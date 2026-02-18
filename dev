@@ -1,0 +1,86 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Global dev CLI: finds git repo root with dev.yml and executes declared commands.
+# Usage: dev <command> [args...]
+# E.g. dev up, dev build, dev test
+
+require "yaml"
+require "fileutils"
+
+def find_repo_root
+  d = Dir.pwd
+  while d != "/" && d != File.dirname(d)
+    git_dir = File.join(d, ".git")
+    if File.directory?(git_dir) || File.file?(git_dir)
+      dev_yml = File.join(d, "dev.yml")
+      if File.file?(dev_yml)
+        return d
+      else
+        $stderr.puts "dev: found git repo at #{d} but no dev.yml there"
+        exit 1
+      end
+    end
+    d = File.dirname(d)
+  end
+  $stderr.puts "dev: no git repo (with dev.yml) found above #{Dir.pwd}"
+  exit 1
+end
+
+def load_dev_yml(repo_root)
+  dev_yml_path = File.join(repo_root, "dev.yml")
+  YAML.load_file(dev_yml_path) || {}
+rescue => e
+  $stderr.puts "dev: failed to parse #{dev_yml_path}: #{e.message}"
+  exit 1
+end
+
+def usage(config)
+  name = config["name"] || "this repo"
+  commands = config["commands"] || {}
+  puts "Usage: dev <command> [args...]"
+  puts ""
+  puts "Commands for #{name}:"
+  if commands.empty?
+    puts "  (no commands defined in dev.yml)"
+  else
+    commands.each do |cmd, spec|
+      desc = spec.is_a?(Hash) && spec["desc"] ? spec["desc"] : "(no description)"
+      puts "  #{cmd.ljust(12)} #{desc}"
+    end
+  end
+  puts ""
+  puts "Examples: dev up    dev up -v    dev test"
+end
+
+def run_command(config, cmd_name, args, repo_root)
+  commands = config["commands"] || {}
+  spec = commands[cmd_name]
+  unless spec
+    $stderr.puts "dev: unknown command: #{cmd_name}"
+    $stderr.puts "Run 'dev' or 'dev --help' to see available commands."
+    exit 1
+  end
+  run = spec.is_a?(Hash) ? spec["run"] : nil
+  unless run && !run.to_s.strip.empty?
+    $stderr.puts "dev: no run defined for command: #{cmd_name}"
+    exit 1
+  end
+  Dir.chdir(repo_root) do
+    exec(run, *args)
+  end
+end
+
+# Main
+arg = ARGV.first
+
+if arg.nil? || arg == "--help" || arg == "-h"
+  repo_root = find_repo_root
+  config = load_dev_yml(repo_root)
+  usage(config)
+  exit 0
+end
+
+repo_root = find_repo_root
+config = load_dev_yml(repo_root)
+run_command(config, arg, ARGV.drop(1), repo_root)
