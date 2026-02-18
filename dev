@@ -3,12 +3,12 @@
 if command -v brew >/dev/null 2>&1; then
   brew_ruby="$(brew --prefix ruby 2>/dev/null)/bin/ruby"
   if [ -x "$brew_ruby" ]; then
-    exec "$brew_ruby" "$0" "$@"
+    exec "$brew_ruby" -x "$0" "$@"
   fi
 fi
-exec ruby "$0" "$@"
+exec ruby -x "$0" "$@"
 
-#!/usr/bin/env ruby
+#!ruby
 # frozen_string_literal: true
 
 # Global dev CLI: finds git repo root with dev.yml and executes declared commands.
