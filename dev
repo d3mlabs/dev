@@ -63,6 +63,7 @@ def run_command(root, cmd_name, run_str, args)
         Dir.chdir(root)
         ARGV.replace(args)
         begin
+          $PROGRAM_NAME = script_path
           load script_path
         rescue SystemExit => e
           exit(e.status || 0)
@@ -77,6 +78,7 @@ def run_command(root, cmd_name, run_str, args)
       Dir.chdir(root)
       ARGV.replace(args)
       begin
+        $PROGRAM_NAME = script_path
         load script_path
       rescue SystemExit => e
         exit(e.status || 0)
