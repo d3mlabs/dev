@@ -11,38 +11,81 @@ exec ruby -x "$0" "$@"
 #!ruby
 # frozen_string_literal: true
 
-# Global dev CLI: finds git repo root with dev.yml and executes declared commands.
-# Usage: dev <command> [args...]
-# E.g. dev up, dev build, dev test
+# Generic dev runner: find repo with dev.yml, enable CLI::UI when TTY, run commands in a Frame.
+# Ruby scripts are run in-process so they inherit CLI::UI; non-Ruby runs as subprocess inside the Frame.
 
 require "yaml"
-require "fileutils"
 
 def find_repo_root
   d = Dir.pwd
-  while d != "/" && d != File.dirname(d)
-    git_dir = File.join(d, ".git")
-    if File.directory?(git_dir) || File.file?(git_dir)
-      dev_yml = File.join(d, "dev.yml")
-      if File.file?(dev_yml)
-        return d
-      else
-        $stderr.puts "dev: found git repo at #{d} but no dev.yml there"
-        exit 1
-      end
-    end
+  while d && d != "/"
+    return d if File.file?(File.join(d, "dev.yml"))
     d = File.dirname(d)
   end
-  $stderr.puts "dev: no git repo (with dev.yml) found above #{Dir.pwd}"
-  exit 1
+  nil
 end
 
-def load_dev_yml(repo_root)
-  dev_yml_path = File.join(repo_root, "dev.yml")
-  YAML.load_file(dev_yml_path) || {}
-rescue => e
-  $stderr.puts "dev: failed to parse #{dev_yml_path}: #{e.message}"
-  exit 1
+def load_dev_yml(root)
+  path = File.join(root, "dev.yml")
+  YAML.load_file(path) if File.file?(path)
+rescue Psych::SyntaxError => e
+  $stderr.puts "dev: invalid YAML in #{path}: #{e.message}"
+  nil
+end
+
+def enable_cli_ui
+  return unless $stdout.tty?
+  require "cli/ui"
+  CLI::UI::StdoutRouter.enable
+  CLI::UI.enable_color = $stdout.tty? if CLI::UI.respond_to?(:enable_color=)
+rescue LoadError
+  # cli-ui not installed; run without pretty output
+end
+
+def ruby_script?(run_str)
+  s = run_str.to_s.strip
+  s.end_with?(".rb") && (s.start_with?("./") || s.start_with?("bin/"))
+end
+
+def run_command(root, cmd_name, run_str, args)
+  run_str = run_str.to_s.strip
+  script_path = nil
+  if ruby_script?(run_str)
+    script_path = File.expand_path(run_str.start_with?("bin/") ? run_str : run_str.sub(/\A\.\//, ""), root)
+    script_path = nil unless File.file?(script_path)
+  end
+
+  title = cmd_name.to_s.tr("-", " ").split.map(&:capitalize).join(" ")
+
+  if $stdout.tty? && defined?(CLI::UI)
+    CLI::UI::Frame.open(title) do
+      if script_path
+        Dir.chdir(root)
+        ARGV.replace(args)
+        begin
+          load script_path
+        rescue SystemExit => e
+          exit(e.status || 0)
+        end
+      else
+        exit(1) unless system(run_str, *args)
+      end
+    end
+  else
+    if script_path
+      Dir.chdir(root)
+      ARGV.replace(args)
+      begin
+        load script_path
+      rescue SystemExit => e
+        exit(e.status || 0)
+      end
+    else
+      # Non-Ruby: exec so we don't wrap in a subshell (preserve exit code and signals)
+      Dir.chdir(root)
+      exec(run_str, *args)
+    end
+  end
 end
 
 def usage(config)
@@ -60,81 +103,37 @@ def usage(config)
     end
   end
   puts ""
-  puts "Examples: dev up    dev up -v    dev test"
-end
-
-def find_homebrew_ruby
-  return nil unless system("command -v brew >/dev/null 2>&1")
-  brew_ruby_prefix = `brew --prefix ruby 2>/dev/null`.strip
-  return nil if brew_ruby_prefix.empty?
-  brew_ruby = File.join(brew_ruby_prefix, "bin", "ruby")
-  return nil unless File.executable?(brew_ruby)
-  brew_ruby
-end
-
-def is_ruby_script?(script_path)
-  return false unless File.file?(script_path)
-  first_line = File.readlines(script_path).first
-  return false unless first_line
-  first_line.include?("ruby") && (first_line.include?("#!/usr/bin/env ruby") || first_line.include?("#!/usr/bin/ruby"))
-rescue
-  false
-end
-
-def run_command(config, cmd_name, args, repo_root)
-  commands = config["commands"] || {}
-  spec = commands[cmd_name]
-  unless spec
-    $stderr.puts "dev: unknown command: #{cmd_name}"
-    $stderr.puts "Run 'dev' or 'dev --help' to see available commands."
-    exit 1
-  end
-  run = spec.is_a?(Hash) ? spec["run"] : nil
-  unless run && !run.to_s.strip.empty?
-    $stderr.puts "dev: no run defined for command: #{cmd_name}"
-    exit 1
-  end
-  
-  Dir.chdir(repo_root) do
-    # Resolve the script path
-    script_path = File.expand_path(run.split.first, repo_root)
-    
-    # If it's a Ruby script and we have Homebrew Ruby, use it explicitly
-    if is_ruby_script?(script_path)
-      brew_ruby = find_homebrew_ruby
-      if brew_ruby
-        # Ensure Homebrew Ruby's bin is in PATH for any child processes
-        brew_ruby_bin = File.dirname(brew_ruby)
-        current_path = ENV["PATH"] || ""
-        ENV["PATH"] = "#{brew_ruby_bin}:#{current_path}" unless current_path.split(":").include?(brew_ruby_bin)
-        # Execute with Homebrew Ruby explicitly
-        exec(brew_ruby, script_path, *args)
-      end
-    end
-    
-    # For non-Ruby scripts or if Homebrew Ruby isn't available, ensure PATH is set
-    # and exec normally (PATH will help with any shebang resolution)
-    brew_ruby = find_homebrew_ruby
-    if brew_ruby
-      brew_ruby_bin = File.dirname(brew_ruby)
-      current_path = ENV["PATH"] || ""
-      ENV["PATH"] = "#{brew_ruby_bin}:#{current_path}" unless current_path.split(":").include?(brew_ruby_bin)
-    end
-    
-    exec(run, *args)
-  end
+  puts "Examples: dev up    dev up -v    dev update-deps    dev test"
 end
 
 # Main
-arg = ARGV.first
+root = find_repo_root
+unless root
+  $stderr.puts "dev: no dev.yml found in current or parent directories"
+  exit 1
+end
 
-if arg.nil? || arg == "--help" || arg == "-h"
-  repo_root = find_repo_root
-  config = load_dev_yml(repo_root)
+config = load_dev_yml(root)
+unless config && config["commands"]
+  $stderr.puts "dev: invalid dev.yml or no commands"
+  exit 1
+end
+
+commands = config["commands"]
+args = ARGV.dup
+
+if args.empty? || args == ["--help"] || args == ["-h"]
   usage(config)
   exit 0
 end
 
-repo_root = find_repo_root
-config = load_dev_yml(repo_root)
-run_command(config, arg, ARGV.drop(1), repo_root)
+cmd_name = args.shift
+spec = commands[cmd_name]
+unless spec.is_a?(Hash) && spec["run"]
+  $stderr.puts "dev: unknown command #{cmd_name}"
+  $stderr.puts "Run 'dev' or 'dev --help' to see available commands."
+  exit 1
+end
+
+enable_cli_ui
+run_command(root, cmd_name, spec["run"], args)
