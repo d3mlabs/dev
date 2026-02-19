@@ -71,6 +71,7 @@ def run_command(root, cmd_name, run_str, args)
         exit(1) unless system(run_str, *args)
       end
     end
+    puts CLI::UI.fmt("{{green:✓}} Done")
   else
     if script_path
       Dir.chdir(root)
