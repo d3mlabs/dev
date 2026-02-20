@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+DEV_ROOT = File.expand_path("..", __dir__)
+$LOAD_PATH.unshift(File.join(DEV_ROOT, "src")) unless $LOAD_PATH.include?(File.join(DEV_ROOT, "src"))
+
 # Per rspock README: install the ASTTransform hook at the very beginning
 # https://github.com/rspockframework/rspock#installation
 require "ast_transform"
