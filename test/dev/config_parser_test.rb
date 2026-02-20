@@ -9,7 +9,7 @@ transform!(RSpock::AST::Transformation)
 class ConfigParserTest < Minitest::Test
   test "parse returns Config with name and commands from dev.yml" do
     Given "A dev.yml file with name and commands"
-    tmp_file = Tempfile.create(["dev", ".yml"])
+    tmp_file = Tempfile.new(["dev", ".yml"])
     tmp_file.write <<~YAML
       name: dev
       commands:
@@ -18,8 +18,10 @@ class ConfigParserTest < Minitest::Test
         test:
           run: rspec
     YAML
+    tmp_file.flush
 
     When "the config is parsed"
+    parser = Dev::ConfigParser.new
     config = parser.parse(tmp_file.path)
 
     Then "we get the expected result"
@@ -44,9 +46,10 @@ class ConfigParserTest < Minitest::Test
 
   test "parse raises when YAML is invalid" do
     Given "an invalid dev.yml file"
-    tmp_file = Tempfile.create(["dev", ".yml"])
+    tmp_file = Tempfile.new(["dev", ".yml"])
     tmp_file.write("not: valid: yaml: [")
-    
+    tmp_file.flush
+
     Expect "raises Psych::SyntaxError when we try to parse it"
     parser = Dev::ConfigParser.new
     assert_raises Psych::SyntaxError do
