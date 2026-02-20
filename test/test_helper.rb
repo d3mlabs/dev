@@ -1,15 +1,7 @@
 # frozen_string_literal: true
 
-DEV_ROOT = File.expand_path("..", __dir__)
+DEV_ROOT = File.expand_path("..", __dir__) unless defined?(DEV_ROOT)
 $LOAD_PATH.unshift(File.join(DEV_ROOT, "src")) unless $LOAD_PATH.include?(File.join(DEV_ROOT, "src"))
-
-# So binding.pry breakpoints work when running dev test.
-require "pry"
-
-# Per rspock README: install the ASTTransform hook at the very beginning
-# https://github.com/rspockframework/rspock#installation
-require "ast_transform"
-ASTTransform.install
 
 # RSpock; load before any file that uses transform!(RSpock::AST::Transformation).
 require "rspock" unless defined?(RSpock)

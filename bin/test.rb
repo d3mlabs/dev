@@ -20,7 +20,7 @@ end
 puts "Running tests..."
 success = Dir.chdir(DEV_ROOT) do
   load_cmds = test_files.sort.map { |p| "load #{p.inspect}" }.join("; ")
-  system("bundle", "exec", "ruby", "-I", "test", "-e", "require 'test_helper'; #{load_cmds}")
+  system("bundle", "exec", "ruby", "-I", "test", "-e", "require 'test_loader'; require 'test_helper'; #{load_cmds}")
 end
 
 exit(success ? 0 : 1)
