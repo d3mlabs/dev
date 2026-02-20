@@ -2,5 +2,11 @@
 
 source "https://rubygems.org"
 
-# RSpock from the managed repo (for test_helper and writing rspock-style tests)
-gem "rspock", path: "repos/rspock"
+# Pretty CLI (Frame, colors, spinners). Dev wraps commands in it; project scripts run in-process and inherit it.
+gem "cli-ui"
+
+# RSpock (from RubyGems) for test_helper and rspock-style tests
+gem "rspock"
+
+# Test (dev repo's own tests)
+gem "minitest"

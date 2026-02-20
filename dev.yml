@@ -5,5 +5,5 @@ commands:
     desc: Setup dev environment (install bundler from dependencies.rb, bundle install)
     run: ./bin/setup.rb
   test:
-    desc: Run tests for managed repositories
+    desc: Run this repo's tests
     run: ./bin/test.rb

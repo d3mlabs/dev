@@ -5,8 +5,7 @@
 require "ast_transform"
 ASTTransform.install
 
-# RSpock (from Gemfile path); load before any file that uses transform!(RSpock::AST::Transformation).
-# Explicit requires ensure ast_transform can resolve the transformation and the transformed code sees BacktraceFilter/Declarative.
+# RSpock; load before any file that uses transform!(RSpock::AST::Transformation).
 require "rspock" unless defined?(RSpock)
 require "rspock/backtrace_filter"
 require "rspock/declarative"

@@ -40,6 +40,12 @@ dev          # List all available commands
 
 The tool walks up from your current directory until it finds a git repo root (directory containing `.git`), then looks for `dev.yml` there. If found, it parses the commands and executes the `run` string for your chosen subcommand.
 
+## Pretty UI (cli-ui)
+
+Dev depends on [Shopify’s cli-ui](https://github.com/Shopify/cli-ui) for Frames, colors, and formatted output. When you run `dev up` or `dev test`, the command is wrapped in a Frame and output is styled. **Ruby scripts (e.g. `./bin/setup.rb`) run in-process**, so they inherit the same CLI::UI context: your project scripts can use `CLI::UI::Frame`, `CLI::UI::Spinner`, `CLI::UI.fmt`, etc. without adding cli-ui to your own Gemfile. Rely on Dev to own the pretty UI so cellbound and other d3mlabs projects stay DRY.
+
+(If the Ruby that runs `dev` doesn’t have cli-ui installed, Dev still works and falls back to plain output.)
+
 ## dev.yml convention
 
 Each repo that wants to support `dev` should have a `dev.yml` at its git root:

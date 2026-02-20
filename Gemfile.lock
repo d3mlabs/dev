@@ -1,13 +1,3 @@
-PATH
-  remote: repos/rspock
-  specs:
-    rspock (1.0.0)
-      ast_transform (~> 1.0)
-      minitest (~> 5.0)
-      mocha (~> 1.0)
-      parser (~> 2.5)
-      unparser (~> 0.4)
-
 GEM
   remote: https://rubygems.org/
   specs:
@@ -23,6 +13,7 @@ GEM
     ast_transform (1.0.0)
       parser (~> 2.5)
       unparser (~> 0.4)
+    cli-ui (2.7.0)
     concord (0.1.6)
       adamantium (~> 0.2.0)
       equalizer (~> 0.0.9)
@@ -31,7 +22,7 @@ GEM
     ice_nine (0.11.2)
     memoizable (0.4.2)
       thread_safe (~> 0.3, >= 0.3.1)
-    minitest (5.25.4)
+    minitest (5.26.1)
     mocha (1.16.1)
     mprelude (0.1.0)
       abstract_type (~> 0.0.7)
@@ -43,6 +34,12 @@ GEM
     parser (2.7.2.0)
       ast (~> 2.4.1)
     procto (0.0.3)
+    rspock (1.0.0)
+      ast_transform (~> 1.0)
+      minitest (~> 5.0)
+      mocha (~> 1.0)
+      parser (~> 2.5)
+      unparser (~> 0.4)
     thread_safe (0.3.6)
     unparser (0.5.5)
       abstract_type (~> 0.0.7)
@@ -59,7 +56,9 @@ PLATFORMS
   ruby
 
 DEPENDENCIES
-  rspock!
+  cli-ui
+  minitest
+  rspock
 
 BUNDLED WITH
    2.1.4
