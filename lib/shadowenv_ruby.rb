@@ -147,6 +147,10 @@ def setup_shadowenv_ruby!(dev_root)
   File.write(lisp_path, generate_ruby_lisp(ruby_root, version))
   puts "  Generated #{lisp_path}"
 
+  ruby_version_path = File.join(dev_root, ".ruby-version")
+  File.write(ruby_version_path, "#{version}\n")
+  puts "  Wrote #{ruby_version_path}"
+
   # Auto-trust so the user doesn't have to run shadowenv trust
   if system("shadowenv", "trust")
     puts "  Trusted .shadowenv.d"

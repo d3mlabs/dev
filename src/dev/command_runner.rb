@@ -81,8 +81,22 @@ module Dev
         run_subprocess_with_capture
       else
         Dir.chdir(@root)
-        exec(@run_str, *@args)
+        exec(*subprocess_exec_argv)
       end
+    end
+
+    # Use repo's Ruby (rbenv + .ruby-version) when available so e.g. dev console matches ./bin/console.
+    def subprocess_exec_argv
+      ruby_version_file = File.join(@root, ".ruby-version")
+      if File.file?(ruby_version_file) && which_rbenv
+        ["rbenv", "exec", @run_str, *@args]
+      else
+        [@run_str, *@args]
+      end
+    end
+
+    def which_rbenv
+      system("which", "rbenv", out: File::NULL, err: File::NULL)
     end
 
     def run_subprocess_with_capture
