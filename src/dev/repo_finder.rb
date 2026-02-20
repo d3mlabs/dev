@@ -5,11 +5,7 @@ module Dev
   class RepoFinder
     FILENAME = "dev.yml"
 
-    def self.find(start_dir = Dir.pwd)
-      new(start_dir).find
-    end
-
-    def initialize(start_dir)
+    def initialize(start_dir = Dir.pwd)
       @start_dir = File.expand_path(start_dir)
     end
 

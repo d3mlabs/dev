@@ -3,10 +3,6 @@
 module Dev
   # Enables CLI::UI (Frame, colors) when stdout is a TTY; no-op otherwise or if cli-ui is not installed.
   class CliUi
-    def self.enable
-      new.enable
-    end
-
     def enable
       return unless $stdout.tty?
       require "cli/ui"

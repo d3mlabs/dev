@@ -16,4 +16,4 @@ src = File.join(script_dir, "src")
 $LOAD_PATH.unshift(src) unless $LOAD_PATH.include?(src)
 
 require "dev"
-Dev::Runner.run(ARGV)
+Dev::Runner.new(ARGV).run

@@ -3,10 +3,6 @@
 module Dev
   # Runs a dev command: in-process for Ruby scripts (so they inherit CLI::UI), subprocess otherwise.
   class CommandRunner
-    def self.run(root:, cmd_name:, run_str:, args:)
-      new(root: root, cmd_name: cmd_name, run_str: run_str, args: args).run
-    end
-
     def initialize(root:, cmd_name:, run_str:, args:)
       @root = root
       @cmd_name = cmd_name

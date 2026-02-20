@@ -5,10 +5,6 @@ require "yaml"
 module Dev
   # Loads and parses dev.yml from a repository root; returns a Config or nil on error.
   class ConfigLoader
-    def self.load(root)
-      new(root).load
-    end
-
     def initialize(root)
       @root = root
       @path = File.join(root, RepoFinder::FILENAME)

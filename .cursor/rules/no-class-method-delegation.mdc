@@ -1,0 +1,45 @@
+---
+description: Do not use class methods that only delegate to an instance (constructor instead)
+globs: "**/*.rb"
+alwaysApply: false
+---
+
+# No class-method-to-instance delegation
+
+Do **not** use the pattern where a class method only creates an instance and calls an instance method (e.g. `def self.find(x); new(x).find; end`). That is a convoluted form of dependency injection; avoid it.
+
+**Why:** Dependencies stay hidden and hard to inject; tests end up stubbing class methods or global state. Putting dependencies in the constructor makes them explicit and testable.
+
+**Use the constructor instead:** Callers pass dependencies when constructing, then call the instance method. Class methods that do real work (not just `new(...).method`) are fine.
+
+```ruby
+# ❌ BAD: class method delegating to instance
+class RepoFinder
+  def self.find(start_dir = Dir.pwd)
+    new(start_dir).find
+  end
+
+  def initialize(start_dir)
+    @start_dir = start_dir
+  end
+
+  def find
+    # ...
+  end
+end
+# Call: RepoFinder.find
+
+# ✅ GOOD: constructor only; callers use the instance
+class RepoFinder
+  def initialize(start_dir = Dir.pwd)
+    @start_dir = File.expand_path(start_dir)
+  end
+
+  def find
+    # ...
+  end
+end
+# Call: RepoFinder.new(Dir.pwd).find
+```
+
+Dependencies (e.g. start directory, config) belong in the constructor. Callers pass them when constructing the object.

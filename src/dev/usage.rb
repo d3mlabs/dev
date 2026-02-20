@@ -3,10 +3,6 @@
 module Dev
   # Prints usage/help for dev commands from a Config.
   class Usage
-    def self.print(config)
-      new(config).print
-    end
-
     def initialize(config)
       @config = config
     end
