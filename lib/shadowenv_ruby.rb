@@ -12,10 +12,22 @@ def find_ruby_root(version)
   nil
 end
 
+def path_with_brew_bin
+  prefix = ENV["HOMEBREW_PREFIX"]
+  prefix ||= begin
+    out = IO.popen(["brew", "prefix"], err: File::NULL, &:read)
+    out&.strip
+  end
+  return ENV["PATH"] unless prefix && File.directory?(prefix)
+  "#{File.join(prefix, "bin")}:#{ENV["PATH"]}"
+end
+
 def install_ruby_with_version_manager(version)
-  return false unless system("which", "rbenv", out: File::NULL, err: File::NULL)
+  path = path_with_brew_bin
+  env = { "PATH" => path }
+  return false unless system(env, "which", "rbenv", out: File::NULL, err: File::NULL)
   puts "  Installing Ruby #{version} with rbenv..."
-  system("rbenv", "install", version)
+  system(env, "rbenv", "install", version)
 end
 
 def gem_api_version(ruby_version)
