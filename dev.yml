@@ -1,0 +1,9 @@
+name: dev
+
+commands:
+  up:
+    desc: Setup dev environment (install bundler from dependencies.rb, bundle install)
+    run: ./bin/setup.rb
+  test:
+    desc: Run tests for managed repositories
+    run: ./bin/test.rb

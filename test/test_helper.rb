@@ -1,0 +1,39 @@
+# frozen_string_literal: true
+
+# Per rspock README: install the ASTTransform hook at the very beginning
+# https://github.com/rspockframework/rspock#installation
+require "ast_transform"
+ASTTransform.install
+
+# RSpock (from Gemfile path); load before any file that uses transform!(RSpock::AST::Transformation).
+# Explicit requires ensure ast_transform can resolve the transformation and the transformed code sees BacktraceFilter/Declarative.
+require "rspock" unless defined?(RSpock)
+require "rspock/backtrace_filter"
+require "rspock/declarative"
+require "rspock/ast/transformation"
+
+# Minitest (load before mocha so MiniTest constant is available)
+begin
+  require "rubygems"
+  gem "minitest"
+rescue Gem::LoadError
+  # do nothing
+end
+
+require "minitest"
+MiniTest = Minitest # mocha/minitest expects the old name
+require "minitest/spec"
+require "minitest/mock"
+require "mocha/minitest"
+require "minitest/hell" if ENV["MT_HELL"]
+
+# Minitest Reporters (optional; rspock uses RakeRerunReporter)
+begin
+  require "minitest/reporters"
+  require "minitest/reporters/rake_rerun_reporter"
+  Minitest::Reporters.use!([Minitest::Reporters::RakeRerunReporter.new])
+rescue LoadError
+  # minitest-reporters not installed
+end
+
+Minitest.autorun

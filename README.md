@@ -4,12 +4,21 @@ Global CLI tool for d3mlabs projects. Discovers `dev.yml` in your git repos and 
 
 ## Installation
 
-Install via Homebrew (from the d3mlabs tap):
+Install via Homebrew (from the d3mlabs tap). This installs `dev` and shadowenv (for per-project Ruby env in repos that use `dev up`):
 
 ```bash
 brew tap d3mlabs
 brew install d3mlabs/dev
 ```
+
+After installing, add the shadowenv hook to your shell so project Rubies activate when you `cd` into a repo:
+
+```bash
+# Add to ~/.zshrc (or ~/.bash_profile / config.fish)
+eval "$(shadowenv init zsh)"
+```
+
+**Formula maintainers:** The Homebrew formula for `d3mlabs/dev` should include `depends_on "shadowenv"` so developers get shadowenv when they install dev.
 
 ## Usage
 
