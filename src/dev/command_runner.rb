@@ -89,10 +89,18 @@ module Dev
     def subprocess_exec_argv
       ruby_version_file = File.join(@root, ".ruby-version")
       if File.file?(ruby_version_file) && which_rbenv
-        ["rbenv", "exec", @run_str, *@args]
+        # rbenv exec looks up the command; use absolute path so it runs the repo's script.
+        cmd = resolve_run_str_to_path
+        ["rbenv", "exec", cmd, *@args]
       else
         [@run_str, *@args]
       end
+    end
+
+    def resolve_run_str_to_path
+      path = @run_str.sub(/\A\.\//, "").strip
+      expanded = File.expand_path(path, @root)
+      File.file?(expanded) ? expanded : @run_str
     end
 
     def which_rbenv
