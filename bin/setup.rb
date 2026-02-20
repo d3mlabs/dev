@@ -23,16 +23,23 @@ if shadowenv_available
   hook_just_added = result.is_a?(Array) && result[1] == :added
 end
 
-exit 1 unless ensure_bundler!(DEV_ROOT)
-
-puts "  Installing dev repo gems..."
-Dir.chdir(DEV_ROOT) do
-  # Use shadowenv exec so bundle runs with the project Ruby when available
-  install_cmd = shadowenv_available ? ["shadowenv", "exec", "--", "bundle", "install"] : ["bundle", "install"]
-  unless system(*install_cmd)
-    puts "  ⚠️  bundle install failed"
+# Run bundler steps under shadowenv so they use project Ruby (avoids system Ruby / permission errors on first run)
+if shadowenv_available
+  ENV["DEV_ROOT"] = DEV_ROOT
+  unless system("shadowenv", "exec", "--", "ruby", "-I", File.join(DEV_ROOT, "lib"), "-r", "ensure_bundler", "-e", "exit 1 unless ensure_bundler!(ENV['DEV_ROOT'])")
     exit 1
   end
+  puts "  Installing dev repo gems..."
+  Dir.chdir(DEV_ROOT) do
+    unless system("shadowenv", "exec", "--", "bundle", "install")
+      puts "  ⚠️  bundle install failed"
+      exit 1
+    end
+  end
+else
+  exit 1 unless ensure_bundler!(DEV_ROOT)
+  puts "  Installing dev repo gems..."
+  Dir.chdir(DEV_ROOT) { exit 1 unless system("bundle", "install") }
 end
 
 puts "  Done."
