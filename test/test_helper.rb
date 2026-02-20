@@ -3,11 +3,7 @@
 DEV_ROOT = File.expand_path("..", __dir__) unless defined?(DEV_ROOT)
 $LOAD_PATH.unshift(File.join(DEV_ROOT, "src")) unless $LOAD_PATH.include?(File.join(DEV_ROOT, "src"))
 
-# RSpock; load before any file that uses transform!(RSpock::AST::Transformation).
 require "rspock" unless defined?(RSpock)
-require "rspock/backtrace_filter"
-require "rspock/declarative"
-require "rspock/ast/transformation"
 
 # Minitest (load before mocha so MiniTest constant is available)
 begin
