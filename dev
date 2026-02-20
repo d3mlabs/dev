@@ -11,7 +11,8 @@ exec ruby -x "$0" "$@"
 #!ruby
 # frozen_string_literal: true
 
-script_dir = File.dirname(File.expand_path(__FILE__))
+# Resolve symlink so Homebrew's bin/dev finds libexec/dev/src
+script_dir = File.dirname(File.realpath(__FILE__))
 src = File.join(script_dir, "src")
 $LOAD_PATH.unshift(src) unless $LOAD_PATH.include?(src)
 
