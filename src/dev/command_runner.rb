@@ -3,21 +3,23 @@
 module Dev
   # Runs a dev command: in-process for Ruby scripts (so they inherit CLI::UI), subprocess otherwise.
   class CommandRunner
-    def initialize(root:, cmd_name:, run_str:, args:)
+    def initialize(root:, cmd_name:, run_str:, args:, interactive: nil)
       @root = root
       @cmd_name = cmd_name
       @run_str = run_str.to_s.strip
       @args = args
+      @interactive = interactive
     end
 
     def run
       script_path = resolve_ruby_script
       title = @cmd_name.to_s.tr("-", " ").split.map(&:capitalize).join(" ")
 
-      if tty? && cli_ui_available?
-        run_with_frame(title, script_path)
-      else
+      # Interactive commands (e.g. console/REPL) need a real TTY; don't run inside a Frame.
+      if interactive? || !tty? || !cli_ui_available?
         run_without_frame(script_path)
+      else
+        run_with_frame(title, script_path)
       end
     end
 
@@ -40,6 +42,10 @@ module Dev
 
     def cli_ui_available?
       defined?(CLI::UI)
+    end
+
+    def interactive?
+      @interactive == true
     end
 
     def run_with_frame(title, script_path)

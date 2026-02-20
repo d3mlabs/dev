@@ -10,6 +10,4 @@ commands:
   console:
     desc: Start Ruby console with dev code loaded (pry)
     run: ./bin/console
-  c:
-    desc: Alias for console
-    run: dev console
+    interactive: true

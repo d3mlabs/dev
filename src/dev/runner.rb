@@ -35,7 +35,8 @@ module Dev
         root: root,
         cmd_name: cmd_name,
         run_str: spec["run"],
-        args: @argv
+        args: @argv,
+        interactive: spec["interactive"]
       ).run
     end
 
