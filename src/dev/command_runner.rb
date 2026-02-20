@@ -89,9 +89,13 @@ module Dev
     def subprocess_exec_argv
       ruby_version_file = File.join(@root, ".ruby-version")
       if File.file?(ruby_version_file) && which_rbenv
-        # rbenv exec looks up the command; use absolute path so it runs the repo's script.
-        cmd = resolve_run_str_to_path
-        ["rbenv", "exec", cmd, *@args]
+        script_path = resolve_run_str_to_path
+        # rbenv exec only runs shimmed commands; run script via "ruby" so repo's Ruby is used.
+        if script_path.start_with?("/")
+          ["rbenv", "exec", "ruby", script_path, *@args]
+        else
+          ["rbenv", "exec", @run_str, *@args]
+        end
       else
         [@run_str, *@args]
       end
