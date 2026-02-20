@@ -69,7 +69,22 @@ def run_command(root, cmd_name, run_str, args)
           exit(e.status || 0)
         end
       else
-        exit(1) unless system(run_str, *args)
+        # Run command and always show output, especially on failure
+        # Use popen3 to capture both stdout and stderr, print as it comes
+        require "open3"
+        status = nil
+        Open3.popen2e(run_str, *args) do |stdin, stdout_err, wait_thr|
+          stdin.close
+          stdout_err.each_line do |line|
+            puts line
+            $stdout.flush  # Ensure output is visible immediately
+          end
+          status = wait_thr.value
+        end
+        unless status.success?
+          # Command failed - output was already printed, exit with command's exit code
+          exit(status.exitstatus || 1)
+        end
       end
       puts CLI::UI.fmt("{{green:✓}} Done")
     end
