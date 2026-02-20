@@ -10,15 +10,12 @@ module Dev
     def run
       root = RepoFinder.new(Dir.pwd).find
       unless root
-        $stderr.puts "dev: no dev.yml found in current or parent directories"
+        $stderr.puts "dev: no dev.yml at project root (run from inside a git repo that has dev.yml at its root)"
         exit 1
       end
 
-      config = ConfigLoader.new(root).load
-      unless config
-        $stderr.puts "dev: invalid dev.yml or no commands"
-        exit 1
-      end
+      dev_yml_path = File.join(root, RepoFinder::FILENAME)
+      config = ConfigParser.new.parse(dev_yml_path)
 
       if show_usage?
         Usage.new(config).print

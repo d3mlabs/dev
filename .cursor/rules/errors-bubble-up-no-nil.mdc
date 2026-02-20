@@ -1,0 +1,30 @@
+---
+description: Don't return nil for error states; let errors bubble up. Parsers return domain objects.
+globs: "**/*.rb"
+alwaysApply: false
+---
+
+# Errors bubble up; no nil as error state
+
+**Do not** return `nil` to signal failure when failure is an error. Let errors bubble up (raise). Callers can rescue at the right layer (e.g. CLI boundary) and exit with a clean message.
+
+```ruby
+# ❌ BAD: return nil on error; caller must check
+def load(root)
+  return nil unless File.file?(@path)
+  raw = YAML.load_file(@path)
+  return nil unless raw.is_a?(Hash) && raw["commands"]
+  Config.new(...)
+rescue Psych::SyntaxError => e
+  $stderr.puts "..."
+  nil
+end
+
+# ✅ GOOD: parse returns domain object; errors raise
+def parse(dev_yml_path)
+  yaml = YAML.load_file(dev_yml_path)
+  Config.new(name: yaml["name"], commands: yaml["commands"])
+end
+```
+
+**Parsers / loaders:** Prefer stateless (or minimal constructor) and take input as method args; return a domain object. The instance is reusable (e.g. for different files later). Inject only real dependencies in the constructor when you have them—none yet is fine.
