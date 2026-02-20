@@ -11,9 +11,10 @@ exec ruby -x "$0" "$@"
 #!ruby
 # frozen_string_literal: true
 
-# Resolve symlink so Homebrew's bin/dev finds libexec/dev/src
+# Resolve symlink so Homebrew's bin/dev finds libexec/dev/src. When this file is in bin/, src is at repo root.
 script_dir = File.dirname(File.realpath(__FILE__))
-src = File.join(script_dir, "src")
+root = (File.basename(script_dir) == "bin") ? File.dirname(script_dir) : script_dir
+src = File.join(root, "src")
 $LOAD_PATH.unshift(src) unless $LOAD_PATH.include?(src)
 
 require "dev"
