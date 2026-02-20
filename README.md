@@ -11,6 +11,13 @@ brew tap d3mlabs
 brew install d3mlabs/dev
 ```
 
+**Ruby:** We use **rbenv** as the standard Ruby version manager. If you run `dev up` in a repo that needs Ruby, have rbenv installed first:
+
+```bash
+brew install rbenv ruby-build
+# Then e.g. rbenv install 2.7.6  (version comes from the repo’s dependencies)
+```
+
 After installing, add the shadowenv hook to your shell so project Rubies activate when you `cd` into a repo:
 
 ```bash

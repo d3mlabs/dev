@@ -3,23 +3,19 @@
 require "fileutils"
 
 # Generates .shadowenv.d/510_ruby.lisp from dependencies.rb and auto-trusts.
-# Detects Ruby via rbenv, chruby, or asdf. Used by dev up.
+# Requires rbenv for Ruby (dev environment standard). Used by dev up.
 
 def find_ruby_root(version)
-  home = ENV["HOME"] || Dir.home
-  # rbenv
-  rbenv_root = ENV["RBENV_ROOT"] || File.join(home, ".rbenv")
+  rbenv_root = ENV["RBENV_ROOT"] || File.join(ENV["HOME"] || Dir.home, ".rbenv")
   rbenv_path = File.join(rbenv_root, "versions", version)
   return File.expand_path(rbenv_path) if File.directory?(rbenv_path)
-  # chruby: /opt/rubies or ~/.rubies
-  [File.join("/opt/rubies", version), File.join(home, ".rubies", version)].each do |p|
-    return File.expand_path(p) if File.directory?(p)
-  end
-  # asdf
-  asdf_dir = ENV["ASDF_DATA_DIR"] || File.join(home, ".asdf")
-  asdf_path = File.join(asdf_dir, "installs", "ruby", version)
-  return File.expand_path(asdf_path) if File.directory?(asdf_path)
   nil
+end
+
+def install_ruby_with_version_manager(version)
+  return false unless system("which", "rbenv", out: File::NULL, err: File::NULL)
+  puts "  Installing Ruby #{version} with rbenv..."
+  system("rbenv", "install", version)
 end
 
 def gem_api_version(ruby_version)
@@ -31,7 +27,6 @@ end
 
 def generate_ruby_lisp(ruby_root, ruby_version)
   gem_root = File.join(ruby_root, "lib", "ruby", "gems", gem_api_version(ruby_version))
-  # Fallback if layout is different (e.g. asdf)
   gem_root = File.join(ruby_root, "lib", "ruby", ruby_version) unless File.directory?(gem_root)
   <<~LISP
     (provide "ruby" "#{ruby_version}")
@@ -126,8 +121,13 @@ def setup_shadowenv_ruby!(dev_root)
   version = RUBY_VERSION_REQUESTED.to_s.strip
   ruby_root = find_ruby_root(version)
   unless ruby_root
-    puts "  ⚠️  Ruby #{version} not found (checked rbenv, chruby, asdf). Install it (e.g. rbenv install #{version}) and run dev up again."
-    return false
+    if install_ruby_with_version_manager(version)
+      ruby_root = find_ruby_root(version)
+    end
+    unless ruby_root
+      puts "  ⚠️  Ruby #{version} not found. We use rbenv. Install: brew install rbenv ruby-build && rbenv install #{version}"
+      return false
+    end
   end
 
   shadowenv_d = File.join(dev_root, ".shadowenv.d")
