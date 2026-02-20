@@ -60,9 +60,10 @@ module Dev
     end
 
     def execute(script_path, in_frame: false)
-      if script_path
+      if script_path && !in_frame
         run_ruby_in_process(script_path)
       else
+        # In a Frame, always subprocess so the Frame can close (green); use subprocess_exec_argv so rbenv is used when .ruby-version exists.
         run_subprocess(in_frame: in_frame)
       end
     end
@@ -115,7 +116,7 @@ module Dev
       require "open3"
       status = nil
       Dir.chdir(@root) do
-        Open3.popen2e(@run_str, *@args) do |stdin, stdout_err, wait_thr|
+        Open3.popen2e(*subprocess_exec_argv) do |stdin, stdout_err, wait_thr|
           stdin.close
           stdout_err.each_line do |line|
             puts line
