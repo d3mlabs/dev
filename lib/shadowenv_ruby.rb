@@ -103,7 +103,7 @@ def ensure_shadowenv_shell_hook!
   # Check if hook is already present
   if File.exist?(profile_path)
     content = File.read(profile_path)
-    return true if content.include?(hook_line) || content.include?("shadowenv init")
+    return :already_present if content.include?(hook_line) || content.include?("shadowenv init")
   end
 
   # Add hook to profile (prompt widget is commented out; uncomment to show active shadowenv in prompt)
@@ -121,8 +121,7 @@ def ensure_shadowenv_shell_hook!
     f.puts prompt_comment
   end
   puts "  Added shadowenv hook to #{profile_path}"
-  puts "  Restart your shell or run: source #{profile_path}"
-  true
+  :added
 rescue => e
   puts "  ⚠️  Could not add shadowenv hook to shell profile: #{e.message}"
   false
@@ -155,8 +154,9 @@ def setup_shadowenv_ruby!(dev_root)
     puts "  ⚠️  Run 'shadowenv trust' in the repo root to activate (or install shadowenv: brew install shadowenv)"
   end
 
-  # Ensure shell hook is installed
-  ensure_shadowenv_shell_hook!
+  # Ensure shell hook is installed; return :added if we wrote it this run (for auto-source)
+  hook_result = ensure_shadowenv_shell_hook!
+  return false if hook_result == false
 
-  true
+  [true, hook_result]
 end

@@ -17,8 +17,10 @@ shadowenv_available = system("which", "shadowenv", out: File::NULL, err: File::N
 unless shadowenv_available
   puts "  ⚠️  shadowenv not found. Install dev via Homebrew (brew install d3mlabs/dev) to get shadowenv, or run: brew install shadowenv"
 end
+hook_just_added = false
 if shadowenv_available
-  setup_shadowenv_ruby!(DEV_ROOT) # Generates .shadowenv.d and auto-adds shell hook
+  result = setup_shadowenv_ruby!(DEV_ROOT) # Generates .shadowenv.d and auto-adds shell hook
+  hook_just_added = result.is_a?(Array) && result[1] == :added
 end
 
 exit 1 unless ensure_bundler!(DEV_ROOT)
@@ -34,3 +36,7 @@ Dir.chdir(DEV_ROOT) do
 end
 
 puts "  Done."
+if hook_just_added && $stdout.tty?
+  puts "  Starting a shell with shadowenv active. Type 'exit' to return to your previous shell."
+  exec(ENV["SHELL"] || "zsh", "-i")
+end
