@@ -4,6 +4,12 @@ commands:
   up:
     desc: Setup dev environment (install bundler from dependencies.rb, bundle install)
     run: ./bin/setup.rb
+  rbi:
+    desc: Regenerate gem RBI files (run after changing Gemfile)
+    run: ./bin/rbi.rb
+  tc:
+    desc: Type check (verify gem RBIs are in sync, then srb tc)
+    run: ./bin/tc.rb
   test:
     desc: Run this repo's tests
     run: ./bin/test.rb
