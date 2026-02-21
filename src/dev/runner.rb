@@ -31,13 +31,11 @@ module Dev
       end
 
       CliUi.new.enable
-      CommandRunner.new(
-        root: root,
+      CommandRunner.new(root: root, interactive: spec["interactive"]).run(
         cmd_name: cmd_name,
         run_str: spec["run"],
-        args: @argv,
-        interactive: spec["interactive"]
-      ).run
+        args: @argv
+      )
     end
 
     private
