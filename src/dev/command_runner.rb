@@ -1,17 +1,19 @@
 # frozen_string_literal: true
 
 module Dev
-  # Runs a dev command: in-process for Ruby scripts (so they inherit CLI::UI), subprocess otherwise.
+  # Runs dev commands in a repo: in-process for Ruby scripts (so they inherit CLI::UI), subprocess otherwise.
+  # Constructor holds shared context (root) and runner config (e.g. interactive); run holds operation parameters.
   class CommandRunner
-    def initialize(root:, cmd_name:, run_str:, args:, interactive: nil)
+    def initialize(root:, interactive: nil)
       @root = root
-      @cmd_name = cmd_name
-      @run_str = run_str.to_s.strip
-      @args = args
       @interactive = interactive
     end
 
-    def run
+    def run(cmd_name:, run_str:, args:)
+      @cmd_name = cmd_name
+      @run_str = run_str.to_s.strip
+      @args = args
+
       script_path = resolve_ruby_script
       title = @cmd_name.to_s.tr("-", " ").split.map(&:capitalize).join(" ")
 
