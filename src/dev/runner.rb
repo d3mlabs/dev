@@ -1,47 +1,76 @@
+# typed: strict
 # frozen_string_literal: true
 
 module Dev
+  # Raised when the user passes a command name that is not defined in dev.yml.
+  class CommandNotFoundError < StandardError
+    extend T::Sig
+
+    sig { returns(String) }
+    attr_reader :command_name
+
+    sig { params(command_name: String).void }
+    def initialize(command_name:)
+      @command_name = command_name
+      super("Command '#{command_name}' not defined in dev.yml")
+    end
+  end
+
   # Main entry: find repo, load config, parse argv, show usage or run command.
   class Runner
-    def initialize(argv)
-      @argv = argv.dup
+    extend T::Sig
+
+    sig { void }
+    def initialize
+      @cfg_parser = T.let(ConfigParser.new(command_parser: CommandParser.new), ConfigParser)
     end
 
-    def run
-      root = RepoFinder.new(Dir.pwd).find
-      unless root
-        $stderr.puts "dev: no dev.yml at project root (run from inside a git repo that has dev.yml at its root)"
-        exit 1
+    # Runs the dev command specified by the given argv.
+    #
+    # @param argv [Array[String]] The argv to run the command with.
+    # @param out [IO::generic_writable] Stream for usage and normal output (default: $stdout).
+    # @return [void]
+    #
+    # @raise [CommandNotFoundError] If the passed command is not defined in the config.
+    # @raise [ArgumentError] If the command is not found.
+    # @raise [RuntimeError] If the command fails.
+    # @raise [SystemExit] If the command exits with a non-zero status.
+    sig { params(argv: T::Array[String], out: T.any(IO, StringIO)).void }
+    def run(argv, out: $stdout)
+      args = T.let(argv.dup, T::Array[String])
+      config = @cfg_parser.parse(DEV_YAML_PATH)
+      if show_usage?(argv)
+        config.print_usage(out: out)
+        return
       end
 
-      dev_yml_path = File.join(root, RepoFinder::FILENAME)
-      config = ConfigParser.new.parse(dev_yml_path)
-
-      if show_usage?
-        Usage.new(config).print
-        exit 0
+      cmd_name = T.must(args.shift)
+      begin
+        command = config.command(cmd_name)
+      rescue KeyError
+        raise CommandNotFoundError.new(command_name: cmd_name)
       end
 
-      cmd_name = @argv.shift
-      spec = config.command_spec(cmd_name)
-      unless spec
-        $stderr.puts "dev: unknown command #{cmd_name}"
-        $stderr.puts "Run 'dev' or 'dev --help' to see available commands."
-        exit 1
-      end
-
-      CliUi.new.enable
-      CommandRunner.new(root: root, interactive: spec["interactive"]).run(
+      Cli::Ui.activate!
+      CommandRunner.new(root: File.dirname(DEV_YAML_PATH), interactive: command.interactive).run(
         cmd_name: cmd_name,
-        run_str: spec["run"],
-        args: @argv
+        run_str: command.run,
+        args: args
       )
+    rescue CommandNotFoundError, ArgumentError => e
+      $stderr.puts "dev: #{e}"
+      $stderr.puts "Run 'dev' or 'dev --help' to see available commands."
+      Kernel.exit(1)
+    rescue RuntimeError => e
+      $stderr.puts "dev: #{e}"
+      Kernel.exit(1)
     end
 
     private
 
-    def show_usage?
-      @argv.empty? || @argv == ["--help"] || @argv == ["-h"]
+    sig { params(argv: T::Array[String]).returns(T::Boolean) }
+    def show_usage?(argv)
+      argv.empty? || argv == ["--help"] || argv == ["-h"]
     end
   end
 end

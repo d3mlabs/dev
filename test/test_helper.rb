@@ -3,6 +3,7 @@
 DEV_ROOT = File.expand_path("..", __dir__) unless defined?(DEV_ROOT)
 $LOAD_PATH.unshift(File.join(DEV_ROOT, "src")) unless $LOAD_PATH.include?(File.join(DEV_ROOT, "src"))
 
+require "sorbet-runtime"
 require "rspock" unless defined?(RSpock)
 
 # Minitest (load before mocha so MiniTest constant is available)
