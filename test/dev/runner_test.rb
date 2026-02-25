@@ -10,17 +10,35 @@ transform!(RSpock::AST::Transformation)
 class RunnerTest < Minitest::Test
   extend T::Sig
 
+  def setup
+    @dev_yaml = <<~YAML
+      name: dev
+      commands:
+        up:
+          run: ./bin/up.rb
+    YAML
+    @cfg_parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    @ui = Dev::Cli::UiImpl.new(cli_ui: CLI::UI)
+  end
+
   test "run with empty argv prints usage and returns" do
-    Given "a Runner and an output buffer"
-    runner = Dev::Runner.new
+    Given "a Runner and a dev.yml file"
+    tmp_file = Tempfile.new("dev.yml") do |f|
+      f.write(@dev_yaml)
+      f.flush
+    end
+    dev_yaml_path = Pathname.new(tmp_file.path)
+    runner = Dev::Runner.new(dev_yaml_path, cfg_parser: @cfg_parser, ui: @ui)
     out = StringIO.new
 
     When "we run with empty argv and injected out"
     runner.run([], out: out)
 
     Then "usage was written to the injected out"
-    assert_includes out.string, "Usage: dev <command> [args...]"
-    assert_includes out.string, "Commands for"
+    1 * @cfg_parser.parse(dev_yaml_path)
+    1 * @ui.frame("Usage: dev <command> [args...]")
+    # assert_includes out.string, "Usage: dev <command> [args...]"
+    # assert_includes out.string, "Commands for"
   end
 
   test "run with --help prints usage and returns" do
@@ -70,6 +88,7 @@ class RunnerTest < Minitest::Test
   end
 
   test "run with valid command invokes CommandRunner with correct args" do
+    NOTE: Gotta change this to at least interaction-based testing.
     Given "CommandRunner and Cli::Ui are stubbed"
     command_runner_mock = mock
     command_runner_mock.expects(:run).with(
@@ -78,7 +97,6 @@ class RunnerTest < Minitest::Test
       args: []
     ).once
     Dev::CommandRunner.stubs(:new).returns(command_runner_mock)
-    Dev::Cli::Ui.stubs(:activate!)
 
     When "we run with a known command from dev.yml"
     runner = Dev::Runner.new

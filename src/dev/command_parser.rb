@@ -3,26 +3,29 @@
 
 module Dev
   # Parses a dev.yml command hash into a Command value object.
-  # Injected into ConfigParser; constructor can later accept config or flags.
   class CommandParser
     extend T::Sig
 
-    # Keys: "run", "desc", "interactive". Values may be nil for optional keys.
+    # Values may be nil for optional keys.
     CommandHash = T.type_alias { T::Hash[String, T.any(String, TrueClass, FalseClass, NilClass)] }
 
-    sig { void }
-    def initialize; end
-
+    # @param cmd_hash [CommandHash] The command hash to parse.
+    #
+    # @return [Command] The parsed command.
+    # @raise [ArgumentError] If the command hash is missing the `run` key or the value is not a string.
     sig { params(cmd_hash: CommandHash).returns(Command) }
-    def parse(cmd_hash:)
+    def parse(cmd_hash)
       run = cmd_hash["run"]
-      raise ArgumentError, "command missing 'run'" unless run.is_a?(String) && !run.empty?
+      run_present = run && !run.empty?
+      raise ArgumentError, "command missing 'run'" unless run_present
 
-      desc = cmd_hash["desc"]
-      desc = T.cast(cmd_hash["desc"], T.nilable(String)) || "(no description)"
-      interactive = cmd_hash["interactive"] == true
+      # Coerces NilClass, TrueClass and FalseClass to String.
+      desc = cmd_hash["desc"].to_s
 
-      Command.new(run: run, desc: desc, interactive: interactive)
+      desc = desc.empty? ? "(no description)" : desc
+      pretty_ui = cmd_hash["pretty_ui"] == true
+
+      Command.new(run: run, desc: desc, pretty_ui: pretty_ui)
     end
   end
 end

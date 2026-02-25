@@ -1,6 +1,10 @@
 # typed: strict
 # frozen_string_literal: true
 
+require 'pathname'
+require 'dev/config_parser'
+require 'dev/cli/ui'
+
 module Dev
   # Raised when the user passes a command name that is not defined in dev.yml.
   class CommandNotFoundError < StandardError
@@ -20,9 +24,15 @@ module Dev
   class Runner
     extend T::Sig
 
-    sig { void }
-    def initialize
-      @cfg_parser = T.let(ConfigParser.new(command_parser: CommandParser.new), ConfigParser)
+    sig { params(dev_yaml_path: Pathname, cfg_parser: Dev::ConfigParser, ui: Dev::Cli::Ui).void }
+    def initialize(
+      dev_yaml_path,
+      cfg_parser: Dev::ConfigParser.new(command_parser: Dev::CommandParser.new),
+      ui: Dev::Cli::UiImpl.new(cli_ui: CLI::UI)
+      )
+      @dev_yaml_path = T.let(dev_yaml_path, Pathname)
+      @cfg_parser = T.let(cfg_parser, Dev::ConfigParser)
+      @ui = T.let(ui, Dev::Cli::Ui)
     end
 
     # Runs the dev command specified by the given argv.
@@ -38,7 +48,7 @@ module Dev
     sig { params(argv: T::Array[String], out: T.any(IO, StringIO)).void }
     def run(argv, out: $stdout)
       args = T.let(argv.dup, T::Array[String])
-      config = @cfg_parser.parse(DEV_YAML_PATH)
+      config = @cfg_parser.parse(@dev_yaml_path)
       if show_usage?(argv)
         config.print_usage(out: out)
         return
@@ -46,17 +56,13 @@ module Dev
 
       cmd_name = T.must(args.shift)
       begin
-        command = config.command(cmd_name)
+        cmd = config.command(cmd_name)
       rescue KeyError
         raise CommandNotFoundError.new(command_name: cmd_name)
       end
 
-      Cli::Ui.activate!
-      CommandRunner.new(root: File.dirname(DEV_YAML_PATH), interactive: command.interactive).run(
-        cmd_name: cmd_name,
-        run_str: command.run,
-        args: args
-      )
+      cmd_runner = CommandRunner.new(root: File.dirname(@dev_yaml_path), ui: @ui)
+      cmd_runner.run(cmd, args: args)
     rescue CommandNotFoundError, ArgumentError => e
       $stderr.puts "dev: #{e}"
       $stderr.puts "Run 'dev' or 'dev --help' to see available commands."

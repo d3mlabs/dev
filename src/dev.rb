@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "pathname"
 require "sorbet-runtime"
 
 # Dev CLI: find repo with dev.yml, run declared commands (optionally in a CLI::UI Frame).
@@ -8,25 +9,26 @@ require "sorbet-runtime"
 module Dev
   extend T::Sig
 
-  DEV_YAML_FILENAME = T.let("dev.yml".freeze, String)
-  GIT_ROOT_COMMAND = T.let("git rev-parse --show-toplevel 2>/dev/null".freeze, String)
+  DEV_YAML_FILENAME = "dev.yml"
 
-  # Full path to dev.yml at git root (from Dir.pwd). Memoized on first call.
-  sig { returns(String) }
-  def self.resolve_dev_yaml_path
-    @dev_yml_path ||= T.let(begin
-        root = Dir.chdir(Dir.pwd) { `#{GIT_ROOT_COMMAND}`.strip }
-        raise "not inside a git repository" if root.empty?
-        root = File.expand_path(root)
-        path = File.join(root, DEV_YAML_FILENAME)
-        raise "no #{DEV_YAML_FILENAME} at git root (#{root})" unless File.file?(path)
-        path.freeze
-      end,
-      T.nilable(String)
-    )
+  class DevYamlNotFoundError < StandardError; end
+  
+  # Pathname of dev.yml current working directory. Walks back parents until it finds a dev.yml file. Memoized on first call.
+  sig { returns(Pathname) }
+  def self.dev_yaml_file
+    return @dev_yaml_file if defined?(@dev_yaml_file)
+
+    @dev_yaml_file = Pathname.new(Dir.pwd).ascend do |path|
+      dev_yaml_path = path / DEV_YAML_FILENAME
+      break dev_yaml_path if dev_yaml_path.exist?
+    end
+    raise DevYamlNotFoundError.new unless @dev_yaml_file
+
+    @dev_yaml_file
   end
 
-  DEV_YAML_PATH = T.let(resolve_dev_yaml_path.freeze, String)
+  # Target project root (directory containing dev.yml)
+  TARGET_PROJECT_ROOT = T.let(Pathname.new(dev_yaml_file.dirname), Pathname)
 end
 
 require_relative "dev/command"
@@ -36,3 +38,5 @@ require_relative "dev/config_parser"
 require_relative "dev/cli"
 require_relative "dev/command_runner"
 require_relative "dev/runner"
+
+

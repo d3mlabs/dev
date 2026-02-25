@@ -12,7 +12,7 @@ transform!(RSpock::AST::Transformation)
 class ConfigParserTest < Minitest::Test
   test "run is required" do
     Given "A dev.yml file with a command without a run argument"
-    tmp_file = Tempfile.new(["dev", ".yml"])
+    tmp_file = Tempfile.new("dev.yml")
     tmp_file.write <<~YAML
       name: dev
       commands:
@@ -33,7 +33,7 @@ class ConfigParserTest < Minitest::Test
 
   test "description is optional and defaults to '(no description)'" do
     Given "A dev.yml file with a command without a description"
-    tmp_file = Tempfile.new(["dev", ".yml"])
+    tmp_file = Tempfile.new("dev.yml")
     tmp_file.write <<~YAML
       name: dev
       commands:
@@ -55,7 +55,7 @@ class ConfigParserTest < Minitest::Test
 
   test "interactive with yaml value `#{yaml_string}` is parsed properly" do
     Given "A command with an interactive flag"
-    tmp_file = Tempfile.new(["dev", ".yml"])
+    tmp_file = Tempfile.new("dev.yml")
     tmp_file.write <<~YAML
       name: dev
       commands:
@@ -84,7 +84,7 @@ class ConfigParserTest < Minitest::Test
 
   test "#parse returns Config with name and Command objects from dev.yml" do
     Given "A dev.yml file with name and commands"
-    tmp_file = Tempfile.new(["dev", ".yml"])
+    tmp_file = Tempfile.new("dev.yml")
     tmp_file.write <<~YAML
       name: dev
       commands:
@@ -130,7 +130,7 @@ class ConfigParserTest < Minitest::Test
 
   test "parse raises when YAML is invalid" do
     Given "an invalid dev.yml file"
-    tmp_file = Tempfile.new(["dev", ".yml"])
+    tmp_file = Tempfile.new("dev.yml")
     tmp_file.write("not: valid: yaml: [")
     tmp_file.flush
 

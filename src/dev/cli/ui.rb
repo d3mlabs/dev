@@ -10,44 +10,79 @@ module Dev
     # Degrades to plain output when not on a TTY.
     module Ui
       extend T::Sig
+      extend T::Helpers
 
-      sig { params(title: String, block: T.proc.void).void }
-      def self.frame(title, &block)
-        if $stdout.tty?
-          ensure_enabled!
-          CLI::UI::Frame.open(title, &block)
-        else
-          yield
-        end
+      interface!
+
+      sig { abstract.params(title: String, block: T.proc.void).void }
+      def frame(title, &block); end
+
+      sig { abstract.params(str: String).returns(String) }
+      def fmt(str); end
+
+      sig { abstract.params(title: String, block: T.proc.void).void }
+      def with_spinner(title, &block); end
+
+      sig { abstract.params(message: String).void }
+      def puts(message); end
+    end
+
+    class UiImpl
+      extend T::Sig
+      include Ui
+
+      sig { returns(IO) }
+      attr_reader :out
+
+      sig { params(cli_ui: T.class_of(CLI::UI), out: IO).void }
+      def initialize(cli_ui:, out: $stdout)
+        @cli_ui = T.let(cli_ui, T.class_of(CLI::UI))
+        @cli_ui.enable
+        @cli_ui.enable_color = true
+        @out = T.let(out, IO)
       end
 
-      sig { params(str: String).returns(String) }
-      def self.fmt(str)
-        if $stdout.tty?
-          ensure_enabled!
-          CLI::UI.fmt(str)
-        else
-          str
-        end
+      sig { override.params(title: String, block: T.proc.void).void }
+      def frame(title, &block)
+        @cli_ui.frame(title, to: @out, &block)
       end
 
-      # Eagerly enable CLI::UI. Use this when callers need CLI::UI
-      # directly (e.g. CommandRunner) rather than going through Cli::Ui.frame/fmt.
+      sig { override.params(str: String).returns(String) }
+      def fmt(str)
+        @cli_ui.fmt(str, to: @out)
+      end
+
+      sig { override.params(title: String, block: T.proc.void).void }
+      def with_spinner(title, &block)
+        @cli_ui.spinner(title, to: @out, &block)
+      end
+
+      sig { override.params(message: String).void }
+      def puts(message)
+        @cli_ui.puts(message, to: @out)
+      end
+
       sig { void }
-      def self.activate!
-        ensure_enabled! if $stdout.tty?
+      def done
+        @cli_ui.puts("#{::CLI::UI::Glyph::CHECK.to_s} Done")
       end
+    end
 
-      sig { void }
-      def self.ensure_enabled!
-        @enabled = T.let(@enabled, T.nilable(T::Boolean))
-        return if @enabled
-        CLI::UI::StdoutRouter.enable
-        CLI::UI.enable_color = true if CLI::UI.respond_to?(:enable_color=)
-        @enabled = true
+    class NoUi
+      extend T::Sig
+      include Ui
+
+      # def initialize(out: $stdout); end
+
+      sig { override.params(title: String, block: T.proc.void).void }
+      def frame(title, &block)
+        yield
       end
-
-      private_class_method :ensure_enabled!
+      
+      sig { override.params(str: String).returns(String) }
+      def fmt(str)
+        str
+      end
     end
   end
 end
