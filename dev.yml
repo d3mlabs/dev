@@ -1,5 +1,5 @@
 name: dev
-
+ruby: "4.0.1"
 commands:
   up:
     desc: Setup dev environment (install bundler from dependencies.rb, bundle install)
@@ -14,6 +14,6 @@ commands:
     desc: Run this repo's tests
     run: ./bin/test.rb
   console:
-    desc: Start Ruby console with dev code loaded (pry)
+    desc: Start Ruby console
     run: ./bin/console
-    interactive: true
+    pretty_ui: false # Don't use Dev::CLI::Ui for this command.

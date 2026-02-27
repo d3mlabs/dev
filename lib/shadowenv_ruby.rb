@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "yaml"
 
-# Generates .shadowenv.d/510_ruby.lisp from dependencies.rb and auto-trusts.
+# Generates .shadowenv.d/510_ruby.lisp from dev.yml and auto-trusts.
 # Requires rbenv for Ruby (dev environment standard). Used by dev up.
 
 def find_ruby_root(version)
@@ -128,8 +129,7 @@ rescue => e
 end
 
 def setup_shadowenv_ruby!(dev_root)
-  load File.join(dev_root, "dependencies.rb") unless defined?(RUBY_VERSION_REQUESTED)
-  version = RUBY_VERSION_REQUESTED.to_s.strip
+  version = YAML.load_file(File.join(dev_root, "dev.yml"))["ruby"].to_s.strip
   ruby_root = find_ruby_root(version)
   unless ruby_root
     if install_ruby_with_version_manager(version)

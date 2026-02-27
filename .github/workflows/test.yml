@@ -9,8 +9,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Detect Ruby version from dev.yml
+        id: ruby-version
+        run: echo "version=$(ruby -ryaml -e 'puts YAML.load_file("dev.yml")["ruby"]')" >> "$GITHUB_OUTPUT"
+
       - uses: ruby/setup-ruby@v1
         with:
+          ruby-version: ${{ steps.ruby-version.outputs.version }}
           bundler-cache: true
 
       - name: Verify RBIs and typecheck

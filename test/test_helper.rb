@@ -3,7 +3,8 @@
 DEV_ROOT = File.expand_path("..", __dir__) unless defined?(DEV_ROOT)
 $LOAD_PATH.unshift(File.join(DEV_ROOT, "src")) unless $LOAD_PATH.include?(File.join(DEV_ROOT, "src"))
 
-require "rspock" unless defined?(RSpock)
+require "sorbet-runtime"
+require "dev"
 
 # Minitest (load before mocha so MiniTest constant is available)
 begin
@@ -18,6 +19,7 @@ MiniTest = Minitest # mocha/minitest expects the old name
 require "minitest/spec"
 require "minitest/mock"
 require "mocha/minitest"
+require "support/sorbet_helper"
 require "minitest/hell" if ENV["MT_HELL"]
 
 # Minitest Reporters (optional; rspock uses RakeRerunReporter)

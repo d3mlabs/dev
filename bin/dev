@@ -18,4 +18,8 @@ src = File.join(root, "src")
 $LOAD_PATH.unshift(src) unless $LOAD_PATH.include?(src)
 
 require "dev"
-Dev::Runner.new(ARGV).run
+
+# Should be in a ServiceLocator
+out = $stdout
+ui = out.tty? ? Dev::Cli::UiImpl.new(cli_ui: CLI::UI) : Dev::Cli::NoUi.new
+Dev::Runner.new.run(ARGV, out: out, ui: ui)

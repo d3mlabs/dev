@@ -1,133 +1,69 @@
+# typed: strict
 # frozen_string_literal: true
 
+require "shellwords"
+
+require "dev/cli/ui"
+require "dev/command"
+
 module Dev
-  # Runs dev commands in a repo: in-process for Ruby scripts (so they inherit CLI::UI), subprocess otherwise.
-  # Constructor holds shared context (root) and runner config (e.g. interactive); run holds operation parameters.
+  # Runs dev commands: subprocess with output capture for pretty UI, or process
+  # replacement for interactive commands (e.g. REPL).
   class CommandRunner
-    def initialize(root:, interactive: nil)
-      @root = root
-      @interactive = interactive
+    extend T::Sig
+
+    sig { params(ui: Dev::Cli::Ui).void }
+    def initialize(ui:)
+      @ui = T.let(ui, Dev::Cli::Ui)
     end
 
-    def run(cmd_name:, run_str:, args:)
-      @cmd_name = cmd_name
-      @run_str = run_str.to_s.strip
-      @args = args
+    sig { params(cmd: Command, args: T::Array[String]).void }
+    def run(cmd, args: [])
+      shell_command = build_shell_command(cmd.run, args)
 
-      script_path = resolve_ruby_script
-      title = @cmd_name.to_s.tr("-", " ").split.map(&:capitalize).join(" ")
-
-      # Interactive commands (e.g. console/REPL) need a real TTY; don't run inside a Frame.
-      if interactive? || !tty? || !cli_ui_available?
-        run_without_frame(script_path)
+      if cmd.pretty_ui && tty?
+        @ui.frame(shell_command) { run_subprocess_with_capture(shell_command) }
+        @ui.done
       else
-        run_with_frame(title, script_path)
+        run_replace_process(shell_command)
       end
     end
 
     private
 
-    def resolve_ruby_script
-      return nil unless ruby_script?(@run_str)
-      path = @run_str.start_with?("bin/") ? @run_str : @run_str.sub(/\A\.\//, "")
-      full = File.expand_path(path, @root)
-      File.file?(full) ? full : nil
-    end
-
-    def ruby_script?(s)
-      s.end_with?(".rb") && (s.start_with?("./") || s.start_with?("bin/"))
-    end
-
+    sig { returns(T::Boolean) }
     def tty?
       $stdout.tty?
     end
 
-    def cli_ui_available?
-      defined?(CLI::UI)
+    sig { params(run_str: String, args: T::Array[String]).returns(String) }
+    def build_shell_command(run_str, args)
+      return run_str if args.empty?
+
+      "#{run_str} #{args.shelljoin}"
     end
 
-    def interactive?
-      @interactive == true
+    # Replaces the current process with the command. Used for interactive
+    # commands (e.g. REPL) that need full terminal control.
+    sig { params(shell_command: String).void }
+    def run_replace_process(shell_command)
+      Dir.chdir(Dev::TARGET_PROJECT_ROOT)
+      Kernel.exec(shell_command)
     end
 
-    def run_with_frame(title, script_path)
-      CLI::UI::Frame.open(title) do
-        execute(script_path, in_frame: true)
-        puts CLI::UI.fmt("{{green:✓}} Done")
-      end
-    end
+    # Runs the command as a subprocess with inherited stdin and captured
+    # stdout/stderr. Stdin passthrough allows password prompts; piped output
+    # flows through CLI::UI for frame borders.
+    sig { params(shell_command: String).void }
+    def run_subprocess_with_capture(shell_command)
+      rd, wr = IO.pipe
+      pid = Process.spawn(shell_command, chdir: Dev::TARGET_PROJECT_ROOT.to_s, in: $stdin, out: wr, err: wr)
+      wr.close
+      rd.each_line { |line| puts line }
+      rd.close
 
-    def run_without_frame(script_path)
-      execute(script_path, in_frame: false)
-    end
-
-    def execute(script_path, in_frame: false)
-      if script_path && !in_frame
-        run_ruby_in_process(script_path)
-      else
-        # In a Frame, always subprocess so the Frame can close (green); use subprocess_exec_argv so rbenv is used when .ruby-version exists.
-        run_subprocess(in_frame: in_frame)
-      end
-    end
-
-    def run_ruby_in_process(script_path)
-      Dir.chdir(@root)
-      ARGV.replace(@args)
-      $PROGRAM_NAME = script_path
-      load script_path
-    rescue SystemExit => e
-      exit(e.status || 0)
-    end
-
-    def run_subprocess(in_frame: false)
-      if in_frame
-        run_subprocess_with_capture
-      else
-        Dir.chdir(@root)
-        exec(*subprocess_exec_argv)
-      end
-    end
-
-    # Use repo's Ruby (rbenv + .ruby-version) when available so e.g. dev console matches ./bin/console.
-    def subprocess_exec_argv
-      ruby_version_file = File.join(@root, ".ruby-version")
-      if File.file?(ruby_version_file) && which_rbenv
-        script_path = resolve_run_str_to_path
-        # rbenv exec only runs shimmed commands; run script via "ruby" so repo's Ruby is used.
-        if script_path.start_with?("/")
-          ["rbenv", "exec", "ruby", script_path, *@args]
-        else
-          ["rbenv", "exec", @run_str, *@args]
-        end
-      else
-        [@run_str, *@args]
-      end
-    end
-
-    def resolve_run_str_to_path
-      path = @run_str.sub(/\A\.\//, "").strip
-      expanded = File.expand_path(path, @root)
-      File.file?(expanded) ? expanded : @run_str
-    end
-
-    def which_rbenv
-      system("which", "rbenv", out: File::NULL, err: File::NULL)
-    end
-
-    def run_subprocess_with_capture
-      require "open3"
-      status = nil
-      Dir.chdir(@root) do
-        Open3.popen2e(*subprocess_exec_argv) do |stdin, stdout_err, wait_thr|
-          stdin.close
-          stdout_err.each_line do |line|
-            puts line
-            $stdout.flush
-          end
-          status = wait_thr.value
-        end
-      end
-      exit(status.exitstatus || 1) unless status.success?
+      _, status = Process.wait2(pid)
+      raise "#{shell_command} failed (exit #{T.must(status).exitstatus})" unless T.must(status).success?
     end
   end
 end
