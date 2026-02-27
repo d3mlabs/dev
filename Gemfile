@@ -13,7 +13,8 @@ gem "minitest"
 gem "rake"
 
 # bin/console
-gem "pry", ">= 0.14"
+gem "pry", "~= 0.14"
+gem "pry-byebug", "~= 3.11"
 
 # Sorbet: static + runtime type checking
 gem "sorbet", group: :development
