@@ -15,8 +15,8 @@ module Dev
     # @raise [ArgumentError] If the command hash is missing the `run` key or the value is not a string.
     sig { params(cmd_hash: CommandHash).returns(Command) }
     def parse(cmd_hash)
-      run = cmd_hash["run"]
-      run_present = run && !run.empty?
+      run = cmd_hash["run"].to_s
+      run_present = !run.empty?
       raise ArgumentError, "command missing 'run'" unless run_present
 
       # Coerces NilClass, TrueClass and FalseClass to String.

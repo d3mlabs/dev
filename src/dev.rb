@@ -16,15 +16,20 @@ module Dev
   # Pathname of dev.yml current working directory. Walks back parents until it finds a dev.yml file. Memoized on first call.
   sig { returns(Pathname) }
   def self.dev_yaml_file
-    return @dev_yaml_file if defined?(@dev_yaml_file)
+    @dev_yaml_file = T.let(@dev_yaml_file, T.nilable(Pathname))
+    return @dev_yaml_file if @dev_yaml_file
 
-    @dev_yaml_file = Pathname.new(Dir.pwd).ascend do |path|
+    result = T.let(nil, T.nilable(Pathname))
+    Pathname.new(Dir.pwd).ascend do |path|
       dev_yaml_path = path / DEV_YAML_FILENAME
-      break dev_yaml_path if dev_yaml_path.exist?
+      if dev_yaml_path.exist?
+        result = dev_yaml_path
+        break
+      end
     end
-    raise DevYamlNotFoundError.new unless @dev_yaml_file
+    raise DevYamlNotFoundError unless result
 
-    @dev_yaml_file
+    @dev_yaml_file = result
   end
 
   # Target project root (directory containing dev.yml)

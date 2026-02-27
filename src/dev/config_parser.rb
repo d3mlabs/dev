@@ -3,6 +3,7 @@
 
 require "yaml"
 require_relative "command_parser"
+require "pathname"
 
 module Dev
   # Parses dev.yml into a Config object.
@@ -15,7 +16,7 @@ module Dev
       @command_parser = T.let(command_parser, CommandParser)
     end
 
-    sig { params(dev_yml_path: String).returns(Config) }
+    sig { params(dev_yml_path: Pathname).returns(Config) }
     def parse(dev_yml_path)
       yaml = YAML.load_file(dev_yml_path)
       raw_commands = yaml["commands"]

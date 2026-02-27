@@ -57,7 +57,7 @@ module Dev
     sig { params(shell_command: String).void }
     def run_subprocess_with_capture(shell_command)
       rd, wr = IO.pipe
-      pid = spawn(shell_command, chdir: Dev::TARGET_PROJECT_ROOT.to_s, in: $stdin, out: wr, err: wr)
+      pid = Process.spawn(shell_command, chdir: Dev::TARGET_PROJECT_ROOT.to_s, in: $stdin, out: wr, err: wr)
       wr.close
       rd.each_line { |line| puts line }
       rd.close

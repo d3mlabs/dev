@@ -44,8 +44,8 @@ module Dev
     # @raise [ArgumentError] If the command is not found.
     # @raise [RuntimeError] If the command fails.
     # @raise [SystemExit] If the command exits with a non-zero status.
-    sig { params(argv: T::Array[String], out: T.any(IO, StringIO), ui: Dev::Cli::Ui).void }
-    def run(argv, out: $stdout, ui:)
+    sig { params(argv: T::Array[String], ui: Dev::Cli::Ui, out: T.any(IO, StringIO)).void }
+    def run(argv, ui:, out: $stdout)
       args = T.let(argv.dup, T::Array[String])
       config = @cfg_parser.parse(@dev_yaml_path)
       if show_usage?(argv)

@@ -36,9 +36,8 @@ class Dev::Cli::UiImplTest < Minitest::Test
     When "we call fmt"
     result = @ui.fmt(str)
 
-
     Then "we delegate to CLI::UI.fmt"
-    1 * @cli_ui.fmt(str, to: @out) >> expected
+    1 * @cli_ui.fmt(str) >> expected
     result == expected
   end
 
@@ -53,9 +52,9 @@ class Dev::Cli::UiImplTest < Minitest::Test
     1 * @cli_ui.spinner("Loading", to: @out, &proc)
   end
 
-  test "#puts delegates to cli_ui.puts with message and out" do
-    When "we call puts"
-    @ui.puts("hello")
+  test "#print_line delegates to cli_ui.puts with message and out" do
+    When "we call print_line"
+    @ui.print_line("hello")
 
     Then "cli_ui.puts is called with the message and out"
     1 * @cli_ui.puts("hello", to: @out)

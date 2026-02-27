@@ -15,10 +15,15 @@ class Minitest::Test
 
   sig { params(label: String).void }
   def Expect(label); end
+  
+  # Cleanup and Where can be used bare (`Cleanup`) or with a label
+  # (`Cleanup "reason"`). Bare uppercase identifiers are parsed by Ruby as
+  # constants, so both a constant and an optional-arg method are needed.
+  sig { params(label: String).void }
+  def Cleanup(label = ""); end
+  Cleanup = T.let(nil, NilClass)
 
   sig { params(label: String).void }
-  def Cleanup(label); end
-
-  # Where is used bare (no parens/args), so Ruby parses it as a constant, not a method call.
+  def Where(label = ""); end
   Where = T.let(nil, NilClass)
 end

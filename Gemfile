@@ -23,3 +23,7 @@ gem "tapioca", require: false, group: [:development, :test]
 
 # RBS 4.0.0.dev.5 is the first version that supports Ruby 4.0
 gem "rbs", "~> 4.0.0.dev.5"
+# We need this to be ported to the RBS 4.0 branch before we can remove this dependency:
+# https://github.com/ruby/rbs/pull/2601
+# Until rbs supports Ruby 4.0 with tsort extracted to bundled gems
+# gem "tsort"

@@ -24,7 +24,10 @@ module Dev
       def with_spinner(title, &block); end
 
       sig { abstract.params(message: String).void }
-      def puts(message); end
+      def print_line(message); end
+
+      sig { abstract.void }
+      def done; end
     end
 
     class UiImpl
@@ -37,7 +40,7 @@ module Dev
       sig { params(cli_ui: T.class_of(CLI::UI), out: IO).void }
       def initialize(cli_ui:, out: $stdout)
         @cli_ui = T.let(cli_ui, T.class_of(CLI::UI))
-        @cli_ui.enable
+        CLI::UI::StdoutRouter.enable
         @cli_ui.enable_color = true
         @out = T.let(out, IO)
       end
@@ -49,7 +52,7 @@ module Dev
 
       sig { override.params(str: String).returns(String) }
       def fmt(str)
-        @cli_ui.fmt(str, to: @out)
+        @cli_ui.fmt(str)
       end
 
       sig { override.params(title: String, block: T.proc.void).void }
@@ -58,11 +61,11 @@ module Dev
       end
 
       sig { override.params(message: String).void }
-      def puts(message)
+      def print_line(message)
         @cli_ui.puts(message, to: @out)
       end
 
-      sig { void }
+      sig { override.void }
       def done
         @cli_ui.puts("#{::CLI::UI::Glyph::CHECK.to_s} Done")
       end
@@ -82,6 +85,21 @@ module Dev
       sig { override.params(str: String).returns(String) }
       def fmt(str)
         str
+      end
+
+      sig { override.params(title: String, block: T.proc.void).void }
+      def with_spinner(title, &block)
+        yield
+      end
+
+      sig { override.params(message: String).void }
+      def print_line(message)
+        $stdout.puts(message)
+      end
+
+      sig { override.void }
+      def done
+        $stdout.puts("Done")
       end
     end
   end
