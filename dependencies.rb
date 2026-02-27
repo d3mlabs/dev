@@ -6,4 +6,4 @@
 BUNDLER_VERSION = "~> 2.1"
 
 # Ruby version for this project (used by shadowenv generator and .ruby-version).
-RUBY_VERSION_REQUESTED = "2.7.6"
+RUBY_VERSION_REQUESTED = "4.0.1"

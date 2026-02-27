@@ -8,81 +8,84 @@ transform!(RSpock::AST::Transformation)
 class CommandTest < Minitest::Test
   extend T::Sig
 
-  test "initialize with only run uses default desc and interactive" do
+  test "initialize with only run uses default desc and pretty_ui" do
     Given "we build a Command with only run"
     cmd = Dev::Command.new(run: "./bin/setup.rb")
 
-    Then "desc and interactive have defaults"
-    assert_equal "./bin/setup.rb", cmd.run
-    assert_equal "(no description)", cmd.desc
-    assert_equal false, cmd.interactive
+    Expect "desc and pretty_ui have defaults"
+    cmd.run == "./bin/setup.rb"
+    cmd.desc == "(no description)"
+    cmd.pretty_ui == true
   end
 
   test "initialize with all args stores them" do
-    Given "we build a Command with run, desc, and interactive"
+    Given "we build a Command with run, desc, and pretty_ui"
     cmd = Dev::Command.new(
-      run: "rspec",
+      run: "./bin/test.rb",
       desc: "Run tests",
-      interactive: true
+      pretty_ui: true
     )
 
-    Then "all attributes match"
-    assert_equal "rspec", cmd.run
-    assert_equal "Run tests", cmd.desc
-    assert_equal true, cmd.interactive
+    Expect "all attributes match"
+    cmd.run == "./bin/test.rb"
+    cmd.desc == "Run tests"
+    cmd.pretty_ui == true
   end
 
-  test "interactive can be false explicitly" do
-    Given "we build a Command with interactive: false"
-    cmd = Dev::Command.new(run: "./bin/foo.rb", interactive: false)
+  test "pretty_ui can be false explicitly" do
+    Given "we build a Command with pretty_ui: false"
+    cmd = Dev::Command.new(run: "./bin/foo.rb", pretty_ui: false)
 
-    Then "interactive is false"
-    assert_equal false, cmd.interactive
+    Expect "pretty_ui is false"
+    cmd.pretty_ui == false
   end
 
-  test "#== for #{cmd1} and #{cmd2} returns #{expected}" do
-    Expect "the correct result"
-    cmd1.==(cmd2) == expected
+  test "#== returns #{expected} for #{cmd1} vs #{cmd2}" do
+    Given "we compare the two commands"
+    result = (cmd1 == cmd2)
+
+    Expect "the result matches"
+    result == expected
 
     Where
-    cmd1                                                        | cmd2                                                        | expected
-    Dev::Command.new(run: "r1", desc: "d1", interactive: false) | Dev::Command.new(run: "r1", desc: "d1", interactive: false) | true
-    Dev::Command.new(run: "r1", desc: "d1", interactive: false) | Dev::Command.new(run: "r1", desc: "d1", interactive: true)  | false
-    Dev::Command.new(run: "r1", desc: "d1", interactive: false) | Dev::Command.new(run: "r1", desc: "d2", interactive: false) | false
-    Dev::Command.new(run: "r1", desc: "d1", interactive: false) | Dev::Command.new(run: "r2", desc: "d1", interactive: false) | false
-    Dev::Command.new(run: "r1", desc: "d1", interactive: false) | "not a command"                                             | false
-    Dev::Command.new(run: "r1", desc: "d1", interactive: false) | nil                                                         | false
+    cmd1                                                      | cmd2                                                      | expected
+    Dev::Command.new(run: "r1", desc: "d1", pretty_ui: false) | Dev::Command.new(run: "r1", desc: "d1", pretty_ui: false) | true
+    Dev::Command.new(run: "r1", desc: "d1", pretty_ui: false) | Dev::Command.new(run: "r1", desc: "d1", pretty_ui: true)  | false
+    Dev::Command.new(run: "r1", desc: "d1", pretty_ui: false) | Dev::Command.new(run: "r1", desc: "d2", pretty_ui: false) | false
+    Dev::Command.new(run: "r1", desc: "d1", pretty_ui: false) | Dev::Command.new(run: "r2", desc: "d1", pretty_ui: false) | false
+    Dev::Command.new(run: "r1", desc: "d1", pretty_ui: false) | "not a command"                                           | false
+    Dev::Command.new(run: "r1", desc: "d1", pretty_ui: false) | nil                                                       | false
   end
 
-  test "Comparing #{cmd}#eql? with #{other} returns #{expected}" do
-    Given "a command with run, desc, and interactive"
-    cmd = Dev::Command.new(run: "r1", desc: "d1", interactive: false)
+  test "#eql? returns #{expected} for #{other}" do
+    Given "a reference command"
+    cmd = Dev::Command.new(run: "r1", desc: "d1", pretty_ui: false)
 
-    Expect "comparing with #{other} returns: #{expected}"
-    cmd1.eql?(other) == expected
+    Expect "eql? returns the expected result"
+    cmd.eql?(other) == expected
 
     Where
-    other                                                       | expected
-    Dev::Command.new(run: "r1", desc: "d1", interactive: false) | true
-    Dev::Command.new(run: "r1", desc: "d1", interactive: true)  | false
-    Dev::Command.new(run: "r1", desc: "d2", interactive: false) | false
-    Dev::Command.new(run: "r2", desc: "d1", interactive: false) | false
-    "not a command"                                             | false
-    nil                                                         | false
+    other                                                     | expected
+    Dev::Command.new(run: "r1", desc: "d1", pretty_ui: false) | true
+    Dev::Command.new(run: "r1", desc: "d1", pretty_ui: true)  | false
+    Dev::Command.new(run: "r1", desc: "d2", pretty_ui: false) | false
+    Dev::Command.new(run: "r2", desc: "d1", pretty_ui: false) | false
+    "not a command"                                           | false
+    nil                                                       | false
   end
 
-  test "#hash for #{cmd1} and #{cmd2} returns #{expected}" do
-    Given "a command with run, desc, and interactive"
-    cmd2 = Dev::Command.new(run: "r1", desc: "d1", interactive: false)
+  test "#hash equality is #{expected} for #{cmd1} vs #{cmd2}" do
+    Given "we compare hashes of the two commands"
+    result = (cmd1.hash == cmd2.hash)
 
-    Expect "hashes are equal when commands are equal"
-    (cmd1.hash == cmd2.hash) == expected
+    Expect "hash equality matches"
+    result == expected
 
     Where
-    cmd1                                                        | cmd2                                                        | expected
-    Dev::Command.new(run: "r1", desc: "d1", interactive: false) | Dev::Command.new(run: "r1", desc: "d1", interactive: false) | true
-    Dev::Command.new(run: "r1", desc: "d1", interactive: false) | Dev::Command.new(run: "r1", desc: "d1", interactive: true)  | false
-    Dev::Command.new(run: "r1", desc: "d1", interactive: false) | Dev::Command.new(run: "r1", desc: "d2", interactive: false) | false
-    Dev::Command.new(run: "r1", desc: "d1", interactive: false) | Dev::Command.new(run: "r2", desc: "d1", interactive: false) | false
+    cmd1                                                      | cmd2                                                      | expected
+    Dev::Command.new(run: "r1", desc: "d1", pretty_ui: false) | Dev::Command.new(run: "r1", desc: "d1", pretty_ui: false) | true
+    Dev::Command.new(run: "r1", desc: "d1", pretty_ui: false) | Dev::Command.new(run: "r1", desc: "d1", pretty_ui: true)  | false
+    Dev::Command.new(run: "r1", desc: "d1", pretty_ui: false) | Dev::Command.new(run: "r1", desc: "d2", pretty_ui: false) | false
+    Dev::Command.new(run: "r1", desc: "d1", pretty_ui: false) | Dev::Command.new(run: "r2", desc: "d1", pretty_ui: false) | false
   end
 end

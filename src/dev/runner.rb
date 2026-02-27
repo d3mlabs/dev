@@ -24,29 +24,28 @@ module Dev
   class Runner
     extend T::Sig
 
-    sig { params(dev_yaml_path: Pathname, cfg_parser: Dev::ConfigParser, ui: Dev::Cli::Ui).void }
+    sig { params(dev_yaml_path: Pathname, cfg_parser: Dev::ConfigParser).void }
     def initialize(
-      dev_yaml_path,
-      cfg_parser: Dev::ConfigParser.new(command_parser: Dev::CommandParser.new),
-      ui: Dev::Cli::UiImpl.new(cli_ui: CLI::UI)
+      dev_yaml_path: Dev.dev_yaml_file,
+      cfg_parser: Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
       )
       @dev_yaml_path = T.let(dev_yaml_path, Pathname)
       @cfg_parser = T.let(cfg_parser, Dev::ConfigParser)
-      @ui = T.let(ui, Dev::Cli::Ui)
     end
 
     # Runs the dev command specified by the given argv.
     #
     # @param argv [Array[String]] The argv to run the command with.
-    # @param out [IO::generic_writable] Stream for usage and normal output (default: $stdout).
+    # @param out [IO, StringIO] Stream for usage output (default: $stdout).
+    # @param ui [Dev::Cli::Ui] CLI UI implementation for framing and formatting.
     # @return [void]
     #
     # @raise [CommandNotFoundError] If the passed command is not defined in the config.
     # @raise [ArgumentError] If the command is not found.
     # @raise [RuntimeError] If the command fails.
     # @raise [SystemExit] If the command exits with a non-zero status.
-    sig { params(argv: T::Array[String], out: T.any(IO, StringIO)).void }
-    def run(argv, out: $stdout)
+    sig { params(argv: T::Array[String], out: T.any(IO, StringIO), ui: Dev::Cli::Ui).void }
+    def run(argv, out: $stdout, ui:)
       args = T.let(argv.dup, T::Array[String])
       config = @cfg_parser.parse(@dev_yaml_path)
       if show_usage?(argv)
@@ -61,7 +60,7 @@ module Dev
         raise CommandNotFoundError.new(command_name: cmd_name)
       end
 
-      cmd_runner = CommandRunner.new(root: File.dirname(@dev_yaml_path), ui: @ui)
+      cmd_runner = CommandRunner.new(ui: ui)
       cmd_runner.run(cmd, args: args)
     rescue CommandNotFoundError, ArgumentError => e
       $stderr.puts "dev: #{e}"

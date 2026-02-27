@@ -4,68 +4,88 @@
 require "test_helper"
 require "dev/cli/ui"
 
+
 transform!(RSpock::AST::Transformation)
-class Dev::Cli::UiTest < Minitest::Test
-  extend T::Sig
+class Dev::Cli::UiImplTest < Minitest::Test
+  include SorbetHelper
 
-  test "frame when TTY opens CLI::UI::Frame and yields" do
-    Given "stdout is a TTY and Frame.open will yield"
-    $stdout.stubs(:tty?).returns(true)
+  def setup
+    @cli_ui = typed_mock(CLI::UI, class_of: true)
+    @cli_ui.stubs(:enable)
+    @cli_ui.stubs(:enable_color=)
+    @out = typed_mock(IO)
+    @ui = Dev::Cli::UiImpl.new(cli_ui: @cli_ui, out: @out)
+  end
+
+  test "#frame delegates to CLI::UI.frame" do
+    Given "a block to forward"
+    proc = Proc.new { }
+
+    When "we call frame with that block"
+    @ui.frame("Build", &proc)
+
+    Then "we delegate to CLI::UI.frame with the same block"
+    1 * @cli_ui.frame("Build", to: @out, &proc)
+  end
+
+  test "#fmt delegates to CLI::UI.fmt" do
+    Given "a string to be formatted"
+    str = "{{red:error}}"
+    expected = "formatted"
+
+    When "we call fmt"
+    result = @ui.fmt(str)
+
+
+    Then "we delegate to CLI::UI.fmt"
+    1 * @cli_ui.fmt(str, to: @out) >> expected
+    result == expected
+  end
+
+  test "#with_spinner delegates to cli_ui.spinner with title, out and block" do
+    Given "a block to forward"
+    proc = Proc.new { }
+
+    When "we call with_spinner with that block"
+    @ui.with_spinner("Loading", &proc)
+
+    Then "cli_ui.spinner is called with the title, out and same block"
+    1 * @cli_ui.spinner("Loading", to: @out, &proc)
+  end
+
+  test "#puts delegates to cli_ui.puts with message and out" do
+    When "we call puts"
+    @ui.puts("hello")
+
+    Then "cli_ui.puts is called with the message and out"
+    1 * @cli_ui.puts("hello", to: @out)
+  end
+
+  test "#done prints check glyph via cli_ui.puts" do
+    When "we call done"
+    @ui.done
+
+    Then "cli_ui.puts is called with the check glyph message"
+    1 * @cli_ui.puts("#{::CLI::UI::Glyph::CHECK.to_s} Done")
+  end
+end
+
+transform!(RSpock::AST::Transformation)
+class Dev::Cli::NoUiTest < Minitest::Test
+  test "#frame yields without external calls" do
+    Given "a NoUi instance"
+    ui = Dev::Cli::NoUi.new
     yielded = false
-    Dev::Cli::Ui.stubs(:ensure_enabled!)
-    CLI::UI::Frame.expects(:open).with("My Title").yields
 
-    When "we call frame with a block"
-    Dev::Cli::Ui.frame("My Title") { yielded = true }
+    When "we call frame"
+    ui.frame("Title") { yielded = true }
 
-    Then "block was yielded to"
+    Then "the block was yielded"
     assert yielded
   end
 
-  test "frame when not TTY yields without opening frame" do
-    Given "stdout is not a TTY and Frame.open is not to be called"
-    $stdout.stubs(:tty?).returns(false)
-    CLI::UI::Frame.expects(:open).never
-    yielded = false
-
-    When "we call frame with a block"
-    Dev::Cli::Ui.frame("My Title") { yielded = true }
-
-    Then "block was yielded to"
-    assert yielded
-  end
-
-  test "fmt when TTY returns CLI::UI.fmt result" do
-    Given "stdout is a TTY"
-    $stdout.stubs(:tty?).returns(true)
-    Dev::Cli::Ui.stubs(:ensure_enabled!)
-
-    When "we call fmt"
-    result = Dev::Cli::Ui.fmt("{{red:hi}}")
-binding.pry
-    Then "result is from CLI::UI.fmt"
-    assert_equal "colored_hi", result
-  end
-
-  test "fmt when not TTY returns string unchanged" do
-    Given "stdout is not a TTY"
-    $stdout.stubs(:tty?).returns(false)
-
-    When "we call fmt"
-    result = Dev::Cli::Ui.fmt("{{red:hi}}")
-
-    Then "result is the original string"
-    assert_equal "{{red:hi}}", result
-  end
-
-  test "activate! when not TTY does not call ensure_enabled!" do
-    Given "stdout is not a TTY"
-    $stdout.stubs(:tty?).returns(false)
-
-    When "we call activate!"
-    Dev::Cli::Ui.activate!
-
-    Then "ensure_enabled! is called"
-    0 * Dev::Cli::Ui.ensure_enabled!
+  test "#fmt returns the string unchanged" do
+    Expect "the string passes through"
+    Dev::Cli::NoUi.new.fmt("{{red:hi}}") == "{{red:hi}}"
   end
 end

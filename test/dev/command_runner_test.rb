@@ -4,103 +4,113 @@
 require "test_helper"
 require "dev/command_runner"
 require "fileutils"
-require "tmpdir"
+require "tempfile"
 
 transform!(RSpock::AST::Transformation)
 class CommandRunnerTest < Minitest::Test
   extend T::Sig
+  include SorbetHelper
 
-  test "run with TTY and non-interactive uses frame and calls execute with in_frame true" do
-    Given "a runner with a ruby script that exists and execute stubbed"
-    runner = Dev::CommandRunner.new(root: root, interactive: false)
-    tmp_file = TempFile.new("test.rb").tap do |f|
-      f.write("puts 'ok'")
-      f.flush
-    end
-
-    When "we run the script"
-    runner = Dev::CommandRunner.new(root: root, interactive: false)
-
-    Dir.mktmpdir do |root|
-      bin = File.join(root, "bin")
-      FileUtils.mkdir_p(bin)
-      File.write(File.join(bin, "test.rb"), "puts 'ok'")
-      runner = Dev::CommandRunner.new(root: root, interactive: false)
-      runner.stubs(:tty?).returns(true)
-      executed = []
-      runner.stubs(:execute).with do |script_path, in_frame:|
-        executed << { script_path: script_path, in_frame: in_frame }
-        true
-      end
-
-      When "we run with that script"
-      runner.run(cmd_name: "test", run_str: "./bin/test.rb", args: [])
-
-      Then "execute was called with resolved path and in_frame true"
-      assert_equal 1, executed.size
-      assert_equal true, executed[0][:in_frame]
-      assert_equal File.expand_path("bin/test.rb", root), executed[0][:script_path]
-    end
+  def setup
+    @ui = typed_mock(Dev::Cli::Ui)
+    @runner = Dev::CommandRunner.new(ui: @ui)
   end
 
-  test "run when interactive uses run_without_frame" do
-    Given "a runner with interactive true and execute stubbed"
-    Dir.mktmpdir do |root|
-      runner = Dev::CommandRunner.new(root: root, interactive: true)
-      executed = []
-      runner.stubs(:execute).with do |_script_path, in_frame:|
-        executed << { in_frame: in_frame }
-        true
-      end
+  test "run replaces process when not a TTY" do
+    Given "a command with pretty_ui true in a non-TTY environment"
+    cmd = Dev::Command.new(run: "./bin/test.rb", pretty_ui: true)
 
-      When "we run"
-      runner.run(cmd_name: "console", run_str: "./bin/console", args: [])
+    When "we run the command"
+    @runner.run(cmd)
 
-      Then "execute was called with in_frame false"
-      assert_equal 1, executed.size
-      assert_equal false, executed[0][:in_frame]
-    end
+    Then "the process is replaced via Kernel.exec"
+    1 * Kernel.exec("./bin/test.rb")
+    Dir.pwd == Dev::TARGET_PROJECT_ROOT.to_s
   end
 
-  test "run when not TTY uses run_without_frame" do
-    Given "a runner with interactive false but not a TTY"
-    Dir.mktmpdir do |root|
-      runner = Dev::CommandRunner.new(root: root, interactive: false)
-      runner.stubs(:tty?).returns(false)
-      executed = []
-      runner.stubs(:execute).with do |_script_path, in_frame:|
-        executed << { in_frame: in_frame }
-        true
-      end
+  test "run replaces process with args appended" do
+    Given "a command with args in a non-TTY environment"
+    cmd = Dev::Command.new(run: "./bin/test.rb", pretty_ui: true)
 
-      When "we run"
-      runner.run(cmd_name: "test", run_str: "bin/nonexistent.rb", args: [])
+    When "we run the command with extra args"
+    @runner.run(cmd, args: ["--verbose", "--seed", "42"])
 
-      Then "execute was called with in_frame false"
-      assert_equal 1, executed.size
-      assert_equal false, executed[0][:in_frame]
-    end
+    Then "the process is replaced with args shell-joined"
+    1 * Kernel.exec("./bin/test.rb --verbose --seed 42")
   end
 
-  test "run strips run_str before resolving" do
-    Given "a runner with a script path that has leading space and exists"
-    Dir.mktmpdir do |root|
-      bin = File.join(root, "bin")
-      FileUtils.mkdir_p(bin)
-      File.write(File.join(bin, "foo.rb"), "")
-      runner = Dev::CommandRunner.new(root: root, interactive: true)
-      runner.stubs(:execute)
-      path_captured = nil
-      runner.stubs(:execute).with do |script_path, in_frame:|
-        path_captured = script_path
-        true
-      end
+  test "run replaces process when pretty_ui is false even with TTY" do
+    Given "a command with pretty_ui false and stdout reports TTY"
+    cmd = Dev::Command.new(run: "./bin/console", pretty_ui: false)
+    @runner.stubs(:tty?).returns(true)
 
-      When "we run with run_str that has leading/trailing space"
-      runner.run(cmd_name: "foo", run_str: "  ./bin/foo.rb  ", args: [])
+    When "we run the command"
+    @runner.run(cmd)
 
-      Then "resolve uses stripped path and finds the script"
-      assert_equal File.expand_path("bin/foo.rb", root), path_captured
-    end
+    Then "the process is replaced via Kernel.exec"
+    1 * Kernel.exec("./bin/console")
+  end
+
+  test "run spawns subprocess with capture when TTY and pretty_ui" do
+    Given "a command that writes to stdout and runner reports TTY"
+    tmp = Tempfile.new(["test", ".sh"])
+    tmp.write("#!/bin/sh\necho 'subprocess output'")
+    tmp.close
+    File.chmod(0o755, tmp.path)
+    cmd = Dev::Command.new(run: tmp.path, pretty_ui: true)
+    @runner.stubs(:tty?).returns(true)
+    @ui.expects(:frame).with(tmp.path).once.yields
+    @ui.expects(:done).once
+
+    When "we run the command and capture output"
+    out, _ = capture_io { @runner.run(cmd) }
+
+    Then "subprocess output was captured and printed"
+    assert_includes out, "subprocess output"
+
+    Cleanup
+    tmp.unlink
+  end
+
+  test "run spawns subprocess with args passed through" do
+    Given "a command with args and runner reports TTY"
+    tmp = Tempfile.new(["test", ".sh"])
+    tmp.write("#!/bin/sh\necho \"args: $@\"")
+    tmp.close
+    File.chmod(0o755, tmp.path)
+    cmd = Dev::Command.new(run: tmp.path, pretty_ui: true)
+    expected_shell_command = "#{tmp.path} --verbose"
+    @runner.stubs(:tty?).returns(true)
+    @ui.expects(:frame).with(expected_shell_command).once.yields
+    @ui.expects(:done).once
+
+    When "we run the command with args and capture output"
+    out, _ = capture_io { @runner.run(cmd, args: ["--verbose"]) }
+
+    Then "subprocess received the args"
+    assert_includes out, "args: --verbose"
+
+    Cleanup
+    tmp.unlink
+  end
+
+  test "run raises when subprocess fails" do
+    Given "a command that exits with non-zero status and runner reports TTY"
+    tmp = Tempfile.new(["test", ".sh"])
+    tmp.write("#!/bin/sh\nexit 1")
+    tmp.close
+    File.chmod(0o755, tmp.path)
+    cmd = Dev::Command.new(run: tmp.path, pretty_ui: true)
+    @runner.stubs(:tty?).returns(true)
+    @ui.stubs(:frame).yields
+
+    When "we run the command"
+    err = assert_raises(RuntimeError) { @runner.run(cmd) }
+
+    Then "the error message includes the command path"
+    assert_includes err.message, tmp.path
+
+    Cleanup
+    tmp.unlink
   end
 end

@@ -10,31 +10,31 @@ class CommandParserTest < Minitest::Test
   extend T::Sig
 
   test "parse with full hash returns Command with correct attributes" do
-    Given "a command hash with run, desc, and interactive"
+    Given "a command hash with run, desc, and pretty_ui"
     parser = Dev::CommandParser.new
-    hash = { "run" => "./bin/setup.rb", "desc" => "Setup", "interactive" => true }
+    hash = { "run" => "./bin/setup.rb", "desc" => "Setup", "pretty_ui" => true }
 
     When "we parse it"
-    cmd = parser.parse(cmd_hash: hash)
+    cmd = parser.parse(hash)
 
     Then "we get a Command with those values"
-    assert_equal "./bin/setup.rb", cmd.run
-    assert_equal "Setup", cmd.desc
-    assert_equal true, cmd.interactive
+    cmd.run == "./bin/setup.rb"
+    cmd.desc == "Setup"
+    cmd.pretty_ui == true
   end
 
-  test "parse with only run uses default desc and interactive false" do
+  test "parse with only run uses default desc and pretty_ui false" do
     Given "a command hash with only run"
     parser = Dev::CommandParser.new
     hash = { "run" => "rspec" }
 
     When "we parse it"
-    cmd = parser.parse(cmd_hash: hash)
+    cmd = parser.parse(hash)
 
-    Then "desc defaults and interactive is false"
-    assert_equal "rspec", cmd.run
-    assert_equal "(no description)", cmd.desc
-    assert_equal false, cmd.interactive
+    Then "desc defaults and pretty_ui is false"
+    cmd.run == "rspec"
+    cmd.desc == "(no description)"
+    cmd.pretty_ui == false
   end
 
   test "parse with missing run raises ArgumentError" do
@@ -43,7 +43,7 @@ class CommandParserTest < Minitest::Test
     hash = { "desc" => "No run" }
 
     Expect "parse raises ArgumentError"
-    assert_raises(ArgumentError) { parser.parse(cmd_hash: hash) }
+    assert_raises(ArgumentError) { parser.parse(hash) }
   end
 
   test "parse with empty run raises ArgumentError" do
@@ -52,7 +52,7 @@ class CommandParserTest < Minitest::Test
     hash = { "run" => "" }
 
     Expect "parse raises ArgumentError"
-    assert_raises(ArgumentError) { parser.parse(cmd_hash: hash) }
+    assert_raises(ArgumentError) { parser.parse(hash) }
   end
 
   test "parse with nil desc uses default description" do
@@ -61,27 +61,21 @@ class CommandParserTest < Minitest::Test
     hash = { "run" => "./bin/up.rb", "desc" => nil }
 
     When "we parse it"
-    cmd = parser.parse(cmd_hash: hash)
+    cmd = parser.parse(hash)
 
     Then "desc is the default"
-    assert_equal "(no description)", cmd.desc
+    cmd.desc == "(no description)"
   end
 
-  test "parse with interactive false or missing is false" do
-    Given "a command hash with interactive false"
+  test "parse with pretty_ui false is false" do
+    Given "a command hash with pretty_ui false"
     parser = Dev::CommandParser.new
-    hash = { "run" => "./bin/up.rb", "interactive" => false }
+    hash = { "run" => "./bin/up.rb", "pretty_ui" => false }
 
     When "we parse it"
-    cmd = parser.parse(cmd_hash: hash)
+    cmd = parser.parse(hash)
 
-    Then "interactive is false"
-    assert_equal false, cmd.interactive
-
-    # When "hash has no interactive key"
-    # cmd2 = parser.parse(cmd_hash: { "run" => "./bin/up.rb" })
-
-    # Then "interactive is false"
-    # assert_equal false, cmd2.interactive
+    Then "pretty_ui is false"
+    cmd.pretty_ui == false
   end
 end
