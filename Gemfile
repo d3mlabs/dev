@@ -20,3 +20,6 @@ gem "pry-byebug", "~> 3.11"
 gem "sorbet", group: :development
 gem "sorbet-runtime"
 gem "tapioca", require: false, group: [:development, :test]
+
+# RBS 4.0.0.dev.5 is the first version that supports Ruby 4.0
+gem "rbs", "~> 4.0.0.dev.5"
