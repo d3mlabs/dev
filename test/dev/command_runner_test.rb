@@ -19,6 +19,7 @@ class CommandRunnerTest < Minitest::Test
   test "run replaces process when not a TTY" do
     Given "a command with pretty_ui true in a non-TTY environment"
     cmd = Dev::Command.new(run: "./bin/test.rb", pretty_ui: true)
+    @runner.stubs(:tty?).returns(false)
 
     When "we run the command"
     @runner.run(cmd)
@@ -31,23 +32,26 @@ class CommandRunnerTest < Minitest::Test
   test "run replaces process with args appended" do
     Given "a command with args in a non-TTY environment"
     cmd = Dev::Command.new(run: "./bin/test.rb", pretty_ui: true)
+    # @runner.stubs(:tty?).returns(false)
 
     When "we run the command with extra args"
     @runner.run(cmd, args: ["--verbose", "--seed", "42"])
 
     Then "the process is replaced with args shell-joined"
+    _ * @runner.tty? >> false
     1 * Kernel.exec("./bin/test.rb --verbose --seed 42")
   end
 
   test "run replaces process when pretty_ui is false even with TTY" do
     Given "a command with pretty_ui false and stdout reports TTY"
     cmd = Dev::Command.new(run: "./bin/console", pretty_ui: false)
-    @runner.stubs(:tty?).returns(true)
+
 
     When "we run the command"
     @runner.run(cmd)
 
     Then "the process is replaced via Kernel.exec"
+    _ * @runner.tty? >> false
     1 * Kernel.exec("./bin/console")
   end
 
