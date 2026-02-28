@@ -9,11 +9,14 @@ module Dev
     sig { returns(String) }
     attr_reader :name
 
+    sig { returns(T.nilable(String)) }
+    attr_reader :ruby_version
 
-    sig { params(name: String, commands: T::Hash[String, Command]).void }
-    def initialize(name:, commands:)
+    sig { params(name: String, commands: T::Hash[String, Command], ruby_version: T.nilable(String)).void }
+    def initialize(name:, commands:, ruby_version: nil)
       @name = T.let(name, String)
       @commands = T.let(commands.freeze, T::Hash[String, Command])
+      @ruby_version = T.let(ruby_version, T.nilable(String))
     end
 
     sig { params(name: String).returns(Command) }

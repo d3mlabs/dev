@@ -43,12 +43,17 @@ module Dev
       "#{run_str} #{args.shelljoin}"
     end
 
+    # Env overrides for child processes: unset GEM_HOME so the dev CLI's
+    # Homebrew gem path doesn't leak into project commands (which use the
+    # project's own Ruby/gems via shadowenv).
+    CHILD_ENV = T.let({ "GEM_HOME" => nil }.freeze, T::Hash[String, T.nilable(String)])
+
     # Replaces the current process with the command. Used for interactive
     # commands (e.g. REPL) that need full terminal control.
     sig { params(shell_command: String).void }
     def run_replace_process(shell_command)
       Dir.chdir(Dev::TARGET_PROJECT_ROOT)
-      Kernel.exec(shell_command)
+      Kernel.exec(CHILD_ENV, shell_command)
     end
 
     # Runs the command as a subprocess with inherited stdin and captured
@@ -57,7 +62,7 @@ module Dev
     sig { params(shell_command: String).void }
     def run_subprocess_with_capture(shell_command)
       rd, wr = IO.pipe
-      pid = Process.spawn(shell_command, chdir: Dev::TARGET_PROJECT_ROOT.to_s, in: $stdin, out: wr, err: wr)
+      pid = Process.spawn(CHILD_ENV, shell_command, chdir: Dev::TARGET_PROJECT_ROOT.to_s, in: $stdin, out: wr, err: wr)
       wr.close
       rd.each_line { |line| puts line }
       rd.close

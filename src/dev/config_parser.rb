@@ -21,9 +21,12 @@ module Dev
       yaml = YAML.load_file(dev_yml_path)
       raw_commands = yaml["commands"] || {}
       commands = raw_commands.transform_values { |h| @command_parser.parse(h) }
+      ruby_version = yaml["ruby"]&.to_s
+      ruby_version = nil if ruby_version&.empty?
       Config.new(
         name: T.cast(yaml["name"], String),
-        commands: commands
+        commands: commands,
+        ruby_version: ruby_version
       )
     end
   end
