@@ -19,8 +19,8 @@ module Dev
     sig { params(dev_yml_path: Pathname).returns(Config) }
     def parse(dev_yml_path)
       yaml = YAML.load_file(dev_yml_path)
-      raw_commands = yaml["commands"]
-      commands = (raw_commands || {}).transform_values { |h| @command_parser.parse(cmd_hash: h) }
+      raw_commands = yaml["commands"] || {}
+      commands = raw_commands.transform_values { |h| @command_parser.parse(h) }
       Config.new(
         name: T.cast(yaml["name"], String),
         commands: commands

@@ -1,146 +1,106 @@
-# # typed: false
-# # frozen_string_literal: true
+# typed: false
+# frozen_string_literal: true
 
-# require "test_helper"
-# require "dev/command"
-# require "dev/command_parser"
-# require "dev/config"
-# require "dev/config_parser"
-# require "tempfile"
+require "test_helper"
+require "dev/command"
+require "dev/command_parser"
+require "dev/config"
+require "dev/config_parser"
+require "tempfile"
 
-# transform!(RSpock::AST::Transformation)
-# class ConfigParserTest < Minitest::Test
-#   test "run is required" do
-#     Given "A dev.yml file with a command without a run argument"
-#     tmp_file = Tempfile.new("dev.yml")
-#     tmp_file.write <<~YAML
-#       name: dev
-#       commands:
-#         up:
-#           desc: Up command!
-#     YAML
-#     tmp_file.flush
+transform!(RSpock::AST::Transformation)
+class ConfigParserTest < Minitest::Test
+  test "#parse returns Config with name and Command objects from dev.yml" do
+    Given "a dev.yml file with name and commands"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: myproject
+      commands:
+        up:
+          desc: Setup
+          run: ./bin/setup.rb
+        test:
+          run: rspec
+    YAML
+    tmp.flush
 
-#     Expect "parsing raises ArgumentError"
-#     parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
-#     assert_raises ArgumentError do
-#       parser.parse(T.must(tmp_file.path))
-#     end
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
 
-#     Cleanup "the tempfile is deleted"
-#     tmp_file. close!
-#   end
+    Then "we get the expected config"
+    config.name == "myproject"
+    config.command("up") == Dev::Command.new(run: "./bin/setup.rb", desc: "Setup", pretty_ui: false)
+    config.command("test") == Dev::Command.new(run: "rspec", desc: "(no description)", pretty_ui: false)
 
-#   test "description is optional and defaults to '(no description)'" do
-#     Given "A dev.yml file with a command without a description"
-#     tmp_file = Tempfile.new("dev.yml")
-#     tmp_file.write <<~YAML
-#       name: dev
-#       commands:
-#         up:
-#           run: ./bin/setup.rb
-#     YAML
-#     tmp_file.flush
+    Cleanup
+    tmp.close!
+  end
 
-#     When "the config is parsed"
-#     parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
-#     config = parser.parse(T.must(tmp_file.path))
+  test "#parse raises ArgumentError when a command is missing run" do
+    Given "a dev.yml file with a command without run"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: myproject
+      commands:
+        up:
+          desc: Setup but no run
+    YAML
+    tmp.flush
 
-#     Then "description defaults to '(no description)'"
-#     assert_equal "(no description)", T.must(config.command("up")).desc
+    Expect "parsing raises ArgumentError"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    assert_raises(ArgumentError) { parser.parse(Pathname.new(tmp.path)) }
 
-#     Cleanup "the tempfile is deleted"
-#     tmp_file.delete
-#   end
+    Cleanup
+    tmp.close!
+  end
 
-#   test "interactive with yaml value `#{yaml_string}` is parsed properly" do
-#     Given "A command with an interactive flag"
-#     tmp_file = Tempfile.new("dev.yml")
-#     tmp_file.write <<~YAML
-#       name: dev
-#       commands:
-#         up:
-#           run: ./bin/setup.rb
-#           interactive: #{yaml_string}
-#     YAML
-#     tmp_file.flush
+  test "#parse with pretty_ui flag passes it through to Command" do
+    Given "a dev.yml file with pretty_ui set"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: myproject
+      commands:
+        console:
+          run: ./bin/console
+          pretty_ui: false
+    YAML
+    tmp.flush
 
-#     When "the config is parsed"
-#     parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
-#     config = parser.parse(T.must(tmp_file.path))
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
 
-#     Then "interactive is parsed properly"
-#     assert_equal parsed_value, T.must(config.command("up")).interactive
+    Then "the command has pretty_ui false"
+    config.command("console").pretty_ui == false
 
-#     Cleanup "by ensuring the tempfile is deleted"
-#     tmp_file.delete
+    Cleanup
+    tmp.close!
+  end
 
-#     Where
-#     yaml_string | parsed_value
-#     ""          | false
-#     "false"     | false
-#     "true"      | true
-#   end
+  test "#parse ignores non-command top-level keys like ruby" do
+    Given "a dev.yml file with a ruby key alongside commands"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: myproject
+      ruby: "4.0.1"
+      commands:
+        up:
+          desc: Setup
+          run: ./bin/setup.rb
+    YAML
+    tmp.flush
 
-#   test "#parse returns Config with name and Command objects from dev.yml" do
-#     Given "A dev.yml file with name and commands"
-#     tmp_file = Tempfile.new("dev.yml")
-#     tmp_file.write <<~YAML
-#       name: dev
-#       commands:
-#         up:
-#           desc: Up command!
-#           run: ./bin/setup.rb
-#         test:
-#           run: rspec
-#     YAML
-#     tmp_file.flush
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
 
-#     When "the config is parsed"
-#     parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
-#     config = parser.parse(T.must(tmp_file.path))
+    Then "it parses successfully with the correct command"
+    config.name == "myproject"
+    config.command("up").run == "./bin/setup.rb"
 
-#     Then "we get the expected result"
-#     assert_equal "dev", config.name
-    
-#     up_command = config.command("up")
-#     assert_kind_of Dev::Command, up_command
-#     assert_equal "./bin/setup.rb", up_command.run
-#     assert_equal "Up command!", up_command.desc
-#     assert_equal false, up_command.interactive
-    
-#     test_command = config.command("test")
-#     assert_kind_of Dev::Command, test_command
-#     assert_equal "rspec", test_command.run
-#     assert_equal "(no description)", test_command.desc
-#     assert_equal false, test_command.interactive
-#     Cleanup "the tempfile is deleted"
-#     tmp_file.delete
-#   end
-
-#   test "parse raises when file does not exist" do
-#     Given "a ConfigParser"
-#     parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
-    
-#     Expect "raises Errno::ENOENT when we try to parse a nonexistent dev.yml file"
-#     assert_raises Errno::ENOENT do
-#       parser.parse("/nonexistent/dev.yml")
-#     end
-#   end
-
-#   test "parse raises when YAML is invalid" do
-#     Given "an invalid dev.yml file"
-#     tmp_file = Tempfile.new("dev.yml")
-#     tmp_file.write("not: valid: yaml: [")
-#     tmp_file.flush
-
-#     Expect "raises Psych::SyntaxError when we try to parse it"
-#     parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
-#     assert_raises Psych::SyntaxError do
-#       parser.parse(T.must(tmp_file.path))
-#     end
-
-#     Cleanup "the tempfile is deleted"
-#     tmp_file.delete
-#   end
-# end
+    Cleanup
+    tmp.close!
+  end
+end
