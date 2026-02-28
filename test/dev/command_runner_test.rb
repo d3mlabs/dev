@@ -25,7 +25,7 @@ class CommandRunnerTest < Minitest::Test
     @runner.run(cmd)
 
     Then "the process is replaced via Kernel.exec"
-    1 * Kernel.exec("./bin/test.rb")
+    1 * Kernel.exec({"GEM_HOME" => nil}, "./bin/test.rb")
     Dir.pwd == Dev::TARGET_PROJECT_ROOT.to_s
   end
 
@@ -39,7 +39,7 @@ class CommandRunnerTest < Minitest::Test
 
     Then "the process is replaced with args shell-joined"
     _ * @runner.tty? >> false
-    1 * Kernel.exec("./bin/test.rb --verbose --seed 42")
+    1 * Kernel.exec({"GEM_HOME" => nil}, "./bin/test.rb --verbose --seed 42")
   end
 
   test "run replaces process when pretty_ui is false even with TTY" do
@@ -52,7 +52,7 @@ class CommandRunnerTest < Minitest::Test
 
     Then "the process is replaced via Kernel.exec"
     _ * @runner.tty? >> false
-    1 * Kernel.exec("./bin/console")
+    1 * Kernel.exec({"GEM_HOME" => nil}, "./bin/console")
   end
 
   test "run spawns subprocess with capture when TTY and pretty_ui" do
