@@ -19,5 +19,8 @@
 # Sorbet (debug log; see sorbet.org/docs/adopting)
 sorbet/rbi/hidden-definitions/errors.txt
 
+# Built gems
+*.gem
+
 # Local / ast_transform-specific work
 tmp/
