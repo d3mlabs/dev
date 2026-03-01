@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "pty"
 require "shellwords"
 
 require "dev/cli/ui"
@@ -72,20 +73,31 @@ module Dev
       Kernel.exec(CHILD_ENV, "shadowenv", "exec", "--", "sh", "-c", shell_command)
     end
 
-    # Runs the command as a subprocess with inherited stdin and captured
-    # stdout/stderr, wrapped in shadowenv exec. Stdin passthrough allows
-    # password prompts; piped output flows through CLI::UI for frame borders.
+    # Runs the command as a subprocess with a PTY so the child sees a real
+    # terminal (preserving CLI::UI colors and spinner animations). Stdin is
+    # inherited for interactive prompts; output streams through the PTY master
+    # into the parent's stdout for CLI::UI frame borders.
     sig { params(shell_command: String).void }
     def run_subprocess_with_capture(shell_command)
-      rd, wr = IO.pipe
+      master, slave = T.unsafe(PTY).open
+      slave.winsize = $stdout.winsize if $stdout.tty?
+
       pid = Process.spawn(
         CHILD_ENV,
         "shadowenv", "exec", "--", "sh", "-c", shell_command,
-        chdir: Dev::TARGET_PROJECT_ROOT.to_s, in: $stdin, out: wr, err: wr
+        chdir: Dev::TARGET_PROJECT_ROOT.to_s, in: $stdin, out: slave, err: slave
       )
-      wr.close
-      rd.each_line { |line| puts line }
-      rd.close
+      slave.close
+
+      begin
+        loop do
+          $stdout.write(master.readpartial(4096))
+          $stdout.flush
+        end
+      rescue EOFError, Errno::EIO
+        # Expected when the child process exits and the PTY slave closes
+      end
+      master.close
 
       _, status = Process.wait2(pid)
       raise "#{shell_command} failed (exit #{T.must(status).exitstatus})" unless T.must(status).success?
