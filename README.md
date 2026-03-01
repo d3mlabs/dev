@@ -46,6 +46,8 @@ Dev depends on [Shopify’s cli-ui](https://github.com/Shopify/cli-ui) for Frame
 
 (If the Ruby that runs `dev` doesn’t have cli-ui installed, Dev still works and falls back to plain output.)
 
+Commands marked `repl: true` bypass the cli-ui frame and instead replace the dev process (`exec`), giving the child command direct terminal access. Use this for interactive commands like `console` or any REPL.
+
 ## dev.yml convention
 
 Each repo that wants to support `dev` should have a `dev.yml` at its git root:
@@ -63,6 +65,10 @@ commands:
   test:
     desc: Run tests
     run: ./bin/test.sh
+  console:
+    desc: Start Ruby console
+    run: ./bin/console
+    repl: true
 ```
 
 - `name`: Display name for the repo (used in help output).
@@ -70,6 +76,7 @@ commands:
   - Each command has:
     - `desc`: Short description (shown in `dev` / `dev --help`).
     - `run`: Shell command to execute (from the repo root). Any extra args passed to `dev <cmd> [args...]` are forwarded to this command.
+    - `repl`: *(optional, default `false`)* When `true`, the command replaces the dev process (via `exec`) instead of running inside a cli-ui frame. Use this for interactive commands like consoles and REPLs that need direct terminal access.
 
 ## Examples
 
