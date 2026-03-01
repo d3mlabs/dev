@@ -28,7 +28,7 @@ module Dev
       ensure_shadowenv_provisioned!
       shell_command = build_shell_command(cmd.run, args)
 
-      if cmd.pretty_ui && tty?
+      if !cmd.repl && tty?
         @ui.frame(shell_command) { run_subprocess_with_capture(shell_command) }
         @ui.done
       else

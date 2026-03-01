@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 module Dev
-  # Value object for one command from dev.yml: run string, optional desc, optional use_pretty_ui flag.
+  # Value object for one command from dev.yml: run string, optional desc, optional repl flag.
   class Command
     extend T::Sig
 
@@ -13,19 +13,19 @@ module Dev
     attr_reader :desc
 
     sig { returns(T::Boolean) }
-    attr_reader :pretty_ui
+    attr_reader :repl
 
-    sig { params(run: String, desc: String, pretty_ui: T::Boolean).void }
-    def initialize(run:, desc: "(no description)", pretty_ui: true)
+    sig { params(run: String, desc: String, repl: T::Boolean).void }
+    def initialize(run:, desc: "(no description)", repl: false)
       @run = T.let(run, String)
       @desc = T.let(desc, String)
-      @pretty_ui = T.let(pretty_ui, T::Boolean)
+      @repl = T.let(repl, T::Boolean)
     end
 
     sig { params(other: Object).returns(T::Boolean) }
     def ==(other)
       return false unless other.is_a?(Command)
-      @run == other.run && @desc == other.desc && @pretty_ui == other.pretty_ui
+      @run == other.run && @desc == other.desc && @repl == other.repl
     end
 
     sig { params(other: Object).returns(T::Boolean) }
@@ -35,7 +35,7 @@ module Dev
 
     sig { returns(Integer) }
     def hash
-      [@run, @desc, @pretty_ui].hash
+      [@run, @desc, @repl].hash
     end
   end
 end

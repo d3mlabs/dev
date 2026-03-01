@@ -23,9 +23,9 @@ module Dev
       desc = cmd_hash["desc"].to_s
 
       desc = desc.empty? ? "(no description)" : desc
-      pretty_ui = cmd_hash["pretty_ui"] == true
+      repl = cmd_hash["repl"] == true
 
-      Command.new(run: run, desc: desc, pretty_ui: pretty_ui)
+      Command.new(run: run, desc: desc, repl: repl)
     end
   end
 end
