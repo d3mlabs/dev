@@ -48,9 +48,12 @@ class ConfigParserTest < Minitest::Test
     YAML
     tmp.flush
 
-    Expect "parsing raises ArgumentError"
+    When "parsing the config"
     parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
-    assert_raises(ArgumentError) { parser.parse(Pathname.new(tmp.path)) }
+    parser.parse(Pathname.new(tmp.path))
+
+    Then "it raises ArgumentError"
+    raises ArgumentError
 
     Cleanup
     tmp.close!

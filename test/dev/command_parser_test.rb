@@ -42,8 +42,11 @@ class CommandParserTest < Minitest::Test
     parser = Dev::CommandParser.new
     hash = { "desc" => "No run" }
 
-    Expect "parse raises ArgumentError"
-    assert_raises(ArgumentError) { parser.parse(hash) }
+    When "parsing the command"
+    parser.parse(hash)
+
+    Then "it raises ArgumentError"
+    raises ArgumentError
   end
 
   test "parse with empty run raises ArgumentError" do
@@ -51,8 +54,11 @@ class CommandParserTest < Minitest::Test
     parser = Dev::CommandParser.new
     hash = { "run" => "" }
 
-    Expect "parse raises ArgumentError"
-    assert_raises(ArgumentError) { parser.parse(hash) }
+    When "parsing the command"
+    parser.parse(hash)
+
+    Then "it raises ArgumentError"
+    raises ArgumentError
   end
 
   test "parse with nil desc uses default description" do
