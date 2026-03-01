@@ -15,8 +15,8 @@ def ensure_bundler!(dev_root)
   return true if current && requirement.satisfied_by?(current)
 
   puts "  Ensuring bundler #{BUNDLER_VERSION}..."
-  unless system("gem", "install", "bundler", "-v", "2.1.4", "--no-document")
-    puts "  ⚠️  Failed to install bundler. Run: gem install bundler -v 2.1.4 (or add --user-install if no write to system gems)"
+  unless system("gem", "install", "bundler", "--no-document")
+    puts "  ⚠️  Failed to install bundler. Run: gem install bundler (or add --user-install if no write to system gems)"
     return false
   end
   Gem.clear_paths
