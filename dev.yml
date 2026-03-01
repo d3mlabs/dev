@@ -13,6 +13,9 @@ commands:
   test:
     desc: Run this repo's tests
     run: ./bin/test.rb
+  release:
+    desc: Release a new version (bump, tag, push, Homebrew formula)
+    run: ./bin/release.rb
   console:
     desc: Start Ruby console
     run: ./bin/console

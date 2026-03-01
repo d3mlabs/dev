@@ -26,10 +26,10 @@ def main
 
   current = VERSION_FILE.read.strip
   new_version, notes = parse_args(current)
+  commits = commits_since_last_tag
 
-  puts "Releasing #{current} → #{new_version}"
-  puts "  Notes: #{notes}"
-  puts
+  print_summary(current, new_version, notes, commits)
+  confirm!
 
   bump_version(current, new_version)
   commit_and_tag(new_version, notes)
@@ -83,6 +83,44 @@ def ensure_clean_tree!
   return if status.empty?
 
   abort "Working tree is not clean. Commit or stash changes first.\n#{status}"
+end
+
+def commits_since_last_tag
+  tag = latest_tag
+  return [] if tag.empty?
+
+  `git log --oneline #{tag}..HEAD`.strip.lines.map(&:strip)
+end
+
+def print_summary(current, new_version, notes, commits)
+  puts "┌─────────────────────────────────────────"
+  puts "│ Release: #{current} → #{new_version}"
+  puts "│"
+  puts "│ Notes: #{notes}"
+  puts "│"
+  if commits.empty?
+    puts "│ Commits: (none since #{latest_tag})"
+  else
+    puts "│ Commits since #{latest_tag}:"
+    commits.each { |c| puts "│   #{c}" }
+  end
+  puts "│"
+  puts "│ Steps:"
+  puts "│   1. Bump VERSION + Gemfile.lock"
+  puts "│   2. Commit + tag v#{new_version}"
+  puts "│   3. Push main + tag to origin"
+  puts "│   4. Create GitHub release"
+  puts "│   5. Update Homebrew formula + push"
+  puts "└─────────────────────────────────────────"
+  puts
+end
+
+def confirm!
+  $stdout.write("Proceed? [y/N] ")
+  $stdout.flush
+  answer = $stdin.gets&.strip&.downcase
+  abort "Aborted." unless answer == "y"
+  puts
 end
 
 def ensure_on_main!
