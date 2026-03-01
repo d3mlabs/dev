@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    dev (0.2.23)
+    dev (0.2.24)
       cli-ui
       sorbet-runtime
 

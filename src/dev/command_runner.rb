@@ -30,7 +30,8 @@ module Dev
       shell_command = build_shell_command(cmd.run, args)
 
       if !cmd.repl && tty?
-        @ui.frame(shell_command) { run_subprocess_with_capture(shell_command) }
+        @ui.print_line(shell_command)
+        run_subprocess_with_capture(shell_command)
         @ui.done
       else
         run_replace_process(shell_command)

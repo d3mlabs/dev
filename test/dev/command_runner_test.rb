@@ -63,7 +63,7 @@ class CommandRunnerTest < Minitest::Test
     File.chmod(0o755, tmp.path)
     cmd = Dev::Command.new(run: tmp.path, repl: false)
     @runner.stubs(:tty?).returns(true)
-    @ui.expects(:frame).with(tmp.path).once.yields
+    @ui.expects(:print_line).with(tmp.path).once
     @ui.expects(:done).once
 
     When "we run the command and capture output"
@@ -85,7 +85,7 @@ class CommandRunnerTest < Minitest::Test
     cmd = Dev::Command.new(run: tmp.path, repl: false)
     expected_shell_command = "#{tmp.path} --verbose"
     @runner.stubs(:tty?).returns(true)
-    @ui.expects(:frame).with(expected_shell_command).once.yields
+    @ui.expects(:print_line).with(expected_shell_command).once
     @ui.expects(:done).once
 
     When "we run the command with args and capture output"
@@ -106,7 +106,7 @@ class CommandRunnerTest < Minitest::Test
     File.chmod(0o755, tmp.path)
     cmd = Dev::Command.new(run: tmp.path, repl: false)
     @runner.stubs(:tty?).returns(true)
-    @ui.stubs(:frame).yields
+    @ui.stubs(:print_line)
 
     When "we run the command"
     err = assert_raises(RuntimeError) { @runner.run(cmd) }
