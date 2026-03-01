@@ -30,8 +30,8 @@ class ConfigParserTest < Minitest::Test
 
     Then "we get the expected config"
     config.name == "myproject"
-    config.command("up") == Dev::Command.new(run: "./bin/setup.rb", desc: "Setup", pretty_ui: false)
-    config.command("test") == Dev::Command.new(run: "rspec", desc: "(no description)", pretty_ui: false)
+    config.command("up") == Dev::Command.new(run: "./bin/setup.rb", desc: "Setup", repl: false)
+    config.command("test") == Dev::Command.new(run: "rspec", desc: "(no description)", repl: false)
 
     Cleanup
     tmp.close!
@@ -59,15 +59,15 @@ class ConfigParserTest < Minitest::Test
     tmp.close!
   end
 
-  test "#parse with pretty_ui flag passes it through to Command" do
-    Given "a dev.yml file with pretty_ui set"
+  test "#parse with repl flag passes it through to Command" do
+    Given "a dev.yml file with repl set"
     tmp = Tempfile.new(["dev", ".yml"])
     tmp.write(<<~YAML)
       name: myproject
       commands:
         console:
           run: ./bin/console
-          pretty_ui: false
+          repl: true
     YAML
     tmp.flush
 
@@ -75,8 +75,8 @@ class ConfigParserTest < Minitest::Test
     parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
     config = parser.parse(Pathname.new(tmp.path))
 
-    Then "the command has pretty_ui false"
-    config.command("console").pretty_ui == false
+    Then "the command has repl true"
+    config.command("console").repl == true
 
     Cleanup
     tmp.close!

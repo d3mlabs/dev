@@ -16,4 +16,4 @@ commands:
   console:
     desc: Start Ruby console
     run: ./bin/console
-    pretty_ui: false # Don't use Dev::CLI::Ui for this command.
+    repl: true

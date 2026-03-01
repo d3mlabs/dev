@@ -18,8 +18,8 @@ class CommandRunnerTest < Minitest::Test
   end
 
   test "run replaces process when not a TTY" do
-    Given "a command with pretty_ui true in a non-TTY environment"
-    cmd = Dev::Command.new(run: "./bin/test.rb", pretty_ui: true)
+    Given "a non-repl command in a non-TTY environment"
+    cmd = Dev::Command.new(run: "./bin/test.rb", repl: false)
     @runner.stubs(:tty?).returns(false)
 
     When "we run the command"
@@ -32,7 +32,7 @@ class CommandRunnerTest < Minitest::Test
 
   test "run replaces process with args appended" do
     Given "a command with args in a non-TTY environment"
-    cmd = Dev::Command.new(run: "./bin/test.rb", pretty_ui: true)
+    cmd = Dev::Command.new(run: "./bin/test.rb", repl: false)
 
     When "we run the command with extra args"
     @runner.run(cmd, args: ["--verbose", "--seed", "42"])
@@ -42,9 +42,9 @@ class CommandRunnerTest < Minitest::Test
     1 * Kernel.exec({"GEM_HOME" => nil}, "shadowenv", "exec", "--", "sh", "-c", "./bin/test.rb --verbose --seed 42")
   end
 
-  test "run replaces process when pretty_ui is false even with TTY" do
-    Given "a command with pretty_ui false and stdout reports TTY"
-    cmd = Dev::Command.new(run: "./bin/console", pretty_ui: false)
+  test "run replaces process when repl even with TTY" do
+    Given "a repl command and stdout reports TTY"
+    cmd = Dev::Command.new(run: "./bin/console", repl: true)
 
 
     When "we run the command"
@@ -55,13 +55,13 @@ class CommandRunnerTest < Minitest::Test
     1 * Kernel.exec({"GEM_HOME" => nil}, "shadowenv", "exec", "--", "sh", "-c", "./bin/console")
   end
 
-  test "run spawns subprocess with capture when TTY and pretty_ui" do
-    Given "a command that writes to stdout and runner reports TTY"
+  test "run spawns subprocess with capture when TTY and not repl" do
+    Given "a non-repl command that writes to stdout and runner reports TTY"
     tmp = Tempfile.new(["test", ".sh"])
     tmp.write("#!/bin/sh\necho 'subprocess output'")
     tmp.close
     File.chmod(0o755, tmp.path)
-    cmd = Dev::Command.new(run: tmp.path, pretty_ui: true)
+    cmd = Dev::Command.new(run: tmp.path, repl: false)
     @runner.stubs(:tty?).returns(true)
     @ui.expects(:frame).with(tmp.path).once.yields
     @ui.expects(:done).once
@@ -82,7 +82,7 @@ class CommandRunnerTest < Minitest::Test
     tmp.write("#!/bin/sh\necho \"args: $@\"")
     tmp.close
     File.chmod(0o755, tmp.path)
-    cmd = Dev::Command.new(run: tmp.path, pretty_ui: true)
+    cmd = Dev::Command.new(run: tmp.path, repl: false)
     expected_shell_command = "#{tmp.path} --verbose"
     @runner.stubs(:tty?).returns(true)
     @ui.expects(:frame).with(expected_shell_command).once.yields
@@ -104,7 +104,7 @@ class CommandRunnerTest < Minitest::Test
     tmp.write("#!/bin/sh\nexit 1")
     tmp.close
     File.chmod(0o755, tmp.path)
-    cmd = Dev::Command.new(run: tmp.path, pretty_ui: true)
+    cmd = Dev::Command.new(run: tmp.path, repl: false)
     @runner.stubs(:tty?).returns(true)
     @ui.stubs(:frame).yields
 

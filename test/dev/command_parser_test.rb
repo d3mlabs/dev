@@ -10,9 +10,9 @@ class CommandParserTest < Minitest::Test
   extend T::Sig
 
   test "parse with full hash returns Command with correct attributes" do
-    Given "a command hash with run, desc, and pretty_ui"
+    Given "a command hash with run, desc, and repl"
     parser = Dev::CommandParser.new
-    hash = { "run" => "./bin/setup.rb", "desc" => "Setup", "pretty_ui" => true }
+    hash = { "run" => "./bin/setup.rb", "desc" => "Setup", "repl" => true }
 
     When "we parse it"
     cmd = parser.parse(hash)
@@ -20,10 +20,10 @@ class CommandParserTest < Minitest::Test
     Then "we get a Command with those values"
     cmd.run == "./bin/setup.rb"
     cmd.desc == "Setup"
-    cmd.pretty_ui == true
+    cmd.repl == true
   end
 
-  test "parse with only run uses default desc and pretty_ui false" do
+  test "parse with only run uses default desc and repl false" do
     Given "a command hash with only run"
     parser = Dev::CommandParser.new
     hash = { "run" => "rspec" }
@@ -31,10 +31,10 @@ class CommandParserTest < Minitest::Test
     When "we parse it"
     cmd = parser.parse(hash)
 
-    Then "desc defaults and pretty_ui is false"
+    Then "desc defaults and repl is false"
     cmd.run == "rspec"
     cmd.desc == "(no description)"
-    cmd.pretty_ui == false
+    cmd.repl == false
   end
 
   test "parse with missing run raises ArgumentError" do
@@ -73,15 +73,15 @@ class CommandParserTest < Minitest::Test
     cmd.desc == "(no description)"
   end
 
-  test "parse with pretty_ui false is false" do
-    Given "a command hash with pretty_ui false"
+  test "parse with repl false is false" do
+    Given "a command hash with repl false"
     parser = Dev::CommandParser.new
-    hash = { "run" => "./bin/up.rb", "pretty_ui" => false }
+    hash = { "run" => "./bin/up.rb", "repl" => false }
 
     When "we parse it"
     cmd = parser.parse(hash)
 
-    Then "pretty_ui is false"
-    cmd.pretty_ui == false
+    Then "repl is false"
+    cmd.repl == false
   end
 end
