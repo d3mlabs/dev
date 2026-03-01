@@ -103,47 +103,16 @@ dev --help      # Same
 
 Releases are distributed via the Homebrew tap at [d3mlabs/homebrew-d3mlabs](https://github.com/d3mlabs/homebrew-d3mlabs).
 
-1. **Bump** the version in `VERSION` and commit:
+The release script handles everything — version bump, commit, tag, push, GitHub release, sha256, and Homebrew formula update:
 
 ```bash
-# Edit VERSION (e.g. 0.2.15 → 0.2.16)
-git add VERSION
-git commit -m "Bump version to 0.2.16"
+./bin/release.rb                     # auto-increment patch (0.2.24 → 0.2.25)
+./bin/release.rb 0.3.0               # explicit version
+./bin/release.rb "Fixed the widget"  # auto-increment with custom notes
+./bin/release.rb 0.3.0 "Big update"  # explicit version + notes
 ```
 
-2. **Tag and push:**
-
-```bash
-git tag v0.2.16
-git push origin main
-git push origin v0.2.16
-```
-
-3. **Create a GitHub release** (generates the source tarball that Homebrew downloads):
-
-```bash
-gh release create v0.2.16 --title "v0.2.16" --notes "Short description of changes."
-```
-
-4. **Compute the tarball sha256:**
-
-```bash
-curl -fSL -o /tmp/dev.tar.gz \
-  https://github.com/d3mlabs/dev/archive/refs/tags/v0.2.16.tar.gz
-shasum -a 256 /tmp/dev.tar.gz
-```
-
-5. **Update the Homebrew formula.** In `d3mlabs/homebrew-d3mlabs`, edit `Formula/dev.rb` — update `version`, the tag in `url`, and `sha256` with the hash from step 4:
-
-```bash
-cd path/to/homebrew-d3mlabs
-# edit Formula/dev.rb
-git add Formula/dev.rb
-git commit -m "dev: 0.2.16"
-git push origin main
-```
-
-6. **Verify** (on any machine with the tap):
+Verify (on any machine with the tap):
 
 ```bash
 brew update
