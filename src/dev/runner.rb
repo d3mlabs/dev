@@ -60,7 +60,8 @@ module Dev
         raise CommandNotFoundError.new(command_name: cmd_name)
       end
 
-      cmd_runner = CommandRunner.new(ui: ui)
+      ruby_version = resolve_ruby_version(config.ruby_version)
+      cmd_runner = CommandRunner.new(ui: ui, ruby_version: ruby_version)
       cmd_runner.run(cmd, args: args)
     rescue CommandNotFoundError, ArgumentError => e
       $stderr.puts "dev: #{e}"
@@ -76,6 +77,12 @@ module Dev
     sig { params(argv: T::Array[String]).returns(T::Boolean) }
     def show_usage?(argv)
       argv.empty? || argv == ["--help"] || argv == ["-h"]
+    end
+
+    sig { params(explicit_version: T.nilable(String)).returns(String) }
+    def resolve_ruby_version(explicit_version)
+      require "shadowenv_ruby"
+      ShadowenvRuby.resolve_ruby_version(explicit_version)
     end
   end
 end

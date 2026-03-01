@@ -13,7 +13,8 @@ class CommandRunnerTest < Minitest::Test
 
   def setup
     @ui = typed_mock(Dev::Cli::Ui)
-    @runner = Dev::CommandRunner.new(ui: @ui)
+    @runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1")
+    @runner.stubs(:ensure_shadowenv_provisioned!)
   end
 
   test "run replaces process when not a TTY" do
@@ -24,22 +25,21 @@ class CommandRunnerTest < Minitest::Test
     When "we run the command"
     @runner.run(cmd)
 
-    Then "the process is replaced via Kernel.exec"
-    1 * Kernel.exec({"GEM_HOME" => nil}, "./bin/test.rb")
+    Then "the process is replaced via shadowenv exec"
+    1 * Kernel.exec({"GEM_HOME" => nil}, "shadowenv", "exec", "--", "sh", "-c", "./bin/test.rb")
     Dir.pwd == Dev::TARGET_PROJECT_ROOT.to_s
   end
 
   test "run replaces process with args appended" do
     Given "a command with args in a non-TTY environment"
     cmd = Dev::Command.new(run: "./bin/test.rb", pretty_ui: true)
-    # @runner.stubs(:tty?).returns(false)
 
     When "we run the command with extra args"
     @runner.run(cmd, args: ["--verbose", "--seed", "42"])
 
     Then "the process is replaced with args shell-joined"
     _ * @runner.tty? >> false
-    1 * Kernel.exec({"GEM_HOME" => nil}, "./bin/test.rb --verbose --seed 42")
+    1 * Kernel.exec({"GEM_HOME" => nil}, "shadowenv", "exec", "--", "sh", "-c", "./bin/test.rb --verbose --seed 42")
   end
 
   test "run replaces process when pretty_ui is false even with TTY" do
@@ -50,9 +50,9 @@ class CommandRunnerTest < Minitest::Test
     When "we run the command"
     @runner.run(cmd)
 
-    Then "the process is replaced via Kernel.exec"
+    Then "the process is replaced via shadowenv exec"
     _ * @runner.tty? >> false
-    1 * Kernel.exec({"GEM_HOME" => nil}, "./bin/console")
+    1 * Kernel.exec({"GEM_HOME" => nil}, "shadowenv", "exec", "--", "sh", "-c", "./bin/console")
   end
 
   test "run spawns subprocess with capture when TTY and pretty_ui" do

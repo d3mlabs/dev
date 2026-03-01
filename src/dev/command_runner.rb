@@ -9,16 +9,23 @@ require "dev/command"
 module Dev
   # Runs dev commands: subprocess with output capture for pretty UI, or process
   # replacement for interactive commands (e.g. REPL).
+  #
+  # Before every command, ensures the project's shadowenv Ruby environment is
+  # provisioned (fast-path: skips if .shadowenv.d/510_ruby.lisp is current).
+  # All child commands are wrapped with `shadowenv exec --` so they inherit
+  # the correct Ruby regardless of the user's shell state.
   class CommandRunner
     extend T::Sig
 
-    sig { params(ui: Dev::Cli::Ui).void }
-    def initialize(ui:)
+    sig { params(ui: Dev::Cli::Ui, ruby_version: String).void }
+    def initialize(ui:, ruby_version:)
       @ui = T.let(ui, Dev::Cli::Ui)
+      @ruby_version = T.let(ruby_version, String)
     end
 
     sig { params(cmd: Command, args: T::Array[String]).void }
     def run(cmd, args: [])
+      ensure_shadowenv_provisioned!
       shell_command = build_shell_command(cmd.run, args)
 
       if cmd.pretty_ui && tty?
@@ -48,21 +55,34 @@ module Dev
     # project's own Ruby/gems via shadowenv).
     CHILD_ENV = T.let({ "GEM_HOME" => nil }.freeze, T::Hash[String, T.nilable(String)])
 
-    # Replaces the current process with the command. Used for interactive
-    # commands (e.g. REPL) that need full terminal control.
+    sig { void }
+    def ensure_shadowenv_provisioned!
+      require "shadowenv_ruby"
+      project_root = Dev::TARGET_PROJECT_ROOT
+      return if ShadowenvRuby.provisioned?(@ruby_version, project_root: project_root)
+
+      ShadowenvRuby.setup!(ruby_version: @ruby_version, project_root: project_root)
+    end
+
+    # Replaces the current process with the command, wrapped in shadowenv exec
+    # so the child inherits the project's Ruby environment.
     sig { params(shell_command: String).void }
     def run_replace_process(shell_command)
       Dir.chdir(Dev::TARGET_PROJECT_ROOT)
-      Kernel.exec(CHILD_ENV, shell_command)
+      Kernel.exec(CHILD_ENV, "shadowenv", "exec", "--", "sh", "-c", shell_command)
     end
 
     # Runs the command as a subprocess with inherited stdin and captured
-    # stdout/stderr. Stdin passthrough allows password prompts; piped output
-    # flows through CLI::UI for frame borders.
+    # stdout/stderr, wrapped in shadowenv exec. Stdin passthrough allows
+    # password prompts; piped output flows through CLI::UI for frame borders.
     sig { params(shell_command: String).void }
     def run_subprocess_with_capture(shell_command)
       rd, wr = IO.pipe
-      pid = Process.spawn(CHILD_ENV, shell_command, chdir: Dev::TARGET_PROJECT_ROOT.to_s, in: $stdin, out: wr, err: wr)
+      pid = Process.spawn(
+        CHILD_ENV,
+        "shadowenv", "exec", "--", "sh", "-c", shell_command,
+        chdir: Dev::TARGET_PROJECT_ROOT.to_s, in: $stdin, out: wr, err: wr
+      )
       wr.close
       rd.each_line { |line| puts line }
       rd.close

@@ -7,6 +7,7 @@ require "rake/testtask"
 Rake::TestTask.new(:test) do |t|
   t.libs << "test"
   t.libs << File.expand_path("src", __dir__)
+  t.libs << File.expand_path("lib", __dir__)
   t.ruby_opts << "-r #{File.expand_path('test/test_loader.rb', __dir__)}"
   t.test_files = FileList["test/**/*_test.rb"]
   t.warning = false

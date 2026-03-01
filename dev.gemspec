@@ -10,7 +10,7 @@ Gem::Specification.new do |s|
 
   s.required_ruby_version = ">= 2.7.0"
 
-  s.files = Dir["bin/*", "src/**/*", "VERSION", "LICENSE"]
+  s.files = Dir["bin/*", "src/**/*", "lib/**/*", "VERSION", "LICENSE"]
 
   s.add_runtime_dependency "cli-ui"
   s.add_runtime_dependency "sorbet-runtime"
