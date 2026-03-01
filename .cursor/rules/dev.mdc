@@ -1,0 +1,13 @@
+---
+description: Use dev CLI for project commands
+alwaysApply: true
+---
+When running project commands (test, build, setup, release, etc.), always use
+`dev <command>` instead of directly invoking bin/ scripts. The dev tool handles
+Ruby version resolution and environment setup via shadowenv.
+
+- `dev test` not `./bin/test.rb`
+- `dev up` not `./bin/setup.rb`
+- `dev build` not `./bin/build.sh`
+
+Run `dev` with no arguments to see all available commands from dev.yml.

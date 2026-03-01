@@ -1,4 +1,14 @@
-#!/usr/bin/env ruby
+#!/bin/sh
+# Prefer Homebrew Ruby if available, fall back to system Ruby
+if command -v brew >/dev/null 2>&1; then
+  brew_ruby="$(brew --prefix ruby 2>/dev/null)/bin/ruby"
+  if [ -x "$brew_ruby" ]; then
+    exec "$brew_ruby" -x "$0" "$@"
+  fi
+fi
+exec ruby -x "$0" "$@"
+
+#!ruby
 # frozen_string_literal: true
 
 # Release a new version of dev: bump VERSION + Gemfile.lock, commit, tag,

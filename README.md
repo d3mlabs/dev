@@ -15,7 +15,7 @@ brew install d3mlabs/dev
 
 ```bash
 brew install rbenv ruby-build
-# Then e.g. rbenv install 2.7.6  (version comes from the repo’s dependencies)
+# Then e.g. rbenv install 2.7.6  (version comes from the repo's dependencies)
 ```
 
 After installing, add the shadowenv hook to your shell so project Rubies activate when you `cd` into a repo:
@@ -40,13 +40,47 @@ dev          # List all available commands
 
 The tool walks up from your current directory until it finds a git repo root (directory containing `.git`), then looks for `dev.yml` there. If found, it parses the commands and executes the `run` string for your chosen subcommand.
 
-## Pretty UI (cli-ui)
+## Pretty UI (cli-ui) and protocol markers
 
-Dev depends on [Shopify’s cli-ui](https://github.com/Shopify/cli-ui) for Frames, colors, and formatted output. When you run `dev up` or `dev test`, the command is wrapped in a Frame and output is styled. **Ruby scripts (e.g. `./bin/setup.rb`) run in-process**, so they inherit the same CLI::UI context: your project scripts can use `CLI::UI::Frame`, `CLI::UI::Spinner`, `CLI::UI.fmt`, etc. without adding cli-ui to your own Gemfile. Rely on Dev to own the pretty UI so cellbound and other d3mlabs projects stay DRY.
+Dev depends on [Shopify's cli-ui](https://github.com/Shopify/cli-ui) for frames, colors, and formatted output. All non-repl commands run as subprocesses with their output piped through a **line protocol parser**. The parser detects protocol markers and renders them via cli-ui; non-marker lines pass through as-is.
 
-(If the Ruby that runs `dev` doesn’t have cli-ui installed, Dev still works and falls back to plain output.)
+Commands marked `repl: true` bypass this entirely and replace the dev process (`exec`), giving the child command direct terminal access.
 
-Commands marked `repl: true` bypass the cli-ui frame and instead replace the dev process (`exec`), giving the child command direct terminal access. Use this for interactive commands like `console` or any REPL.
+### Three-tier rendering
+
+Dev adapts its output based on the environment:
+
+- **TTY (terminal)** — detected via `$stdout.tty?` — full cli-ui: frames, colors, spinners
+- **CI** — detected via `CI` or `CLICOLOR_FORCE` env var — frames and colors, no spinner animation
+- **Pipe/file** — neither of the above — plain text fallback
+
+### Protocol markers
+
+Child scripts can output these markers (one per line) to control the parent dev process's UI rendering:
+
+```
+::frame::Title       Open a cli-ui frame
+::endframe::         Close the current frame
+::ok::label          Green checkmark + label
+::fail::label        Red X + label
+::warn::message      Yellow warning message
+::spin::label        Start draining lines (hidden) until endspin
+::endspin::          End drain, report success (ok)
+::endspin::fail      End drain, report failure (fail)
+```
+
+Example child script (`bin/setup.sh`):
+
+```bash
+#!/bin/sh
+echo "::frame::Dependencies"
+echo "::ok::ruby 4.0.1"
+echo "::ok::bundler"
+echo "::fail::cmake (not found)"
+echo "::endframe::"
+```
+
+This renders as a properly indented cli-ui frame with checkmarks and X marks, without the child script needing cli-ui as a dependency.
 
 ## dev.yml convention
 

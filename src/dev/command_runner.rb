@@ -6,10 +6,11 @@ require "shellwords"
 
 require "dev/cli/ui"
 require "dev/command"
+require "dev/ui_protocol"
 
 module Dev
-  # Runs dev commands: subprocess with output capture for pretty UI, or process
-  # replacement for interactive commands (e.g. REPL).
+  # Runs dev commands: subprocess with protocol-parsed output for pretty UI,
+  # or process replacement for interactive commands (e.g. REPL).
   #
   # Before every command, ensures the project's shadowenv Ruby environment is
   # provisioned (fast-path: skips if .shadowenv.d/510_ruby.lisp is current).
@@ -29,21 +30,16 @@ module Dev
       ensure_shadowenv_provisioned!
       shell_command = build_shell_command(cmd.run, args)
 
-      if !cmd.repl && tty?
+      if cmd.repl
+        run_replace_process(shell_command)
+      else
         @ui.print_line(shell_command)
         run_subprocess_with_capture(shell_command)
         @ui.done
-      else
-        run_replace_process(shell_command)
       end
     end
 
     private
-
-    sig { returns(T::Boolean) }
-    def tty?
-      $stdout.tty?
-    end
 
     sig { params(run_str: String, args: T::Array[String]).returns(String) }
     def build_shell_command(run_str, args)
@@ -74,10 +70,9 @@ module Dev
       Kernel.exec(CHILD_ENV, "shadowenv", "exec", "--", "sh", "-c", shell_command)
     end
 
-    # Runs the command as a subprocess with a PTY so the child sees a real
-    # terminal (preserving CLI::UI colors and spinner animations). Stdin is
-    # inherited for interactive prompts; output streams through the PTY master
-    # into the parent's stdout for CLI::UI frame borders.
+    # Runs the command as a subprocess with a PTY and parses its output for
+    # protocol markers (::frame::, ::ok::, ::spin::, etc.). The UiProtocol
+    # renders markers via the Ui interface; non-marker lines pass through.
     sig { params(shell_command: String).void }
     def run_subprocess_with_capture(shell_command)
       master, slave = T.unsafe(PTY).open
@@ -90,14 +85,8 @@ module Dev
       )
       slave.close
 
-      begin
-        loop do
-          $stdout.write(master.readpartial(4096))
-          $stdout.flush
-        end
-      rescue EOFError, Errno::EIO
-        # Expected when the child process exits and the PTY slave closes
-      end
+      protocol = Dev::UiProtocol.new(ui: @ui)
+      protocol.process_stream(master)
       master.close
 
       _, status = Process.wait2(pid)

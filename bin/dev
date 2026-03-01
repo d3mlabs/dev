@@ -21,7 +21,12 @@ $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 
 require "dev"
 
-# Should be in a ServiceLocator
 out = $stdout
-ui = out.tty? ? Dev::Cli::UiImpl.new(cli_ui: CLI::UI) : Dev::Cli::NoUi.new
+ui = if out.tty?
+  Dev::Cli::UiImpl.new(cli_ui: CLI::UI, spinners: true)
+elsif ENV["CI"] || ENV["CLICOLOR_FORCE"]
+  Dev::Cli::UiImpl.new(cli_ui: CLI::UI, spinners: false)
+else
+  Dev::Cli::NoUi.new
+end
 Dev::Runner.new.run(ARGV, out: out, ui: ui)

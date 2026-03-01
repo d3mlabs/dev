@@ -17,95 +17,80 @@ class CommandRunnerTest < Minitest::Test
     @runner.stubs(:ensure_shadowenv_provisioned!)
   end
 
-  test "run replaces process when not a TTY" do
-    Given "a non-repl command in a non-TTY environment"
-    cmd = Dev::Command.new(run: "./bin/test.rb", repl: false)
-    @runner.stubs(:tty?).returns(false)
-
-    When "we run the command"
-    @runner.run(cmd)
-
-    Then "the process is replaced via shadowenv exec"
-    1 * Kernel.exec({"GEM_HOME" => nil}, "shadowenv", "exec", "--", "sh", "-c", "./bin/test.rb")
-    Dir.pwd == Dev::TARGET_PROJECT_ROOT.to_s
-  end
-
-  test "run replaces process with args appended" do
-    Given "a command with args in a non-TTY environment"
-    cmd = Dev::Command.new(run: "./bin/test.rb", repl: false)
-
-    When "we run the command with extra args"
-    @runner.run(cmd, args: ["--verbose", "--seed", "42"])
-
-    Then "the process is replaced with args shell-joined"
-    _ * @runner.tty? >> false
-    1 * Kernel.exec({"GEM_HOME" => nil}, "shadowenv", "exec", "--", "sh", "-c", "./bin/test.rb --verbose --seed 42")
-  end
-
-  test "run replaces process when repl even with TTY" do
-    Given "a repl command and stdout reports TTY"
+  test "run replaces process when repl" do
+    Given "a repl command"
     cmd = Dev::Command.new(run: "./bin/console", repl: true)
 
-
     When "we run the command"
     @runner.run(cmd)
 
     Then "the process is replaced via shadowenv exec"
-    _ * @runner.tty? >> false
     1 * Kernel.exec({"GEM_HOME" => nil}, "shadowenv", "exec", "--", "sh", "-c", "./bin/console")
   end
 
-  test "run spawns subprocess with capture when TTY and not repl" do
-    Given "a non-repl command that writes to stdout and runner reports TTY"
+  test "run replaces process with args when repl" do
+    Given "a repl command with args"
+    cmd = Dev::Command.new(run: "./bin/console", repl: true)
+
+    When "we run the command with extra args"
+    @runner.run(cmd, args: ["--verbose"])
+
+    Then "the process is replaced with args shell-joined"
+    1 * Kernel.exec({"GEM_HOME" => nil}, "shadowenv", "exec", "--", "sh", "-c", "./bin/console --verbose")
+  end
+
+  test "run spawns subprocess for non-repl command" do
+    Given "a non-repl command that writes to stdout"
     tmp = Tempfile.new(["test", ".sh"])
     tmp.write("#!/bin/sh\necho 'subprocess output'")
     tmp.close
     File.chmod(0o755, tmp.path)
     cmd = Dev::Command.new(run: tmp.path, repl: false)
-    @runner.stubs(:tty?).returns(true)
-    @ui.expects(:print_line).with(tmp.path).once
-    @ui.expects(:done).once
+    @ui.stubs(:print_line)
+    @ui.stubs(:done)
 
-    When "we run the command and capture output"
-    out, _ = capture_io { @runner.run(cmd) }
+    When "we run the command"
+    @runner.run(cmd)
 
-    Then "subprocess output was captured and printed"
-    assert_includes out, "subprocess output"
+    Then "print_line is called for the command header and subprocess output"
+    1 * @ui.print_line(tmp.path)
+    1 * @ui.print_line("subprocess output")
+    1 * @ui.done
 
     Cleanup
     tmp.unlink
   end
 
   test "run spawns subprocess with args passed through" do
-    Given "a command with args and runner reports TTY"
+    Given "a non-repl command with args"
     tmp = Tempfile.new(["test", ".sh"])
     tmp.write("#!/bin/sh\necho \"args: $@\"")
     tmp.close
     File.chmod(0o755, tmp.path)
     cmd = Dev::Command.new(run: tmp.path, repl: false)
     expected_shell_command = "#{tmp.path} --verbose"
-    @runner.stubs(:tty?).returns(true)
-    @ui.expects(:print_line).with(expected_shell_command).once
-    @ui.expects(:done).once
+    @ui.stubs(:print_line)
+    @ui.stubs(:done)
 
-    When "we run the command with args and capture output"
-    out, _ = capture_io { @runner.run(cmd, args: ["--verbose"]) }
+    When "we run the command with args"
+    @runner.run(cmd, args: ["--verbose"])
 
-    Then "subprocess received the args"
-    assert_includes out, "args: --verbose"
+    Then "print_line is called for the command header and subprocess output"
+    1 * @ui.print_line(expected_shell_command)
+    1 * @ui.print_line("args: --verbose")
+    1 * @ui.done
 
     Cleanup
     tmp.unlink
   end
 
   test "run raises when subprocess fails" do
-    Given "a command that exits with non-zero status and runner reports TTY"
+    Given "a command that exits with non-zero status"
     tmp = Tempfile.new(["test", ".sh"])
     tmp.write("#!/bin/sh\nexit 1")
     tmp.close
     File.chmod(0o755, tmp.path)
     cmd = Dev::Command.new(run: tmp.path, repl: false)
-    @runner.stubs(:tty?).returns(true)
     @ui.stubs(:print_line)
 
     When "we run the command"
@@ -113,6 +98,27 @@ class CommandRunnerTest < Minitest::Test
 
     Then "the error message includes the command path"
     assert_includes err.message, tmp.path
+
+    Cleanup
+    tmp.unlink
+  end
+
+  test "run parses protocol markers from subprocess output" do
+    Given "a non-repl command that outputs protocol markers"
+    tmp = Tempfile.new(["test", ".sh"])
+    tmp.write("#!/bin/sh\necho '::ok::step one'\necho '::fail::step two'")
+    tmp.close
+    File.chmod(0o755, tmp.path)
+    cmd = Dev::Command.new(run: tmp.path, repl: false)
+    @ui.stubs(:print_line)
+    @ui.stubs(:done)
+
+    When "we run the command"
+    @runner.run(cmd)
+
+    Then "ok and fail are dispatched to the ui"
+    1 * @ui.ok("step one")
+    1 * @ui.fail("step two")
 
     Cleanup
     tmp.unlink
