@@ -6,7 +6,9 @@ require "dev/cli/ui"
 
 module Dev
   # Parses a line-based protocol from child process output and renders it
-  # via the Ui interface. Non-marker lines pass through as-is.
+  # via the Ui interface. Non-marker lines are written directly to +raw_out+
+  # (bypassing CLI::UI::StdoutRouter) so that child processes using CLI::UI
+  # render correctly without double-decoration.
   #
   # Protocol markers (each must be a complete line):
   #   ::frame::Title       open a frame
@@ -14,9 +16,9 @@ module Dev
   #   ::ok::label          green checkmark + label
   #   ::fail::label        red X + label
   #   ::warn::message      yellow warning
-  #   ::spin::label        drain lines until ::endspin::, then report ok/fail
-  #   ::endspin::          end spin with success (ok)
-  #   ::endspin::fail      end spin with failure (fail)
+  #   ::spin::label        start animated spinner, drain lines until ::endspin::
+  #   ::endspin::          end spin with success
+  #   ::endspin::fail      end spin with failure
   class UiProtocol
     extend T::Sig
 
@@ -27,21 +29,26 @@ module Dev
     WARN_RE     = T.let(/\A::warn::(.+)\z/, Regexp)
     SPIN_RE     = T.let(/\A::spin::(.+)\z/, Regexp)
 
-    sig { params(ui: Dev::Cli::Ui).void }
-    def initialize(ui:)
+    # +raw_out+ bypasses StdoutRouter so child CLI::UI output reaches the
+    # terminal untouched. In production this defaults to a raw fd handle;
+    # tests inject a StringIO.
+    sig { params(ui: Dev::Cli::Ui, raw_out: T.any(IO, StringIO)).void }
+    def initialize(ui:, raw_out: T.unsafe(IO).for_fd($stdout.fileno, autoclose: false))
       @ui = T.let(ui, Dev::Cli::Ui)
+      @raw_out = T.let(raw_out, T.any(IO, StringIO))
+      @raw_out.sync = true if @raw_out.respond_to?(:sync=)
       @frame_stack = T.let([], T::Array[String])
     end
 
     # Reads from +io+ line by line, dispatching protocol markers to the Ui
-    # and passing plain lines through via print_line.
+    # and writing plain lines directly to +raw_out+.
     sig { params(io: T.any(IO, StringIO)).void }
     def process_stream(io)
       io.each_line do |raw_line|
         line = raw_line.chomp
         next if dispatch_marker(line, io)
 
-        @ui.print_line(raw_line.chomp("\n"))
+        @raw_out.write(raw_line)
       end
     rescue Errno::EIO
       # Expected when child exits and PTY slave closes
@@ -73,25 +80,27 @@ module Dev
       true
     end
 
-    # Reads and discards lines from +io+ until ::endspin:: or ::endspin::fail,
-    # then reports success/failure via ok/fail on the Ui.
+    # Wraps the drain loop in a spinner so the animation plays while the
+    # child process runs. Returns success/failure via the spinner block's
+    # return value (truthy = checkmark, falsy = X).
     sig { params(label: String, io: T.any(IO, StringIO)).void }
     def drain_until_endspin(label, io)
-      loop do
-        raw = io.gets
-        break if raw.nil?
+      T.unsafe(@ui).with_spinner(label) do
+        success = T.let(false, T::Boolean)
+        loop do
+          raw = io.gets
+          break if raw.nil?
 
-        line = raw.chomp
-        if line == "::endspin::"
-          @ui.ok(label)
-          return
-        elsif line == "::endspin::fail"
-          @ui.fail(label)
-          return
+          line = raw.chomp
+          if line == "::endspin::"
+            success = true
+            break
+          elsif line == "::endspin::fail"
+            break
+          end
         end
+        success
       end
-      # EOF before ::endspin:: — treat as failure
-      @ui.fail(label)
     end
   end
 end

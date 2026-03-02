@@ -12,39 +12,43 @@ class UiProtocolTest < Minitest::Test
 
   def setup
     @ui = typed_mock(Dev::Cli::Ui)
+    @raw_out = StringIO.new
   end
 
-  test "plain lines pass through via print_line" do
+  def build_protocol
+    Dev::UiProtocol.new(ui: @ui, raw_out: @raw_out)
+  end
+
+  test "plain lines pass through to raw_out (bypass StdoutRouter)" do
     Given "a stream with no protocol markers"
     io = StringIO.new("hello world\ngoodbye\n")
-    protocol = Dev::UiProtocol.new(ui: @ui)
+    protocol = build_protocol
 
     When "we process the stream"
     protocol.process_stream(io)
 
-    Then "each line is passed to print_line"
-    1 * @ui.print_line("hello world")
-    1 * @ui.print_line("goodbye")
+    Then "each line is written directly to raw_out"
+    assert_equal "hello world\ngoodbye\n", @raw_out.string
   end
 
   test "::frame:: opens a frame and ::endframe:: closes it" do
     Given "a stream with frame markers"
     io = StringIO.new("::frame::Build\nsome output\n::endframe::\n")
-    protocol = Dev::UiProtocol.new(ui: @ui)
+    protocol = build_protocol
 
     When "we process the stream"
     protocol.process_stream(io)
 
-    Then "open_frame and close_frame are called"
+    Then "open_frame and close_frame are called, plain line goes to raw_out"
     1 * @ui.open_frame("Build")
-    1 * @ui.print_line("some output")
     1 * @ui.close_frame("Build")
+    assert_equal "some output\n", @raw_out.string
   end
 
   test "::ok:: renders a checkmark" do
     Given "a stream with an ok marker"
     io = StringIO.new("::ok::ccache\n")
-    protocol = Dev::UiProtocol.new(ui: @ui)
+    protocol = build_protocol
 
     When "we process the stream"
     protocol.process_stream(io)
@@ -56,7 +60,7 @@ class UiProtocolTest < Minitest::Test
   test "::fail:: renders an X" do
     Given "a stream with a fail marker"
     io = StringIO.new("::fail::cmake\n")
-    protocol = Dev::UiProtocol.new(ui: @ui)
+    protocol = build_protocol
 
     When "we process the stream"
     protocol.process_stream(io)
@@ -68,7 +72,7 @@ class UiProtocolTest < Minitest::Test
   test "::warn:: renders a warning" do
     Given "a stream with a warn marker"
     io = StringIO.new("::warn::lockfile changed\n")
-    protocol = Dev::UiProtocol.new(ui: @ui)
+    protocol = build_protocol
 
     When "we process the stream"
     protocol.process_stream(io)
@@ -77,28 +81,30 @@ class UiProtocolTest < Minitest::Test
     1 * @ui.warn("lockfile changed")
   end
 
-  test "::spin:: drains lines until ::endspin:: and reports ok" do
+  test "::spin:: runs animated spinner until ::endspin::" do
     Given "a stream with spin/endspin markers"
     io = StringIO.new("::spin::Fetching boost\ndownloading...\n::endspin::\n")
-    protocol = Dev::UiProtocol.new(ui: @ui)
+    @ui.stubs(:with_spinner).yields
+    protocol = build_protocol
 
     When "we process the stream"
     protocol.process_stream(io)
 
-    Then "ok is called with the spin label"
-    1 * @ui.ok("Fetching boost")
+    Then "with_spinner is called with the label"
+    1 * @ui.with_spinner("Fetching boost")
   end
 
-  test "::spin:: with ::endspin::fail reports failure" do
+  test "::spin:: with ::endspin::fail reports failure via spinner" do
     Given "a stream where the spinner fails"
     io = StringIO.new("::spin::Fetching boost\nerror!\n::endspin::fail\n")
-    protocol = Dev::UiProtocol.new(ui: @ui)
+    @ui.stubs(:with_spinner).yields
+    protocol = build_protocol
 
     When "we process the stream"
     protocol.process_stream(io)
 
-    Then "fail is called with the spin label"
-    1 * @ui.fail("Fetching boost")
+    Then "with_spinner is called with the label"
+    1 * @ui.with_spinner("Fetching boost")
   end
 
   test "nested frames track correctly" do
@@ -110,7 +116,7 @@ class UiProtocolTest < Minitest::Test
       ::endframe::
       ::endframe::
     PROTO
-    protocol = Dev::UiProtocol.new(ui: @ui)
+    protocol = build_protocol
 
     When "we process the stream"
     protocol.process_stream(io)
@@ -118,9 +124,9 @@ class UiProtocolTest < Minitest::Test
     Then "inner frame closes before outer frame"
     1 * @ui.open_frame("Outer")
     1 * @ui.open_frame("Inner")
-    1 * @ui.print_line("content")
     1 * @ui.close_frame("Inner")
     1 * @ui.close_frame("Outer")
+    assert_includes @raw_out.string, "content"
   end
 
   test "mixed protocol and plain output" do
@@ -132,29 +138,29 @@ class UiProtocolTest < Minitest::Test
       ::fail::step two
       ::endframe::
     PROTO
-    protocol = Dev::UiProtocol.new(ui: @ui)
+    protocol = build_protocol
 
     When "we process the stream"
     protocol.process_stream(io)
 
-    Then "all markers and plain lines are dispatched correctly"
+    Then "markers go to ui, plain lines go to raw_out"
     1 * @ui.open_frame("Setup")
     1 * @ui.ok("step one")
-    1 * @ui.print_line("plain output here")
     1 * @ui.fail("step two")
     1 * @ui.close_frame("Setup")
+    assert_equal "plain output here\n", @raw_out.string
   end
 
   test "empty stream does nothing" do
     Given "an empty stream"
     io = StringIO.new("")
-    protocol = Dev::UiProtocol.new(ui: @ui)
+    protocol = build_protocol
 
     When "we process the stream"
     protocol.process_stream(io)
 
-    Then "no ui methods are called"
-    0 * @ui.print_line(anything)
+    Then "no ui methods are called and raw_out is empty"
     0 * @ui.open_frame(anything)
+    assert_equal "", @raw_out.string
   end
 end

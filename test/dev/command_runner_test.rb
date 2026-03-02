@@ -52,9 +52,8 @@ class CommandRunnerTest < Minitest::Test
     When "we run the command"
     @runner.run(cmd)
 
-    Then "print_line is called for the command header and subprocess output"
+    Then "print_line is called for the command header, done is called"
     1 * @ui.print_line(tmp.path)
-    1 * @ui.print_line("subprocess output")
     1 * @ui.done
 
     Cleanup
@@ -75,9 +74,8 @@ class CommandRunnerTest < Minitest::Test
     When "we run the command with args"
     @runner.run(cmd, args: ["--verbose"])
 
-    Then "print_line is called for the command header and subprocess output"
+    Then "print_line is called for the command header, done is called"
     1 * @ui.print_line(expected_shell_command)
-    1 * @ui.print_line("args: --verbose")
     1 * @ui.done
 
     Cleanup
