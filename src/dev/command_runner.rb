@@ -1,16 +1,15 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "pty"
 require "shellwords"
 
 require "dev/cli/ui"
 require "dev/command"
-require "dev/ui_protocol"
 
 module Dev
-  # Runs dev commands: subprocess with protocol-parsed output for pretty UI,
-  # or process replacement for interactive commands (e.g. REPL).
+  # Runs dev commands: child scripts get direct terminal access and handle
+  # their own UI (CLI::UI frames, spinners, prompts). Dev prints a header
+  # (command name) and footer (success/failure).
   #
   # Before every command, ensures the project's shadowenv Ruby environment is
   # provisioned (fast-path: skips if .shadowenv.d/510_ruby.lisp is current).
@@ -34,7 +33,7 @@ module Dev
         run_replace_process(shell_command)
       else
         @ui.print_line(shell_command)
-        run_subprocess_with_capture(shell_command)
+        run_subprocess(shell_command)
         @ui.done
       end
     end
@@ -70,27 +69,14 @@ module Dev
       Kernel.exec(CHILD_ENV, "shadowenv", "exec", "--", "sh", "-c", shell_command)
     end
 
-    # Runs the command as a subprocess with a PTY and parses its output for
-    # protocol markers (::frame::, ::ok::, ::spin::, etc.). The UiProtocol
-    # renders markers via the Ui interface; non-marker lines pass through.
+    # Runs the command as a subprocess via system(). The child inherits
+    # stdin/stdout/stderr directly, so CLI::UI, prompts, and spinners
+    # all work natively in the child process.
     sig { params(shell_command: String).void }
-    def run_subprocess_with_capture(shell_command)
-      master, slave = T.unsafe(PTY).open
-      slave.winsize = $stdout.winsize if $stdout.tty?
-
-      pid = Process.spawn(
-        CHILD_ENV,
-        "shadowenv", "exec", "--", "sh", "-c", shell_command,
-        chdir: Dev::TARGET_PROJECT_ROOT.to_s, in: $stdin, out: slave, err: slave
-      )
-      slave.close
-
-      protocol = Dev::UiProtocol.new(ui: @ui)
-      protocol.process_stream(master)
-      master.close
-
-      _, status = Process.wait2(pid)
-      raise "#{shell_command} failed (exit #{T.must(status).exitstatus})" unless T.must(status).success?
+    def run_subprocess(shell_command)
+      Dir.chdir(Dev::TARGET_PROJECT_ROOT)
+      success = system(CHILD_ENV, "shadowenv", "exec", "--", "sh", "-c", shell_command)
+      raise "#{shell_command} failed (exit #{$?.exitstatus})" unless success
     end
   end
 end

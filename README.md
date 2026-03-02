@@ -42,78 +42,32 @@ The tool walks up from your current directory until it finds a git repo root (di
 
 ## Child script UI
 
-Dev uses [Shopify's cli-ui](https://github.com/Shopify/cli-ui) for frames, colors, and spinners. All non-repl commands run as subprocesses with their output piped through a PTY. Child scripts can use any of three approaches to produce UI output.
+Dev runs child commands via `system()`, giving them direct terminal access (stdin, stdout, stderr inherited). Child scripts handle their own UI — dev just prints a header (command name) and footer (success/failure).
 
-Commands marked `repl: true` bypass this entirely and replace the dev process (`exec`), giving the child command direct terminal access.
+Commands marked `repl: true` replace the dev process entirely via `exec`, which is useful for long-running interactive sessions (e.g. consoles) where you don't want a parent process lingering.
 
-### Three-tier rendering
+### How it works
 
-Dev adapts its own rendering based on the environment:
+Ruby child scripts use [Shopify's cli-ui](https://github.com/Shopify/cli-ui) natively for frames, spinners, prompts, and colors. Since the child has direct terminal access, all CLI::UI features work without compromise — animated spinners, interactive prompts, password inputs, menus.
 
-- **TTY (terminal)** -- detected via `$stdout.tty?` -- full cli-ui: frames, colors, animated spinners
-- **CI** -- detected via `CI` or `CLICOLOR_FORCE` env var -- frames and colors, static checkmarks (no spinner animation)
-- **Pipe/file** -- neither of the above -- plain text fallback
+Shell scripts output plain text. No special markers or protocol needed.
 
-### Approach A: Protocol markers
+### Environment behavior
 
-Child scripts output structured markers; dev parses and renders them. No cli-ui dependency needed in the child. Best for shell scripts and CI-facing commands.
+| | Ruby scripts (with cli-ui) | Shell scripts |
+|---|---|---|
+| Dev terminal | Full CLI::UI: frames, colors, animated spinners, prompts | Plain text |
+| CI (no TTY) | CLI::UI degrades gracefully (no animation, basic formatting) | Plain text |
+| Cursor sandbox | Same as dev terminal (use `dev <cmd>` per `.cursor/rules/dev.mdc`) | Plain text |
+| Without dev | CLI::UI renders directly to terminal | Plain text |
 
-```
-::frame::Title       Open a cli-ui frame
-::endframe::         Close the current frame
-::ok::label          Green checkmark + label
-::fail::label        Red X + label
-::warn::message      Yellow warning message
-::spin::label        Start animated spinner, drain lines until endspin
-::endspin::          End spin with success (checkmark)
-::endspin::fail      End spin with failure (X)
-```
-
-Example (`bin/setup.sh`):
-
-```bash
-#!/bin/sh
-echo "::frame::Dependencies"
-echo "::ok::ruby 4.0.1"
-echo "::ok::bundler"
-echo "::spin::Installing cmake"
-brew install cmake >/dev/null 2>&1
-echo "::endspin::"
-echo "::endframe::"
-```
-
-### Approach B: CLI::UI in child scripts
-
-Child scripts use CLI::UI directly (frames, spinners, colors). The output passes through the PTY and is written directly to the terminal, bypassing the parent's StdoutRouter. This gives the richest real-time rendering (animated spinners in the child process itself) but requires the cli-ui gem.
-
-### Approach C: Plain text
-
-Child scripts output plain text. It passes through unmodified. Simplest option.
-
-### Environment comparison
-
-**Rendering:**
-
-| | Protocol markers | CLI::UI in child | Plain text |
-|---|---|---|---|
-| Dev terminal | Dev renders frames, colors, animated spinners | Child renders natively via PTY; full frames/spinners/colors | Raw text |
-| CI | Dev renders frames/colors, static checkmarks; CI-safe | Child sees PTY (thinks TTY), renders spinners that CI log viewers may garble | Clean logs |
-| Cursor | Same as dev terminal | Same as dev terminal | Raw text |
-| Without dev | Markers appear as readable plain text | CLI::UI renders directly to terminal | Raw text |
-
-**Ruby / environment resolution:**
+### Ruby / environment resolution
 
 | | How Ruby resolves |
 |---|---|
 | Dev terminal | `dev` uses Homebrew Ruby (shell trampoline in `bin/dev`). Child commands get the project's Ruby via `shadowenv exec --`. |
 | CI | Docker image provides Ruby. Scripts run directly (not via `dev`). |
-| Cursor sandbox | `dev <cmd>` resolves Ruby correctly. `.cursor/rules/dev.mdc` instructs the AI agent to always use `dev <cmd>`. Shell trampolines in child scripts are NOT needed -- only `d3mlabs/dev`'s own bin/ scripts need them (bootstrapping: can't use `dev` to run `dev` itself). |
-
-**When to use each approach:**
-
-- **Protocol markers**: Default for new scripts. Works everywhere, CI-safe, no gem dependency.
-- **CLI::UI in child**: Dev-only scripts that benefit from real-time spinner animation and won't run in CI.
-- **Plain text**: When structured output isn't needed.
+| Cursor sandbox | `dev <cmd>` resolves Ruby correctly. `.cursor/rules/dev.mdc` instructs the AI agent to always use `dev <cmd>`. Shell trampolines in child scripts are NOT needed — only `d3mlabs/dev`'s own bin/ scripts need them (bootstrapping: can't use `dev` to run `dev` itself). |
 
 ## dev.yml convention
 
@@ -143,7 +97,7 @@ commands:
   - Each command has:
     - `desc`: Short description (shown in `dev` / `dev --help`).
     - `run`: Shell command to execute (from the repo root). Any extra args passed to `dev <cmd> [args...]` are forwarded to this command.
-    - `repl`: *(optional, default `false`)* When `true`, the command replaces the dev process (via `exec`) instead of running inside a cli-ui frame. Use this for interactive commands like consoles and REPLs that need direct terminal access.
+    - `repl`: *(optional, default `false`)* When `true`, the command replaces the dev process (via `exec`). Use this for long-running interactive sessions like consoles and REPLs where you don't want a parent process lingering.
 
 ## Examples
 

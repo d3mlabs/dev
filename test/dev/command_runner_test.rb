@@ -101,10 +101,10 @@ class CommandRunnerTest < Minitest::Test
     tmp.unlink
   end
 
-  test "run parses protocol markers from subprocess output" do
-    Given "a non-repl command that outputs protocol markers"
+  test "run passes child output directly to terminal" do
+    Given "a non-repl command that writes to stdout"
     tmp = Tempfile.new(["test", ".sh"])
-    tmp.write("#!/bin/sh\necho '::ok::step one'\necho '::fail::step two'")
+    tmp.write("#!/bin/sh\necho 'direct terminal output'")
     tmp.close
     File.chmod(0o755, tmp.path)
     cmd = Dev::Command.new(run: tmp.path, repl: false)
@@ -112,11 +112,10 @@ class CommandRunnerTest < Minitest::Test
     @ui.stubs(:done)
 
     When "we run the command"
-    @runner.run(cmd)
+    output = capture_subprocess_io { @runner.run(cmd) }.first
 
-    Then "ok and fail are dispatched to the ui"
-    1 * @ui.ok("step one")
-    1 * @ui.fail("step two")
+    Then "the child output goes directly to the terminal (not through ui)"
+    assert_includes output, "direct terminal output"
 
     Cleanup
     tmp.unlink
