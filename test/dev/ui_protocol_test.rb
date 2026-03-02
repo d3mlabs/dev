@@ -19,7 +19,7 @@ class UiProtocolTest < Minitest::Test
     Dev::UiProtocol.new(ui: @ui, raw_out: @raw_out)
   end
 
-  test "plain lines pass through to raw_out (bypass StdoutRouter)" do
+  test "plain lines outside frames pass through to raw_out" do
     Given "a stream with no protocol markers"
     io = StringIO.new("hello world\ngoodbye\n")
     protocol = build_protocol
@@ -27,7 +27,7 @@ class UiProtocolTest < Minitest::Test
     When "we process the stream"
     protocol.process_stream(io)
 
-    Then "each line is written directly to raw_out"
+    Then "each line is written directly to raw_out (bypass StdoutRouter)"
     assert_equal "hello world\ngoodbye\n", @raw_out.string
   end
 
@@ -39,10 +39,11 @@ class UiProtocolTest < Minitest::Test
     When "we process the stream"
     protocol.process_stream(io)
 
-    Then "open_frame and close_frame are called, plain line goes to raw_out"
+    Then "open_frame/close_frame are called, plain line goes through ui (gets frame borders)"
     1 * @ui.open_frame("Build")
+    1 * @ui.print_line("some output")
     1 * @ui.close_frame("Build")
-    assert_equal "some output\n", @raw_out.string
+    assert_equal "", @raw_out.string
   end
 
   test "::ok:: renders a checkmark" do
@@ -121,12 +122,13 @@ class UiProtocolTest < Minitest::Test
     When "we process the stream"
     protocol.process_stream(io)
 
-    Then "inner frame closes before outer frame"
+    Then "inner frame closes before outer frame, content goes through ui"
     1 * @ui.open_frame("Outer")
     1 * @ui.open_frame("Inner")
+    1 * @ui.print_line("content")
     1 * @ui.close_frame("Inner")
     1 * @ui.close_frame("Outer")
-    assert_includes @raw_out.string, "content"
+    assert_equal "", @raw_out.string
   end
 
   test "mixed protocol and plain output" do
@@ -143,12 +145,13 @@ class UiProtocolTest < Minitest::Test
     When "we process the stream"
     protocol.process_stream(io)
 
-    Then "markers go to ui, plain lines go to raw_out"
+    Then "markers and plain lines inside frame go through ui"
     1 * @ui.open_frame("Setup")
     1 * @ui.ok("step one")
+    1 * @ui.print_line("plain output here")
     1 * @ui.fail("step two")
     1 * @ui.close_frame("Setup")
-    assert_equal "plain output here\n", @raw_out.string
+    assert_equal "", @raw_out.string
   end
 
   test "empty stream does nothing" do

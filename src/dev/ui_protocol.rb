@@ -40,15 +40,22 @@ module Dev
       @frame_stack = T.let([], T::Array[String])
     end
 
-    # Reads from +io+ line by line, dispatching protocol markers to the Ui
-    # and writing plain lines directly to +raw_out+.
+    # Reads from +io+ line by line, dispatching protocol markers to the Ui.
+    # Non-marker lines inside a protocol frame go through @ui.print_line
+    # (so they get frame borders from StdoutRouter). Non-marker lines
+    # outside any frame go to @raw_out (bypass StdoutRouter, so CLI::UI
+    # child output renders correctly).
     sig { params(io: T.any(IO, StringIO)).void }
     def process_stream(io)
       io.each_line do |raw_line|
         line = raw_line.chomp
         next if dispatch_marker(line, io)
 
-        @raw_out.write(raw_line)
+        if @frame_stack.any?
+          @ui.print_line(line)
+        else
+          @raw_out.write(raw_line)
+        end
       end
     rescue Errno::EIO
       # Expected when child exits and PTY slave closes
