@@ -63,7 +63,6 @@ module Dev
             else
               append(lock_path, "set(dep_#{name}_hash \"#{hash}\")\n")
             end
-            append(lock_path, "set(dep_#{name}_tag \"#{opts[:tag]}\")\n") if opts[:tag]
             dep_label = env == "test" ? "#{name} (test)" : name
             step_ok(dep_label, quiet: quiet)
             step_detail("url: #{repo_or_url} , sha256: #{hash ? hash.sub(/\ASHA256=/, "") : "(none)"}", quiet: quiet)
