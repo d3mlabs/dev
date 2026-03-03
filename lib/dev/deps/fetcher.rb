@@ -32,13 +32,9 @@ module Dev
           if in_sync
             if populated
               Brew.step_ok(label)
-              if dep.key?(:url)
-                sha_display = dep[:hash] ? dep[:hash].sub(/\ASHA256=/, "") : "(pending)"
-                puts "  url: #{dep[:url]} , sha256: #{sha_display}"
-              end
               fetchcontent_source_dirs << ["FETCHCONTENT_SOURCE_DIR_#{name.upcase}", File.expand_path(dep_src)]
             else
-              fetch_dep(dep, dep_src, lock_path, verbose: verbose)
+              fetch_dep(dep, dep_src, lock_path, label: label, verbose: verbose)
               fetchcontent_source_dirs << ["FETCHCONTENT_SOURCE_DIR_#{name.upcase}", File.expand_path(dep_src)]
             end
           else
@@ -126,17 +122,14 @@ module Dev
             (dep.key?(:url) && !Dir.entries(dep_src).reject { |e| e == "." || e == ".." }.empty?)
         end
 
-        def fetch_dep(dep, dep_src, lock_path, verbose: false)
-          name = dep[:name]
+        def fetch_dep(dep, dep_src, lock_path, label:, verbose: false)
           if dep.key?(:url)
-            sha_display = dep[:hash] ? dep[:hash].sub(/\ASHA256=/, "") : "(pending)"
-            puts "  url: #{dep[:url]} , sha256: #{sha_display}"
-            Brew.with_spinner("Fetching #{name}") do
+            Brew.with_spinner("Fetching #{label}") do
               computed = fetch_tarball(dep[:url], dep_src, quiet: !verbose)
-              update_lockfile_hash(lock_path, name, computed) if computed
+              update_lockfile_hash(lock_path, dep[:name], computed) if computed
             end
           else
-            Brew.with_spinner("Fetching #{name}") do
+            Brew.with_spinner("Fetching #{label}") do
               fetch_git(dep[:repo], dep[:sha], dep_src, quiet: !verbose)
             end
           end
