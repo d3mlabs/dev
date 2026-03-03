@@ -5,7 +5,7 @@
 # Projects include this file and optionally a project-local DepsConfig.cmake for
 # per-dep cache options (e.g. Boost, googletest build flags).
 #
-# cmake_target_prefix support: if deps.targets.cmake sets dep_<name>_cmake_target_prefix
+# cmake_namespace support: if deps.targets.cmake sets dep_<name>_cmake_namespace
 # (e.g. "Boost::"), targets are prefixed automatically. This replaces hardcoded dep checks.
 
 if(NOT EXISTS "${CMAKE_SOURCE_DIR}/deps.lock.cmake")
@@ -51,16 +51,16 @@ endfunction()
 
 # Resolve one runtime dep to linkables (targets and/or headers shim).
 #
-# If dep_<name>_cmake_target_prefix is set (e.g. "Boost::"), each target name from
+# If dep_<name>_cmake_namespace is set (e.g. "Boost::"), each target name from
 # dep_<name>_cmake_targets is prefixed (e.g. "stacktrace" -> "Boost::stacktrace").
 # This generalizes what was previously a hardcoded boost check.
 function(resolve_dep_to_linkables _dep _result_var)
   set(_linkables "")
   if(DEFINED dep_${_dep}_cmake_targets)
-    # Determine prefix: use dep_<name>_cmake_target_prefix if set, else empty.
+    # Determine namespace: use dep_<name>_cmake_namespace if set, else empty.
     set(_prefix "")
-    if(DEFINED dep_${_dep}_cmake_target_prefix)
-      set(_prefix "${dep_${_dep}_cmake_target_prefix}")
+    if(DEFINED dep_${_dep}_cmake_namespace)
+      set(_prefix "${dep_${_dep}_cmake_namespace}")
     endif()
 
     foreach(_t ${dep_${_dep}_cmake_targets})

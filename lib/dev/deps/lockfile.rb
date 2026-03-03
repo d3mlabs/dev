@@ -222,8 +222,8 @@ module Dev
               if spec["cmake_targets"]
                 buf << "set(dep_#{name}_cmake_targets \"#{Array(spec["cmake_targets"]).map(&:to_s).join(";")}\")"
               end
-              if spec["cmake_target_prefix"]
-                buf << "set(dep_#{name}_cmake_target_prefix \"#{spec["cmake_target_prefix"]}\")"
+              if spec["cmake_namespace"]
+                buf << "set(dep_#{name}_cmake_namespace \"#{spec["cmake_namespace"]}\")"
               end
               buf << "set(dep_#{name}_includes \"#{Array(spec["includes"]).map(&:to_s).join(";")}\")" if spec["includes"]
             end
@@ -235,8 +235,8 @@ module Dev
               if spec["cmake_targets"]
                 buf << "set(dep_#{name}_cmake_targets \"#{Array(spec["cmake_targets"]).map(&:to_s).join(";")}\")"
               end
-              if spec["cmake_target_prefix"]
-                buf << "set(dep_#{name}_cmake_target_prefix \"#{spec["cmake_target_prefix"]}\")"
+              if spec["cmake_namespace"]
+                buf << "set(dep_#{name}_cmake_namespace \"#{spec["cmake_namespace"]}\")"
               end
               buf << "set(dep_#{name}_includes \"#{Array(spec["includes"]).map(&:to_s).join(";")}\")" if spec["includes"]
             end

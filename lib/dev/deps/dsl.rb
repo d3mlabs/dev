@@ -83,7 +83,7 @@ module Dev
       # Runtime dependency (app or test group).
       # Git: repo:, tag: or commit:.
       # URL: url:, optional hash:.
-      # CMake: cmake_targets:, includes:, cmake_target_prefix:.
+      # CMake: cmake_targets:, includes:, cmake_namespace:.
       def runtime(name, **spec)
         name_str = name.to_s
         return if name_str.empty?
