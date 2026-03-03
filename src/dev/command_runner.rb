@@ -7,9 +7,15 @@ require "dev/cli/ui"
 require "dev/command"
 
 module Dev
-  # Runs dev commands: child scripts get direct terminal access and handle
-  # their own UI (CLI::UI frames, spinners, prompts). Dev prints a header
-  # (command name) and footer (success/failure).
+  # Runs dev commands by exec-ing into the child process. Dev prints a colored
+  # header (command name) and then replaces itself:
+  #
+  # - repl commands: exec directly (no footer, for interactive sessions)
+  # - non-repl commands: exec into a shell wrapper that runs the command and
+  #   prints ✓ Done / ✗ Failed based on exit code
+  #
+  # The child has full terminal access — CLI::UI features (frames, spinners,
+  # prompts) all work natively without any interception.
   #
   # Before every command, ensures the project's shadowenv Ruby environment is
   # provisioned (fast-path: skips if .shadowenv.d/510_ruby.lisp is current).
@@ -28,13 +34,12 @@ module Dev
     def run(cmd, args: [])
       ensure_shadowenv_provisioned!
       shell_command = build_shell_command(cmd.run, args)
+      @ui.print_header(shell_command)
 
       if cmd.repl
         run_replace_process(shell_command)
       else
-        @ui.print_line(shell_command)
-        run_subprocess(shell_command)
-        @ui.done
+        run_exec_with_status(shell_command)
       end
     end
 
@@ -47,9 +52,6 @@ module Dev
       "#{run_str} #{args.shelljoin}"
     end
 
-    # Env overrides for child processes: unset GEM_HOME so the dev CLI's
-    # Homebrew gem path doesn't leak into project commands (which use the
-    # project's own Ruby/gems via shadowenv).
     CHILD_ENV = T.let({ "GEM_HOME" => nil }.freeze, T::Hash[String, T.nilable(String)])
 
     sig { void }
@@ -61,22 +63,35 @@ module Dev
       ShadowenvRuby.setup!(ruby_version: @ruby_version, project_root: project_root)
     end
 
-    # Replaces the current process with the command, wrapped in shadowenv exec
-    # so the child inherits the project's Ruby environment.
     sig { params(shell_command: String).void }
     def run_replace_process(shell_command)
       Dir.chdir(Dev::TARGET_PROJECT_ROOT)
       Kernel.exec(CHILD_ENV, "shadowenv", "exec", "--", "sh", "-c", shell_command)
     end
 
-    # Runs the command as a subprocess via system(). The child inherits
-    # stdin/stdout/stderr directly, so CLI::UI, prompts, and spinners
-    # all work natively in the child process.
+    # Execs into a shell wrapper that runs the command, then prints a colored
+    # success/failure footer based on the exit code.
     sig { params(shell_command: String).void }
-    def run_subprocess(shell_command)
+    def run_exec_with_status(shell_command)
       Dir.chdir(Dev::TARGET_PROJECT_ROOT)
-      success = system(CHILD_ENV, "shadowenv", "exec", "--", "sh", "-c", shell_command)
-      raise "#{shell_command} failed (exit #{$?.exitstatus})" unless success
+      Kernel.exec(CHILD_ENV, "shadowenv", "exec", "--", "sh", "-c", <<~SH)
+        #{shell_command}
+        __dev_status=$?
+        if [ $__dev_status -eq 0 ]; then
+          if [ -t 1 ]; then
+            printf '\\033[32m✓\\033[0m Done\\n'
+          else
+            echo 'Done'
+          fi
+        else
+          if [ -t 1 ]; then
+            printf '\\033[31m✗\\033[0m Failed (exit %d)\\n' "$__dev_status"
+          else
+            printf 'Failed (exit %d)\\n' "$__dev_status"
+          fi
+          exit $__dev_status
+        fi
+      SH
     end
   end
 end

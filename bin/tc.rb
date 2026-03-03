@@ -1,12 +1,16 @@
 #!/bin/sh
-# Prefer Homebrew Ruby if available, fall back to system Ruby
+# Use PATH ruby (rbenv) if available, fall back to Homebrew Ruby for bootstrapping
+if command -v ruby >/dev/null 2>&1; then
+  exec ruby -x "$0" "$@"
+fi
 if command -v brew >/dev/null 2>&1; then
   brew_ruby="$(brew --prefix ruby 2>/dev/null)/bin/ruby"
   if [ -x "$brew_ruby" ]; then
     exec "$brew_ruby" -x "$0" "$@"
   fi
 fi
-exec ruby -x "$0" "$@"
+echo "dev: no ruby found. Install rbenv and a Ruby version, or brew install ruby." >&2
+exit 1
 
 #!ruby
 # frozen_string_literal: true
@@ -18,20 +22,35 @@ DEV_ROOT = File.expand_path("..", __dir__)
 $LOAD_PATH.unshift(File.join(DEV_ROOT, "lib")) unless $LOAD_PATH.include?(File.join(DEV_ROOT, "lib"))
 
 load File.join(DEV_ROOT, "dependencies.rb")
+
+require "open3"
+require "cli/ui"
 require "ensure_bundler"
 
-ensure_bundler!(DEV_ROOT)
+CLI::UI::StdoutRouter.enable
 
-exit_code = Dir.chdir(DEV_ROOT) do
-  # Ensure gem RBIs are in sync with Gemfile.lock so drift is caught locally (not only on CI).
-  unless system("bundle", "exec", "tapioca", "gem", "--verify", out: $stdout, err: $stderr)
-    warn "\nRBI files are out of date. Run: dev rbi"
-    warn "Then commit the updated sorbet/rbi/gems/ files."
-    next 1
+class SorbetError < StandardError; end
+
+CLI::UI.frame("Type checking...") do
+  CLI::UI.spinner("Install Bundler") do
+    ensure_bundler!(DEV_ROOT)
   end
 
-  success = system("bundle", "exec", "srb", "tc", out: $stdout, err: $stderr)
-  success ? 0 : 1
+  CLI::UI.spinner("Verifying gem RBIs are in sync...") do
+    Dir.chdir(DEV_ROOT) do
+      out, err, status = Open3.capture3("bundle", "exec", "tapioca", "gem", "--verify")
+      
+      unless status.success?
+        warn "\nRBI files are out of date. Run: dev rbi"
+        warn "Then commit the updated sorbet/rbi/gems/ files."
+        next 1
+      end
+    end
+  end
+
+  CLI::UI.spinner("Running type checking...") do
+    out, err, status = Open3.capture3("bundle", "exec", "srb", "tc")
+    raise SorbetError, "srb tc error: #{err}" unless status.success?
+  end
 end
 
-exit(exit_code)

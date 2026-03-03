@@ -10,6 +10,7 @@ gem "rspock", "~> 2.3"
 
 # Test (dev repo's own tests)
 gem "minitest"
+gem "minitest-reporters"
 gem "rake"
 
 # bin/console

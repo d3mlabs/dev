@@ -1,12 +1,16 @@
 #!/bin/sh
-# Prefer Homebrew Ruby if available, fall back to system Ruby
+# Use PATH ruby (rbenv) if available, fall back to Homebrew Ruby for bootstrapping
+if command -v ruby >/dev/null 2>&1; then
+  exec ruby -x "$0" "$@"
+fi
 if command -v brew >/dev/null 2>&1; then
   brew_ruby="$(brew --prefix ruby 2>/dev/null)/bin/ruby"
   if [ -x "$brew_ruby" ]; then
     exec "$brew_ruby" -x "$0" "$@"
   fi
 fi
-exec ruby -x "$0" "$@"
+echo "dev: no ruby found. Install rbenv and a Ruby version, or brew install ruby." >&2
+exit 1
 
 #!ruby
 # frozen_string_literal: true
@@ -21,18 +25,21 @@ ENV["PATH"] = "#{File.dirname(RbConfig.ruby)}:#{ENV['PATH']}"
 DEV_ROOT = File.expand_path("..", __dir__)
 $LOAD_PATH.unshift(File.join(DEV_ROOT, "lib")) unless $LOAD_PATH.include?(File.join(DEV_ROOT, "lib"))
 
+require "open3"
+require "cli/ui"
 require "ensure_bundler"
 
-puts "Setting up dev environment..."
+CLI::UI::StdoutRouter.enable
 
-exit 1 unless ensure_bundler!(DEV_ROOT)
+class BundleInstallError < StandardError; end
 
-puts "  Installing dev repo gems..."
-Dir.chdir(DEV_ROOT) do
-  unless system("bundle", "install")
-    $stderr.puts "  bundle install failed"
-    exit 1
+CLI::UI.frame("Setting up dev environment...") do
+  CLI::UI.spinner("Installing bundler...") do
+    ensure_bundler!(DEV_ROOT)
+  end
+
+  CLI::UI.spinner("💎 bundle install") do
+    out, err, status = Open3.capture3("bundle", "install")
+    raise BundleInstallError, "bundle install error: #{err}" unless status.success?
   end
 end
-
-puts "  Done."

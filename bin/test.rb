@@ -1,12 +1,16 @@
 #!/bin/sh
-# Prefer Homebrew Ruby if available, fall back to system Ruby
+# Use PATH ruby (rbenv) if available, fall back to Homebrew Ruby for bootstrapping
+if command -v ruby >/dev/null 2>&1; then
+  exec ruby -x "$0" "$@"
+fi
 if command -v brew >/dev/null 2>&1; then
   brew_ruby="$(brew --prefix ruby 2>/dev/null)/bin/ruby"
   if [ -x "$brew_ruby" ]; then
     exec "$brew_ruby" -x "$0" "$@"
   fi
 fi
-exec ruby -x "$0" "$@"
+echo "dev: no ruby found. Install rbenv and a Ruby version, or brew install ruby." >&2
+exit 1
 
 #!ruby
 # frozen_string_literal: true
@@ -18,22 +22,41 @@ DEV_ROOT = File.expand_path("..", __dir__)
 $LOAD_PATH.unshift(File.join(DEV_ROOT, "lib")) unless $LOAD_PATH.include?(File.join(DEV_ROOT, "lib"))
 
 load File.join(DEV_ROOT, "dependencies.rb")
+
+require "open3"
+require "cli/ui"
 require "ensure_bundler"
 
-# Run this repo's tests only
-ensure_bundler!(DEV_ROOT)
+CLI::UI::StdoutRouter.enable
 
-# test/ mirrors src/: test/dev/config_parser_test.rb for src/dev/config_parser.rb
-test_files = Dir[File.join(DEV_ROOT, "test", "**", "*_test.rb")]
-if test_files.empty?
-  puts "  ⚠️  No test files found in test/"
-  exit 1
+class NoTestFilesError < StandardError; end
+class TestError < StandardError; end
+
+def main
+  CLI::UI.frame("Running tests...") do
+    CLI::UI.spinner("Install Bundler") do
+      ensure_bundler!(DEV_ROOT)
+    end
+
+    test_files = []
+    CLI::UI.spinner("Gathering test files...") do
+      # test/ mirrors src/: test/dev/config_parser_test.rb for src/dev/config_parser.rb
+      test_files = Dir[File.join(DEV_ROOT, "test", "**", "*_test.rb")]
+      raise NoTestFilesError, "No test files found in test/" if test_files.empty?
+    end
+
+    CLI::UI.puts("")
+    CLI::UI.frame("#{CLI::UI::Glyph::BUG} bundle exec rake test") do
+      Open3.popen2e("bundle", "exec", "rake", "test") do |_stdin, stdout_err, wait_thr|
+        stdout_err.each_line { |line| CLI::UI.puts(line.chomp) }
+        unless wait_thr.value.success?
+          e = TestError.new("Tests failed")
+          e.set_backtrace([]) # no backtrace here, test output is already printed
+          raise e
+        end
+      end
+    end
+  end
 end
 
-puts "Running tests..."
-success = Dir.chdir(DEV_ROOT) do
-  load_cmds = test_files.sort.map { |p| "load #{p.inspect}" }.join("; ")
-  system("bundle", "exec", "ruby", "-I", "test", "-e", "require 'test_loader'; require 'test_helper'; #{load_cmds}")
-end
-
-exit(success ? 0 : 1)
+main

@@ -48,6 +48,7 @@ class EnsureBundlerTest < Minitest::Test
     result = ensure_bundler!(DEV_ROOT)
 
     Then "it returns true after installing"
+    _ * $stdout.puts
     result == true
 
     Cleanup
@@ -55,23 +56,25 @@ class EnsureBundlerTest < Minitest::Test
     FileUtils.rm_rf(tmpdir)
   end
 
-  test "ensure_bundler! returns false when gem install fails" do
+  test "ensure_bundler! raises when gem install fails" do
     Given "bundle reports old version and gem install fails"
     tmpdir = Dir.mktmpdir("bundler-test-")
     fake_bin = File.join(tmpdir, "bin")
     FileUtils.mkdir_p(fake_bin)
     File.write(File.join(fake_bin, "bundle"), "#!/bin/sh\necho 'Bundler version 1.0.0'")
     File.chmod(0o755, File.join(fake_bin, "bundle"))
-    File.write(File.join(fake_bin, "gem"), "#!/bin/sh\nexit 1")
+    File.write(File.join(fake_bin, "gem"), "#!/bin/sh\necho 'install error' >&2\nexit 1")
     File.chmod(0o755, File.join(fake_bin, "gem"))
     original_path = ENV["PATH"]
     ENV["PATH"] = "#{fake_bin}:#{original_path}"
 
     When "we call ensure_bundler!"
-    result = ensure_bundler!(DEV_ROOT)
+    ensure_bundler!(DEV_ROOT)
 
-    Then "it returns false"
-    result == false
+    Then "it raises with a descriptive message"
+    _ * $stdout.puts
+    raises BundlerInstallError
+
 
     Cleanup
     ENV["PATH"] = original_path
@@ -90,10 +93,12 @@ class EnsureBundlerTest < Minitest::Test
     original_path = ENV["PATH"]
     ENV["PATH"] = "#{fake_bin}:#{original_path}"
 
+
     When "we call ensure_bundler!"
     result = ensure_bundler!(DEV_ROOT)
 
-    Then "it attempts install and returns true"
+    Then "it returns true"
+    _ * $stdout.puts
     result == true
 
     Cleanup

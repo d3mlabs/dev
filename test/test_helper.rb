@@ -26,8 +26,9 @@ require "minitest/hell" if ENV["MT_HELL"]
 # Minitest Reporters (optional; rspock uses RakeRerunReporter)
 begin
   require "minitest/reporters"
-  require "minitest/reporters/rake_rerun_reporter"
-  Minitest::Reporters.use!([Minitest::Reporters::RakeRerunReporter.new])
+  # require "minitest/reporters/rake_rerun_reporter"
+  # Minitest::Reporters.use!([Minitest::Reporters::RakeRerunReporter.new])
+  Minitest::Reporters.use!
 rescue LoadError
   # minitest-reporters not installed
 end

@@ -42,15 +42,32 @@ The tool walks up from your current directory until it finds a git repo root (di
 
 ## Child script UI
 
-Dev runs child commands via `system()`, giving them direct terminal access (stdin, stdout, stderr inherited). Child scripts handle their own UI — dev just prints a header (command name) and footer (success/failure).
+Dev uses `Kernel.exec` to replace itself with the child command. This gives the child full, direct terminal access — no pipes, no PTY, no output interception.
 
-Commands marked `repl: true` replace the dev process entirely via `exec`, which is useful for long-running interactive sessions (e.g. consoles) where you don't want a parent process lingering.
+Dev prints a colored header (the command name) before exec-ing. For non-repl commands, a shell wrapper runs after the child exits and prints `✓ Done` or `✗ Failed` based on the exit code. Commands marked `repl: true` exec directly without a wrapper (for interactive sessions like consoles).
 
 ### How it works
 
-Ruby child scripts use [Shopify's cli-ui](https://github.com/Shopify/cli-ui) natively for frames, spinners, prompts, and colors. Since the child has direct terminal access, all CLI::UI features work without compromise — animated spinners, interactive prompts, password inputs, menus.
+Ruby child scripts use [Shopify's cli-ui](https://github.com/Shopify/cli-ui) natively for frames, spinners, prompts, and colors. Since the child IS the process (not a subprocess), all CLI::UI features work without compromise — animated spinners, interactive prompts, password inputs, menus.
 
 Shell scripts output plain text. No special markers or protocol needed.
+
+### Running subcommands from child scripts
+
+Since the child process has full terminal access, `system()` is the simplest and best default for running subcommands — the subprocess inherits the TTY, so colors, prompts, and interactive output all work.
+
+Use `Open3.capture3` instead when running a subcommand **inside a `CLI::UI::Spinner`**. The spinner uses StdoutRouter to capture output while it animates; `system()` writes directly to the terminal file descriptor (bypassing StdoutRouter), which causes output to leak past the spinner and produce garbled text. `capture3` redirects the subprocess's stdout to a pipe so the spinner stays clean.
+
+```ruby
+# Outside a spinner — system() is fine
+system("cmake", "--build", "build")
+
+# Inside a spinner — use capture3 to prevent output leaking
+CLI::UI::Spinner.spin("Installing bundler...") do
+  out, err, status = Open3.capture3("gem", "install", "bundler", "--no-document")
+  raise "install failed: #{err}" unless status.success?
+end
+```
 
 ### Environment behavior
 
@@ -97,7 +114,7 @@ commands:
   - Each command has:
     - `desc`: Short description (shown in `dev` / `dev --help`).
     - `run`: Shell command to execute (from the repo root). Any extra args passed to `dev <cmd> [args...]` are forwarded to this command.
-    - `repl`: *(optional, default `false`)* When `true`, the command replaces the dev process (via `exec`). Use this for long-running interactive sessions like consoles and REPLs where you don't want a parent process lingering.
+    - `repl`: *(optional, default `false`)* When `true`, the command execs directly without a status footer. Use this for long-running interactive sessions like consoles and REPLs where a trailing `✓ Done` doesn't make sense.
 
 ## Examples
 

@@ -5,41 +5,34 @@ require "cli/ui"
 
 module Dev
   module Cli
-    # Minimal UI interface for dev's own output (header + footer around commands).
-    # Child scripts handle their own UI via CLI::UI with direct terminal access.
-    # Two tiers: UiImpl (TTY/CI — colors and glyphs) and NoUi (pipe/file — plain text).
+    # Minimal UI interface for dev's own output. Dev prints a colored header
+    # (command name) before exec-ing into the child process. The child handles
+    # all its own UI (CLI::UI frames, spinners, prompts).
+    #
+    # Two tiers: UiImpl (TTY/CI — colored header) and NoUi (pipe/file — plain text).
     module Ui
       extend T::Sig
       extend T::Helpers
 
       interface!
 
-      sig { abstract.params(message: String).void }
-      def print_line(message); end
-
-      sig { abstract.void }
-      def done; end
+      sig { abstract.params(command: String).void }
+      def print_header(command); end
     end
 
     class UiImpl
       extend T::Sig
       include Ui
 
-      sig { params(cli_ui: T.class_of(CLI::UI), out: IO).void }
-      def initialize(cli_ui:, out: $stdout)
+      sig { params(cli_ui: T.class_of(CLI::UI)).void }
+      def initialize(cli_ui:)
         @cli_ui = T.let(cli_ui, T.class_of(CLI::UI))
         @cli_ui.enable_color = true
-        @out = T.let(out, IO)
       end
 
-      sig { override.params(message: String).void }
-      def print_line(message)
-        @cli_ui.puts(message, to: @out)
-      end
-
-      sig { override.void }
-      def done
-        @cli_ui.puts("#{::CLI::UI::Glyph::CHECK} Done")
+      sig { override.params(command: String).void }
+      def print_header(command)
+        @cli_ui.puts(@cli_ui.fmt("{{bold:#{command}}}"))
       end
     end
 
@@ -47,14 +40,9 @@ module Dev
       extend T::Sig
       include Ui
 
-      sig { override.params(message: String).void }
-      def print_line(message)
-        $stdout.puts(message)
-      end
-
-      sig { override.void }
-      def done
-        $stdout.puts("Done")
+      sig { override.params(command: String).void }
+      def print_header(command)
+        $stdout.puts(command)
       end
     end
   end

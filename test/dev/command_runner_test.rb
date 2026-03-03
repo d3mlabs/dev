@@ -3,8 +3,6 @@
 
 require "test_helper"
 require "dev/command_runner"
-require "fileutils"
-require "tempfile"
 
 transform!(RSpock::AST::Transformation)
 class CommandRunnerTest < Minitest::Test
@@ -13,111 +11,68 @@ class CommandRunnerTest < Minitest::Test
 
   def setup
     @ui = typed_mock(Dev::Cli::Ui)
+    @ui.stubs(:print_header)
     @runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1")
     @runner.stubs(:ensure_shadowenv_provisioned!)
   end
 
-  test "run replaces process when repl" do
+  test "run prints header and execs directly when repl" do
     Given "a repl command"
     cmd = Dev::Command.new(run: "./bin/console", repl: true)
 
     When "we run the command"
     @runner.run(cmd)
 
-    Then "the process is replaced via shadowenv exec"
+    Then "header is printed and process is replaced via exec"
+    1 * @ui.print_header("./bin/console")
     1 * Kernel.exec({"GEM_HOME" => nil}, "shadowenv", "exec", "--", "sh", "-c", "./bin/console")
   end
 
-  test "run replaces process with args when repl" do
+  test "run prints header and execs with args when repl" do
     Given "a repl command with args"
     cmd = Dev::Command.new(run: "./bin/console", repl: true)
 
     When "we run the command with extra args"
     @runner.run(cmd, args: ["--verbose"])
 
-    Then "the process is replaced with args shell-joined"
+    Then "header includes args and exec passes them through"
+    1 * @ui.print_header("./bin/console --verbose")
     1 * Kernel.exec({"GEM_HOME" => nil}, "shadowenv", "exec", "--", "sh", "-c", "./bin/console --verbose")
   end
 
-  test "run spawns subprocess for non-repl command" do
-    Given "a non-repl command that writes to stdout"
-    tmp = Tempfile.new(["test", ".sh"])
-    tmp.write("#!/bin/sh\necho 'subprocess output'")
-    tmp.close
-    File.chmod(0o755, tmp.path)
-    cmd = Dev::Command.new(run: tmp.path, repl: false)
-    @ui.stubs(:print_line)
-    @ui.stubs(:done)
+  test "run prints header and execs with shell wrapper for non-repl" do
+    Given "a non-repl command"
+    cmd = Dev::Command.new(run: "./bin/setup.rb", repl: false)
 
     When "we run the command"
     @runner.run(cmd)
 
-    Then "print_line is called for the command header, done is called"
-    1 * @ui.print_line(tmp.path)
-    1 * @ui.done
-
-    Cleanup
-    tmp.unlink
+    Then "header is printed and exec is called with a shell wrapper"
+    1 * @ui.print_header("./bin/setup.rb")
+    1 * Kernel.exec({"GEM_HOME" => nil}, "shadowenv", "exec", "--", "sh", "-c", includes("./bin/setup.rb"))
   end
 
-  test "run spawns subprocess with args passed through" do
+  test "non-repl shell wrapper includes status check and Done message" do
+    Given "a non-repl command"
+    cmd = Dev::Command.new(run: "./bin/test.sh", repl: false)
+
+    When "we run the command"
+    @runner.run(cmd)
+
+    Then "the shell wrapper includes exit code handling and Done/Failed output"
+    1 * Kernel.exec({"GEM_HOME" => nil}, "shadowenv", "exec", "--", "sh", "-c",
+      all_of(includes("./bin/test.sh"), includes("__dev_status=$?"), includes("Done"), includes("Failed")))
+  end
+
+  test "non-repl shell wrapper includes args" do
     Given "a non-repl command with args"
-    tmp = Tempfile.new(["test", ".sh"])
-    tmp.write("#!/bin/sh\necho \"args: $@\"")
-    tmp.close
-    File.chmod(0o755, tmp.path)
-    cmd = Dev::Command.new(run: tmp.path, repl: false)
-    expected_shell_command = "#{tmp.path} --verbose"
-    @ui.stubs(:print_line)
-    @ui.stubs(:done)
+    cmd = Dev::Command.new(run: "./bin/test.sh", repl: false)
 
-    When "we run the command with args"
-    @runner.run(cmd, args: ["--verbose"])
+    When "we run with args"
+    @runner.run(cmd, args: ["-v"])
 
-    Then "print_line is called for the command header, done is called"
-    1 * @ui.print_line(expected_shell_command)
-    1 * @ui.done
-
-    Cleanup
-    tmp.unlink
-  end
-
-  test "run raises when subprocess fails" do
-    Given "a command that exits with non-zero status"
-    tmp = Tempfile.new(["test", ".sh"])
-    tmp.write("#!/bin/sh\nexit 1")
-    tmp.close
-    File.chmod(0o755, tmp.path)
-    cmd = Dev::Command.new(run: tmp.path, repl: false)
-    @ui.stubs(:print_line)
-
-    When "we run the command"
-    err = assert_raises(RuntimeError) { @runner.run(cmd) }
-
-    Then "the error message includes the command path"
-    assert_includes err.message, tmp.path
-
-    Cleanup
-    tmp.unlink
-  end
-
-  test "run passes child output directly to terminal" do
-    Given "a non-repl command that writes to stdout"
-    tmp = Tempfile.new(["test", ".sh"])
-    tmp.write("#!/bin/sh\necho 'direct terminal output'")
-    tmp.close
-    File.chmod(0o755, tmp.path)
-    cmd = Dev::Command.new(run: tmp.path, repl: false)
-    @ui.stubs(:print_line)
-    @ui.stubs(:done)
-
-    When "we run the command"
-    output = capture_subprocess_io { @runner.run(cmd) }.first
-
-    Then "the child output goes directly to the terminal (not through ui)"
-    assert_includes output, "direct terminal output"
-
-    Cleanup
-    tmp.unlink
+    Then "header and wrapper both include args"
+    1 * @ui.print_header("./bin/test.sh -v")
+    1 * Kernel.exec({"GEM_HOME" => nil}, "shadowenv", "exec", "--", "sh", "-c", includes("./bin/test.sh -v"))
   end
 end

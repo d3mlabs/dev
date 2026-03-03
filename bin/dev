@@ -1,12 +1,16 @@
 #!/bin/sh
-# Prefer Homebrew Ruby if available, fall back to system Ruby
+# Use PATH ruby (rbenv) if available, fall back to Homebrew Ruby for bootstrapping
+if command -v ruby >/dev/null 2>&1; then
+  exec ruby -x "$0" "$@"
+fi
 if command -v brew >/dev/null 2>&1; then
   brew_ruby="$(brew --prefix ruby 2>/dev/null)/bin/ruby"
   if [ -x "$brew_ruby" ]; then
     exec "$brew_ruby" -x "$0" "$@"
   fi
 fi
-exec ruby -x "$0" "$@"
+echo "dev: no ruby found. Install rbenv and a Ruby version, or brew install ruby." >&2
+exit 1
 
 #!ruby
 # frozen_string_literal: true
@@ -21,10 +25,9 @@ $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 
 require "dev"
 
-out = $stdout
-ui = if out.tty? || ENV["CI"] || ENV["CLICOLOR_FORCE"]
+ui = if $stdout.tty? || ENV["CI"] || ENV["CLICOLOR_FORCE"]
   Dev::Cli::UiImpl.new(cli_ui: CLI::UI)
 else
   Dev::Cli::NoUi.new
 end
-Dev::Runner.new.run(ARGV, out: out, ui: ui)
+Dev::Runner.new.run(ARGV, out: $stdout, ui: ui)
