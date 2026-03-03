@@ -38,14 +38,16 @@ CLI::UI::StdoutRouter.enable
 class SorbetError < StandardError; end
 class RbiOutOfDateError < StandardError; end
 
+# CLI::UI.spinner returns false when the task fails (debrief prints exceptions
+# but never re-raises), so we check each return value explicitly.
 CLI::UI.frame("Type checking...") do
-  CLI::UI.spinner("Install Bundler") do
-    ensure_bundler!(DEV_ROOT)
+  unless CLI::UI.spinner("Install Bundler") { ensure_bundler!(DEV_ROOT) }
+    exit 1
   end
 
-  CLI::UI.spinner("Verifying gem RBIs are in sync...") do
+  unless CLI::UI.spinner("Verifying gem RBIs are in sync...") do
     Dir.chdir(DEV_ROOT) do
-      out, err, status = Open3.capture3("bundle", "exec", "tapioca", "gem", "--verify")
+      _, _, status = Open3.capture3("bundle", "exec", "tapioca", "gem", "--verify")
 
       unless status.success?
         raise RbiOutOfDateError,
@@ -53,10 +55,14 @@ CLI::UI.frame("Type checking...") do
       end
     end
   end
+    exit 1
+  end
 
-  CLI::UI.spinner("Running type checking...") do
-    out, err, status = Open3.capture3("bundle", "exec", "srb", "tc")
+  unless CLI::UI.spinner("Running type checking...") do
+    _, err, status = Open3.capture3("bundle", "exec", "srb", "tc")
     raise SorbetError, "srb tc error: #{err}" unless status.success?
+  end
+    exit 1
   end
 end
 

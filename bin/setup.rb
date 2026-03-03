@@ -40,12 +40,14 @@ CLI::UI::StdoutRouter.enable
 class BundleInstallError < StandardError; end
 
 CLI::UI.frame("Setting up dev environment...") do
-  CLI::UI.spinner("Installing bundler...") do
-    ensure_bundler!(DEV_ROOT)
+  unless CLI::UI.spinner("Installing bundler...") { ensure_bundler!(DEV_ROOT) }
+    exit 1
   end
 
-  CLI::UI.spinner("💎 bundle install") do
-    out, err, status = Open3.capture3("bundle", "install")
+  unless CLI::UI.spinner("💎 bundle install") do
+    _, err, status = Open3.capture3("bundle", "install")
     raise BundleInstallError, "bundle install error: #{err}" unless status.success?
+  end
+    exit 1
   end
 end

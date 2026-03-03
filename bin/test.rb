@@ -40,15 +40,17 @@ class TestError < StandardError; end
 
 def main
   CLI::UI.frame("Running tests...") do
-    CLI::UI.spinner("Install Bundler") do
-      ensure_bundler!(DEV_ROOT)
+    unless CLI::UI.spinner("Install Bundler") { ensure_bundler!(DEV_ROOT) }
+      exit 1
     end
 
     test_files = []
-    CLI::UI.spinner("Gathering test files...") do
+    unless CLI::UI.spinner("Gathering test files...") do
       # test/ mirrors src/: test/dev/config_parser_test.rb for src/dev/config_parser.rb
       test_files = Dir[File.join(DEV_ROOT, "test", "**", "*_test.rb")]
       raise NoTestFilesError, "No test files found in test/" if test_files.empty?
+    end
+      exit 1
     end
 
     CLI::UI.puts("")
