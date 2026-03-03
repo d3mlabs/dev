@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "deps/version"
 require_relative "deps/config"
 require_relative "deps/brew"
 require_relative "deps/taps"
