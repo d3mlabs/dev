@@ -36,6 +36,7 @@ require "ensure_bundler"
 CLI::UI::StdoutRouter.enable
 
 class SorbetError < StandardError; end
+class RbiOutOfDateError < StandardError; end
 
 CLI::UI.frame("Type checking...") do
   CLI::UI.spinner("Install Bundler") do
@@ -45,11 +46,10 @@ CLI::UI.frame("Type checking...") do
   CLI::UI.spinner("Verifying gem RBIs are in sync...") do
     Dir.chdir(DEV_ROOT) do
       out, err, status = Open3.capture3("bundle", "exec", "tapioca", "gem", "--verify")
-      
+
       unless status.success?
-        warn "\nRBI files are out of date. Run: dev rbi"
-        warn "Then commit the updated sorbet/rbi/gems/ files."
-        next 1
+        raise RbiOutOfDateError,
+          "RBI files are out of date. Run: dev rbi\nThen commit the updated sorbet/rbi/gems/ files."
       end
     end
   end
