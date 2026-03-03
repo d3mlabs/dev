@@ -32,6 +32,12 @@ module Dev
     @dev_yaml_file = result
   end
 
+  # Dev's root directory
+  DEV_ROOT = T.let(Pathname.new(File.expand_path("..", __dir__)), Pathname)
+
+  # Dev's lib directory
+  DEV_LIB_DIR = T.let(Dev::DEV_ROOT / "lib", Pathname)
+
   # Target project root (directory containing dev.yml)
   TARGET_PROJECT_ROOT = T.let(Pathname.new(dev_yaml_file.dirname), Pathname)
 end

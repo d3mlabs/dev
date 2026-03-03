@@ -26,6 +26,9 @@ $LOAD_PATH.unshift(File.join(DEV_ROOT, "lib")) unless $LOAD_PATH.include?(File.j
 
 load File.join(DEV_ROOT, "dependencies.rb")
 
+ENV["BUNDLE_GEMFILE"] ||= File.join(DEV_ROOT, "Gemfile")
+require "bundler/setup"
+
 require "open3"
 require "cli/ui"
 require "ensure_bundler"

@@ -25,7 +25,7 @@ class CommandRunnerTest < Minitest::Test
 
     Then "header is printed and process is replaced via exec"
     1 * @ui.print_header("./bin/console")
-    1 * Kernel.exec({"GEM_HOME" => nil}, "shadowenv", "exec", "--", "sh", "-c", "./bin/console")
+    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", "./bin/console")
   end
 
   test "run prints header and execs with args when repl" do
@@ -37,7 +37,7 @@ class CommandRunnerTest < Minitest::Test
 
     Then "header includes args and exec passes them through"
     1 * @ui.print_header("./bin/console --verbose")
-    1 * Kernel.exec({"GEM_HOME" => nil}, "shadowenv", "exec", "--", "sh", "-c", "./bin/console --verbose")
+    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", "./bin/console --verbose")
   end
 
   test "run prints header and execs with shell wrapper for non-repl" do
@@ -49,7 +49,7 @@ class CommandRunnerTest < Minitest::Test
 
     Then "header is printed and exec is called with a shell wrapper"
     1 * @ui.print_header("./bin/setup.rb")
-    1 * Kernel.exec({"GEM_HOME" => nil}, "shadowenv", "exec", "--", "sh", "-c", includes("./bin/setup.rb"))
+    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/setup.rb"))
   end
 
   test "non-repl shell wrapper includes status check and Done message" do
@@ -60,7 +60,7 @@ class CommandRunnerTest < Minitest::Test
     @runner.run(cmd)
 
     Then "the shell wrapper includes exit code handling and Done/Failed output"
-    1 * Kernel.exec({"GEM_HOME" => nil}, "shadowenv", "exec", "--", "sh", "-c",
+    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c",
       all_of(includes("./bin/test.sh"), includes("__dev_status=$?"), includes("Done"), includes("Failed")))
   end
 
@@ -73,6 +73,6 @@ class CommandRunnerTest < Minitest::Test
 
     Then "header and wrapper both include args"
     1 * @ui.print_header("./bin/test.sh -v")
-    1 * Kernel.exec({"GEM_HOME" => nil}, "shadowenv", "exec", "--", "sh", "-c", includes("./bin/test.sh -v"))
+    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/test.sh -v"))
   end
 end

@@ -52,7 +52,12 @@ module Dev
       "#{run_str} #{args.shelljoin}"
     end
 
-    CHILD_ENV = T.let({ "GEM_HOME" => nil }.freeze, T::Hash[String, T.nilable(String)])
+
+    sig { returns(T::Hash[String, T.nilable(String)]) }
+    def child_env
+      rubylib = [Dev::DEV_LIB_DIR, ENV["RUBYLIB"]].compact.join(File::PATH_SEPARATOR)
+      { "GEM_HOME" => nil, "RUBYLIB" => rubylib }
+    end
 
     sig { void }
     def ensure_shadowenv_provisioned!
@@ -66,7 +71,7 @@ module Dev
     sig { params(shell_command: String).void }
     def run_replace_process(shell_command)
       Dir.chdir(Dev::TARGET_PROJECT_ROOT)
-      Kernel.exec(CHILD_ENV, "shadowenv", "exec", "--", "sh", "-c", shell_command)
+      Kernel.exec(child_env, "shadowenv", "exec", "--", "sh", "-c", shell_command)
     end
 
     # Execs into a shell wrapper that runs the command, then prints a colored
@@ -74,7 +79,7 @@ module Dev
     sig { params(shell_command: String).void }
     def run_exec_with_status(shell_command)
       Dir.chdir(Dev::TARGET_PROJECT_ROOT)
-      Kernel.exec(CHILD_ENV, "shadowenv", "exec", "--", "sh", "-c", <<~SH)
+      Kernel.exec(child_env, "shadowenv", "exec", "--", "sh", "-c", <<~SH)
         #{shell_command}
         __dev_status=$?
         if [ $__dev_status -eq 0 ]; then

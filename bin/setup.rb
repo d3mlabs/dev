@@ -28,6 +28,9 @@ ENV["PATH"] = "#{File.dirname(RbConfig.ruby)}:#{ENV['PATH']}"
 DEV_ROOT = File.expand_path("..", __dir__)
 $LOAD_PATH.unshift(File.join(DEV_ROOT, "lib")) unless $LOAD_PATH.include?(File.join(DEV_ROOT, "lib"))
 
+ENV["BUNDLE_GEMFILE"] ||= File.join(DEV_ROOT, "Gemfile")
+require "bundler/setup"
+
 require "open3"
 require "cli/ui"
 require "ensure_bundler"
