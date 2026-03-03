@@ -1,7 +1,10 @@
 #!/bin/sh
-# Use PATH ruby (rbenv) if available, fall back to Homebrew Ruby for bootstrapping
+# Use PATH ruby (rbenv) if >= 2.7, fall back to Homebrew Ruby for bootstrapping.
+# Skips macOS system Ruby 2.6 which is too old for sorbet-runtime.
 if command -v ruby >/dev/null 2>&1; then
-  exec ruby -x "$0" "$@"
+  if ruby -e 'exit(RUBY_VERSION >= "2.7" ? 0 : 1)' 2>/dev/null; then
+    exec ruby -x "$0" "$@"
+  fi
 fi
 if command -v brew >/dev/null 2>&1; then
   brew_ruby="$(brew --prefix ruby 2>/dev/null)/bin/ruby"

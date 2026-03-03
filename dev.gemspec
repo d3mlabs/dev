@@ -13,5 +13,6 @@ Gem::Specification.new do |s|
   s.files = Dir["bin/*", "src/**/*", "lib/**/*", "VERSION", "LICENSE"]
 
   s.add_runtime_dependency "cli-ui"
+  s.add_runtime_dependency "devdeps"
   s.add_runtime_dependency "sorbet-runtime"
 end
