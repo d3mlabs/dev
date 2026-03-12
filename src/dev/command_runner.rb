@@ -63,9 +63,31 @@ module Dev
     def ensure_shadowenv_provisioned!
       require "shadowenv_ruby"
       project_root = Dev::TARGET_PROJECT_ROOT
-      return if ShadowenvRuby.provisioned?(@ruby_version, project_root: project_root)
+      unless ShadowenvRuby.provisioned?(@ruby_version, project_root: project_root)
+        ShadowenvRuby.setup!(ruby_version: @ruby_version, project_root: project_root)
+      end
 
-      ShadowenvRuby.setup!(ruby_version: @ruby_version, project_root: project_root)
+      ensure_llvm_provisioned!(project_root)
+    end
+
+    sig { params(project_root: Pathname).void }
+    def ensure_llvm_provisioned!(project_root)
+      require "shadowenv_llvm"
+      return if ShadowenvLlvm.ci_or_linux?
+      return unless project_needs_llvm?(project_root)
+
+      prefix = ShadowenvLlvm.detect_llvm_prefix
+      return unless prefix
+      return if ShadowenvLlvm.provisioned?(prefix, project_root: project_root)
+
+      ShadowenvLlvm.setup!(project_root: project_root, llvm_prefix: prefix)
+    end
+
+    sig { params(project_root: Pathname).returns(T::Boolean) }
+    def project_needs_llvm?(project_root)
+      lockfile = project_root / "build-deps.lock"
+      return false unless lockfile.exist?
+      lockfile.read.match?(/^brew llvm\b/)
     end
 
     sig { params(shell_command: String).void }
