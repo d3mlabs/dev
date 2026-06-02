@@ -9,7 +9,7 @@ require "tmpdir"
 transform!(RSpock::AST::Transformation)
 class ShadowenvLuaTest < Minitest::Test
   test "provisioned? returns true when lisp file matches version" do
-    Given
+    Given "a 510_lua.lisp provisioned for 5.1"
     tmpdir = Dir.mktmpdir("shadowenv-lua-test-")
     shadowenv_d = File.join(tmpdir, ".shadowenv.d")
     FileUtils.mkdir_p(shadowenv_d)
@@ -26,7 +26,7 @@ class ShadowenvLuaTest < Minitest::Test
   end
 
   test "provisioned? returns false when no lisp file exists" do
-    Given
+    Given "an empty project root"
     tmpdir = Dir.mktmpdir("shadowenv-lua-test-")
 
     Expect
@@ -37,7 +37,7 @@ class ShadowenvLuaTest < Minitest::Test
   end
 
   test "provisioned? returns false for different version" do
-    Given
+    Given "a 510_lua.lisp provisioned for 5.4"
     tmpdir = Dir.mktmpdir("shadowenv-lua-test-")
     shadowenv_d = File.join(tmpdir, ".shadowenv.d")
     FileUtils.mkdir_p(shadowenv_d)
@@ -54,7 +54,7 @@ class ShadowenvLuaTest < Minitest::Test
   end
 
   test "generate_lua_lisp contains provide directive" do
-    When
+    When "generating lisp for 5.1"
     result = ShadowenvLua.generate_lua_lisp("5.1")
 
     Then
@@ -62,7 +62,7 @@ class ShadowenvLuaTest < Minitest::Test
   end
 
   test "generate_lua_lisp sets LUA_PATH for lua_modules" do
-    When
+    When "generating lisp for 5.1"
     result = ShadowenvLua.generate_lua_lisp("5.1")
 
     Then
@@ -71,7 +71,7 @@ class ShadowenvLuaTest < Minitest::Test
   end
 
   test "generate_lua_lisp sets LUA_CPATH for lua_modules" do
-    When
+    When "generating lisp for 5.1"
     result = ShadowenvLua.generate_lua_lisp("5.1")
 
     Then
@@ -79,7 +79,7 @@ class ShadowenvLuaTest < Minitest::Test
   end
 
   test "generate_lua_lisp prepends lua and luarocks to PATH" do
-    When
+    When "generating lisp for 5.1"
     result = ShadowenvLua.generate_lua_lisp("5.1")
 
     Then
@@ -88,10 +88,10 @@ class ShadowenvLuaTest < Minitest::Test
   end
 
   test "setup! writes lisp file and returns true" do
-    Given
+    Given "a temporary project directory"
     tmpdir = Dir.mktmpdir("shadowenv-lua-setup-")
 
-    When
+    When "running setup!"
     result = ShadowenvLua.setup!(lua_version: "5.1", project_root: tmpdir)
 
     Then
