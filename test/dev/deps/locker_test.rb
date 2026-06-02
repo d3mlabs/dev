@@ -3,64 +3,64 @@
 
 require "test_helper"
 require "dev/deps/locker"
-require "dev/deps/pin"
+require "dev/deps/dependency"
 require "tmpdir"
 require "yaml"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::LockerTest < Minitest::Test
-  test "write and read round-trips pins through YAML" do
-    Given
+  test "write and read round-trips dependencies through YAML" do
+    Given "a locker with two dependencies"
     dir = Dir.mktmpdir("dev-locker-test-")
     lockfile = File.join(dir, "deps.lock")
     locker = Dev::Deps::Locker.new
-    pins = [
-      Dev::Deps::Pin.new(
+    deps = [
+      Dev::Deps::Dependency.new(
         name: "boost", integration: :cmake, group: :app,
         version: "1.90.0", hash: "SHA256=deadbeef",
         metadata: { "url" => "https://example.com/boost.tar.gz" },
       ),
-      Dev::Deps::Pin.new(
+      Dev::Deps::Dependency.new(
         name: "luaunit", integration: :luarocks, group: :test,
         version: "3.5-1", hash: "SHA256=abc123",
         metadata: {},
       ),
     ]
 
-    When
-    locker.write(pins, lockfile_path: lockfile)
-    read_pins = locker.read(lockfile_path: lockfile)
+    When "writing and reading back"
+    locker.write(deps, lockfile_path: lockfile)
+    read_deps = locker.read(lockfile_path: lockfile)
 
     Then
-    read_pins.size == 2
-    read_pins[0].name == "boost"
-    read_pins[0].integration == :cmake
-    read_pins[0].group == :app
-    read_pins[0].version == "1.90.0"
-    read_pins[0].hash == "SHA256=deadbeef"
-    read_pins[0].metadata == { "url" => "https://example.com/boost.tar.gz" }
-    read_pins[1].name == "luaunit"
-    read_pins[1].integration == :luarocks
-    read_pins[1].group == :test
+    read_deps.size == 2
+    read_deps[0].name == "boost"
+    read_deps[0].integration == :cmake
+    read_deps[0].group == :app
+    read_deps[0].version == "1.90.0"
+    read_deps[0].hash == "SHA256=deadbeef"
+    read_deps[0].metadata == { "url" => "https://example.com/boost.tar.gz" }
+    read_deps[1].name == "luaunit"
+    read_deps[1].integration == :luarocks
+    read_deps[1].group == :test
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
   test "write produces readable YAML with header comment" do
-    Given
+    Given "a single dependency"
     dir = Dir.mktmpdir("dev-locker-test-")
     lockfile = File.join(dir, "deps.lock")
     locker = Dev::Deps::Locker.new
-    pins = [
-      Dev::Deps::Pin.new(
+    deps = [
+      Dev::Deps::Dependency.new(
         name: "boost", integration: :cmake, group: :app,
         version: "1.90.0", hash: "SHA256=deadbeef", metadata: {},
       ),
     ]
 
-    When
-    locker.write(pins, lockfile_path: lockfile)
+    When "writing to lockfile"
+    locker.write(deps, lockfile_path: lockfile)
     content = File.read(lockfile)
 
     Then
@@ -73,72 +73,68 @@ class Dev::Deps::LockerTest < Minitest::Test
   end
 
   test "read returns empty array for nonexistent lockfile" do
-    Given
+    Given "a locker"
     locker = Dev::Deps::Locker.new
 
-    When
-    pins = locker.read(lockfile_path: "/nonexistent/deps.lock")
+    When "reading a nonexistent path"
+    deps = locker.read(lockfile_path: "/nonexistent/deps.lock")
 
     Then
-    pins == []
+    deps == []
   end
 
-  test "write_for_groups routes app and test pins to deps.lock" do
-    Given
+  test "write_for_groups routes app and test deps to deps.lock" do
+    Given "dependencies in app, test, and build groups"
     dir = Dir.mktmpdir("dev-locker-test-")
     locker = Dev::Deps::Locker.new
-    pins = [
-      Dev::Deps::Pin.new(name: "boost", integration: :cmake, group: :app,
-                          version: "1.90.0", hash: "SHA256=aaa", metadata: {}),
-      Dev::Deps::Pin.new(name: "luaunit", integration: :luarocks, group: :test,
-                          version: "3.5-1", hash: "SHA256=bbb", metadata: {}),
-      Dev::Deps::Pin.new(name: "cmake", integration: :brew, group: :build,
-                          version: "3.31.4", hash: "SHA256=ccc", metadata: {}),
+    deps = [
+      Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
+                                version: "1.90.0", hash: "SHA256=aaa", metadata: {}),
+      Dev::Deps::Dependency.new(name: "luaunit", integration: :luarocks, group: :test,
+                                version: "3.5-1", hash: "SHA256=bbb", metadata: {}),
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
+                                version: "3.31.4", hash: "SHA256=ccc", metadata: {}),
     ]
 
-    When
-    locker.write_for_groups(pins, root: dir)
-    deps_pins = locker.read(lockfile_path: File.join(dir, "deps.lock"))
-    build_pins = locker.read(lockfile_path: File.join(dir, "build-deps.lock"))
+    When "writing for groups"
+    locker.write_for_groups(deps, root: dir)
+    app_deps = locker.read(lockfile_path: File.join(dir, "deps.lock"))
+    build_deps = locker.read(lockfile_path: File.join(dir, "build-deps.lock"))
 
-    Then "app and test go to deps.lock"
-    deps_pins.size == 2
-    deps_pins.map(&:name).sort == ["boost", "luaunit"]
-
-    Then "build goes to build-deps.lock"
-    build_pins.size == 1
-    build_pins[0].name == "cmake"
+    Then
+    app_deps.size == 2
+    app_deps.map(&:name).sort == ["boost", "luaunit"]
+    build_deps.size == 1
+    build_deps[0].name == "cmake"
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
-  test "write_for_groups handles env-scoped build pins" do
-    Given
+  test "write_for_groups handles env-scoped build deps" do
+    Given "build dependencies with env scoping"
     dir = Dir.mktmpdir("dev-locker-test-")
     locker = Dev::Deps::Locker.new
-    pins = [
-      Dev::Deps::Pin.new(name: "ccache", integration: :brew, group: :build,
-                          version: "4.10.2", hash: "SHA256=aaa", metadata: {}),
-      Dev::Deps::Pin.new(name: "ruby", integration: :brew, group: :build,
-                          version: "3.3.0", hash: "SHA256=bbb",
-                          metadata: { "env" => "ci" }),
-      Dev::Deps::Pin.new(name: "powershell", integration: :brew, group: :build,
-                          version: "7.4.0", hash: "SHA256=ccc",
-                          metadata: { "env" => "ci", "tap" => "d3mlabs/d3mlabs" }),
-      Dev::Deps::Pin.new(name: "powershell", integration: :brew, group: :build,
-                          version: nil, hash: nil,
-                          metadata: { "env" => "dev", "cask" => true }),
+    deps = [
+      Dev::Deps::Dependency.new(name: "ccache", integration: :brew, group: :build,
+                                version: "4.10.2", hash: "SHA256=aaa", metadata: {}),
+      Dev::Deps::Dependency.new(name: "ruby", integration: :brew, group: :build,
+                                version: "3.3.0", hash: "SHA256=bbb",
+                                metadata: { "env" => "ci" }),
+      Dev::Deps::Dependency.new(name: "powershell", integration: :brew, group: :build,
+                                version: "7.4.0", hash: "SHA256=ccc",
+                                metadata: { "env" => "ci", "tap" => "d3mlabs/d3mlabs" }),
+      Dev::Deps::Dependency.new(name: "powershell", integration: :brew, group: :build,
+                                version: nil, hash: nil,
+                                metadata: { "env" => "dev", "cask" => true }),
     ]
 
-    When
-    locker.write_for_groups(pins, root: dir)
+    When "writing for groups"
+    locker.write_for_groups(deps, root: dir)
     content = File.read(File.join(dir, "build-deps.lock"))
 
-    Then "global pin is at top level"
+    Then
     content.include?("ccache:")
-
-    Then "env-scoped pins are nested under env:"
     yaml = YAML.safe_load(content, permitted_classes: [Symbol])
     yaml["env"]["ci"]["ruby"]["version"] == "3.3.0"
     yaml["env"]["ci"]["powershell"]["tap"] == "d3mlabs/d3mlabs"
@@ -148,29 +144,29 @@ class Dev::Deps::LockerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "read round-trips env-scoped build pins" do
-    Given
+  test "read round-trips env-scoped build deps" do
+    Given "global and env-scoped build dependencies"
     dir = Dir.mktmpdir("dev-locker-test-")
     locker = Dev::Deps::Locker.new
-    pins = [
-      Dev::Deps::Pin.new(name: "ccache", integration: :brew, group: :build,
-                          version: "4.10.2", hash: "SHA256=aaa", metadata: {}),
-      Dev::Deps::Pin.new(name: "ruby", integration: :brew, group: :build,
-                          version: "3.3.0", hash: "SHA256=bbb",
-                          metadata: { "env" => "ci" }),
+    deps = [
+      Dev::Deps::Dependency.new(name: "ccache", integration: :brew, group: :build,
+                                version: "4.10.2", hash: "SHA256=aaa", metadata: {}),
+      Dev::Deps::Dependency.new(name: "ruby", integration: :brew, group: :build,
+                                version: "3.3.0", hash: "SHA256=bbb",
+                                metadata: { "env" => "ci" }),
     ]
 
-    When
-    locker.write_for_groups(pins, root: dir)
-    read_pins = locker.read(lockfile_path: File.join(dir, "build-deps.lock"))
+    When "writing and reading back"
+    locker.write_for_groups(deps, root: dir)
+    read_deps = locker.read(lockfile_path: File.join(dir, "build-deps.lock"))
 
     Then
-    read_pins.size == 2
-    global_pin = read_pins.find { |p| p.name == "ccache" }
-    env_pin = read_pins.find { |p| p.name == "ruby" }
-    !global_pin.nil?
-    !env_pin.nil?
-    env_pin.metadata["env"] == "ci"
+    read_deps.size == 2
+    global_dep = read_deps.find { |d| d.name == "ccache" }
+    env_dep = read_deps.find { |d| d.name == "ruby" }
+    !global_dep.nil?
+    !env_dep.nil?
+    env_dep.metadata["env"] == "ci"
 
     Cleanup
     FileUtils.rm_rf(dir)
