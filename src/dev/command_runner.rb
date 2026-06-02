@@ -87,7 +87,10 @@ module Dev
     def project_needs_llvm?(project_root)
       lockfile = project_root / "build-deps.lock"
       return false unless lockfile.exist?
-      lockfile.read.match?(/^brew llvm\b/)
+
+      content = lockfile.read
+      # YAML format: top-level "llvm:" key with integration: brew
+      content.match?(/^llvm:\s*$/) || content.match?(/^brew llvm\b/)
     end
 
     sig { params(shell_command: String).void }
