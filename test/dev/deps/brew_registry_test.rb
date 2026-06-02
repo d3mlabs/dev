@@ -9,10 +9,8 @@ require "json"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::BrewRegistryTest < Minitest::Test
-  test "resolve parses brew info JSON and returns a Pin" do
-    Given
-    dir = Dir.mktmpdir("dev-brew-reg-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
+  test "fetch parses brew info JSON and returns a Dependency" do
+    Given "a brew formula identifier"
     registry = Dev::Deps::BrewRegistry.new
     brew_json = [{
       "name" => "cmake",
@@ -30,28 +28,23 @@ class Dev::Deps::BrewRegistryTest < Minitest::Test
          .with("brew", "info", "--json=v1", "cmake")
          .returns([brew_json, "", stub(success?: true)])
 
-    When
-    pin = registry.resolve(
-      "cmake",
-      { "integration" => "brew", "group" => "build" },
-      cache: cache,
+    When "fetching the dependency"
+    dep = registry.fetch(
+      "name" => "cmake",
+      "integration" => "brew",
+      "group" => "build",
     )
 
     Then
-    pin.name == "cmake"
-    pin.integration == :brew
-    pin.group == :build
-    pin.version == "3.31.4"
-    pin.hash == "SHA256=abc123def456"
-
-    Cleanup
-    FileUtils.rm_rf(dir)
+    dep.name == "cmake"
+    dep.integration == :brew
+    dep.group == :build
+    dep.version == "3.31.4"
+    dep.hash == "SHA256=abc123def456"
   end
 
-  test "resolve includes tap in metadata when specified" do
-    Given
-    dir = Dir.mktmpdir("dev-brew-reg-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
+  test "fetch includes tap in metadata when specified" do
+    Given "a tapped formula identifier"
     registry = Dev::Deps::BrewRegistry.new
     brew_json = [{
       "name" => "powershell",
@@ -63,41 +56,35 @@ class Dev::Deps::BrewRegistryTest < Minitest::Test
          .with("brew", "info", "--json=v1", "d3mlabs/d3mlabs/powershell")
          .returns([brew_json, "", stub(success?: true)])
 
-    When
-    pin = registry.resolve(
-      "powershell",
-      { "integration" => "brew", "group" => "build", "tap" => "d3mlabs/d3mlabs" },
-      cache: cache,
+    When "fetching with a tap"
+    dep = registry.fetch(
+      "name" => "powershell",
+      "integration" => "brew",
+      "group" => "build",
+      "tap" => "d3mlabs/d3mlabs",
     )
 
     Then
-    pin.name == "powershell"
-    pin.metadata["tap"] == "d3mlabs/d3mlabs"
-
-    Cleanup
-    FileUtils.rm_rf(dir)
+    dep.name == "powershell"
+    dep.metadata["tap"] == "d3mlabs/d3mlabs"
   end
 
-  test "resolve handles cask entries (no hash)" do
-    Given
-    dir = Dir.mktmpdir("dev-brew-reg-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
+  test "fetch handles cask entries (no hash)" do
+    Given "a cask identifier"
     registry = Dev::Deps::BrewRegistry.new
 
-    When
-    pin = registry.resolve(
-      "powershell",
-      { "integration" => "brew", "group" => "build", "cask" => true },
-      cache: cache,
+    When "fetching a cask"
+    dep = registry.fetch(
+      "name" => "powershell",
+      "integration" => "brew",
+      "group" => "build",
+      "cask" => true,
     )
 
     Then
-    pin.name == "powershell"
-    pin.version.nil?
-    pin.hash.nil?
-    pin.metadata["cask"] == true
-
-    Cleanup
-    FileUtils.rm_rf(dir)
+    dep.name == "powershell"
+    dep.version.nil?
+    dep.hash.nil?
+    dep.metadata["cask"] == true
   end
 end
