@@ -12,7 +12,7 @@ class LlvmCompatTest < Minitest::Test
   include SorbetHelper
 
   test "project_needs_llvm? detects llvm in YAML build-deps.lock" do
-    Given
+    Given "a YAML lockfile containing llvm"
     dir = Dir.mktmpdir("dev-llvm-compat-")
     lockfile = File.join(dir, "build-deps.lock")
     yaml_content = {
@@ -28,7 +28,7 @@ class LlvmCompatTest < Minitest::Test
     ui = typed_mock(Dev::Cli::Ui)
     runner = Dev::CommandRunner.new(ui: ui, ruby_version: "4.0.1")
 
-    When
+    When "checking for llvm"
     result = runner.send(:project_needs_llvm?, Pathname.new(dir))
 
     Then
@@ -39,7 +39,7 @@ class LlvmCompatTest < Minitest::Test
   end
 
   test "project_needs_llvm? returns false when no llvm in build-deps.lock" do
-    Given
+    Given "a YAML lockfile without llvm"
     dir = Dir.mktmpdir("dev-llvm-compat-")
     lockfile = File.join(dir, "build-deps.lock")
     yaml_content = {
@@ -54,7 +54,7 @@ class LlvmCompatTest < Minitest::Test
     ui = typed_mock(Dev::Cli::Ui)
     runner = Dev::CommandRunner.new(ui: ui, ruby_version: "4.0.1")
 
-    When
+    When "checking for llvm"
     result = runner.send(:project_needs_llvm?, Pathname.new(dir))
 
     Then
@@ -65,7 +65,7 @@ class LlvmCompatTest < Minitest::Test
   end
 
   test "project_needs_llvm? still works with old plain-text format" do
-    Given
+    Given "a plain-text lockfile with brew llvm"
     dir = Dir.mktmpdir("dev-llvm-compat-")
     lockfile = File.join(dir, "build-deps.lock")
     File.write(lockfile, "brew llvm\nbrew cmake\n")
@@ -73,7 +73,7 @@ class LlvmCompatTest < Minitest::Test
     ui = typed_mock(Dev::Cli::Ui)
     runner = Dev::CommandRunner.new(ui: ui, ruby_version: "4.0.1")
 
-    When
+    When "checking for llvm"
     result = runner.send(:project_needs_llvm?, Pathname.new(dir))
 
     Then
