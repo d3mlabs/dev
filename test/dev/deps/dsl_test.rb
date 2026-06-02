@@ -11,7 +11,7 @@ class Dev::Deps::DSLTest < Minitest::Test
   end
 
   test "cmake() method stores deps with integration tag" do
-    When
+    When "defining a cmake dep"
     Dev::Deps.define do
       group :app do
         cmake "boost",
@@ -29,7 +29,7 @@ class Dev::Deps::DSLTest < Minitest::Test
   end
 
   test "cmake() is aliased to runtime() for backward compatibility" do
-    When
+    When "defining via runtime()"
     Dev::Deps.define do
       group :app do
         runtime "cereal", repo: "https://github.com/USCiLab/cereal", tag: "v1.3.2"
@@ -44,7 +44,7 @@ class Dev::Deps::DSLTest < Minitest::Test
   end
 
   test "github: shorthand expands org/repo to full URL" do
-    When
+    When "defining with github: shorthand"
     Dev::Deps.define do
       group :app do
         cmake "cereal", github: "USCiLab/cereal", tag: "v1.3.2"
@@ -58,7 +58,7 @@ class Dev::Deps::DSLTest < Minitest::Test
   end
 
   test "github: shorthand with org only appends dep name" do
-    When
+    When "defining with org-only github: shorthand"
     Dev::Deps.define do
       group :app do
         cmake "axmol", github: "axmolengine", tag: "v2.11.2"
@@ -71,7 +71,7 @@ class Dev::Deps::DSLTest < Minitest::Test
   end
 
   test "luarocks() method stores deps with luarocks integration" do
-    When
+    When "defining a luarocks dep"
     Dev::Deps.define do
       group :test do
         luarocks "luaunit", ">=3.5"
@@ -87,7 +87,7 @@ class Dev::Deps::DSLTest < Minitest::Test
   end
 
   test "custom() method stores deps with arbitrary integration" do
-    When
+    When "defining a custom integration dep"
     Dev::Deps.define do
       group :app do
         custom "CombatMode", integration: :wow_curseforge, version: ">=1.0"
@@ -103,7 +103,7 @@ class Dev::Deps::DSLTest < Minitest::Test
   end
 
   test "lua_version() stores the lua version" do
-    When
+    When "defining a lua version"
     Dev::Deps.define do
       lua_version "5.1"
     end
@@ -113,7 +113,7 @@ class Dev::Deps::DSLTest < Minitest::Test
   end
 
   test "register_integration and register_method create DSL methods" do
-    When
+    When "registering and using a custom method"
     Dev::Deps.define do
       register_integration :wow_curseforge, "WoWCurseforgeIntegration"
       register_method :wow_curseforge

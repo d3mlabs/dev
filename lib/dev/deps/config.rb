@@ -16,6 +16,8 @@ module Dev
           "groups"                   => dsl.groups,
           "gems"                     => dsl.gems,
           "ruby_version_requirement" => dsl.ruby_version_requirement,
+          "lua_version"              => dsl.lua_version_value,
+          "registered_integrations"  => dsl.registered_integrations,
         }
       end
 
@@ -39,6 +41,14 @@ module Dev
 
       def self.ruby_version_requirement
         config["ruby_version_requirement"]
+      end
+
+      def self.lua_version
+        config["lua_version"]
+      end
+
+      def self.registered_integrations
+        config["registered_integrations"] || {}
       end
 
       def self.local_tap_names
