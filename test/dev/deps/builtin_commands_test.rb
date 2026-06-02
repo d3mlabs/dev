@@ -3,7 +3,7 @@
 
 require "test_helper"
 require "dev/deps/builtin_commands"
-require "dev/deps/pin"
+require "dev/deps/dependency"
 require "dev/deps/locker"
 require "dev/deps/cache"
 require "tmpdir"
@@ -30,22 +30,20 @@ class Dev::Deps::BuiltinCommandsTest < Minitest::Test
     !Dev::Deps::BuiltinCommands.builtin?("test")
   end
 
-  test "install_from_lockfiles reads pins and groups by integration" do
-    Given
+  test "read_lockfile_deps reads deps and groups by integration" do
+    Given "a lockfile with one dependency"
     dir = Dir.mktmpdir("dev-builtin-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
     locker = Dev::Deps::Locker.new
 
-    # Write a deps.lock with one pin
-    pins = [
-      Dev::Deps::Pin.new(name: "boost", integration: :cmake, group: :app,
-                          version: "1.90.0", hash: "SHA256=deadbeef",
-                          metadata: { "url" => "https://example.com/boost.tar.gz" }),
+    deps = [
+      Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
+                                version: "1.90.0", hash: "SHA256=deadbeef",
+                                metadata: { "url" => "https://example.com/boost.tar.gz" }),
     ]
-    locker.write(pins, lockfile_path: File.join(dir, "deps.lock"))
+    locker.write(deps, lockfile_path: File.join(dir, "deps.lock"))
 
-    When
-    grouped = Dev::Deps::BuiltinCommands.read_lockfile_pins(root: dir)
+    When "reading lockfile deps"
+    grouped = Dev::Deps::BuiltinCommands.read_lockfile_deps(root: dir)
 
     Then
     grouped[:cmake].size == 1
@@ -55,24 +53,24 @@ class Dev::Deps::BuiltinCommandsTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "read_lockfile_pins reads both deps.lock and build-deps.lock" do
-    Given
+  test "read_lockfile_deps reads both deps.lock and build-deps.lock" do
+    Given "separate deps and build-deps lockfiles"
     dir = Dir.mktmpdir("dev-builtin-test-")
     locker = Dev::Deps::Locker.new
 
-    deps_pins = [
-      Dev::Deps::Pin.new(name: "boost", integration: :cmake, group: :app,
-                          version: "1.90.0", hash: "SHA256=aaa", metadata: {}),
+    app_deps = [
+      Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
+                                version: "1.90.0", hash: "SHA256=aaa", metadata: {}),
     ]
-    build_pins = [
-      Dev::Deps::Pin.new(name: "cmake", integration: :brew, group: :build,
-                          version: "3.31.4", hash: "SHA256=bbb", metadata: {}),
+    build_deps = [
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
+                                version: "3.31.4", hash: "SHA256=bbb", metadata: {}),
     ]
-    locker.write(deps_pins, lockfile_path: File.join(dir, "deps.lock"))
-    locker.write(build_pins, lockfile_path: File.join(dir, "build-deps.lock"))
+    locker.write(app_deps, lockfile_path: File.join(dir, "deps.lock"))
+    locker.write(build_deps, lockfile_path: File.join(dir, "build-deps.lock"))
 
-    When
-    grouped = Dev::Deps::BuiltinCommands.read_lockfile_pins(root: dir)
+    When "reading lockfile deps"
+    grouped = Dev::Deps::BuiltinCommands.read_lockfile_deps(root: dir)
 
     Then
     grouped[:cmake].size == 1
