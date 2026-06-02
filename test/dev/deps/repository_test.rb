@@ -11,8 +11,17 @@ class Dev::Deps::RepositoryTest < Minitest::Test
     Given
     repo = Dev::Deps::Repository.new
 
-    Expect
-    assert_raises(NotImplementedError) { repo.resolve("boost", ">= 1.0", cache: nil) }
+    When
+    error = begin
+      repo.resolve("boost", ">= 1.0", cache: nil)
+      nil
+    rescue NotImplementedError => e
+      e
+    end
+
+    Then
+    !error.nil?
+    error.is_a?(NotImplementedError)
   end
 
   test "base class dependencies returns empty array by default" do

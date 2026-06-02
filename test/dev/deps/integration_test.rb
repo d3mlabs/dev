@@ -26,8 +26,17 @@ class Dev::Deps::IntegrationTest < Minitest::Test
     integration = Dev::Deps::Integration.new(repository: repo, cache: nil)
     dir = Dir.mktmpdir("dev-integration-test-")
 
-    Expect
-    assert_raises(NotImplementedError) { integration.install_all([], root: dir) }
+    When
+    error = begin
+      integration.install_all([], root: dir)
+      nil
+    rescue NotImplementedError => e
+      e
+    end
+
+    Then
+    !error.nil?
+    error.is_a?(NotImplementedError)
 
     Cleanup
     FileUtils.rm_rf(dir)
