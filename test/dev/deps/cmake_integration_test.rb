@@ -6,30 +6,34 @@ require "dev/deps/cmake_integration"
 require "dev/deps/git_repository"
 require "dev/deps/url_repository"
 require "dev/deps/cache"
-require "dev/deps/pin"
+require "dev/deps/dependency"
 require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::CmakeIntegrationTest < Minitest::Test
+  def prepopulate_dep(root, name)
+    dep_src = File.join(root, "build", "_deps", "#{name}-src")
+    FileUtils.mkdir_p(dep_src)
+    File.write(File.join(dep_src, "CMakeLists.txt"), "cmake_minimum_required(VERSION 3.20)")
+  end
+
   test "install_all generates deps.cmake with repo+sha entries" do
-    Given
+    Given "a git-backed cmake dependency"
     dir = Dir.mktmpdir("dev-cmake-int-test-")
     cache = Dev::Deps::Cache.new(cache_dir: dir)
     git_repo = Dev::Deps::GitRepository.new
     integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache)
-    pins = [
-      Dev::Deps::Pin.new(
+    prepopulate_dep(dir, "cereal")
+    deps = [
+      Dev::Deps::Dependency.new(
         name: "cereal", integration: :cmake, group: :app,
         version: "abc123def456", hash: nil,
         metadata: { "repo" => "https://github.com/USCiLab/cereal" },
       ),
     ]
 
-    # Stub the actual git clone since we only test CMake file generation
-    integration.stubs(:fetch_pin)
-
-    When
-    integration.install_all(pins, root: dir)
+    When "installing all"
+    integration.install_all(deps, root: dir)
     cmake_content = File.read(File.join(dir, "deps.cmake"))
 
     Then
@@ -41,23 +45,22 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
   end
 
   test "install_all generates deps.cmake with url+hash entries" do
-    Given
+    Given "a URL-backed cmake dependency"
     dir = Dir.mktmpdir("dev-cmake-int-test-")
     cache = Dev::Deps::Cache.new(cache_dir: dir)
     url_repo = Dev::Deps::UrlRepository.new
     integration = Dev::Deps::CmakeIntegration.new(repository: url_repo, cache: cache)
-    pins = [
-      Dev::Deps::Pin.new(
+    prepopulate_dep(dir, "boost")
+    deps = [
+      Dev::Deps::Dependency.new(
         name: "boost", integration: :cmake, group: :app,
         version: "1.90.0", hash: "SHA256=deadbeef",
         metadata: { "url" => "https://example.com/boost.tar.gz" },
       ),
     ]
 
-    integration.stubs(:fetch_pin)
-
-    When
-    integration.install_all(pins, root: dir)
+    When "installing all"
+    integration.install_all(deps, root: dir)
     cmake_content = File.read(File.join(dir, "deps.cmake"))
 
     Then
@@ -69,24 +72,24 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
   end
 
   test "install_all generates RUNTIME_DEPS_APP and RUNTIME_DEPS_TEST lists" do
-    Given
+    Given "app and test cmake dependencies"
     dir = Dir.mktmpdir("dev-cmake-int-test-")
     cache = Dev::Deps::Cache.new(cache_dir: dir)
     git_repo = Dev::Deps::GitRepository.new
     integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache)
-    pins = [
-      Dev::Deps::Pin.new(name: "boost", integration: :cmake, group: :app,
-                          version: "sha1", hash: nil,
-                          metadata: { "repo" => "https://github.com/boost/boost" }),
-      Dev::Deps::Pin.new(name: "gtest", integration: :cmake, group: :test,
-                          version: "sha2", hash: nil,
-                          metadata: { "repo" => "https://github.com/google/googletest" }),
+    prepopulate_dep(dir, "boost")
+    prepopulate_dep(dir, "gtest")
+    deps = [
+      Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
+                                version: "sha1", hash: nil,
+                                metadata: { "repo" => "https://github.com/boost/boost" }),
+      Dev::Deps::Dependency.new(name: "gtest", integration: :cmake, group: :test,
+                                version: "sha2", hash: nil,
+                                metadata: { "repo" => "https://github.com/google/googletest" }),
     ]
 
-    integration.stubs(:fetch_pin)
-
-    When
-    integration.install_all(pins, root: dir)
+    When "installing all"
+    integration.install_all(deps, root: dir)
     cmake_content = File.read(File.join(dir, "deps.cmake"))
 
     Then
@@ -98,13 +101,14 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
   end
 
   test "install_all generates deps.targets.cmake with cmake_targets" do
-    Given
+    Given "a dependency with cmake targets and namespace"
     dir = Dir.mktmpdir("dev-cmake-int-test-")
     cache = Dev::Deps::Cache.new(cache_dir: dir)
     git_repo = Dev::Deps::GitRepository.new
     integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache)
-    pins = [
-      Dev::Deps::Pin.new(
+    prepopulate_dep(dir, "googletest")
+    deps = [
+      Dev::Deps::Dependency.new(
         name: "googletest", integration: :cmake, group: :test,
         version: "sha1", hash: nil,
         metadata: {
@@ -115,10 +119,8 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
       ),
     ]
 
-    integration.stubs(:fetch_pin)
-
-    When
-    integration.install_all(pins, root: dir)
+    When "installing all"
+    integration.install_all(deps, root: dir)
     targets_content = File.read(File.join(dir, "deps.targets.cmake"))
 
     Then
