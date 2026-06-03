@@ -11,7 +11,7 @@ class Dev::Deps::CacheTest < Minitest::Test
   test "exists? returns false for missing key" do
     Given "an empty cache"
     dir = Dir.mktmpdir("dev-cache-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    cache = Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache"))
 
     Expect
     !cache.exists?("SHA256=deadbeef")
@@ -21,19 +21,18 @@ class Dev::Deps::CacheTest < Minitest::Test
   end
 
   test "store moves artifact into cache, fetch retrieves it" do
-    Given "a cache and an artifact file"
+    Given "a cache and an artifact named by its key"
     dir = Dir.mktmpdir("dev-cache-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
-    artifact_path = File.join(dir, "boost.tar.gz")
+    cache = Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache"))
+    artifact_path = File.join(dir, "SHA256=deadbeef")
     File.write(artifact_path, "fake tarball content")
-    key = "SHA256=deadbeef"
 
     When "storing via File handle"
-    File.open(artifact_path, "rb") { |f| cache.store(key, f) }
+    File.open(artifact_path, "rb") { |f| cache.store(f) }
 
     Then
-    cache.exists?(key)
-    file = cache.fetch(key)
+    cache.exists?("SHA256=deadbeef")
+    file = cache.fetch("SHA256=deadbeef")
     file.is_a?(File)
     file.read == "fake tarball content"
 
@@ -45,12 +44,12 @@ class Dev::Deps::CacheTest < Minitest::Test
   test "store takes ownership — original file no longer exists" do
     Given "a cache and a source artifact"
     dir = Dir.mktmpdir("dev-cache-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
-    artifact_path = File.join(dir, "source.tar.gz")
+    cache = Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache"))
+    artifact_path = File.join(dir, "SHA256=moved")
     File.write(artifact_path, "original content")
 
     When "storing the artifact"
-    File.open(artifact_path, "rb") { |f| cache.store("SHA256=moved", f) }
+    File.open(artifact_path, "rb") { |f| cache.store(f) }
 
     Then
     !File.exist?(artifact_path)
@@ -63,7 +62,7 @@ class Dev::Deps::CacheTest < Minitest::Test
   test "fetch raises CacheMissError for missing key" do
     Given "an empty cache"
     dir = Dir.mktmpdir("dev-cache-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    cache = Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache"))
 
     When "fetching a non-existent key"
     error = begin
@@ -86,11 +85,11 @@ class Dev::Deps::CacheTest < Minitest::Test
     dir = Dir.mktmpdir("dev-cache-test-")
     cache_dir = File.join(dir, "nested", "cache")
     cache = Dev::Deps::Cache.new(cache_dir: cache_dir)
-    artifact_path = File.join(dir, "data.zip")
+    artifact_path = File.join(dir, "SHA256=abc123")
     File.write(artifact_path, "zip content")
 
     When "storing an artifact"
-    File.open(artifact_path, "rb") { |f| cache.store("SHA256=abc123", f) }
+    File.open(artifact_path, "rb") { |f| cache.store(f) }
 
     Then
     cache.exists?("SHA256=abc123")
@@ -103,10 +102,10 @@ class Dev::Deps::CacheTest < Minitest::Test
   test "fetch returns a File handle" do
     Given "a cache with a stored artifact"
     dir = Dir.mktmpdir("dev-cache-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
-    artifact_path = File.join(dir, "data.tar.gz")
+    cache = Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache"))
+    artifact_path = File.join(dir, "SHA256=typed")
     File.write(artifact_path, "content")
-    File.open(artifact_path, "rb") { |f| cache.store("SHA256=typed", f) }
+    File.open(artifact_path, "rb") { |f| cache.store(f) }
 
     When "fetching the stored key"
     result = cache.fetch("SHA256=typed")

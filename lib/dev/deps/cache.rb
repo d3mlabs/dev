@@ -23,12 +23,12 @@ module Dev
       end
 
       # Store an artifact in the cache. Takes ownership (moves the file).
+      # The file's basename is used as the cache key.
       #
-      # @param key  [Pathname] cache key (used as filename within cache dir)
-      # @param file [File]     open handle to the source artifact
-      def store(key, file)
+      # @param file [File] open handle to the source artifact
+      def store(file)
         FileUtils.mkdir_p(@cache_dir)
-        FileUtils.mv(file.path, path_for(key))
+        FileUtils.mv(file.path, @cache_dir / File.basename(file.path))
       end
 
       # Retrieve a cached artifact.
