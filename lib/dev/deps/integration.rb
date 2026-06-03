@@ -4,32 +4,28 @@ module Dev
   module Deps
     # Lifecycle handler for a dependency type.
     #
-    # Accepts a Repository and Cache via DI at construction; immutable after
-    # construction. Receives all pins for its type at once via install_all —
-    # handles per-pin install plus any batch artifacts (e.g. deps.cmake).
-    #
-    # Subclasses: CmakeIntegration, LuaRocksIntegration, BrewIntegration, …
+    # Accepts a Repository and Cache via DI at construction. Receives all
+    # dependencies for its type at once via install_all — handles per-dep
+    # install plus any batch artifacts (e.g. deps.cmake).
     class Integration
-      attr_reader :repository, :cache
-
       # @param repository [Repository] source adapter for this integration type
       # @param cache      [Cache]      shared download cache
       def initialize(repository:, cache:)
         @repository = repository
         @cache = cache
-        freeze
       end
 
-      # Install all pins of this integration type into the project.
+      # Install all dependencies of this integration type into the project.
       #
-      # Handles per-pin install (extract, luarocks install, brew install, …)
-      # and any batch artifacts (e.g. deps.cmake generation for CmakeIntegration).
-      #
-      # @param pins [Array<Pin>] all pins for this integration type
-      # @param root [String]     project root directory
-      def install_all(pins, root:)
+      # @param dependencies [Array<Dependency>] all deps for this integration type
+      # @param root         [Pathname]          project root directory
+      def install_all(dependencies, root:)
         raise NotImplementedError, "#{self.class}#install_all must be implemented"
       end
+
+      private
+
+      attr_reader :repository, :cache
     end
   end
 end

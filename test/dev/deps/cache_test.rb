@@ -8,32 +8,32 @@ require "fileutils"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::CacheTest < Minitest::Test
-  test "has? returns false for missing hash" do
-    Given
+  test "key? returns false for missing key" do
+    Given "an empty cache"
     dir = Dir.mktmpdir("dev-cache-test-")
     cache = Dev::Deps::Cache.new(cache_dir: dir)
 
     Expect
-    !cache.has?("SHA256=deadbeef")
+    !cache.key?("SHA256=deadbeef")
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
-  test "store places artifact in cache, fetch retrieves it" do
-    Given
+  test "store moves artifact into cache, fetch retrieves it" do
+    Given "a cache and an artifact file"
     dir = Dir.mktmpdir("dev-cache-test-")
     cache = Dev::Deps::Cache.new(cache_dir: dir)
     artifact = File.join(dir, "boost.tar.gz")
     File.write(artifact, "fake tarball content")
-    hash = "SHA256=deadbeef"
+    key = "SHA256=deadbeef"
 
     When
-    cache.store(hash, artifact)
+    cache.store(key, artifact)
 
     Then
-    cache.has?(hash)
-    cached_path = cache.fetch(hash)
+    cache.key?(key)
+    cached_path = cache.fetch(key)
     !cached_path.nil?
     File.read(cached_path) == "fake tarball content"
 
@@ -41,8 +41,26 @@ class Dev::Deps::CacheTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "fetch returns nil for missing hash" do
-    Given
+  test "store takes ownership — original file no longer exists" do
+    Given "a cache and a source artifact"
+    dir = Dir.mktmpdir("dev-cache-test-")
+    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    artifact = File.join(dir, "source.tar.gz")
+    File.write(artifact, "original content")
+
+    When
+    cache.store("SHA256=moved", artifact)
+
+    Then
+    !File.exist?(artifact)
+    cache.key?("SHA256=moved")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "fetch returns nil for missing key" do
+    Given "an empty cache"
     dir = Dir.mktmpdir("dev-cache-test-")
     cache = Dev::Deps::Cache.new(cache_dir: dir)
 
@@ -54,7 +72,7 @@ class Dev::Deps::CacheTest < Minitest::Test
   end
 
   test "store creates cache directory if it does not exist" do
-    Given
+    Given "a cache pointing to a non-existent directory"
     dir = Dir.mktmpdir("dev-cache-test-")
     cache_dir = File.join(dir, "nested", "cache")
     cache = Dev::Deps::Cache.new(cache_dir: cache_dir)
@@ -65,26 +83,48 @@ class Dev::Deps::CacheTest < Minitest::Test
     cache.store("SHA256=abc123", artifact)
 
     Then
-    cache.has?("SHA256=abc123")
+    cache.key?("SHA256=abc123")
     Dir.exist?(cache_dir)
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
-  test "store copies the file rather than moving it" do
-    Given
-    dir = Dir.mktmpdir("dev-cache-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
-    artifact = File.join(dir, "source.tar.gz")
-    File.write(artifact, "original content")
+  test "Key rejects blank values" do
+    Given "blank key inputs"
 
     When
-    cache.store("SHA256=keep", artifact)
+    nil_error = begin
+      Dev::Deps::Cache::Key.new(nil)
+      nil
+    rescue ArgumentError => e
+      e
+    end
+    empty_error = begin
+      Dev::Deps::Cache::Key.new("   ")
+      nil
+    rescue ArgumentError => e
+      e
+    end
 
-    Then "original file still exists"
-    File.exist?(artifact)
-    cache.has?("SHA256=keep")
+    Then
+    !nil_error.nil?
+    !empty_error.nil?
+  end
+
+  test "fetch returns Pathname" do
+    Given "a cache with a stored artifact"
+    dir = Dir.mktmpdir("dev-cache-test-")
+    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    artifact = File.join(dir, "data.tar.gz")
+    File.write(artifact, "content")
+    cache.store("SHA256=typed", artifact)
+
+    When
+    result = cache.fetch("SHA256=typed")
+
+    Then
+    result.is_a?(Pathname)
 
     Cleanup
     FileUtils.rm_rf(dir)
