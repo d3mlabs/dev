@@ -14,9 +14,9 @@ class Dev::Deps::IntegrationTest < Minitest::Test
     integration = Dev::Deps::Integration.new(repository: repo, cache: nil)
     dir = Dir.mktmpdir("dev-integration-test-")
 
-    When
+    When "calling install_all"
     error = begin
-      integration.install_all([], root: dir)
+      integration.install_all([], project_root: dir)
       nil
     rescue NotImplementedError => e
       e

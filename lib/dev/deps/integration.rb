@@ -18,8 +18,8 @@ module Dev
       # Install all dependencies of this integration type into the project.
       #
       # @param dependencies [Array<Dependency>] all deps for this integration type
-      # @param root         [Pathname]          project root directory
-      def install_all(dependencies, root:)
+      # @param project_root [Pathname]          root directory of the project
+      def install_all(dependencies, project_root:)
         raise NotImplementedError, "#{self.class}#install_all must be implemented"
       end
 
