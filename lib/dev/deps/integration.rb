@@ -15,11 +15,10 @@ module Dev
         @cache = cache
       end
 
-      # Install all dependencies of this integration type into the project.
+      # Install all dependencies of this integration type.
       #
       # @param dependencies [Array<Dependency>] all deps for this integration type
-      # @param project_root [Pathname]          root directory of the project
-      def install_all(dependencies, project_root:)
+      def install_all(dependencies)
         raise NotImplementedError, "#{self.class}#install_all must be implemented"
       end
 

@@ -8,13 +8,13 @@ require "fileutils"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::CacheTest < Minitest::Test
-  test "key? returns false for missing key" do
+  test "exists? returns false for missing key" do
     Given "an empty cache"
     dir = Dir.mktmpdir("dev-cache-test-")
     cache = Dev::Deps::Cache.new(cache_dir: dir)
 
     Expect
-    !cache.key?("SHA256=deadbeef")
+    !cache.exists?("SHA256=deadbeef")
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -32,7 +32,7 @@ class Dev::Deps::CacheTest < Minitest::Test
     File.open(artifact_path, "rb") { |f| cache.store(key, f) }
 
     Then
-    cache.key?(key)
+    cache.exists?(key)
     file = cache.fetch(key)
     file.is_a?(File)
     file.read == "fake tarball content"
@@ -54,13 +54,13 @@ class Dev::Deps::CacheTest < Minitest::Test
 
     Then
     !File.exist?(artifact_path)
-    cache.key?("SHA256=moved")
+    cache.exists?("SHA256=moved")
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
-  test "fetch raises Cache::Miss for missing key" do
+  test "fetch raises CacheMissError for missing key" do
     Given "an empty cache"
     dir = Dir.mktmpdir("dev-cache-test-")
     cache = Dev::Deps::Cache.new(cache_dir: dir)
@@ -69,13 +69,13 @@ class Dev::Deps::CacheTest < Minitest::Test
     error = begin
       cache.fetch("SHA256=nonexistent")
       nil
-    rescue Dev::Deps::Cache::Miss => e
+    rescue Dev::Deps::Cache::CacheMissError => e
       e
     end
 
     Then
     !error.nil?
-    error.is_a?(Dev::Deps::Cache::Miss)
+    error.is_a?(Dev::Deps::Cache::CacheMissError)
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -93,7 +93,7 @@ class Dev::Deps::CacheTest < Minitest::Test
     File.open(artifact_path, "rb") { |f| cache.store("SHA256=abc123", f) }
 
     Then
-    cache.key?("SHA256=abc123")
+    cache.exists?("SHA256=abc123")
     Dir.exist?(cache_dir)
 
     Cleanup

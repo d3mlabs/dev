@@ -12,11 +12,10 @@ class Dev::Deps::IntegrationTest < Minitest::Test
     Given "an Integration with injected dependencies"
     repo = Dev::Deps::Repository.new
     integration = Dev::Deps::Integration.new(repository: repo, cache: nil)
-    dir = Dir.mktmpdir("dev-integration-test-")
 
     When "calling install_all"
     error = begin
-      integration.install_all([], project_root: dir)
+      integration.install_all([])
       nil
     rescue NotImplementedError => e
       e
@@ -25,8 +24,5 @@ class Dev::Deps::IntegrationTest < Minitest::Test
     Then
     !error.nil?
     error.is_a?(NotImplementedError)
-
-    Cleanup
-    FileUtils.rm_rf(dir)
   end
 end

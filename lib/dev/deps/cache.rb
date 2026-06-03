@@ -13,7 +13,7 @@ module Dev
     # each Integration.
     class Cache
       # Raised when a requested key is not in the cache.
-      class Miss < StandardError; end
+      class CacheMissError < StandardError; end
 
       DEFAULT_DIR = Pathname.new(File.expand_path("~/.dev/cache"))
 
@@ -35,19 +35,19 @@ module Dev
       #
       # @param key [Pathname] cache key
       # @return [File] read-only handle to the cached artifact
-      # @raise [Cache::Miss] if the key is not in the cache
+      # @raise [Cache::CacheMissError] if the key is not in the cache
       def fetch(key)
         path = path_for(key)
-        raise Miss, "Cache miss: #{key}" unless path.exist?
+        raise CacheMissError, "Cache miss: #{key}" unless path.exist?
 
         File.open(path, "rb")
       end
 
-      # Check whether a key is in the cache.
+      # Check whether a key exists in the cache.
       #
       # @param key [Pathname] cache key
       # @return [Boolean]
-      def key?(key)
+      def exists?(key)
         path_for(key).exist?
       end
 
