@@ -67,16 +67,10 @@ class Dev::Deps::CacheTest < Minitest::Test
     cache = Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache"))
 
     When "fetching a non-existent key"
-    error = begin
-      cache.fetch("cmake/missing-1.0.0-000000.tar.gz")
-      nil
-    rescue Dev::Deps::Cache::CacheMissError => e
-      e
-    end
+    cache.fetch("cmake/missing-1.0.0-000000.tar.gz")
 
     Then
-    !error.nil?
-    error.is_a?(Dev::Deps::Cache::CacheMissError)
+    raises Dev::Deps::Cache::CacheMissError
 
     Cleanup
     FileUtils.rm_rf(dir)

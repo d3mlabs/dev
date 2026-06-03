@@ -4,7 +4,6 @@
 require "test_helper"
 require "dev/deps/integration"
 require "dev/deps/repository"
-require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::IntegrationTest < Minitest::Test
@@ -14,15 +13,9 @@ class Dev::Deps::IntegrationTest < Minitest::Test
     integration = Dev::Deps::Integration.new(repository: repo, cache: nil)
 
     When "calling install_all"
-    error = begin
-      integration.install_all([])
-      nil
-    rescue NotImplementedError => e
-      e
-    end
+    integration.install_all([])
 
     Then
-    !error.nil?
-    error.is_a?(NotImplementedError)
+    raises NotImplementedError
   end
 end

@@ -10,16 +10,10 @@ class Dev::Deps::RepositoryTest < Minitest::Test
     Given "a base Repository instance"
     repo = Dev::Deps::Repository.new
 
-    When
-    error = begin
-      repo.fetch("boost>=1.0")
-      nil
-    rescue NotImplementedError => e
-      e
-    end
+    When "fetching a dependency"
+    repo.fetch("boost>=1.0")
 
     Then
-    !error.nil?
-    error.is_a?(NotImplementedError)
+    raises NotImplementedError
   end
 end
