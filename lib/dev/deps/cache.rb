@@ -7,7 +7,12 @@ module Dev
   module Deps
     # Content-addressed download cache shared across projects.
     #
-    # Stores raw downloaded archives (tarballs, zips) keyed by Pathname.
+    # Stores raw downloaded archives (tarballs, zips) keyed by a structured
+    # path: <integration>/<name>-<version>-<hash>.ext
+    #
+    # The key is built by the Repository, which has the context to construct
+    # it. The Cache itself is a dumb key-value store.
+    #
     # Two-layer caching pattern: this global cache is the download
     # accelerator; project-local install directories are managed by
     # each Integration.
@@ -23,17 +28,18 @@ module Dev
       end
 
       # Store an artifact in the cache. Takes ownership (moves the file).
-      # The file's basename is used as the cache key.
       #
-      # @param file [File] open handle to the source artifact
-      def store(file)
-        FileUtils.mkdir_p(@cache_dir)
-        FileUtils.mv(file.path, @cache_dir / File.basename(file.path))
+      # @param key  [String] cache key (e.g. "cmake/boost-1.90.0-a1b2c3.tar.gz")
+      # @param file [File]   open handle to the source artifact
+      def store(key, file)
+        dest = path_for(key)
+        FileUtils.mkdir_p(dest.dirname)
+        FileUtils.mv(file.path, dest)
       end
 
       # Retrieve a cached artifact.
       #
-      # @param key [Pathname] cache key
+      # @param key [String] cache key
       # @return [File] read-only handle to the cached artifact
       # @raise [Cache::CacheMissError] if the key is not in the cache
       def fetch(key)
@@ -45,7 +51,7 @@ module Dev
 
       # Check whether a key exists in the cache.
       #
-      # @param key [Pathname] cache key
+      # @param key [String] cache key
       # @return [Boolean]
       def exists?(key)
         path_for(key).exist?
@@ -54,7 +60,7 @@ module Dev
       private
 
       def path_for(key)
-        @cache_dir / Pathname(key).to_s.tr("/", "_")
+        @cache_dir / key
       end
     end
   end
