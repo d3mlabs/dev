@@ -1,0 +1,33 @@
+---
+description: Use named error classes, not bare raise with strings. Test every error path.
+globs: "**/*.rb"
+alwaysApply: false
+---
+
+# Typed errors
+
+Always define named error classes. Never `raise "message"` with a bare string.
+
+Error names must be specific to the class — prefix with the class name when the
+error type is otherwise generic (e.g. `BrewInfoError` not `InfoError`).
+
+```ruby
+# BAD
+raise "brew info failed"
+raise "Could not resolve ref"
+
+# GOOD
+class BrewInfoError < StandardError; end
+raise BrewInfoError, "brew info --json=v1 #{formula} failed"
+```
+
+Every typed error must have a corresponding test that asserts the specific class:
+
+```ruby
+# In RSpock tests
+When "fetching a bad formula"
+repository.fetch(bad_id)
+
+Then
+raises Dev::Deps::BrewRepository::BrewInfoError
+```

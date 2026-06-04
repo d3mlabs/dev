@@ -1,0 +1,41 @@
+---
+description: Layers must not own, implement, or mention concerns that belong elsewhere.
+globs: "**/*.rb"
+alwaysApply: false
+---
+
+# Separation of concerns
+
+Each layer owns a single responsibility. It must not implement, reference, or
+even mention in comments concerns that belong to another layer.
+
+**Repository** — resolves an identifier to a pinned Dependency (version + hash).
+Does not know about env scoping, installation, or lockfiles.
+
+**Integration** — installs dependencies it is given. Does not filter, resolve,
+or decide which deps to install. Receives only deps that should be installed.
+
+**Lockfile** — pure serialization. Reads/writes YAML. Does not resolve, filter,
+or install. Internal file routing (which lockfile for which group) is
+encapsulated; consumers call `lock(deps)` and `read`.
+
+**Orchestrator** (future) — owns the lifecycle: resolve, lock, env filter,
+dispatch to integrations. Cross-cutting concerns like env detection live here.
+
+```ruby
+# BAD: repository knows about env
+def fetch(id)
+  metadata.merge!(env_metadata(id))  # not your job
+end
+
+# BAD: integration filters by env
+def install_all(dependencies)
+  dependencies.each do |dep|
+    next if skip_for_env?(dep)  # not your job
+  end
+end
+
+# BAD: comment mentions a concern the layer doesn't own
+# Env scoping is not this layer's concern — the orchestrator handles it.
+class BrewRepository < Repository  # don't talk about what you don't own
+```

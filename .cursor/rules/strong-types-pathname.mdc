@@ -1,0 +1,44 @@
+---
+description: Use Pathname for file paths, _FILE suffix for path constants, coerce in constructors.
+globs: "**/*.rb"
+alwaysApply: false
+---
+
+# Strong types for paths
+
+Use `Pathname` for file/directory paths, not `String`. Coerce in constructors
+with `Pathname()`.
+
+```ruby
+# BAD
+def initialize(dir:)
+  @dir = dir  # could be String or Pathname
+end
+
+# GOOD
+def initialize(dir:)
+  @dir = Pathname(dir)
+end
+```
+
+Use Pathname's `/` operator for path joins instead of `File.join`:
+
+```ruby
+# BAD
+path = File.join(@dir.to_s, "deps.lock")
+
+# GOOD
+path = @dir / "deps.lock"
+```
+
+Constants holding filenames get a `_FILE` suffix:
+
+```ruby
+# BAD
+DEPS_LOCK = "deps.lock"
+DEPS_CMAKE = "deps.cmake"
+
+# GOOD
+DEPS_LOCK_FILE = "deps.lock"
+DEPS_CMAKE_FILE = "deps.cmake"
+```

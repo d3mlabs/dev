@@ -1,0 +1,41 @@
+---
+description: Subclasses must match base class signatures. Inject context via constructor DI, not method params.
+globs: "**/*.rb"
+alwaysApply: false
+---
+
+# Interface contracts and constructor DI
+
+Subclasses must respect their base class method signatures exactly. Do not add
+extra parameters to overridden methods.
+
+```ruby
+# Base class
+class Integration
+  def install_all(dependencies)
+    raise NotImplementedError
+  end
+end
+
+# BAD: breaks the interface
+class CmakeIntegration < Integration
+  def install_all(dependencies, root:)  # extra param
+  end
+end
+
+# GOOD: context via constructor
+class CmakeIntegration < Integration
+  def initialize(repository:, cache:, project_root:)
+    super(repository:, cache:)
+    @project_root = Pathname(project_root)
+  end
+
+  def install_all(dependencies)
+    # uses @project_root
+  end
+end
+```
+
+If a method needs context that isn't in the base signature, inject it via the
+constructor. The caller constructs the object with the right context; methods
+stay polymorphic.
