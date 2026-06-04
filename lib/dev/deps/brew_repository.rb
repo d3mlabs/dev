@@ -11,7 +11,19 @@ module Dev
     #
     # Uses `brew info --json=v1` for formulae. Cask entries get no version
     # or hash (Homebrew doesn't expose bottle hashes for casks in the same way).
-    class BrewRegistry < Repository
+    class BrewRepository < Repository
+      class InfoError < StandardError; end
+
+      # Resolve a brew dependency identifier to a pinned Dependency.
+      #
+      # For casks, returns a Dependency with nil version/hash.
+      # For formulae, queries `brew info --json=v1` for the stable version
+      # and bottle SHA256.
+      #
+      # @param id [Hash] must include "name", "integration", "group";
+      #   optionally "tap", "cask", "env"
+      # @return [Dependency]
+      # @raise [InfoError] if `brew info` fails for a formula
       def fetch(id)
         name = id["name"]
 
@@ -48,13 +60,22 @@ module Dev
 
       private
 
+      # Query `brew info --json=v1` for a formula.
+      #
+      # @param formula [String] formula spec (e.g. "cmake" or "d3mlabs/d3mlabs/powershell")
+      # @return [Hash] parsed JSON info for the formula
+      # @raise [InfoError] if the command fails
       def brew_info(formula)
         out, _err, status = Open3.capture3("brew", "info", "--json=v1", formula)
-        raise "brew info --json=v1 #{formula} failed" unless status.success?
+        raise InfoError, "brew info --json=v1 #{formula} failed" unless status.success?
 
         JSON.parse(out).first
       end
 
+      # Extract the bottle SHA256 for the current platform.
+      #
+      # @param info [Hash] parsed brew info JSON
+      # @return [String, nil] hex SHA256, or nil if no bottle found
       def extract_bottle_hash(info)
         bottles = info.dig("bottle", "stable", "files") || {}
         current_arch = RUBY_PLATFORM.include?("arm") ? "arm64_sonoma" : "sonoma"
@@ -62,6 +83,10 @@ module Dev
         bottle&.fetch("sha256", nil)
       end
 
+      # Build env metadata from the identifier.
+      #
+      # @param id [Hash]
+      # @return [Hash] empty or {"env" => "ci"/"dev"}
       def env_metadata(id)
         id["env"] ? { "env" => id["env"] } : {}
       end

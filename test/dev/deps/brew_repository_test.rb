@@ -2,16 +2,16 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/deps/brew_registry"
+require "dev/deps/brew_repository"
 require "dev/deps/cache"
 require "tmpdir"
 require "json"
 
 transform!(RSpock::AST::Transformation)
-class Dev::Deps::BrewRegistryTest < Minitest::Test
+class Dev::Deps::BrewRepositoryTest < Minitest::Test
   test "fetch parses brew info JSON and returns a Dependency" do
     Given "a brew formula identifier"
-    registry = Dev::Deps::BrewRegistry.new
+    repository = Dev::Deps::BrewRepository.new
     brew_json = [{
       "name" => "cmake",
       "versions" => { "stable" => "3.31.4" },
@@ -29,7 +29,7 @@ class Dev::Deps::BrewRegistryTest < Minitest::Test
          .returns([brew_json, "", stub(success?: true)])
 
     When "fetching the dependency"
-    dep = registry.fetch(
+    dep = repository.fetch(
       "name" => "cmake",
       "integration" => "brew",
       "group" => "build",
@@ -45,7 +45,7 @@ class Dev::Deps::BrewRegistryTest < Minitest::Test
 
   test "fetch includes tap in metadata when specified" do
     Given "a tapped formula identifier"
-    registry = Dev::Deps::BrewRegistry.new
+    repository = Dev::Deps::BrewRepository.new
     brew_json = [{
       "name" => "powershell",
       "versions" => { "stable" => "7.4.0" },
@@ -57,7 +57,7 @@ class Dev::Deps::BrewRegistryTest < Minitest::Test
          .returns([brew_json, "", stub(success?: true)])
 
     When "fetching with a tap"
-    dep = registry.fetch(
+    dep = repository.fetch(
       "name" => "powershell",
       "integration" => "brew",
       "group" => "build",
@@ -71,10 +71,10 @@ class Dev::Deps::BrewRegistryTest < Minitest::Test
 
   test "fetch handles cask entries (no hash)" do
     Given "a cask identifier"
-    registry = Dev::Deps::BrewRegistry.new
+    repository = Dev::Deps::BrewRepository.new
 
     When "fetching a cask"
-    dep = registry.fetch(
+    dep = repository.fetch(
       "name" => "powershell",
       "integration" => "brew",
       "group" => "build",
@@ -86,5 +86,24 @@ class Dev::Deps::BrewRegistryTest < Minitest::Test
     dep.version.nil?
     dep.hash.nil?
     dep.metadata["cask"] == true
+  end
+
+  test "fetch raises InfoError when brew info fails" do
+    Given "a formula that brew info cannot resolve"
+    repository = Dev::Deps::BrewRepository.new
+    failed_status = stub(success?: false)
+    Open3.stubs(:capture3)
+         .with("brew", "info", "--json=v1", "nonexistent")
+         .returns(["", "Error: No available formula", failed_status])
+
+    When "fetching the dependency"
+    repository.fetch(
+      "name" => "nonexistent",
+      "integration" => "brew",
+      "group" => "build",
+    )
+
+    Then
+    raises Dev::Deps::BrewRepository::InfoError
   end
 end
