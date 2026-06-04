@@ -11,9 +11,6 @@ module Dev
     #
     # Uses `brew info --json=v1` for formulae. Cask entries get no version
     # or hash (Homebrew doesn't expose bottle hashes for casks in the same way).
-    #
-    # Env scoping is not this layer's concern — the orchestrator handles
-    # env filtering before and after resolution.
     class BrewRepository < Repository
       class BrewInfoError < StandardError; end
 
