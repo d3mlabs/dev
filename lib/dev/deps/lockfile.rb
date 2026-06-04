@@ -32,8 +32,7 @@ module Dev
       #
       # @param deps [Array<Dependency>]
       def lock(deps)
-        app_test_deps = deps.select { |d| d.group == :app || d.group == :test }
-        build_deps = deps.select { |d| d.group == :build }
+        app_test_deps, build_deps = deps.partition { |d| d.group != :build }
 
         write_lockfile(app_test_deps, @dir / DEPS_LOCK_FILE) if app_test_deps.any?
         write_build_lockfile(build_deps) if build_deps.any?
