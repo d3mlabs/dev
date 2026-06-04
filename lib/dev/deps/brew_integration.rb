@@ -8,31 +8,18 @@ module Dev
   module Deps
     # Lifecycle handler for Homebrew dependencies.
     #
-    # install_all:
-    #   1. Filters deps by env scope (skip env-scoped deps not matching current env)
-    #   2. Installs each formula/cask via brew
+    # install_all installs each formula/cask via brew.
     #
-    # Env follows Bundler's model: env controls inclusion (install or skip),
-    # not versioning. All versions are universal.
+    # Env filtering (install vs skip based on ci/dev) is the caller's
+    # responsibility — only pass deps that should be installed.
     class BrewIntegration < Integration
       class InstallError < StandardError; end
 
-      # @param repository [Repository] source adapter (BrewRepository)
-      # @param cache      [Cache]      shared download cache
-      # @param env        [String, nil] current environment ("ci", "dev", or nil for auto-detect)
-      def initialize(repository:, cache:, env: nil)
-        @env = env || detect_env
-        super(repository:, cache:)
-      end
-
-      # Install all brew dependencies, skipping env-scoped deps that don't
-      # match the current environment.
+      # Install all brew dependencies.
       #
       # @param dependencies [Array<Dependency>] brew deps to install
       def install_all(dependencies)
         dependencies.each do |dep|
-          next if skip_for_env?(dep)
-
           if dep.metadata["cask"]
             install_cask(dep)
           else
@@ -42,16 +29,6 @@ module Dev
       end
 
       private
-
-      # Check if a dep should be skipped based on env scoping.
-      #
-      # @param dep [Dependency]
-      # @return [Boolean]
-      def skip_for_env?(dep)
-        dep_env = dep.metadata["env"]
-        return false if dep_env.nil?
-        dep_env != @env
-      end
 
       # Install a Homebrew formula, constructing the spec from tap/version.
       #
@@ -98,16 +75,6 @@ module Dev
       def run_brew_install(name, spec)
         _out, err, status = Open3.capture3("brew", "install", *spec.split)
         raise InstallError, "brew install #{spec} failed: #{err}" unless status.success?
-        true
-      end
-
-      # Detect the current environment based on CI/platform signals.
-      #
-      # @return [String] "ci" or "dev"
-      def detect_env
-        ci_like = ENV["CI"].to_s =~ /\A(true|1)\z/i
-        linux = RUBY_PLATFORM.to_s.include?("linux")
-        (ci_like || linux) ? "ci" : "dev"
       end
     end
   end
