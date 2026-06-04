@@ -31,16 +31,24 @@ module Dev
 
       TEXT
 
-      def install_all(dependencies, root:)
-        dependencies.each { |dep| fetch_dep(dep, root) }
-        write_deps_cmake(dependencies, root)
-        write_targets_cmake(dependencies, root)
+      # @param repository    [Repository]
+      # @param cache         [Cache]
+      # @param project_root  [String, Pathname] project root directory
+      def initialize(repository:, cache:, project_root:)
+        super(repository:, cache:)
+        @project_root = project_root
+      end
+
+      def install_all(dependencies)
+        dependencies.each { |dep| fetch_dep(dep) }
+        write_deps_cmake(dependencies)
+        write_targets_cmake(dependencies)
       end
 
       private
 
-      def fetch_dep(dep, root)
-        deps_dir = File.join(root, "build", "_deps")
+      def fetch_dep(dep)
+        deps_dir = File.join(@project_root.to_s, "build", "_deps")
         dest = File.join(deps_dir, "#{dep.name}-src")
         return if populated?(dest, dep)
 
@@ -96,8 +104,8 @@ module Dev
           (dep.metadata["url"] && !Dir.empty?(dest))
       end
 
-      def write_deps_cmake(dependencies, root)
-        path = File.join(root, DEPS_CMAKE)
+      def write_deps_cmake(dependencies)
+        path = File.join(@project_root.to_s, DEPS_CMAKE)
         app_deps = []
         test_deps = []
 
@@ -125,8 +133,8 @@ module Dev
         File.write(path, lines.join)
       end
 
-      def write_targets_cmake(dependencies, root)
-        path = File.join(root, TARGETS_CMAKE)
+      def write_targets_cmake(dependencies)
+        path = File.join(@project_root.to_s, TARGETS_CMAKE)
         lines = [TARGETS_HEADER]
 
         dependencies.each do |dep|

@@ -22,7 +22,7 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     dir = Dir.mktmpdir("dev-cmake-int-test-")
     cache = Dev::Deps::Cache.new(cache_dir: dir)
     git_repo = Dev::Deps::GitRepository.new
-    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache)
+    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache, project_root: dir)
     prepopulate_dep(dir, "cereal")
     deps = [
       Dev::Deps::Dependency.new(
@@ -33,7 +33,7 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     ]
 
     When "installing all"
-    integration.install_all(deps, root: dir)
+    integration.install_all(deps)
     cmake_content = File.read(File.join(dir, "deps.cmake"))
 
     Then
@@ -49,7 +49,7 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     dir = Dir.mktmpdir("dev-cmake-int-test-")
     cache = Dev::Deps::Cache.new(cache_dir: dir)
     url_repo = Dev::Deps::UrlRepository.new
-    integration = Dev::Deps::CmakeIntegration.new(repository: url_repo, cache: cache)
+    integration = Dev::Deps::CmakeIntegration.new(repository: url_repo, cache: cache, project_root: dir)
     prepopulate_dep(dir, "boost")
     deps = [
       Dev::Deps::Dependency.new(
@@ -60,7 +60,7 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     ]
 
     When "installing all"
-    integration.install_all(deps, root: dir)
+    integration.install_all(deps)
     cmake_content = File.read(File.join(dir, "deps.cmake"))
 
     Then
@@ -76,7 +76,7 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     dir = Dir.mktmpdir("dev-cmake-int-test-")
     cache = Dev::Deps::Cache.new(cache_dir: dir)
     git_repo = Dev::Deps::GitRepository.new
-    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache)
+    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache, project_root: dir)
     prepopulate_dep(dir, "boost")
     prepopulate_dep(dir, "gtest")
     deps = [
@@ -89,7 +89,7 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     ]
 
     When "installing all"
-    integration.install_all(deps, root: dir)
+    integration.install_all(deps)
     cmake_content = File.read(File.join(dir, "deps.cmake"))
 
     Then
@@ -105,7 +105,7 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     dir = Dir.mktmpdir("dev-cmake-int-test-")
     cache = Dev::Deps::Cache.new(cache_dir: dir)
     git_repo = Dev::Deps::GitRepository.new
-    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache)
+    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache, project_root: dir)
     prepopulate_dep(dir, "googletest")
     deps = [
       Dev::Deps::Dependency.new(
@@ -120,7 +120,7 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     ]
 
     When "installing all"
-    integration.install_all(deps, root: dir)
+    integration.install_all(deps)
     targets_content = File.read(File.join(dir, "deps.targets.cmake"))
 
     Then
