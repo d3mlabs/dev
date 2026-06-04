@@ -13,6 +13,7 @@ module Dev
     # The artifact is downloaded to a temp file and hashed.
     # Callers (e.g. Integration) are responsible for caching the result.
     class UrlRepository < Repository
+      class DownloadError < StandardError; end
       def fetch(id)
         url = id["url"]
         name = id["name"]
@@ -39,7 +40,7 @@ module Dev
         tmp.close
 
         _out, err, status = Open3.capture3("curl", "-fsSL", "-o", tmp.path, url)
-        raise "Download failed for #{url}: #{err}" unless status.success?
+        raise DownloadError, "Download failed for #{url}: #{err}" unless status.success?
 
         tmp.path
       end

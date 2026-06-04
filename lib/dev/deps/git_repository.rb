@@ -12,6 +12,7 @@ module Dev
     # 40-char hex commit SHAs pass through without network calls.
     # Git SHAs are identifiers, not integrity hashes — hash field is nil.
     class GitRepository < Repository
+      class RefResolutionError < StandardError; end
       def fetch(id)
         repo_url = id["repo"]
         tag = id["tag"]
@@ -41,7 +42,7 @@ module Dev
         out, _err, status = Open3.capture3("git", "ls-remote", repo, "refs/heads/#{ref}")
         return out.lines.first.split.first if status.success? && !out.strip.empty?
 
-        raise "Could not resolve ref '#{ref}' for #{repo}"
+        raise RefResolutionError, "Could not resolve ref '#{ref}' for #{repo}"
       end
     end
   end
