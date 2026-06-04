@@ -88,7 +88,7 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
     dep.metadata["cask"] == true
   end
 
-  test "fetch raises InfoError when brew info fails" do
+  test "fetch raises BrewInfoError when brew info fails" do
     Given "a formula that brew info cannot resolve"
     repository = Dev::Deps::BrewRepository.new
     failed_status = stub(success?: false)
@@ -104,6 +104,6 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
     )
 
     Then
-    raises Dev::Deps::BrewRepository::InfoError
+    raises Dev::Deps::BrewRepository::BrewInfoError
   end
 end

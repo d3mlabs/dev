@@ -11,8 +11,11 @@ module Dev
     #
     # Uses `brew info --json=v1` for formulae. Cask entries get no version
     # or hash (Homebrew doesn't expose bottle hashes for casks in the same way).
+    #
+    # Env scoping is not this layer's concern — the orchestrator handles
+    # env filtering before and after resolution.
     class BrewRepository < Repository
-      class InfoError < StandardError; end
+      class BrewInfoError < StandardError; end
 
       # Resolve a brew dependency identifier to a pinned Dependency.
       #
@@ -21,9 +24,9 @@ module Dev
       # and bottle SHA256.
       #
       # @param id [Hash] must include "name", "integration", "group";
-      #   optionally "tap", "cask", "env"
+      #   optionally "tap", "cask"
       # @return [Dependency]
-      # @raise [InfoError] if `brew info` fails for a formula
+      # @raise [BrewInfoError] if `brew info` fails for a formula
       def fetch(id)
         name = id["name"]
 
@@ -34,7 +37,7 @@ module Dev
             group: id["group"].to_sym,
             version: nil,
             hash: nil,
-            metadata: { "cask" => true }.merge(env_metadata(id)),
+            metadata: { "cask" => true },
           )
         end
 
@@ -46,7 +49,6 @@ module Dev
 
         metadata = {}
         metadata["tap"] = id["tap"] if id["tap"]
-        metadata.merge!(env_metadata(id))
 
         Dependency.new(
           name: name,
@@ -64,10 +66,10 @@ module Dev
       #
       # @param formula [String] formula spec (e.g. "cmake" or "d3mlabs/d3mlabs/powershell")
       # @return [Hash] parsed JSON info for the formula
-      # @raise [InfoError] if the command fails
+      # @raise [BrewInfoError] if the command fails
       def brew_info(formula)
         out, _err, status = Open3.capture3("brew", "info", "--json=v1", formula)
-        raise InfoError, "brew info --json=v1 #{formula} failed" unless status.success?
+        raise BrewInfoError, "brew info --json=v1 #{formula} failed" unless status.success?
 
         JSON.parse(out).first
       end
@@ -81,14 +83,6 @@ module Dev
         current_arch = RUBY_PLATFORM.include?("arm") ? "arm64_sonoma" : "sonoma"
         bottle = bottles[current_arch] || bottles.values.first
         bottle&.fetch("sha256", nil)
-      end
-
-      # Build env metadata from the identifier.
-      #
-      # @param id [Hash]
-      # @return [Hash] empty or {"env" => "ci"/"dev"}
-      def env_metadata(id)
-        id["env"] ? { "env" => id["env"] } : {}
       end
     end
   end
