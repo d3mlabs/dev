@@ -145,16 +145,16 @@ class ShadowenvLlvmTest < Minitest::Test
     ENV["CI"] = original
   end
 
-  test "ci_or_linux? returns false on macOS without CI" do
-    Given "no CI env and macOS platform"
+  test "ci_or_linux? without CI env reflects platform" do
+    Given "no CI env"
     original = ENV["CI"]
     ENV.delete("CI")
 
-    When "we check ci_or_linux? on a non-linux platform"
+    When "we check ci_or_linux?"
     result = ShadowenvLlvm.ci_or_linux?
 
-    Then "it returns false (assuming test runs on macOS)"
-    result == false unless RUBY_PLATFORM.include?("linux")
+    Then "it returns true on Linux, false on macOS"
+    result == RUBY_PLATFORM.include?("linux")
 
     Cleanup
     ENV["CI"] = original if original
