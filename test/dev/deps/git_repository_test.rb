@@ -51,4 +51,28 @@ class Dev::Deps::GitRepositoryTest < Minitest::Test
     dep.integration == :cmake
     dep.group == :test
   end
+
+  test "fetch raises RefResolutionError for unresolvable ref" do
+    Given "a tag that does not exist on the remote"
+    repo = Dev::Deps::GitRepository.new
+    failed_status = stub(success?: false)
+    Open3.stubs(:capture3)
+         .with("git", "ls-remote", "--tags", "https://github.com/example/repo", "nonexistent-tag")
+         .returns(["", "", failed_status])
+    Open3.stubs(:capture3)
+         .with("git", "ls-remote", "https://github.com/example/repo", "refs/heads/nonexistent-tag")
+         .returns(["", "", failed_status])
+
+    When "fetching by unresolvable tag"
+    repo.fetch(
+      "name" => "bad",
+      "repo" => "https://github.com/example/repo",
+      "tag" => "nonexistent-tag",
+      "integration" => "cmake",
+      "group" => "app",
+    )
+
+    Then
+    raises Dev::Deps::GitRepository::RefResolutionError
+  end
 end

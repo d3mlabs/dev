@@ -14,6 +14,14 @@ module Dev
     # Callers (e.g. Integration) are responsible for caching the result.
     class UrlRepository < Repository
       class DownloadError < StandardError; end
+
+      # Download a URL dependency and compute its SHA256 integrity hash.
+      #
+      # @param id [Hash] must include "name", "url", "integration", "group";
+      #   optionally "tag" for version
+      # @return [Dependency] with hash set to "SHA256=<hex>" and
+      #   metadata["downloaded_path"] pointing to the temp file
+      # @raise [DownloadError] if the download fails
       def fetch(id)
         url = id["url"]
         name = id["name"]
@@ -34,6 +42,12 @@ module Dev
 
       private
 
+      # Download a URL to a temp file via curl.
+      #
+      # @param url  [String] URL to download
+      # @param name [String] dependency name (used in temp file naming)
+      # @return [String] path to the downloaded temp file
+      # @raise [DownloadError] if curl exits non-zero
       def download_to_tempfile(url, name)
         tmp = Tempfile.new(["dev_deps_#{name}", ".bin"])
         tmp.binmode

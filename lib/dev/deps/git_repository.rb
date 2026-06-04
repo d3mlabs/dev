@@ -13,6 +13,13 @@ module Dev
     # Git SHAs are identifiers, not integrity hashes — hash field is nil.
     class GitRepository < Repository
       class RefResolutionError < StandardError; end
+
+      # Resolve a git dependency identifier to a pinned Dependency.
+      #
+      # @param id [Hash] must include "name", "repo", "integration", "group",
+      #   and one of "tag" or "commit"
+      # @return [Dependency] with version set to the resolved full SHA
+      # @raise [RefResolutionError] if the ref cannot be resolved via ls-remote
       def fetch(id)
         repo_url = id["repo"]
         tag = id["tag"]
@@ -33,6 +40,14 @@ module Dev
 
       private
 
+      # Resolve a git ref (tag, branch, or commit SHA) to a full 40-char SHA.
+      #
+      # Tries in order: passthrough for 40-char hex, ls-remote --tags, ls-remote branch.
+      #
+      # @param repo [String] git remote URL
+      # @param ref  [String] tag name, branch name, or commit SHA
+      # @return [String] full 40-char SHA
+      # @raise [RefResolutionError] if no match found
       def resolve_ref(repo, ref)
         return ref if ref.to_s.length == 40 && ref.to_s.match?(/\A[0-9a-f]+\z/)
 

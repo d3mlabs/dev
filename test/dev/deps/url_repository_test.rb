@@ -38,4 +38,24 @@ class Dev::Deps::UrlRepositoryTest < Minitest::Test
     Cleanup
     FileUtils.rm_rf(dir)
   end
+
+  test "fetch raises DownloadError when curl fails" do
+    Given "a URL repository with a stubbed failing download"
+    repo = Dev::Deps::UrlRepository.new
+    failed_status = stub(success?: false)
+    Open3.stubs(:capture3)
+         .with("curl", "-fsSL", "-o", anything, "https://example.com/missing.tar.gz")
+         .returns(["", "404 Not Found", failed_status])
+
+    When "fetching a non-existent URL"
+    repo.fetch(
+      "name" => "missing",
+      "url" => "https://example.com/missing.tar.gz",
+      "integration" => "cmake",
+      "group" => "app",
+    )
+
+    Then
+    raises Dev::Deps::UrlRepository::DownloadError
+  end
 end

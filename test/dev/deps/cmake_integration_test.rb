@@ -100,6 +100,115 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "install_all raises GitCloneError when git clone fails" do
+    Given "a git dep with no prepopulated source and a failing git clone"
+    dir = Dir.mktmpdir("dev-cmake-int-test-")
+    cache = Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache"))
+    git_repo = Dev::Deps::GitRepository.new
+    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache, project_root: dir)
+    deps = [
+      Dev::Deps::Dependency.new(
+        name: "bad_repo", integration: :cmake, group: :app,
+        version: "abc123", hash: nil,
+        metadata: { "repo" => "https://example.com/bad_repo" },
+      ),
+    ]
+    integration.stubs(:system).returns(false)
+
+    When "installing all"
+    integration.install_all(deps)
+
+    Then
+    raises Dev::Deps::CmakeIntegration::GitCloneError
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all raises GitCheckoutError when checkout fails" do
+    Given "a git dep where clone succeeds but checkout fails"
+    dir = Dir.mktmpdir("dev-cmake-int-test-")
+    cache = Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache"))
+    git_repo = Dev::Deps::GitRepository.new
+    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache, project_root: dir)
+    deps = [
+      Dev::Deps::Dependency.new(
+        name: "bad_checkout", integration: :cmake, group: :app,
+        version: "abc123", hash: nil,
+        metadata: { "repo" => "https://example.com/bad_checkout" },
+      ),
+    ]
+    integration.stubs(:system)
+               .with("git", "clone", "--no-checkout", "-q", anything, anything)
+               .returns(true)
+    integration.stubs(:system)
+               .with("git", "-c", "advice.detachedHead=false", "checkout", anything, chdir: anything)
+               .returns(false)
+
+    When "installing all"
+    integration.install_all(deps)
+
+    Then
+    raises Dev::Deps::CmakeIntegration::GitCheckoutError
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all raises DownloadError when curl fails" do
+    Given "a URL dep with no cache and a failing download"
+    dir = Dir.mktmpdir("dev-cmake-int-test-")
+    cache = Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache"))
+    url_repo = Dev::Deps::UrlRepository.new
+    integration = Dev::Deps::CmakeIntegration.new(repository: url_repo, cache: cache, project_root: dir)
+    deps = [
+      Dev::Deps::Dependency.new(
+        name: "bad_url", integration: :cmake, group: :app,
+        version: "1.0.0", hash: nil,
+        metadata: { "url" => "https://example.com/missing.tar.gz" },
+      ),
+    ]
+    integration.stubs(:system)
+               .with("curl", "-fsSL", "-o", anything, anything)
+               .returns(false)
+
+    When "installing all"
+    integration.install_all(deps)
+
+    Then
+    raises Dev::Deps::CmakeIntegration::DownloadError
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all raises ExtractError when tar fails" do
+    Given "a URL dep with a tarball that fails to extract"
+    dir = Dir.mktmpdir("dev-cmake-int-test-")
+    cache = Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache"))
+    url_repo = Dev::Deps::UrlRepository.new
+    integration = Dev::Deps::CmakeIntegration.new(repository: url_repo, cache: cache, project_root: dir)
+    deps = [
+      Dev::Deps::Dependency.new(
+        name: "bad_tar", integration: :cmake, group: :app,
+        version: "1.0.0", hash: nil,
+        metadata: { "url" => "https://example.com/bad.tar.gz" },
+      ),
+    ]
+    # curl succeeds but tar fails
+    integration.stubs(:system).with { |cmd, *_| cmd == "curl" }.returns(true)
+    integration.stubs(:system).with { |cmd, *_| cmd == "tar" }.returns(false)
+
+    When "installing all"
+    integration.install_all(deps)
+
+    Then
+    raises Dev::Deps::CmakeIntegration::ExtractError
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "install_all generates deps.targets.cmake with cmake_targets" do
     Given "a dependency with cmake targets and namespace"
     dir = Dir.mktmpdir("dev-cmake-int-test-")
