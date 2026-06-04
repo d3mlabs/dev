@@ -145,6 +145,40 @@ class Dev::Deps::LockfileTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "custom groups round-trip through deps.lock" do
+    Given "dependencies with custom groups alongside standard ones"
+    dir = Dir.mktmpdir("dev-lockfile-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: dir)
+    deps = [
+      Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
+                                version: "1.90.0", hash: "SHA256=aaa", metadata: {}),
+      Dev::Deps::Dependency.new(name: "mock-server", integration: :custom, group: :staging,
+                                version: "2.0.0", hash: "SHA256=bbb", metadata: {}),
+      Dev::Deps::Dependency.new(name: "load-gen", integration: :custom, group: :integration,
+                                version: "1.0.0", hash: "SHA256=ccc",
+                                metadata: { "url" => "https://example.com/load-gen.tar.gz" }),
+    ]
+
+    When "locking and reading back"
+    lockfile.lock(deps)
+    read_deps = lockfile.read
+
+    Then
+    read_deps.size == 3
+    staging_dep = read_deps.find { |d| d.name == "mock-server" }
+    integration_dep = read_deps.find { |d| d.name == "load-gen" }
+    !staging_dep.nil?
+    staging_dep.group == :staging
+    staging_dep.version == "2.0.0"
+    !integration_dep.nil?
+    integration_dep.group == :integration
+    integration_dep.metadata == { "url" => "https://example.com/load-gen.tar.gz" }
+    !File.exist?(File.join(dir, "build-deps.lock"))
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "read round-trips env-scoped build deps" do
     Given "global and env-scoped build dependencies"
     dir = Dir.mktmpdir("dev-lockfile-test-")
