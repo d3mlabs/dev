@@ -5,10 +5,6 @@ require_relative "dsl"
 module Dev
   module Deps
     # Parsed dependency configuration. Returned by Dev::Deps.define.
-    #
-    # Prefer using the returned instance over the class-level accessors.
-    # Class-level delegates exist for backward compatibility with Brew/Taps
-    # and will be removed once those modules accept a Config parameter.
     class Config
       attr_reader :taps, :groups, :gems, :ruby_version_requirement,
                   :lua_version, :registered_integrations
@@ -52,7 +48,7 @@ module Dev
       def self.define(&block)
         dsl = DSL.new
         dsl.instance_eval(&block) if block
-        instance = new(
+        new(
           taps: dsl.taps,
           groups: dsl.groups,
           gems: dsl.gems,
@@ -60,25 +56,6 @@ module Dev
           lua_version: dsl.lua_version_value,
           registered_integrations: dsl.registered_integrations,
         )
-        @current = instance
-        instance
-      end
-
-      # -- Backward-compat class-level delegates (used by Brew, Taps) --
-      # These proxy to the last Config instance created by .define.
-      # TODO: remove once Brew/Taps accept a Config parameter.
-
-      class << self
-        # @return [Config, nil] last config created by .define
-        attr_reader :current
-
-        def taps = current&.taps || {}
-        def group(name) = current&.group(name) || { "runtime" => [], "brew" => [], "env" => {} }
-        def gems = current&.gems || []
-        def ruby_version_requirement = current&.ruby_version_requirement
-        def lua_version = current&.lua_version
-        def registered_integrations = current&.registered_integrations || {}
-        def local_tap_names = current&.local_tap_names || []
       end
     end
   end

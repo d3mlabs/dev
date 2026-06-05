@@ -15,9 +15,12 @@ module Dev
       end
 
       # Install all build-group brew deps for the given (or auto-detected) environment.
-      def self.install_build_deps(env: nil)
+      #
+      # @param config [Config] parsed dependency configuration
+      # @param env [String, nil] environment name (auto-detected if nil)
+      def self.install_build_deps(config:, env: nil)
         env = (env || current_env).to_s
-        build_group = Config.group("build")
+        build_group = config.group("build")
         global_brew = build_group["brew"] || []
         env_brew = (build_group["env"] || {})[env]&.dig("brew") || []
         process_brew_entries(Array(global_brew) + Array(env_brew))
