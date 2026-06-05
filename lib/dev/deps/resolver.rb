@@ -51,13 +51,31 @@ module Dev
             queue << DependencyDeclaration.new(
               name: tdep[:name],
               integration: decl.integration,
-              constraint: tdep[:constraint].is_a?(Hash) ? tdep[:constraint] : {},
+              constraint: normalize_constraint(tdep[:constraint]),
               group: decl.group,
             )
           end
         end
 
         resolved.values
+      end
+
+      private
+
+      # Normalize a transitive dep constraint to a Hash.
+      #
+      # Transitive deps from Dependency#dependencies may express constraints as
+      # a string (e.g. ">= 1.0") or a Hash. Strings are wrapped so they are not
+      # silently dropped when merged into the fetch ID.
+      #
+      # @param constraint [Hash, String, nil] raw constraint from Dependency#dependencies
+      # @return [Hash]
+      def normalize_constraint(constraint)
+        case constraint
+        when Hash then constraint
+        when String then { "version" => constraint }
+        else {}
+        end
       end
     end
   end

@@ -10,12 +10,17 @@ require "dev/deps/cache"
 require "tmpdir"
 
 # Stub repository that returns canned Dependencies without network calls.
+# Records fetch IDs for assertion.
 class StubRepository < Dev::Deps::Repository
+  attr_reader :fetched_ids
+
   def initialize(deps_by_name: {})
     @deps_by_name = deps_by_name
+    @fetched_ids = []
   end
 
   def fetch(id)
+    @fetched_ids << id
     @deps_by_name.fetch(id["name"])
   end
 end
@@ -116,5 +121,123 @@ class Dev::Deps::ResolverTest < Minitest::Test
     Then
     result.size == 1
     result[0].name == "solo"
+  end
+
+  test "resolves deep transitive chains beyond depth 1" do
+    Given "A depends on B, B depends on C"
+    c = Dev::Deps::Dependency.new(name: "c", integration: :luarocks, group: :app,
+                                  version: "3.0", hash: "SHA256=ccc", metadata: {})
+    b = Dev::Deps::Dependency.new(name: "b", integration: :luarocks, group: :app,
+                                  version: "2.0", hash: "SHA256=bbb", metadata: {},
+                                  dependencies: [{ name: "c", constraint: ">= 3.0" }])
+    a = Dev::Deps::Dependency.new(name: "a", integration: :luarocks, group: :app,
+                                  version: "1.0", hash: "SHA256=aaa", metadata: {},
+                                  dependencies: [{ name: "b", constraint: ">= 2.0" }])
+    repo = StubRepository.new(deps_by_name: { "a" => a, "b" => b, "c" => c })
+    declarations = [
+      Dev::Deps::DependencyDeclaration.new(name: "a", integration: :luarocks, group: :app),
+    ]
+    resolver = Dev::Deps::Resolver.new(repositories: { luarocks: repo })
+
+    When "resolving"
+    result = resolver.resolve(declarations)
+
+    Then
+    result.size == 3
+    result.map(&:name).sort == ["a", "b", "c"]
+  end
+
+  test "resolves diamond dependencies without duplication" do
+    Given "A depends on B and C, both depend on D"
+    d = Dev::Deps::Dependency.new(name: "d", integration: :luarocks, group: :app,
+                                  version: "1.0", hash: "SHA256=ddd", metadata: {})
+    b = Dev::Deps::Dependency.new(name: "b", integration: :luarocks, group: :app,
+                                  version: "1.0", hash: "SHA256=bbb", metadata: {},
+                                  dependencies: [{ name: "d", constraint: ">= 1.0" }])
+    c = Dev::Deps::Dependency.new(name: "c", integration: :luarocks, group: :app,
+                                  version: "1.0", hash: "SHA256=ccc", metadata: {},
+                                  dependencies: [{ name: "d", constraint: ">= 1.0" }])
+    a = Dev::Deps::Dependency.new(name: "a", integration: :luarocks, group: :app,
+                                  version: "1.0", hash: "SHA256=aaa", metadata: {},
+                                  dependencies: [
+                                    { name: "b", constraint: ">= 1.0" },
+                                    { name: "c", constraint: ">= 1.0" },
+                                  ])
+    repo = StubRepository.new(deps_by_name: { "a" => a, "b" => b, "c" => c, "d" => d })
+    declarations = [
+      Dev::Deps::DependencyDeclaration.new(name: "a", integration: :luarocks, group: :app),
+    ]
+    resolver = Dev::Deps::Resolver.new(repositories: { luarocks: repo })
+
+    When "resolving"
+    result = resolver.resolve(declarations)
+
+    Then
+    result.size == 4
+    result.map(&:name).sort == ["a", "b", "c", "d"]
+  end
+
+  test "terminates on cyclic transitive dependencies" do
+    Given "A depends on B, B depends on A"
+    a = Dev::Deps::Dependency.new(name: "a", integration: :cmake, group: :app,
+                                  version: "1.0", hash: nil, metadata: {},
+                                  dependencies: [{ name: "b", constraint: {} }])
+    b = Dev::Deps::Dependency.new(name: "b", integration: :cmake, group: :app,
+                                  version: "1.0", hash: nil, metadata: {},
+                                  dependencies: [{ name: "a", constraint: {} }])
+    repo = StubRepository.new(deps_by_name: { "a" => a, "b" => b })
+    declarations = [
+      Dev::Deps::DependencyDeclaration.new(name: "a", integration: :cmake, group: :app),
+    ]
+    resolver = Dev::Deps::Resolver.new(repositories: { cmake: repo })
+
+    When "resolving"
+    result = resolver.resolve(declarations)
+
+    Then
+    result.size == 2
+    result.map(&:name).sort == ["a", "b"]
+  end
+
+  test "transitive dependencies inherit parent's group" do
+    Given "a :test parent with a transitive child"
+    child = Dev::Deps::Dependency.new(name: "child", integration: :luarocks, group: :test,
+                                      version: "2.0", hash: "SHA256=bbb", metadata: {})
+    parent = Dev::Deps::Dependency.new(name: "parent", integration: :luarocks, group: :test,
+                                       version: "1.0", hash: "SHA256=aaa", metadata: {},
+                                       dependencies: [{ name: "child", constraint: ">= 1.0" }])
+    repo = StubRepository.new(deps_by_name: { "parent" => parent, "child" => child })
+    declarations = [
+      Dev::Deps::DependencyDeclaration.new(name: "parent", integration: :luarocks, group: :test),
+    ]
+    resolver = Dev::Deps::Resolver.new(repositories: { luarocks: repo })
+
+    When "resolving"
+    resolver.resolve(declarations)
+
+    Then "child was fetched with parent's :test group"
+    child_id = repo.fetched_ids.find { |id| id["name"] == "child" }
+    child_id["group"] == "test"
+  end
+
+  test "normalizes string constraints on transitive deps to Hash" do
+    Given "a parent whose transitive dep has a string constraint"
+    child = Dev::Deps::Dependency.new(name: "child", integration: :luarocks, group: :app,
+                                      version: "2.0", hash: "SHA256=bbb", metadata: {})
+    parent = Dev::Deps::Dependency.new(name: "parent", integration: :luarocks, group: :app,
+                                       version: "1.0", hash: "SHA256=aaa", metadata: {},
+                                       dependencies: [{ name: "child", constraint: ">= 2.0" }])
+    repo = StubRepository.new(deps_by_name: { "parent" => parent, "child" => child })
+    declarations = [
+      Dev::Deps::DependencyDeclaration.new(name: "parent", integration: :luarocks, group: :app),
+    ]
+    resolver = Dev::Deps::Resolver.new(repositories: { luarocks: repo })
+
+    When "resolving"
+    resolver.resolve(declarations)
+
+    Then "string constraint was normalized to a version hash"
+    child_id = repo.fetched_ids.find { |id| id["name"] == "child" }
+    child_id["version"] == ">= 2.0"
   end
 end
