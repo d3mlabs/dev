@@ -2,13 +2,15 @@
 
 module Dev
   module Deps
-    # Registers Homebrew taps declared in Dev::Deps::Config.
+    # Registers Homebrew taps declared in a Config instance.
     # file:// URLs are resolved relative to the given root directory.
     module Taps
       # Register all taps from the config.
-      # root: project root directory; file:// URLs resolve relative to this.
-      def self.register(root:)
-        taps = Config.taps
+      #
+      # @param config [Config] parsed dependency configuration
+      # @param root [String] project root directory; file:// URLs resolve relative to this
+      def self.register(config:, root:)
+        taps = config.taps
         abort("No taps declared in dependencies.rb.") if taps.nil? || taps.empty?
 
         taps.each do |name, t|
@@ -23,16 +25,19 @@ module Dev
           end
         end
 
-        setup_tap_env(root: root)
+        setup_tap_env(config:, root:)
       end
 
       # Write TAP_NAME and LOCAL_TAP_DIR env vars for the first local tap.
       # Used by downstream steps (e.g. brew formula install that references a local tap).
-      def self.setup_tap_env(root:)
-        first_local = Config.local_tap_names.first
+      #
+      # @param config [Config] parsed dependency configuration
+      # @param root [String] project root directory
+      def self.setup_tap_env(config:, root:)
+        first_local = config.local_tap_names.first
         return unless first_local
 
-        url = (Config.taps[first_local]["url"] || "").to_s.strip
+        url = (config.taps[first_local]["url"] || "").to_s.strip
         path = url.sub(/\Afile:\/\//, "")
         path = path.start_with?("./") ? File.join(root, path[2..]) : path
         ENV["TAP_NAME"] = first_local
