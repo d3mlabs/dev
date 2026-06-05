@@ -5,6 +5,7 @@ require "test_helper"
 require "dev/deps/resolver"
 require "dev/deps/repository"
 require "dev/deps/dependency"
+require "dev/deps/dependency_declaration"
 require "dev/deps/cache"
 require "tmpdir"
 
@@ -21,21 +22,21 @@ end
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::ResolverTest < Minitest::Test
-  test "resolves a flat list of deps with no transitive dependencies" do
-    Given "two independent dependencies"
+  test "resolves a flat list of declarations with no transitive dependencies" do
+    Given "two independent declarations"
     boost = Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
                                       version: "sha1", hash: nil, metadata: {})
     gtest = Dev::Deps::Dependency.new(name: "gtest", integration: :cmake, group: :test,
                                       version: "sha2", hash: nil, metadata: {})
     repo = StubRepository.new(deps_by_name: { "boost" => boost, "gtest" => gtest })
-    deps = [
-      { name: "boost", integration: :cmake, constraint: {}, group: :app },
-      { name: "gtest", integration: :cmake, constraint: {}, group: :test },
+    declarations = [
+      Dev::Deps::DependencyDeclaration.new(name: "boost", integration: :cmake, group: :app),
+      Dev::Deps::DependencyDeclaration.new(name: "gtest", integration: :cmake, group: :test),
     ]
     resolver = Dev::Deps::Resolver.new(repositories: { cmake: repo })
 
     When "resolving"
-    result = resolver.resolve(deps)
+    result = resolver.resolve(declarations)
 
     Then
     result.size == 2
@@ -50,17 +51,31 @@ class Dev::Deps::ResolverTest < Minitest::Test
                                        version: "1.0", hash: "SHA256=aaa", metadata: {},
                                        dependencies: [{ name: "child", constraint: ">= 1.0" }])
     repo = StubRepository.new(deps_by_name: { "parent" => parent, "child" => child })
-    deps = [
-      { name: "parent", integration: :luarocks, constraint: {}, group: :test },
+    declarations = [
+      Dev::Deps::DependencyDeclaration.new(name: "parent", integration: :luarocks, group: :test),
     ]
     resolver = Dev::Deps::Resolver.new(repositories: { luarocks: repo })
 
     When "resolving"
-    result = resolver.resolve(deps)
+    result = resolver.resolve(declarations)
 
     Then
     result.size == 2
     result.map(&:name).sort == ["child", "parent"]
+  end
+
+  test "raises UnknownIntegrationError for unregistered integration" do
+    Given "a declaration referencing an unregistered integration"
+    resolver = Dev::Deps::Resolver.new(repositories: {})
+    declarations = [
+      Dev::Deps::DependencyDeclaration.new(name: "foo", integration: :unknown, group: :app),
+    ]
+
+    When "resolving"
+    resolver.resolve(declarations)
+
+    Then
+    raises Dev::Deps::Resolver::UnknownIntegrationError
   end
 
   test "does not duplicate already-resolved transitive deps" do
@@ -71,42 +86,32 @@ class Dev::Deps::ResolverTest < Minitest::Test
     b = Dev::Deps::Dependency.new(name: "b", integration: :cmake, group: :app,
                                   version: "1.0", hash: nil, metadata: {})
     repo = StubRepository.new(deps_by_name: { "a" => a, "b" => b })
-    deps = [
-      { name: "a", integration: :cmake, constraint: {}, group: :app },
-      { name: "b", integration: :cmake, constraint: {}, group: :app },
+    declarations = [
+      Dev::Deps::DependencyDeclaration.new(name: "a", integration: :cmake, group: :app),
+      Dev::Deps::DependencyDeclaration.new(name: "b", integration: :cmake, group: :app),
     ]
     resolver = Dev::Deps::Resolver.new(repositories: { cmake: repo })
 
     When "resolving"
-    result = resolver.resolve(deps)
+    result = resolver.resolve(declarations)
 
     Then
     result.size == 2
     result.map(&:name).sort == ["a", "b"]
   end
 
-  test "raises UnknownIntegrationError for unregistered integration" do
-    Given "a dep referencing an unregistered integration"
-    resolver = Dev::Deps::Resolver.new(repositories: {})
-    deps = [{ name: "foo", integration: :unknown, constraint: {}, group: :app }]
-
-    When "resolving"
-    resolver.resolve(deps)
-
-    Then
-    raises Dev::Deps::Resolver::UnknownIntegrationError
-  end
-
-  test "handles deps with empty transitive dependencies" do
-    Given "a dependency with no transitive deps"
+  test "handles declarations with empty transitive dependencies" do
+    Given "a declaration with no transitive deps"
     solo = Dev::Deps::Dependency.new(name: "solo", integration: :cmake, group: :app,
                                      version: "1.0", hash: nil, metadata: {})
     repo = StubRepository.new(deps_by_name: { "solo" => solo })
-    deps = [{ name: "solo", integration: :cmake, constraint: {}, group: :app }]
+    declarations = [
+      Dev::Deps::DependencyDeclaration.new(name: "solo", integration: :cmake, group: :app),
+    ]
     resolver = Dev::Deps::Resolver.new(repositories: { cmake: repo })
 
     When "resolving"
-    result = resolver.resolve(deps)
+    result = resolver.resolve(declarations)
 
     Then
     result.size == 1
