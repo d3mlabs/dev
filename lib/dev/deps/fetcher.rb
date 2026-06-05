@@ -31,17 +31,17 @@ module Dev
 
           if in_sync
             if populated
-              Brew.step_ok(label)
+              CliUI.step_ok(label)
               fetchcontent_source_dirs << ["FETCHCONTENT_SOURCE_DIR_#{name.upcase}", File.expand_path(dep_src)]
             else
               fetch_dep(dep, dep_src, lock_path, label: label, verbose: verbose)
               fetchcontent_source_dirs << ["FETCHCONTENT_SOURCE_DIR_#{name.upcase}", File.expand_path(dep_src)]
             end
           else
-            Brew.step_fail(label)
+            CliUI.step_fail(label)
             current_content = File.read(lock_path)
             generated = Lockfile.dep_pin(current_content, name)
-            if Brew.cli_ui_available?
+            if CliUI.available?
               CLI::UI.puts(CLI::UI.fmt("{{yellow:lockfile out of sync for #{name}: #{generated}}}"))
             else
               puts "  WARNING: lockfile out of sync for #{name}: #{generated}"
@@ -52,7 +52,7 @@ module Dev
         if out_of_sync.any?
           puts ""
           msg = "Run update-deps and commit deps.lock.cmake."
-          if Brew.cli_ui_available?
+          if CliUI.available?
             CLI::UI.puts(CLI::UI.fmt("{{yellow:#{msg}}}"))
           else
             puts msg
@@ -124,12 +124,12 @@ module Dev
 
         def fetch_dep(dep, dep_src, lock_path, label:, verbose: false)
           if dep.key?(:url)
-            Brew.with_spinner("Fetching #{label}") do
+            CliUI.with_spinner("Fetching #{label}") do
               computed = fetch_tarball(dep[:url], dep_src, quiet: !verbose)
               update_lockfile_hash(lock_path, dep[:name], computed) if computed
             end
           else
-            Brew.with_spinner("Fetching #{label}") do
+            CliUI.with_spinner("Fetching #{label}") do
               fetch_git(dep[:repo], dep[:sha], dep_src, quiet: !verbose)
             end
           end
