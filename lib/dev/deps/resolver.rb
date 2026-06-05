@@ -11,15 +11,21 @@ module Dev
     # Registries that support dependency metadata (LuaRocks, CurseForge, Brew)
     # get full transitive resolution. Source-based repos (Git, URL) return [].
     class Resolver
+      class UnknownIntegrationError < StandardError; end
+
       # @param repositories [Hash{Symbol => Repository}] integration type → repository
       def initialize(repositories:)
         @repositories = repositories
       end
 
-      # Resolve all deps → flat Dependency list.
+      # Resolve all deps into a flat Dependency list.
+      #
+      # Iterates declared deps, queries each Repository to fetch the pinned
+      # Dependency, then walks transitive deps via Dependency#dependencies.
       #
       # @param deps [Array<Hash>] each has :name, :integration, :constraint, :group
       # @return [Array<Dependency>]
+      # @raise [UnknownIntegrationError] if no repository is registered for a dep's integration type
       def resolve(deps)
         resolved = {}
         queue = deps.dup
@@ -29,7 +35,7 @@ module Dev
           next if resolved.key?(name)
 
           repo = @repositories[dep[:integration]]
-          raise "No repository registered for #{dep[:integration].inspect}" unless repo
+          raise UnknownIntegrationError, "no repository registered for #{dep[:integration].inspect}" unless repo
 
           id = dep[:constraint].merge(
             "name" => name,

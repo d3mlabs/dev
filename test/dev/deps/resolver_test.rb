@@ -85,6 +85,18 @@ class Dev::Deps::ResolverTest < Minitest::Test
     result.map(&:name).sort == ["a", "b"]
   end
 
+  test "raises UnknownIntegrationError for unregistered integration" do
+    Given "a dep referencing an unregistered integration"
+    resolver = Dev::Deps::Resolver.new(repositories: {})
+    deps = [{ name: "foo", integration: :unknown, constraint: {}, group: :app }]
+
+    When "resolving"
+    resolver.resolve(deps)
+
+    Then
+    raises Dev::Deps::Resolver::UnknownIntegrationError
+  end
+
   test "handles deps with empty transitive dependencies" do
     Given "a dependency with no transitive deps"
     solo = Dev::Deps::Dependency.new(name: "solo", integration: :cmake, group: :app,
