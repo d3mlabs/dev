@@ -1,6 +1,5 @@
 ---
-description: YARD docs on all public and private methods. No narrating concerns the layer doesn't own.
-globs: "**/*.rb"
+description: "YARD docs on all public and private methods with @param, @return, @raise tags. Comments must not describe concerns owned by other layers."
 alwaysApply: false
 ---
 

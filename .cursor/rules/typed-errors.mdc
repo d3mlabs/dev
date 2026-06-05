@@ -1,6 +1,5 @@
 ---
-description: Use named error classes, not bare raise with strings. Test every error path.
-globs: "**/*.rb"
+description: "Always define named error classes — never raise with a bare string. Prefix generic error names with the parent class. Every typed error must have a test asserting the specific class."
 alwaysApply: false
 ---
 

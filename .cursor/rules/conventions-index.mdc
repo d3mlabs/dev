@@ -1,0 +1,23 @@
+---
+description: Index of on-demand convention rules. Read the relevant files listed here before writing or reviewing code.
+alwaysApply: true
+---
+
+# Convention index
+
+Read the relevant convention file(s) before starting work. Use the mode tags
+to decide which files apply to your current task.
+
+## Architecture — planning, reviewing, designing
+
+- `.cursor/rules/separation-of-concerns.mdc` — Layer responsibilities: Repository resolves, Integration installs, Lockfile serializes, Orchestrator coordinates
+- `.cursor/rules/interface-contracts.mdc` — Subclass signatures must match base; subclass-specific ambient context via constructor DI only
+
+## Implementation — writing or modifying code
+
+- `.cursor/rules/typed-errors.mdc` — Named error classes, never bare `raise "string"`; every error type must have a test
+- `.cursor/rules/strong-types-pathname.mdc` — `Pathname` for paths, `_FILE` suffix on constants, coerce in constructors
+- `.cursor/rules/yardoc.mdc` — YARD docs on all public and private methods; no cross-concern comments
+- `.cursor/rules/naming-conventions.mdc` — `Dev::Deps` naming: `<Thing>Repository`, `<Thing>Integration`, `lock`/`read` verbs, specific error names
+- `.cursor/rules/no-class-method-delegation.mdc` — No class methods that only delegate to an instance; use constructor injection
+- `.cursor/rules/errors-bubble-up-no-nil.mdc` — Never return nil for error states; let exceptions raise and bubble to boundaries

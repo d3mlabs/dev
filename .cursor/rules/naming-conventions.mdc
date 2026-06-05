@@ -1,6 +1,5 @@
 ---
-description: Consistent naming for deps system classes, constants, and errors.
-globs: "lib/dev/deps/**/*.rb"
+description: "Dev::Deps naming: <Thing>Repository, <Thing>Integration, prefix generic error names with parent class, lock/read verbs for lockfile API, no unnecessary return values."
 alwaysApply: false
 ---
 

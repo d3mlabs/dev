@@ -1,6 +1,5 @@
 ---
-description: Do not use class methods that only delegate to an instance (constructor instead)
-globs: "**/*.rb"
+description: "No class methods that only delegate to an instance (e.g. self.find → new.find). Use constructor injection and call instance methods directly."
 alwaysApply: false
 ---
 

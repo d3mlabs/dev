@@ -1,6 +1,5 @@
 ---
-description: Don't return nil for error states; let errors bubble up. Parsers return domain objects.
-globs: "**/*.rb"
+description: "Never return nil for error states — let exceptions raise and bubble to boundaries. Parsers/loaders are stateless and return domain objects."
 alwaysApply: false
 ---
 

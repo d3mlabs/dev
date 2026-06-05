@@ -1,6 +1,5 @@
 ---
-description: Layers must not own, implement, or mention concerns that belong elsewhere.
-globs: "**/*.rb"
+description: "Layer responsibilities: Repository resolves, Integration installs, Lockfile serializes, Orchestrator coordinates. Layers must not implement, reference, or even comment on other layers' concerns."
 alwaysApply: false
 ---
 

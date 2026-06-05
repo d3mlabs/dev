@@ -1,6 +1,5 @@
 ---
-description: Use Pathname for file paths, _FILE suffix for path constants, coerce in constructors.
-globs: "**/*.rb"
+description: "Use Pathname for file/directory paths (coerce in constructors), / operator for joins instead of File.join, _FILE suffix on path constants."
 alwaysApply: false
 ---
 

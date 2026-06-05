@@ -1,6 +1,5 @@
 ---
-description: Subclasses must match base class signatures. Use constructor DI only for subclass-specific ambient context.
-globs: "**/*.rb"
+description: "Subclasses must match base class method signatures exactly. Use constructor DI only for subclass-specific, fixed ambient context — not per-call inputs."
 alwaysApply: false
 ---
 
