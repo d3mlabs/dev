@@ -94,50 +94,50 @@ class Dev::Deps::ConfigTest < Minitest::Test
     build["env"]["dev"]["brew"] == [{ "powershell" => { "cask" => true } }]
   end
 
-  test "define app group with runtime deps" do
+  test "define app group with cmake deps produces declarations" do
     When
     config = Dev::Deps.define do
       group :app do
-        runtime "boost",
-                url: "https://example.com/boost.tar.gz",
-                tag: "boost-1.90.0",
-                cmake_targets: ["stacktrace"],
-                cmake_namespace: "Boost::"
-        runtime "cereal",
-                repo: "https://github.com/USCiLab/cereal",
-                tag: "v1.3.2"
+        cmake "boost",
+              url: "https://example.com/boost.tar.gz",
+              tag: "boost-1.90.0",
+              cmake_targets: ["stacktrace"],
+              cmake_namespace: "Boost::"
+        cmake "cereal",
+              repo: "https://github.com/USCiLab/cereal",
+              tag: "v1.3.2"
       end
     end
 
     Then
-    app = config.group("app")
-    app["runtime"].size == 2
+    decls = config.declarations.select { |d| d.group == :app }
+    decls.size == 2
 
-    boost = app["runtime"][0]["boost"]
-    boost["url"] == "https://example.com/boost.tar.gz"
-    boost["tag"] == "boost-1.90.0"
-    boost["cmake_targets"] == ["stacktrace"]
-    boost["cmake_namespace"] == "Boost::"
+    decls[0].name == "boost"
+    decls[0].constraint["url"] == "https://example.com/boost.tar.gz"
+    decls[0].constraint["tag"] == "boost-1.90.0"
+    decls[0].constraint["cmake_targets"] == ["stacktrace"]
+    decls[0].constraint["cmake_namespace"] == "Boost::"
 
-    cereal = app["runtime"][1]["cereal"]
-    cereal["repo"] == "https://github.com/USCiLab/cereal"
-    cereal["tag"] == "v1.3.2"
+    decls[1].name == "cereal"
+    decls[1].constraint["repo"] == "https://github.com/USCiLab/cereal"
+    decls[1].constraint["tag"] == "v1.3.2"
   end
 
   test "define test group with cmake_targets" do
     When
     config = Dev::Deps.define do
       group :test do
-        runtime "googletest",
-                repo: "https://github.com/google/googletest",
-                tag: "v1.17.0",
-                cmake_targets: ["gtest", "gmock"]
+        cmake "googletest",
+              repo: "https://github.com/google/googletest",
+              tag: "v1.17.0",
+              cmake_targets: ["gtest", "gmock"]
       end
     end
 
     Then
-    gtest = config.group("test")["runtime"][0]["googletest"]
-    gtest["cmake_targets"] == ["gtest", "gmock"]
+    decl = config.declarations.find { |d| d.name == "googletest" }
+    decl.constraint["cmake_targets"] == ["gtest", "gmock"]
   end
 
   test "missing group returns empty defaults" do
@@ -146,23 +146,34 @@ class Dev::Deps::ConfigTest < Minitest::Test
 
     Then
     nonexistent = config.group("nonexistent")
-    nonexistent["runtime"] == []
     nonexistent["brew"] == []
     nonexistent["env"] == {}
   end
 
-  test "runtime with commit pin" do
+  test "cmake dep with commit pin" do
     When
     config = Dev::Deps.define do
       group :app do
-        runtime "entityx",
-                repo: "https://github.com/alecthomas/entityx",
-                commit: "ee3042f8b027"
+        cmake "entityx",
+              repo: "https://github.com/alecthomas/entityx",
+              commit: "ee3042f8b027"
       end
     end
 
     Then
-    entityx = config.group("app")["runtime"][0]["entityx"]
-    entityx["commit"] == "ee3042f8b027"
+    decl = config.declarations.find { |d| d.name == "entityx" }
+    decl.constraint["commit"] == "ee3042f8b027"
+  end
+
+  test "declarations is empty for config with only brew deps" do
+    When
+    config = Dev::Deps.define do
+      group :build do
+        brew "cmake"
+      end
+    end
+
+    Then
+    config.declarations.empty?
   end
 end

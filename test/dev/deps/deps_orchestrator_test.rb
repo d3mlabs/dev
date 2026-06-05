@@ -6,7 +6,6 @@ require "dev/deps/deps_orchestrator"
 require "dev/deps/lockfile"
 require "dev/deps/dependency"
 require "dev/deps/dependency_declaration"
-require "dev/deps/config"
 require "dev/deps/repository"
 require "dev/deps/integration"
 require "dev/deps/cache"
@@ -37,9 +36,9 @@ end
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::DepsOrchestratorTest < Minitest::Test
-  # --- update_deps ---
+  # --- resolve_dependencies ---
 
-  test "update_deps resolves declarations and writes lockfiles" do
+  test "resolve_dependencies resolves declarations and writes lockfiles" do
     Given "declarations and a stub repository"
     dir = Dir.mktmpdir("orchestrator-test-")
     boost = Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
@@ -48,10 +47,10 @@ class Dev::Deps::DepsOrchestratorTest < Minitest::Test
     declarations = [
       Dev::Deps::DependencyDeclaration.new(name: "boost", integration: :cmake, group: :app),
     ]
-    orchestrator = Dev::Deps::DepsOrchestrator.new(dir: Pathname(dir))
+    orchestrator = Dev::Deps::DepsOrchestrator.new(dir: Pathname(dir), repositories: { cmake: repo })
 
-    When "running update_deps"
-    orchestrator.update_deps(declarations:, repositories: { cmake: repo })
+    When "running resolve_dependencies"
+    orchestrator.resolve_dependencies(declarations)
 
     Then "deps.lock is written"
     File.exist?(File.join(dir, "deps.lock"))
@@ -76,10 +75,12 @@ class Dev::Deps::DepsOrchestratorTest < Minitest::Test
     ]
     lockfile.lock(deps)
     cmake_integration = RecordingIntegration.new
-    orchestrator = Dev::Deps::DepsOrchestrator.new(dir: Pathname(dir))
+    orchestrator = Dev::Deps::DepsOrchestrator.new(
+      dir: Pathname(dir), integrations: { cmake: cmake_integration },
+    )
 
     When "running install_all"
-    orchestrator.install_all(integrations: { cmake: cmake_integration })
+    orchestrator.install_all
 
     Then "cmake integration received the dep"
     cmake_integration.installed_deps.size == 1
@@ -89,7 +90,7 @@ class Dev::Deps::DepsOrchestratorTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "install_all dispatches build group before app/test" do
+  test "install_all dispatches build group before others" do
     Given "lockfiles with build and app deps"
     dir = Dir.mktmpdir("orchestrator-test-")
     lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
@@ -114,10 +115,12 @@ class Dev::Deps::DepsOrchestratorTest < Minitest::Test
       @installed_deps.concat(dependencies)
     end
 
-    orchestrator = Dev::Deps::DepsOrchestrator.new(dir: Pathname(dir))
+    orchestrator = Dev::Deps::DepsOrchestrator.new(
+      dir: Pathname(dir), integrations: { cmake: cmake_int, brew: brew_int },
+    )
 
     When "running install_all"
-    orchestrator.install_all(integrations: { cmake: cmake_int, brew: brew_int })
+    orchestrator.install_all
 
     Then "build (brew) ran before app (cmake)"
     install_order == [:brew, :cmake]
@@ -142,10 +145,12 @@ class Dev::Deps::DepsOrchestratorTest < Minitest::Test
     ]
     lockfile.lock(deps)
     brew_int = RecordingIntegration.new
-    orchestrator = Dev::Deps::DepsOrchestrator.new(dir: Pathname(dir))
+    orchestrator = Dev::Deps::DepsOrchestrator.new(
+      dir: Pathname(dir), integrations: { brew: brew_int },
+    )
 
     When "installing for ci env"
-    orchestrator.install_all(integrations: { brew: brew_int }, env: "ci")
+    orchestrator.install_all(env: "ci")
 
     Then "only cmake (no env) and ruby (ci env) are installed"
     names = brew_int.installed_deps.map(&:name).sort
@@ -167,7 +172,7 @@ class Dev::Deps::DepsOrchestratorTest < Minitest::Test
     orchestrator = Dev::Deps::DepsOrchestrator.new(dir: Pathname(dir))
 
     When "running install_all with no matching integration"
-    orchestrator.install_all(integrations: {})
+    orchestrator.install_all
 
     Then "no error raised"
     true
@@ -210,58 +215,5 @@ class Dev::Deps::DepsOrchestratorTest < Minitest::Test
 
     Cleanup
     ENV["CI"] = original_ci
-  end
-
-  # --- declarations_from_config ---
-
-  test "declarations_from_config converts config groups to DependencyDeclarations" do
-    Given "a config with app and build groups"
-    config = Dev::Deps::Config.define do
-      group :app do
-        runtime "boost", tag: "boost-1.90.0", integration: "cmake"
-      end
-      group :build do
-        runtime "ccache", version: "4.10", integration: "brew"
-      end
-    end
-
-    When "building declarations"
-    declarations = Dev::Deps::DepsOrchestrator.declarations_from_config(config)
-
-    Then
-    declarations.size == 2
-    declarations[0].name == "boost"
-    declarations[0].integration == :cmake
-    declarations[0].group == :app
-    declarations[1].name == "ccache"
-    declarations[1].integration == :brew
-    declarations[1].group == :build
-  end
-
-  test "declarations_from_config defaults integration to cmake" do
-    Given "a config entry without explicit integration"
-    config = Dev::Deps::Config.define do
-      group :app do
-        runtime "boost", tag: "boost-1.90.0"
-      end
-    end
-
-    When "building declarations"
-    declarations = Dev::Deps::DepsOrchestrator.declarations_from_config(config)
-
-    Then
-    declarations.size == 1
-    declarations[0].integration == :cmake
-  end
-
-  test "declarations_from_config returns empty array for empty config" do
-    Given "an empty config"
-    config = Dev::Deps::Config.define {}
-
-    When "building declarations"
-    declarations = Dev::Deps::DepsOrchestrator.declarations_from_config(config)
-
-    Then
-    declarations.empty?
   end
 end
