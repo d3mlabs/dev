@@ -67,6 +67,8 @@ module Dev
 
     # DSL for per-environment entries (inside group :build for env-specific brew).
     class EnvDSL
+      class EmptyNameError < StandardError; end
+
       def initialize
         @brew = []
         @runtime = []
@@ -74,6 +76,8 @@ module Dev
 
       def brew(name, **opts)
         name_str = name.to_s
+        raise EmptyNameError, "brew dependency name cannot be empty" if name_str.empty?
+
         if opts.empty?
           @brew << name_str
         else
@@ -83,7 +87,8 @@ module Dev
 
       def runtime(name, **spec)
         name_str = name.to_s
-        return if name_str.empty?
+        raise EmptyNameError, "runtime dependency name cannot be empty" if name_str.empty?
+
         @runtime << { name_str => stringify_keys(spec) }
       end
 
@@ -100,6 +105,8 @@ module Dev
 
     # DSL for group-scoped deps: runtime (app/test), brew + nested env (build).
     class GroupDSL
+      class EmptyNameError < StandardError; end
+
       def initialize(registered_methods: [])
         @runtime = []
         @brew    = []
@@ -145,14 +152,16 @@ module Dev
       # @param spec [Hash] dependency specification
       def runtime(name, **spec)
         name_str = name.to_s
-        return if name_str.empty?
+        raise EmptyNameError, "runtime dependency name cannot be empty" if name_str.empty?
+
         spec = expand_github(name_str, spec) unless spec.key?(:integration)
         @runtime << { name_str => stringify_keys(spec) }
       end
 
       def brew(name, **opts)
         name_str = name.to_s
-        return if name_str.empty?
+        raise EmptyNameError, "brew dependency name cannot be empty" if name_str.empty?
+
         if opts.empty?
           @brew << name_str
         else

@@ -6,27 +6,23 @@ require "dev/deps"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::ConfigTest < Minitest::Test
-  def setup
-    Dev::Deps::Config.instance_variable_set(:@config, nil)
-  end
-
   test "define sets ruby version" do
     When
-    Dev::Deps.define { ruby_version ">= 3.0.0" }
+    config = Dev::Deps.define { ruby_version ">= 3.0.0" }
 
     Then
-    Dev::Deps::Config.ruby_version_requirement == ">= 3.0.0"
+    config.ruby_version_requirement == ">= 3.0.0"
   end
 
   test "define registers gems with optional version" do
     When
-    Dev::Deps.define do
+    config = Dev::Deps.define do
       gem "cli-ui"
       gem "rake", "~> 13.0"
     end
 
     Then
-    gems = Dev::Deps::Config.gems
+    gems = config.gems
     gems.size == 2
     gems[0]["name"] == "cli-ui"
     !gems[0].key?("version")
@@ -36,13 +32,13 @@ class Dev::Deps::ConfigTest < Minitest::Test
 
   test "define registers taps with optional url" do
     When
-    Dev::Deps.define do
+    config = Dev::Deps.define do
       tap "d3mlabs/d3mlabs"
       tap "local/tap", url: "file://./brew-tap"
     end
 
     Then
-    taps = Dev::Deps::Config.taps
+    taps = config.taps
     taps.size == 2
     taps["d3mlabs/d3mlabs"]["name"] == "d3mlabs/d3mlabs"
     taps["d3mlabs/d3mlabs"]["url"].nil?
@@ -51,18 +47,18 @@ class Dev::Deps::ConfigTest < Minitest::Test
 
   test "local_tap_names returns only file:// taps" do
     When
-    Dev::Deps.define do
+    config = Dev::Deps.define do
       tap "remote/tap"
       tap "local/tap", url: "file://./brew-tap"
     end
 
     Then
-    Dev::Deps::Config.local_tap_names == ["local/tap"]
+    config.local_tap_names == ["local/tap"]
   end
 
   test "define build group with brew formulae" do
     When
-    Dev::Deps.define do
+    config = Dev::Deps.define do
       group :build do
         brew "ccache"
         brew "cmake"
@@ -71,7 +67,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
     end
 
     Then
-    build = Dev::Deps::Config.group("build")
+    build = config.group("build")
     build["brew"].size == 3
     build["brew"][0] == "ccache"
     build["brew"][1] == "cmake"
@@ -80,7 +76,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
 
   test "define build group with env-specific brew" do
     When
-    Dev::Deps.define do
+    config = Dev::Deps.define do
       group :build do
         brew "cmake"
         env :ci do
@@ -93,14 +89,14 @@ class Dev::Deps::ConfigTest < Minitest::Test
     end
 
     Then
-    build = Dev::Deps::Config.group("build")
+    build = config.group("build")
     build["env"]["ci"]["brew"] == ["ruby"]
     build["env"]["dev"]["brew"] == [{ "powershell" => { "cask" => true } }]
   end
 
   test "define app group with runtime deps" do
     When
-    Dev::Deps.define do
+    config = Dev::Deps.define do
       group :app do
         runtime "boost",
                 url: "https://example.com/boost.tar.gz",
@@ -114,7 +110,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
     end
 
     Then
-    app = Dev::Deps::Config.group("app")
+    app = config.group("app")
     app["runtime"].size == 2
 
     boost = app["runtime"][0]["boost"]
@@ -130,7 +126,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
 
   test "define test group with cmake_targets" do
     When
-    Dev::Deps.define do
+    config = Dev::Deps.define do
       group :test do
         runtime "googletest",
                 repo: "https://github.com/google/googletest",
@@ -140,16 +136,16 @@ class Dev::Deps::ConfigTest < Minitest::Test
     end
 
     Then
-    gtest = Dev::Deps::Config.group("test")["runtime"][0]["googletest"]
+    gtest = config.group("test")["runtime"][0]["googletest"]
     gtest["cmake_targets"] == ["gtest", "gmock"]
   end
 
   test "missing group returns empty defaults" do
     When
-    Dev::Deps.define {}
+    config = Dev::Deps.define {}
 
     Then
-    nonexistent = Dev::Deps::Config.group("nonexistent")
+    nonexistent = config.group("nonexistent")
     nonexistent["runtime"] == []
     nonexistent["brew"] == []
     nonexistent["env"] == {}
@@ -157,7 +153,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
 
   test "runtime with commit pin" do
     When
-    Dev::Deps.define do
+    config = Dev::Deps.define do
       group :app do
         runtime "entityx",
                 repo: "https://github.com/alecthomas/entityx",
@@ -166,7 +162,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
     end
 
     Then
-    entityx = Dev::Deps::Config.group("app")["runtime"][0]["entityx"]
+    entityx = config.group("app")["runtime"][0]["entityx"]
     entityx["commit"] == "ee3042f8b027"
   end
 end
