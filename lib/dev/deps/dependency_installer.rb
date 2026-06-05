@@ -1,44 +1,17 @@
 # frozen_string_literal: true
 
-require "pathname"
-require_relative "lockfile"
-require_relative "resolver"
-
 module Dev
   module Deps
-    # Orchestrates the dependency lifecycle: resolve → lock → install.
+    # Reads locked dependencies and dispatches to integrations.
     #
-    # Cross-cutting concerns (env filtering, install ordering) live here —
-    # not in Repository, Integration, or Lockfile.
-    class DepsOrchestrator
-      # Detect the current environment (ci vs dev).
-      #
-      # CI-like environments (CI=true, Linux) → "ci"; everything else → "dev".
-      #
-      # @return [String] "ci" or "dev"
-      def self.detect_env
-        ci_like = ENV["CI"].to_s =~ /\A(true|1)\z/i
-        linux = RUBY_PLATFORM.to_s.include?("linux")
-        (ci_like || linux) ? "ci" : "dev"
-      end
-
-      # @param dir [Pathname] project root directory containing lockfiles
-      # @param repositories [Hash{Symbol => Repository}] integration type → repository
+    # Cross-cutting install concerns (env filtering, build-first ordering)
+    # live here — not in Integration or Lockfile.
+    class DependencyInstaller
+      # @param lockfile [Lockfile] lockfile reader
       # @param integrations [Hash{Symbol => Integration}] integration type → integration
-      def initialize(dir:, repositories: {}, integrations: {})
-        @dir = Pathname(dir)
-        @repositories = repositories
+      def initialize(lockfile:, integrations:)
+        @lockfile = lockfile
         @integrations = integrations
-        @resolver = Resolver.new(repositories: @repositories)
-        @lockfile = Lockfile.new(dir: @dir)
-      end
-
-      # Resolve declarations and write lockfiles.
-      #
-      # @param declarations [Array<DependencyDeclaration>] declared dependencies
-      def resolve_dependencies(declarations)
-        resolved = @resolver.resolve(declarations)
-        @lockfile.lock(resolved)
       end
 
       # Read lockfiles and dispatch to integrations.
@@ -48,7 +21,7 @@ module Dev
       # Deps with no env metadata are always included.
       #
       # @param env [String, nil] environment name for filtering (nil = no filtering)
-      def install_all(env: nil)
+      def install(env: nil)
         all_deps = @lockfile.read
         all_deps = filter_by_env(all_deps, env) if env
 

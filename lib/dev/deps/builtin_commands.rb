@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require_relative "deps_orchestrator"
+require_relative "dependency_installer"
 
 module Dev
   module Deps

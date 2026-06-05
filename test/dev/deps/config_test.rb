@@ -30,7 +30,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
     gems[1]["version"] == "~> 13.0"
   end
 
-  test "define registers taps with optional url" do
+  test "define registers taps as Tap objects" do
     When
     config = Dev::Deps.define do
       tap "d3mlabs/d3mlabs"
@@ -40,12 +40,14 @@ class Dev::Deps::ConfigTest < Minitest::Test
     Then
     taps = config.taps
     taps.size == 2
-    taps["d3mlabs/d3mlabs"]["name"] == "d3mlabs/d3mlabs"
-    taps["d3mlabs/d3mlabs"]["url"].nil?
-    taps["local/tap"]["url"] == "file://./brew-tap"
+    taps[0].is_a?(Dev::Deps::Tap)
+    taps[0].name == "d3mlabs/d3mlabs"
+    taps[0].url.nil?
+    taps[1].name == "local/tap"
+    taps[1].url == "file://./brew-tap"
   end
 
-  test "local_tap_names returns only file:// taps" do
+  test "Tap#local? returns true for file:// taps" do
     When
     config = Dev::Deps.define do
       tap "remote/tap"
@@ -53,7 +55,9 @@ class Dev::Deps::ConfigTest < Minitest::Test
     end
 
     Then
-    config.local_tap_names == ["local/tap"]
+    local_taps = config.taps.select(&:local?)
+    local_taps.size == 1
+    local_taps[0].name == "local/tap"
   end
 
   test "define build group with brew formulae" do

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "dsl"
+require_relative "tap"
 
 module Dev
   module Deps
@@ -9,7 +10,7 @@ module Dev
       attr_reader :taps, :groups, :declarations, :gems, :ruby_version_requirement,
                   :lua_version, :registered_integrations
 
-      # @param taps [Hash] declared Homebrew taps
+      # @param taps [Array<Tap>] declared Homebrew taps
       # @param groups [Hash] group name → { "brew" => [...], "env" => {...} }
       # @param declarations [Array<DependencyDeclaration>] all declared dependencies
       # @param gems [Array<Hash>] declared Ruby gems
@@ -35,15 +36,6 @@ module Dev
         @groups[name.to_s] || { "brew" => [], "env" => {} }
       end
 
-      # Return tap names that use file:// URLs (local taps).
-      #
-      # @return [Array<String>]
-      def local_tap_names
-        taps.values
-            .select { |t| t["url"].is_a?(String) && t["url"].start_with?("file://") }
-            .map { |t| t["name"] }
-      end
-
       # Evaluate a DSL block and return a Config instance.
       #
       # @param block [Proc] DSL block evaluated in DSL context
@@ -51,8 +43,13 @@ module Dev
       def self.define(&block)
         dsl = DSL.new
         dsl.instance_eval(&block) if block
+
+        taps = dsl.taps.map do |_name, raw|
+          Tap.new(name: raw["name"], url: raw["url"])
+        end
+
         new(
-          taps: dsl.taps,
+          taps:,
           groups: dsl.groups,
           declarations: dsl.declarations,
           gems: dsl.gems,

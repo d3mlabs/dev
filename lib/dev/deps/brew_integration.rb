@@ -4,6 +4,7 @@ require "open3"
 require "pathname"
 require_relative "integration"
 require_relative "dependency"
+require_relative "tap"
 
 module Dev
   module Deps
@@ -20,9 +21,9 @@ module Dev
 
       # @param repository [Repository] source adapter
       # @param cache [Cache] shared download cache
-      # @param taps [Hash] tap name → { "name" => ..., "url" => ... }
+      # @param taps [Array<Tap>] Homebrew taps to register before installing
       # @param project_dir [Pathname, nil] project root for resolving file:// tap URLs
-      def initialize(repository:, cache:, taps: {}, project_dir: nil)
+      def initialize(repository:, cache:, taps: [], project_dir: nil)
         super(repository:, cache:)
         @taps = taps
         @project_dir = project_dir ? Pathname(project_dir) : nil
@@ -49,29 +50,26 @@ module Dev
       def ensure_taps_registered
         return if @taps_registered
 
-        @taps.each_value { |tap| register_tap(tap) }
+        @taps.each { |tap| register_tap(tap) }
         setup_tap_env
         @taps_registered = true
       end
 
       # Register a single Homebrew tap.
       #
-      # @param tap [Hash] tap config with "name" and optional "url"
+      # @param tap [Tap] tap to register
       # @raise [TapRegistrationError] if `brew tap` fails
       def register_tap(tap)
-        name = tap["name"]
-        url = (tap["url"] || "").to_s.strip
-
-        if url.start_with?("file://") && @project_dir
-          path = resolve_file_url(url)
-          success = system("brew", "tap", name, path)
-          raise TapRegistrationError, "brew tap #{name} #{path} failed" unless success
-        elsif url.empty?
-          success = system("brew", "tap", name)
-          raise TapRegistrationError, "brew tap #{name} failed" unless success
+        if tap.local? && @project_dir
+          path = resolve_file_url(tap.url)
+          success = system("brew", "tap", tap.name, path)
+          raise TapRegistrationError, "brew tap #{tap.name} #{path} failed" unless success
+        elsif tap.url
+          success = system("brew", "tap", tap.name, tap.url)
+          raise TapRegistrationError, "brew tap #{tap.name} #{tap.url} failed" unless success
         else
-          success = system("brew", "tap", name, url)
-          raise TapRegistrationError, "brew tap #{name} #{url} failed" unless success
+          success = system("brew", "tap", tap.name)
+          raise TapRegistrationError, "brew tap #{tap.name} failed" unless success
         end
       end
 
@@ -79,13 +77,11 @@ module Dev
       def setup_tap_env
         return unless @project_dir
 
-        local_tap = @taps.values.find do |t|
-          t["url"].is_a?(String) && t["url"].start_with?("file://")
-        end
+        local_tap = @taps.find(&:local?)
         return unless local_tap
 
-        ENV["TAP_NAME"] = local_tap["name"]
-        ENV["LOCAL_TAP_DIR"] = resolve_file_url(local_tap["url"])
+        ENV["TAP_NAME"] = local_tap.name
+        ENV["LOCAL_TAP_DIR"] = resolve_file_url(local_tap.url)
       end
 
       # Resolve a file:// URL to an absolute path relative to project_dir.

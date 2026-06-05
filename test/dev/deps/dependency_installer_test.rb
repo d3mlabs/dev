@@ -2,25 +2,11 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/deps/deps_orchestrator"
+require "dev/deps/dependency_installer"
 require "dev/deps/lockfile"
 require "dev/deps/dependency"
-require "dev/deps/dependency_declaration"
-require "dev/deps/repository"
 require "dev/deps/integration"
-require "dev/deps/cache"
 require "tmpdir"
-require "yaml"
-
-class StubResolverRepository < Dev::Deps::Repository
-  def initialize(deps_by_name: {})
-    @deps_by_name = deps_by_name
-  end
-
-  def fetch(id)
-    @deps_by_name.fetch(id["name"])
-  end
-end
 
 class RecordingIntegration < Dev::Deps::Integration
   attr_reader :installed_deps
@@ -35,39 +21,10 @@ class RecordingIntegration < Dev::Deps::Integration
 end
 
 transform!(RSpock::AST::Transformation)
-class Dev::Deps::DepsOrchestratorTest < Minitest::Test
-  # --- resolve_dependencies ---
-
-  test "resolve_dependencies resolves declarations and writes lockfiles" do
-    Given "declarations and a stub repository"
-    dir = Dir.mktmpdir("orchestrator-test-")
-    boost = Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
-                                      version: "1.90.0", hash: "SHA256=aaa", metadata: {})
-    repo = StubResolverRepository.new(deps_by_name: { "boost" => boost })
-    declarations = [
-      Dev::Deps::DependencyDeclaration.new(name: "boost", integration: :cmake, group: :app),
-    ]
-    orchestrator = Dev::Deps::DepsOrchestrator.new(dir: Pathname(dir), repositories: { cmake: repo })
-
-    When "running resolve_dependencies"
-    orchestrator.resolve_dependencies(declarations)
-
-    Then "deps.lock is written"
-    File.exist?(File.join(dir, "deps.lock"))
-    lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
-    deps = lockfile.read
-    deps.size == 1
-    deps[0].name == "boost"
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  # --- install_all ---
-
-  test "install_all reads lockfiles and dispatches to integrations" do
+class Dev::Deps::DependencyInstallerTest < Minitest::Test
+  test "install reads lockfiles and dispatches to integrations" do
     Given "a lockfile with one cmake dep"
-    dir = Dir.mktmpdir("orchestrator-test-")
+    dir = Dir.mktmpdir("installer-test-")
     lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
     deps = [
       Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
@@ -75,12 +32,12 @@ class Dev::Deps::DepsOrchestratorTest < Minitest::Test
     ]
     lockfile.lock(deps)
     cmake_integration = RecordingIntegration.new
-    orchestrator = Dev::Deps::DepsOrchestrator.new(
-      dir: Pathname(dir), integrations: { cmake: cmake_integration },
+    installer = Dev::Deps::DependencyInstaller.new(
+      lockfile:, integrations: { cmake: cmake_integration },
     )
 
-    When "running install_all"
-    orchestrator.install_all
+    When "running install"
+    installer.install
 
     Then "cmake integration received the dep"
     cmake_integration.installed_deps.size == 1
@@ -90,9 +47,9 @@ class Dev::Deps::DepsOrchestratorTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "install_all dispatches build group before others" do
+  test "install dispatches build group before others" do
     Given "lockfiles with build and app deps"
-    dir = Dir.mktmpdir("orchestrator-test-")
+    dir = Dir.mktmpdir("installer-test-")
     lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
     deps = [
       Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
@@ -115,12 +72,12 @@ class Dev::Deps::DepsOrchestratorTest < Minitest::Test
       @installed_deps.concat(dependencies)
     end
 
-    orchestrator = Dev::Deps::DepsOrchestrator.new(
-      dir: Pathname(dir), integrations: { cmake: cmake_int, brew: brew_int },
+    installer = Dev::Deps::DependencyInstaller.new(
+      lockfile:, integrations: { cmake: cmake_int, brew: brew_int },
     )
 
-    When "running install_all"
-    orchestrator.install_all
+    When "running install"
+    installer.install
 
     Then "build (brew) ran before app (cmake)"
     install_order == [:brew, :cmake]
@@ -129,9 +86,9 @@ class Dev::Deps::DepsOrchestratorTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "install_all filters deps by env when env is set" do
+  test "install filters deps by env when env is set" do
     Given "deps with env metadata"
-    dir = Dir.mktmpdir("orchestrator-test-")
+    dir = Dir.mktmpdir("installer-test-")
     lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
     deps = [
       Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
@@ -145,12 +102,12 @@ class Dev::Deps::DepsOrchestratorTest < Minitest::Test
     ]
     lockfile.lock(deps)
     brew_int = RecordingIntegration.new
-    orchestrator = Dev::Deps::DepsOrchestrator.new(
-      dir: Pathname(dir), integrations: { brew: brew_int },
+    installer = Dev::Deps::DependencyInstaller.new(
+      lockfile:, integrations: { brew: brew_int },
     )
 
     When "installing for ci env"
-    orchestrator.install_all(env: "ci")
+    installer.install(env: "ci")
 
     Then "only cmake (no env) and ruby (ci env) are installed"
     names = brew_int.installed_deps.map(&:name).sort
@@ -160,60 +117,24 @@ class Dev::Deps::DepsOrchestratorTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "install_all skips integration types with no registered integration" do
+  test "install skips integration types with no registered integration" do
     Given "a lockfile with an unregistered integration type"
-    dir = Dir.mktmpdir("orchestrator-test-")
+    dir = Dir.mktmpdir("installer-test-")
     lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
     deps = [
       Dev::Deps::Dependency.new(name: "foo", integration: :unknown, group: :app,
                                 version: "1.0", hash: "SHA256=aaa", metadata: {}),
     ]
     lockfile.lock(deps)
-    orchestrator = Dev::Deps::DepsOrchestrator.new(dir: Pathname(dir))
+    installer = Dev::Deps::DependencyInstaller.new(lockfile:, integrations: {})
 
-    When "running install_all with no matching integration"
-    orchestrator.install_all
+    When "running install with no matching integration"
+    installer.install
 
     Then "no error raised"
     true
 
     Cleanup
     FileUtils.rm_rf(dir)
-  end
-
-  # --- detect_env ---
-
-  test "detect_env returns dev on macOS without CI" do
-    Given "non-CI, non-Linux environment"
-    original_ci = ENV["CI"]
-    ENV.delete("CI")
-
-    When "detecting env"
-    result = Dev::Deps::DepsOrchestrator.detect_env
-
-    Then "result depends on platform"
-    if RUBY_PLATFORM.include?("linux")
-      result == "ci"
-    else
-      result == "dev"
-    end
-
-    Cleanup
-    ENV["CI"] = original_ci if original_ci
-  end
-
-  test "detect_env returns ci when CI env var is set" do
-    Given "CI=true"
-    original_ci = ENV["CI"]
-    ENV["CI"] = "true"
-
-    When "detecting env"
-    result = Dev::Deps::DepsOrchestrator.detect_env
-
-    Then
-    result == "ci"
-
-    Cleanup
-    ENV["CI"] = original_ci
   end
 end
