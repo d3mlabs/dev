@@ -1,5 +1,5 @@
 ---
-description: "Dev::Deps naming: <Thing>Repository, <Thing>Integration, prefix generic error names with parent class, lock/read verbs for lockfile API, no unnecessary return values."
+description: "Dev::Deps naming patterns: <Thing>Repository, <Thing>Integration, lock/read verbs for Lockfile API."
 alwaysApply: false
 ---
 
@@ -11,24 +11,5 @@ alwaysApply: false
 **Integration subclasses**: `<Thing>Integration` — e.g. `CmakeIntegration`,
 `BrewIntegration`.
 
-**Error classes**: Prefix with the parent class name when the error type is
-otherwise generic. Nest inside the class that raises them.
-
-```ruby
-# BAD
-class InfoError < StandardError; end        # too generic
-class DownloadError < StandardError; end    # ambiguous owner
-
-# GOOD (inside BrewRepository)
-class BrewInfoError < StandardError; end
-
-# OK when already unambiguous (inside CmakeIntegration)
-class GitCloneError < StandardError; end
-class GitCheckoutError < StandardError; end
-```
-
-**Lockfile constants**: `lock` verb, `read` to get all deps back.
+**Lockfile API**: `lock` verb to write, `read` to get all deps back.
 No `write`, no `lockfile_path` params — routing is internal.
-
-**No unnecessary return values**: If a method's job is a side effect (install,
-write), don't `return true`. Let it return nil implicitly.

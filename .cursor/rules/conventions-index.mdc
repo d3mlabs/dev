@@ -5,19 +5,21 @@ alwaysApply: true
 
 # Convention index
 
-Read the relevant convention file(s) before starting work. Use the mode tags
-to decide which files apply to your current task.
+Before starting work, read the convention files relevant to your task. Each
+file's frontmatter `description` explains what it covers — read that first to
+decide if you need the full content.
 
 ## Architecture — planning, reviewing, designing
 
-- `.cursor/rules/separation-of-concerns.mdc` — Layer responsibilities: Repository resolves, Integration installs, Lockfile serializes, Orchestrator coordinates
-- `.cursor/rules/interface-contracts.mdc` — Subclass signatures must match base; subclass-specific ambient context via constructor DI only
+- `.cursor/rules/separation-of-concerns.mdc`
+- `.cursor/rules/interface-contracts.mdc`
 
 ## Implementation — writing or modifying code
 
-- `.cursor/rules/typed-errors.mdc` — Named error classes, never bare `raise "string"`; every error type must have a test
-- `.cursor/rules/strong-types-pathname.mdc` — `Pathname` for paths, `_FILE` suffix on constants, coerce in constructors
-- `.cursor/rules/yardoc.mdc` — YARD docs on all public and private methods; no cross-concern comments
-- `.cursor/rules/naming-conventions.mdc` — `Dev::Deps` naming: `<Thing>Repository`, `<Thing>Integration`, `lock`/`read` verbs, specific error names
-- `.cursor/rules/no-class-method-delegation.mdc` — No class methods that only delegate to an instance; use constructor injection
-- `.cursor/rules/errors-bubble-up-no-nil.mdc` — Never return nil for error states; let exceptions raise and bubble to boundaries
+- `.cursor/rules/typed-errors.mdc`
+- `.cursor/rules/strong-types.mdc`
+- `.cursor/rules/yardoc.mdc`
+- `.cursor/rules/naming-conventions.mdc`
+- `.cursor/rules/no-class-method-delegation.mdc`
+- `.cursor/rules/errors-bubble-up-no-nil.mdc`
+- `.cursor/rules/stateless-parsers.mdc`

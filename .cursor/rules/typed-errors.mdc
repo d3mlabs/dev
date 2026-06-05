@@ -1,5 +1,5 @@
 ---
-description: "Always define named error classes — never raise with a bare string. Prefix generic error names with the parent class. Every typed error must have a test asserting the specific class."
+description: "Always define named error classes — never raise with a bare string. Error names should describe what went wrong specifically. Every typed error must have a test asserting the specific class."
 alwaysApply: false
 ---
 
@@ -7,17 +7,25 @@ alwaysApply: false
 
 Always define named error classes. Never `raise "message"` with a bare string.
 
-Error names must be specific to the class — prefix with the class name when the
-error type is otherwise generic (e.g. `BrewInfoError` not `InfoError`).
+Error names should describe what went wrong specifically. Nest them inside
+the class that raises them. A name like `BrewInfoError` is good because it
+describes the failure (the brew info command failed), not because it
+mechanically prefixes the class name.
 
 ```ruby
-# BAD
+# BAD: bare string
 raise "brew info failed"
 raise "Could not resolve ref"
 
-# GOOD
-class BrewInfoError < StandardError; end
-raise BrewInfoError, "brew info --json=v1 #{formula} failed"
+# BAD: too generic — what kind of info? whose download?
+class InfoError < StandardError; end
+class DownloadError < StandardError; end
+
+# GOOD: describes what went wrong
+class BrewInfoError < StandardError; end      # brew info command failed
+class GitCloneError < StandardError; end      # git clone failed
+class GitCheckoutError < StandardError; end   # git checkout failed
+class RefResolutionError < StandardError; end # could not resolve a git ref
 ```
 
 Every typed error must have a corresponding test that asserts the specific class:

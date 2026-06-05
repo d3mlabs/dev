@@ -1,9 +1,9 @@
 ---
-description: "Layer responsibilities: Repository resolves, Integration installs, Lockfile serializes, Orchestrator coordinates. Layers must not implement, reference, or even comment on other layers' concerns."
+description: "Dev::Deps layer boundaries — don't leak concerns. Repository resolves, Integration installs, Lockfile serializes, Orchestrator coordinates. Layers must not implement, reference, or comment on other layers' concerns."
 alwaysApply: false
 ---
 
-# Separation of concerns
+# Don't leak concerns across layers
 
 Each layer owns a single responsibility. It must not implement, reference, or
 even mention in comments concerns that belong to another layer.

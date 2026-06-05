@@ -9,7 +9,19 @@ Subclasses must respect their base class method signatures exactly. Do not add
 extra parameters to overridden methods.
 
 ```ruby
-# BAD: breaks the interface
+# Base class defines the contract
+class Integration
+  def initialize(repository:, cache:)
+    @repository = repository
+    @cache = cache
+  end
+
+  def install_all(dependencies)
+    raise NotImplementedError
+  end
+end
+
+# BAD: breaks the interface — extra param on install_all
 class CmakeIntegration < Integration
   def install_all(dependencies, root:)  # extra param
   end
