@@ -1,0 +1,15 @@
+---
+description: "Dev::Deps naming patterns: <Thing>Repository, <Thing>Integration, lock/read verbs for Lockfile API."
+alwaysApply: false
+---
+
+# Naming conventions for Dev::Deps
+
+**Repository subclasses**: `<Thing>Repository` — e.g. `GitRepository`,
+`UrlRepository`, `BrewRepository`. Not `Registry`, `Source`, `Adapter`.
+
+**Integration subclasses**: `<Thing>Integration` — e.g. `CmakeIntegration`,
+`BrewIntegration`.
+
+**Lockfile API**: `lock` verb to write, `read` to get all deps back.
+No `write`, no `lockfile_path` params — routing is internal.

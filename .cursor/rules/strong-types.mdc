@@ -1,0 +1,48 @@
+---
+description: "Prefer strong types over primitives everywhere except system boundaries (user input, file I/O). Pathname for paths, coerce in constructors, _FILE suffix on path constants."
+alwaysApply: false
+---
+
+# Strong types
+
+Prefer strong types over raw primitives. System boundaries (user input, file
+reads, environment variables) are the exception — coerce to strong types as
+early as possible after crossing the boundary.
+
+## Pathname for file/directory paths
+
+Use `Pathname`, not `String`. Coerce in constructors with `Pathname()`.
+
+```ruby
+# BAD
+def initialize(dir:)
+  @dir = dir  # could be String or Pathname
+end
+
+# GOOD
+def initialize(dir:)
+  @dir = Pathname(dir)
+end
+```
+
+Use Pathname's `/` operator for path joins instead of `File.join`:
+
+```ruby
+# BAD
+path = File.join(@dir.to_s, "deps.lock")
+
+# GOOD
+path = @dir / "deps.lock"
+```
+
+Constants holding filenames get a `_FILE` suffix:
+
+```ruby
+# BAD
+DEPS_LOCK = "deps.lock"
+DEPS_CMAKE = "deps.cmake"
+
+# GOOD
+DEPS_LOCK_FILE = "deps.lock"
+DEPS_CMAKE_FILE = "deps.cmake"
+```

@@ -1,6 +1,5 @@
 ---
-description: Don't return nil for error states; let errors bubble up. Parsers return domain objects.
-globs: "**/*.rb"
+description: "Never return nil for error states — let exceptions raise and bubble to boundaries. Side-effect methods (install, write) return nil implicitly, not an explicit value."
 alwaysApply: false
 ---
 
@@ -27,4 +26,4 @@ def parse(dev_yml_path)
 end
 ```
 
-**Parsers / loaders:** Prefer stateless (or minimal constructor) and take input as method args; return a domain object. The instance is reusable (e.g. for different files later). Inject only real dependencies in the constructor when you have them—none yet is fine.
+If a method's job is a side effect (install, write), don't `return true`. Let it return nil implicitly.

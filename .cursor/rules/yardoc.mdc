@@ -1,0 +1,23 @@
+---
+description: "YARD docs on all public and private methods with @param, @return, @raise tags. Comments must not describe concerns owned by other layers."
+alwaysApply: false
+---
+
+# YARD documentation
+
+All methods — public and private — must have YARD docs with `@param`,
+`@return`, and `@raise` tags where applicable.
+
+```ruby
+# GOOD
+# Resolve a git ref to a full 40-char SHA.
+#
+# @param repo [String] git remote URL
+# @param ref  [String] tag name, branch name, or commit SHA
+# @return [String] full 40-char SHA
+# @raise [RefResolutionError] if no match found
+def resolve_ref(repo, ref)
+```
+
+Comments must only describe what this code does, not what other layers do.
+Do not mention concerns the layer doesn't own (see separation-of-concerns rule).

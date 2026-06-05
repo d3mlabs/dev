@@ -1,0 +1,49 @@
+---
+description: "Subclasses must match base class method signatures exactly. Use constructor DI only for subclass-specific, fixed ambient context — not per-call inputs."
+alwaysApply: false
+---
+
+# Interface contracts
+
+Subclasses must respect their base class method signatures exactly. Do not add
+extra parameters to overridden methods.
+
+```ruby
+# Base class defines the contract
+class Integration
+  def initialize(repository:, cache:)
+    @repository = repository
+    @cache = cache
+  end
+
+  def install_all(dependencies)
+    raise NotImplementedError
+  end
+end
+
+# BAD: breaks the interface — extra param on install_all
+class CmakeIntegration < Integration
+  def install_all(dependencies, root:)  # extra param
+  end
+end
+
+# GOOD: subclass-specific context via constructor
+class CmakeIntegration < Integration
+  def initialize(repository:, cache:, project_root:)
+    super(repository:, cache:)
+    @project_root = Pathname(project_root)
+  end
+
+  def install_all(dependencies)
+    # uses @project_root
+  end
+end
+```
+
+Use constructor DI **only** for values that are:
+- Fixed for the lifetime of the object (not changing per call)
+- Subclass-specific context the base interface doesn't define
+- Not the method's direct input
+
+Regular method parameters are correct when the value changes per call or is
+the method's primary input (e.g. `lock(deps)` — different deps each time).

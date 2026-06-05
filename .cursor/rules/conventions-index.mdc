@@ -1,0 +1,25 @@
+---
+description: Index of on-demand convention rules. Read the relevant files listed here before writing or reviewing code.
+alwaysApply: true
+---
+
+# Convention index
+
+Before starting work, read the convention files relevant to your task. Each
+file's frontmatter `description` explains what it covers — read that first to
+decide if you need the full content.
+
+## Architecture — planning, reviewing, designing
+
+- `.cursor/rules/separation-of-concerns.mdc`
+- `.cursor/rules/interface-contracts.mdc`
+
+## Implementation — writing or modifying code
+
+- `.cursor/rules/typed-errors.mdc`
+- `.cursor/rules/strong-types.mdc`
+- `.cursor/rules/yardoc.mdc`
+- `.cursor/rules/naming-conventions.mdc`
+- `.cursor/rules/no-class-method-delegation.mdc`
+- `.cursor/rules/errors-bubble-up-no-nil.mdc`
+- `.cursor/rules/stateless-parsers.mdc`

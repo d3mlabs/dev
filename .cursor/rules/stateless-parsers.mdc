@@ -1,0 +1,32 @@
+---
+description: "Parsers and loaders are stateless — take input as method args, return domain objects. Reusable instances with minimal constructors."
+alwaysApply: false
+---
+
+# Stateless parsers and loaders
+
+Parsers and loaders take input as method arguments and return domain objects.
+Keep them stateless or with a minimal constructor so the instance is reusable
+(e.g. for different files). Inject only real dependencies in the constructor
+when you have them — none yet is fine.
+
+```ruby
+# BAD: stateful loader that reads from an instance path
+class ConfigLoader
+  def initialize(path)
+    @path = path
+  end
+
+  def load
+    YAML.load_file(@path)
+  end
+end
+
+# GOOD: stateless parser, input via method arg
+class ConfigParser
+  def parse(dev_yml_path)
+    yaml = YAML.load_file(dev_yml_path)
+    Config.new(name: yaml["name"], commands: yaml["commands"])
+  end
+end
+```
