@@ -122,7 +122,9 @@ module Dev
     # Store a credential to the plain text credentials file.
     #
     # Merges with existing content so other namespaces are preserved.
-    # File is created with 0600 permissions (owner read/write only).
+    # Uses flock(LOCK_EX) to prevent concurrent writes from clobbering
+    # each other, and ensures 0600 permissions even if the file was
+    # created externally with a wider umask.
     #
     # @param namespace [String]
     # @param key [String]
@@ -133,13 +135,20 @@ module Dev
       dir = File.dirname(path)
       FileUtils.mkdir_p(dir, mode: 0o700)
 
-      creds = File.exist?(path) ? (YAML.safe_load_file(path) || {}) : {}
-      creds[namespace] ||= {}
-      creds[namespace][key] = value
+      File.open(path, File::RDWR | File::CREAT, 0o600) do |f|
+        f.flock(File::LOCK_EX)
 
-      # Atomic-safe: File.open with explicit mode creates the file with 0600
-      # from the start, avoiding the TOCTOU window of File.write + File.chmod.
-      File.open(path, "w", 0o600) { |f| f.write(YAML.dump(creds)) }
+        existing = f.read
+        creds = existing.empty? ? {} : (YAML.safe_load(existing) || {})
+        creds[namespace] ||= {}
+        creds[namespace][key] = value
+
+        f.rewind
+        f.truncate(0)
+        f.write(YAML.dump(creds))
+      end
+
+      File.chmod(0o600, path)
     end
 
     # Interactive prompt for credential onboarding.
