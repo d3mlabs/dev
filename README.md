@@ -201,8 +201,8 @@ end
 | DSL method | Integration | Repository | Lockfile |
 |---|---|---|---|
 | `cmake()` | CmakeIntegration | GitRepository / UrlRepository | deps.lock |
-| `luarocks()` | LuaRocksIntegration | LuaRocksRegistry | deps.lock |
-| `brew()` | BrewIntegration | BrewRegistry | build-deps.lock |
+| `luarocks()` | LuaRocksIntegration | LuaRocksRepository | deps.lock |
+| `brew()` | BrewIntegration | BrewRepository | build-deps.lock |
 
 ### Custom integrations
 
