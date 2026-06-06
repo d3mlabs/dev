@@ -1,5 +1,5 @@
 ---
-description: "Prefer strong types over primitives everywhere except system boundaries (user input, file I/O). Pathname for paths, URI for URLs, domain objects at parsing boundaries, never T.untyped."
+description: "Prefer strong types over primitives everywhere except system boundaries (user input, file I/O). Pathname for paths, URI for URLs, domain objects at parsing boundaries, never erase types."
 alwaysApply: false
 ---
 
@@ -82,17 +82,17 @@ def parse(path)
 end
 ```
 
-## Never use `T.untyped` in Sorbet signatures
+## Never erase types
 
-Every Sorbet-typed field and parameter must use a concrete type. If you
-reach for `T.untyped`, that is a design signal — restructure so the
-type can be stated explicitly.
+When the language or type system gives you a way to express a type, use it.
+Type erasure (e.g., `T.untyped` in Sorbet, `any` in TypeScript, `Object` in
+Java) is a design signal — restructure so the type can be stated explicitly.
 
 ```ruby
-# BAD
+# BAD: type erasure hides the real contract
 const :command_runner, T.untyped
 
-# GOOD
+# GOOD: concrete types make the contract explicit
 const :ui, Dev::Cli::Ui
 const :ruby_version, String
 const :project_root, Pathname
