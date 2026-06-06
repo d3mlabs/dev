@@ -59,6 +59,9 @@ module Dev
       { "GEM_HOME" => nil, "RUBYLIB" => rubylib }
     end
 
+    # Toolchain provisioning: each toolchain the project uses gets its shadowenv
+    # set up before command execution. Currently hardcoded to Ruby + LLVM.
+    # When a third toolchain appears, generalize into a registry pattern (see #21).
     sig { void }
     def ensure_shadowenv_provisioned!
       require "shadowenv_ruby"
