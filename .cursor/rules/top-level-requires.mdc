@@ -1,0 +1,29 @@
+---
+description: "All require/require_relative statements go at the top of the file. No lazy requires inside method bodies, blocks, or callbacks."
+alwaysApply: false
+---
+
+# Top-level requires
+
+All `require` and `require_relative` statements belong at the top of the file.
+Do not place them inside method bodies, blocks, or callbacks.
+
+```ruby
+# BAD: lazy require inside a block
+BuiltinCommand.new(desc: "Update deps") do |args:, context:|
+  require "dev/deps"
+  require "dev/deps/resolver"
+  # ...
+end
+
+# GOOD: requires at the top of the file
+require "dev/deps"
+require "dev/deps/resolver"
+
+BuiltinCommand.new(desc: "Update deps") do |args:, context:|
+  # ...
+end
+```
+
+Lazy loading is intentional in some frameworks (e.g., Rails autoloading), but
+in this codebase all dependencies are loaded eagerly at file scope.
