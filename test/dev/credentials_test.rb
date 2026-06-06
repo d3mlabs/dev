@@ -234,6 +234,23 @@ class Dev::CredentialsTest < Minitest::Test
     ENV["XDG_CONFIG_HOME"] = original if original
   end
 
+  test "store_to_file creates parent directory with 0700 permissions" do
+    Given "a temporary config directory"
+    tmpdir = Dir.mktmpdir("credentials-test-")
+    ENV["XDG_CONFIG_HOME"] = tmpdir
+
+    When "storing a credential"
+    Dev::Credentials.store_to_file("curseforge", "api_key", "cf-secret")
+
+    Then "the parent directory has owner-only permissions"
+    dir = File.join(tmpdir, "dev")
+    (File.stat(dir).mode & 0o777) == 0o700
+
+    Cleanup
+    ENV.delete("XDG_CONFIG_HOME")
+    FileUtils.rm_rf(tmpdir)
+  end
+
   test "keychain_service builds namespaced service name" do
     When "building a keychain service name"
     service = Dev::Credentials.keychain_service("curseforge", "api_key")

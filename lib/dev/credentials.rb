@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "io/console"
 require "open3"
 require "yaml"
 
@@ -178,7 +179,8 @@ module Dev
       Kernel.system("open", create_url) unless answer.downcase == "n"
 
       $stdout.print "\nPaste your #{key}: "
-      value = $stdin.gets.chomp
+      value = $stdin.noecho { $stdin.gets.chomp }
+      $stdout.puts
       raise MissingCredentialError, "No #{key} provided" if value.empty?
 
       store(namespace, key, value)
