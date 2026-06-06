@@ -25,3 +25,4 @@ decide if you need the full content.
 - `.cursor/rules/stateless-parsers.mdc`
 - `.cursor/rules/constructor-ownership.mdc`
 - `.cursor/rules/top-level-requires.mdc`
+- `.cursor/rules/secure-file-io.mdc`
