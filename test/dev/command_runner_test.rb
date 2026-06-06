@@ -18,7 +18,7 @@ class CommandRunnerTest < Minitest::Test
 
   test "run prints header and execs directly when repl" do
     Given "a repl command"
-    cmd = Dev::Command.new(run: "./bin/console", repl: true)
+    cmd = Dev::ShellCommand.new(run: "./bin/console", repl: true)
 
     When "we run the command"
     @runner.run(cmd)
@@ -30,7 +30,7 @@ class CommandRunnerTest < Minitest::Test
 
   test "run prints header and execs with args when repl" do
     Given "a repl command with args"
-    cmd = Dev::Command.new(run: "./bin/console", repl: true)
+    cmd = Dev::ShellCommand.new(run: "./bin/console", repl: true)
 
     When "we run the command with extra args"
     @runner.run(cmd, args: ["--verbose"])
@@ -42,7 +42,7 @@ class CommandRunnerTest < Minitest::Test
 
   test "run prints header and execs with shell wrapper for non-repl" do
     Given "a non-repl command"
-    cmd = Dev::Command.new(run: "./bin/setup.rb", repl: false)
+    cmd = Dev::ShellCommand.new(run: "./bin/setup.rb", repl: false)
 
     When "we run the command"
     @runner.run(cmd)
@@ -54,7 +54,7 @@ class CommandRunnerTest < Minitest::Test
 
   test "non-repl shell wrapper includes status check and Done message" do
     Given "a non-repl command"
-    cmd = Dev::Command.new(run: "./bin/test.sh", repl: false)
+    cmd = Dev::ShellCommand.new(run: "./bin/test.sh", repl: false)
 
     When "we run the command"
     @runner.run(cmd)
@@ -66,7 +66,7 @@ class CommandRunnerTest < Minitest::Test
 
   test "non-repl shell wrapper includes args" do
     Given "a non-repl command with args"
-    cmd = Dev::Command.new(run: "./bin/test.sh", repl: false)
+    cmd = Dev::ShellCommand.new(run: "./bin/test.sh", repl: false)
 
     When "we run with args"
     @runner.run(cmd, args: ["-v"])

@@ -1,15 +1,18 @@
 # frozen_string_literal: true
 
+require_relative "dependency_declaration"
+
 module Dev
   module Deps
     # Top-level DSL evaluated inside Dev::Deps.define { ... }.
     class DSL
-      attr_reader :taps, :groups, :gems, :ruby_version_requirement,
+      attr_reader :taps, :groups, :declarations, :gems, :ruby_version_requirement,
                   :lua_version_value, :registered_integrations, :registered_methods
 
       def initialize
         @taps   = {}
         @groups = {}
+        @declarations = []
         @gems   = []
         @ruby_version_requirement = nil
         @lua_version_value = nil
@@ -59,9 +62,10 @@ module Dev
 
       def group(name, &block)
         group_name = name.to_s
-        group_dsl = GroupDSL.new(registered_methods: @registered_methods)
+        group_dsl = GroupDSL.new(group: group_name.to_sym, registered_methods: @registered_methods)
         group_dsl.instance_eval(&block) if block
         @groups[group_name] = group_dsl.to_h
+        @declarations.concat(group_dsl.declarations)
       end
     end
 
@@ -71,7 +75,6 @@ module Dev
 
       def initialize
         @brew = []
-        @runtime = []
       end
 
       def brew(name, **opts)
@@ -85,15 +88,8 @@ module Dev
         end
       end
 
-      def runtime(name, **spec)
-        name_str = name.to_s
-        raise EmptyNameError, "runtime dependency name cannot be empty" if name_str.empty?
-
-        @runtime << { name_str => stringify_keys(spec) }
-      end
-
       def to_h
-        { "brew" => @brew, "runtime" => @runtime }
+        { "brew" => @brew }
       end
 
       private
@@ -103,12 +99,17 @@ module Dev
       end
     end
 
-    # DSL for group-scoped deps: runtime (app/test), brew + nested env (build).
+    # DSL for group-scoped deps: declarations (app/test), brew + nested env (build).
     class GroupDSL
       class EmptyNameError < StandardError; end
 
-      def initialize(registered_methods: [])
-        @runtime = []
+      attr_reader :declarations
+
+      # @param group [Symbol] group name (e.g. :app, :test, :build)
+      # @param registered_methods [Array<Symbol>] dynamically registered integration methods
+      def initialize(group:, registered_methods: [])
+        @group = group
+        @declarations = []
         @brew    = []
         @envs    = {}
         @registered_methods = registered_methods
@@ -117,11 +118,10 @@ module Dev
       # Declare a CMake dependency. Expands github: shorthand if present.
       #
       # @param name [String, Symbol] dependency name
-      # @param spec [Hash] options passed through to runtime (tag:, repo:, url:, github:, etc.)
+      # @param spec [Hash] options (tag:, repo:, url:, github:, etc.)
       def cmake(name, **spec)
         spec = expand_github(name, spec)
-        spec[:integration] = "cmake"
-        runtime(name, **spec)
+        add_declaration(name, :cmake, spec)
       end
 
       # Declare a LuaRocks dependency with an optional version constraint.
@@ -130,9 +130,8 @@ module Dev
       # @param constraint [String, nil] version constraint (e.g. ">=3.5")
       # @param spec [Hash] additional options
       def luarocks(name, constraint = nil, **spec)
-        spec[:integration] = "luarocks"
         spec[:constraint] = constraint if constraint
-        runtime(name, **spec)
+        add_declaration(name, :luarocks, spec)
       end
 
       # Declare a dependency using any registered integration by name.
@@ -141,21 +140,7 @@ module Dev
       # @param integration [Symbol, String] integration identifier (e.g. :wow_curseforge)
       # @param spec [Hash] additional options
       def custom(name, integration:, **spec)
-        spec[:integration] = integration.to_s
-        runtime(name, **spec)
-      end
-
-      # Add a runtime dependency. All typed methods (cmake, luarocks, custom)
-      # delegate here. Backward compatible entry point.
-      #
-      # @param name [String, Symbol] dependency name
-      # @param spec [Hash] dependency specification
-      def runtime(name, **spec)
-        name_str = name.to_s
-        raise EmptyNameError, "runtime dependency name cannot be empty" if name_str.empty?
-
-        spec = expand_github(name_str, spec) unless spec.key?(:integration)
-        @runtime << { name_str => stringify_keys(spec) }
+        add_declaration(name, integration.to_sym, spec)
       end
 
       def brew(name, **opts)
@@ -177,7 +162,7 @@ module Dev
       end
 
       def to_h
-        { "runtime" => @runtime, "brew" => @brew, "env" => @envs }
+        { "brew" => @brew, "env" => @envs }
       end
 
       # Dispatch dynamically registered integration methods (e.g. wow_curseforge).
@@ -199,6 +184,26 @@ module Dev
       end
 
       private
+
+      # Create a DependencyDeclaration and store it.
+      #
+      # @param name [String, Symbol] dependency name
+      # @param integration [Symbol] integration type
+      # @param spec [Hash] constraint spec (symbol keys → stringified)
+      def add_declaration(name, integration, spec)
+        name_str = name.to_s
+        raise EmptyNameError, "dependency name cannot be empty" if name_str.empty?
+
+        spec = expand_github(name_str, spec) if spec.key?(:github)
+        constraint = stringify_keys(spec)
+
+        @declarations << DependencyDeclaration.new(
+          name: name_str,
+          integration:,
+          constraint:,
+          group: @group,
+        )
+      end
 
       # Expand github: shorthand to a full repo: URL.
       #

@@ -1,142 +1,121 @@
-# # typed: false
-# # frozen_string_literal: true
+# typed: false
+# frozen_string_literal: true
 
-# require "test_helper"
-# require "dev"
-# require "dev/runner"
-# require "stringio"
+require "test_helper"
+require "dev"
+require "dev/runner"
+require "stringio"
+require "tempfile"
 
-# transform!(RSpock::AST::Transformation)
-# class RunnerTest < Minitest::Test
-#   extend T::Sig
+transform!(RSpock::AST::Transformation)
+class RunnerTest < Minitest::Test
+  extend T::Sig
+  include SorbetHelper
 
-#   def setup
-#     @dev_yaml = <<~YAML
-#       name: dev
-#       commands:
-#         up:
-#           run: ./bin/up.rb
-#     YAML
-#     @cfg_parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
-#     @ui = Dev::Cli::UiImpl.new(cli_ui: CLI::UI)
-#   end
+  test "run with empty argv prints usage" do
+    Given "a Runner with a dev.yml"
+    runner = build_runner(commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup" } })
+    out = StringIO.new
 
-#   test "run with empty argv prints usage and returns" do
-#     Given "a Runner and a dev.yml file"
-#     tmp_file = Tempfile.new("dev.yml") do |f|
-#       f.write(@dev_yaml)
-#       f.flush
-#     end
-#     dev_yaml_path = Pathname.new(tmp_file.path)
-#     runner = Dev::Runner.new(dev_yaml_path, cfg_parser: @cfg_parser, ui: @ui)
-#     out = StringIO.new
+    When "we run with empty argv"
+    runner.run([], ui: fake_ui, out: out)
 
-#     When "we run with empty argv and injected out"
-#     runner.run([], out: out)
+    Then "usage is printed"
+    out.string.include?("Usage: dev <command> [args...]")
+    out.string.include?("Commands for testproject:")
+    out.string.include?("up")
+    out.string.include?("Setup")
+  end
 
-#     Then "usage was written to the injected out"
-#     1 * @cfg_parser.parse(dev_yaml_path)
-#     1 * @ui.frame("Usage: dev <command> [args...]")
-#     # assert_includes out.string, "Usage: dev <command> [args...]"
-#     # assert_includes out.string, "Commands for"
-#   end
+  test "run with --help prints usage" do
+    Given "a Runner"
+    runner = build_runner
+    out = StringIO.new
 
-#   test "run with --help prints usage and returns" do
-#     Given "a Runner and an output buffer"
-#     runner = Dev::Runner.new
-#     out = StringIO.new
+    When "we run with --help"
+    runner.run(["--help"], ui: fake_ui, out: out)
 
-#     When "we run with --help and injected out"
-#     runner.run(["--help"], out: out)
+    Then "usage is printed"
+    out.string.include?("Usage: dev <command> [args...]")
+  end
 
-#     Then "usage was written to the injected out"
-#     assert_includes out.string, "Usage: dev <command> [args...]"
-#     assert_includes out.string, "Commands for"
-#   end
+  test "run with -h prints usage" do
+    Given "a Runner"
+    runner = build_runner
+    out = StringIO.new
 
-#   test "run with -h prints usage and returns" do
-#     Given "a Runner and an output buffer"
-#     runner = Dev::Runner.new
-#     out = StringIO.new
+    When "we run with -h"
+    runner.run(["-h"], ui: fake_ui, out: out)
 
-#     When "we run with -h and injected out"
-#     runner.run(["-h"], out: out)
+    Then "usage is printed"
+    out.string.include?("Usage: dev <command> [args...]")
+  end
 
-#     Then "usage was written to the injected out"
-#     assert_includes out.string, "Usage: dev <command> [args...]"
-#     assert_includes out.string, "Commands for"
-#   end
+  test "run with unknown command prints error to stderr and exits 1" do
+    Given "a Runner"
+    runner = build_runner
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(1).once
 
-#   test "run with unknown command prints error to stderr and exits 1" do
-#     Given "a Runner and stderr captured"
-#     runner = Dev::Runner.new
-#     err = StringIO.new
-#     old_stderr = $stderr
-#     $stderr = err
-#     Kernel.expects(:exit).with(1).once
+    When "we run an unknown command"
+    runner.run(["nonexistent"], ui: fake_ui)
 
-#     When "we run an unknown command"
-#     runner.run(["unknown-cmd"], out: StringIO.new)
+    Then "error mentions the command name"
+    $stderr.string.include?("nonexistent")
+    $stderr.string.include?("dev --help")
 
-#     Then "error was written to stderr"
-#     assert_includes err.string, "unknown-cmd"
-#     assert_includes err.string, "not defined"
-#     assert_includes err.string, "dev --help"
+    Cleanup
+    $stderr = old_stderr
+  end
 
-#     Cleanup "restore stderr"
-#     $stderr = old_stderr
-#   end
+  test "usage includes built-in update-deps command" do
+    Given "a Runner with no project commands"
+    runner = build_runner(commands: {})
+    out = StringIO.new
 
-#   test "run with valid command invokes CommandRunner with correct args" do
-#     NOTE: Gotta change this to at least interaction-based testing.
-#     Given "CommandRunner and Cli::Ui are stubbed"
-#     command_runner_mock = mock
-#     command_runner_mock.expects(:run).with(
-#       cmd_name: "test",
-#       run_str: "./bin/test.rb",
-#       args: []
-#     ).once
-#     Dev::CommandRunner.stubs(:new).returns(command_runner_mock)
+    When "we print usage"
+    runner.run([], ui: fake_ui, out: out)
 
-#     When "we run with a known command from dev.yml"
-#     runner = Dev::Runner.new
-#     runner.run(["test"])
+    Then "update-deps is listed"
+    out.string.include?("update-deps")
+    out.string.include?("Resolve dependency constraints")
+  end
 
-#     Then "CommandRunner.run was invoked with cmd_name, run_str, and args from dev.yml"
-#     assert true # Mocha verifies run was called once with correct args at teardown
-#   end
+  test "usage includes both built-in and project commands" do
+    Given "a Runner with project commands"
+    runner = build_runner(commands: {
+      "test" => { "run" => "rspec", "desc" => "Run tests" },
+      "up" => { "run" => "./bin/up.rb", "desc" => "Setup" },
+    })
+    out = StringIO.new
 
-#   test "show_usage? returns true for empty argv" do
-#     Given "a Runner"
-#     runner = Dev::Runner.new
+    When "we print usage"
+    runner.run([], ui: fake_ui, out: out)
 
-#     When "we call show_usage? with empty argv"
-#     result = runner.send(:show_usage?, [])
+    Then "all commands appear"
+    out.string.include?("update-deps")
+    out.string.include?("test")
+    out.string.include?("up")
+  end
 
-#     Then "it returns true"
-#     assert result
-#   end
+  private
 
-#   test "show_usage? returns true for --help" do
-#     Given "a Runner"
-#     runner = Dev::Runner.new
+  def build_runner(name: "testproject", commands: {})
+    yaml = { "name" => name, "commands" => commands }
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(YAML.dump(yaml))
+    tmp.flush
 
-#     When "we call show_usage? with [\"--help\"]"
-#     result = runner.send(:show_usage?, ["--help"])
+    Dev::Runner.new(
+      dev_yaml_path: Pathname.new(tmp.path),
+      cfg_parser: Dev::ConfigParser.new(command_parser: Dev::CommandParser.new),
+    )
+  end
 
-#     Then "it returns true"
-#     assert result
-#   end
-
-#   test "show_usage? returns false for a command name" do
-#     Given "a Runner"
-#     runner = Dev::Runner.new
-
-#     When "we call show_usage? with [\"test\"]"
-#     result = runner.send(:show_usage?, ["test"])
-
-#     Then "it returns false"
-#     refute result
-#   end
-
-# end
+  def fake_ui
+    ui = typed_mock(Dev::Cli::Ui)
+    ui.stubs(:print_header)
+    ui
+  end
+end

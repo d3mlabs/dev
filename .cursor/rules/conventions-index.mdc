@@ -23,3 +23,5 @@ decide if you need the full content.
 - `.cursor/rules/no-class-method-delegation.mdc`
 - `.cursor/rules/errors-bubble-up-no-nil.mdc`
 - `.cursor/rules/stateless-parsers.mdc`
+- `.cursor/rules/constructor-ownership.mdc`
+- `.cursor/rules/top-level-requires.mdc`

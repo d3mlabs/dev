@@ -1,23 +1,27 @@
 # frozen_string_literal: true
 
 require_relative "dsl"
+require_relative "tap"
 
 module Dev
   module Deps
     # Parsed dependency configuration. Returned by Dev::Deps.define.
     class Config
-      attr_reader :taps, :groups, :gems, :ruby_version_requirement,
+      attr_reader :taps, :groups, :declarations, :gems, :ruby_version_requirement,
                   :lua_version, :registered_integrations
 
-      # @param taps [Hash] declared Homebrew taps
-      # @param groups [Hash] group name → { "runtime" => [...], "brew" => [...], "env" => {...} }
+      # @param taps [Array<Tap>] declared Homebrew taps
+      # @param groups [Hash] group name → { "brew" => [...], "env" => {...} }
+      # @param declarations [Array<DependencyDeclaration>] all declared dependencies
       # @param gems [Array<Hash>] declared Ruby gems
       # @param ruby_version_requirement [String, nil] required Ruby version
       # @param lua_version [String, nil] Lua version for LuaRocks
       # @param registered_integrations [Hash{Symbol => Class}] custom integration registrations
-      def initialize(taps:, groups:, gems:, ruby_version_requirement:, lua_version:, registered_integrations:)
+      def initialize(taps:, groups:, declarations:, gems:, ruby_version_requirement:,
+                     lua_version:, registered_integrations:)
         @taps = taps
         @groups = groups
+        @declarations = declarations
         @gems = gems
         @ruby_version_requirement = ruby_version_requirement
         @lua_version = lua_version
@@ -29,16 +33,7 @@ module Dev
       # @param name [String, Symbol] group name
       # @return [Hash]
       def group(name)
-        @groups[name.to_s] || { "runtime" => [], "brew" => [], "env" => {} }
-      end
-
-      # Return tap names that use file:// URLs (local taps).
-      #
-      # @return [Array<String>]
-      def local_tap_names
-        taps.values
-            .select { |t| t["url"].is_a?(String) && t["url"].start_with?("file://") }
-            .map { |t| t["name"] }
+        @groups[name.to_s] || { "brew" => [], "env" => {} }
       end
 
       # Evaluate a DSL block and return a Config instance.
@@ -48,9 +43,15 @@ module Dev
       def self.define(&block)
         dsl = DSL.new
         dsl.instance_eval(&block) if block
+
+        taps = dsl.taps.map do |_name, raw|
+          Tap.new(name: raw["name"], url: raw["url"])
+        end
+
         new(
-          taps: dsl.taps,
+          taps:,
           groups: dsl.groups,
+          declarations: dsl.declarations,
           gems: dsl.gems,
           ruby_version_requirement: dsl.ruby_version_requirement,
           lua_version: dsl.lua_version_value,

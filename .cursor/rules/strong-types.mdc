@@ -1,5 +1,5 @@
 ---
-description: "Prefer strong types over primitives everywhere except system boundaries (user input, file I/O). Pathname for paths, coerce in constructors, _FILE suffix on path constants."
+description: "Prefer strong types over primitives everywhere except system boundaries (user input, file I/O). Pathname for paths, URI for URLs, domain objects at parsing boundaries, never erase types."
 alwaysApply: false
 ---
 
@@ -45,4 +45,55 @@ DEPS_CMAKE = "deps.cmake"
 # GOOD
 DEPS_LOCK_FILE = "deps.lock"
 DEPS_CMAKE_FILE = "deps.cmake"
+```
+
+## URI for URLs
+
+Coerce URL strings to `URI` in constructors. Downstream code works with
+the `URI` object and calls `.to_s` only at system boundaries (e.g.,
+passing to `system("brew", "tap", ...)`).
+
+```ruby
+# BAD
+Tap = Data.define(:name, :url)  # url is a raw String
+
+# GOOD
+Tap = Data.define(:name, :url) do
+  def initialize(name:, url: nil)
+    super(name:, url: url ? URI(url).freeze : nil)
+  end
+end
+```
+
+## Domain objects at parsing boundaries
+
+Build domain value objects at the system boundary (parser, DSL builder,
+config loader) rather than passing raw hashes or arrays through layers.
+
+```ruby
+# BAD: parser returns raw hash, consumer builds domain object later
+def parse(path)
+  { name: yaml["name"], version: yaml["version"] }
+end
+
+# GOOD: parser returns domain object immediately
+def parse(path)
+  DependencyDeclaration.new(name: yaml["name"], version: yaml["version"])
+end
+```
+
+## Never erase types
+
+When the language or type system gives you a way to express a type, use it.
+Type erasure (e.g., `T.untyped` in Sorbet, `any` in TypeScript, `Object` in
+Java) is a design signal — restructure so the type can be stated explicitly.
+
+```ruby
+# BAD: type erasure hides the real contract
+const :command_runner, T.untyped
+
+# GOOD: concrete types make the contract explicit
+const :ui, Dev::Cli::Ui
+const :ruby_version, String
+const :project_root, Pathname
 ```

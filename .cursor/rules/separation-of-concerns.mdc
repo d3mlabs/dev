@@ -1,5 +1,5 @@
 ---
-description: "Dev::Deps layer boundaries — don't leak concerns. Repository resolves, Integration installs, Lockfile serializes, Orchestrator coordinates. Layers must not implement, reference, or comment on other layers' concerns."
+description: "Dev::Deps layer boundaries — don't leak concerns. Repository resolves, Integration installs, Lockfile serializes, Orchestrator coordinates. One class = one layer. Integration-specific logic stays in its integration."
 alwaysApply: false
 ---
 
@@ -37,4 +37,50 @@ end
 # BAD: comment mentions a concern the layer doesn't own
 # Env scoping is not this layer's concern — the orchestrator handles it.
 class BrewRepository < Repository  # don't talk about what you don't own
+```
+
+## One class = one layer
+
+A class must not span two layers. If a single class both resolves+locks
+dependencies AND installs them, those are two separate responsibilities that
+belong in separate classes.
+
+```ruby
+# BAD: one class spans resolve and install layers
+class DependencyService
+  def resolve(declarations)
+    # resolves and locks
+  end
+
+  def install(lockfile_path)
+    # reads lockfile and installs
+  end
+end
+
+# GOOD: separate classes for separate layers
+class DependencyResolver   # resolve + lock layer
+class DependencyInstaller  # install layer
+```
+
+## Integration-specific logic stays in its integration
+
+If logic is specific to one integration (e.g., Homebrew tap handling), it
+belongs in that integration class — not in the orchestrator or a shared service.
+
+```ruby
+# BAD: orchestrator handles brew-specific tap logic
+class DependencyService
+  def resolve(declarations)
+    ensure_taps_added(declarations)  # brew concern, not yours
+    # ...
+  end
+end
+
+# GOOD: BrewIntegration owns its own tap handling
+class BrewIntegration < Integration
+  def install_all(dependencies)
+    ensure_taps_added
+    # ...
+  end
+end
 ```

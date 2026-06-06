@@ -1,0 +1,41 @@
+---
+description: "Stable collaborators and dependencies belong in the constructor, not in method bodies. If a value doesn't change between calls, initialize it once."
+alwaysApply: false
+---
+
+# Constructor ownership
+
+If a collaborator or dependency does not change between method calls, it belongs
+in the constructor — not created or accepted as a parameter in individual methods.
+
+This applies to service objects, registries, parsers, repositories, and any
+collaborator whose identity is fixed for the lifetime of the owning object.
+
+```ruby
+# BAD: collaborators created in method body
+class DependencyService
+  def resolve(declarations, repositories)
+    resolver = Resolver.new
+    lockfile = Lockfile.new(@dir)
+    resolved = resolver.resolve(declarations, repositories:)
+    lockfile.lock(resolved)
+  end
+end
+
+# GOOD: collaborators owned by the constructor
+class DependencyService
+  def initialize(resolver:, lockfile:)
+    @resolver = resolver
+    @lockfile = lockfile
+  end
+
+  def resolve(declarations)
+    resolved = @resolver.resolve(declarations)
+    @lockfile.lock(resolved)
+  end
+end
+```
+
+**Test for it:** if a value is passed to or created in a method but never varies
+across calls, move it to the constructor. Method parameters are for values that
+change per call (e.g., the declarations being resolved).

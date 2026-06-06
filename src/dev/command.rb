@@ -2,14 +2,35 @@
 # frozen_string_literal: true
 
 module Dev
-  # Value object for one command from dev.yml: run string, optional desc, optional repl flag.
+  # Base command interface. All command types implement #execute and #desc.
+  #
+  # - ShellCommand: wraps a shell run string from dev.yml (final)
+  # - BuiltinCommand: wraps Ruby code (virtual / overridable)
   class Command
+    extend T::Sig
+    extend T::Helpers
+    abstract!
+
+    sig { abstract.params(args: T::Array[String], context: T.untyped).void }
+    def execute(args:, context:); end
+
+    sig { abstract.returns(String) }
+    def desc; end
+
+    # Whether this command slot is final (cannot be overridden).
+    sig { abstract.returns(T::Boolean) }
+    def final?; end
+  end
+
+  # Shell command from dev.yml. Wraps a run string, optional description, and repl flag.
+  # Final in the registry — duplicate declarations are an error.
+  class ShellCommand < Command
     extend T::Sig
 
     sig { returns(String) }
     attr_reader :run
 
-    sig { returns(String) }
+    sig { override.returns(String) }
     attr_reader :desc
 
     sig { returns(T::Boolean) }
@@ -22,9 +43,19 @@ module Dev
       @repl = T.let(repl, T::Boolean)
     end
 
+    sig { override.returns(T::Boolean) }
+    def final? = true
+
+    sig { override.params(args: T::Array[String], context: T.untyped).void }
+    def execute(args:, context:)
+      runner = CommandRunner.new(ui: context.ui, ruby_version: context.ruby_version)
+      runner.run(self, args:)
+    end
+
     sig { params(other: Object).returns(T::Boolean) }
     def ==(other)
-      return false unless other.is_a?(Command)
+      return false unless other.is_a?(ShellCommand)
+
       @run == other.run && @desc == other.desc && @repl == other.repl
     end
 
