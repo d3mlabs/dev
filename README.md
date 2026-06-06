@@ -212,8 +212,7 @@ Projects can register their own integration types:
 require_relative "lib/my_integration"
 
 Dev::Deps.define do
-  register_integration :my_type, MyIntegration
-  register_method :my_type
+  register :my_type, MyIntegration
 
   group :app do
     my_type "some_dep", version: ">=1.0"
