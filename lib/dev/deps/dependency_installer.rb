@@ -16,9 +16,16 @@ module Dev
 
       # Read lockfiles and dispatch to integrations.
       #
-      # Build-group deps (compilers, build systems) are installed before all
-      # others because app/test deps may depend on them at install time
-      # (e.g. cmake must exist before a cmake-based library can be built).
+      # Install order is a simplified topological sort: build-group deps
+      # (compilers, build systems) are installed before all others because
+      # app/test deps may depend on them at install time (e.g. cmake must
+      # exist before a cmake-based library can be built).
+      #
+      # Today individual integrations (Homebrew, LuaRocks) handle their own
+      # internal dependency graphs, so we don't need full topological ordering
+      # here. If we later encounter cross-integration transitive dependencies,
+      # or integrate a repository that doesn't resolve its own dep graph,
+      # this partition would generalize into a proper topological sort.
       #
       # When env is set, deps with non-matching env metadata are filtered out.
       # Deps with no env metadata are always included.
