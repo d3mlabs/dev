@@ -16,7 +16,10 @@ module Dev
 
       # Read lockfiles and dispatch to integrations.
       #
-      # Build-group deps are installed first (tooling), then all others.
+      # Build-group deps (compilers, build systems) are installed before all
+      # others because app/test deps may depend on them at install time
+      # (e.g. cmake must exist before a cmake-based library can be built).
+      #
       # When env is set, deps with non-matching env metadata are filtered out.
       # Deps with no env metadata are always included.
       #
