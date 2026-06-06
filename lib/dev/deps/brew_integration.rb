@@ -65,8 +65,9 @@ module Dev
           success = system("brew", "tap", tap.name, path)
           raise TapRegistrationError, "brew tap #{tap.name} #{path} failed" unless success
         elsif tap.url
-          success = system("brew", "tap", tap.name, tap.url)
-          raise TapRegistrationError, "brew tap #{tap.name} #{tap.url} failed" unless success
+          url_str = tap.url.to_s
+          success = system("brew", "tap", tap.name, url_str)
+          raise TapRegistrationError, "brew tap #{tap.name} #{url_str} failed" unless success
         else
           success = system("brew", "tap", tap.name)
           raise TapRegistrationError, "brew tap #{tap.name} failed" unless success
@@ -81,15 +82,15 @@ module Dev
         return unless local_tap
 
         ENV["TAP_NAME"] = local_tap.name
-        ENV["LOCAL_TAP_DIR"] = resolve_file_url(local_tap.url)
+        ENV["LOCAL_TAP_DIR"] = resolve_file_url(local_tap.url) if local_tap.url
       end
 
-      # Resolve a file:// URL to an absolute path relative to project_dir.
+      # Resolve a file:// URI to an absolute path relative to project_dir.
       #
-      # @param url [String] file:// URL
+      # @param uri [URI] file:// URI
       # @return [String] absolute path
-      def resolve_file_url(url)
-        path = url.sub(%r{\Afile://}, "")
+      def resolve_file_url(uri)
+        path = uri.path.to_s
         path = (@project_dir / path[2..]).to_s if path.start_with?("./")
         File.expand_path(path)
       end

@@ -19,7 +19,7 @@ module Dev
       @ruby_version = T.let(ruby_version, T.nilable(String))
     end
 
-    # Returns the project commands hash for merging into the registry.
+    # Project commands defined in dev.yml.
     #
     # @return [Hash{String => ShellCommand}]
     sig { returns(T::Hash[String, ShellCommand]) }

@@ -48,7 +48,8 @@ module Dev
 
     sig { override.params(args: T::Array[String], context: T.untyped).void }
     def execute(args:, context:)
-      context.command_runner.run(self, args:)
+      runner = CommandRunner.new(ui: context.ui, ruby_version: context.ruby_version)
+      runner.run(self, args:)
     end
 
     sig { params(other: Object).returns(T::Boolean) }

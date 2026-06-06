@@ -2,12 +2,13 @@
 # frozen_string_literal: true
 
 module Dev
-  # Context passed to Command#execute. Provides access to the command runner
-  # (for shell commands) and project root (for built-in commands).
+  # Context passed to Command#execute. Generic runtime context —
+  # individual command types use what they need.
   class ExecutionContext < T::Struct
     extend T::Sig
 
-    const :command_runner, T.untyped
-    const :project_root, T.nilable(Pathname), default: nil
+    const :ui, Dev::Cli::Ui
+    const :ruby_version, String
+    const :project_root, Pathname
   end
 end

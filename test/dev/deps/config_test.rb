@@ -44,7 +44,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
     taps[0].name == "d3mlabs/d3mlabs"
     taps[0].url.nil?
     taps[1].name == "local/tap"
-    taps[1].url == "file://./brew-tap"
+    taps[1].url == URI("file://./brew-tap")
   end
 
   test "Tap#local? returns true for file:// taps" do

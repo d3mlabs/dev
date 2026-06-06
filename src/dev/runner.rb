@@ -5,6 +5,9 @@ require 'pathname'
 require 'dev/config_parser'
 require 'dev/command_registry'
 require 'dev/execution_context'
+require 'dev/deps'
+require 'dev/deps/resolver'
+require 'dev/deps/lockfile'
 require 'dev/cli/ui'
 
 module Dev
@@ -17,8 +20,9 @@ module Dev
       dev_yaml_path: Dev.dev_yaml_file,
       cfg_parser: Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
       )
-      @dev_yaml_path = T.let(dev_yaml_path, Pathname)
       @cfg_parser = T.let(cfg_parser, Dev::ConfigParser)
+      @config = T.let(@cfg_parser.parse(dev_yaml_path), Dev::Config)
+      @registry = T.let(build_registry(@config), Dev::CommandRegistry)
     end
 
     # Runs the dev command specified by the given argv.
@@ -29,21 +33,17 @@ module Dev
     # @return [void]
     sig { params(argv: T::Array[String], ui: Dev::Cli::Ui, out: T.any(IO, StringIO)).void }
     def run(argv, ui:, out: $stdout)
-      args = T.let(argv.dup, T::Array[String])
-      config = @cfg_parser.parse(@dev_yaml_path)
-      registry = build_registry(config)
-
       if show_usage?(argv)
-        print_usage(config.name, registry, out:)
+        print_usage(@config.name, @registry, out:)
         return
       end
 
+      args = T.let(argv.dup, T::Array[String])
       cmd_name = T.must(args.shift)
-      cmd = registry.lookup(cmd_name)
+      cmd = @registry.lookup(cmd_name)
 
-      ruby_version = resolve_ruby_version(config.ruby_version)
-      cmd_runner = CommandRunner.new(ui:, ruby_version:)
-      context = ExecutionContext.new(command_runner: cmd_runner, project_root: Dev::TARGET_PROJECT_ROOT)
+      ruby_version = resolve_ruby_version(@config.ruby_version)
+      context = ExecutionContext.new(ui:, ruby_version:, project_root: Dev::TARGET_PROJECT_ROOT)
       cmd.execute(args:, context:)
     rescue CommandRegistry::CommandNotFoundError => e
       $stderr.puts "dev: #{e}"
@@ -64,16 +64,11 @@ module Dev
       registry
     end
 
-    # Register all built-in commands.
     sig { params(registry: CommandRegistry).void }
     def register_builtins(registry)
       registry.register("update-deps", BuiltinCommand.new(
         desc: "Resolve dependency constraints and write lockfiles",
       ) do |args:, context:|
-        require "dev/deps"
-        require "dev/deps/resolver"
-        require "dev/deps/lockfile"
-
         deps_rb = context.project_root / "dependencies.rb"
         load(deps_rb.to_s) if deps_rb.exist?
 
@@ -113,5 +108,4 @@ module Dev
       ShadowenvRuby.resolve_ruby_version(explicit_version)
     end
   end
-
 end
