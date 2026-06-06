@@ -18,7 +18,7 @@ class ShadowenvLuaTest < Minitest::Test
       ShadowenvLua.generate_lua_lisp("5.1"),
     )
 
-    Expect
+    Expect "provisioned? returns true"
     ShadowenvLua.provisioned?("5.1", project_root: tmpdir) == true
 
     Cleanup
@@ -29,7 +29,7 @@ class ShadowenvLuaTest < Minitest::Test
     Given "an empty project root"
     tmpdir = Dir.mktmpdir("shadowenv-lua-test-")
 
-    Expect
+    Expect "provisioned? returns false"
     ShadowenvLua.provisioned?("5.1", project_root: tmpdir) == false
 
     Cleanup
@@ -46,7 +46,7 @@ class ShadowenvLuaTest < Minitest::Test
       ShadowenvLua.generate_lua_lisp("5.4"),
     )
 
-    Expect
+    Expect "provisioned? returns false for mismatched version"
     ShadowenvLua.provisioned?("5.1", project_root: tmpdir) == false
 
     Cleanup
@@ -57,7 +57,7 @@ class ShadowenvLuaTest < Minitest::Test
     When "generating lisp for 5.1"
     result = ShadowenvLua.generate_lua_lisp("5.1")
 
-    Then
+    Then "the lisp includes the provide directive"
     assert_includes result, '(provide "lua" "5.1")'
   end
 
@@ -65,7 +65,7 @@ class ShadowenvLuaTest < Minitest::Test
     When "generating lisp for 5.1"
     result = ShadowenvLua.generate_lua_lisp("5.1")
 
-    Then
+    Then "LUA_PATH references lua_modules"
     assert_includes result, "LUA_PATH"
     assert_includes result, "lua_modules"
   end
@@ -74,7 +74,7 @@ class ShadowenvLuaTest < Minitest::Test
     When "generating lisp for 5.1"
     result = ShadowenvLua.generate_lua_lisp("5.1")
 
-    Then
+    Then "LUA_CPATH is configured"
     assert_includes result, "LUA_CPATH"
   end
 
@@ -82,7 +82,7 @@ class ShadowenvLuaTest < Minitest::Test
     When "generating lisp for 5.1"
     result = ShadowenvLua.generate_lua_lisp("5.1")
 
-    Then
+    Then "PATH includes lua formula and luarocks"
     assert_includes result, "lua@5.1"
     assert_includes result, "luarocks"
   end
@@ -91,16 +91,33 @@ class ShadowenvLuaTest < Minitest::Test
     Given "a temporary project directory"
     tmpdir = Dir.mktmpdir("shadowenv-lua-setup-")
 
-    When "running setup!"
+    When "running setup! with all system calls stubbed"
     result = ShadowenvLua.setup!(lua_version: "5.1", project_root: tmpdir)
 
-    Then
-    _ * ShadowenvLua.method(:system) >> true
+    Then "it writes the lisp file and returns true"
+    _ * Kernel.system >> true
     result == true
     lisp_path = File.join(tmpdir, ".shadowenv.d", "510_lua.lisp")
     assert File.exist?(lisp_path)
     content = File.read(lisp_path)
     assert_includes content, '(provide "lua" "5.1")'
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "setup! raises BrewInstallError when lua formula install fails" do
+    Given "a temporary project directory"
+    tmpdir = Dir.mktmpdir("shadowenv-lua-setup-")
+
+    When "brew list returns false and brew install also fails"
+    error = assert_raises(ShadowenvLua::BrewInstallError) do
+      ShadowenvLua.setup!(lua_version: "5.1", project_root: tmpdir)
+    end
+
+    Then "the error mentions the failing formula"
+    _ * Kernel.system >> false
+    error.message.include?("lua@5.1")
 
     Cleanup
     FileUtils.rm_rf(tmpdir)

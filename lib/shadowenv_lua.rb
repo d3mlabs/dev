@@ -7,12 +7,18 @@ require "fileutils"
 #
 # Mirrors ShadowenvRuby. Triggered when dev.yml declares `lua: "5.1"`.
 module ShadowenvLua
+  class BrewInstallError < StandardError; end
+
   LISP_FILENAME = "510_lua.lisp"
 
   module_function
 
   # Fast-path check: does .shadowenv.d/510_lua.lisp exist and provision
   # the correct Lua version?
+  #
+  # @param lua_version  [String]   e.g. "5.1"
+  # @param project_root [Pathname, String] project root directory
+  # @return [Boolean]
   def provisioned?(lua_version, project_root:)
     lisp_path = File.join(project_root.to_s, ".shadowenv.d", LISP_FILENAME)
     return false unless File.exist?(lisp_path)
@@ -22,6 +28,11 @@ module ShadowenvLua
   end
 
   # Full provisioning: write .shadowenv.d/510_lua.lisp, trust shadowenv.
+  #
+  # @param lua_version  [String]   e.g. "5.1"
+  # @param project_root [Pathname, String] project root directory
+  # @return [true]
+  # @raise [BrewInstallError] if Homebrew lua or luarocks cannot be installed
   def setup!(lua_version:, project_root:)
     ensure_homebrew_lua!(lua_version)
 
@@ -31,13 +42,16 @@ module ShadowenvLua
     File.write(lisp_path, generate_lua_lisp(lua_version))
 
     Dir.chdir(project_root.to_s) do
-      system("shadowenv", "trust", out: File::NULL, err: File::NULL)
+      Kernel.system("shadowenv", "trust", out: File::NULL, err: File::NULL)
     end
 
     true
   end
 
   # Generate the shadowenv lisp for Lua environment isolation.
+  #
+  # @param lua_version [String] e.g. "5.1"
+  # @return [String] lisp source
   def generate_lua_lisp(lua_version)
     lua_formula = "lua@#{lua_version}"
     <<~LISP
@@ -63,15 +77,22 @@ module ShadowenvLua
   end
 
   # Ensure Homebrew lua and luarocks are installed.
+  #
+  # @param lua_version [String] e.g. "5.1"
+  # @raise [BrewInstallError] if brew install fails
   def ensure_homebrew_lua!(lua_version)
     formula = "lua@#{lua_version}"
-    unless system("brew list #{formula} >/dev/null 2>&1")
+    unless Kernel.system("brew", "list", formula, out: File::NULL, err: File::NULL)
       $stderr.puts "dev: Installing #{formula} via Homebrew..."
-      system("brew", "install", formula) || $stderr.puts("dev: brew install #{formula} failed")
+      unless Kernel.system("brew", "install", formula)
+        raise BrewInstallError, "brew install #{formula} failed"
+      end
     end
-    unless system("brew list luarocks >/dev/null 2>&1")
+    unless Kernel.system("brew", "list", "luarocks", out: File::NULL, err: File::NULL)
       $stderr.puts "dev: Installing luarocks via Homebrew..."
-      system("brew", "install", "luarocks") || $stderr.puts("dev: brew install luarocks failed")
+      unless Kernel.system("brew", "install", "luarocks")
+        raise BrewInstallError, "brew install luarocks failed"
+      end
     end
   end
 end
