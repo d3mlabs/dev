@@ -1,0 +1,108 @@
+---
+description: "Security patterns for file I/O: avoid TOCTOU races, enforce permissions, use file locking, prefer safe deserialization, and suppress echo for secrets."
+alwaysApply: false
+---
+
+# Secure file I/O
+
+When reading or writing sensitive data (credentials, tokens, keys, configs
+with secrets), follow these patterns.
+
+## Create files with restrictive permissions from the start
+
+Never `File.write` then `File.chmod` — the file is briefly world-readable
+between the two calls (TOCTOU race).
+
+```ruby
+# BAD: TOCTOU window between write and chmod
+File.write(path, content)
+File.chmod(0o600, path)
+
+# GOOD: file is created with 0600 from the start
+File.open(path, "w", 0o600) { |f| f.write(content) }
+
+# GOOD: read-modify-write with creation mode
+File.open(path, File::RDWR | File::CREAT, 0o600) do |f|
+  # ...
+end
+```
+
+## Correct permissions on pre-existing files and directories
+
+`File.open`'s mode and `mkdir_p`'s mode only apply on **creation**. If the
+file or directory already exists (created by a user, another tool, or an
+older version of the code), the permissions are preserved.
+
+Always `File.chmod` after write/mkdir as a belt-and-suspenders measure:
+
+```ruby
+FileUtils.mkdir_p(dir, mode: 0o700)
+File.chmod(0o700, dir)  # corrects pre-existing directories
+
+File.open(path, File::RDWR | File::CREAT, 0o600) { |f| ... }
+File.chmod(0o600, path)  # corrects pre-existing files
+```
+
+## Use file locking for read-modify-write
+
+Without locking, concurrent processes can clobber each other's writes.
+Use `flock(LOCK_EX)` inside the `File.open` block:
+
+```ruby
+File.open(path, File::RDWR | File::CREAT, 0o600) do |f|
+  f.flock(File::LOCK_EX)
+
+  existing = f.read
+  data = existing.empty? ? {} : parse(existing)
+  data[key] = value
+
+  f.rewind
+  f.truncate(0)
+  f.write(serialize(data))
+end
+```
+
+The lock is released automatically when the block exits.
+
+## Use safe deserialization
+
+Never `YAML.load` or `YAML.load_file` on untrusted data — they allow
+arbitrary object instantiation. Always use the safe variants:
+
+```ruby
+# BAD: arbitrary object instantiation
+YAML.load_file(path)
+
+# GOOD: only basic types (String, Hash, Array, Numeric, Boolean, nil)
+YAML.safe_load_file(path)
+YAML.safe_load(string)
+```
+
+## Suppress echo for secret input
+
+When prompting for credentials, suppress terminal echo so the value
+isn't visible on screen:
+
+```ruby
+require "io/console"
+
+$stdout.print "Paste your token: "
+value = $stdin.noecho { $stdin.gets.chomp }
+$stdout.puts  # newline after hidden input
+```
+
+## Prefer multi-arg subprocess calls
+
+When passing secrets to external commands, use multi-argument form to
+avoid shell interpolation. Document any unavoidable CLI argument exposure:
+
+```ruby
+# BAD: shell interpolation — value could contain metacharacters
+system("security add-generic-password -w #{value}")
+
+# GOOD: multi-arg form, no shell
+Kernel.system("security", "add-generic-password", "-w", value)
+```
+
+Note: CLI arguments are visible in `ps` output. Document this when the
+external tool offers no stdin alternative.
