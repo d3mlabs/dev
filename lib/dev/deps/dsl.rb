@@ -43,21 +43,15 @@ module Dev
         }
       end
 
-      # Register a custom Integration class for use in dependencies.rb.
-      # The class is mapped to a symbol name used in DSL methods and lockfiles.
+      # Register a custom integration: maps the name to an Integration class
+      # and creates a DSL method so it can be used inside group blocks.
       #
       # @param name [Symbol, String] integration identifier (e.g. :wow_curseforge)
       # @param klass [Class, String] Integration subclass or its name
-      def register_integration(name, klass)
-        @registered_integrations[name.to_sym] = klass
-      end
-
-      # Create a named DSL method mapped to a registered integration.
-      # The method becomes available inside group blocks via method_missing.
-      #
-      # @param name [Symbol, String] method name to register (e.g. :wow_curseforge)
-      def register_method(name)
-        @registered_methods << name.to_sym
+      def register(name, klass)
+        sym = name.to_sym
+        @registered_integrations[sym] = klass
+        @registered_methods << sym
       end
 
       def group(name, &block)

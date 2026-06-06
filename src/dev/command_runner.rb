@@ -59,6 +59,9 @@ module Dev
       { "GEM_HOME" => nil, "RUBYLIB" => rubylib }
     end
 
+    # Toolchain provisioning: each toolchain the project uses gets its shadowenv
+    # set up before command execution. Currently hardcoded to Ruby + LLVM.
+    # When a third toolchain appears, generalize into a registry pattern (see #21).
     sig { void }
     def ensure_shadowenv_provisioned!
       require "shadowenv_ruby"
@@ -74,20 +77,13 @@ module Dev
     def ensure_llvm_provisioned!(project_root)
       require "shadowenv_llvm"
       return if ShadowenvLlvm.ci_or_linux?
-      return unless project_needs_llvm?(project_root)
+      return unless ShadowenvLlvm.project_needs_llvm?(project_root)
 
       prefix = ShadowenvLlvm.detect_llvm_prefix
       return unless prefix
       return if ShadowenvLlvm.provisioned?(prefix, project_root: project_root)
 
       ShadowenvLlvm.setup!(project_root: project_root, llvm_prefix: prefix)
-    end
-
-    sig { params(project_root: Pathname).returns(T::Boolean) }
-    def project_needs_llvm?(project_root)
-      lockfile = project_root / "build-deps.lock"
-      return false unless lockfile.exist?
-      lockfile.read.match?(/^brew llvm\b/)
     end
 
     sig { params(shell_command: String).void }

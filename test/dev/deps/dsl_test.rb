@@ -93,11 +93,10 @@ class Dev::Deps::DSLTest < Minitest::Test
     config.lua_version == "5.1"
   end
 
-  test "register_integration and register_method create DSL methods" do
-    When "registering and using a custom method"
+  test "register creates integration and DSL method in one call" do
+    When "registering and using a custom integration"
     config = Dev::Deps.define do
-      register_integration :wow_curseforge, "WoWCurseforgeIntegration"
-      register_method :wow_curseforge
+      register :wow_curseforge, "WoWCurseforgeIntegration"
 
       group :app do
         wow_curseforge "CombatMode", version: ">=1.0"
