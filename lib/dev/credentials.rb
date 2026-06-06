@@ -116,6 +116,8 @@ module Dev
       path = credentials_path
       return nil unless File.exist?(path)
 
+      # Security: safe_load only allows basic types — no arbitrary
+      # object instantiation from tampered YAML.
       creds = YAML.safe_load_file(path)
       creds&.dig(namespace, key)
     end
@@ -134,9 +136,15 @@ module Dev
     def store_to_file(namespace, key, value)
       path = credentials_path
       dir = File.dirname(path)
+
+      # Security: mkdir_p only sets mode on creation; chmod corrects
+      # pre-existing directories that may have a wider umask (e.g. 0755).
       FileUtils.mkdir_p(dir, mode: 0o700)
       File.chmod(0o700, dir)
 
+      # Security: RDWR|CREAT with explicit 0o600 creates the file with
+      # restrictive permissions from the start (no TOCTOU window).
+      # flock(LOCK_EX) prevents concurrent writes from clobbering each other.
       File.open(path, File::RDWR | File::CREAT, 0o600) do |f|
         f.flock(File::LOCK_EX)
 
@@ -150,6 +158,8 @@ module Dev
         f.write(YAML.dump(creds))
       end
 
+      # Security: corrects permissions on files created externally with
+      # a wider umask. File.open's mode only applies on creation.
       File.chmod(0o600, path)
     end
 
@@ -179,6 +189,7 @@ module Dev
       answer = $stdin.gets.chomp
       Kernel.system("open", create_url) unless answer.downcase == "n"
 
+      # Security: suppress echo so the credential isn't visible on screen.
       $stdout.print "\nPaste your #{key}: "
       value = $stdin.noecho { $stdin.gets.chomp }
       $stdout.puts
