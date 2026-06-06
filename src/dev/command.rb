@@ -16,6 +16,10 @@ module Dev
 
     sig { abstract.returns(String) }
     def desc; end
+
+    # Whether this command slot is final (cannot be overridden).
+    sig { abstract.returns(T::Boolean) }
+    def final?; end
   end
 
   # Shell command from dev.yml. Wraps a run string, optional description, and repl flag.
@@ -38,6 +42,9 @@ module Dev
       @desc = T.let(desc, String)
       @repl = T.let(repl, T::Boolean)
     end
+
+    sig { override.returns(T::Boolean) }
+    def final? = true
 
     sig { override.params(args: T::Array[String], context: T.untyped).void }
     def execute(args:, context:)

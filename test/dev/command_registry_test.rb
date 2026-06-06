@@ -57,13 +57,14 @@ class Dev::CommandRegistryTest < Minitest::Test
     raises Dev::CommandRegistry::DuplicateCommandError
   end
 
-  test "register BuiltinCommand into occupied slot raises DuplicateCommandError" do
-    Given "a registry with a command"
+  test "register into already-overridden slot raises DuplicateCommandError" do
+    Given "a registry where a built-in has already been overridden"
     registry = Dev::CommandRegistry.new
-    registry.register("up", Dev::BuiltinCommand.new(desc: "first") {})
+    registry.register("up", Dev::BuiltinCommand.new(desc: "builtin") { |args:, context:| })
+    registry.register("up", Dev::ShellCommand.new(run: "./bin/up.sh", desc: "project"))
 
-    When "registering another built-in with same name"
-    registry.register("up", Dev::BuiltinCommand.new(desc: "second") {})
+    When "registering a third command into the sealed slot"
+    registry.register("up", Dev::ShellCommand.new(run: "./bin/up2.sh", desc: "another"))
 
     Then
     raises Dev::CommandRegistry::DuplicateCommandError

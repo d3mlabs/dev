@@ -23,6 +23,9 @@ module Dev
       @super_command.desc
     end
 
+    sig { override.returns(T::Boolean) }
+    def final? = true
+
     sig { override.params(args: T::Array[String], context: T.untyped).void }
     def execute(args:, context:)
       @super_command.execute(args:, context:)

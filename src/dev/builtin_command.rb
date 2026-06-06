@@ -18,6 +18,9 @@ module Dev
       @block = T.let(block, T.proc.params(args: T::Array[String], context: T.untyped).void)
     end
 
+    sig { override.returns(T::Boolean) }
+    def final? = false
+
     sig { override.params(args: T::Array[String], context: T.untyped).void }
     def execute(args:, context:)
       @block.call(args:, context:)

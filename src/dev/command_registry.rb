@@ -23,28 +23,27 @@ module Dev
     sig { void }
     def initialize
       @commands = T.let({}, T::Hash[String, Command])
-      @virtual = T.let(Set.new, T::Set[String])
     end
 
-    # Register a command. Override semantics derived from type:
+    # Register a command. Override semantics derived from Command#final?:
+    #
+    # - Non-final (virtual) existing slot: override creates an OverriddenCommand
+    # - Final existing slot: raises DuplicateCommandError
     #
     # @param name [String] command name
     # @param command [Command] command to register
-    # @raise [DuplicateCommandError] if registering into a final slot,
-    #   or a BuiltinCommand into an occupied slot
+    # @raise [DuplicateCommandError] if registering into a final slot
     sig { params(name: String, command: Command).void }
     def register(name, command)
       existing = @commands[name]
-
-      if existing.nil?
+      unless existing
         @commands[name] = command
-        @virtual.add(name) if command.is_a?(BuiltinCommand)
-      elsif @virtual.include?(name) && !command.is_a?(BuiltinCommand)
-        @commands[name] = OverriddenCommand.new(super_command: existing, body: command)
-        @virtual.delete(name)
-      else
-        raise DuplicateCommandError, "Command '#{name}' is already registered and cannot be overridden"
+        return
       end
+
+      raise DuplicateCommandError, "Command '#{name}' is already registered and cannot be overridden" if existing.final?
+
+      @commands[name] = OverriddenCommand.new(super_command: existing, body: command)
     end
 
     # Look up a command by name.
