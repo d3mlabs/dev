@@ -135,6 +135,7 @@ module Dev
       path = credentials_path
       dir = File.dirname(path)
       FileUtils.mkdir_p(dir, mode: 0o700)
+      File.chmod(0o700, dir)
 
       File.open(path, File::RDWR | File::CREAT, 0o600) do |f|
         f.flock(File::LOCK_EX)
