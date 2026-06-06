@@ -10,8 +10,8 @@ class Dev::OverriddenCommandTest < Minitest::Test
   test "execute calls super first, then body" do
     Given "an overridden command with two recording blocks"
     order = []
-    super_cmd = Dev::BuiltinCommand.new(desc: "super") { |args:, context:| order << :super }
-    body_cmd = Dev::BuiltinCommand.new(desc: "body") { |args:, context:| order << :body }
+    super_cmd = Dev::BuiltinCommand.new(desc: "super") { |args, context| order << :super }
+    body_cmd = Dev::BuiltinCommand.new(desc: "body") { |args, context| order << :body }
     cmd = Dev::OverriddenCommand.new(super_command: super_cmd, body: body_cmd)
 
     When "executing"
@@ -23,8 +23,8 @@ class Dev::OverriddenCommandTest < Minitest::Test
 
   test "desc delegates to super_command" do
     Given "an overridden command"
-    super_cmd = Dev::BuiltinCommand.new(desc: "Resolve deps") { |args:, context:| }
-    body_cmd = Dev::BuiltinCommand.new(desc: "Project setup") { |args:, context:| }
+    super_cmd = Dev::BuiltinCommand.new(desc: "Resolve deps") { |args, context| }
+    body_cmd = Dev::BuiltinCommand.new(desc: "Project setup") { |args, context| }
     cmd = Dev::OverriddenCommand.new(super_command: super_cmd, body: body_cmd)
 
     Expect "desc comes from super"
@@ -34,8 +34,8 @@ class Dev::OverriddenCommandTest < Minitest::Test
   test "execute passes args and context through to both" do
     Given "an overridden command that records args and context"
     received = []
-    super_cmd = Dev::BuiltinCommand.new { |args:, context:| received << { from: :super, args: args, context: context } }
-    body_cmd = Dev::BuiltinCommand.new { |args:, context:| received << { from: :body, args: args, context: context } }
+    super_cmd = Dev::BuiltinCommand.new { |args, context| received << { from: :super, args: args, context: context } }
+    body_cmd = Dev::BuiltinCommand.new { |args, context| received << { from: :body, args: args, context: context } }
     cmd = Dev::OverriddenCommand.new(super_command: super_cmd, body: body_cmd)
 
     When "executing with specific args and context"

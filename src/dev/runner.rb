@@ -68,7 +68,7 @@ module Dev
     def register_builtins(registry)
       registry.register("update-deps", BuiltinCommand.new(
         desc: "Resolve dependency constraints and write lockfiles",
-      ) do |args:, context:|
+      ) do |args, context|
         deps_rb = context.project_root / "dependencies.rb"
         load(deps_rb.to_s) if deps_rb.exist?
 

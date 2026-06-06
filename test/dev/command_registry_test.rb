@@ -32,7 +32,7 @@ class Dev::CommandRegistryTest < Minitest::Test
   test "register ShellCommand into virtual slot creates OverriddenCommand" do
     Given "a registry with a built-in, then a shell override"
     registry = Dev::CommandRegistry.new
-    builtin = Dev::BuiltinCommand.new(desc: "built-in up") { |args:, context:| }
+    builtin = Dev::BuiltinCommand.new(desc: "built-in up") { |args, context| }
     shell = Dev::ShellCommand.new(run: "./bin/up.sh", desc: "project up")
     registry.register("up", builtin)
     registry.register("up", shell)
@@ -60,7 +60,7 @@ class Dev::CommandRegistryTest < Minitest::Test
   test "register into already-overridden slot raises DuplicateCommandError" do
     Given "a registry where a built-in has already been overridden"
     registry = Dev::CommandRegistry.new
-    registry.register("up", Dev::BuiltinCommand.new(desc: "builtin") { |args:, context:| })
+    registry.register("up", Dev::BuiltinCommand.new(desc: "builtin") { |args, context| })
     registry.register("up", Dev::ShellCommand.new(run: "./bin/up.sh", desc: "project"))
 
     When "registering a third command into the sealed slot"

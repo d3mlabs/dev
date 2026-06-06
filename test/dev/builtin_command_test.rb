@@ -9,7 +9,7 @@ class Dev::BuiltinCommandTest < Minitest::Test
   test "execute calls the block with args and context" do
     Given "a builtin command with a recording block"
     received = {}
-    cmd = Dev::BuiltinCommand.new(desc: "test command") do |args:, context:|
+    cmd = Dev::BuiltinCommand.new(desc: "test command") do |args, context|
       received[:args] = args
       received[:context] = context
     end
@@ -32,7 +32,7 @@ class Dev::BuiltinCommandTest < Minitest::Test
 
   test "desc defaults to no description" do
     Given "a builtin command without desc"
-    cmd = Dev::BuiltinCommand.new { |args:, context:| }
+    cmd = Dev::BuiltinCommand.new { |args, context| }
 
     Expect
     cmd.desc == "(no description)"
