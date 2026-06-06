@@ -12,16 +12,19 @@ module Dev
     sig { returns(T.nilable(String)) }
     attr_reader :ruby_version
 
-    sig { params(name: String, commands: T::Hash[String, Command], ruby_version: T.nilable(String)).void }
+    sig { params(name: String, commands: T::Hash[String, ShellCommand], ruby_version: T.nilable(String)).void }
     def initialize(name:, commands:, ruby_version: nil)
       @name = T.let(name, String)
-      @commands = T.let(commands.freeze, T::Hash[String, Command])
+      @commands = T.let(commands.freeze, T::Hash[String, ShellCommand])
       @ruby_version = T.let(ruby_version, T.nilable(String))
     end
 
-    sig { params(name: String).returns(Command) }
-    def command(name)
-      @commands.fetch(name)
+    # Returns the project commands hash for merging into the registry.
+    #
+    # @return [Hash{String => ShellCommand}]
+    sig { returns(T::Hash[String, ShellCommand]) }
+    def commands
+      @commands
     end
 
     sig { params(out: T.any(IO, StringIO)).void }

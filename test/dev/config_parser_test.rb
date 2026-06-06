@@ -30,8 +30,8 @@ class ConfigParserTest < Minitest::Test
 
     Then "we get the expected config"
     config.name == "myproject"
-    config.command("up") == Dev::Command.new(run: "./bin/setup.rb", desc: "Setup", repl: false)
-    config.command("test") == Dev::Command.new(run: "rspec", desc: "(no description)", repl: false)
+    config.commands["up"] == Dev::ShellCommand.new(run: "./bin/setup.rb", desc: "Setup", repl: false)
+    config.commands["test"] == Dev::ShellCommand.new(run: "rspec", desc: "(no description)", repl: false)
 
     Cleanup
     tmp.close!
@@ -76,7 +76,7 @@ class ConfigParserTest < Minitest::Test
     config = parser.parse(Pathname.new(tmp.path))
 
     Then "the command has repl true"
-    config.command("console").repl == true
+    config.commands["console"].repl == true
 
     Cleanup
     tmp.close!
@@ -101,7 +101,7 @@ class ConfigParserTest < Minitest::Test
 
     Then "it parses successfully with the correct command"
     config.name == "myproject"
-    config.command("up").run == "./bin/setup.rb"
+    config.commands["up"].run == "./bin/setup.rb"
 
     Cleanup
     tmp.close!

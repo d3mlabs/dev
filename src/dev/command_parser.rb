@@ -13,7 +13,7 @@ module Dev
     #
     # @return [Command] The parsed command.
     # @raise [ArgumentError] If the command hash is missing the `run` key or the value is not a string.
-    sig { params(cmd_hash: CommandHash).returns(Command) }
+    sig { params(cmd_hash: CommandHash).returns(ShellCommand) }
     def parse(cmd_hash)
       run = cmd_hash["run"].to_s
       run_present = !run.empty?
@@ -25,7 +25,7 @@ module Dev
       desc = desc.empty? ? "(no description)" : desc
       repl = cmd_hash["repl"] == true
 
-      Command.new(run: run, desc: desc, repl: repl)
+      ShellCommand.new(run: run, desc: desc, repl: repl)
     end
   end
 end

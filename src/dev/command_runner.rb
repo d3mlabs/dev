@@ -30,7 +30,7 @@ module Dev
       @ruby_version = T.let(ruby_version, String)
     end
 
-    sig { params(cmd: Command, args: T::Array[String]).void }
+    sig { params(cmd: ShellCommand, args: T::Array[String]).void }
     def run(cmd, args: [])
       ensure_shadowenv_provisioned!
       shell_command = build_shell_command(cmd.run, args)
