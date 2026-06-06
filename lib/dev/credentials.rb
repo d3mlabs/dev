@@ -86,6 +86,9 @@ module Dev
     # Store a credential to the macOS Keychain.
     #
     # Uses -U flag to update if the entry already exists.
+    # Note: -w passes the value as a CLI argument, briefly visible in `ps`.
+    # This is the only interface `security add-generic-password` offers;
+    # a native Keychain API binding would eliminate this exposure.
     #
     # @param namespace [String]
     # @param key [String]
@@ -128,14 +131,15 @@ module Dev
     def store_to_file(namespace, key, value)
       path = credentials_path
       dir = File.dirname(path)
-      FileUtils.mkdir_p(dir)
+      FileUtils.mkdir_p(dir, mode: 0o700)
 
       creds = File.exist?(path) ? (YAML.safe_load_file(path) || {}) : {}
       creds[namespace] ||= {}
       creds[namespace][key] = value
 
-      File.write(path, YAML.dump(creds))
-      File.chmod(0o600, path)
+      # Atomic-safe: File.open with explicit mode creates the file with 0600
+      # from the start, avoiding the TOCTOU window of File.write + File.chmod.
+      File.open(path, "w", 0o600) { |f| f.write(YAML.dump(creds)) }
     end
 
     # Interactive prompt for credential onboarding.
