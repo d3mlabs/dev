@@ -141,6 +141,17 @@ dev --help      # Same
 
 Dev includes a built-in dependency management system for reproducible builds across ecosystems.
 
+### Lifecycle
+
+Dependencies flow through four stages:
+
+1. **Declare** — list what you need in `dependencies.rb` using the Ruby DSL
+2. **Resolve & lock** — `dev update-deps` resolves constraints to exact versions and writes lockfiles
+3. **Install** — `dev up` installs pinned dependencies from lockfiles (build group first)
+4. **Use** — `dev <command>` provisions the project's toolchain environment and runs your command
+
+Lockfiles are the source of truth for stages 3 and 4. After changing `dependencies.rb`, run `dev update-deps` to re-resolve before building.
+
 ### Lockfiles
 
 Two YAML lockfiles, same format, two purposes:
