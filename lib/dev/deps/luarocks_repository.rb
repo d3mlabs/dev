@@ -13,7 +13,18 @@ module Dev
     # Uses `luarocks search <name> --porcelain` to find available versions,
     # picks the best match for the constraint, downloads the rock to compute
     # SHA256. Callers are responsible for caching.
-    class LuaRocksRegistry < Repository
+    class LuaRocksRepository < Repository
+      class SearchError < StandardError; end
+      class NoVersionError < StandardError; end
+      class DownloadError < StandardError; end
+
+      # Resolve a LuaRocks package to an exact version + integrity hash.
+      #
+      # @param id [Hash] identifier with "name", "integration", "group", "constraint"
+      # @return [Dependency]
+      # @raise [SearchError] if luarocks search fails
+      # @raise [NoVersionError] if no versions match
+      # @raise [DownloadError] if luarocks download fails
       def fetch(id)
         name = id["name"]
         version = find_best_version(name, id["constraint"])
@@ -33,23 +44,36 @@ module Dev
 
       private
 
+      # Find the best available version for a package.
+      #
+      # @param name [String] rock name
+      # @param _constraint [String, nil] version constraint (not yet used)
+      # @return [String] best matching version
+      # @raise [SearchError] if luarocks search command fails
+      # @raise [NoVersionError] if no versions found
       def find_best_version(name, _constraint)
         out, _err, status = Open3.capture3("luarocks", "search", name, "--porcelain")
-        raise "luarocks search #{name} failed" unless status.success?
+        raise SearchError, "luarocks search #{name} failed" unless status.success?
 
         versions = out.scan(/^\s+(\S+)\s+\(/).map(&:first)
-        raise "No versions found for #{name}" if versions.empty?
+        raise NoVersionError, "No versions found for #{name}" if versions.empty?
 
         versions.first
       end
 
+      # Download a source rock to a temp file.
+      #
+      # @param name [String] rock name
+      # @param version [String] exact version
+      # @return [String] path to downloaded rock file
+      # @raise [DownloadError] if luarocks download command fails
       def download_rock(name, version)
         tmp = Tempfile.new(["dev_deps_#{name}", ".src.rock"])
         tmp.close
         _out, err, status = Open3.capture3(
           "luarocks", "download", name, version, "--source", "--to=#{File.dirname(tmp.path)}",
         )
-        raise "luarocks download #{name} #{version} failed: #{err}" unless status.success?
+        raise DownloadError, "luarocks download #{name} #{version} failed: #{err}" unless status.success?
         tmp.path
       end
     end
