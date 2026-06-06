@@ -74,23 +74,13 @@ module Dev
     def ensure_llvm_provisioned!(project_root)
       require "shadowenv_llvm"
       return if ShadowenvLlvm.ci_or_linux?
-      return unless project_needs_llvm?(project_root)
+      return unless ShadowenvLlvm.project_needs_llvm?(project_root)
 
       prefix = ShadowenvLlvm.detect_llvm_prefix
       return unless prefix
       return if ShadowenvLlvm.provisioned?(prefix, project_root: project_root)
 
       ShadowenvLlvm.setup!(project_root: project_root, llvm_prefix: prefix)
-    end
-
-    sig { params(project_root: Pathname).returns(T::Boolean) }
-    def project_needs_llvm?(project_root)
-      lockfile = project_root / "build-deps.lock"
-      return false unless lockfile.exist?
-
-      content = lockfile.read
-      # YAML format: top-level "llvm:" key with integration: brew
-      content.match?(/^llvm:\s*$/) || content.match?(/^brew llvm\b/)
     end
 
     sig { params(shell_command: String).void }

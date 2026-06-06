@@ -73,6 +73,17 @@ module ShadowenvLlvm
     LISP
   end
 
+  # Returns true if the project's build-deps.lock references LLVM.
+  # Supports both YAML format (top-level "llvm:" key) and the legacy
+  # plain-text format ("brew llvm").
+  def project_needs_llvm?(project_root)
+    lockfile = Pathname(project_root) / "build-deps.lock"
+    return false unless lockfile.exist?
+
+    content = lockfile.read
+    content.match?(/^llvm:\s*$/) || content.match?(/^brew llvm\b/)
+  end
+
   # --- internal helpers ------------------------------------------------
 
   def brew_prefix_for(formula)
