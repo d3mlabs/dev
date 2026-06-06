@@ -13,7 +13,7 @@ module Dev
   module Credentials
     class MissingCredentialError < StandardError; end
 
-    KEYCHAIN_ACCOUNT = "dev"
+    KEYCHAIN_ACCOUNT = "d3mlabs/dev"
 
     module_function
 
@@ -187,9 +187,9 @@ module Dev
     #
     # @param namespace [String]
     # @param key [String]
-    # @return [String] e.g. "dev/curseforge/api_key"
+    # @return [String] e.g. "curseforge/api_key"
     def keychain_service(namespace, key)
-      "dev/#{namespace}/#{key}"
+      "#{namespace}/#{key}"
     end
   end
 end

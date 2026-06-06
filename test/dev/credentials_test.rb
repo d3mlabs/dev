@@ -150,7 +150,7 @@ class Dev::CredentialsTest < Minitest::Test
     stdout = "my-secret-key\n"
     Open3.stubs(:capture3)
          .with("security", "find-generic-password",
-               "-a", "dev", "-s", "dev/curseforge/api_key", "-w")
+               "-a", "d3mlabs/dev", "-s", "curseforge/api_key", "-w")
          .returns([stdout, "", stub(success?: true)])
 
     When "loading from keychain"
@@ -164,7 +164,7 @@ class Dev::CredentialsTest < Minitest::Test
     Given "no keychain entry"
     Open3.stubs(:capture3)
          .with("security", "find-generic-password",
-               "-a", "dev", "-s", "dev/curseforge/api_key", "-w")
+               "-a", "d3mlabs/dev", "-s", "curseforge/api_key", "-w")
          .returns(["", "security: SecKeychainSearchCopyNext", stub(success?: false)])
 
     When "loading from keychain"
@@ -182,8 +182,8 @@ class Dev::CredentialsTest < Minitest::Test
     1 * Kernel.system(
       "security", "add-generic-password",
       "-U",
-      "-a", "dev",
-      "-s", "dev/curseforge/api_key",
+      "-a", "d3mlabs/dev",
+      "-s", "curseforge/api_key",
       "-w", "cf-secret",
       out: File::NULL, err: File::NULL,
     )
@@ -238,7 +238,7 @@ class Dev::CredentialsTest < Minitest::Test
     When "building a keychain service name"
     service = Dev::Credentials.keychain_service("curseforge", "api_key")
 
-    Then "it returns dev/namespace/key"
-    service == "dev/curseforge/api_key"
+    Then "it returns namespace/key"
+    service == "curseforge/api_key"
   end
 end
