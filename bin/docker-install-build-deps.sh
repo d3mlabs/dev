@@ -16,6 +16,11 @@ set -euo pipefail
 DEPS_DIR="${1:-/app}"
 DEV_REF="${DEV_REF:-main}"
 
+# Homebrew's Linux build sandbox (Bubblewrap) requires unprivileged user
+# namespaces, which aren't available inside docker build. The container
+# already provides that isolation, so disable the redundant sandbox.
+export HOMEBREW_NO_SANDBOX_LINUX=1
+
 echo ">>> Installing Linuxbrew"
 NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
