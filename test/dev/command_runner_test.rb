@@ -14,6 +14,10 @@ class CommandRunnerTest < Minitest::Test
   def setup
     @ui = typed_mock(Dev::Cli::Ui)
     @ui.stubs(:print_header)
+    # CommandRunner#run chdirs into @project_root, which teardown deletes.
+    # Each test restores @original_cwd in its Cleanup block so later tests
+    # don't run from a deleted directory (getcwd would raise ENOENT).
+    @original_cwd = Dir.pwd
     @project_root = Pathname(Dir.mktmpdir("dev-runner-test"))
     @runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", project_root: @project_root)
     @runner.stubs(:ensure_shadowenv_provisioned!)
@@ -35,6 +39,9 @@ class CommandRunnerTest < Minitest::Test
     Then "header is printed and process is replaced via exec"
     1 * @ui.print_header("./bin/console")
     1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", "./bin/console")
+
+    Cleanup
+    Dir.chdir(@original_cwd)
   end
 
   test "run prints header and execs with args when repl" do
@@ -47,6 +54,9 @@ class CommandRunnerTest < Minitest::Test
     Then "header includes args and exec passes them through"
     1 * @ui.print_header("./bin/console --verbose")
     1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", "./bin/console --verbose")
+
+    Cleanup
+    Dir.chdir(@original_cwd)
   end
 
   test "run prints header and execs with shell wrapper for non-repl" do
@@ -59,6 +69,9 @@ class CommandRunnerTest < Minitest::Test
     Then "header is printed and exec is called with a shell wrapper"
     1 * @ui.print_header("./bin/setup.rb")
     1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/setup.rb"))
+
+    Cleanup
+    Dir.chdir(@original_cwd)
   end
 
   test "non-repl shell wrapper includes status check and Done message" do
@@ -71,6 +84,9 @@ class CommandRunnerTest < Minitest::Test
     Then "the shell wrapper includes exit code handling and Done/Failed output"
     1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c",
       all_of(includes("./bin/test.sh"), includes("__dev_status=$?"), includes("Done"), includes("Failed")))
+
+    Cleanup
+    Dir.chdir(@original_cwd)
   end
 
   test "non-repl shell wrapper includes args" do
@@ -83,6 +99,9 @@ class CommandRunnerTest < Minitest::Test
     Then "header and wrapper both include args"
     1 * @ui.print_header("./bin/test.sh -v")
     1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/test.sh -v"))
+
+    Cleanup
+    Dir.chdir(@original_cwd)
   end
 
   # --- Container execution ---
@@ -104,6 +123,9 @@ class CommandRunnerTest < Minitest::Test
 
     Then "exec is called with the docker run command"
     1 * Kernel.exec("docker", "run", "--rm", "-v", "#{@project_root}:/project", "-w", "/project", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh")
+
+    Cleanup
+    Dir.chdir(@original_cwd)
   end
 
   test "run falls back to local execution when command has container: false" do
@@ -118,6 +140,9 @@ class CommandRunnerTest < Minitest::Test
 
     Then "exec uses shadowenv, not docker"
     1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/deploy.sh"))
+
+    Cleanup
+    Dir.chdir(@original_cwd)
   end
 
   test "run falls back to local execution when no build_container is configured" do
@@ -131,6 +156,9 @@ class CommandRunnerTest < Minitest::Test
 
     Then "exec uses shadowenv"
     1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/build.sh"))
+
+    Cleanup
+    Dir.chdir(@original_cwd)
   end
 
   test "container execution includes args in shell command" do
@@ -151,5 +179,8 @@ class CommandRunnerTest < Minitest::Test
     Then "the args are included in the shell command passed to docker"
     1 * @ui.print_header("./bin/test.sh --verbose")
     1 * Kernel.exec("docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/test.sh --verbose")
+
+    Cleanup
+    Dir.chdir(@original_cwd)
   end
 end
