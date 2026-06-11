@@ -34,6 +34,26 @@ module Dev
         prompt_and_store(namespace, key, env_var, prompt_label, create_url)
     end
 
+    # Resolve docker build args declared in dev.yml (build.container.build_args).
+    #
+    # Each value is a "namespace/key" credential reference; the arg name
+    # doubles as the ENV var override. Prompts and stores on first use.
+    #
+    # @param build_args [Hash{String => String}] arg name => credential reference
+    # @return [Hash{String => String}] arg name => resolved value
+    def resolve_build_args(build_args)
+      build_args.to_h do |arg_name, credential_ref|
+        namespace, key = credential_ref.split("/", 2)
+        value = resolve(
+          namespace: namespace,
+          key: key,
+          env_var: arg_name,
+          prompt_label: "#{namespace} #{key} (docker build arg #{arg_name})",
+        )
+        [arg_name, value]
+      end
+    end
+
     # Load a credential from the platform-appropriate backend.
     #
     # Tries macOS Keychain first (when available), then the plain text file.

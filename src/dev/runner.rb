@@ -51,6 +51,7 @@ module Dev
         project_root: Dev::TARGET_PROJECT_ROOT,
         build_container: @config.build_container,
       )
+      provision_build_credentials if cmd_name == "up"
       cmd.execute(args:, context:)
     rescue CommandRegistry::CommandNotFoundError => e
       $stderr.puts "dev: #{e}"
@@ -62,6 +63,19 @@ module Dev
     end
 
     private
+
+    # `dev up` is the provisioning command: after it succeeds, every other
+    # command should work unattended. Resolving docker build args here
+    # (prompting and storing credentials on first run) keeps the lazily
+    # triggered image build in containerized commands non-interactive.
+    sig { void }
+    def provision_build_credentials
+      config = @config.build_container
+      return if config.nil? || config.build_args.empty?
+
+      require "dev/credentials"
+      Dev::Credentials.resolve_build_args(config.build_args)
+    end
 
     sig { params(config: Config).returns(CommandRegistry) }
     def build_registry(config)

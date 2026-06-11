@@ -54,6 +54,25 @@ class Dev::CredentialsTest < Minitest::Test
     FileUtils.rm_rf(tmpdir)
   end
 
+  test "resolve_build_args resolves each arg via its env var override" do
+    Given "build args whose env vars are set"
+    email_var = "TEST_WWISE_EMAIL_#{Process.pid}"
+    password_var = "TEST_WWISE_PASSWORD_#{Process.pid}"
+    ENV[email_var] = "me@example.com"
+    ENV[password_var] = "s3cret"
+    build_args = { email_var => "wwise/email", password_var => "wwise/password" }
+
+    When "resolving build args"
+    result = Dev::Credentials.resolve_build_args(build_args)
+
+    Then "each arg name maps to its resolved value"
+    result == { email_var => "me@example.com", password_var => "s3cret" }
+
+    Cleanup
+    ENV.delete(email_var)
+    ENV.delete(password_var)
+  end
+
   test "store_to_file creates credentials file with 0600 permissions" do
     Given "a temporary config directory"
     tmpdir = Dir.mktmpdir("credentials-test-")

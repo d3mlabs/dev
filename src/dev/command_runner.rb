@@ -87,24 +87,15 @@ module Dev
     end
 
     # Resolve docker build args declared in dev.yml from Dev::Credentials.
-    # Each value is a "namespace/key" reference; the arg name doubles as the
-    # ENV var override. Only invoked when the image actually needs building.
+    # Only invoked when the image actually needs building. Normally `dev up`
+    # has already prompted and stored these, so this resolves silently.
     #
     # @param config [Dev::BuildContainerConfig]
     # @return [Hash{String => String}]
     sig { params(config: Dev::BuildContainerConfig).returns(T::Hash[String, String]) }
     def resolve_build_args(config)
       require "dev/credentials"
-      config.build_args.to_h do |arg_name, credential_ref|
-        namespace, key = credential_ref.split("/", 2)
-        value = Dev::Credentials.resolve(
-          namespace: T.must(namespace),
-          key: T.must(key),
-          env_var: arg_name,
-          prompt_label: "#{namespace} #{key} (docker build arg #{arg_name})",
-        )
-        [arg_name, value]
-      end
+      Dev::Credentials.resolve_build_args(config.build_args)
     end
 
     sig { params(run_str: String, args: T::Array[String]).returns(String) }

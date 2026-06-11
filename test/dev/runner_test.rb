@@ -4,6 +4,7 @@
 require "test_helper"
 require "dev"
 require "dev/runner"
+require "dev/credentials"
 require "stringio"
 require "tempfile"
 
@@ -99,10 +100,59 @@ class RunnerTest < Minitest::Test
     out.string.include?("up")
   end
 
+  test "up resolves docker build arg credentials before executing" do
+    Given "a Runner with build container build_args and an up command"
+    runner = build_runner(
+      commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup", "container" => false } },
+      build: { "container" => {
+        "image" => "myapp-linux", "registry" => "myregistry",
+        "build_args" => { "WWISE_EMAIL" => "wwise/email" },
+      } },
+    )
+    Dev::ShellCommand.any_instance.stubs(:execute)
+
+    When "we run up"
+    runner.run(["up"], ui: fake_ui)
+
+    Then "build args are resolved (prompting and storing on first run)"
+    1 * Dev::Credentials.resolve_build_args({ "WWISE_EMAIL" => "wwise/email" })
+  end
+
+  test "up without build container skips credential provisioning" do
+    Given "a Runner without a build container"
+    runner = build_runner(commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup" } })
+    Dev::ShellCommand.any_instance.stubs(:execute)
+
+    When "we run up"
+    runner.run(["up"], ui: fake_ui)
+
+    Then "credentials are never resolved"
+    0 * Dev::Credentials.resolve_build_args(anything)
+  end
+
+  test "non-up commands do not provision credentials eagerly" do
+    Given "a Runner with build container build_args and a test command"
+    runner = build_runner(
+      commands: { "test" => { "run" => "./bin/test.sh", "desc" => "Run tests", "container" => false } },
+      build: { "container" => {
+        "image" => "myapp-linux", "registry" => "myregistry",
+        "build_args" => { "WWISE_EMAIL" => "wwise/email" },
+      } },
+    )
+    Dev::ShellCommand.any_instance.stubs(:execute)
+
+    When "we run a non-up command"
+    runner.run(["test"], ui: fake_ui)
+
+    Then "credentials are not resolved eagerly"
+    0 * Dev::Credentials.resolve_build_args(anything)
+  end
+
   private
 
-  def build_runner(name: "testproject", commands: {})
-    yaml = { "name" => name, "commands" => commands }
+  def build_runner(name: "testproject", commands: {}, build: nil)
+    yaml = { "name" => name, "ruby" => "4.0.1", "commands" => commands }
+    yaml["build"] = build if build
     tmp = Tempfile.new(["dev", ".yml"])
     tmp.write(YAML.dump(yaml))
     tmp.flush
