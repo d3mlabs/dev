@@ -17,9 +17,15 @@ module Dev
   #       build_args:
   #         WWISE_EMAIL: wwise/email
   #         WWISE_PASSWORD: wwise/password
+  #       run_env:
+  #         WWISE_TOKEN: wwise/token
   #
   # build_args maps docker --build-arg names to Dev::Credentials
   # "namespace/key" references, resolved only when the image is built.
+  #
+  # run_env maps docker `run -e` env var names to the same "namespace/key"
+  # references, resolved when a containerized command runs. Use it for
+  # secrets a command needs at runtime (not baked into the image).
   class BuildContainerConfig
     extend T::Sig
 
@@ -35,19 +41,24 @@ module Dev
     sig { returns(T::Hash[String, String]) }
     attr_reader :build_args
 
+    sig { returns(T::Hash[String, String]) }
+    attr_reader :run_env
+
     sig do
       params(
         image: String,
         registry: String,
         volumes: T::Array[String],
         build_args: T::Hash[String, String],
+        run_env: T::Hash[String, String],
       ).void
     end
-    def initialize(image:, registry:, volumes: [], build_args: {})
+    def initialize(image:, registry:, volumes: [], build_args: {}, run_env: {})
       @image = T.let(image, String)
       @registry = T.let(registry, String)
       @volumes = T.let(volumes, T::Array[String])
       @build_args = T.let(build_args, T::Hash[String, String])
+      @run_env = T.let(run_env, T::Hash[String, String])
     end
 
     # Full image reference without tag (e.g. "jpduchesne89/snappy-linux").
@@ -61,7 +72,8 @@ module Dev
       return false unless other.is_a?(BuildContainerConfig)
 
       @image == other.image && @registry == other.registry &&
-        @volumes == other.volumes && @build_args == other.build_args
+        @volumes == other.volumes && @build_args == other.build_args &&
+        @run_env == other.run_env
     end
 
     sig { params(other: Object).returns(T::Boolean) }
@@ -71,7 +83,7 @@ module Dev
 
     sig { returns(Integer) }
     def hash
-      [@image, @registry, @volumes, @build_args].hash
+      [@image, @registry, @volumes, @build_args, @run_env].hash
     end
   end
 end

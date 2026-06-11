@@ -123,6 +123,21 @@ class BuildContainerTest < Minitest::Test
     cmd.index("-w") > cmd.index("/var/cache/wwise:/wwise")
   end
 
+  test "docker_run_command renders env vars as -e flags" do
+    When "building a docker run command with env"
+    cmd = BuildContainer.docker_run_command(
+      "jpduchesne89/snappy:content-abc123",
+      project_root: Pathname("/project"),
+      shell_cmd: "./bin/build.sh",
+      env: { "WWISE_TOKEN" => "tok-123" },
+    )
+
+    Then
+    cmd.include?("WWISE_TOKEN=tok-123")
+    cmd[cmd.index("WWISE_TOKEN=tok-123") - 1] == "-e"
+    cmd.index("-w") > cmd.index("WWISE_TOKEN=tok-123")
+  end
+
   test "docker_run_command expands ~ in volume host paths" do
     When "building a docker run command with a ~ volume"
     cmd = BuildContainer.docker_run_command(

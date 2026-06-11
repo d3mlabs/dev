@@ -49,7 +49,11 @@ module Dev
 
       volumes = Array(container["volumes"]).map(&:to_s)
       build_args = (container["build_args"] || {}).to_h { |k, v| [k.to_s, v.to_s] }
-      BuildContainerConfig.new(image: image, registry: registry, volumes: volumes, build_args: build_args)
+      run_env = (container["run_env"] || {}).to_h { |k, v| [k.to_s, v.to_s] }
+      BuildContainerConfig.new(
+        image: image, registry: registry, volumes: volumes,
+        build_args: build_args, run_env: run_env,
+      )
     end
   end
 end

@@ -80,6 +80,7 @@ module Dev
         project_root: @project_root,
         shell_cmd: shell_command,
         volumes: config.volumes,
+        env: resolve_run_env(config),
       )
 
       Dir.chdir(@project_root)
@@ -96,6 +97,31 @@ module Dev
     def resolve_build_args(config)
       require "dev/credentials"
       Dev::Credentials.resolve_build_args(config.build_args)
+    end
+
+    # Resolve runtime env vars (build.container.run_env) for `docker run -e`.
+    #
+    # Best-effort and non-interactive by design: an entry is injected only
+    # when its value is already available (ENV override, then stored
+    # credential), and silently skipped otherwise. run_env applies to every
+    # containerized command, so a missing runtime secret must not block or
+    # prompt commands that don't need it (e.g. `dev build` when the relevant
+    # provisioning step already ran). The provisioning command that *does*
+    # need it is responsible for making the value available (e.g. exporting
+    # it before invoking the command).
+    #
+    # @param config [Dev::BuildContainerConfig]
+    # @return [Hash{String => String}]
+    sig { params(config: Dev::BuildContainerConfig).returns(T::Hash[String, String]) }
+    def resolve_run_env(config)
+      return {} if config.run_env.empty?
+
+      require "dev/credentials"
+      config.run_env.each_with_object({}) do |(name, credential_ref), resolved|
+        namespace, key = credential_ref.split("/", 2)
+        value = ENV[name] || Dev::Credentials.load(T.must(namespace), T.must(key))
+        resolved[name] = value if value
+      end
     end
 
     sig { params(run_str: String, args: T::Array[String]).returns(String) }

@@ -196,6 +196,34 @@ class ConfigParserTest < Minitest::Test
     tmp.close!
   end
 
+  test "#parse extracts build.container run_env credential refs" do
+    Given "a dev.yml file with container run_env"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: snappy
+      build:
+        container:
+          image: snappy-linux
+          registry: jpduchesne89
+          run_env:
+            WWISE_TOKEN: wwise/token
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+    tmp.flush
+
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
+
+    Then
+    config.build_container.run_env == { "WWISE_TOKEN" => "wwise/token" }
+
+    Cleanup
+    tmp.close!
+  end
+
   test "#parse defaults build.container volumes to empty" do
     Given "a dev.yml file without container volumes"
     tmp = Tempfile.new(["dev", ".yml"])

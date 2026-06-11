@@ -87,17 +87,21 @@ module BuildContainer
   # @param shell_cmd    [String]   command to run inside the container
   # @param volumes      [Array<String>] extra "host:container" mounts; host
   #   paths may use ~ (e.g. "~/.dev/engines/unreal-engine-css:/ue")
+  # @param env          [Hash{String => String}] env vars to inject via `-e`
   # @return [Array<String>] docker run command array
-  def docker_run_command(image_tag, project_root:, shell_cmd:, volumes: [])
+  def docker_run_command(image_tag, project_root:, shell_cmd:, volumes: [], env: {})
     volume_flags = volumes.flat_map do |spec|
       host, container = spec.split(":", 2)
       ["-v", "#{File.expand_path(host)}:#{container}"]
     end
 
+    env_flags = env.flat_map { |name, value| ["-e", "#{name}=#{value}"] }
+
     [
       "docker", "run", "--rm",
       "-v", "#{project_root}:/project",
       *volume_flags,
+      *env_flags,
       "-w", "/project",
       image_tag,
       "sh", "-c", shell_cmd,

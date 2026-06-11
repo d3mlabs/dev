@@ -4,6 +4,7 @@
 require "test_helper"
 require "dev/command_runner"
 require "dev/build_container_config"
+require "dev/credentials"
 require "build_container"
 
 transform!(RSpock::AST::Transformation)
@@ -117,7 +118,7 @@ class CommandRunnerTest < Minitest::Test
       .with(config, project_root: @project_root, push: false, build_args_provider: instance_of(Proc))
       .returns("myregistry/myapp-linux:content-abc123")
     BuildContainer.expects(:docker_run_command)
-      .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [])
+      .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: {})
       .returns(["docker", "run", "--rm", "-v", "#{@project_root}:/project", "-w", "/project", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
     runner.run(cmd)
 
@@ -172,13 +173,63 @@ class CommandRunnerTest < Minitest::Test
       .with(config, project_root: @project_root, push: false, build_args_provider: instance_of(Proc))
       .returns("myregistry/myapp-linux:content-abc123")
     BuildContainer.expects(:docker_run_command)
-      .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/test.sh --verbose", volumes: [])
+      .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/test.sh --verbose", volumes: [], env: {})
       .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/test.sh --verbose"])
     runner.run(cmd, args: ["--verbose"])
 
     Then "the args are included in the shell command passed to docker"
     1 * @ui.print_header("./bin/test.sh --verbose")
     1 * Kernel.exec("docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/test.sh --verbose")
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+  end
+
+  test "container execution injects run_env from ENV override" do
+    Given "a runner with build_container declaring run_env and the ENV var set"
+    config = Dev::BuildContainerConfig.new(
+      image: "myapp-linux", registry: "myregistry",
+      run_env: { "WWISE_TOKEN" => "wwise/token" },
+    )
+    runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root)
+    cmd = Dev::ShellCommand.new(run: "./bin/build.sh", repl: false)
+    ENV["WWISE_TOKEN"] = "tok-123"
+
+    When "the image is ready and the command runs"
+    BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
+    BuildContainer.expects(:docker_run_command)
+      .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: { "WWISE_TOKEN" => "tok-123" })
+      .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
+    runner.run(cmd)
+
+    Then "the ENV value is passed through to docker run"
+    1 * Kernel.exec("docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh")
+
+    Cleanup
+    ENV.delete("WWISE_TOKEN")
+    Dir.chdir(@original_cwd)
+  end
+
+  test "container execution skips unresolvable run_env without prompting" do
+    Given "a runner with run_env whose value is not in ENV or storage"
+    config = Dev::BuildContainerConfig.new(
+      image: "myapp-linux", registry: "myregistry",
+      run_env: { "WWISE_TOKEN" => "wwise/token" },
+    )
+    runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root)
+    cmd = Dev::ShellCommand.new(run: "./bin/build.sh", repl: false)
+    ENV.delete("WWISE_TOKEN")
+
+    When "the credential is not stored and the command runs"
+    Dev::Credentials.stubs(:load).with("wwise", "token").returns(nil)
+    BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
+    BuildContainer.expects(:docker_run_command)
+      .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: {})
+      .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
+    runner.run(cmd)
+
+    Then "no env is injected and the command still runs"
+    1 * Kernel.exec("docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh")
 
     Cleanup
     Dir.chdir(@original_cwd)
