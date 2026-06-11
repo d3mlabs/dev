@@ -50,9 +50,20 @@ module Dev
       volumes = Array(container["volumes"]).map(&:to_s)
       build_args = (container["build_args"] || {}).to_h { |k, v| [k.to_s, v.to_s] }
       run_env = (container["run_env"] || {}).to_h { |k, v| [k.to_s, v.to_s] }
+      resources = parse_resources(container["resources"])
       BuildContainerConfig.new(
         image: image, registry: registry, volumes: volumes,
-        build_args: build_args, run_env: run_env,
+        build_args: build_args, run_env: run_env, resources: resources,
+      )
+    end
+
+    sig { params(raw: T.untyped).returns(ContainerResources) }
+    def parse_resources(raw)
+      return ContainerResources.new unless raw.is_a?(Hash)
+
+      ContainerResources.new(
+        cpus: raw["cpus"]&.to_i,
+        memory_gb: raw["memory_gb"]&.to_i,
       )
     end
   end

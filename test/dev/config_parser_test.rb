@@ -224,6 +224,62 @@ class ConfigParserTest < Minitest::Test
     tmp.close!
   end
 
+  test "#parse extracts build.container resources" do
+    Given "a dev.yml file with container resources"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: snappy
+      build:
+        container:
+          image: snappy-linux
+          registry: jpduchesne89
+          resources:
+            cpus: 16
+            memory_gb: 24
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+    tmp.flush
+
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
+
+    Then
+    config.build_container.resources.cpus == 16
+    config.build_container.resources.memory_gb == 24
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#parse defaults build.container resources to empty when absent" do
+    Given "a dev.yml file without container resources"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: snappy
+      build:
+        container:
+          image: snappy-linux
+          registry: jpduchesne89
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+    tmp.flush
+
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
+
+    Then
+    config.build_container.resources.empty?
+
+    Cleanup
+    tmp.close!
+  end
+
   test "#parse defaults build.container volumes to empty" do
     Given "a dev.yml file without container volumes"
     tmp = Tempfile.new(["dev", ".yml"])

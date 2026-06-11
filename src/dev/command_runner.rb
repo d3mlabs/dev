@@ -69,6 +69,7 @@ module Dev
     def run_in_container(_cmd, shell_command)
       require "build_container"
       config = T.must(@build_container)
+      warn_if_under_provisioned!(config)
       image_tag = BuildContainer.ensure_image!(
         config,
         project_root: @project_root,
@@ -85,6 +86,46 @@ module Dev
 
       Dir.chdir(@project_root)
       Kernel.exec(*docker_argv)
+    end
+
+    # Preflight the Docker VM against the project's declared resources.
+    #
+    # Docker Desktop's VM size is a host-wide setting a project can't raise on
+    # its own, so an under-provisioned VM can't be fixed here — but a silent
+    # 8 GiB VM throttles UBT to a handful of parallel actions and turns a ~15min
+    # build into hours. We surface that loudly with remediation instead. Purely
+    # advisory: never blocks, and skips silently when Docker info is unavailable.
+    #
+    # @param config [Dev::BuildContainerConfig]
+    sig { params(config: Dev::BuildContainerConfig).void }
+    def warn_if_under_provisioned!(config)
+      resources = config.resources
+      return if resources.empty?
+
+      host = BuildContainer.host_resources
+      return if host.nil?
+
+      available_memory_gb = Integer(host.fetch(:mem_bytes)) / (1024 * 1024 * 1024)
+      shortfalls = resources.shortfalls(
+        available_cpus: Integer(host.fetch(:cpus)),
+        available_memory_gb: available_memory_gb,
+      )
+      return if shortfalls.empty?
+
+      print_under_provisioned_warning(shortfalls)
+    end
+
+    sig { params(shortfalls: T::Array[String]).void }
+    def print_under_provisioned_warning(shortfalls)
+      $stderr.puts
+      $stderr.puts "dev: ⚠ Docker VM is smaller than this project declares:"
+      shortfalls.each { |line| $stderr.puts "dev:     #{line}" }
+      $stderr.puts "dev: The build will run but parallelism (and speed) suffer."
+      $stderr.puts "dev: Raise Docker Desktop → Settings → Resources, or set"
+      $stderr.puts "dev:   \"Cpus\" / \"MemoryMiB\" in"
+      $stderr.puts "dev:   ~/Library/Group Containers/group.com.docker/settings-store.json"
+      $stderr.puts "dev:   and restart Docker."
+      $stderr.puts
     end
 
     # Resolve docker build args declared in dev.yml from Dev::Credentials.

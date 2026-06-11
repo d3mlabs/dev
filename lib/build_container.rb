@@ -108,6 +108,24 @@ module BuildContainer
     ]
   end
 
+  # CPU/memory the Docker VM currently exposes, for preflight checks.
+  #
+  # Returns nil when Docker isn't reachable or the output can't be parsed, so
+  # callers treat the check as best-effort and never block on it.
+  #
+  # @return [Hash{Symbol => Integer}, nil] { cpus:, mem_bytes: }
+  def host_resources
+    out = `docker info --format '{{.NCPU}} {{.MemTotal}}' 2>/dev/null`.strip
+    return nil if out.empty?
+
+    ncpu, mem_bytes = out.split
+    return nil if ncpu.nil? || mem_bytes.nil?
+
+    { cpus: ncpu.to_i, mem_bytes: mem_bytes.to_i }
+  rescue StandardError
+    nil
+  end
+
   # --- internal helpers ------------------------------------------------
 
   def local_image?(image_tag)
