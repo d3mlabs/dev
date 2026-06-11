@@ -40,6 +40,22 @@ class CommandTest < Minitest::Test
     cmd.repl == true
   end
 
+  test "container defaults to true" do
+    Given "a ShellCommand without explicit container"
+    cmd = Dev::ShellCommand.new(run: "./bin/build.sh")
+
+    Expect
+    cmd.container == true
+  end
+
+  test "container can be set to false" do
+    Given "a ShellCommand with container: false"
+    cmd = Dev::ShellCommand.new(run: "./bin/deploy.sh", container: false)
+
+    Expect
+    cmd.container == false
+  end
+
   test "#== returns #{expected} for #{cmd1} vs #{cmd2}" do
     Given "we compare the two commands"
     result = (cmd1 == cmd2)
@@ -55,6 +71,15 @@ class CommandTest < Minitest::Test
     Dev::ShellCommand.new(run: "r1", desc: "d1", repl: false) | Dev::ShellCommand.new(run: "r2", desc: "d1", repl: false) | false
     Dev::ShellCommand.new(run: "r1", desc: "d1", repl: false) | "not a command"                                            | false
     Dev::ShellCommand.new(run: "r1", desc: "d1", repl: false) | nil                                                        | false
+  end
+
+  test "#== considers container field" do
+    Given "two commands differing only in container"
+    a = Dev::ShellCommand.new(run: "r1", desc: "d1", repl: false, container: true)
+    b = Dev::ShellCommand.new(run: "r1", desc: "d1", repl: false, container: false)
+
+    Expect
+    a != b
   end
 
   test "#eql? returns #{expected} for #{other}" do
@@ -87,5 +112,14 @@ class CommandTest < Minitest::Test
     Dev::ShellCommand.new(run: "r1", desc: "d1", repl: false) | Dev::ShellCommand.new(run: "r1", desc: "d1", repl: true)  | false
     Dev::ShellCommand.new(run: "r1", desc: "d1", repl: false) | Dev::ShellCommand.new(run: "r1", desc: "d2", repl: false) | false
     Dev::ShellCommand.new(run: "r1", desc: "d1", repl: false) | Dev::ShellCommand.new(run: "r2", desc: "d1", repl: false) | false
+  end
+
+  test "#hash differs when container differs" do
+    Given "two commands differing only in container"
+    a = Dev::ShellCommand.new(run: "r1", desc: "d1", repl: false, container: true)
+    b = Dev::ShellCommand.new(run: "r1", desc: "d1", repl: false, container: false)
+
+    Expect
+    a.hash != b.hash
   end
 end

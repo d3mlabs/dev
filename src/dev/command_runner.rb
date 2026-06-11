@@ -19,31 +19,93 @@ module Dev
   #
   # Before every command, ensures the project's shadowenv Ruby environment is
   # provisioned (fast-path: skips if .shadowenv.d/510_ruby.lisp is current).
-  # All child commands are wrapped with `shadowenv exec --` so they inherit
-  # the correct Ruby regardless of the user's shell state.
+  #
+  # When a build container is configured and the command opts in (default),
+  # the command runs inside the container via `docker run`. Otherwise it runs
+  # locally via `shadowenv exec`.
   class CommandRunner
     extend T::Sig
 
-    sig { params(ui: Dev::Cli::Ui, ruby_version: String).void }
-    def initialize(ui:, ruby_version:)
+    sig do
+      params(
+        ui: Dev::Cli::Ui,
+        ruby_version: String,
+        build_container: T.nilable(Dev::BuildContainerConfig),
+        project_root: Pathname,
+      ).void
+    end
+    def initialize(ui:, ruby_version:, build_container: nil, project_root: Dev::TARGET_PROJECT_ROOT)
       @ui = T.let(ui, Dev::Cli::Ui)
       @ruby_version = T.let(ruby_version, String)
+      @build_container = T.let(build_container, T.nilable(Dev::BuildContainerConfig))
+      @project_root = T.let(project_root, Pathname)
     end
 
     sig { params(cmd: ShellCommand, args: T::Array[String]).void }
     def run(cmd, args: [])
-      ensure_shadowenv_provisioned!
       shell_command = build_shell_command(cmd.run, args)
       @ui.print_header(shell_command)
 
-      if cmd.repl
-        run_replace_process(shell_command)
+      if use_container?(cmd)
+        run_in_container(cmd, shell_command)
       else
-        run_exec_with_status(shell_command)
+        ensure_shadowenv_provisioned!
+        if cmd.repl
+          run_replace_process(shell_command)
+        else
+          run_exec_with_status(shell_command)
+        end
       end
     end
 
     private
+
+    sig { params(cmd: ShellCommand).returns(T::Boolean) }
+    def use_container?(cmd)
+      !@build_container.nil? && cmd.container
+    end
+
+    sig { params(_cmd: ShellCommand, shell_command: String).void }
+    def run_in_container(_cmd, shell_command)
+      require "build_container"
+      config = T.must(@build_container)
+      image_tag = BuildContainer.ensure_image!(
+        config,
+        project_root: @project_root,
+        push: false,
+        build_args_provider: -> { resolve_build_args(config) },
+      )
+      docker_argv = BuildContainer.docker_run_command(
+        image_tag,
+        project_root: @project_root,
+        shell_cmd: shell_command,
+        volumes: config.volumes,
+      )
+
+      Dir.chdir(@project_root)
+      Kernel.exec(*docker_argv)
+    end
+
+    # Resolve docker build args declared in dev.yml from Dev::Credentials.
+    # Each value is a "namespace/key" reference; the arg name doubles as the
+    # ENV var override. Only invoked when the image actually needs building.
+    #
+    # @param config [Dev::BuildContainerConfig]
+    # @return [Hash{String => String}]
+    sig { params(config: Dev::BuildContainerConfig).returns(T::Hash[String, String]) }
+    def resolve_build_args(config)
+      require "dev/credentials"
+      config.build_args.to_h do |arg_name, credential_ref|
+        namespace, key = credential_ref.split("/", 2)
+        value = Dev::Credentials.resolve(
+          namespace: T.must(namespace),
+          key: T.must(key),
+          env_var: arg_name,
+          prompt_label: "#{namespace} #{key} (docker build arg #{arg_name})",
+        )
+        [arg_name, value]
+      end
+    end
 
     sig { params(run_str: String, args: T::Array[String]).returns(String) }
     def build_shell_command(run_str, args)
@@ -51,7 +113,6 @@ module Dev
 
       "#{run_str} #{args.shelljoin}"
     end
-
 
     sig { returns(T::Hash[String, T.nilable(String)]) }
     def child_env
@@ -65,7 +126,7 @@ module Dev
     sig { void }
     def ensure_shadowenv_provisioned!
       require "shadowenv_ruby"
-      project_root = Dev::TARGET_PROJECT_ROOT
+      project_root = @project_root
       unless ShadowenvRuby.provisioned?(@ruby_version, project_root: project_root)
         ShadowenvRuby.setup!(ruby_version: @ruby_version, project_root: project_root)
       end
@@ -88,7 +149,7 @@ module Dev
 
     sig { params(shell_command: String).void }
     def run_replace_process(shell_command)
-      Dir.chdir(Dev::TARGET_PROJECT_ROOT)
+      Dir.chdir(@project_root)
       Kernel.exec(child_env, "shadowenv", "exec", "--", "sh", "-c", shell_command)
     end
 
@@ -96,7 +157,7 @@ module Dev
     # success/failure footer based on the exit code.
     sig { params(shell_command: String).void }
     def run_exec_with_status(shell_command)
-      Dir.chdir(Dev::TARGET_PROJECT_ROOT)
+      Dir.chdir(@project_root)
       Kernel.exec(child_env, "shadowenv", "exec", "--", "sh", "-c", <<~SH)
         #{shell_command}
         __dev_status=$?

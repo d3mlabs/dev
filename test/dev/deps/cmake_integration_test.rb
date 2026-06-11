@@ -5,9 +5,22 @@ require "test_helper"
 require "dev/deps/cmake_integration"
 require "dev/deps/git_repository"
 require "dev/deps/url_repository"
+require "dev/deps/resolver"
+require "dev/deps/dependency_declaration"
 require "dev/deps/cache"
 require "dev/deps/dependency"
 require "tmpdir"
+
+# Stub repository for end-to-end resolver tests.
+class StubRepository < Dev::Deps::Repository
+  def initialize(deps_by_name: {})
+    @deps_by_name = deps_by_name
+  end
+
+  def fetch(id)
+    @deps_by_name.fetch(id["name"])
+  end
+end unless defined?(StubRepository)
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::CmakeIntegrationTest < Minitest::Test
@@ -235,6 +248,131 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     Then
     targets_content.include?('set(dep_googletest_cmake_targets "gtest;gmock")')
     targets_content.include?('set(dep_googletest_cmake_namespace "GTest::")')
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all calls post_install hook after fetching" do
+    Given "a dependency with a post_install hook"
+    dir = Dir.mktmpdir("dev-cmake-int-test-")
+    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    git_repo = Dev::Deps::GitRepository.new
+    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache, project_root: dir)
+    prepopulate_dep(dir, "mylib")
+    hook_calls = []
+    hook = ->(dep, root) { hook_calls << [dep.name, root.to_s] }
+    deps = [
+      Dev::Deps::Dependency.new(
+        name: "mylib", integration: :cmake, group: :app,
+        version: "sha1", hash: nil,
+        metadata: { "repo" => "https://github.com/example/mylib" },
+        post_install: hook,
+      ),
+    ]
+
+    When "installing all"
+    integration.install_all(deps)
+
+    Then
+    hook_calls.size == 1
+    hook_calls[0][0] == "mylib"
+    hook_calls[0][1] == dir
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all calls multiple post_install hooks in order" do
+    Given "a dependency with an array of post_install hooks"
+    dir = Dir.mktmpdir("dev-cmake-int-test-")
+    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    git_repo = Dev::Deps::GitRepository.new
+    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache, project_root: dir)
+    prepopulate_dep(dir, "mylib")
+    order = []
+    hook_a = ->(_dep, _root) { order << :a }
+    hook_b = ->(_dep, _root) { order << :b }
+    deps = [
+      Dev::Deps::Dependency.new(
+        name: "mylib", integration: :cmake, group: :app,
+        version: "sha1", hash: nil,
+        metadata: { "repo" => "https://github.com/example/mylib" },
+        post_install: [hook_a, hook_b],
+      ),
+    ]
+
+    When "installing all"
+    integration.install_all(deps)
+
+    Then
+    order == [:a, :b]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "post_install hook receives correct dep and root from full DSL-resolve-install pipeline" do
+    Given "a DSL config with a post_install hook wired through the resolver"
+    dir = Dir.mktmpdir("dev-cmake-int-test-")
+    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    git_repo = Dev::Deps::GitRepository.new
+    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache, project_root: dir)
+    prepopulate_dep(dir, "googletest")
+
+    hook_calls = []
+    hook = ->(dep, root) { hook_calls << { name: dep.name, version: dep.version, root: root.to_s } }
+
+    fetched = Dev::Deps::Dependency.new(
+      name: "googletest", integration: :cmake, group: :test,
+      version: "sha1", hash: nil,
+      metadata: { "repo" => "https://github.com/google/googletest" },
+    )
+    stub_repo = StubRepository.new(deps_by_name: { "googletest" => fetched })
+    resolver = Dev::Deps::Resolver.new(repositories: { cmake: stub_repo })
+    declarations = [
+      Dev::Deps::DependencyDeclaration.new(
+        name: "googletest", integration: :cmake, group: :test,
+        constraint: { "repo" => "https://github.com/google/googletest" },
+        post_install: hook,
+      ),
+    ]
+
+    When "resolving and installing"
+    resolved = resolver.resolve(declarations)
+    integration.install_all(resolved)
+
+    Then "the hook was called with the resolved dep and project root"
+    hook_calls.size == 1
+    hook_calls[0][:name] == "googletest"
+    hook_calls[0][:version] == "sha1"
+    hook_calls[0][:root] == dir
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all skips post_install when nil" do
+    Given "a dependency without a post_install hook"
+    dir = Dir.mktmpdir("dev-cmake-int-test-")
+    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    git_repo = Dev::Deps::GitRepository.new
+    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache, project_root: dir)
+    prepopulate_dep(dir, "boost")
+    deps = [
+      Dev::Deps::Dependency.new(
+        name: "boost", integration: :cmake, group: :app,
+        version: "sha1", hash: nil,
+        metadata: { "repo" => "https://github.com/boost/boost" },
+      ),
+    ]
+
+    When "installing all"
+    integration.install_all(deps)
+    cmake_content = File.read(File.join(dir, "deps.cmake"))
+
+    Then "no error, deps.cmake still generated"
+    cmake_content.include?('set(dep_boost_repo')
 
     Cleanup
     FileUtils.rm_rf(dir)

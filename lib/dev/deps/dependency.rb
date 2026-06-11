@@ -12,9 +12,11 @@ module Dev
     # - hash:         integrity hash ("SHA256=…") computed during fetch
     # - metadata:     integration-specific extras (url:, repo:, cmake_targets:, tap:, …)
     # - dependencies: transitive dependencies discovered during fetch ([{name:, constraint:}, …])
-    Dependency = Data.define(:name, :integration, :group, :version, :hash, :metadata, :dependencies) do
-      def initialize(name:, integration:, group:, version:, hash:, metadata:, dependencies: [])
-        super(name:, integration:, group:, version:, hash:, metadata:, dependencies:)
+    # - post_install: callable or array of callables to run after the dep is fetched.
+    #                 Each callable receives (dep, project_root). Not serialized to lockfile.
+    Dependency = Data.define(:name, :integration, :group, :version, :hash, :metadata, :dependencies, :post_install) do
+      def initialize(name:, integration:, group:, version:, hash:, metadata:, dependencies: [], post_install: nil)
+        super(name:, integration:, group:, version:, hash:, metadata:, dependencies:, post_install:)
       end
     end
   end

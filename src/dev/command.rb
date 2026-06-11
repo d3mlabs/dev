@@ -22,7 +22,9 @@ module Dev
     def final?; end
   end
 
-  # Shell command from dev.yml. Wraps a run string, optional description, and repl flag.
+  # Shell command from dev.yml. Wraps a run string, optional description, repl flag,
+  # and container opt-out. When build.container is declared, commands run inside
+  # the container by default unless container: false.
   # Final in the registry — duplicate declarations are an error.
   class ShellCommand < Command
     extend T::Sig
@@ -36,11 +38,17 @@ module Dev
     sig { returns(T::Boolean) }
     attr_reader :repl
 
-    sig { params(run: String, desc: String, repl: T::Boolean).void }
-    def initialize(run:, desc: "(no description)", repl: false)
+    # Whether this command should run inside the build container (when one is
+    # configured). Defaults to true; set to false via `container: false` in dev.yml.
+    sig { returns(T::Boolean) }
+    attr_reader :container
+
+    sig { params(run: String, desc: String, repl: T::Boolean, container: T::Boolean).void }
+    def initialize(run:, desc: "(no description)", repl: false, container: true)
       @run = T.let(run, String)
       @desc = T.let(desc, String)
       @repl = T.let(repl, T::Boolean)
+      @container = T.let(container, T::Boolean)
     end
 
     sig { override.returns(T::Boolean) }
@@ -48,7 +56,12 @@ module Dev
 
     sig { override.params(args: T::Array[String], context: T.untyped).void }
     def execute(args:, context:)
-      runner = CommandRunner.new(ui: context.ui, ruby_version: context.ruby_version)
+      runner = CommandRunner.new(
+        ui: context.ui,
+        ruby_version: context.ruby_version,
+        build_container: context.build_container,
+        project_root: context.project_root,
+      )
       runner.run(self, args:)
     end
 
@@ -56,7 +69,7 @@ module Dev
     def ==(other)
       return false unless other.is_a?(ShellCommand)
 
-      @run == other.run && @desc == other.desc && @repl == other.repl
+      @run == other.run && @desc == other.desc && @repl == other.repl && @container == other.container
     end
 
     sig { params(other: Object).returns(T::Boolean) }
@@ -66,7 +79,7 @@ module Dev
 
     sig { returns(Integer) }
     def hash
-      [@run, @desc, @repl].hash
+      [@run, @desc, @repl, @container].hash
     end
   end
 end

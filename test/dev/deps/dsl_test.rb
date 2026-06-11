@@ -110,6 +110,91 @@ class Dev::Deps::DSLTest < Minitest::Test
     config.registered_integrations[:wow_curseforge] == "WoWCurseforgeIntegration"
   end
 
+  test "ficsit() produces DependencyDeclaration with ficsit integration" do
+    When "defining a ficsit mod dep"
+    config = Dev::Deps.define do
+      group :app do
+        ficsit "SML", version: "^3.12.0"
+      end
+    end
+
+    Then
+    decl = config.declarations[0]
+    decl.name == "SML"
+    decl.integration == :ficsit
+    decl.group == :app
+    decl.constraint["version"] == "^3.12.0"
+  end
+
+  test "ficsit() without version constraint produces declaration with empty constraint" do
+    When "defining a ficsit dep without version"
+    config = Dev::Deps.define do
+      group :app do
+        ficsit "AreaActions"
+      end
+    end
+
+    Then
+    decl = config.declarations[0]
+    decl.name == "AreaActions"
+    decl.integration == :ficsit
+    decl.constraint == {}
+  end
+
+  test "ficsit() with target passes target in constraint" do
+    When "defining a ficsit dep with target"
+    config = Dev::Deps.define do
+      group :app do
+        ficsit "MyMod", version: "^1.0", target: "LinuxServer"
+      end
+    end
+
+    Then
+    decl = config.declarations[0]
+    decl.constraint["version"] == "^1.0"
+    decl.constraint["target"] == "LinuxServer"
+  end
+
+  test "gh() produces DependencyDeclaration named after the repo basename" do
+    When "defining a gh release dep"
+    config = Dev::Deps.define do
+      group :build do
+        gh "satisfactorymodding/UnrealEngine",
+           tag: "5.6.1-css-83",
+           assets: "UnrealEngine-CSS-Editor-Linux.tar.zst.*",
+           install_dir: "~/.dev/engines/unreal-engine-css"
+      end
+    end
+
+    Then
+    decl = config.declarations[0]
+    decl.name == "UnrealEngine"
+    decl.integration == :gh
+    decl.group == :build
+    decl.constraint["repo"] == "satisfactorymodding/UnrealEngine"
+    decl.constraint["tag"] == "5.6.1-css-83"
+    decl.constraint["assets"] == "UnrealEngine-CSS-Editor-Linux.tar.zst.*"
+    decl.constraint["install_dir"] == "~/.dev/engines/unreal-engine-css"
+  end
+
+  test "brew with post_install stores callable in opts" do
+    Given "a post_install callable"
+    hook = ->(name, opts) {}
+
+    When "defining a brew dep with post_install"
+    config = Dev::Deps.define do
+      group :build do
+        brew "wwise-cli", tap: "d3mlabs/d3mlabs", post_install: hook
+      end
+    end
+
+    Then
+    entry = config.group("build")["brew"][0]
+    entry.is_a?(Hash)
+    entry["wwise-cli"]["post_install"] == hook
+    entry["wwise-cli"]["tap"] == "d3mlabs/d3mlabs"
+  end
+
   test "cmake raises EmptyNameError for empty name" do
     When "defining a cmake dep with empty name"
     Dev::Deps.define do
@@ -162,5 +247,49 @@ class Dev::Deps::DSLTest < Minitest::Test
     Then
     config.declarations.size == 1
     config.declarations[0].group == :deploy
+  end
+
+  test "post_install callable is extracted from spec and stored on declaration" do
+    Given "a lambda post_install hook"
+    hook = ->(dep, root) {}
+
+    When "defining a cmake dep with post_install"
+    config = Dev::Deps.define do
+      group :test do
+        cmake "googletest", github: "google/googletest", tag: "v1.17.0",
+              post_install: hook
+      end
+    end
+
+    Then
+    decl = config.declarations[0]
+    decl.post_install == hook
+    !decl.constraint.key?("post_install")
+  end
+
+  test "post_install defaults to nil when not specified" do
+    When "defining a cmake dep without post_install"
+    config = Dev::Deps.define do
+      group :app do
+        cmake "boost", tag: "boost-1.90.0"
+      end
+    end
+
+    Then
+    config.declarations[0].post_install.nil?
+  end
+
+  test "last_config returns the most recently defined config" do
+    When "defining a config"
+    config = Dev::Deps.define do
+      group :app do
+        cmake "mylib", tag: "v1.0"
+      end
+    end
+
+    Then "last_config matches the returned config"
+    Dev::Deps.last_config == config
+    Dev::Deps.last_config.declarations.size == 1
+    Dev::Deps.last_config.declarations[0].name == "mylib"
   end
 end

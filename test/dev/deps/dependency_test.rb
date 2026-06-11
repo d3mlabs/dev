@@ -124,4 +124,63 @@ class Dev::Deps::DependencyTest < Minitest::Test
     Then
     dep.dependencies == transitive
   end
+
+  test "post_install defaults to nil" do
+    When "creating a dependency without post_install"
+    dep = Dev::Deps::Dependency.new(
+      name: "boost", integration: :cmake, group: :app,
+      version: "1.90.0", hash: "SHA256=deadbeef", metadata: {},
+    )
+
+    Then
+    dep.post_install.nil?
+  end
+
+  test "post_install stores a callable" do
+    Given "a lambda hook"
+    hook = ->(dep, root) {}
+
+    When "creating a dependency with post_install"
+    dep = Dev::Deps::Dependency.new(
+      name: "gtest", integration: :cmake, group: :test,
+      version: "v1.17.0", hash: nil, metadata: {},
+      post_install: hook,
+    )
+
+    Then
+    dep.post_install == hook
+  end
+
+  test "with() creates a copy with overridden post_install" do
+    Given "a dependency without post_install"
+    dep = Dev::Deps::Dependency.new(
+      name: "gtest", integration: :cmake, group: :test,
+      version: "v1.17.0", hash: nil, metadata: {},
+    )
+    hook = ->(dep, root) {}
+
+    When "using with() to add post_install"
+    updated = dep.with(post_install: hook)
+
+    Then
+    updated.post_install == hook
+    dep.post_install.nil?
+    updated.name == "gtest"
+  end
+
+  test "post_install is included in to_h" do
+    Given "a dependency with post_install"
+    hook = ->(dep, root) {}
+    dep = Dev::Deps::Dependency.new(
+      name: "gtest", integration: :cmake, group: :test,
+      version: "v1.17.0", hash: nil, metadata: {},
+      post_install: hook,
+    )
+
+    When "deconstructing to a hash"
+    h = dep.to_h
+
+    Then
+    h[:post_install] == hook
+  end
 end

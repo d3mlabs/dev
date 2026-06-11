@@ -44,6 +44,7 @@ module Dev
           )
 
           dependency = repo.fetch(id)
+          dependency = dependency.with(post_install: decl.post_install) if decl.post_install
           resolved[decl.name] = dependency
 
           dependency.dependencies.each do |tdep|

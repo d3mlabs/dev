@@ -4,6 +4,7 @@
 require "test_helper"
 require "dev/command"
 require "dev/config"
+require "dev/build_container_config"
 require "stringio"
 
 transform!(RSpock::AST::Transformation)
@@ -68,5 +69,24 @@ class ConfigTest < Minitest::Test
     out.string.include?("Setup")
     out.string.include?("test")
     out.string.include?("Run tests")
+  end
+
+  test "build_container defaults to nil" do
+    Given "a Config without build_container"
+    config = Dev::Config.new(name: "dev", commands: {})
+
+    Expect
+    config.build_container.nil?
+  end
+
+  test "build_container stores the container config" do
+    Given "a Config with build_container"
+    container = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
+    config = Dev::Config.new(name: "snappy", commands: {}, build_container: container)
+
+    Expect
+    config.build_container == container
+    config.build_container.image == "snappy-linux"
+    config.build_container.registry == "jpduchesne89"
   end
 end
