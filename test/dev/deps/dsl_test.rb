@@ -155,6 +155,28 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl.constraint["target"] == "LinuxServer"
   end
 
+  test "gh() produces DependencyDeclaration named after the repo basename" do
+    When "defining a gh release dep"
+    config = Dev::Deps.define do
+      group :build do
+        gh "satisfactorymodding/UnrealEngine",
+           tag: "5.6.1-css-83",
+           assets: "UnrealEngine-CSS-Editor-Linux.tar.zst.*",
+           install_dir: "~/.dev/engines/unreal-engine-css"
+      end
+    end
+
+    Then
+    decl = config.declarations[0]
+    decl.name == "UnrealEngine"
+    decl.integration == :gh
+    decl.group == :build
+    decl.constraint["repo"] == "satisfactorymodding/UnrealEngine"
+    decl.constraint["tag"] == "5.6.1-css-83"
+    decl.constraint["assets"] == "UnrealEngine-CSS-Editor-Linux.tar.zst.*"
+    decl.constraint["install_dir"] == "~/.dev/engines/unreal-engine-css"
+  end
+
   test "brew with post_install stores callable in opts" do
     Given "a post_install callable"
     hook = ->(name, opts) {}

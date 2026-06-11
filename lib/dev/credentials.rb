@@ -24,10 +24,11 @@ module Dev
     # @param key [String] credential key within namespace, e.g. "api_key"
     # @param env_var [String] environment variable name, e.g. "CF_API_KEY"
     # @param prompt_label [String] human-readable description for the interactive prompt
-    # @param create_url [String] URL where the user creates the credential
+    # @param create_url [String, nil] URL where the user creates the credential
+    #   (omitted from prompts when nil)
     # @return [String] the credential value
     # @raise [MissingCredentialError] if non-interactive and no credential found
-    def resolve(namespace:, key:, env_var:, prompt_label:, create_url:)
+    def resolve(namespace:, key:, env_var:, prompt_label:, create_url: nil)
       ENV[env_var] ||
         load(namespace, key) ||
         prompt_and_store(namespace, key, env_var, prompt_label, create_url)
@@ -165,29 +166,32 @@ module Dev
 
     # Interactive prompt for credential onboarding.
     #
-    # Displays instructions, optionally opens the browser, and prompts
-    # the user to paste the credential. Stores it via the appropriate backend.
+    # Displays instructions, optionally opens the browser (when a create_url
+    # is known), and prompts the user to paste the credential. Stores it via
+    # the appropriate backend.
     #
     # @param namespace [String]
     # @param key [String]
     # @param env_var [String]
     # @param prompt_label [String]
-    # @param create_url [String]
+    # @param create_url [String, nil]
     # @return [String] the credential value
     # @raise [MissingCredentialError] if non-interactive or empty input
     def prompt_and_store(namespace, key, env_var, prompt_label, create_url)
       unless $stdin.tty?
-        raise MissingCredentialError,
-          "#{prompt_label} required.\n" \
-          "Create one at: #{create_url}\n" \
-          "Then set: gh secret set #{env_var}"
+        message = "#{prompt_label} required.\n"
+        message += "Create one at: #{create_url}\n" if create_url
+        message += "Then set: gh secret set #{env_var}"
+        raise MissingCredentialError, message
       end
 
       $stdout.puts "\n#{prompt_label} required."
-      $stdout.puts "Create one (free) at: #{create_url}\n\n"
-      $stdout.print "Open in browser? (Y/n): "
-      answer = $stdin.gets.chomp
-      Kernel.system("open", create_url) unless answer.downcase == "n"
+      if create_url
+        $stdout.puts "Create one (free) at: #{create_url}\n\n"
+        $stdout.print "Open in browser? (Y/n): "
+        answer = $stdin.gets.chomp
+        Kernel.system("open", create_url) unless answer.downcase == "n"
+      end
 
       # Security: suppress echo so the credential isn't visible on screen.
       $stdout.print "\nPaste your #{key}: "

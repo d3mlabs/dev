@@ -47,7 +47,9 @@ module Dev
       registry = container["registry"]&.to_s
       return nil if image.nil? || image.empty? || registry.nil? || registry.empty?
 
-      BuildContainerConfig.new(image: image, registry: registry)
+      volumes = Array(container["volumes"]).map(&:to_s)
+      build_args = (container["build_args"] || {}).to_h { |k, v| [k.to_s, v.to_s] }
+      BuildContainerConfig.new(image: image, registry: registry, volumes: volumes, build_args: build_args)
     end
   end
 end

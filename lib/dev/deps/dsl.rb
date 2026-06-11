@@ -138,6 +138,23 @@ module Dev
         add_declaration(mod_reference, :ficsit, spec)
       end
 
+      # Declare a GitHub release artifact dependency (e.g. the custom UE engine).
+      #
+      # The declaration name is the repo basename; the full slug is kept in
+      # the constraint so the resolver can query the GitHub API.
+      #
+      # @param slug [String, Symbol] GitHub "owner/repo" slug
+      # @param tag [String] exact release tag (e.g. "5.6.1-css-83") — no floating "latest"
+      # @param assets [String] glob pattern selecting release assets
+      # @param install_dir [String] host directory the artifact is installed into
+      # @param spec [Hash] additional options
+      def gh(slug, tag:, assets:, install_dir:, **spec)
+        slug_str = slug.to_s
+        name = slug_str.split("/").last
+        spec = spec.merge(repo: slug_str, tag: tag, assets: assets, install_dir: install_dir)
+        add_declaration(name, :gh, spec)
+      end
+
       # Declare a dependency using any registered integration by name.
       #
       # @param name [String, Symbol] dependency name

@@ -45,15 +45,28 @@ module BuildContainer
     "#{config.image_ref}:#{content_tag(project_root:)}"
   end
 
-  # Ensure the build container image exists: pull from registry if available,
-  # otherwise build and push. Returns the full image:tag string.
+  # Ensure the build container image exists: use a local image if present,
+  # pull from registry if available, otherwise build and push. Returns the
+  # full image:tag string.
   #
-  # @param config       [Dev::BuildContainerConfig]
-  # @param project_root [Pathname]
-  # @param push         [Boolean] whether to push after building (default: true)
+  # The local check comes first so images built manually are honored.
+  #
+  # build_args_provider is a lazy source of docker --build-arg values
+  # (e.g. credentials). It is only called on a cache miss so cache hits
+  # never trigger credential resolution or prompts.
+  #
+  # @param config              [Dev::BuildContainerConfig]
+  # @param project_root        [Pathname]
+  # @param push                [Boolean] whether to push after building (default: true)
+  # @param build_args_provider [#call, nil] returns Hash{String => String} of build args
   # @return [String] the full image:tag string
-  def ensure_image!(config, project_root:, push: true)
+  def ensure_image!(config, project_root:, push: true, build_args_provider: nil)
     tag = image_with_tag(config, project_root:)
+
+    if local_image?(tag)
+      $stderr.puts "dev: Container image found locally — #{tag}"
+      return tag
+    end
 
     if pull(tag)
       $stderr.puts "dev: Container image cache hit — #{tag}"
@@ -61,7 +74,8 @@ module BuildContainer
     end
 
     $stderr.puts "dev: Container image cache miss — building #{tag}"
-    build!(tag, project_root:)
+    build_args = build_args_provider ? build_args_provider.call : {}
+    build!(tag, project_root:, build_args: build_args)
     push!(tag) if push
     tag
   end
@@ -71,11 +85,19 @@ module BuildContainer
   # @param image_tag    [String]   full image:tag reference
   # @param project_root [Pathname] project root to mount
   # @param shell_cmd    [String]   command to run inside the container
+  # @param volumes      [Array<String>] extra "host:container" mounts; host
+  #   paths may use ~ (e.g. "~/.dev/engines/unreal-engine-css:/ue")
   # @return [Array<String>] docker run command array
-  def docker_run_command(image_tag, project_root:, shell_cmd:)
+  def docker_run_command(image_tag, project_root:, shell_cmd:, volumes: [])
+    volume_flags = volumes.flat_map do |spec|
+      host, container = spec.split(":", 2)
+      ["-v", "#{File.expand_path(host)}:#{container}"]
+    end
+
     [
       "docker", "run", "--rm",
       "-v", "#{project_root}:/project",
+      *volume_flags,
       "-w", "/project",
       image_tag,
       "sh", "-c", shell_cmd,
@@ -84,12 +106,17 @@ module BuildContainer
 
   # --- internal helpers ------------------------------------------------
 
+  def local_image?(image_tag)
+    system("docker", "image", "inspect", image_tag, out: File::NULL, err: File::NULL)
+  end
+
   def pull(image_tag)
     system("docker", "pull", image_tag, out: File::NULL, err: File::NULL)
   end
 
-  def build!(image_tag, project_root:)
-    success = system("docker", "build", "-t", image_tag, project_root.to_s)
+  def build!(image_tag, project_root:, build_args: {})
+    arg_flags = build_args.flat_map { |name, value| ["--build-arg", "#{name}=#{value}"] }
+    success = system("docker", "build", "-t", image_tag, *arg_flags, project_root.to_s)
     raise "Docker build failed for #{image_tag}" unless success
   end
 

@@ -136,6 +136,92 @@ class ConfigParserTest < Minitest::Test
     tmp.close!
   end
 
+  test "#parse extracts build.container volumes" do
+    Given "a dev.yml file with container volumes"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: snappy
+      build:
+        container:
+          image: snappy-linux
+          registry: jpduchesne89
+          volumes:
+            - "~/.dev/engines/unreal-engine-css:/ue"
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+    tmp.flush
+
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
+
+    Then
+    config.build_container.volumes == ["~/.dev/engines/unreal-engine-css:/ue"]
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#parse extracts build.container build_args credential refs" do
+    Given "a dev.yml file with container build_args"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: snappy
+      build:
+        container:
+          image: snappy-linux
+          registry: jpduchesne89
+          build_args:
+            WWISE_EMAIL: wwise/email
+            WWISE_PASSWORD: wwise/password
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+    tmp.flush
+
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
+
+    Then
+    config.build_container.build_args == {
+      "WWISE_EMAIL" => "wwise/email",
+      "WWISE_PASSWORD" => "wwise/password",
+    }
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#parse defaults build.container volumes to empty" do
+    Given "a dev.yml file without container volumes"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: snappy
+      build:
+        container:
+          image: snappy-linux
+          registry: jpduchesne89
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+    tmp.flush
+
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
+
+    Then
+    config.build_container.volumes == []
+
+    Cleanup
+    tmp.close!
+  end
+
   test "#parse returns nil build_container when not declared" do
     Given "a dev.yml without build.container"
     tmp = Tempfile.new(["dev", ".yml"])

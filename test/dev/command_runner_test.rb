@@ -94,9 +94,11 @@ class CommandRunnerTest < Minitest::Test
     cmd = Dev::ShellCommand.new(run: "./bin/build.sh", repl: false)
 
     When "BuildContainer.ensure_image! returns a tag and we run the command"
-    BuildContainer.expects(:ensure_image!).with(config, project_root: @project_root, push: false).returns("myregistry/myapp-linux:content-abc123")
+    BuildContainer.expects(:ensure_image!)
+      .with(config, project_root: @project_root, push: false, build_args_provider: instance_of(Proc))
+      .returns("myregistry/myapp-linux:content-abc123")
     BuildContainer.expects(:docker_run_command)
-      .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh")
+      .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [])
       .returns(["docker", "run", "--rm", "-v", "#{@project_root}:/project", "-w", "/project", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
     runner.run(cmd)
 
@@ -138,9 +140,11 @@ class CommandRunnerTest < Minitest::Test
     cmd = Dev::ShellCommand.new(run: "./bin/test.sh", repl: false)
 
     When "BuildContainer returns docker command and we run with args"
-    BuildContainer.expects(:ensure_image!).with(config, project_root: @project_root, push: false).returns("myregistry/myapp-linux:content-abc123")
+    BuildContainer.expects(:ensure_image!)
+      .with(config, project_root: @project_root, push: false, build_args_provider: instance_of(Proc))
+      .returns("myregistry/myapp-linux:content-abc123")
     BuildContainer.expects(:docker_run_command)
-      .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/test.sh --verbose")
+      .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/test.sh --verbose", volumes: [])
       .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/test.sh --verbose"])
     runner.run(cmd, args: ["--verbose"])
 

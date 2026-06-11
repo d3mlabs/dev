@@ -6,6 +6,8 @@ require 'dev/config_parser'
 require 'dev/command_registry'
 require 'dev/execution_context'
 require 'dev/deps'
+require 'dev/deps/repository'
+require 'dev/deps/integration'
 require 'dev/deps/resolver'
 require 'dev/deps/lockfile'
 require 'dev/cli/ui'
@@ -83,6 +85,17 @@ module Dev
         resolved = resolver.resolve(deps_config.declarations)
         lockfile.lock(resolved)
       end)
+
+      registry.register("install-deps", BuiltinCommand.new(
+        desc: "Install locked dependencies handled on the host (e.g. gh releases)",
+      ) do |args, context|
+        lockfile = Dev::Deps::Lockfile.new(dir: context.project_root)
+        installer = Dev::Deps::DependencyInstaller.new(
+          lockfile: lockfile,
+          integrations: build_host_integrations,
+        )
+        installer.install(env: Dev::Deps.detect_env)
+      end)
     end
 
     # Build the repositories hash mapping integration types to Repository instances.
@@ -95,6 +108,7 @@ module Dev
       require "dev/deps/url_repository"
       require "dev/deps/luarocks_repository"
       require "dev/deps/ficsit_repository"
+      require "dev/deps/gh_repository"
 
       git_repo = Dev::Deps::GitRepository.new
       {
@@ -102,6 +116,26 @@ module Dev
         cmake: git_repo,
         luarocks: Dev::Deps::LuaRocksRepository.new,
         ficsit: Dev::Deps::FicsitRepository.new,
+        gh: Dev::Deps::GhRepository.new,
+      }
+    end
+
+    # Build the integrations that install on the host (not in the build
+    # container). Today that's only gh releases — the UE engine must land on
+    # the host so it can be volume-mounted into the container.
+    #
+    # @return [Hash{Symbol => Dev::Deps::Integration}]
+    sig { returns(T::Hash[Symbol, Dev::Deps::Integration]) }
+    def build_host_integrations
+      require "dev/deps/cache"
+      require "dev/deps/gh_repository"
+      require "dev/deps/gh_integration"
+
+      {
+        gh: Dev::Deps::GhIntegration.new(
+          repository: Dev::Deps::GhRepository.new,
+          cache: Dev::Deps::Cache.new,
+        ),
       }
     end
 

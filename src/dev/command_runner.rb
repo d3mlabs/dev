@@ -69,11 +69,42 @@ module Dev
     def run_in_container(_cmd, shell_command)
       require "build_container"
       config = T.must(@build_container)
-      image_tag = BuildContainer.ensure_image!(config, project_root: @project_root, push: false)
-      docker_argv = BuildContainer.docker_run_command(image_tag, project_root: @project_root, shell_cmd: shell_command)
+      image_tag = BuildContainer.ensure_image!(
+        config,
+        project_root: @project_root,
+        push: false,
+        build_args_provider: -> { resolve_build_args(config) },
+      )
+      docker_argv = BuildContainer.docker_run_command(
+        image_tag,
+        project_root: @project_root,
+        shell_cmd: shell_command,
+        volumes: config.volumes,
+      )
 
       Dir.chdir(@project_root)
       Kernel.exec(*docker_argv)
+    end
+
+    # Resolve docker build args declared in dev.yml from Dev::Credentials.
+    # Each value is a "namespace/key" reference; the arg name doubles as the
+    # ENV var override. Only invoked when the image actually needs building.
+    #
+    # @param config [Dev::BuildContainerConfig]
+    # @return [Hash{String => String}]
+    sig { params(config: Dev::BuildContainerConfig).returns(T::Hash[String, String]) }
+    def resolve_build_args(config)
+      require "dev/credentials"
+      config.build_args.to_h do |arg_name, credential_ref|
+        namespace, key = credential_ref.split("/", 2)
+        value = Dev::Credentials.resolve(
+          namespace: T.must(namespace),
+          key: T.must(key),
+          env_var: arg_name,
+          prompt_label: "#{namespace} #{key} (docker build arg #{arg_name})",
+        )
+        [arg_name, value]
+      end
     end
 
     sig { params(run_str: String, args: T::Array[String]).returns(String) }
