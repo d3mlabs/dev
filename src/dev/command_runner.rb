@@ -34,7 +34,7 @@ module Dev
         project_root: Pathname,
       ).void
     end
-    def initialize(ui:, ruby_version:, build_container: nil, project_root: Dev::TARGET_PROJECT_ROOT)
+    def initialize(ui:, ruby_version:, build_container: nil, project_root: Dev.target_project_root)
       @ui = T.let(ui, Dev::Cli::Ui)
       @ruby_version = T.let(ruby_version, String)
       @build_container = T.let(build_container, T.nilable(Dev::BuildContainerConfig))

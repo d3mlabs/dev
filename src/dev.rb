@@ -38,8 +38,16 @@ module Dev
   # Dev's lib directory
   DEV_LIB_DIR = T.let(Dev::DEV_ROOT / "lib", Pathname)
 
-  # Target project root (directory containing dev.yml)
-  TARGET_PROJECT_ROOT = T.let(Pathname.new(dev_yaml_file.dirname), Pathname)
+  # Target project root (directory containing dev.yml).
+  #
+  # Resolved lazily rather than as a load-time constant: requiring "dev" from
+  # a directory without a dev.yml must not raise during load (it would dump a
+  # backtrace before the CLI can print a friendly message). Callers that need
+  # a project hit DevYamlNotFoundError here, where it can be handled.
+  sig { returns(Pathname) }
+  def self.target_project_root
+    dev_yaml_file.dirname
+  end
 end
 
 require_relative "dev/command"

@@ -48,7 +48,7 @@ module Dev
       context = ExecutionContext.new(
         ui:,
         ruby_version:,
-        project_root: Dev::TARGET_PROJECT_ROOT,
+        project_root: Dev.target_project_root,
         build_container: @config.build_container,
       )
       provision_build_credentials if cmd_name == "up"

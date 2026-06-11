@@ -33,4 +33,11 @@ ui = if $stdout.tty? || ENV["CI"] || ENV["CLICOLOR_FORCE"]
 else
   Dev::Cli::NoUi.new
 end
-Dev::Runner.new.run(ARGV, out: $stdout, ui: ui)
+
+begin
+  Dev::Runner.new.run(ARGV, out: $stdout, ui: ui)
+rescue Dev::DevYamlNotFoundError
+  warn "dev: no dev.yml found in this directory or any parent."
+  warn "Run dev from inside a project that defines a dev.yml."
+  exit 1
+end
