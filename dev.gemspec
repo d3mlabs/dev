@@ -8,7 +8,8 @@ Gem::Specification.new do |s|
   s.license     = "MIT"
   s.authors     = ["d3mlabs"]
 
-  s.required_ruby_version = ">= 2.7.0"
+  # The codebase uses Ruby 3.1+ syntax (e.g. hash literal value omission).
+  s.required_ruby_version = ">= 3.1.0"
 
   s.files = Dir["bin/*", "src/**/*", "lib/**/*", "data/**/*", "VERSION", "LICENSE"]
 

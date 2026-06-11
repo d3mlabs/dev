@@ -20,6 +20,12 @@ echo ">>> Installing Linuxbrew"
 NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 
+# dev requires Ruby >= 3.1; distro rubies are often older (Ubuntu 22.04 ships
+# 3.0). Homebrew's ruby is keg-only, hence the explicit PATH prepend.
+echo ">>> Installing Ruby"
+brew install --quiet ruby
+export PATH="$(brew --prefix ruby)/bin:$PATH"
+
 echo ">>> Cloning d3mlabs/dev (${DEV_REF})"
 git clone --depth 1 --branch "$DEV_REF" https://github.com/d3mlabs/dev.git /tmp/dev
 
