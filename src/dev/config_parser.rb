@@ -3,6 +3,7 @@
 
 require "yaml"
 require_relative "command_parser"
+require_relative "build_container_config"
 require "pathname"
 
 module Dev
@@ -23,11 +24,30 @@ module Dev
       commands = raw_commands.transform_values { |h| @command_parser.parse(h) }
       ruby_version = yaml["ruby"]&.to_s
       ruby_version = nil if ruby_version&.empty?
+      build_container = parse_build_container(yaml)
       Config.new(
         name: T.cast(yaml["name"], String),
         commands: commands,
-        ruby_version: ruby_version
+        ruby_version: ruby_version,
+        build_container: build_container,
       )
+    end
+
+    private
+
+    sig { params(yaml: T::Hash[String, T.untyped]).returns(T.nilable(BuildContainerConfig)) }
+    def parse_build_container(yaml)
+      build = yaml["build"]
+      return nil unless build.is_a?(Hash)
+
+      container = build["container"]
+      return nil unless container.is_a?(Hash)
+
+      image = container["image"]&.to_s
+      registry = container["registry"]&.to_s
+      return nil if image.nil? || image.empty? || registry.nil? || registry.empty?
+
+      BuildContainerConfig.new(image: image, registry: registry)
     end
   end
 end

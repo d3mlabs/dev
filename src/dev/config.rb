@@ -1,6 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "build_container_config"
+
 module Dev
   # Value object for parsed dev.yml: repo name and command specs.
   class Config
@@ -12,11 +14,22 @@ module Dev
     sig { returns(T.nilable(String)) }
     attr_reader :ruby_version
 
-    sig { params(name: String, commands: T::Hash[String, ShellCommand], ruby_version: T.nilable(String)).void }
-    def initialize(name:, commands:, ruby_version: nil)
+    sig { returns(T.nilable(BuildContainerConfig)) }
+    attr_reader :build_container
+
+    sig do
+      params(
+        name: String,
+        commands: T::Hash[String, ShellCommand],
+        ruby_version: T.nilable(String),
+        build_container: T.nilable(BuildContainerConfig),
+      ).void
+    end
+    def initialize(name:, commands:, ruby_version: nil, build_container: nil)
       @name = T.let(name, String)
       @commands = T.let(commands.freeze, T::Hash[String, ShellCommand])
       @ruby_version = T.let(ruby_version, T.nilable(String))
+      @build_container = T.let(build_container, T.nilable(BuildContainerConfig))
     end
 
     # Project commands defined in dev.yml.

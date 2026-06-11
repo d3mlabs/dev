@@ -128,6 +128,16 @@ module Dev
         add_declaration(name, :luarocks, spec)
       end
 
+      # Declare a Satisfactory mod dependency from ficsit.app.
+      #
+      # @param mod_reference [String, Symbol] mod reference (e.g. "SML", "AreaActions")
+      # @param version [String, nil] semver constraint (e.g. "^3.12.0", ">=1.0")
+      # @param spec [Hash] additional options (target:, etc.)
+      def ficsit(mod_reference, version: nil, **spec)
+        spec[:version] = version if version
+        add_declaration(mod_reference, :ficsit, spec)
+      end
+
       # Declare a dependency using any registered integration by name.
       #
       # @param name [String, Symbol] dependency name
@@ -188,6 +198,7 @@ module Dev
         name_str = name.to_s
         raise EmptyNameError, "dependency name cannot be empty" if name_str.empty?
 
+        post_install = spec.delete(:post_install)
         spec = expand_github(name_str, spec) if spec.key?(:github)
         constraint = stringify_keys(spec)
 
@@ -196,6 +207,7 @@ module Dev
           integration:,
           constraint:,
           group: @group,
+          post_install:,
         )
       end
 

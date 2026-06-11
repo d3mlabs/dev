@@ -206,4 +206,33 @@ class Dev::Deps::LockfileTest < Minitest::Test
     Cleanup
     FileUtils.rm_rf(dir)
   end
+
+  test "post_install is not serialized to lockfile" do
+    Given "a dependency with a post_install hook"
+    dir = Dir.mktmpdir("dev-lockfile-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: dir)
+    hook = ->(dep, root) {}
+    deps = [
+      Dev::Deps::Dependency.new(
+        name: "gtest", integration: :cmake, group: :test,
+        version: "v1.17.0", hash: "SHA256=abc",
+        metadata: { "repo" => "https://github.com/google/googletest" },
+        post_install: hook,
+      ),
+    ]
+
+    When "locking and reading back"
+    lockfile.lock(deps)
+    content = File.read(File.join(dir, "deps.lock"))
+    read_deps = lockfile.read
+
+    Then "post_install is absent from YAML and nil on read-back"
+    !content.include?("post_install")
+    read_deps[0].post_install.nil?
+    read_deps[0].name == "gtest"
+    read_deps[0].version == "v1.17.0"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
 end

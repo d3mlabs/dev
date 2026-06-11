@@ -1,0 +1,99 @@
+# frozen_string_literal: true
+
+require "digest"
+require "pathname"
+
+# Content-addressed Docker image management for build containers.
+#
+# Computes a tag from the hash of Dockerfile + .dockerignore + build-deps.lock.
+# Any change to those files produces a new tag, guaranteeing a rebuild.
+#
+# Usage:
+#   BuildContainer.ensure_image!(config, project_root: Pathname("..."))
+#     # pulls or builds the image, returns the full image:tag string
+#
+#   BuildContainer.content_tag(project_root: Pathname("..."))
+#     # returns the content-addressed tag without side effects
+module BuildContainer
+  CONTENT_FILES = ["Dockerfile", ".dockerignore", "build-deps.lock"].freeze
+  TAG_PREFIX = "content-"
+
+  module_function
+
+  # Compute the content-addressed tag from Dockerfile + lockfiles.
+  #
+  # @param project_root [Pathname] project root containing Dockerfile etc.
+  # @return [String] tag like "content-a1b2c3d4e5f6"
+  def content_tag(project_root:)
+    root = Pathname(project_root)
+    content = CONTENT_FILES
+      .map { |f| root / f }
+      .select(&:exist?)
+      .map(&:read)
+      .join
+
+    hash = Digest::SHA256.hexdigest(content)[0, 12]
+    "#{TAG_PREFIX}#{hash}"
+  end
+
+  # Full image reference with content-addressed tag.
+  #
+  # @param config       [Dev::BuildContainerConfig]
+  # @param project_root [Pathname]
+  # @return [String] e.g. "jpduchesne89/snappy-linux:content-a1b2c3d4e5f6"
+  def image_with_tag(config, project_root:)
+    "#{config.image_ref}:#{content_tag(project_root:)}"
+  end
+
+  # Ensure the build container image exists: pull from registry if available,
+  # otherwise build and push. Returns the full image:tag string.
+  #
+  # @param config       [Dev::BuildContainerConfig]
+  # @param project_root [Pathname]
+  # @param push         [Boolean] whether to push after building (default: true)
+  # @return [String] the full image:tag string
+  def ensure_image!(config, project_root:, push: true)
+    tag = image_with_tag(config, project_root:)
+
+    if pull(tag)
+      $stderr.puts "dev: Container image cache hit — #{tag}"
+      return tag
+    end
+
+    $stderr.puts "dev: Container image cache miss — building #{tag}"
+    build!(tag, project_root:)
+    push!(tag) if push
+    tag
+  end
+
+  # Build a docker run command for executing a shell command inside the container.
+  #
+  # @param image_tag    [String]   full image:tag reference
+  # @param project_root [Pathname] project root to mount
+  # @param shell_cmd    [String]   command to run inside the container
+  # @return [Array<String>] docker run command array
+  def docker_run_command(image_tag, project_root:, shell_cmd:)
+    [
+      "docker", "run", "--rm",
+      "-v", "#{project_root}:/project",
+      "-w", "/project",
+      image_tag,
+      "sh", "-c", shell_cmd,
+    ]
+  end
+
+  # --- internal helpers ------------------------------------------------
+
+  def pull(image_tag)
+    system("docker", "pull", image_tag, out: File::NULL, err: File::NULL)
+  end
+
+  def build!(image_tag, project_root:)
+    success = system("docker", "build", "-t", image_tag, project_root.to_s)
+    raise "Docker build failed for #{image_tag}" unless success
+  end
+
+  def push!(image_tag)
+    system("docker", "push", image_tag, out: File::NULL, err: File::NULL)
+  end
+end

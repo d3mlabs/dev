@@ -84,4 +84,40 @@ class CommandParserTest < Minitest::Test
     Then "repl is false"
     cmd.repl == false
   end
+
+  test "parse defaults container to true" do
+    Given "a command hash without container"
+    parser = Dev::CommandParser.new
+    hash = { "run" => "./bin/build.sh" }
+
+    When "we parse it"
+    cmd = parser.parse(hash)
+
+    Then
+    cmd.container == true
+  end
+
+  test "parse with container false sets container to false" do
+    Given "a command hash with container: false"
+    parser = Dev::CommandParser.new
+    hash = { "run" => "./bin/deploy.sh", "container" => false }
+
+    When "we parse it"
+    cmd = parser.parse(hash)
+
+    Then
+    cmd.container == false
+  end
+
+  test "parse with container true sets container to true" do
+    Given "a command hash with container: true"
+    parser = Dev::CommandParser.new
+    hash = { "run" => "./bin/build.sh", "container" => true }
+
+    When "we parse it"
+    cmd = parser.parse(hash)
+
+    Then
+    cmd.container == true
+  end
 end

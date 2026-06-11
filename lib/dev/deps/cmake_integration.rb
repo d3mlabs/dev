@@ -2,6 +2,7 @@
 
 require "fileutils"
 require "pathname"
+require "tmpdir"
 require_relative "integration"
 require_relative "dependency"
 
@@ -44,17 +45,31 @@ module Dev
         @project_root = Pathname(project_root)
       end
 
-      # Install all cmake dependencies: fetch sources, generate deps.cmake
-      # and deps.targets.cmake.
+      # Install all cmake dependencies: fetch sources, run post_install hooks,
+      # generate deps.cmake and deps.targets.cmake.
       #
       # @param dependencies [Array<Dependency>] cmake deps to install
       def install_all(dependencies)
-        dependencies.each { |dep| fetch_dep(dep) }
+        dependencies.each do |dep|
+          fetch_dep(dep)
+          run_post_install(dep)
+        end
         write_deps_cmake(dependencies)
         write_targets_cmake(dependencies)
       end
 
       private
+
+      # Run post_install hooks for a dependency, if any.
+      # Each callable receives the dependency and the project root.
+      #
+      # @param dep [Dependency]
+      def run_post_install(dep)
+        return unless dep.post_install
+
+        hooks = Array(dep.post_install)
+        hooks.each { |hook| hook.call(dep, @project_root) }
+      end
 
       # Fetch a single dependency's source into build/_deps/<name>-src/.
       # Skips if the destination is already populated.
@@ -99,7 +114,6 @@ module Dev
         if cached
           extract_tarball(cached, dest)
         else
-          require "tmpdir"
           Dir.mktmpdir("dev-cmake-fetch-") do |tmpdir|
             tarball = File.join(tmpdir, "archive.tar.gz")
             system("curl", "-fsSL", "-o", tarball, dep.metadata["url"]) ||
@@ -115,7 +129,6 @@ module Dev
       # @param dest         [Pathname]         extraction destination
       # @raise [ExtractError] if tar extraction fails or tarball has no top-level directory
       def extract_tarball(tarball_path, dest)
-        require "tmpdir"
         FileUtils.rm_rf(dest)
         Dir.mktmpdir("dev-cmake-extract-") do |tmpdir|
           system("tar", "xzf", tarball_path.to_s, "-C", tmpdir) ||

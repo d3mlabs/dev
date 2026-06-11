@@ -106,4 +106,85 @@ class ConfigParserTest < Minitest::Test
     Cleanup
     tmp.close!
   end
+
+  test "#parse extracts build.container config" do
+    Given "a dev.yml file with build.container"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: snappy
+      build:
+        container:
+          image: snappy-linux
+          registry: jpduchesne89
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+    tmp.flush
+
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
+
+    Then
+    !config.build_container.nil?
+    config.build_container.image == "snappy-linux"
+    config.build_container.registry == "jpduchesne89"
+    config.build_container.image_ref == "jpduchesne89/snappy-linux"
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#parse returns nil build_container when not declared" do
+    Given "a dev.yml without build.container"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: myproject
+      commands:
+        up:
+          run: ./bin/setup.rb
+    YAML
+    tmp.flush
+
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
+
+    Then
+    config.build_container.nil?
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#parse handles container: false on individual commands" do
+    Given "a dev.yml with container opt-out on a command"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: snappy
+      build:
+        container:
+          image: snappy-linux
+          registry: jpduchesne89
+      commands:
+        build:
+          run: ./bin/build.sh
+        deploy:
+          run: ./bin/deploy.sh
+          container: false
+    YAML
+    tmp.flush
+
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
+
+    Then
+    config.commands["build"].container == true
+    config.commands["deploy"].container == false
+
+    Cleanup
+    tmp.close!
+  end
 end

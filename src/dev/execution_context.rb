@@ -10,5 +10,6 @@ module Dev
     const :ui, Dev::Cli::Ui
     const :ruby_version, String
     const :project_root, Pathname
+    const :build_container, T.nilable(Dev::BuildContainerConfig), default: nil
   end
 end

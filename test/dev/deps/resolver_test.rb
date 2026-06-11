@@ -240,4 +240,40 @@ class Dev::Deps::ResolverTest < Minitest::Test
     child_id = repo.fetched_ids.find { |id| id["name"] == "child" }
     child_id["version"] == ">= 2.0"
   end
+
+  test "carries post_install from declaration to resolved dependency" do
+    Given "a declaration with a post_install hook"
+    hook = ->(dep, root) {}
+    dep = Dev::Deps::Dependency.new(name: "gtest", integration: :cmake, group: :test,
+                                    version: "sha1", hash: nil, metadata: {})
+    repo = StubRepository.new(deps_by_name: { "gtest" => dep })
+    declarations = [
+      Dev::Deps::DependencyDeclaration.new(name: "gtest", integration: :cmake, group: :test,
+                                            post_install: hook),
+    ]
+    resolver = Dev::Deps::Resolver.new(repositories: { cmake: repo })
+
+    When "resolving"
+    result = resolver.resolve(declarations)
+
+    Then
+    result[0].post_install == hook
+  end
+
+  test "post_install is nil when declaration has none" do
+    Given "a declaration without post_install"
+    dep = Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
+                                    version: "sha1", hash: nil, metadata: {})
+    repo = StubRepository.new(deps_by_name: { "boost" => dep })
+    declarations = [
+      Dev::Deps::DependencyDeclaration.new(name: "boost", integration: :cmake, group: :app),
+    ]
+    resolver = Dev::Deps::Resolver.new(repositories: { cmake: repo })
+
+    When "resolving"
+    result = resolver.resolve(declarations)
+
+    Then
+    result[0].post_install.nil?
+  end
 end

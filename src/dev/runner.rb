@@ -43,7 +43,12 @@ module Dev
       cmd = @registry.lookup(cmd_name)
 
       ruby_version = resolve_ruby_version(@config.ruby_version)
-      context = ExecutionContext.new(ui:, ruby_version:, project_root: Dev::TARGET_PROJECT_ROOT)
+      context = ExecutionContext.new(
+        ui:,
+        ruby_version:,
+        project_root: Dev::TARGET_PROJECT_ROOT,
+        build_container: @config.build_container,
+      )
       cmd.execute(args:, context:)
     rescue CommandRegistry::CommandNotFoundError => e
       $stderr.puts "dev: #{e}"
@@ -72,12 +77,32 @@ module Dev
         deps_rb = context.project_root / "dependencies.rb"
         load(deps_rb.to_s) if deps_rb.exist?
 
-        deps_config = Dev::Deps.define {}
-        resolver = Dev::Deps::Resolver.new(repositories: {})
+        deps_config = Dev::Deps.last_config || Dev::Deps.define {}
+        resolver = Dev::Deps::Resolver.new(repositories: build_repositories)
         lockfile = Dev::Deps::Lockfile.new(dir: context.project_root)
         resolved = resolver.resolve(deps_config.declarations)
         lockfile.lock(resolved)
       end)
+    end
+
+    # Build the repositories hash mapping integration types to Repository instances.
+    #
+    # @return [Hash{Symbol => Dev::Deps::Repository}]
+    sig { returns(T::Hash[Symbol, Dev::Deps::Repository]) }
+    def build_repositories
+      require "dev/deps/brew_repository"
+      require "dev/deps/git_repository"
+      require "dev/deps/url_repository"
+      require "dev/deps/luarocks_repository"
+      require "dev/deps/ficsit_repository"
+
+      git_repo = Dev::Deps::GitRepository.new
+      {
+        brew: Dev::Deps::BrewRepository.new,
+        cmake: git_repo,
+        luarocks: Dev::Deps::LuaRocksRepository.new,
+        ficsit: Dev::Deps::FicsitRepository.new,
+      }
     end
 
     sig { params(argv: T::Array[String]).returns(T::Boolean) }
