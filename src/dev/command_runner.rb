@@ -74,17 +74,44 @@ module Dev
         project_root: @project_root,
         push: false,
         build_args_provider: -> { resolve_build_args(config) },
+        secrets_provider: -> { resolve_build_secrets(config) },
       )
-      docker_argv = BuildContainer.docker_run_command(
-        image_tag,
-        project_root: @project_root,
-        shell_cmd: shell_command,
-        volumes: config.volumes,
-        env: resolve_run_env(config),
-      )
+      docker_argv = container_command(config, image_tag, shell_command)
 
       Dir.chdir(@project_root)
-      Kernel.exec(*docker_argv)
+      Kernel.exec(*T.unsafe(docker_argv))
+    end
+
+    # docker argv for a containerized command: a `docker exec` into the reused
+    # long-lived container when persist is set (its writable layer keeps the
+    # build tool's incremental state across commands), else a one-shot `docker
+    # run --rm`.
+    #
+    # @param config        [Dev::BuildContainerConfig]
+    # @param image_tag      [String]
+    # @param shell_command [String]
+    # @return [Array<String>]
+    sig do
+      params(config: Dev::BuildContainerConfig, image_tag: String, shell_command: String)
+        .returns(T::Array[String])
+    end
+    def container_command(config, image_tag, shell_command)
+      if config.persist
+        container = BuildContainer.ensure_service!(
+          image_tag, project_root: @project_root, volumes: config.volumes,
+        )
+        BuildContainer.docker_exec_command(
+          container, shell_cmd: shell_command, env: resolve_run_env(config),
+        )
+      else
+        BuildContainer.docker_run_command(
+          image_tag,
+          project_root: @project_root,
+          shell_cmd: shell_command,
+          volumes: config.volumes,
+          env: resolve_run_env(config),
+        )
+      end
     end
 
     # Resolve docker build args declared in dev.yml from Dev::Credentials.
@@ -97,6 +124,18 @@ module Dev
     def resolve_build_args(config)
       require "dev/credentials"
       Dev::Credentials.resolve_build_args(config.build_args)
+    end
+
+    # Resolve BuildKit build secrets declared in dev.yml from Dev::Credentials.
+    # Same shape and lazy timing as build args (only on a cache miss), but the
+    # values are mounted as BuildKit secrets rather than baked into image layers.
+    #
+    # @param config [Dev::BuildContainerConfig]
+    # @return [Hash{String => String}]
+    sig { params(config: Dev::BuildContainerConfig).returns(T::Hash[String, String]) }
+    def resolve_build_secrets(config)
+      require "dev/credentials"
+      Dev::Credentials.resolve_build_args(config.build_secrets)
     end
 
     # Resolve runtime env vars (build.container.run_env) for `docker run -e`.

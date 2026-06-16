@@ -17,15 +17,50 @@ module Dev
   #       build_args:
   #         WWISE_EMAIL: wwise/email
   #         WWISE_PASSWORD: wwise/password
+  #       build_secrets:
+  #         WWISE_TOKEN: wwise/token
   #       run_env:
   #         WWISE_TOKEN: wwise/token
+  #       content_globs:
+  #         - "Mods/*/Source/*/*.Build.cs"
   #
   # build_args maps docker --build-arg names to Dev::Credentials
   # "namespace/key" references, resolved only when the image is built.
   #
+  # build_secrets maps BuildKit `--secret id=` names to the same "namespace/key"
+  # references. Unlike build_args (which bake into image history), secrets are
+  # mounted only for the RUN that requests them and never persist in a layer —
+  # use them for tokens the image *build* needs (e.g. fetching a gated SDK).
+  # Only the image builder needs them; pullers never do.
+  #
   # run_env maps docker `run -e` env var names to the same "namespace/key"
   # references, resolved when a containerized command runs. Use it for
   # secrets a command needs at runtime (not baked into the image).
+  #
+  # content_globs adds project files (matched relative to the project root) to
+  # the content-addressed image tag, on top of the always-hashed Dockerfile /
+  # .dockerignore / lockfiles. Use it so structural inputs baked into the image
+  # (e.g. a mod's *.Build.cs) invalidate the image when they change.
+  #
+  # prewarm, when set, switches image creation from a single `docker build` to a
+  # build -> `docker run` -> `docker commit` flow: the Dockerfile builds the
+  # cheap base, then this command runs inside a container with the build-dep
+  # volumes mounted (robust `-v` virtiofs, unlike a streamed BuildKit
+  # build-context) and build_secrets delivered as mounted files; the result is
+  # committed to the content-addressed tag. Use it to bake an expensive warm
+  # state that needs a large, randomly-read dependency (e.g. compiling against a
+  # ~30GB engine) which a BuildKit build-context streams unreliably under
+  # emulation.
+  #
+  # persist, when true, runs containerized commands inside a single long-lived
+  # container (one `docker exec` per command) instead of a fresh `docker run
+  # --rm` each time. The container's writable layer therefore survives between
+  # commands, so an incremental build tool's state (object files, dependency
+  # caches) written on top of the image is reused — a `--rm` container always
+  # reverts to the image and recompiles everything that changed since it was
+  # built. dev owns the container's lifecycle: it is created on demand, reused
+  # while the image tag is unchanged, reaped when the tag changes, and removed
+  # by `dev reset-container`. Default false (every other repo keeps `--rm`).
   class BuildContainerConfig
     extend T::Sig
 
@@ -42,7 +77,19 @@ module Dev
     attr_reader :build_args
 
     sig { returns(T::Hash[String, String]) }
+    attr_reader :build_secrets
+
+    sig { returns(T::Hash[String, String]) }
     attr_reader :run_env
+
+    sig { returns(T::Array[String]) }
+    attr_reader :content_globs
+
+    sig { returns(T.nilable(String)) }
+    attr_reader :prewarm
+
+    sig { returns(T::Boolean) }
+    attr_reader :persist
 
     sig do
       params(
@@ -50,15 +97,24 @@ module Dev
         registry: String,
         volumes: T::Array[String],
         build_args: T::Hash[String, String],
+        build_secrets: T::Hash[String, String],
         run_env: T::Hash[String, String],
+        content_globs: T::Array[String],
+        prewarm: T.nilable(String),
+        persist: T::Boolean,
       ).void
     end
-    def initialize(image:, registry:, volumes: [], build_args: {}, run_env: {})
+    def initialize(image:, registry:, volumes: [], build_args: {}, build_secrets: {},
+                   run_env: {}, content_globs: [], prewarm: nil, persist: false)
       @image = T.let(image, String)
       @registry = T.let(registry, String)
       @volumes = T.let(volumes, T::Array[String])
       @build_args = T.let(build_args, T::Hash[String, String])
+      @build_secrets = T.let(build_secrets, T::Hash[String, String])
       @run_env = T.let(run_env, T::Hash[String, String])
+      @content_globs = T.let(content_globs, T::Array[String])
+      @prewarm = T.let(prewarm, T.nilable(String))
+      @persist = T.let(persist, T::Boolean)
     end
 
     # Full image reference without tag (e.g. "jpduchesne89/snappy-linux").
@@ -73,7 +129,9 @@ module Dev
 
       @image == other.image && @registry == other.registry &&
         @volumes == other.volumes && @build_args == other.build_args &&
-        @run_env == other.run_env
+        @build_secrets == other.build_secrets && @run_env == other.run_env &&
+        @content_globs == other.content_globs && @prewarm == other.prewarm &&
+        @persist == other.persist
     end
 
     sig { params(other: Object).returns(T::Boolean) }
@@ -83,7 +141,8 @@ module Dev
 
     sig { returns(Integer) }
     def hash
-      [@image, @registry, @volumes, @build_args, @run_env].hash
+      [@image, @registry, @volumes, @build_args, @build_secrets, @run_env,
+       @content_globs, @prewarm, @persist].hash
     end
   end
 end

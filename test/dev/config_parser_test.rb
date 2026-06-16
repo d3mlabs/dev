@@ -224,6 +224,142 @@ class ConfigParserTest < Minitest::Test
     tmp.close!
   end
 
+  test "#parse extracts build.container build_secrets credential refs" do
+    Given "a dev.yml file with container build_secrets"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: snappy
+      build:
+        container:
+          image: snappy-linux
+          registry: jpduchesne89
+          build_secrets:
+            WWISE_TOKEN: wwise/token
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+    tmp.flush
+
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
+
+    Then
+    config.build_container.build_secrets == { "WWISE_TOKEN" => "wwise/token" }
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#parse extracts build.container content_globs" do
+    Given "a dev.yml file with container content_globs"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: snappy
+      build:
+        container:
+          image: snappy-linux
+          registry: jpduchesne89
+          content_globs:
+            - "Mods/*/Source/*/*.Build.cs"
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+    tmp.flush
+
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
+
+    Then
+    config.build_container.content_globs == ["Mods/*/Source/*/*.Build.cs"]
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#parse extracts build.container prewarm command" do
+    Given "a dev.yml file with a container prewarm command"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: snappy
+      build:
+        container:
+          image: snappy-linux
+          registry: jpduchesne89
+          prewarm: "bash /work/bin/prewarm.sh"
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+    tmp.flush
+
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
+
+    Then
+    config.build_container.prewarm == "bash /work/bin/prewarm.sh"
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#parse defaults build.container prewarm to nil" do
+    Given "a dev.yml file without a prewarm command"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: snappy
+      build:
+        container:
+          image: snappy-linux
+          registry: jpduchesne89
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+    tmp.flush
+
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
+
+    Then
+    config.build_container.prewarm.nil?
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#parse defaults build.container build_secrets and content_globs to empty" do
+    Given "a dev.yml file without build_secrets or content_globs"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: snappy
+      build:
+        container:
+          image: snappy-linux
+          registry: jpduchesne89
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+    tmp.flush
+
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
+
+    Then
+    config.build_container.build_secrets == {}
+    config.build_container.content_globs == []
+
+    Cleanup
+    tmp.close!
+  end
+
   test "#parse defaults build.container volumes to empty" do
     Given "a dev.yml file without container volumes"
     tmp = Tempfile.new(["dev", ".yml"])
@@ -245,6 +381,59 @@ class ConfigParserTest < Minitest::Test
 
     Then
     config.build_container.volumes == []
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#parse extracts build.container persist flag" do
+    Given "a dev.yml file with persist: true"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: snappy
+      build:
+        container:
+          image: snappy-linux
+          registry: jpduchesne89
+          persist: true
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+    tmp.flush
+
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
+
+    Then
+    config.build_container.persist == true
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#parse defaults build.container persist to false" do
+    Given "a dev.yml file without persist"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: snappy
+      build:
+        container:
+          image: snappy-linux
+          registry: jpduchesne89
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+    tmp.flush
+
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
+
+    Then
+    config.build_container.persist == false
 
     Cleanup
     tmp.close!

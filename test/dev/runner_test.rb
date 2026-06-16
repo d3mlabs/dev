@@ -100,6 +100,38 @@ class RunnerTest < Minitest::Test
     out.string.include?("up")
   end
 
+  test "usage includes reset-container when the build container persists" do
+    Given "a Runner whose build container opts into persist"
+    runner = build_runner(
+      commands: {},
+      build: { "container" => {
+        "image" => "myapp-linux", "registry" => "myregistry", "persist" => true,
+      } },
+    )
+    out = StringIO.new
+
+    When "we print usage"
+    runner.run([], ui: fake_ui, out: out)
+
+    Then "the teardown command is listed"
+    out.string.include?("reset-container")
+  end
+
+  test "reset-container is not registered without persist" do
+    Given "a Runner with a non-persistent build container"
+    runner = build_runner(
+      commands: {},
+      build: { "container" => { "image" => "myapp-linux", "registry" => "myregistry" } },
+    )
+    out = StringIO.new
+
+    When "we print usage"
+    runner.run([], ui: fake_ui, out: out)
+
+    Then "no teardown command is listed"
+    !out.string.include?("reset-container")
+  end
+
   test "up resolves docker build arg credentials before executing" do
     Given "a Runner with build container build_args and an up command"
     runner = build_runner(

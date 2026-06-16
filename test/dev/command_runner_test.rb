@@ -115,7 +115,7 @@ class CommandRunnerTest < Minitest::Test
 
     When "BuildContainer.ensure_image! returns a tag and we run the command"
     BuildContainer.expects(:ensure_image!)
-      .with(config, project_root: @project_root, push: false, build_args_provider: instance_of(Proc))
+      .with(config, project_root: @project_root, push: false, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc))
       .returns("myregistry/myapp-linux:content-abc123")
     BuildContainer.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: {})
@@ -124,6 +124,30 @@ class CommandRunnerTest < Minitest::Test
 
     Then "exec is called with the docker run command"
     1 * Kernel.exec("docker", "run", "--rm", "-v", "#{@project_root}:/project", "-w", "/project", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh")
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+  end
+
+  test "run execs docker exec into the persistent container when persist is set" do
+    Given "a runner whose build_container opts into persist"
+    config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry", persist: true, volumes: ["/e:/e"])
+    runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root)
+    cmd = Dev::ShellCommand.new(run: "./bin/build.sh", repl: false)
+
+    When "the image resolves and the service container is ensured"
+    BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
+    BuildContainer.expects(:ensure_service!)
+      .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, volumes: ["/e:/e"])
+      .returns("dev-myapp-linux-content-abc123")
+    BuildContainer.expects(:docker_exec_command)
+      .with("dev-myapp-linux-content-abc123", shell_cmd: "./bin/build.sh", env: {})
+      .returns(["docker", "exec", "-w", "/project", "dev-myapp-linux-content-abc123", "sh", "-c", "./bin/build.sh"])
+    BuildContainer.expects(:docker_run_command).never
+    runner.run(cmd)
+
+    Then "exec is called with the docker exec command, not docker run"
+    1 * Kernel.exec("docker", "exec", "-w", "/project", "dev-myapp-linux-content-abc123", "sh", "-c", "./bin/build.sh")
 
     Cleanup
     Dir.chdir(@original_cwd)
@@ -170,7 +194,7 @@ class CommandRunnerTest < Minitest::Test
 
     When "BuildContainer returns docker command and we run with args"
     BuildContainer.expects(:ensure_image!)
-      .with(config, project_root: @project_root, push: false, build_args_provider: instance_of(Proc))
+      .with(config, project_root: @project_root, push: false, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc))
       .returns("myregistry/myapp-linux:content-abc123")
     BuildContainer.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/test.sh --verbose", volumes: [], env: {})

@@ -341,4 +341,442 @@ class BuildContainerTest < Minitest::Test
     Cleanup
     FileUtils.rm_rf(dir)
   end
+
+  test "content_tag includes deps.lock in hash" do
+    Given "a project with a Dockerfile"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
+    tag_without = BuildContainer.content_tag(project_root: Pathname(dir))
+
+    When "adding a deps.lock"
+    File.write(File.join(dir, "deps.lock"), "SML: {version: 3.12.0}")
+    tag_with = BuildContainer.content_tag(project_root: Pathname(dir))
+
+    Then
+    tag_without != tag_with
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "content_tag changes when an extra_globs file changes" do
+    Given "a project with a Dockerfile and a globbed Build.cs"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
+    FileUtils.mkdir_p(File.join(dir, "Mods/Snappy/Source/Snappy"))
+    build_cs = File.join(dir, "Mods/Snappy/Source/Snappy/Snappy.Build.cs")
+    File.write(build_cs, "// deps: Core")
+    globs = ["Mods/*/Source/*/*.Build.cs"]
+    tag_a = BuildContainer.content_tag(project_root: Pathname(dir), extra_globs: globs)
+
+    When "the Build.cs changes"
+    File.write(build_cs, "// deps: Core, SML")
+    tag_b = BuildContainer.content_tag(project_root: Pathname(dir), extra_globs: globs)
+
+    Then
+    tag_a != tag_b
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "content_tag is unaffected by files outside extra_globs" do
+    Given "a project with a Dockerfile and an unhashed .cpp"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
+    FileUtils.mkdir_p(File.join(dir, "Mods/Snappy/Source/Snappy"))
+    File.write(File.join(dir, "Mods/Snappy/Source/Snappy/Snappy.Build.cs"), "// deps")
+    globs = ["Mods/*/Source/*/*.Build.cs"]
+    tag_a = BuildContainer.content_tag(project_root: Pathname(dir), extra_globs: globs)
+
+    When "a non-globbed source file changes"
+    File.write(File.join(dir, "Mods/Snappy/Source/Snappy/Snappy.cpp"), "int main() {}")
+    tag_b = BuildContainer.content_tag(project_root: Pathname(dir), extra_globs: globs)
+
+    Then
+    tag_a == tag_b
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "build_contexts_from_lockfile returns build-group install_dirs" do
+    Given "a build-deps.lock with an engine install_dir and a context-less dep"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "build-deps.lock"), <<~LOCK)
+      UnrealEngine:
+        integration: gh
+        group: build
+        install_dir: "~/.dev/engines/unreal-engine-css"
+      wwise-cli:
+        integration: brew
+        group: build
+    LOCK
+
+    When "computing build contexts"
+    contexts = BuildContainer.build_contexts_from_lockfile(Pathname(dir))
+
+    Then "the context name is lowercased (Docker rejects uppercase)"
+    contexts == { "unrealengine" => File.expand_path("~/.dev/engines/unreal-engine-css") }
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "build_contexts_from_lockfile is empty without a lockfile" do
+    Given "a project with no build-deps.lock"
+    dir = Dir.mktmpdir("build-container-test-")
+
+    When "computing build contexts"
+    contexts = BuildContainer.build_contexts_from_lockfile(Pathname(dir))
+
+    Then
+    contexts == {}
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "build! passes build contexts and secrets with BuildKit enabled" do
+    Given "a project root and captured docker invocation"
+    dir = Dir.mktmpdir("build-container-test-")
+    captured = nil
+
+    When "building with contexts and secrets"
+    BuildContainer.stubs(:system).with { |*argv| captured = argv; true }.returns(true)
+    BuildContainer.send(
+      :build!,
+      "img:tag",
+      project_root: Pathname(dir),
+      build_contexts: { "UnrealEngine" => "/engines/ue" },
+      secrets: { "WWISE_TOKEN" => "tok-123" },
+    )
+
+    Then "BuildKit env, build-context flag, and secret flag are present"
+    captured[0].is_a?(Hash)
+    captured[0]["DOCKER_BUILDKIT"] == "1"
+    captured[0]["WWISE_TOKEN"] == "tok-123"
+    captured.include?("--build-context")
+    captured.include?("UnrealEngine=/engines/ue")
+    captured.include?("--secret")
+    captured.include?("id=WWISE_TOKEN,env=WWISE_TOKEN")
+    captured.last == dir
+  end
+
+  test "build! keeps the secret value off argv" do
+    Given "a project root and captured docker invocation"
+    dir = Dir.mktmpdir("build-container-test-")
+    captured = nil
+
+    When "building with a secret"
+    BuildContainer.stubs(:system).with { |*argv| captured = argv; true }.returns(true)
+    BuildContainer.send(
+      :build!,
+      "img:tag",
+      project_root: Pathname(dir),
+      secrets: { "WWISE_TOKEN" => "super-secret" },
+    )
+
+    Then "the value travels via env, never as an argument"
+    captured.drop(1).none? { |part| part.is_a?(String) && part.include?("super-secret") }
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "ensure_image! resolves secrets lazily and passes contexts on cache miss" do
+    Given "a project whose image must be built, with an engine build dep"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
+    File.write(File.join(dir, "build-deps.lock"), <<~LOCK)
+      UnrealEngine:
+        integration: gh
+        group: build
+        install_dir: "/engines/ue"
+    LOCK
+    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
+    secret_calls = 0
+    received_secrets = nil
+    received_contexts = nil
+
+    When "ensuring the image with a secrets provider"
+    BuildContainer.stubs(:local_image?).returns(false)
+    BuildContainer.stubs(:pull).returns(false)
+    BuildContainer.stubs(:build!).with do |_tag, secrets:, build_contexts:, **_|
+      received_secrets = secrets
+      received_contexts = build_contexts
+      true
+    end
+    BuildContainer.stubs(:push!).returns(true)
+    BuildContainer.ensure_image!(
+      config,
+      project_root: Pathname(dir),
+      build_args_provider: -> { {} },
+      secrets_provider: -> { secret_calls += 1; { "WWISE_TOKEN" => "tok" } },
+    )
+
+    Then
+    secret_calls == 1
+    received_secrets == { "WWISE_TOKEN" => "tok" }
+    received_contexts == { "unrealengine" => "/engines/ue" }
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "ensure_image! does not invoke the secrets provider on cache hit" do
+    Given "a project whose image pulls successfully"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
+    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
+    secret_calls = 0
+
+    When "ensuring the image"
+    BuildContainer.stubs(:local_image?).returns(false)
+    BuildContainer.stubs(:pull).returns(true)
+    BuildContainer.ensure_image!(
+      config,
+      project_root: Pathname(dir),
+      secrets_provider: -> { secret_calls += 1; {} },
+    )
+
+    Then
+    secret_calls == 0
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "ensure_image! builds a base then runs+commits when prewarm is set" do
+    Given "a project whose image must be built and declares a prewarm command"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
+    config = Dev::BuildContainerConfig.new(
+      image: "snappy-linux", registry: "jpduchesne89",
+      volumes: ["/engines/ue:/ue"], prewarm: "bash /work/bin/prewarm.sh",
+    )
+    tag = BuildContainer.image_with_tag(config, project_root: Pathname(dir))
+
+    When "ensuring the image"
+    result = BuildContainer.ensure_image!(config, project_root: Pathname(dir))
+
+    Then "the base is built engine-free, the prewarm runs against it, and the base tag is dropped"
+    result == tag
+    1 * BuildContainer.local_image?(tag) >> false
+    1 * BuildContainer.pull(tag) >> false
+    1 * BuildContainer.build!("#{tag}-base", project_root: Pathname(dir), build_args: {},
+      build_contexts: {}, secrets: {}) >> true
+    1 * BuildContainer.prewarm_commit!("#{tag}-base", tag, config: config,
+      prewarm: "bash /work/bin/prewarm.sh", secrets: {}) >> true
+    1 * BuildContainer.remove_image("#{tag}-base") >> true
+    1 * BuildContainer.push!(tag) >> true
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "prewarm_commit! runs the prewarm with dep volumes and secret files, commits, and cleans up" do
+    Given "config volumes and a secret"
+    config = Dev::BuildContainerConfig.new(
+      image: "snappy-linux", registry: "jpduchesne89", volumes: ["/engines/ue:/ue"],
+    )
+
+    When "running the prewarm commit"
+    BuildContainer.send(
+      :prewarm_commit!, "img:tag-base", "img:tag",
+      config: config, prewarm: "bash /work/bin/prewarm.sh", secrets: { "WWISE_TOKEN" => "tok" }
+    )
+
+    Then "the run mounts the engine + secret file (never -e: commit would bake env), commits that container, and removes it"
+    1 * BuildContainer.prewarm_container_name >> "dev-prewarm-test"
+    1 * BuildContainer.write_secret_files({ "WWISE_TOKEN" => "tok" }) >> { "WWISE_TOKEN" => "/tmp/dev-secret-xyz" }
+    1 * BuildContainer.system("docker", "run", "--name", "dev-prewarm-test",
+      "-v", "/engines/ue:/ue",
+      "-v", "/tmp/dev-secret-xyz:/run/secrets/WWISE_TOKEN:ro",
+      "img:tag-base", "sh", "-c", "bash /work/bin/prewarm.sh") >> true
+    1 * BuildContainer.system("docker", "commit", "dev-prewarm-test", "img:tag") >> true
+    1 * BuildContainer.system("docker", "rm", "-f", "dev-prewarm-test",
+      out: File::NULL, err: File::NULL) >> true
+  end
+
+  test "prewarm_commit! raises when the prewarm run fails, still removing the container" do
+    Given "config and a prewarm command that fails"
+    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
+
+    When "running the prewarm commit"
+    BuildContainer.send(
+      :prewarm_commit!, "img:tag-base", "img:tag",
+      config: config, prewarm: "false", secrets: {}
+    )
+
+    Then "it surfaces the failure and the ensure block removes the container (no commit)"
+    raises RuntimeError
+    1 * BuildContainer.prewarm_container_name >> "dev-prewarm-test"
+    1 * BuildContainer.write_secret_files({}) >> {}
+    1 * BuildContainer.system("docker", "run", "--name", "dev-prewarm-test",
+      "img:tag-base", "sh", "-c", "false") >> false
+    1 * BuildContainer.system("docker", "rm", "-f", "dev-prewarm-test",
+      out: File::NULL, err: File::NULL) >> true
+  end
+
+  test "write_secret_files writes each secret to a private temp file" do
+    When "writing secret files"
+    files = BuildContainer.send(:write_secret_files, { "TOK" => "s3cr3t" })
+
+    Then "the value is on disk with owner-only permissions"
+    File.read(files["TOK"]) == "s3cr3t"
+    (File.stat(files["TOK"]).mode & 0o777) == 0o600
+
+    Cleanup
+    files.each_value { |p| File.delete(p) if File.exist?(p) }
+  end
+
+  test "service_container_name drops the registry and replaces the tag colon" do
+    When "naming the service container for a full image:tag"
+    name = BuildContainer.service_container_name("jpduchesne89/snappy-linux:content-abc123")
+
+    Then "the name is registry-free, colon-free, and dev-prefixed"
+    name == "dev-snappy-linux-content-abc123"
+  end
+
+  test "service_name_prefix is the tag-independent project prefix" do
+    When "computing the reap prefix for a tag"
+    prefix = BuildContainer.service_name_prefix("jpduchesne89/snappy-linux:content-abc123")
+
+    Then "it omits the tag so any tag's container matches"
+    prefix == "dev-snappy-linux-"
+  end
+
+  test "docker_exec_command targets the container with /project workdir" do
+    When "building a docker exec command"
+    cmd = BuildContainer.docker_exec_command(
+      "dev-snappy-linux-content-abc", shell_cmd: "./bin/build.sh",
+    )
+
+    Then
+    cmd[0] == "docker"
+    cmd[1] == "exec"
+    cmd.include?("-w")
+    cmd.include?("/project")
+    cmd.include?("dev-snappy-linux-content-abc")
+    cmd.last(3) == ["sh", "-c", "./bin/build.sh"]
+  end
+
+  test "docker_exec_command renders env vars as -e flags before the container" do
+    When "building a docker exec command with env"
+    cmd = BuildContainer.docker_exec_command(
+      "dev-snappy-linux-content-abc", shell_cmd: "./bin/build.sh",
+      env: { "WWISE_TOKEN" => "tok-123" },
+    )
+
+    Then "the -e flag precedes the container name (a docker exec arg-order rule)"
+    cmd.include?("WWISE_TOKEN=tok-123")
+    cmd[cmd.index("WWISE_TOKEN=tok-123") - 1] == "-e"
+    cmd.index("WWISE_TOKEN=tok-123") < cmd.index("dev-snappy-linux-content-abc")
+  end
+
+  test "ensure_service! creates the container when none exists" do
+    Given "an image tag whose container is absent"
+    tag = "jpduchesne89/snappy-linux:content-abc"
+
+    When "ensuring the service"
+    result = BuildContainer.ensure_service!(tag, project_root: Pathname("/proj"), volumes: ["/e:/e"])
+
+    Then "stale containers are reaped, then the container is created (never started)"
+    result == "dev-snappy-linux-content-abc"
+    1 * BuildContainer.reap_stale_services!(tag) >> nil
+    1 * BuildContainer.container_exists?("dev-snappy-linux-content-abc") >> false
+    1 * BuildContainer.create_service_container("dev-snappy-linux-content-abc", tag,
+      project_root: Pathname("/proj"), volumes: ["/e:/e"]) >> true
+    0 * BuildContainer.start_container("dev-snappy-linux-content-abc")
+  end
+
+  test "ensure_service! starts the container when it exists but is stopped" do
+    Given "an image tag whose container exists but is stopped"
+    tag = "jpduchesne89/snappy-linux:content-abc"
+
+    When "ensuring the service"
+    BuildContainer.ensure_service!(tag, project_root: Pathname("/proj"))
+
+    Then "the existing container is started, not recreated"
+    1 * BuildContainer.reap_stale_services!(tag) >> nil
+    1 * BuildContainer.container_exists?("dev-snappy-linux-content-abc") >> true
+    1 * BuildContainer.container_running?("dev-snappy-linux-content-abc") >> false
+    1 * BuildContainer.start_container("dev-snappy-linux-content-abc") >> true
+    0 * BuildContainer.create_service_container("dev-snappy-linux-content-abc", tag,
+      project_root: Pathname("/proj"), volumes: [])
+  end
+
+  test "ensure_service! is a no-op when the container is already running" do
+    Given "an image tag whose container is already up"
+    tag = "jpduchesne89/snappy-linux:content-abc"
+
+    When "ensuring the service"
+    BuildContainer.ensure_service!(tag, project_root: Pathname("/proj"))
+
+    Then "neither start nor create is invoked"
+    1 * BuildContainer.reap_stale_services!(tag) >> nil
+    1 * BuildContainer.container_exists?("dev-snappy-linux-content-abc") >> true
+    1 * BuildContainer.container_running?("dev-snappy-linux-content-abc") >> true
+    0 * BuildContainer.start_container("dev-snappy-linux-content-abc")
+  end
+
+  test "reap_stale_services! removes other-tag containers but keeps the current tag" do
+    Given "a current tag and a stale sibling container"
+    tag = "jpduchesne89/snappy-linux:content-new"
+
+    When "reaping"
+    BuildContainer.send(:reap_stale_services!, tag)
+
+    Then "only the non-current container is removed"
+    1 * BuildContainer.service_containers("dev-snappy-linux-") >>
+      ["dev-snappy-linux-content-old", "dev-snappy-linux-content-new"]
+    1 * BuildContainer.remove_container("dev-snappy-linux-content-old") >> true
+    0 * BuildContainer.remove_container("dev-snappy-linux-content-new")
+  end
+
+  test "reset_service! removes every container for the project prefix" do
+    Given "two containers for the project (current and stale)"
+    tag = "jpduchesne89/snappy-linux:content-abc"
+
+    When "resetting"
+    result = BuildContainer.reset_service!(tag)
+
+    Then "all matching containers are removed and their names returned"
+    result == ["dev-snappy-linux-content-old", "dev-snappy-linux-content-abc"]
+    1 * BuildContainer.service_containers("dev-snappy-linux-") >>
+      ["dev-snappy-linux-content-old", "dev-snappy-linux-content-abc"]
+    1 * BuildContainer.remove_container("dev-snappy-linux-content-old") >> true
+    1 * BuildContainer.remove_container("dev-snappy-linux-content-abc") >> true
+  end
+
+  test "create_service_container runs detached, mounts project + volumes, and idles" do
+    Given "captured docker invocation"
+    captured = nil
+
+    When "creating the service container"
+    BuildContainer.stubs(:system).with { |*argv, **_kw| captured = argv; true }.returns(true)
+    BuildContainer.send(
+      :create_service_container, "dev-x", "img:tag",
+      project_root: Pathname("/project"), volumes: ["/engines/ue:/ue"],
+    )
+
+    Then "it is a detached, named run that bind-mounts the project + engine and sleeps"
+    captured[0, 5] == ["docker", "run", "-d", "--name", "dev-x"]
+    captured.include?("/project:/project")
+    captured.include?("/engines/ue:/ue")
+    captured.include?("img:tag")
+    captured.last(2) == ["sleep", "infinity"]
+  end
+
+  test "create_service_container raises when docker run fails" do
+    When "docker run fails"
+    BuildContainer.stubs(:system).returns(false)
+    BuildContainer.send(
+      :create_service_container, "dev-x", "img:tag", project_root: Pathname("/project"),
+    )
+
+    Then
+    raises RuntimeError
+  end
 end

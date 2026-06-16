@@ -81,8 +81,28 @@ module Dev
     def build_registry(config)
       registry = CommandRegistry.new
       register_builtins(registry)
+      register_container_builtins(registry, config)
       config.commands.each { |name, cmd| registry.register(name, cmd) }
       registry
+    end
+
+    # Lifecycle commands for the persistent build container, registered only when
+    # a project opts into it (build.container.persist). dev owns the container's
+    # lifecycle, so the teardown lives here rather than in each repo's dev.yml.
+    sig { params(registry: CommandRegistry, config: Config).void }
+    def register_container_builtins(registry, config)
+      build_container = config.build_container
+      return unless build_container&.persist
+
+      registry.register("reset-container", BuiltinCommand.new(
+        desc: "Remove the persistent build container (clears its incremental cache)",
+      ) do |_args, context|
+        require "build_container"
+        cfg = context.build_container
+        image_tag = BuildContainer.image_with_tag(cfg, project_root: context.project_root)
+        removed = BuildContainer.reset_service!(image_tag)
+        puts(removed.empty? ? "dev: no persistent build container to remove." : "dev: removed #{removed.join(", ")}.")
+      end)
     end
 
     sig { params(registry: CommandRegistry).void }

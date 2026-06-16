@@ -33,4 +33,22 @@ class Dev::BuildContainerConfigTest < Minitest::Test
     Expect
     a != b
   end
+
+  test "persist defaults to false" do
+    When "creating a config without persist"
+    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
+
+    Then
+    config.persist == false
+  end
+
+  test "inequality when persist differs" do
+    Given "two configs differing only in persist"
+    a = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89", persist: true)
+    b = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89", persist: false)
+
+    Expect
+    a != b
+    a.hash != b.hash
+  end
 end
