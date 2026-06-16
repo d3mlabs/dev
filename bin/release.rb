@@ -201,7 +201,11 @@ end
 def update_formula(version, sha)
   abort "Homebrew tap not found at #{FORMULA_REPO}" unless FORMULA_PATH.exist?
 
-  formula = FORMULA_PATH.read
+  # Read as UTF-8 explicitly: the formula has non-ASCII bytes (e.g. an em-dash
+  # in a comment), and when release.rb runs under a non-UTF-8 locale (such as a
+  # piped, login-less subshell) Ruby's default external encoding is US-ASCII,
+  # which makes the gsub! below raise "invalid byte sequence in US-ASCII".
+  formula = FORMULA_PATH.read(encoding: "UTF-8")
   formula.gsub!(/version "[\d.]+"/, "version \"#{version}\"")
   formula.gsub!(%r{url "https://github\.com/d3mlabs/dev/archive/refs/tags/v[\d.]+\.tar\.gz"},
     "url \"#{format(TARBALL_URL, version)}\"")
