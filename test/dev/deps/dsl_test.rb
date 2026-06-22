@@ -155,6 +155,51 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl.constraint["target"] == "LinuxServer"
   end
 
+  test "group platform: stamps the platform onto every declaration in the group" do
+    When "defining a group pinned to a platform"
+    config = Dev::Deps.define do
+      group :integration, platform: "LinuxServer" do
+        ficsit "SML", version: "^3.12.0"
+      end
+    end
+
+    Then
+    decl = config.declarations[0]
+    decl.name == "SML"
+    decl.group == :integration
+    decl.platform == "LinuxServer"
+  end
+
+  test "group without platform leaves declaration platform nil" do
+    When "defining a group with no platform"
+    config = Dev::Deps.define do
+      group :app do
+        ficsit "SML", version: "^3.12.0"
+      end
+    end
+
+    Then
+    config.declarations[0].platform.nil?
+  end
+
+  test "the same dep declared in two groups produces two declarations with each group's platform" do
+    When "declaring SML in :app (default) and :integration (LinuxServer)"
+    config = Dev::Deps.define do
+      group :app do
+        ficsit "SML", version: "^3.12.0"
+      end
+      group :integration, platform: "LinuxServer" do
+        ficsit "SML", version: "^3.12.0"
+      end
+    end
+
+    Then "both declarations exist, carrying their own group's platform"
+    sml = config.declarations.select { |d| d.name == "SML" }
+    sml.size == 2
+    sml.map(&:platform).sort_by(&:to_s) == [nil, "LinuxServer"].sort_by(&:to_s)
+    sml.map { |d| d.group }.sort == [:app, :integration]
+  end
+
   test "gh() produces DependencyDeclaration named after the repo basename" do
     When "defining a gh release dep"
     config = Dev::Deps.define do
@@ -175,6 +220,37 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl.constraint["tag"] == "5.6.1-css-83"
     decl.constraint["assets"] == "UnrealEngine-CSS-Editor-Linux.tar.zst.*"
     decl.constraint["install_dir"] == "~/.dev/engines/unreal-engine-css"
+  end
+
+  test "steam() produces a DependencyDeclaration with steam integration" do
+    When "defining a steam dep in a LinuxServer group"
+    config = Dev::Deps.define do
+      group :integration, platform: "LinuxServer" do
+        steam "SatisfactoryServer", app: 1690800, install_dir: "~/.dev/satisfactory-server"
+      end
+    end
+
+    Then
+    decl = config.declarations[0]
+    decl.name == "SatisfactoryServer"
+    decl.integration == :steam
+    decl.group == :integration
+    decl.platform == "LinuxServer"
+    decl.constraint["app"] == 1690800
+    decl.constraint["install_dir"] == "~/.dev/satisfactory-server"
+    decl.constraint["branch"] == "public"
+  end
+
+  test "steam() accepts an explicit buildid pin" do
+    When "defining a steam dep with a pinned buildid"
+    config = Dev::Deps.define do
+      group :integration, platform: "LinuxServer" do
+        steam "SatisfactoryServer", app: 1690800, install_dir: "/srv", buildid: "15321746"
+      end
+    end
+
+    Then
+    config.declarations[0].constraint["buildid"] == "15321746"
   end
 
   test "brew with post_install stores callable in opts" do

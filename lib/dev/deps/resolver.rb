@@ -28,6 +28,7 @@ module Dev
       # @return [Array<Dependency>]
       # @raise [UnknownIntegrationError] if no repository is registered for a declaration's integration type
       def resolve(declarations)
+        platforms_by_name = platforms_by_name(declarations)
         resolved = {}
         queue = declarations.dup
 
@@ -42,6 +43,14 @@ module Dev
             "integration" => decl.integration.to_s,
             "group" => decl.group.to_s,
           )
+
+          # A dep declared in several groups is resolved once, for the union of
+          # those groups' platforms. nil entries mean "the integration's default
+          # platform" and are passed through so a multi-arch repository can expand
+          # them. We only attach "platforms" when at least one group pinned an
+          # explicit platform, so single-platform deps keep their legacy fetch id.
+          platforms = platforms_by_name[decl.name] || []
+          id["platforms"] = platforms if platforms.any? { |p| !p.nil? }
 
           dependency = repo.fetch(id)
           dependency = dependency.with(post_install: decl.post_install) if decl.post_install
@@ -62,6 +71,19 @@ module Dev
       end
 
       private
+
+      # Collect, per dependency name, the platforms of every group that declares
+      # it (preserving nils, which mean "integration default"). This is how the
+      # same dep declared in two groups gets resolved for the union of their
+      # platforms without per-dep platform lists.
+      #
+      # @param declarations [Array<DependencyDeclaration>]
+      # @return [Hash{String => Array<String, nil>}] name → de-duped platform list
+      def platforms_by_name(declarations)
+        result = Hash.new { |h, k| h[k] = [] }
+        declarations.each { |decl| result[decl.name] << decl.platform }
+        result.transform_values(&:uniq)
+      end
 
       # Normalize a transitive dep constraint to a Hash.
       #

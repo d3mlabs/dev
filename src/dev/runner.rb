@@ -130,6 +130,17 @@ module Dev
         )
         installer.install(env: Dev::Deps.detect_env)
       end)
+
+      registry.register("deps", BuiltinCommand.new(
+        desc: "Inspect locked dependencies (e.g. deps path ficsit <mod> <platform>)",
+      ) do |args, context|
+        require "dev/deps/accessor"
+        require "dev/deps/cache"
+        Dev::Deps::Accessor.new(
+          lockfile: Dev::Deps::Lockfile.new(dir: context.project_root),
+          cache: Dev::Deps::Cache.new,
+        ).run(args)
+      end)
     end
 
     # Build the repositories hash mapping integration types to Repository instances.
@@ -143,6 +154,7 @@ module Dev
       require "dev/deps/luarocks_repository"
       require "dev/deps/ficsit_repository"
       require "dev/deps/gh_repository"
+      require "dev/deps/steam_repository"
 
       git_repo = Dev::Deps::GitRepository.new
       {
@@ -151,12 +163,15 @@ module Dev
         luarocks: Dev::Deps::LuaRocksRepository.new,
         ficsit: Dev::Deps::FicsitRepository.new,
         gh: Dev::Deps::GhRepository.new,
+        steam: Dev::Deps::SteamRepository.new,
       }
     end
 
     # Build the integrations that install on the host (not in the build
-    # container). Today that's only gh releases — the UE engine must land on
-    # the host so it can be volume-mounted into the container.
+    # container) so they can be volume-mounted in:
+    # - gh: the UE engine (install_dir, mounted at /ue)
+    # - steam: the Satisfactory Dedicated Server (install_dir, mounted at /server)
+    # - ficsit: SML zips, content-cached (~/.dev/cache, mounted read-only)
     #
     # @return [Hash{Symbol => Dev::Deps::Integration}]
     sig { returns(T::Hash[Symbol, Dev::Deps::Integration]) }
@@ -164,11 +179,24 @@ module Dev
       require "dev/deps/cache"
       require "dev/deps/gh_repository"
       require "dev/deps/gh_integration"
+      require "dev/deps/ficsit_repository"
+      require "dev/deps/ficsit_integration"
+      require "dev/deps/steam_repository"
+      require "dev/deps/steam_integration"
 
+      cache = Dev::Deps::Cache.new
       {
         gh: Dev::Deps::GhIntegration.new(
           repository: Dev::Deps::GhRepository.new,
-          cache: Dev::Deps::Cache.new,
+          cache: cache,
+        ),
+        ficsit: Dev::Deps::FicsitIntegration.new(
+          repository: Dev::Deps::FicsitRepository.new,
+          cache: cache,
+        ),
+        steam: Dev::Deps::SteamIntegration.new(
+          repository: Dev::Deps::SteamRepository.new,
+          cache: cache,
         ),
       }
     end

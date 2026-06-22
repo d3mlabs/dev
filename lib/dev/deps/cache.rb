@@ -57,6 +57,16 @@ module Dev
         path_for(key).exist?
       end
 
+      # Resolve a key to its absolute on-disk path (whether or not it exists).
+      # Lets consumers locate a cached artifact without reconstructing the
+      # cache-dir layout.
+      #
+      # @param key [String] cache key
+      # @return [Pathname]
+      def path(key)
+        path_for(key)
+      end
+
       private
 
       def path_for(key)

@@ -54,9 +54,15 @@ module Dev
         @registered_methods << sym
       end
 
-      def group(name, &block)
+      # Declare a dependency group, optionally pinned to a platform.
+      #
+      # @param name [String, Symbol] group name (e.g. :app, :test, :integration)
+      # @param platform [String, nil] platform the group's deps target (e.g. "LinuxServer").
+      #   Stamped onto every declaration in the group so the resolver can union platforms
+      #   across groups for multi-arch integrations. nil lets each integration pick its default.
+      def group(name, platform: nil, &block)
         group_name = name.to_s
-        group_dsl = GroupDSL.new(group: group_name.to_sym, registered_methods: @registered_methods)
+        group_dsl = GroupDSL.new(group: group_name.to_sym, platform:, registered_methods: @registered_methods)
         group_dsl.instance_eval(&block) if block
         @groups[group_name] = group_dsl.to_h
         @declarations.concat(group_dsl.declarations)
@@ -100,9 +106,11 @@ module Dev
       attr_reader :declarations
 
       # @param group [Symbol] group name (e.g. :app, :test, :build)
+      # @param platform [String, nil] platform stamped onto every declaration in this group
       # @param registered_methods [Array<Symbol>] dynamically registered integration methods
-      def initialize(group:, registered_methods: [])
+      def initialize(group:, platform: nil, registered_methods: [])
         @group = group
+        @platform = platform
         @declarations = []
         @brew    = []
         @envs    = {}
@@ -155,6 +163,23 @@ module Dev
         add_declaration(name, :gh, spec)
       end
 
+      # Declare a Steam application dependency (e.g. the Satisfactory Dedicated
+      # Server), provisioned via SteamCMD into a host install_dir.
+      #
+      # The depot platform comes from the consuming group's platform:, so this
+      # method takes no platform of its own. Pass buildid: to pin an exact build;
+      # otherwise the resolver floats to the current public-branch build.
+      #
+      # @param name [String, Symbol] dependency name (e.g. "SatisfactoryServer")
+      # @param app [Integer, String] Steam app id (e.g. 1690800)
+      # @param install_dir [String] host directory the depot is installed into
+      # @param branch [String] Steam branch (default "public")
+      # @param spec [Hash] additional options (buildid:, etc.)
+      def steam(name, app:, install_dir:, branch: "public", **spec)
+        spec = spec.merge(app:, install_dir:, branch:)
+        add_declaration(name, :steam, spec)
+      end
+
       # Declare a dependency using any registered integration by name.
       #
       # @param name [String, Symbol] dependency name
@@ -183,7 +208,7 @@ module Dev
       end
 
       def to_h
-        { "brew" => @brew, "env" => @envs }
+        { "brew" => @brew, "env" => @envs, "platform" => @platform }
       end
 
       # Dispatch dynamically registered integration methods (e.g. wow_curseforge).
@@ -224,6 +249,7 @@ module Dev
           integration:,
           constraint:,
           group: @group,
+          platform: @platform,
           post_install:,
         )
       end

@@ -241,6 +241,44 @@ class Dev::Deps::ResolverTest < Minitest::Test
     child_id["version"] == ">= 2.0"
   end
 
+  test "unions platforms across groups and resolves a duplicated dep once" do
+    Given "SML declared in :app (no platform) and :integration (LinuxServer)"
+    sml = Dev::Deps::Dependency.new(name: "SML", integration: :ficsit, group: :app,
+                                    version: "3.12.0", hash: nil, metadata: {})
+    repo = StubRepository.new(deps_by_name: { "SML" => sml })
+    declarations = [
+      Dev::Deps::DependencyDeclaration.new(name: "SML", integration: :ficsit, group: :app),
+      Dev::Deps::DependencyDeclaration.new(name: "SML", integration: :ficsit, group: :integration,
+                                           platform: "LinuxServer"),
+    ]
+    resolver = Dev::Deps::Resolver.new(repositories: { ficsit: repo })
+
+    When "resolving"
+    result = resolver.resolve(declarations)
+
+    Then "fetched once, with the union of both groups' platforms"
+    result.size == 1
+    repo.fetched_ids.size == 1
+    repo.fetched_ids[0]["platforms"].sort_by(&:to_s) == [nil, "LinuxServer"].sort_by(&:to_s)
+  end
+
+  test "omits platforms from the fetch id when no group pins a platform" do
+    Given "a dep declared only in groups without a platform"
+    boost = Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
+                                      version: "1.0", hash: nil, metadata: {})
+    repo = StubRepository.new(deps_by_name: { "boost" => boost })
+    declarations = [
+      Dev::Deps::DependencyDeclaration.new(name: "boost", integration: :cmake, group: :app),
+    ]
+    resolver = Dev::Deps::Resolver.new(repositories: { cmake: repo })
+
+    When "resolving"
+    resolver.resolve(declarations)
+
+    Then "no platforms key leaks into the fetch id"
+    !repo.fetched_ids[0].key?("platforms")
+  end
+
   test "carries post_install from declaration to resolved dependency" do
     Given "a declaration with a post_install hook"
     hook = ->(dep, root) {}

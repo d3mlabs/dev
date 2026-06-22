@@ -132,6 +132,124 @@ class Dev::Deps::FicsitRepositoryTest < Minitest::Test
     dep.hash == "SHA256=winhash"
   end
 
+  test "fetch resolves multiple platforms into nested metadata with absolute links" do
+    Given "a mod with Windows and LinuxServer targets and relative links"
+    repo = Dev::Deps::FicsitRepository.new
+    graphql_response = {
+      "data" => {
+        "getModByReference" => {
+          "id" => "abc123",
+          "name" => "SML",
+          "mod_reference" => "SML",
+          "versions" => [{
+            "id" => "ver1",
+            "version" => "3.12.0",
+            "game_version" => ">=491125",
+            "targets" => [
+              { "targetName" => "Windows", "hash" => "winhash", "size" => 100,
+                "link" => "/v1/version/ver1/Windows/download" },
+              { "targetName" => "LinuxServer", "hash" => "linuxhash", "size" => 200,
+                "link" => "/v1/version/ver1/LinuxServer/download" },
+            ],
+            "dependencies" => [],
+          }],
+        },
+      },
+    }
+    stub_response = stub(body: JSON.generate(graphql_response))
+    stub_response.stubs(:is_a?).with(Net::HTTPSuccess).returns(true)
+    repo.stubs(:post_graphql).returns(stub_response)
+
+    When "fetching with a platform set including the nil default and LinuxServer"
+    dep = repo.fetch(
+      "name" => "SML",
+      "integration" => "ficsit",
+      "group" => "app",
+      "platforms" => [nil, "LinuxServer"],
+    )
+
+    Then
+    dep.version == "3.12.0"
+    dep.hash.nil?
+    dep.metadata["platforms"]["Windows"]["hash"] == "SHA256=winhash"
+    dep.metadata["platforms"]["Windows"]["link"] == "https://api.ficsit.app/v1/version/ver1/Windows/download"
+    dep.metadata["platforms"]["LinuxServer"]["hash"] == "SHA256=linuxhash"
+    dep.metadata["platforms"]["LinuxServer"]["link"] == "https://api.ficsit.app/v1/version/ver1/LinuxServer/download"
+    !dep.metadata.key?("target")
+  end
+
+  test "fetch builds the download link from the version id when link is absent" do
+    Given "a target without a link field"
+    repo = Dev::Deps::FicsitRepository.new
+    graphql_response = {
+      "data" => {
+        "getModByReference" => {
+          "id" => "abc123",
+          "name" => "SML",
+          "mod_reference" => "SML",
+          "versions" => [{
+            "id" => "ver1",
+            "version" => "3.12.0",
+            "game_version" => ">=491125",
+            "targets" => [{ "targetName" => "LinuxServer", "hash" => "linuxhash", "size" => 200 }],
+            "dependencies" => [],
+          }],
+        },
+      },
+    }
+    stub_response = stub(body: JSON.generate(graphql_response))
+    stub_response.stubs(:is_a?).with(Net::HTTPSuccess).returns(true)
+    repo.stubs(:post_graphql).returns(stub_response)
+
+    When "fetching the LinuxServer platform"
+    dep = repo.fetch(
+      "name" => "SML",
+      "integration" => "ficsit",
+      "group" => "integration",
+      "platforms" => ["LinuxServer"],
+    )
+
+    Then
+    dep.metadata["platforms"]["LinuxServer"]["link"] ==
+      "https://api.ficsit.app/v1/version/ver1/LinuxServer/download"
+  end
+
+  test "fetch raises TargetNotFoundError when a requested platform has no target" do
+    Given "a mod with only a Windows target"
+    repo = Dev::Deps::FicsitRepository.new
+    graphql_response = {
+      "data" => {
+        "getModByReference" => {
+          "id" => "abc123",
+          "name" => "SML",
+          "mod_reference" => "SML",
+          "versions" => [{
+            "id" => "ver1",
+            "version" => "3.12.0",
+            "game_version" => ">=491125",
+            "targets" => [{ "targetName" => "Windows", "hash" => "winhash", "size" => 100,
+                            "link" => "/v1/version/ver1/Windows/download" }],
+            "dependencies" => [],
+          }],
+        },
+      },
+    }
+    stub_response = stub(body: JSON.generate(graphql_response))
+    stub_response.stubs(:is_a?).with(Net::HTTPSuccess).returns(true)
+    repo.stubs(:post_graphql).returns(stub_response)
+
+    When "fetching a missing LinuxServer platform"
+    repo.fetch(
+      "name" => "SML",
+      "integration" => "ficsit",
+      "group" => "integration",
+      "platforms" => ["LinuxServer"],
+    )
+
+    Then
+    raises Dev::Deps::FicsitRepository::TargetNotFoundError
+  end
+
   test "fetch raises ModNotFoundError when mod does not exist" do
     Given "a repository returning null mod data"
     repo = Dev::Deps::FicsitRepository.new
