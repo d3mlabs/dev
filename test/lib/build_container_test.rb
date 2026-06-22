@@ -400,6 +400,96 @@ class BuildContainerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "content_tag is unaffected by a structure_globs file's content change" do
+    Given "a project whose Build.cs is hashed as structure (paths only)"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
+    FileUtils.mkdir_p(File.join(dir, "Mods/Snappy/Source/Snappy"))
+    build_cs = File.join(dir, "Mods/Snappy/Source/Snappy/Snappy.Build.cs")
+    File.write(build_cs, "// deps: Core")
+    globs = ["Mods/*/Source/*/*.Build.cs"]
+    tag_a = BuildContainer.content_tag(project_root: Pathname(dir), structure_globs: globs)
+
+    When "the Build.cs contents change but the module set does not"
+    File.write(build_cs, "// deps: Core, UMG, Slate, AssetRegistry")
+    tag_b = BuildContainer.content_tag(project_root: Pathname(dir), structure_globs: globs)
+
+    Then "the tag is unchanged: a dependency edit must not invalidate the image"
+    tag_a == tag_b
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "content_tag changes when a structure_globs path is added" do
+    Given "a project with one module's Build.cs hashed as structure"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
+    FileUtils.mkdir_p(File.join(dir, "Mods/Snappy/Source/Snappy"))
+    File.write(File.join(dir, "Mods/Snappy/Source/Snappy/Snappy.Build.cs"), "// deps")
+    globs = ["Mods/*/Source/*/*.Build.cs"]
+    tag_a = BuildContainer.content_tag(project_root: Pathname(dir), structure_globs: globs)
+
+    When "a second module is added (a new Build.cs path)"
+    FileUtils.mkdir_p(File.join(dir, "Mods/Snappy/Source/SnappyTests"))
+    File.write(File.join(dir, "Mods/Snappy/Source/SnappyTests/SnappyTests.Build.cs"), "// deps")
+    tag_b = BuildContainer.content_tag(project_root: Pathname(dir), structure_globs: globs)
+
+    Then "the tag changes: adding/removing a module must invalidate the image"
+    tag_a != tag_b
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "content_tag changes when a structure_globs path is removed" do
+    Given "a project with two modules' Build.cs hashed as structure"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
+    FileUtils.mkdir_p(File.join(dir, "Mods/Snappy/Source/Snappy"))
+    FileUtils.mkdir_p(File.join(dir, "Mods/Snappy/Source/SnappyTests"))
+    File.write(File.join(dir, "Mods/Snappy/Source/Snappy/Snappy.Build.cs"), "// deps")
+    tests_cs = File.join(dir, "Mods/Snappy/Source/SnappyTests/SnappyTests.Build.cs")
+    File.write(tests_cs, "// deps")
+    globs = ["Mods/*/Source/*/*.Build.cs"]
+    tag_a = BuildContainer.content_tag(project_root: Pathname(dir), structure_globs: globs)
+
+    When "a module is removed (its Build.cs path disappears)"
+    File.delete(tests_cs)
+    tag_b = BuildContainer.content_tag(project_root: Pathname(dir), structure_globs: globs)
+
+    Then
+    tag_a != tag_b
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "image_with_tag honors config.structure_globs" do
+    Given "two configs differing only by a structural module path"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
+    FileUtils.mkdir_p(File.join(dir, "Mods/Snappy/Source/Snappy"))
+    File.write(File.join(dir, "Mods/Snappy/Source/Snappy/Snappy.Build.cs"), "// deps")
+    structure = ["Mods/*/Source/*/*.Build.cs"]
+    config = Dev::BuildContainerConfig.new(
+      image: "snappy-linux", registry: "jpduchesne89", structure_globs: structure,
+    )
+    ref_a = BuildContainer.image_with_tag(config, project_root: Pathname(dir))
+
+    When "a module is added"
+    FileUtils.mkdir_p(File.join(dir, "Mods/Snappy/Source/SnappyTests"))
+    File.write(File.join(dir, "Mods/Snappy/Source/SnappyTests/SnappyTests.Build.cs"), "// deps")
+    ref_b = BuildContainer.image_with_tag(config, project_root: Pathname(dir))
+
+    Then "the full image reference changes via the structural path set"
+    ref_a != ref_b
+    ref_a.start_with?("jpduchesne89/snappy-linux:content-")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "build_contexts_from_lockfile returns build-group install_dirs" do
     Given "a build-deps.lock with an engine install_dir and a context-less dep"
     dir = Dir.mktmpdir("build-container-test-")

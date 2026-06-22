@@ -52,13 +52,15 @@ module Dev
       build_secrets = (container["build_secrets"] || {}).to_h { |k, v| [k.to_s, v.to_s] }
       run_env = (container["run_env"] || {}).to_h { |k, v| [k.to_s, v.to_s] }
       content_globs = Array(container["content_globs"]).map(&:to_s)
+      structure_globs = Array(container["structure_globs"]).map(&:to_s)
       prewarm = container["prewarm"]&.to_s
       prewarm = nil if prewarm&.empty?
       persist = container["persist"] == true
       BuildContainerConfig.new(
         image: image, registry: registry, volumes: volumes,
         build_args: build_args, build_secrets: build_secrets,
-        run_env: run_env, content_globs: content_globs, prewarm: prewarm,
+        run_env: run_env, content_globs: content_globs,
+        structure_globs: structure_globs, prewarm: prewarm,
         persist: persist,
       )
     end

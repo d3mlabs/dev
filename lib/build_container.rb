@@ -27,12 +27,18 @@ module BuildContainer
 
   # Compute the content-addressed tag from Dockerfile + lockfiles + globs.
   #
-  # @param project_root [Pathname] project root containing Dockerfile etc.
-  # @param extra_globs  [Array<String>] additional project-relative globs whose
+  # @param project_root    [Pathname] project root containing Dockerfile etc.
+  # @param extra_globs      [Array<String>] additional project-relative globs whose
   #   matched files contribute to the hash (path + content), e.g. a mod's
   #   *.Build.cs. Sorted for determinism; missing matches contribute nothing.
+  # @param structure_globs  [Array<String>] project-relative globs whose matched
+  #   *paths* (not contents) contribute to the hash. Use for inputs where the set
+  #   of matching files is structural but their contents are not, e.g. one
+  #   *.Build.cs per build module: adding/removing a module changes the path set
+  #   (and the tag), while editing a module's dependency list does not. Sorted
+  #   for determinism; missing matches contribute nothing.
   # @return [String] tag like "content-a1b2c3d4e5f6"
-  def content_tag(project_root:, extra_globs: [])
+  def content_tag(project_root:, extra_globs: [], structure_globs: [])
     root = Pathname(project_root)
     file_content = CONTENT_FILES
       .map { |f| root / f }
@@ -47,7 +53,14 @@ module BuildContainer
       .map { |rel| "#{rel}\n#{(root / rel).read}" }
       .join
 
-    hash = Digest::SHA256.hexdigest(file_content + glob_content)[0, 12]
+    # Paths only: the *existence* of these files matters, not their contents.
+    structure_content = structure_globs
+      .flat_map { |pattern| Dir.glob(pattern, base: root.to_s) }
+      .uniq
+      .sort
+      .join("\n")
+
+    hash = Digest::SHA256.hexdigest(file_content + glob_content + structure_content)[0, 12]
     "#{TAG_PREFIX}#{hash}"
   end
 
@@ -58,7 +71,8 @@ module BuildContainer
   # @return [String] e.g. "jpduchesne89/snappy-linux:content-a1b2c3d4e5f6"
   def image_with_tag(config, project_root:)
     globs = config.respond_to?(:content_globs) ? config.content_globs : []
-    "#{config.image_ref}:#{content_tag(project_root:, extra_globs: globs)}"
+    structure_globs = config.respond_to?(:structure_globs) ? config.structure_globs : []
+    "#{config.image_ref}:#{content_tag(project_root:, extra_globs: globs, structure_globs:)}"
   end
 
   # Ensure the build container image exists: use a local image if present,

@@ -40,7 +40,13 @@ module Dev
   # content_globs adds project files (matched relative to the project root) to
   # the content-addressed image tag, on top of the always-hashed Dockerfile /
   # .dockerignore / lockfiles. Use it so structural inputs baked into the image
-  # (e.g. a mod's *.Build.cs) invalidate the image when they change.
+  # (e.g. a build script) invalidate the image when their *contents* change.
+  #
+  # structure_globs is the same idea but hashes only the *set of matching paths*,
+  # not their contents: the existence of these files matters, not what is in
+  # them. Use it when the file set is structural but per-file contents are not —
+  # e.g. one *.Build.cs per build module, where adding/removing a module must
+  # invalidate the image but editing a module's dependency list must not.
   #
   # prewarm, when set, switches image creation from a single `docker build` to a
   # build -> `docker run` -> `docker commit` flow: the Dockerfile builds the
@@ -85,6 +91,9 @@ module Dev
     sig { returns(T::Array[String]) }
     attr_reader :content_globs
 
+    sig { returns(T::Array[String]) }
+    attr_reader :structure_globs
+
     sig { returns(T.nilable(String)) }
     attr_reader :prewarm
 
@@ -100,12 +109,13 @@ module Dev
         build_secrets: T::Hash[String, String],
         run_env: T::Hash[String, String],
         content_globs: T::Array[String],
+        structure_globs: T::Array[String],
         prewarm: T.nilable(String),
         persist: T::Boolean,
       ).void
     end
     def initialize(image:, registry:, volumes: [], build_args: {}, build_secrets: {},
-                   run_env: {}, content_globs: [], prewarm: nil, persist: false)
+                   run_env: {}, content_globs: [], structure_globs: [], prewarm: nil, persist: false)
       @image = T.let(image, String)
       @registry = T.let(registry, String)
       @volumes = T.let(volumes, T::Array[String])
@@ -113,6 +123,7 @@ module Dev
       @build_secrets = T.let(build_secrets, T::Hash[String, String])
       @run_env = T.let(run_env, T::Hash[String, String])
       @content_globs = T.let(content_globs, T::Array[String])
+      @structure_globs = T.let(structure_globs, T::Array[String])
       @prewarm = T.let(prewarm, T.nilable(String))
       @persist = T.let(persist, T::Boolean)
     end
@@ -130,8 +141,8 @@ module Dev
       @image == other.image && @registry == other.registry &&
         @volumes == other.volumes && @build_args == other.build_args &&
         @build_secrets == other.build_secrets && @run_env == other.run_env &&
-        @content_globs == other.content_globs && @prewarm == other.prewarm &&
-        @persist == other.persist
+        @content_globs == other.content_globs && @structure_globs == other.structure_globs &&
+        @prewarm == other.prewarm && @persist == other.persist
     end
 
     sig { params(other: Object).returns(T::Boolean) }
@@ -142,7 +153,7 @@ module Dev
     sig { returns(Integer) }
     def hash
       [@image, @registry, @volumes, @build_args, @build_secrets, @run_env,
-       @content_globs, @prewarm, @persist].hash
+       @content_globs, @structure_globs, @prewarm, @persist].hash
     end
   end
 end

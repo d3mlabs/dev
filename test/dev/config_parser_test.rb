@@ -280,6 +280,34 @@ class ConfigParserTest < Minitest::Test
     tmp.close!
   end
 
+  test "#parse extracts build.container structure_globs" do
+    Given "a dev.yml file with container structure_globs"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: snappy
+      build:
+        container:
+          image: snappy-linux
+          registry: jpduchesne89
+          structure_globs:
+            - "Mods/*/Source/*/*.Build.cs"
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+    tmp.flush
+
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
+
+    Then
+    config.build_container.structure_globs == ["Mods/*/Source/*/*.Build.cs"]
+
+    Cleanup
+    tmp.close!
+  end
+
   test "#parse extracts build.container prewarm command" do
     Given "a dev.yml file with a container prewarm command"
     tmp = Tempfile.new(["dev", ".yml"])
@@ -333,8 +361,8 @@ class ConfigParserTest < Minitest::Test
     tmp.close!
   end
 
-  test "#parse defaults build.container build_secrets and content_globs to empty" do
-    Given "a dev.yml file without build_secrets or content_globs"
+  test "#parse defaults build.container build_secrets, content_globs and structure_globs to empty" do
+    Given "a dev.yml file without build_secrets, content_globs or structure_globs"
     tmp = Tempfile.new(["dev", ".yml"])
     tmp.write(<<~YAML)
       name: snappy
@@ -355,6 +383,7 @@ class ConfigParserTest < Minitest::Test
     Then
     config.build_container.build_secrets == {}
     config.build_container.content_globs == []
+    config.build_container.structure_globs == []
 
     Cleanup
     tmp.close!

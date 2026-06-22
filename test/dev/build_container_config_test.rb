@@ -51,4 +51,23 @@ class Dev::BuildContainerConfigTest < Minitest::Test
     a != b
     a.hash != b.hash
   end
+
+  test "structure_globs defaults to empty" do
+    When "creating a config without structure_globs"
+    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
+
+    Then
+    config.structure_globs == []
+  end
+
+  test "inequality when structure_globs differs" do
+    Given "two configs differing only in structure_globs"
+    a = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89",
+      structure_globs: ["Mods/*/Source/*/*.Build.cs"])
+    b = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
+
+    Expect
+    a != b
+    a.hash != b.hash
+  end
 end
