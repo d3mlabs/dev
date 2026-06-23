@@ -20,7 +20,12 @@ module Dev
     # Deliberately bypasses the shared download Cache: artifacts here are
     # multi-gigabyte (the UE engine is ~8GB compressed), so parking a second
     # copy in ~/.dev/cache would double disk usage for no benefit. The
-    # install_dir plus marker file is the cache.
+    # version-keyed install dir plus its marker file is the cache.
+    #
+    # Each release installs into an immutable version-keyed subdir
+    # (install_dir/<tag>/, see Integration's version-keyed layout), so distinct
+    # locked tags coexist, branch switches never reinstall, and concurrent jobs
+    # never overwrite a directory another is mounting.
     class GhIntegration < Integration
       class DownloadError < StandardError; end
       class IntegrityError < StandardError; end
@@ -40,16 +45,16 @@ module Dev
 
       # @param dep [Dependency]
       def install(dep)
-        install_dir = Pathname(File.expand_path(dep.metadata["install_dir"]))
-        if installed?(install_dir, dep.version)
-          puts ">>> #{dep.name}@#{dep.version} already installed at #{install_dir}"
+        base_dir = Pathname(File.expand_path(dep.metadata["install_dir"]))
+        target_dir = versioned_dir(base_dir, dep.version)
+        if version_published?(target_dir, MARKER_FILE, dep.version)
+          puts ">>> #{dep.name}@#{dep.version} already installed at #{target_dir}"
           return
         end
 
-        # Staging lives next to install_dir so the final move is a cheap
-        # same-filesystem rename, and a crashed run leaves install_dir intact.
-        staging_dir = Pathname("#{install_dir}.staging")
-        FileUtils.rm_rf(staging_dir)
+        # Staging lives next to the version dirs so the publish is a cheap
+        # same-filesystem rename; a crashed run leaves published versions intact.
+        staging_dir = new_staging_dir(base_dir)
         archives_dir = staging_dir / "archives"
         extracted_dir = staging_dir / "extracted"
         FileUtils.mkdir_p(archives_dir)
@@ -62,20 +67,16 @@ module Dev
         puts ">>> Extracting #{dep.name}@#{dep.version}"
         extract_archives(archives_dir, extracted_dir)
 
-        FileUtils.rm_rf(install_dir)
-        FileUtils.mkdir_p(install_dir.dirname)
-        FileUtils.mv(extracted_dir, install_dir)
-        (install_dir / MARKER_FILE).write(dep.version)
-        FileUtils.rm_rf(staging_dir)
-        puts ">>> Installed #{dep.name}@#{dep.version} to #{install_dir}"
-      end
-
-      # @param install_dir [Pathname]
-      # @param tag [String] locked release tag
-      # @return [Boolean]
-      def installed?(install_dir, tag)
-        marker = install_dir / MARKER_FILE
-        marker.file? && marker.read.strip == tag
+        # Stamp the marker inside staging so the published dir is atomically
+        # complete: a reader never sees content without a valid marker.
+        (extracted_dir / MARKER_FILE).write(dep.version)
+        if publish_version(extracted_dir, target_dir)
+          puts ">>> Installed #{dep.name}@#{dep.version} to #{target_dir}"
+        else
+          puts ">>> #{dep.name}@#{dep.version} published concurrently at #{target_dir}"
+        end
+      ensure
+        FileUtils.rm_rf(staging_dir) if staging_dir
       end
 
       # Download the locked release assets. Isolated so tests can stub the

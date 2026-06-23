@@ -115,6 +115,8 @@ commands:
     - `desc`: Short description (shown in `dev` / `dev --help`).
     - `run`: Shell command to execute (from the repo root). Any extra args passed to `dev <cmd> [args...]` are forwarded to this command.
     - `repl`: *(optional, default `false`)* When `true`, the command execs directly without a status footer. Use this for long-running interactive sessions like consoles and REPLs where a trailing `✓ Done` doesn't make sense.
+    - `container`: *(optional, default `true` when `build.container` is configured)* When `false`, the command runs on the host (via `shadowenv exec`) instead of inside the build container. Use for host-side commands like provisioning (`up`) or deploying.
+    - `hidden`: *(optional, default `false`)* When `true`, the command is still callable (`dev <cmd>`) but omitted from `dev` / `dev --help` output. Use for internal plumbing — e.g. a `build` primitive that an intent command (`test`, `release`) calls but that developers shouldn't invoke directly.
 
 ## Examples
 
@@ -229,7 +231,55 @@ Custom integrations implement `Dev::Deps::Integration` (with `install_all(pins, 
 ### Built-in commands
 
 - **`dev update-deps`** — resolve constraints from `dependencies.rb`, write lockfiles. Always available (no need to define in `dev.yml`).
+- **`dev install-deps`** — install locked deps handled on the host (gh releases, steam apps) into their version-keyed install dirs.
 - **`dev up`** — auto-installs all deps from lockfiles (build group first), then runs the project's `up:` command from `dev.yml` if defined.
+- **`dev deps path <integration> <name> <platform>`** — print the absolute path of a locked, cached artifact (e.g. `dev deps path ficsit SML LinuxServer`) so scripts don't reconstruct cache keys.
+- **`dev cred get <namespace> <key>`** — resolve a credential through the provider chain (ENV → keychain → file → prompt) and print it. A non-interactive miss errors with `gh secret set` guidance. Mirrors `dev deps path` for shell consumers (e.g. a staging sync).
+- **`dev cache gc [--keep N]`** — reclaim host caches dev owns (see below).
+- **`dev reset-container`** — remove the persistent build container (clears its incremental cache); registered only when `build.container.persist` is set.
+
+## Build container & caching model
+
+For repos that declare a `build.container`, dev builds and runs commands inside a content-addressed Docker image, backed by host-side caches it owns end to end. The guiding principle throughout is **content-addressing**: an artifact's identity is a hash of its inputs, so distinct versions coexist instead of overwriting, and identical inputs are never rebuilt.
+
+### Content-addressed image tag
+
+The image tag is `content-<hash>`, where the hash covers the `Dockerfile`, `.dockerignore`, both lockfiles, and any project-declared `content_globs` (file contents) / `structure_globs` (path set only). Any change to those inputs yields a new tag — and therefore a guaranteed rebuild — while an unchanged set is a guaranteed cache hit.
+
+`ensure_image!` resolves the image in three steps, cheapest first:
+
+1. **local** — a matching local image is honored as-is (manual builds work).
+2. **pull** — otherwise pull the tag from the registry (the CI-produced image lands here).
+3. **build** — only on a miss, build it locally (and push if configured).
+
+### Prewarm
+
+A large base dependency (e.g. a game engine) is too big to stream into a `docker build` (BuildKit's build-context transport stalls under emulation). Instead, dev builds a cheap engine-free **base** image from the `Dockerfile`, then runs the project's `prewarm:` command in a container with the dependency volume-mounted and `build_secrets` file-mounted at `/run/secrets/<id>`, and commits the result as the content tag. Secrets are bind-mounted (never `-e`), so `docker commit` can't bake them into a layer.
+
+### install_dir content-addressing (version-keyed)
+
+Multi-GB host deps (`gh` releases, `steam` apps) bypass the download cache and install under their declared `install_dir`, **keyed by version**:
+
+```
+<install_dir>/<version>/…        # immutable; one dir per locked version
+```
+
+Installs are **atomic and concurrency-safe**: dev builds into a unique same-filesystem staging dir, stamps a marker, then publishes via a single `rename`. First writer wins — a second concurrent installer of the same version sees the published dir and discards its staging, and dev never `rm_rf`s a live directory a running job may have mounted. Switching branches (different locked versions) never reinstalls, and different-version builds can run in parallel.
+
+dev resolves the configured volume/build-context onto the right versioned subdir from the lockfile, so a `dev.yml` volume like `~/.dev/engines/unreal-engine-css:/ue` is mounted from `…/unreal-engine-css/<locked-version>` automatically.
+
+### Hung-build watcher
+
+The prewarm runs under a watcher that detects the intermittent emulated-compiler deadlock (container silent **and** ~0% CPU): it kills and retries a hang, retries a transient crash signature (e.g. a Rosetta/clang crash), and **fails fast** on a genuine compile error. Retries are capped and rely on the build tool's atomic intermediate writes, so a retry resumes incrementally.
+
+### `dev cache gc`
+
+dev owns the cache layout, so it owns reclamation. `dev cache gc [--keep N]` applies **size-tiered, safe** retention:
+
+- **install_dir versions** (multi-GB) get a tight default keep. Locked versions (current lockfiles) and in-use versions (mounted by a running container) are **never** evicted; orphan staging dirs from a killed install are always reclaimed.
+- **docker content tags** for the project image are pruned down to the live tag (never one backing a running container).
+
+A workflow/cron only *schedules* `dev cache gc`; it never reaches into the layout itself.
 
 ## Releasing a new version
 

@@ -20,6 +20,12 @@ module Dev
     # Whether this command slot is final (cannot be overridden).
     sig { abstract.returns(T::Boolean) }
     def final?; end
+
+    # Whether this command is callable but omitted from `dev`/`dev --help`
+    # usage. Used for internal plumbing (e.g. build primitives) a project keeps
+    # invocable without advertising it. Visible by default.
+    sig { returns(T::Boolean) }
+    def hidden? = false
   end
 
   # Shell command from dev.yml. Wraps a run string, optional description, repl flag,
@@ -43,16 +49,27 @@ module Dev
     sig { returns(T::Boolean) }
     attr_reader :container
 
-    sig { params(run: String, desc: String, repl: T::Boolean, container: T::Boolean).void }
-    def initialize(run:, desc: "(no description)", repl: false, container: true)
+    # Whether this command is omitted from usage output. Set via `hidden: true`
+    # in dev.yml for internal build primitives that stay callable but unlisted.
+    sig { returns(T::Boolean) }
+    attr_reader :hidden
+
+    sig do
+      params(run: String, desc: String, repl: T::Boolean, container: T::Boolean, hidden: T::Boolean).void
+    end
+    def initialize(run:, desc: "(no description)", repl: false, container: true, hidden: false)
       @run = T.let(run, String)
       @desc = T.let(desc, String)
       @repl = T.let(repl, T::Boolean)
       @container = T.let(container, T::Boolean)
+      @hidden = T.let(hidden, T::Boolean)
     end
 
     sig { override.returns(T::Boolean) }
     def final? = true
+
+    sig { override.returns(T::Boolean) }
+    def hidden? = @hidden
 
     sig { override.params(args: T::Array[String], context: T.untyped).void }
     def execute(args:, context:)
@@ -69,7 +86,8 @@ module Dev
     def ==(other)
       return false unless other.is_a?(ShellCommand)
 
-      @run == other.run && @desc == other.desc && @repl == other.repl && @container == other.container
+      @run == other.run && @desc == other.desc && @repl == other.repl &&
+        @container == other.container && @hidden == other.hidden
     end
 
     sig { params(other: Object).returns(T::Boolean) }
@@ -79,7 +97,7 @@ module Dev
 
     sig { returns(Integer) }
     def hash
-      [@run, @desc, @repl, @container].hash
+      [@run, @desc, @repl, @container, @hidden].hash
     end
   end
 end

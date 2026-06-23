@@ -513,6 +513,99 @@ class BuildContainerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "build_contexts_from_lockfile points at the version-keyed subdir when a version is locked" do
+    Given "a build-deps.lock whose engine dep declares a version"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "build-deps.lock"), <<~LOCK)
+      UnrealEngine:
+        integration: gh
+        group: build
+        version: "5.6.1-css-83"
+        install_dir: "~/.dev/engines/unreal-engine-css"
+    LOCK
+
+    When "computing build contexts"
+    contexts = BuildContainer.build_contexts_from_lockfile(Pathname(dir))
+
+    Then "the host path includes the locked version"
+    contexts == { "unrealengine" => File.join(File.expand_path("~/.dev/engines/unreal-engine-css"), "5.6.1-css-83") }
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "resolve_versioned_volumes rewrites a locked install_dir volume to its versioned subdir" do
+    Given "lockfiles pinning an engine (build) and a server (integration) install_dir"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "build-deps.lock"), <<~LOCK)
+      UnrealEngine:
+        integration: gh
+        group: build
+        version: "5.6.1-css-83"
+        install_dir: "/opt/engines/ue"
+    LOCK
+    File.write(File.join(dir, "deps.lock"), <<~LOCK)
+      SatisfactoryServer:
+        integration: steam
+        group: integration
+        version: "15321746"
+        install_dir: "/opt/satisfactory-server"
+    LOCK
+
+    When "resolving a mix of locked and unlocked volumes"
+    resolved = BuildContainer.resolve_versioned_volumes(
+      ["/opt/engines/ue:/ue", "/opt/satisfactory-server:/server", "~/.dev/cache:/cache:ro"],
+      project_root: Pathname(dir),
+    )
+
+    Then "locked volumes gain their version subdir; the cache volume (and its :ro) is untouched"
+    resolved == [
+      "/opt/engines/ue/5.6.1-css-83:/ue",
+      "/opt/satisfactory-server/15321746:/server",
+      "~/.dev/cache:/cache:ro",
+    ]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "resolve_versioned_volumes is identity when no lockfiles are present" do
+    Given "a project with no lockfiles"
+    dir = Dir.mktmpdir("build-container-test-")
+
+    When "resolving volumes"
+    resolved = BuildContainer.resolve_versioned_volumes(["/opt/engines/ue:/ue"], project_root: Pathname(dir))
+
+    Then
+    resolved == ["/opt/engines/ue:/ue"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_dir_versions collects env-nested build deps that declare a version" do
+    Given "a build-deps.lock with an env-scoped install_dir"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "build-deps.lock"), <<~LOCK)
+      env:
+        ci:
+          UnrealEngine:
+            integration: gh
+            group: build
+            version: "5.6.1-css-83"
+            install_dir: "/opt/engines/ue"
+    LOCK
+
+    When "collecting install_dir versions"
+    versions = BuildContainer.install_dir_versions(Pathname(dir))
+
+    Then
+    versions == { "/opt/engines/ue" => "5.6.1-css-83" }
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "build_contexts_from_lockfile is empty without a lockfile" do
     Given "a project with no build-deps.lock"
     dir = Dir.mktmpdir("build-container-test-")
@@ -656,7 +749,7 @@ class BuildContainerTest < Minitest::Test
     1 * BuildContainer.pull(tag) >> false
     1 * BuildContainer.build!("#{tag}-base", project_root: Pathname(dir), build_args: {},
       build_contexts: {}, secrets: {}) >> true
-    1 * BuildContainer.prewarm_commit!("#{tag}-base", tag, config: config,
+    1 * BuildContainer.prewarm_commit!("#{tag}-base", tag, volumes: ["/engines/ue:/ue"],
       prewarm: "bash /work/bin/prewarm.sh", secrets: {}) >> true
     1 * BuildContainer.remove_image("#{tag}-base") >> true
     1 * BuildContainer.push!(tag) >> true
@@ -666,45 +759,41 @@ class BuildContainerTest < Minitest::Test
   end
 
   test "prewarm_commit! runs the prewarm with dep volumes and secret files, commits, and cleans up" do
-    Given "config volumes and a secret"
-    config = Dev::BuildContainerConfig.new(
-      image: "snappy-linux", registry: "jpduchesne89", volumes: ["/engines/ue:/ue"],
-    )
+    Given "resolved dep volumes and a secret"
 
     When "running the prewarm commit"
     BuildContainer.send(
       :prewarm_commit!, "img:tag-base", "img:tag",
-      config: config, prewarm: "bash /work/bin/prewarm.sh", secrets: { "WWISE_TOKEN" => "tok" }
+      volumes: ["/engines/ue:/ue"], prewarm: "bash /work/bin/prewarm.sh", secrets: { "WWISE_TOKEN" => "tok" }
     )
 
-    Then "the run mounts the engine + secret file (never -e: commit would bake env), commits that container, and removes it"
+    Then "the run mounts the engine + secret file (never -e: commit would bake env), runs under the watcher, commits, and removes it"
     1 * BuildContainer.prewarm_container_name >> "dev-prewarm-test"
     1 * BuildContainer.write_secret_files({ "WWISE_TOKEN" => "tok" }) >> { "WWISE_TOKEN" => "/tmp/dev-secret-xyz" }
-    1 * BuildContainer.system("docker", "run", "--name", "dev-prewarm-test",
+    1 * BuildContainer.run_watched(["docker", "run", "--name", "dev-prewarm-test",
       "-v", "/engines/ue:/ue",
       "-v", "/tmp/dev-secret-xyz:/run/secrets/WWISE_TOKEN:ro",
-      "img:tag-base", "sh", "-c", "bash /work/bin/prewarm.sh") >> true
+      "img:tag-base", "sh", "-c", "bash /work/bin/prewarm.sh"], container: "dev-prewarm-test") >> true
     1 * BuildContainer.system("docker", "commit", "dev-prewarm-test", "img:tag") >> true
     1 * BuildContainer.system("docker", "rm", "-f", "dev-prewarm-test",
       out: File::NULL, err: File::NULL) >> true
   end
 
   test "prewarm_commit! raises when the prewarm run fails, still removing the container" do
-    Given "config and a prewarm command that fails"
-    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
+    Given "a prewarm command that fails"
 
     When "running the prewarm commit"
     BuildContainer.send(
       :prewarm_commit!, "img:tag-base", "img:tag",
-      config: config, prewarm: "false", secrets: {}
+      volumes: [], prewarm: "false", secrets: {}
     )
 
     Then "it surfaces the failure and the ensure block removes the container (no commit)"
     raises RuntimeError
     1 * BuildContainer.prewarm_container_name >> "dev-prewarm-test"
     1 * BuildContainer.write_secret_files({}) >> {}
-    1 * BuildContainer.system("docker", "run", "--name", "dev-prewarm-test",
-      "img:tag-base", "sh", "-c", "false") >> false
+    1 * BuildContainer.run_watched(["docker", "run", "--name", "dev-prewarm-test",
+      "img:tag-base", "sh", "-c", "false"], container: "dev-prewarm-test") >> false
     1 * BuildContainer.system("docker", "rm", "-f", "dev-prewarm-test",
       out: File::NULL, err: File::NULL) >> true
   end

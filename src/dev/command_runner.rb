@@ -96,9 +96,13 @@ module Dev
         .returns(T::Array[String])
     end
     def container_command(config, image_tag, shell_command)
+      # Resolve configured volumes onto the version-keyed install dirs the
+      # integrations publish, so the command mounts the exact locked version.
+      volumes = BuildContainer.resolve_versioned_volumes(config.volumes, project_root: @project_root)
+
       if config.persist
         container = BuildContainer.ensure_service!(
-          image_tag, project_root: @project_root, volumes: config.volumes,
+          image_tag, project_root: @project_root, volumes: volumes,
         )
         BuildContainer.docker_exec_command(
           container, shell_cmd: shell_command, env: resolve_run_env(config),
@@ -108,7 +112,7 @@ module Dev
           image_tag,
           project_root: @project_root,
           shell_cmd: shell_command,
-          volumes: config.volumes,
+          volumes: volumes,
           env: resolve_run_env(config),
         )
       end

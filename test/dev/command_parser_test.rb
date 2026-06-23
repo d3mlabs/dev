@@ -120,4 +120,30 @@ class CommandParserTest < Minitest::Test
     Then
     cmd.container == true
   end
+
+  test "parse defaults hidden to false" do
+    Given "a command hash without hidden"
+    parser = Dev::CommandParser.new
+    hash = { "run" => "./bin/build.sh" }
+
+    When "we parse it"
+    cmd = parser.parse(hash)
+
+    Then
+    cmd.hidden == false
+    cmd.hidden? == false
+  end
+
+  test "parse with hidden true marks the command hidden" do
+    Given "a command hash with hidden: true"
+    parser = Dev::CommandParser.new
+    hash = { "run" => "./bin/build.sh", "hidden" => true }
+
+    When "we parse it"
+    cmd = parser.parse(hash)
+
+    Then
+    cmd.hidden == true
+    cmd.hidden? == true
+  end
 end

@@ -84,7 +84,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     )
   end
 
-  test "install_all downloads, extracts a split archive, and writes the marker" do
+  test "install_all downloads, extracts into the version-keyed dir, and writes the marker" do
     Given "a split zstd tarball fixture and a gh dependency"
     dir = Dir.mktmpdir("dev-gh-int-test-")
     parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
@@ -95,24 +95,26 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     When "installing"
     integration.install_all([dep])
 
-    Then
-    File.read(File.join(install_dir, "Engine", "engine.txt")) == "engine payload"
-    File.read(File.join(install_dir, "README.md")) == "readme payload"
-    File.read(File.join(install_dir, ".dev-gh-release")) == "5.6.1-css-83"
-    !File.exist?("#{install_dir}.staging")
+    Then "content + marker land under install_dir/<tag>/ and no staging remains"
+    version_dir = File.join(install_dir, "5.6.1-css-83")
+    File.read(File.join(version_dir, "Engine", "engine.txt")) == "engine payload"
+    File.read(File.join(version_dir, "README.md")) == "readme payload"
+    File.read(File.join(version_dir, ".dev-gh-release")) == "5.6.1-css-83"
+    Dir.glob(File.join(install_dir, ".staging-*")).empty?
     integration.download_count == 1
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
-  test "install_all skips when the marker already records the locked tag" do
-    Given "an install dir with a matching marker"
+  test "install_all skips when the version dir already records the locked tag" do
+    Given "a version dir with a matching marker"
     dir = Dir.mktmpdir("dev-gh-int-test-")
     parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
     install_dir = File.join(dir, "engines", "unreal-engine-css")
-    FileUtils.mkdir_p(install_dir)
-    File.write(File.join(install_dir, ".dev-gh-release"), "5.6.1-css-83")
+    version_dir = File.join(install_dir, "5.6.1-css-83")
+    FileUtils.mkdir_p(version_dir)
+    File.write(File.join(version_dir, ".dev-gh-release"), "5.6.1-css-83")
     dep = build_dependency(parts, install_dir)
     integration = build_integration(parts, File.join(dir, "cache"))
 
@@ -126,30 +128,31 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "install_all reinstalls when the locked tag changes" do
-    Given "an install dir marked with an older tag"
+  test "install_all installs a new version alongside the existing one when the locked tag changes" do
+    Given "an existing version dir for an older tag"
     dir = Dir.mktmpdir("dev-gh-int-test-")
     parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
     install_dir = File.join(dir, "engines", "unreal-engine-css")
-    FileUtils.mkdir_p(install_dir)
-    File.write(File.join(install_dir, ".dev-gh-release"), "5.3.2-css-68")
-    File.write(File.join(install_dir, "stale.txt"), "old engine")
+    old_dir = File.join(install_dir, "5.3.2-css-68")
+    FileUtils.mkdir_p(old_dir)
+    File.write(File.join(old_dir, ".dev-gh-release"), "5.3.2-css-68")
+    File.write(File.join(old_dir, "old.txt"), "old engine")
     dep = build_dependency(parts, install_dir, tag: "5.6.1-css-83")
     integration = build_integration(parts, File.join(dir, "cache"))
 
     When "installing the new tag"
     integration.install_all([dep])
 
-    Then
+    Then "the new version is published while the old version coexists untouched"
     integration.download_count == 1
-    File.read(File.join(install_dir, ".dev-gh-release")) == "5.6.1-css-83"
-    !File.exist?(File.join(install_dir, "stale.txt"))
+    File.read(File.join(install_dir, "5.6.1-css-83", ".dev-gh-release")) == "5.6.1-css-83"
+    File.read(File.join(old_dir, "old.txt")) == "old engine"
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
-  test "install_all raises IntegrityError on digest mismatch and leaves no install" do
+  test "install_all raises IntegrityError on digest mismatch and publishes no version" do
     Given "a locked digest that does not match the downloaded bytes"
     dir = Dir.mktmpdir("dev-gh-int-test-")
     parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
@@ -163,9 +166,10 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
       integration.install_all([dep])
     end
 
-    Then
+    Then "no version dir is published and the staging dir is cleaned up"
     error.message.include?(parts.first.basename.to_s)
-    !File.exist?(install_dir)
+    !File.exist?(File.join(install_dir, "5.6.1-css-83"))
+    Dir.glob(File.join(install_dir, ".staging-*")).empty?
 
     Cleanup
     FileUtils.rm_rf(dir)

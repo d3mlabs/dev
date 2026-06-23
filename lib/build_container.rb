@@ -2,6 +2,7 @@
 
 require "digest"
 require "pathname"
+require "yaml"
 
 # Content-addressed Docker image management for build containers.
 #
@@ -22,6 +23,10 @@ module BuildContainer
   CONTENT_FILES = ["Dockerfile", ".dockerignore", "deps.lock", "build-deps.lock"].freeze
   TAG_PREFIX = "content-"
   BUILD_DEPS_LOCK = "build-deps.lock"
+  # Both lockfiles are scanned for version-keyed install_dir resolution: gh
+  # build deps (e.g. the engine) land in build-deps.lock, while integration
+  # deps (e.g. the Satisfactory server) land in deps.lock.
+  LOCKFILES = ["deps.lock", "build-deps.lock"].freeze
 
   module_function
 
@@ -150,7 +155,8 @@ module BuildContainer
     # The base is engine-free and secret-free: no build-contexts, no BuildKit
     # secrets. Those are supplied to the prewarm run, not the Dockerfile.
     build!(base_tag, project_root:, build_args:, build_contexts: {}, secrets: {})
-    prewarm_commit!(base_tag, tag, config:, prewarm:, secrets:)
+    volumes = resolve_versioned_volumes(config.volumes, project_root:)
+    prewarm_commit!(base_tag, tag, volumes:, prewarm:, secrets:)
   ensure
     # The committed image references the base's layers, so dropping the base tag
     # frees the name without removing shared data.
@@ -179,9 +185,68 @@ module BuildContainer
       next unless attrs.is_a?(Hash)
       next unless attrs["group"] == "build" && attrs["install_dir"]
 
-      contexts[name.downcase] = File.expand_path(attrs["install_dir"])
+      base = File.expand_path(attrs["install_dir"])
+      # Point at the version-keyed subdir the integration publishes to, so the
+      # build context tracks the locked version (see resolve_versioned_volumes).
+      contexts[name.downcase] = attrs["version"] ? File.join(base, attrs["version"].to_s) : base
     end
     contexts
+  end
+
+  # Rewrite each "host:container[:opts]" volume whose host path is a locked
+  # dependency's install_dir to its version-keyed subdir (install_dir/<version>,
+  # the immutable directory the integration publishes). This is how a command
+  # mounts the exact locked version while the integration keeps every version
+  # side by side. Volumes that don't match a locked install_dir (e.g. the shared
+  # cache mount) pass through unchanged.
+  #
+  # @param volumes      [Array<String>] configured "host:container[:opts]" specs
+  # @param project_root [Pathname]
+  # @return [Array<String>] specs with matching host paths version-resolved
+  def resolve_versioned_volumes(volumes, project_root:)
+    versions = install_dir_versions(project_root)
+    return volumes if versions.empty?
+
+    volumes.map do |spec|
+      host, container = spec.split(":", 2)
+      version = versions[File.expand_path(host)]
+      version ? "#{host}/#{version}:#{container}" : spec
+    end
+  end
+
+  # Map every locked dependency install_dir (expanded) to its locked version,
+  # scanning both lockfiles (including env-nested build deps). Only entries with
+  # BOTH an install_dir and a version contribute.
+  #
+  # @param project_root [Pathname]
+  # @return [Hash{String => String}] expanded install_dir => version
+  def install_dir_versions(project_root)
+    root = Pathname(project_root)
+    LOCKFILES.each_with_object({}) do |file, acc|
+      path = root / file
+      next unless path.exist?
+
+      yaml = YAML.safe_load(path.read, permitted_classes: [Symbol]) || {}
+      collect_install_dir_versions(yaml, acc)
+    end
+  end
+
+  # Recursively collect {expanded install_dir => version} from a lockfile hash,
+  # descending into the nested env: section of build-deps.lock.
+  #
+  # @param yaml [Hash]
+  # @param acc  [Hash{String => String}] accumulator (mutated)
+  # @return [void]
+  def collect_install_dir_versions(yaml, acc)
+    yaml.each do |name, attrs|
+      next unless attrs.is_a?(Hash)
+
+      if name == "env"
+        attrs.each_value { |env_deps| collect_install_dir_versions(env_deps, acc) }
+      elsif attrs["install_dir"] && attrs["version"]
+        acc[File.expand_path(attrs["install_dir"])] = attrs["version"].to_s
+      end
+    end
   end
 
   # Build a docker run command for executing a shell command inside the container.
@@ -281,27 +346,41 @@ module BuildContainer
   #
   # @param base_tag  [String]
   # @param final_tag [String]
-  # @param config    [Dev::BuildContainerConfig]
+  # @param volumes   [Array<String>] resolved "host:container" build-dep mounts
+  #   (already version-resolved by the caller via resolve_versioned_volumes)
   # @param prewarm   [String] shell command run via `sh -c`
   # @param secrets   [Hash{String => String}] secret id => value
-  def prewarm_commit!(base_tag, final_tag, config:, prewarm:, secrets:)
+  def prewarm_commit!(base_tag, final_tag, volumes:, prewarm:, secrets:)
     container = prewarm_container_name
     secret_files = write_secret_files(secrets)
     secret_mounts = secret_files.flat_map { |id, path| ["-v", "#{path}:/run/secrets/#{id}:ro"] }
 
     run_argv = [
       "docker", "run", "--name", container,
-      *volume_flags(config.volumes),
+      *volume_flags(volumes),
       *secret_mounts,
       base_tag,
       "sh", "-c", prewarm,
     ]
 
-    raise "Prewarm run failed for #{final_tag}" unless system(*run_argv)
+    raise "Prewarm run failed for #{final_tag}" unless run_watched(run_argv, container: container)
     raise "docker commit failed for #{final_tag}" unless system("docker", "commit", container, final_tag)
   ensure
     system("docker", "rm", "-f", container, out: File::NULL, err: File::NULL)
     secret_files&.each_value { |path| File.delete(path) if File.exist?(path) }
+  end
+
+  # Run the prewarm docker command under the hung-build watcher, which detects
+  # the Rosetta clang deadlock (silent, idle container) and retries transient
+  # crashes while failing fast on real compile errors. Isolated here so callers
+  # (and tests) treat it as a single boundary.
+  #
+  # @param argv      [Array<String>] docker run command
+  # @param container [String] the run's --name, so a stall can be killed
+  # @return [Boolean] whether a run succeeded within the retry budget
+  def run_watched(argv, container:)
+    require "build_watcher"
+    BuildWatcher.new(container_name: container).run(argv)
   end
 
   # Write each secret value to a private host temp file for bind-mounting into

@@ -25,8 +25,9 @@ module Dev
       desc = desc.empty? ? "(no description)" : desc
       repl = cmd_hash["repl"] == true
       container = cmd_hash["container"] != false
+      hidden = cmd_hash["hidden"] == true
 
-      ShellCommand.new(run: run, desc: desc, repl: repl, container: container)
+      ShellCommand.new(run: run, desc: desc, repl: repl, container: container, hidden: hidden)
     end
   end
 end

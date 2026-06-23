@@ -54,7 +54,7 @@ class Dev::Deps::SteamIntegrationTest < Minitest::Test
     )
   end
 
-  test "install_all provisions the depot, verifies the build, and writes the marker" do
+  test "install_all provisions the depot into the version-keyed dir, verifies, and writes the marker" do
     Given "a steam dependency and a stubbed provisioner"
     dir = Dir.mktmpdir("dev-steam-int-test-")
     install_dir = File.join(dir, "satisfactory-server")
@@ -64,21 +64,24 @@ class Dev::Deps::SteamIntegrationTest < Minitest::Test
     When "installing"
     integration.install_all([dep])
 
-    Then
+    Then "the depot + marker land under install_dir/<buildid>/ and no staging remains"
+    version_dir = File.join(install_dir, "15321746")
     integration.provision_count == 1
-    File.read(File.join(install_dir, ".dev-steam-build")) == "15321746"
-    File.exist?(File.join(install_dir, "install", "steamapps", "appmanifest_1690800.acf"))
+    File.read(File.join(version_dir, ".dev-steam-build")) == "15321746"
+    File.exist?(File.join(version_dir, "install", "steamapps", "appmanifest_1690800.acf"))
+    Dir.glob(File.join(install_dir, ".staging-*")).empty?
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
-  test "install_all skips when the marker already records the locked build" do
-    Given "an install dir with a matching marker"
+  test "install_all skips when the version dir already records the locked build" do
+    Given "a version dir with a matching marker"
     dir = Dir.mktmpdir("dev-steam-int-test-")
     install_dir = File.join(dir, "satisfactory-server")
-    FileUtils.mkdir_p(install_dir)
-    File.write(File.join(install_dir, ".dev-steam-build"), "15321746")
+    version_dir = File.join(install_dir, "15321746")
+    FileUtils.mkdir_p(version_dir)
+    File.write(File.join(version_dir, ".dev-steam-build"), "15321746")
     dep = build_dependency(install_dir, build_id: "15321746")
     integration = build_integration(dir, manifest_build: "15321746")
 
@@ -92,21 +95,23 @@ class Dev::Deps::SteamIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "install_all reprovisions when the locked build changes" do
-    Given "an install dir marked with an older build"
+  test "install_all provisions a new build alongside the existing one when the locked build changes" do
+    Given "an existing version dir for an older build"
     dir = Dir.mktmpdir("dev-steam-int-test-")
     install_dir = File.join(dir, "satisfactory-server")
-    FileUtils.mkdir_p(install_dir)
-    File.write(File.join(install_dir, ".dev-steam-build"), "15000000")
+    old_dir = File.join(install_dir, "15000000")
+    FileUtils.mkdir_p(old_dir)
+    File.write(File.join(old_dir, ".dev-steam-build"), "15000000")
     dep = build_dependency(install_dir, build_id: "15321746")
     integration = build_integration(dir, manifest_build: "15321746")
 
     When "installing the new build"
     integration.install_all([dep])
 
-    Then
+    Then "the new build is published while the old build coexists untouched"
     integration.provision_count == 1
-    File.read(File.join(install_dir, ".dev-steam-build")) == "15321746"
+    File.read(File.join(install_dir, "15321746", ".dev-steam-build")) == "15321746"
+    File.read(File.join(old_dir, ".dev-steam-build")) == "15000000"
 
     Cleanup
     FileUtils.rm_rf(dir)

@@ -141,6 +141,48 @@ module Dev
           cache: Dev::Deps::Cache.new,
         ).run(args)
       end)
+
+      registry.register("cache", BuiltinCommand.new(
+        desc: "Manage host caches (e.g. cache gc --keep 2)",
+      ) do |args, context|
+        require "dev/deps/cache_gc"
+        subcommand, *rest = args
+        raise ArgumentError, "usage: dev cache gc [--keep N]" unless subcommand == "gc"
+
+        gc = Dev::Deps::CacheGc.new(lockfile: Dev::Deps::Lockfile.new(dir: context.project_root))
+        # The build container config (when present) lets GC also prune stale
+        # content-tagged images while protecting the live tag.
+        image_ref = nil
+        live_tag = nil
+        if (cfg = context.build_container)
+          require "build_container"
+          image_ref = cfg.image_ref
+          live_tag = BuildContainer.image_with_tag(cfg, project_root: context.project_root)
+        end
+        gc.gc(keep: parse_gc_keep(rest), image_ref: image_ref, live_tag: live_tag)
+      end)
+
+      registry.register("cred", BuiltinCommand.new(
+        desc: "Resolve a stored credential (e.g. cred get <namespace> <key>)",
+      ) do |args, _context|
+        require "dev/credentials"
+        require "dev/credential_accessor"
+        Dev::CredentialAccessor.new.run(args)
+      end)
+    end
+
+    # Parse `--keep N` / `--keep=N` from `dev cache gc` args, defaulting to the
+    # tight install-dir retention.
+    #
+    # @param args [Array<String>]
+    # @return [Integer]
+    sig { params(args: T::Array[String]).returns(Integer) }
+    def parse_gc_keep(args)
+      idx = args.index("--keep")
+      return Integer(T.must(args[idx + 1])) if idx && args[idx + 1]
+
+      flag = args.find { |a| a.start_with?("--keep=") }
+      flag ? Integer(flag.split("=", 2).fetch(1)) : Dev::Deps::CacheGc::DEFAULT_KEEP
     end
 
     # Build the repositories hash mapping integration types to Repository instances.
@@ -211,7 +253,7 @@ module Dev
       out.puts "Usage: dev <command> [args...]"
       out.puts ""
       out.puts "Commands for #{name}:"
-      commands = registry.all
+      commands = registry.all.reject { |_name, command| command.hidden? }
       if commands.empty?
         out.puts "  (no commands defined)"
       else
