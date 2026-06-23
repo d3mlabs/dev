@@ -206,11 +206,18 @@ def update_formula(version, sha)
   # piped, login-less subshell) Ruby's default external encoding is US-ASCII,
   # which makes the gsub! below raise "invalid byte sequence in US-ASCII".
   formula = FORMULA_PATH.read(encoding: "UTF-8")
-  formula.gsub!(/version "[\d.]+"/, "version \"#{version}\"")
-  formula.gsub!(%r{url "https://github\.com/d3mlabs/dev/archive/refs/tags/v[\d.]+\.tar\.gz"},
-    "url \"#{format(TARBALL_URL, version)}\"")
-  formula.gsub!(/sha256 "[a-f0-9]+"/, "sha256 \"#{sha}\"")
-  FORMULA_PATH.write(formula)
+
+  # Update the package url + its sha256 together, anchored to the github archive
+  # url. The formula also carries one `sha256` line per vendored-gem `resource`;
+  # those are immutable per gem version and must NOT change on a dev release.
+  # (A prior gsub over every `sha256 "..."` replaced the resource checksums too,
+  # with the tarball sha, silently corrupting them — clean installs then failed
+  # resource verification.) Matching the url+sha as a pair keeps it surgical.
+  pattern = %r{(url "https://github\.com/d3mlabs/dev/archive/refs/tags/v)[\d.]+(\.tar\.gz"\n\s+sha256 ")[0-9a-f]+(")}
+  updated = formula.sub(pattern) { "#{$1}#{version}#{$2}#{sha}#{$3}" }
+  abort "Could not find the package url+sha256 to update in #{FORMULA_PATH}" if updated == formula
+
+  FORMULA_PATH.write(updated)
 
   Dir.chdir(FORMULA_REPO) do
     run!("git", "add", "Formula/dev.rb")
