@@ -51,9 +51,13 @@ module BuildContainer
       .map(&:read)
       .join
 
+    # A recursive glob (e.g. "bin/image/**/*") also matches directories; hash
+    # only files. The files under a matched dir are matched in their own right,
+    # so skipping the dir entry loses nothing — and avoids Errno::EISDIR on read.
     glob_content = extra_globs
       .flat_map { |pattern| Dir.glob(pattern, base: root.to_s) }
       .uniq
+      .select { |rel| (root / rel).file? }
       .sort
       .map { |rel| "#{rel}\n#{(root / rel).read}" }
       .join

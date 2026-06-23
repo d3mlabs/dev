@@ -380,6 +380,29 @@ class BuildContainerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "content_tag skips directories matched by a recursive extra_globs pattern" do
+    Given "a project whose extra_globs recursive pattern matches a subdirectory"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
+    FileUtils.mkdir_p(File.join(dir, "bin/image/lib"))
+    File.write(File.join(dir, "bin/image/build.sh"), "echo build")
+    File.write(File.join(dir, "bin/image/lib/env.sh"), "echo env")
+    globs = ["bin/image/**/*"]
+
+    When "computing the content tag (the glob also matches bin/image/lib)"
+    # Regression: the dir entry must be skipped, not read (Errno::EISDIR).
+    tag_a = BuildContainer.content_tag(project_root: Pathname(dir), extra_globs: globs)
+    File.write(File.join(dir, "bin/image/lib/env.sh"), "echo env changed")
+    tag_b = BuildContainer.content_tag(project_root: Pathname(dir), extra_globs: globs)
+
+    Then "it hashes the nested files without raising, and tracks their contents"
+    tag_a.start_with?("content-")
+    tag_a != tag_b
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "content_tag is unaffected by files outside extra_globs" do
     Given "a project with a Dockerfile and an unhashed .cpp"
     dir = Dir.mktmpdir("build-container-test-")
