@@ -11,6 +11,27 @@ brew tap d3mlabs
 brew install d3mlabs/dev
 ```
 
+### System dependencies
+
+`dev` shells out to a few external tools during `dev up` / dependency installs.
+A fresh machine is often missing some, and each surfaces as a mid-run failure,
+so install them up front:
+
+```bash
+# macOS and Linux (Homebrew):
+brew install gh zstd            # gh: gated GitHub release downloads; zstd: engine .tar.zst extraction
+
+# Linux runners only (git/curl preinstalled on macOS; lib32gcc-s1 = 32-bit support for SteamCMD):
+sudo apt-get update && sudo apt-get install -y git curl sqlite3 lib32gcc-s1
+
+# gh must be authenticated — dev pulls gated assets (e.g. the custom Unreal Engine) with no explicit token:
+gh auth login
+```
+
+Docker is also required for repos whose builds run in containers (e.g. `dev up`
+building a prewarmed image): Docker Desktop on macOS / Windows+WSL2, or Docker
+Engine on Linux.
+
 **Ruby:** We use **rbenv** as the standard Ruby version manager. If you run `dev up` in a repo that needs Ruby, have rbenv installed first:
 
 ```bash
