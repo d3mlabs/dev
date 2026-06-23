@@ -138,6 +138,7 @@ class BuildWatcher
   # @param argv [Array<String>]
   # @return [Result]
   def run_once(argv)
+    free_container_name
     last_output = now
     captured = +""
 
@@ -196,6 +197,17 @@ class BuildWatcher
   def kill_container
     @out.puts ">>> build-watcher: killing hung container #{@container_name}"
     system("docker", "kill", @container_name, out: File::NULL, err: File::NULL)
+  end
+
+  # Remove any container left by a previous attempt so this attempt's
+  # `docker run --name` can't collide. A stalled container we killed, or one
+  # that exited non-zero, persists until removed — and the prewarm run can't use
+  # `--rm` because the container must survive for the subsequent `docker commit`.
+  # Silent no-op on the first attempt, when nothing by this name exists yet.
+  #
+  # @return [void]
+  def free_container_name
+    system("docker", "rm", "-f", @container_name, out: File::NULL, err: File::NULL)
   end
 
   # Monotonic clock so wall-clock changes never skew stall timing.
