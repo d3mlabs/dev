@@ -310,6 +310,119 @@ class BuildContainerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "ensure_image! publishes a locally-resolved image when publish is requested" do
+    Given "an image present locally but absent from the registry"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
+    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
+    tag = BuildContainer.image_with_tag(config, project_root: Pathname(dir))
+
+    When "ensuring the image with publish: true"
+    result = BuildContainer.ensure_image!(config, project_root: Pathname(dir), publish: true)
+
+    Then "the local image is honored, then published to the registry (no pull, no build)"
+    result == tag
+    1 * BuildContainer.local_image?(tag) >> true
+    0 * BuildContainer.pull(tag)
+    1 * BuildContainer.registry_has?(tag) >> false
+    1 * BuildContainer.push!(tag) >> true
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "ensure_image! does not re-push a locally-resolved image already in the registry" do
+    Given "an image present locally and already advertised by the registry"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
+    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
+    tag = BuildContainer.image_with_tag(config, project_root: Pathname(dir))
+
+    When "ensuring the image with publish: true"
+    result = BuildContainer.ensure_image!(config, project_root: Pathname(dir), publish: true)
+
+    Then "the registry check short-circuits the push"
+    result == tag
+    1 * BuildContainer.local_image?(tag) >> true
+    1 * BuildContainer.registry_has?(tag) >> true
+    0 * BuildContainer.push!(tag)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "ensure_image! does not publish a local hit by default" do
+    Given "an image present locally and publish left at its default"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
+    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
+    tag = BuildContainer.image_with_tag(config, project_root: Pathname(dir))
+
+    When "ensuring the image"
+    result = BuildContainer.ensure_image!(config, project_root: Pathname(dir))
+
+    Then "no registry interaction happens — a plain local run never publishes"
+    result == tag
+    1 * BuildContainer.local_image?(tag) >> true
+    0 * BuildContainer.registry_has?(tag)
+    0 * BuildContainer.push!(tag)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "ensure_image! publishes a freshly built image when publish is requested" do
+    Given "a project that misses both caches and is provisioned with publish"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
+    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
+    tag = BuildContainer.image_with_tag(config, project_root: Pathname(dir))
+
+    When "ensuring the image with push: false (the only real caller) and publish: true"
+    result = BuildContainer.ensure_image!(config, project_root: Pathname(dir), push: false, publish: true)
+
+    Then "it builds, then publishes via the registry-guarded path"
+    result == tag
+    1 * BuildContainer.local_image?(tag) >> false
+    1 * BuildContainer.pull(tag) >> false
+    1 * BuildContainer.build!(tag, project_root: Pathname(dir), build_args: {}, build_contexts: {}, secrets: {}) >> true
+    1 * BuildContainer.registry_has?(tag) >> false
+    1 * BuildContainer.push!(tag) >> true
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "publish! is a no-op when the registry already advertises the tag" do
+    When "publishing a tag the registry already has"
+    result = BuildContainer.publish!("img:tag")
+
+    Then "the manifest check short-circuits and nothing is pushed"
+    result == true
+    1 * BuildContainer.registry_has?("img:tag") >> true
+    0 * BuildContainer.push!("img:tag")
+  end
+
+  test "publish! pushes when the registry lacks the tag" do
+    When "publishing a tag the registry lacks"
+    result = BuildContainer.publish!("img:tag")
+
+    Then "it pushes the local image"
+    result == true
+    1 * BuildContainer.registry_has?("img:tag") >> false
+    1 * BuildContainer.push!("img:tag") >> true
+  end
+
+  test "publish! warns but does not raise when the push fails" do
+    When "the registry lacks the tag and the push fails"
+    result = BuildContainer.publish!("img:tag")
+
+    Then "the failure is surfaced as a falsey return, not an exception"
+    result == false
+    1 * BuildContainer.registry_has?("img:tag") >> false
+    1 * BuildContainer.push!("img:tag") >> false
+  end
+
   test "build! raises when docker build fails" do
     Given "a project root"
     dir = Dir.mktmpdir("build-container-test-")

@@ -65,6 +65,18 @@ module Dev
       !@build_container.nil? && cmd.container
     end
 
+    # Whether the resolved image should be published to the shared registry.
+    # Off by default — a normal local build/run must never push. The
+    # provisioning step (e.g. CI's `dev up`) opts in by setting
+    # DEV_PUBLISH_IMAGE, so it populates the registry that every other machine
+    # — and a from-scratch CI runner — pulls from. Gated by an env var rather
+    # than the command name so any project's provisioning can enable it without
+    # dev hard-coding which command is the publisher.
+    sig { returns(T::Boolean) }
+    def publish_image?
+      ENV["DEV_PUBLISH_IMAGE"] == "1"
+    end
+
     sig { params(_cmd: ShellCommand, shell_command: String).void }
     def run_in_container(_cmd, shell_command)
       require "build_container"
@@ -73,6 +85,7 @@ module Dev
         config,
         project_root: @project_root,
         push: false,
+        publish: publish_image?,
         build_args_provider: -> { resolve_build_args(config) },
         secrets_provider: -> { resolve_build_secrets(config) },
       )

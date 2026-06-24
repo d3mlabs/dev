@@ -115,7 +115,7 @@ class CommandRunnerTest < Minitest::Test
 
     When "BuildContainer.ensure_image! returns a tag and we run the command"
     BuildContainer.expects(:ensure_image!)
-      .with(config, project_root: @project_root, push: false, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc))
+      .with(config, project_root: @project_root, push: false, publish: false, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc))
       .returns("myregistry/myapp-linux:content-abc123")
     BuildContainer.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: {})
@@ -194,7 +194,7 @@ class CommandRunnerTest < Minitest::Test
 
     When "BuildContainer returns docker command and we run with args"
     BuildContainer.expects(:ensure_image!)
-      .with(config, project_root: @project_root, push: false, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc))
+      .with(config, project_root: @project_root, push: false, publish: false, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc))
       .returns("myregistry/myapp-linux:content-abc123")
     BuildContainer.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/test.sh --verbose", volumes: [], env: {})
@@ -231,6 +231,28 @@ class CommandRunnerTest < Minitest::Test
 
     Cleanup
     ENV.delete("WWISE_TOKEN")
+    Dir.chdir(@original_cwd)
+  end
+
+  test "container execution opts into publishing when DEV_PUBLISH_IMAGE is set" do
+    Given "a runner with build_container and DEV_PUBLISH_IMAGE=1 in the env"
+    config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry")
+    runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root)
+    cmd = Dev::ShellCommand.new(run: "./bin/build.sh", repl: false)
+    ENV["DEV_PUBLISH_IMAGE"] = "1"
+
+    When "the command runs"
+    BuildContainer.expects(:ensure_image!)
+      .with(config, project_root: @project_root, push: false, publish: true, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc))
+      .returns("myregistry/myapp-linux:content-abc123")
+    BuildContainer.stubs(:docker_run_command).returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
+    runner.run(cmd)
+
+    Then "ensure_image! is asked to publish the resolved image"
+    1 * Kernel.exec("docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh")
+
+    Cleanup
+    ENV.delete("DEV_PUBLISH_IMAGE")
     Dir.chdir(@original_cwd)
   end
 

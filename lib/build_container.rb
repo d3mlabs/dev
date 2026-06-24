@@ -85,8 +85,8 @@ module BuildContainer
   end
 
   # Ensure the build container image exists: use a local image if present,
-  # pull from registry if available, otherwise build and push. Returns the
-  # full image:tag string.
+  # pull from registry if available, otherwise build. Returns the full
+  # image:tag string.
   #
   # The local check comes first so images built manually are honored.
   #
@@ -100,18 +100,31 @@ module BuildContainer
   # by dependency name), so the Dockerfile can bind-mount large host artifacts
   # (e.g. the engine) without baking them into the image.
   #
+  # Publishing (`publish: true`) is the *provisioning* guarantee: after the
+  # image is resolved by any path — built OR found locally — it is published to
+  # the shared registry so other machines can pull it. The local-hit case is
+  # the one that matters: the machine that originally built the image (e.g. the
+  # CI runner) keeps hitting its own local copy on every run, so without
+  # publish-on-hit the registry it is meant to populate stays empty forever and
+  # no other machine can ever pull. `push:` (legacy) only pushes a freshly built
+  # image; `publish:` subsumes it and additionally covers the local hit, so the
+  # provisioning step sets `publish: true` while build/run steps leave both off.
+  #
   # @param config              [Dev::BuildContainerConfig]
   # @param project_root        [Pathname]
-  # @param push                [Boolean] whether to push after building (default: true)
+  # @param push                [Boolean] whether to push a freshly built image (default: true)
+  # @param publish             [Boolean] whether to publish the resolved image to the
+  #   registry, even on a local hit (default: false — only the provisioning step opts in)
   # @param build_args_provider [#call, nil] returns Hash{String => String} of build args
   # @param secrets_provider    [#call, nil] returns Hash{String => String} of secret id => value
   # @return [String] the full image:tag string
-  def ensure_image!(config, project_root:, push: true, build_args_provider: nil,
-                    secrets_provider: nil)
+  def ensure_image!(config, project_root:, push: true, publish: false,
+                    build_args_provider: nil, secrets_provider: nil)
     tag = image_with_tag(config, project_root:)
 
     if local_image?(tag)
       $stderr.puts "dev: Container image found locally — #{tag}"
+      publish!(tag) if publish
       return tag
     end
 
@@ -133,6 +146,7 @@ module BuildContainer
     end
 
     push!(tag) if push
+    publish!(tag) if publish
     tag
   end
 
@@ -521,5 +535,38 @@ module BuildContainer
 
   def push!(image_tag)
     system("docker", "push", image_tag, out: File::NULL, err: File::NULL)
+  end
+
+  # Guarantee the shared registry advertises this content tag, so other
+  # machines pull it instead of rebuilding. A no-op when the registry already
+  # has the tag (checked via a remote manifest lookup that transfers only
+  # metadata, never the multi-GB layers), otherwise pushes the local image.
+  #
+  # Best-effort: a push failure is logged, not raised, so a transient registry
+  # hiccup never fails an otherwise-green build — the next provisioning run
+  # retries, since the registry still lacks the tag.
+  #
+  # @param image_tag [String]
+  # @return [Boolean] whether the registry has the tag after this call
+  def publish!(image_tag)
+    if registry_has?(image_tag)
+      $stderr.puts "dev: Container image already published — #{image_tag}"
+      return true
+    end
+
+    $stderr.puts "dev: Publishing container image to registry — #{image_tag}"
+    pushed = push!(image_tag)
+    $stderr.puts "dev: WARNING — could not publish #{image_tag} to the registry" unless pushed
+    pushed
+  end
+
+  # Whether the registry already advertises image_tag. `docker manifest inspect`
+  # queries the remote registry for the tag's manifest only (no layer
+  # download), so this is a cheap existence check.
+  #
+  # @param image_tag [String]
+  # @return [Boolean]
+  def registry_has?(image_tag)
+    system("docker", "manifest", "inspect", image_tag, out: File::NULL, err: File::NULL)
   end
 end

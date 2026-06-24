@@ -271,7 +271,9 @@ The image tag is `content-<hash>`, where the hash covers the `Dockerfile`, `.doc
 
 1. **local** — a matching local image is honored as-is (manual builds work).
 2. **pull** — otherwise pull the tag from the registry (the CI-produced image lands here).
-3. **build** — only on a miss, build it locally (and push if configured).
+3. **build** — only on a miss, build it locally.
+
+**Publishing** is separate from resolution. The provisioning step opts in (set `DEV_PUBLISH_IMAGE=1`, as CI's `dev up` does) so the resolved image is pushed to the shared registry — and this runs **even on a local hit** (step 1), not only after a build. That local-hit case is the whole point: the machine that built the image (e.g. the CI runner) keeps resolving its own local copy on every run, so without publish-on-hit the registry it is meant to populate would stay empty and no other machine could ever pull. The push is registry-guarded (a remote manifest check), so it is a no-op once the tag is published. A normal local build/run leaves `DEV_PUBLISH_IMAGE` unset and never pushes.
 
 ### Prewarm
 
