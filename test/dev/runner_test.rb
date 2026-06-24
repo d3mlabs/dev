@@ -5,8 +5,11 @@ require "test_helper"
 require "dev"
 require "dev/runner"
 require "dev/credentials"
+require "dev/deps/cmake_integration"
 require "stringio"
 require "tempfile"
+require "tmpdir"
+require "fileutils"
 
 transform!(RSpock::AST::Transformation)
 class RunnerTest < Minitest::Test
@@ -130,6 +133,21 @@ class RunnerTest < Minitest::Test
 
     Then "no teardown command is listed"
     !out.string.include?("reset-container")
+  end
+
+  test "host integrations register a project-rooted cmake integration" do
+    Given "a Runner"
+    runner = build_runner
+    root = Pathname.new(Dir.mktmpdir("runner-cmake-test-"))
+
+    When "we build the host integrations for a project root"
+    integrations = runner.send(:build_host_integrations, project_root: root)
+
+    Then "the cmake integration is registered so dev install-deps fetches cmake source"
+    integrations[:cmake].is_a?(Dev::Deps::CmakeIntegration)
+
+    Cleanup
+    FileUtils.rm_rf(root)
   end
 
   test "up resolves docker build arg credentials before executing" do

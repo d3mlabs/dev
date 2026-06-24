@@ -126,7 +126,7 @@ module Dev
         lockfile = Dev::Deps::Lockfile.new(dir: context.project_root)
         installer = Dev::Deps::DependencyInstaller.new(
           lockfile: lockfile,
-          integrations: build_host_integrations,
+          integrations: build_host_integrations(project_root: context.project_root),
         )
         installer.install(env: Dev::Deps.detect_env)
       end)
@@ -214,10 +214,14 @@ module Dev
     # - gh: the UE engine (install_dir, mounted at /ue)
     # - steam: the Satisfactory Dedicated Server (install_dir, mounted at /server)
     # - ficsit: SML zips, content-cached (~/.dev/cache, mounted read-only)
+    # - cmake: C/C++ source deps fetched into the project (build/_deps/<name>-src,
+    #   mounted via /project) — the one integration rooted in the project rather
+    #   than a host cache, hence the project_root argument.
     #
+    # @param project_root [Pathname] repo root the cmake integration fetches into
     # @return [Hash{Symbol => Dev::Deps::Integration}]
-    sig { returns(T::Hash[Symbol, Dev::Deps::Integration]) }
-    def build_host_integrations
+    sig { params(project_root: Pathname).returns(T::Hash[Symbol, Dev::Deps::Integration]) }
+    def build_host_integrations(project_root:)
       require "dev/deps/cache"
       require "dev/deps/gh_repository"
       require "dev/deps/gh_integration"
@@ -225,6 +229,8 @@ module Dev
       require "dev/deps/ficsit_integration"
       require "dev/deps/steam_repository"
       require "dev/deps/steam_integration"
+      require "dev/deps/git_repository"
+      require "dev/deps/cmake_integration"
 
       cache = Dev::Deps::Cache.new
       {
@@ -239,6 +245,11 @@ module Dev
         steam: Dev::Deps::SteamIntegration.new(
           repository: Dev::Deps::SteamRepository.new,
           cache: cache,
+        ),
+        cmake: Dev::Deps::CmakeIntegration.new(
+          repository: Dev::Deps::GitRepository.new,
+          cache: cache,
+          project_root: project_root,
         ),
       }
     end
