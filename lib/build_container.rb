@@ -318,8 +318,8 @@ module BuildContainer
   # @param volumes      [Array<String>] extra "host:container" mounts (e.g. engine)
   # @return [String] the running container's name
   def ensure_service!(image_tag, project_root:, volumes: [])
-    name = service_container_name(image_tag)
-    reap_stale_services!(image_tag)
+    name = service_container_name(image_tag, project_root)
+    reap_stale_services!(image_tag, project_root)
 
     if container_exists?(name)
       start_container(name) unless container_running?(name)
@@ -341,15 +341,16 @@ module BuildContainer
     ["docker", "exec", *env_flags, "-w", "/project", container, "sh", "-c", shell_cmd]
   end
 
-  # Remove every service container for this project — the current tag's and any
-  # stale one — backing `dev reset-container`. Keyed by the project/image prefix
-  # (not the exact tag) so a container from a now-superseded Dockerfile/dep is
-  # still matched.
+  # Remove every service container for this checkout — the current tag's and any
+  # stale one — backing `dev reset-container`. Keyed by the image + workspace
+  # prefix (not the exact tag) so a container from a now-superseded Dockerfile/dep
+  # is still matched, while OTHER checkouts' containers are left untouched.
   #
-  # @param image_tag [String]
+  # @param image_tag    [String]
+  # @param project_root [Pathname] the checkout whose containers to remove
   # @return [Array<String>] names of the removed containers
-  def reset_service!(image_tag)
-    names = service_containers(service_name_prefix(image_tag))
+  def reset_service!(image_tag, project_root)
+    names = service_containers(service_name_prefix(image_tag, project_root))
     names.each { |name| remove_container(name) }
     names
   end
@@ -428,30 +429,62 @@ module BuildContainer
     system("docker", "image", "rm", "-f", image_tag, out: File::NULL, err: File::NULL)
   end
 
-  # Container name for image_tag: "dev-<image>-<tag>", registry dropped and any
-  # char Docker forbids in a name (notably ':') replaced with '-'. E.g.
-  # "reg/snappy-linux:content-abc" -> "dev-snappy-linux-content-abc".
-  def service_container_name(image_tag)
-    "dev-#{sanitize_container_name(image_tag.split("/").last)}"
+  # Container name for image_tag + workspace: "dev-<image>-<workspace>-<tag>",
+  # registry dropped and any char Docker forbids in a name (notably ':') replaced
+  # with '-'. E.g. "reg/snappy-linux:content-abc" in /work/snappy ->
+  # "dev-snappy-linux-9f86d08-content-abc".
+  #
+  # The <workspace> segment is what keys the persistent container to the checkout
+  # it is bind-mounted to. Without it the container is keyed by image tag ALONE,
+  # so a SECOND checkout of the same project (e.g. a CI runner's actions/checkout
+  # vs. a manual clone elsewhere on the same machine) finds the first checkout's
+  # container by name and reuses it — still bind-mounted to the FIRST checkout —
+  # silently building and testing the wrong tree on every run. Keying by workspace
+  # gives each checkout its own long-lived container, each bound correctly, with
+  # no cross-thrash when a machine is both a dev box and a CI runner.
+  def service_container_name(image_tag, project_root)
+    image = image_basename(image_tag)
+    tag = image_tag.split(":").last
+    "dev-#{sanitize_container_name(image)}-#{workspace_id(project_root)}-#{sanitize_container_name(tag)}"
   end
 
-  # Project/image prefix shared by every tag's container, used to find and reap
-  # stale ones. E.g. "reg/snappy-linux:content-abc" -> "dev-snappy-linux-".
-  def service_name_prefix(image_tag)
-    image = image_tag.split("/").last.split(":").first
-    "dev-#{sanitize_container_name(image)}-"
+  # Image + workspace prefix shared by every tag's container for one checkout,
+  # used to find and reap stale ones without touching OTHER checkouts' containers.
+  # E.g. "reg/snappy-linux:content-abc" in /work/snappy -> "dev-snappy-linux-9f86d08-".
+  def service_name_prefix(image_tag, project_root)
+    "dev-#{sanitize_container_name(image_basename(image_tag))}-#{workspace_id(project_root)}-"
+  end
+
+  # Bare image name (no registry, no tag). E.g.
+  # "reg/snappy-linux:content-abc" -> "snappy-linux".
+  def image_basename(image_tag)
+    image_tag.split("/").last.split(":").first
+  end
+
+  # Short, stable identifier for the checkout a persistent container is bound to,
+  # so the container name is unique per workspace (see service_container_name).
+  # Hash of the resolved real path: different directories differ, the same
+  # directory is stable across runs, and symlinked paths normalize to one id.
+  def workspace_id(project_root)
+    path = begin
+      File.realpath(project_root.to_s)
+    rescue Errno::ENOENT
+      File.expand_path(project_root.to_s)
+    end
+    Digest::SHA256.hexdigest(path)[0, 10]
   end
 
   def sanitize_container_name(str)
     str.gsub(/[^a-zA-Z0-9_.-]/, "-")
   end
 
-  # Remove service containers for this project that don't match the current
+  # Remove service containers for this checkout that don't match the current
   # tag's name, so a Dockerfile/dep bump (new tag) doesn't leave the old one
-  # running alongside the new.
-  def reap_stale_services!(image_tag)
-    keep = service_container_name(image_tag)
-    service_containers(service_name_prefix(image_tag)).each do |name|
+  # running alongside the new. Scoped to the workspace prefix, so a tag bump in
+  # one checkout never reaps another checkout's container.
+  def reap_stale_services!(image_tag, project_root)
+    keep = service_container_name(image_tag, project_root)
+    service_containers(service_name_prefix(image_tag, project_root)).each do |name|
       remove_container(name) unless name == keep
     end
   end

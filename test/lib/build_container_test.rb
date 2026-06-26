@@ -946,20 +946,40 @@ class BuildContainerTest < Minitest::Test
     files.each_value { |p| File.delete(p) if File.exist?(p) }
   end
 
-  test "service_container_name drops the registry and replaces the tag colon" do
-    When "naming the service container for a full image:tag"
-    name = BuildContainer.service_container_name("jpduchesne89/snappy-linux:content-abc123")
+  test "service_container_name keys the name by image, workspace, and tag" do
+    Given "a full image:tag and the checkout it runs in"
+    root = Pathname("/work/snappy")
+    wid = BuildContainer.workspace_id(root)
 
-    Then "the name is registry-free, colon-free, and dev-prefixed"
-    name == "dev-snappy-linux-content-abc123"
+    When "naming the service container"
+    name = BuildContainer.service_container_name("jpduchesne89/snappy-linux:content-abc123", root)
+
+    Then "the name is registry-free, colon-free, dev-prefixed, and workspace-keyed"
+    name == "dev-snappy-linux-#{wid}-content-abc123"
   end
 
-  test "service_name_prefix is the tag-independent project prefix" do
-    When "computing the reap prefix for a tag"
-    prefix = BuildContainer.service_name_prefix("jpduchesne89/snappy-linux:content-abc123")
+  test "service_container_name differs per checkout for the same image tag" do
+    Given "one image:tag checked out in two directories"
+    tag = "jpduchesne89/snappy-linux:content-abc123"
 
-    Then "it omits the tag so any tag's container matches"
-    prefix == "dev-snappy-linux-"
+    When "naming the service container for each checkout"
+    runner = BuildContainer.service_container_name(tag, Pathname("/runner/_work/snappy/snappy"))
+    manual = BuildContainer.service_container_name(tag, Pathname("/home/dev/snappy"))
+
+    Then "the names differ, so neither checkout can hijack the other's container"
+    runner != manual
+  end
+
+  test "service_name_prefix is the tag-independent, workspace-scoped prefix" do
+    Given "a full image:tag and the checkout it runs in"
+    root = Pathname("/work/snappy")
+    wid = BuildContainer.workspace_id(root)
+
+    When "computing the reap prefix for a tag"
+    prefix = BuildContainer.service_name_prefix("jpduchesne89/snappy-linux:content-abc123", root)
+
+    Then "it omits the tag (so any tag matches) but pins the workspace"
+    prefix == "dev-snappy-linux-#{wid}-"
   end
 
   test "docker_exec_command targets the container with /project workdir" do
@@ -991,78 +1011,90 @@ class BuildContainerTest < Minitest::Test
   end
 
   test "ensure_service! creates the container when none exists" do
-    Given "an image tag whose container is absent"
+    Given "an image tag whose container is absent, and the checkout it runs in"
     tag = "jpduchesne89/snappy-linux:content-abc"
+    root = Pathname("/proj")
+    name = BuildContainer.service_container_name(tag, root)
 
     When "ensuring the service"
-    result = BuildContainer.ensure_service!(tag, project_root: Pathname("/proj"), volumes: ["/e:/e"])
+    result = BuildContainer.ensure_service!(tag, project_root: root, volumes: ["/e:/e"])
 
     Then "stale containers are reaped, then the container is created (never started)"
-    result == "dev-snappy-linux-content-abc"
-    1 * BuildContainer.reap_stale_services!(tag) >> nil
-    1 * BuildContainer.container_exists?("dev-snappy-linux-content-abc") >> false
-    1 * BuildContainer.create_service_container("dev-snappy-linux-content-abc", tag,
-      project_root: Pathname("/proj"), volumes: ["/e:/e"]) >> true
-    0 * BuildContainer.start_container("dev-snappy-linux-content-abc")
+    result == name
+    1 * BuildContainer.reap_stale_services!(tag, root) >> nil
+    1 * BuildContainer.container_exists?(name) >> false
+    1 * BuildContainer.create_service_container(name, tag,
+      project_root: root, volumes: ["/e:/e"]) >> true
+    0 * BuildContainer.start_container(name)
   end
 
   test "ensure_service! starts the container when it exists but is stopped" do
     Given "an image tag whose container exists but is stopped"
     tag = "jpduchesne89/snappy-linux:content-abc"
+    root = Pathname("/proj")
+    name = BuildContainer.service_container_name(tag, root)
 
     When "ensuring the service"
-    BuildContainer.ensure_service!(tag, project_root: Pathname("/proj"))
+    BuildContainer.ensure_service!(tag, project_root: root)
 
     Then "the existing container is started, not recreated"
-    1 * BuildContainer.reap_stale_services!(tag) >> nil
-    1 * BuildContainer.container_exists?("dev-snappy-linux-content-abc") >> true
-    1 * BuildContainer.container_running?("dev-snappy-linux-content-abc") >> false
-    1 * BuildContainer.start_container("dev-snappy-linux-content-abc") >> true
-    0 * BuildContainer.create_service_container("dev-snappy-linux-content-abc", tag,
-      project_root: Pathname("/proj"), volumes: [])
+    1 * BuildContainer.reap_stale_services!(tag, root) >> nil
+    1 * BuildContainer.container_exists?(name) >> true
+    1 * BuildContainer.container_running?(name) >> false
+    1 * BuildContainer.start_container(name) >> true
+    0 * BuildContainer.create_service_container(name, tag,
+      project_root: root, volumes: [])
   end
 
   test "ensure_service! is a no-op when the container is already running" do
     Given "an image tag whose container is already up"
     tag = "jpduchesne89/snappy-linux:content-abc"
+    root = Pathname("/proj")
+    name = BuildContainer.service_container_name(tag, root)
 
     When "ensuring the service"
-    BuildContainer.ensure_service!(tag, project_root: Pathname("/proj"))
+    BuildContainer.ensure_service!(tag, project_root: root)
 
     Then "neither start nor create is invoked"
-    1 * BuildContainer.reap_stale_services!(tag) >> nil
-    1 * BuildContainer.container_exists?("dev-snappy-linux-content-abc") >> true
-    1 * BuildContainer.container_running?("dev-snappy-linux-content-abc") >> true
-    0 * BuildContainer.start_container("dev-snappy-linux-content-abc")
+    1 * BuildContainer.reap_stale_services!(tag, root) >> nil
+    1 * BuildContainer.container_exists?(name) >> true
+    1 * BuildContainer.container_running?(name) >> true
+    0 * BuildContainer.start_container(name)
   end
 
   test "reap_stale_services! removes other-tag containers but keeps the current tag" do
-    Given "a current tag and a stale sibling container"
+    Given "a current tag and a stale sibling container in the same checkout"
     tag = "jpduchesne89/snappy-linux:content-new"
+    root = Pathname("/proj")
+    prefix = BuildContainer.service_name_prefix(tag, root)
+    keep = "#{prefix}content-new"
+    stale = "#{prefix}content-old"
 
     When "reaping"
-    BuildContainer.send(:reap_stale_services!, tag)
+    BuildContainer.send(:reap_stale_services!, tag, root)
 
     Then "only the non-current container is removed"
-    1 * BuildContainer.service_containers("dev-snappy-linux-") >>
-      ["dev-snappy-linux-content-old", "dev-snappy-linux-content-new"]
-    1 * BuildContainer.remove_container("dev-snappy-linux-content-old") >> true
-    0 * BuildContainer.remove_container("dev-snappy-linux-content-new")
+    1 * BuildContainer.service_containers(prefix) >> [stale, keep]
+    1 * BuildContainer.remove_container(stale) >> true
+    0 * BuildContainer.remove_container(keep)
   end
 
-  test "reset_service! removes every container for the project prefix" do
-    Given "two containers for the project (current and stale)"
+  test "reset_service! removes every container for the checkout prefix" do
+    Given "two containers for the checkout (current and stale)"
     tag = "jpduchesne89/snappy-linux:content-abc"
+    root = Pathname("/proj")
+    prefix = BuildContainer.service_name_prefix(tag, root)
+    current = "#{prefix}content-abc"
+    stale = "#{prefix}content-old"
 
     When "resetting"
-    result = BuildContainer.reset_service!(tag)
+    result = BuildContainer.reset_service!(tag, root)
 
     Then "all matching containers are removed and their names returned"
-    result == ["dev-snappy-linux-content-old", "dev-snappy-linux-content-abc"]
-    1 * BuildContainer.service_containers("dev-snappy-linux-") >>
-      ["dev-snappy-linux-content-old", "dev-snappy-linux-content-abc"]
-    1 * BuildContainer.remove_container("dev-snappy-linux-content-old") >> true
-    1 * BuildContainer.remove_container("dev-snappy-linux-content-abc") >> true
+    result == [stale, current]
+    1 * BuildContainer.service_containers(prefix) >> [stale, current]
+    1 * BuildContainer.remove_container(stale) >> true
+    1 * BuildContainer.remove_container(current) >> true
   end
 
   test "create_service_container runs detached, mounts project + volumes, and idles" do

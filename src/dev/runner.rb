@@ -100,7 +100,7 @@ module Dev
         require "build_container"
         cfg = context.build_container
         image_tag = BuildContainer.image_with_tag(cfg, project_root: context.project_root)
-        removed = BuildContainer.reset_service!(image_tag)
+        removed = BuildContainer.reset_service!(image_tag, context.project_root)
         puts(removed.empty? ? "dev: no persistent build container to remove." : "dev: removed #{removed.join(", ")}.")
       end)
     end
