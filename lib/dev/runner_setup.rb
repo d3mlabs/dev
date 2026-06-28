@@ -69,6 +69,7 @@ module Dev
 
       @out.puts ">>> Setting up runner '#{name}' for #{repo} (labels: #{@config.labels})"
       download_runner(dir, version)
+      remove_existing_config(dir, repo)
       token = mint_registration_token(repo)
       configure_runner(dir: dir, url: url, token: token, name: name)
       install_service(dir)
@@ -165,18 +166,47 @@ module Dev
       FileUtils.rm_f(File.join(dir, tarball))
     end
 
+    # Make re-runs idempotent. config.sh refuses to configure a dir that already
+    # holds a runner (`.runner`), and `--replace` only resolves a *server-side*
+    # same-name collision — not the local guard — so an existing config must be
+    # removed first. No-op on a fresh dir.
+    #
+    # @param dir [String] install dir
+    # @param repo [String] "owner/repo"
+    # @raise [Error] when the stale config can't be removed
+    def remove_existing_config(dir, repo)
+      return unless File.exist?(File.join(dir, ".runner"))
+
+      @out.puts ">>> Existing runner config found; removing it before reconfiguring ..."
+      token = mint_token(repo, "remove-token")
+      return if @exec.system("./config.sh", "remove", "--token", token, chdir: dir)
+
+      raise Error, "failed to remove the existing runner config (try ./config.sh remove manually in #{dir})"
+    end
+
     # @param repo [String] "owner/repo"
     # @return [String] a fresh registration token
     # @raise [Error] when the token can't be minted
     def mint_registration_token(repo)
       @out.puts ">>> Minting a registration token ..."
+      mint_token(repo, "registration-token")
+    end
+
+    # Mint a runner token via the API. `kind` is "registration-token" (to add) or
+    # "remove-token" (to deregister).
+    #
+    # @param repo [String] "owner/repo"
+    # @param kind [String]
+    # @return [String]
+    # @raise [Error] when the token can't be minted
+    def mint_token(repo, kind)
       out, err, ok = @exec.capture(
         "gh", "api", "-X", "POST",
-        "repos/#{repo}/actions/runners/registration-token",
+        "repos/#{repo}/actions/runners/#{kind}",
         "--jq", ".token"
       )
       token = out.strip
-      raise Error, "failed to mint a registration token: #{err.strip}" if !ok || token.empty?
+      raise Error, "failed to mint a #{kind}: #{err.strip}" if !ok || token.empty?
 
       token
     end

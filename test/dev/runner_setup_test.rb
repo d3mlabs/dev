@@ -36,6 +36,7 @@ class Dev::RunnerSetupTest < Minitest::Test
   def authed_responder
     lambda do |argv|
       next ["owner/repo\n", "", true] if argv[0, 3] == ["gh", "repo", "view"]
+      next ["RMTOKEN\n", "", true] if argv.any? { |arg| arg.include?("remove-token") }
       next ["TOKEN123\n", "", true] if argv.any? { |arg| arg.include?("registration-token") }
 
       ["", "", true]
@@ -149,6 +150,33 @@ class Dev::RunnerSetupTest < Minitest::Test
     exec.systems.any? { |call| call[:argv] == ["sudo", "./svc.sh", "start"] && call[:chdir] == dir }
     exec.systems.none? { |call| call[:argv] == ["sudo", "./svc.sh", "status"] }
     exec.systems.none? { |call| call[:argv].first == "curl" }
+    exec.systems.none? { |call| call[:argv][0, 2] == ["./config.sh", "remove"] }
+
+    Cleanup
+    FileUtils.remove_entry(dir)
+  end
+
+  test "run removes an existing runner config before reconfiguring" do
+    Given "a runner dir that is already configured (has .runner)"
+    dir = Dir.mktmpdir
+    config_sh = File.join(dir, "config.sh")
+    File.write(config_sh, "#!/bin/bash\n")
+    File.chmod(0o755, config_sh)
+    File.write(File.join(dir, ".runner"), "{}")
+    config = Dev::RunnerSetupConfig.new(labels: "ue-engine", dir: dir, name: "box")
+    exec = RecordingExecutor.new(&authed_responder)
+    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, out: silent)
+
+    When "running setup"
+    setup.run
+
+    Then "config.sh remove runs with the remove token before config.sh registers"
+    remove = exec.systems.find { |call| call[:argv][0, 2] == ["./config.sh", "remove"] }
+    remove[:argv] == ["./config.sh", "remove", "--token", "RMTOKEN"]
+    remove[:chdir] == dir
+    remove_idx = exec.systems.index { |call| call[:argv][0, 2] == ["./config.sh", "remove"] }
+    register_idx = exec.systems.index { |call| call[:argv][0, 2] == ["./config.sh", "--url"] }
+    remove_idx < register_idx
 
     Cleanup
     FileUtils.remove_entry(dir)
