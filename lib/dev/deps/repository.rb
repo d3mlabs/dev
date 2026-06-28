@@ -14,6 +14,15 @@ module Dev
       def fetch(id)
         raise NotImplementedError, "#{self.class}#fetch must be implemented"
       end
+
+      # Batch hook called once per integration type before any fetch, with all
+      # declarations of this type. Repositories whose backing tool resolves the
+      # whole set together (e.g. bundler running `bundle lock` once) override
+      # this; per-dependency repositories inherit the no-op.
+      #
+      # @param declarations [Array<DependencyDeclaration>] this type's declarations
+      # @return [void]
+      def prepare(declarations); end
     end
   end
 end

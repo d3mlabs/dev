@@ -26,26 +26,35 @@ module Dev
       # @raise [BrewInfoError] if `brew info` fails for a formula
       def fetch(id)
         name = id["name"]
+        # The declared `version:` is a brew formula version *suffix* (e.g. "18"
+        # selects the llvm@18 formula), not a semver to resolve — same meaning the
+        # container build path gives it. The resolved stable version below is the
+        # exact installed version, recorded for the lockfile.
+        version_suffix = id["version"]
 
         if id["cask"]
+          cask_metadata = { "cask" => true }
+          cask_metadata["version_suffix"] = version_suffix if version_suffix
+          cask_metadata["env"] = id["env"] if id["env"]
           return Dependency.new(
             name: name,
             integration: id["integration"].to_sym,
             group: id["group"].to_sym,
             version: nil,
             hash: nil,
-            metadata: { "cask" => true },
+            metadata: cask_metadata,
           )
         end
 
-        formula_spec = id["tap"] ? "#{id["tap"]}/#{name}" : name
-        info = brew_info(formula_spec)
+        info = brew_info(build_formula_spec(name, id["tap"], version_suffix))
 
         version = info["versions"]["stable"]
         bottle_hash = extract_bottle_hash(info)
 
         metadata = {}
         metadata["tap"] = id["tap"] if id["tap"]
+        metadata["version_suffix"] = version_suffix if version_suffix
+        metadata["env"] = id["env"] if id["env"]
 
         Dependency.new(
           name: name,
@@ -58,6 +67,19 @@ module Dev
       end
 
       private
+
+      # Build a brew formula spec: [tap/]name[@version_suffix]. Querying the
+      # suffixed spec (e.g. "llvm@18") returns that versioned formula's stable
+      # version and bottle, not the latest formula's.
+      #
+      # @param name [String] formula name
+      # @param tap [String, nil] tap slug
+      # @param version_suffix [String, nil] brew version suffix (e.g. "18")
+      # @return [String]
+      def build_formula_spec(name, tap, version_suffix)
+        base = tap ? "#{tap}/#{name}" : name
+        version_suffix ? "#{base}@#{version_suffix}" : base
+      end
 
       # Query `brew info --json=v1` for a formula.
       #

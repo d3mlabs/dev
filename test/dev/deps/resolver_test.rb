@@ -25,8 +25,47 @@ class StubRepository < Dev::Deps::Repository
   end
 end
 
+# Records the declarations passed to the batch prepare hook.
+class PreparingRepository < Dev::Deps::Repository
+  attr_reader :prepared_with
+
+  def initialize(deps_by_name: {})
+    @deps_by_name = deps_by_name
+    @prepared_with = nil
+  end
+
+  def prepare(declarations)
+    @prepared_with = declarations
+  end
+
+  def fetch(id)
+    @deps_by_name.fetch(id["name"])
+  end
+end
+
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::ResolverTest < Minitest::Test
+  test "calls prepare once per integration with that integration's declarations before fetching" do
+    Given "a preparing repo with two declarations of its type"
+    foo = Dev::Deps::Dependency.new(name: "foo", integration: :bundler, group: :app,
+                                    version: "1.0", hash: nil, metadata: {})
+    bar = Dev::Deps::Dependency.new(name: "bar", integration: :bundler, group: :test,
+                                    version: "2.0", hash: nil, metadata: {})
+    repo = PreparingRepository.new(deps_by_name: { "foo" => foo, "bar" => bar })
+    declarations = [
+      Dev::Deps::DependencyDeclaration.new(name: "foo", integration: :bundler, group: :app),
+      Dev::Deps::DependencyDeclaration.new(name: "bar", integration: :bundler, group: :test),
+    ]
+    resolver = Dev::Deps::Resolver.new(repositories: { bundler: repo })
+
+    When "resolving"
+    result = resolver.resolve(declarations)
+
+    Then "prepare received all bundler declarations and resolution still works"
+    repo.prepared_with.map(&:name).sort == ["bar", "foo"]
+    result.map(&:name).sort == ["bar", "foo"]
+  end
+
   test "resolves a flat list of declarations with no transitive dependencies" do
     Given "two independent declarations"
     boost = Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,

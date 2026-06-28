@@ -95,24 +95,22 @@ module Dev
         File.expand_path(path)
       end
 
-      # Install a Homebrew formula, constructing the spec from tap/version.
+      # Install a Homebrew formula.
+      #
+      # The install target is the versioned formula (e.g. "llvm@18"), built from
+      # the declared version *suffix* in metadata — never the resolved stable
+      # version (dep.version), which is a record like "18.1.8" and is not a valid
+      # formula name (there is no "llvm@18.1.8").
       #
       # @param dep [Dependency]
       # @raise [InstallError] if brew install fails
       def install_formula(dep)
-        name = dep.name
-        return if brew_installed?(name)
+        suffix = dep.metadata["version_suffix"]
+        formula = suffix ? "#{dep.name}@#{suffix}" : dep.name
+        return if brew_installed?(formula)
 
-        spec = if dep.metadata["tap"]
-          version_suffix = dep.version ? "@#{dep.version}" : ""
-          "#{dep.metadata["tap"]}/#{name}#{version_suffix}"
-        elsif dep.version
-          "#{name}@#{dep.version}"
-        else
-          name
-        end
-
-        run_brew_install(name, spec)
+        spec = dep.metadata["tap"] ? "#{dep.metadata["tap"]}/#{formula}" : formula
+        run_brew_install(dep.name, spec)
       end
 
       # Install a Homebrew cask.

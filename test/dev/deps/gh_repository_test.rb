@@ -160,4 +160,65 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
     Then
     raises Dev::Deps::GhRepository::GhMissingError
   end
+
+  def source_id(overrides = {})
+    {
+      "name" => "UnrealEngine",
+      "integration" => "gh",
+      "group" => "game",
+      "repo" => "EpicGames/UnrealEngine",
+      "tag" => "5.6.1-release",
+      "build" => "bin/build-ue.sh",
+      "install_dir" => "~/.dev/engines/ue5",
+    }.merge(overrides)
+  end
+
+  test "fetch resolves a build-from-source dep to the tag's commit SHA and build recipe" do
+    Given "a repository whose commit lookup is stubbed"
+    repo = Dev::Deps::GhRepository.new
+    repo.stubs(:run_gh_api)
+        .with("repos/EpicGames/UnrealEngine/commits/5.6.1-release")
+        .returns([JSON.generate({ "sha" => "6978b63c" }), "", stub(success?: true)])
+
+    When "fetching the source dependency"
+    dep = repo.fetch(source_id)
+
+    Then
+    dep.name == "UnrealEngine"
+    dep.version == "5.6.1-release"
+    dep.metadata["repo"] == "EpicGames/UnrealEngine"
+    dep.metadata["install_dir"] == "~/.dev/engines/ue5"
+    dep.metadata["build"] == "bin/build-ue.sh"
+    dep.metadata["commit"] == "6978b63c"
+    !dep.metadata.key?("assets")
+  end
+
+  test "fetch source raises ReleaseNotFoundError when the tag is missing but repo is visible" do
+    Given "a 404 on the commit and a visible repo"
+    repo = Dev::Deps::GhRepository.new
+    repo.stubs(:run_gh_api)
+        .with("repos/EpicGames/UnrealEngine/commits/9.9.9")
+        .returns(["", "gh: Not Found (HTTP 404)", stub(success?: false)])
+    repo.stubs(:run_gh_api)
+        .with("repos/EpicGames/UnrealEngine")
+        .returns([JSON.generate({ "full_name" => "EpicGames/UnrealEngine" }), "", stub(success?: true)])
+
+    When "fetching a nonexistent tag"
+    repo.fetch(source_id("tag" => "9.9.9"))
+
+    Then
+    raises Dev::Deps::GhRepository::ReleaseNotFoundError
+  end
+
+  test "fetch source raises RepoAccessError when the repo is invisible (account not linked)" do
+    Given "a 404 on both the commit and the repo"
+    repo = Dev::Deps::GhRepository.new
+    repo.stubs(:run_gh_api).returns(["", "gh: Not Found (HTTP 404)", stub(success?: false)])
+
+    When "fetching from an inaccessible repo"
+    repo.fetch(source_id)
+
+    Then
+    raises Dev::Deps::GhRepository::RepoAccessError
+  end
 end

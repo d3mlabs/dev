@@ -221,11 +221,19 @@ end
 
 ### Built-in integrations
 
+All built-in integrations are declared in one place — `lib/dev/deps/registry.rb` — and `dev install-deps` installs every host-scoped one. `registry_consistency_test.rb` fails the build if a repository/integration class or a declaration DSL verb is added without a registry entry.
+
 | DSL method | Integration | Repository | Lockfile |
 |---|---|---|---|
+| `gem()` | BundlerIntegration | BundlerRepository | deps.lock |
 | `cmake()` | CmakeIntegration | GitRepository / UrlRepository | deps.lock |
 | `luarocks()` | LuaRocksIntegration | LuaRocksRepository | deps.lock |
-| `brew()` | BrewIntegration | BrewRepository | build-deps.lock |
+| `brew()` | BrewIntegration | BrewRepository | deps.lock / build-deps.lock |
+| `gh()` | GhIntegration | GhRepository | deps.lock |
+| `ficsit()` | FicsitIntegration | FicsitRepository | deps.lock |
+| `steam()` | SteamIntegration | SteamRepository | deps.lock |
+
+`gem()` declares Ruby gems: dev generates a `Gemfile`/`Gemfile.lock` from your declarations (a top-level `gem` lands in the default group; `group(:test) { gem ... }` scopes it to a bundler group), and `dev install-deps` runs `bundle install`. `brew()` dual-writes — the container build path keeps reading the group structure while `dev install-deps` also installs the formulae on the host (idempotently).
 
 ### Custom integrations
 

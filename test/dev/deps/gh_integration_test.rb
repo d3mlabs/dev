@@ -29,6 +29,26 @@ class FixtureGhIntegration < Dev::Deps::GhIntegration
   end
 end unless defined?(FixtureGhIntegration)
 
+# GhIntegration with the gh tarball-download boundary replaced by copying a
+# pre-built fixture source tarball. Extraction, the real build recipe, marker,
+# and publish all run for real against the filesystem.
+class FixtureSourceGhIntegration < Dev::Deps::GhIntegration
+  attr_reader :download_count
+
+  def initialize(source_tarball:, **kwargs)
+    super(**kwargs)
+    @source_tarball = source_tarball
+    @download_count = 0
+  end
+
+  private
+
+  def download_source(_dep, archive_path)
+    @download_count += 1
+    FileUtils.cp(@source_tarball, archive_path)
+  end
+end unless defined?(FixtureSourceGhIntegration)
+
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::GhIntegrationTest < Minitest::Test
   # Build a real split zstd tarball: tar + zstd the content dir, then split
@@ -100,6 +120,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     File.read(File.join(version_dir, "Engine", "engine.txt")) == "engine payload"
     File.read(File.join(version_dir, "README.md")) == "readme payload"
     File.read(File.join(version_dir, ".dev-gh-release")) == "5.6.1-css-83"
+    File.readlink(File.join(install_dir, "current")) == "5.6.1-css-83"
     Dir.glob(File.join(install_dir, ".staging-*")).empty?
     integration.download_count == 1
 
@@ -189,6 +210,143 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
 
     Then
     raises Dev::Deps::GhIntegration::UnsupportedArchiveError
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  # --- build-from-source path ------------------------------------------------
+
+  # A GitHub-style source tarball: a single top-level "<repo>-<sha>/" dir that
+  # the integration strips with --strip-components=1.
+  #
+  # @return [Pathname] the .tar.gz
+  def build_source_tarball(dir, files:)
+    top_name = "UnrealEngine-abc123"
+    files.each do |name, content|
+      path = File.join(dir, "src", top_name, name)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, content)
+    end
+    tarball = Pathname(File.join(dir, "source.tar.gz"))
+    system("sh", "-c", "tar -czf #{tarball} -C #{File.join(dir, "src")} #{top_name}") ||
+      raise("fixture tarball build failed")
+    tarball
+  end
+
+  def source_dep(install_dir, build:, tag: "5.6.1-release")
+    Dev::Deps::Dependency.new(
+      name: "UnrealEngine", integration: :gh, group: :game,
+      version: tag, hash: nil,
+      metadata: {
+        "repo" => "EpicGames/UnrealEngine",
+        "install_dir" => install_dir,
+        "build" => build,
+        "commit" => "abc123",
+      },
+    )
+  end
+
+  def build_source_integration(tarball, project_root, cache_dir)
+    FixtureSourceGhIntegration.new(
+      source_tarball: tarball,
+      repository: Dev::Deps::GhRepository.new,
+      cache: Dev::Deps::Cache.new(cache_dir: cache_dir),
+      project_root: project_root,
+    )
+  end
+
+  test "install_all builds from source via a project-relative script and publishes the output" do
+    Given "a source tarball and a project build script that populates DEV_INSTALL_DIR"
+    dir = Dir.mktmpdir("dev-gh-src-test-")
+    tarball = build_source_tarball(dir, files: { "hello.txt" => "engine source" })
+    project_root = File.join(dir, "project")
+    FileUtils.mkdir_p(File.join(project_root, "bin"))
+    File.write(File.join(project_root, "bin", "build.sh"), <<~SH)
+      #!/usr/bin/env bash
+      set -euo pipefail
+      cp "$DEV_SOURCE_DIR/hello.txt" "$DEV_INSTALL_DIR/built.txt"
+      echo "$DEV_VERSION" > "$DEV_INSTALL_DIR/version.txt"
+    SH
+    install_dir = File.join(dir, "engines", "ue5")
+    dep = source_dep(install_dir, build: "bin/build.sh")
+    integration = build_source_integration(tarball, project_root, File.join(dir, "cache"))
+
+    When "installing"
+    integration.install_all([dep])
+
+    Then "the build output lands under install_dir/<tag>/ with the marker, no staging remains"
+    version_dir = File.join(install_dir, "5.6.1-release")
+    File.read(File.join(version_dir, "built.txt")) == "engine source"
+    File.read(File.join(version_dir, "version.txt")).strip == "5.6.1-release"
+    File.read(File.join(version_dir, ".dev-gh-release")) == "5.6.1-release"
+    File.readlink(File.join(install_dir, "current")) == "5.6.1-release"
+    Dir.glob(File.join(install_dir, ".staging-*")).empty?
+    integration.download_count == 1
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all with build: none publishes the extracted source tree unchanged" do
+    Given "a source tarball and a header-only (build: none) dependency"
+    dir = Dir.mktmpdir("dev-gh-src-test-")
+    tarball = build_source_tarball(dir, files: { "include/lib.h" => "#pragma once" })
+    install_dir = File.join(dir, "libs", "headeronly")
+    dep = source_dep(install_dir, build: "none", tag: "v1.0")
+    integration = build_source_integration(tarball, File.join(dir, "project"), File.join(dir, "cache"))
+
+    When "installing"
+    integration.install_all([dep])
+
+    Then "the source tree itself becomes the version dir, marker included"
+    version_dir = File.join(install_dir, "v1.0")
+    File.read(File.join(version_dir, "include", "lib.h")) == "#pragma once"
+    File.read(File.join(version_dir, ".dev-gh-release")) == "v1.0"
+    Dir.glob(File.join(install_dir, ".staging-*")).empty?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all skips the source build when the version dir already records the tag" do
+    Given "a version dir with a matching marker"
+    dir = Dir.mktmpdir("dev-gh-src-test-")
+    tarball = build_source_tarball(dir, files: { "hello.txt" => "x" })
+    install_dir = File.join(dir, "engines", "ue5")
+    version_dir = File.join(install_dir, "5.6.1-release")
+    FileUtils.mkdir_p(version_dir)
+    File.write(File.join(version_dir, ".dev-gh-release"), "5.6.1-release")
+    dep = source_dep(install_dir, build: "bin/build.sh")
+    integration = build_source_integration(tarball, File.join(dir, "project"), File.join(dir, "cache"))
+
+    When "installing again"
+    integration.install_all([dep])
+
+    Then
+    integration.download_count == 0
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all raises BuildError and publishes no version when the build recipe fails" do
+    Given "a build recipe that exits non-zero"
+    dir = Dir.mktmpdir("dev-gh-src-test-")
+    tarball = build_source_tarball(dir, files: { "hello.txt" => "x" })
+    install_dir = File.join(dir, "engines", "ue5")
+    dep = source_dep(install_dir, build: "exit 7")
+    integration = build_source_integration(tarball, File.join(dir, "project"), File.join(dir, "cache"))
+
+    When "installing"
+    error = assert_raises(Dev::Deps::GhIntegration::BuildError) do
+      integration.install_all([dep])
+    end
+
+    Then "no version dir is published and staging is cleaned up"
+    error.message.include?("UnrealEngine")
+    !File.exist?(File.join(install_dir, "5.6.1-release"))
+    Dir.glob(File.join(install_dir, ".staging-*")).empty?
 
     Cleanup
     FileUtils.rm_rf(dir)

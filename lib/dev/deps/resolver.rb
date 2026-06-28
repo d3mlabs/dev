@@ -28,6 +28,8 @@ module Dev
       # @return [Array<Dependency>]
       # @raise [UnknownIntegrationError] if no repository is registered for a declaration's integration type
       def resolve(declarations)
+        prepare_repositories(declarations)
+
         platforms_by_name = platforms_by_name(declarations)
         resolved = {}
         queue = declarations.dup
@@ -71,6 +73,18 @@ module Dev
       end
 
       private
+
+      # Give each repository a chance to batch-resolve all declarations of its
+      # type before per-dependency fetches begin. Most repositories inherit the
+      # no-op; bundler uses it to generate the Gemfile and run `bundle lock` once.
+      #
+      # @param declarations [Array<DependencyDeclaration>] all declarations
+      # @return [void]
+      def prepare_repositories(declarations)
+        declarations.group_by(&:integration).each do |type, typed_declarations|
+          @repositories[type]&.prepare(typed_declarations)
+        end
+      end
 
       # Collect, per dependency name, the platforms of every group that declares
       # it (preserving nils, which mean "integration default"). This is how the

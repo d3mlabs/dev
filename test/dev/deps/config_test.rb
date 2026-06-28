@@ -14,7 +14,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
     config.ruby_version_requirement == ">= 3.0.0"
   end
 
-  test "define registers gems with optional version" do
+  test "define registers gems as bundler declarations with optional version" do
     When
     config = Dev::Deps.define do
       gem "cli-ui"
@@ -22,12 +22,28 @@ class Dev::Deps::ConfigTest < Minitest::Test
     end
 
     Then
-    gems = config.gems
+    gems = config.declarations.select { |d| d.integration == :bundler }
     gems.size == 2
-    gems[0]["name"] == "cli-ui"
-    !gems[0].key?("version")
-    gems[1]["name"] == "rake"
-    gems[1]["version"] == "~> 13.0"
+    gems[0].name == "cli-ui"
+    gems[0].group == Dev::Deps::DSL::DEFAULT_GEM_GROUP
+    !gems[0].constraint.key?("version")
+    gems[1].name == "rake"
+    gems[1].constraint["version"] == "~> 13.0"
+  end
+
+  test "define registers group-scoped gems with the group as bundler group" do
+    When
+    config = Dev::Deps.define do
+      group :test do
+        gem "minitest", "~> 5.0"
+      end
+    end
+
+    Then
+    decl = config.declarations.find { |d| d.name == "minitest" }
+    decl.integration == :bundler
+    decl.group == :test
+    decl.constraint["version"] == "~> 5.0"
   end
 
   test "define registers taps as Tap objects" do
@@ -169,15 +185,25 @@ class Dev::Deps::ConfigTest < Minitest::Test
     decl.constraint["commit"] == "ee3042f8b027"
   end
 
-  test "declarations is empty for config with only brew deps" do
+  test "brew dual-writes to both groups and declarations" do
     When
     config = Dev::Deps.define do
       group :build do
         brew "cmake"
+        brew "powershell", version: "7.4.0", tap: "d3mlabs/d3mlabs"
+        env :ci do
+          brew "ruby"
+        end
       end
     end
 
-    Then
-    config.declarations.empty?
+    Then "the container groups path is unchanged and brew also rides the lockfile pipeline"
+    config.group("build")["brew"].size == 2
+    config.group("build")["env"]["ci"]["brew"] == ["ruby"]
+    brew_decls = config.declarations.select { |d| d.integration == :brew }
+    brew_decls.map(&:name).sort == %w[cmake powershell ruby]
+    brew_decls.all? { |d| d.group == :build }
+    brew_decls.find { |d| d.name == "powershell" }.constraint["tap"] == "d3mlabs/d3mlabs"
+    brew_decls.find { |d| d.name == "ruby" }.constraint["env"] == "ci"
   end
 end

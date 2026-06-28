@@ -117,6 +117,38 @@ class Dev::Deps::DependencyInstallerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "install dispatches bundler and luarocks deps to their integrations" do
+    Given "a lockfile with a gem and a rock alongside a brew dep"
+    dir = Dir.mktmpdir("installer-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
+    deps = [
+      Dev::Deps::Dependency.new(name: "ffi", integration: :bundler, group: :app,
+                                version: "1.17.0", hash: nil, metadata: {}),
+      Dev::Deps::Dependency.new(name: "luaunit", integration: :luarocks, group: :test,
+                                version: "3.5-1", hash: "SHA256=aaa", metadata: {}),
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
+                                version: "3.31", hash: "SHA256=bbb", metadata: {}),
+    ]
+    lockfile.lock(deps)
+    bundler_int = RecordingIntegration.new
+    luarocks_int = RecordingIntegration.new
+    brew_int = RecordingIntegration.new
+    installer = Dev::Deps::DependencyInstaller.new(
+      lockfile:, integrations: { bundler: bundler_int, luarocks: luarocks_int, brew: brew_int },
+    )
+
+    When "running install"
+    installer.install
+
+    Then "each integration received only its own deps"
+    bundler_int.installed_deps.map(&:name) == ["ffi"]
+    luarocks_int.installed_deps.map(&:name) == ["luaunit"]
+    brew_int.installed_deps.map(&:name) == ["cmake"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "install skips integration types with no registered integration" do
     Given "a lockfile with an unregistered integration type"
     dir = Dir.mktmpdir("installer-test-")

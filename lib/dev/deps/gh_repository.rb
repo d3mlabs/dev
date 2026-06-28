@@ -26,17 +26,30 @@ module Dev
       class NoMatchingAssetsError < StandardError; end
       class ApiError < StandardError; end
 
-      # Resolve a GitHub release dependency to a pinned Dependency.
+      # Resolve a GitHub dependency to a pinned Dependency.
+      #
+      # Two shapes, distinguished by the declaration: "assets" => prebuilt release
+      # assets (download + verify); "build" => build from the tag's source archive.
       #
       # @param id [Hash] must include "name", "repo" (owner/repo slug), "tag",
-      #   "assets" (glob pattern), "install_dir", "integration", "group"
+      #   "install_dir", "integration", "group", and one of "assets"/"build"
       # @return [Dependency]
       # @raise [GhMissingError] if the gh CLI is not installed
       # @raise [AuthenticationError] if gh is not authenticated
       # @raise [RepoAccessError] if the repo is not visible to the account
-      # @raise [ReleaseNotFoundError] if the tag has no release
+      # @raise [ReleaseNotFoundError] if the tag has no release/ref
       # @raise [NoMatchingAssetsError] if no assets match the pattern
       def fetch(id)
+        id["assets"] ? fetch_prebuilt(id) : fetch_source(id)
+      end
+
+      private
+
+      # Resolve a prebuilt-release dependency (download + verify path).
+      #
+      # @param id [Hash]
+      # @return [Dependency]
+      def fetch_prebuilt(id)
         repo_slug = id["repo"]
         tag = id["tag"]
         pattern = id["assets"]
@@ -63,7 +76,46 @@ module Dev
         )
       end
 
-      private
+      # Resolve a build-from-source dependency. Pins the tag's commit SHA (for
+      # provenance) and records the build recipe; GhIntegration fetches the source
+      # archive and runs the build. No release is required — the tag just needs to
+      # exist as a ref (Epic ships UE as source, not release assets).
+      #
+      # @param id [Hash]
+      # @return [Dependency]
+      def fetch_source(id)
+        repo_slug = id["repo"]
+        tag = id["tag"]
+        commit = resolve_commit_sha(repo_slug, tag)
+
+        Dependency.new(
+          name: id["name"],
+          integration: id["integration"].to_sym,
+          group: id["group"].to_sym,
+          version: tag,
+          hash: nil,
+          metadata: {
+            "repo" => repo_slug,
+            "install_dir" => id["install_dir"],
+            "build" => id["build"],
+            "commit" => commit,
+          },
+        )
+      end
+
+      # Resolve a tag to its commit SHA, mapping gh failures to actionable errors.
+      #
+      # @param repo_slug [String] "owner/repo"
+      # @param tag [String] tag/ref
+      # @return [String] commit SHA
+      def resolve_commit_sha(repo_slug, tag)
+        out, err, status = run_gh_api("repos/#{repo_slug}/commits/#{tag}")
+        return JSON.parse(out)["sha"] if status.success?
+
+        raise_auth_error!(err)
+        raise_not_found_error!(repo_slug, tag) if not_found?(err)
+        raise ApiError, "gh api failed resolving #{repo_slug}@#{tag}: #{err.strip}"
+      end
 
       # Fetch release metadata for a tag, mapping gh failures to actionable errors.
       #
@@ -88,7 +140,7 @@ module Dev
       def raise_not_found_error!(repo_slug, tag)
         _out, _err, status = run_gh_api("repos/#{repo_slug}")
         if status.success?
-          raise ReleaseNotFoundError, "no release tagged #{tag.inspect} in #{repo_slug}"
+          raise ReleaseNotFoundError, "no release or tag #{tag.inspect} in #{repo_slug}"
         end
 
         raise RepoAccessError, <<~MSG

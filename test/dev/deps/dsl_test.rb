@@ -222,6 +222,69 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl.constraint["install_dir"] == "~/.dev/engines/unreal-engine-css"
   end
 
+  test "gh() build-from-source with github: shorthand names the dep and keeps the slug" do
+    When "defining a gh build-from-source dep"
+    config = Dev::Deps.define do
+      group :game do
+        gh "UnrealEngine",
+           github: "EpicGames/UnrealEngine",
+           tag: "5.6.1-release",
+           build: "bin/build-ue.sh",
+           install_dir: "~/.dev/engines/ue5"
+      end
+    end
+
+    Then
+    decl = config.declarations[0]
+    decl.name == "UnrealEngine"
+    decl.integration == :gh
+    decl.group == :game
+    decl.constraint["repo"] == "EpicGames/UnrealEngine"
+    decl.constraint["tag"] == "5.6.1-release"
+    decl.constraint["build"] == "bin/build-ue.sh"
+    decl.constraint["install_dir"] == "~/.dev/engines/ue5"
+    !decl.constraint.key?("assets")
+  end
+
+  test "gh() stringifies a :none build recipe for header-only deps" do
+    When "defining a header-only gh dep"
+    config = Dev::Deps.define do
+      group :app do
+        gh "json", github: "nlohmann/json", tag: "v3.11.3", build: :none,
+           install_dir: "~/.dev/headers/json"
+      end
+    end
+
+    Then
+    config.declarations[0].constraint["build"] == "none"
+  end
+
+  test "gh() raises when neither assets: nor build: is given" do
+    When "defining a gh dep with no materialization"
+    Dev::Deps.define do
+      group :game do
+        gh "UnrealEngine", github: "EpicGames/UnrealEngine", tag: "5.6.1-release",
+           install_dir: "~/.dev/engines/ue5"
+      end
+    end
+
+    Then
+    raises ArgumentError
+  end
+
+  test "gh() raises when both assets: and build: are given" do
+    When "defining a gh dep with both materializations"
+    Dev::Deps.define do
+      group :game do
+        gh "UnrealEngine", github: "EpicGames/UnrealEngine", tag: "5.6.1-release",
+           assets: "*.tar.zst.*", build: "bin/build-ue.sh", install_dir: "~/.dev/engines/ue5"
+      end
+    end
+
+    Then
+    raises ArgumentError
+  end
+
   test "steam() produces a DependencyDeclaration with steam integration" do
     When "defining a steam dep in a LinuxServer group"
     config = Dev::Deps.define do

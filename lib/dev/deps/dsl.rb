@@ -6,14 +6,17 @@ module Dev
   module Deps
     # Top-level DSL evaluated inside Dev::Deps.define { ... }.
     class DSL
-      attr_reader :taps, :groups, :declarations, :gems, :ruby_version_requirement,
+      # Group a top-level `gem` declaration lands in when none is given. Bundler's
+      # default (unscoped) group, mirroring a hand-written Gemfile's top section.
+      DEFAULT_GEM_GROUP = :app
+
+      attr_reader :taps, :groups, :declarations, :ruby_version_requirement,
                   :lua_version_value, :registered_integrations, :registered_methods
 
       def initialize
         @taps   = {}
         @groups = {}
         @declarations = []
-        @gems   = []
         @ruby_version_requirement = nil
         @lua_version_value = nil
         @registered_integrations = {}
@@ -31,8 +34,24 @@ module Dev
         @lua_version_value = version.to_s.strip
       end
 
-      def gem(name, version = nil)
-        @gems << { "name" => name.to_s, "version" => version.to_s }.reject { |_, v| v.empty? }
+      # Declare a Ruby gem. Gems are a first-class dev-managed dependency type
+      # backed by bundler: this records a :bundler declaration that rides the
+      # normal resolver -> lockfile -> install pipeline (dev generates the
+      # Gemfile/Gemfile.lock from these). A top-level gem lands in the default
+      # group; use a group block to scope it (e.g. group(:test) { gem ... }).
+      #
+      # @param name [String, Symbol] gem name
+      # @param version [String, nil] version requirement (e.g. "~> 1.17")
+      # @param opts [Hash] additional bundler options (e.g. require:, git:)
+      def gem(name, version = nil, **opts)
+        constraint = opts.each_with_object({}) { |(k, v), h| h[k.to_s] = v }
+        constraint["version"] = version.to_s if version
+        @declarations << DependencyDeclaration.new(
+          name: name.to_s,
+          integration: :bundler,
+          constraint:,
+          group: DEFAULT_GEM_GROUP,
+        )
       end
 
       def tap(name, url: nil)
@@ -73,8 +92,15 @@ module Dev
     class EnvDSL
       class EmptyNameError < StandardError; end
 
-      def initialize
+      attr_reader :declarations
+
+      # @param group [Symbol] enclosing group, stamped onto declarations
+      # @param platform [String, nil] enclosing group's platform
+      def initialize(group: :app, platform: nil)
         @brew = []
+        @declarations = []
+        @group = group
+        @platform = platform
       end
 
       def brew(name, **opts)
@@ -86,6 +112,13 @@ module Dev
         else
           @brew << { name_str => stringify_keys(opts) }
         end
+        @declarations << DependencyDeclaration.new(
+          name: name_str,
+          integration: :brew,
+          constraint: stringify_keys(opts),
+          group: @group,
+          platform: @platform,
+        )
       end
 
       def to_h
@@ -126,6 +159,16 @@ module Dev
         add_declaration(name, :cmake, spec)
       end
 
+      # Declare a Ruby gem scoped to this group (group name -> bundler group).
+      #
+      # @param name [String, Symbol] gem name
+      # @param version [String, nil] version requirement (e.g. "~> 1.17")
+      # @param spec [Hash] additional bundler options (e.g. require:, git:)
+      def gem(name, version = nil, **spec)
+        spec[:version] = version if version
+        add_declaration(name, :bundler, spec)
+      end
+
       # Declare a LuaRocks dependency with an optional version constraint.
       #
       # @param name [String, Symbol] rock name
@@ -146,20 +189,42 @@ module Dev
         add_declaration(mod_reference, :ficsit, spec)
       end
 
-      # Declare a GitHub release artifact dependency (e.g. the custom UE engine).
+      # Declare a GitHub dependency, materialized one of two ways:
+      #   - assets:  download prebuilt release asset(s) matching a glob (e.g. the CSS
+      #              engine tarball). Prebuilt path.
+      #   - build:   fetch the tag's source archive and build it (e.g. stock UE, which
+      #              Epic ships as source only). Pass a project-relative script path or
+      #              an inline shell string; :none extracts source with no build step
+      #              (header-only). dev runs it with $DEV_SOURCE_DIR / $DEV_INSTALL_DIR /
+      #              $DEV_VERSION and publishes $DEV_INSTALL_DIR to install_dir/<tag>.
+      # Exactly one of assets:/build: must be given (the verb names the FETCH backend;
+      # assets/build names how it's MATERIALIZED).
       #
-      # The declaration name is the repo basename; the full slug is kept in
-      # the constraint so the resolver can query the GitHub API.
+      # The first argument is the declaration name. With github:/repo: it is the name and
+      # the slug comes from that option; otherwise it is the "owner/repo" slug and the
+      # name is its basename (e.g. gh "EpicGames/UnrealEngine" -> name "UnrealEngine").
       #
-      # @param slug [String, Symbol] GitHub "owner/repo" slug
-      # @param tag [String] exact release tag (e.g. "5.6.1-css-83") — no floating "latest"
-      # @param assets [String] glob pattern selecting release assets
+      # @param name_or_slug [String, Symbol] dependency name, or "owner/repo" slug
+      # @param tag [String] exact tag (e.g. "5.6.1-release") — no floating "latest"
       # @param install_dir [String] host directory the artifact is installed into
+      # @param github [String, nil] "owner/repo" slug (shorthand; makes the first arg the name)
+      # @param repo [String, nil] alias for github:
+      # @param assets [String, nil] glob selecting prebuilt release assets
+      # @param build [String, Symbol, nil] build-from-source recipe (script path / shell / :none)
       # @param spec [Hash] additional options
-      def gh(slug, tag:, assets:, install_dir:, **spec)
-        slug_str = slug.to_s
-        name = slug_str.split("/").last
-        spec = spec.merge(repo: slug_str, tag: tag, assets: assets, install_dir: install_dir)
+      def gh(name_or_slug, tag:, install_dir:, github: nil, repo: nil, assets: nil, build: nil, **spec)
+        slug = (github || repo || name_or_slug).to_s
+        name = (github || repo) ? name_or_slug.to_s : slug.split("/").last
+
+        unless [assets, build].compact.size == 1
+          raise ArgumentError,
+                "gh #{name.inspect}: provide exactly one of assets: (prebuilt release asset) " \
+                "or build: (build from source)"
+        end
+
+        spec = spec.merge(repo: slug, tag: tag, install_dir: install_dir)
+        spec[:assets] = assets if assets
+        spec[:build] = build.to_s if build
         add_declaration(name, :gh, spec)
       end
 
@@ -189,6 +254,16 @@ module Dev
         add_declaration(name, integration.to_sym, spec)
       end
 
+      # Declare a Homebrew formula/cask.
+      #
+      # Dual-writes: the existing @brew/groups entry feeds the container build
+      # path (bin/install-build-deps.rb), while the additional :brew declaration
+      # rides the resolver -> lockfile -> install pipeline so `dev install-deps`
+      # installs it on the host too. BrewIntegration skips already-installed
+      # formulae, so the host install is idempotent.
+      #
+      # @param name [String, Symbol] formula or cask name
+      # @param opts [Hash] options (tap:, version:, cask:)
       def brew(name, **opts)
         name_str = name.to_s
         raise EmptyNameError, "brew dependency name cannot be empty" if name_str.empty?
@@ -198,13 +273,19 @@ module Dev
         else
           @brew << { name_str => stringify_keys(opts) }
         end
+        add_declaration(name_str, :brew, opts.dup)
       end
 
       def env(name, &block)
         env_name = name.to_s
-        env_dsl = EnvDSL.new
+        env_dsl = EnvDSL.new(group: @group, platform: @platform)
         env_dsl.instance_eval(&block) if block
         @envs[env_name] = env_dsl.to_h
+        # Stamp the env name so the brew declaration lands in the lockfile's
+        # env section and install-deps filters it to the matching environment.
+        env_dsl.declarations.each do |decl|
+          @declarations << decl.with(constraint: decl.constraint.merge("env" => env_name))
+        end
       end
 
       def to_h

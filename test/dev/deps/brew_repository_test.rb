@@ -43,6 +43,34 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
     dep.hash == "SHA256=abc123def456"
   end
 
+  test "fetch treats declared version as a formula suffix and records the resolved version" do
+    Given "a formula declared with a version suffix"
+    repository = Dev::Deps::BrewRepository.new
+    brew_json = [{
+      "name" => "llvm@18",
+      "versions" => { "stable" => "18.1.8" },
+      "bottle" => { "stable" => { "files" => { "arm64_sonoma" => { "sha256" => "llvm18" } } } },
+    }].to_json
+
+    Open3.stubs(:capture3)
+         .with("brew", "info", "--json=v1", "llvm@18")
+         .returns([brew_json, "", stub(success?: true)])
+
+    When "fetching with version: 18"
+    dep = repository.fetch(
+      "name" => "llvm",
+      "integration" => "brew",
+      "group" => "build",
+      "version" => "18",
+    )
+
+    Then "the resolved version is recorded and the suffix is kept for install"
+    dep.name == "llvm"
+    dep.version == "18.1.8"
+    dep.hash == "SHA256=llvm18"
+    dep.metadata["version_suffix"] == "18"
+  end
+
   test "fetch includes tap in metadata when specified" do
     Given "a tapped formula identifier"
     repository = Dev::Deps::BrewRepository.new
