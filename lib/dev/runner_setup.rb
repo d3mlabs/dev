@@ -190,6 +190,8 @@ module Dev
     end
 
     # svc.sh manages the systemd unit and needs root (interactive sudo is fine).
+    # `svc.sh start` already echoes the unit status, so there's no separate status
+    # call (a redundant one prints the same service twice).
     #
     # @param dir [String] install dir
     # @raise [Error] when the service can't be installed or started
@@ -197,8 +199,6 @@ module Dev
       @out.puts ">>> Installing + starting the runner service ..."
       raise Error, "svc.sh install failed" unless @exec.system("sudo", "./svc.sh", "install", chdir: dir)
       raise Error, "svc.sh start failed" unless @exec.system("sudo", "./svc.sh", "start", chdir: dir)
-
-      @exec.system("sudo", "./svc.sh", "status", chdir: dir)
     end
 
     # First label, sanitized for use in a directory name.

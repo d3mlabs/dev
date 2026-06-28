@@ -147,6 +147,7 @@ class Dev::RunnerSetupTest < Minitest::Test
     ]
     exec.systems.any? { |call| call[:argv] == ["sudo", "./svc.sh", "install"] && call[:chdir] == dir }
     exec.systems.any? { |call| call[:argv] == ["sudo", "./svc.sh", "start"] && call[:chdir] == dir }
+    exec.systems.none? { |call| call[:argv] == ["sudo", "./svc.sh", "status"] }
     exec.systems.none? { |call| call[:argv].first == "curl" }
 
     Cleanup
