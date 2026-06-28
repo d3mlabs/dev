@@ -9,6 +9,23 @@ module ShadowenvRuby
   MIN_RUBY = Gem::Requirement.new(">= 2.7.0")
   LISP_FILENAME = "510_ruby.lisp"
 
+  # Stdlib C-extensions every dev workflow depends on. rbenv/ruby-build silently
+  # *skips* an extension when its dev library is missing at compile time, so a Ruby
+  # can install "successfully" yet blow up on the first `require` deep inside bundler
+  # ("cannot load such file -- zlib"). We make that failure mode impossible: provision
+  # the libraries below before building, and hard-verify these after.
+  REQUIRED_EXTENSIONS = %w[zlib openssl psych].freeze
+
+  # Homebrew formulae that supply the headers/libs ruby-build links the required
+  # extensions against, mapped to the `--with-<flag>-dir` configure flag that points
+  # Ruby's build at the brew copy. Works on macOS and Linuxbrew alike (the box).
+  RUBY_BUILD_BREW_DEPS = {
+    "openssl@3" => "openssl",
+    "readline" => "readline",
+    "libyaml" => "libyaml",
+    "zlib" => "zlib",
+  }.freeze
+
   module_function
 
   # Resolve the Ruby version to provision. Explicit pin wins; falls back to
@@ -51,20 +68,13 @@ module ShadowenvRuby
     content.include?(%(provide "ruby" "#{ruby_version}"))
   end
 
-  # Full provisioning: install Ruby via rbenv if needed, write lisp,
-  # trust shadowenv, ensure shell hook. Idempotent.
+  # Full provisioning: install Ruby via rbenv if needed (with the build deps that
+  # guarantee the required extensions compile), verify it is not crippled, write the
+  # lisp, trust shadowenv, ensure shell hook. Idempotent.
   def setup!(ruby_version:, project_root:)
     root = project_root.to_s
-    ruby_root = find_ruby_root(ruby_version)
-    unless ruby_root
-      if install_ruby_with_version_manager(ruby_version)
-        ruby_root = find_ruby_root(ruby_version)
-      end
-      unless ruby_root
-        $stderr.puts "dev: Ruby #{ruby_version} not found. Install: brew install rbenv ruby-build && rbenv install #{ruby_version}"
-        return false
-      end
-    end
+    ruby_root = ensure_ruby_installed!(ruby_version)
+    return false unless ruby_root
 
     shadowenv_d = File.join(root, ".shadowenv.d")
     FileUtils.mkdir_p(shadowenv_d)
@@ -108,12 +118,120 @@ module ShadowenvRuby
     "#{File.join(prefix, "bin")}:#{ENV["PATH"]}"
   end
 
-  def install_ruby_with_version_manager(version)
-    path = path_with_brew_bin
-    env = { "PATH" => path }
+  # Resolve a usable Ruby for the version: install it if absent, repair it if a
+  # pre-existing install is crippled (missing a required extension), and abort with
+  # actionable steps if it still can't be made whole. The repair path matters on a
+  # long-lived box where a Ruby was first built before its dev libs were present.
+  def ensure_ruby_installed!(version)
+    ruby_root = find_ruby_root(version)
+
+    if ruby_root && extensions_ok?(ruby_root)
+      return ruby_root
+    elsif ruby_root
+      missing = missing_extensions(ruby_root)
+      $stderr.puts "dev: Ruby #{version} is missing required extension(s): #{missing.join(', ')}. Rebuilding with the right deps..."
+      install_ruby_with_version_manager(version, force: true)
+    else
+      install_ruby_with_version_manager(version)
+    end
+
+    ruby_root = find_ruby_root(version)
+    unless ruby_root
+      $stderr.puts "dev: Ruby #{version} not found. Install: brew install rbenv ruby-build && rbenv install #{version}"
+      return nil
+    end
+
+    verify_extensions!(ruby_root, version)
+    ruby_root
+  end
+
+  # Install (or force-reinstall) the Ruby via rbenv, first ensuring the build-time
+  # libraries are present and pointing ruby-build at them, so the required extensions
+  # are compiled rather than silently skipped.
+  def install_ruby_with_version_manager(version, force: false)
+    env = { "PATH" => path_with_brew_bin }
     return false unless system(env, "which", "rbenv", out: File::NULL, err: File::NULL)
+
+    ensure_ruby_build_deps!(env)
+    system(env, "rbenv", "uninstall", "--force", version, out: File::NULL, err: File::NULL) if force
     $stderr.puts "dev: Installing Ruby #{version} with rbenv (one-time)..."
-    system(env, "rbenv", "install", version)
+    system(ruby_build_env(env), "rbenv", "install", "--skip-existing", version)
+  end
+
+  # Abort (loudly, with a fix) if the provisioned Ruby is missing a required
+  # extension. A crippled Ruby must never pass silently to surface as a cryptic
+  # bundler error later.
+  def verify_extensions!(ruby_root, version)
+    missing = missing_extensions(ruby_root)
+    return if missing.empty?
+
+    Kernel.abort(<<~MSG)
+      dev: Ruby #{version} is built without required extension(s): #{missing.join(', ')}.
+      ruby-build skips an extension when its dev library is missing at build time.
+      Install the libraries and reinstall:
+        brew install #{RUBY_BUILD_BREW_DEPS.keys.join(' ')}     # or apt: zlib1g-dev libssl-dev libyaml-dev libreadline-dev
+        rbenv uninstall -f #{version} && rbenv install #{version}
+    MSG
+  end
+
+  # The subset of REQUIRED_EXTENSIONS the given Ruby cannot `require`. A Ruby whose
+  # binary is missing entirely counts as missing all of them.
+  def missing_extensions(ruby_root)
+    ruby_bin = File.join(ruby_root, "bin", "ruby")
+    return REQUIRED_EXTENSIONS.dup unless File.executable?(ruby_bin)
+
+    REQUIRED_EXTENSIONS.reject do |ext|
+      system(ruby_bin, "-e", "require #{ext.inspect}", out: File::NULL, err: File::NULL)
+    end
+  end
+
+  def extensions_ok?(ruby_root)
+    missing_extensions(ruby_root).empty?
+  end
+
+  # Best-effort install of the build-time libraries via Homebrew. A no-op when brew
+  # is absent (e.g. an apt-only host) — verify_extensions! still guards the result.
+  def ensure_ruby_build_deps!(env)
+    return unless system(env, "command -v brew >/dev/null 2>&1")
+
+    RUBY_BUILD_BREW_DEPS.each_key do |formula|
+      next if system(env, "brew", "list", "--versions", formula, out: File::NULL, err: File::NULL)
+      system(env, "brew", "install", formula)
+    end
+  end
+
+  # Augment the install env so ruby-build links the brew-provided libraries. Adds a
+  # `--with-<lib>-dir` for each available formula plus the brew prefix's include/lib/
+  # pkgconfig, which is the documented fix for ruby-build on Linuxbrew. Returns the
+  # env unchanged when brew isn't present.
+  def ruby_build_env(env)
+    prefix = homebrew_prefix
+    return env unless prefix
+
+    configure_opts = RUBY_BUILD_BREW_DEPS.filter_map do |formula, flag|
+      dir = brew_prefix_for(formula)
+      "--with-#{flag}-dir=#{dir}" if dir
+    end
+
+    env.merge(
+      "RUBY_CONFIGURE_OPTS" => [env["RUBY_CONFIGURE_OPTS"], *configure_opts].compact.reject(&:empty?).join(" "),
+      "PKG_CONFIG_PATH" => [File.join(prefix, "lib", "pkgconfig"), ENV["PKG_CONFIG_PATH"]].compact.reject(&:empty?).join(":"),
+      "CPPFLAGS" => [ENV["CPPFLAGS"], "-I#{File.join(prefix, "include")}"].compact.reject(&:empty?).join(" "),
+      "LDFLAGS" => [ENV["LDFLAGS"], "-L#{File.join(prefix, "lib")}"].compact.reject(&:empty?).join(" "),
+    )
+  end
+
+  # The Homebrew prefix (HOMEBREW_PREFIX, else `brew --prefix`), or nil when brew is
+  # unavailable.
+  def homebrew_prefix
+    prefix = ENV["HOMEBREW_PREFIX"]
+    prefix ||= begin
+      out = IO.popen(["brew", "--prefix"], err: File::NULL, &:read)
+      out&.strip
+    rescue Errno::ENOENT
+      nil
+    end
+    (prefix && !prefix.empty? && File.directory?(prefix)) ? prefix : nil
   end
 
   def gem_api_version(ruby_version)

@@ -222,4 +222,81 @@ class ShadowenvRubyTest < Minitest::Test
     ENV["HOME"] = original_home
     FileUtils.rm_rf(tmpdir)
   end
+
+  # --- missing_extensions / extensions_ok? ---
+
+  test "missing_extensions reports every required extension when the ruby binary is absent" do
+    Given "a ruby_root with no bin/ruby"
+    tmpdir = Dir.mktmpdir("shadowenv-ext-test-")
+
+    Expect "all required extensions are reported missing"
+    ShadowenvRuby.missing_extensions(tmpdir) == ShadowenvRuby::REQUIRED_EXTENSIONS
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "missing_extensions is empty for a healthy ruby" do
+    Given "a ruby_root whose bin/ruby is the (healthy) test runner ruby"
+    tmpdir = Dir.mktmpdir("shadowenv-ext-test-")
+    bin = File.join(tmpdir, "bin")
+    FileUtils.mkdir_p(bin)
+    FileUtils.ln_s(RbConfig.ruby, File.join(bin, "ruby"))
+
+    Expect "nothing is missing — the running ruby has zlib/openssl/psych"
+    ShadowenvRuby.missing_extensions(tmpdir).empty? == true
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "missing_extensions reports all when bin/ruby cannot load extensions" do
+    Given "a ruby_root whose bin/ruby always fails to require"
+    tmpdir = Dir.mktmpdir("shadowenv-ext-test-")
+    bin = File.join(tmpdir, "bin")
+    FileUtils.mkdir_p(bin)
+    fake_ruby = File.join(bin, "ruby")
+    File.write(fake_ruby, "#!/bin/sh\nexit 1\n")
+    FileUtils.chmod(0o755, fake_ruby)
+
+    Expect "every required extension is reported missing"
+    ShadowenvRuby.missing_extensions(tmpdir) == ShadowenvRuby::REQUIRED_EXTENSIONS
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  # --- ruby_build_env ---
+
+  test "ruby_build_env returns the env unchanged when Homebrew is absent" do
+    Given "a base install env and no Homebrew"
+    base_env = { "PATH" => "/usr/bin" }
+
+    When "we build the ruby-build env"
+    result = ShadowenvRuby.ruby_build_env(base_env)
+
+    Then "the env is returned unchanged"
+    _ * ShadowenvRuby.homebrew_prefix >> nil
+    result == base_env
+  end
+
+  test "ruby_build_env points ruby-build at the brew libraries when Homebrew is present" do
+    Given "a base install env and a Homebrew prefix"
+    tmp_prefix = Dir.mktmpdir("brew-prefix-")
+    base_env = { "PATH" => "/usr/bin" }
+
+    When "we build the ruby-build env"
+    result = ShadowenvRuby.ruby_build_env(base_env)
+
+    Then "configure opts and compiler/pkg-config flags point at brew"
+    _ * ShadowenvRuby.homebrew_prefix >> tmp_prefix
+    _ * ShadowenvRuby.brew_prefix_for(anything) >> "/brew/opt/zlib"
+    assert_includes result["RUBY_CONFIGURE_OPTS"], "--with-zlib-dir=/brew/opt/zlib"
+    assert_includes result["CPPFLAGS"], "-I#{File.join(tmp_prefix, "include")}"
+    assert_includes result["LDFLAGS"], "-L#{File.join(tmp_prefix, "lib")}"
+    assert_includes result["PKG_CONFIG_PATH"], File.join(tmp_prefix, "lib", "pkgconfig")
+
+    Cleanup
+    FileUtils.rm_rf(tmp_prefix)
+  end
 end
