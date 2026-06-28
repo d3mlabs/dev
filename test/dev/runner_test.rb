@@ -135,6 +135,30 @@ class RunnerTest < Minitest::Test
     !out.string.include?("reset-container")
   end
 
+  test "usage includes runner-setup when a runner block is declared" do
+    Given "a Runner whose dev.yml declares a runner block"
+    runner = build_runner(commands: {}, runner: { "labels" => "ue-engine" })
+    out = StringIO.new
+
+    When "we print usage"
+    runner.run([], ui: fake_ui, out: out)
+
+    Then "the runner-setup command is listed"
+    out.string.include?("runner-setup")
+  end
+
+  test "runner-setup is not registered without a runner block" do
+    Given "a Runner with no runner block"
+    runner = build_runner(commands: {})
+    out = StringIO.new
+
+    When "we print usage"
+    runner.run([], ui: fake_ui, out: out)
+
+    Then "no runner-setup command is listed"
+    !out.string.include?("runner-setup")
+  end
+
   test "host integrations register a project-rooted cmake integration" do
     Given "a Runner"
     runner = build_runner
@@ -143,8 +167,11 @@ class RunnerTest < Minitest::Test
     When "we build the host integrations for a project root"
     integrations = runner.send(:build_host_integrations, project_root: root)
 
-    Then "the cmake integration is registered so dev install-deps fetches cmake source"
+    Then "cmake plus the newly-wired gems/luarocks/brew integrations are all host-installed"
     integrations[:cmake].is_a?(Dev::Deps::CmakeIntegration)
+    integrations[:bundler].is_a?(Dev::Deps::BundlerIntegration)
+    integrations[:luarocks].is_a?(Dev::Deps::LuaRocksIntegration)
+    integrations[:brew].is_a?(Dev::Deps::BrewIntegration)
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -200,9 +227,10 @@ class RunnerTest < Minitest::Test
 
   private
 
-  def build_runner(name: "testproject", commands: {}, build: nil)
+  def build_runner(name: "testproject", commands: {}, build: nil, runner: nil)
     yaml = { "name" => name, "ruby" => "4.0.1", "commands" => commands }
     yaml["build"] = build if build
+    yaml["runner"] = runner if runner
     tmp = Tempfile.new(["dev", ".yml"])
     tmp.write(YAML.dump(yaml))
     tmp.flush

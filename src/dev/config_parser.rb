@@ -4,6 +4,7 @@
 require "yaml"
 require_relative "command_parser"
 require_relative "build_container_config"
+require_relative "runner_setup_config"
 require "pathname"
 
 module Dev
@@ -25,15 +26,44 @@ module Dev
       ruby_version = yaml["ruby"]&.to_s
       ruby_version = nil if ruby_version&.empty?
       build_container = parse_build_container(yaml)
+      runner = parse_runner(yaml)
       Config.new(
         name: T.cast(yaml["name"], String),
         commands: commands,
         ruby_version: ruby_version,
         build_container: build_container,
+        runner: runner,
       )
     end
 
     private
+
+    # Parse the top-level `runner` block into a RunnerSetupConfig. Returns nil
+    # when absent or labelless (labels are what make a runner registration
+    # meaningful). labels accept a string or a YAML list, normalized to the
+    # comma-separated form config.sh expects.
+    sig { params(yaml: T::Hash[String, T.untyped]).returns(T.nilable(RunnerSetupConfig)) }
+    def parse_runner(yaml)
+      runner = yaml["runner"]
+      return nil unless runner.is_a?(Hash)
+
+      labels = Array(runner["labels"]).map(&:to_s).reject(&:empty?).join(",")
+      return nil if labels.empty?
+
+      RunnerSetupConfig.new(
+        labels: labels,
+        dir: presence(runner["dir"]),
+        name: presence(runner["name"]),
+        version: presence(runner["version"]),
+      )
+    end
+
+    # Coerce a YAML scalar to a non-empty String, or nil.
+    sig { params(value: T.untyped).returns(T.nilable(String)) }
+    def presence(value)
+      str = value&.to_s
+      str unless str.nil? || str.empty?
+    end
 
     sig { params(yaml: T::Hash[String, T.untyped]).returns(T.nilable(BuildContainerConfig)) }
     def parse_build_container(yaml)

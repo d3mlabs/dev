@@ -50,6 +50,7 @@ module Dev
         ruby_version:,
         project_root: Dev.target_project_root,
         build_container: @config.build_container,
+        runner: @config.runner,
       )
       provision_build_credentials if cmd_name == "up"
       cmd.execute(args:, context:)
@@ -82,8 +83,30 @@ module Dev
       registry = CommandRegistry.new
       register_builtins(registry)
       register_container_builtins(registry, config)
+      register_runner_builtins(registry, config)
       config.commands.each { |name, cmd| registry.register(name, cmd) }
       registry
+    end
+
+    # `dev runner-setup` registers the current host as the repo's self-hosted
+    # GitHub Actions runner. Registered only when a project declares a `runner:`
+    # block, so the command surfaces only where it applies. dev owns the install
+    # logic (one shared implementation) so repos declare just their runner
+    # identity instead of vendoring a bespoke setup script.
+    sig { params(registry: CommandRegistry, config: Config).void }
+    def register_runner_builtins(registry, config)
+      runner_config = config.runner
+      return if runner_config.nil?
+
+      registry.register("runner-setup", BuiltinCommand.new(
+        desc: "Register this host as the repo's self-hosted GitHub Actions runner",
+      ) do |args, context|
+        require "dev/runner_setup"
+        cfg = context.runner
+        raise ArgumentError, "no `runner:` block in dev.yml" if cfg.nil?
+
+        Dev::RunnerSetup.new(config: cfg, repo: parse_repo_flag(args)).run
+      end)
     end
 
     # Lifecycle commands for the persistent build container, registered only when
@@ -114,7 +137,12 @@ module Dev
         load(deps_rb.to_s) if deps_rb.exist?
 
         deps_config = Dev::Deps.last_config || Dev::Deps.define {}
-        resolver = Dev::Deps::Resolver.new(repositories: build_repositories)
+        resolver = Dev::Deps::Resolver.new(
+          repositories: build_repositories(
+            project_root: context.project_root,
+            ruby_version_requirement: deps_config.ruby_version_requirement,
+          ),
+        )
         lockfile = Dev::Deps::Lockfile.new(dir: context.project_root)
         resolved = resolver.resolve(deps_config.declarations)
         lockfile.lock(resolved)
@@ -185,73 +213,57 @@ module Dev
       flag ? Integer(flag.split("=", 2).fetch(1)) : Dev::Deps::CacheGc::DEFAULT_KEEP
     end
 
-    # Build the repositories hash mapping integration types to Repository instances.
+    # Parse an optional `--repo owner/name` / `--repo=owner/name` override for
+    # `dev runner-setup`. Returns nil so RunnerSetup falls back to `gh repo view`.
     #
-    # @return [Hash{Symbol => Dev::Deps::Repository}]
-    sig { returns(T::Hash[Symbol, Dev::Deps::Repository]) }
-    def build_repositories
-      require "dev/deps/brew_repository"
-      require "dev/deps/git_repository"
-      require "dev/deps/url_repository"
-      require "dev/deps/luarocks_repository"
-      require "dev/deps/ficsit_repository"
-      require "dev/deps/gh_repository"
-      require "dev/deps/steam_repository"
+    # @param args [Array<String>]
+    # @return [String, nil]
+    sig { params(args: T::Array[String]).returns(T.nilable(String)) }
+    def parse_repo_flag(args)
+      idx = args.index("--repo")
+      return args[idx + 1] if idx && args[idx + 1]
 
-      git_repo = Dev::Deps::GitRepository.new
-      {
-        brew: Dev::Deps::BrewRepository.new,
-        cmake: git_repo,
-        luarocks: Dev::Deps::LuaRocksRepository.new,
-        ficsit: Dev::Deps::FicsitRepository.new,
-        gh: Dev::Deps::GhRepository.new,
-        steam: Dev::Deps::SteamRepository.new,
-      }
+      flag = args.find { |a| a.start_with?("--repo=") }
+      flag&.split("=", 2)&.fetch(1)
     end
 
-    # Build the integrations that install on the host (not in the build
-    # container) so they can be volume-mounted in:
-    # - gh: the UE engine (install_dir, mounted at /ue)
-    # - steam: the Satisfactory Dedicated Server (install_dir, mounted at /server)
-    # - ficsit: SML zips, content-cached (~/.dev/cache, mounted read-only)
-    # - cmake: C/C++ source deps fetched into the project (build/_deps/<name>-src,
-    #   mounted via /project) — the one integration rooted in the project rather
-    #   than a host cache, hence the project_root argument.
+    # Build the integration-type -> Repository hash the Resolver consumes,
+    # derived from the single Registry table (see lib/dev/deps/registry.rb).
     #
-    # @param project_root [Pathname] repo root the cmake integration fetches into
+    # @param project_root [Pathname] project root, threaded to repositories that need it
+    # @param ruby_version_requirement [String, nil] for the bundler-generated Gemfile
+    # @return [Hash{Symbol => Dev::Deps::Repository}]
+    sig do
+      params(
+        project_root: Pathname,
+        ruby_version_requirement: T.nilable(String),
+      ).returns(T::Hash[Symbol, Dev::Deps::Repository])
+    end
+    def build_repositories(project_root:, ruby_version_requirement: nil)
+      require "dev/deps/registry"
+      Dev::Deps::Registry.repositories(project_root:, ruby_version_requirement:)
+    end
+
+    # Build the integration-type -> Integration hash for host installs, derived
+    # from the same Registry table. Host integrations install on the host (not the
+    # build container) so their artifacts can be volume-mounted in (the UE engine,
+    # the Satisfactory server, SML zips, cmake source deps), plus the host-side
+    # types dev now owns end to end: gems (bundler), Lua rocks, and brew formulae.
+    #
+    # Install-time has no loaded dependencies.rb, so config-level inputs default:
+    # taps is empty (custom-tap installs go through the container path) and the
+    # bundler Gemfile is already generated, so no ruby version is needed here.
+    #
+    # @param project_root [Pathname] repo root threaded to integrations that need it
     # @return [Hash{Symbol => Dev::Deps::Integration}]
     sig { params(project_root: Pathname).returns(T::Hash[Symbol, Dev::Deps::Integration]) }
     def build_host_integrations(project_root:)
       require "dev/deps/cache"
-      require "dev/deps/gh_repository"
-      require "dev/deps/gh_integration"
-      require "dev/deps/ficsit_repository"
-      require "dev/deps/ficsit_integration"
-      require "dev/deps/steam_repository"
-      require "dev/deps/steam_integration"
-      require "dev/deps/git_repository"
-      require "dev/deps/cmake_integration"
-
-      cache = Dev::Deps::Cache.new
-      {
-        gh: Dev::Deps::GhIntegration.new(
-          repository: Dev::Deps::GhRepository.new,
-          cache: cache,
-        ),
-        ficsit: Dev::Deps::FicsitIntegration.new(
-          repository: Dev::Deps::FicsitRepository.new,
-          cache: cache,
-        ),
-        steam: Dev::Deps::SteamIntegration.new(
-          repository: Dev::Deps::SteamRepository.new,
-          cache: cache,
-        ),
-        cmake: Dev::Deps::CmakeIntegration.new(
-          repository: Dev::Deps::GitRepository.new,
-          cache: cache,
-          project_root: project_root,
-        ),
-      }
+      require "dev/deps/registry"
+      Dev::Deps::Registry.host_integrations(
+        project_root:,
+        cache: Dev::Deps::Cache.new,
+      )
     end
 
     sig { params(argv: T::Array[String]).returns(T::Boolean) }

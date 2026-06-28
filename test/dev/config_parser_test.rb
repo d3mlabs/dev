@@ -490,6 +490,99 @@ class ConfigParserTest < Minitest::Test
     tmp.close!
   end
 
+  test "#parse extracts a runner block with string labels" do
+    Given "a dev.yml file with a runner block"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: unreal-engine
+      runner:
+        labels: ue-engine
+        dir: "~/actions-runner-ue"
+        name: gaming-box
+        version: "2.335.1"
+    YAML
+    tmp.flush
+
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
+
+    Then
+    config.runner == Dev::RunnerSetupConfig.new(
+      labels: "ue-engine", dir: "~/actions-runner-ue", name: "gaming-box", version: "2.335.1",
+    )
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#parse normalizes a runner labels list to comma-separated" do
+    Given "a dev.yml file with a runner labels list"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: snappy
+      runner:
+        labels:
+          - snappy
+          - x64
+    YAML
+    tmp.flush
+
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
+
+    Then
+    config.runner.labels == "snappy,x64"
+    config.runner.dir.nil?
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#parse returns nil runner when not declared" do
+    Given "a dev.yml without a runner block"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: myproject
+      commands:
+        up:
+          run: ./bin/setup.rb
+    YAML
+    tmp.flush
+
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
+
+    Then
+    config.runner.nil?
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#parse returns nil runner when labels are absent" do
+    Given "a dev.yml with a labelless runner block"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: myproject
+      runner:
+        dir: "~/actions-runner"
+    YAML
+    tmp.flush
+
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
+
+    Then
+    config.runner.nil?
+
+    Cleanup
+    tmp.close!
+  end
+
   test "#parse handles container: false on individual commands" do
     Given "a dev.yml with container opt-out on a command"
     tmp = Tempfile.new(["dev", ".yml"])
