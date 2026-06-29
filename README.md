@@ -192,7 +192,7 @@ Declare dependencies using a Ruby DSL:
 require "dev/deps"
 
 Dev::Deps.define do
-  ruby_version ">= 3.0.0"
+  ruby "4.0.5" # the project's Ruby toolchain; dev provisions it (rbenv + shadowenv)
   gem "cli-ui"
   tap "d3mlabs/d3mlabs"
 

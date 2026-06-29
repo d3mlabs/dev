@@ -23,8 +23,16 @@ module Dev
         @registered_methods = []
       end
 
-      def ruby_version(requirement)
-        @ruby_version_requirement = requirement.to_s.strip
+      # Declare the project's Ruby toolchain — a first-class dependency, on equal
+      # footing with brew/cmake/gh. dev provisions this exact version (rbenv +
+      # shadowenv) before any command and writes it as the generated Gemfile's
+      # `ruby` directive. It is resolved specially (early, pre-dispatch) rather than
+      # through the resolver -> lockfile -> install pipeline because it is the
+      # interpreter every other dependency and command runs under.
+      #
+      # @param version [String, Symbol] exact Ruby version (e.g. "4.0.5")
+      def ruby(version)
+        @ruby_version_requirement = version.to_s.strip
       end
 
       # Declare the Lua version for LuaRocks integration.

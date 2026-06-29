@@ -225,6 +225,42 @@ class RunnerTest < Minitest::Test
     0 * Dev::Credentials.resolve_build_args(anything)
   end
 
+  test "declared_ruby_version prefers the dependencies.rb ruby directive over dev.yml" do
+    Given "a project whose dependencies.rb declares ruby and whose dev.yml also pins one"
+    root = Pathname.new(Dir.mktmpdir("runner-ruby-deps-"))
+    File.write(root / "dependencies.rb", <<~RUBY)
+      require "dev/deps"
+      Dev::Deps.define { ruby "9.9.9" }
+    RUBY
+    Dev.stubs(:target_project_root).returns(root)
+    runner = build_runner
+
+    When "we read the declared ruby version"
+    result = runner.send(:declared_ruby_version)
+
+    Then "the first-class dependencies.rb directive wins"
+    result == "9.9.9"
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "declared_ruby_version falls back to dev.yml ruby when there is no deps manifest" do
+    Given "a project with no dependencies.rb (e.g. dev's own repo)"
+    root = Pathname.new(Dir.mktmpdir("runner-ruby-fallback-"))
+    Dev.stubs(:target_project_root).returns(root)
+    runner = build_runner
+
+    When "we read the declared ruby version"
+    result = runner.send(:declared_ruby_version)
+
+    Then "it falls back to the dev.yml ruby:"
+    result == "4.0.1"
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
   private
 
   def build_runner(name: "testproject", commands: {}, build: nil, runner: nil)

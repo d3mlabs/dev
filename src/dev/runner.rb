@@ -44,7 +44,7 @@ module Dev
       cmd_name = T.must(args.shift)
       cmd = @registry.lookup(cmd_name)
 
-      ruby_version = resolve_ruby_version(@config.ruby_version)
+      ruby_version = resolve_ruby_version(declared_ruby_version)
       context = ExecutionContext.new(
         ui:,
         ruby_version:,
@@ -292,6 +292,27 @@ module Dev
     def resolve_ruby_version(explicit_version)
       require "shadowenv_ruby"
       ShadowenvRuby.resolve_ruby_version(explicit_version)
+    end
+
+    # The project's declared Ruby version, preferring the first-class `ruby`
+    # directive in dependencies.rb (where toolchains live) and falling back to
+    # dev.yml's `ruby:` for repos without a deps manifest (e.g. dev itself). nil
+    # when neither is set, so resolve_ruby_version can fall back to Homebrew Ruby.
+    #
+    # dev evaluates dependencies.rb under its own bootstrap Ruby, so reading it
+    # here — before the project's interpreter is provisioned — is safe.
+    sig { returns(T.nilable(String)) }
+    def declared_ruby_version
+      deps_rb = Dev.target_project_root / "dependencies.rb"
+      if deps_rb.exist?
+        load(deps_rb.to_s)
+        from_deps = Dev::Deps.last_config&.ruby_version_requirement
+        return from_deps if from_deps && !from_deps.empty?
+      end
+      @config.ruby_version
+    rescue StandardError => e
+      $stderr.puts "dev: could not read `ruby` from dependencies.rb (#{e.message}); using dev.yml ruby:"
+      @config.ruby_version
     end
   end
 end
