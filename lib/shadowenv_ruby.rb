@@ -213,11 +213,18 @@ module ShadowenvRuby
       "--with-#{flag}-dir=#{dir}" if dir
     end
 
+    # -rpath alongside -L: on Linuxbrew, ruby-build links miniruby against brew's
+    # libs (e.g. libcrypt.so.2 from libxcrypt) but bakes no runtime search path, so
+    # the just-built miniruby dies with "libcrypt.so.2: cannot open shared object"
+    # mid-build. Baking the brew lib dir into the rpath makes the built ruby find
+    # its brew libs at runtime. Harmless on macOS (rpath to an already-found dir).
+    lib = File.join(prefix, "lib")
+
     env.merge(
       "RUBY_CONFIGURE_OPTS" => [env["RUBY_CONFIGURE_OPTS"], *configure_opts].compact.reject(&:empty?).join(" "),
       "PKG_CONFIG_PATH" => [File.join(prefix, "lib", "pkgconfig"), ENV["PKG_CONFIG_PATH"]].compact.reject(&:empty?).join(":"),
       "CPPFLAGS" => [ENV["CPPFLAGS"], "-I#{File.join(prefix, "include")}"].compact.reject(&:empty?).join(" "),
-      "LDFLAGS" => [ENV["LDFLAGS"], "-L#{File.join(prefix, "lib")}"].compact.reject(&:empty?).join(" "),
+      "LDFLAGS" => [ENV["LDFLAGS"], "-L#{lib}", "-Wl,-rpath,#{lib}"].compact.reject(&:empty?).join(" "),
     )
   end
 

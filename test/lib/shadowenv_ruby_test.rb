@@ -294,6 +294,7 @@ class ShadowenvRubyTest < Minitest::Test
     assert_includes result["RUBY_CONFIGURE_OPTS"], "--with-zlib-dir=/brew/opt/zlib"
     assert_includes result["CPPFLAGS"], "-I#{File.join(tmp_prefix, "include")}"
     assert_includes result["LDFLAGS"], "-L#{File.join(tmp_prefix, "lib")}"
+    assert_includes result["LDFLAGS"], "-Wl,-rpath,#{File.join(tmp_prefix, "lib")}"
     assert_includes result["PKG_CONFIG_PATH"], File.join(tmp_prefix, "lib", "pkgconfig")
 
     Cleanup
