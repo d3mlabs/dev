@@ -532,8 +532,12 @@ module BuildContainer
     system("docker", "image", "inspect", image_tag, out: File::NULL, err: File::NULL)
   end
 
+  # Stream pull progress to stdout so a multi-GB pull (e.g. a 20GB build image
+  # on a fresh CI runner) shows layer-by-layer liveness instead of looking hung.
+  # stderr stays silenced: the pull doubles as a cache probe, so "manifest not
+  # found" on a miss is expected noise, not an error worth surfacing.
   def pull(image_tag)
-    system("docker", "pull", image_tag, out: File::NULL, err: File::NULL)
+    system("docker", "pull", image_tag, err: File::NULL)
   end
 
   # Build the image with BuildKit. build_contexts are passed as
@@ -557,17 +561,23 @@ module BuildContainer
     # values travel via the environment (referenced by env=), never on argv.
     env = { "DOCKER_BUILDKIT" => "1" }.merge(secrets)
 
+    # --progress=plain: BuildKit's auto renderer detects non-TTY stdout (CI log
+    # pipes) and goes near-silent, so a long image build (msvc-wine download,
+    # WineHQ install) looks hung for tens of minutes. Plain progress prints every
+    # step with timestamps and streams RUN output, giving CI logs a heartbeat.
     success = system(
       env,
-      "docker", "build", "-t", image_tag,
+      "docker", "build", "--progress=plain", "-t", image_tag,
       *arg_flags, *context_flags, *secret_flags,
       project_root.to_s,
     )
     raise "Docker build failed for #{image_tag}" unless success
   end
 
+  # Stream push progress for the same liveness reason as pull: publishing a
+  # multi-GB image can take many minutes and CI logs need a heartbeat.
   def push!(image_tag)
-    system("docker", "push", image_tag, out: File::NULL, err: File::NULL)
+    system("docker", "push", image_tag)
   end
 
   # Guarantee the shared registry advertises this content tag, so other

@@ -244,6 +244,22 @@ class BuildContainerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "build! uses plain BuildKit progress so CI logs stream every step" do
+    Given "a project root and captured docker invocation"
+    dir = Dir.mktmpdir("build-container-test-")
+    captured = nil
+
+    When "building"
+    BuildContainer.stubs(:system).with { |*argv| captured = argv; true }.returns(true)
+    BuildContainer.send(:build!, "img:tag", project_root: Pathname(dir))
+
+    Then "the non-TTY-silent auto renderer is overridden"
+    captured.include?("--progress=plain")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "ensure_image! prefers a local image over pulling or building" do
     Given "a project whose image already exists locally"
     dir = Dir.mktmpdir("build-container-test-")
