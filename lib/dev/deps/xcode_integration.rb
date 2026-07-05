@@ -98,7 +98,7 @@ module Dev
         unless xcodes_available?
           raise XcodesMissingError,
                 "xcode #{version}: the xcodes CLI is not installed. " \
-                "Declare it in dependencies.rb — group :build { brew \"xcodes\", tap: \"xcodesorg/made\" } — and run dev up."
+                "Declare it in dependencies.rb — group :build { brew \"xcodes\" } — and run dev up."
         end
 
         puts ">>> Installing Xcode #{version} via xcodes (this downloads several GB)"

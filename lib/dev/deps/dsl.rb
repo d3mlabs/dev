@@ -279,7 +279,7 @@ module Dev
       # inherently darwin-scoped (Xcode only exists on macOS; a no-op on other
       # hosts), so the declaration is safe without explicit host gating. dev
       # installs the pin to /Applications/Xcode-<version>.app via the xcodes
-      # CLI (declare `brew "xcodes", tap: "xcodesorg/made"` in :build so it
+      # CLI (declare `brew "xcodes"` in :build so it
       # exists first) and publishes DEVELOPER_DIR via shadowenv.
       #
       # @param version [String, Symbol] exact Xcode version (e.g. "26.1.1")
