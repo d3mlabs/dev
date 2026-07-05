@@ -3,27 +3,31 @@
 require_relative "lockfile"
 require_relative "cache"
 require_relative "ficsit_integration"
+require_relative "xcode_integration"
 
 module Dev
   module Deps
     # Read-only accessor over the lockfile + content cache, surfaced as
-    # `dev deps <subcommand>`. Today it answers one question: where is the
-    # cached zip for a locked ficsit mod platform? Consumers (deploy / the
-    # integration harness) use this instead of reconstructing cache keys, so the
-    # key scheme stays an implementation detail of the integration.
+    # `dev deps <subcommand>`. It answers "where is a locked dep's artifact?"
+    # — the cached zip for a ficsit mod platform, the DEVELOPER_DIR for the
+    # pinned Xcode — so consumers (deploy, build scripts, CI) resolve paths
+    # from the lockfile instead of reconstructing dev's layout conventions.
     class Accessor
       class UsageError < StandardError; end
       class NotLockedError < StandardError; end
       class PlatformNotLockedError < StandardError; end
       class NotCachedError < StandardError; end
+      class NotInstalledError < StandardError; end
 
-      USAGE = "usage: dev deps path ficsit <mod> <platform>"
+      USAGE = "usage: dev deps path ficsit <mod> <platform> | dev deps path xcode"
 
       # @param lockfile [Lockfile]
       # @param cache [Cache]
-      def initialize(lockfile:, cache:)
+      # @param xcode_install_root [String] where Xcode bundles live (tests use a tmpdir)
+      def initialize(lockfile:, cache:, xcode_install_root: XcodeIntegration::INSTALL_ROOT)
         @lockfile = lockfile
         @cache = cache
+        @xcode_install_root = xcode_install_root
       end
 
       # Dispatch a `dev deps …` invocation and print the result.
@@ -39,18 +43,32 @@ module Dev
         end
       end
 
-      # Resolve the cached artifact path for a locked dependency platform.
+      # Resolve the artifact path for a locked dependency.
       #
-      # @param integration [String] integration name (only "ficsit" supported)
-      # @param name [String] dependency name (e.g. "SML")
-      # @param platform [String] ficsit target name (e.g. "LinuxServer")
-      # @return [Pathname] absolute path to the cached zip
+      # @param integration [String] integration name ("ficsit" or "xcode")
+      # @param name [String, nil] dependency name (e.g. "SML"; unused for xcode)
+      # @param platform [String, nil] ficsit target name (e.g. "LinuxServer")
+      # @return [Pathname] absolute path to the artifact
       # @raise [UsageError] for a missing/unsupported integration
       # @raise [NotLockedError] if the dep isn't in the lockfile
       # @raise [PlatformNotLockedError] if the platform isn't locked for the dep
       # @raise [NotCachedError] if the zip isn't in the cache (run dev up)
+      # @raise [NotInstalledError] if the pinned Xcode isn't installed (run dev up)
       def path(integration = nil, name = nil, platform = nil)
-        raise UsageError, USAGE unless integration == "ficsit" && name && platform
+        case integration
+        when "ficsit" then ficsit_path(name, platform)
+        when "xcode" then xcode_developer_dir
+        else raise UsageError, USAGE
+        end
+      end
+
+      private
+
+      # @param name [String, nil]
+      # @param platform [String, nil]
+      # @return [Pathname]
+      def ficsit_path(name, platform)
+        raise UsageError, USAGE unless name && platform
 
         dep = find_dep(:ficsit, name)
         target = locked_platform(dep, platform)
@@ -65,7 +83,21 @@ module Dev
         @cache.path(key)
       end
 
-      private
+      # The DEVELOPER_DIR of the locked Xcode pin — what build scripts export
+      # so xcodebuild rides the pin (e.g. unreal-engine's Mac release job).
+      #
+      # @return [Pathname]
+      def xcode_developer_dir
+        dep = find_dep(:xcode, "xcode")
+        developer_dir = Pathname(XcodeIntegration.developer_dir(dep.version, root: @xcode_install_root))
+        unless developer_dir.directory?
+          raise NotInstalledError,
+                "xcode #{dep.version} is not installed at " \
+                "#{XcodeIntegration.app_path(dep.version, root: @xcode_install_root)} — run dev up"
+        end
+
+        developer_dir
+      end
 
       # @param integration [Symbol]
       # @param name [String]

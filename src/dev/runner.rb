@@ -52,8 +52,10 @@ module Dev
         build_container: @config.build_container,
         runner: @config.runner,
       )
+      guard_staleness(cmd_name, context.project_root)
       provision_build_credentials if cmd_name == "up"
       cmd.execute(args:, context:)
+      stamp_installed(cmd_name, context.project_root)
     rescue CommandRegistry::CommandNotFoundError => e
       $stderr.puts "dev: #{e}"
       $stderr.puts "Run 'dev' or 'dev --help' to see available commands."
@@ -64,6 +66,40 @@ module Dev
     end
 
     private
+
+    # Commands that ARE the staleness remediation (or its explicit check) —
+    # nagging before them would block the very fix being run.
+    STALENESS_EXEMPT_COMMANDS = T.let(%w[up install-deps update-deps check].freeze, T::Array[String])
+
+    # Two O(1) digest checks at every command start (see Dev::Deps::Staleness):
+    # manifest vs lockfile, lockfile vs installed stamp. Warn on workstations;
+    # error in CI, where a stale state is a pipeline bug, not a reminder.
+    sig { params(cmd_name: String, project_root: Pathname).void }
+    def guard_staleness(cmd_name, project_root)
+      return if STALENESS_EXEMPT_COMMANDS.include?(cmd_name)
+
+      require "dev/deps/staleness"
+      messages = Dev::Deps::Staleness.new(project_root:).messages
+      return if messages.empty?
+
+      if Dev::Deps.detect_env == "ci"
+        raise "stale dependency state:\n#{messages.map { |m| "  #{m}" }.join("\n")}"
+      end
+
+      messages.each { |m| $stderr.puts "dev: warning: #{m}" }
+    end
+
+    # Record the installed stamp after a fully-successful provisioning command
+    # (`dev up` treats a stale stamp as its expected precondition and rewrites
+    # it; `install-deps` is the CI-side install). Reached only when execute
+    # didn't raise.
+    sig { params(cmd_name: String, project_root: Pathname).void }
+    def stamp_installed(cmd_name, project_root)
+      return unless ["up", "install-deps"].include?(cmd_name)
+
+      require "dev/deps/staleness"
+      Dev::Deps::Staleness.new(project_root:).stamp_installed!
+    end
 
     # `dev up` is the provisioning command: after it succeeds, every other
     # command should work unattended. Resolving docker build args here
@@ -145,7 +181,12 @@ module Dev
         )
         lockfile = Dev::Deps::Lockfile.new(dir: context.project_root)
         resolved = resolver.resolve(deps_config.declarations)
-        lockfile.lock(resolved)
+        # Record the manifest digest so the staleness check can tell whether
+        # dependencies.rb changed after this resolution (Dev::Deps::Staleness).
+        require "digest"
+        manifest_digest = deps_rb.exist? ? Digest::SHA256.file(deps_rb.to_s).hexdigest : nil
+        lockfile.lock(resolved, manifest_digest:)
+        puts "dev: lockfiles updated — now run dev up to install."
       end)
 
       registry.register("install-deps", BuiltinCommand.new(
@@ -156,7 +197,20 @@ module Dev
           lockfile: lockfile,
           integrations: build_host_integrations(project_root: context.project_root),
         )
-        installer.install(env: Dev::Deps.detect_env)
+        installer.install(env: Dev::Deps.detect_env, host: Dev::Deps.detect_host)
+      end)
+
+      registry.register("check", BuiltinCommand.new(
+        desc: "Check dependency state freshness (manifest vs lockfiles vs installed)",
+      ) do |args, context|
+        require "dev/deps/staleness"
+        messages = Dev::Deps::Staleness.new(project_root: context.project_root).messages
+        if messages.empty?
+          puts "dev: dependency state is in sync (manifest, lockfiles, installed stamp)."
+        else
+          messages.each { |m| $stderr.puts "dev: #{m}" }
+          Kernel.exit(1)
+        end
       end)
 
       registry.register("deps", BuiltinCommand.new(

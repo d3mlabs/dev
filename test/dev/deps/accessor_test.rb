@@ -7,6 +7,8 @@ require "dev/deps/lockfile"
 require "dev/deps/cache"
 require "dev/deps/dependency"
 require "dev/deps/ficsit_integration"
+require "dev/deps/xcode_integration"
+require "pathname"
 require "tmpdir"
 require "stringio"
 
@@ -39,6 +41,76 @@ class Dev::Deps::AccessorTest < Minitest::Test
       "Windows" => { "hash" => "SHA256=#{"a" * 64}", "link" => "https://example/win" },
       "LinuxServer" => { "hash" => "SHA256=#{"b" * 64}", "link" => "https://example/lin" },
     }
+  end
+
+  # Lock an xcode pin and return an accessor whose install root is inside dir.
+  def setup_locked_xcode(dir, version: "26.1.1", installed: true)
+    lockfile = Dev::Deps::Lockfile.new(dir: dir)
+    lockfile.lock([
+      Dev::Deps::Dependency.new(
+        name: "xcode", integration: :xcode, group: :build,
+        version: version, hash: nil, metadata: {},
+      ),
+    ])
+    install_root = File.join(dir, "Applications")
+    developer_dir = Dev::Deps::XcodeIntegration.developer_dir(version, root: install_root)
+    FileUtils.mkdir_p(developer_dir) if installed
+
+    accessor = Dev::Deps::Accessor.new(
+      lockfile: lockfile,
+      cache: Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache")),
+      xcode_install_root: install_root,
+    )
+    [accessor, developer_dir]
+  end
+
+  test "path xcode returns the pinned DEVELOPER_DIR" do
+    Given "a locked and installed xcode pin"
+    dir = Dir.mktmpdir("dev-accessor-test-")
+    accessor, developer_dir = setup_locked_xcode(dir)
+
+    When "asking for the xcode path"
+    result = accessor.path("xcode")
+
+    Then
+    result == Pathname(developer_dir)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "path xcode raises NotInstalledError when the pin is not on disk" do
+    Given "a locked but uninstalled xcode pin"
+    dir = Dir.mktmpdir("dev-accessor-test-")
+    accessor, = setup_locked_xcode(dir, installed: false)
+
+    When "asking for the xcode path"
+    error = assert_raises(Dev::Deps::Accessor::NotInstalledError) do
+      accessor.path("xcode")
+    end
+
+    Then "the fix is dev up"
+    error.message.include?("run dev up")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "path xcode raises NotLockedError without an xcode pin in the lockfile" do
+    Given "a lockfile without any xcode dep"
+    dir = Dir.mktmpdir("dev-accessor-test-")
+    accessor, = setup_locked_sml(dir, platforms: linux_platforms)
+
+    When "asking for the xcode path"
+    error = assert_raises(Dev::Deps::Accessor::NotLockedError) do
+      accessor.path("xcode")
+    end
+
+    Then "the fix is update-deps"
+    error.message.include?("run dev update-deps")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
   test "path returns the cached zip path for a locked dep platform" do

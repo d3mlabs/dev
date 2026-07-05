@@ -219,6 +219,17 @@ Dev::Deps.define do
 end
 ```
 
+### Dependency axes
+
+Four orthogonal axes scope a declaration; each answers a different question:
+
+- **`group`** — *purpose* (`:app`, `:test`, `:build`, `:game`, `:editor`, …). User-defined; `:build` installs first.
+- **`env`** — *execution context* the dep is for (`"ci"` / `"dev"`), declared via `env :ci do ... end` inside a group. Filtered at install against the detected env (`CI` variable only — a Linux workstation is `dev`, a Mac CI runner is `ci`).
+- **`host`** — *OS of the machine the dep installs on* (`:darwin` / `:linux`). Declared per-group (`group :editor, host: :darwin do ... end`) or per-declaration (`gh ..., host: :linux`). Filtered at install against the detected host OS — deps for other hosts are still resolved and locked, so the lockfile stays the single source of truth for every machine.
+- **`platform`** — *what artifact variant the dep targets* (e.g. `"LinuxServer"`), for multi-arch integrations like ficsit. A resolve-time concern, not an install filter.
+
+`env` and `host` describe *where/when a dep installs* and are first-class declaration fields; the constraint hash describes *what the dep is*.
+
 ### Built-in integrations
 
 All built-in integrations are declared in one place — `lib/dev/deps/registry.rb` — and `dev install-deps` installs every host-scoped one. `registry_consistency_test.rb` fails the build if a repository/integration class or a declaration DSL verb is added without a registry entry.
@@ -232,6 +243,9 @@ All built-in integrations are declared in one place — `lib/dev/deps/registry.r
 | `gh()` | GhIntegration | GhRepository | deps.lock |
 | `ficsit()` | FicsitIntegration | FicsitRepository | deps.lock |
 | `steam()` | SteamIntegration | SteamRepository | deps.lock |
+| `xcode()` | XcodeIntegration | XcodeRepository | deps.lock |
+
+`xcode "26.1.1"` pins the Xcode toolchain (macOS only; a no-op on other hosts). dev installs the pin to `/Applications/Xcode-<ver>.app` via the [xcodes](https://github.com/XcodesOrg/xcodes) CLI — declare `brew "xcodes", tap: "xcodesorg/made", host: :darwin` in `:build` so it exists first — and publishes `DEVELOPER_DIR` into the project shadowenv. Interactive runs pass any Apple ID/2FA/sudo prompt through to you; headless runs fail fast with remediation instead of hanging (normal practice: pre-install the pin interactively once during machine bring-up, e.g. a CI runner's).
 
 `gem()` declares Ruby gems: dev generates a `Gemfile`/`Gemfile.lock` from your declarations (a top-level `gem` lands in the default group; `group(:test) { gem ... }` scopes it to a bundler group), and `dev install-deps` runs `bundle install`. `brew()` dual-writes — the container build path keeps reading the group structure while `dev install-deps` also installs the formulae on the host (idempotently).
 
@@ -259,10 +273,11 @@ Custom integrations implement `Dev::Deps::Integration` (with `install_all(pins, 
 
 ### Built-in commands
 
-- **`dev update-deps`** — resolve constraints from `dependencies.rb`, write lockfiles. Always available (no need to define in `dev.yml`).
-- **`dev install-deps`** — install locked deps handled on the host (gh releases, steam apps) into their version-keyed install dirs.
-- **`dev up`** — auto-installs all deps from lockfiles (build group first), then runs the project's `up:` command from `dev.yml` if defined.
-- **`dev deps path <integration> <name> <platform>`** — print the absolute path of a locked, cached artifact (e.g. `dev deps path ficsit SML LinuxServer`) so scripts don't reconstruct cache keys.
+- **`dev update-deps`** — resolve constraints from `dependencies.rb`, write lockfiles (recording the manifest digest for the staleness check). Always available (no need to define in `dev.yml`).
+- **`dev install-deps`** — install locked deps handled on the host (gh releases, steam apps) into their version-keyed install dirs, filtered to the detected env and host OS.
+- **`dev up`** — auto-installs all deps from lockfiles (build group first), then runs the project's `up:` command from `dev.yml` if defined. On success, stamps the installed lockfile digest (see `dev check`).
+- **`dev check`** — report dependency-state staleness explicitly: `dependencies.rb` vs lockfiles (digest recorded by `update-deps`), and lockfiles vs the per-machine installed stamp (`~/.dev/state/<project>/installed-digest`, written after a fully-successful `up`/`install-deps`). The same two O(1) checks run at every command start — warning on workstations, erroring in CI.
+- **`dev deps path <integration> <name> <platform>`** — print the absolute path of a locked artifact (e.g. `dev deps path ficsit SML LinuxServer`, or `dev deps path xcode` for the pinned DEVELOPER_DIR) so scripts don't reconstruct cache keys or layout conventions.
 - **`dev cred get <namespace> <key>`** — resolve a credential through the provider chain (ENV → keychain → file → prompt) and print it. A non-interactive miss errors with `gh secret set` guidance. Mirrors `dev deps path` for shell consumers (e.g. a staging sync).
 - **`dev cache gc [--keep N]`** — reclaim host caches dev owns (see below).
 - **`dev reset-container`** — remove the persistent build container (clears its incremental cache); registered only when `build.container.persist` is set.

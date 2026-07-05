@@ -7,7 +7,10 @@
 # Usage: ruby install-build-deps.rb [deps_dir]
 #   deps_dir: directory containing dependencies.rb (default: /app)
 #
-# Environment filtering uses Dev::Deps.detect_env (CI/Linux → "ci", else "dev").
+# env is declared, not detected: this script only ever runs inside a docker
+# build (see header), where no CI variable exists — it IS the ci install
+# path by construction. This declaration is what let detect_env drop its
+# Linux-implies-CI clause (a Linux workstation is dev, not ci).
 
 require "dev/deps"
 
@@ -19,7 +22,7 @@ load(deps_file)
 config = Dev::Deps.last_config
 abort "No config found — dependencies.rb must call Dev::Deps.define" unless config
 
-env = Dev::Deps.detect_env
+env = "ci"
 build_group = config.group("build")
 
 config.taps.each do |tap|
@@ -32,6 +35,11 @@ brew_entries = Array(build_group["brew"])
 env_section = build_group.dig("env", env)
 brew_entries += Array(env_section["brew"]) if env_section
 
+# Host OS of the container being built, for host-gated brew entries. Docker
+# builds are Linux; the constant spares a RUBY_PLATFORM sniff that could never
+# say anything else here.
+HOST = "linux"
+
 def install_brew_entry(entry)
   case entry
   when String
@@ -39,6 +47,14 @@ def install_brew_entry(entry)
     system("brew", "install", entry) || abort("brew install #{entry} failed")
   when Hash
     entry.each do |name, opts|
+      # Host-gated entries (e.g. brew "xcodes", host: :darwin) skip
+      # non-matching hosts — mirrors DependencyInstaller#filter_by_host.
+      host = opts["host"]
+      if host && host.to_s != HOST
+        puts ">>> Skipping #{name} (host: #{host})"
+        next
+      end
+
       post_install = opts.delete("post_install")
       tap = opts["tap"]
       version = opts["version"]

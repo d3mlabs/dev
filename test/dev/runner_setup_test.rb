@@ -131,7 +131,8 @@ class Dev::RunnerSetupTest < Minitest::Test
     setup = Dev::RunnerSetup.new(config: config, executor: exec, out: silent)
 
     When "running setup with a repo override"
-    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, out: silent)
+    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, out: silent,
+                                 host_platform: "linux-x64")
     setup.run
 
     Then "config.sh registers with the minted token, the service starts, no download happens"
@@ -187,7 +188,8 @@ class Dev::RunnerSetupTest < Minitest::Test
     dir = Dir.mktmpdir
     config = Dev::RunnerSetupConfig.new(labels: "ue-engine", dir: dir, version: "9.9.9")
     exec = RecordingExecutor.new(&authed_responder)
-    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, out: silent)
+    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, out: silent,
+                                 host_platform: "linux-x64")
 
     When "running setup"
     setup.run
@@ -200,5 +202,39 @@ class Dev::RunnerSetupTest < Minitest::Test
 
     Cleanup
     FileUtils.remove_entry(dir)
+  end
+
+  test "run on macOS fetches the osx tarball and installs the service without sudo" do
+    Given "an empty runner dir on an Apple Silicon host"
+    dir = Dir.mktmpdir
+    config = Dev::RunnerSetupConfig.new(labels: "macos,ue-editor", dir: dir, version: "9.9.9")
+    exec = RecordingExecutor.new(&authed_responder)
+    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, out: silent,
+                                 host_platform: "osx-arm64")
+
+    When "running setup"
+    setup.run
+
+    Then "the osx-arm64 runner is fetched and svc.sh runs as the user (LaunchAgent, not systemd)"
+    curl = exec.systems.find { |call| call[:argv].first == "curl" }
+    curl[:argv].last == "https://github.com/actions/runner/releases/download/v9.9.9/actions-runner-osx-arm64-9.9.9.tar.gz"
+    exec.systems.any? { |call| call[:argv] == ["./svc.sh", "install"] && call[:chdir] == dir }
+    exec.systems.any? { |call| call[:argv] == ["./svc.sh", "start"] && call[:chdir] == dir }
+    exec.systems.none? { |call| call[:argv].first == "sudo" }
+
+    Cleanup
+    FileUtils.remove_entry(dir)
+  end
+
+  test "detect_host_platform reflects the current interpreter platform" do
+    When "detecting the host platform"
+    platform = Dev::RunnerSetup.detect_host_platform
+
+    Then "the slug matches this host's OS"
+    if RUBY_PLATFORM.include?("darwin")
+      platform.start_with?("osx-")
+    else
+      platform.start_with?("linux-")
+    end
   end
 end

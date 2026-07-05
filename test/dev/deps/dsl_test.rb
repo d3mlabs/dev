@@ -200,6 +200,77 @@ class Dev::Deps::DSLTest < Minitest::Test
     sml.map { |d| d.group }.sort == [:app, :integration]
   end
 
+  test "group host: stamps the host onto every declaration in the group" do
+    When "defining a darwin-gated group"
+    config = Dev::Deps.define do
+      group :editor, host: :darwin do
+        gh "UnrealEngineMac",
+           github: "d3mlabs/unreal-engine",
+           tag: "5.8.0-mac-editor-1",
+           assets: "UnrealEngine-Editor-Mac.tar.zst.*",
+           install_dir: "~/.dev/engines/ue5-mac"
+        xcode "26.1.1"
+      end
+    end
+
+    Then "every member carries the group's host"
+    config.declarations.size == 2
+    config.declarations.all? { |d| d.host == :darwin }
+    config.declarations.all? { |d| d.constraint["host"].nil? }
+  end
+
+  test "per-declaration host: overrides the group and stays out of the constraint" do
+    When "declaring a host-gated dep inside an ungated group"
+    config = Dev::Deps.define do
+      group :game do
+        gh "UnrealEngine",
+           github: "d3mlabs/unreal-engine",
+           tag: "5.8.0-wine-7",
+           assets: "UnrealEngine-Wine-Editor-Linux.tar.zst.*",
+           install_dir: "~/.dev/engines/ue5",
+           host: :linux
+      end
+    end
+
+    Then "the declaration carries the host as a first-class field only"
+    decl = config.declarations[0]
+    decl.host == :linux
+    decl.constraint["host"].nil?
+  end
+
+  test "xcode() declares a pinned xcode toolchain dep" do
+    When "pinning the Xcode toolchain"
+    config = Dev::Deps.define do
+      group :build do
+        xcode "26.1.1"
+      end
+    end
+
+    Then "the declaration rides the :xcode integration with the exact version"
+    decl = config.declarations[0]
+    decl.name == "xcode"
+    decl.integration == :xcode
+    decl.constraint["version"] == "26.1.1"
+    decl.group == :build
+  end
+
+  test "env block stamps env as a first-class field, not a constraint key" do
+    When "declaring a ci-scoped brew dep"
+    config = Dev::Deps.define do
+      group :build, host: :linux do
+        env :ci do
+          brew "ruby"
+        end
+      end
+    end
+
+    Then "env and the enclosing group's host both land as fields"
+    decl = config.declarations[0]
+    decl.env == "ci"
+    decl.host == :linux
+    decl.constraint["env"].nil?
+  end
+
   test "gh() produces DependencyDeclaration named after the repo basename" do
     When "defining a gh release dep"
     config = Dev::Deps.define do

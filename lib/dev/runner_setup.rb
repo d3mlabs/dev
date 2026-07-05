@@ -46,11 +46,26 @@ module Dev
     # @param repo [String, nil] "owner/repo" override; defaults to `gh repo view`
     # @param executor [Executor] CLI boundary (injectable for tests)
     # @param out [IO] progress stream
-    def initialize(config:, repo: nil, executor: Executor.new, out: $stdout)
+    # @param host_platform [String] actions-runner release platform slug for this
+    #   host (e.g. "linux-x64", "osx-arm64"); defaults to detection. Drives both
+    #   the tarball choice and the service-install shape (systemd vs LaunchAgent).
+    def initialize(config:, repo: nil, executor: Executor.new, out: $stdout,
+                   host_platform: self.class.detect_host_platform)
       @config = config
       @repo_override = repo
       @exec = executor
       @out = out
+      @host_platform = host_platform
+    end
+
+    # The actions-runner release platform slug for the current host (GitHub
+    # names macOS "osx").
+    #
+    # @return [String]
+    def self.detect_host_platform
+      os = RUBY_PLATFORM.include?("darwin") ? "osx" : "linux"
+      arch = RUBY_PLATFORM.match?(/arm64|aarch64/) ? "arm64" : "x64"
+      "#{os}-#{arch}"
     end
 
     # Run the full setup: preflight, download, register, install the service.
@@ -157,7 +172,7 @@ module Dev
         return
       end
 
-      tarball = "actions-runner-linux-x64-#{version}.tar.gz"
+      tarball = "actions-runner-#{@host_platform}-#{version}.tar.gz"
       url = "https://github.com/actions/runner/releases/download/v#{version}/#{tarball}"
       @out.puts ">>> Downloading actions-runner #{version} ..."
       raise Error, "failed to download #{url}" unless @exec.system("curl", "-fsSL", "-o", tarball, url, chdir: dir)
@@ -219,16 +234,30 @@ module Dev
       raise Error, "config.sh failed to register the runner"
     end
 
-    # svc.sh manages the systemd unit and needs root (interactive sudo is fine).
-    # `svc.sh start` already echoes the unit status, so there's no separate status
-    # call (a redundant one prints the same service twice).
+    # svc.sh manages the service unit. On Linux that's a systemd unit and needs
+    # root (interactive sudo is fine); on macOS it's a per-user LaunchAgent and
+    # svc.sh must run as the user — under sudo it would install a root agent
+    # that never loads into the user's launchd session. `svc.sh start` already
+    # echoes the unit status, so there's no separate status call (a redundant
+    # one prints the same service twice).
     #
     # @param dir [String] install dir
     # @raise [Error] when the service can't be installed or started
     def install_service(dir)
       @out.puts ">>> Installing + starting the runner service ..."
-      raise Error, "svc.sh install failed" unless @exec.system("sudo", "./svc.sh", "install", chdir: dir)
-      raise Error, "svc.sh start failed" unless @exec.system("sudo", "./svc.sh", "start", chdir: dir)
+      raise Error, "svc.sh install failed" unless @exec.system(*service_argv("install"), chdir: dir)
+      raise Error, "svc.sh start failed" unless @exec.system(*service_argv("start"), chdir: dir)
+    end
+
+    # @param action [String] svc.sh subcommand
+    # @return [Array<String>]
+    def service_argv(action)
+      darwin? ? ["./svc.sh", action] : ["sudo", "./svc.sh", action]
+    end
+
+    # @return [Boolean]
+    def darwin?
+      @host_platform.start_with?("osx")
     end
 
     # First label, sanitized for use in a directory name.

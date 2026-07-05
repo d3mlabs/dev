@@ -66,6 +66,54 @@ class Dev::Deps::ResolverTest < Minitest::Test
     result.map(&:name).sort == ["bar", "foo"]
   end
 
+  test "attaches host and env from the declaration onto resolved metadata" do
+    Given "declarations carrying the install-scoping axes"
+    engine = Dev::Deps::Dependency.new(name: "UnrealEngineMac", integration: :gh, group: :editor,
+                                       version: "5.8.0-mac-editor-1", hash: nil, metadata: { "repo" => "d3mlabs/unreal-engine" })
+    ruby_dep = Dev::Deps::Dependency.new(name: "ruby", integration: :brew, group: :build,
+                                         version: "4.0", hash: nil, metadata: {})
+    repo = StubRepository.new(deps_by_name: { "UnrealEngineMac" => engine, "ruby" => ruby_dep })
+    declarations = [
+      Dev::Deps::DependencyDeclaration.new(name: "UnrealEngineMac", integration: :gh, group: :editor, host: :darwin),
+      Dev::Deps::DependencyDeclaration.new(name: "ruby", integration: :brew, group: :build, env: "ci"),
+    ]
+    resolver = Dev::Deps::Resolver.new(repositories: { gh: repo, brew: repo })
+
+    When "resolving"
+    result = resolver.resolve(declarations)
+
+    Then "host/env land in metadata (for the lockfile + install filtering), existing metadata intact"
+    mac = result.find { |d| d.name == "UnrealEngineMac" }
+    mac.metadata["host"] == "darwin"
+    mac.metadata["repo"] == "d3mlabs/unreal-engine"
+    result.find { |d| d.name == "ruby" }.metadata["env"] == "ci"
+    # Neither axis leaks into the fetch id: the constraint describes what the dep is.
+    repo.fetched_ids.none? { |id| id.key?("host") || id.key?("env") }
+  end
+
+  test "transitive dependencies inherit the declaring dep's host and env" do
+    Given "a host/env-scoped dep with a transitive dependency"
+    parent = Dev::Deps::Dependency.new(name: "parent", integration: :brew, group: :build,
+                                       version: "1.0", hash: nil, metadata: {},
+                                       dependencies: [{ name: "child", constraint: ">= 1.0" }])
+    child = Dev::Deps::Dependency.new(name: "child", integration: :brew, group: :build,
+                                      version: "2.0", hash: nil, metadata: {})
+    repo = StubRepository.new(deps_by_name: { "parent" => parent, "child" => child })
+    declarations = [
+      Dev::Deps::DependencyDeclaration.new(name: "parent", integration: :brew, group: :build,
+                                           host: :darwin, env: "ci"),
+    ]
+    resolver = Dev::Deps::Resolver.new(repositories: { brew: repo })
+
+    When "resolving"
+    result = resolver.resolve(declarations)
+
+    Then "the child carries the parent's scoping — it can't be needed anywhere the parent isn't"
+    resolved_child = result.find { |d| d.name == "child" }
+    resolved_child.metadata["host"] == "darwin"
+    resolved_child.metadata["env"] == "ci"
+  end
+
   test "resolves a flat list of declarations with no transitive dependencies" do
     Given "two independent declarations"
     boost = Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,

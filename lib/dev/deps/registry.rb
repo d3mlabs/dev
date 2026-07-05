@@ -14,6 +14,8 @@ require_relative "steam_repository"
 require_relative "steam_integration"
 require_relative "bundler_repository"
 require_relative "bundler_integration"
+require_relative "xcode_repository"
+require_relative "xcode_integration"
 
 module Dev
   module Deps
@@ -110,6 +112,13 @@ module Dev
           symbol: :steam,
           repository: SteamRepository,
           integration: SteamIntegration,
+          scope: HOST,
+        ),
+        Entry.new(
+          symbol: :xcode,
+          repository: XcodeRepository,
+          integration: XcodeIntegration,
+          integration_needs: %i[project_root],
           scope: HOST,
         ),
       ].freeze

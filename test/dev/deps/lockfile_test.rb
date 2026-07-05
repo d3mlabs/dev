@@ -46,6 +46,54 @@ class Dev::Deps::LockfileTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "lock records the manifest digest in the header and reads it back" do
+    Given "a dependency and the digest of the manifest it came from"
+    dir = Dir.mktmpdir("dev-lockfile-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: dir)
+    deps = [
+      Dev::Deps::Dependency.new(
+        name: "boost", integration: :cmake, group: :app,
+        version: "1.90.0", hash: "SHA256=deadbeef", metadata: {},
+      ),
+      Dev::Deps::Dependency.new(
+        name: "cmake", integration: :brew, group: :build,
+        version: "3.31", hash: "SHA256=abc", metadata: {},
+      ),
+    ]
+    digest = "a" * 64
+
+    When "locking with the digest"
+    lockfile.lock(deps, manifest_digest: digest)
+
+    Then "both lockfiles carry it as a header comment and it reads back"
+    File.read(File.join(dir, "deps.lock")).include?("# dependencies-digest: #{digest}")
+    File.read(File.join(dir, "build-deps.lock")).include?("# dependencies-digest: #{digest}")
+    lockfile.manifest_digest == digest
+    # The YAML payload stays pure deps — the digest rides a comment.
+    YAML.safe_load(File.read(File.join(dir, "deps.lock"))).key?("boost")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "manifest_digest is nil for legacy lockfiles without the header" do
+    Given "a lockfile written without a manifest digest"
+    dir = Dir.mktmpdir("dev-lockfile-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: dir)
+    lockfile.lock([
+      Dev::Deps::Dependency.new(
+        name: "boost", integration: :cmake, group: :app,
+        version: "1.90.0", hash: nil, metadata: {},
+      ),
+    ])
+
+    Expect "legacy locks report no digest (unknown, not stale)"
+    lockfile.manifest_digest.nil?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "lock produces readable YAML with header comment" do
     Given "a single dependency"
     dir = Dir.mktmpdir("dev-lockfile-test-")

@@ -56,8 +56,12 @@ module Dev
 
           dependency = repo.fetch(id)
           dependency = dependency.with(post_install: decl.post_install) if decl.post_install
+          dependency = attach_install_scoping(dependency, decl)
           resolved[decl.name] = dependency
 
+          # Transitive deps inherit the declaring dep's group, host, and env: a
+          # dep only needed on one host/env can't need its transitive closure
+          # anywhere else.
           dependency.dependencies.each do |tdep|
             next if resolved.key?(tdep[:name])
             queue << DependencyDeclaration.new(
@@ -65,6 +69,8 @@ module Dev
               integration: decl.integration,
               constraint: normalize_constraint(tdep[:constraint]),
               group: decl.group,
+              host: decl.host,
+              env: decl.env,
             )
           end
         end
@@ -73,6 +79,24 @@ module Dev
       end
 
       private
+
+      # Stamp the declaration's install-scoping axes (host, env) onto the
+      # resolved dependency's metadata so they serialize into the lockfile and
+      # the installer can filter on them. Done here, uniformly, so no
+      # repository has to know these axes exist — a repository resolves what a
+      # dep IS; where it installs is resolver/installer plumbing.
+      #
+      # @param dependency [Dependency] freshly fetched
+      # @param decl [DependencyDeclaration] the declaration it came from
+      # @return [Dependency]
+      def attach_install_scoping(dependency, decl)
+        extra = {}
+        extra["host"] = decl.host.to_s if decl.host
+        extra["env"] = decl.env if decl.env
+        return dependency if extra.empty?
+
+        dependency.with(metadata: dependency.metadata.merge(extra))
+      end
 
       # Give each repository a chance to batch-resolve all declarations of its
       # type before per-dependency fetches begin. Most repositories inherit the

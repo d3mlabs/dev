@@ -117,6 +117,38 @@ class Dev::Deps::DependencyInstallerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "install filters deps by host when host is set" do
+    Given "deps with host metadata for both OSes"
+    dir = Dir.mktmpdir("installer-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
+    deps = [
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
+                                version: "3.31", hash: "SHA256=aaa", metadata: {}),
+      Dev::Deps::Dependency.new(name: "UnrealEngine", integration: :gh, group: :game,
+                                version: "5.8.0-wine-7", hash: nil,
+                                metadata: { "host" => "linux" }),
+      Dev::Deps::Dependency.new(name: "UnrealEngineMac", integration: :gh, group: :editor,
+                                version: "5.8.0-mac-editor-1", hash: nil,
+                                metadata: { "host" => "darwin" }),
+    ]
+    lockfile.lock(deps)
+    brew_int = RecordingIntegration.new
+    gh_int = RecordingIntegration.new
+    installer = Dev::Deps::DependencyInstaller.new(
+      lockfile:, integrations: { brew: brew_int, gh: gh_int },
+    )
+
+    When "installing for a darwin host"
+    installer.install(host: "darwin")
+
+    Then "the linux-hosted engine is filtered out; unhosted and darwin deps install"
+    brew_int.installed_deps.map(&:name) == ["cmake"]
+    gh_int.installed_deps.map(&:name) == ["UnrealEngineMac"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "install dispatches bundler and luarocks deps to their integrations" do
     Given "a lockfile with a gem and a rock alongside a brew dep"
     dir = Dir.mktmpdir("installer-test-")

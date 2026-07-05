@@ -540,6 +540,56 @@ class ConfigParserTest < Minitest::Test
     tmp.close!
   end
 
+  test "#parse selects the current host's identity from a host-keyed runner block" do
+    Given "a dev.yml with one runner identity per host OS"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: unreal-engine
+      runner:
+        linux:
+          labels: ue-engine
+        darwin:
+          labels:
+            - macos
+            - ue-editor
+    YAML
+    tmp.flush
+
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
+
+    Then "the identity matches the OS the test is running on"
+    expected_labels = RUBY_PLATFORM.include?("darwin") ? "macos,ue-editor" : "ue-engine"
+    config.runner.labels == expected_labels
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#parse returns nil runner when a host-keyed block has no entry for this host" do
+    Given "a dev.yml keyed only for the other host OS"
+    other_host = RUBY_PLATFORM.include?("darwin") ? "linux" : "darwin"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(<<~YAML)
+      name: unreal-engine
+      runner:
+        #{other_host}:
+          labels: ue-engine
+    YAML
+    tmp.flush
+
+    When "the config is parsed"
+    parser = Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+    config = parser.parse(Pathname.new(tmp.path))
+
+    Then "this host has no runner identity"
+    config.runner.nil?
+
+    Cleanup
+    tmp.close!
+  end
+
   test "#parse returns nil runner when not declared" do
     Given "a dev.yml without a runner block"
     tmp = Tempfile.new(["dev", ".yml"])

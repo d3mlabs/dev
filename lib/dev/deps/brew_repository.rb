@@ -35,7 +35,6 @@ module Dev
         if id["cask"]
           cask_metadata = { "cask" => true }
           cask_metadata["version_suffix"] = version_suffix if version_suffix
-          cask_metadata["env"] = id["env"] if id["env"]
           return Dependency.new(
             name: name,
             integration: id["integration"].to_sym,
@@ -51,10 +50,11 @@ module Dev
         version = info["versions"]["stable"]
         bottle_hash = extract_bottle_hash(info)
 
+        # env/host scoping is attached by the Resolver (attach_install_scoping),
+        # not read from the fetch id — the id describes what the dep is.
         metadata = {}
         metadata["tap"] = id["tap"] if id["tap"]
         metadata["version_suffix"] = version_suffix if version_suffix
-        metadata["env"] = id["env"] if id["env"]
 
         Dependency.new(
           name: name,

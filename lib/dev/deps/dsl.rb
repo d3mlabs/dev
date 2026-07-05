@@ -81,15 +81,19 @@ module Dev
         @registered_methods << sym
       end
 
-      # Declare a dependency group, optionally pinned to a platform.
+      # Declare a dependency group, optionally pinned to a platform and/or host OS.
       #
       # @param name [String, Symbol] group name (e.g. :app, :test, :integration)
       # @param platform [String, nil] platform the group's deps target (e.g. "LinuxServer").
       #   Stamped onto every declaration in the group so the resolver can union platforms
       #   across groups for multi-arch integrations. nil lets each integration pick its default.
-      def group(name, platform: nil, &block)
+      # @param host [Symbol, nil] host OS the group's deps install on (:darwin / :linux).
+      #   Sugar that stamps every member declaration, exactly as platform: does; install
+      #   filters against the detected host OS (the lockfile stays universal — all hosts'
+      #   deps are resolved and locked, filtering happens at install, never at resolve).
+      def group(name, platform: nil, host: nil, &block)
         group_name = name.to_s
-        group_dsl = GroupDSL.new(group: group_name.to_sym, platform:, registered_methods: @registered_methods)
+        group_dsl = GroupDSL.new(group: group_name.to_sym, platform:, host:, registered_methods: @registered_methods)
         group_dsl.instance_eval(&block) if block
         @groups[group_name] = group_dsl.to_h
         @declarations.concat(group_dsl.declarations)
@@ -104,11 +108,15 @@ module Dev
 
       # @param group [Symbol] enclosing group, stamped onto declarations
       # @param platform [String, nil] enclosing group's platform
-      def initialize(group: :app, platform: nil)
+      # @param host [Symbol, nil] enclosing group's host OS
+      # @param env [String, nil] environment name ("ci" / "dev"), stamped onto declarations
+      def initialize(group: :app, platform: nil, host: nil, env: nil)
         @brew = []
         @declarations = []
         @group = group
         @platform = platform
+        @host = host
+        @env = env
       end
 
       def brew(name, **opts)
@@ -126,6 +134,8 @@ module Dev
           constraint: stringify_keys(opts),
           group: @group,
           platform: @platform,
+          host: @host,
+          env: @env,
         )
       end
 
@@ -148,10 +158,12 @@ module Dev
 
       # @param group [Symbol] group name (e.g. :app, :test, :build)
       # @param platform [String, nil] platform stamped onto every declaration in this group
+      # @param host [Symbol, nil] host OS stamped onto every declaration in this group
       # @param registered_methods [Array<Symbol>] dynamically registered integration methods
-      def initialize(group:, platform: nil, registered_methods: [])
+      def initialize(group:, platform: nil, host: nil, registered_methods: [])
         @group = group
         @platform = platform
+        @host = host
         @declarations = []
         @brew    = []
         @envs    = {}
@@ -262,6 +274,21 @@ module Dev
         add_declaration(name, integration.to_sym, spec)
       end
 
+      # Pin the Xcode toolchain — a first-class dep like ruby, but riding the
+      # normal resolver -> lockfile -> install pipeline. The integration is
+      # inherently darwin-scoped (Xcode only exists on macOS; a no-op on other
+      # hosts), so the declaration is safe without explicit host gating. dev
+      # installs the pin to /Applications/Xcode-<version>.app via the xcodes
+      # CLI (declare `brew "xcodes", tap: "xcodesorg/made"` in :build so it
+      # exists first) and publishes DEVELOPER_DIR via shadowenv.
+      #
+      # @param version [String, Symbol] exact Xcode version (e.g. "26.1.1")
+      # @param spec [Hash] additional options
+      def xcode(version, **spec)
+        spec[:version] = version.to_s.strip
+        add_declaration("xcode", :xcode, spec)
+      end
+
       # Declare a Homebrew formula/cask.
       #
       # Dual-writes: the existing @brew/groups entry feeds the container build
@@ -284,16 +311,16 @@ module Dev
         add_declaration(name_str, :brew, opts.dup)
       end
 
+      # Scope member declarations to an environment ("ci" / "dev"). The env
+      # name is a first-class declaration field (like host), landing in the
+      # lockfile's env section so install-deps filters it to the matching
+      # environment — never smuggled through the constraint hash.
       def env(name, &block)
         env_name = name.to_s
-        env_dsl = EnvDSL.new(group: @group, platform: @platform)
+        env_dsl = EnvDSL.new(group: @group, platform: @platform, host: @host, env: env_name)
         env_dsl.instance_eval(&block) if block
         @envs[env_name] = env_dsl.to_h
-        # Stamp the env name so the brew declaration lands in the lockfile's
-        # env section and install-deps filters it to the matching environment.
-        env_dsl.declarations.each do |decl|
-          @declarations << decl.with(constraint: decl.constraint.merge("env" => env_name))
-        end
+        @declarations.concat(env_dsl.declarations)
       end
 
       def to_h
@@ -322,6 +349,11 @@ module Dev
 
       # Create a DependencyDeclaration and store it.
       #
+      # host: is peeled off the spec into the first-class declaration field —
+      # a per-declaration override of the group's host (e.g. `gh ..., host:
+      # :darwin` outside a host-gated group). It never reaches the constraint,
+      # which describes what the dep is, not where it installs.
+      #
       # @param name [String, Symbol] dependency name
       # @param integration [Symbol] integration type
       # @param spec [Hash] constraint spec (symbol keys → stringified)
@@ -330,6 +362,7 @@ module Dev
         raise EmptyNameError, "dependency name cannot be empty" if name_str.empty?
 
         post_install = spec.delete(:post_install)
+        host = spec.delete(:host) || @host
         spec = expand_github(name_str, spec) if spec.key?(:github)
         constraint = stringify_keys(spec)
 
@@ -339,6 +372,7 @@ module Dev
           constraint:,
           group: @group,
           platform: @platform,
+          host:,
           post_install:,
         )
       end

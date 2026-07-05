@@ -204,6 +204,8 @@ class Dev::Deps::ConfigTest < Minitest::Test
     brew_decls.map(&:name).sort == %w[cmake powershell ruby]
     brew_decls.all? { |d| d.group == :build }
     brew_decls.find { |d| d.name == "powershell" }.constraint["tap"] == "d3mlabs/d3mlabs"
-    brew_decls.find { |d| d.name == "ruby" }.constraint["env"] == "ci"
+    # env is a first-class declaration field, never smuggled into the constraint.
+    brew_decls.find { |d| d.name == "ruby" }.env == "ci"
+    brew_decls.find { |d| d.name == "ruby" }.constraint["env"].nil?
   end
 end
