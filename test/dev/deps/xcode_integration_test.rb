@@ -13,17 +13,21 @@ require "fileutils"
 # check) replaced by canned values. The install root is a real tmpdir so the
 # app-bundle presence checks run against the actual filesystem.
 class FakeXcodeIntegration < Dev::Deps::XcodeIntegration
-  attr_reader :install_invocations
+  attr_reader :install_invocations, :metal_download_invocations
 
   def initialize(darwin: true, interactive: false, xcodes_available: true, install_succeeds: true,
-                 creates_app_on_install: true, **kwargs)
+                 creates_app_on_install: true, metal_present: true, metal_download_succeeds: true,
+                 **kwargs)
     super(**kwargs)
     @darwin = darwin
     @interactive = interactive
     @xcodes_available = xcodes_available
     @install_succeeds = install_succeeds
     @creates_app_on_install = creates_app_on_install
+    @metal_present = metal_present
+    @metal_download_succeeds = metal_download_succeeds
     @install_invocations = []
+    @metal_download_invocations = []
   end
 
   private
@@ -31,11 +35,17 @@ class FakeXcodeIntegration < Dev::Deps::XcodeIntegration
   def darwin? = @darwin
   def interactive? = @interactive
   def xcodes_available? = @xcodes_available
+  def metal_toolchain_present?(_version) = @metal_present
 
   def run_xcodes_install(version)
     @install_invocations << version
     FileUtils.mkdir_p(self.class.app_path(version, root: install_root)) if @creates_app_on_install
     @install_succeeds
+  end
+
+  def run_metal_toolchain_download(version)
+    @metal_download_invocations << version
+    @metal_download_succeeds
   end
 end unless defined?(FakeXcodeIntegration)
 
@@ -123,6 +133,59 @@ class Dev::Deps::XcodeIntegrationTest < Minitest::Test
 
     Then "the message points at the brew declaration"
     error.message.include?("xcodes CLI is not installed")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a missing Metal toolchain is downloaded even when the pin is already installed" do
+    Given "an installed pin whose Metal toolchain component is absent (fresh Xcode 26 install)"
+    dir = Dir.mktmpdir("dev-xcode-int-test-")
+    FileUtils.mkdir_p(File.join(dir, "project"))
+    integration = build_integration(dir, metal_present: false)
+    FileUtils.mkdir_p(Dev::Deps::XcodeIntegration.app_path("26.1.1", root: File.join(dir, "Applications")))
+
+    When "installing"
+    integration.install_all([build_dependency("26.1.1")])
+
+    Then "the component download ran for the pinned version"
+    integration.metal_download_invocations == ["26.1.1"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a present Metal toolchain skips the component download" do
+    Given "an installed pin that can already resolve the metal tool"
+    dir = Dir.mktmpdir("dev-xcode-int-test-")
+    FileUtils.mkdir_p(File.join(dir, "project"))
+    integration = build_integration(dir, metal_present: true)
+    FileUtils.mkdir_p(Dev::Deps::XcodeIntegration.app_path("26.1.1", root: File.join(dir, "Applications")))
+
+    When "installing"
+    integration.install_all([build_dependency("26.1.1")])
+
+    Then "no download runs"
+    integration.metal_download_invocations.empty?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a failed Metal toolchain download raises with the manual retry command" do
+    Given "an installed pin whose component download fails"
+    dir = Dir.mktmpdir("dev-xcode-int-test-")
+    FileUtils.mkdir_p(File.join(dir, "project"))
+    integration = build_integration(dir, metal_present: false, metal_download_succeeds: false)
+    FileUtils.mkdir_p(Dev::Deps::XcodeIntegration.app_path("26.1.1", root: File.join(dir, "Applications")))
+
+    When "installing"
+    error = assert_raises(Dev::Deps::XcodeIntegration::InstallError) do
+      integration.install_all([build_dependency("26.1.1")])
+    end
+
+    Then "the message carries the manual xcodebuild command"
+    error.message.include?("-downloadComponent MetalToolchain")
 
     Cleanup
     FileUtils.rm_rf(dir)

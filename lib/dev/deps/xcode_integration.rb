@@ -27,7 +27,12 @@ module Dev
     #      XCODES_PASSWORD, passwordless sudo); a genuinely-required prompt
     #      reads EOF and fails immediately — never a hung job — and the error
     #      carries the remediation menu.
-    #   3. Publish DEVELOPER_DIR via shadowenv so every project command rides
+    #   3. Ensure the Metal toolchain component is present. Xcode 26 ships the
+    #      Metal shader compiler as a separately downloaded component, so a
+    #      fresh install can't compile shaders (UE's editor fails at startup)
+    #      until `xcodebuild -downloadComponent MetalToolchain` runs. The
+    #      download needs no prompt, so it is safe headless.
+    #   4. Publish DEVELOPER_DIR via shadowenv so every project command rides
     #      the pin.
     class XcodeIntegration < Integration
       class XcodesMissingError < StandardError; end
@@ -88,7 +93,25 @@ module Dev
         else
           install_via_xcodes(dep.version)
         end
+        ensure_metal_toolchain(dep.version)
         publish_developer_dir(dep.version)
+      end
+
+      # Download the Metal toolchain component when the pin can't compile
+      # shaders yet (see the class contract, step 3).
+      #
+      # @param version [String]
+      # @raise [InstallError] when the component download fails
+      def ensure_metal_toolchain(version)
+        return if metal_toolchain_present?(version)
+
+        puts ">>> xcode #{version}: downloading the Metal toolchain component (~700 MB)"
+        return if run_metal_toolchain_download(version)
+
+        raise InstallError,
+              "xcodebuild -downloadComponent MetalToolchain failed for Xcode #{version}. " \
+              "Retry manually: DEVELOPER_DIR=#{self.class.developer_dir(version, root: install_root)} " \
+              "xcodebuild -downloadComponent MetalToolchain"
       end
 
       # @param version [String]
@@ -148,6 +171,24 @@ module Dev
 
         ShadowenvXcode.setup!(project_root: project_root, version: version, developer_dir: developer_dir)
         puts ">>> xcode #{version}: DEVELOPER_DIR published via shadowenv (#{developer_dir})"
+      end
+
+      # Whether the pinned Xcode can already resolve the `metal` tool. `xcrun
+      # -f` probes the toolchain without compiling anything; it fails until
+      # the MetalToolchain component has been downloaded.
+      #
+      # @param version [String]
+      # @return [Boolean]
+      def metal_toolchain_present?(version)
+        env = { "DEVELOPER_DIR" => self.class.developer_dir(version, root: install_root) }
+        system(env, "xcrun", "-sdk", "macosx", "-f", "metal", out: File::NULL, err: File::NULL)
+      end
+
+      # @param version [String]
+      # @return [Boolean] whether the download exited 0
+      def run_metal_toolchain_download(version)
+        env = { "DEVELOPER_DIR" => self.class.developer_dir(version, root: install_root) }
+        system(env, "xcodebuild", "-downloadComponent", "MetalToolchain")
       end
 
       # @return [Boolean]
