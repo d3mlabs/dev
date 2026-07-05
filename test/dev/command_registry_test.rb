@@ -40,9 +40,9 @@ class Dev::CommandRegistryTest < Minitest::Test
     When "looking up the resolved command"
     resolved = registry.lookup("up")
 
-    Then "it is an OverriddenCommand with super's desc"
+    Then "it is an OverriddenCommand with the override's desc"
     resolved.is_a?(Dev::OverriddenCommand)
-    resolved.desc == "built-in up"
+    resolved.desc == "project up"
   end
 
   test "register into final slot raises DuplicateCommandError" do
@@ -100,6 +100,7 @@ class Dev::CommandRegistryTest < Minitest::Test
     commands.key?("update-deps")
     commands.key?("test")
     commands["test"] == shell
-    commands["update-deps"].desc == "resolve"
+    # The override owns the slot, so its desc wins in listings.
+    commands["update-deps"].desc == "project up"
   end
 end

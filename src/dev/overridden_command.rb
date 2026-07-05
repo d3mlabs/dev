@@ -18,9 +18,11 @@ module Dev
       @body = T.let(body, Command)
     end
 
+    # The override owns the slot, so its description wins — a project `up:`
+    # shows its own desc in usage, not the generic builtin one.
     sig { override.returns(String) }
     def desc
-      @super_command.desc
+      @body.desc
     end
 
     sig { override.returns(T::Boolean) }

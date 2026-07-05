@@ -21,14 +21,14 @@ class Dev::OverriddenCommandTest < Minitest::Test
     order == [:super, :body]
   end
 
-  test "desc delegates to super_command" do
+  test "desc delegates to the overriding body" do
     Given "an overridden command"
     super_cmd = Dev::BuiltinCommand.new(desc: "Resolve deps") { |args, context| }
     body_cmd = Dev::BuiltinCommand.new(desc: "Project setup") { |args, context| }
     cmd = Dev::OverriddenCommand.new(super_command: super_cmd, body: body_cmd)
 
-    Expect "desc comes from super"
-    cmd.desc == "Resolve deps"
+    Expect "the override owns the slot, so its desc wins"
+    cmd.desc == "Project setup"
   end
 
   test "execute passes args and context through to both" do

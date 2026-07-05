@@ -177,6 +177,33 @@ class RunnerTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "up is a builtin even when the project defines no up command" do
+    Given "a Runner with no project commands"
+    runner = build_runner(commands: {})
+    out = StringIO.new
+
+    When "we print usage"
+    runner.run([], ui: fake_ui, out: out)
+
+    Then "up is listed as the builtin dependency install"
+    out.string.include?("up")
+    out.string.include?("Install locked dependencies, then run the project's up command")
+  end
+
+  test "a project up command overrides the builtin: install runs first, then the script" do
+    Given "a Runner whose dev.yml defines up and a spy on both stages"
+    runner = build_runner(commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup", "container" => false } })
+    execution_order = []
+    runner.stubs(:install_locked_deps).with { execution_order << :builtin_install; true }
+    Dev::ShellCommand.any_instance.stubs(:execute).with { execution_order << :project_script; true }
+
+    When "we run up"
+    runner.run(["up"], ui: fake_ui)
+
+    Then "OverriddenCommand super()-dispatches the builtin before the project script"
+    execution_order == [:builtin_install, :project_script]
+  end
+
   test "up resolves docker build arg credentials before executing" do
     Given "a Runner with build container build_args and an up command"
     runner = build_runner(
@@ -187,6 +214,7 @@ class RunnerTest < Minitest::Test
       } },
     )
     Dev::ShellCommand.any_instance.stubs(:execute)
+    runner.stubs(:install_locked_deps)
 
     When "we run up"
     runner.run(["up"], ui: fake_ui)
@@ -199,6 +227,7 @@ class RunnerTest < Minitest::Test
     Given "a Runner without a build container"
     runner = build_runner(commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup" } })
     Dev::ShellCommand.any_instance.stubs(:execute)
+    runner.stubs(:install_locked_deps)
 
     When "we run up"
     runner.run(["up"], ui: fake_ui)

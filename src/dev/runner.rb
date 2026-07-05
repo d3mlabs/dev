@@ -192,12 +192,17 @@ module Dev
       registry.register("install-deps", BuiltinCommand.new(
         desc: "Install locked dependencies handled on the host (e.g. gh releases)",
       ) do |args, context|
-        lockfile = Dev::Deps::Lockfile.new(dir: context.project_root)
-        installer = Dev::Deps::DependencyInstaller.new(
-          lockfile: lockfile,
-          integrations: build_host_integrations(project_root: context.project_root),
-        )
-        installer.install(env: Dev::Deps.detect_env, host: Dev::Deps.detect_host)
+        install_locked_deps(context)
+      end)
+
+      # `up` is a virtual slot: the builtin installs locked deps, and a project
+      # `up:` command in dev.yml overrides it into an OverriddenCommand — the
+      # builtin install runs first (super()), then the project's provisioning.
+      # Projects with only a dependencies.rb get `dev up` for free.
+      registry.register("up", BuiltinCommand.new(
+        desc: "Install locked dependencies, then run the project's up command (if defined)",
+      ) do |args, context|
+        install_locked_deps(context)
       end)
 
       registry.register("check", BuiltinCommand.new(
@@ -305,6 +310,21 @@ module Dev
     # types dev now owns end to end: gems (bundler), Lua rocks, and brew formulae.
     #
     # Install-time has no loaded dependencies.rb, so config-level inputs default:
+    # Install everything the lockfiles pin for this machine — shared by the
+    # `install-deps` and `up` builtins. Filtered to the detected env and host
+    # OS so e.g. a Mac never downloads the Linux engine.
+    #
+    # @param context [ExecutionContext]
+    sig { params(context: ExecutionContext).void }
+    def install_locked_deps(context)
+      lockfile = Dev::Deps::Lockfile.new(dir: context.project_root)
+      installer = Dev::Deps::DependencyInstaller.new(
+        lockfile: lockfile,
+        integrations: build_host_integrations(project_root: context.project_root),
+      )
+      installer.install(env: Dev::Deps.detect_env, host: Dev::Deps.detect_host)
+    end
+
     # taps is empty (custom-tap installs go through the container path) and the
     # bundler Gemfile is already generated, so no ruby version is needed here.
     #
