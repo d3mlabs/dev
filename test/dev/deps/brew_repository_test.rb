@@ -97,6 +97,36 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
     dep.metadata["tap"] == "d3mlabs/d3mlabs"
   end
 
+  test "fetch registers the declared tap and retries when brew info fails untapped" do
+    Given "a tapped formula on a machine that has never tapped it"
+    repository = Dev::Deps::BrewRepository.new
+    brew_json = [{
+      "name" => "xcodes",
+      "versions" => { "stable" => "1.6.2" },
+      "bottle" => { "stable" => { "files" => { "arm64_sonoma" => { "sha256" => "xc123" } } } },
+    }].to_json
+
+    Open3.stubs(:capture3)
+         .with("brew", "info", "--json=v1", "xcodesorg/made/xcodes")
+         .returns(["", "Error: this command requires the tap", stub(success?: false)])
+         .then.returns([brew_json, "", stub(success?: true)])
+    Open3.stubs(:capture3)
+         .with("brew", "tap", "xcodesorg/made")
+         .returns(["", "", stub(success?: true)])
+
+    When "fetching with the tap"
+    dep = repository.fetch(
+      "name" => "xcodes",
+      "integration" => "brew",
+      "group" => "build",
+      "tap" => "xcodesorg/made",
+    )
+
+    Then "the tap was registered and resolution succeeded on retry"
+    dep.version == "1.6.2"
+    dep.metadata["tap"] == "xcodesorg/made"
+  end
+
   test "fetch handles cask entries (no hash)" do
     Given "a cask identifier"
     repository = Dev::Deps::BrewRepository.new

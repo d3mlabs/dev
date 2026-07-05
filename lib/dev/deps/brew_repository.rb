@@ -45,7 +45,7 @@ module Dev
           )
         end
 
-        info = brew_info(build_formula_spec(name, id["tap"], version_suffix))
+        info = brew_info_with_tap(build_formula_spec(name, id["tap"], version_suffix), id["tap"])
 
         version = info["versions"]["stable"]
         bottle_hash = extract_bottle_hash(info)
@@ -81,6 +81,22 @@ module Dev
         version_suffix ? "#{base}@#{version_suffix}" : base
       end
 
+      # Query brew info, registering the declaration's tap first when the
+      # initial query fails — resolving a `tap:`-scoped formula on a machine
+      # that has never installed it requires the tap to be present.
+      #
+      # @param formula [String] formula spec (e.g. "xcodesorg/made/xcodes")
+      # @param tap [String, nil] tap slug from the declaration
+      # @return [Hash] parsed JSON info for the formula
+      # @raise [BrewInfoError] if the command fails
+      def brew_info_with_tap(formula, tap)
+        brew_info(formula)
+      rescue BrewInfoError
+        raise unless tap && register_tap(tap)
+
+        brew_info(formula)
+      end
+
       # Query `brew info --json=v1` for a formula.
       #
       # @param formula [String] formula spec (e.g. "cmake" or "d3mlabs/d3mlabs/powershell")
@@ -91,6 +107,13 @@ module Dev
         raise BrewInfoError, "brew info --json=v1 #{formula} failed" unless status.success?
 
         JSON.parse(out).first
+      end
+
+      # @param tap [String] tap slug (e.g. "xcodesorg/made")
+      # @return [Boolean] whether `brew tap` succeeded
+      def register_tap(tap)
+        _out, _err, status = Open3.capture3("brew", "tap", tap)
+        status.success?
       end
 
       # Extract the bottle SHA256 for the current platform.
