@@ -54,8 +54,8 @@ class Dev::Deps::PipIntegrationTest < Minitest::Test
     When "installing"
     integration.install_all([dep("totalsegmentator", "2.0.5")])
 
-    Then "pip install is invoked with the exact version pin"
-    1 * Open3.capture3(includes(".venv/bin/pip"), "install", "totalsegmentator==2.0.5") >> ["", "", ok]
+    Then "pip install is invoked via the venv python with the exact version pin"
+    1 * Open3.capture3(includes(".venv/bin/python"), "-m", "pip", "install", "totalsegmentator==2.0.5") >> ["", "", ok]
 
     Cleanup
     FileUtils.rm_rf(tmpdir)

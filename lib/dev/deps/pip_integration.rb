@@ -43,18 +43,21 @@ module Dev
         require "shadowenv_python"
         ShadowenvPython.ensure_venv!(python_version: version, project_root: @project_root)
 
-        pip = @project_root / ShadowenvPython::VENV_DIR / "bin" / "pip"
-        dependencies.each { |dep| run_pip_install(pip, dep) }
+        # Invoke `python -m pip` (not the `pip` console script): ensurepip always
+        # provides the module, but the bin/pip wrapper can be absent on a venv
+        # built by a Homebrew interpreter, which would fail with ENOENT.
+        python = @project_root / ShadowenvPython::VENV_DIR / "bin" / "python"
+        dependencies.each { |dep| run_pip_install(python, dep) }
       end
 
       private
 
-      # @param pip [Pathname] the venv's pip executable
+      # @param python [Pathname] the venv's python interpreter
       # @param dep [Dependency] dependency to install (exact version when pinned)
       # @raise [InstallError] if pip install fails
-      def run_pip_install(pip, dep)
+      def run_pip_install(python, dep)
         spec = dep.version ? "#{dep.name}==#{dep.version}" : dep.name
-        _out, err, status = Open3.capture3(pip.to_s, "install", spec)
+        _out, err, status = Open3.capture3(python.to_s, "-m", "pip", "install", spec)
         raise InstallError, "pip install #{spec} failed: #{err}" unless status.success?
       end
     end
