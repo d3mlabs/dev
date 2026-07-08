@@ -65,11 +65,26 @@ module ShadowenvPython
   def ensure_venv!(python_version:, project_root:)
     python_bin = ensure_homebrew_python!(python_version)
     venv_path = File.join(project_root.to_s, VENV_DIR)
-    return venv_path if File.executable?(File.join(venv_path, "bin", "python"))
+    venv_python = File.join(venv_path, "bin", "python")
 
-    raise BrewInstallError, "python -m venv #{venv_path} failed" unless Kernel.system(python_bin, "-m", "venv", venv_path)
+    unless File.executable?(venv_python)
+      raise BrewInstallError, "python -m venv #{venv_path} failed" unless Kernel.system(python_bin, "-m", "venv", venv_path)
+    end
 
+    ensure_pip!(venv_python)
     venv_path
+  end
+
+  # Guarantee pip is importable inside the venv. `python -m venv` normally seeds
+  # pip via ensurepip, but some Homebrew interpreters produce a venv without it;
+  # bootstrap it so package installs (PipIntegration) don't fail on a bare venv.
+  #
+  # @param venv_python [String] path to the venv's python
+  # @raise [BrewInstallError] if pip cannot be made available
+  def ensure_pip!(venv_python)
+    return if system(venv_python, "-m", "pip", "--version", out: File::NULL, err: File::NULL)
+
+    raise BrewInstallError, "could not bootstrap pip in the venv" unless Kernel.system(venv_python, "-m", "ensurepip", "--upgrade")
   end
 
   # Generate the shadowenv lisp that activates the project venv: VIRTUAL_ENV set,
