@@ -41,11 +41,11 @@ module ShadowenvPython
   # @param project_root   [Pathname, String]
   # @return [true]
   def setup!(python_version:, project_root:)
-    ensure_venv!(python_version:, project_root:)
+    venv_path = ensure_venv!(python_version:, project_root:)
 
     shadowenv_d = File.join(project_root.to_s, ".shadowenv.d")
     FileUtils.mkdir_p(shadowenv_d)
-    File.write(File.join(shadowenv_d, LISP_FILENAME), generate_python_lisp(python_version))
+    File.write(File.join(shadowenv_d, LISP_FILENAME), generate_python_lisp(python_version, venv_path))
 
     Dir.chdir(project_root.to_s) do
       Kernel.system("shadowenv", "trust", out: File::NULL, err: File::NULL)
@@ -91,20 +91,25 @@ module ShadowenvPython
   # its bin prepended to PATH, and PYTHONHOME cleared (a stray PYTHONHOME makes a
   # venv resolve the wrong stdlib). Mirrors what a venv's activate script does.
   #
+  # The venv path is baked in as an absolute literal (shadowenv exposes no
+  # reliable project-dir variable — SHADOWENV_PROJECT_DIR reads empty, and an
+  # empty path-concat panics the loader), matching how ShadowenvRuby/Lua bake
+  # their absolute Homebrew/rbenv roots.
+  #
   # @param python_version [String] e.g. "3.12"
+  # @param venv_path      [String] absolute path to the project venv
   # @return [String] lisp source
-  def generate_python_lisp(python_version)
+  def generate_python_lisp(python_version, venv_path)
+    venv = File.expand_path(venv_path)
     <<~LISP
       (provide "python" "#{python_version}")
 
-      (when-let ((venv (env/get "VIRTUAL_ENV")))
-        (env/remove-from-pathlist "PATH" (path-concat venv "bin")))
+      (when-let ((old (env/get "VIRTUAL_ENV")))
+        (env/remove-from-pathlist "PATH" (path-concat old "bin")))
 
-      (let ((venv (path-concat (env/get "SHADOWENV_PROJECT_DIR") "#{VENV_DIR}")))
-        (do
-          (env/set "VIRTUAL_ENV" venv)
-          (env/set "PYTHONHOME" ())
-          (env/prepend-to-pathlist "PATH" (path-concat venv "bin"))))
+      (env/set "PYTHONHOME" ())
+      (env/set "VIRTUAL_ENV" "#{venv}")
+      (env/prepend-to-pathlist "PATH" "#{File.join(venv, "bin")}")
     LISP
   end
 
