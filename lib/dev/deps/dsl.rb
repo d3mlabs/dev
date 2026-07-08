@@ -11,7 +11,7 @@ module Dev
       DEFAULT_GEM_GROUP = :app
 
       attr_reader :taps, :groups, :declarations, :ruby_version_requirement,
-                  :lua_version_value, :registered_integrations, :registered_methods
+                  :lua_version_value, :python_version_value, :registered_integrations, :registered_methods
 
       def initialize
         @taps   = {}
@@ -19,6 +19,7 @@ module Dev
         @declarations = []
         @ruby_version_requirement = nil
         @lua_version_value = nil
+        @python_version_value = nil
         @registered_integrations = {}
         @registered_methods = []
       end
@@ -40,6 +41,17 @@ module Dev
       # @param version [String, Symbol] Lua version (e.g. "5.1")
       def lua_version(version)
         @lua_version_value = version.to_s.strip
+      end
+
+      # Declare the project's Python toolchain. Like `ruby`, this is a first-class
+      # toolchain: dev provisions the interpreter (Homebrew python@<version>) and a
+      # project-local .venv (ShadowenvPython) before commands run, and pip deps
+      # (declared with `pip` inside a group) install into that venv. Resolved
+      # specially (pre-dispatch), not through the resolver -> lockfile pipeline.
+      #
+      # @param version [String, Symbol] Python minor version (e.g. "3.12")
+      def python(version)
+        @python_version_value = version.to_s.strip
       end
 
       # Declare a Ruby gem. Gems are a first-class dev-managed dependency type
@@ -197,6 +209,18 @@ module Dev
       def luarocks(name, constraint = nil, **spec)
         spec[:constraint] = constraint if constraint
         add_declaration(name, :luarocks, spec)
+      end
+
+      # Declare a pip package installed into the project venv (see `python`).
+      # The transitive tree is resolved by pip at install time, so only the
+      # top-level packages you depend on need declaring — mirroring luarocks.
+      #
+      # @param name [String, Symbol] distribution name (e.g. "totalsegmentator")
+      # @param version [String, nil] version constraint (e.g. ">=2.0", "2.0.5")
+      # @param spec [Hash] additional options (e.g. host:)
+      def pip(name, version = nil, **spec)
+        spec[:version] = version if version
+        add_declaration(name, :pip, spec)
       end
 
       # Declare a Satisfactory mod dependency from ficsit.app.

@@ -26,7 +26,7 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
 
   # Every GroupDSL verb that creates a declaration, mapped to its integration
   # symbol. Adding a new declaration verb must add a Registry entry too.
-  DECLARATION_INTEGRATIONS = %i[bundler brew cmake luarocks ficsit gh steam].freeze
+  DECLARATION_INTEGRATIONS = %i[bundler brew cmake luarocks ficsit gh steam pip].freeze
 
   def source_file(klass)
     File.realpath(Object.const_source_location(klass.name).first)

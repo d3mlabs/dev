@@ -48,6 +48,7 @@ module Dev
       context = ExecutionContext.new(
         ui:,
         ruby_version:,
+        python_version: declared_python_version,
         project_root: Dev.target_project_root,
         build_container: @config.build_container,
         runner: @config.runner,
@@ -320,7 +321,10 @@ module Dev
       lockfile = Dev::Deps::Lockfile.new(dir: context.project_root)
       installer = Dev::Deps::DependencyInstaller.new(
         lockfile: lockfile,
-        integrations: build_host_integrations(project_root: context.project_root),
+        integrations: build_host_integrations(
+          project_root: context.project_root,
+          python_version: context.python_version,
+        ),
       )
       installer.install(env: Dev::Deps.detect_env, host: Dev::Deps.detect_host)
     end
@@ -329,14 +333,17 @@ module Dev
     # bundler Gemfile is already generated, so no ruby version is needed here.
     #
     # @param project_root [Pathname] repo root threaded to integrations that need it
+    # @param python_version [String, nil] the `python` toolchain version, for the
+    #   pip integration to build the project venv with
     # @return [Hash{Symbol => Dev::Deps::Integration}]
-    sig { params(project_root: Pathname).returns(T::Hash[Symbol, Dev::Deps::Integration]) }
-    def build_host_integrations(project_root:)
+    sig { params(project_root: Pathname, python_version: T.nilable(String)).returns(T::Hash[Symbol, Dev::Deps::Integration]) }
+    def build_host_integrations(project_root:, python_version: nil)
       require "dev/deps/cache"
       require "dev/deps/registry"
       Dev::Deps::Registry.host_integrations(
         project_root:,
         cache: Dev::Deps::Cache.new,
+        python_version:,
       )
     end
 
@@ -387,6 +394,23 @@ module Dev
     rescue StandardError => e
       $stderr.puts "dev: could not read `ruby` from dependencies.rb (#{e.message}); using dev.yml ruby:"
       @config.ruby_version
+    end
+
+    # The project's declared Python toolchain version from the first-class
+    # `python` directive in dependencies.rb, or nil when unset. Read here (under
+    # dev's bootstrap Ruby, before the project interpreter is provisioned) so it
+    # can flow to command_runner (shadowenv provisioning) and the pip integration.
+    sig { returns(T.nilable(String)) }
+    def declared_python_version
+      deps_rb = Dev.target_project_root / "dependencies.rb"
+      return nil unless deps_rb.exist?
+
+      load(deps_rb.to_s)
+      version = Dev::Deps.last_config&.python_version
+      (version && !version.empty?) ? version : nil
+    rescue StandardError => e
+      $stderr.puts "dev: could not read `python` from dependencies.rb (#{e.message})"
+      nil
     end
   end
 end

@@ -193,6 +193,7 @@ require "dev/deps"
 
 Dev::Deps.define do
   ruby "4.0.5" # the project's Ruby toolchain; dev provisions it (rbenv + shadowenv)
+  python "3.12" # optional Python toolchain; dev provisions the interpreter + a project .venv
   gem "cli-ui"
   tap "d3mlabs/d3mlabs"
 
@@ -215,6 +216,12 @@ Dev::Deps.define do
     cmake "googletest", github: "google", tag: "v1.17.0",
           targets: ["gtest", "gmock"]
     luarocks "luaunit", ">=3.5"
+  end
+
+  # Python packages install into the project .venv (needs a `python` directive).
+  # Heavy, host-specific toolchains gate with `host:` so they only land where used.
+  group :anatomy, host: :darwin do
+    pip "totalsegmentator", ">=2.0"
   end
 end
 ```
@@ -244,10 +251,13 @@ All built-in integrations are declared in one place — `lib/dev/deps/registry.r
 | `ficsit()` | FicsitIntegration | FicsitRepository | deps.lock |
 | `steam()` | SteamIntegration | SteamRepository | deps.lock |
 | `xcode()` | XcodeIntegration | XcodeRepository | deps.lock |
+| `pip()` | PipIntegration | PipRepository | deps.lock |
 
 `xcode "26.1.1"` pins the Xcode toolchain (macOS only; a no-op on other hosts). dev installs the pin to `/Applications/Xcode-<ver>.app` via the [xcodes](https://github.com/XcodesOrg/xcodes) CLI — declare `brew "xcodes", host: :darwin` in `:build` so it exists first — and publishes `DEVELOPER_DIR` into the project shadowenv. Interactive runs pass any Apple ID/2FA/sudo prompt through to you; headless runs fail fast with remediation instead of hanging (normal practice: pre-install the pin interactively once during machine bring-up, e.g. a CI runner's).
 
 `gem()` declares Ruby gems: dev generates a `Gemfile`/`Gemfile.lock` from your declarations (a top-level `gem` lands in the default group; `group(:test) { gem ... }` scopes it to a bundler group), and `dev install-deps` runs `bundle install`. `brew()` dual-writes — the container build path keeps reading the group structure while `dev install-deps` also installs the formulae on the host (idempotently).
+
+`python "3.12"` pins the Python toolchain: dev provisions the interpreter (Homebrew `python@3.12`) and a project-local `.venv`, and publishes it into the project shadowenv (`VIRTUAL_ENV` + `.venv/bin` on `PATH`). `pip()` declares packages installed into that venv — like `luarocks()`, you declare only the top-level packages and pip resolves the transitive tree at install time. Gate heavy, platform-specific stacks (e.g. a PyTorch-backed ML tool) with `host:` so only the machines that use them pay the download.
 
 ### Custom integrations
 

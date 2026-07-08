@@ -30,13 +30,15 @@ module Dev
       params(
         ui: Dev::Cli::Ui,
         ruby_version: String,
+        python_version: T.nilable(String),
         build_container: T.nilable(Dev::BuildContainerConfig),
         project_root: Pathname,
       ).void
     end
-    def initialize(ui:, ruby_version:, build_container: nil, project_root: Dev.target_project_root)
+    def initialize(ui:, ruby_version:, python_version: nil, build_container: nil, project_root: Dev.target_project_root)
       @ui = T.let(ui, Dev::Cli::Ui)
       @ruby_version = T.let(ruby_version, String)
+      @python_version = T.let(python_version, T.nilable(String))
       @build_container = T.let(build_container, T.nilable(Dev::BuildContainerConfig))
       @project_root = T.let(project_root, Pathname)
     end
@@ -194,8 +196,10 @@ module Dev
     end
 
     # Toolchain provisioning: each toolchain the project uses gets its shadowenv
-    # set up before command execution. Currently hardcoded to Ruby + LLVM.
-    # When a third toolchain appears, generalize into a registry pattern (see #21).
+    # set up before command execution — Ruby (always), then LLVM and Python when
+    # the project declares them. Each ensure_* is a fast provisioned?-guarded
+    # no-op after the first run. (A registry pattern per #21 would fold these into
+    # a list; three explicit, guarded steps stay readable for now.)
     sig { void }
     def ensure_shadowenv_provisioned!
       require "shadowenv_ruby"
@@ -205,6 +209,20 @@ module Dev
       end
 
       ensure_llvm_provisioned!(project_root)
+      ensure_python_provisioned!(project_root)
+    end
+
+    # Provision the project's Python venv (Homebrew interpreter + .venv +
+    # 540_python.lisp) when a `python` version is declared. No-op otherwise.
+    sig { params(project_root: Pathname).void }
+    def ensure_python_provisioned!(project_root)
+      version = @python_version
+      return if version.nil? || version.empty?
+
+      require "shadowenv_python"
+      return if ShadowenvPython.provisioned?(version, project_root: project_root)
+
+      ShadowenvPython.setup!(python_version: version, project_root: project_root)
     end
 
     sig { params(project_root: Pathname).void }

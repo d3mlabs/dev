@@ -76,6 +76,7 @@ module Dev
       runner = CommandRunner.new(
         ui: context.ui,
         ruby_version: context.ruby_version,
+        python_version: context.python_version,
         build_container: context.build_container,
         project_root: context.project_root,
       )

@@ -12,6 +12,7 @@ module Dev
 
     const :ui, Dev::Cli::Ui
     const :ruby_version, String
+    const :python_version, T.nilable(String), default: nil
     const :project_root, Pathname
     const :build_container, T.nilable(Dev::BuildContainerConfig), default: nil
     const :runner, T.nilable(Dev::RunnerSetupConfig), default: nil

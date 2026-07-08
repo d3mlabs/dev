@@ -16,6 +16,8 @@ require_relative "bundler_repository"
 require_relative "bundler_integration"
 require_relative "xcode_repository"
 require_relative "xcode_integration"
+require_relative "pip_repository"
+require_relative "pip_integration"
 
 module Dev
   module Deps
@@ -121,6 +123,13 @@ module Dev
           integration_needs: %i[project_root],
           scope: HOST,
         ),
+        Entry.new(
+          symbol: :pip,
+          repository: PipRepository,
+          integration: PipIntegration,
+          integration_needs: %i[project_root python_version],
+          scope: HOST,
+        ),
       ].freeze
 
       # Build the integration-type -> Repository hash the Resolver consumes.
@@ -141,12 +150,14 @@ module Dev
       # @param cache [Cache] shared download cache (passed to every integration)
       # @param taps [Array<Tap>] Homebrew taps for the brew integration
       # @param ruby_version_requirement [String, nil] for the bundler repository
+      # @param python_version [String, nil] for the pip integration's venv
       # @return [Hash{Symbol => Integration}]
-      def self.host_integrations(project_root:, cache:, taps: [], ruby_version_requirement: nil)
+      def self.host_integrations(project_root:, cache:, taps: [], ruby_version_requirement: nil, python_version: nil)
         context = {
           project_root:,
           project_dir: project_root,
           ruby_version_requirement:,
+          python_version:,
           taps:,
         }
         INTEGRATIONS.each_with_object({}) do |entry, integrations|
