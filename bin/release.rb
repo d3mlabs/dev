@@ -25,6 +25,7 @@ exit 1
 #   ./bin/release.rb                 # auto-increments patch (0.2.24 → 0.2.25)
 #   ./bin/release.rb 0.3.0           # explicit version
 #   ./bin/release.rb "Release notes" # auto-increment with custom notes
+#   ./bin/release.rb --yes           # skip the confirmation (non-interactive runs)
 
 require "pathname"
 require "json"
@@ -45,12 +46,16 @@ def main
   ensure_clean_tree!
   ensure_on_main!
 
+  # --yes skips the interactive confirmation, which would otherwise hang a
+  # piped or backgrounded run waiting for input it can never receive.
+  assume_yes = !ARGV.delete("--yes").nil?
+
   current = VERSION_FILE.read.strip
   new_version, notes = parse_args(current)
   commits = commits_since_last_tag
 
   print_summary(current, new_version, notes, commits)
-  abort "Aborted." unless CLI::UI.confirm("Proceed?")
+  abort "Aborted." unless assume_yes || CLI::UI.confirm("Proceed?")
   puts
 
   CLI::UI::Frame.open("Releasing v#{new_version}") do
