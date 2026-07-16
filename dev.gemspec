@@ -11,7 +11,7 @@ Gem::Specification.new do |s|
   # The codebase uses Ruby 3.1+ syntax (e.g. hash literal value omission).
   s.required_ruby_version = ">= 3.1.0"
 
-  s.files = Dir["bin/*", "src/**/*", "lib/**/*", "data/**/*", "VERSION", "LICENSE"]
+  s.files = Dir["bin/*", "src/**/*", "lib/**/*", "data/**/*", "share/**/*", "VERSION", "LICENSE"]
 
   s.add_runtime_dependency "cli-ui"
   s.add_runtime_dependency "sorbet-runtime"

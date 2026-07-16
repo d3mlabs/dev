@@ -24,3 +24,6 @@ sorbet/rbi/hidden-definitions/errors.txt
 
 # Local / ast_transform-specific work
 tmp/
+
+# ai-flow: local plan working copies (canonical copy is the GitHub issue)
+.cursor/plans/
