@@ -241,12 +241,15 @@ module Dev
 
     # The scope of the runner currently configured in dir, read from the
     # gitHubUrl config.sh wrote into .runner ("https://github.com/owner[/repo]").
-    # nil when the file can't be parsed, so the caller can fall back.
+    # config.sh writes the file with a UTF-8 BOM, so read with "bom|utf-8" or
+    # JSON.parse chokes on the first byte. nil when the file can't be parsed,
+    # so the caller can fall back.
     #
     # @param dir [String] install dir
     # @return [String, nil] "owner/repo" or "owner"
     def existing_registration_scope(dir)
-      url = JSON.parse(File.read(File.join(dir, ".runner")))["gitHubUrl"].to_s
+      raw = File.read(File.join(dir, ".runner"), encoding: "bom|utf-8")
+      url = JSON.parse(raw)["gitHubUrl"].to_s
       scope = url.sub(%r{\Ahttps://github\.com/}, "").chomp("/")
       scope.empty? || scope == url ? nil : scope
     rescue JSON::ParserError, Errno::ENOENT

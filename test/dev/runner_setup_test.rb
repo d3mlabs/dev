@@ -201,7 +201,9 @@ class Dev::RunnerSetupTest < Minitest::Test
     config_sh = File.join(dir, "config.sh")
     File.write(config_sh, "#!/bin/bash\n")
     File.chmod(0o755, config_sh)
-    File.write(File.join(dir, ".runner"), JSON.generate("gitHubUrl" => "https://github.com/owner/repo"))
+    # config.sh writes .runner with a UTF-8 BOM; reproduce it so the scope
+    # parse is exercised against the real file shape.
+    File.write(File.join(dir, ".runner"), "\uFEFF#{JSON.generate("gitHubUrl" => "https://github.com/owner/repo")}")
     File.write(File.join(dir, ".service"), "actions.runner.plist\n")
     config = Dev::RunnerSetupConfig.new(labels: "ai-light", dir: dir, name: "box")
     captured = []
