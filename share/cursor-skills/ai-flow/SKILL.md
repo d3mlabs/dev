@@ -39,6 +39,21 @@ Open feedback lives as issue comments (often quote-anchored). To address it:
    section it concerns), then `dev plan push`.
 5. Report which comments were addressed and which were skipped (and why).
 
+## Link format (GitHub is the backend)
+
+Plan links use GitHub URL format everywhere — the local plan file included,
+since its content becomes the issue body verbatim. Never use local filesystem
+paths (`/Users/…`) in a plan.
+
+- Files: `https://github.com/<owner>/<repo>/blob/HEAD/<path>` (`blob/HEAD`
+  always points at the repo's default branch).
+- Other plans: their issue URL (`https://github.com/<owner>/<repo>/issues/<n>`).
+- When working locally, resolve a `blob/HEAD` link to the workspace checkout
+  (`~/src/github.com/<owner>/<repo>/<path>`) and read the file there — do not
+  fetch it from GitHub.
+- If a plan contains a local path (e.g. from a cmd+L file reference), rewrite
+  it to the formats above while editing.
+
 ## Conventions (do not violate)
 
 - Linked plan files start with an `<!-- ai-flow -->` HTML comment header
