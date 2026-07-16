@@ -69,8 +69,10 @@ module Dev
     private
 
     # Commands that ARE the staleness remediation (or its explicit check) —
-    # nagging before them would block the very fix being run.
-    STALENESS_EXEMPT_COMMANDS = T.let(%w[up install-deps update-deps check].freeze, T::Array[String])
+    # nagging before them would block the very fix being run. `plan` is exempt
+    # because it never touches dependencies and runs headlessly from Cursor
+    # hooks, where a staleness warning would only add noise.
+    STALENESS_EXEMPT_COMMANDS = T.let(%w[up install-deps update-deps check plan].freeze, T::Array[String])
 
     # Two O(1) digest checks at every command start (see Dev::Deps::Staleness):
     # manifest vs lockfile, lockfile vs installed stamp. Warn on workstations;
@@ -125,24 +127,33 @@ module Dev
       registry
     end
 
-    # `dev runner-setup` registers the current host as the repo's self-hosted
-    # GitHub Actions runner. Registered only when a project declares a `runner:`
-    # block, so the command surfaces only where it applies. dev owns the install
-    # logic (one shared implementation) so repos declare just their runner
-    # identity instead of vendoring a bespoke setup script.
+    # `dev runner-setup` registers the current host as a self-hosted GitHub
+    # Actions runner — repo-scoped by default, org-scoped with `--org` (one
+    # runner serving every repo in the org, the shape ai-flow's shared pools
+    # want). Registered only when a project declares a `runner:` block, so the
+    # command surfaces only where it applies. dev owns the install logic (one
+    # shared implementation) so repos declare just their runner identity
+    # instead of vendoring a bespoke setup script. `--labels`/`--dir`/`--name`
+    # override the block for hosts that differ from the repo default (e.g.
+    # registering the Mac org-wide from a repo whose block describes the CI
+    # box).
     sig { params(registry: CommandRegistry, config: Config).void }
     def register_runner_builtins(registry, config)
       runner_config = config.runner
       return if runner_config.nil?
 
       registry.register("runner-setup", BuiltinCommand.new(
-        desc: "Register this host as the repo's self-hosted GitHub Actions runner",
+        desc: "Register this host as a self-hosted GitHub Actions runner (repo-scoped, or org-wide with --org)",
       ) do |args, context|
         require "dev/runner_setup"
         cfg = context.runner
         raise ArgumentError, "no `runner:` block in dev.yml" if cfg.nil?
 
-        Dev::RunnerSetup.new(config: cfg, repo: parse_repo_flag(args)).run
+        Dev::RunnerSetup.new(
+          config: runner_config_with_flag_overrides(cfg, args),
+          repo: parse_repo_flag(args),
+          org: args.include?("--org"),
+        ).run
       end)
     end
 
@@ -257,6 +268,13 @@ module Dev
         require "dev/credential_accessor"
         Dev::CredentialAccessor.new.run(args)
       end)
+
+      registry.register("plan", BuiltinCommand.new(
+        desc: "Sync Cursor plans with GitHub issues (new/link/pull/push/status)",
+      ) do |args, context|
+        require "dev/plan"
+        Dev::Plan::Accessor.new(project_root: context.project_root).run(args)
+      end)
     end
 
     # Parse `--keep N` / `--keep=N` from `dev cache gc` args, defaulting to the
@@ -280,11 +298,39 @@ module Dev
     # @return [String, nil]
     sig { params(args: T::Array[String]).returns(T.nilable(String)) }
     def parse_repo_flag(args)
-      idx = args.index("--repo")
+      parse_value_flag(args, "--repo")
+    end
+
+    # A copy of the dev.yml runner block with any `--labels` / `--dir` / `--name`
+    # CLI overrides applied. The block describes the repo's default runner host;
+    # overrides let a different host (e.g. the shared Mac registering org-wide)
+    # reuse the same command without editing dev.yml.
+    #
+    # @param cfg [Dev::RunnerSetupConfig]
+    # @param args [Array<String>]
+    # @return [Dev::RunnerSetupConfig]
+    sig { params(cfg: RunnerSetupConfig, args: T::Array[String]).returns(RunnerSetupConfig) }
+    def runner_config_with_flag_overrides(cfg, args)
+      RunnerSetupConfig.new(
+        labels: parse_value_flag(args, "--labels") || cfg.labels,
+        dir: parse_value_flag(args, "--dir") || cfg.dir,
+        name: parse_value_flag(args, "--name") || cfg.name,
+        version: cfg.version,
+      )
+    end
+
+    # Parse `--flag value` / `--flag=value` from args; nil when absent.
+    #
+    # @param args [Array<String>]
+    # @param flag [String]
+    # @return [String, nil]
+    sig { params(args: T::Array[String], flag: String).returns(T.nilable(String)) }
+    def parse_value_flag(args, flag)
+      idx = args.index(flag)
       return args[idx + 1] if idx && args[idx + 1]
 
-      flag = args.find { |a| a.start_with?("--repo=") }
-      flag&.split("=", 2)&.fetch(1)
+      inline = args.find { |a| a.start_with?("#{flag}=") }
+      inline&.split("=", 2)&.fetch(1)
     end
 
     # Build the integration-type -> Repository hash the Resolver consumes,

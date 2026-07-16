@@ -6,6 +6,7 @@ require "dev/runner_setup_config"
 require "dev/runner_setup"
 require "tmpdir"
 require "fileutils"
+require "json"
 require "stringio"
 require "socket"
 
@@ -41,6 +42,18 @@ class Dev::RunnerSetupTest < Minitest::Test
 
       ["", "", true]
     end
+  end
+
+  # An authed executor that also appends each capture call (as a joined command
+  # line) to `captured`. A lambda (like authed_responder) because plain blocks
+  # auto-splat their single array argument under RSpock's transformation.
+  def capturing_executor(captured)
+    responder = authed_responder
+    recorder = lambda do |argv|
+      captured << argv.join(" ")
+      responder.call(argv)
+    end
+    RecordingExecutor.new(&recorder)
   end
 
   test "config_argv builds the config.sh registration contract" do
@@ -152,6 +165,62 @@ class Dev::RunnerSetupTest < Minitest::Test
     exec.systems.none? { |call| call[:argv] == ["sudo", "./svc.sh", "status"] }
     exec.systems.none? { |call| call[:argv].first == "curl" }
     exec.systems.none? { |call| call[:argv][0, 2] == ["./config.sh", "remove"] }
+
+    Cleanup
+    FileUtils.remove_entry(dir)
+  end
+
+  test "run with org scope registers against the org URL with an org-minted token" do
+    Given "a runner dir that already has an executable config.sh"
+    dir = Dir.mktmpdir
+    config_sh = File.join(dir, "config.sh")
+    File.write(config_sh, "#!/bin/bash\n")
+    File.chmod(0o755, config_sh)
+    config = Dev::RunnerSetupConfig.new(labels: "ai-light,ai-build", dir: dir, name: "box")
+    captured = []
+    exec = capturing_executor(captured)
+
+    When "running setup org-wide"
+    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", org: true, executor: exec,
+                                 out: silent, host_platform: "osx-arm64")
+    setup.run
+
+    Then "the registration token is minted at the org endpoint and config.sh targets the org URL"
+    captured.any? { |line| line.include?("orgs/owner/actions/runners/registration-token") }
+    captured.none? { |line| line.include?("repos/owner/repo/actions/runners/registration-token") }
+    register = exec.systems.find { |call| call[:argv].first == "./config.sh" }
+    register[:argv][1, 2] == ["--url", "https://github.com/owner"]
+
+    Cleanup
+    FileUtils.remove_entry(dir)
+  end
+
+  test "run migrates a repo-scoped runner to org scope by removing at the old scope first" do
+    Given "a runner dir configured at the repo scope (per its .runner gitHubUrl)"
+    dir = Dir.mktmpdir
+    config_sh = File.join(dir, "config.sh")
+    File.write(config_sh, "#!/bin/bash\n")
+    File.chmod(0o755, config_sh)
+    File.write(File.join(dir, ".runner"), JSON.generate("gitHubUrl" => "https://github.com/owner/repo"))
+    File.write(File.join(dir, ".service"), "actions.runner.plist\n")
+    config = Dev::RunnerSetupConfig.new(labels: "ai-light", dir: dir, name: "box")
+    captured = []
+    exec = capturing_executor(captured)
+
+    When "re-running setup org-wide"
+    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", org: true, executor: exec,
+                                 out: silent, host_platform: "osx-arm64")
+    setup.run
+
+    Then "the installed service is uninstalled, the remove token comes from the old repo scope, " \
+         "and the new registration from the org scope"
+    uninstall_idx = exec.systems.index { |call| call[:argv] == ["./svc.sh", "uninstall"] }
+    remove_idx = exec.systems.index { |call| call[:argv][0, 2] == ["./config.sh", "remove"] }
+    register_idx = exec.systems.index { |call| call[:argv][0, 2] == ["./config.sh", "--url"] }
+    uninstall_idx < remove_idx
+    remove_idx < register_idx
+    captured.any? { |line| line.include?("repos/owner/repo/actions/runners/remove-token") }
+    captured.any? { |line| line.include?("orgs/owner/actions/runners/registration-token") }
 
     Cleanup
     FileUtils.remove_entry(dir)

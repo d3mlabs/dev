@@ -1,17 +1,23 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "json"
 require "open3"
 require "socket"
 
 module Dev
-  # Registers the current host as a repo's self-hosted GitHub Actions runner.
+  # Registers the current host as a self-hosted GitHub Actions runner — scoped
+  # to a repo by default, or to the whole org (`org: true`) so one runner
+  # serves every repo without per-repo registration.
   #
   # This is the one shared implementation behind `dev runner-setup`; repos opt in
   # by declaring a `runner:` block in dev.yml (see Dev::RunnerSetupConfig) instead
   # of vendoring a per-repo setup script. With `gh` already authenticated, there's
   # no manual "copy a registration token from the web UI" step — we mint one via
-  # the API. Idempotent: re-running reconfigures the existing runner (--replace).
+  # the API (org scope needs the admin:org gh scope). Idempotent: re-running
+  # reconfigures the existing runner (--replace), including across scopes — a
+  # repo-scoped runner re-registered with `org: true` is deregistered at its old
+  # scope first (read back from the runner's own .runner file).
   #
   # It installs a systemd service and touches the host filesystem + network, so it
   # runs on the host (a built-in command), never inside a build container.
@@ -44,15 +50,18 @@ module Dev
 
     # @param config [Dev::RunnerSetupConfig] the repo's runner declaration
     # @param repo [String, nil] "owner/repo" override; defaults to `gh repo view`
+    # @param org [Boolean] register at the org scope (the repo's owner) instead
+    #   of the repo scope, so the runner serves every repo in the org
     # @param executor [Executor] CLI boundary (injectable for tests)
     # @param out [IO] progress stream
     # @param host_platform [String] actions-runner release platform slug for this
     #   host (e.g. "linux-x64", "osx-arm64"); defaults to detection. Drives both
     #   the tarball choice and the service-install shape (systemd vs LaunchAgent).
-    def initialize(config:, repo: nil, executor: Executor.new, out: $stdout,
+    def initialize(config:, repo: nil, org: false, executor: Executor.new, out: $stdout,
                    host_platform: self.class.detect_host_platform)
       @config = config
       @repo_override = repo
+      @org = org
       @exec = executor
       @out = out
       @host_platform = host_platform
@@ -77,15 +86,16 @@ module Dev
       guard_ext4!(dir)
       ensure_gh_authenticated!
 
-      repo = resolve_repo
-      url = "https://github.com/#{repo}"
+      scope = resolve_scope
+      url = "https://github.com/#{scope}"
       name = resolve_name
       version = resolve_version
 
-      @out.puts ">>> Setting up runner '#{name}' for #{repo} (labels: #{@config.labels})"
+      @out.puts ">>> Setting up runner '#{name}' for #{scope}#{@org ? " (org-wide)" : ""} " \
+                "(labels: #{@config.labels})"
       download_runner(dir, version)
-      remove_existing_config(dir, repo)
-      token = mint_registration_token(repo)
+      remove_existing_config(dir, scope)
+      token = mint_registration_token(scope)
       configure_runner(dir: dir, url: url, token: token, name: name)
       install_service(dir)
       @out.puts ">>> Runner '#{name}' is registered and running. " \
@@ -148,6 +158,16 @@ module Dev
       raise Error, "gh is not authenticated — run: gh auth login"
     end
 
+    # The registration scope: "owner/repo" (repo mode) or "owner" (org mode —
+    # the org is the resolved repo's owner, so `--org` needs no extra flag).
+    #
+    # @return [String]
+    # @raise [Error] when the repo can't be resolved
+    def resolve_scope
+      repo = resolve_repo
+      @org ? repo.split("/").fetch(0) : repo
+    end
+
     # @return [String] "owner/repo"
     # @raise [Error] when the repo can't be resolved
     def resolve_repo
@@ -184,40 +204,76 @@ module Dev
     # Make re-runs idempotent. config.sh refuses to configure a dir that already
     # holds a runner (`.runner`), and `--replace` only resolves a *server-side*
     # same-name collision — not the local guard — so an existing config must be
-    # removed first. No-op on a fresh dir.
+    # removed first. The remove token is minted at the scope the runner is
+    # *currently* registered under (read from its .runner file), not the target
+    # scope — that's what makes a repo→org migration a plain re-run. No-op on a
+    # fresh dir.
     #
     # @param dir [String] install dir
-    # @param repo [String] "owner/repo"
+    # @param scope [String] the target scope ("owner/repo" or "owner"), used as
+    #   a fallback when the existing registration's scope can't be read
     # @raise [Error] when the stale config can't be removed
-    def remove_existing_config(dir, repo)
+    def remove_existing_config(dir, scope)
       return unless File.exist?(File.join(dir, ".runner"))
 
-      @out.puts ">>> Existing runner config found; removing it before reconfiguring ..."
-      token = mint_token(repo, "remove-token")
+      existing_scope = existing_registration_scope(dir) || scope
+      @out.puts ">>> Existing runner config found (#{existing_scope}); removing it before reconfiguring ..."
+      uninstall_existing_service(dir)
+      token = mint_token(existing_scope, "remove-token")
       return if @exec.system("./config.sh", "remove", "--token", token, chdir: dir)
 
       raise Error, "failed to remove the existing runner config (try ./config.sh remove manually in #{dir})"
     end
 
-    # @param repo [String] "owner/repo"
-    # @return [String] a fresh registration token
-    # @raise [Error] when the token can't be minted
-    def mint_registration_token(repo)
-      @out.puts ">>> Minting a registration token ..."
-      mint_token(repo, "registration-token")
+    # config.sh remove refuses while the service unit is installed ("Uninstall
+    # service first"), so stop + uninstall it before deregistering; install_service
+    # reinstalls it after the new registration. Best-effort (no raise): a dir
+    # whose service was never installed, or already removed, has nothing to undo.
+    #
+    # @param dir [String] install dir
+    def uninstall_existing_service(dir)
+      return unless File.exist?(File.join(dir, ".service"))
+
+      @out.puts ">>> Stopping + uninstalling the existing runner service ..."
+      @exec.system(*service_argv("stop"), chdir: dir)
+      @exec.system(*service_argv("uninstall"), chdir: dir)
     end
 
-    # Mint a runner token via the API. `kind` is "registration-token" (to add) or
-    # "remove-token" (to deregister).
+    # The scope of the runner currently configured in dir, read from the
+    # gitHubUrl config.sh wrote into .runner ("https://github.com/owner[/repo]").
+    # nil when the file can't be parsed, so the caller can fall back.
     #
-    # @param repo [String] "owner/repo"
+    # @param dir [String] install dir
+    # @return [String, nil] "owner/repo" or "owner"
+    def existing_registration_scope(dir)
+      url = JSON.parse(File.read(File.join(dir, ".runner")))["gitHubUrl"].to_s
+      scope = url.sub(%r{\Ahttps://github\.com/}, "").chomp("/")
+      scope.empty? || scope == url ? nil : scope
+    rescue JSON::ParserError, Errno::ENOENT
+      nil
+    end
+
+    # @param scope [String] "owner/repo" or "owner"
+    # @return [String] a fresh registration token
+    # @raise [Error] when the token can't be minted
+    def mint_registration_token(scope)
+      @out.puts ">>> Minting a registration token ..."
+      mint_token(scope, "registration-token")
+    end
+
+    # Mint a runner token via the API. `kind` is "registration-token" (to add)
+    # or "remove-token" (to deregister); the endpoint follows the scope's shape
+    # (repos/... for "owner/repo", orgs/... for a bare org).
+    #
+    # @param scope [String] "owner/repo" or "owner"
     # @param kind [String]
     # @return [String]
     # @raise [Error] when the token can't be minted
-    def mint_token(repo, kind)
+    def mint_token(scope, kind)
+      base = scope.include?("/") ? "repos/#{scope}" : "orgs/#{scope}"
       out, err, ok = @exec.capture(
         "gh", "api", "-X", "POST",
-        "repos/#{repo}/actions/runners/#{kind}",
+        "#{base}/actions/runners/#{kind}",
         "--jq", ".token"
       )
       token = out.strip
