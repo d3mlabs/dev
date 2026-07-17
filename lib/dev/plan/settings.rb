@@ -14,7 +14,7 @@ module Dev
     # `dev plan link --org` target. ENV override: DEV_PLANS_REPO (matching the
     # credentials ENV-first convention).
     class Settings
-      class MissingSettingError < StandardError; end
+      class MissingSettingError < RuntimeError; end
 
       # @param config_path [String, nil] override for tests; defaults to the
       #   XDG config location

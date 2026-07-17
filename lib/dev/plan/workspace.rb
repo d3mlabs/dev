@@ -9,7 +9,7 @@ module Dev
     # convention, and resolution of the repo's `owner/repo` from its origin
     # remote (repo-scoped plans target the repo you're standing in).
     class Workspace
-      class Error < StandardError; end
+      class Error < RuntimeError; end
 
       PLAN_GLOB = "*.plan.md"
 

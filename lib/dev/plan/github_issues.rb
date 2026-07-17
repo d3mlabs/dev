@@ -8,7 +8,7 @@ module Dev
     # (the same boundary the rest of dev uses — no extra token management).
     # JSON payloads go through `--input -` so bodies never hit argv.
     class GithubIssues
-      class Error < StandardError; end
+      class Error < RuntimeError; end
 
       Issue = Struct.new(:number, :title, :body, :updated_at, :html_url, keyword_init: true)
 
