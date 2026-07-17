@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "dev/cd/shell_hook"
 
 # Shadowenv Ruby provisioning: installs Ruby via rbenv, generates
 # .shadowenv.d/510_ruby.lisp, trusts, and ensures the shell hook.
@@ -309,25 +310,31 @@ module ShadowenvRuby
 
     return false unless profile_path && hook_line
 
-    if File.exist?(profile_path)
-      content = File.read(profile_path)
-      return :already_present if content.include?(hook_line) || content.include?("shadowenv init")
+    result = if File.exist?(profile_path) &&
+        (content = File.read(profile_path)) &&
+        (content.include?(hook_line) || content.include?("shadowenv init"))
+      :already_present
+    else
+      FileUtils.mkdir_p(File.dirname(profile_path))
+      prompt_comment = if shell.include?("zsh")
+        "# Optional: show active shadowenv in prompt: setopt PROMPT_SUBST && PROMPT='$(shadowenv prompt-widget)'\"$PROMPT\""
+      elsif shell.include?("bash")
+        "# Optional: show active shadowenv in prompt: PS1='$(shadowenv prompt-widget)'\"$PS1\""
+      else
+        "# Optional: see https://shopify.github.io/shadowenv/best-practices/#prompt-widget for fish"
+      end
+      File.open(profile_path, "a") do |f|
+        f.puts "\n# Shadowenv (added by dev)"
+        f.puts hook_line
+        f.puts prompt_comment
+      end
+      :added
     end
 
-    FileUtils.mkdir_p(File.dirname(profile_path))
-    prompt_comment = if shell.include?("zsh")
-      "# Optional: show active shadowenv in prompt: setopt PROMPT_SUBST && PROMPT='$(shadowenv prompt-widget)'\"$PROMPT\""
-    elsif shell.include?("bash")
-      "# Optional: show active shadowenv in prompt: PS1='$(shadowenv prompt-widget)'\"$PS1\""
-    else
-      "# Optional: see https://shopify.github.io/shadowenv/best-practices/#prompt-widget for fish"
-    end
-    File.open(profile_path, "a") do |f|
-      f.puts "\n# Shadowenv (added by dev)"
-      f.puts hook_line
-      f.puts prompt_comment
-    end
-    :added
+    # Same RC files as shadowenv; always ensure so an existing shadowenv block
+    # still gets the cd wrapper on a later `dev up`.
+    Dev::Cd::ShellHook.ensure!
+    result
   rescue => e
     $stderr.puts "dev: Could not add shadowenv hook to shell profile: #{e.message}"
     false

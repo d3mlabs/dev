@@ -173,6 +173,7 @@ class ShadowenvRubyTest < Minitest::Test
     result == :added
     zshrc = File.read(File.join(tmpdir, ".zshrc"))
     assert_includes zshrc, 'eval "$(shadowenv init zsh)"'
+    assert_includes zshrc, "# Dev cd (added by dev)"
 
     Cleanup
     ENV["SHELL"] = original_shell
@@ -192,8 +193,9 @@ class ShadowenvRubyTest < Minitest::Test
     When "we ensure the shell hook"
     result = ShadowenvRuby.ensure_shadowenv_shell_hook!
 
-    Then "it reports already present"
+    Then "it reports already present but still adds the cd hook"
     result == :already_present
+    assert_includes File.read(File.join(tmpdir, ".zshrc")), "# Dev cd (added by dev)"
 
     Cleanup
     ENV["SHELL"] = original_shell

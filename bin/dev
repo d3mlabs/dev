@@ -28,6 +28,13 @@ $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 
 require "dev"
 
+# Global commands that must work without a nearby dev.yml (before Runner loads
+# project config). `dev cd` resolves checkouts under DEV_CD_ROOT.
+if ARGV[0] == "cd"
+  require "dev/cd"
+  exit Dev::Cd::Accessor.new.run(ARGV[1..], out: $stdout, err: $stderr)
+end
+
 ui = if $stdout.tty? || ENV["CI"] || ENV["CLICOLOR_FORCE"]
   Dev::Cli::UiImpl.new(cli_ui: CLI::UI)
 else

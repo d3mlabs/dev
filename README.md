@@ -39,14 +39,16 @@ brew install rbenv ruby-build
 # Then e.g. rbenv install 2.7.6  (version comes from the repo's dependencies)
 ```
 
-After installing, add the shadowenv hook to your shell so project Rubies activate when you `cd` into a repo:
+After installing, add the shadowenv hook to your shell so project Rubies activate when you `cd` into a repo (zsh, bash, or fish — the same shells `dev` provisions):
 
 ```bash
 # Add to ~/.zshrc (or ~/.bash_profile / config.fish)
 eval "$(shadowenv init zsh)"
 ```
 
-**Formula maintainers:** The Homebrew formula for `d3mlabs/dev` should include `depends_on "shadowenv"` so developers get shadowenv when they install dev.
+`dev up` also appends a `dev cd` shell function to the same RC file (idempotent; marked `# Dev cd (added by dev)`). That wrapper is required so `dev cd` can change the **current** shell's directory (a Ruby child cannot). Without it, `dev cd --resolve <query>` still prints a path, but no `cd` happens — and without the shadowenv hook, env activation will not run either (same as a plain `cd` today).
+
+**Formula maintainers:** The Homebrew formula for `d3mlabs/dev` should include `depends_on "shadowenv"` so developers get shadowenv when they install `dev`.
 
 ## Usage
 
@@ -58,6 +60,25 @@ dev build    # Run the 'build' command
 dev test     # Run the 'test' command
 dev          # List all available commands
 ```
+
+### Jump to a local checkout (`dev cd`)
+
+`dev cd` works **without** a nearby `dev.yml`. It finds git repos under `DEV_CD_ROOT` (default `~/src`, typically `~/src/github.com/<org>/<repo>`) and changes into a match:
+
+```bash
+dev cd myrepo              # unique fuzzy / substring match → cd there
+dev cd d3mlabs/myrepo      # explicit org/repo when names collide
+dev cd d3m/d               # fuzzy each side of / → e.g. d3mlabs/dev
+dev cd myr<TAB>            # complete repo names (and org/repo when needed)
+```
+
+If your checkouts live somewhere other than `~/src`, set the search root in your shell RC (or current session):
+
+```bash
+export DEV_CD_ROOT=/path/to/checkouts
+```
+
+On multiple matches, `dev cd` prints up to 10 `org/repo` candidates and exits non-zero (it does not guess). Only directories that contain `.git` are candidates.
 
 The tool walks up from your current directory until it finds a git repo root (directory containing `.git`), then looks for `dev.yml` there. If found, it parses the commands and executes the `run` string for your chosen subcommand.
 
