@@ -11,20 +11,14 @@ module Dev
     class ShellHook
       MARKER = "# Dev cd (added by dev)"
 
-      # Ensure the hook exists in the current shell's RC file.
-      #
       # @param env [Hash] environment (injectable for tests)
-      # @return [Symbol] `:added`, `:already_present`, or `false` when unsupported
-      def self.ensure!(env: ENV)
-        new(env:).ensure!
-      end
-
-      # @param env [Hash]
       def initialize(env: ENV)
         @env = env
       end
 
-      # @return [Symbol, false]
+      # Ensure the hook exists in the current shell's RC file.
+      #
+      # @return [Symbol, false] `:added`, `:already_present`, or `false` when unsupported
       def ensure!
         shell = @env["SHELL"] || "/bin/sh"
         home = @env["HOME"] || Dir.home

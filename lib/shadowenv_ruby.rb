@@ -333,7 +333,7 @@ module ShadowenvRuby
 
     # Same RC files as shadowenv; always ensure so an existing shadowenv block
     # still gets the cd wrapper on a later `dev up`.
-    Dev::Cd::ShellHook.ensure!
+    Dev::Cd::ShellHook.new.ensure!
     result
   rescue => e
     $stderr.puts "dev: Could not add shadowenv hook to shell profile: #{e.message}"

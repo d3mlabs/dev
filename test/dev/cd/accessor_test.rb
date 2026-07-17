@@ -118,4 +118,15 @@ class Dev::Cd::AccessorTest < Minitest::Test
     status == 1
     err.string.include?("usage: dev cd")
   end
+
+  test "--resolve with no query raises UsageError" do
+    Given "an accessor"
+    accessor = Dev::Cd::Accessor.new(index: Dev::Cd::RepoIndex.new(root: "/tmp"))
+
+    When "resolving an empty query"
+    accessor.send(:resolve, [], out: StringIO.new)
+
+    Then
+    raises Dev::Cd::Accessor::UsageError
+  end
 end

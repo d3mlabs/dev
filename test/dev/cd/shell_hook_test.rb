@@ -14,7 +14,7 @@ class Dev::Cd::ShellHookTest < Minitest::Test
     env = { "SHELL" => "/bin/zsh", "HOME" => tmpdir }
 
     When
-    result = Dev::Cd::ShellHook.ensure!(env:)
+    result = Dev::Cd::ShellHook.new(env:).ensure!
 
     Then
     result == :added
@@ -31,11 +31,11 @@ class Dev::Cd::ShellHookTest < Minitest::Test
     Given "a zshrc that already has the hook"
     tmpdir = Dir.mktmpdir("dev-cd-hook-")
     env = { "SHELL" => "/bin/zsh", "HOME" => tmpdir }
-    Dev::Cd::ShellHook.ensure!(env:)
+    Dev::Cd::ShellHook.new(env:).ensure!
     before = File.read(File.join(tmpdir, ".zshrc"))
 
     When "ensuring again"
-    result = Dev::Cd::ShellHook.ensure!(env:)
+    result = Dev::Cd::ShellHook.new(env:).ensure!
 
     Then
     result == :already_present
@@ -51,7 +51,7 @@ class Dev::Cd::ShellHookTest < Minitest::Test
     env = { "SHELL" => "/bin/bash", "HOME" => tmpdir }
 
     When
-    result = Dev::Cd::ShellHook.ensure!(env:)
+    result = Dev::Cd::ShellHook.new(env:).ensure!
 
     Then
     result == :added
@@ -69,7 +69,7 @@ class Dev::Cd::ShellHookTest < Minitest::Test
     env = { "SHELL" => "/usr/local/bin/fish", "HOME" => tmpdir }
 
     When
-    result = Dev::Cd::ShellHook.ensure!(env:)
+    result = Dev::Cd::ShellHook.new(env:).ensure!
 
     Then
     result == :added
@@ -87,7 +87,7 @@ class Dev::Cd::ShellHookTest < Minitest::Test
     env = { "SHELL" => "/bin/sh", "HOME" => tmpdir }
 
     Expect
-    Dev::Cd::ShellHook.ensure!(env:) == false
+    Dev::Cd::ShellHook.new(env:).ensure! == false
 
     Cleanup
     FileUtils.rm_rf(tmpdir)
