@@ -12,14 +12,24 @@ module Dev
     sig { override.returns(String) }
     attr_reader :desc
 
-    sig { params(desc: String, block: T.proc.params(args: T::Array[String], context: T.untyped).void).void }
-    def initialize(desc: "(no description)", &block)
+    sig do
+      params(
+        desc: String,
+        hidden: T::Boolean,
+        block: T.proc.params(args: T::Array[String], context: T.untyped).void,
+      ).void
+    end
+    def initialize(desc: "(no description)", hidden: false, &block)
       @desc = T.let(desc, String)
+      @hidden = T.let(hidden, T::Boolean)
       @block = T.let(block, T.proc.params(args: T::Array[String], context: T.untyped).void)
     end
 
     sig { override.returns(T::Boolean) }
     def final? = false
+
+    sig { override.returns(T::Boolean) }
+    def hidden? = @hidden
 
     sig { override.params(args: T::Array[String], context: T.untyped).void }
     def execute(args:, context:)

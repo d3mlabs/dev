@@ -37,4 +37,20 @@ class Dev::BuiltinCommandTest < Minitest::Test
     Expect
     cmd.desc == "(no description)"
   end
+
+  test "hidden defaults to false" do
+    Given "a builtin command without hidden"
+    cmd = Dev::BuiltinCommand.new(desc: "visible") {}
+
+    Expect
+    !cmd.hidden?
+  end
+
+  test "hidden: true marks the command hidden" do
+    Given "a builtin command with hidden: true"
+    cmd = Dev::BuiltinCommand.new(desc: "plumbing", hidden: true) {}
+
+    Expect
+    cmd.hidden?
+  end
 end

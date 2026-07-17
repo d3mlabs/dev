@@ -71,8 +71,11 @@ module Dev
     # Commands that ARE the staleness remediation (or its explicit check) —
     # nagging before them would block the very fix being run. `plan` is exempt
     # because it never touches dependencies and runs headlessly from Cursor
-    # hooks, where a staleness warning would only add noise.
-    STALENESS_EXEMPT_COMMANDS = T.let(%w[up install-deps update-deps check plan].freeze, T::Array[String])
+    # hooks, where a staleness warning would only add noise. `provide-image`
+    # is exempt because it consumes the committed lockfiles directly (they are
+    # inputs to the image's content hash) and runs on fresh CI checkouts where
+    # no installed stamp exists yet.
+    STALENESS_EXEMPT_COMMANDS = T.let(%w[up install-deps update-deps check plan provide-image].freeze, T::Array[String])
 
     # Two O(1) digest checks at every command start (see Dev::Deps::Staleness):
     # manifest vs lockfile, lockfile vs installed stamp. Warn on workstations;
@@ -157,13 +160,40 @@ module Dev
       end)
     end
 
-    # Lifecycle commands for the persistent build container, registered only when
-    # a project opts into it (build.container.persist). dev owns the container's
-    # lifecycle, so the teardown lives here rather than in each repo's dev.yml.
+    # Commands for the build container, registered only when a project declares
+    # one (build.container). dev owns the container's lifecycle, so these live
+    # here rather than in each repo's dev.yml.
     sig { params(registry: CommandRegistry, config: Config).void }
     def register_container_builtins(registry, config)
       build_container = config.build_container
-      return unless build_container&.persist
+      return if build_container.nil?
+
+      # The CLI verb for CI image provisioning: resolve the content-addressed
+      # image (local → pull → build, see BuildContainer.ensure_image!) and
+      # print its tag to stdout (resolution progress goes to stderr, so the
+      # tag is capturable). Publishing to the shared registry stays gated on
+      # DEV_PUBLISH_IMAGE, same as containerized commands. Hidden: workflow
+      # plumbing, not a developer intent command.
+      registry.register("provide-image", BuiltinCommand.new(
+        desc: "Resolve the build container image (local/pull/build) and print its tag",
+        hidden: true,
+      ) do |_args, context|
+        require "build_container"
+        require "dev/credentials"
+        cfg = context.build_container
+        image_tag = BuildContainer.ensure_image!(
+          cfg,
+          project_root: context.project_root,
+          push: false,
+          publish: ENV["DEV_PUBLISH_IMAGE"] == "1",
+          build_args_provider: -> { Dev::Credentials.resolve_build_args(cfg.build_args) },
+          secrets_provider: -> { Dev::Credentials.resolve_build_args(cfg.build_secrets) },
+        )
+        puts image_tag
+      end)
+
+      # Teardown for the persistent container, only where a project opts in.
+      return unless build_container.persist
 
       registry.register("reset-container", BuiltinCommand.new(
         desc: "Remove the persistent build container (clears its incremental cache)",

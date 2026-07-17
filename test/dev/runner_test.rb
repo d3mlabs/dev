@@ -135,6 +135,35 @@ class RunnerTest < Minitest::Test
     !out.string.include?("reset-container")
   end
 
+  test "provide-image is registered (but hidden) when a build container is configured" do
+    Given "a Runner with a build container"
+    runner = build_runner(
+      commands: {},
+      build: { "container" => { "image" => "myapp-linux", "registry" => "myregistry" } },
+    )
+    registry = runner.instance_variable_get(:@registry)
+    out = StringIO.new
+
+    When "we print usage"
+    runner.run([], ui: fake_ui, out: out)
+
+    Then "the command is callable but omitted from usage"
+    registry.lookup("provide-image").is_a?(Dev::BuiltinCommand)
+    registry.lookup("provide-image").hidden?
+    !out.string.include?("provide-image")
+  end
+
+  test "provide-image is not registered without a build container" do
+    Given "a Runner without a build container"
+    runner = build_runner(commands: {})
+
+    When "we inspect the registry"
+    registry = runner.instance_variable_get(:@registry)
+
+    Then "the command is absent"
+    !registry.all.key?("provide-image")
+  end
+
   test "usage includes runner-setup when a runner block is declared" do
     Given "a Runner whose dev.yml declares a runner block"
     runner = build_runner(commands: {}, runner: { "labels" => "ue-engine" })
