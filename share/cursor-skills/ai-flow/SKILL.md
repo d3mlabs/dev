@@ -67,5 +67,3 @@ paths (`/Users/…`) in a plan.
 - If `dev plan push` refuses because the remote changed, run
   `dev plan pull <n> --merge`, resolve any conflict markers in the file, then
   push again.
-- The issue body ends with an `<!-- ai-flow:plan -->` marker; leave it to the
-  tooling.

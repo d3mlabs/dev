@@ -56,7 +56,7 @@ class Dev::Plan::HeaderTest < Minitest::Test
     nil
   end
 
-  test "issue body conversion adds and strips the managed marker" do
+  test "issue body conversion round-trips a plan body" do
     Given "a plan body"
     plan_body = "# Title\n\ncontent\n"
 
@@ -64,8 +64,8 @@ class Dev::Plan::HeaderTest < Minitest::Test
     issue_body = Dev::Plan.to_issue_body(plan_body)
     round_tripped = Dev::Plan.from_issue_body(issue_body)
 
-    Then "the marker is appended and then stripped"
-    issue_body == "# Title\n\ncontent\n\n<!-- ai-flow:plan -->\n"
+    Then "the body survives, normalized to a single trailing newline"
+    issue_body == "# Title\n\ncontent\n"
     round_tripped == plan_body
 
     Cleanup
@@ -74,7 +74,7 @@ class Dev::Plan::HeaderTest < Minitest::Test
 
   test "from_issue_body normalizes CRLF line endings from web edits" do
     Given "an issue body edited via the GitHub web UI"
-    issue_body = "# Title\r\n\r\ncontent\r\n\r\n<!-- ai-flow:plan -->"
+    issue_body = "# Title\r\n\r\ncontent\r\n"
 
     Expect "LF-normalized plan body"
     Dev::Plan.from_issue_body(issue_body) == "# Title\n\ncontent\n"

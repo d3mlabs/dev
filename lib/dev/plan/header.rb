@@ -2,29 +2,25 @@
 
 module Dev
   module Plan
-    # The trailing marker identifying an issue as an ai-flow managed plan.
-    ISSUE_MARKER = "<!-- ai-flow:plan -->"
-
     module_function
 
-    # Render a plan body as an issue body: verbatim content plus the trailing
-    # marker so tooling can recognize managed issues.
+    # Render a plan body as an issue body: verbatim content, normalized to a
+    # single trailing newline.
     #
     # @param plan_body [String]
     # @return [String]
     def to_issue_body(plan_body)
-      "#{plan_body.rstrip}\n\n#{ISSUE_MARKER}\n"
+      "#{plan_body.rstrip}\n"
     end
 
-    # Extract the plan body from an issue body (drop the trailing marker).
-    # Issue bodies use CRLF line endings when edited via the GitHub web UI, so
-    # normalize to LF — the local file and merge base always use LF.
+    # Extract the plan body from an issue body. Issue bodies use CRLF line
+    # endings when edited via the GitHub web UI, so normalize to LF — the
+    # local file and merge base always use LF.
     #
     # @param issue_body [String, nil]
     # @return [String]
     def from_issue_body(issue_body)
-      body = (issue_body || "").gsub("\r\n", "\n")
-      "#{body.sub(/\n*#{Regexp.escape(ISSUE_MARKER)}\s*\z/, "").rstrip}\n"
+      "#{(issue_body || "").gsub("\r\n", "\n").rstrip}\n"
     end
 
     # The ai-flow sync header: an HTML comment at the top of a linked plan file

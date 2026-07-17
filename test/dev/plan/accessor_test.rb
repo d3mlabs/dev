@@ -96,8 +96,8 @@ class Dev::Plan::AccessorTest < Minitest::Test
     When "creating a plan"
     accessor.run(["new", "Carve system"], out: StringIO.new)
 
-    Then "the issue carries the managed marker and the file is linked to it"
-    issues.get(REPO, 1).body == "# Carve system\n\n<!-- ai-flow:plan -->\n"
+    Then "the issue carries the plan body and the file is linked to it"
+    issues.get(REPO, 1).body == "# Carve system\n"
     header, body = read_plan(root, "gh-1-carve-system.plan.md")
     header.issue_ref == "#{REPO}#1"
     header.synced_at == issues.get(REPO, 1).updated_at
@@ -137,7 +137,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     accessor.run(["push"], out: StringIO.new)
 
     Then "the issue body is updated and synced_at advances to the new updated_at"
-    issues.get(REPO, 1).body == "# Carve system\n\nNew section.\n\n<!-- ai-flow:plan -->\n"
+    issues.get(REPO, 1).body == "# Carve system\n\nNew section.\n"
     new_header, _new_body = Dev::Plan::Header.split(path.read)
     new_header.synced_at == issues.get(REPO, 1).updated_at
 
@@ -169,7 +169,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     dir = Dir.mktmpdir("ai-flow-acc-test-")
     accessor, root, issues = build_env(dir)
     accessor.run(["new", "Carve system"], out: StringIO.new)
-    issues.edit_remotely(REPO, 1, body: "# Carve system\n\nRemote addition.\n\n<!-- ai-flow:plan -->\n")
+    issues.edit_remotely(REPO, 1, body: "# Carve system\n\nRemote addition.\n")
     path = root / ".cursor" / "plans" / "gh-1-carve-system.plan.md"
     header, _body = Dev::Plan::Header.split(path.read)
     path.write(header.render + "# Carve system\n\nLocal addition.\n")
@@ -189,7 +189,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     dir = Dir.mktmpdir("ai-flow-acc-test-")
     accessor, root, issues = build_env(dir)
     accessor.run(["new", "Carve system"], out: StringIO.new)
-    issues.edit_remotely(REPO, 1, body: "# Carve system\n\nRemote addition.\n\n<!-- ai-flow:plan -->\n")
+    issues.edit_remotely(REPO, 1, body: "# Carve system\n\nRemote addition.\n")
 
     When "pulling"
     accessor.run(["pull", "1"], out: StringIO.new)
@@ -207,7 +207,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     Given "an issue with no local copy"
     dir = Dir.mktmpdir("ai-flow-acc-test-")
     accessor, root, issues = build_env(dir)
-    issues.create(REPO, title: "Remote-born plan", body: "# Remote-born plan\n\n<!-- ai-flow:plan -->\n")
+    issues.create(REPO, title: "Remote-born plan", body: "# Remote-born plan\n")
 
     When "pulling it"
     accessor.run(["pull", "1"], out: StringIO.new)
@@ -226,7 +226,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     dir = Dir.mktmpdir("ai-flow-acc-test-")
     accessor, root, issues = build_env(dir)
     accessor.run(["new", "Carve system"], out: StringIO.new)
-    issues.edit_remotely(REPO, 1, body: "# Carve system\n\nRemote addition.\n\n<!-- ai-flow:plan -->\n")
+    issues.edit_remotely(REPO, 1, body: "# Carve system\n\nRemote addition.\n")
     path = root / ".cursor" / "plans" / "gh-1-carve-system.plan.md"
     header, _body = Dev::Plan::Header.split(path.read)
     path.write(header.render + "# Carve system\n\nLocal addition.\n")
@@ -246,9 +246,9 @@ class Dev::Plan::AccessorTest < Minitest::Test
     dir = Dir.mktmpdir("ai-flow-acc-test-")
     accessor, root, issues = build_env(dir)
     base = "# Plan\n\nalpha\n\none\ntwo\nthree\nfour\n\nomega\n"
-    issues.create(REPO, title: "Plan", body: "#{base}\n<!-- ai-flow:plan -->\n")
+    issues.create(REPO, title: "Plan", body: "#{base}\n")
     accessor.run(["pull", "1"], out: StringIO.new)
-    issues.edit_remotely(REPO, 1, body: "#{base.sub("omega", "omega REMOTE")}\n<!-- ai-flow:plan -->\n")
+    issues.edit_remotely(REPO, 1, body: "#{base.sub("omega", "omega REMOTE")}\n")
     path = root / ".cursor" / "plans" / "gh-1-plan.plan.md"
     header, _body = Dev::Plan::Header.split(path.read)
     path.write(header.render + base.sub("alpha", "alpha LOCAL"))
@@ -258,7 +258,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     accessor.run(["push"], out: StringIO.new)
 
     Then "both edits are in the issue"
-    issues.get(REPO, 1).body == "#{base.sub("alpha", "alpha LOCAL").sub("omega", "omega REMOTE")}\n<!-- ai-flow:plan -->\n"
+    issues.get(REPO, 1).body == base.sub("alpha", "alpha LOCAL").sub("omega", "omega REMOTE")
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -269,7 +269,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     dir = Dir.mktmpdir("ai-flow-acc-test-")
     accessor, root, issues = build_env(dir)
     accessor.run(["new", "Plan"], out: StringIO.new)
-    issues.edit_remotely(REPO, 1, body: "# Plan remote\n\n<!-- ai-flow:plan -->\n")
+    issues.edit_remotely(REPO, 1, body: "# Plan remote\n")
     path = root / ".cursor" / "plans" / "gh-1-plan.plan.md"
     header, _body = Dev::Plan::Header.split(path.read)
     path.write(header.render + "# Plan local\n")
@@ -289,7 +289,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     Given "an unlinked draft and an existing issue"
     dir = Dir.mktmpdir("ai-flow-acc-test-")
     accessor, root, issues = build_env(dir)
-    issues.create(REPO, title: "Existing issue", body: "# Existing issue\n\n<!-- ai-flow:plan -->\n")
+    issues.create(REPO, title: "Existing issue", body: "# Existing issue\n")
     draft = root / ".cursor" / "plans" / "draft.plan.md"
     FileUtils.mkdir_p(draft.dirname)
     draft.write("# My draft\n\nLocal thinking.\n")
@@ -302,7 +302,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     !draft.exist?
     header, _body = read_plan(root, "gh-1-existing-issue.plan.md")
     header.issue_ref == "#{REPO}#1"
-    issues.get(REPO, 1).body == "# My draft\n\nLocal thinking.\n\n<!-- ai-flow:plan -->\n"
+    issues.get(REPO, 1).body == "# My draft\n\nLocal thinking.\n"
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -321,7 +321,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
 
     Then "the issue is created from the H1 title with the draft's body"
     issues.get(REPO, 1).title == "Fresh plan"
-    issues.get(REPO, 1).body == "# Fresh plan\n\nContent.\n\n<!-- ai-flow:plan -->\n"
+    issues.get(REPO, 1).body == "# Fresh plan\n\nContent.\n"
     header, _body = read_plan(root, "gh-1-fresh-plan.plan.md")
     header.issue_ref == "#{REPO}#1"
 
@@ -343,8 +343,8 @@ class Dev::Plan::AccessorTest < Minitest::Test
       header, body = Dev::Plan::Header.split(path.read)
       path.write(header.render + body + "\nlocal edit\n")
     end
-    issues.edit_remotely(REPO, 3, body: "# Behind plan\n\nremote edit\n\n<!-- ai-flow:plan -->\n")
-    issues.edit_remotely(REPO, 4, body: "# Diverged plan\n\nremote edit\n\n<!-- ai-flow:plan -->\n")
+    issues.edit_remotely(REPO, 3, body: "# Behind plan\n\nremote edit\n")
+    issues.edit_remotely(REPO, 4, body: "# Diverged plan\n\nremote edit\n")
     out = StringIO.new
 
     When "listing status"
@@ -374,7 +374,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     accessor.run(["hook-after-edit"], out: StringIO.new, input: payload)
 
     Then "the edit is on the issue"
-    issues.get(REPO, 1).body == "# Carve system\n\nAgent edit.\n\n<!-- ai-flow:plan -->\n"
+    issues.get(REPO, 1).body == "# Carve system\n\nAgent edit.\n"
 
     Cleanup
     FileUtils.rm_rf(dir)
