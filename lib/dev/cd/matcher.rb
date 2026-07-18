@@ -2,7 +2,7 @@
 
 require "pathname"
 require "dev/cd/repo"
-require "dev/cd/repo_index"
+require "dev/cd/workspace"
 
 module Dev
   module Cd
@@ -28,9 +28,6 @@ module Dev
         end
       end
 
-      # Cap how many tied candidates we print in AmbiguousRepoError.
-      MAX_AMBIGUOUS = 10
-
       # Per-segment match weights (higher is better). Multi-segment scores pack
       # these as base-(SCORE_EXACT + 1) digits so exact+exact always outranks
       # any mixed exact/prefix/substring pair.
@@ -38,9 +35,9 @@ module Dev
       SCORE_PREFIX = 2     # candidate starts with query
       SCORE_SUBSTRING = 1  # query appears inside candidate
 
-      # @param index [Dev::Cd::RepoIndex]
-      def initialize(index:)
-        @index = index
+      # @param workspace [Dev::Cd::Workspace]
+      def initialize(workspace:)
+        @workspace = workspace
       end
 
       # Resolve a query to a single checkout path.
@@ -51,16 +48,15 @@ module Dev
       # @raise [AmbiguousRepoError] when multiple repos share the best score
       def resolve(query)
         ranked = rank(query)
-        raise RepoNotFoundError, "dev: no repo matching #{query.inspect} under #{@index.root}" if ranked.empty?
+        raise RepoNotFoundError, "dev: no repo matching #{query.inspect} under #{@workspace.root}" if ranked.empty?
 
         best_score = ranked.first.fetch(:score)
         best = ranked.select { |entry| entry.fetch(:score) == best_score }.map { |entry| entry.fetch(:repo) }
         return best.first.path if best.length == 1
 
-        listed = best.first(MAX_AMBIGUOUS).map(&:org_repo)
-        suffix = best.length > MAX_AMBIGUOUS ? "\n  … and #{best.length - MAX_AMBIGUOUS} more" : ""
+        listed = best.map(&:org_repo)
         raise AmbiguousRepoError.new(
-          "dev: ambiguous repo #{query.inspect}; candidates:\n#{listed.map { |c| "  #{c}" }.join("\n")}#{suffix}",
+          "dev: ambiguous repo #{query.inspect}; candidates:\n#{listed.map { |c| "  #{c}" }.join("\n")}",
           candidates: best,
         )
       end
@@ -75,7 +71,7 @@ module Dev
       # @return [Array<String>] sorted, deduplicated candidate strings
       def complete(prefix)
         prefix = prefix.to_s
-        repos = @index.all
+        repos = @workspace.all
         leaf_counts = repos.group_by(&:name).transform_values(&:length)
 
         candidates = []
@@ -103,7 +99,7 @@ module Dev
         raise RepoNotFoundError, "dev: missing repo query" if query.empty?
 
         segments = query.split("/")
-        @index.all.filter_map do |repo|
+        @workspace.all.filter_map do |repo|
           score = score_repo(repo, query, segments)
           next unless score
 
@@ -183,7 +179,7 @@ module Dev
       # @param repo [Dev::Cd::Repo]
       # @return [String]
       def relative_path_string(repo)
-        repo.path.relative_path_from(@index.root).each_filename.to_a.join("/")
+        repo.path.relative_path_from(@workspace.root).each_filename.to_a.join("/")
       end
 
       # @param candidates [Array<String>]

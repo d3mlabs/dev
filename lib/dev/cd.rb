@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require "dev/cd/repo"
-require "dev/cd/repo_index"
+require "dev/cd/workspace"
 require "dev/cd/matcher"
 require "dev/cd/accessor"
 require "dev/cd/shell_hook"

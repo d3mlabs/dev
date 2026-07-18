@@ -24,7 +24,7 @@ class Dev::Cd::MatcherTest < Minitest::Test
   def build_matcher(*relative_paths)
     dir = Dir.mktmpdir("dev-cd-matcher-")
     relative_paths.each { |rel| make_git_repo(dir, rel) }
-    [dir, Dev::Cd::Matcher.new(index: Dev::Cd::RepoIndex.new(root: dir))]
+    [dir, Dev::Cd::Matcher.new(workspace: Dev::Cd::Workspace.new(root: dir))]
   end
 
   test "resolve returns the unique leaf match" do
@@ -98,10 +98,33 @@ class Dev::Cd::MatcherTest < Minitest::Test
       error = e
     end
 
-    Then "candidates are stable and capped labels appear in the message"
+    Then "candidates are stable and all labels appear in the message"
     error.candidates.map(&:org_repo) == ["alpha/dev", "zeta/dev"]
     error.message.include?("alpha/dev")
     error.message.include?("zeta/dev")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "AmbiguousRepoError lists every tied candidate" do
+    Given "more than ten colliding leaves"
+    paths = (1..12).map { |n| format("github.com/org%02d/dev", n) }
+    expected_labels = (1..12).map { |n| format("org%02d/dev", n) }
+    dir, matcher = build_matcher(*paths)
+
+    When "resolving"
+    begin
+      matcher.resolve("dev")
+      flunk "expected AmbiguousRepoError"
+    rescue Dev::Cd::Matcher::AmbiguousRepoError => e
+      error = e
+    end
+
+    Then "the message includes every org/repo, not a truncated suffix"
+    error.candidates.map(&:org_repo) == expected_labels
+    expected_labels.all? { |label| error.message.include?(label) }
+    !error.message.include?("more")
 
     Cleanup
     FileUtils.rm_rf(dir)

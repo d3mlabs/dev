@@ -1,29 +1,32 @@
 # frozen_string_literal: true
 
 require "dev/cd/matcher"
-require "dev/cd/repo_index"
+require "dev/cd/workspace"
 
 module Dev
   module Cd
     # CLI surface for the global `dev cd` command (no `dev.yml` required).
     #
-    # The interactive shell hook calls `--resolve` then `builtin cd`s into the
-    # printed path. Tab completion calls `--complete`.
+    # User-facing form is `dev cd <query>` (via the shell hook installed by
+    # `dev up`). `--resolve` and `--complete` are machine interfaces for that
+    # hook — not day-to-day flags — so the hook can print a path / candidates
+    # and then `builtin cd` (or feed the completer).
     class Accessor
       class UsageError < StandardError; end
 
       USAGE = <<~USAGE.strip
-        usage: dev cd --resolve <query>
-               dev cd --complete [<prefix>]
+        usage: dev cd <query>
+               dev cd --resolve <query>     (shell hook / scripting)
+               dev cd --complete [<prefix>] (shell tab completion)
         Jump into a local checkout under DEV_CD_ROOT (default ~/src).
         Requires the shell hook so the current shell can change directory — see README.
       USAGE
 
       # @param matcher [Dev::Cd::Matcher, nil]
-      # @param index [Dev::Cd::RepoIndex, nil]
-      def initialize(matcher: nil, index: nil)
-        @index = index || RepoIndex.new
-        @matcher = matcher || Matcher.new(index: @index)
+      # @param workspace [Dev::Cd::Workspace, nil]
+      def initialize(matcher: nil, workspace: nil)
+        @workspace = workspace || Workspace.new
+        @matcher = matcher || Matcher.new(workspace: @workspace)
       end
 
       # Dispatch a `dev cd …` invocation.

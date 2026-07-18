@@ -46,7 +46,7 @@ After installing, add the shadowenv hook to your shell so project Rubies activat
 eval "$(shadowenv init zsh)"
 ```
 
-`dev up` also appends a `dev cd` shell function to the same RC file (idempotent; marked `# Dev cd (added by dev)`). That wrapper is required so `dev cd` can change the **current** shell's directory (a Ruby child cannot). Without it, `dev cd --resolve <query>` still prints a path, but no `cd` happens — and without the shadowenv hook, env activation will not run either (same as a plain `cd` today).
+`dev up` also appends a `dev cd` shell function to the same RC file (idempotent; marked `# Dev cd (added by dev)`). That wrapper is required so `dev cd` can change the **current** shell's directory (a Ruby child cannot). Without it, bare `dev cd <query>` still prints a resolved path (useful for scripting), but no `cd` happens — and without the shadowenv hook, env activation will not run either (same as a plain `cd` today). `--resolve` / `--complete` are the shell hook's machine interface, not day-to-day flags.
 
 **Formula maintainers:** The Homebrew formula for `d3mlabs/dev` should include `depends_on "shadowenv"` so developers get shadowenv when they install `dev`.
 

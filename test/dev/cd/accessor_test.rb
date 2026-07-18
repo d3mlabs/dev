@@ -25,8 +25,8 @@ class Dev::Cd::AccessorTest < Minitest::Test
   def build_accessor(*relative_paths)
     dir = Dir.mktmpdir("dev-cd-accessor-")
     relative_paths.each { |rel| make_git_repo(dir, rel) }
-    index = Dev::Cd::RepoIndex.new(root: dir)
-    [dir, Dev::Cd::Accessor.new(index: index, matcher: Dev::Cd::Matcher.new(index: index))]
+    workspace = Dev::Cd::Workspace.new(root: dir)
+    [dir, Dev::Cd::Accessor.new(workspace: workspace, matcher: Dev::Cd::Matcher.new(workspace: workspace))]
   end
 
   test "--resolve prints the absolute path on success" do
@@ -108,7 +108,7 @@ class Dev::Cd::AccessorTest < Minitest::Test
 
   test "missing args print usage and exit 1" do
     Given "an accessor"
-    accessor = Dev::Cd::Accessor.new(index: Dev::Cd::RepoIndex.new(root: "/tmp"))
+    accessor = Dev::Cd::Accessor.new(workspace: Dev::Cd::Workspace.new(root: "/tmp"))
     err = StringIO.new
 
     When

@@ -9,7 +9,7 @@ module Dev
     # Discovers git checkouts under a search root (default `DEV_CD_ROOT` / `~/src`).
     # Primary layout is `$ROOT/github.com/<org>/<repo>`; other trees get a
     # best-effort parent/leaf org+name.
-    class RepoIndex
+    class Workspace
       DEFAULT_ROOT = "~/src"
       ENV_ROOT = "DEV_CD_ROOT"
 
