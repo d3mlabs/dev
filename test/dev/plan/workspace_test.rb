@@ -108,6 +108,33 @@ class Dev::Plan::WorkspaceTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "linked_plan_files finds a header even when Cursor frontmatter sits above it" do
+    Given "a hand-edited linked plan with frontmatter above the ai-flow header"
+    dir = Dir.mktmpdir("ai-flow-ws-test-")
+    root = build_repo(dir)
+    plans = root / ".cursor" / "plans"
+    FileUtils.mkdir_p(plans)
+    linked = plans / "gh-1-linked.plan.md"
+    linked.write(<<~PLAN)
+      ---
+      name: Local label
+      isProject: false
+      ---
+      <!-- ai-flow
+      issue: d3mlabs/demo#1
+      synced_at: 2026-01-01T00:00:00Z
+      -->
+      # L
+    PLAN
+    workspace = Dev::Plan::Workspace.new(project_root: root)
+
+    Expect
+    workspace.linked_plan_files == [linked]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "slugify bounds length and strips symbols" do
     Expect
     Dev::Plan::Workspace.slugify("Héllo,  World! ") == "h-llo-world"

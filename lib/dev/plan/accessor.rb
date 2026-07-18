@@ -102,9 +102,8 @@ module Dev
 
       def link_to_existing(number, file, org:, out:)
         path = file ? Pathname.new(file) : sole_unlinked_plan
-        content = path.read
-        header, body = Header.split(content)
-        raise UsageError, "#{path} is already linked to #{header.issue_ref}" if header
+        plan = Content.parse(path.read)
+        raise UsageError, "#{path} is already linked to #{plan.header.issue_ref}" if plan.header
 
         owner_repo = target_repo(org:)
         issue = @issues.get(owner_repo, number)
@@ -112,7 +111,7 @@ module Dev
         # file is a draft ahead of the issue until `dev plan push` publishes it.
         new_header = Header.new(owner_repo: owner_repo, number: issue.number, synced_at: issue.updated_at)
         target = move_into_convention(path, owner_repo, issue)
-        target.write(new_header.render + body)
+        target.write(plan.with_header(new_header).render)
         @merge_base.write(owner_repo, issue.number, Plan.from_issue_body(issue.body))
         out.puts "dev: linked #{target} to #{owner_repo}##{issue.number} (#{issue.html_url})"
         out.puts "dev: local content kept — run `dev plan push` to publish it."
@@ -122,15 +121,14 @@ module Dev
         path = Pathname.new(file)
         raise UsageError, "no such plan file: #{path}" unless path.exist?
 
-        content = path.read
-        header, body = Header.split(content)
-        raise UsageError, "#{path} is already linked to #{header.issue_ref}" if header
+        plan = Content.parse(path.read)
+        raise UsageError, "#{path} is already linked to #{plan.header.issue_ref}" if plan.header
 
         owner_repo = target_repo(org:)
-        title = extract_title(body) || path.basename(".plan.md").to_s
-        issue = @issues.create(owner_repo, title: title, body: Plan.to_issue_body(body))
+        title = extract_title(plan.body) || path.basename(".plan.md").to_s
+        issue = @issues.create(owner_repo, title: title, body: Plan.to_issue_body(plan.body))
         target = move_into_convention(path, owner_repo, issue)
-        write_linked_plan(owner_repo, issue, body, path: target)
+        write_linked_plan(owner_repo, issue, plan.body, path: target, frontmatter: plan.frontmatter)
         out.puts "dev: created #{owner_repo}##{issue.number} from #{path} (#{issue.html_url})"
         out.puts "dev: plan file: #{target}"
       end
@@ -156,30 +154,31 @@ module Dev
           return
         end
 
-        _header, local_body = Header.split(path.read)
+        plan = Content.parse(path.read)
         base = @merge_base.read(owner_repo, number)
-        local_dirty = base.nil? ? false : local_body != base
+        local_dirty = base.nil? ? false : plan.body != base
         remote_dirty = base.nil? ? true : remote_body != base
 
         if !local_dirty
-          write_linked_plan(owner_repo, issue, remote_body, path: path)
+          write_linked_plan(owner_repo, issue, remote_body, path: path, frontmatter: plan.frontmatter)
           out.puts(remote_dirty ? "dev: pulled #{owner_repo}##{number} into #{path}" : "dev: #{path} is already up to date.")
         elsif !remote_dirty
           out.puts "dev: local plan is ahead of #{owner_repo}##{number} — nothing to pull. Run `dev plan push`."
         elsif merge
-          merge_pull(path, issue, owner_repo, number, local_body, base, remote_body, out:)
+          merge_pull(path, issue, owner_repo, number, plan, base, remote_body, out:)
         else
           raise "both #{path} and #{owner_repo}##{number} changed since the last sync — " \
                 "run `dev plan pull #{number} --merge`."
         end
       end
 
-      def merge_pull(path, issue, owner_repo, number, local_body, base, remote_body, out:)
-        result = Merge.three_way(local: local_body, base: base, remote: remote_body, executor: @executor)
+      def merge_pull(path, issue, owner_repo, number, plan, base, remote_body, out:)
+        result = Merge.three_way(local: plan.body, base: base, remote: remote_body, executor: @executor)
         # The remote becomes the new base either way: the merged local copy is
-        # now "ahead" of the issue, and `push` publishes it.
+        # now "ahead" of the issue, and `push` publishes it. Frontmatter is
+        # carried through from the local side untouched.
         header = Header.new(owner_repo: owner_repo, number: number, synced_at: issue.updated_at)
-        path.write(header.render + result.content)
+        path.write(plan.with_header(header).with_body(result.content).render)
         @merge_base.write(owner_repo, number, remote_body)
         if result.conflicts?
           out.puts "dev: merged with conflicts — resolve the markers in #{path}, then run `dev plan push`."
@@ -197,10 +196,11 @@ module Dev
         raise UsageError, "usage: dev plan push [<file>]" unless args.empty?
 
         path = file ? Pathname.new(file) : sole_linked_plan
-        header, body = Header.split(path.read)
-        raise UsageError, "#{path} has no ai-flow header — link it first with `dev plan link`." unless header
-        raise "#{path} contains unresolved merge conflict markers — resolve them before pushing." if body.include?("<<<<<<<")
+        plan = Content.parse(path.read)
+        raise UsageError, "#{path} has no ai-flow header — link it first with `dev plan link`." unless plan.header
+        raise "#{path} contains unresolved merge conflict markers — resolve them before pushing." if plan.body.include?("<<<<<<<")
 
+        header = plan.header
         issue = @issues.get(header.owner_repo, header.number)
         remote_body = Plan.from_issue_body(issue.body)
         base = @merge_base.read(header.owner_repo, header.number)
@@ -214,19 +214,19 @@ module Dev
                 "run `dev plan pull #{header.number} --merge`, then push again."
         end
 
-        if body == remote_body
-          record_sync(path, header, issue, body)
+        if plan.body == remote_body
+          record_sync(path, plan, issue)
           out.puts "dev: #{header.issue_ref} is already in sync."
           return
         end
 
-        title = extract_title(body)
+        title = extract_title(plan.body)
         updated = @issues.update(
           header.owner_repo, header.number,
-          body: Plan.to_issue_body(body),
+          body: Plan.to_issue_body(plan.body),
           title: (title if title && title != issue.title),
         )
-        record_sync(path, header, updated, body)
+        record_sync(path, plan, updated)
         out.puts "dev: pushed #{path} to #{header.issue_ref} (#{updated.html_url})"
       end
 
@@ -244,8 +244,8 @@ module Dev
         return unless path.to_s.end_with?(".plan.md") && path.exist?
         return unless path.expand_path.to_s.start_with?(@workspace.plans_dir.expand_path.to_s)
 
-        header, _body = Header.split(path.read)
-        return unless header
+        plan = Content.parse(path.read)
+        return unless plan.header
 
         push([path.to_s], out:)
       end
@@ -260,10 +260,10 @@ module Dev
         end
 
         files.each do |path|
-          header, body = Header.split(path.read)
-          issue = @issues.get(header.owner_repo, header.number)
-          state = sync_state(header, body, Plan.from_issue_body(issue.body))
-          out.puts "#{state.ljust(10)} #{header.issue_ref.ljust(30)} #{path}"
+          plan = Content.parse(path.read)
+          issue = @issues.get(plan.header.owner_repo, plan.header.number)
+          state = sync_state(plan.header, plan.body, Plan.from_issue_body(issue.body))
+          out.puts "#{state.ljust(10)} #{plan.header.issue_ref.ljust(30)} #{path}"
         end
       end
 
@@ -286,22 +286,31 @@ module Dev
         org ? @settings.plans_repo : @workspace.origin_repo
       end
 
-      # Write the plan file (header + body) and refresh the merge base — the
-      # single definition of "synced".
+      # Write the plan file (header + optional frontmatter + markdown body) and
+      # refresh the merge base — the single definition of "synced". The merge
+      # base stores the markdown body only.
       #
+      # @param owner_repo [String]
+      # @param issue [Dev::Plan::GithubIssues::Issue]
+      # @param body [String] markdown body
+      # @param path [Pathname, nil]
+      # @param frontmatter [String, nil] Cursor YAML block to preserve locally
       # @return [Pathname] the written path
-      def write_linked_plan(owner_repo, issue, body, path: nil)
+      def write_linked_plan(owner_repo, issue, body, path: nil, frontmatter: nil)
         path ||= @workspace.plan_path(owner_repo, issue.number, issue.title)
         header = Header.new(owner_repo: owner_repo, number: issue.number, synced_at: issue.updated_at)
         FileUtils.mkdir_p(path.dirname)
-        path.write(header.render + body)
+        path.write(Content.new(header: header, frontmatter: frontmatter, body: body).render)
         @merge_base.write(owner_repo, issue.number, body)
         path
       end
 
-      def record_sync(path, header, issue, body)
-        path.write(header.with_synced_at(issue.updated_at).render + body)
-        @merge_base.write(header.owner_repo, header.number, body)
+      # @param path [Pathname]
+      # @param plan [Dev::Plan::Content]
+      # @param issue [Dev::Plan::GithubIssues::Issue]
+      def record_sync(path, plan, issue)
+        path.write(plan.with_synced_at(issue.updated_at).render)
+        @merge_base.write(plan.header.owner_repo, plan.header.number, plan.body)
       end
 
       # Move a freshly linked file to the `gh-<n>-<slug>.plan.md` convention
@@ -326,8 +335,8 @@ module Dev
       # @return [Pathname]
       def find_linked_plan(owner_repo, number)
         @workspace.linked_plan_files.find do |path|
-          header, _body = Header.split(path.read)
-          header.owner_repo == owner_repo && header.number == number
+          plan = Content.parse(path.read)
+          plan.header.owner_repo == owner_repo && plan.header.number == number
         end
       end
 
@@ -343,8 +352,7 @@ module Dev
         files =
           if @workspace.plans_dir.directory?
             @workspace.plans_dir.glob(Workspace::PLAN_GLOB).sort.reject do |path|
-              header, _body = Header.split(path.read)
-              header
+              Content.parse(path.read).header
             end
           else
             []

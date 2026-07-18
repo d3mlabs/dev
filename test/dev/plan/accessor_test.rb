@@ -85,8 +85,21 @@ class Dev::Plan::AccessorTest < Minitest::Test
   end
 
   def read_plan(root, name)
-    Dev::Plan::Header.split((root / ".cursor" / "plans" / name).read)
+    plan = Dev::Plan::Content.parse((root / ".cursor" / "plans" / name).read)
+    [plan.header, plan.body, plan.frontmatter]
   end
+
+  CURSOR_FRONTMATTER = <<~YAML
+    ---
+    name: Local picker label
+    overview: Short overview
+    todos:
+      - id: step-one
+        content: Do the thing
+        status: pending
+    isProject: false
+    ---
+  YAML
 
   test "new creates the issue and a linked local plan" do
     Given "a workspace"
@@ -435,4 +448,134 @@ class Dev::Plan::AccessorTest < Minitest::Test
     Cleanup
     FileUtils.rm_rf(dir)
   end
+
+  test "link and push ship markdown only — Cursor frontmatter stays local" do
+    Given "a Cursor draft with YAML frontmatter"
+    dir = Dir.mktmpdir("ai-flow-acc-test-")
+    accessor, root, issues = build_env(dir)
+    draft = root / ".cursor" / "plans" / "draft.plan.md"
+    FileUtils.mkdir_p(draft.dirname)
+    draft.write("#{CURSOR_FRONTMATTER}# Squeeze visual\n\nImprove the membrane.\n")
+
+    When "canonizing and pushing"
+    accessor.run(["link", draft.to_s], out: StringIO.new)
+
+    Then "the issue body is markdown-only and the local file keeps frontmatter"
+    issues.get(REPO, 1).title == "Squeeze visual"
+    issues.get(REPO, 1).body == "# Squeeze visual\n\nImprove the membrane.\n"
+    !issues.get(REPO, 1).body.include?("isProject:")
+    header, body, frontmatter = read_plan(root, "gh-1-squeeze-visual.plan.md")
+    header.issue_ref == "#{REPO}#1"
+    body == "# Squeeze visual\n\nImprove the membrane.\n"
+    frontmatter == CURSOR_FRONTMATTER
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "pull preserves local Cursor frontmatter while replacing the markdown body" do
+    Given "a linked plan with local frontmatter whose issue moved ahead"
+    dir = Dir.mktmpdir("ai-flow-acc-test-")
+    accessor, root, issues = build_env(dir)
+    accessor.run(["new", "Carve system"], out: StringIO.new)
+    path = root / ".cursor" / "plans" / "gh-1-carve-system.plan.md"
+    plan = Dev::Plan::Content.parse(path.read)
+    path.write(Dev::Plan::Content.new(
+      header: plan.header, frontmatter: CURSOR_FRONTMATTER, body: plan.body,
+    ).render)
+    issues.edit_remotely(REPO, 1, body: "# Carve system\n\nRemote addition.\n")
+
+    When "pulling"
+    accessor.run(["pull", "1"], out: StringIO.new)
+
+    Then "the markdown matches the remote and frontmatter is untouched"
+    _header, body, frontmatter = read_plan(root, "gh-1-carve-system.plan.md")
+    body == "# Carve system\n\nRemote addition.\n"
+    frontmatter == CURSOR_FRONTMATTER
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "frontmatter-only edits leave the plan clean and push is a no-op" do
+    Given "a linked plan whose only local change is Cursor todos"
+    dir = Dir.mktmpdir("ai-flow-acc-test-")
+    accessor, root, issues = build_env(dir)
+    accessor.run(["new", "Carve system"], out: StringIO.new)
+    path = root / ".cursor" / "plans" / "gh-1-carve-system.plan.md"
+    plan = Dev::Plan::Content.parse(path.read)
+    path.write(Dev::Plan::Content.new(
+      header: plan.header, frontmatter: CURSOR_FRONTMATTER, body: plan.body,
+    ).render)
+    out = StringIO.new
+
+    When "checking status and pushing"
+    accessor.run(["status"], out: out)
+    accessor.run(["push"], out: StringIO.new)
+
+    Then "status is clean, the issue is unchanged, and frontmatter remains local"
+    out.string.match?(/^clean\s+#{REPO}#1/)
+    issues.get(REPO, 1).body == "# Carve system\n"
+    _header, body, frontmatter = read_plan(root, "gh-1-carve-system.plan.md")
+    body == "# Carve system\n"
+    frontmatter == CURSOR_FRONTMATTER
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "pull --merge merges markdown only and keeps local frontmatter" do
+    Given "a diverged plan with local Cursor frontmatter"
+    dir = Dir.mktmpdir("ai-flow-acc-test-")
+    accessor, root, issues = build_env(dir)
+    base = "# Plan\n\nalpha\n\none\ntwo\nthree\nfour\n\nomega\n"
+    issues.create(REPO, title: "Plan", body: "#{base}\n")
+    accessor.run(["pull", "1"], out: StringIO.new)
+    path = root / ".cursor" / "plans" / "gh-1-plan.plan.md"
+    plan = Dev::Plan::Content.parse(path.read)
+    path.write(Dev::Plan::Content.new(
+      header: plan.header,
+      frontmatter: CURSOR_FRONTMATTER,
+      body: base.sub("alpha", "alpha LOCAL"),
+    ).render)
+    issues.edit_remotely(REPO, 1, body: "#{base.sub("omega", "omega REMOTE")}\n")
+
+    When "pulling with --merge"
+    accessor.run(["pull", "1", "--merge"], out: StringIO.new)
+
+    Then "both markdown edits land and frontmatter is preserved"
+    _header, body, frontmatter = read_plan(root, "gh-1-plan.plan.md")
+    body == base.sub("alpha", "alpha LOCAL").sub("omega", "omega REMOTE")
+    frontmatter == CURSOR_FRONTMATTER
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "push strips previously published frontmatter from the issue body" do
+    Given "an issue that still carries Cursor frontmatter from the old sync bug"
+    dir = Dir.mktmpdir("ai-flow-acc-test-")
+    accessor, root, issues = build_env(dir)
+    polluted = "#{CURSOR_FRONTMATTER}# Carve system\n"
+    issue = issues.create(REPO, title: "Carve system", body: polluted)
+    path = root / ".cursor" / "plans" / "gh-1-carve-system.plan.md"
+    FileUtils.mkdir_p(path.dirname)
+    header = Dev::Plan::Header.new(owner_repo: REPO, number: 1, synced_at: issue.updated_at)
+    path.write(Dev::Plan::Content.new(
+      header: header, frontmatter: CURSOR_FRONTMATTER, body: "# Carve system\n",
+    ).render)
+    merge_base = Dev::Plan::MergeBase.new(state_dir: File.join(dir, "state"))
+    merge_base.write(REPO, 1, polluted)
+
+    When "pushing the linked plan"
+    accessor.run(["push", path.to_s], out: StringIO.new)
+
+    Then "the issue is cleaned to markdown-only"
+    issues.get(REPO, 1).body == "# Carve system\n"
+    !issues.get(REPO, 1).body.include?("---\n")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
 end
+
