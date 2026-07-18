@@ -47,23 +47,24 @@ class Dev::Cd::GlobalDispatchTest < Minitest::Test
   end
 
   test "shell hook cds into the resolved path" do
-    Given "a sourced zsh hook and a unique checkout"
+    Given "a sourced bash hook and a unique checkout"
+    # Use bash (not zsh): GitHub Actions Ubuntu runners ship bash, not zsh.
     src = Dir.mktmpdir("dev-cd-src-")
     home = Dir.mktmpdir("dev-cd-home-")
     expected = make_git_repo(src, "github.com/d3mlabs/widgets")
-    Dev::Cd::ShellHook.ensure!(env: { "SHELL" => "/bin/zsh", "HOME" => home })
-    zshrc = File.read(File.join(home, ".zshrc"))
+    Dev::Cd::ShellHook.ensure!(env: { "SHELL" => "/bin/bash", "HOME" => home })
+    bash_profile = File.read(File.join(home, ".bash_profile"))
 
-    script = <<~ZSH
-      #{zshrc}
+    script = <<~BASH
+      #{bash_profile}
       dev cd widgets
       pwd
-    ZSH
+    BASH
 
-    When "running zsh with the hook and a PATH that finds bin/dev"
-    stdout, stderr, status = Open3.capture3(
+    When "running bash with the hook and a PATH that finds bin/dev"
+    stdout, _stderr, status = Open3.capture3(
       { "DEV_CD_ROOT" => src, "PATH" => "#{File.dirname(DEV_BIN)}:#{ENV.fetch("PATH")}" },
-      "zsh", "-c", script,
+      "bash", "-c", script,
     )
 
     Then "pwd is the checkout"
