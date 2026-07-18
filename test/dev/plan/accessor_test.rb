@@ -115,10 +115,12 @@ class Dev::Plan::AccessorTest < Minitest::Test
     When "creating an org-wide plan"
     accessor.run(["new", "Org roadmap", "--org"], out: StringIO.new)
 
-    Then "the issue lands in the plans repo and the filename disambiguates"
+    Then "the issue lands in the plans repo, scaffolded with a Target repos line, and the filename disambiguates"
     issues.get("d3mlabs/plans", 1).title == "Org roadmap"
-    header, _body = read_plan(root, "gh-plans-1-org-roadmap.plan.md")
+    issues.get("d3mlabs/plans", 1).body.include?("Target repos:")
+    header, body = read_plan(root, "gh-plans-1-org-roadmap.plan.md")
     header.owner_repo == "d3mlabs/plans"
+    body.include?("Target repos:")
 
     Cleanup
     FileUtils.rm_rf(dir)

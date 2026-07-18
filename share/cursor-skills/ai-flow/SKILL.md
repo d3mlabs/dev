@@ -27,6 +27,29 @@ conflict guard so local content can never clobber newer remote edits.
 | "address the open feedback on this plan" | see below |
 | org-wide / cross-repo plan (not tied to this repo) | add `--org` to `new`/`link`/`pull` — targets the configured org plans repo |
 
+## Multi-repo plans: the `Target repos:` line
+
+When canonizing a plan whose work lands in other repos (especially
+`dev plan link --org`), include a `Target repos: owner/a, owner/b` line near
+the top of the plan body. It declares the plan's scope and narrows the repo
+menu `/split` routes sub-issues within (`dev plan new --org` scaffolds the
+line; fill it in). Without it, `/split` may route to any repo of the org.
+
+## Remote lifecycle (the GitHub-side commands)
+
+Once canonical, the plan is driven from GitHub comments — `/ask` and `/edit`
+refine the body, `/split --dry` stages an editable `## Subtasks` yaml
+section in the plan body (review/edit it, then `/split --apply`; bare
+`/split` does both), `/build` builds a PR (or iterates when commented on a
+PR), `/build --split` orchestrates the sub-issues in dependency waves. A
+staged (unapplied) `## Subtasks` spec blocks `/build` until applied or
+deleted; the section round-trips through `dev plan pull`/`push` like any
+other body content. Full reference:
+[docs/commands.md](https://github.com/d3mlabs/ai-flow/blob/HEAD/docs/commands.md)
+and
+[docs/plan-lifecycle.md](https://github.com/d3mlabs/ai-flow/blob/HEAD/docs/plan-lifecycle.md)
+in d3mlabs/ai-flow.
+
 ## Addressing open feedback
 
 Open feedback lives as issue comments (often quote-anchored). To address it:

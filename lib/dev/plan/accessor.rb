@@ -67,6 +67,10 @@ module Dev
 
       # `dev plan new "<title>" [--org]` — create the issue first (it is
       # canonical from birth), then materialize the linked local working copy.
+      # Org plans are scaffolded with a `Target repos:` line: they usually
+      # span repos, and the line narrows /split's routing menu (see ai-flow's
+      # docs/plan-lifecycle.md). Left blank it is inert — the menu falls back
+      # to every org repo.
       def new_plan(args, out:)
         org = args.delete("--org") ? true : false
         title = args.shift
@@ -74,6 +78,7 @@ module Dev
 
         owner_repo = target_repo(org:)
         body = "# #{title}\n"
+        body += "\nTarget repos:\n<!-- comma-separated owner/repo list — declares scope; /split routes sub-issues within it -->\n" if org
         issue = @issues.create(owner_repo, title: title, body: Plan.to_issue_body(body))
         path = write_linked_plan(owner_repo, issue, body)
         out.puts "dev: created #{owner_repo}##{issue.number} (#{issue.html_url})"
