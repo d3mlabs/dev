@@ -28,13 +28,15 @@ module Dev
         end
       end
 
+      # Cap how many tied candidates we print in AmbiguousRepoError.
       MAX_AMBIGUOUS = 10
 
-      # Score values — higher is better. Gaps keep combined totals ordered so
-      # exact-on-both-sides outranks any mixed exact/prefix/substring pair.
-      SCORE_EXACT = 3
-      SCORE_PREFIX = 2
-      SCORE_SUBSTRING = 1
+      # Per-segment match weights (higher is better). Multi-segment scores pack
+      # these as base-(SCORE_EXACT + 1) digits so exact+exact always outranks
+      # any mixed exact/prefix/substring pair.
+      SCORE_EXACT = 3      # candidate equals query
+      SCORE_PREFIX = 2     # candidate starts with query
+      SCORE_SUBSTRING = 1  # query appears inside candidate
 
       # @param index [Dev::Cd::RepoIndex]
       def initialize(index:)
