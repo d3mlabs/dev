@@ -201,6 +201,29 @@ class ShadowenvRubyTest < Minitest::Test
     FileUtils.rm_rf(tmpdir)
   end
 
+  test "ensure_shadowenv_shell_hook! recognizes an RC written before the shared installer" do
+    Given "a zsh .zshrc carrying the historical dev marker"
+    tmpdir = Dir.mktmpdir("shadowenv-hook-test-")
+    original_shell = ENV["SHELL"]
+    original_home = ENV["HOME"]
+    ENV["SHELL"] = "/bin/zsh"
+    ENV["HOME"] = tmpdir
+    File.write(File.join(tmpdir, ".zshrc"), "\n# Shadowenv (added by dev)\neval \"$(shadowenv init zsh)\"\n")
+    before = File.read(File.join(tmpdir, ".zshrc"))
+
+    When "we ensure the shell hook"
+    result = ShadowenvRuby.ensure_shadowenv_shell_hook!
+
+    Then "the old install is recognized, not re-appended"
+    result == :already_present
+    File.read(File.join(tmpdir, ".zshrc")) == before
+
+    Cleanup
+    ENV["SHELL"] = original_shell
+    ENV["HOME"] = original_home
+    FileUtils.rm_rf(tmpdir)
+  end
+
   test "ensure_shadowenv_shell_hook! adds hook to bash_profile for bash" do
     Given "a bash shell with no .bash_profile"
     tmpdir = Dir.mktmpdir("shadowenv-hook-test-")

@@ -46,7 +46,13 @@ After installing, add the shadowenv hook to your shell so project Rubies activat
 eval "$(shadowenv init zsh)"
 ```
 
-**Formula maintainers:** The Homebrew formula for `d3mlabs/dev` should include `depends_on "shadowenv"` so developers get shadowenv when they install dev.
+dev also ensures this hook (and the `dev cd` hook below) automatically and idempotently when you run `dev up` in a project, so a manual edit is only needed if you want it before your first `dev up`.
+
+### Supported shells
+
+All dev shell RC hooks — shadowenv activation and the `dev cd` wrapper + completers — are installed for **zsh, bash, and fish** (`~/.zshrc`, `~/.bash_profile` or `~/.bashrc`, `~/.config/fish/config.fish`). Other shells are unsupported for hooks: `dev` project commands still run, but there is no env activation and no `dev cd`.
+
+**Formula maintainers:** The Homebrew formula for `d3mlabs/dev` should include `depends_on "shadowenv"` so developers get shadowenv when they install dev. Formulas must never edit shell RCs — dev installs its hooks itself on its own command paths (`dev up`, `dev cd`).
 
 ## Usage
 
@@ -60,6 +66,36 @@ dev          # List all available commands
 ```
 
 The tool walks up from your current directory until it finds a git repo root (directory containing `.git`), then looks for `dev.yml` there. If found, it parses the commands and executes the `run` string for your chosen subcommand.
+
+A few builtins are global and work from **any** directory, no `dev.yml` needed: `dev cd` (host-global navigation), `dev cred` (host-global credentials), and `dev plan` (workspace-global plan sync). Project commands (`dev up` and anything declared in `dev.yml`) still require a nearby `dev.yml`.
+
+## dev cd — jump between checkouts
+
+`dev cd <repo>` jumps to a local checkout under your search root by short name, with fuzzy matching and Tab completion:
+
+```bash
+dev cd myrepo              # unique fuzzy / substring match → cd there
+dev cd d3mlabs/myrepo      # explicit org/repo when names collide
+dev cd d3m/d               # fuzzy each side of / → e.g. d3mlabs/dev
+dev cd myr<TAB>            # interactive complete: list matches, select or refine
+dev cd <TAB>               # empty prefix → list all candidates
+```
+
+The search root is `$DEV_CD_ROOT`, defaulting to `~/src` with the conventional `~/src/github.com/<org>/<repo>` layout. If your checkouts live elsewhere, set the override in your shell RC (or the current session) before calling `dev cd`:
+
+```bash
+export DEV_CD_ROOT=/path/to/checkouts
+```
+
+Only git repos count as candidates (directories with a `.git` entry — a `.git` file from a worktree checkout works too); plain folders are skipped. The query is a right-anchored path suffix matched per segment: `dev` matches the leaf, `d3mlabs/dev` the org and leaf, `bitbucket.org/d3mlabs/dev` the host too — a more explicit path always works. On an ambiguous query, `dev cd` lists the candidates (each at the shortest depth that makes it unique, capped at 10) and exits non-zero; refine the query or press Tab to browse all matches. On no match it errors clearly.
+
+### Shell hook install
+
+`dev cd` needs a small shell wrapper — a Ruby child process cannot change your shell's directory. dev installs the wrapper function and Tab completers into your shell RC automatically and idempotently: on `dev up` in any project, and on `dev cd` itself (so a first `dev cd` self-heals the hook; open a new shell after the install hint). The snippet is marker-guarded (`# dev cd (added by dev)`) next to the shadowenv one, and re-runs never duplicate it.
+
+Tab completion is registered per shell: zsh gets a navigable menu-select list scoped to the `dev` command only (your other commands' completion is untouched; registration is skipped quietly if your zshrc never runs `compinit`), bash fills `COMPREPLY` directly, and fish registers a standard pager completion (fish applies its own filtering, so fuzzy tokens may only complete literally there). Completion fills the argument only — it never runs the `cd` for you — and inserts `org/repo` (or deeper) forms when a short name would collide.
+
+Because the wrapper runs `builtin cd` in your interactive shell, shadowenv activation after `dev cd` behaves exactly like a manual `cd`: if the shadowenv hook is in your RC (see above), the project env loads; if it's missing, `dev cd` still changes directory but no env activates — same as plain `cd`.
 
 ## Child script UI
 
@@ -288,10 +324,11 @@ Custom integrations implement `Dev::Deps::Integration` (with `install_all(pins, 
 - **`dev up`** — auto-installs all deps from lockfiles (build group first), then runs the project's `up:` command from `dev.yml` if defined. On success, stamps the installed lockfile digest (see `dev check`).
 - **`dev check`** — report dependency-state staleness explicitly: `dependencies.rb` vs lockfiles (digest recorded by `update-deps`), and lockfiles vs the per-machine installed stamp (`~/.dev/state/<project>/installed-digest`, written after a fully-successful `up`/`install-deps`). The same two O(1) checks run at every command start — warning on workstations, erroring in CI.
 - **`dev deps path <integration> <name> <platform>`** — print the absolute path of a locked artifact (e.g. `dev deps path ficsit SML LinuxServer`, or `dev deps path xcode` for the pinned DEVELOPER_DIR) so scripts don't reconstruct cache keys or layout conventions.
-- **`dev cred get <namespace> <key>`** — resolve a credential through the provider chain (ENV → keychain → file → prompt) and print it. A non-interactive miss errors with `gh secret set` guidance. Mirrors `dev deps path` for shell consumers (e.g. a staging sync).
+- **`dev cred get <namespace> <key>`** — resolve a credential through the provider chain (ENV → keychain → file → prompt) and print it. A non-interactive miss errors with `gh secret set` guidance. Mirrors `dev deps path` for shell consumers (e.g. a staging sync). Global: works without a `dev.yml`.
+- **`dev cd <repo>`** — jump to a checkout under `$DEV_CD_ROOT` (default `~/src`) by fuzzy name, with Tab completion (see [dev cd](#dev-cd--jump-between-checkouts)). Global: works without a `dev.yml`.
 - **`dev cache gc [--keep N]`** — reclaim host caches dev owns (see below).
 - **`dev reset-container`** — remove the persistent build container (clears its incremental cache); registered only when `build.container.persist` is set.
-- **`dev plan …`** — sync Cursor plans with GitHub issues (ai-flow): the issue is the canonical plan, the local `.cursor/plans/gh-<n>-<slug>.plan.md` is a transient working copy carrying an `<!-- ai-flow … -->` header. Subcommands: `new "<title>" [--org]` (create issue + linked plan; `--org` scaffolds a `Target repos:` line), `link <n> [<file>]` / `link <file>` (attach a draft to an existing issue / create one from it), `pull <n> [--merge]` (fetch, 3-way merging when both sides changed — the merge base lives at `~/.local/state/ai-flow/`), `push [<file>|<n>]` (guarded body PATCH — refuses to clobber newer remote edits; a number resolves the linked plan like `pull`), and `status` (clean / ahead / behind / diverged, per linked plan). `--org` targets the org plans repo (`plans_repo:` in `~/.config/dev/config.yml`, or `DEV_PLANS_REPO`) instead of the current repo's origin. Every invocation also ensures `~/.cursor/skills/ai-flow` symlinks to the skill shipped in `share/cursor-skills/`, so the Cursor agent knows these verbs. For auto-push, a participating repo adds a Cursor `afterFileEdit` hook to `.cursor/hooks.json` running `dev plan hook-after-edit` — it reads the hook payload from stdin and no-ops unless the edited file is a linked plan. What happens to a plan after it's canonical — `/ask`, `/edit`, `/split` (two-phase dry/apply), `/build` — is ai-flow's remote half: see [plan-lifecycle.md](https://github.com/d3mlabs/ai-flow/blob/HEAD/docs/plan-lifecycle.md) and [commands.md](https://github.com/d3mlabs/ai-flow/blob/HEAD/docs/commands.md).
+- **`dev plan …`** — global (works without a `dev.yml`; the workspace is the nearest dev.yml or git root). Sync Cursor plans with GitHub issues (ai-flow): the issue is the canonical plan, the local `.cursor/plans/gh-<n>-<slug>.plan.md` is a transient working copy carrying an `<!-- ai-flow … -->` header. Subcommands: `new "<title>" [--org]` (create issue + linked plan; `--org` scaffolds a `Target repos:` line), `link <n> [<file>]` / `link <file>` (attach a draft to an existing issue / create one from it), `pull <n> [--merge]` (fetch, 3-way merging when both sides changed — the merge base lives at `~/.local/state/ai-flow/`), `push [<file>|<n>]` (guarded body PATCH — refuses to clobber newer remote edits; a number resolves the linked plan like `pull`), and `status` (clean / ahead / behind / diverged, per linked plan). `--org` targets the org plans repo (`plans_repo:` in `~/.config/dev/config.yml`, or `DEV_PLANS_REPO`) instead of the current repo's origin. Every invocation also ensures `~/.cursor/skills/ai-flow` symlinks to the skill shipped in `share/cursor-skills/`, so the Cursor agent knows these verbs. For auto-push, a participating repo adds a Cursor `afterFileEdit` hook to `.cursor/hooks.json` running `dev plan hook-after-edit` — it reads the hook payload from stdin and no-ops unless the edited file is a linked plan. What happens to a plan after it's canonical — `/ask`, `/edit`, `/split` (two-phase dry/apply), `/build` — is ai-flow's remote half: see [plan-lifecycle.md](https://github.com/d3mlabs/ai-flow/blob/HEAD/docs/plan-lifecycle.md) and [commands.md](https://github.com/d3mlabs/ai-flow/blob/HEAD/docs/commands.md).
 
 ## Build container & caching model
 
