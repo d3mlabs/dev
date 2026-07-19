@@ -1,9 +1,10 @@
 # ai-flow slash commands (/ask, /edit, /split, /build) — see d3mlabs/ai-flow.
-# Uses the default ai-light / ai-build runner labels: jobs queue until a
-# runner with those labels is registered (see the ai-flow README's adoption
-# checklist; `dev runner-setup` registers a host once a `runner:` block with
-# the labels is declared). The App secrets give writes the ai-flow[bot]
-# identity and make /build PRs trigger CI.
+# Each command routes to its own fixed runner label (ai-ask / ai-edit /
+# ai-split / ai-build; one box can carry all four): jobs queue until a
+# runner with the matching label is registered (see the ai-flow README's
+# adoption checklist). Model policy lives in .github/ai-flow.yml, not here —
+# workflow inputs are scalar-only. The App secrets give writes the
+# ai-flow[bot] identity and make /build PRs trigger CI.
 name: ai-commands
 
 on:
