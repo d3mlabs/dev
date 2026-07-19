@@ -20,7 +20,7 @@ conflict guard so local content can never clobber newer remote edits.
 | User intent | Action |
 |---|---|
 | "load issue 123 as a plan" / "open issue 123 as a plan" | `dev plan pull 123`, then open the file it reports (under `.cursor/plans/`) |
-| "push this plan" / "sync this plan to GitHub" | `dev plan push` (add the file path if several plans are linked) |
+| "push this plan" / "sync this plan to GitHub" | `dev plan push` (add the issue number or file path if several plans are linked, e.g. `dev plan push 123`; `--org` for org plans pushed by number) |
 | "canonize this plan" / "link this plan to an issue" | `dev plan link <file>` to create a new issue from it, or `dev plan link <n> <file>` to attach it to existing issue #n |
 | "create a plan for X" (canonical from the start) | `dev plan new "X"`, then edit the created file |
 | "is this plan in sync?" | `dev plan status` |

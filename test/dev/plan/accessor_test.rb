@@ -179,6 +179,61 @@ class Dev::Plan::AccessorTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "push by issue number resolves the linked plan like pull does" do
+    Given "two linked plans with local edits on the first"
+    dir = Dir.mktmpdir("ai-flow-acc-test-")
+    accessor, root, issues = build_env(dir)
+    accessor.run(["new", "Carve system"], out: StringIO.new)
+    accessor.run(["new", "Second plan"], out: StringIO.new)
+    path = root / ".cursor" / "plans" / "gh-1-carve-system.plan.md"
+    header, _body = Dev::Plan::Header.split(path.read)
+    path.write(header.render + "# Carve system\n\nNew section.\n")
+
+    When "pushing by number"
+    accessor.run(["push", "1"], out: StringIO.new)
+
+    Then "the right issue is updated even though the workspace holds several plans"
+    issues.get(REPO, 1).body == "# Carve system\n\nNew section.\n"
+    issues.get(REPO, 2).body == "# Second plan\n"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "push by number with --org resolves against the org plans repo" do
+    Given "a linked org plan with local edits"
+    dir = Dir.mktmpdir("ai-flow-acc-test-")
+    accessor, root, issues = build_env(dir)
+    accessor.run(["new", "Org roadmap", "--org"], out: StringIO.new)
+    path = root / ".cursor" / "plans" / "gh-plans-1-org-roadmap.plan.md"
+    header, _body = Dev::Plan::Header.split(path.read)
+    path.write(header.render + "# Org roadmap\n\nScoped.\n")
+
+    When "pushing by number with --org"
+    accessor.run(["push", "1", "--org"], out: StringIO.new)
+
+    Then
+    issues.get("d3mlabs/plans", 1).body == "# Org roadmap\n\nScoped.\n"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "push by a number with no linked plan errors with pull-first guidance" do
+    Given "a workspace with no linked plan for issue 7"
+    dir = Dir.mktmpdir("ai-flow-acc-test-")
+    accessor, _root, _issues = build_env(dir)
+
+    When "pushing by that number"
+    accessor.run(["push", "7"], out: StringIO.new)
+
+    Then
+    raises Dev::Plan::Accessor::UsageError
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "push refuses when the remote body changed since the last sync" do
     Given "a linked plan whose issue was edited remotely"
     dir = Dir.mktmpdir("ai-flow-acc-test-")
