@@ -27,6 +27,15 @@ $LOAD_PATH.unshift(src) unless $LOAD_PATH.include?(src)
 $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 
 require "dev"
+require "dev/global_dispatch"
+
+# Global builtins (cd/plan/cred) dispatch before any dev.yml lookup — they
+# are host- or workspace-global, not project commands.
+global_dispatch = Dev::GlobalDispatch.new
+if global_dispatch.global_command?(ARGV)
+  global_dispatch.run(ARGV)
+  exit 0
+end
 
 ui = if $stdout.tty? || ENV["CI"] || ENV["CLICOLOR_FORCE"]
   Dev::Cli::UiImpl.new(cli_ui: CLI::UI)

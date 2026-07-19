@@ -11,6 +11,7 @@ require 'dev/deps/integration'
 require 'dev/deps/resolver'
 require 'dev/deps/lockfile'
 require 'dev/cli/ui'
+require 'dev/cd'
 
 module Dev
   # Main entry: find repo, load config, build registry, parse argv, show usage or run command.
@@ -240,11 +241,22 @@ module Dev
       # `up` is a virtual slot: the builtin installs locked deps, and a project
       # `up:` command in dev.yml overrides it into an OverriddenCommand — the
       # builtin install runs first (super()), then the project's provisioning.
-      # Projects with only a dependencies.rb get `dev up` for free.
+      # Projects with only a dependencies.rb get `dev up` for free. `up` also
+      # ensures the `dev cd` shell hook (idempotent) — provisioning is where
+      # dev's RC hooks land, next to the shadowenv one.
       registry.register("up", BuiltinCommand.new(
         desc: "Install locked dependencies, then run the project's up command (if defined)",
       ) do |args, context|
+        Dev::Cd::HookInstaller.new.ensure_installed
         install_locked_deps(context)
+      end)
+
+      # `dev cd` is dispatched globally (before dev.yml lookup) in bin/dev;
+      # this registration only surfaces it in `dev --help`.
+      registry.register("cd", BuiltinCommand.new(
+        desc: "Jump to a checkout under $DEV_CD_ROOT (default ~/src) by fuzzy name",
+      ) do |args, _context|
+        Dev::Cd::Accessor.new.run(args)
       end)
 
       registry.register("check", BuiltinCommand.new(

@@ -219,9 +219,36 @@ class RunnerTest < Minitest::Test
     out.string.include?("Install locked dependencies, then run the project's up command")
   end
 
+  test "usage includes the cd builtin" do
+    Given "a Runner with no project commands"
+    runner = build_runner(commands: {})
+    out = StringIO.new
+
+    When "we print usage"
+    runner.run([], ui: fake_ui, out: out)
+
+    Then "cd is listed"
+    out.string.include?("cd")
+    out.string.include?("Jump to a checkout")
+  end
+
+  test "up ensures the dev cd shell hook (idempotently)" do
+    Given "a Runner with no project up command and a hook installer expectation"
+    runner = build_runner(commands: {})
+    runner.stubs(:install_locked_deps)
+    Dev::Cd::HookInstaller.any_instance.expects(:ensure_installed).once.returns(:already_present)
+
+    When "we run up"
+    runner.run(["up"], ui: fake_ui)
+
+    Then "the expectation on the hook installer holds"
+    true
+  end
+
   test "a project up command overrides the builtin: install runs first, then the script" do
     Given "a Runner whose dev.yml defines up and a spy on both stages"
     runner = build_runner(commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup", "container" => false } })
+    Dev::Cd::HookInstaller.any_instance.stubs(:ensure_installed).returns(:already_present)
     execution_order = []
     runner.stubs(:install_locked_deps).with { execution_order << :builtin_install; true }
     Dev::ShellCommand.any_instance.stubs(:execute).with { execution_order << :project_script; true }
@@ -244,6 +271,7 @@ class RunnerTest < Minitest::Test
     )
     Dev::ShellCommand.any_instance.stubs(:execute)
     runner.stubs(:install_locked_deps)
+    Dev::Cd::HookInstaller.any_instance.stubs(:ensure_installed).returns(:already_present)
 
     When "we run up"
     runner.run(["up"], ui: fake_ui)
@@ -257,6 +285,7 @@ class RunnerTest < Minitest::Test
     runner = build_runner(commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup" } })
     Dev::ShellCommand.any_instance.stubs(:execute)
     runner.stubs(:install_locked_deps)
+    Dev::Cd::HookInstaller.any_instance.stubs(:ensure_installed).returns(:already_present)
 
     When "we run up"
     runner.run(["up"], ui: fake_ui)

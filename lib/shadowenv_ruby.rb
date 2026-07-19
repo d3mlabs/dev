@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "dev/shell_rc_hook"
 
 # Shadowenv Ruby provisioning: installs Ruby via rbenv, generates
 # .shadowenv.d/510_ruby.lisp, trusts, and ensures the shell hook.
@@ -284,50 +285,33 @@ module ShadowenvRuby
     LISP
   end
 
+# Ensure the shadowenv activation hook is in the user's shell RC.
+  #
+  # Delegates the shell → RC-file mapping and the idempotent append to the
+  # shared Dev::ShellRcHook installer; this module only declares its snippet
+  # per shell. "shadowenv init" counts as already installed so hand-added
+  # hook lines (pre-dating the marker) are never duplicated.
+  #
+  # @return [Symbol, false] :added, :already_present, or false (unsupported shell)
   def ensure_shadowenv_shell_hook!
-    shell = ENV["SHELL"] || "/bin/sh"
-    home = ENV["HOME"] || Dir.home
-    hook_line = nil
-    profile_path = nil
-
-    if shell.include?("zsh")
-      profile_path = File.join(home, ".zshrc")
-      hook_line = 'eval "$(shadowenv init zsh)"'
-    elsif shell.include?("bash")
-      profile_path = File.join(home, ".bash_profile")
-      hook_line = 'eval "$(shadowenv init bash)"'
-      unless File.exist?(profile_path)
-        bashrc = File.join(home, ".bashrc")
-        profile_path = bashrc if File.exist?(bashrc)
-      end
-    elsif shell.include?("fish")
-      fish_config_dir = File.join(home, ".config", "fish")
-      FileUtils.mkdir_p(fish_config_dir)
-      profile_path = File.join(fish_config_dir, "config.fish")
-      hook_line = 'shadowenv init fish | source'
-    end
-
-    return false unless profile_path && hook_line
-
-    if File.exist?(profile_path)
-      content = File.read(profile_path)
-      return :already_present if content.include?(hook_line) || content.include?("shadowenv init")
-    end
-
-    FileUtils.mkdir_p(File.dirname(profile_path))
-    prompt_comment = if shell.include?("zsh")
-      "# Optional: show active shadowenv in prompt: setopt PROMPT_SUBST && PROMPT='$(shadowenv prompt-widget)'\"$PROMPT\""
-    elsif shell.include?("bash")
-      "# Optional: show active shadowenv in prompt: PS1='$(shadowenv prompt-widget)'\"$PS1\""
-    else
-      "# Optional: see https://shopify.github.io/shadowenv/best-practices/#prompt-widget for fish"
-    end
-    File.open(profile_path, "a") do |f|
-      f.puts "\n# Shadowenv (added by dev)"
-      f.puts hook_line
-      f.puts prompt_comment
-    end
-    :added
+    Dev::ShellRcHook.new.ensure_snippet(
+      marker: "# Shadowenv (added by dev)",
+      present_markers: ["shadowenv init"],
+      snippets: {
+        zsh: <<~SNIPPET.chomp,
+          eval "$(shadowenv init zsh)"
+          # Optional: show active shadowenv in prompt: setopt PROMPT_SUBST && PROMPT='$(shadowenv prompt-widget)'"$PROMPT"
+        SNIPPET
+        bash: <<~SNIPPET.chomp,
+          eval "$(shadowenv init bash)"
+          # Optional: show active shadowenv in prompt: PS1='$(shadowenv prompt-widget)'"$PS1"
+        SNIPPET
+        fish: <<~SNIPPET.chomp,
+          shadowenv init fish | source
+          # Optional: see https://shopify.github.io/shadowenv/best-practices/#prompt-widget for fish
+        SNIPPET
+      },
+    )
   rescue => e
     $stderr.puts "dev: Could not add shadowenv hook to shell profile: #{e.message}"
     false
