@@ -4,8 +4,9 @@ module Dev
   module Plan
     module_function
 
-    # Render a plan body as an issue body: verbatim content, normalized to a
-    # single trailing newline.
+    # Normalize a markdown plan body for the issue: LF, single trailing
+    # newline. Callers pass the markdown body only — not Cursor YAML
+    # frontmatter or the ai-flow sync header.
     #
     # @param plan_body [String]
     # @return [String]
@@ -13,9 +14,10 @@ module Dev
       "#{plan_body.rstrip}\n"
     end
 
-    # Extract the plan body from an issue body. Issue bodies use CRLF line
-    # endings when edited via the GitHub web UI, so normalize to LF — the
-    # local file and merge base always use LF.
+    # Normalize an issue body to a local markdown plan body. Issue bodies use
+    # CRLF when edited via the GitHub web UI, so normalize to LF — the local
+    # file and merge base always use LF. The result is markdown only (GitHub
+    # never stores Cursor frontmatter).
     #
     # @param issue_body [String, nil]
     # @return [String]

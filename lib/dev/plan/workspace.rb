@@ -53,8 +53,7 @@ module Dev
         return [] unless @plans_dir.directory?
 
         @plans_dir.glob(PLAN_GLOB).sort.select do |path|
-          header, _body = Header.split(path.read)
-          !header.nil?
+          !Content.parse(path.read).header.nil?
         end
       end
 

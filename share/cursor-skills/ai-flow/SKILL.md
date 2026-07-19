@@ -65,7 +65,7 @@ Open feedback lives as issue comments (often quote-anchored). To address it:
 ## Link format (GitHub is the backend)
 
 Plan links use GitHub URL format everywhere — the local plan file included,
-since its content becomes the issue body verbatim. Never use local filesystem
+since its **markdown body** becomes the issue body. Never use local filesystem
 paths (`/Users/…`) in a plan.
 
 - Files: `https://github.com/<owner>/<repo>/blob/HEAD/<path>` (`blob/HEAD`
@@ -76,6 +76,42 @@ paths (`/Users/…`) in a plan.
   fetch it from GitHub.
 - If a plan contains a local path (e.g. from a cmd+L file reference), rewrite
   it to the formats above while editing.
+
+## Layers of a linked local plan file
+
+A linked `.plan.md` has up to three layers. Only the markdown body is
+canonical on GitHub:
+
+```
+<!-- ai-flow
+issue: owner/repo#n
+synced_at: …
+-->
+---
+name: …
+overview: …
+todos: […]
+isProject: false
+---
+
+# Plan title
+
+…markdown body…
+```
+
+| Layer | On disk | On GitHub | Owner |
+|---|---|---|---|
+| `<!-- ai-flow -->` header | yes | no | `dev plan` sync guard |
+| YAML frontmatter (`---`…`---`) | yes (optional) | **no** | Cursor plan UI |
+| Markdown body | yes | **yes (canonical)** | humans + ai-flow review |
+
+Cursor YAML frontmatter (`name`, `overview`, `todos`, `isProject`) is local
+editor state — a picker label and session checklist. **Do not hand-edit
+frontmatter into issue-facing prose**, and do not expect `dev plan push` to
+publish it. Sync compares and PATCHes the markdown body only; ticking a todo
+or renaming in Cursor must not mark the plan dirty. Absence of frontmatter is
+valid (e.g. a fresh `dev plan pull`); Cursor may add it the next time it opens
+the file.
 
 ## Conventions (do not violate)
 

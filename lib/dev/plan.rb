@@ -2,6 +2,8 @@
 
 require "dev/plan/executor"
 require "dev/plan/header"
+require "dev/plan/frontmatter"
+require "dev/plan/content"
 require "dev/plan/settings"
 require "dev/plan/github_issues"
 require "dev/plan/workspace"
