@@ -50,6 +50,25 @@ class Dev::Plan::ContentTest < Minitest::Test
     nil
   end
 
+  test "parse recognizes Cursor's rewrite layout: frontmatter, blank line, header" do
+    Given "the exact layout Cursor's plan tool writes for a linked plan"
+    header = Dev::Plan::Header.new(owner_repo: "d3mlabs/demo", number: 3, synced_at: "2026-01-01T00:00:00Z")
+    body = "# Title\n\nprose\n"
+    raw = "#{FRONTMATTER}\n#{header.render}#{body}"
+
+    When "parsing and re-rendering"
+    plan = Dev::Plan::Content.parse(raw)
+
+    Then "the header is found past the blank line and render restores canonical order"
+    plan.header.issue_ref == "d3mlabs/demo#3"
+    plan.frontmatter == FRONTMATTER
+    plan.body == body
+    plan.render == "#{header.render}#{FRONTMATTER}#{body}"
+
+    Cleanup
+    nil
+  end
+
   test "parse tolerates a draft with frontmatter and no ai-flow header" do
     Given "an unlinked Cursor draft"
     body = "# Draft\n"

@@ -22,7 +22,7 @@ module Dev
           dev plan link <n> [<file>] [--org]    attach a plan file to issue #n
           dev plan link <file> [--org]          create an issue from a plan file
           dev plan pull <n> [--merge] [--org]   fetch the issue into the local plan
-          dev plan push [<file>]                update the issue body (guarded)
+          dev plan push [<file>|<n>] [--org]    update the issue body (guarded)
           dev plan status                       sync state of all linked plans
       USAGE
 
@@ -187,15 +187,18 @@ module Dev
         end
       end
 
-      # `dev plan push [<file>]` — PATCH the issue body iff the remote hasn't
-      # changed since the recorded base; otherwise fail with instructions. The
-      # target repo comes from the file's header, so org-wide plans push
-      # transparently.
+      # `dev plan push [<file>|<n>] [--org]` — PATCH the issue body iff the
+      # remote hasn't changed since the recorded base; otherwise fail with
+      # instructions. A number resolves through the same workspace lookup
+      # `pull` uses (`--org` picks the org plans repo, symmetric with pull);
+      # a file path never needs `--org` — the target repo comes from the
+      # file's header, so org-wide plans push transparently.
       def push(args, out:)
-        file = args.shift
-        raise UsageError, "usage: dev plan push [<file>]" unless args.empty?
+        org = args.delete("--org") ? true : false
+        target = args.shift
+        raise UsageError, "usage: dev plan push [<file>|<n>] [--org]" unless args.empty?
 
-        path = file ? Pathname.new(file) : sole_linked_plan
+        path = push_path(target, org:)
         plan = Content.parse(path.read)
         raise UsageError, "#{path} has no ai-flow header — link it first with `dev plan link`." unless plan.header
         raise "#{path} contains unresolved merge conflict markers — resolve them before pushing." if plan.body.include?("<<<<<<<")
@@ -330,6 +333,22 @@ module Dev
       # @return [String, nil] the first H1 heading, which doubles as the title
       def extract_title(body)
         body[/^# (.+)$/, 1]&.strip
+      end
+
+      # Resolve push's optional argument: nothing (the sole linked plan), an
+      # issue number (workspace lookup, like pull), or a file path.
+      #
+      # @param target [String, nil]
+      # @param org [Boolean]
+      # @return [Pathname]
+      def push_path(target, org:)
+        return sole_linked_plan if target.nil?
+        return Pathname.new(target) unless target.match?(/\A\d+\z/)
+
+        owner_repo = target_repo(org:)
+        number = Integer(target)
+        find_linked_plan(owner_repo, number) ||
+          raise(UsageError, "no linked plan for #{owner_repo}##{number} — run `dev plan pull #{number}` first.")
       end
 
       # @return [Pathname]
