@@ -296,6 +296,11 @@ class RunnerTest < Minitest::Test
 
   test "non-up commands do not provision credentials eagerly" do
     Given "a Runner with build container build_args and a test command"
+    # Pin the project root to an empty tmpdir so the staleness guard sees no
+    # lockfiles — otherwise it digests the real dev checkout against
+    # ~/.dev/state and aborts the run under CI (a fresh HOME has no stamp).
+    root = Pathname.new(Dir.mktmpdir("runner-non-up-"))
+    Dev.stubs(:target_project_root).returns(root)
     runner = build_runner(
       commands: { "test" => { "run" => "./bin/test.sh", "desc" => "Run tests", "container" => false } },
       build: { "container" => {
@@ -310,6 +315,9 @@ class RunnerTest < Minitest::Test
 
     Then "credentials are not resolved eagerly"
     0 * Dev::Credentials.resolve_build_args(anything)
+
+    Cleanup
+    FileUtils.rm_rf(root)
   end
 
   test "declared_ruby_version prefers the dependencies.rb ruby directive over dev.yml" do
