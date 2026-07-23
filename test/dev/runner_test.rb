@@ -360,6 +360,24 @@ class RunnerTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "declared_ruby_version ignores a config left over from a previously loaded manifest" do
+    Given "a stale config from an earlier manifest load, and a project whose dependencies.rb never calls Dev::Deps.define (bootstrap constants)"
+    Dev::Deps.define { ruby "9.9.9" }
+    root = Pathname.new(Dir.mktmpdir("runner-ruby-stale-"))
+    File.write(root / "dependencies.rb", "SOME_CONSTANT = 1 unless defined?(SOME_CONSTANT)\n")
+    Dev.stubs(:target_project_root).returns(root)
+    runner = build_runner
+
+    When "we read the declared ruby version"
+    result = runner.send(:declared_ruby_version)
+
+    Then "the stale config is not mistaken for this project's declaration"
+    result == "4.0.1"
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
   test "declared_ruby_version falls back to dev.yml ruby when there is no deps manifest" do
     Given "a project with no dependencies.rb (e.g. dev's own repo)"
     root = Pathname.new(Dir.mktmpdir("runner-ruby-fallback-"))

@@ -217,6 +217,7 @@ module Dev
         desc: "Resolve dependency constraints and write lockfiles",
       ) do |args, context|
         deps_rb = context.project_root / "dependencies.rb"
+        Dev::Deps.reset!
         load(deps_rb.to_s) if deps_rb.exist?
 
         deps_config = Dev::Deps.last_config || Dev::Deps.define {}
@@ -480,6 +481,7 @@ module Dev
       deps_rb = Dev.target_project_root / "dependencies.rb"
       from_deps = T.let(nil, T.nilable(String))
       if deps_rb.exist?
+        Dev::Deps.reset!
         load(deps_rb.to_s)
         from_deps = Dev::Deps.last_config&.ruby_version_requirement
         from_deps = nil if from_deps&.empty?
@@ -508,6 +510,7 @@ module Dev
       deps_rb = Dev.target_project_root / "dependencies.rb"
       return nil unless deps_rb.exist?
 
+      Dev::Deps.reset!
       load(deps_rb.to_s)
       version = Dev::Deps.last_config&.python_version
       (version && !version.empty?) ? version : nil

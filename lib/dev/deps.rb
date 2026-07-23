@@ -22,6 +22,14 @@ module Dev
       @last_config
     end
 
+    # Clears the last defined config. Call before loading a dependencies.rb:
+    # a file that never calls .define (e.g. dev's own bootstrap-constants
+    # dependencies.rb) would otherwise leave a previously loaded project's
+    # config visible as if it were its own.
+    def self.reset!
+      @last_config = nil
+    end
+
     # Detect the current environment (ci vs dev) from the CI variable alone.
     #
     # Deliberately NOT platform-based: a Linux workstation is "dev" and a Mac
