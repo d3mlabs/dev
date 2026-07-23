@@ -56,6 +56,8 @@ dev resolves a project's Ruby version in this order:
 2. `ruby:` in `dev.yml` — for repos without a deps manifest (dev itself, small gems).
 3. Homebrew Ruby — fallback when neither declares a version.
 
+Declaring the Ruby in **both** places is an error (`dev` refuses to run): a silent precedence would let the losing declaration go stale and mislead anyone reading it. Keep the `dependencies.rb` directive once a manifest exists.
+
 On `dev up`, dev provisions the resolved version through rbenv (installing it if needed) and generates two artifacts at the repo root:
 
 - **`.shadowenv.d/510_ruby.lisp`** — the per-project environment. Contains machine-specific absolute paths; always gitignored.

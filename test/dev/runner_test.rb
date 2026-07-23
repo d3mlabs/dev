@@ -320,9 +320,29 @@ class RunnerTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "declared_ruby_version prefers the dependencies.rb ruby directive over dev.yml" do
-    Given "a project whose dependencies.rb declares ruby and whose dev.yml also pins one"
+  test "declared_ruby_version returns the dependencies.rb ruby directive for manifest repos" do
+    Given "a project whose dependencies.rb declares ruby and whose dev.yml does not"
     root = Pathname.new(Dir.mktmpdir("runner-ruby-deps-"))
+    File.write(root / "dependencies.rb", <<~RUBY)
+      require "dev/deps"
+      Dev::Deps.define { ruby "9.9.9" }
+    RUBY
+    Dev.stubs(:target_project_root).returns(root)
+    runner = build_runner(ruby: nil)
+
+    When "we read the declared ruby version"
+    result = runner.send(:declared_ruby_version)
+
+    Then "the first-class dependencies.rb directive is used"
+    result == "9.9.9"
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "declared_ruby_version rejects a Ruby declared in both dependencies.rb and dev.yml" do
+    Given "a project declaring ruby in dependencies.rb AND dev.yml (drift waiting to happen)"
+    root = Pathname.new(Dir.mktmpdir("runner-ruby-conflict-"))
     File.write(root / "dependencies.rb", <<~RUBY)
       require "dev/deps"
       Dev::Deps.define { ruby "9.9.9" }
@@ -331,10 +351,10 @@ class RunnerTest < Minitest::Test
     runner = build_runner
 
     When "we read the declared ruby version"
-    result = runner.send(:declared_ruby_version)
+    runner.send(:declared_ruby_version)
 
-    Then "the first-class dependencies.rb directive wins"
-    result == "9.9.9"
+    Then "the double declaration is rejected"
+    raises Dev::Runner::ConflictingRubyDeclarationError
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -358,8 +378,9 @@ class RunnerTest < Minitest::Test
 
   private
 
-  def build_runner(name: "testproject", commands: {}, build: nil, runner: nil)
-    yaml = { "name" => name, "ruby" => "4.0.1", "commands" => commands }
+  def build_runner(name: "testproject", commands: {}, build: nil, runner: nil, ruby: "4.0.1")
+    yaml = { "name" => name, "commands" => commands }
+    yaml["ruby"] = ruby if ruby
     yaml["build"] = build if build
     yaml["runner"] = runner if runner
     tmp = Tempfile.new(["dev", ".yml"])

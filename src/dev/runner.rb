@@ -18,6 +18,10 @@ module Dev
   class Runner
     extend T::Sig
 
+    # Raised when a project declares its Ruby in both dependencies.rb and
+    # dev.yml. RuntimeError so Runner#run reports it as a clean `dev:` error.
+    class ConflictingRubyDeclarationError < RuntimeError; end
+
     sig { params(dev_yaml_path: Pathname, cfg_parser: Dev::ConfigParser).void }
     def initialize(
       dev_yaml_path: Dev.dev_yaml_file,
@@ -463,9 +467,10 @@ module Dev
       ShadowenvRuby.resolve_ruby_version(explicit_version)
     end
 
-    # The project's declared Ruby version, preferring the first-class `ruby`
-    # directive in dependencies.rb (where toolchains live) and falling back to
-    # dev.yml's `ruby:` for repos without a deps manifest (e.g. dev itself). nil
+    # The project's declared Ruby version: the first-class `ruby` directive in
+    # dependencies.rb (where toolchains live), or dev.yml's `ruby:` for repos
+    # without a deps manifest (e.g. dev itself). Declaring in both is an error —
+    # a silent precedence would let the loser go stale and mislead readers. nil
     # when neither is set, so resolve_ruby_version can fall back to Homebrew Ruby.
     #
     # dev evaluates dependencies.rb under its own bootstrap Ruby, so reading it
@@ -473,12 +478,22 @@ module Dev
     sig { returns(T.nilable(String)) }
     def declared_ruby_version
       deps_rb = Dev.target_project_root / "dependencies.rb"
+      from_deps = T.let(nil, T.nilable(String))
       if deps_rb.exist?
         load(deps_rb.to_s)
         from_deps = Dev::Deps.last_config&.ruby_version_requirement
-        return from_deps if from_deps && !from_deps.empty?
+        from_deps = nil if from_deps&.empty?
       end
-      @config.ruby_version
+
+      if from_deps && @config.ruby_version
+        raise ConflictingRubyDeclarationError,
+          "Ruby is declared in both dependencies.rb (#{from_deps}) and dev.yml (#{@config.ruby_version}); " \
+            "keep only the dependencies.rb `ruby` directive"
+      end
+
+      from_deps || @config.ruby_version
+    rescue ConflictingRubyDeclarationError
+      raise
     rescue StandardError => e
       $stderr.puts "dev: could not read `ruby` from dependencies.rb (#{e.message}); using dev.yml ruby:"
       @config.ruby_version
