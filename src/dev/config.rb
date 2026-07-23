@@ -12,6 +12,8 @@ module Dev
     sig { returns(String) }
     attr_reader :name
 
+    # From the removed dev.yml `ruby:` key. Kept only so Runner can reject it
+    # with a dependencies.rb migration message; never used for resolution.
     sig { returns(T.nilable(String)) }
     attr_reader :ruby_version
 

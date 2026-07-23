@@ -23,6 +23,8 @@ module Dev
       yaml = YAML.load_file(dev_yml_path)
       raw_commands = yaml["commands"] || {}
       commands = raw_commands.transform_values { |h| @command_parser.parse(h) }
+      # `ruby:` is a removed key — still parsed so Runner can reject it with a
+      # dependencies.rb migration message instead of silently ignoring it.
       ruby_version = yaml["ruby"]&.to_s
       ruby_version = nil if ruby_version&.empty?
       build_container = parse_build_container(yaml)

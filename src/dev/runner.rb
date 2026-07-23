@@ -18,6 +18,11 @@ module Dev
   class Runner
     extend T::Sig
 
+    # Raised when dev.yml still carries the removed `ruby:` key. The toolchain
+    # is a project dependency and is declared only in dependencies.rb.
+    # RuntimeError so Runner#run reports it as a clean `dev:` error.
+    class UnsupportedDevYamlRubyError < RuntimeError; end
+
     sig { params(dev_yaml_path: Pathname, cfg_parser: Dev::ConfigParser).void }
     def initialize(
       dev_yaml_path: Dev.dev_yaml_file,
@@ -213,6 +218,7 @@ module Dev
         desc: "Resolve dependency constraints and write lockfiles",
       ) do |args, context|
         deps_rb = context.project_root / "dependencies.rb"
+        Dev::Deps.reset!
         load(deps_rb.to_s) if deps_rb.exist?
 
         deps_config = Dev::Deps.last_config || Dev::Deps.define {}
@@ -463,25 +469,35 @@ module Dev
       ShadowenvRuby.resolve_ruby_version(explicit_version)
     end
 
-    # The project's declared Ruby version, preferring the first-class `ruby`
-    # directive in dependencies.rb (where toolchains live) and falling back to
-    # dev.yml's `ruby:` for repos without a deps manifest (e.g. dev itself). nil
-    # when neither is set, so resolve_ruby_version can fall back to Homebrew Ruby.
+    # The project's declared Ruby version: the first-class `ruby` directive in
+    # dependencies.rb. The toolchain is a project dependency, so it lives in
+    # the dependency manifest — even when nothing else is declared there
+    # (a ruby-only manifest engages no integrations and generates no Gemfile).
+    # nil when no manifest declares one, so resolve_ruby_version can fall back
+    # to Homebrew Ruby.
     #
     # dev evaluates dependencies.rb under its own bootstrap Ruby, so reading it
     # here — before the project's interpreter is provisioned — is safe.
     sig { returns(T.nilable(String)) }
     def declared_ruby_version
-      deps_rb = Dev.target_project_root / "dependencies.rb"
-      if deps_rb.exist?
-        load(deps_rb.to_s)
-        from_deps = Dev::Deps.last_config&.ruby_version_requirement
-        return from_deps if from_deps && !from_deps.empty?
+      if @config.ruby_version
+        raise UnsupportedDevYamlRubyError,
+          "dev.yml `ruby:` is no longer supported; declare the toolchain in dependencies.rb: " \
+            'Dev::Deps.define { ruby "x.y.z" }'
       end
-      @config.ruby_version
+
+      deps_rb = Dev.target_project_root / "dependencies.rb"
+      return nil unless deps_rb.exist?
+
+      Dev::Deps.reset!
+      load(deps_rb.to_s)
+      from_deps = Dev::Deps.last_config&.ruby_version_requirement
+      (from_deps && !from_deps.empty?) ? from_deps : nil
+    rescue UnsupportedDevYamlRubyError
+      raise
     rescue StandardError => e
-      $stderr.puts "dev: could not read `ruby` from dependencies.rb (#{e.message}); using dev.yml ruby:"
-      @config.ruby_version
+      $stderr.puts "dev: could not read `ruby` from dependencies.rb (#{e.message})"
+      nil
     end
 
     # The project's declared Python toolchain version from the first-class
@@ -493,6 +509,7 @@ module Dev
       deps_rb = Dev.target_project_root / "dependencies.rb"
       return nil unless deps_rb.exist?
 
+      Dev::Deps.reset!
       load(deps_rb.to_s)
       version = Dev::Deps.last_config&.python_version
       (version && !version.empty?) ? version : nil

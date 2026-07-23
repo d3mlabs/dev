@@ -34,11 +34,11 @@ module ShadowenvRuby
   def resolve_ruby_version(explicit_version)
     version = explicit_version || detect_homebrew_ruby_version
     unless version
-      Kernel.abort("dev: No Ruby version specified in dev.yml and Homebrew Ruby not found. Run: brew install ruby")
+      Kernel.abort("dev: No Ruby declared in dependencies.rb and Homebrew Ruby not found. Run: brew install ruby")
       return
     end
     unless MIN_RUBY.satisfied_by?(Gem::Version.new(version))
-      Kernel.abort("dev: Resolved Ruby #{version} is below dev's minimum (#{MIN_RUBY}). Pin a newer version in dev.yml or run: brew upgrade ruby")
+      Kernel.abort("dev: Resolved Ruby #{version} is below dev's minimum (#{MIN_RUBY}). Pin a newer version in dependencies.rb or run: brew upgrade ruby")
       return
     end
     version
