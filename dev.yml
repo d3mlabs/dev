@@ -1,5 +1,4 @@
 name: dev
-ruby: "4.0.6"
 commands:
   up:
     desc: Setup dev environment (install bundler from dependencies.rb, bundle install)

@@ -1,10 +1,17 @@
 # frozen_string_literal: true
 
-# Prerequisites when running tests for managed repos (Ruby ecosystem).
-# Used by bin/test.rb and dev up.
-#
-# This is a bootstrap constants file, not a Dev::Deps manifest: dev's own Ruby
-# toolchain stays pinned in dev.yml (`ruby:`), which dev reads as the fallback
-# when a repo has no `ruby` directive in a dependencies.rb manifest. The guard
-# keeps re-loads idempotent, since dev loads this file to look for that directive.
+# dev's own dependency manifest. Loaded in two ways:
+# - by dev itself (before every command) to read the project toolchain;
+# - by bin/setup.rb and bin/test.rb BEFORE the bundle exists, for the
+#   bootstrap constants below. The dev/deps require chain is stdlib-only,
+#   so this file must stay loadable pre-bundle (both callers put lib/ on
+#   the load path first). The guard keeps re-loads idempotent.
+require "dev/deps"
+
+Dev::Deps.define do
+  # The project Ruby toolchain; dev provisions it (rbenv + shadowenv).
+  # No gem declarations — the hand-written Gemfile stays bundler-managed.
+  ruby "4.0.6"
+end
+
 BUNDLER_VERSION = ">= 2.1" unless defined?(BUNDLER_VERSION)

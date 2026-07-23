@@ -18,9 +18,10 @@ module Dev
   class Runner
     extend T::Sig
 
-    # Raised when a project declares its Ruby in both dependencies.rb and
-    # dev.yml. RuntimeError so Runner#run reports it as a clean `dev:` error.
-    class ConflictingRubyDeclarationError < RuntimeError; end
+    # Raised when dev.yml still carries the removed `ruby:` key. The toolchain
+    # is a project dependency and is declared only in dependencies.rb.
+    # RuntimeError so Runner#run reports it as a clean `dev:` error.
+    class UnsupportedDevYamlRubyError < RuntimeError; end
 
     sig { params(dev_yaml_path: Pathname, cfg_parser: Dev::ConfigParser).void }
     def initialize(
@@ -469,36 +470,34 @@ module Dev
     end
 
     # The project's declared Ruby version: the first-class `ruby` directive in
-    # dependencies.rb (where toolchains live), or dev.yml's `ruby:` for repos
-    # without a deps manifest (e.g. dev itself). Declaring in both is an error —
-    # a silent precedence would let the loser go stale and mislead readers. nil
-    # when neither is set, so resolve_ruby_version can fall back to Homebrew Ruby.
+    # dependencies.rb. The toolchain is a project dependency, so it lives in
+    # the dependency manifest — even when nothing else is declared there
+    # (a ruby-only manifest engages no integrations and generates no Gemfile).
+    # nil when no manifest declares one, so resolve_ruby_version can fall back
+    # to Homebrew Ruby.
     #
     # dev evaluates dependencies.rb under its own bootstrap Ruby, so reading it
     # here — before the project's interpreter is provisioned — is safe.
     sig { returns(T.nilable(String)) }
     def declared_ruby_version
+      if @config.ruby_version
+        raise UnsupportedDevYamlRubyError,
+          "dev.yml `ruby:` is no longer supported; declare the toolchain in dependencies.rb: " \
+            'Dev::Deps.define { ruby "x.y.z" }'
+      end
+
       deps_rb = Dev.target_project_root / "dependencies.rb"
-      from_deps = T.let(nil, T.nilable(String))
-      if deps_rb.exist?
-        Dev::Deps.reset!
-        load(deps_rb.to_s)
-        from_deps = Dev::Deps.last_config&.ruby_version_requirement
-        from_deps = nil if from_deps&.empty?
-      end
+      return nil unless deps_rb.exist?
 
-      if from_deps && @config.ruby_version
-        raise ConflictingRubyDeclarationError,
-          "Ruby is declared in both dependencies.rb (#{from_deps}) and dev.yml (#{@config.ruby_version}); " \
-            "keep only the dependencies.rb `ruby` directive"
-      end
-
-      from_deps || @config.ruby_version
-    rescue ConflictingRubyDeclarationError
+      Dev::Deps.reset!
+      load(deps_rb.to_s)
+      from_deps = Dev::Deps.last_config&.ruby_version_requirement
+      (from_deps && !from_deps.empty?) ? from_deps : nil
+    rescue UnsupportedDevYamlRubyError
       raise
     rescue StandardError => e
-      $stderr.puts "dev: could not read `ruby` from dependencies.rb (#{e.message}); using dev.yml ruby:"
-      @config.ruby_version
+      $stderr.puts "dev: could not read `ruby` from dependencies.rb (#{e.message})"
+      nil
     end
 
     # The project's declared Python toolchain version from the first-class

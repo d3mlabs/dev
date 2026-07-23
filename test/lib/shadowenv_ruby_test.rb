@@ -43,7 +43,7 @@ class ShadowenvRubyTest < Minitest::Test
 
     Then "it aborts"
     _ * ShadowenvRuby.detect_homebrew_ruby_version >> nil
-    1 * Kernel.abort("dev: No Ruby version specified in dev.yml and Homebrew Ruby not found. Run: brew install ruby")
+    1 * Kernel.abort("dev: No Ruby declared in dependencies.rb and Homebrew Ruby not found. Run: brew install ruby")
   end
 
   test "resolve_ruby_version aborts when version is below minimum" do
@@ -54,7 +54,7 @@ class ShadowenvRubyTest < Minitest::Test
     ShadowenvRuby.resolve_ruby_version(ruby_version)
 
     Then "it aborts for version below 2.7.0"
-    1 * Kernel.abort("dev: Resolved Ruby 2.6.0 is below dev's minimum (>= 2.7.0). Pin a newer version in dev.yml or run: brew upgrade ruby")
+    1 * Kernel.abort("dev: Resolved Ruby 2.6.0 is below dev's minimum (>= 2.7.0). Pin a newer version in dependencies.rb or run: brew upgrade ruby")
   end
 
   # --- provisioned? ---

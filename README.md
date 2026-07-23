@@ -50,28 +50,42 @@ dev also ensures this hook (and the `dev cd` hook below) automatically and idemp
 
 ### Ruby version resolution
 
-dev resolves a project's Ruby version in this order:
+A project declares its Ruby toolchain in exactly one place: the `ruby "x.y.z"` directive in `dependencies.rb` (see [Dependency management](#dependency-management)). The toolchain is a project dependency, so it lives in the dependency manifest — even when nothing else is declared there. A ruby-only manifest is the minimal form and engages nothing else (no Gemfile generation, no lockfiles, no other integrations):
 
-1. `ruby "x.y.z"` in `dependencies.rb` (see [Dependency management](#dependency-management)) — the standard place for repos with a deps manifest.
-2. `ruby:` in `dev.yml` — for repos without a deps manifest (dev itself, small gems).
-3. Homebrew Ruby — fallback when neither declares a version.
+```ruby
+require "dev/deps"
 
-Declaring the Ruby in **both** places is an error (`dev` refuses to run): a silent precedence would let the losing declaration go stale and mislead anyone reading it. Keep the `dependencies.rb` directive once a manifest exists.
+Dev::Deps.define do
+  ruby "4.0.6"
+end
+```
 
-On `dev up`, dev provisions the resolved version through rbenv (installing it if needed) and generates two artifacts at the repo root:
+Repos with no `dependencies.rb` (or no `ruby` directive) fall back to the machine's Homebrew Ruby. A `ruby:` key in `dev.yml` is no longer supported; dev refuses to run and points at the `dependencies.rb` migration.
+
+On `dev up`, dev provisions the declared version through rbenv (installing it if needed) and generates two artifacts at the repo root:
 
 - **`.shadowenv.d/510_ruby.lisp`** — the per-project environment. Contains machine-specific absolute paths; always gitignored.
 - **`.ruby-version`** — the standard rbenv pin, so everything that is not shadowenv-aware (a plain rbenv shell, RubyMine's SDK detection, Bundler's `ruby file:`, GitHub's setup-ruby) agrees with dev.
 
-**Commit `.ruby-version` when the project declares its Ruby** (cases 1 and 2). It is deterministic generated output — same idea as a lockfile — and it is exactly what contributors without dev consume. Do not commit it for fallback-Ruby repos (case 3): there it reflects whatever Ruby the machine happens to have.
+**Commit `.ruby-version` when the project declares its Ruby.** It is deterministic generated output — same idea as a lockfile — and it is exactly what contributors without dev consume. Do not commit it for fallback-Ruby repos: there it reflects whatever Ruby the machine happens to have.
 
-Keep the file a bare version string. rbenv only reads the first word, but other consumers (setup-ruby, Bundler, editors) parse the file strictly, so comments would break them. There is no drift risk in the other direction either: `dev up` rewrites the file from the declared version every run, so a hand edit never survives — to change the Ruby, edit `dependencies.rb` (then `dev update-deps`) or `dev.yml`, and run `dev up`.
+Keep the file a bare version string. rbenv only reads the first word, but other consumers (setup-ruby, Bundler, editors) parse the file strictly, so comments would break them. There is no drift risk in the other direction either: `dev up` rewrites the file from the declared version every run, so a hand edit never survives — to change the Ruby, edit `dependencies.rb`, run `dev update-deps`, then `dev up`.
 
 ### Supported shells
 
 All dev shell RC hooks — shadowenv activation and the `dev cd` wrapper + completers — are installed for **zsh, bash, and fish** (`~/.zshrc`, `~/.bash_profile` or `~/.bashrc`, `~/.config/fish/config.fish`). Other shells are unsupported for hooks: `dev` project commands still run, but there is no env activation and no `dev cd`.
 
 **Formula maintainers:** The Homebrew formula for `d3mlabs/dev` should include `depends_on "shadowenv"` so developers get shadowenv when they install dev. Formulas must never edit shell RCs — dev installs its hooks itself on its own command paths (`dev up`, `dev cd`).
+
+## Adoption model
+
+dev's feature set is three independent opt-ins; a repo takes whichever rungs it needs, in any combination:
+
+1. **Command running** — add a `dev.yml` with a `commands:` map. That alone gets you `dev up` / `dev test` / etc. with the standard UI, from anywhere in the repo. dev does not touch your toolchain or dependencies; your scripts keep doing whatever they did before.
+2. **Toolchain provisioning** — add a `dependencies.rb` with just a `ruby` directive (see [Ruby version resolution](#ruby-version-resolution)). dev provisions that exact Ruby (rbenv + shadowenv) and every `dev <cmd>` runs under it. This does *not* hand your Gemfile to dev — a hand-written Gemfile stays yours, managed by plain bundler.
+3. **Dependency management** — declare gems, brew formulae, engine artifacts, etc. in `dependencies.rb`. `dev update-deps` locks them and `dev up` installs them; for `gem()` declarations dev generates and owns the `Gemfile`.
+
+A gem repo typically stops at rungs 1–2 (commands + a pinned Ruby, hand-written gemspec/Gemfile); an app repo usually takes all three.
 
 ## Usage
 
@@ -247,7 +261,7 @@ Declare dependencies using a Ruby DSL:
 require "dev/deps"
 
 Dev::Deps.define do
-  ruby "4.0.5" # the project's Ruby toolchain; dev provisions it (rbenv + shadowenv)
+  ruby "4.0.6" # the project's Ruby toolchain; dev provisions it (rbenv + shadowenv)
   python "3.12" # optional Python toolchain; dev provisions the interpreter + a project .venv
   gem "cli-ui"
   tap "d3mlabs/d3mlabs"

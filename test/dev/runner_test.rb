@@ -309,6 +309,9 @@ class RunnerTest < Minitest::Test
       } },
     )
     Dev::ShellCommand.any_instance.stubs(:execute)
+    # The empty tmpdir declares no Ruby; pin resolution so the test never
+    # shells out to brew for the Homebrew-Ruby fallback.
+    runner.stubs(:resolve_ruby_version).returns("4.0.1")
 
     When "we run a non-up command"
     runner.run(["test"], ui: fake_ui)
@@ -320,29 +323,9 @@ class RunnerTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "declared_ruby_version returns the dependencies.rb ruby directive for manifest repos" do
-    Given "a project whose dependencies.rb declares ruby and whose dev.yml does not"
+  test "declared_ruby_version returns the dependencies.rb ruby directive" do
+    Given "a project whose dependencies.rb declares ruby"
     root = Pathname.new(Dir.mktmpdir("runner-ruby-deps-"))
-    File.write(root / "dependencies.rb", <<~RUBY)
-      require "dev/deps"
-      Dev::Deps.define { ruby "9.9.9" }
-    RUBY
-    Dev.stubs(:target_project_root).returns(root)
-    runner = build_runner(ruby: nil)
-
-    When "we read the declared ruby version"
-    result = runner.send(:declared_ruby_version)
-
-    Then "the first-class dependencies.rb directive is used"
-    result == "9.9.9"
-
-    Cleanup
-    FileUtils.rm_rf(root)
-  end
-
-  test "declared_ruby_version rejects a Ruby declared in both dependencies.rb and dev.yml" do
-    Given "a project declaring ruby in dependencies.rb AND dev.yml (drift waiting to happen)"
-    root = Pathname.new(Dir.mktmpdir("runner-ruby-conflict-"))
     File.write(root / "dependencies.rb", <<~RUBY)
       require "dev/deps"
       Dev::Deps.define { ruby "9.9.9" }
@@ -351,10 +334,26 @@ class RunnerTest < Minitest::Test
     runner = build_runner
 
     When "we read the declared ruby version"
+    result = runner.send(:declared_ruby_version)
+
+    Then "the dependencies.rb directive is used"
+    result == "9.9.9"
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "declared_ruby_version rejects the removed dev.yml ruby: key with a migration error" do
+    Given "a project whose dev.yml still carries the removed ruby: key"
+    root = Pathname.new(Dir.mktmpdir("runner-ruby-devyml-"))
+    Dev.stubs(:target_project_root).returns(root)
+    runner = build_runner(ruby: "4.0.1")
+
+    When "we read the declared ruby version"
     runner.send(:declared_ruby_version)
 
-    Then "the double declaration is rejected"
-    raises Dev::Runner::ConflictingRubyDeclarationError
+    Then "the stale key is rejected, pointing at the dependencies.rb migration"
+    raises Dev::Runner::UnsupportedDevYamlRubyError
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -372,14 +371,14 @@ class RunnerTest < Minitest::Test
     result = runner.send(:declared_ruby_version)
 
     Then "the stale config is not mistaken for this project's declaration"
-    result == "4.0.1"
+    result == nil
 
     Cleanup
     FileUtils.rm_rf(root)
   end
 
-  test "declared_ruby_version falls back to dev.yml ruby when there is no deps manifest" do
-    Given "a project with no dependencies.rb (e.g. dev's own repo)"
+  test "declared_ruby_version is nil when there is no deps manifest (Homebrew fallback)" do
+    Given "a project with no dependencies.rb"
     root = Pathname.new(Dir.mktmpdir("runner-ruby-fallback-"))
     Dev.stubs(:target_project_root).returns(root)
     runner = build_runner
@@ -387,8 +386,8 @@ class RunnerTest < Minitest::Test
     When "we read the declared ruby version"
     result = runner.send(:declared_ruby_version)
 
-    Then "it falls back to the dev.yml ruby:"
-    result == "4.0.1"
+    Then "nothing is declared, so resolve_ruby_version will fall back to Homebrew Ruby"
+    result == nil
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -396,7 +395,7 @@ class RunnerTest < Minitest::Test
 
   private
 
-  def build_runner(name: "testproject", commands: {}, build: nil, runner: nil, ruby: "4.0.1")
+  def build_runner(name: "testproject", commands: {}, build: nil, runner: nil, ruby: nil)
     yaml = { "name" => name, "commands" => commands }
     yaml["ruby"] = ruby if ruby
     yaml["build"] = build if build
