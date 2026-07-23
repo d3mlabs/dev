@@ -48,6 +48,23 @@ eval "$(shadowenv init zsh)"
 
 dev also ensures this hook (and the `dev cd` hook below) automatically and idempotently when you run `dev up` in a project, so a manual edit is only needed if you want it before your first `dev up`.
 
+### Ruby version resolution
+
+dev resolves a project's Ruby version in this order:
+
+1. `ruby "x.y.z"` in `dependencies.rb` (see [Dependency management](#dependency-management)) — the standard place for repos with a deps manifest.
+2. `ruby:` in `dev.yml` — for repos without a deps manifest (dev itself, small gems).
+3. Homebrew Ruby — fallback when neither declares a version.
+
+On `dev up`, dev provisions the resolved version through rbenv (installing it if needed) and generates two artifacts at the repo root:
+
+- **`.shadowenv.d/510_ruby.lisp`** — the per-project environment. Contains machine-specific absolute paths; always gitignored.
+- **`.ruby-version`** — the standard rbenv pin, so everything that is not shadowenv-aware (a plain rbenv shell, RubyMine's SDK detection, Bundler's `ruby file:`, GitHub's setup-ruby) agrees with dev.
+
+**Commit `.ruby-version` when the project declares its Ruby** (cases 1 and 2). It is deterministic generated output — same idea as a lockfile — and it is exactly what contributors without dev consume. Do not commit it for fallback-Ruby repos (case 3): there it reflects whatever Ruby the machine happens to have.
+
+Keep the file a bare version string. rbenv only reads the first word, but other consumers (setup-ruby, Bundler, editors) parse the file strictly, so comments would break them. There is no drift risk in the other direction either: `dev up` rewrites the file from the declared version every run, so a hand edit never survives — to change the Ruby, edit `dependencies.rb` (then `dev update-deps`) or `dev.yml`, and run `dev up`.
+
 ### Supported shells
 
 All dev shell RC hooks — shadowenv activation and the `dev cd` wrapper + completers — are installed for **zsh, bash, and fish** (`~/.zshrc`, `~/.bash_profile` or `~/.bashrc`, `~/.config/fish/config.fish`). Other shells are unsupported for hooks: `dev` project commands still run, but there is no env activation and no `dev cd`.

@@ -29,7 +29,18 @@ DEV_ROOT = File.expand_path("..", __dir__)
 $LOAD_PATH.unshift(File.join(DEV_ROOT, "lib")) unless $LOAD_PATH.include?(File.join(DEV_ROOT, "lib"))
 
 ENV["BUNDLE_GEMFILE"] ||= File.join(DEV_ROOT, "Gemfile")
-require "bundler/setup"
+
+# On a freshly provisioned Ruby (e.g. after a version bump) the bundle isn't
+# installed yet — and cli/ui below comes from the bundle, so activating it
+# here would be a bootstrap dead end. Install plainly, then re-exec so the
+# activation below sees a complete bundle.
+require "bundler"
+begin
+  Bundler.setup
+rescue Bundler::BundlerError
+  system("bundle", "install") || abort("dev: bootstrap `bundle install` failed")
+  exec(RbConfig.ruby, "-x", __FILE__, *ARGV)
+end
 
 require "open3"
 require "cli/ui"
