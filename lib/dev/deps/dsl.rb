@@ -11,7 +11,7 @@ module Dev
       DEFAULT_GEM_GROUP = :app
 
       attr_reader :taps, :groups, :declarations, :ruby_version_requirement,
-                  :lua_version_value, :python_version_value, :registered_integrations, :registered_methods
+        :lua_version_value, :python_version_value, :registered_integrations, :registered_methods
 
       def initialize
         @taps   = {}
@@ -262,8 +262,8 @@ module Dev
 
         unless [assets, build].compact.size == 1
           raise ArgumentError,
-                "gh #{name.inspect}: provide exactly one of assets: (prebuilt release asset) " \
-                "or build: (build from source)"
+            "gh #{name.inspect}: provide exactly one of assets: (prebuilt release asset) " \
+            "or build: (build from source)"
         end
 
         spec = spec.merge(repo: slug, tag: tag, install_dir: install_dir)

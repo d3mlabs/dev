@@ -14,7 +14,10 @@ module Dev
     # - dependencies: transitive dependencies discovered during fetch ([{name:, constraint:}, …])
     # - post_install: callable or array of callables to run after the dep is fetched.
     #                 Each callable receives (dep, project_root). Not serialized to lockfile.
-    Dependency = Data.define(:name, :integration, :group, :version, :hash, :metadata, :dependencies, :post_install) do
+    # The :hash member (integrity hash) shadows Data#hash; instances are never
+    # used as Hash keys, and renaming it would ripple through the lockfile
+    # format. Known trade-off.
+    Dependency = Data.define(:name, :integration, :group, :version, :hash, :metadata, :dependencies, :post_install) do # rubocop:disable Lint/DataDefineOverride
       def initialize(name:, integration:, group:, version:, hash:, metadata:, dependencies: [], post_install: nil)
         super(name:, integration:, group:, version:, hash:, metadata:, dependencies:, post_install:)
       end

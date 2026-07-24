@@ -24,24 +24,26 @@ module Dev
       class DownloadError < StandardError; end
       class IntegrityError < StandardError; end
 
-      # Build the content-cache key for a locked mod platform. Shared with the
-      # `dev deps path` accessor so consumers never reconstruct the key by hand.
-      #
-      # @param name [String] mod reference (e.g. "SML")
-      # @param version [String] locked version (e.g. "3.12.0")
-      # @param platform [String] ficsit target name (e.g. "LinuxServer")
-      # @param hash [String] locked integrity hash ("SHA256=…")
-      # @return [String] cache key, e.g. "ficsit/SML-3.12.0-LinuxServer-<sha>.zip"
-      def self.cache_key(name:, version:, platform:, hash:)
-        "ficsit/#{name}-#{version}-#{platform}-#{strip_algo(hash)}.zip"
-      end
+      class << self
+        # Build the content-cache key for a locked mod platform. Shared with the
+        # `dev deps path` accessor so consumers never reconstruct the key by hand.
+        #
+        # @param name [String] mod reference (e.g. "SML")
+        # @param version [String] locked version (e.g. "3.12.0")
+        # @param platform [String] ficsit target name (e.g. "LinuxServer")
+        # @param hash [String] locked integrity hash ("SHA256=…")
+        # @return [String] cache key, e.g. "ficsit/SML-3.12.0-LinuxServer-<sha>.zip"
+        def cache_key(name:, version:, platform:, hash:)
+          "ficsit/#{name}-#{version}-#{platform}-#{strip_algo(hash)}.zip"
+        end
 
-      # Strip the "SHA256=" algorithm prefix from a locked hash.
-      #
-      # @param hash [String, nil]
-      # @return [String]
-      def self.strip_algo(hash)
-        hash.to_s.sub(/\ASHA256=/, "")
+        # Strip the "SHA256=" algorithm prefix from a locked hash.
+        #
+        # @param hash [String, nil]
+        # @return [String]
+        def strip_algo(hash)
+          hash.to_s.sub(/\ASHA256=/, "")
+        end
       end
 
       # Download and cache every locked platform zip for each ficsit dep.
@@ -59,8 +61,8 @@ module Dev
         platforms = dep.metadata["platforms"]
         if platforms.nil? || platforms.empty?
           raise MissingPlatformsError,
-                "#{dep.name}@#{dep.version} has no resolved platforms — declare it in a " \
-                "group with a platform and run dev update-deps"
+            "#{dep.name}@#{dep.version} has no resolved platforms — declare it in a " \
+            "group with a platform and run dev update-deps"
         end
 
         platforms.each { |platform, target| install_platform(dep, platform, target) }
@@ -107,7 +109,7 @@ module Dev
         return if actual == sha
 
         raise IntegrityError,
-              "SHA256 mismatch for #{dep.name}@#{dep.version} (#{platform}): expected #{sha}, got #{actual}"
+          "SHA256 mismatch for #{dep.name}@#{dep.version} (#{platform}): expected #{sha}, got #{actual}"
       end
     end
   end

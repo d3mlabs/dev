@@ -6,5 +6,5 @@
 # mocha/minitest expects the old MiniTest constant (test_helper.rb aliases it, but
 # that doesn't run during tapioca loading).
 require "minitest"
-MiniTest = Minitest unless defined?(MiniTest) # rubocop:disable Naming/ConstantName
+MiniTest = Minitest unless defined?(MiniTest)
 require "mocha/minitest"

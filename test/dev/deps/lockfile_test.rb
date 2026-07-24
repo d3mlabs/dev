@@ -139,11 +139,11 @@ class Dev::Deps::LockfileTest < Minitest::Test
     lockfile = Dev::Deps::Lockfile.new(dir: dir)
     deps = [
       Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
-                                version: "1.90.0", hash: "SHA256=aaa", metadata: {}),
+        version: "1.90.0", hash: "SHA256=aaa", metadata: {}),
       Dev::Deps::Dependency.new(name: "luaunit", integration: :luarocks, group: :test,
-                                version: "3.5-1", hash: "SHA256=bbb", metadata: {}),
+        version: "3.5-1", hash: "SHA256=bbb", metadata: {}),
       Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
-                                version: "3.31.4", hash: "SHA256=ccc", metadata: {}),
+        version: "3.31.4", hash: "SHA256=ccc", metadata: {}),
     ]
 
     When "locking and reading back"
@@ -166,16 +166,16 @@ class Dev::Deps::LockfileTest < Minitest::Test
     lockfile = Dev::Deps::Lockfile.new(dir: dir)
     deps = [
       Dev::Deps::Dependency.new(name: "ccache", integration: :brew, group: :build,
-                                version: "4.10.2", hash: "SHA256=aaa", metadata: {}),
+        version: "4.10.2", hash: "SHA256=aaa", metadata: {}),
       Dev::Deps::Dependency.new(name: "ruby", integration: :brew, group: :build,
-                                version: "3.3.0", hash: "SHA256=bbb",
-                                metadata: { "env" => "ci" }),
+        version: "3.3.0", hash: "SHA256=bbb",
+        metadata: { "env" => "ci" }),
       Dev::Deps::Dependency.new(name: "powershell", integration: :brew, group: :build,
-                                version: "7.4.0", hash: "SHA256=ccc",
-                                metadata: { "env" => "ci", "tap" => "d3mlabs/d3mlabs" }),
+        version: "7.4.0", hash: "SHA256=ccc",
+        metadata: { "env" => "ci", "tap" => "d3mlabs/d3mlabs" }),
       Dev::Deps::Dependency.new(name: "powershell", integration: :brew, group: :build,
-                                version: nil, hash: nil,
-                                metadata: { "env" => "dev", "cask" => true }),
+        version: nil, hash: nil,
+        metadata: { "env" => "dev", "cask" => true }),
     ]
 
     When "locking"
@@ -199,12 +199,12 @@ class Dev::Deps::LockfileTest < Minitest::Test
     lockfile = Dev::Deps::Lockfile.new(dir: dir)
     deps = [
       Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
-                                version: "1.90.0", hash: "SHA256=aaa", metadata: {}),
+        version: "1.90.0", hash: "SHA256=aaa", metadata: {}),
       Dev::Deps::Dependency.new(name: "mock-server", integration: :custom, group: :staging,
-                                version: "2.0.0", hash: "SHA256=bbb", metadata: {}),
+        version: "2.0.0", hash: "SHA256=bbb", metadata: {}),
       Dev::Deps::Dependency.new(name: "load-gen", integration: :custom, group: :integration,
-                                version: "1.0.0", hash: "SHA256=ccc",
-                                metadata: { "url" => "https://example.com/load-gen.tar.gz" }),
+        version: "1.0.0", hash: "SHA256=ccc",
+        metadata: { "url" => "https://example.com/load-gen.tar.gz" }),
     ]
 
     When "locking and reading back"
@@ -233,10 +233,10 @@ class Dev::Deps::LockfileTest < Minitest::Test
     lockfile = Dev::Deps::Lockfile.new(dir: dir)
     deps = [
       Dev::Deps::Dependency.new(name: "ccache", integration: :brew, group: :build,
-                                version: "4.10.2", hash: "SHA256=aaa", metadata: {}),
+        version: "4.10.2", hash: "SHA256=aaa", metadata: {}),
       Dev::Deps::Dependency.new(name: "ruby", integration: :brew, group: :build,
-                                version: "3.3.0", hash: "SHA256=bbb",
-                                metadata: { "env" => "ci" }),
+        version: "3.3.0", hash: "SHA256=bbb",
+        metadata: { "env" => "ci" }),
     ]
 
     When "locking and reading back"

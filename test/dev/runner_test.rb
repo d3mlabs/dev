@@ -250,8 +250,12 @@ class RunnerTest < Minitest::Test
     runner = build_runner(commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup", "container" => false } })
     Dev::Cd::HookInstaller.any_instance.stubs(:ensure_installed).returns(:already_present)
     execution_order = []
-    runner.stubs(:install_locked_deps).with { execution_order << :builtin_install; true }
-    Dev::ShellCommand.any_instance.stubs(:execute).with { execution_order << :project_script; true }
+    runner.stubs(:install_locked_deps).with {
+      execution_order << :builtin_install
+      true }
+    Dev::ShellCommand.any_instance.stubs(:execute).with {
+      execution_order << :project_script
+      true }
 
     When "we run up"
     runner.run(["up"], ui: fake_ui)

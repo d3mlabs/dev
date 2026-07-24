@@ -100,7 +100,7 @@ module Dev
         system("git", "clone", "--no-checkout", "-q", dep.metadata["repo"], dest.to_s) ||
           raise(GitCloneError, "git clone #{dep.metadata["repo"]} failed")
         system("git", "-c", "advice.detachedHead=false", "checkout", dep.version,
-               chdir: dest.to_s) ||
+          chdir: dest.to_s) ||
           raise(GitCheckoutError, "git checkout #{dep.version} failed")
       end
 

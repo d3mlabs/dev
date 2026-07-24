@@ -125,7 +125,7 @@ module Dev
           unless target_data
             available = targets.map { |t| t["targetName"] }.join(", ")
             raise TargetNotFoundError,
-                  "#{mod_reference} #{version_data["version"]} has no #{target_name} target (available: #{available})"
+              "#{mod_reference} #{version_data["version"]} has no #{target_name} target (available: #{available})"
           end
 
           acc[target_name] = {

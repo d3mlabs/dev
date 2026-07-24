@@ -132,50 +132,50 @@ module Dev
         ),
       ].freeze
 
-      # Build the integration-type -> Repository hash the Resolver consumes.
-      #
-      # @param project_root [Pathname] project root (threaded to repositories that need it)
-      # @param ruby_version_requirement [String, nil] for the bundler-generated Gemfile
-      # @return [Hash{Symbol => Repository}]
-      def self.repositories(project_root:, ruby_version_requirement: nil)
-        context = { project_root:, ruby_version_requirement: }
-        INTEGRATIONS.each_with_object({}) do |entry, repositories|
-          repositories[entry.symbol] = build_repository(entry, context)
+      class << self
+        # Build the integration-type -> Repository hash the Resolver consumes.
+        #
+        # @param project_root [Pathname] project root (threaded to repositories that need it)
+        # @param ruby_version_requirement [String, nil] for the bundler-generated Gemfile
+        # @return [Hash{Symbol => Repository}]
+        def repositories(project_root:, ruby_version_requirement: nil)
+          context = { project_root:, ruby_version_requirement: }
+          INTEGRATIONS.to_h { |entry| [entry.symbol, build_repository(entry, context)] }
         end
-      end
 
-      # Build the integration-type -> Integration hash for host installs.
-      #
-      # @param project_root [Pathname] project root (threaded to integrations that need it)
-      # @param cache [Cache] shared download cache (passed to every integration)
-      # @param taps [Array<Tap>] Homebrew taps for the brew integration
-      # @param ruby_version_requirement [String, nil] for the bundler repository
-      # @param python_version [String, nil] for the pip integration's venv
-      # @return [Hash{Symbol => Integration}]
-      def self.host_integrations(project_root:, cache:, taps: [], ruby_version_requirement: nil, python_version: nil)
-        context = {
-          project_root:,
-          project_dir: project_root,
-          ruby_version_requirement:,
-          python_version:,
-          taps:,
-        }
-        INTEGRATIONS.each_with_object({}) do |entry, integrations|
-          next unless entry.host?
+        # Build the integration-type -> Integration hash for host installs.
+        #
+        # @param project_root [Pathname] project root (threaded to integrations that need it)
+        # @param cache [Cache] shared download cache (passed to every integration)
+        # @param taps [Array<Tap>] Homebrew taps for the brew integration
+        # @param ruby_version_requirement [String, nil] for the bundler repository
+        # @param python_version [String, nil] for the pip integration's venv
+        # @return [Hash{Symbol => Integration}]
+        def host_integrations(project_root:, cache:, taps: [], ruby_version_requirement: nil, python_version: nil)
+          context = {
+            project_root:,
+            project_dir: project_root,
+            ruby_version_requirement:,
+            python_version:,
+            taps:,
+          }
+          INTEGRATIONS.each_with_object({}) do |entry, integrations|
+            next unless entry.host?
 
-          integrations[entry.symbol] = entry.integration.new(
-            repository: build_repository(entry, context),
-            cache:,
-            **context.slice(*entry.integration_needs),
-          )
+            integrations[entry.symbol] = entry.integration.new(
+              repository: build_repository(entry, context),
+              cache:,
+              **context.slice(*entry.integration_needs),
+            )
+          end
         end
-      end
 
-      # @param entry [Entry]
-      # @param context [Hash{Symbol => Object}] available constructor arguments
-      # @return [Repository]
-      def self.build_repository(entry, context)
-        entry.repository.new(**context.slice(*entry.repository_needs))
+        # @param entry [Entry]
+        # @param context [Hash{Symbol => Object}] available constructor arguments
+        # @return [Repository]
+        def build_repository(entry, context)
+          entry.repository.new(**context.slice(*entry.repository_needs))
+        end
       end
     end
   end

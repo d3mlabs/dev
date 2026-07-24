@@ -195,7 +195,7 @@ class Dev::Deps::XcodeIntegrationTest < Minitest::Test
     Given "xcodes fails without a TTY (it hit a prompt and read EOF)"
     dir = Dir.mktmpdir("dev-xcode-int-test-")
     integration = build_integration(dir, interactive: false, install_succeeds: false,
-                                         creates_app_on_install: false)
+      creates_app_on_install: false)
 
     When "installing"
     error = assert_raises(Dev::Deps::XcodeIntegration::InstallError) do

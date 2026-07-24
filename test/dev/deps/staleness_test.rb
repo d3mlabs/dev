@@ -21,7 +21,7 @@ class Dev::Deps::StalenessTest < Minitest::Test
     lockfile = Dev::Deps::Lockfile.new(dir: project)
     lockfile.lock(
       [Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
-                                 version: "1.90.0", hash: nil, metadata: {})],
+        version: "1.90.0", hash: nil, metadata: {})],
       manifest_digest: Digest::SHA256.file(manifest).hexdigest,
     )
     project
@@ -69,7 +69,7 @@ class Dev::Deps::StalenessTest < Minitest::Test
     manifest_digest = Digest::SHA256.file(File.join(project, "dependencies.rb")).hexdigest
     Dev::Deps::Lockfile.new(dir: project).lock(
       [Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
-                                 version: "1.91.0", hash: nil, metadata: {})],
+        version: "1.91.0", hash: nil, metadata: {})],
       manifest_digest: manifest_digest,
     )
 
@@ -101,7 +101,7 @@ class Dev::Deps::StalenessTest < Minitest::Test
     File.write(File.join(project, "dependencies.rb"), "group :app do\nend\n")
     Dev::Deps::Lockfile.new(dir: project).lock(
       [Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
-                                 version: "1.90.0", hash: nil, metadata: {})],
+        version: "1.90.0", hash: nil, metadata: {})],
     )
     staleness = build_staleness(dir, project)
     staleness.stamp_installed!

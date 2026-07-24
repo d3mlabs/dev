@@ -285,7 +285,7 @@ module ShadowenvRuby
     LISP
   end
 
-# Ensure the shadowenv activation hook is in the user's shell RC.
+  # Ensure the shadowenv activation hook is in the user's shell RC.
   #
   # Delegates the shell → RC-file mapping and the idempotent append to the
   # shared Dev::ShellRcHook installer; this module only declares its snippet

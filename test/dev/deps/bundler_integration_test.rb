@@ -21,7 +21,7 @@ class Dev::Deps::BundlerIntegrationTest < Minitest::Test
 
   def gem_dep(name)
     Dev::Deps::Dependency.new(name: name, integration: :bundler, group: :app,
-                              version: "1.0.0", hash: nil, metadata: {})
+      version: "1.0.0", hash: nil, metadata: {})
   end
 
   test "install_all runs a frozen bundle install against the generated Gemfile" do

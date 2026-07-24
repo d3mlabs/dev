@@ -169,7 +169,7 @@ class Dev::CredentialsTest < Minitest::Test
     stdout = "my-secret-key\n"
     Open3.stubs(:capture3)
          .with("security", "find-generic-password",
-               "-a", "d3mlabs/dev", "-s", "curseforge/api_key", "-w")
+           "-a", "d3mlabs/dev", "-s", "curseforge/api_key", "-w")
          .returns([stdout, "", stub(success?: true)])
 
     When "loading from keychain"
@@ -183,7 +183,7 @@ class Dev::CredentialsTest < Minitest::Test
     Given "no keychain entry"
     Open3.stubs(:capture3)
          .with("security", "find-generic-password",
-               "-a", "d3mlabs/dev", "-s", "curseforge/api_key", "-w")
+           "-a", "d3mlabs/dev", "-s", "curseforge/api_key", "-w")
          .returns(["", "security: SecKeychainSearchCopyNext", stub(success?: false)])
 
     When "loading from keychain"

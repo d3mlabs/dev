@@ -67,14 +67,16 @@ module Dev
       @host_platform = host_platform
     end
 
-    # The actions-runner release platform slug for the current host (GitHub
-    # names macOS "osx").
-    #
-    # @return [String]
-    def self.detect_host_platform
-      os = RUBY_PLATFORM.include?("darwin") ? "osx" : "linux"
-      arch = RUBY_PLATFORM.match?(/arm64|aarch64/) ? "arm64" : "x64"
-      "#{os}-#{arch}"
+    class << self
+      # The actions-runner release platform slug for the current host (GitHub
+      # names macOS "osx").
+      #
+      # @return [String]
+      def detect_host_platform
+        os = RUBY_PLATFORM.include?("darwin") ? "osx" : "linux"
+        arch = RUBY_PLATFORM.match?(/arm64|aarch64/) ? "arm64" : "x64"
+        "#{os}-#{arch}"
+      end
     end
 
     # Run the full setup: preflight, download, register, install the service.

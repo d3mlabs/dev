@@ -49,20 +49,22 @@ module Dev
         @synced_at = synced_at
       end
 
-      # Split a plan file's content into its header and body.
-      #
-      # @param content [String]
-      # @return [Array(Header | nil, String)] header (nil when unlinked) and body
-      def self.split(content)
-        match = PATTERN.match(content)
-        return [nil, content] unless match
+      class << self
+        # Split a plan file's content into its header and body.
+        #
+        # @param content [String]
+        # @return [Array(Header | nil, String)] header (nil when unlinked) and body
+        def split(content)
+          match = PATTERN.match(content)
+          return [nil, content] unless match
 
-        header = new(
-          owner_repo: match[:owner_repo],
-          number: Integer(match[:number]),
-          synced_at: match[:synced_at],
-        )
-        [header, match.post_match]
+          header = new(
+            owner_repo: match[:owner_repo],
+            number: Integer(match[:number]),
+            synced_at: match[:synced_at],
+          )
+          [header, match.post_match]
+        end
       end
 
       # @return [String] "owner/repo#number"

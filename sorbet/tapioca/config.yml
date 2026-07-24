@@ -1,10 +1,16 @@
 gem:
   # Add your `gem` command parameters here:
   #
-  # exclude:
-  # - gem_name
   # doc: true
   # workers: 5
+  #
+  # RuboCop is lint-time only (require: false) and never referenced from typed
+  # code; generating its RBIs also crashes on Ruby 4 (yard's legacy parser
+  # requires the removed irb/notifier).
+  exclude:
+    - rubocop
+    - rubocop-ast
+    - rubocop-shopify
 dsl:
   # Add your `dsl` command parameters here:
   #

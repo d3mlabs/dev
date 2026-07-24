@@ -145,7 +145,7 @@ class Dev::RunnerSetupTest < Minitest::Test
 
     When "running setup with a repo override"
     setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, out: silent,
-                                 host_platform: "linux-x64")
+      host_platform: "linux-x64")
     setup.run
 
     Then "config.sh registers with the minted token, the service starts, no download happens"
@@ -182,7 +182,7 @@ class Dev::RunnerSetupTest < Minitest::Test
 
     When "running setup org-wide"
     setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", org: true, executor: exec,
-                                 out: silent, host_platform: "osx-arm64")
+      out: silent, host_platform: "osx-arm64")
     setup.run
 
     Then "the registration token is minted at the org endpoint and config.sh targets the org URL"
@@ -211,7 +211,7 @@ class Dev::RunnerSetupTest < Minitest::Test
 
     When "re-running setup org-wide"
     setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", org: true, executor: exec,
-                                 out: silent, host_platform: "osx-arm64")
+      out: silent, host_platform: "osx-arm64")
     setup.run
 
     Then "the installed service is uninstalled, the remove token comes from the old repo scope, " \
@@ -260,7 +260,7 @@ class Dev::RunnerSetupTest < Minitest::Test
     config = Dev::RunnerSetupConfig.new(labels: "ue-engine", dir: dir, version: "9.9.9")
     exec = RecordingExecutor.new(&authed_responder)
     setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, out: silent,
-                                 host_platform: "linux-x64")
+      host_platform: "linux-x64")
 
     When "running setup"
     setup.run
@@ -281,7 +281,7 @@ class Dev::RunnerSetupTest < Minitest::Test
     config = Dev::RunnerSetupConfig.new(labels: "macos,ue-editor", dir: dir, version: "9.9.9")
     exec = RecordingExecutor.new(&authed_responder)
     setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, out: silent,
-                                 host_platform: "osx-arm64")
+      host_platform: "osx-arm64")
 
     When "running setup"
     setup.run

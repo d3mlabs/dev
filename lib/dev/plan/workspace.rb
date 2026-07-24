@@ -57,12 +57,14 @@ module Dev
         end
       end
 
-      # @param title [String]
-      # @return [String] filesystem-safe slug (bounded length)
-      def self.slugify(title)
-        slug = title.downcase.gsub(/[^a-z0-9]+/, "-").gsub(/\A-|-\z/, "")
-        slug = slug[0, 40].to_s.sub(/-\z/, "")
-        slug.empty? ? "plan" : slug
+      class << self
+        # @param title [String]
+        # @return [String] filesystem-safe slug (bounded length)
+        def slugify(title)
+          slug = title.downcase.gsub(/[^a-z0-9]+/, "-").gsub(/\A-|-\z/, "")
+          slug = slug[0, 40].to_s.sub(/-\z/, "")
+          slug.empty? ? "plan" : slug
+        end
       end
 
       private

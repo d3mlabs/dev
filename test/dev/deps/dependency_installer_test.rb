@@ -28,7 +28,7 @@ class Dev::Deps::DependencyInstallerTest < Minitest::Test
     lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
     deps = [
       Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
-                                version: "1.90.0", hash: "SHA256=aaa", metadata: {}),
+        version: "1.90.0", hash: "SHA256=aaa", metadata: {}),
     ]
     lockfile.lock(deps)
     cmake_integration = RecordingIntegration.new
@@ -53,9 +53,9 @@ class Dev::Deps::DependencyInstallerTest < Minitest::Test
     lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
     deps = [
       Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
-                                version: "1.90.0", hash: "SHA256=aaa", metadata: {}),
+        version: "1.90.0", hash: "SHA256=aaa", metadata: {}),
       Dev::Deps::Dependency.new(name: "ccache", integration: :brew, group: :build,
-                                version: "4.10", hash: "SHA256=bbb", metadata: {}),
+        version: "4.10", hash: "SHA256=bbb", metadata: {}),
     ]
     lockfile.lock(deps)
 
@@ -92,13 +92,13 @@ class Dev::Deps::DependencyInstallerTest < Minitest::Test
     lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
     deps = [
       Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
-                                version: "3.31", hash: "SHA256=aaa", metadata: {}),
+        version: "3.31", hash: "SHA256=aaa", metadata: {}),
       Dev::Deps::Dependency.new(name: "ruby", integration: :brew, group: :build,
-                                version: "4.0", hash: "SHA256=bbb",
-                                metadata: { "env" => "ci" }),
+        version: "4.0", hash: "SHA256=bbb",
+        metadata: { "env" => "ci" }),
       Dev::Deps::Dependency.new(name: "powershell", integration: :brew, group: :build,
-                                version: "7.4", hash: "SHA256=ccc",
-                                metadata: { "env" => "dev" }),
+        version: "7.4", hash: "SHA256=ccc",
+        metadata: { "env" => "dev" }),
     ]
     lockfile.lock(deps)
     brew_int = RecordingIntegration.new
@@ -123,13 +123,13 @@ class Dev::Deps::DependencyInstallerTest < Minitest::Test
     lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
     deps = [
       Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
-                                version: "3.31", hash: "SHA256=aaa", metadata: {}),
+        version: "3.31", hash: "SHA256=aaa", metadata: {}),
       Dev::Deps::Dependency.new(name: "UnrealEngine", integration: :gh, group: :game,
-                                version: "5.8.0-wine-7", hash: nil,
-                                metadata: { "host" => "linux" }),
+        version: "5.8.0-wine-7", hash: nil,
+        metadata: { "host" => "linux" }),
       Dev::Deps::Dependency.new(name: "UnrealEngineMac", integration: :gh, group: :editor,
-                                version: "5.8.0-mac-editor-1", hash: nil,
-                                metadata: { "host" => "darwin" }),
+        version: "5.8.0-mac-editor-1", hash: nil,
+        metadata: { "host" => "darwin" }),
     ]
     lockfile.lock(deps)
     brew_int = RecordingIntegration.new
@@ -155,11 +155,11 @@ class Dev::Deps::DependencyInstallerTest < Minitest::Test
     lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
     deps = [
       Dev::Deps::Dependency.new(name: "ffi", integration: :bundler, group: :app,
-                                version: "1.17.0", hash: nil, metadata: {}),
+        version: "1.17.0", hash: nil, metadata: {}),
       Dev::Deps::Dependency.new(name: "luaunit", integration: :luarocks, group: :test,
-                                version: "3.5-1", hash: "SHA256=aaa", metadata: {}),
+        version: "3.5-1", hash: "SHA256=aaa", metadata: {}),
       Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
-                                version: "3.31", hash: "SHA256=bbb", metadata: {}),
+        version: "3.31", hash: "SHA256=bbb", metadata: {}),
     ]
     lockfile.lock(deps)
     bundler_int = RecordingIntegration.new
@@ -187,7 +187,7 @@ class Dev::Deps::DependencyInstallerTest < Minitest::Test
     lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
     deps = [
       Dev::Deps::Dependency.new(name: "foo", integration: :unknown, group: :app,
-                                version: "1.0", hash: "SHA256=aaa", metadata: {}),
+        version: "1.0", hash: "SHA256=aaa", metadata: {}),
     ]
     lockfile.lock(deps)
     installer = Dev::Deps::DependencyInstaller.new(lockfile:, integrations: {})

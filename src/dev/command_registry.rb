@@ -65,6 +65,5 @@ module Dev
     def all
       @commands.dup
     end
-
   end
 end
