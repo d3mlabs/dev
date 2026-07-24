@@ -48,7 +48,7 @@ class Dev::Deps::LuaRocksRepositoryTest < Minitest::Test
     When "fetching the dependency"
     error = assert_raises(Dev::Deps::LuaRocksRepository::SearchError) do
       repository.fetch("name" => "missing", "integration" => "luarocks",
-                        "group" => "runtime", "constraint" => ">=1.0")
+        "group" => "runtime", "constraint" => ">=1.0")
     end
 
     Then "the error mentions the package name"
@@ -65,7 +65,7 @@ class Dev::Deps::LuaRocksRepositoryTest < Minitest::Test
     When "fetching the dependency"
     error = assert_raises(Dev::Deps::LuaRocksRepository::NoVersionError) do
       repository.fetch("name" => "empty", "integration" => "luarocks",
-                        "group" => "runtime", "constraint" => ">=1.0")
+        "group" => "runtime", "constraint" => ">=1.0")
     end
 
     Then "the error mentions the package name"

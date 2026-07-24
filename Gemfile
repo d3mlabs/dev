@@ -17,6 +17,9 @@ gem "rake"
 gem "pry", "~> 0.14"
 gem "pry-byebug", "~> 3.11"
 
+# Style
+gem "rubocop-shopify", "~> 3.0", require: false
+
 # Sorbet: static + runtime type checking
 gem "sorbet", group: :development
 gem "tapioca", require: false, group: [:development, :test]

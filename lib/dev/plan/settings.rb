@@ -32,8 +32,8 @@ module Dev
         return value if value && !value.empty?
 
         raise MissingSettingError,
-              "no org plans repo configured — add `plans_repo: <owner>/<repo>` " \
-              "to #{@config_path} (or set DEV_PLANS_REPO)."
+          "no org plans repo configured — add `plans_repo: <owner>/<repo>` " \
+          "to #{@config_path} (or set DEV_PLANS_REPO)."
       end
 
       private

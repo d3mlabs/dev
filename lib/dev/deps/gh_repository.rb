@@ -58,7 +58,7 @@ module Dev
         assets = matching_assets(release, pattern)
         if assets.empty?
           raise NoMatchingAssetsError,
-                "no assets matching #{pattern.inspect} in #{repo_slug}@#{tag}"
+            "no assets matching #{pattern.inspect} in #{repo_slug}@#{tag}"
         end
 
         Dependency.new(

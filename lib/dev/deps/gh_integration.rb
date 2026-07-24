@@ -179,7 +179,7 @@ module Dev
         return if success
 
         raise DownloadError,
-              "gh api tarball failed for #{dep.metadata["repo"]}@#{dep.version}"
+          "gh api tarball failed for #{dep.metadata["repo"]}@#{dep.version}"
       end
 
       # Extract a GitHub source tarball into source_dir, stripping the single
@@ -233,7 +233,7 @@ module Dev
         return if success
 
         raise BuildError,
-              "build failed for #{dep.name}@#{dep.version} (#{dep.metadata["build"]})"
+          "build failed for #{dep.name}@#{dep.version} (#{dep.metadata["build"]})"
       end
 
       # Resolve a build: value to a command. A project-relative path to an existing
@@ -265,7 +265,7 @@ module Dev
         return if success
 
         raise DownloadError,
-              "gh release download failed for #{dep.metadata["repo"]}@#{dep.version}"
+          "gh release download failed for #{dep.metadata["repo"]}@#{dep.version}"
       end
 
       # Verify downloaded files against the digests locked at resolve time.
@@ -287,7 +287,7 @@ module Dev
           next if actual == expected
 
           raise IntegrityError,
-                "SHA256 mismatch for #{asset["name"]}: expected #{expected}, got #{actual}"
+            "SHA256 mismatch for #{asset["name"]}: expected #{expected}, got #{actual}"
         end
       end
 
@@ -324,7 +324,7 @@ module Dev
       def extract_zstd_tarball(base_name, parts, dest_dir)
         unless base_name.end_with?(".tar.zst")
           raise UnsupportedArchiveError,
-                "unsupported archive #{base_name} — only .tar.zst[.NN] is supported"
+            "unsupported archive #{base_name} — only .tar.zst[.NN] is supported"
         end
 
         pipeline = "cat #{parts.map(&:to_s).shelljoin} | zstd -d | " \

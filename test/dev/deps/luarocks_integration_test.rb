@@ -16,10 +16,10 @@ class Dev::Deps::LuaRocksIntegrationTest < Minitest::Test
     cache = Dev::Deps::Cache.new(cache_dir: dir)
     repository = Dev::Deps::LuaRocksRepository.new
     integration = Dev::Deps::LuaRocksIntegration.new(repository: repository, cache: cache,
-                                                     project_root: Pathname(dir))
+      project_root: Pathname(dir))
     deps = [
       Dev::Deps::Dependency.new(name: "luaunit", integration: :luarocks, group: :test,
-                                version: "3.5-1", hash: "SHA256=abc", metadata: {}),
+        version: "3.5-1", hash: "SHA256=abc", metadata: {}),
     ]
     tree = (Pathname(dir) / "lua_modules").to_s
     Open3.expects(:capture3)
@@ -42,10 +42,10 @@ class Dev::Deps::LuaRocksIntegrationTest < Minitest::Test
     cache = Dev::Deps::Cache.new(cache_dir: dir)
     repository = Dev::Deps::LuaRocksRepository.new
     integration = Dev::Deps::LuaRocksIntegration.new(repository: repository, cache: cache,
-                                                     project_root: Pathname(dir))
+      project_root: Pathname(dir))
     deps = [
       Dev::Deps::Dependency.new(name: "badrock", integration: :luarocks, group: :runtime,
-                                version: "1.0", hash: "SHA256=def", metadata: {}),
+        version: "1.0", hash: "SHA256=def", metadata: {}),
     ]
     failed_status = stub(success?: false)
     Open3.stubs(:capture3).returns(["", "not found", failed_status])

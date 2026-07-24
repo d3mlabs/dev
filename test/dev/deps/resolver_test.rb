@@ -48,9 +48,9 @@ class Dev::Deps::ResolverTest < Minitest::Test
   test "calls prepare once per integration with that integration's declarations before fetching" do
     Given "a preparing repo with two declarations of its type"
     foo = Dev::Deps::Dependency.new(name: "foo", integration: :bundler, group: :app,
-                                    version: "1.0", hash: nil, metadata: {})
+      version: "1.0", hash: nil, metadata: {})
     bar = Dev::Deps::Dependency.new(name: "bar", integration: :bundler, group: :test,
-                                    version: "2.0", hash: nil, metadata: {})
+      version: "2.0", hash: nil, metadata: {})
     repo = PreparingRepository.new(deps_by_name: { "foo" => foo, "bar" => bar })
     declarations = [
       Dev::Deps::DependencyDeclaration.new(name: "foo", integration: :bundler, group: :app),
@@ -69,9 +69,9 @@ class Dev::Deps::ResolverTest < Minitest::Test
   test "attaches host and env from the declaration onto resolved metadata" do
     Given "declarations carrying the install-scoping axes"
     engine = Dev::Deps::Dependency.new(name: "UnrealEngineMac", integration: :gh, group: :editor,
-                                       version: "5.8.0-mac-editor-1", hash: nil, metadata: { "repo" => "d3mlabs/unreal-engine" })
+      version: "5.8.0-mac-editor-1", hash: nil, metadata: { "repo" => "d3mlabs/unreal-engine" })
     ruby_dep = Dev::Deps::Dependency.new(name: "ruby", integration: :brew, group: :build,
-                                         version: "4.0", hash: nil, metadata: {})
+      version: "4.0", hash: nil, metadata: {})
     repo = StubRepository.new(deps_by_name: { "UnrealEngineMac" => engine, "ruby" => ruby_dep })
     declarations = [
       Dev::Deps::DependencyDeclaration.new(name: "UnrealEngineMac", integration: :gh, group: :editor, host: :darwin),
@@ -94,14 +94,14 @@ class Dev::Deps::ResolverTest < Minitest::Test
   test "transitive dependencies inherit the declaring dep's host and env" do
     Given "a host/env-scoped dep with a transitive dependency"
     parent = Dev::Deps::Dependency.new(name: "parent", integration: :brew, group: :build,
-                                       version: "1.0", hash: nil, metadata: {},
-                                       dependencies: [{ name: "child", constraint: ">= 1.0" }])
+      version: "1.0", hash: nil, metadata: {},
+      dependencies: [{ name: "child", constraint: ">= 1.0" }])
     child = Dev::Deps::Dependency.new(name: "child", integration: :brew, group: :build,
-                                      version: "2.0", hash: nil, metadata: {})
+      version: "2.0", hash: nil, metadata: {})
     repo = StubRepository.new(deps_by_name: { "parent" => parent, "child" => child })
     declarations = [
       Dev::Deps::DependencyDeclaration.new(name: "parent", integration: :brew, group: :build,
-                                           host: :darwin, env: "ci"),
+        host: :darwin, env: "ci"),
     ]
     resolver = Dev::Deps::Resolver.new(repositories: { brew: repo })
 
@@ -117,9 +117,9 @@ class Dev::Deps::ResolverTest < Minitest::Test
   test "resolves a flat list of declarations with no transitive dependencies" do
     Given "two independent declarations"
     boost = Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
-                                      version: "sha1", hash: nil, metadata: {})
+      version: "sha1", hash: nil, metadata: {})
     gtest = Dev::Deps::Dependency.new(name: "gtest", integration: :cmake, group: :test,
-                                      version: "sha2", hash: nil, metadata: {})
+      version: "sha2", hash: nil, metadata: {})
     repo = StubRepository.new(deps_by_name: { "boost" => boost, "gtest" => gtest })
     declarations = [
       Dev::Deps::DependencyDeclaration.new(name: "boost", integration: :cmake, group: :app),
@@ -138,10 +138,10 @@ class Dev::Deps::ResolverTest < Minitest::Test
   test "resolves transitive dependencies via Dependency#dependencies" do
     Given "a parent with a transitive child"
     child = Dev::Deps::Dependency.new(name: "child", integration: :luarocks, group: :test,
-                                      version: "2.0", hash: "SHA256=bbb", metadata: {})
+      version: "2.0", hash: "SHA256=bbb", metadata: {})
     parent = Dev::Deps::Dependency.new(name: "parent", integration: :luarocks, group: :test,
-                                       version: "1.0", hash: "SHA256=aaa", metadata: {},
-                                       dependencies: [{ name: "child", constraint: ">= 1.0" }])
+      version: "1.0", hash: "SHA256=aaa", metadata: {},
+      dependencies: [{ name: "child", constraint: ">= 1.0" }])
     repo = StubRepository.new(deps_by_name: { "parent" => parent, "child" => child })
     declarations = [
       Dev::Deps::DependencyDeclaration.new(name: "parent", integration: :luarocks, group: :test),
@@ -173,10 +173,10 @@ class Dev::Deps::ResolverTest < Minitest::Test
   test "does not duplicate already-resolved transitive deps" do
     Given "overlapping direct and transitive deps"
     a = Dev::Deps::Dependency.new(name: "a", integration: :cmake, group: :app,
-                                  version: "1.0", hash: nil, metadata: {},
-                                  dependencies: [{ name: "b", constraint: ">= 1.0" }])
+      version: "1.0", hash: nil, metadata: {},
+      dependencies: [{ name: "b", constraint: ">= 1.0" }])
     b = Dev::Deps::Dependency.new(name: "b", integration: :cmake, group: :app,
-                                  version: "1.0", hash: nil, metadata: {})
+      version: "1.0", hash: nil, metadata: {})
     repo = StubRepository.new(deps_by_name: { "a" => a, "b" => b })
     declarations = [
       Dev::Deps::DependencyDeclaration.new(name: "a", integration: :cmake, group: :app),
@@ -195,7 +195,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
   test "handles declarations with empty transitive dependencies" do
     Given "a declaration with no transitive deps"
     solo = Dev::Deps::Dependency.new(name: "solo", integration: :cmake, group: :app,
-                                     version: "1.0", hash: nil, metadata: {})
+      version: "1.0", hash: nil, metadata: {})
     repo = StubRepository.new(deps_by_name: { "solo" => solo })
     declarations = [
       Dev::Deps::DependencyDeclaration.new(name: "solo", integration: :cmake, group: :app),
@@ -213,13 +213,13 @@ class Dev::Deps::ResolverTest < Minitest::Test
   test "resolves deep transitive chains beyond depth 1" do
     Given "A depends on B, B depends on C"
     c = Dev::Deps::Dependency.new(name: "c", integration: :luarocks, group: :app,
-                                  version: "3.0", hash: "SHA256=ccc", metadata: {})
+      version: "3.0", hash: "SHA256=ccc", metadata: {})
     b = Dev::Deps::Dependency.new(name: "b", integration: :luarocks, group: :app,
-                                  version: "2.0", hash: "SHA256=bbb", metadata: {},
-                                  dependencies: [{ name: "c", constraint: ">= 3.0" }])
+      version: "2.0", hash: "SHA256=bbb", metadata: {},
+      dependencies: [{ name: "c", constraint: ">= 3.0" }])
     a = Dev::Deps::Dependency.new(name: "a", integration: :luarocks, group: :app,
-                                  version: "1.0", hash: "SHA256=aaa", metadata: {},
-                                  dependencies: [{ name: "b", constraint: ">= 2.0" }])
+      version: "1.0", hash: "SHA256=aaa", metadata: {},
+      dependencies: [{ name: "b", constraint: ">= 2.0" }])
     repo = StubRepository.new(deps_by_name: { "a" => a, "b" => b, "c" => c })
     declarations = [
       Dev::Deps::DependencyDeclaration.new(name: "a", integration: :luarocks, group: :app),
@@ -237,19 +237,19 @@ class Dev::Deps::ResolverTest < Minitest::Test
   test "resolves diamond dependencies without duplication" do
     Given "A depends on B and C, both depend on D"
     d = Dev::Deps::Dependency.new(name: "d", integration: :luarocks, group: :app,
-                                  version: "1.0", hash: "SHA256=ddd", metadata: {})
+      version: "1.0", hash: "SHA256=ddd", metadata: {})
     b = Dev::Deps::Dependency.new(name: "b", integration: :luarocks, group: :app,
-                                  version: "1.0", hash: "SHA256=bbb", metadata: {},
-                                  dependencies: [{ name: "d", constraint: ">= 1.0" }])
+      version: "1.0", hash: "SHA256=bbb", metadata: {},
+      dependencies: [{ name: "d", constraint: ">= 1.0" }])
     c = Dev::Deps::Dependency.new(name: "c", integration: :luarocks, group: :app,
-                                  version: "1.0", hash: "SHA256=ccc", metadata: {},
-                                  dependencies: [{ name: "d", constraint: ">= 1.0" }])
+      version: "1.0", hash: "SHA256=ccc", metadata: {},
+      dependencies: [{ name: "d", constraint: ">= 1.0" }])
     a = Dev::Deps::Dependency.new(name: "a", integration: :luarocks, group: :app,
-                                  version: "1.0", hash: "SHA256=aaa", metadata: {},
-                                  dependencies: [
-                                    { name: "b", constraint: ">= 1.0" },
-                                    { name: "c", constraint: ">= 1.0" },
-                                  ])
+      version: "1.0", hash: "SHA256=aaa", metadata: {},
+      dependencies: [
+        { name: "b", constraint: ">= 1.0" },
+        { name: "c", constraint: ">= 1.0" },
+      ])
     repo = StubRepository.new(deps_by_name: { "a" => a, "b" => b, "c" => c, "d" => d })
     declarations = [
       Dev::Deps::DependencyDeclaration.new(name: "a", integration: :luarocks, group: :app),
@@ -267,11 +267,11 @@ class Dev::Deps::ResolverTest < Minitest::Test
   test "terminates on cyclic transitive dependencies" do
     Given "A depends on B, B depends on A"
     a = Dev::Deps::Dependency.new(name: "a", integration: :cmake, group: :app,
-                                  version: "1.0", hash: nil, metadata: {},
-                                  dependencies: [{ name: "b", constraint: {} }])
+      version: "1.0", hash: nil, metadata: {},
+      dependencies: [{ name: "b", constraint: {} }])
     b = Dev::Deps::Dependency.new(name: "b", integration: :cmake, group: :app,
-                                  version: "1.0", hash: nil, metadata: {},
-                                  dependencies: [{ name: "a", constraint: {} }])
+      version: "1.0", hash: nil, metadata: {},
+      dependencies: [{ name: "a", constraint: {} }])
     repo = StubRepository.new(deps_by_name: { "a" => a, "b" => b })
     declarations = [
       Dev::Deps::DependencyDeclaration.new(name: "a", integration: :cmake, group: :app),
@@ -289,10 +289,10 @@ class Dev::Deps::ResolverTest < Minitest::Test
   test "transitive dependencies inherit parent's group" do
     Given "a :test parent with a transitive child"
     child = Dev::Deps::Dependency.new(name: "child", integration: :luarocks, group: :test,
-                                      version: "2.0", hash: "SHA256=bbb", metadata: {})
+      version: "2.0", hash: "SHA256=bbb", metadata: {})
     parent = Dev::Deps::Dependency.new(name: "parent", integration: :luarocks, group: :test,
-                                       version: "1.0", hash: "SHA256=aaa", metadata: {},
-                                       dependencies: [{ name: "child", constraint: ">= 1.0" }])
+      version: "1.0", hash: "SHA256=aaa", metadata: {},
+      dependencies: [{ name: "child", constraint: ">= 1.0" }])
     repo = StubRepository.new(deps_by_name: { "parent" => parent, "child" => child })
     declarations = [
       Dev::Deps::DependencyDeclaration.new(name: "parent", integration: :luarocks, group: :test),
@@ -310,10 +310,10 @@ class Dev::Deps::ResolverTest < Minitest::Test
   test "normalizes string constraints on transitive deps to Hash" do
     Given "a parent whose transitive dep has a string constraint"
     child = Dev::Deps::Dependency.new(name: "child", integration: :luarocks, group: :app,
-                                      version: "2.0", hash: "SHA256=bbb", metadata: {})
+      version: "2.0", hash: "SHA256=bbb", metadata: {})
     parent = Dev::Deps::Dependency.new(name: "parent", integration: :luarocks, group: :app,
-                                       version: "1.0", hash: "SHA256=aaa", metadata: {},
-                                       dependencies: [{ name: "child", constraint: ">= 2.0" }])
+      version: "1.0", hash: "SHA256=aaa", metadata: {},
+      dependencies: [{ name: "child", constraint: ">= 2.0" }])
     repo = StubRepository.new(deps_by_name: { "parent" => parent, "child" => child })
     declarations = [
       Dev::Deps::DependencyDeclaration.new(name: "parent", integration: :luarocks, group: :app),
@@ -331,12 +331,12 @@ class Dev::Deps::ResolverTest < Minitest::Test
   test "unions platforms across groups and resolves a duplicated dep once" do
     Given "SML declared in :app (no platform) and :integration (LinuxServer)"
     sml = Dev::Deps::Dependency.new(name: "SML", integration: :ficsit, group: :app,
-                                    version: "3.12.0", hash: nil, metadata: {})
+      version: "3.12.0", hash: nil, metadata: {})
     repo = StubRepository.new(deps_by_name: { "SML" => sml })
     declarations = [
       Dev::Deps::DependencyDeclaration.new(name: "SML", integration: :ficsit, group: :app),
       Dev::Deps::DependencyDeclaration.new(name: "SML", integration: :ficsit, group: :integration,
-                                           platform: "LinuxServer"),
+        platform: "LinuxServer"),
     ]
     resolver = Dev::Deps::Resolver.new(repositories: { ficsit: repo })
 
@@ -352,7 +352,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
   test "omits platforms from the fetch id when no group pins a platform" do
     Given "a dep declared only in groups without a platform"
     boost = Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
-                                      version: "1.0", hash: nil, metadata: {})
+      version: "1.0", hash: nil, metadata: {})
     repo = StubRepository.new(deps_by_name: { "boost" => boost })
     declarations = [
       Dev::Deps::DependencyDeclaration.new(name: "boost", integration: :cmake, group: :app),
@@ -370,11 +370,11 @@ class Dev::Deps::ResolverTest < Minitest::Test
     Given "a declaration with a post_install hook"
     hook = ->(dep, root) {}
     dep = Dev::Deps::Dependency.new(name: "gtest", integration: :cmake, group: :test,
-                                    version: "sha1", hash: nil, metadata: {})
+      version: "sha1", hash: nil, metadata: {})
     repo = StubRepository.new(deps_by_name: { "gtest" => dep })
     declarations = [
       Dev::Deps::DependencyDeclaration.new(name: "gtest", integration: :cmake, group: :test,
-                                            post_install: hook),
+        post_install: hook),
     ]
     resolver = Dev::Deps::Resolver.new(repositories: { cmake: repo })
 
@@ -388,7 +388,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
   test "post_install is nil when declaration has none" do
     Given "a declaration without post_install"
     dep = Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
-                                    version: "sha1", hash: nil, metadata: {})
+      version: "sha1", hash: nil, metadata: {})
     repo = StubRepository.new(deps_by_name: { "boost" => dep })
     declarations = [
       Dev::Deps::DependencyDeclaration.new(name: "boost", integration: :cmake, group: :app),

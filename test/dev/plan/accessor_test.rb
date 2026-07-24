@@ -633,4 +633,3 @@ class Dev::Plan::AccessorTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 end
-

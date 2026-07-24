@@ -101,8 +101,8 @@ module Dev
         return if installed_build == dep.version
 
         raise BuildMismatchError,
-              "#{dep.name}: expected buildid #{dep.version}, installed #{installed_build.inspect} " \
-              "— run dev update-deps to re-pin"
+          "#{dep.name}: expected buildid #{dep.version}, installed #{installed_build.inspect} " \
+          "— run dev update-deps to re-pin"
       end
     end
   end

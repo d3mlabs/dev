@@ -77,7 +77,7 @@ module Dev
         )
         unless @cache.exists?(key)
           raise NotCachedError,
-                "#{name} (#{platform}) is not cached — run dev up to download it"
+            "#{name} (#{platform}) is not cached — run dev up to download it"
         end
 
         @cache.path(key)
@@ -92,8 +92,8 @@ module Dev
         developer_dir = Pathname(XcodeIntegration.developer_dir(dep.version, root: @xcode_install_root))
         unless developer_dir.directory?
           raise NotInstalledError,
-                "xcode #{dep.version} is not installed at " \
-                "#{XcodeIntegration.app_path(dep.version, root: @xcode_install_root)} — run dev up"
+            "xcode #{dep.version} is not installed at " \
+            "#{XcodeIntegration.app_path(dep.version, root: @xcode_install_root)} — run dev up"
         end
 
         developer_dir
@@ -118,7 +118,7 @@ module Dev
         unless target
           available = platforms.keys.join(", ")
           raise PlatformNotLockedError,
-                "#{dep.name} has no locked #{platform} platform (locked: #{available})"
+            "#{dep.name} has no locked #{platform} platform (locked: #{available})"
         end
 
         target

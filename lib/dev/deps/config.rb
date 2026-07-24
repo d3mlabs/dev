@@ -8,7 +8,7 @@ module Dev
     # Parsed dependency configuration. Returned by Dev::Deps.define.
     class Config
       attr_reader :taps, :groups, :declarations, :ruby_version_requirement,
-                  :lua_version, :python_version, :registered_integrations
+        :lua_version, :python_version, :registered_integrations
 
       # @param taps [Array<Tap>] declared Homebrew taps
       # @param groups [Hash] group name → { "brew" => [...], "env" => {...} }
@@ -37,27 +37,29 @@ module Dev
         @groups[name.to_s] || { "brew" => [], "env" => {} }
       end
 
-      # Evaluate a DSL block and return a Config instance.
-      #
-      # @param block [Proc] DSL block evaluated in DSL context
-      # @return [Config]
-      def self.define(&block)
-        dsl = DSL.new
-        dsl.instance_eval(&block) if block
+      class << self
+        # Evaluate a DSL block and return a Config instance.
+        #
+        # @param block [Proc] DSL block evaluated in DSL context
+        # @return [Config]
+        def define(&block)
+          dsl = DSL.new
+          dsl.instance_eval(&block) if block
 
-        taps = dsl.taps.map do |_name, raw|
-          Tap.new(name: raw["name"], url: raw["url"])
+          taps = dsl.taps.map do |_name, raw|
+            Tap.new(name: raw["name"], url: raw["url"])
+          end
+
+          new(
+            taps:,
+            groups: dsl.groups,
+            declarations: dsl.declarations,
+            ruby_version_requirement: dsl.ruby_version_requirement,
+            lua_version: dsl.lua_version_value,
+            python_version: dsl.python_version_value,
+            registered_integrations: dsl.registered_integrations,
+          )
         end
-
-        new(
-          taps:,
-          groups: dsl.groups,
-          declarations: dsl.declarations,
-          ruby_version_requirement: dsl.ruby_version_requirement,
-          lua_version: dsl.lua_version_value,
-          python_version: dsl.python_version_value,
-          registered_integrations: dsl.registered_integrations,
-        )
       end
     end
   end

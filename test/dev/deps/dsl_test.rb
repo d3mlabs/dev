@@ -11,8 +11,8 @@ class Dev::Deps::DSLTest < Minitest::Test
     config = Dev::Deps.define do
       group :app do
         cmake "boost",
-              url: "https://example.com/boost.tar.gz",
-              tag: "boost-1.90.0"
+          url: "https://example.com/boost.tar.gz",
+          tag: "boost-1.90.0"
       end
     end
 
@@ -205,10 +205,10 @@ class Dev::Deps::DSLTest < Minitest::Test
     config = Dev::Deps.define do
       group :editor, host: :darwin do
         gh "UnrealEngineMac",
-           github: "d3mlabs/unreal-engine",
-           tag: "5.8.0-mac-editor-1",
-           assets: "UnrealEngine-Editor-Mac.tar.zst.*",
-           install_dir: "~/.dev/engines/ue5-mac"
+          github: "d3mlabs/unreal-engine",
+          tag: "5.8.0-mac-editor-1",
+          assets: "UnrealEngine-Editor-Mac.tar.zst.*",
+          install_dir: "~/.dev/engines/ue5-mac"
         xcode "26.1.1"
       end
     end
@@ -224,11 +224,11 @@ class Dev::Deps::DSLTest < Minitest::Test
     config = Dev::Deps.define do
       group :game do
         gh "UnrealEngine",
-           github: "d3mlabs/unreal-engine",
-           tag: "5.8.0-wine-7",
-           assets: "UnrealEngine-Wine-Editor-Linux.tar.zst.*",
-           install_dir: "~/.dev/engines/ue5",
-           host: :linux
+          github: "d3mlabs/unreal-engine",
+          tag: "5.8.0-wine-7",
+          assets: "UnrealEngine-Wine-Editor-Linux.tar.zst.*",
+          install_dir: "~/.dev/engines/ue5",
+          host: :linux
       end
     end
 
@@ -276,9 +276,9 @@ class Dev::Deps::DSLTest < Minitest::Test
     config = Dev::Deps.define do
       group :build do
         gh "satisfactorymodding/UnrealEngine",
-           tag: "5.6.1-css-83",
-           assets: "UnrealEngine-CSS-Editor-Linux.tar.zst.*",
-           install_dir: "~/.dev/engines/unreal-engine-css"
+          tag: "5.6.1-css-83",
+          assets: "UnrealEngine-CSS-Editor-Linux.tar.zst.*",
+          install_dir: "~/.dev/engines/unreal-engine-css"
       end
     end
 
@@ -298,10 +298,10 @@ class Dev::Deps::DSLTest < Minitest::Test
     config = Dev::Deps.define do
       group :game do
         gh "UnrealEngine",
-           github: "EpicGames/UnrealEngine",
-           tag: "5.6.1-release",
-           build: "bin/build-ue.sh",
-           install_dir: "~/.dev/engines/ue5"
+          github: "EpicGames/UnrealEngine",
+          tag: "5.6.1-release",
+          build: "bin/build-ue.sh",
+          install_dir: "~/.dev/engines/ue5"
       end
     end
 
@@ -322,7 +322,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     config = Dev::Deps.define do
       group :app do
         gh "json", github: "nlohmann/json", tag: "v3.11.3", build: :none,
-           install_dir: "~/.dev/headers/json"
+          install_dir: "~/.dev/headers/json"
       end
     end
 
@@ -335,7 +335,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     Dev::Deps.define do
       group :game do
         gh "UnrealEngine", github: "EpicGames/UnrealEngine", tag: "5.6.1-release",
-           install_dir: "~/.dev/engines/ue5"
+          install_dir: "~/.dev/engines/ue5"
       end
     end
 
@@ -348,7 +348,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     Dev::Deps.define do
       group :game do
         gh "UnrealEngine", github: "EpicGames/UnrealEngine", tag: "5.6.1-release",
-           assets: "*.tar.zst.*", build: "bin/build-ue.sh", install_dir: "~/.dev/engines/ue5"
+          assets: "*.tar.zst.*", build: "bin/build-ue.sh", install_dir: "~/.dev/engines/ue5"
       end
     end
 
@@ -467,7 +467,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     config = Dev::Deps.define do
       group :test do
         cmake "googletest", github: "google/googletest", tag: "v1.17.0",
-              post_install: hook
+          post_install: hook
       end
     end
 

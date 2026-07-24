@@ -64,7 +64,7 @@ class CommandTest < Minitest::Test
     result == expected
 
     Where
-    cmd1                                                       | cmd2                                                       | expected
+    cmd1 | cmd2 | expected
     Dev::ShellCommand.new(run: "r1", desc: "d1", repl: false) | Dev::ShellCommand.new(run: "r1", desc: "d1", repl: false) | true
     Dev::ShellCommand.new(run: "r1", desc: "d1", repl: false) | Dev::ShellCommand.new(run: "r1", desc: "d1", repl: true)  | false
     Dev::ShellCommand.new(run: "r1", desc: "d1", repl: false) | Dev::ShellCommand.new(run: "r1", desc: "d2", repl: false) | false
@@ -90,7 +90,7 @@ class CommandTest < Minitest::Test
     cmd.eql?(other) == expected
 
     Where
-    other                                                      | expected
+    other | expected
     Dev::ShellCommand.new(run: "r1", desc: "d1", repl: false) | true
     Dev::ShellCommand.new(run: "r1", desc: "d1", repl: true)  | false
     Dev::ShellCommand.new(run: "r1", desc: "d2", repl: false) | false
@@ -107,7 +107,7 @@ class CommandTest < Minitest::Test
     result == expected
 
     Where
-    cmd1                                                       | cmd2                                                       | expected
+    cmd1 | cmd2 | expected
     Dev::ShellCommand.new(run: "r1", desc: "d1", repl: false) | Dev::ShellCommand.new(run: "r1", desc: "d1", repl: false) | true
     Dev::ShellCommand.new(run: "r1", desc: "d1", repl: false) | Dev::ShellCommand.new(run: "r1", desc: "d1", repl: true)  | false
     Dev::ShellCommand.new(run: "r1", desc: "d1", repl: false) | Dev::ShellCommand.new(run: "r1", desc: "d2", repl: false) | false

@@ -119,13 +119,13 @@ class Dev::Deps::ConfigTest < Minitest::Test
     config = Dev::Deps.define do
       group :app do
         cmake "boost",
-              url: "https://example.com/boost.tar.gz",
-              tag: "boost-1.90.0",
-              cmake_targets: ["stacktrace"],
-              cmake_namespace: "Boost::"
+          url: "https://example.com/boost.tar.gz",
+          tag: "boost-1.90.0",
+          cmake_targets: ["stacktrace"],
+          cmake_namespace: "Boost::"
         cmake "cereal",
-              repo: "https://github.com/USCiLab/cereal",
-              tag: "v1.3.2"
+          repo: "https://github.com/USCiLab/cereal",
+          tag: "v1.3.2"
       end
     end
 
@@ -149,9 +149,9 @@ class Dev::Deps::ConfigTest < Minitest::Test
     config = Dev::Deps.define do
       group :test do
         cmake "googletest",
-              repo: "https://github.com/google/googletest",
-              tag: "v1.17.0",
-              cmake_targets: ["gtest", "gmock"]
+          repo: "https://github.com/google/googletest",
+          tag: "v1.17.0",
+          cmake_targets: ["gtest", "gmock"]
       end
     end
 
@@ -175,8 +175,8 @@ class Dev::Deps::ConfigTest < Minitest::Test
     config = Dev::Deps.define do
       group :app do
         cmake "entityx",
-              repo: "https://github.com/alecthomas/entityx",
-              commit: "ee3042f8b027"
+          repo: "https://github.com/alecthomas/entityx",
+          commit: "ee3042f8b027"
       end
     end
 

@@ -181,12 +181,16 @@ class BuildContainerTest < Minitest::Test
     When "ensuring the image with a build args provider"
     BuildContainer.stubs(:local_image?).returns(false)
     BuildContainer.stubs(:pull).returns(false)
-    BuildContainer.stubs(:build!).with { |_tag, build_args:, **_| received_args = build_args; true }
+    BuildContainer.stubs(:build!).with { |_tag, build_args:, **_|
+      received_args = build_args
+      true }
     BuildContainer.stubs(:push!).returns(true)
     BuildContainer.ensure_image!(
       config,
       project_root: Pathname(dir),
-      build_args_provider: -> { provider_calls += 1; { "WWISE_EMAIL" => "me@example.com" } },
+      build_args_provider: -> {
+                             provider_calls += 1
+                             { "WWISE_EMAIL" => "me@example.com" } },
     )
 
     Then
@@ -210,7 +214,9 @@ class BuildContainerTest < Minitest::Test
     BuildContainer.ensure_image!(
       config,
       project_root: Pathname(dir),
-      build_args_provider: -> { provider_calls += 1; {} },
+      build_args_provider: -> {
+                             provider_calls += 1
+                             {} },
     )
 
     Then
@@ -226,7 +232,9 @@ class BuildContainerTest < Minitest::Test
     captured = nil
 
     When "building with build args"
-    BuildContainer.stubs(:system).with { |*argv| captured = argv; true }.returns(true)
+    BuildContainer.stubs(:system).with { |*argv|
+      captured = argv
+      true }.returns(true)
     BuildContainer.send(
       :build!,
       "img:tag",
@@ -250,7 +258,9 @@ class BuildContainerTest < Minitest::Test
     captured = nil
 
     When "building"
-    BuildContainer.stubs(:system).with { |*argv| captured = argv; true }.returns(true)
+    BuildContainer.stubs(:system).with { |*argv|
+      captured = argv
+      true }.returns(true)
     BuildContainer.send(:build!, "img:tag", project_root: Pathname(dir))
 
     Then "the non-TTY-silent auto renderer is overridden"
@@ -269,7 +279,9 @@ class BuildContainerTest < Minitest::Test
 
     When "ensuring the image"
     BuildContainer.stubs(:local_image?).returns(true)
-    BuildContainer.stubs(:pull).with { |tag| pulled << tag; true }
+    BuildContainer.stubs(:pull).with { |tag|
+      pulled << tag
+      true }
     result = BuildContainer.ensure_image!(config, project_root: Pathname(dir))
 
     Then
@@ -291,8 +303,12 @@ class BuildContainerTest < Minitest::Test
     When "ensuring the image"
     BuildContainer.stubs(:local_image?).returns(false)
     BuildContainer.stubs(:pull).returns(false)
-    BuildContainer.stubs(:build!).with { |tag, **_| built << tag; true }
-    BuildContainer.stubs(:push!).with { |tag| pushed << tag; true }
+    BuildContainer.stubs(:build!).with { |tag, **_|
+      built << tag
+      true }
+    BuildContainer.stubs(:push!).with { |tag|
+      pushed << tag
+      true }
     result = BuildContainer.ensure_image!(config, project_root: Pathname(dir))
 
     Then
@@ -316,7 +332,9 @@ class BuildContainerTest < Minitest::Test
     BuildContainer.stubs(:local_image?).returns(false)
     BuildContainer.stubs(:pull).returns(false)
     BuildContainer.stubs(:build!).returns(true)
-    BuildContainer.stubs(:push!).with { |tag| pushed << tag; true }
+    BuildContainer.stubs(:push!).with { |tag|
+      pushed << tag
+      true }
     BuildContainer.ensure_image!(config, project_root: Pathname(dir), push: false)
 
     Then
@@ -778,7 +796,9 @@ class BuildContainerTest < Minitest::Test
     captured = nil
 
     When "building with contexts and secrets"
-    BuildContainer.stubs(:system).with { |*argv| captured = argv; true }.returns(true)
+    BuildContainer.stubs(:system).with { |*argv|
+      captured = argv
+      true }.returns(true)
     BuildContainer.send(
       :build!,
       "img:tag",
@@ -804,7 +824,9 @@ class BuildContainerTest < Minitest::Test
     captured = nil
 
     When "building with a secret"
-    BuildContainer.stubs(:system).with { |*argv| captured = argv; true }.returns(true)
+    BuildContainer.stubs(:system).with { |*argv|
+      captured = argv
+      true }.returns(true)
     BuildContainer.send(
       :build!,
       "img:tag",
@@ -847,7 +869,9 @@ class BuildContainerTest < Minitest::Test
       config,
       project_root: Pathname(dir),
       build_args_provider: -> { {} },
-      secrets_provider: -> { secret_calls += 1; { "WWISE_TOKEN" => "tok" } },
+      secrets_provider: -> {
+                          secret_calls += 1
+                          { "WWISE_TOKEN" => "tok" } },
     )
 
     Then
@@ -872,7 +896,9 @@ class BuildContainerTest < Minitest::Test
     BuildContainer.ensure_image!(
       config,
       project_root: Pathname(dir),
-      secrets_provider: -> { secret_calls += 1; {} },
+      secrets_provider: -> {
+                          secret_calls += 1
+                          {} },
     )
 
     Then
@@ -1118,7 +1144,9 @@ class BuildContainerTest < Minitest::Test
     captured = nil
 
     When "creating the service container"
-    BuildContainer.stubs(:system).with { |*argv, **_kw| captured = argv; true }.returns(true)
+    BuildContainer.stubs(:system).with { |*argv, **_kw|
+      captured = argv
+      true }.returns(true)
     BuildContainer.send(
       :create_service_container, "dev-x", "img:tag",
       project_root: Pathname("/project"), volumes: ["/engines/ue:/ue"],

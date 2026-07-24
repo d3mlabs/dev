@@ -18,7 +18,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     integration = Dev::Deps::BrewIntegration.new(repository: repository, cache: cache)
     deps = [
       Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
-                                version: "3.31.4", hash: "SHA256=abc", metadata: {}),
+        version: "3.31.4", hash: "SHA256=abc", metadata: {}),
     ]
 
     Dev::Deps::BrewIntegration.any_instance.stubs(:brew_installed?).returns(false)
@@ -41,7 +41,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     integration = Dev::Deps::BrewIntegration.new(repository: Dev::Deps::BrewRepository.new, cache: cache)
     deps = [
       Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
-                                version: "4.3.4", hash: "SHA256=abc", metadata: {}),
+        version: "4.3.4", hash: "SHA256=abc", metadata: {}),
     ]
     integration.stubs(:brew_installed?).returns(false)
     Open3.expects(:capture3).with("brew", "install", "cmake").returns(["", "", stub(success?: true)])
@@ -63,8 +63,8 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     integration = Dev::Deps::BrewIntegration.new(repository: Dev::Deps::BrewRepository.new, cache: cache)
     deps = [
       Dev::Deps::Dependency.new(name: "llvm", integration: :brew, group: :build,
-                                version: "18.1.8", hash: "SHA256=abc",
-                                metadata: { "version_suffix" => "18" }),
+        version: "18.1.8", hash: "SHA256=abc",
+        metadata: { "version_suffix" => "18" }),
     ]
     integration.stubs(:brew_installed?).returns(false)
     Open3.expects(:capture3).with("brew", "install", "llvm@18").returns(["", "", stub(success?: true)])
@@ -87,7 +87,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     integration = Dev::Deps::BrewIntegration.new(repository: repository, cache: cache)
     deps = [
       Dev::Deps::Dependency.new(name: "bad_formula", integration: :brew, group: :build,
-                                version: "1.0.0", hash: nil, metadata: { "version_suffix" => "1" }),
+        version: "1.0.0", hash: nil, metadata: { "version_suffix" => "1" }),
     ]
 
     integration.stubs(:brew_installed?).returns(false)

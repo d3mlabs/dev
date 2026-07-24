@@ -27,7 +27,7 @@ module Dev
     def initialize(
       dev_yaml_path: Dev.dev_yaml_file,
       cfg_parser: Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
-      )
+    )
       @cfg_parser = T.let(cfg_parser, Dev::ConfigParser)
       @config = T.let(@cfg_parser.parse(dev_yaml_path), Dev::Config)
       @registry = T.let(build_registry(@config), Dev::CommandRegistry)

@@ -40,23 +40,25 @@ module Dev
 
       INSTALL_ROOT = "/Applications"
 
-      # The version-named app bundle the pin installs to. xcodes' default
-      # naming, chosen precisely because nothing auto-updates it in place.
-      #
-      # @param version [String] pinned Xcode version
-      # @param root [String] install root (tests point this at a tmpdir)
-      # @return [String]
-      def self.app_path(version, root: INSTALL_ROOT)
-        File.join(root, "Xcode-#{version}.app")
-      end
+      class << self
+        # The version-named app bundle the pin installs to. xcodes' default
+        # naming, chosen precisely because nothing auto-updates it in place.
+        #
+        # @param version [String] pinned Xcode version
+        # @param root [String] install root (tests point this at a tmpdir)
+        # @return [String]
+        def app_path(version, root: INSTALL_ROOT)
+          File.join(root, "Xcode-#{version}.app")
+        end
 
-      # The DEVELOPER_DIR for a pinned version.
-      #
-      # @param version [String] pinned Xcode version
-      # @param root [String] install root (tests point this at a tmpdir)
-      # @return [String]
-      def self.developer_dir(version, root: INSTALL_ROOT)
-        File.join(app_path(version, root:), "Contents", "Developer")
+        # The DEVELOPER_DIR for a pinned version.
+        #
+        # @param version [String] pinned Xcode version
+        # @param root [String] install root (tests point this at a tmpdir)
+        # @return [String]
+        def developer_dir(version, root: INSTALL_ROOT)
+          File.join(app_path(version, root:), "Contents", "Developer")
+        end
       end
 
       # @param repository [Repository]
@@ -109,9 +111,9 @@ module Dev
         return if run_metal_toolchain_download(version)
 
         raise InstallError,
-              "xcodebuild -downloadComponent MetalToolchain failed for Xcode #{version}. " \
-              "Retry manually: DEVELOPER_DIR=#{self.class.developer_dir(version, root: install_root)} " \
-              "xcodebuild -downloadComponent MetalToolchain"
+          "xcodebuild -downloadComponent MetalToolchain failed for Xcode #{version}. " \
+          "Retry manually: DEVELOPER_DIR=#{self.class.developer_dir(version, root: install_root)} " \
+          "xcodebuild -downloadComponent MetalToolchain"
       end
 
       # @param version [String]
@@ -120,8 +122,8 @@ module Dev
       def install_via_xcodes(version)
         unless xcodes_available?
           raise XcodesMissingError,
-                "xcode #{version}: the xcodes CLI is not installed. " \
-                "Declare it in dependencies.rb — group :build { brew \"xcodes\" } — and run dev up."
+            "xcode #{version}: the xcodes CLI is not installed. " \
+            "Declare it in dependencies.rb — group :build { brew \"xcodes\" } — and run dev up."
         end
 
         puts ">>> Installing Xcode #{version} via xcodes (this downloads several GB)"

@@ -1,0 +1,25 @@
+inherit_gem:
+  rubocop-shopify: rubocop.yml
+
+inherit_mode:
+  merge:
+    - Exclude
+
+AllCops:
+  SuggestExtensions: false
+  Exclude:
+    # Polyglot sh/ruby bootstrap scripts (#!/bin/sh preamble re-execing via
+    # `ruby -x`); not parseable as plain Ruby.
+    - bin/**/*
+    - tmp/**/*
+
+# dev's tests are written in the RSpock dialect: bare comparisons in
+# Then/Expect blocks, block-name constants (Given/When/Then/Where), and
+# Where-table rows (`a | b`, sometimes with identical operands) are rewritten
+# by the AST transform, not evaluated for value.
+Lint/Void:
+  Exclude:
+    - test/**/*
+Lint/BinaryOperatorWithIdenticalOperands:
+  Exclude:
+    - test/**/*

@@ -94,11 +94,11 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     prepopulate_dep(dir, "gtest")
     deps = [
       Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
-                                version: "sha1", hash: nil,
-                                metadata: { "repo" => "https://github.com/boost/boost" }),
+        version: "sha1", hash: nil,
+        metadata: { "repo" => "https://github.com/boost/boost" }),
       Dev::Deps::Dependency.new(name: "gtest", integration: :cmake, group: :test,
-                                version: "sha2", hash: nil,
-                                metadata: { "repo" => "https://github.com/google/googletest" }),
+        version: "sha2", hash: nil,
+        metadata: { "repo" => "https://github.com/google/googletest" }),
     ]
 
     When "installing all"
