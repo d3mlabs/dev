@@ -59,6 +59,12 @@ class FakePlanSettings
   def plans_repo = "d3mlabs/plans"
 end unless defined?(FakePlanSettings)
 
+# A knowledge synchronizer stand-in: plan flows are under test here, and the
+# real synchronizer would read the machine's config and touch user-global dirs.
+class NoopKnowledgeSynchronizer
+  def sync(project_root: nil); end
+end unless defined?(NoopKnowledgeSynchronizer)
+
 transform!(RSpock::AST::Transformation)
 class Dev::Plan::AccessorTest < Minitest::Test
   REPO = "d3mlabs/demo"
@@ -77,9 +83,8 @@ class Dev::Plan::AccessorTest < Minitest::Test
       issues: issues,
       settings: FakePlanSettings.new,
       merge_base: Dev::Plan::MergeBase.new(state_dir: File.join(dir, "state")),
-      skill_installer: Dev::Plan::SkillInstaller.new(
-        skill_source: File.join(dir, "no-skill"), skills_dir: File.join(dir, "skills"),
-      ),
+      skill_installer: Dev::SkillInstaller.new(skills_dir: File.join(dir, "skills")),
+      knowledge: NoopKnowledgeSynchronizer.new,
     )
     [accessor, root, issues]
   end

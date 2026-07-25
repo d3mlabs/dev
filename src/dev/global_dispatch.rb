@@ -4,17 +4,20 @@
 require "pathname"
 require "dev/cd"
 require "dev/plan"
+require "dev/knowledge"
 require "dev/credentials"
 require "dev/credential_accessor"
 
 module Dev
   # Early dispatch for global builtins that must not require a dev.yml:
   #
-  # - `dev cd`   — host-global (jumps between checkouts; also its hidden
-  #                --resolve / --candidates plumbing)
-  # - `dev cred` — host-global (credentials live under XDG / ~/.config/dev)
-  # - `dev plan` — workspace-global (plans live in the enclosing workspace,
-  #                no project config is read)
+  # - `dev cd`        — host-global (jumps between checkouts; also its hidden
+  #                     --resolve / --candidates plumbing)
+  # - `dev cred`      — host-global (credentials live under XDG / ~/.config/dev)
+  # - `dev plan`      — workspace-global (plans live in the enclosing
+  #                     workspace, no project config is read)
+  # - `dev knowledge` — host-global (the machine knowledge cache lives under
+  #                     XDG / ~/.local/share/dev)
   #
   # Runs before Dev::Runner is constructed, so these commands work from any
   # directory. Project commands (`up`, yaml-declared names) keep the existing
@@ -22,7 +25,7 @@ module Dev
   class GlobalDispatch
     extend T::Sig
 
-    GLOBAL_COMMANDS = T.let(%w[cd plan cred].freeze, T::Array[String])
+    GLOBAL_COMMANDS = T.let(%w[cd plan cred knowledge].freeze, T::Array[String])
 
     # Candidates shown in an ambiguous `dev cd` error before truncating.
     AMBIGUOUS_CANDIDATE_CAP = 10
@@ -55,8 +58,10 @@ module Dev
       cmd_name = T.must(args.shift)
       case cmd_name
       when "cd" then @cd_accessor.run(args)
-      # Plan::Accessor is built per run: its workspace root depends on the cwd.
+      # Plan and Knowledge accessors are built per run: their workspace root
+      # depends on the cwd.
       when "plan" then Dev::Plan::Accessor.new(project_root: workspace_root).run(args)
+      when "knowledge" then Dev::Knowledge::Accessor.new(project_root: workspace_root).run(args)
       when "cred" then @cred_accessor.run(args)
       else raise ArgumentError, "not a global command: #{cmd_name}"
       end

@@ -29,18 +29,22 @@ module Dev
       # @param project_root [Pathname] the workspace root (from dev's context)
       # @param workspace [Dev::Plan::Workspace, nil]
       # @param issues [Dev::Plan::GithubIssues, nil]
-      # @param settings [Dev::Plan::Settings, nil]
+      # @param settings [Dev::Settings, nil]
       # @param merge_base [Dev::Plan::MergeBase, nil]
-      # @param skill_installer [Dev::Plan::SkillInstaller, nil]
+      # @param skill_installer [Dev::SkillInstaller, nil] target for dev's
+      #   shipped skill links (defaults to the user-global ~/.cursor/skills)
+      # @param knowledge [Dev::Knowledge::Synchronizer, nil]
       # @param executor [Dev::Plan::Executor] CLI boundary (injectable for tests)
       def initialize(project_root:, executor: Executor.new, workspace: nil, issues: nil,
-                     settings: nil, merge_base: nil, skill_installer: nil)
+                     settings: nil, merge_base: nil, skill_installer: nil, knowledge: nil)
+        @project_root = project_root
         @executor = executor
         @workspace = workspace || Workspace.new(project_root: project_root, executor: executor)
         @issues = issues || GithubIssues.new(executor: executor)
-        @settings = settings || Settings.new
+        @settings = settings || Dev::Settings.new
         @merge_base = merge_base || MergeBase.new
-        @skill_installer = skill_installer || SkillInstaller.new
+        @skill_installer = skill_installer || Dev::SkillInstaller.new
+        @knowledge = knowledge || Knowledge::Synchronizer.new
       end
 
       # Dispatch a `dev plan …` invocation.
@@ -50,7 +54,11 @@ module Dev
       # @param input [IO] input stream (the Cursor hook payload for hook-after-edit)
       # @raise [UsageError] on an unrecognized invocation
       def run(args, out: $stdout, input: $stdin)
-        @skill_installer.ensure_installed
+        # Hook point: refresh dev's shipped skill links and the org knowledge
+        # artifacts. Cheap and idempotent (content-compared, network only in a
+        # detached background refresh), so every invocation can afford it.
+        @skill_installer.install_all(Dev::SkillInstaller::SHIPPED_SKILLS_DIR)
+        @knowledge.sync(project_root: @project_root)
         subcommand, *rest = args
         case subcommand
         when "new" then new_plan(rest, out:)
