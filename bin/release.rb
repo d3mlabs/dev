@@ -59,28 +59,28 @@ def main
   puts
 
   CLI::UI::Frame.open("Releasing v#{new_version}") do
-    CLI::UI::Spinner.spin("Bumping VERSION #{current} → #{new_version}") do
+    step("Bumping VERSION #{current} → #{new_version}") do
       bump_version(current, new_version)
     end
 
-    CLI::UI::Spinner.spin("Committing and tagging v#{new_version}") do
+    step("Committing and tagging v#{new_version}") do
       commit_and_tag(new_version, notes)
     end
 
-    CLI::UI::Spinner.spin("Pushing main + tag v#{new_version}") do
+    step("Pushing main + tag v#{new_version}") do
       push(new_version)
     end
 
-    CLI::UI::Spinner.spin("Creating GitHub release v#{new_version}") do
+    step("Creating GitHub release v#{new_version}") do
       create_release(new_version, notes)
     end
 
     sha = nil
-    CLI::UI::Spinner.spin("Computing tarball sha256") do
+    step("Computing tarball sha256") do
       sha = compute_sha256(new_version)
     end
 
-    CLI::UI::Spinner.spin("Updating Homebrew formula") do
+    step("Updating Homebrew formula") do
       update_formula(new_version, sha)
     end
   end
@@ -164,6 +164,16 @@ def ensure_on_main!
   return if branch == "main"
 
   abort "Must be on main branch (currently on #{branch})."
+end
+
+# One release step under a spinner, aborting the whole release when it fails.
+# Spinner.spin swallows the block's exception and only reports it — without
+# the abort, a failed push once cascaded into the formula publishing a tag
+# that never reached GitHub (v0.2.73), breaking brew installs until hand-fixed.
+def step(title, &block)
+  return if CLI::UI::Spinner.spin(title, &block)
+
+  abort "Release aborted: '#{title}' failed. Fix the issue, then finish the remaining steps manually."
 end
 
 def run!(*cmd)
