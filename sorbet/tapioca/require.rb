@@ -8,3 +8,7 @@
 require "minitest"
 MiniTest = Minitest unless defined?(MiniTest)
 require "mocha/minitest"
+
+# simplecov loads its JSON formatter lazily; require it explicitly so tapioca
+# exports SimpleCov::Formatter::JSONFormatter (test_loader.rb references it).
+require "simplecov_json_formatter"
