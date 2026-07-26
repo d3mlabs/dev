@@ -10,6 +10,8 @@ require 'dev/deps/repository'
 require 'dev/deps/integration'
 require 'dev/deps/resolver'
 require 'dev/deps/lockfile'
+require 'dev/deps/gem_skill_linker'
+require 'dev/knowledge'
 require 'dev/cli/ui'
 require 'dev/cd'
 
@@ -265,6 +267,14 @@ module Dev
         Dev::Cd::Accessor.new.run(args)
       end)
 
+      # `dev knowledge` is dispatched globally in bin/dev, like cd; this
+      # registration only surfaces it in `dev --help`.
+      registry.register("knowledge", BuiltinCommand.new(
+        desc: "Org knowledge cache (sync: refresh now, status: age/freshness)",
+      ) do |args, context|
+        Dev::Knowledge::Accessor.new(project_root: context.project_root).run(args)
+      end)
+
       registry.register("check", BuiltinCommand.new(
         desc: "Check dependency state freshness (manifest vs lockfiles vs installed)",
       ) do |args, context|
@@ -421,6 +431,11 @@ module Dev
         ),
       )
       installer.install(env: Dev::Deps.detect_env, host: Dev::Deps.detect_host)
+      # Installing a dependency includes its shipped skills: finish by linking
+      # the locked gem set's skills project-scoped, and refresh the machine's
+      # org knowledge artifacts (both hooks are best-effort and never raise).
+      Dev::Deps::GemSkillLinker.new(project_root: context.project_root).link_all
+      Dev::Knowledge::Synchronizer.new.sync(project_root: context.project_root)
     end
 
     # taps is empty (custom-tap installs go through the container path) and the

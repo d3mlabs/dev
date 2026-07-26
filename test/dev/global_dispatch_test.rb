@@ -33,9 +33,39 @@ class Dev::GlobalDispatchTest < Minitest::Test
     "cd"          | true
     "plan"        | true
     "cred"        | true
+    "knowledge"   | true
     "up"          | false
     "test"        | false
     "update-deps" | false
+  end
+
+  test "dev knowledge status dispatches globally without a dev.yml lookup" do
+    Given "a knowledge repo via ENV and tmpdir-scoped XDG homes"
+    dir = Dir.mktmpdir("dispatch-knowledge-")
+    saved = {
+      "DEV_KNOWLEDGE_REPO" => ENV["DEV_KNOWLEDGE_REPO"],
+      "XDG_DATA_HOME" => ENV["XDG_DATA_HOME"],
+      "XDG_CONFIG_HOME" => ENV["XDG_CONFIG_HOME"],
+    }
+    ENV["DEV_KNOWLEDGE_REPO"] = File.join(dir, "knowledge")
+    ENV["XDG_DATA_HOME"] = File.join(dir, "data")
+    ENV["XDG_CONFIG_HOME"] = File.join(dir, "config")
+    dispatch = Dev::GlobalDispatch.new(cred_accessor: RecordingCredAccessor.new)
+    out = StringIO.new
+    old_stdout = $stdout
+    $stdout = out
+
+    When "we dispatch dev knowledge status from a cwd with no dev.yml"
+    Dir.chdir(dir) { dispatch.run(["knowledge", "status"]) }
+
+    Then "the status reports the configured repo and the empty cache"
+    out.string.include?(File.join(dir, "knowledge"))
+    out.string.include?("not cloned yet")
+
+    Cleanup
+    $stdout = old_stdout
+    saved.each { |key, value| value ? ENV[key] = value : ENV.delete(key) }
+    FileUtils.rm_rf(dir)
   end
 
   test "dev cd resolves through the dispatcher from a directory with no dev.yml" do

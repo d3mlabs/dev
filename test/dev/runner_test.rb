@@ -327,6 +327,44 @@ class RunnerTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "knowledge dispatches the subcommand to the knowledge accessor" do
+    Given "a Runner pinned to an empty project root"
+    root = Pathname.new(Dir.mktmpdir("runner-knowledge-"))
+    Dev.stubs(:target_project_root).returns(root)
+    runner = build_runner(commands: {})
+    runner.stubs(:resolve_ruby_version).returns("4.0.1")
+    Dev::Knowledge::Accessor.any_instance.expects(:run).with(["status"]).once
+
+    When "we run dev knowledge status"
+    runner.run(["knowledge", "status"], ui: fake_ui)
+
+    Then "the expectation on the accessor holds"
+    true
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "install-deps finishes by linking gem skills and syncing org knowledge" do
+    Given "a Runner pinned to an empty project root, with the installer stubbed"
+    root = Pathname.new(Dir.mktmpdir("runner-install-deps-"))
+    Dev.stubs(:target_project_root).returns(root)
+    runner = build_runner(commands: {})
+    runner.stubs(:resolve_ruby_version).returns("4.0.1")
+    Dev::Deps::DependencyInstaller.any_instance.stubs(:install)
+    Dev::Deps::GemSkillLinker.any_instance.expects(:link_all).once
+    Dev::Knowledge::Synchronizer.any_instance.expects(:sync).with(project_root: root).once
+
+    When "we run install-deps"
+    runner.run(["install-deps"], ui: fake_ui)
+
+    Then "the expectations on both post-install hooks hold"
+    true
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
   test "declared_ruby_version returns the dependencies.rb ruby directive" do
     Given "a project whose dependencies.rb declares ruby"
     root = Pathname.new(Dir.mktmpdir("runner-ruby-deps-"))

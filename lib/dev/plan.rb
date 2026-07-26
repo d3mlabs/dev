@@ -1,15 +1,16 @@
 # frozen_string_literal: true
 
+require "dev/settings"
+require "dev/skill_installer"
+require "dev/knowledge"
 require "dev/plan/executor"
 require "dev/plan/header"
 require "dev/plan/frontmatter"
 require "dev/plan/content"
-require "dev/plan/settings"
 require "dev/plan/github_issues"
 require "dev/plan/workspace"
 require "dev/plan/merge_base"
 require "dev/plan/merge"
-require "dev/plan/skill_installer"
 require "dev/plan/accessor"
 
 module Dev
