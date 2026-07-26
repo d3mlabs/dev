@@ -20,6 +20,9 @@ sorbet/rbi/hidden-definitions/errors.txt
 # Built gems
 *.gem
 
+# SimpleCov output
+/coverage/
+
 # Local / ast_transform-specific work
 tmp/
 

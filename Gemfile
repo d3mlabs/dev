@@ -12,6 +12,7 @@ gem "rspock", "~> 2.3"
 gem "minitest"
 gem "minitest-reporters"
 gem "rake"
+gem "simplecov", "~> 0.22"
 
 # bin/console
 gem "pry", "~> 0.14"

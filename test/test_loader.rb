@@ -2,6 +2,19 @@
 
 # Entry point when running tests (-r test_loader). Follows RSpock convention: load path, rspock, pry, then ASTTransform.
 # test_helper is required by each test file and provides minitest.
+
+# SimpleCov must start before any application code loads so every file is tracked.
+require "simplecov"
+require "simplecov_json_formatter"
+
+SimpleCov.start do
+  add_filter("/test/")
+  formatter SimpleCov::Formatter::MultiFormatter.new([
+    SimpleCov::Formatter::HTMLFormatter,
+    SimpleCov::Formatter::JSONFormatter,
+  ])
+end
+
 DEV_ROOT = File.expand_path("..", __dir__)
 $LOAD_PATH.unshift(File.join(DEV_ROOT, "src")) unless $LOAD_PATH.include?(File.join(DEV_ROOT, "src"))
 $LOAD_PATH.unshift(File.join(DEV_ROOT, "lib")) unless $LOAD_PATH.include?(File.join(DEV_ROOT, "lib"))
