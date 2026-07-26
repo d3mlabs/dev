@@ -5,8 +5,9 @@ source "https://rubygems.org"
 # Runtime deps (cli-ui, sorbet-runtime) come from the gemspec.
 gemspec
 
-# RSpock (from RubyGems) for test_helper and rspock-style tests
-gem "rspock", "~> 2.3"
+# RSpock (from RubyGems) for test_helper and rspock-style tests; 3.0 also
+# ships the rspock agent skill the learnings index points at.
+gem "rspock", "~> 3.0"
 
 # Test (dev repo's own tests)
 gem "minitest"
