@@ -1,4 +1,5 @@
 # dev
+[![codecov](https://codecov.io/gh/d3mlabs/dev/branch/main/graph/badge.svg)](https://codecov.io/gh/d3mlabs/dev)
 
 Global CLI tool for d3mlabs projects. Discovers `dev.yml` in your git repos and executes declared commands like `dev up`, `dev build`, `dev test`, etc.
 
