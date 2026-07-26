@@ -111,6 +111,29 @@ class Dev::SkillInstallerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "install warns instead of raising when the skills dir cannot be created" do
+    Given "a skills dir under a read-only parent"
+    dir = Dir.mktmpdir("dev-skill-test-")
+    source = build_skill(dir, "share", "cursor-skills", "ai-flow")
+    read_only_parent = File.join(dir, "read-only")
+    FileUtils.mkdir_p(read_only_parent)
+    FileUtils.chmod(0o555, read_only_parent)
+    installer = Dev::SkillInstaller.new(skills_dir: File.join(read_only_parent, "skills"))
+    old_stderr = $stderr
+    $stderr = StringIO.new
+
+    When "installing the skill"
+    installer.install("ai-flow", source)
+
+    Then "the failure is a warning, not an exception"
+    $stderr.string.include?("could not install the ai-flow skill symlink")
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.chmod(0o755, read_only_parent)
+    FileUtils.rm_rf(dir)
+  end
+
   test "install_all links every skill dir carrying a SKILL.md and skips the rest" do
     Given "a source root with two skills and one non-skill dir"
     dir = Dir.mktmpdir("dev-skill-test-")
@@ -172,6 +195,30 @@ class Dev::SkillInstallerTest < Minitest::Test
     File.symlink?(File.join(skills_dir, "mine"))
 
     Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all warns instead of raising when pruning cannot read the skills dir" do
+    Given "an unreadable skills dir"
+    dir = Dir.mktmpdir("dev-skill-test-")
+    source_root = File.join(dir, "source")
+    FileUtils.mkdir_p(source_root)
+    skills_dir = File.join(dir, "skills")
+    FileUtils.mkdir_p(skills_dir)
+    FileUtils.chmod(0o000, skills_dir)
+    installer = Dev::SkillInstaller.new(skills_dir: skills_dir)
+    old_stderr = $stderr
+    $stderr = StringIO.new
+
+    When "installing all skills"
+    installer.install_all(source_root)
+
+    Then "the prune failure is a warning, not an exception"
+    $stderr.string.include?("could not prune stale skill symlinks")
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.chmod(0o755, skills_dir)
     FileUtils.rm_rf(dir)
   end
 

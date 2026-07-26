@@ -157,6 +157,30 @@ class Dev::Deps::GemSkillLinkerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "link_all warns instead of failing the install when the skills dir is unreadable" do
+    Given "a project whose skills dir cannot be read for pruning"
+    dir = Dir.mktmpdir("dev-gem-skill-test-")
+    project, = build_project(dir)
+    stub_bundle_list(project, [])
+    skills_dir = project / ".agents" / "skills"
+    FileUtils.mkdir_p(skills_dir)
+    FileUtils.chmod(0o000, skills_dir)
+    linker = Dev::Deps::GemSkillLinker.new(project_root: project)
+    old_stderr = $stderr
+    $stderr = StringIO.new
+
+    When "linking"
+    linker.link_all
+
+    Then "the failure is a warning, not an exception"
+    $stderr.string.include?("could not refresh gem skill links")
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.chmod(0o755, skills_dir)
+    FileUtils.rm_rf(dir)
+  end
+
   test "a failing bundle list warns instead of failing the install" do
     Given "bundler erroring out"
     dir = Dir.mktmpdir("dev-gem-skill-test-")

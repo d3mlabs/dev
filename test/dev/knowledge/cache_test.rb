@@ -5,6 +5,7 @@ require "test_helper"
 require "dev/knowledge/cache"
 require "tmpdir"
 require "fileutils"
+require "stringio"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Knowledge::CacheTest < Minitest::Test
@@ -131,6 +132,51 @@ class Dev::Knowledge::CacheTest < Minitest::Test
     raises Dev::Knowledge::Cache::KnowledgeFetchError
 
     Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "an owner/repo source clones through gh (riding the user's gh auth)" do
+    Given "a fake gh on PATH that records its invocation"
+    dir = Dir.mktmpdir("dev-knowledge-cache-test-")
+    bin = File.join(dir, "bin")
+    FileUtils.mkdir_p(bin)
+    record = File.join(dir, "gh-args.txt")
+    File.write(File.join(bin, "gh"), "#!/bin/sh\necho \"$@\" > \"#{record}\"\n")
+    FileUtils.chmod(0o755, File.join(bin, "gh"))
+    original_path = ENV.fetch("PATH")
+    ENV["PATH"] = "#{bin}:#{original_path}"
+    cache = Dev::Knowledge::Cache.new(repo: "d3mlabs/knowledge", dir: File.join(dir, "cache"))
+
+    When "refreshing on first run"
+    cache.refresh
+
+    Then "the clone went through gh repo clone"
+    File.read(record).start_with?("repo clone d3mlabs/knowledge")
+
+    Cleanup
+    ENV["PATH"] = original_path
+    FileUtils.rm_rf(dir)
+  end
+
+  test "refresh_async warns instead of raising when the cache location cannot be created" do
+    Given "a cache location under a read-only parent"
+    dir = Dir.mktmpdir("dev-knowledge-cache-test-")
+    read_only_parent = File.join(dir, "read-only")
+    FileUtils.mkdir_p(read_only_parent)
+    FileUtils.chmod(0o555, read_only_parent)
+    cache = Dev::Knowledge::Cache.new(repo: "d3mlabs/knowledge", dir: File.join(read_only_parent, "sub", "cache"))
+    old_stderr = $stderr
+    $stderr = StringIO.new
+
+    When "kicking a background refresh"
+    cache.refresh_async
+
+    Then "the failure is a warning, not an exception"
+    $stderr.string.include?("could not start the knowledge cache refresh")
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.chmod(0o755, read_only_parent)
     FileUtils.rm_rf(dir)
   end
 

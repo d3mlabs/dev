@@ -122,6 +122,25 @@ class Dev::Knowledge::AccessorTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "status reports multi-day ages in days" do
+    Given "a cache last synced three days ago"
+    dir = Dir.mktmpdir("dev-knowledge-acc-test-")
+    accessor, cache, = build_env(dir)
+    cache.refresh
+    old = Time.now - (3 * 86_400)
+    File.utime(old, old, File.join(dir, "cache", ".git", "HEAD"))
+    out = StringIO.new
+
+    When "running dev knowledge status"
+    accessor.run(["status"], out: out)
+
+    Then "the age renders in days"
+    out.string.include?("3d ago")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "an unrecognized invocation is rejected with usage" do
     Given "a configured accessor"
     dir = Dir.mktmpdir("dev-knowledge-acc-test-")

@@ -76,15 +76,15 @@ module Dev
     end
 
     # Remove a skill symlink by name. Only symlinks are removed — anything
-    # user-owned in the skills dir survives. Never raises.
+    # user-owned in the skills dir survives. Never raises: symlink? reports
+    # false instead of raising, and rm_f's force semantics swallow
+    # filesystem errors.
     #
     # @param name [String] link name inside the skills dir
     # @return [void]
     def remove(name)
       link = @skills_dir / name
       FileUtils.rm_f(link) if link.symlink?
-    rescue SystemCallError => e
-      $stderr.puts "dev: warning: could not remove the #{name} skill symlink (#{e.message})."
     end
 
     private
