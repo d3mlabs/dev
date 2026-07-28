@@ -6,6 +6,7 @@ require "dev"
 require "dev/runner"
 require "dev/credentials"
 require "dev/deps/cmake_integration"
+require "shadowenv_ruby"
 require "stringio"
 require "tempfile"
 require "tmpdir"
@@ -351,6 +352,7 @@ class RunnerTest < Minitest::Test
     Dev.stubs(:target_project_root).returns(root)
     runner = build_runner(commands: {})
     runner.stubs(:resolve_ruby_version).returns("4.0.1")
+    ShadowenvRuby.stubs(:ensure!)
     Dev::Deps::DependencyInstaller.any_instance.stubs(:install)
     Dev::Deps::GemSkillLinker.any_instance.expects(:link_all).once
     Dev::Knowledge::Synchronizer.any_instance.expects(:sync).with(project_root: root).once
@@ -359,6 +361,31 @@ class RunnerTest < Minitest::Test
     runner.run(["install-deps"], ui: fake_ui)
 
     Then "the expectations on both post-install hooks hold"
+    true
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  # Headless boxes (CI, runner services) reach install-deps before any
+  # dev.yml command has run CommandRunner's provisioning — the builtin must
+  # provision the toolchain itself or bundler installs against whatever
+  # Ruby the service PATH happens to carry.
+  test "install-deps provisions the shadowenv Ruby before installing" do
+    Given "a Runner pinned to an empty project root, with the installer stubbed"
+    root = Pathname.new(Dir.mktmpdir("runner-install-deps-ruby-"))
+    Dev.stubs(:target_project_root).returns(root)
+    runner = build_runner(commands: {})
+    runner.stubs(:resolve_ruby_version).returns("4.0.1")
+    ShadowenvRuby.expects(:ensure!).with(ruby_version: "4.0.1", project_root: root).once
+    Dev::Deps::DependencyInstaller.any_instance.stubs(:install)
+    Dev::Deps::GemSkillLinker.any_instance.stubs(:link_all)
+    Dev::Knowledge::Synchronizer.any_instance.stubs(:sync)
+
+    When "we run install-deps"
+    runner.run(["install-deps"], ui: fake_ui)
+
+    Then "the expectation on the provisioning step holds"
     true
 
     Cleanup

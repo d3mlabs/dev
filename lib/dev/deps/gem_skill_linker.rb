@@ -82,11 +82,15 @@ module Dev
         end
       end
 
+      # Runs under the project's shadowenv for the same reason as
+      # BundlerIntegration: the dev process's own PATH is the invoking
+      # service's, which on headless boxes carries the wrong Ruby.
+      #
       # @return [Array<Pathname>] install paths of every gem in the bundle
       def bundled_gem_paths
         out, err, status = Open3.capture3(
           { "BUNDLE_GEMFILE" => gemfile_path.to_s },
-          "bundle", "list", "--paths",
+          "shadowenv", "exec", "--", "bundle", "list", "--paths",
           chdir: @project_root.to_s,
         )
         unless status.success?

@@ -44,16 +44,29 @@ module Dev
 
       private
 
-      # Ensure a bundler executable is available. Bundler ships with modern Ruby,
-      # so this is normally a no-op; install it on demand if missing.
+      # Every subprocess below runs through `shadowenv exec` in the project
+      # root: the dev process inherits the invoking shell's PATH — headless
+      # services (CI, runners) have no shadowenv hook — so a bare `bundle`
+      # or `gem` would resolve to whatever Ruby the host carries instead of
+      # the provisioned toolchain the installed gems must target.
+
+      # Ensure a bundler executable is available in the provisioned Ruby.
+      # Bundler ships with modern Ruby, so this is normally a no-op; install
+      # it on demand if missing.
       #
       # @raise [BundlerMissingError] if bundler cannot be made available
       # @return [void]
       def ensure_bundler!
-        _out, _err, status = Open3.capture3("bundle", "--version")
+        _out, _err, status = Open3.capture3(
+          "shadowenv", "exec", "--", "bundle", "--version",
+          chdir: @project_root.to_s,
+        )
         return if status.success?
 
-        _out, err, status = Open3.capture3("gem", "install", "bundler", "--no-document")
+        _out, err, status = Open3.capture3(
+          "shadowenv", "exec", "--", "gem", "install", "bundler", "--no-document",
+          chdir: @project_root.to_s,
+        )
         raise BundlerMissingError, "failed to install bundler: #{err}" unless status.success?
       end
 
@@ -64,7 +77,7 @@ module Dev
       def run_bundle_install
         _out, err, status = Open3.capture3(
           { "BUNDLE_GEMFILE" => gemfile_path.to_s, "BUNDLE_FROZEN" => "true" },
-          "bundle", "install",
+          "shadowenv", "exec", "--", "bundle", "install",
           chdir: @project_root.to_s,
         )
         raise InstallError, "bundle install failed: #{err}" unless status.success?

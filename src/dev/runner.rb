@@ -422,6 +422,12 @@ module Dev
     # @param context [ExecutionContext]
     sig { params(context: ExecutionContext).void }
     def install_locked_deps(context)
+      # Headless boxes (CI, runner services) reach install-deps before any
+      # dev.yml command has run CommandRunner's provisioning, so the builtin
+      # must provision the pinned Ruby itself — bundler installs against it.
+      require "shadowenv_ruby"
+      ShadowenvRuby.ensure!(ruby_version: context.ruby_version, project_root: context.project_root)
+
       lockfile = Dev::Deps::Lockfile.new(dir: context.project_root)
       installer = Dev::Deps::DependencyInstaller.new(
         lockfile: lockfile,

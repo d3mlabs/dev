@@ -204,9 +204,7 @@ module Dev
     def ensure_shadowenv_provisioned!
       require "shadowenv_ruby"
       project_root = @project_root
-      unless ShadowenvRuby.provisioned?(@ruby_version, project_root: project_root)
-        ShadowenvRuby.setup!(ruby_version: @ruby_version, project_root: project_root)
-      end
+      ShadowenvRuby.ensure!(ruby_version: @ruby_version, project_root: project_root)
 
       ensure_llvm_provisioned!(project_root)
       ensure_python_provisioned!(project_root)
