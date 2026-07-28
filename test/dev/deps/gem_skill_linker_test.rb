@@ -48,9 +48,13 @@ class Dev::Deps::GemSkillLinkerTest < Minitest::Test
     root
   end
 
+  # `bundle list` must run under the project's shadowenv — same reasoning as
+  # BundlerIntegration: the dev process's PATH is the invoking service's,
+  # which on headless boxes carries the wrong Ruby.
   def stub_bundle_list(project, paths)
     Open3.stubs(:capture3)
-         .with({ "BUNDLE_GEMFILE" => (project / "Gemfile").to_s }, "bundle", "list", "--paths", chdir: project.to_s)
+         .with({ "BUNDLE_GEMFILE" => (project / "Gemfile").to_s },
+           "shadowenv", "exec", "--", "bundle", "list", "--paths", chdir: project.to_s)
          .returns([paths.map { |p| "#{p}\n" }.join, "", stub(success?: true)])
   end
 

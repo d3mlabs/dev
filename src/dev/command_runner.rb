@@ -5,6 +5,11 @@ require "shellwords"
 
 require "dev/cli/ui"
 require "dev/command"
+require "dev/credentials"
+require "build_container"
+require "shadowenv_llvm"
+require "shadowenv_python"
+require "shadowenv_ruby"
 
 module Dev
   # Runs dev commands by exec-ing into the child process. Dev prints a colored
@@ -81,7 +86,6 @@ module Dev
 
     sig { params(_cmd: ShellCommand, shell_command: String).void }
     def run_in_container(_cmd, shell_command)
-      require "build_container"
       config = T.must(@build_container)
       image_tag = BuildContainer.ensure_image!(
         config,
@@ -141,7 +145,6 @@ module Dev
     # @return [Hash{String => String}]
     sig { params(config: Dev::BuildContainerConfig).returns(T::Hash[String, String]) }
     def resolve_build_args(config)
-      require "dev/credentials"
       Dev::Credentials.resolve_build_args(config.build_args)
     end
 
@@ -153,7 +156,6 @@ module Dev
     # @return [Hash{String => String}]
     sig { params(config: Dev::BuildContainerConfig).returns(T::Hash[String, String]) }
     def resolve_build_secrets(config)
-      require "dev/credentials"
       Dev::Credentials.resolve_build_args(config.build_secrets)
     end
 
@@ -174,7 +176,6 @@ module Dev
     def resolve_run_env(config)
       return {} if config.run_env.empty?
 
-      require "dev/credentials"
       config.run_env.each_with_object({}) do |(name, credential_ref), resolved|
         namespace, key = credential_ref.split("/", 2)
         value = ENV[name] || Dev::Credentials.load(T.must(namespace), T.must(key))
@@ -202,11 +203,8 @@ module Dev
     # a list; three explicit, guarded steps stay readable for now.)
     sig { void }
     def ensure_shadowenv_provisioned!
-      require "shadowenv_ruby"
       project_root = @project_root
-      unless ShadowenvRuby.provisioned?(@ruby_version, project_root: project_root)
-        ShadowenvRuby.setup!(ruby_version: @ruby_version, project_root: project_root)
-      end
+      ShadowenvRuby.ensure!(ruby_version: @ruby_version, project_root: project_root)
 
       ensure_llvm_provisioned!(project_root)
       ensure_python_provisioned!(project_root)
@@ -219,7 +217,6 @@ module Dev
       version = @python_version
       return if version.nil? || version.empty?
 
-      require "shadowenv_python"
       return if ShadowenvPython.provisioned?(version, project_root: project_root)
 
       ShadowenvPython.setup!(python_version: version, project_root: project_root)
@@ -227,7 +224,6 @@ module Dev
 
     sig { params(project_root: Pathname).void }
     def ensure_llvm_provisioned!(project_root)
-      require "shadowenv_llvm"
       return if ShadowenvLlvm.ci_or_linux?
       return unless ShadowenvLlvm.project_needs_llvm?(project_root)
 

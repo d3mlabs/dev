@@ -2,6 +2,7 @@
 
 require "set"
 require "fileutils"
+require "open3"
 require "pathname"
 require_relative "lockfile"
 
@@ -166,7 +167,6 @@ module Dev
       #
       # @return [String]
       def capture(*argv)
-        require "open3"
         out, _err, status = Open3.capture3(*argv)
         status.success? ? out : ""
       rescue StandardError

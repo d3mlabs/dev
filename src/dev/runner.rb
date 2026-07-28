@@ -1,19 +1,31 @@
 # typed: strict
 # frozen_string_literal: true
 
+require 'digest'
 require 'pathname'
 require 'dev/config_parser'
 require 'dev/command_registry'
+require 'dev/credential_accessor'
+require 'dev/credentials'
 require 'dev/execution_context'
 require 'dev/deps'
-require 'dev/deps/repository'
-require 'dev/deps/integration'
-require 'dev/deps/resolver'
-require 'dev/deps/lockfile'
+require 'dev/deps/accessor'
+require 'dev/deps/cache'
+require 'dev/deps/cache_gc'
 require 'dev/deps/gem_skill_linker'
+require 'dev/deps/integration'
+require 'dev/deps/lockfile'
+require 'dev/deps/registry'
+require 'dev/deps/repository'
+require 'dev/deps/resolver'
+require 'dev/deps/staleness'
 require 'dev/knowledge'
+require 'dev/plan'
+require 'dev/runner_setup'
 require 'dev/cli/ui'
 require 'dev/cd'
+require 'build_container'
+require 'shadowenv_ruby'
 
 module Dev
   # Main entry: find repo, load config, build registry, parse argv, show usage or run command.
@@ -92,7 +104,6 @@ module Dev
     def guard_staleness(cmd_name, project_root)
       return if STALENESS_EXEMPT_COMMANDS.include?(cmd_name)
 
-      require "dev/deps/staleness"
       messages = Dev::Deps::Staleness.new(project_root:).messages
       return if messages.empty?
 
@@ -111,7 +122,6 @@ module Dev
     def stamp_installed(cmd_name, project_root)
       return unless ["up", "install-deps"].include?(cmd_name)
 
-      require "dev/deps/staleness"
       Dev::Deps::Staleness.new(project_root:).stamp_installed!
     end
 
@@ -124,7 +134,6 @@ module Dev
       config = @config.build_container
       return if config.nil? || config.build_args.empty?
 
-      require "dev/credentials"
       Dev::Credentials.resolve_build_args(config.build_args)
     end
 
@@ -156,7 +165,6 @@ module Dev
       registry.register("runner-setup", BuiltinCommand.new(
         desc: "Register this host as a self-hosted GitHub Actions runner (repo-scoped, or org-wide with --org)",
       ) do |args, context|
-        require "dev/runner_setup"
         cfg = context.runner
         raise ArgumentError, "no `runner:` block in dev.yml" if cfg.nil?
 
@@ -186,8 +194,6 @@ module Dev
         desc: "Resolve the build container image (local/pull/build) and print its tag",
         hidden: true,
       ) do |_args, context|
-        require "build_container"
-        require "dev/credentials"
         cfg = context.build_container
         image_tag = BuildContainer.ensure_image!(
           cfg,
@@ -206,7 +212,6 @@ module Dev
       registry.register("reset-container", BuiltinCommand.new(
         desc: "Remove the persistent build container (clears its incremental cache)",
       ) do |_args, context|
-        require "build_container"
         cfg = context.build_container
         image_tag = BuildContainer.image_with_tag(cfg, project_root: context.project_root)
         removed = BuildContainer.reset_service!(image_tag, context.project_root)
@@ -234,7 +239,6 @@ module Dev
         resolved = resolver.resolve(deps_config.declarations)
         # Record the manifest digest so the staleness check can tell whether
         # dependencies.rb changed after this resolution (Dev::Deps::Staleness).
-        require "digest"
         manifest_digest = deps_rb.exist? ? Digest::SHA256.file(deps_rb.to_s).hexdigest : nil
         lockfile.lock(resolved, manifest_digest:)
         puts "dev: lockfiles updated — now run dev up to install."
@@ -278,7 +282,6 @@ module Dev
       registry.register("check", BuiltinCommand.new(
         desc: "Check dependency state freshness (manifest vs lockfiles vs installed)",
       ) do |args, context|
-        require "dev/deps/staleness"
         messages = Dev::Deps::Staleness.new(project_root: context.project_root).messages
         if messages.empty?
           puts "dev: dependency state is in sync (manifest, lockfiles, installed stamp)."
@@ -291,8 +294,6 @@ module Dev
       registry.register("deps", BuiltinCommand.new(
         desc: "Inspect locked dependencies (e.g. deps path ficsit <mod> <platform>)",
       ) do |args, context|
-        require "dev/deps/accessor"
-        require "dev/deps/cache"
         Dev::Deps::Accessor.new(
           lockfile: Dev::Deps::Lockfile.new(dir: context.project_root),
           cache: Dev::Deps::Cache.new,
@@ -302,7 +303,6 @@ module Dev
       registry.register("cache", BuiltinCommand.new(
         desc: "Manage host caches (e.g. cache gc --keep 2)",
       ) do |args, context|
-        require "dev/deps/cache_gc"
         subcommand, *rest = args
         raise ArgumentError, "usage: dev cache gc [--keep N]" unless subcommand == "gc"
 
@@ -312,7 +312,6 @@ module Dev
         image_ref = nil
         live_tag = nil
         if (cfg = context.build_container)
-          require "build_container"
           image_ref = cfg.image_ref
           live_tag = BuildContainer.image_with_tag(cfg, project_root: context.project_root)
         end
@@ -322,15 +321,12 @@ module Dev
       registry.register("cred", BuiltinCommand.new(
         desc: "Resolve a stored credential (e.g. cred get <namespace> <key>)",
       ) do |args, _context|
-        require "dev/credentials"
-        require "dev/credential_accessor"
         Dev::CredentialAccessor.new.run(args)
       end)
 
       registry.register("plan", BuiltinCommand.new(
         desc: "Sync Cursor plans with GitHub issues (new/link/pull/push/status)",
       ) do |args, context|
-        require "dev/plan"
         Dev::Plan::Accessor.new(project_root: context.project_root).run(args)
       end)
     end
@@ -404,7 +400,6 @@ module Dev
       ).returns(T::Hash[Symbol, Dev::Deps::Repository])
     end
     def build_repositories(project_root:, ruby_version_requirement: nil)
-      require "dev/deps/registry"
       Dev::Deps::Registry.repositories(project_root:, ruby_version_requirement:)
     end
 
@@ -422,6 +417,11 @@ module Dev
     # @param context [ExecutionContext]
     sig { params(context: ExecutionContext).void }
     def install_locked_deps(context)
+      # Headless boxes (CI, runner services) reach install-deps before any
+      # dev.yml command has run CommandRunner's provisioning, so the builtin
+      # must provision the pinned Ruby itself — bundler installs against it.
+      ShadowenvRuby.ensure!(ruby_version: context.ruby_version, project_root: context.project_root)
+
       lockfile = Dev::Deps::Lockfile.new(dir: context.project_root)
       installer = Dev::Deps::DependencyInstaller.new(
         lockfile: lockfile,
@@ -447,8 +447,6 @@ module Dev
     # @return [Hash{Symbol => Dev::Deps::Integration}]
     sig { params(project_root: Pathname, python_version: T.nilable(String)).returns(T::Hash[Symbol, Dev::Deps::Integration]) }
     def build_host_integrations(project_root:, python_version: nil)
-      require "dev/deps/cache"
-      require "dev/deps/registry"
       Dev::Deps::Registry.host_integrations(
         project_root:,
         cache: Dev::Deps::Cache.new,
@@ -480,7 +478,6 @@ module Dev
 
     sig { params(explicit_version: T.nilable(String)).returns(String) }
     def resolve_ruby_version(explicit_version)
-      require "shadowenv_ruby"
       ShadowenvRuby.resolve_ruby_version(explicit_version)
     end
 

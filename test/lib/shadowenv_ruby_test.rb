@@ -57,6 +57,42 @@ class ShadowenvRubyTest < Minitest::Test
     1 * Kernel.abort("dev: Resolved Ruby 2.6.0 is below dev's minimum (>= 2.7.0). Pin a newer version in dependencies.rb or run: brew upgrade ruby")
   end
 
+  # --- ensure! ---
+
+  test "ensure! skips setup! when the project is already provisioned" do
+    Given "a project root whose lisp already provides the version"
+    tmpdir = Dir.mktmpdir("shadowenv-ensure-test-")
+    shadowenv_d = File.join(tmpdir, ".shadowenv.d")
+    FileUtils.mkdir_p(shadowenv_d)
+    File.write(
+      File.join(shadowenv_d, "510_ruby.lisp"),
+      ShadowenvRuby.generate_ruby_lisp("/opt/ruby/4.0.1", "4.0.1")
+    )
+
+    When "we ensure the version"
+    ShadowenvRuby.ensure!(ruby_version: "4.0.1", project_root: tmpdir)
+
+    Then "setup! is never reached (the fast path won)"
+    0 * ShadowenvRuby.setup!
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "ensure! runs setup! when the project is not provisioned" do
+    Given "a project root with no .shadowenv.d"
+    tmpdir = Dir.mktmpdir("shadowenv-ensure-test-")
+
+    When "we ensure the version"
+    ShadowenvRuby.ensure!(ruby_version: "4.0.1", project_root: tmpdir)
+
+    Then "setup! runs with the same version and root"
+    1 * ShadowenvRuby.setup!(ruby_version: "4.0.1", project_root: tmpdir)
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
   # --- provisioned? ---
 
   test "provisioned? returns true when lisp file matches version" do

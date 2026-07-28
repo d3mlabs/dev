@@ -24,20 +24,51 @@ class Dev::Deps::BundlerIntegrationTest < Minitest::Test
       version: "1.0.0", hash: nil, metadata: {})
   end
 
-  test "install_all runs a frozen bundle install against the generated Gemfile" do
+  # Every bundler subprocess goes through `shadowenv exec` in the project
+  # root: the dev process inherits the invoking service's PATH (headless
+  # boxes have no shadowenv shell hook), so a bare `bundle` would resolve
+  # to whatever Ruby the host carries, not the provisioned toolchain.
+  test "install_all runs a frozen bundle install under the project's shadowenv" do
     Given "a bundler integration with one locked gem"
     dir = Dir.mktmpdir("dev-bundler-int-test-")
     integration = build_integration(dir)
     gemfile = (Pathname(dir) / "Gemfile").to_s
-    Open3.stubs(:capture3).with("bundle", "--version").returns(["Bundler version 2.5.0", "", stub(success?: true)])
+    Open3.stubs(:capture3)
+         .with("shadowenv", "exec", "--", "bundle", "--version", chdir: dir)
+         .returns(["Bundler version 2.5.0", "", stub(success?: true)])
     Open3.expects(:capture3)
-         .with({ "BUNDLE_GEMFILE" => gemfile, "BUNDLE_FROZEN" => "true" }, "bundle", "install", chdir: dir)
+         .with({ "BUNDLE_GEMFILE" => gemfile, "BUNDLE_FROZEN" => "true" },
+           "shadowenv", "exec", "--", "bundle", "install", chdir: dir)
          .returns(["", "", stub(success?: true)])
 
     When "installing all dependencies"
     integration.install_all([gem_dep("ffi")])
 
-    Then "bundle install was dispatched against the project root"
+    Then "bundle install was dispatched under shadowenv against the project root"
+    true
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all installs bundler under the project's shadowenv when missing" do
+    Given "a bundler integration whose shadowenv Ruby has no bundler"
+    dir = Dir.mktmpdir("dev-bundler-int-test-")
+    integration = build_integration(dir)
+    Open3.stubs(:capture3)
+         .with("shadowenv", "exec", "--", "bundle", "--version", chdir: dir)
+         .returns(["", "command not found", stub(success?: false)])
+    Open3.expects(:capture3)
+         .with("shadowenv", "exec", "--", "gem", "install", "bundler", "--no-document", chdir: dir)
+         .returns(["", "", stub(success?: true)])
+    Open3.stubs(:capture3)
+         .with(anything, "shadowenv", "exec", "--", "bundle", "install", chdir: dir)
+         .returns(["", "", stub(success?: true)])
+
+    When "installing all dependencies"
+    integration.install_all([gem_dep("ffi")])
+
+    Then "bundler was installed into the provisioned Ruby, not the host one"
     true
 
     Cleanup
@@ -64,8 +95,12 @@ class Dev::Deps::BundlerIntegrationTest < Minitest::Test
     Given "a bundler integration whose install fails"
     dir = Dir.mktmpdir("dev-bundler-int-test-")
     integration = build_integration(dir)
-    Open3.stubs(:capture3).with("bundle", "--version").returns(["Bundler version 2.5.0", "", stub(success?: true)])
-    Open3.stubs(:capture3).with(anything, "bundle", "install", chdir: dir).returns(["", "frozen mismatch", stub(success?: false)])
+    Open3.stubs(:capture3)
+         .with("shadowenv", "exec", "--", "bundle", "--version", chdir: dir)
+         .returns(["Bundler version 2.5.0", "", stub(success?: true)])
+    Open3.stubs(:capture3)
+         .with(anything, "shadowenv", "exec", "--", "bundle", "install", chdir: dir)
+         .returns(["", "frozen mismatch", stub(success?: false)])
 
     When "installing all dependencies"
     error = assert_raises(Dev::Deps::BundlerIntegration::InstallError) do

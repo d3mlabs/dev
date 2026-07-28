@@ -2,7 +2,11 @@
 
 require "digest"
 require "pathname"
+require "securerandom"
+require "tmpdir"
 require "yaml"
+
+require "build_watcher"
 
 # Content-addressed Docker image management for build containers.
 #
@@ -194,7 +198,6 @@ module BuildContainer
     path = Pathname(project_root) / BUILD_DEPS_LOCK
     return {} unless path.exist?
 
-    require "yaml"
     yaml = YAML.safe_load(path.read, permitted_classes: [Symbol]) || {}
 
     contexts = {}
@@ -398,7 +401,6 @@ module BuildContainer
   # @param container [String] the run's --name, so a stall can be killed
   # @return [Boolean] whether a run succeeded within the retry budget
   def run_watched(argv, container:)
-    require "build_watcher"
     BuildWatcher.new(container_name: container).run(argv)
   end
 
@@ -408,8 +410,6 @@ module BuildContainer
   # @param secrets [Hash{String => String}]
   # @return [Hash{String => String}] secret id => temp file path
   def write_secret_files(secrets)
-    require "tmpdir"
-    require "securerandom"
     secrets.each_with_object({}) do |(id, value), files|
       path = File.join(Dir.tmpdir, "dev-secret-#{SecureRandom.hex(8)}")
       File.open(path, File::WRONLY | File::CREAT | File::EXCL, 0o600) { |f| f.write(value) }

@@ -6,6 +6,7 @@ require "dev/command_runner"
 require "dev/build_container_config"
 require "dev/credentials"
 require "build_container"
+require "shadowenv_ruby"
 
 transform!(RSpock::AST::Transformation)
 class CommandRunnerTest < Minitest::Test
@@ -26,6 +27,26 @@ class CommandRunnerTest < Minitest::Test
 
   def teardown
     FileUtils.rm_rf(@project_root) if @project_root&.exist?
+  end
+
+  # --- Toolchain provisioning ---
+
+  test "run routes Ruby provisioning through the shared guarded ensure!" do
+    Given "a runner whose provisioning step is not stubbed"
+    runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", project_root: @project_root)
+    runner.stubs(:ensure_llvm_provisioned!)
+    runner.stubs(:ensure_python_provisioned!)
+    Kernel.stubs(:exec)
+    cmd = Dev::ShellCommand.new(run: "./bin/console", repl: true)
+
+    When "we run a command"
+    runner.run(cmd)
+
+    Then "the declared Ruby is ensured for the project root"
+    1 * ShadowenvRuby.ensure!(ruby_version: "4.0.1", project_root: @project_root)
+
+    Cleanup
+    Dir.chdir(@original_cwd)
   end
 
   # --- Local execution (no container) ---

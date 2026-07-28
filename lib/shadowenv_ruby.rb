@@ -60,6 +60,15 @@ module ShadowenvRuby
     (v && !v.empty?) ? v : nil
   end
 
+  # Guarded provisioning: the O(1) provisioned? check first, so callers on
+  # every-command paths (CommandRunner, the up/install-deps builtins) pay
+  # nothing after the first run.
+  def ensure!(ruby_version:, project_root:)
+    return if provisioned?(ruby_version, project_root: project_root)
+
+    setup!(ruby_version: ruby_version, project_root: project_root)
+  end
+
   # Returns true when .shadowenv.d/510_ruby.lisp exists and already
   # provisions the requested version. This is the fast-path check.
   def provisioned?(ruby_version, project_root:)

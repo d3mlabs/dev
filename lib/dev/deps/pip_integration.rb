@@ -2,6 +2,7 @@
 
 require "open3"
 require "pathname"
+require "shadowenv_python"
 require_relative "integration"
 require_relative "dependency"
 
@@ -40,7 +41,6 @@ module Dev
         version = @python_version.to_s.strip
         raise MissingVersionError, "pip dependencies declared but no `python` version set in dependencies.rb" if version.empty?
 
-        require "shadowenv_python"
         ShadowenvPython.ensure_venv!(python_version: version, project_root: @project_root)
 
         # Invoke `python -m pip` (not the `pip` console script): ensurepip always
