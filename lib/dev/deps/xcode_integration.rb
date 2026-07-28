@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "pathname"
+require "shadowenv_xcode"
 require_relative "integration"
 
 module Dev
@@ -167,7 +168,6 @@ module Dev
       def publish_developer_dir(version)
         return unless project_root
 
-        require "shadowenv_xcode"
         developer_dir = self.class.developer_dir(version, root: install_root)
         return if ShadowenvXcode.provisioned?(developer_dir, project_root: project_root)
 
