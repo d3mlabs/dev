@@ -1,7 +1,9 @@
-name: Test
+name: CI
 
 on:
   push:
+    branches: [main]
+  pull_request:
 
 jobs:
   lint:
@@ -17,7 +19,7 @@ jobs:
       - name: Run RuboCop
         run: bundle exec rubocop
 
-  test:
+  typecheck:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,6 +41,26 @@ jobs:
 
       - name: Verify RBIs and typecheck
         run: ./bin/tc.rb
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect Ruby version from dev.yml
+        id: ruby-version
+        run: echo "version=$(ruby -ryaml -e 'puts YAML.load_file("dev.yml")["ruby"]')" >> "$GITHUB_OUTPUT"
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ steps.ruby-version.outputs.version }}
+          bundler-cache: true
+
+      - name: Install shadowenv
+        run: |
+          curl -fsSL https://github.com/Shopify/shadowenv/releases/latest/download/shadowenv-x86_64-unknown-linux-gnu -o /usr/local/bin/shadowenv
+          chmod +x /usr/local/bin/shadowenv
+          shadowenv --version
 
       - name: Run tests
         run: bundle exec rake test
