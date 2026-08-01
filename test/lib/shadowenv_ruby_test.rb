@@ -332,7 +332,7 @@ class ShadowenvRubyTest < Minitest::Test
     base_env = { "PATH" => "/usr/bin" }
 
     When "we build the ruby-build env"
-    result = ShadowenvRuby.ruby_build_env(base_env)
+    result = ShadowenvRuby.ruby_build_env(base_env, "4.0.5")
 
     Then "the env is returned unchanged"
     _ * ShadowenvRuby.homebrew_prefix >> nil
@@ -345,7 +345,7 @@ class ShadowenvRubyTest < Minitest::Test
     base_env = { "PATH" => "/usr/bin" }
 
     When "we build the ruby-build env"
-    result = ShadowenvRuby.ruby_build_env(base_env)
+    result = ShadowenvRuby.ruby_build_env(base_env, "4.0.5")
 
     Then "configure opts and compiler/pkg-config flags point at brew"
     _ * ShadowenvRuby.homebrew_prefix >> tmp_prefix
@@ -358,5 +358,193 @@ class ShadowenvRubyTest < Minitest::Test
 
     Cleanup
     FileUtils.rm_rf(tmp_prefix)
+  end
+
+  test "ruby_build_env rpaths the built ruby's own lib dir ahead of brew's" do
+    Given "a Homebrew prefix and a pinned rbenv root"
+    tmp_prefix = Dir.mktmpdir("brew-prefix-")
+    tmp_rbenv_root = Dir.mktmpdir("rbenv-root-")
+    original_rbenv_root = ENV["RBENV_ROOT"]
+    ENV["RBENV_ROOT"] = tmp_rbenv_root
+
+    When "we build the ruby-build env"
+    result = ShadowenvRuby.ruby_build_env({ "PATH" => "/usr/bin" }, "4.0.5")
+
+    Then "the version's own lib dir is rpathed before brew's lib dir"
+    _ * ShadowenvRuby.homebrew_prefix >> tmp_prefix
+    _ * ShadowenvRuby.brew_prefix_for(anything) >> nil
+    own_rpath = "-Wl,-rpath,#{File.join(tmp_rbenv_root, "versions", "4.0.5", "lib")}"
+    brew_rpath = "-Wl,-rpath,#{File.join(tmp_prefix, "lib")}"
+    assert_includes result["LDFLAGS"], own_rpath
+    assert_operator result["LDFLAGS"].index(own_rpath), :<, result["LDFLAGS"].index(brew_rpath)
+
+    Cleanup
+    ENV["RBENV_ROOT"] = original_rbenv_root
+    FileUtils.rm_rf(tmp_prefix)
+    FileUtils.rm_rf(tmp_rbenv_root)
+  end
+
+  # --- reported_ruby_version / verify_reported_version! ---
+
+  test "reported_ruby_version returns what the ruby binary prints" do
+    Given "a ruby_root whose bin/ruby reports a hijacked version"
+    tmpdir = Dir.mktmpdir("shadowenv-version-test-")
+    write_fake_ruby(tmpdir, reports: "4.0.6")
+
+    Expect "the reported version comes from running the binary"
+    ShadowenvRuby.reported_ruby_version(tmpdir) == "4.0.6"
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "reported_ruby_version returns nil when the binary is absent" do
+    Given "a ruby_root with no bin/ruby"
+    tmpdir = Dir.mktmpdir("shadowenv-version-test-")
+
+    Expect "nil is returned"
+    ShadowenvRuby.reported_ruby_version(tmpdir).nil? == true
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "verify_reported_version! aborts when the ruby runs as another version" do
+    Given "a ruby_root whose bin/ruby reports a different version"
+    tmpdir = Dir.mktmpdir("shadowenv-version-test-")
+    write_fake_ruby(tmpdir, reports: "4.0.6")
+
+    When "we verify the reported version"
+    ShadowenvRuby.verify_reported_version!(tmpdir, "4.0.5")
+
+    Then "it aborts with the hijack explanation"
+    1 * Kernel.abort(ShadowenvRuby.version_hijack_message(tmpdir, "4.0.5", "4.0.6"))
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "verify_reported_version! passes when the ruby reports the requested version" do
+    Given "a ruby_root whose bin/ruby reports the requested version"
+    tmpdir = Dir.mktmpdir("shadowenv-version-test-")
+    write_fake_ruby(tmpdir, reports: "4.0.5")
+
+    When "we verify the reported version"
+    ShadowenvRuby.verify_reported_version!(tmpdir, "4.0.5")
+
+    Then "it never aborts"
+    0 * Kernel.abort
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  # --- ensure_ruby_installed! version repair ---
+
+  test "ensure_ruby_installed! force-rebuilds a ruby that runs as another version" do
+    Given "an installed ruby with healthy extensions that reports the wrong version"
+    tmp_rbenv_root = Dir.mktmpdir("rbenv-root-")
+    original_rbenv_root = ENV["RBENV_ROOT"]
+    ENV["RBENV_ROOT"] = tmp_rbenv_root
+    ruby_root = File.join(tmp_rbenv_root, "versions", "4.0.5")
+    write_fake_ruby(ruby_root, reports: "4.0.6")
+
+    When "we ensure the ruby is installed"
+    ShadowenvRuby.ensure_ruby_installed!("4.0.5")
+
+    Then "a forced reinstall is attempted, and the still-hijacked result aborts loudly"
+    1 * ShadowenvRuby.install_ruby_with_version_manager("4.0.5", force: true)
+    1 * Kernel.abort(ShadowenvRuby.version_hijack_message(ruby_root, "4.0.5", "4.0.6"))
+
+    Cleanup
+    ENV["RBENV_ROOT"] = original_rbenv_root
+    FileUtils.rm_rf(tmp_rbenv_root)
+  end
+
+  test "ensure_ruby_installed! force-rebuilds a ruby with missing extensions" do
+    Given "an installed ruby that reports the right version but cannot load extensions"
+    tmp_rbenv_root = Dir.mktmpdir("rbenv-root-")
+    original_rbenv_root = ENV["RBENV_ROOT"]
+    ENV["RBENV_ROOT"] = tmp_rbenv_root
+    ruby_root = File.join(tmp_rbenv_root, "versions", "4.0.5")
+    write_fake_ruby(ruby_root, reports: "4.0.5", extensions_ok: false)
+
+    When "we ensure the ruby is installed"
+    ShadowenvRuby.ensure_ruby_installed!("4.0.5")
+
+    Then "a forced reinstall is attempted, and the still-crippled result aborts loudly"
+    1 * ShadowenvRuby.install_ruby_with_version_manager("4.0.5", force: true)
+    1 * Kernel.abort(anything)
+
+    Cleanup
+    ENV["RBENV_ROOT"] = original_rbenv_root
+    FileUtils.rm_rf(tmp_rbenv_root)
+  end
+
+  test "install_ruby_with_version_manager invokes rbenv install for the version" do
+    Given "a PATH carrying a fake rbenv that records its invocations"
+    tmpdir = Dir.mktmpdir("fake-rbenv-")
+    invocations_log = File.join(tmpdir, "invocations.log")
+    fake_rbenv = File.join(tmpdir, "rbenv")
+    File.write(fake_rbenv, "#!/bin/sh\necho \"$@\" >> \"#{invocations_log}\"\nexit 0\n")
+    FileUtils.chmod(0o755, fake_rbenv)
+    original_path = ENV["PATH"]
+    original_brew_prefix = ENV["HOMEBREW_PREFIX"]
+    # Restrict PATH so brew is absent: the build-dep and build-env brew branches
+    # no-op and the fake rbenv is the only version manager in sight.
+    ENV["PATH"] = "#{tmpdir}:/usr/bin:/bin"
+    ENV["HOMEBREW_PREFIX"] = File.join(tmpdir, "no-brew-here")
+
+    When "we install the ruby"
+    result = ShadowenvRuby.install_ruby_with_version_manager("4.0.5")
+
+    Then "rbenv install ran for the requested version and the run succeeded"
+    result == true
+    File.read(invocations_log).include?("install --skip-existing 4.0.5") == true
+
+    Cleanup
+    ENV["PATH"] = original_path
+    ENV["HOMEBREW_PREFIX"] = original_brew_prefix
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "ensure_ruby_installed! returns a healthy ruby without reinstalling" do
+    Given "an installed ruby with healthy extensions that reports the requested version"
+    tmp_rbenv_root = Dir.mktmpdir("rbenv-root-")
+    original_rbenv_root = ENV["RBENV_ROOT"]
+    ENV["RBENV_ROOT"] = tmp_rbenv_root
+    ruby_root = File.join(tmp_rbenv_root, "versions", "4.0.5")
+    write_fake_ruby(ruby_root, reports: "4.0.5")
+
+    When "we ensure the ruby is installed"
+    result = ShadowenvRuby.ensure_ruby_installed!("4.0.5")
+
+    Then "the existing install is returned untouched"
+    result == ruby_root
+    0 * ShadowenvRuby.install_ruby_with_version_manager
+
+    Cleanup
+    ENV["RBENV_ROOT"] = original_rbenv_root
+    FileUtils.rm_rf(tmp_rbenv_root)
+  end
+
+  private
+
+  # A stand-in bin/ruby: prints the given version for `-e "print RUBY_VERSION"`;
+  # every other invocation (the extension `require` probes) exits 0 when
+  # extensions_ok, 1 otherwise.
+  def write_fake_ruby(ruby_root, reports:, extensions_ok: true)
+    bin = File.join(ruby_root, "bin")
+    FileUtils.mkdir_p(bin)
+    fake_ruby = File.join(bin, "ruby")
+    extension_probe_exit_code = extensions_ok ? 0 : 1
+    File.write(fake_ruby, <<~SCRIPT)
+      #!/bin/sh
+      case "$2" in
+        "print RUBY_VERSION") printf '%s' "#{reports}"; exit 0 ;;
+      esac
+      exit #{extension_probe_exit_code}
+    SCRIPT
+    FileUtils.chmod(0o755, fake_ruby)
   end
 end
