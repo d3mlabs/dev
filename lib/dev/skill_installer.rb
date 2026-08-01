@@ -23,6 +23,9 @@ module Dev
     # (lib/dev/ → repo or libexec root) — the installed location under brew.
     SHIPPED_SKILLS_DIR = Pathname(File.expand_path(File.join(__dir__, "..", "..", "share", "cursor-skills")))
 
+    # @return [Pathname] target dir the symlinks live in
+    attr_reader :skills_dir
+
     # @param skills_dir [Pathname, String] target dir the symlinks live in;
     #   defaults to the user-global ~/.cursor/skills
     def initialize(skills_dir: Pathname(Dir.home) / ".cursor" / "skills")

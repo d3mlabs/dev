@@ -33,10 +33,10 @@ module Dev
       # @param merge_base [Dev::Plan::MergeBase, nil]
       # @param skill_installer [Dev::SkillInstaller, nil] target for dev's
       #   shipped skill links (defaults to the user-global ~/.cursor/skills)
-      # @param knowledge [Dev::Knowledge::Synchronizer, nil]
+      # @param learnings [Dev::Learnings::Synchronizer, nil]
       # @param executor [Dev::Plan::Executor] CLI boundary (injectable for tests)
       def initialize(project_root:, executor: Executor.new, workspace: nil, issues: nil,
-                     settings: nil, merge_base: nil, skill_installer: nil, knowledge: nil)
+                     settings: nil, merge_base: nil, skill_installer: nil, learnings: nil)
         @project_root = project_root
         @executor = executor
         @workspace = workspace || Workspace.new(project_root: project_root, executor: executor)
@@ -44,7 +44,7 @@ module Dev
         @settings = settings || Dev::Settings.new
         @merge_base = merge_base || MergeBase.new
         @skill_installer = skill_installer || Dev::SkillInstaller.new
-        @knowledge = knowledge || Knowledge::Synchronizer.new
+        @learnings = learnings || Learnings::Synchronizer.new
       end
 
       # Dispatch a `dev plan …` invocation.
@@ -54,11 +54,11 @@ module Dev
       # @param input [IO] input stream (the Cursor hook payload for hook-after-edit)
       # @raise [UsageError] on an unrecognized invocation
       def run(args, out: $stdout, input: $stdin)
-        # Hook point: refresh dev's shipped skill links and the org knowledge
-        # artifacts. Cheap and idempotent (content-compared, network only in a
-        # detached background refresh), so every invocation can afford it.
+        # Hook point: refresh dev's shipped skill links and the org learnings
+        # artifacts. Cheap and idempotent (content-compared, the network pull
+        # bounded by a short timeout), so every invocation can afford it.
         @skill_installer.install_all(Dev::SkillInstaller::SHIPPED_SKILLS_DIR)
-        @knowledge.sync(project_root: @project_root)
+        @learnings.sync(project_root: @project_root)
         subcommand, *rest = args
         case subcommand
         when "new" then new_plan(rest, out:)

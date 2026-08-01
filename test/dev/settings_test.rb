@@ -99,24 +99,4 @@ class Dev::SettingsTest < Minitest::Test
     ENV["DEV_KNOWLEDGE_REPO"] = saved_env if saved_env
     FileUtils.rm_rf(dir)
   end
-
-  test "knowledge_ttl is #{expected}s when the config declares #{declared.inspect}" do
-    Given "a config file"
-    dir = Dir.mktmpdir("dev-settings-test-")
-    path = File.join(dir, "config.yml")
-    File.write(path, declared ? "knowledge_ttl: #{declared.inspect}\n" : "")
-    settings = Dev::Settings.new(config_path: path)
-
-    Expect
-    settings.knowledge_ttl == expected
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-
-    Where
-    declared | expected
-    nil      | 900
-    60       | 60
-    "3600"   | 3600
-  end
 end

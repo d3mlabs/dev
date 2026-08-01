@@ -33,15 +33,15 @@ class Dev::GlobalDispatchTest < Minitest::Test
     "cd"          | true
     "plan"        | true
     "cred"        | true
-    "knowledge"   | true
+    "learnings"   | true
     "up"          | false
     "test"        | false
     "update-deps" | false
   end
 
-  test "dev knowledge status dispatches globally without a dev.yml lookup" do
+  test "dev learnings status dispatches globally without a dev.yml lookup" do
     Given "a knowledge repo via ENV and tmpdir-scoped XDG homes"
-    dir = Dir.mktmpdir("dispatch-knowledge-")
+    dir = Dir.mktmpdir("dispatch-learnings-")
     saved = {
       "DEV_KNOWLEDGE_REPO" => ENV["DEV_KNOWLEDGE_REPO"],
       "XDG_DATA_HOME" => ENV["XDG_DATA_HOME"],
@@ -55,8 +55,8 @@ class Dev::GlobalDispatchTest < Minitest::Test
     old_stdout = $stdout
     $stdout = out
 
-    When "we dispatch dev knowledge status from a cwd with no dev.yml"
-    Dir.chdir(dir) { dispatch.run(["knowledge", "status"]) }
+    When "we dispatch dev learnings status from a cwd with no dev.yml"
+    Dir.chdir(dir) { dispatch.run(["learnings", "status"]) }
 
     Then "the status reports the configured repo and the empty cache"
     out.string.include?(File.join(dir, "knowledge"))

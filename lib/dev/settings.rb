@@ -9,22 +9,15 @@ module Dev
   #
   #   plans_repo: d3mlabs/plans
   #   knowledge_repo: d3mlabs/knowledge
-  #   knowledge_ttl: 900
   #
   # `plans_repo` is the org-wide plans repo that `dev plan new --org` /
   # `dev plan link --org` target. `knowledge_repo` is the org knowledge repo
   # dev keeps a machine-local cache of; leaving it unset simply means no org
-  # knowledge sync (dev is public and hardcodes no org content).
-  # `knowledge_ttl` is the cache staleness ceiling in seconds. ENV overrides:
-  # DEV_PLANS_REPO and DEV_KNOWLEDGE_REPO (matching the credentials ENV-first
-  # convention).
+  # learnings sync (dev is public and hardcodes no org content). ENV
+  # overrides: DEV_PLANS_REPO and DEV_KNOWLEDGE_REPO (matching the
+  # credentials ENV-first convention).
   class Settings
     class MissingSettingError < RuntimeError; end
-
-    # Aggressive default for the corpus's growth phase: a fresh learning
-    # should reach machines within the merge-to-next-session window. Relax
-    # toward daily once the base matures — a default change, not a code change.
-    DEFAULT_KNOWLEDGE_TTL_SECONDS = 15 * 60
 
     # @return [String] path of the config file settings are read from
     attr_reader :config_path
@@ -51,7 +44,7 @@ module Dev
 
     # The org knowledge repo the machine cache syncs from. Unset is a
     # supported state, not an error: machines without the setting have no
-    # org knowledge sync.
+    # org learnings sync.
     #
     # @return [String, nil] "owner/repo" (or any git-clonable URL), or nil
     def knowledge_repo
@@ -60,12 +53,6 @@ module Dev
 
       value = load_config["knowledge_repo"]
       (value && !value.empty?) ? value : nil
-    end
-
-    # @return [Integer] knowledge cache staleness ceiling in seconds
-    def knowledge_ttl
-      value = load_config["knowledge_ttl"]
-      value ? Integer(value) : DEFAULT_KNOWLEDGE_TTL_SECONDS
     end
 
     private

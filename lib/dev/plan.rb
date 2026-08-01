@@ -2,7 +2,7 @@
 
 require "dev/settings"
 require "dev/skill_installer"
-require "dev/knowledge"
+require "dev/learnings"
 require "dev/plan/executor"
 require "dev/plan/header"
 require "dev/plan/frontmatter"

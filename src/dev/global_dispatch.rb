@@ -4,7 +4,7 @@
 require "pathname"
 require "dev/cd"
 require "dev/plan"
-require "dev/knowledge"
+require "dev/learnings"
 require "dev/credentials"
 require "dev/credential_accessor"
 
@@ -16,8 +16,8 @@ module Dev
   # - `dev cred`      — host-global (credentials live under XDG / ~/.config/dev)
   # - `dev plan`      — workspace-global (plans live in the enclosing
   #                     workspace, no project config is read)
-  # - `dev knowledge` — host-global (the machine knowledge cache lives under
-  #                     XDG / ~/.local/share/dev)
+  # - `dev learnings` — host-global (the machine cache of the knowledge repo
+  #                     lives under XDG / ~/.local/share/dev)
   #
   # Runs before Dev::Runner is constructed, so these commands work from any
   # directory. Project commands (`up`, yaml-declared names) keep the existing
@@ -25,7 +25,7 @@ module Dev
   class GlobalDispatch
     extend T::Sig
 
-    GLOBAL_COMMANDS = T.let(%w[cd plan cred knowledge].freeze, T::Array[String])
+    GLOBAL_COMMANDS = T.let(%w[cd plan cred learnings].freeze, T::Array[String])
 
     # Candidates shown in an ambiguous `dev cd` error before truncating.
     AMBIGUOUS_CANDIDATE_CAP = 10
@@ -58,10 +58,10 @@ module Dev
       cmd_name = T.must(args.shift)
       case cmd_name
       when "cd" then @cd_accessor.run(args)
-      # Plan and Knowledge accessors are built per run: their workspace root
+      # Plan and Learnings accessors are built per run: their workspace root
       # depends on the cwd.
       when "plan" then Dev::Plan::Accessor.new(project_root: workspace_root).run(args)
-      when "knowledge" then Dev::Knowledge::Accessor.new(project_root: workspace_root).run(args)
+      when "learnings" then Dev::Learnings::Accessor.new(project_root: enclosing_project_root).run(args)
       when "cred" then @cred_accessor.run(args)
       else raise ArgumentError, "not a global command: #{cmd_name}"
       end
@@ -101,6 +101,16 @@ module Dev
     # @return [Pathname]
     sig { returns(Pathname) }
     def workspace_root
+      enclosing_project_root || Pathname.new(Dir.pwd)
+    end
+
+    # The enclosing project (nearest dev.yml, else nearest git root), or nil
+    # when the cwd sits in no project at all — `dev learnings` outside any
+    # checkout does only the machine-global work.
+    #
+    # @return [Pathname, nil]
+    sig { returns(T.nilable(Pathname)) }
+    def enclosing_project_root
       cwd = Pathname.new(Dir.pwd)
       cwd.ascend do |path|
         return path if (path / Dev::DEV_YAML_FILENAME).exist?
@@ -108,7 +118,7 @@ module Dev
       cwd.ascend do |path|
         return path if (path / ".git").exist?
       end
-      cwd
+      nil
     end
   end
 end
