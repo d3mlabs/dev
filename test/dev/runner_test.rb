@@ -328,16 +328,16 @@ class RunnerTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "knowledge dispatches the subcommand to the knowledge accessor" do
+  test "learnings dispatches the subcommand to the learnings accessor" do
     Given "a Runner pinned to an empty project root"
-    root = Pathname.new(Dir.mktmpdir("runner-knowledge-"))
+    root = Pathname.new(Dir.mktmpdir("runner-learnings-"))
     Dev.stubs(:target_project_root).returns(root)
     runner = build_runner(commands: {})
     runner.stubs(:resolve_ruby_version).returns("4.0.1")
-    Dev::Knowledge::Accessor.any_instance.expects(:run).with(["status"]).once
+    Dev::Learnings::Accessor.any_instance.expects(:run).with(["status"]).once
 
-    When "we run dev knowledge status"
-    runner.run(["knowledge", "status"], ui: fake_ui)
+    When "we run dev learnings status"
+    runner.run(["learnings", "status"], ui: fake_ui)
 
     Then "the expectation on the accessor holds"
     true
@@ -346,7 +346,7 @@ class RunnerTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "install-deps finishes by linking gem skills and syncing org knowledge" do
+  test "install-deps finishes by linking gem skills and syncing org learnings" do
     Given "a Runner pinned to an empty project root, with the installer stubbed"
     root = Pathname.new(Dir.mktmpdir("runner-install-deps-"))
     Dev.stubs(:target_project_root).returns(root)
@@ -355,7 +355,7 @@ class RunnerTest < Minitest::Test
     ShadowenvRuby.stubs(:ensure!)
     Dev::Deps::DependencyInstaller.any_instance.stubs(:install)
     Dev::Deps::GemSkillLinker.any_instance.expects(:link_all).once
-    Dev::Knowledge::Synchronizer.any_instance.expects(:sync).with(project_root: root).once
+    Dev::Learnings::Synchronizer.any_instance.expects(:sync).with(project_root: root).once
 
     When "we run install-deps"
     runner.run(["install-deps"], ui: fake_ui)
@@ -380,7 +380,7 @@ class RunnerTest < Minitest::Test
     ShadowenvRuby.expects(:ensure!).with(ruby_version: "4.0.1", project_root: root).once
     Dev::Deps::DependencyInstaller.any_instance.stubs(:install)
     Dev::Deps::GemSkillLinker.any_instance.stubs(:link_all)
-    Dev::Knowledge::Synchronizer.any_instance.stubs(:sync)
+    Dev::Learnings::Synchronizer.any_instance.stubs(:sync)
 
     When "we run install-deps"
     runner.run(["install-deps"], ui: fake_ui)

@@ -19,7 +19,7 @@ require 'dev/deps/registry'
 require 'dev/deps/repository'
 require 'dev/deps/resolver'
 require 'dev/deps/staleness'
-require 'dev/knowledge'
+require 'dev/learnings'
 require 'dev/plan'
 require 'dev/runner_setup'
 require 'dev/cli/ui'
@@ -271,12 +271,12 @@ module Dev
         Dev::Cd::Accessor.new.run(args)
       end)
 
-      # `dev knowledge` is dispatched globally in bin/dev, like cd; this
+      # `dev learnings` is dispatched globally in bin/dev, like cd; this
       # registration only surfaces it in `dev --help`.
-      registry.register("knowledge", BuiltinCommand.new(
-        desc: "Org knowledge cache (sync: refresh now, status: age/freshness)",
+      registry.register("learnings", BuiltinCommand.new(
+        desc: "Learnings read path (sync: refresh now, status: what's linked, invariants: Tier-0 block)",
       ) do |args, context|
-        Dev::Knowledge::Accessor.new(project_root: context.project_root).run(args)
+        Dev::Learnings::Accessor.new(project_root: context.project_root).run(args)
       end)
 
       registry.register("check", BuiltinCommand.new(
@@ -433,9 +433,12 @@ module Dev
       installer.install(env: Dev::Deps.detect_env, host: Dev::Deps.detect_host)
       # Installing a dependency includes its shipped skills: finish by linking
       # the locked gem set's skills project-scoped, and refresh the machine's
-      # org knowledge artifacts (both hooks are best-effort and never raise).
+      # org learnings artifacts (both hooks are best-effort and never raise).
+      # This is hygiene, not a bootstrap contract: workflows that must start
+      # on fresh invariants (e.g. ai-flow's runner) run an explicit blocking
+      # `dev learnings sync` step instead of relying on this side effect.
       Dev::Deps::GemSkillLinker.new(project_root: context.project_root).link_all
-      Dev::Knowledge::Synchronizer.new.sync(project_root: context.project_root)
+      Dev::Learnings::Synchronizer.new.sync(project_root: context.project_root)
     end
 
     # taps is empty (custom-tap installs go through the container path) and the

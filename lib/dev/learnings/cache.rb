@@ -5,15 +5,18 @@ require "open3"
 require "pathname"
 
 module Dev
-  module Knowledge
+  module Learnings
     # Machine-local git cache of the org knowledge repo, under
     # $XDG_DATA_HOME/dev/knowledge (~/.local/share/dev/knowledge).
     #
-    # Two frequencies, no network on the hot path: hooks call refresh_async
-    # when the TTL has lapsed (a detached child process; the calling command
-    # never blocks on the network), and `dev knowledge sync` calls refresh
-    # (blocking, TTL bypassed). Offline simply serves the cache; the
-    # staleness ceiling is the TTL.
+    # Two refresh shapes, both cheap (the knowledge repo is tiny):
+    # `dev learnings sync` calls refresh (blocking, errors bubble), and hook
+    # points call refresh_bounded — an inline pull capped by a short timeout,
+    # so a hook distributes what it just fetched instead of what it found. On
+    # timeout the pull keeps running detached and the current cache is served;
+    # offline simply serves the cache. A hardcoded ~30s courtesy floor keeps
+    # rapid-fire hooks (e.g. per-edit plan hooks) from pulling on every call —
+    # deliberately a constant, not a setting.
     #
     # A "owner/repo" source clones through `gh` so the fetch rides the user's
     # gh auth (dev is public and carries no credentials of its own); any other
@@ -32,6 +35,18 @@ module Dev
 
       OWNER_REPO_PATTERN = %r{\A[\w.-]+/[\w.-]+\z}
 
+      # How long a bounded refresh waits for the pull before detaching it and
+      # serving the current cache.
+      REFRESH_TIMEOUT_SECONDS = 2
+
+      # Courtesy floor between bounded refreshes: within it, refresh_bounded
+      # is a no-op. A constant, not a setting — the only cost it caps is a
+      # subsecond no-op pull.
+      REFRESH_FLOOR_SECONDS = 30
+
+      # Poll cadence while waiting on a bounded refresh's child process.
+      REFRESH_POLL_SECONDS = 0.05
+
       # @return [Pathname] the clone's location
       attr_reader :dir
 
@@ -39,9 +54,15 @@ module Dev
       #   any git-clonable URL or local path
       # @param dir [Pathname, String, nil] override for tests; defaults to the
       #   XDG data location
-      def initialize(repo:, dir: nil)
+      # @param refresh_timeout [Numeric] override for tests; how long a
+      #   bounded refresh blocks before detaching
+      # @param refresh_floor [Numeric] override for tests; minimum age before
+      #   a bounded refresh pulls again
+      def initialize(repo:, dir: nil, refresh_timeout: REFRESH_TIMEOUT_SECONDS, refresh_floor: REFRESH_FLOOR_SECONDS)
         @repo = repo
         @dir = Pathname(dir || default_dir)
+        @refresh_timeout = refresh_timeout
+        @refresh_floor = refresh_floor
       end
 
       # @return [Boolean] whether the cache has been cloned
@@ -75,20 +96,23 @@ module Dev
         end
       end
 
-      # Fire-and-forget refresh in a detached child process, so hook points
-      # never block on the network. A first-run clone is async too: this
-      # command renders nothing, the next one serves the fresh cache. Never
-      # raises — a failed background refresh only extends staleness, and the
-      # explicit `dev knowledge sync` path reports errors properly.
+      # Bounded refresh for hook points: pull (or first-clone) inline, waiting
+      # up to the timeout so the calling hook distributes fresh content, then
+      # detach and fall back to the current cache when the network is slower
+      # than that. Within the courtesy floor of the last successful refresh it
+      # is a no-op. Never raises — offline or a failed pull only means the
+      # cache is served as-is, and the explicit `dev learnings sync` path
+      # reports errors properly.
       #
       # @return [void]
-      def refresh_async
+      def refresh_bounded
+        return if refreshed_within_floor?
+
         FileUtils.mkdir_p(@dir.dirname)
         pid = Process.spawn(*(present? ? pull_command : clone_command), out: File::NULL, err: File::NULL)
-        Process.detach(pid)
-        nil
+        wait_or_detach(pid)
       rescue SystemCallError => e
-        $stderr.puts "dev: warning: could not start the knowledge cache refresh (#{e.message})."
+        $stderr.puts "dev: warning: could not start the knowledge repo cache refresh (#{e.message})."
       end
 
       # When the cache last talked to the remote: the fetch marker's mtime,
@@ -100,14 +124,31 @@ module Dev
         marker&.mtime
       end
 
-      # @param ttl_seconds [Integer] staleness ceiling
-      # @return [Boolean] true when never synced or older than the TTL
-      def stale?(ttl_seconds)
+      private
+
+      # @return [Boolean] whether the last successful refresh is inside the
+      #   courtesy floor
+      def refreshed_within_floor?
         at = synced_at
-        at.nil? || (Time.now - at) > ttl_seconds
+        !at.nil? && (Time.now - at) <= @refresh_floor
       end
 
-      private
+      # Wait for the refresh child up to the timeout; past it, detach so the
+      # pull finishes in the background and the next hook serves its result.
+      #
+      # @param pid [Integer]
+      # @return [void]
+      def wait_or_detach(pid)
+        deadline = Time.now + @refresh_timeout
+        until Process.waitpid(pid, Process::WNOHANG)
+          if Time.now >= deadline
+            Process.detach(pid)
+            return
+          end
+
+          sleep(REFRESH_POLL_SECONDS)
+        end
+      end
 
       # @param command [Array<String>]
       # @param error_class [Class<RuntimeError>]
