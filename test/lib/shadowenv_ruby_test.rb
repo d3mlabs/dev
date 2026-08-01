@@ -461,6 +461,53 @@ class ShadowenvRubyTest < Minitest::Test
     FileUtils.rm_rf(tmp_rbenv_root)
   end
 
+  test "ensure_ruby_installed! force-rebuilds a ruby with missing extensions" do
+    Given "an installed ruby that reports the right version but cannot load extensions"
+    tmp_rbenv_root = Dir.mktmpdir("rbenv-root-")
+    original_rbenv_root = ENV["RBENV_ROOT"]
+    ENV["RBENV_ROOT"] = tmp_rbenv_root
+    ruby_root = File.join(tmp_rbenv_root, "versions", "4.0.5")
+    write_fake_ruby(ruby_root, reports: "4.0.5", extensions_ok: false)
+
+    When "we ensure the ruby is installed"
+    ShadowenvRuby.ensure_ruby_installed!("4.0.5")
+
+    Then "a forced reinstall is attempted, and the still-crippled result aborts loudly"
+    1 * ShadowenvRuby.install_ruby_with_version_manager("4.0.5", force: true)
+    1 * Kernel.abort(anything)
+
+    Cleanup
+    ENV["RBENV_ROOT"] = original_rbenv_root
+    FileUtils.rm_rf(tmp_rbenv_root)
+  end
+
+  test "install_ruby_with_version_manager invokes rbenv install for the version" do
+    Given "a PATH carrying a fake rbenv that records its invocations"
+    tmpdir = Dir.mktmpdir("fake-rbenv-")
+    invocations_log = File.join(tmpdir, "invocations.log")
+    fake_rbenv = File.join(tmpdir, "rbenv")
+    File.write(fake_rbenv, "#!/bin/sh\necho \"$@\" >> \"#{invocations_log}\"\nexit 0\n")
+    FileUtils.chmod(0o755, fake_rbenv)
+    original_path = ENV["PATH"]
+    original_brew_prefix = ENV["HOMEBREW_PREFIX"]
+    # Restrict PATH so brew is absent: the build-dep and build-env brew branches
+    # no-op and the fake rbenv is the only version manager in sight.
+    ENV["PATH"] = "#{tmpdir}:/usr/bin:/bin"
+    ENV["HOMEBREW_PREFIX"] = File.join(tmpdir, "no-brew-here")
+
+    When "we install the ruby"
+    result = ShadowenvRuby.install_ruby_with_version_manager("4.0.5")
+
+    Then "rbenv install ran for the requested version and the run succeeded"
+    result == true
+    File.read(invocations_log).include?("install --skip-existing 4.0.5") == true
+
+    Cleanup
+    ENV["PATH"] = original_path
+    ENV["HOMEBREW_PREFIX"] = original_brew_prefix
+    FileUtils.rm_rf(tmpdir)
+  end
+
   test "ensure_ruby_installed! returns a healthy ruby without reinstalling" do
     Given "an installed ruby with healthy extensions that reports the requested version"
     tmp_rbenv_root = Dir.mktmpdir("rbenv-root-")
@@ -483,18 +530,20 @@ class ShadowenvRubyTest < Minitest::Test
 
   private
 
-  # A stand-in bin/ruby: prints the given version for `-e "print RUBY_VERSION"`
-  # and exits 0 for everything else (so the extension checks pass).
-  def write_fake_ruby(ruby_root, reports:)
+  # A stand-in bin/ruby: prints the given version for `-e "print RUBY_VERSION"`;
+  # every other invocation (the extension `require` probes) exits 0 when
+  # extensions_ok, 1 otherwise.
+  def write_fake_ruby(ruby_root, reports:, extensions_ok: true)
     bin = File.join(ruby_root, "bin")
     FileUtils.mkdir_p(bin)
     fake_ruby = File.join(bin, "ruby")
+    extension_probe_exit_code = extensions_ok ? 0 : 1
     File.write(fake_ruby, <<~SCRIPT)
       #!/bin/sh
       case "$2" in
-        "print RUBY_VERSION") printf '%s' "#{reports}" ;;
+        "print RUBY_VERSION") printf '%s' "#{reports}"; exit 0 ;;
       esac
-      exit 0
+      exit #{extension_probe_exit_code}
     SCRIPT
     FileUtils.chmod(0o755, fake_ruby)
   end
