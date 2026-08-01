@@ -34,15 +34,15 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
 ## architecture
 
 - [architecture/command-dispatch] Global builtins (cd, plan, cred,
-  knowledge) dispatch before the dev.yml gate; project commands are
+  learnings) dispatch before the dev.yml gate; project commands are
   yaml-declared and run through Runner.
   → .cursor/skills/architecture/command-dispatch/
 - [architecture/module-map] What owns what: src/dev is the typed CLI core;
   each `lib/dev/<module>` is one feature whose Accessor is its only CLI
   surface. → .cursor/skills/architecture/module-map/
 - [architecture/hook-points] `dev up` / `install-deps` / `dev plan` double
-  as the idempotent hygiene hooks (skill links, knowledge sync): never
-  raise, never block on the network.
+  as the idempotent hygiene hooks (skill links, learnings sync): never
+  raise, network only as a bounded pull before distribution.
   → .cursor/skills/architecture/hook-points/
 
 ## toolchain
@@ -56,7 +56,7 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
 ## org tier
 
 Org-wide invariants and knowledge live in the configured org knowledge
-repo (`knowledge_repo:`), not here: dev renders the always-on slice into
-the generated `.cursor/rules/org-invariants.mdc` and links the on-demand
-corpus into `~/.cursor/skills/`. A lesson about how we build software —
-not about this repo — belongs there.
+repo (`knowledge_repo:`), not here: dev renders the always-on slice once
+machine-side and links it in as `.cursor/rules/org-invariants.mdc`, and
+links the on-demand corpus into `~/.cursor/skills/`. A lesson about how
+we build software — not about this repo — belongs there.

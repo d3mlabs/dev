@@ -19,9 +19,10 @@ description: >-
   `.cursor/rules/separation-of-concerns.mdc`: Repository resolves,
   Integration installs, Lockfile serializes, the orchestrator
   coordinates — one class, one layer.
-- **`lib/dev/knowledge/`** — org knowledge distribution: Cache (TTL git
-  clone), Synchronizer (orchestration), InvariantsRenderer (the generated
-  org-invariants.mdc).
+- **`lib/dev/learnings/`** — the learnings read path: Cache (bounded git
+  clone/pull of the knowledge repo), Synchronizer (orchestration),
+  InvariantsRenderer (one machine-side org-invariants.mdc render plus the
+  per-project symlink and the `dev learnings invariants` prompt seam).
 - **`lib/dev/skill_installer.rb`** — the one symlink mechanism behind all
   three skill channels (shipped, org, gem); the gem channel's lockfile
   scan is `lib/dev/deps/gem_skill_linker.rb`.
