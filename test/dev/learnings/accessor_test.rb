@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/deps/gem_skill_linker"
 require "dev/learnings"
 require "dev/settings"
 require "dev/skill_installer"
@@ -57,6 +58,13 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     system("git", "-C", source, "-c", "user.email=dev@test", "-c", "user.name=dev",
       "commit", "-qm", "seed", exception: true)
     source
+  end
+
+  # Rewind the cache's sync marker (the same files Cache#synced_at reads) so
+  # status reports an older age.
+  def backdate_cache(cache, seconds)
+    markers = [cache.dir / ".git" / "FETCH_HEAD", cache.dir / ".git" / "HEAD"].select(&:exist?)
+    FileUtils.touch(markers, mtime: Time.now - seconds)
   end
 
   test "learnings sync refreshes the whole read path and reports" do
@@ -154,6 +162,87 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     out.string.include?("project invariants link:")
     out.string.include?("(linked)")
     out.string.include?("gem skills: 0 linked")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "status with a cloned but never-synced cache points both tiers at dev learnings sync" do
+    Given "a cloned cache that has never been distributed"
+    dir = Dir.mktmpdir("dev-learnings-acc-test-")
+    accessor, cache, = build_env(dir)
+    cache.refresh
+    out = StringIO.new
+
+    When "running dev learnings status"
+    accessor.run(["status"], out: out)
+
+    Then "the org render and the project link are both reported missing"
+    out.string.include?("invariants: not rendered")
+    out.string.include?("missing — run `dev learnings sync`")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "status flags an invariants rules file that is not dev's link" do
+    Given "a synced project whose rules file was replaced by a plain file"
+    dir = Dir.mktmpdir("dev-learnings-acc-test-")
+    accessor, _cache, project, synchronizer, = build_env(dir)
+    accessor.run(["sync"], out: StringIO.new)
+    rules_file = synchronizer.project_rules_file(project)
+    rules_file.delete
+    rules_file.write("# hand-rolled, not dev's symlink\n")
+    out = StringIO.new
+
+    When "running dev learnings status"
+    accessor.run(["status"], out: out)
+
+    Then
+    out.string.include?("present but not dev's link")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "status counts the project's gem skill links and ignores other entries" do
+    Given "a synced project with one gem skill link and one unrelated file"
+    dir = Dir.mktmpdir("dev-learnings-acc-test-")
+    accessor, _cache, project, = build_env(dir)
+    accessor.run(["sync"], out: StringIO.new)
+    gem_skills_dir = project.join(*Dev::Deps::GemSkillLinker::AGENT_SKILLS_SUBDIRS)
+    FileUtils.mkdir_p(gem_skills_dir)
+    File.symlink(File.join(dir, "knowledge", "skills", "srp"), gem_skills_dir / "gem-rspock--rspock")
+    File.write(gem_skills_dir / "README.md", "not a link\n")
+    out = StringIO.new
+
+    When "running dev learnings status"
+    accessor.run(["status"], out: out)
+
+    Then
+    out.string.include?("gem skills: 1 linked")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "status formats the cache age in minutes, hours, and days" do
+    Given "a synced accessor"
+    dir = Dir.mktmpdir("dev-learnings-acc-test-")
+    accessor, cache, = build_env(dir)
+    accessor.run(["sync"], out: StringIO.new)
+
+    When "running status with the cache's sync marker backdated to each granularity"
+    reports = { 5 * 60 => StringIO.new, 3 * 3600 => StringIO.new, 2 * 86_400 => StringIO.new }
+    reports.each do |age_seconds, out|
+      backdate_cache(cache, age_seconds)
+      accessor.run(["status"], out: out)
+    end
+
+    Then "each report carries the compact age"
+    reports[5 * 60].string.include?("(refreshed 5m ago)")
+    reports[3 * 3600].string.include?("(refreshed 3h ago)")
+    reports[2 * 86_400].string.include?("(refreshed 2d ago)")
 
     Cleanup
     FileUtils.rm_rf(dir)
