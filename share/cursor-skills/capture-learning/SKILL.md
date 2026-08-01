@@ -89,7 +89,7 @@ Learnings merge through review, never silently:
   document — index line, skill body, target tier per learning — and
   iterate conversationally ("drop 3, merge 2 into 5, that's org-wide");
   switching to agent mode applies the agreed set. Preferred for scans.
-- **Otherwise:** write the files and open a draft PR on a dedicated
+- **Otherwise:** write the files and open a proposal PR on a dedicated
   branch (`ai/learn-<source>`), the body embedding the motivating
   evidence and a `learned-from: <source>` marker line. Never mix
   learnings into an unrelated code PR — separate PRs give independent
