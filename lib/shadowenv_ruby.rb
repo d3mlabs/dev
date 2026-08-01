@@ -105,10 +105,17 @@ module ShadowenvRuby
   # --- internal helpers ------------------------------------------------
 
   def find_ruby_root(version)
-    rbenv_root = ENV["RBENV_ROOT"] || File.join(ENV["HOME"] || Dir.home, ".rbenv")
-    rbenv_path = File.join(rbenv_root, "versions", version)
-    return File.expand_path(rbenv_path) if File.directory?(rbenv_path)
+    rbenv_path = rbenv_version_prefix(version)
+    return rbenv_path if File.directory?(rbenv_path)
     nil
+  end
+
+  # The prefix rbenv/ruby-build installs (or will install) the version under.
+  # Shared by find_ruby_root and ruby_build_env so the rpath baked at build
+  # time always names the same directory the install lands in.
+  def rbenv_version_prefix(version)
+    rbenv_root = ENV["RBENV_ROOT"] || File.join(ENV["HOME"] || Dir.home, ".rbenv")
+    File.expand_path(File.join(rbenv_root, "versions", version))
   end
 
   def brew_prefix_for(formula)
@@ -135,11 +142,15 @@ module ShadowenvRuby
   def ensure_ruby_installed!(version)
     ruby_root = find_ruby_root(version)
 
-    if ruby_root && extensions_ok?(ruby_root)
+    if ruby_root && extensions_ok?(ruby_root) && reported_version_ok?(ruby_root, version)
       return ruby_root
     elsif ruby_root
       missing = missing_extensions(ruby_root)
-      $stderr.puts "dev: Ruby #{version} is missing required extension(s): #{missing.join(', ')}. Rebuilding with the right deps..."
+      if missing.any?
+        $stderr.puts "dev: Ruby #{version} is missing required extension(s): #{missing.join(', ')}. Rebuilding with the right deps..."
+      else
+        $stderr.puts "dev: Ruby #{version} runs as #{reported_ruby_version(ruby_root)} (its libruby is shadowed by another install). Rebuilding..."
+      end
       install_ruby_with_version_manager(version, force: true)
     else
       install_ruby_with_version_manager(version)
@@ -152,6 +163,7 @@ module ShadowenvRuby
     end
 
     verify_extensions!(ruby_root, version)
+    verify_reported_version!(ruby_root, version)
     ruby_root
   end
 
@@ -165,7 +177,7 @@ module ShadowenvRuby
     ensure_ruby_build_deps!(env)
     system(env, "rbenv", "uninstall", "--force", version, out: File::NULL, err: File::NULL) if force
     $stderr.puts "dev: Installing Ruby #{version} with rbenv (one-time)..."
-    system(ruby_build_env(env), "rbenv", "install", "--skip-existing", version)
+    system(ruby_build_env(env, version), "rbenv", "install", "--skip-existing", version)
   end
 
   # Abort (loudly, with a fix) if the provisioned Ruby is missing a required
@@ -199,6 +211,45 @@ module ShadowenvRuby
     missing_extensions(ruby_root).empty?
   end
 
+  # Abort if the provisioned ruby runs as a different version than requested.
+  # With --enable-shared, rubies differing only in teeny share a libruby soname
+  # (libruby.so.X.Y), so a wrong runtime search path (e.g. Homebrew's lib dir
+  # rpathed ahead of the ruby's own — carrying a same-minor Ruby) makes the
+  # binary silently *run as* that other version. Bundler then fails the
+  # Gemfile's ruby pin with a baffling version mismatch; this guard names the
+  # real culprit instead.
+  def verify_reported_version!(ruby_root, version)
+    reported = reported_ruby_version(ruby_root)
+    return if reported == version
+
+    Kernel.abort(version_hijack_message(ruby_root, version, reported))
+  end
+
+  def version_hijack_message(ruby_root, version, reported)
+    <<~MSG
+      dev: Ruby #{version} at #{ruby_root} runs as RUBY_VERSION #{reported.inspect}.
+      Its binary is loading another Ruby's shared libruby (same-soname runtime search path collision).
+      Reinstall it: rbenv uninstall -f #{version} && dev up
+    MSG
+  end
+
+  def reported_version_ok?(ruby_root, version)
+    reported_ruby_version(ruby_root) == version
+  end
+
+  # The RUBY_VERSION the ruby at ruby_root actually reports when executed, or
+  # nil when the binary is absent or fails to run. This is deliberately the
+  # *runtime* answer, not the directory name: the two disagree exactly when
+  # the libruby hijack described above is in effect.
+  def reported_ruby_version(ruby_root)
+    ruby_bin = File.join(ruby_root, "bin", "ruby")
+    return nil unless File.executable?(ruby_bin)
+
+    out = IO.popen([ruby_bin, "-e", "print RUBY_VERSION"], err: File::NULL, &:read)
+    version = out&.strip
+    (version && !version.empty?) ? version : nil
+  end
+
   # Best-effort install of the build-time libraries via Homebrew. A no-op when brew
   # is absent (e.g. an apt-only host) — verify_extensions! still guards the result.
   def ensure_ruby_build_deps!(env)
@@ -214,7 +265,7 @@ module ShadowenvRuby
   # `--with-<lib>-dir` for each available formula plus the brew prefix's include/lib/
   # pkgconfig, which is the documented fix for ruby-build on Linuxbrew. Returns the
   # env unchanged when brew isn't present.
-  def ruby_build_env(env)
+  def ruby_build_env(env, version)
     prefix = homebrew_prefix
     return env unless prefix
 
@@ -230,11 +281,18 @@ module ShadowenvRuby
     # its brew libs at runtime. Harmless on macOS (rpath to an already-found dir).
     lib = File.join(prefix, "lib")
 
+    # rpath ORDER is load-bearing: brew's lib dir can carry its own Ruby, and
+    # rubies differing only in teeny share a libruby soname (libruby.so.X.Y).
+    # If brew's dir is searched first, the freshly built ruby silently loads —
+    # and runs as — brew's version (e.g. a 4.0.5 build reporting 4.0.6). Rpath
+    # the build's own lib dir ahead of brew's so its libruby always wins.
+    own_lib = File.join(rbenv_version_prefix(version), "lib")
+
     env.merge(
       "RUBY_CONFIGURE_OPTS" => [env["RUBY_CONFIGURE_OPTS"], *configure_opts].compact.reject(&:empty?).join(" "),
       "PKG_CONFIG_PATH" => [File.join(prefix, "lib", "pkgconfig"), ENV["PKG_CONFIG_PATH"]].compact.reject(&:empty?).join(":"),
       "CPPFLAGS" => [ENV["CPPFLAGS"], "-I#{File.join(prefix, "include")}"].compact.reject(&:empty?).join(" "),
-      "LDFLAGS" => [ENV["LDFLAGS"], "-L#{lib}", "-Wl,-rpath,#{lib}"].compact.reject(&:empty?).join(" "),
+      "LDFLAGS" => [ENV["LDFLAGS"], "-L#{lib}", "-Wl,-rpath,#{own_lib}", "-Wl,-rpath,#{lib}"].compact.reject(&:empty?).join(" "),
     )
   end
 
