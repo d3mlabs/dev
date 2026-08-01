@@ -36,6 +36,5 @@ readelf -d "$(rbenv prefix)/bin/ruby" | grep -i rpath
 # without the Homebrew lib dir in its rpath
 ```
 
-learned-from: dictated via ai-flow /learn — root-cause of a bundler
-ruby-pin failure on a Linux host running both rbenv and Homebrew rubies.
+learned-from: dev#75, root-causing cellbound-3d#151's CI ruby-pin failure.
 date: 2026-08-01
