@@ -45,6 +45,14 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
   raise, never block on the network.
   → .cursor/skills/architecture/hook-points/
 
+## toolchain
+
+- [toolchain/rbenv-libruby-rpath-hijack] On Linux, an rbenv-built Ruby with
+  a Homebrew lib dir rpathed ahead of its own libdir silently runs a
+  same-minor brew libruby — bundler's Gemfile ruby-pin mismatch is the
+  symptom, not a project bug.
+  → .cursor/skills/learnings/rbenv-libruby-rpath-hijack/
+
 ## org tier
 
 Org-wide invariants and knowledge live in the configured org knowledge
