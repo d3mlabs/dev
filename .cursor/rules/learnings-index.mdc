@@ -52,11 +52,6 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
   same-minor brew libruby — bundler's Gemfile ruby-pin mismatch is the
   symptom, not a project bug.
   → .cursor/skills/learnings/rbenv-libruby-rpath-hijack/
-- [toolchain/runner-shell-bundler-leak] ai-flow runner shells leak the
-  harness's bundler env (RUBYOPT, BUNDLE_GEMFILE, GEM_HOME) into worktree
-  commands — scrub it before running dev, or the project resolves
-  .ai-flow's Ruby pin.
-  → .cursor/skills/learnings/runner-shell-bundler-leak/
 
 ## org tier
 
