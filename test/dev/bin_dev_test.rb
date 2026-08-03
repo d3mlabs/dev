@@ -42,6 +42,32 @@ class Dev::BinDevTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  # Drift guard: the shim's unset list is a hand-pinned denylist of what
+  # `bundle exec` exports into children, and that set grows across bundler
+  # versions — a new exported key would silently re-open the leak. The
+  # suite itself runs under bundle exec, so the live truth is right here:
+  # every key where ENV differs from Bundler.original_env is something the
+  # locked bundler exported. Subset direction only, on purpose: keys the
+  # shim lists but this launch didn't export (config-dependent ones like
+  # BUNDLE_PATH) are free no-ops, so exact equality would only add flake.
+  test "the unset list covers every key the running bundler exports" do
+    Given "the env diff bundler's own activation left on this process"
+    exported = (ENV.keys | Bundler.original_env.keys).select { |key| ENV[key] != Bundler.original_env[key] }
+    # BUNDLER_ORIG_* are bundler's inert restore records, not activation
+    # keys; GEM_* are deliberately out of the shim's scope (dev#94).
+    hostile = exported.grep(/\A(?:BUNDLE_|BUNDLER_(?!ORIG_)|RUBYOPT\z|RUBYLIB\z)/)
+
+    Expect "a bundler-activated suite (or this guard proves nothing), with every exported key in the shim's unset list"
+    hostile.include?("BUNDLE_GEMFILE")
+    (hostile - shim_unset_keys).empty?
+  end
+
+  # The scrub keys parsed out of the shim's `unset` line (with its
+  # backslash continuations), so the guard reads what actually ships.
+  def shim_unset_keys
+    File.read(BIN_DEV)[/^unset ((?:\\\n|[^\n])*)/, 1].gsub("\\\n", " ").split
+  end
+
   # Pins the exact unset set: dropping a key from the shim's scrub would
   # silently re-open the leak for that key. The stub ruby stands in for the
   # real one so the assertion sees the env exactly as the shim hands it
@@ -62,8 +88,8 @@ class Dev::BinDevTest < Minitest::Test
     SH
     FileUtils.chmod(0o755, File.join(stub_bin, "ruby"))
     scrub_keys = %w[
-      RUBYOPT RUBYLIB BUNDLE_GEMFILE BUNDLE_PATH BUNDLE_APP_CONFIG
-      BUNDLE_BIN BUNDLE_BIN_PATH BUNDLER_VERSION BUNDLER_SETUP
+      RUBYOPT RUBYLIB BUNDLE_GEMFILE BUNDLE_LOCKFILE BUNDLE_PATH
+      BUNDLE_APP_CONFIG BUNDLE_BIN BUNDLE_BIN_PATH BUNDLER_VERSION BUNDLER_SETUP
     ]
     hostile = scrub_keys.to_h { |key| [key, "/hostile/#{key}"] }
     env = hostile.merge("PATH" => "#{stub_bin}:#{ENV.fetch("PATH")}")

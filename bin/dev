@@ -8,8 +8,8 @@
 # probe below (which would itself crash under a hostile RUBYOPT). GEM_HOME/
 # GEM_PATH stay: they are legitimate user config, and the one resolution
 # they can redirect is guarded at its call site (dev#90).
-unset RUBYOPT RUBYLIB BUNDLE_GEMFILE BUNDLE_PATH BUNDLE_APP_CONFIG \
-  BUNDLE_BIN BUNDLE_BIN_PATH BUNDLER_VERSION BUNDLER_SETUP
+unset RUBYOPT RUBYLIB BUNDLE_GEMFILE BUNDLE_LOCKFILE BUNDLE_PATH \
+  BUNDLE_APP_CONFIG BUNDLE_BIN BUNDLE_BIN_PATH BUNDLER_VERSION BUNDLER_SETUP
 
 # Use PATH ruby (rbenv) if >= 3.1, fall back to Homebrew Ruby for bootstrapping.
 # dev uses Ruby 3.1+ syntax (e.g. hash literal value omission).
