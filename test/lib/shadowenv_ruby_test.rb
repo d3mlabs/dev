@@ -537,13 +537,12 @@ class ShadowenvRubyTest < Minitest::Test
     bin = File.join(ruby_root, "bin")
     FileUtils.mkdir_p(bin)
     fake_ruby = File.join(bin, "ruby")
-    extension_probe_exit_code = extensions_ok ? 0 : 1
     File.write(fake_ruby, <<~SCRIPT)
       #!/bin/sh
       case "$2" in
         "print RUBY_VERSION") printf '%s' "#{reports}"; exit 0 ;;
       esac
-      exit #{extension_probe_exit_code}
+      exit #{extensions_ok ? 0 : 1}
     SCRIPT
     FileUtils.chmod(0o755, fake_ruby)
   end
