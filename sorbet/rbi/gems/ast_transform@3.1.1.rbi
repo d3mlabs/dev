@@ -8,68 +8,90 @@
 # source://ast_transform//lib/ast_transform/version.rb#3
 module ASTTransform
   class << self
-    # source://ast_transform//lib/ast_transform.rb#16
+    # source://ast_transform//lib/ast_transform.rb#17
     def acronym(acronym); end
 
-    # source://ast_transform//lib/ast_transform.rb#12
+    # source://ast_transform//lib/ast_transform.rb#13
     def acronyms; end
 
-    # source://ast_transform//lib/ast_transform.rb#21
+    # source://ast_transform//lib/ast_transform.rb#22
     def install; end
 
-    # source://ast_transform//lib/ast_transform.rb#35
+    # source://ast_transform//lib/ast_transform.rb#36
     def output_path; end
 
     # Sets the attribute output_path
     #
     # @param value the value to set the attribute output_path to.
     #
-    # source://ast_transform//lib/ast_transform.rb#33
+    # source://ast_transform//lib/ast_transform.rb#34
     def output_path=(_arg0); end
   end
 end
 
-# source://ast_transform//lib/ast_transform/abstract_transformation.rb#6
-class ASTTransform::AbstractTransformation < ::Parser::AST::Processor
+# Shared traversal core for tree passes. Parser::AST::Processor is a rewriting walker — every visit functionally
+# rebuilds the tree — so transformation and analysis share one engine and differ only in what they keep:
+# AbstractTransformation's +run+ returns the rebuilt tree, AbstractAnalysis's +run+ discards it and returns the
+# harvested results. Subclass one of those leaves rather than this class.
+#
+# source://ast_transform//lib/ast_transform/abstract_processor.rb#10
+class ASTTransform::AbstractProcessor < ::Parser::AST::Processor
   include ::ASTTransform::TransformationHelper
   include ::ASTTransform::TransformationHelper::Methods
   extend ::ASTTransform::TransformationHelper::Methods
 
   # Thunks are framework-owned IR: descend into the body so passes that don't know about thunks still process the
   # wrapped statements. Without this, Processor's handler_missing default would pass the node through opaquely,
-  # hiding the body from every later transformation. The token (first child) is not a node and passes through
-  # untouched.
+  # hiding the body from every later pass. The token (first child) is not a node and passes through untouched.
   #
-  # source://ast_transform//lib/ast_transform/abstract_transformation.rb#30
+  # source://ast_transform//lib/ast_transform/abstract_processor.rb#23
   def on_ast_thunk(node); end
 
   # Used internally by Parser::AST::Processor to process each node. DO NOT OVERRIDE.
   #
-  # source://ast_transform//lib/ast_transform/abstract_transformation.rb#20
+  # source://ast_transform//lib/ast_transform/abstract_processor.rb#14
   def process(node); end
-
-  # Runs this transformation on +node+.
-  # Note: If you want to add one-time checks to the transformation, override this, then call super.
-  #
-  # @param node [Parser::AST::Node] The node to be transformed.
-  # @return [Parser::AST::Node] The transformed node.
-  #
-  # source://ast_transform//lib/ast_transform/abstract_transformation.rb#15
-  def run(node); end
 
   private
 
   # Processes the given +node+.
   # Note: If you want to do processing on each node, override this.
   #
-  # @param node [Parser::AST::Node] The node to be transformed.
-  # @return [Parser::AST::Node] The transformed node.
+  # @param node [Parser::AST::Node] The node being visited.
+  # @return [Parser::AST::Node] The rebuilt node.
   #
-  # source://ast_transform//lib/ast_transform/abstract_transformation.rb#42
+  # source://ast_transform//lib/ast_transform/abstract_processor.rb#35
   def process_node(node); end
 end
 
-# source://ast_transform//lib/ast_transform.rb#9
+# Base class for structural transformations: subclass and write +on_*+ handlers to rewrite a pattern wherever it
+# occurs in the tree. This is one of three authoring shapes — pick by how the rewrite site is found:
+#
+# - Structural (this class): the pattern alone identifies the site, so +on_*+ handlers rewrite it anywhere in
+#   the tree.
+# - Positional (node builders): a plain object with +run(node) → node+, including only TransformationHelper. The
+#   caller owns traversal and applies the builder at a site it already located; the builder never walks. Anything
+#   with that duck type composes with Transformer and other passes — deriving from this class is just one way to
+#   implement it.
+# - Sibling-annotation: the pattern is a marker statement plus its NEXT sibling, matched in +process_node+ where
+#   the child list is visible — an +on_*+ handler sees one node, never its siblings, and cannot delete itself
+#   from its parent. See ASTTransform::Transformation (the +transform!+ detector) for the canonical example.
+#
+# For read-only passes that harvest information instead of rewriting, see ASTTransform::AbstractAnalysis.
+#
+# source://ast_transform//lib/ast_transform/abstract_transformation.rb#20
+class ASTTransform::AbstractTransformation < ::ASTTransform::AbstractProcessor
+  # Runs this transformation on +node+ and returns the rebuilt tree.
+  # Note: If you want to add one-time checks to the transformation, override this, then call super.
+  #
+  # @param node [Parser::AST::Node] The node to be transformed.
+  # @return [Parser::AST::Node] The transformed node.
+  #
+  # source://ast_transform//lib/ast_transform/abstract_transformation.rb#27
+  def run(node); end
+end
+
+# source://ast_transform//lib/ast_transform.rb#10
 ASTTransform::DEFAULT_OUTPUT_PATH = T.let(T.unsafe(nil), String)
 
 # source://ast_transform//lib/ast_transform/instruction_sequence.rb#4
@@ -103,22 +125,23 @@ module ASTTransform::InstructionSequence::Mixin
   def load_iseq(source_path); end
 end
 
-# Extends the default Prism parser builder to distinguish keyword arguments from hash literals in the AST.
+# The framework's parser builder: the stock builder with the parser gem's `emit_kwargs` opt-in, which
+# distinguishes keyword arguments from hash literals in the AST.
 #
-# The upstream builder always emits :hash nodes for both `foo(bar: 1)` and `foo({ bar: 1 })`. Unparser uses the
-# node type to decide whether to emit braces: :hash gets `{}`, :kwargs does not. Since Ruby 3.0+ treats these as
-# semantically different (strict keyword/positional separation), we need the AST to preserve the distinction.
+# With the flag off (the gem's compatibility default) both `foo(bar: 1)` and `foo({ bar: 1 })` emit :hash nodes.
+# Unparser uses the node type to decide whether to emit braces: :hash gets `{}`, :kwargs does not. Since Ruby 3.0+
+# treats these as semantically different (strict keyword/positional separation), the AST must preserve the
+# distinction. `emit_kwargs` rewrites at the call sites where kwargs semantics live (method calls, index,
+# super/yield); the flag is a class-level ivar, so setting it here opts in this builder only — the global
+# Parser::Builders::Default stays untouched.
 #
 # NOTE: parsed nodes deliberately stay plain Parser::AST::Node. Custom node classes exist only for registered
 # custom types (see ASTTransform::Node), which are IR and never reach Unparser: AST::Node#eql? compares class, and
 # Unparser verifies dynamic-string emission by re-parsing and comparing eql? against the freshly parsed
 # (plain-class) node — custom-class nodes of standard types would fail that verification.
 #
-# source://ast_transform//lib/ast_transform/kwargs_builder.rb#16
-class ASTTransform::KwargsBuilder < ::Prism::Translation::Parser::Builder
-  # source://ast_transform//lib/ast_transform/kwargs_builder.rb#17
-  def associate(begin_t, pairs, end_t); end
-end
+# source://ast_transform//lib/ast_transform/kwargs_builder.rb#20
+class ASTTransform::KwargsBuilder < ::Prism::Translation::Parser::Builder; end
 
 # Line-addressed output: text is placed at absolute line numbers, top to bottom, and the cursor never rewinds.
 # When a placement's target line is already behind the cursor, the text is packed (`; `) onto the current line
@@ -135,13 +158,15 @@ class ASTTransform::Layout
 
   # The line number currently being written; the next fresh line would be +cursor + 1+.
   #
-  # source://ast_transform//lib/ast_transform/layout.rb#15
+  # source://ast_transform//lib/ast_transform/layout.rb#16
   def cursor; end
 
-  # Appends +text+ to the current line with a `; ` separator. The last line is never blank here: padding blanks
-  # are only created inside +place+, which immediately overwrites the padded line.
+  # Appends +text+ to the current line with a `; ` separator — unless the current line is sealed, in which case
+  # the text opens a fresh line (alignment degrades by one more line; validity is preserved). The last line is
+  # never blank here: padding blanks are only created inside +place+, which immediately overwrites the padded
+  # line.
   #
-  # source://ast_transform//lib/ast_transform/layout.rb#45
+  # source://ast_transform//lib/ast_transform/layout.rb#53
   def pack(text); end
 
   # Places +text+ at +target_line+ when the cursor hasn't passed it; otherwise packs onto the current line.
@@ -150,23 +175,26 @@ class ASTTransform::Layout
   # visually close to the source. Packed text ignores the column, as do continuation lines (they keep their own
   # relative indentation).
   #
-  # source://ast_transform//lib/ast_transform/layout.rb#24
-  def place(target_line, text, column: T.unsafe(nil)); end
+  # +seal+ declares the text's last line unextendable (the caller's property — e.g. it terminates a heredoc,
+  # whose terminator must stand alone): a subsequent pack opens a fresh line instead of joining it.
+  #
+  # source://ast_transform//lib/ast_transform/layout.rb#28
+  def place(target_line, text, column: T.unsafe(nil), seal: T.unsafe(nil)); end
 
   # Appends +text+ on a new line unconditionally — for text that must never be `;`-packed after a statement
   # (e.g. keywords).
   #
-  # source://ast_transform//lib/ast_transform/layout.rb#39
+  # source://ast_transform//lib/ast_transform/layout.rb#44
   def place_on_fresh_line(text); end
 
   # @return [String] the laid-out text, with a trailing newline.
   #
-  # source://ast_transform//lib/ast_transform/layout.rb#54
+  # source://ast_transform//lib/ast_transform/layout.rb#63
   def to_source; end
 
   private
 
-  # source://ast_transform//lib/ast_transform/layout.rb#60
+  # source://ast_transform//lib/ast_transform/layout.rb#69
   def indented(text, column); end
 end
 
@@ -209,47 +237,47 @@ class ASTTransform::LineAlignedEmitter
 
   private
 
-  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#212
+  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#215
   def assert_no_custom_types(node, source_path); end
 
   # @return [Boolean]
   #
-  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#139
+  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#141
   def block_assignment?(node); end
 
-  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#196
+  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#199
   def closer_column(node); end
 
   # The line the container's `end`/`}` occupies in the source, when known.
   #
-  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#191
+  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#194
   def closer_line(node); end
 
-  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#182
+  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#185
   def container_body(node); end
 
-  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#153
+  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#156
   def container_delimiters(node, renderer); end
 
   # Emits a container body that may be a bare :ensure/:rescue node (their begin/end context comes from the
   # surrounding def/block/kwbegin, so the keywords must be emitted inline, aligned like statements).
   #
-  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#80
+  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#82
   def emit_body(body, layout, renderer); end
 
   # Renders a container's opener and closer from the node with its body emptied, then recurses into the body so
   # nested statements align.
   #
-  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#146
+  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#148
   def emit_container(node, layout, renderer); end
 
-  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#88
+  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#90
   def emit_ensure(node, layout, renderer); end
 
-  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#106
+  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#108
   def emit_resbody(node, layout, renderer); end
 
-  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#95
+  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#97
   def emit_rescue(node, layout, renderer); end
 
   # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#70
@@ -258,30 +286,30 @@ class ASTTransform::LineAlignedEmitter
   # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#66
   def emit_statements(statements, layout, renderer); end
 
-  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#167
+  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#170
   def empty_container(node); end
 
-  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#130
+  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#132
   def keyword_column(node); end
 
-  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#125
+  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#127
   def keyword_line(node); end
 
   # Keywords (rescue/ensure/else) cannot be `;`-packed after a statement; when their line is taken they go on a
   # fresh line instead.
   #
-  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#117
+  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#119
   def place_keyword(layout, target_line, keyword, column: T.unsafe(nil)); end
 
   # @return [Boolean]
   #
-  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#135
+  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#137
   def recursive_container?(node); end
 
   # Loc-less :begin nodes in statement position (e.g. a lowered thunk in a single-statement container body, carried
   # with its placement) are grouping, not structure: flatten them so each inner statement is laid out independently.
   #
-  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#203
+  # source://ast_transform//lib/ast_transform/line_aligned_emitter.rb#206
   def statements_of(body); end
 end
 
@@ -360,6 +388,54 @@ class ASTTransform::Node < ::Parser::AST::Node
   end
 end
 
+# Owns source → AST parsing: Prism's C parser through its whitequark translation layer, so every consumer gets the
+# node vocabulary Parser::AST::Processor understands. Transformer parses through this seam; analysis-only
+# consumers that never emit instantiate it directly and keep the instance for as many parses as they need.
+#
+# source://ast_transform//lib/ast_transform/source_parser.rb#11
+class ASTTransform::SourceParser
+  # Constructs a new SourceParser instance.
+  #
+  # KwargsBuilder is a required implementation detail, not an injection seam: the framework's emission depends
+  # on the kwargs/hash distinction it preserves, so every parse goes through it.
+  #
+  # @return [SourceParser] a new instance of SourceParser
+  #
+  # source://ast_transform//lib/ast_transform/source_parser.rb#16
+  def initialize; end
+
+  # Parses the given +source+.
+  #
+  # in backtraces.
+  #
+  # @param file_path [String] The file path recorded on source locations. This is important for source mapping
+  # @param source [String] The input source code.
+  # @return [Parser::AST::Node] The AST.
+  #
+  # source://ast_transform//lib/ast_transform/source_parser.rb#27
+  def parse(source, file_path: T.unsafe(nil)); end
+
+  # Parses the source in the given +file_path+.
+  #
+  # @param file_path [String] The input file path.
+  # @return [Parser::AST::Node] The AST.
+  #
+  # source://ast_transform//lib/ast_transform/source_parser.rb#39
+  def parse_file(file_path); end
+
+  private
+
+  # Builds a source buffer over +source+ in the given +encoding+.
+  #
+  # @param encoding [Encoding] The encoding the buffer's source is coerced to.
+  # @param file_path [String] The file path recorded on the buffer.
+  # @param source [String] The input source code.
+  # @return [Parser::Source::Buffer] The buffer.
+  #
+  # source://ast_transform//lib/ast_transform/source_parser.rb#52
+  def create_buffer(source, file_path, encoding); end
+end
+
 # Renders individual statements to text via Unparser, working around the two consequences of unparsing them in
 # isolation (line-aligned emission places each statement independently, so each is ripped out of its context):
 #
@@ -387,6 +463,19 @@ class ASTTransform::StatementRenderer
   # source://ast_transform//lib/ast_transform/statement_renderer.rb#54
   def aligned_render(node); end
 
+  # Whether +render+ must be the last text on its final line: a render ending on a heredoc terminator (Unparser
+  # falls back to `<<-HEREDOC` form when its quoted-string round-trip fails) cannot have anything `;`-packed
+  # after it — the terminator must stand alone, so a join unterminates the heredoc. Probed by re-parse, the same
+  # verification style as +compress_to_single_line+, behind a cheap textual gate: only a heredoc makes a last
+  # line unextendable, and every heredoc opener contains +<<+. A false positive (the probe failing for another
+  # reason, e.g. an isolated container opener carrying a heredoc argument) costs one line of alignment, never
+  # correctness.
+  #
+  # @return [Boolean]
+  #
+  # source://ast_transform//lib/ast_transform/statement_renderer.rb#72
+  def line_terminal?(render); end
+
   # @param node [Parser::AST::Node] the statement to render.
   # @return [String] Unparser's render, informed of the tree's locals.
   #
@@ -395,8 +484,13 @@ class ASTTransform::StatementRenderer
 
   private
 
-  # source://ast_transform//lib/ast_transform/statement_renderer.rb#67
+  # source://ast_transform//lib/ast_transform/statement_renderer.rb#89
   def compress_to_single_line(render); end
+
+  # @return [Boolean]
+  #
+  # source://ast_transform//lib/ast_transform/statement_renderer.rb#82
+  def parses?(source); end
 
   class << self
     # Builds a renderer for statements of +node+'s tree, holding every local bound anywhere in it — an
@@ -676,49 +770,55 @@ ASTTransform::ThunkLowering::SCOPE_BODY_INDEXES = T.let(T.unsafe(nil), Hash)
 # source://ast_transform//lib/ast_transform/thunk_lowering.rb#84
 ASTTransform::ThunkLowering::SEQUENCE_TYPES = T.let(T.unsafe(nil), Array)
 
-# source://ast_transform//lib/ast_transform/transformation.rb#9
+# The +transform!+ detector — the canonical sibling-annotation pass (see AbstractTransformation for the taxonomy).
+# A +transform!(...)+ statement is a pragma on the NEXT sibling: the transformations it names are applied to the
+# following class definition or constant assignment, and the marker itself is deleted from the child list. Both
+# effects need the parent's child list in view, which is why matching happens in +process_node+ — an +on_send+
+# handler would see the marker node alone, with no access to its next sibling and no way to remove itself.
+#
+# source://ast_transform//lib/ast_transform/transformation.rb#14
 class ASTTransform::Transformation < ::ASTTransform::AbstractTransformation
   private
 
-  # source://ast_transform//lib/ast_transform/transformation.rb#70
+  # source://ast_transform//lib/ast_transform/transformation.rb#75
   def extract_transformation(node); end
 
-  # source://ast_transform//lib/ast_transform/transformation.rb#64
+  # source://ast_transform//lib/ast_transform/transformation.rb#69
   def extract_transformations(node); end
 
-  # source://ast_transform//lib/ast_transform/transformation.rb#39
+  # source://ast_transform//lib/ast_transform/transformation.rb#44
   def next_child(node, index); end
 
-  # source://ast_transform//lib/ast_transform/transformation.rb#35
+  # source://ast_transform//lib/ast_transform/transformation.rb#40
   def previous_child(node, index); end
 
-  # source://ast_transform//lib/ast_transform/transformation.rb#14
+  # source://ast_transform//lib/ast_transform/transformation.rb#19
   def process_node(node); end
 
-  # source://ast_transform//lib/ast_transform/transformation.rb#43
+  # source://ast_transform//lib/ast_transform/transformation.rb#48
   def process_node_helper(node, previous_node); end
 
-  # source://ast_transform//lib/ast_transform/transformation.rb#95
+  # source://ast_transform//lib/ast_transform/transformation.rb#100
   def require_path(const_name); end
 
-  # source://ast_transform//lib/ast_transform/transformation.rb#82
+  # source://ast_transform//lib/ast_transform/transformation.rb#87
   def require_transformation(node); end
 
   # @return [Boolean]
   #
-  # source://ast_transform//lib/ast_transform/transformation.rb#52
+  # source://ast_transform//lib/ast_transform/transformation.rb#57
   def transform_node?(node); end
 
   # @return [Boolean]
   #
-  # source://ast_transform//lib/ast_transform/transformation.rb#58
+  # source://ast_transform//lib/ast_transform/transformation.rb#63
   def transformable_node?(node); end
 
-  # source://ast_transform//lib/ast_transform/transformation.rb#109
+  # source://ast_transform//lib/ast_transform/transformation.rb#114
   def try_const_get(const_name); end
 end
 
-# source://ast_transform//lib/ast_transform/transformation.rb#10
+# source://ast_transform//lib/ast_transform/transformation.rb#15
 ASTTransform::Transformation::TRANSFORM_AST = T.let(T.unsafe(nil), Parser::AST::Node)
 
 # The transform-authoring layer. Three shapes:
@@ -828,7 +928,7 @@ end
 # source://ast_transform//lib/ast_transform/transformation_helper.rb#20
 class ASTTransform::TransformationHelper::MissingLocationError < ::StandardError; end
 
-# source://ast_transform//lib/ast_transform/transformer.rb#10
+# source://ast_transform//lib/ast_transform/transformer.rb#7
 class ASTTransform::Transformer
   # Constructs a new Transformer instance.
   #
@@ -836,7 +936,7 @@ class ASTTransform::Transformer
   # @param transformations [Array<ASTTransform::AbstractTransformation>] The transformations to be run.
   # @return [Transformer] a new instance of Transformer
   #
-  # source://ast_transform//lib/ast_transform/transformer.rb#15
+  # source://ast_transform//lib/ast_transform/transformer.rb#12
   def initialize(*transformations, emitter: T.unsafe(nil)); end
 
   # Builds the AST for the given +source+.
@@ -845,7 +945,7 @@ class ASTTransform::Transformer
   # @param source [String] The input source code.
   # @return [Parser::AST::Node] The AST.
   #
-  # source://ast_transform//lib/ast_transform/transformer.rb#26
+  # source://ast_transform//lib/ast_transform/transformer.rb#24
   def build_ast(source, file_path: T.unsafe(nil)); end
 
   # Builds the AST for the given +file_path+.
@@ -853,7 +953,7 @@ class ASTTransform::Transformer
   # @param file_path [String] The input file path.
   # @return [Parser::AST::Node] The AST.
   #
-  # source://ast_transform//lib/ast_transform/transformer.rb#36
+  # source://ast_transform//lib/ast_transform/transformer.rb#33
   def build_ast_from_file(file_path); end
 
   # Transforms the given +source+.
@@ -861,7 +961,7 @@ class ASTTransform::Transformer
   # @param source [String] The input source code to be transformed.
   # @return [String] The transformed code, line-aligned (see #transform_file_source).
   #
-  # source://ast_transform//lib/ast_transform/transformer.rb#46
+  # source://ast_transform//lib/ast_transform/transformer.rb#42
   def transform(source); end
 
   # Transforms the given +ast+.
@@ -869,7 +969,7 @@ class ASTTransform::Transformer
   # @param ast [Parser::AST::Node] The input AST to be transformed.
   # @return [Parser::AST::Node] The transformed AST.
   #
-  # source://ast_transform//lib/ast_transform/transformer.rb#87
+  # source://ast_transform//lib/ast_transform/transformer.rb#83
   def transform_ast(ast); end
 
   # Transforms the give +file_path+.
@@ -880,7 +980,7 @@ class ASTTransform::Transformer
   # @param transformed_file_path [String] The file path to the transformed file.
   # @return [String] The transformed code.
   #
-  # source://ast_transform//lib/ast_transform/transformer.rb#59
+  # source://ast_transform//lib/ast_transform/transformer.rb#55
   def transform_file(file_path, transformed_file_path); end
 
   # Transforms the given +source+ in +file_path+.
@@ -894,16 +994,8 @@ class ASTTransform::Transformer
   # @param transformed_file_path [String] The file path the transformed file will be written to.
   # @return [String] The transformed code, line-aligned: every statement carrying a source
   #
-  # source://ast_transform//lib/ast_transform/transformer.rb#74
+  # source://ast_transform//lib/ast_transform/transformer.rb#70
   def transform_file_source(source, file_path, _transformed_file_path); end
-
-  private
-
-  # source://ast_transform//lib/ast_transform/transformer.rb#95
-  def create_buffer(source, file_path); end
-
-  # source://ast_transform//lib/ast_transform/transformer.rb#102
-  def parser; end
 end
 
 # source://ast_transform//lib/ast_transform/version.rb#4
