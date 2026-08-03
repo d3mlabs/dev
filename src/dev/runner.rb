@@ -274,7 +274,8 @@ module Dev
       # `dev learnings` is dispatched globally in bin/dev, like cd; this
       # registration only surfaces it in `dev --help`.
       registry.register("learnings", BuiltinCommand.new(
-        desc: "Learnings read path (sync: refresh now, status: what's linked, invariants: Tier-0 block)",
+        desc: "Learnings read path (sync: refresh now, status: what's linked, invariants: Tier-0 block, " \
+          "init: scaffold the index)",
       ) do |args, context|
         Dev::Learnings::Accessor.new(project_root: context.project_root).run(args)
       end)

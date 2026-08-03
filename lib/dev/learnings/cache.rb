@@ -3,6 +3,7 @@
 require "fileutils"
 require "open3"
 require "pathname"
+require_relative "layout"
 
 module Dev
   module Learnings
@@ -27,11 +28,6 @@ module Dev
 
       # `git pull` refreshing an existing cache failed.
       class KnowledgeFetchError < RuntimeError; end
-
-      # Layout of the knowledge repo (see d3mlabs/knowledge's README): the
-      # always-on index at the root, the on-demand skills corpus beside it.
-      INDEX_FILE = "index.md"
-      SKILLS_SUBDIR = "skills"
 
       OWNER_REPO_PATTERN = %r{\A[\w.-]+/[\w.-]+\z}
 
@@ -70,14 +66,18 @@ module Dev
         (@dir / ".git").exist?
       end
 
+      # The org tier's layout inside the cache (Layout is the canonical
+      # owner: the always-on index at the root, the on-demand skills corpus
+      # beside it).
+
       # @return [Pathname] the on-demand skills corpus inside the cache
       def skills_dir
-        @dir / SKILLS_SUBDIR
+        Layout.org_skills_dir(@dir)
       end
 
       # @return [Pathname] the org learnings index inside the cache
       def index_file
-        @dir / INDEX_FILE
+        Layout.org_index_file(@dir)
       end
 
       # Blocking refresh: clone on first run, fast-forward pull after (the

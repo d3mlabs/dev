@@ -336,6 +336,98 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "init scaffolds the repo-tier index and says to commit it" do
+    Given "a project without a learnings index"
+    dir = Dir.mktmpdir("dev-learnings-acc-test-")
+    accessor, _cache, project, = build_env(dir)
+    out = StringIO.new
+
+    When "running dev learnings init"
+    accessor.run(["init"], out: out)
+
+    Then "the canonical always-on index exists and the report points at committing it"
+    index = Dev::Learnings::Layout.repo_index_file(project)
+    index.file?
+    index.read.include?("alwaysApply: true")
+    out.string.include?("scaffolded #{index}")
+    out.string.include?("commit")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "init --org scaffolds the knowledge-repo layout" do
+    Given "a knowledge repo checkout without an index"
+    dir = Dir.mktmpdir("dev-learnings-acc-test-")
+    accessor, _cache, project, = build_env(dir)
+    out = StringIO.new
+
+    When "running dev learnings init --org"
+    accessor.run(["init", "--org"], out: out)
+
+    Then "index.md carries the fixed section structure and skills/ exists beside it"
+    index = Dev::Learnings::Layout.org_index_file(project)
+    index.file?
+    index.read.include?("## Invariants (always-on)")
+    index.read.include?("## Knowledge (on-demand)")
+    Dev::Learnings::Layout.org_skills_dir(project).directory?
+    out.string.include?("scaffolded #{index}")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "init is idempotent — an existing index is reported and left untouched" do
+    Given "a scaffolded project whose index has since been hand-edited"
+    dir = Dir.mktmpdir("dev-learnings-acc-test-")
+    accessor, _cache, project, = build_env(dir)
+    accessor.run(["init"], out: StringIO.new)
+    index = Dev::Learnings::Layout.repo_index_file(project)
+    index.write("# hand-curated entries\n")
+    out = StringIO.new
+
+    When "running dev learnings init again"
+    accessor.run(["init"], out: out)
+
+    Then "the run reports the write-once no-op and the index is untouched"
+    out.string.include?("already exists")
+    out.string.include?("write-once")
+    index.read == "# hand-curated entries\n"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "init outside a project raises — there is nowhere to scaffold" do
+    Given "a configured accessor with no enclosing project"
+    dir = Dir.mktmpdir("dev-learnings-acc-test-")
+    accessor, = build_env(dir, project_root: nil)
+
+    When "running dev learnings init"
+    accessor.run(["init"], out: StringIO.new)
+
+    Then
+    raises Dev::Learnings::Accessor::NoEnclosingProjectError
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "init with an unknown flag is rejected with usage" do
+    Given "a configured accessor"
+    dir = Dir.mktmpdir("dev-learnings-acc-test-")
+    accessor, = build_env(dir)
+
+    When "running init with a flag that isn't --org"
+    accessor.run(["init", "--bogus"], out: StringIO.new)
+
+    Then
+    raises Dev::Learnings::Accessor::UsageError
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "an unrecognized invocation is rejected with usage" do
     Given "a configured accessor"
     dir = Dir.mktmpdir("dev-learnings-acc-test-")

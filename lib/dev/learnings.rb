@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "dev/learnings/layout"
+require "dev/learnings/scaffolder"
 require "dev/learnings/cache"
 require "dev/learnings/invariants_renderer"
 require "dev/learnings/synchronizer"

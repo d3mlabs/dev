@@ -6,6 +6,8 @@ require_relative "../settings"
 require_relative "../skill_installer"
 require_relative "cache"
 require_relative "invariants_renderer"
+require_relative "layout"
+require_relative "scaffolder"
 require_relative "synchronizer"
 
 module Dev
@@ -25,6 +27,11 @@ module Dev
     # - `invariants` — print the Tier-0 prompt block (the invariants section
     #                  extracted from the org index); the seam prompt-building
     #                  consumers like ai-flow shell out to
+    # - `init`       — scaffold the canonical learnings layout (repo tier, or
+    #                  the org knowledge-repo layout with --org); write-once —
+    #                  an existing index is reported and left untouched, so
+    #                  consumers (e.g. ai-flow's /learn) can call it
+    #                  unconditionally before capturing
     #
     # RuntimeError subclasses throughout so the CLI boundary prints clean
     # `dev:` messages instead of backtraces.
@@ -35,11 +42,17 @@ module Dev
       # configured, no cache cloned yet, or no invariants section upstream.
       class InvariantsUnavailableError < RuntimeError; end
 
+      # `dev learnings init` ran outside any project — there is no root to
+      # scaffold into.
+      class NoEnclosingProjectError < RuntimeError; end
+
       USAGE = <<~USAGE.strip
         usage: dev learnings <subcommand>
           dev learnings sync        refresh the whole read path now (blocking): knowledge repo cache, skill links, invariants render
           dev learnings status      configured knowledge repo, cache location/age, what's rendered and linked
           dev learnings invariants  print the always-on org invariants block (the Tier-0 prompt seam)
+          dev learnings init        scaffold this repo's empty learnings index (write-once: an existing index is left untouched)
+          dev learnings init --org  scaffold the org knowledge-repo layout (index.md + skills/) here, same write-once semantics
       USAGE
 
       # @param project_root [Pathname, String, nil] the enclosing project for
@@ -54,9 +67,10 @@ module Dev
       # @param gem_skill_linker [Dev::Deps::GemSkillLinker, nil] override for
       #   tests; defaults to the project's linker (nil outside a project)
       # @param renderer [Dev::Learnings::InvariantsRenderer]
+      # @param scaffolder [Dev::Learnings::Scaffolder]
       def initialize(project_root:, settings: Dev::Settings.new, cache: nil, synchronizer: nil,
                      skill_installer: Dev::SkillInstaller.new, gem_skill_linker: nil,
-                     renderer: InvariantsRenderer.new)
+                     renderer: InvariantsRenderer.new, scaffolder: Scaffolder.new)
         @project_root = project_root && Pathname(project_root)
         @settings = settings
         repo = settings.knowledge_repo
@@ -66,6 +80,7 @@ module Dev
         @gem_skill_linker = gem_skill_linker ||
           (@project_root && Dev::Deps::GemSkillLinker.new(project_root: @project_root))
         @renderer = renderer
+        @scaffolder = scaffolder
       end
 
       # Dispatch a `dev learnings …` invocation.
@@ -79,6 +94,8 @@ module Dev
         when ["sync"] then sync(out:)
         when ["status"] then status(out:)
         when ["invariants"] then invariants(out:)
+        when ["init"] then init(out:)
+        when ["init", "--org"] then init(out:, org: true)
         else raise UsageError, USAGE
         end
       end
@@ -138,6 +155,36 @@ module Dev
         raise InvariantsUnavailableError, "#{@cache.index_file} has no `## Invariants` section." if block.nil?
 
         out.puts block
+      end
+
+      # Scaffold the canonical learnings layout at the enclosing project's
+      # root: the empty repo-tier index, or the org knowledge-repo layout
+      # with org: true. The scaffold is write-once-committed — an existing
+      # index makes this a reported no-op (exit 0), never an overwrite — so
+      # consumers can call init unconditionally before capturing.
+      #
+      # @param out [IO]
+      # @param org [Boolean] scaffold the org knowledge-repo layout instead
+      #   of the repo tier
+      # @return [void]
+      # @raise [NoEnclosingProjectError] when run outside any project
+      def init(out:, org: false)
+        if @project_root.nil?
+          raise NoEnclosingProjectError,
+            "no enclosing project — run `dev learnings init` inside the repo to scaffold."
+        end
+
+        if org
+          @scaffolder.scaffold_org(@project_root)
+          out.puts "dev: scaffolded #{Layout.org_index_file(@project_root)} and " \
+            "#{Layout.org_skills_dir(@project_root)}/ (the org knowledge-repo layout) — commit them."
+        else
+          @scaffolder.scaffold_repo(@project_root)
+          out.puts "dev: scaffolded #{Layout.repo_index_file(@project_root)} " \
+            "(this repo's empty always-on learnings index) — commit it."
+        end
+      rescue Scaffolder::IndexAlreadyExistsError => e
+        out.puts "dev: #{e.message}"
       end
 
       # The org tier's rendered/linked state: the machine-side invariants
