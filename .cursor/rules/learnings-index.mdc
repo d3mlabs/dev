@@ -4,7 +4,6 @@ alwaysApply: true
 ---
 
 # Learnings index
-
 One line per learning: `[domain/slug]`, the trigger sentence, the skill
 pointer. The line buys awareness; the pointed skill carries the rule, a
 wrong/right pair, and the origin — read it before working in that entry's
@@ -50,6 +49,11 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
   `cmd.execute` in Runner#run runs for them — post-command work needs a
   builtin or CommandRunner wait mode (dev#85).
   → .cursor/skills/learnings/command-runner-exec/
+- [architecture/harness-env-scrub] A child process that must resolve the
+  project's own toolchain gets harness env overrides (BUNDLE_*, GEM_*,
+  RUBY*) explicitly unset, and machine-persistent artifacts never point
+  under Dir.tmpdir.
+  → .cursor/skills/learnings/harness-env-scrub/
 
 ## toolchain
 
