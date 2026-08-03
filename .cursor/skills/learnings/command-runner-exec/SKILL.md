@@ -1,9 +1,9 @@
 ---
 name: command-runner-exec
 description: >-
-  MUST be used when sequencing work after cmd.execute in Dev::Runner#run,
-  or when diagnosing a post-command step (like the installed stamp) that
-  silently never happens.
+  MUST be used when adding a dev command, sequencing work after
+  cmd.execute in Dev::Runner#run, or diagnosing a post-command step (like
+  the installed stamp) that silently never happens.
 ---
 
 # CommandRunner exec ends the dev process
@@ -12,7 +12,8 @@ description: >-
 dev process is replaced, so nothing after `cmd.execute` in
 `Dev::Runner#run` executes for a yaml-declared command, nor for an
 `OverriddenCommand` whose body is one. Post-execute steps only ever run
-for fully in-process builtins.
+for fully in-process builtins — which makes this an input to command
+placement: a builtin can carry post-steps, a `run:` command cannot.
 
 Wrong — a follow-up step after execute, expecting it for every command:
 

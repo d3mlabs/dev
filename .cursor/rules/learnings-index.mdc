@@ -44,10 +44,11 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
   as the idempotent hygiene hooks (skill links, learnings sync): never
   raise, network only as a bounded pull before distribution.
   → .cursor/skills/architecture/hook-points/
-- [architecture/command-runner-exec] CommandRunner exec-replaces the dev
-  process for project `run:` commands, so nothing after `cmd.execute` in
-  Runner#run happens for them (e.g. `dev up` with a project `up:` never
-  reaches `stamp_installed`).
+- [architecture/command-runner-exec] When adding a dev command or any
+  step that must run after one (installed stamp, hygiene hooks): project
+  `run:` commands exec-replace the dev process, so nothing after
+  `cmd.execute` in Runner#run runs for them — post-command work needs a
+  builtin or spawn-and-wait (dev#85).
   → .cursor/skills/learnings/command-runner-exec/
 
 ## toolchain
