@@ -48,7 +48,7 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
   step that must run after one (installed stamp, hygiene hooks): project
   `run:` commands exec-replace the dev process, so nothing after
   `cmd.execute` in Runner#run runs for them — post-command work needs a
-  builtin or spawn-and-wait (dev#85).
+  builtin or CommandRunner wait mode (dev#85).
   → .cursor/skills/learnings/command-runner-exec/
 
 ## toolchain
