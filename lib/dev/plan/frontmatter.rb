@@ -36,7 +36,26 @@ module Dev
           [frontmatter, body]
         end
 
+        # True when the block carries no content — every value in its mapping
+        # is nil, false, an empty string, or an empty collection. Cursor writes
+        # such a block (`name: ""`, `todos: []`, …) for an unfilled draft.
+        #
+        # @param frontmatter [String] a block produced by {.split}, fences included
+        # @return [Boolean]
+        def empty?(frontmatter)
+          interior = frontmatter.lines[1..-2].join
+          YAML.safe_load(interior).values.all? { |value| blank_value?(value) }
+        end
+
         private
+
+        # @param value [Object] a value from the frontmatter's YAML mapping
+        # @return [Boolean]
+        def blank_value?(value)
+          return true if value.nil? || value == false
+
+          value.respond_to?(:empty?) && value.empty?
+        end
 
         # @param line [String]
         # @return [Boolean]
