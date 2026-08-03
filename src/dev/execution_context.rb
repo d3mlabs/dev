@@ -16,5 +16,10 @@ module Dev
     const :project_root, Pathname
     const :build_container, T.nilable(Dev::BuildContainerConfig), default: nil
     const :runner, T.nilable(Dev::RunnerSetupConfig), default: nil
+
+    # When true, exec-style commands run spawn-and-wait (CommandRunner wait
+    # mode) instead of exec-replacing the dev process, so the caller can
+    # sequence post-execute work such as the installed stamp (#85).
+    const :wait, T::Boolean, default: false
   end
 end

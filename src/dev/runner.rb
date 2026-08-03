@@ -5,6 +5,7 @@ require 'digest'
 require 'pathname'
 require 'dev/config_parser'
 require 'dev/command_registry'
+require 'dev/command_runner'
 require 'dev/credential_accessor'
 require 'dev/credentials'
 require 'dev/execution_context'
@@ -72,11 +73,19 @@ module Dev
         project_root: Dev.target_project_root,
         build_container: @config.build_container,
         runner: @config.runner,
+        # Stamping commands sequence the installed stamp after execute, so an
+        # exec-style project command (e.g. a dev.yml `up:`) must spawn-and-wait
+        # — exec-replace would make the stamp unreachable (#85).
+        wait: STAMPING_COMMANDS.include?(cmd_name),
       )
       guard_staleness(cmd_name, context.project_root)
       provision_build_credentials if cmd_name == "up"
       cmd.execute(args:, context:)
       stamp_installed(cmd_name, context.project_root)
+    rescue CommandRunner::CommandFailedError => e
+      # The child already reported its failure (the shell wrapper prints its
+      # ✗ Failed footer); skip the stamp and preserve the child's exit code.
+      Kernel.exit(e.exit_status)
     rescue CommandRegistry::CommandNotFoundError => e
       $stderr.puts "dev: #{e}"
       $stderr.puts "Run 'dev' or 'dev --help' to see available commands."
@@ -96,6 +105,11 @@ module Dev
     # inputs to the image's content hash) and runs on fresh CI checkouts where
     # no installed stamp exists yet.
     STALENESS_EXEMPT_COMMANDS = T.let(%w[up install-deps update-deps check plan provide-image].freeze, T::Array[String])
+
+    # Provisioning commands that record the installed stamp after a fully
+    # successful run (see #stamp_installed). Their post-execute step is why
+    # #run selects CommandRunner's wait mode for them.
+    STAMPING_COMMANDS = T.let(%w[up install-deps].freeze, T::Array[String])
 
     # Two O(1) digest checks at every command start (see Dev::Deps::Staleness):
     # manifest vs lockfile, lockfile vs installed stamp. Warn on workstations;
@@ -117,10 +131,11 @@ module Dev
     # Record the installed stamp after a fully-successful provisioning command
     # (`dev up` treats a stale stamp as its expected precondition and rewrites
     # it; `install-deps` is the CI-side install). Reached only when execute
-    # didn't raise.
+    # didn't raise — exec-style project commands run in CommandRunner wait
+    # mode (see #run), so a project-defined `up:` gets here too (#85).
     sig { params(cmd_name: String, project_root: Pathname).void }
     def stamp_installed(cmd_name, project_root)
-      return unless ["up", "install-deps"].include?(cmd_name)
+      return unless STAMPING_COMMANDS.include?(cmd_name)
 
       Dev::Deps::Staleness.new(project_root:).stamp_installed!
     end

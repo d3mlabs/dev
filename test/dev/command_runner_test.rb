@@ -126,6 +126,65 @@ class CommandRunnerTest < Minitest::Test
     Dir.chdir(@original_cwd)
   end
 
+  # --- Wait mode (spawn-and-wait for callers with post-execute steps) ---
+
+  test "wait mode spawns and waits instead of exec-replacing the process" do
+    Given "a wait-mode runner and a non-repl command"
+    runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", project_root: @project_root, wait: true)
+    runner.stubs(:ensure_shadowenv_provisioned!)
+    cmd = Dev::ShellCommand.new(run: "./bin/setup.rb", repl: false)
+
+    When "we run the command"
+    runner.run(cmd)
+
+    Then "the command runs as a waited child, never via exec"
+    1 * Kernel.system(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/setup.rb")) >> true
+    0 * Kernel.exec(any_parameters)
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+  end
+
+  test "wait mode raises CommandFailedError carrying the child's exit status" do
+    Given "a wait-mode runner whose child exits 7"
+    runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", project_root: @project_root, wait: true)
+    runner.stubs(:ensure_shadowenv_provisioned!)
+    cmd = Dev::ShellCommand.new(run: "./bin/setup.rb", repl: false)
+    Kernel.stubs(:system).returns(false)
+    # Kernel.system is stubbed, so wait on a real child here to leave the
+    # thread-local $? at exit status 7 — what a real failed child would set.
+    Process.wait(Process.spawn("sh", "-c", "exit 7"))
+
+    When "we run the command"
+    error = assert_raises(Dev::CommandRunner::CommandFailedError) { runner.run(cmd) }
+
+    Then "the error carries the child's exit status"
+    error.exit_status == 7
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+  end
+
+  test "wait mode runs the containerized command spawn-and-wait" do
+    Given "a wait-mode runner with a build container"
+    config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry")
+    runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root, wait: true)
+    cmd = Dev::ShellCommand.new(run: "./bin/up.sh", repl: false)
+
+    When "the image resolves and we run the command"
+    BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
+    BuildContainer.stubs(:docker_run_command)
+      .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/up.sh"])
+    runner.run(cmd)
+
+    Then "docker runs as a waited child, never via exec"
+    1 * Kernel.system("docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/up.sh") >> true
+    0 * Kernel.exec(any_parameters)
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+  end
+
   # --- Container execution ---
 
   test "run execs docker run when build_container is configured and command opts in" do
