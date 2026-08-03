@@ -49,10 +49,10 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
   `cmd.execute` in Runner#run runs for them — post-command work needs a
   builtin or CommandRunner wait mode (dev#85).
   → .cursor/skills/learnings/command-runner-exec/
-- [architecture/harness-env-scrub] A child process that must resolve the
-  project's own toolchain gets harness env overrides (BUNDLE_*, GEM_*,
-  RUBY*) explicitly unset, and machine-persistent artifacts never point
-  under Dir.tmpdir.
+- [architecture/harness-env-scrub] Harness toolchain overrides (BUNDLE_*,
+  GEM_*, RUBY*) are scrubbed at ownership boundaries — a tool's own
+  entrypoint, an orchestrator's one spawn seam — never per call site; and
+  machine-persistent artifacts never point under Dir.tmpdir.
   → .cursor/skills/learnings/harness-env-scrub/
 
 ## toolchain
