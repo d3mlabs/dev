@@ -79,6 +79,7 @@ module Dev
         python_version: context.python_version,
         build_container: context.build_container,
         project_root: context.project_root,
+        wait: context.wait,
       )
       runner.run(self, args:)
     end

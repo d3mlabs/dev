@@ -265,6 +265,85 @@ class RunnerTest < Minitest::Test
     execution_order == [:builtin_install, :project_script]
   end
 
+  # Regression for dev#85: a project-defined `up:` used to exec-replace the
+  # dev process, so Runner#run never reached stamp_installed and the
+  # staleness gate reported "never installed" forever.
+  test "up with a project up command runs it spawn-and-wait and stamps installed" do
+    Given "a Runner whose dev.yml defines up, pinned to an empty project root"
+    original_cwd = Dir.pwd
+    root = Pathname.new(Dir.mktmpdir("runner-up-stamp-"))
+    Dev.stubs(:target_project_root).returns(root)
+    runner = build_runner(commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup", "container" => false } })
+    runner.stubs(:resolve_ruby_version).returns("4.0.1")
+    runner.stubs(:install_locked_deps)
+    Dev::Cd::HookInstaller.any_instance.stubs(:ensure_installed).returns(:already_present)
+    Dev::CommandRunner.any_instance.stubs(:ensure_shadowenv_provisioned!)
+    Dev::Deps::Staleness.any_instance.expects(:stamp_installed!).once
+
+    When "we run up"
+    runner.run(["up"], ui: fake_ui)
+
+    Then "the project script runs as a waited child, never via exec-replace"
+    1 * Kernel.system(anything, "shadowenv", "exec", "--", "sh", "-c", includes("./bin/up.rb")) >> true
+    0 * Kernel.exec(any_parameters)
+
+    Cleanup
+    Dir.chdir(original_cwd)
+    FileUtils.rm_rf(root)
+  end
+
+  test "a failing project up command skips the stamp and exits with the child's status" do
+    Given "a Runner whose dev.yml defines up, whose script exits 7"
+    original_cwd = Dir.pwd
+    root = Pathname.new(Dir.mktmpdir("runner-up-fail-"))
+    Dev.stubs(:target_project_root).returns(root)
+    runner = build_runner(commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup", "container" => false } })
+    runner.stubs(:resolve_ruby_version).returns("4.0.1")
+    runner.stubs(:install_locked_deps)
+    Dev::Cd::HookInstaller.any_instance.stubs(:ensure_installed).returns(:already_present)
+    Dev::CommandRunner.any_instance.stubs(:ensure_shadowenv_provisioned!)
+    Kernel.stubs(:system).returns(false)
+    # Kernel.system is stubbed, so wait on a real child here to leave the
+    # thread-local $? at exit status 7 — what a real failed child would set.
+    Process.wait(Process.spawn("sh", "-c", "exit 7"))
+    Dev::Deps::Staleness.any_instance.expects(:stamp_installed!).never
+    Kernel.expects(:exit).with(7).once
+    # Guard: a regression to exec-replace would otherwise replace the test
+    # process itself (Kernel.system above is stubbed, Kernel.exec is real).
+    Kernel.expects(:exec).never
+
+    When "we run up"
+    runner.run(["up"], ui: fake_ui)
+
+    Then "the expectations hold: no stamp, exit with the child's status"
+    true
+
+    Cleanup
+    Dir.chdir(original_cwd)
+    FileUtils.rm_rf(root)
+  end
+
+  test "generic project commands keep the exec tail-call" do
+    Given "a Runner with a test command, pinned to an empty project root"
+    original_cwd = Dir.pwd
+    root = Pathname.new(Dir.mktmpdir("runner-exec-tail-"))
+    Dev.stubs(:target_project_root).returns(root)
+    runner = build_runner(commands: { "test" => { "run" => "./bin/test.sh", "desc" => "Run tests", "container" => false } })
+    runner.stubs(:resolve_ruby_version).returns("4.0.1")
+    Dev::CommandRunner.any_instance.stubs(:ensure_shadowenv_provisioned!)
+
+    When "we run a non-stamping command"
+    runner.run(["test"], ui: fake_ui)
+
+    Then "the command exec-replaces the process, never spawn-and-wait"
+    1 * Kernel.exec(anything, "shadowenv", "exec", "--", "sh", "-c", includes("./bin/test.sh"))
+    0 * Kernel.system(any_parameters)
+
+    Cleanup
+    Dir.chdir(original_cwd)
+    FileUtils.rm_rf(root)
+  end
+
   test "up resolves docker build arg credentials before executing" do
     Given "a Runner with build container build_args and an up command"
     runner = build_runner(

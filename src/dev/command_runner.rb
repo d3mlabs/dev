@@ -12,12 +12,19 @@ require "shadowenv_python"
 require "shadowenv_ruby"
 
 module Dev
-  # Runs dev commands by exec-ing into the child process. Dev prints a colored
-  # header (command name) and then replaces itself:
+  # Runs dev commands by handing the process over to the child. Dev prints a
+  # colored header (command name) and then, by default, exec-replaces itself:
   #
-  # - repl commands: exec directly (no footer, for interactive sessions)
-  # - non-repl commands: exec into a shell wrapper that runs the command and
-  #   prints ✓ Done / ✗ Failed based on exit code
+  # - repl commands: the bare shell command (no footer, for interactive
+  #   sessions)
+  # - non-repl commands: a shell wrapper that runs the command and prints
+  #   ✓ Done / ✗ Failed based on exit code
+  #
+  # In wait mode (wait: true) the same commands run spawn-and-wait instead of
+  # exec-replace: the child is waited on, and a failure raises
+  # CommandFailedError carrying its exit status — so a caller with
+  # success-contingent post-steps (e.g. Runner's installed stamp) can sequence
+  # them after execute while preserving the child's exit code (#85).
   #
   # The child has full terminal access — CLI::UI features (frames, spinners,
   # prompts) all work natively without any interception.
@@ -31,6 +38,23 @@ module Dev
   class CommandRunner
     extend T::Sig
 
+    # Raised in wait mode when the child command fails, carrying its exit
+    # status so the caller can skip success-contingent post-steps and exit
+    # with the child's code. (Exec-replace mode never raises — the child's
+    # status becomes the process's own.)
+    class CommandFailedError < StandardError
+      extend T::Sig
+
+      sig { returns(Integer) }
+      attr_reader :exit_status
+
+      sig { params(exit_status: Integer).void }
+      def initialize(exit_status:)
+        @exit_status = T.let(exit_status, Integer)
+        super("command failed with exit status #{exit_status}")
+      end
+    end
+
     sig do
       params(
         ui: Dev::Cli::Ui,
@@ -38,14 +62,17 @@ module Dev
         python_version: T.nilable(String),
         build_container: T.nilable(Dev::BuildContainerConfig),
         project_root: Pathname,
+        wait: T::Boolean,
       ).void
     end
-    def initialize(ui:, ruby_version:, python_version: nil, build_container: nil, project_root: Dev.target_project_root)
+    def initialize(ui:, ruby_version:, python_version: nil, build_container: nil, project_root: Dev.target_project_root,
+      wait: false)
       @ui = T.let(ui, Dev::Cli::Ui)
       @ruby_version = T.let(ruby_version, String)
       @python_version = T.let(python_version, T.nilable(String))
       @build_container = T.let(build_container, T.nilable(Dev::BuildContainerConfig))
       @project_root = T.let(project_root, Pathname)
+      @wait = T.let(wait, T::Boolean)
     end
 
     sig { params(cmd: ShellCommand, args: T::Array[String]).void }
@@ -58,9 +85,9 @@ module Dev
       else
         ensure_shadowenv_provisioned!
         if cmd.repl
-          run_replace_process(shell_command)
+          run_bare(shell_command)
         else
-          run_exec_with_status(shell_command)
+          run_with_status_footer(shell_command)
         end
       end
     end
@@ -98,7 +125,7 @@ module Dev
       docker_argv = container_command(config, image_tag, shell_command)
 
       Dir.chdir(@project_root)
-      Kernel.exec(*T.unsafe(docker_argv))
+      run_child(docker_argv)
     end
 
     # docker argv for a containerized command: a `docker exec` into the reused
@@ -234,18 +261,26 @@ module Dev
       ShadowenvLlvm.setup!(project_root: project_root, llvm_prefix: prefix)
     end
 
+    # Runs the bare shell command with no footer, so an interactive (repl)
+    # session owns the terminal end to end.
+    #
+    # @param shell_command [String]
+    # @return [void]
     sig { params(shell_command: String).void }
-    def run_replace_process(shell_command)
+    def run_bare(shell_command)
       Dir.chdir(@project_root)
-      Kernel.exec(child_env, "shadowenv", "exec", "--", "sh", "-c", shell_command)
+      run_child([child_env, "shadowenv", "exec", "--", "sh", "-c", shell_command])
     end
 
-    # Execs into a shell wrapper that runs the command, then prints a colored
-    # success/failure footer based on the exit code.
+    # Runs the command inside a shell wrapper that prints a colored
+    # success/failure footer based on the exit code (and preserves it).
+    #
+    # @param shell_command [String]
+    # @return [void]
     sig { params(shell_command: String).void }
-    def run_exec_with_status(shell_command)
+    def run_with_status_footer(shell_command)
       Dir.chdir(@project_root)
-      Kernel.exec(child_env, "shadowenv", "exec", "--", "sh", "-c", <<~SH)
+      run_child([child_env, "shadowenv", "exec", "--", "sh", "-c", <<~SH])
         #{shell_command}
         __dev_status=$?
         if [ $__dev_status -eq 0 ]; then
@@ -263,6 +298,25 @@ module Dev
           exit $__dev_status
         fi
       SH
+    end
+
+    # Hands the assembled argv (optional env hash first) to the child process.
+    # Exec-replace by default — the right shape for a leaf command: TTY and
+    # signal passthrough, no double process tree. In wait mode, spawn-and-wait
+    # instead, so control returns to the caller's post-execute steps.
+    #
+    # @param argv [Array] Kernel.exec / Kernel.system argv
+    # @return [void]
+    # @raise [CommandFailedError] in wait mode, when the child fails
+    sig { params(argv: T::Array[T.untyped]).void }
+    def run_child(argv)
+      return Kernel.exec(*T.unsafe(argv)) unless @wait
+
+      return if Kernel.system(*T.unsafe(argv))
+
+      # $? is nil when the child could not be spawned at all, and exitstatus
+      # is nil for a signal-terminated child; report a generic failure then.
+      raise CommandFailedError.new(exit_status: $?&.exitstatus || 1)
     end
   end
 end
