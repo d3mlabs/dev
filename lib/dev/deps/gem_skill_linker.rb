@@ -23,27 +23,58 @@ module Dev
       SKILLS_SUBDIR = "skills"
       AGENT_SKILLS_SUBDIRS = [".agents", "skills"].freeze
 
+      # Env overrides a harness (e.g. a sandboxed agent session) may have
+      # exported into dev's own environment, redirecting bundler to an
+      # ephemeral gem cache. The `bundle list` child gets them explicitly
+      # unset so paths resolve from the project's canonical bundler config —
+      # dev never runs under bundler itself, so these unsets are its
+      # equivalent of Bundler.original_env (dev#89).
+      HARNESS_ENV_SCRUB = [
+        "BUNDLE_PATH",
+        "BUNDLE_APP_CONFIG",
+        "BUNDLE_BIN",
+        "GEM_HOME",
+        "GEM_PATH",
+        "RUBYOPT",
+        "RUBYLIB",
+      ].to_h { |name| [name, nil] }.freeze
+
       # @param project_root [Pathname, String] repo root (Gemfile + link target)
       # @param skills_dir [Pathname, String, nil] override for tests; defaults
       #   to <project_root>/.agents/skills
-      def initialize(project_root:, skills_dir: nil)
+      # @param tmpdir [Pathname, String] ephemeral temp root that links must
+      #   never target; defaults to Dir.tmpdir (override for tests, whose
+      #   fixture gem trees themselves live under the real temp dir)
+      def initialize(project_root:, skills_dir: nil, tmpdir: Dir.tmpdir)
         @project_root = Pathname(project_root)
         @skills_dir = Pathname(skills_dir || @project_root.join(*AGENT_SKILLS_SUBDIRS))
         @skill_installer = SkillInstaller.new(skills_dir: @skills_dir)
+        @tmpdir_roots = tmpdir_roots(Pathname(tmpdir))
       end
 
       # Scan the locked gem set for shipped skills and refresh the project's
       # links: install one per skill found, prune gem links whose gem left the
-      # lock. Never raises — skill links are hygiene riding a dependency
-      # install, and hygiene must not block correctness (failures are reported
-      # on stderr).
+      # lock. A skill that resolves under the temp dir is never linked (warned
+      # and skipped — a persistent link to purgeable state silently dangles
+      # later), but its gem still counts as present for pruning, so an
+      # ephemeral resolution cannot delete a durable link minted earlier.
+      # Never raises — skill links are hygiene riding a dependency install,
+      # and hygiene must not block correctness (failures are reported on
+      # stderr).
       #
       # @return [void]
       def link_all
         return unless gemfile_path.exist?
 
         expected = expected_links
-        expected.each { |name, skill_dir| @skill_installer.install(name, skill_dir) }
+        expected.each do |name, skill_dir|
+          if ephemeral?(skill_dir)
+            $stderr.puts "dev: warning: not linking #{name} — #{skill_dir} is under the temp dir " \
+              "and would dangle once it is purged."
+          else
+            @skill_installer.install(name, skill_dir)
+          end
+        end
         prune_stale_links(expected.keys)
       rescue StandardError => e
         $stderr.puts "dev: warning: could not refresh gem skill links (#{e.message})."
@@ -84,12 +115,15 @@ module Dev
 
       # Runs under the project's shadowenv for the same reason as
       # BundlerIntegration: the dev process's own PATH is the invoking
-      # service's, which on headless boxes carries the wrong Ruby.
+      # service's, which on headless boxes carries the wrong Ruby. Harness
+      # bundler/gem overrides are scrubbed from the child env (see
+      # HARNESS_ENV_SCRUB) so a sandboxed session cannot redirect the
+      # resolution into its ephemeral cache.
       #
       # @return [Array<Pathname>] install paths of every gem in the bundle
       def bundled_gem_paths
         out, err, status = Open3.capture3(
-          { "BUNDLE_GEMFILE" => gemfile_path.to_s },
+          HARNESS_ENV_SCRUB.merge("BUNDLE_GEMFILE" => gemfile_path.to_s),
           "shadowenv", "exec", "--", "bundle", "list", "--paths",
           chdir: @project_root.to_s,
         )
@@ -126,6 +160,30 @@ module Dev
           end
         end
         names.uniq
+      end
+
+      # The temp root in both its raw and fully-resolved forms — on macOS
+      # Dir.tmpdir is under /var/... while bundler reports the
+      # /private/var/... realpath, so containment must check both spellings.
+      #
+      # @param tmpdir [Pathname]
+      # @return [Array<Pathname>]
+      def tmpdir_roots(tmpdir)
+        expanded = tmpdir.expand_path
+        roots = [expanded]
+        roots << expanded.realpath if expanded.exist?
+        roots.uniq
+      end
+
+      # Whether a resolved skill directory lives under the temp dir — the
+      # signature of a harness resolving the bundle into its own purgeable
+      # cache, whatever produced it.
+      #
+      # @param path [Pathname]
+      # @return [Boolean]
+      def ephemeral?(path)
+        resolved = path.exist? ? path.realpath : path.expand_path
+        @tmpdir_roots.any? { |root| resolved.to_s.start_with?("#{root}#{File::SEPARATOR}") }
       end
 
       # Remove gem links that no current gem accounts for (the gem left the
