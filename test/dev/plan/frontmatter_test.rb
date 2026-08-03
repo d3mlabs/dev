@@ -79,6 +79,32 @@ class Dev::Plan::FrontmatterTest < Minitest::Test
     nil
   end
 
+  test "empty? is true for Cursor's unfilled draft block" do
+    Given "the block Cursor writes for a fresh draft"
+    frontmatter = <<~YAML
+      ---
+      name: ""
+      overview: ""
+      todos: []
+      isProject: false
+      ---
+    YAML
+
+    Expect "it carries no content"
+    Dev::Plan::Frontmatter.empty?(frontmatter)
+
+    Cleanup
+    nil
+  end
+
+  test "empty? is false once any field carries content" do
+    Expect "a named block is not empty"
+    !Dev::Plan::Frontmatter.empty?(CURSOR_FRONTMATTER)
+
+    Cleanup
+    nil
+  end
+
   test "split leaves a YAML sequence (non-mapping) alone" do
     Given "fences whose interior is a YAML list"
     content = "---\n- item\n- other\n---\n# Title\n"

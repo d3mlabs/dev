@@ -23,19 +23,21 @@ module Dev
         # then optional frontmatter, then body. When frontmatter sits above the
         # ai-flow header (Cursor's plan tool writes that layout, with a blank
         # line after the closing fence), both are still recognized; {#render}
-        # rewrites canonical order.
+        # rewrites canonical order. Stacked frontmatter blocks — an empty one
+        # Cursor wrote above the real one — are collapsed to the block that
+        # carries content.
         #
         # @param content [String]
         # @return [Content]
         def parse(content)
           header, remainder = Header.split(without_leading_blank_lines(content))
           if header
-            frontmatter, body = Frontmatter.split(remainder)
+            frontmatter, body = split_stacked_frontmatter(remainder)
             return new(header: header, frontmatter: frontmatter, body: body)
           end
 
           # Frontmatter may sit above a misplaced ai-flow header.
-          frontmatter, after_frontmatter = Frontmatter.split(content)
+          frontmatter, after_frontmatter = split_stacked_frontmatter(content)
           if frontmatter
             header, body = Header.split(without_leading_blank_lines(after_frontmatter))
             # No header: keep the body byte-exact (the stripped copy was only
@@ -47,6 +49,30 @@ module Dev
         end
 
         private
+
+        # Peel the leading frontmatter, collapsing stacked blocks: while the
+        # peeled block is empty and another block follows (blank lines between
+        # them tolerated), drop it in favor of the next one. Peeling stops at
+        # the first block that carries content, so a body that merely starts
+        # with something frontmatter-shaped is never consumed. A solitary empty
+        # block (a fresh Cursor draft) is kept as-is.
+        #
+        # @param content [String]
+        # @return [Array(String | nil, String)] the surviving frontmatter block
+        #   (or nil) and the remainder
+        def split_stacked_frontmatter(content)
+          frontmatter, remainder = Frontmatter.split(content)
+          return [nil, content] if frontmatter.nil?
+
+          while Frontmatter.empty?(frontmatter)
+            next_frontmatter, next_remainder = Frontmatter.split(without_leading_blank_lines(remainder))
+            break if next_frontmatter.nil?
+
+            frontmatter = next_frontmatter
+            remainder = next_remainder
+          end
+          [frontmatter, remainder]
+        end
 
         # The Header pattern is anchored at the start of its input, so blank
         # lines ahead of the comment (Cursor writes one after its frontmatter

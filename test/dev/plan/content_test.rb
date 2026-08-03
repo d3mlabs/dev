@@ -69,6 +69,67 @@ class Dev::Plan::ContentTest < Minitest::Test
     nil
   end
 
+  test "parse collapses an empty frontmatter block stacked above the real one" do
+    Given "the mangled double-frontmatter layout from dev#60: empty block, then a de-fenced real block, then the header"
+    header = Dev::Plan::Header.new(owner_repo: "d3mlabs/plans", number: 13, synced_at: "2026-01-01T00:00:00Z")
+    body = "# Self-learning practices loop\n\nprose\n"
+    empty_frontmatter = <<~YAML
+      ---
+      name: ""
+      overview: ""
+      todos: []
+      isProject: false
+      ---
+    YAML
+    real_frontmatter = <<~YAML
+      ---
+
+      name: Self-learning practices loop
+      overview: Keep practices current
+      todos: []
+      isProject: false
+      ---
+    YAML
+    raw = "#{empty_frontmatter}\n#{real_frontmatter}\n#{header.render}#{body}"
+
+    When "parsing and re-rendering"
+    plan = Dev::Plan::Content.parse(raw)
+
+    Then "the empty block is dropped, all three layers are recovered, and render is canonical"
+    plan.header.issue_ref == "d3mlabs/plans#13"
+    plan.frontmatter == real_frontmatter
+    plan.body == body
+    plan.render == "#{header.render}#{real_frontmatter}#{body}"
+
+    Cleanup
+    nil
+  end
+
+  test "parse keeps a solitary empty frontmatter block on a fresh draft" do
+    Given "an unlinked draft whose frontmatter Cursor has not filled in yet"
+    empty_frontmatter = <<~YAML
+      ---
+      name: ""
+      overview: ""
+      todos: []
+      isProject: false
+      ---
+    YAML
+    body = "# Draft\n"
+    raw = "#{empty_frontmatter}#{body}"
+
+    When "parsing it"
+    plan = Dev::Plan::Content.parse(raw)
+
+    Then "the empty block survives as the draft's frontmatter"
+    plan.header.nil?
+    plan.frontmatter == empty_frontmatter
+    plan.body == body
+
+    Cleanup
+    nil
+  end
+
   test "parse tolerates a draft with frontmatter and no ai-flow header" do
     Given "an unlinked Cursor draft"
     body = "# Draft\n"
