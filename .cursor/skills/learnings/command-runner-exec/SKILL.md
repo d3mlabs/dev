@@ -12,19 +12,19 @@ description: >-
 dev process is replaced, so nothing after `cmd.execute` in
 `Dev::Runner#run` executes for a yaml-declared command, nor for an
 `OverriddenCommand` whose body is one. Post-execute steps only ever run
-for fully in-process builtins; work that must always happen belongs
-before the exec point.
+for fully in-process builtins.
 
 Wrong — a follow-up step after execute, expecting it for every command:
 
     cmd.execute(args:, context:)
     stamp_installed(cmd_name, context.project_root) # skipped on exec
 
-Right — do must-happen work before execute (which may never return), or
-keep the command fully in-process:
-
-    stamp_installed(cmd_name, context.project_root)
-    cmd.execute(args:, context:)
+Also wrong: hoisting the step before execute, when it records an outcome
+(the stamp means "provisioning *succeeded*" — stamping first marks a
+failed `dev up` as installed). Success-contingent work needs the command
+to run in-process: spawn-and-wait with the exit status propagated, not
+exec-replace — that fix is dev#85. Only outcome-independent work may
+move before the exec point.
 
 Observed symptom: in a repo whose dev.yml defines `up:`, `dev up` exec's
 into the project's up command and never reaches `stamp_installed`, so the
@@ -32,5 +32,6 @@ staleness gate keeps reporting "never installed" — fatal in a CI=true
 shell. `dev install-deps` stays in-process and stamps. Check this before
 suspecting the staleness digests themselves.
 
-learned-from: dev#73 build pass (dev up never stamped; install-deps did)
+learned-from: dev#73 build pass (dev up never stamped; install-deps did);
+the sequencing bug itself is dev#85
 date: 2026-08-02
