@@ -6,3 +6,10 @@
 # Precedence per command: models.<command> > models.default > CLI default.
 models:
   default: claude-fable-5-high
+
+# The org knowledge repo that /learn --promote and capture-declared
+# PROMOTE: route org-tier lessons to (proposal PRs opened there, the
+# lesson pruned from this repo's draft). This is the write-path opt-in,
+# reviewed in-repo; the read path (dev learnings sync / invariants) is
+# configured machine-side in dev's own settings.
+knowledge_repo: d3mlabs/knowledge
