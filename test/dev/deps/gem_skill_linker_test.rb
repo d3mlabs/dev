@@ -50,12 +50,21 @@ class Dev::Deps::GemSkillLinkerTest < Minitest::Test
 
   # `bundle list` must run under the project's shadowenv — same reasoning as
   # BundlerIntegration: the dev process's PATH is the invoking service's,
-  # which on headless boxes carries the wrong Ruby.
+  # which on headless boxes carries the wrong Ruby — with harness bundler
+  # overrides scrubbed from the child env.
   def stub_bundle_list(project, paths)
+    env = Dev::Deps::GemSkillLinker::HARNESS_ENV_SCRUB.merge("BUNDLE_GEMFILE" => (project / "Gemfile").to_s)
     Open3.stubs(:capture3)
-         .with({ "BUNDLE_GEMFILE" => (project / "Gemfile").to_s },
-           "shadowenv", "exec", "--", "bundle", "list", "--paths", chdir: project.to_s)
+         .with(env, "shadowenv", "exec", "--", "bundle", "list", "--paths", chdir: project.to_s)
          .returns([paths.map { |p| "#{p}\n" }.join, "", stub(success?: true)])
+  end
+
+  # Linker under test. The real Dir.tmpdir contains these tests' own fixture
+  # trees, so every linker gets a tmpdir override pointing inside the fixture
+  # dir — gems built by build_gem under `gems/` then read as durable, and a
+  # test opts into ephemerality by building under `<dir>/tmp`.
+  def build_linker(project, dir)
+    Dev::Deps::GemSkillLinker.new(project_root: project, tmpdir: Pathname(dir) / "tmp")
   end
 
   test "links a locked gem's shipped skills as gem-<gem>--<skill>" do
@@ -65,7 +74,7 @@ class Dev::Deps::GemSkillLinkerTest < Minitest::Test
     rspock = build_gem(gems, "rspock-1.2.0", skills: ["rspock"])
     minitest = build_gem(gems, "minitest-5.25.0")
     stub_bundle_list(project, [rspock, minitest])
-    linker = Dev::Deps::GemSkillLinker.new(project_root: project)
+    linker = build_linker(project, dir)
 
     When "linking"
     linker.link_all
@@ -85,7 +94,7 @@ class Dev::Deps::GemSkillLinkerTest < Minitest::Test
     project, gems = build_project(dir)
     reporters = build_gem(gems, "minitest-reporters-1.7.1", skills: ["reporting"])
     stub_bundle_list(project, [reporters])
-    linker = Dev::Deps::GemSkillLinker.new(project_root: project)
+    linker = build_linker(project, dir)
 
     When "linking"
     linker.link_all
@@ -104,7 +113,7 @@ class Dev::Deps::GemSkillLinkerTest < Minitest::Test
     project, gems = build_project(dir)
     stray = build_gem(gems, "stray-9.9.9", skills: ["stray"])
     stub_bundle_list(project, [stray])
-    linker = Dev::Deps::GemSkillLinker.new(project_root: project)
+    linker = build_linker(project, dir)
 
     When "linking"
     linker.link_all
@@ -128,7 +137,7 @@ class Dev::Deps::GemSkillLinkerTest < Minitest::Test
     File.symlink(departed / "skills" / "departed", skills_dir / "gem-departed--departed")
     File.symlink(gems, skills_dir / "my-own-link")
     (skills_dir / "notes.md").write("mine\n")
-    linker = Dev::Deps::GemSkillLinker.new(project_root: project)
+    linker = build_linker(project, dir)
 
     When "linking"
     linker.link_all
@@ -149,7 +158,7 @@ class Dev::Deps::GemSkillLinkerTest < Minitest::Test
     project = Pathname(dir) / "repo"
     FileUtils.mkdir_p(project)
     Open3.expects(:capture3).never
-    linker = Dev::Deps::GemSkillLinker.new(project_root: project)
+    linker = build_linker(project, dir)
 
     When "linking"
     linker.link_all
@@ -169,7 +178,7 @@ class Dev::Deps::GemSkillLinkerTest < Minitest::Test
     skills_dir = project / ".agents" / "skills"
     FileUtils.mkdir_p(skills_dir)
     FileUtils.chmod(0o000, skills_dir)
-    linker = Dev::Deps::GemSkillLinker.new(project_root: project)
+    linker = build_linker(project, dir)
     old_stderr = $stderr
     $stderr = StringIO.new
 
@@ -185,12 +194,116 @@ class Dev::Deps::GemSkillLinkerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  # Pins the exact scrub set rather than referencing HARNESS_ENV_SCRUB: a
+  # sandboxed session (Cursor sandbox cache, dev#89) leaks these overrides
+  # into dev's env, and dropping any of them from the scrub would silently
+  # re-open the leak.
+  test "bundle list runs with harness bundler and gem overrides explicitly unset" do
+    Given "a project"
+    dir = Dir.mktmpdir("dev-gem-skill-test-")
+    project, = build_project(dir)
+    linker = build_linker(project, dir)
+
+    When "linking"
+    linker.link_all
+
+    Then "every harness override is nil'd in the child env"
+    1 * Open3.capture3(
+      {
+        "BUNDLE_PATH" => nil,
+        "BUNDLE_APP_CONFIG" => nil,
+        "BUNDLE_BIN" => nil,
+        "GEM_HOME" => nil,
+        "GEM_PATH" => nil,
+        "RUBYOPT" => nil,
+        "RUBYLIB" => nil,
+        "BUNDLE_GEMFILE" => (project / "Gemfile").to_s,
+      },
+      "shadowenv", "exec", "--", "bundle", "list", "--paths", chdir: project.to_s
+    ) >> ["", "", stub(success?: true)]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "refuses to link a skill resolved under the temp dir and warns" do
+    Given "a locked gem whose tree resolves into the ephemeral temp dir"
+    dir = Dir.mktmpdir("dev-gem-skill-test-")
+    project, = build_project(dir)
+    ephemeral = build_gem(Pathname(dir) / "tmp" / "gems", "rspock-1.2.0", skills: ["rspock"])
+    stub_bundle_list(project, [ephemeral])
+    linker = build_linker(project, dir)
+    old_stderr = $stderr
+    $stderr = StringIO.new
+
+    When "linking"
+    linker.link_all
+
+    Then "no link is created and the skip is warned"
+    !File.exist?(project / ".agents" / "skills" / "gem-rspock--rspock")
+    $stderr.string.include?("not linking gem-rspock--rspock")
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.rm_rf(dir)
+  end
+
+  test "an ephemeral resolution does not prune the durable link it shadows" do
+    Given "a durable link for a gem that now resolves into the temp dir"
+    dir = Dir.mktmpdir("dev-gem-skill-test-")
+    project, gems = build_project(dir)
+    durable = build_gem(gems, "rspock-1.2.0", skills: ["rspock"])
+    skills_dir = project / ".agents" / "skills"
+    FileUtils.mkdir_p(skills_dir)
+    File.symlink(durable / "skills" / "rspock", skills_dir / "gem-rspock--rspock")
+    ephemeral = build_gem(Pathname(dir) / "tmp" / "gems", "rspock-1.2.0", skills: ["rspock"])
+    stub_bundle_list(project, [ephemeral])
+    linker = build_linker(project, dir)
+    old_stderr = $stderr
+    $stderr = StringIO.new
+
+    When "linking"
+    linker.link_all
+
+    Then "the durable link survives, still pointing at its durable target"
+    File.symlink?(skills_dir / "gem-rspock--rspock")
+    File.readlink(skills_dir / "gem-rspock--rspock") == (durable / "skills" / "rspock").to_s
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.rm_rf(dir)
+  end
+
+  test "temp dir containment sees through symlinked temp roots" do
+    Given "a tmpdir override that is a symlink to the dir the gem resolves under"
+    dir = Dir.mktmpdir("dev-gem-skill-test-")
+    project, = build_project(dir)
+    real_tmp = Pathname(dir) / "tmp"
+    ephemeral = build_gem(real_tmp / "gems", "rspock-1.2.0", skills: ["rspock"])
+    tmp_alias = Pathname(dir) / "tmp-alias"
+    File.symlink(real_tmp, tmp_alias)
+    stub_bundle_list(project, [ephemeral])
+    linker = Dev::Deps::GemSkillLinker.new(project_root: project, tmpdir: tmp_alias)
+    old_stderr = $stderr
+    $stderr = StringIO.new
+
+    When "linking"
+    linker.link_all
+
+    Then "the path is recognized as ephemeral and never links"
+    !File.exist?(project / ".agents" / "skills" / "gem-rspock--rspock")
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.rm_rf(dir)
+  end
+
   test "a failing bundle list warns instead of failing the install" do
     Given "bundler erroring out"
     dir = Dir.mktmpdir("dev-gem-skill-test-")
     project, = build_project(dir)
     Open3.stubs(:capture3).returns(["", "bundler exploded", stub(success?: false)])
-    linker = Dev::Deps::GemSkillLinker.new(project_root: project)
+    linker = build_linker(project, dir)
     old_stderr = $stderr
     $stderr = StringIO.new
 
