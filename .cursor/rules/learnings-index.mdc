@@ -57,11 +57,6 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
 
 ## toolchain
 
-- [toolchain/rbenv-libruby-rpath-hijack] On Linux, an rbenv-built Ruby with
-  a Homebrew lib dir rpathed ahead of its own libdir silently runs a
-  same-minor brew libruby — bundler's Gemfile ruby-pin mismatch is the
-  symptom, not a project bug.
-  → .cursor/skills/learnings/rbenv-libruby-rpath-hijack/
 
 ## org tier
 
