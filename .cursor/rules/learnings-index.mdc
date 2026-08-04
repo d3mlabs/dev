@@ -53,7 +53,6 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
   GEM_*, RUBY*) are scrubbed at ownership boundaries — a tool's own
   entrypoint, an orchestrator's one spawn seam — never per call site; and
   machine-persistent artifacts never point under Dir.tmpdir.
-  → .cursor/skills/learnings/harness-env-scrub/
 
 ## toolchain
 
