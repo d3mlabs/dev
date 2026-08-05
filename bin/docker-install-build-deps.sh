@@ -26,7 +26,12 @@ DEV_REF="${DEV_REF:-}"
 export HOMEBREW_NO_SANDBOX_LINUX=1
 
 echo ">>> Installing Linuxbrew"
-NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+# Pinned to a Homebrew/install commit rather than HEAD: this pipes
+# third-party code to bash inside every image build, and HEAD is a mutable
+# ref an upstream compromise could repoint (dev#99). The repo publishes no
+# tags, so the pin is a commit SHA; bump it deliberately when a newer
+# installer is needed — a stale pin still installs current Homebrew.
+NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/24173182915f24bdd52a22fd073e421953b2a252/install.sh)"
 eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 
 # dev requires Ruby >= 3.1; distro rubies are often older (Ubuntu 22.04 ships
