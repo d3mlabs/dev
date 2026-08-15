@@ -101,7 +101,7 @@ dev          # List all available commands
 
 The tool walks up from your current directory until it finds a git repo root (directory containing `.git`), then looks for `dev.yml` there. If found, it parses the commands and executes the `run` string for your chosen subcommand.
 
-A few builtins are global and work from **any** directory, no `dev.yml` needed: `dev cd` (host-global navigation), `dev cred` (host-global credentials), and `dev plan` (workspace-global plan sync). Project commands (`dev up` and anything declared in `dev.yml`) still require a nearby `dev.yml`.
+A few builtins are global and work from **any** directory, no `dev.yml` needed: `dev cd` (host-global navigation), `dev clone` (host-global checkout creation), `dev cred` (host-global credentials), and `dev plan` (workspace-global plan sync). Project commands (`dev up` and anything declared in `dev.yml`) still require a nearby `dev.yml`.
 
 ## dev cd — jump between checkouts
 
@@ -123,9 +123,22 @@ export DEV_CD_ROOT=/path/to/checkouts
 
 Only git repos count as candidates (directories with a `.git` entry — a `.git` file from a worktree checkout works too); plain folders are skipped. The query is a right-anchored path suffix matched per segment: `dev` matches the leaf, `d3mlabs/dev` the org and leaf, `bitbucket.org/d3mlabs/dev` the host too — a more explicit path always works. On an ambiguous query, `dev cd` lists the candidates (each at the shortest depth that makes it unique, capped at 10) and exits non-zero; refine the query or press Tab to browse all matches. On no match it errors clearly.
 
+## dev clone — clone into the canonical layout
+
+`dev clone [<org>/]<repo>` clones a GitHub repo (via your `gh` auth — no credentials of dev's own) into the canonical checkout path under the same search root `dev cd` walks — `$DEV_CD_ROOT/github.com/<org>/<repo>`, default `~/src` — and lands your shell in the fresh checkout through the same wrapper:
+
+```bash
+dev clone myrepo           # org defaults to d3mlabs → ~/src/github.com/d3mlabs/myrepo
+dev clone acme/widget      # explicit org
+```
+
+It is clone-only by design — no automatic `dev up`. Provisioning stays a deliberate second step, because a first `dev up` is where credential prompts happen and you should see them coming. The fresh-machine story is three commands: `brew install d3mlabs/d3mlabs/dev` → `dev clone <repo>` → `dev up`.
+
+If the canonical destination already exists, `dev clone` errors and points you at `dev cd`. Without the shell wrapper active (e.g. the very first dev command on a fresh machine), the clone still happens; dev installs the hook for next time and prints the destination instead of jumping there.
+
 ### Shell hook install
 
-`dev cd` needs a small shell wrapper — a Ruby child process cannot change your shell's directory. dev installs the wrapper function and Tab completers into your shell RC automatically and idempotently: on `dev up` in any project, and on `dev cd` itself (so a first `dev cd` self-heals the hook; open a new shell after the install hint). The snippet is marker-guarded (`# dev cd (added by dev)`) next to the shadowenv one, and re-runs never duplicate it.
+`dev cd` and the landing half of `dev clone` need a small shell wrapper — a Ruby child process cannot change your shell's directory. dev installs the wrapper function and Tab completers into your shell RC automatically and idempotently: on `dev up` in any project, and on `dev cd` / a hook-less `dev clone` themselves (so a first use self-heals the hook; open a new shell after the install hint). The snippet is marker-guarded (`# dev cd + clone (added by dev)`) next to the shadowenv one, and re-runs never duplicate it; when the snippet itself evolves, the marker changes with it and the next ensure appends the updated wrapper, whose later definition wins.
 
 Tab completion is registered per shell: zsh gets a navigable menu-select list scoped to the `dev` command only (your other commands' completion is untouched; registration is skipped quietly if your zshrc never runs `compinit`), bash fills `COMPREPLY` directly, and fish registers a standard pager completion (fish applies its own filtering, so fuzzy tokens may only complete literally there). Completion fills the argument only — it never runs the `cd` for you — and inserts `org/repo` (or deeper) forms when a short name would collide.
 
@@ -360,6 +373,7 @@ Custom integrations implement `Dev::Deps::Integration` (with `install_all(pins, 
 - **`dev deps path <integration> <name> <platform>`** — print the absolute path of a locked artifact (e.g. `dev deps path ficsit SML LinuxServer`, or `dev deps path xcode` for the pinned DEVELOPER_DIR) so scripts don't reconstruct cache keys or layout conventions.
 - **`dev cred get <namespace> <key>`** — resolve a credential through the provider chain (ENV → keychain → file → prompt) and print it. A non-interactive miss errors with `gh secret set` guidance. Mirrors `dev deps path` for shell consumers (e.g. a staging sync). Global: works without a `dev.yml`.
 - **`dev cd <repo>`** — jump to a checkout under `$DEV_CD_ROOT` (default `~/src`) by fuzzy name, with Tab completion (see [dev cd](#dev-cd--jump-between-checkouts)). Global: works without a `dev.yml`.
+- **`dev clone [<org>/]<repo>`** — clone a GitHub repo via your `gh` auth into the canonical `$DEV_CD_ROOT/github.com/<org>/<repo>` path (org defaults to `d3mlabs`) and land there (see [dev clone](#dev-clone--clone-into-the-canonical-layout)). Clone-only — run `dev up` yourself. Global: works without a `dev.yml`.
 - **`dev cache gc [--keep N]`** — reclaim host caches dev owns (see below).
 - **`dev reset-container`** — remove the persistent build container (clears its incremental cache); registered only when `build.container.persist` is set.
 - **`dev plan …`** — global (works without a `dev.yml`; the workspace is the nearest dev.yml or git root). Sync Cursor plans with GitHub issues (ai-flow): the issue is the canonical plan, the local `.cursor/plans/gh-<n>-<slug>.plan.md` is a transient working copy carrying an `<!-- ai-flow … -->` header. Subcommands: `new "<title>" [--org]` (create issue + linked plan; `--org` scaffolds a `Target repos:` line), `link <n> [<file>]` / `link <file>` (attach a draft to an existing issue / create one from it), `pull <n> [--merge]` (fetch, 3-way merging when both sides changed — the merge base lives at `~/.local/state/ai-flow/`), `push [<file>|<n>]` (guarded body PATCH — refuses to clobber newer remote edits; a number resolves the linked plan like `pull`), and `status` (clean / ahead / behind / diverged, per linked plan). `--org` targets the org plans repo (`plans_repo:` in `~/.config/dev/config.yml`, or `DEV_PLANS_REPO`) instead of the current repo's origin. Every invocation also refreshes the user-global links for dev's shipped skills (`share/cursor-skills/*` → `~/.cursor/skills/`, so the Cursor agent knows these verbs) and the org learnings artifacts (see [Agent skills & org learnings](#agent-skills--org-learnings)). For auto-push, a participating repo adds a Cursor `afterFileEdit` hook to `.cursor/hooks.json` running `dev plan hook-after-edit` — it reads the hook payload from stdin and no-ops unless the edited file is a linked plan. What happens to a plan after it's canonical — `/ask`, `/edit`, `/split` (two-phase dry/apply), `/build` — is ai-flow's remote half: see [plan-lifecycle.md](https://github.com/d3mlabs/ai-flow/blob/HEAD/docs/plan-lifecycle.md) and [commands.md](https://github.com/d3mlabs/ai-flow/blob/HEAD/docs/commands.md).

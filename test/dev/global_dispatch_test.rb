@@ -19,6 +19,21 @@ class RecordingCredAccessor < Dev::CredentialAccessor
   end
 end unless defined?(RecordingCredAccessor)
 
+# A clone accessor stand-in recording its argv, so dispatch is tested without
+# gh or shell RC writes. Subclasses the real accessor to satisfy the
+# dispatcher's typed constructor.
+class RecordingCloneAccessor < Dev::Clone::Accessor
+  attr_reader :last_args
+
+  def initialize
+    super(root: Dir.tmpdir)
+  end
+
+  def run(args, out: $stdout, err: $stderr)
+    @last_args = args
+  end
+end unless defined?(RecordingCloneAccessor)
+
 transform!(RSpock::AST::Transformation)
 class Dev::GlobalDispatchTest < Minitest::Test
   test "#{name} is a global command: #{expected}" do
@@ -31,12 +46,51 @@ class Dev::GlobalDispatchTest < Minitest::Test
     Where
     name          | expected
     "cd"          | true
+    "clone"       | true
     "plan"        | true
     "cred"        | true
     "learnings"   | true
     "up"          | false
     "test"        | false
     "update-deps" | false
+  end
+
+  test "dev clone dispatches globally without a dev.yml lookup" do
+    Given "a recording clone accessor and a cwd with no dev.yml"
+    clone = RecordingCloneAccessor.new
+    dispatch = Dev::GlobalDispatch.new(clone_accessor: clone, cred_accessor: RecordingCredAccessor.new)
+    cwd = Dir.mktmpdir("dispatch-cwd-")
+
+    When "we dispatch dev clone"
+    Dir.chdir(cwd) { dispatch.run(["clone", "--path", "d3mlabs/dev"]) }
+
+    Then "the accessor received the subcommand argv"
+    clone.last_args == ["--path", "d3mlabs/dev"]
+
+    Cleanup
+    FileUtils.rm_rf(cwd)
+  end
+
+  test "dev clone against an existing checkout prints a clean error and exits non-zero" do
+    Given "the canonical destination already on disk"
+    root = Dir.mktmpdir("dispatch-clone-")
+    FileUtils.mkdir_p(File.join(root, "github.com", "d3mlabs", "dev"))
+    clone_accessor = Dev::Clone::Accessor.new(root: root, hook_installer: quiet_hook_installer)
+    dispatch = Dev::GlobalDispatch.new(clone_accessor: clone_accessor, cred_accessor: RecordingCredAccessor.new)
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(1).once
+
+    When "we dispatch the duplicate clone"
+    dispatch.run(["clone", "dev"])
+
+    Then "the error names the existing path and hints at dev cd"
+    $stderr.string.include?("already exists")
+    $stderr.string.include?("dev cd dev")
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.rm_rf(root)
   end
 
   test "dev learnings status dispatches globally without a dev.yml lookup" do
