@@ -11,8 +11,9 @@ description: >-
   parser/registry, dev.yml config parsing, CLI UI, GlobalDispatch. Owns
   dispatch and execution, no feature logic.
 - **`lib/dev/cd/`** — checkout jumping: RepoDiscovery walks the workspace
-  root, Matcher ranks, ShellHook owns the RC function (a child process
-  cannot cd its parent shell).
+  root, Matcher ranks, HookInstaller owns the RC wrapper function (a child
+  process cannot cd its parent shell; it also serves `dev clone`).
+- **`lib/dev/clone/`** — checkout creation: RepoSpec parses `[org/]repo`, GhCloner clones via gh auth to the canonical `$DEV_CD_ROOT` path.
 - **`lib/dev/plan/`** — Cursor plans ⇄ GitHub issues sync (the issue is
   canonical; a stored merge base guards against clobbering remote edits).
 - **`lib/dev/deps/`** — dependency management. Layering is canonical in

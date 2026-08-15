@@ -12,8 +12,9 @@ routes argv through two layers:
 
 1. **Global builtins** — `Dev::GlobalDispatch`
    (`src/dev/global_dispatch.rb`) runs first, before any dev.yml lookup,
-   so `cd`, `plan`, `cred`, and `learnings` work from any directory. Each
-   owns host- or workspace-global state, never project config.
+   so `cd`, `clone`, `plan`, `cred`, and `learnings` work from any
+   directory. Each owns host- or workspace-global state, never project
+   config.
 2. **Project commands** — everything else builds `Dev::Runner`
    (`src/dev/runner.rb`), which requires a dev.yml in the cwd's ancestry
    (`DevYamlNotFoundError` at the CLI boundary) and runs the
@@ -25,7 +26,7 @@ The seams:
 - A new global command joins `GlobalDispatch::GLOBAL_COMMANDS` and gets a
   feature module under `lib/dev/<name>/` whose `Accessor` is its only CLI
   surface (usage, arg parsing, clean failures) — see `Cd::Accessor`,
-  `Plan::Accessor`, `Learnings::Accessor`.
+  `Clone::Accessor`, `Plan::Accessor`, `Learnings::Accessor`.
 - Project commands are declared in each repo's dev.yml, never hardcoded
   in dev's core.
 - Workspace-global commands resolve their root as nearest dev.yml, else
