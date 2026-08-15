@@ -246,10 +246,11 @@ class RunnerTest < Minitest::Test
     out.string.include?("Clone a GitHub repo")
   end
 
-  test "the clone builtin dispatches argv to the clone accessor" do
-    Given "a Runner and an expectation on the clone accessor"
-    runner = build_runner(commands: {})
-    Dev::Clone::Accessor.any_instance.expects(:run).with(["acme/widget"]).once
+  test "the clone builtin dispatches argv to the injected clone accessor" do
+    Given "a Runner with a clone accessor expecting the argv"
+    clone_accessor = typed_mock(Dev::Clone::Accessor)
+    clone_accessor.expects(:run).with(["acme/widget"]).once
+    runner = build_runner(commands: {}, clone_accessor: clone_accessor)
 
     When "we run dev clone"
     runner.run(["clone", "acme/widget"], ui: fake_ui)
@@ -258,11 +259,26 @@ class RunnerTest < Minitest::Test
     true
   end
 
+  test "the cd builtin dispatches argv to the injected cd accessor" do
+    Given "a Runner with a cd accessor expecting the argv"
+    cd_accessor = typed_mock(Dev::Cd::Accessor)
+    cd_accessor.expects(:run).with(["widget"]).once
+    runner = build_runner(commands: {}, cd_accessor: cd_accessor)
+
+    When "we run dev cd"
+    runner.run(["cd", "widget"], ui: fake_ui)
+
+    Then "the expectation on the accessor holds"
+    true
+  end
+
   test "up ensures the dev cd shell hook (idempotently)" do
     Given "a Runner with no project up command and a hook installer expectation"
-    runner = build_runner(commands: {})
+    hook_installer = typed_mock(Dev::Cd::HookInstaller)
+    hook_installer.expects(:ensure_installed).once.returns(:already_present)
+    staleness = fake_staleness
+    runner = build_runner(commands: {}, hook_installer: hook_installer, staleness_provider: ->(_root) { staleness })
     runner.stubs(:install_locked_deps)
-    Dev::Cd::HookInstaller.any_instance.expects(:ensure_installed).once.returns(:already_present)
 
     When "we run up"
     runner.run(["up"], ui: fake_ui)
@@ -273,21 +289,36 @@ class RunnerTest < Minitest::Test
 
   test "a project up command overrides the builtin: install runs first, then the script" do
     Given "a Runner whose dev.yml defines up and a spy on both stages"
-    runner = build_runner(commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup", "container" => false } })
-    Dev::Cd::HookInstaller.any_instance.stubs(:ensure_installed).returns(:already_present)
+    original_cwd = Dir.pwd
+    root = Pathname.new(Dir.mktmpdir("runner-up-order-"))
+    Dev.stubs(:target_project_root).returns(root)
+    staleness = fake_staleness
+    runner = build_runner(
+      commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup", "container" => false } },
+      hook_installer: stubbed_hook_installer,
+      staleness_provider: ->(_root) { staleness },
+    )
+    runner.stubs(:resolve_ruby_version).returns("4.0.1")
+    ShadowenvRuby.stubs(:ensure!)
     execution_order = []
     runner.stubs(:install_locked_deps).with {
       execution_order << :builtin_install
       true }
-    Dev::ShellCommand.any_instance.stubs(:execute).with {
+    # The project script's execution boundary is Kernel.system (wait mode);
+    # spying there keeps the real ShellCommand -> CommandRunner path intact.
+    Kernel.stubs(:system).with {
       execution_order << :project_script
-      true }
+      true }.returns(true)
 
     When "we run up"
     runner.run(["up"], ui: fake_ui)
 
     Then "OverriddenCommand super()-dispatches the builtin before the project script"
     execution_order == [:builtin_install, :project_script]
+
+    Cleanup
+    Dir.chdir(original_cwd)
+    FileUtils.rm_rf(root)
   end
 
   # Regression for dev#85: a project-defined `up:` used to exec-replace the
@@ -298,12 +329,18 @@ class RunnerTest < Minitest::Test
     original_cwd = Dir.pwd
     root = Pathname.new(Dir.mktmpdir("runner-up-stamp-"))
     Dev.stubs(:target_project_root).returns(root)
-    runner = build_runner(commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup", "container" => false } })
+    staleness = fake_staleness
+    staleness.expects(:stamp_installed!).once
+    runner = build_runner(
+      commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup", "container" => false } },
+      hook_installer: stubbed_hook_installer,
+      staleness_provider: ->(_root) { staleness },
+    )
     runner.stubs(:resolve_ruby_version).returns("4.0.1")
     runner.stubs(:install_locked_deps)
-    Dev::Cd::HookInstaller.any_instance.stubs(:ensure_installed).returns(:already_present)
-    Dev::CommandRunner.any_instance.stubs(:ensure_shadowenv_provisioned!)
-    Dev::Deps::Staleness.any_instance.expects(:stamp_installed!).once
+    # Provisioning's shell-out boundary; llvm/python provisioning no-op on an
+    # empty project root.
+    ShadowenvRuby.stubs(:ensure!)
 
     When "we run up"
     runner.run(["up"], ui: fake_ui)
@@ -322,16 +359,20 @@ class RunnerTest < Minitest::Test
     original_cwd = Dir.pwd
     root = Pathname.new(Dir.mktmpdir("runner-up-fail-"))
     Dev.stubs(:target_project_root).returns(root)
-    runner = build_runner(commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup", "container" => false } })
+    staleness = fake_staleness
+    staleness.expects(:stamp_installed!).never
+    runner = build_runner(
+      commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup", "container" => false } },
+      hook_installer: stubbed_hook_installer,
+      staleness_provider: ->(_root) { staleness },
+    )
     runner.stubs(:resolve_ruby_version).returns("4.0.1")
     runner.stubs(:install_locked_deps)
-    Dev::Cd::HookInstaller.any_instance.stubs(:ensure_installed).returns(:already_present)
-    Dev::CommandRunner.any_instance.stubs(:ensure_shadowenv_provisioned!)
+    ShadowenvRuby.stubs(:ensure!)
     Kernel.stubs(:system).returns(false)
     # Kernel.system is stubbed, so wait on a real child here to leave the
     # thread-local $? at exit status 7 — what a real failed child would set.
     Process.wait(Process.spawn("sh", "-c", "exit 7"))
-    Dev::Deps::Staleness.any_instance.expects(:stamp_installed!).never
     Kernel.expects(:exit).with(7).once
     # Guard: a regression to exec-replace would otherwise replace the test
     # process itself (Kernel.system above is stubbed, Kernel.exec is real).
@@ -355,7 +396,7 @@ class RunnerTest < Minitest::Test
     Dev.stubs(:target_project_root).returns(root)
     runner = build_runner(commands: { "test" => { "run" => "./bin/test.sh", "desc" => "Run tests", "container" => false } })
     runner.stubs(:resolve_ruby_version).returns("4.0.1")
-    Dev::CommandRunner.any_instance.stubs(:ensure_shadowenv_provisioned!)
+    ShadowenvRuby.stubs(:ensure!)
 
     When "we run a non-stamping command"
     runner.run(["test"], ui: fake_ui)
@@ -371,36 +412,60 @@ class RunnerTest < Minitest::Test
 
   test "up resolves docker build arg credentials before executing" do
     Given "a Runner with build container build_args and an up command"
+    original_cwd = Dir.pwd
+    root = Pathname.new(Dir.mktmpdir("runner-up-creds-"))
+    Dev.stubs(:target_project_root).returns(root)
+    staleness = fake_staleness
     runner = build_runner(
       commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup", "container" => false } },
       build: { "container" => {
         "image" => "myapp-linux", "registry" => "myregistry",
         "build_args" => { "WWISE_EMAIL" => "wwise/email" },
       } },
+      hook_installer: stubbed_hook_installer,
+      staleness_provider: ->(_root) { staleness },
     )
-    Dev::ShellCommand.any_instance.stubs(:execute)
+    runner.stubs(:resolve_ruby_version).returns("4.0.1")
     runner.stubs(:install_locked_deps)
-    Dev::Cd::HookInstaller.any_instance.stubs(:ensure_installed).returns(:already_present)
+    ShadowenvRuby.stubs(:ensure!)
+    Kernel.stubs(:system).returns(true)
 
     When "we run up"
     runner.run(["up"], ui: fake_ui)
 
     Then "build args are resolved (prompting and storing on first run)"
     1 * Dev::Credentials.resolve_build_args({ "WWISE_EMAIL" => "wwise/email" })
+
+    Cleanup
+    Dir.chdir(original_cwd)
+    FileUtils.rm_rf(root)
   end
 
   test "up without build container skips credential provisioning" do
     Given "a Runner without a build container"
-    runner = build_runner(commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup" } })
-    Dev::ShellCommand.any_instance.stubs(:execute)
+    original_cwd = Dir.pwd
+    root = Pathname.new(Dir.mktmpdir("runner-up-nocreds-"))
+    Dev.stubs(:target_project_root).returns(root)
+    staleness = fake_staleness
+    runner = build_runner(
+      commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup" } },
+      hook_installer: stubbed_hook_installer,
+      staleness_provider: ->(_root) { staleness },
+    )
+    runner.stubs(:resolve_ruby_version).returns("4.0.1")
     runner.stubs(:install_locked_deps)
-    Dev::Cd::HookInstaller.any_instance.stubs(:ensure_installed).returns(:already_present)
+    ShadowenvRuby.stubs(:ensure!)
+    Kernel.stubs(:system).returns(true)
 
     When "we run up"
     runner.run(["up"], ui: fake_ui)
 
     Then "credentials are never resolved"
     0 * Dev::Credentials.resolve_build_args(anything)
+
+    Cleanup
+    Dir.chdir(original_cwd)
+    FileUtils.rm_rf(root)
   end
 
   test "non-up commands do not provision credentials eagerly" do
@@ -408,6 +473,7 @@ class RunnerTest < Minitest::Test
     # Pin the project root to an empty tmpdir so the staleness guard sees no
     # lockfiles — otherwise it digests the real dev checkout against
     # ~/.dev/state and aborts the run under CI (a fresh HOME has no stamp).
+    original_cwd = Dir.pwd
     root = Pathname.new(Dir.mktmpdir("runner-non-up-"))
     Dev.stubs(:target_project_root).returns(root)
     runner = build_runner(
@@ -417,10 +483,12 @@ class RunnerTest < Minitest::Test
         "build_args" => { "WWISE_EMAIL" => "wwise/email" },
       } },
     )
-    Dev::ShellCommand.any_instance.stubs(:execute)
     # The empty tmpdir declares no Ruby; pin resolution so the test never
     # shells out to brew for the Homebrew-Ruby fallback.
     runner.stubs(:resolve_ruby_version).returns("4.0.1")
+    ShadowenvRuby.stubs(:ensure!)
+    # A non-stamping command exec-replaces at the Kernel boundary.
+    Kernel.stubs(:exec)
 
     When "we run a non-up command"
     runner.run(["test"], ui: fake_ui)
@@ -429,22 +497,28 @@ class RunnerTest < Minitest::Test
     0 * Dev::Credentials.resolve_build_args(anything)
 
     Cleanup
+    Dir.chdir(original_cwd)
     FileUtils.rm_rf(root)
   end
 
-  test "learnings dispatches the subcommand to the learnings accessor" do
-    Given "a Runner pinned to an empty project root"
+  test "learnings dispatches the subcommand to the learnings accessor built for the project root" do
+    Given "a Runner pinned to an empty project root, with a learnings accessor provider"
     root = Pathname.new(Dir.mktmpdir("runner-learnings-"))
     Dev.stubs(:target_project_root).returns(root)
-    runner = build_runner(commands: {})
+    learnings_accessor = typed_mock(Dev::Learnings::Accessor)
+    learnings_accessor.expects(:run).with(["status"]).once
+    provided_roots = []
+    runner = build_runner(commands: {}, learnings_accessor_provider: ->(project_root) {
+      provided_roots << project_root
+      learnings_accessor
+    })
     runner.stubs(:resolve_ruby_version).returns("4.0.1")
-    Dev::Learnings::Accessor.any_instance.expects(:run).with(["status"]).once
 
     When "we run dev learnings status"
     runner.run(["learnings", "status"], ui: fake_ui)
 
-    Then "the expectation on the accessor holds"
-    true
+    Then "the accessor was built for the project root and received the subcommand"
+    provided_roots == [root]
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -454,12 +528,22 @@ class RunnerTest < Minitest::Test
     Given "a Runner pinned to an empty project root, with the installer stubbed"
     root = Pathname.new(Dir.mktmpdir("runner-install-deps-"))
     Dev.stubs(:target_project_root).returns(root)
-    runner = build_runner(commands: {})
+    installer = typed_mock(Dev::Deps::DependencyInstaller)
+    installer.stubs(:install)
+    gem_skill_linker = typed_mock(Dev::Deps::GemSkillLinker)
+    gem_skill_linker.expects(:link_all).once
+    synchronizer = typed_mock(Dev::Learnings::Synchronizer)
+    synchronizer.expects(:sync).with(project_root: root).once
+    staleness = fake_staleness
+    runner = build_runner(
+      commands: {},
+      dependency_installer_provider: ->(_lockfile, _integrations) { installer },
+      gem_skill_linker_provider: ->(_root) { gem_skill_linker },
+      learnings_synchronizer_provider: -> { synchronizer },
+      staleness_provider: ->(_root) { staleness },
+    )
     runner.stubs(:resolve_ruby_version).returns("4.0.1")
     ShadowenvRuby.stubs(:ensure!)
-    Dev::Deps::DependencyInstaller.any_instance.stubs(:install)
-    Dev::Deps::GemSkillLinker.any_instance.expects(:link_all).once
-    Dev::Learnings::Synchronizer.any_instance.expects(:sync).with(project_root: root).once
 
     When "we run install-deps"
     runner.run(["install-deps"], ui: fake_ui)
@@ -479,12 +563,22 @@ class RunnerTest < Minitest::Test
     Given "a Runner pinned to an empty project root, with the installer stubbed"
     root = Pathname.new(Dir.mktmpdir("runner-install-deps-ruby-"))
     Dev.stubs(:target_project_root).returns(root)
-    runner = build_runner(commands: {})
+    installer = typed_mock(Dev::Deps::DependencyInstaller)
+    installer.stubs(:install)
+    gem_skill_linker = typed_mock(Dev::Deps::GemSkillLinker)
+    gem_skill_linker.stubs(:link_all)
+    synchronizer = typed_mock(Dev::Learnings::Synchronizer)
+    synchronizer.stubs(:sync)
+    staleness = fake_staleness
+    runner = build_runner(
+      commands: {},
+      dependency_installer_provider: ->(_lockfile, _integrations) { installer },
+      gem_skill_linker_provider: ->(_root) { gem_skill_linker },
+      learnings_synchronizer_provider: -> { synchronizer },
+      staleness_provider: ->(_root) { staleness },
+    )
     runner.stubs(:resolve_ruby_version).returns("4.0.1")
     ShadowenvRuby.expects(:ensure!).with(ruby_version: "4.0.1", project_root: root).once
-    Dev::Deps::DependencyInstaller.any_instance.stubs(:install)
-    Dev::Deps::GemSkillLinker.any_instance.stubs(:link_all)
-    Dev::Learnings::Synchronizer.any_instance.stubs(:sync)
 
     When "we run install-deps"
     runner.run(["install-deps"], ui: fake_ui)
@@ -568,7 +662,9 @@ class RunnerTest < Minitest::Test
 
   private
 
-  def build_runner(name: "testproject", commands: {}, build: nil, runner: nil, ruby: nil)
+  # Extra keyword args are forwarded to Dev::Runner.new, so tests inject
+  # fakes through the constructor seams instead of any_instance stubs.
+  def build_runner(name: "testproject", commands: {}, build: nil, runner: nil, ruby: nil, **collaborators)
     yaml = { "name" => name, "commands" => commands }
     yaml["ruby"] = ruby if ruby
     yaml["build"] = build if build
@@ -580,7 +676,25 @@ class RunnerTest < Minitest::Test
     Dev::Runner.new(
       dev_yaml_path: Pathname.new(tmp.path),
       cfg_parser: Dev::ConfigParser.new(command_parser: Dev::CommandParser.new),
+      **collaborators,
     )
+  end
+
+  # A hook installer whose ensure_installed is a benign no-op, for tests where
+  # the `up` flow runs but the shell RC must never be touched.
+  def stubbed_hook_installer
+    hook_installer = typed_mock(Dev::Cd::HookInstaller)
+    hook_installer.stubs(:ensure_installed).returns(:already_present)
+    hook_installer
+  end
+
+  # An in-sync staleness fake: no warnings, and stamping is a no-op — keeps
+  # `up`/`install-deps` tests from writing the real ~/.dev/state stamp.
+  def fake_staleness
+    staleness = typed_mock(Dev::Deps::Staleness)
+    staleness.stubs(:messages).returns([])
+    staleness.stubs(:stamp_installed!)
+    staleness
   end
 
   def fake_ui

@@ -39,12 +39,78 @@ module Dev
     # RuntimeError so Runner#run reports it as a clean `dev:` error.
     class UnsupportedDevYamlRubyError < RuntimeError; end
 
-    sig { params(dev_yaml_path: Pathname, cfg_parser: Dev::ConfigParser).void }
+    # Collaborators are injected with concrete defaults (bin/dev is the
+    # composition root and constructs a bare Runner). Context-free ones come
+    # in as instances; the ones that need the project root (known only once a
+    # command runs) come in as providers, so nothing project-scoped is built
+    # eagerly — e.g. `dev --help` never reads learnings settings.
+    #
+    # @param dev_yaml_path [Pathname] the dev.yml to load
+    # @param cfg_parser [Dev::ConfigParser] parses dev.yml into a Config
+    # @param cd_accessor [Dev::Cd::Accessor] backs the `cd` builtin
+    # @param clone_accessor [Dev::Clone::Accessor] backs the `clone` builtin
+    # @param hook_installer [Dev::Cd::HookInstaller] ensures the shell hook on `up`
+    # @param learnings_accessor_provider [Proc] project_root -> Learnings::Accessor
+    # @param staleness_provider [Proc] project_root -> Deps::Staleness
+    # @param dependency_installer_provider [Proc] (lockfile, integrations) -> Deps::DependencyInstaller
+    # @param gem_skill_linker_provider [Proc] project_root -> Deps::GemSkillLinker
+    # @param learnings_synchronizer_provider [Proc] () -> Learnings::Synchronizer
+    sig do
+      params(
+        dev_yaml_path: Pathname,
+        cfg_parser: Dev::ConfigParser,
+        cd_accessor: Dev::Cd::Accessor,
+        clone_accessor: Dev::Clone::Accessor,
+        hook_installer: Dev::Cd::HookInstaller,
+        learnings_accessor_provider: T.proc.params(project_root: Pathname).returns(Dev::Learnings::Accessor),
+        staleness_provider: T.proc.params(project_root: Pathname).returns(Dev::Deps::Staleness),
+        dependency_installer_provider: T.proc
+          .params(lockfile: Dev::Deps::Lockfile, integrations: T::Hash[Symbol, Dev::Deps::Integration])
+          .returns(Dev::Deps::DependencyInstaller),
+        gem_skill_linker_provider: T.proc.params(project_root: Pathname).returns(Dev::Deps::GemSkillLinker),
+        learnings_synchronizer_provider: T.proc.returns(Dev::Learnings::Synchronizer),
+      ).void
+    end
     def initialize(
       dev_yaml_path: Dev.dev_yaml_file,
-      cfg_parser: Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+      cfg_parser: Dev::ConfigParser.new(command_parser: Dev::CommandParser.new),
+      cd_accessor: Dev::Cd::Accessor.new,
+      clone_accessor: Dev::Clone::Accessor.new,
+      hook_installer: Dev::Cd::HookInstaller.new,
+      learnings_accessor_provider: ->(project_root) { Dev::Learnings::Accessor.new(project_root:) },
+      staleness_provider: ->(project_root) { Dev::Deps::Staleness.new(project_root:) },
+      dependency_installer_provider: ->(lockfile, integrations) {
+        Dev::Deps::DependencyInstaller.new(lockfile:, integrations:)
+      },
+      gem_skill_linker_provider: ->(project_root) { Dev::Deps::GemSkillLinker.new(project_root:) },
+      learnings_synchronizer_provider: -> { Dev::Learnings::Synchronizer.new }
     )
       @cfg_parser = T.let(cfg_parser, Dev::ConfigParser)
+      @cd_accessor = T.let(cd_accessor, Dev::Cd::Accessor)
+      @clone_accessor = T.let(clone_accessor, Dev::Clone::Accessor)
+      @hook_installer = T.let(hook_installer, Dev::Cd::HookInstaller)
+      @learnings_accessor_provider = T.let(
+        learnings_accessor_provider,
+        T.proc.params(project_root: Pathname).returns(Dev::Learnings::Accessor),
+      )
+      @staleness_provider = T.let(
+        staleness_provider,
+        T.proc.params(project_root: Pathname).returns(Dev::Deps::Staleness),
+      )
+      @dependency_installer_provider = T.let(
+        dependency_installer_provider,
+        T.proc
+          .params(lockfile: Dev::Deps::Lockfile, integrations: T::Hash[Symbol, Dev::Deps::Integration])
+          .returns(Dev::Deps::DependencyInstaller),
+      )
+      @gem_skill_linker_provider = T.let(
+        gem_skill_linker_provider,
+        T.proc.params(project_root: Pathname).returns(Dev::Deps::GemSkillLinker),
+      )
+      @learnings_synchronizer_provider = T.let(
+        learnings_synchronizer_provider,
+        T.proc.returns(Dev::Learnings::Synchronizer),
+      )
       @config = T.let(@cfg_parser.parse(dev_yaml_path), Dev::Config)
       @registry = T.let(build_registry(@config), Dev::CommandRegistry)
     end
@@ -119,7 +185,7 @@ module Dev
     def guard_staleness(cmd_name, project_root)
       return if STALENESS_EXEMPT_COMMANDS.include?(cmd_name)
 
-      messages = Dev::Deps::Staleness.new(project_root:).messages
+      messages = @staleness_provider.call(project_root).messages
       return if messages.empty?
 
       if Dev::Deps.detect_env == "ci"
@@ -138,7 +204,7 @@ module Dev
     def stamp_installed(cmd_name, project_root)
       return unless STAMPING_COMMANDS.include?(cmd_name)
 
-      Dev::Deps::Staleness.new(project_root:).stamp_installed!
+      @staleness_provider.call(project_root).stamp_installed!
     end
 
     # `dev up` is the provisioning command: after it succeeds, every other
@@ -275,7 +341,7 @@ module Dev
       registry.register("up", BuiltinCommand.new(
         desc: "Install locked dependencies, then run the project's up command (if defined)",
       ) do |args, context|
-        Dev::Cd::HookInstaller.new.ensure_installed
+        @hook_installer.ensure_installed
         install_locked_deps(context)
       end)
 
@@ -284,7 +350,7 @@ module Dev
       registry.register("cd", BuiltinCommand.new(
         desc: "Jump to a checkout under $DEV_CD_ROOT (default ~/src) by fuzzy name",
       ) do |args, _context|
-        Dev::Cd::Accessor.new.run(args)
+        @cd_accessor.run(args)
       end)
 
       # `dev clone` is dispatched globally (before dev.yml lookup) in bin/dev;
@@ -292,7 +358,7 @@ module Dev
       registry.register("clone", BuiltinCommand.new(
         desc: "Clone a GitHub repo (via gh auth) into $DEV_CD_ROOT (default ~/src), org defaults to d3mlabs",
       ) do |args, _context|
-        Dev::Clone::Accessor.new.run(args)
+        @clone_accessor.run(args)
       end)
 
       # `dev learnings` is dispatched globally in bin/dev, like cd; this
@@ -301,13 +367,13 @@ module Dev
         desc: "Learnings read path (sync: refresh now, status: what's linked, invariants: Tier-0 block, " \
           "init: scaffold the index)",
       ) do |args, context|
-        Dev::Learnings::Accessor.new(project_root: context.project_root).run(args)
+        @learnings_accessor_provider.call(context.project_root).run(args)
       end)
 
       registry.register("check", BuiltinCommand.new(
         desc: "Check dependency state freshness (manifest vs lockfiles vs installed)",
       ) do |args, context|
-        messages = Dev::Deps::Staleness.new(project_root: context.project_root).messages
+        messages = @staleness_provider.call(context.project_root).messages
         if messages.empty?
           puts "dev: dependency state is in sync (manifest, lockfiles, installed stamp)."
         else
@@ -448,9 +514,9 @@ module Dev
       ShadowenvRuby.ensure!(ruby_version: context.ruby_version, project_root: context.project_root)
 
       lockfile = Dev::Deps::Lockfile.new(dir: context.project_root)
-      installer = Dev::Deps::DependencyInstaller.new(
-        lockfile: lockfile,
-        integrations: build_host_integrations(
+      installer = @dependency_installer_provider.call(
+        lockfile,
+        build_host_integrations(
           project_root: context.project_root,
           python_version: context.python_version,
         ),
@@ -462,8 +528,8 @@ module Dev
       # This is hygiene, not a bootstrap contract: workflows that must start
       # on fresh invariants (e.g. ai-flow's runner) run an explicit blocking
       # `dev learnings sync` step instead of relying on this side effect.
-      Dev::Deps::GemSkillLinker.new(project_root: context.project_root).link_all
-      Dev::Learnings::Synchronizer.new.sync(project_root: context.project_root)
+      @gem_skill_linker_provider.call(context.project_root).link_all
+      @learnings_synchronizer_provider.call.sync(project_root: context.project_root)
     end
 
     # taps is empty (custom-tap installs go through the container path) and the
