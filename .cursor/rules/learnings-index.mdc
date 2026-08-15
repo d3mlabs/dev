@@ -33,7 +33,7 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
 
 ## architecture
 
-- [architecture/command-dispatch] Global builtins (cd, plan, cred,
+- [architecture/command-dispatch] Global builtins (cd, clone, plan, cred,
   learnings) dispatch before the dev.yml gate; project commands are
   yaml-declared and run through Runner.
   → .cursor/skills/architecture/command-dispatch/
@@ -56,6 +56,12 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  pull. → .cursor/skills/learnings/plan-parse-normalizes/
 
 ## toolchain
+
+- [toolchain/data-define-nested-constants] Constants declared inside a
+  `Data.define do … end` block land on the enclosing module, and Sorbet
+  rejects `class X < Data.define`; value classes needing nested constants
+  (typed errors) are plain classes.
+  → .cursor/skills/learnings/data-define-nested-constants/
 
 
 ## org tier
