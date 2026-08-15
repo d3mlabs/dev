@@ -233,6 +233,31 @@ class RunnerTest < Minitest::Test
     out.string.include?("Jump to a checkout")
   end
 
+  test "usage includes the clone builtin" do
+    Given "a Runner with no project commands"
+    runner = build_runner(commands: {})
+    out = StringIO.new
+
+    When "we print usage"
+    runner.run([], ui: fake_ui, out: out)
+
+    Then "clone is listed"
+    out.string.include?("clone")
+    out.string.include?("Clone a GitHub repo")
+  end
+
+  test "the clone builtin dispatches argv to the clone accessor" do
+    Given "a Runner and an expectation on the clone accessor"
+    runner = build_runner(commands: {})
+    Dev::Clone::Accessor.any_instance.expects(:run).with(["acme/widget"]).once
+
+    When "we run dev clone"
+    runner.run(["clone", "acme/widget"], ui: fake_ui)
+
+    Then "the expectation on the accessor holds"
+    true
+  end
+
   test "up ensures the dev cd shell hook (idempotently)" do
     Given "a Runner with no project up command and a hook installer expectation"
     runner = build_runner(commands: {})

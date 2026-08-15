@@ -20,8 +20,9 @@ class Dev::Cd::HookInstallerTest < Minitest::Test
     Then "the wrapper, completer and dev-scoped menu-select are installed"
     result == :added
     content = File.read(File.join(home, ".zshrc"))
-    assert_includes content, "# dev cd (added by dev)"
+    assert_includes content, "# dev cd + clone (added by dev)"
     assert_includes content, 'command dev cd --resolve "$@"'
+    assert_includes content, 'command dev clone --path "$@"'
     assert_includes content, "builtin cd"
     assert_includes content, "compadd -U"
     assert_includes content, "zstyle ':completion:*:*:dev:*' menu select"
@@ -76,6 +77,7 @@ class Dev::Cd::HookInstallerTest < Minitest::Test
     result == :added
     content = File.read(File.join(home, ".bash_profile"))
     assert_includes content, 'command dev cd --resolve "$@"'
+    assert_includes content, 'command dev clone --path "$@"'
     assert_includes content, "COMPREPLY=($(command dev cd --candidates"
     assert_includes content, "complete -F _dev_cd_completion dev"
     refute_includes content, "compgen -W"
@@ -97,6 +99,7 @@ class Dev::Cd::HookInstallerTest < Minitest::Test
     content = File.read(File.join(home, ".config", "fish", "config.fish"))
     assert_includes content, "function dev"
     assert_includes content, "command dev cd --resolve $argv"
+    assert_includes content, "command dev clone --path $argv"
     assert_includes content, "complete -c dev"
 
     Cleanup
@@ -129,7 +132,38 @@ class Dev::Cd::HookInstallerTest < Minitest::Test
     result == :added
     content = File.read(File.join(home, ".zshrc"))
     assert_includes content, "# Shadowenv (added by dev)"
-    assert_includes content, "# dev cd (added by dev)"
+    assert_includes content, "# dev cd + clone (added by dev)"
+
+    Cleanup
+    FileUtils.rm_rf(home)
+  end
+
+  test "an RC carrying the pre-clone snippet self-heals to the current wrapper" do
+    Given "a zsh user with the old cd-only snippet under its old marker"
+    home = Dir.mktmpdir("cd-hook-test-")
+    File.write(File.join(home, ".zshrc"), <<~RC)
+      # dev cd (added by dev)
+      dev() {
+        if [[ "$1" == cd ]]; then
+          shift
+          local __dev_cd_target
+          __dev_cd_target="$(command dev cd --resolve "$@")" || return $?
+          builtin cd -- "$__dev_cd_target"
+        else
+          command dev "$@"
+        fi
+      }
+    RC
+    installer = build_installer(shell: "/bin/zsh", home: home)
+
+    When "we ensure the hook"
+    result = installer.ensure_installed
+
+    Then "the current wrapper is appended (its later definition wins in the shell)"
+    result == :added
+    content = File.read(File.join(home, ".zshrc"))
+    assert_includes content, "# dev cd + clone (added by dev)"
+    assert_includes content, 'command dev clone --path "$@"'
 
     Cleanup
     FileUtils.rm_rf(home)

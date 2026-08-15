@@ -4,13 +4,16 @@ require "dev/shell_rc_hook"
 
 module Dev
   module Cd
-    # Installs the `dev cd` shell hook through the shared RC-hook installer.
+    # Installs the `dev cd` / `dev clone` shell hook through the shared
+    # RC-hook installer.
     #
     # The hook is a `dev()` wrapper function (a Ruby child cannot change the
-    # parent shell's cwd): it intercepts `dev cd …`, resolves the target via
-    # the hidden `--resolve` plumbing, and `builtin cd`s into it in the
-    # current shell — so chpwd hooks (e.g. shadowenv) fire exactly as they
-    # would for a manual `cd`. Everything else falls through to `command dev`.
+    # parent shell's cwd): it intercepts `dev cd …` and `dev clone …`,
+    # resolves the target directory via the hidden plumbing modes (`cd
+    # --resolve` matches an existing checkout; `clone --path` clones then
+    # prints the destination), and `builtin cd`s into it in the current
+    # shell — so chpwd hooks (e.g. shadowenv) fire exactly as they would for
+    # a manual `cd`. Everything else falls through to `command dev`.
     #
     # Each snippet also registers Tab completion backed by `--candidates`.
     # Completion replaces the typed token with the rendered candidate (fuzzy
@@ -20,7 +23,11 @@ module Dev
     # registers a `complete -c dev` source (fish applies its own filtering,
     # so fuzzy tokens may complete only literally there).
     class HookInstaller
-      MARKER = "# dev cd (added by dev)"
+      # The marker names the snippet generation: RCs carrying only an older
+      # marker get the current snippet appended on the next ensure (dev up or
+      # any `dev cd`), and the later function definition wins in every
+      # supported shell — self-healing updates without RC surgery.
+      MARKER = "# dev cd + clone (added by dev)"
 
       ZSH_SNIPPET = <<~'SNIPPET'
         dev() {
@@ -29,6 +36,11 @@ module Dev
             local __dev_cd_target
             __dev_cd_target="$(command dev cd --resolve "$@")" || return $?
             builtin cd -- "$__dev_cd_target"
+          elif [[ "$1" == clone ]]; then
+            shift
+            local __dev_clone_target
+            __dev_clone_target="$(command dev clone --path "$@")" || return $?
+            builtin cd -- "$__dev_clone_target"
           else
             command dev "$@"
           fi
@@ -53,6 +65,11 @@ module Dev
             local __dev_cd_target
             __dev_cd_target="$(command dev cd --resolve "$@")" || return $?
             builtin cd -- "$__dev_cd_target"
+          elif [ "$1" = clone ]; then
+            shift
+            local __dev_clone_target
+            __dev_clone_target="$(command dev clone --path "$@")" || return $?
+            builtin cd -- "$__dev_clone_target"
           else
             command dev "$@"
           fi
@@ -74,6 +91,11 @@ module Dev
                 set -l __dev_cd_target (command dev cd --resolve $argv)
                 or return $status
                 builtin cd $__dev_cd_target
+            else if test (count $argv) -ge 1; and test "$argv[1]" = clone
+                set -e argv[1]
+                set -l __dev_clone_target (command dev clone --path $argv)
+                or return $status
+                builtin cd $__dev_clone_target
             else
                 command dev $argv
             end

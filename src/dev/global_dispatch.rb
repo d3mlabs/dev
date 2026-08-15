@@ -3,6 +3,7 @@
 
 require "pathname"
 require "dev/cd"
+require "dev/clone"
 require "dev/plan"
 require "dev/learnings"
 require "dev/credentials"
@@ -13,6 +14,9 @@ module Dev
   #
   # - `dev cd`        — host-global (jumps between checkouts; also its hidden
   #                     --resolve / --candidates plumbing)
+  # - `dev clone`     — host-global (clones into the canonical checkout layout
+  #                     under $DEV_CD_ROOT; on a fresh machine it runs before
+  #                     any project exists)
   # - `dev cred`      — host-global (credentials live under XDG / ~/.config/dev)
   # - `dev plan`      — workspace-global (plans live in the enclosing
   #                     workspace, no project config is read)
@@ -25,16 +29,25 @@ module Dev
   class GlobalDispatch
     extend T::Sig
 
-    GLOBAL_COMMANDS = T.let(%w[cd plan cred learnings].freeze, T::Array[String])
+    GLOBAL_COMMANDS = T.let(%w[cd clone plan cred learnings].freeze, T::Array[String])
 
     # Candidates shown in an ambiguous `dev cd` error before truncating.
     AMBIGUOUS_CANDIDATE_CAP = 10
 
     # @param cd_accessor [Dev::Cd::Accessor]
+    # @param clone_accessor [Dev::Clone::Accessor]
     # @param cred_accessor [Dev::CredentialAccessor]
-    sig { params(cd_accessor: Dev::Cd::Accessor, cred_accessor: Dev::CredentialAccessor).void }
-    def initialize(cd_accessor: Dev::Cd::Accessor.new, cred_accessor: Dev::CredentialAccessor.new)
+    sig do
+      params(
+        cd_accessor: Dev::Cd::Accessor,
+        clone_accessor: Dev::Clone::Accessor,
+        cred_accessor: Dev::CredentialAccessor,
+      ).void
+    end
+    def initialize(cd_accessor: Dev::Cd::Accessor.new, clone_accessor: Dev::Clone::Accessor.new,
+                   cred_accessor: Dev::CredentialAccessor.new)
       @cd_accessor = T.let(cd_accessor, Dev::Cd::Accessor)
+      @clone_accessor = T.let(clone_accessor, Dev::Clone::Accessor)
       @cred_accessor = T.let(cred_accessor, Dev::CredentialAccessor)
     end
 
@@ -58,6 +71,7 @@ module Dev
       cmd_name = T.must(args.shift)
       case cmd_name
       when "cd" then @cd_accessor.run(args)
+      when "clone" then @clone_accessor.run(args)
       # Plan and Learnings accessors are built per run: their workspace root
       # depends on the cwd.
       when "plan" then Dev::Plan::Accessor.new(project_root: workspace_root).run(args)

@@ -25,6 +25,7 @@ require 'dev/plan'
 require 'dev/runner_setup'
 require 'dev/cli/ui'
 require 'dev/cd'
+require 'dev/clone'
 require 'build_container'
 require 'shadowenv_ruby'
 
@@ -284,6 +285,14 @@ module Dev
         desc: "Jump to a checkout under $DEV_CD_ROOT (default ~/src) by fuzzy name",
       ) do |args, _context|
         Dev::Cd::Accessor.new.run(args)
+      end)
+
+      # `dev clone` is dispatched globally (before dev.yml lookup) in bin/dev;
+      # this registration only surfaces it in `dev --help`.
+      registry.register("clone", BuiltinCommand.new(
+        desc: "Clone a GitHub repo (via gh auth) into $DEV_CD_ROOT (default ~/src), org defaults to d3mlabs",
+      ) do |args, _context|
+        Dev::Clone::Accessor.new.run(args)
       end)
 
       # `dev learnings` is dispatched globally in bin/dev, like cd; this
