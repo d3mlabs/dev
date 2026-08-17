@@ -130,7 +130,6 @@ class CommandParserTest < Minitest::Test
     cmd = parser.parse(hash)
 
     Then
-    cmd.hidden == false
     cmd.hidden? == false
   end
 
@@ -143,7 +142,6 @@ class CommandParserTest < Minitest::Test
     cmd = parser.parse(hash)
 
     Then
-    cmd.hidden == true
     cmd.hidden? == true
   end
 end

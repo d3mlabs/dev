@@ -1,38 +1,78 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "execution_context"
+
 module Dev
-  # Base command interface. All command types implement #execute and #desc.
+  # Sealed command data hierarchy. A command is one of exactly three shapes:
   #
-  # - ShellCommand: wraps a shell run string from dev.yml (final)
-  # - BuiltinCommand: wraps Ruby code (virtual / overridable)
+  # - BuiltinCommand: a Ruby body dev ships (abstract here; concretes live
+  #   under src/dev/builtins/)
+  # - ProjectCommand: pure data parsed from a dev.yml `commands:` entry
+  # - OverriddenCommand: a project command occupying a builtin's slot (the
+  #   builtin runs first, like a hardcoded super())
+  #
+  # Sealing makes any other nesting unrepresentable: CommandExecutor
+  # dispatches exhaustively over these three variants (case + T.absurd).
+  # Sorbet requires the direct subclasses of a sealed class beside it, which
+  # is why the whole hierarchy shares this file; BuiltinCommand is abstract
+  # but deliberately NOT sealed, so its concretes get their own files.
   class Command
     extend T::Sig
     extend T::Helpers
     abstract!
-
-    sig { abstract.params(args: T::Array[String], context: T.untyped).void }
-    def execute(args:, context:); end
+    sealed!
 
     sig { abstract.returns(String) }
     def desc; end
 
-    # Whether this command slot is final (cannot be overridden).
-    sig { abstract.returns(T::Boolean) }
-    def final?; end
-
     # Whether this command is callable but omitted from `dev`/`dev --help`
-    # usage. Used for internal plumbing (e.g. build primitives) a project keeps
-    # invocable without advertising it. Visible by default.
-    sig { returns(T::Boolean) }
+    # usage. Used for internal plumbing (e.g. build primitives) a project
+    # keeps invocable without advertising it. Visible by default.
+    sig { overridable.returns(T::Boolean) }
     def hidden? = false
+
+    # Whether the staleness guard skips this command. Exempt commands ARE
+    # the staleness remediation (or its explicit check) — nagging before
+    # them would block the very fix being run.
+    sig { overridable.returns(T::Boolean) }
+    def staleness_exempt? = false
+
+    # Whether a fully-successful run records the installed stamp
+    # (DependencyService#lock!). Stamping commands must run their process
+    # halves spawn-and-wait — exec-replace would make the stamp
+    # unreachable (#85); CommandExecutor derives wait-vs-exec from this.
+    sig { overridable.returns(T::Boolean) }
+    def stamps? = false
   end
 
-  # Shell command from dev.yml. Wraps a run string, optional description, repl flag,
-  # and container opt-out. When build.container is declared, commands run inside
-  # the container by default unless container: false.
-  # Final in the registry — duplicate declarations are an error.
-  class ShellCommand < Command
+  # Built-in command that executes Ruby code. Concretes live under
+  # src/dev/builtins/, one class per builtin, with collaborators injected
+  # through their constructors; per-call values arrive through #call.
+  class BuiltinCommand < Command
+    extend T::Sig
+    extend T::Helpers
+    abstract!
+
+    sig { abstract.params(args: T::Array[String], context: ExecutionContext).void }
+    def call(args:, context:); end
+  end
+
+  # Statically, `sealed!` binds only Command's direct subclasses, so
+  # BuiltinCommand concretes may live in their own files — but sorbet-runtime's
+  # inherited hook also rides down to BuiltinCommand's subclasses and would
+  # reject them for lacking a sealed declaration. Registering an empty
+  # decl-file prefix marks BuiltinCommand as the hierarchy's deliberately open
+  # edge: the hook accepts subclasses from any file (src/dev/builtins/, test
+  # fakes), matching the static rule.
+  BuiltinCommand.instance_variable_set(:@sorbet_sealed_module_decl_file, "")
+  BuiltinCommand.instance_variable_set(:@sorbet_sealed_module_all_subclasses, [])
+
+  # Project command from a dev.yml `commands:` entry. Pure data: the run
+  # string, optional description, repl flag, and container opt-out. When
+  # build.container is declared, commands run inside the container by
+  # default unless container: false.
+  class ProjectCommand < Command
     extend T::Sig
 
     sig { returns(String) }
@@ -49,11 +89,6 @@ module Dev
     sig { returns(T::Boolean) }
     attr_reader :container
 
-    # Whether this command is omitted from usage output. Set via `hidden: true`
-    # in dev.yml for internal build primitives that stay callable but unlisted.
-    sig { returns(T::Boolean) }
-    attr_reader :hidden
-
     sig do
       params(run: String, desc: String, repl: T::Boolean, container: T::Boolean, hidden: T::Boolean).void
     end
@@ -66,30 +101,14 @@ module Dev
     end
 
     sig { override.returns(T::Boolean) }
-    def final? = true
-
-    sig { override.returns(T::Boolean) }
     def hidden? = @hidden
-
-    sig { override.params(args: T::Array[String], context: T.untyped).void }
-    def execute(args:, context:)
-      runner = CommandRunner.new(
-        ui: context.ui,
-        ruby_version: context.ruby_version,
-        python_version: context.python_version,
-        build_container: context.build_container,
-        project_root: context.project_root,
-        wait: context.wait,
-      )
-      runner.run(self, args:)
-    end
 
     sig { params(other: Object).returns(T::Boolean) }
     def ==(other)
-      return false unless other.is_a?(ShellCommand)
+      return false unless other.is_a?(ProjectCommand)
 
       @run == other.run && @desc == other.desc && @repl == other.repl &&
-        @container == other.container && @hidden == other.hidden
+        @container == other.container && @hidden == other.hidden?
     end
 
     sig { params(other: Object).returns(T::Boolean) }
@@ -101,5 +120,42 @@ module Dev
     def hash
       [@run, @desc, @repl, @container, @hidden].hash
     end
+  end
+
+  # A project command occupying a builtin's slot. Mirrors OOP virtual
+  # dispatch: the override owns the slot, and its implementation calls
+  # super() at the top — CommandExecutor runs the builtin body first, then
+  # the project command.
+  class OverriddenCommand < Command
+    extend T::Sig
+
+    sig { returns(BuiltinCommand) }
+    attr_reader :builtin
+
+    sig { returns(ProjectCommand) }
+    attr_reader :project
+
+    sig { params(builtin: BuiltinCommand, project: ProjectCommand).void }
+    def initialize(builtin:, project:)
+      @builtin = T.let(builtin, BuiltinCommand)
+      @project = T.let(project, ProjectCommand)
+    end
+
+    # The override owns the slot, so its description wins — a project `up:`
+    # shows its own desc in usage, not the generic builtin one.
+    sig { override.returns(String) }
+    def desc = @project.desc
+
+    sig { override.returns(T::Boolean) }
+    def hidden? = @project.hidden?
+
+    # Guard and stamp traits belong to the slot, not the override: a project
+    # `up:` still is the provisioning command, so it inherits the builtin's
+    # exemption and stamping behavior.
+    sig { override.returns(T::Boolean) }
+    def staleness_exempt? = @builtin.staleness_exempt?
+
+    sig { override.returns(T::Boolean) }
+    def stamps? = @builtin.stamps?
   end
 end

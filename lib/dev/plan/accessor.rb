@@ -33,7 +33,7 @@ module Dev
       # @param merge_base [Dev::Plan::MergeBase, nil]
       # @param skill_installer [Dev::SkillInstaller, nil] target for dev's
       #   shipped skill links (defaults to the user-global ~/.cursor/skills)
-      # @param learnings [Dev::Learnings::Synchronizer, nil]
+      # @param learnings [Dev::Learnings::Synchronizer, Dev::Learnings::UnconfiguredSynchronizer, nil]
       # @param executor [Dev::Plan::Executor] CLI boundary (injectable for tests)
       def initialize(project_root:, executor: Executor.new, workspace: nil, issues: nil,
                      settings: nil, merge_base: nil, skill_installer: nil, learnings: nil)
@@ -44,7 +44,7 @@ module Dev
         @settings = settings || Dev::Settings.new
         @merge_base = merge_base || MergeBase.new
         @skill_installer = skill_installer || Dev::SkillInstaller.new
-        @learnings = learnings || Learnings::Synchronizer.new
+        @learnings = learnings || Learnings::Synchronizer.for(settings: @settings)
       end
 
       # Dispatch a `dev plan …` invocation.

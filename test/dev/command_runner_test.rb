@@ -37,7 +37,7 @@ class CommandRunnerTest < Minitest::Test
     runner.stubs(:ensure_llvm_provisioned!)
     runner.stubs(:ensure_python_provisioned!)
     Kernel.stubs(:exec)
-    cmd = Dev::ShellCommand.new(run: "./bin/console", repl: true)
+    cmd = Dev::ProjectCommand.new(run: "./bin/console", repl: true)
 
     When "we run a command"
     runner.run(cmd)
@@ -53,7 +53,7 @@ class CommandRunnerTest < Minitest::Test
 
   test "run prints header and execs directly when repl" do
     Given "a repl command"
-    cmd = Dev::ShellCommand.new(run: "./bin/console", repl: true)
+    cmd = Dev::ProjectCommand.new(run: "./bin/console", repl: true)
 
     When "we run the command"
     @runner.run(cmd)
@@ -68,7 +68,7 @@ class CommandRunnerTest < Minitest::Test
 
   test "run prints header and execs with args when repl" do
     Given "a repl command with args"
-    cmd = Dev::ShellCommand.new(run: "./bin/console", repl: true)
+    cmd = Dev::ProjectCommand.new(run: "./bin/console", repl: true)
 
     When "we run the command with extra args"
     @runner.run(cmd, args: ["--verbose"])
@@ -83,7 +83,7 @@ class CommandRunnerTest < Minitest::Test
 
   test "run prints header and execs with shell wrapper for non-repl" do
     Given "a non-repl command"
-    cmd = Dev::ShellCommand.new(run: "./bin/setup.rb", repl: false)
+    cmd = Dev::ProjectCommand.new(run: "./bin/setup.rb", repl: false)
 
     When "we run the command"
     @runner.run(cmd)
@@ -98,7 +98,7 @@ class CommandRunnerTest < Minitest::Test
 
   test "non-repl shell wrapper includes status check and Done message" do
     Given "a non-repl command"
-    cmd = Dev::ShellCommand.new(run: "./bin/test.sh", repl: false)
+    cmd = Dev::ProjectCommand.new(run: "./bin/test.sh", repl: false)
 
     When "we run the command"
     @runner.run(cmd)
@@ -113,7 +113,7 @@ class CommandRunnerTest < Minitest::Test
 
   test "non-repl shell wrapper includes args" do
     Given "a non-repl command with args"
-    cmd = Dev::ShellCommand.new(run: "./bin/test.sh", repl: false)
+    cmd = Dev::ProjectCommand.new(run: "./bin/test.sh", repl: false)
 
     When "we run with args"
     @runner.run(cmd, args: ["-v"])
@@ -132,7 +132,7 @@ class CommandRunnerTest < Minitest::Test
     Given "a wait-mode runner and a non-repl command"
     runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", project_root: @project_root, wait: true)
     runner.stubs(:ensure_shadowenv_provisioned!)
-    cmd = Dev::ShellCommand.new(run: "./bin/setup.rb", repl: false)
+    cmd = Dev::ProjectCommand.new(run: "./bin/setup.rb", repl: false)
 
     When "we run the command"
     runner.run(cmd)
@@ -149,7 +149,7 @@ class CommandRunnerTest < Minitest::Test
     Given "a wait-mode runner whose child exits 7"
     runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", project_root: @project_root, wait: true)
     runner.stubs(:ensure_shadowenv_provisioned!)
-    cmd = Dev::ShellCommand.new(run: "./bin/setup.rb", repl: false)
+    cmd = Dev::ProjectCommand.new(run: "./bin/setup.rb", repl: false)
     Kernel.stubs(:system).returns(false)
     # Kernel.system is stubbed, so wait on a real child here to leave the
     # thread-local $? at exit status 7 — what a real failed child would set.
@@ -169,7 +169,7 @@ class CommandRunnerTest < Minitest::Test
     Given "a wait-mode runner with a build container"
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry")
     runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root, wait: true)
-    cmd = Dev::ShellCommand.new(run: "./bin/up.sh", repl: false)
+    cmd = Dev::ProjectCommand.new(run: "./bin/up.sh", repl: false)
 
     When "the image resolves and we run the command"
     BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
@@ -191,7 +191,7 @@ class CommandRunnerTest < Minitest::Test
     Given "a runner with build_container and a command with container: true (default)"
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry")
     runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root)
-    cmd = Dev::ShellCommand.new(run: "./bin/build.sh", repl: false)
+    cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
 
     When "BuildContainer.ensure_image! returns a tag and we run the command"
     BuildContainer.expects(:ensure_image!)
@@ -213,7 +213,7 @@ class CommandRunnerTest < Minitest::Test
     Given "a runner whose build_container opts into persist"
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry", persist: true, volumes: ["/e:/e"])
     runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root)
-    cmd = Dev::ShellCommand.new(run: "./bin/build.sh", repl: false)
+    cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
 
     When "the image resolves and the service container is ensured"
     BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
@@ -238,7 +238,7 @@ class CommandRunnerTest < Minitest::Test
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry")
     runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root)
     runner.stubs(:ensure_shadowenv_provisioned!)
-    cmd = Dev::ShellCommand.new(run: "./bin/deploy.sh", repl: false, container: false)
+    cmd = Dev::ProjectCommand.new(run: "./bin/deploy.sh", repl: false, container: false)
 
     When "we run the command"
     runner.run(cmd)
@@ -254,7 +254,7 @@ class CommandRunnerTest < Minitest::Test
     Given "a runner without build_container"
     runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", project_root: @project_root)
     runner.stubs(:ensure_shadowenv_provisioned!)
-    cmd = Dev::ShellCommand.new(run: "./bin/build.sh", repl: false)
+    cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
 
     When "we run the command"
     runner.run(cmd)
@@ -270,7 +270,7 @@ class CommandRunnerTest < Minitest::Test
     Given "a runner with build_container and a command with args"
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry")
     runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root)
-    cmd = Dev::ShellCommand.new(run: "./bin/test.sh", repl: false)
+    cmd = Dev::ProjectCommand.new(run: "./bin/test.sh", repl: false)
 
     When "BuildContainer returns docker command and we run with args"
     BuildContainer.expects(:ensure_image!)
@@ -296,7 +296,7 @@ class CommandRunnerTest < Minitest::Test
       run_env: { "WWISE_TOKEN" => "wwise/token" },
     )
     runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root)
-    cmd = Dev::ShellCommand.new(run: "./bin/build.sh", repl: false)
+    cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
     ENV["WWISE_TOKEN"] = "tok-123"
 
     When "the image is ready and the command runs"
@@ -318,7 +318,7 @@ class CommandRunnerTest < Minitest::Test
     Given "a runner with build_container and DEV_PUBLISH_IMAGE=1 in the env"
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry")
     runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root)
-    cmd = Dev::ShellCommand.new(run: "./bin/build.sh", repl: false)
+    cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
     ENV["DEV_PUBLISH_IMAGE"] = "1"
 
     When "the command runs"
@@ -343,7 +343,7 @@ class CommandRunnerTest < Minitest::Test
       run_env: { "WWISE_TOKEN" => "wwise/token" },
     )
     runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root)
-    cmd = Dev::ShellCommand.new(run: "./bin/build.sh", repl: false)
+    cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
     ENV.delete("WWISE_TOKEN")
 
     When "the credential is not stored and the command runs"

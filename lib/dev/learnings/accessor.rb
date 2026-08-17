@@ -61,7 +61,7 @@ module Dev
       # @param settings [Dev::Settings]
       # @param cache [Dev::Learnings::Cache, nil] override for tests; defaults
       #   to a cache over the configured knowledge repo (nil when unconfigured)
-      # @param synchronizer [Dev::Learnings::Synchronizer, nil]
+      # @param synchronizer [Dev::Learnings::Synchronizer, Dev::Learnings::UnconfiguredSynchronizer, nil]
       # @param skill_installer [Dev::SkillInstaller] target of the shipped and
       #   org skill links; defaults to the user-global ~/.cursor/skills
       # @param gem_skill_linker [Dev::Deps::GemSkillLinker, nil] override for
@@ -75,7 +75,10 @@ module Dev
         @settings = settings
         repo = settings.knowledge_repo
         @cache = cache || (repo && Cache.new(repo: repo))
-        @synchronizer = synchronizer || Synchronizer.new(settings: settings, cache: @cache)
+        # The synchronizer shares the accessor's cache (status/invariants
+        # read it too); an unconfigured machine gets the null synchronizer.
+        @synchronizer = synchronizer ||
+          (@cache ? Synchronizer.new(settings: settings, cache: @cache) : UnconfiguredSynchronizer.new(settings: settings))
         @skill_installer = skill_installer
         @gem_skill_linker = gem_skill_linker ||
           (@project_root && Dev::Deps::GemSkillLinker.new(project_root: @project_root))

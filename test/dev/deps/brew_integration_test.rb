@@ -21,8 +21,8 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
         version: "3.31.4", hash: "SHA256=abc", metadata: {}),
     ]
 
-    Dev::Deps::BrewIntegration.any_instance.stubs(:brew_installed?).returns(false)
-    Dev::Deps::BrewIntegration.any_instance.stubs(:run_brew_install).returns(nil)
+    integration.stubs(:brew_installed?).returns(false)
+    integration.stubs(:run_brew_install).returns(nil)
 
     When "installing all"
     integration.install_all(deps)

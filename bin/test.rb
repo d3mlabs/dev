@@ -46,7 +46,7 @@ def main
 
     test_files = []
     unless CLI::UI.spinner("Gathering test files...") do
-      # test/ mirrors src/: test/dev/config_parser_test.rb for src/dev/config_parser.rb
+      # test/ mirrors src/: test/dev/command_parser_test.rb for src/dev/command_parser.rb
       test_files = Dir[File.join(DEV_ROOT, "test", "**", "*_test.rb")]
       raise NoTestFilesError, "No test files found in test/" if test_files.empty?
     end

@@ -54,8 +54,8 @@ end
 
 require_relative "dev/command"
 require_relative "dev/command_parser"
-require_relative "dev/config"
-require_relative "dev/config_parser"
+require_relative "dev/project_manifest"
+require_relative "dev/project_manifest_loader"
 require_relative "dev/cli"
 require_relative "dev/command_runner"
 require_relative "dev/runner"
