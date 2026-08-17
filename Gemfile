@@ -14,6 +14,10 @@ gem "minitest"
 gem "minitest-reporters"
 gem "rake"
 gem "simplecov", "~> 0.22"
+# Codecov can't process SimpleCov's JSON once a `# :nocov:` line appears
+# (the "ignored" value breaks its parser — codecov/engineering-team#3592),
+# so CI uploads the cobertura report instead.
+gem "simplecov-cobertura", "~> 3.0"
 
 # bin/console
 gem "pry", "~> 0.14"
