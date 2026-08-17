@@ -120,21 +120,38 @@ class Dev::Learnings::SynchronizerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "an unconfigured machine has no org sync" do
+  test ".for on a configured machine builds the real synchronizer" do
+    Given "settings with a knowledge repo"
+    dir = Dir.mktmpdir("dev-learnings-sync-test-")
+    config = File.join(dir, "config.yml")
+    File.write(config, "knowledge_repo: d3mlabs/knowledge\n")
+    settings = Dev::Settings.new(config_path: config)
+
+    When "constructing through the factory"
+    synchronizer = Dev::Learnings::Synchronizer.for(settings: settings)
+
+    Then "the real synchronizer comes back, cache and all"
+    synchronizer.is_a?(Dev::Learnings::Synchronizer)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test ".for on an unconfigured machine hands out the null synchronizer, whose passive hook is a silent no-op" do
     Given "settings without a knowledge repo"
     dir = Dir.mktmpdir("dev-learnings-sync-test-")
     saved_env = ENV.delete("DEV_KNOWLEDGE_REPO")
     settings = Dev::Settings.new(config_path: File.join(dir, "config.yml"))
     installer = Dev::SkillInstaller.new(skills_dir: File.join(dir, "user-skills"))
-    synchronizer = Dev::Learnings::Synchronizer.new(settings: settings, skill_installer: installer)
+    synchronizer = Dev::Learnings::Synchronizer.for(settings: settings, skill_installer: installer)
     project = Pathname(dir) / "repo"
     FileUtils.mkdir_p(project)
 
     When "the passive hook runs"
     synchronizer.sync(project_root: project)
 
-    Then "it is a silent no-op"
-    !synchronizer.configured?
+    Then "no org sync happened, silently"
+    synchronizer.is_a?(Dev::Learnings::UnconfiguredSynchronizer)
     !File.exist?(File.join(dir, "user-skills"))
     !(project / ".cursor").exist?
 
@@ -144,11 +161,11 @@ class Dev::Learnings::SynchronizerTest < Minitest::Test
   end
 
   test "sync! on an unconfigured machine raises with configuration instructions" do
-    Given "settings without a knowledge repo"
+    Given "the null synchronizer of an unconfigured machine"
     dir = Dir.mktmpdir("dev-learnings-sync-test-")
     saved_env = ENV.delete("DEV_KNOWLEDGE_REPO")
     settings = Dev::Settings.new(config_path: File.join(dir, "config.yml"))
-    synchronizer = Dev::Learnings::Synchronizer.new(settings: settings)
+    synchronizer = Dev::Learnings::Synchronizer.for(settings: settings)
 
     When "forcing a sync"
     synchronizer.sync!

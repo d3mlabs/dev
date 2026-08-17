@@ -1,8 +1,10 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "command"
+
 module Dev
-  # Parses a dev.yml command hash into a Command value object.
+  # Parses a dev.yml command hash into a ProjectCommand value object.
   class CommandParser
     extend T::Sig
 
@@ -11,9 +13,9 @@ module Dev
 
     # @param cmd_hash [CommandHash] The command hash to parse.
     #
-    # @return [Command] The parsed command.
+    # @return [ProjectCommand] The parsed command.
     # @raise [ArgumentError] If the command hash is missing the `run` key or the value is not a string.
-    sig { params(cmd_hash: CommandHash).returns(ShellCommand) }
+    sig { params(cmd_hash: CommandHash).returns(ProjectCommand) }
     def parse(cmd_hash)
       run = cmd_hash["run"].to_s
       run_present = !run.empty?
@@ -27,7 +29,7 @@ module Dev
       container = cmd_hash["container"] != false
       hidden = cmd_hash["hidden"] == true
 
-      ShellCommand.new(run: run, desc: desc, repl: repl, container: container, hidden: hidden)
+      ProjectCommand.new(run: run, desc: desc, repl: repl, container: container, hidden: hidden)
     end
   end
 end

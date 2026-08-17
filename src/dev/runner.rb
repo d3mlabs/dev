@@ -1,561 +1,159 @@
 # typed: strict
 # frozen_string_literal: true
 
-require 'digest'
-require 'pathname'
-require 'dev/config_parser'
-require 'dev/command_registry'
-require 'dev/command_runner'
-require 'dev/credential_accessor'
-require 'dev/credentials'
-require 'dev/execution_context'
-require 'dev/deps'
-require 'dev/deps/accessor'
-require 'dev/deps/cache'
-require 'dev/deps/cache_gc'
-require 'dev/deps/gem_skill_linker'
-require 'dev/deps/integration'
-require 'dev/deps/lockfile'
-require 'dev/deps/registry'
-require 'dev/deps/repository'
-require 'dev/deps/resolver'
-require 'dev/deps/staleness'
-require 'dev/learnings'
-require 'dev/plan'
-require 'dev/runner_setup'
-require 'dev/cli/ui'
-require 'dev/cd'
-require 'dev/clone'
-require 'build_container'
-require 'shadowenv_ruby'
+require "pathname"
+require "stringio"
+require "dev/builtins"
+require "dev/cli"
+require "dev/command"
+require "dev/command_executor"
+require "dev/command_parser"
+require "dev/command_repository"
+require "dev/command_runner"
+require "dev/command_service"
+require "dev/dependency_service"
+require "dev/deps/staleness"
+require "dev/execution_context"
+require "dev/project_manifest"
+require "dev/project_manifest_loader"
+require "shadowenv_ruby"
 
 module Dev
-  # Main entry: find repo, load config, build registry, parse argv, show usage or run command.
+  # The application service behind bin/dev, and the composition root of the
+  # command onion: usage check, argv/context assembly, one call into
+  # CommandService, and the rescue-to-exit mapping at the CLI boundary.
   class Runner
     extend T::Sig
 
-    # Raised when dev.yml still carries the removed `ruby:` key. The toolchain
-    # is a project dependency and is declared only in dependencies.rb.
-    # RuntimeError so Runner#run reports it as a clean `dev:` error.
-    class UnsupportedDevYamlRubyError < RuntimeError; end
-
-    sig { params(dev_yaml_path: Pathname, cfg_parser: Dev::ConfigParser).void }
+    sig do
+      params(
+        dev_yaml_path: Pathname,
+        manifest_loader: ProjectManifestLoader,
+        command_service: T.nilable(CommandService),
+      ).void
+    end
     def initialize(
       dev_yaml_path: Dev.dev_yaml_file,
-      cfg_parser: Dev::ConfigParser.new(command_parser: Dev::CommandParser.new)
+      manifest_loader: ProjectManifestLoader.new,
+      command_service: nil
     )
-      @cfg_parser = T.let(cfg_parser, Dev::ConfigParser)
-      @config = T.let(@cfg_parser.parse(dev_yaml_path), Dev::Config)
-      @registry = T.let(build_registry(@config), Dev::CommandRegistry)
+      @manifest_loader = T.let(manifest_loader, ProjectManifestLoader)
+      # The dev.yml side loads eagerly — usage needs the command list. The
+      # dependencies.rb side waits for #run (see the toolchain pass there).
+      @manifest = T.let(manifest_loader.load(dev_yaml_path), ProjectManifest)
+      @command_service = T.let(command_service || build_command_service(@manifest), CommandService)
+      @usage_printer = T.let(Cli::UsagePrinter.new, Cli::UsagePrinter)
     end
 
     # Runs the dev command specified by the given argv.
     #
     # @param argv [Array[String]] The argv to run the command with.
-    # @param out [IO, StringIO] Stream for usage output (default: $stdout).
     # @param ui [Dev::Cli::Ui] CLI UI implementation for framing and formatting.
+    # @param out [IO, StringIO] Stream for usage output (default: $stdout).
     # @return [void]
     sig { params(argv: T::Array[String], ui: Dev::Cli::Ui, out: T.any(IO, StringIO)).void }
     def run(argv, ui:, out: $stdout)
-      if show_usage?(argv)
-        print_usage(@config.name, @registry, out:)
+      if @usage_printer.show_usage?(argv)
+        @usage_printer.print(project_name: @manifest.name, commands: @command_service.visible_commands, out:)
         return
       end
 
       args = T.let(argv.dup, T::Array[String])
       cmd_name = T.must(args.shift)
-      cmd = @registry.lookup(cmd_name)
-
-      ruby_version = resolve_ruby_version(declared_ruby_version)
+      # The toolchain pass runs here, after the usage check — `dev --help`
+      # never loads the deps manifest (dependencies.rb is arbitrary Ruby).
+      manifest = @manifest_loader.with_toolchain(@manifest, project_root: Dev.target_project_root)
       context = ExecutionContext.new(
         ui:,
-        ruby_version:,
-        python_version: declared_python_version,
+        ruby_version: ShadowenvRuby.resolve_ruby_version(manifest.declared_ruby_version),
+        python_version: manifest.declared_python_version,
         project_root: Dev.target_project_root,
-        build_container: @config.build_container,
-        runner: @config.runner,
-        # Stamping commands sequence the installed stamp after execute, so an
-        # exec-style project command (e.g. a dev.yml `up:`) must spawn-and-wait
-        # — exec-replace would make the stamp unreachable (#85).
-        wait: STAMPING_COMMANDS.include?(cmd_name),
+        build_container: manifest.build_container,
+        runner: manifest.runner,
       )
-      guard_staleness(cmd_name, context.project_root)
-      provision_build_credentials if cmd_name == "up"
-      cmd.execute(args:, context:)
-      stamp_installed(cmd_name, context.project_root)
-    rescue CommandRunner::CommandFailedError => e
-      # The child already reported its failure (the shell wrapper prints its
-      # ✗ Failed footer); skip the stamp and preserve the child's exit code.
-      Kernel.exit(e.exit_status)
-    rescue CommandRegistry::CommandNotFoundError => e
-      $stderr.puts "dev: #{e}"
-      $stderr.puts "Run 'dev' or 'dev --help' to see available commands."
-      Kernel.exit(1)
-    rescue ArgumentError, RuntimeError => e
-      $stderr.puts "dev: #{e}"
-      Kernel.exit(1)
+      @command_service.execute(cmd_name, args:, context:)
+    rescue StandardError => e
+      exit_for(e)
     end
 
     private
 
-    # Commands that ARE the staleness remediation (or its explicit check) —
-    # nagging before them would block the very fix being run. `plan` is exempt
-    # because it never touches dependencies and runs headlessly from Cursor
-    # hooks, where a staleness warning would only add noise. `provide-image`
-    # is exempt because it consumes the committed lockfiles directly (they are
-    # inputs to the image's content hash) and runs on fresh CI checkouts where
-    # no installed stamp exists yet.
-    STALENESS_EXEMPT_COMMANDS = T.let(%w[up install-deps update-deps check plan provide-image].freeze, T::Array[String])
-
-    # Provisioning commands that record the installed stamp after a fully
-    # successful run (see #stamp_installed). Their post-execute step is why
-    # #run selects CommandRunner's wait mode for them.
-    STAMPING_COMMANDS = T.let(%w[up install-deps].freeze, T::Array[String])
-
-    # Two O(1) digest checks at every command start (see Dev::Deps::Staleness):
-    # manifest vs lockfile, lockfile vs installed stamp. Warn on workstations;
-    # error in CI, where a stale state is a pipeline bug, not a reminder.
-    sig { params(cmd_name: String, project_root: Pathname).void }
-    def guard_staleness(cmd_name, project_root)
-      return if STALENESS_EXEMPT_COMMANDS.include?(cmd_name)
-
-      messages = Dev::Deps::Staleness.new(project_root:).messages
-      return if messages.empty?
-
-      if Dev::Deps.detect_env == "ci"
-        raise "stale dependency state:\n#{messages.map { |m| "  #{m}" }.join("\n")}"
-      end
-
-      messages.each { |m| $stderr.puts "dev: warning: #{m}" }
-    end
-
-    # Record the installed stamp after a fully-successful provisioning command
-    # (`dev up` treats a stale stamp as its expected precondition and rewrites
-    # it; `install-deps` is the CI-side install). Reached only when execute
-    # didn't raise — exec-style project commands run in CommandRunner wait
-    # mode (see #run), so a project-defined `up:` gets here too (#85).
-    sig { params(cmd_name: String, project_root: Pathname).void }
-    def stamp_installed(cmd_name, project_root)
-      return unless STAMPING_COMMANDS.include?(cmd_name)
-
-      Dev::Deps::Staleness.new(project_root:).stamp_installed!
-    end
-
-    # `dev up` is the provisioning command: after it succeeds, every other
-    # command should work unattended. Resolving docker build args here
-    # (prompting and storing credentials on first run) keeps the lazily
-    # triggered image build in containerized commands non-interactive.
-    sig { void }
-    def provision_build_credentials
-      config = @config.build_container
-      return if config.nil? || config.build_args.empty?
-
-      Dev::Credentials.resolve_build_args(config.build_args)
-    end
-
-    sig { params(config: Config).returns(CommandRegistry) }
-    def build_registry(config)
-      registry = CommandRegistry.new
-      register_builtins(registry)
-      register_container_builtins(registry, config)
-      register_runner_builtins(registry, config)
-      config.commands.each { |name, cmd| registry.register(name, cmd) }
-      registry
-    end
-
-    # `dev runner-setup` registers the current host as a self-hosted GitHub
-    # Actions runner — repo-scoped by default, org-scoped with `--org` (one
-    # runner serving every repo in the org, the shape ai-flow's shared pools
-    # want). Registered only when a project declares a `runner:` block, so the
-    # command surfaces only where it applies. dev owns the install logic (one
-    # shared implementation) so repos declare just their runner identity
-    # instead of vendoring a bespoke setup script. `--labels`/`--dir`/`--name`
-    # override the block for hosts that differ from the repo default (e.g.
-    # registering the Mac org-wide from a repo whose block describes the CI
-    # box).
-    sig { params(registry: CommandRegistry, config: Config).void }
-    def register_runner_builtins(registry, config)
-      runner_config = config.runner
-      return if runner_config.nil?
-
-      registry.register("runner-setup", BuiltinCommand.new(
-        desc: "Register this host as a self-hosted GitHub Actions runner (repo-scoped, or org-wide with --org)",
-      ) do |args, context|
-        cfg = context.runner
-        raise ArgumentError, "no `runner:` block in dev.yml" if cfg.nil?
-
-        Dev::RunnerSetup.new(
-          config: runner_config_with_flag_overrides(cfg, args),
-          repo: parse_repo_flag(args),
-          org: args.include?("--org"),
-        ).run
-      end)
-    end
-
-    # Commands for the build container, registered only when a project declares
-    # one (build.container). dev owns the container's lifecycle, so these live
-    # here rather than in each repo's dev.yml.
-    sig { params(registry: CommandRegistry, config: Config).void }
-    def register_container_builtins(registry, config)
-      build_container = config.build_container
-      return if build_container.nil?
-
-      # The CLI verb for CI image provisioning: resolve the content-addressed
-      # image (local → pull → build, see BuildContainer.ensure_image!) and
-      # print its tag to stdout (resolution progress goes to stderr, so the
-      # tag is capturable). Publishing to the shared registry stays gated on
-      # DEV_PUBLISH_IMAGE, same as containerized commands. Hidden: workflow
-      # plumbing, not a developer intent command.
-      registry.register("provide-image", BuiltinCommand.new(
-        desc: "Resolve the build container image (local/pull/build) and print its tag",
-        hidden: true,
-      ) do |_args, context|
-        cfg = context.build_container
-        image_tag = BuildContainer.ensure_image!(
-          cfg,
-          project_root: context.project_root,
-          push: false,
-          publish: ENV["DEV_PUBLISH_IMAGE"] == "1",
-          build_args_provider: -> { Dev::Credentials.resolve_build_args(cfg.build_args) },
-          secrets_provider: -> { Dev::Credentials.resolve_build_args(cfg.build_secrets) },
-        )
-        puts image_tag
-      end)
-
-      # Teardown for the persistent container, only where a project opts in.
-      return unless build_container.persist
-
-      registry.register("reset-container", BuiltinCommand.new(
-        desc: "Remove the persistent build container (clears its incremental cache)",
-      ) do |_args, context|
-        cfg = context.build_container
-        image_tag = BuildContainer.image_with_tag(cfg, project_root: context.project_root)
-        removed = BuildContainer.reset_service!(image_tag, context.project_root)
-        puts(removed.empty? ? "dev: no persistent build container to remove." : "dev: removed #{removed.join(", ")}.")
-      end)
-    end
-
-    sig { params(registry: CommandRegistry).void }
-    def register_builtins(registry)
-      registry.register("update-deps", BuiltinCommand.new(
-        desc: "Resolve dependency constraints and write lockfiles",
-      ) do |args, context|
-        deps_rb = context.project_root / "dependencies.rb"
-        Dev::Deps.reset!
-        load(deps_rb.to_s) if deps_rb.exist?
-
-        deps_config = Dev::Deps.last_config || Dev::Deps.define {}
-        resolver = Dev::Deps::Resolver.new(
-          repositories: build_repositories(
-            project_root: context.project_root,
-            ruby_version_requirement: deps_config.ruby_version_requirement,
-          ),
-        )
-        lockfile = Dev::Deps::Lockfile.new(dir: context.project_root)
-        resolved = resolver.resolve(deps_config.declarations)
-        # Record the manifest digest so the staleness check can tell whether
-        # dependencies.rb changed after this resolution (Dev::Deps::Staleness).
-        manifest_digest = deps_rb.exist? ? Digest::SHA256.file(deps_rb.to_s).hexdigest : nil
-        lockfile.lock(resolved, manifest_digest:)
-        puts "dev: lockfiles updated — now run dev up to install."
-      end)
-
-      registry.register("install-deps", BuiltinCommand.new(
-        desc: "Install locked dependencies handled on the host (e.g. gh releases)",
-      ) do |args, context|
-        install_locked_deps(context)
-      end)
-
-      # `up` is a virtual slot: the builtin installs locked deps, and a project
-      # `up:` command in dev.yml overrides it into an OverriddenCommand — the
-      # builtin install runs first (super()), then the project's provisioning.
-      # Projects with only a dependencies.rb get `dev up` for free. `up` also
-      # ensures the `dev cd` shell hook (idempotent) — provisioning is where
-      # dev's RC hooks land, next to the shadowenv one.
-      registry.register("up", BuiltinCommand.new(
-        desc: "Install locked dependencies, then run the project's up command (if defined)",
-      ) do |args, context|
-        Dev::Cd::HookInstaller.new.ensure_installed
-        install_locked_deps(context)
-      end)
-
-      # `dev cd` is dispatched globally (before dev.yml lookup) in bin/dev;
-      # this registration only surfaces it in `dev --help`.
-      registry.register("cd", BuiltinCommand.new(
-        desc: "Jump to a checkout under $DEV_CD_ROOT (default ~/src) by fuzzy name",
-      ) do |args, _context|
-        Dev::Cd::Accessor.new.run(args)
-      end)
-
-      # `dev clone` is dispatched globally (before dev.yml lookup) in bin/dev;
-      # this registration only surfaces it in `dev --help`.
-      registry.register("clone", BuiltinCommand.new(
-        desc: "Clone a GitHub repo (via gh auth) into $DEV_CD_ROOT (default ~/src), org defaults to d3mlabs",
-      ) do |args, _context|
-        Dev::Clone::Accessor.new.run(args)
-      end)
-
-      # `dev learnings` is dispatched globally in bin/dev, like cd; this
-      # registration only surfaces it in `dev --help`.
-      registry.register("learnings", BuiltinCommand.new(
-        desc: "Learnings read path (sync: refresh now, status: what's linked, invariants: Tier-0 block, " \
-          "init: scaffold the index)",
-      ) do |args, context|
-        Dev::Learnings::Accessor.new(project_root: context.project_root).run(args)
-      end)
-
-      registry.register("check", BuiltinCommand.new(
-        desc: "Check dependency state freshness (manifest vs lockfiles vs installed)",
-      ) do |args, context|
-        messages = Dev::Deps::Staleness.new(project_root: context.project_root).messages
-        if messages.empty?
-          puts "dev: dependency state is in sync (manifest, lockfiles, installed stamp)."
-        else
-          messages.each { |m| $stderr.puts "dev: #{m}" }
-          Kernel.exit(1)
-        end
-      end)
-
-      registry.register("deps", BuiltinCommand.new(
-        desc: "Inspect locked dependencies (e.g. deps path ficsit <mod> <platform>)",
-      ) do |args, context|
-        Dev::Deps::Accessor.new(
-          lockfile: Dev::Deps::Lockfile.new(dir: context.project_root),
-          cache: Dev::Deps::Cache.new,
-        ).run(args)
-      end)
-
-      registry.register("cache", BuiltinCommand.new(
-        desc: "Manage host caches (e.g. cache gc --keep 2)",
-      ) do |args, context|
-        subcommand, *rest = args
-        raise ArgumentError, "usage: dev cache gc [--keep N]" unless subcommand == "gc"
-
-        gc = Dev::Deps::CacheGc.new(lockfile: Dev::Deps::Lockfile.new(dir: context.project_root))
-        # The build container config (when present) lets GC also prune stale
-        # content-tagged images while protecting the live tag.
-        image_ref = nil
-        live_tag = nil
-        if (cfg = context.build_container)
-          image_ref = cfg.image_ref
-          live_tag = BuildContainer.image_with_tag(cfg, project_root: context.project_root)
-        end
-        gc.gc(keep: parse_gc_keep(rest), image_ref: image_ref, live_tag: live_tag)
-      end)
-
-      registry.register("cred", BuiltinCommand.new(
-        desc: "Resolve a stored credential (e.g. cred get <namespace> <key>)",
-      ) do |args, _context|
-        Dev::CredentialAccessor.new.run(args)
-      end)
-
-      registry.register("plan", BuiltinCommand.new(
-        desc: "Sync Cursor plans with GitHub issues (new/link/pull/push/status)",
-      ) do |args, context|
-        Dev::Plan::Accessor.new(project_root: context.project_root).run(args)
-      end)
-    end
-
-    # Parse `--keep N` / `--keep=N` from `dev cache gc` args, defaulting to the
-    # tight install-dir retention.
+    # The rescue-to-exit mapping of the CLI boundary, in one place — the
+    # counterpart of bin/dev's DevYamlNotFoundError handling. Errors keep
+    # their native namespaces all the way up here (no service-layer
+    # wrapping); anything unmapped is a dev bug and re-raises with its
+    # backtrace.
     #
-    # @param args [Array<String>]
-    # @return [Integer]
-    sig { params(args: T::Array[String]).returns(Integer) }
-    def parse_gc_keep(args)
-      idx = args.index("--keep")
-      return Integer(T.must(args[idx + 1])) if idx && args[idx + 1]
-
-      flag = args.find { |a| a.start_with?("--keep=") }
-      flag ? Integer(flag.split("=", 2).fetch(1)) : Dev::Deps::CacheGc::DEFAULT_KEEP
-    end
-
-    # Parse an optional `--repo owner/name` / `--repo=owner/name` override for
-    # `dev runner-setup`. Returns nil so RunnerSetup falls back to `gh repo view`.
-    #
-    # @param args [Array<String>]
-    # @return [String, nil]
-    sig { params(args: T::Array[String]).returns(T.nilable(String)) }
-    def parse_repo_flag(args)
-      parse_value_flag(args, "--repo")
-    end
-
-    # A copy of the dev.yml runner block with any `--labels` / `--dir` / `--name`
-    # CLI overrides applied. The block describes the repo's default runner host;
-    # overrides let a different host (e.g. the shared Mac registering org-wide)
-    # reuse the same command without editing dev.yml.
-    #
-    # @param cfg [Dev::RunnerSetupConfig]
-    # @param args [Array<String>]
-    # @return [Dev::RunnerSetupConfig]
-    sig { params(cfg: RunnerSetupConfig, args: T::Array[String]).returns(RunnerSetupConfig) }
-    def runner_config_with_flag_overrides(cfg, args)
-      RunnerSetupConfig.new(
-        labels: parse_value_flag(args, "--labels") || cfg.labels,
-        dir: parse_value_flag(args, "--dir") || cfg.dir,
-        name: parse_value_flag(args, "--name") || cfg.name,
-        version: cfg.version,
-      )
-    end
-
-    # Parse `--flag value` / `--flag=value` from args; nil when absent.
-    #
-    # @param args [Array<String>]
-    # @param flag [String]
-    # @return [String, nil]
-    sig { params(args: T::Array[String], flag: String).returns(T.nilable(String)) }
-    def parse_value_flag(args, flag)
-      idx = args.index(flag)
-      return args[idx + 1] if idx && args[idx + 1]
-
-      inline = args.find { |a| a.start_with?("#{flag}=") }
-      inline&.split("=", 2)&.fetch(1)
-    end
-
-    # Build the integration-type -> Repository hash the Resolver consumes,
-    # derived from the single Registry table (see lib/dev/deps/registry.rb).
-    #
-    # @param project_root [Pathname] project root, threaded to repositories that need it
-    # @param ruby_version_requirement [String, nil] for the bundler-generated Gemfile
-    # @return [Hash{Symbol => Dev::Deps::Repository}]
-    sig do
-      params(
-        project_root: Pathname,
-        ruby_version_requirement: T.nilable(String),
-      ).returns(T::Hash[Symbol, Dev::Deps::Repository])
-    end
-    def build_repositories(project_root:, ruby_version_requirement: nil)
-      Dev::Deps::Registry.repositories(project_root:, ruby_version_requirement:)
-    end
-
-    # Build the integration-type -> Integration hash for host installs, derived
-    # from the same Registry table. Host integrations install on the host (not the
-    # build container) so their artifacts can be volume-mounted in (the UE engine,
-    # the Satisfactory server, SML zips, cmake source deps), plus the host-side
-    # types dev now owns end to end: gems (bundler), Lua rocks, and brew formulae.
-    #
-    # Install-time has no loaded dependencies.rb, so config-level inputs default:
-    # Install everything the lockfiles pin for this machine — shared by the
-    # `install-deps` and `up` builtins. Filtered to the detected env and host
-    # OS so e.g. a Mac never downloads the Linux engine.
-    #
-    # @param context [ExecutionContext]
-    sig { params(context: ExecutionContext).void }
-    def install_locked_deps(context)
-      # Headless boxes (CI, runner services) reach install-deps before any
-      # dev.yml command has run CommandRunner's provisioning, so the builtin
-      # must provision the pinned Ruby itself — bundler installs against it.
-      ShadowenvRuby.ensure!(ruby_version: context.ruby_version, project_root: context.project_root)
-
-      lockfile = Dev::Deps::Lockfile.new(dir: context.project_root)
-      installer = Dev::Deps::DependencyInstaller.new(
-        lockfile: lockfile,
-        integrations: build_host_integrations(
-          project_root: context.project_root,
-          python_version: context.python_version,
-        ),
-      )
-      installer.install(env: Dev::Deps.detect_env, host: Dev::Deps.detect_host)
-      # Installing a dependency includes its shipped skills: finish by linking
-      # the locked gem set's skills project-scoped, and refresh the machine's
-      # org learnings artifacts (both hooks are best-effort and never raise).
-      # This is hygiene, not a bootstrap contract: workflows that must start
-      # on fresh invariants (e.g. ai-flow's runner) run an explicit blocking
-      # `dev learnings sync` step instead of relying on this side effect.
-      Dev::Deps::GemSkillLinker.new(project_root: context.project_root).link_all
-      Dev::Learnings::Synchronizer.new.sync(project_root: context.project_root)
-    end
-
-    # taps is empty (custom-tap installs go through the container path) and the
-    # bundler Gemfile is already generated, so no ruby version is needed here.
-    #
-    # @param project_root [Pathname] repo root threaded to integrations that need it
-    # @param python_version [String, nil] the `python` toolchain version, for the
-    #   pip integration to build the project venv with
-    # @return [Hash{Symbol => Dev::Deps::Integration}]
-    sig { params(project_root: Pathname, python_version: T.nilable(String)).returns(T::Hash[Symbol, Dev::Deps::Integration]) }
-    def build_host_integrations(project_root:, python_version: nil)
-      Dev::Deps::Registry.host_integrations(
-        project_root:,
-        cache: Dev::Deps::Cache.new,
-        python_version:,
-      )
-    end
-
-    sig { params(argv: T::Array[String]).returns(T::Boolean) }
-    def show_usage?(argv)
-      argv.empty? || argv == ["--help"] || argv == ["-h"]
-    end
-
-    sig { params(name: String, registry: CommandRegistry, out: T.any(IO, StringIO)).void }
-    def print_usage(name, registry, out:)
-      out.puts "Usage: dev <command> [args...]"
-      out.puts ""
-      out.puts "Commands for #{name}:"
-      commands = registry.all.reject { |_name, command| command.hidden? }
-      if commands.empty?
-        out.puts "  (no commands defined)"
+    # @param error [StandardError]
+    # @return [void]
+    sig { params(error: StandardError).void }
+    def exit_for(error)
+      case error
+      when CommandRunner::CommandFailedError
+        # The child already reported its failure (the shell wrapper prints
+        # its ✗ Failed footer); preserve the child's exit code.
+        Kernel.exit(error.exit_status)
+      when CommandRepository::CommandNotFoundError
+        $stderr.puts "dev: #{error}"
+        $stderr.puts "Run 'dev' or 'dev --help' to see available commands."
+        Kernel.exit(1)
+      when ArgumentError, RuntimeError
+        $stderr.puts "dev: #{error}"
+        Kernel.exit(1)
       else
-        commands.each do |cmd_name, command|
-          out.puts "  #{cmd_name.ljust(12)} #{command.desc}"
-        end
+        raise error
       end
-      out.puts ""
-      out.puts "Examples: dev up    dev up -v    dev update-deps    dev test"
     end
 
-    sig { params(explicit_version: T.nilable(String)).returns(String) }
-    def resolve_ruby_version(explicit_version)
-      ShadowenvRuby.resolve_ruby_version(explicit_version)
-    end
-
-    # The project's declared Ruby version: the first-class `ruby` directive in
-    # dependencies.rb. The toolchain is a project dependency, so it lives in
-    # the dependency manifest — even when nothing else is declared there
-    # (a ruby-only manifest engages no integrations and generates no Gemfile).
-    # nil when no manifest declares one, so resolve_ruby_version can fall back
-    # to Homebrew Ruby.
+    # The composition root: the one place the repository (private to this
+    # onion) and the builtin set are constructed. Which builtins exist is
+    # config-gated here — runner-setup only with a `runner:` block,
+    # provide-image/reset-container only with a build container.
     #
-    # dev evaluates dependencies.rb under its own bootstrap Ruby, so reading it
-    # here — before the project's interpreter is provisioned — is safe.
-    sig { returns(T.nilable(String)) }
-    def declared_ruby_version
-      if @config.ruby_version
-        raise UnsupportedDevYamlRubyError,
-          "dev.yml `ruby:` is no longer supported; declare the toolchain in dependencies.rb: " \
-            'Dev::Deps.define { ruby "x.y.z" }'
-      end
-
-      deps_rb = Dev.target_project_root / "dependencies.rb"
-      return nil unless deps_rb.exist?
-
-      Dev::Deps.reset!
-      load(deps_rb.to_s)
-      from_deps = Dev::Deps.last_config&.ruby_version_requirement
-      (from_deps && !from_deps.empty?) ? from_deps : nil
-    rescue UnsupportedDevYamlRubyError
-      raise
-    rescue StandardError => e
-      $stderr.puts "dev: could not read `ruby` from dependencies.rb (#{e.message})"
-      nil
+    # @param manifest [ProjectManifest]
+    # @return [CommandService]
+    sig { params(manifest: ProjectManifest).returns(CommandService) }
+    def build_command_service(manifest)
+      dependency_service = DependencyService.new(
+        staleness: Dev::Deps::Staleness.new(project_root: Dev.target_project_root),
+      )
+      CommandService.new(
+        repository: CommandRepository.new(
+          builtins: build_builtins(manifest, dependency_service),
+          project_commands: manifest.commands,
+        ),
+        executor: CommandExecutor.new,
+        dependency_service: dependency_service,
+      )
     end
 
-    # The project's declared Python toolchain version from the first-class
-    # `python` directive in dependencies.rb, or nil when unset. Read here (under
-    # dev's bootstrap Ruby, before the project interpreter is provisioned) so it
-    # can flow to command_runner (shadowenv provisioning) and the pip integration.
-    sig { returns(T.nilable(String)) }
-    def declared_python_version
-      deps_rb = Dev.target_project_root / "dependencies.rb"
-      return nil unless deps_rb.exist?
-
-      Dev::Deps.reset!
-      load(deps_rb.to_s)
-      version = Dev::Deps.last_config&.python_version
-      (version && !version.empty?) ? version : nil
-    rescue StandardError => e
-      $stderr.puts "dev: could not read `python` from dependencies.rb (#{e.message})"
-      nil
+    # @param manifest [ProjectManifest]
+    # @param dependency_service [DependencyService]
+    # @return [Hash{String => BuiltinCommand}] the builtin set, in listing order
+    sig do
+      params(manifest: ProjectManifest, dependency_service: DependencyService)
+        .returns(T::Hash[String, BuiltinCommand])
+    end
+    def build_builtins(manifest, dependency_service)
+      install_deps = Builtins::InstallDepsCommand.new
+      builtins = T.let({
+        "update-deps" => Builtins::UpdateDepsCommand.new,
+        "install-deps" => install_deps,
+        # `up` composes the same install the install-deps builtin runs.
+        "up" => Builtins::UpCommand.new(install_deps_command: install_deps),
+        "cd" => Builtins::CdCommand.new,
+        "clone" => Builtins::CloneCommand.new,
+        "learnings" => Builtins::LearningsCommand.new,
+        "check" => Builtins::CheckCommand.new(dependency_service:),
+        "deps" => Builtins::DepsCommand.new,
+        "cache" => Builtins::CacheCommand.new,
+        "cred" => Builtins::CredCommand.new,
+        "plan" => Builtins::PlanCommand.new,
+      }, T::Hash[String, BuiltinCommand])
+      builtins["provide-image"] = Builtins::ProvideImageCommand.new if manifest.build_container
+      builtins["reset-container"] = Builtins::ResetContainerCommand.new if manifest.build_container&.persist
+      builtins["runner-setup"] = Builtins::RunnerSetupCommand.new if manifest.runner
+      builtins
     end
   end
 end

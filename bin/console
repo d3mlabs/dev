@@ -20,7 +20,7 @@ DEV_ROOT = File.expand_path("..", __dir__)
 $LOAD_PATH.unshift(File.join(DEV_ROOT, "src")) unless $LOAD_PATH.include?(File.join(DEV_ROOT, "src"))
 require "dev"
 
-# Toy around with Dev::ConfigParser, Dev::Runner, etc.
+# Toy around with Dev::ProjectManifestLoader, Dev::Runner, etc.
 require "pry"
 require "pry-byebug"
 Pry.start

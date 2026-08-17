@@ -4,13 +4,11 @@
 require "test_helper"
 require "dev"
 require "dev/runner"
-require "dev/credentials"
-require "dev/deps/cmake_integration"
+require "fileutils"
 require "shadowenv_ruby"
 require "stringio"
 require "tempfile"
 require "tmpdir"
-require "fileutils"
 
 transform!(RSpock::AST::Transformation)
 class RunnerTest < Minitest::Test
@@ -56,8 +54,29 @@ class RunnerTest < Minitest::Test
     out.string.include?("Usage: dev <command> [args...]")
   end
 
+  test "usage never loads the deps manifest (dev --help stays lazy)" do
+    Given "a Runner whose project root carries a booby-trapped dependencies.rb"
+    root = Pathname.new(Dir.mktmpdir("runner-usage-lazy-"))
+    File.write(root / "dependencies.rb", "raise 'usage must not load me'\n")
+    Dev.stubs(:target_project_root).returns(root)
+    runner = build_runner
+    out = StringIO.new
+
+    When "we print usage"
+    runner.run([], ui: fake_ui, out: out)
+
+    Then "the usage rendered without touching dependencies.rb"
+    out.string.include?("Usage: dev <command> [args...]")
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
   test "run with unknown command prints error to stderr and exits 1" do
-    Given "a Runner"
+    Given "a Runner pinned to an empty project root"
+    root = Pathname.new(Dir.mktmpdir("runner-unknown-"))
+    Dev.stubs(:target_project_root).returns(root)
+    ShadowenvRuby.stubs(:resolve_ruby_version).returns("4.0.1")
     runner = build_runner
     old_stderr = $stderr
     $stderr = StringIO.new
@@ -72,6 +91,7 @@ class RunnerTest < Minitest::Test
 
     Cleanup
     $stderr = old_stderr
+    FileUtils.rm_rf(root)
   end
 
   test "usage includes built-in update-deps command" do
@@ -102,6 +122,58 @@ class RunnerTest < Minitest::Test
     out.string.include?("update-deps")
     out.string.include?("test")
     out.string.include?("up")
+  end
+
+  test "up is a builtin even when the project defines no up command" do
+    Given "a Runner with no project commands"
+    runner = build_runner(commands: {})
+    out = StringIO.new
+
+    When "we print usage"
+    runner.run([], ui: fake_ui, out: out)
+
+    Then "up is listed as the builtin dependency install"
+    out.string.include?("up")
+    out.string.include?("Install locked dependencies, then run the project's up command")
+  end
+
+  test "a project up command keeps the builtin slot's position with its own desc" do
+    Given "a Runner whose dev.yml overrides up"
+    runner = build_runner(commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Project setup" } })
+    out = StringIO.new
+
+    When "we print usage"
+    runner.run([], ui: fake_ui, out: out)
+
+    Then "the override's description wins"
+    out.string.include?("Project setup")
+    !out.string.include?("Install locked dependencies, then run the project's up command")
+  end
+
+  test "usage includes the cd builtin" do
+    Given "a Runner with no project commands"
+    runner = build_runner(commands: {})
+    out = StringIO.new
+
+    When "we print usage"
+    runner.run([], ui: fake_ui, out: out)
+
+    Then "cd is listed"
+    out.string.include?("cd")
+    out.string.include?("Jump to a checkout")
+  end
+
+  test "usage includes the clone builtin" do
+    Given "a Runner with no project commands"
+    runner = build_runner(commands: {})
+    out = StringIO.new
+
+    When "we print usage"
+    runner.run([], ui: fake_ui, out: out)
+
+    Then "clone is listed"
+    out.string.include?("clone")
+    out.string.include?("Clone a GitHub repo")
   end
 
   test "usage includes reset-container when the build container persists" do
@@ -137,32 +209,51 @@ class RunnerTest < Minitest::Test
   end
 
   test "provide-image is registered (but hidden) when a build container is configured" do
-    Given "a Runner with a build container"
+    Given "a Runner with a build container, pinned to an empty project root"
+    root = Pathname.new(Dir.mktmpdir("runner-provide-image-"))
+    Dev.stubs(:target_project_root).returns(root)
+    ShadowenvRuby.stubs(:resolve_ruby_version).returns("4.0.1")
     runner = build_runner(
       commands: {},
       build: { "container" => { "image" => "myapp-linux", "registry" => "myregistry" } },
     )
-    registry = runner.instance_variable_get(:@registry)
-    out = StringIO.new
+    BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
+    usage = StringIO.new
+    old_stdout = $stdout
+    $stdout = StringIO.new
 
-    When "we print usage"
-    runner.run([], ui: fake_ui, out: out)
+    When "we print usage and then invoke the command anyway"
+    runner.run([], ui: fake_ui, out: usage)
+    runner.run(["provide-image"], ui: fake_ui)
 
     Then "the command is callable but omitted from usage"
-    registry.lookup("provide-image").is_a?(Dev::BuiltinCommand)
-    registry.lookup("provide-image").hidden?
-    !out.string.include?("provide-image")
+    !usage.string.include?("provide-image")
+    $stdout.string.include?("myregistry/myapp-linux:content-abc123")
+
+    Cleanup
+    $stdout = old_stdout
+    FileUtils.rm_rf(root)
   end
 
   test "provide-image is not registered without a build container" do
-    Given "a Runner without a build container"
+    Given "a Runner without a build container, pinned to an empty project root"
+    root = Pathname.new(Dir.mktmpdir("runner-no-provide-image-"))
+    Dev.stubs(:target_project_root).returns(root)
+    ShadowenvRuby.stubs(:resolve_ruby_version).returns("4.0.1")
     runner = build_runner(commands: {})
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(1).once
 
-    When "we inspect the registry"
-    registry = runner.instance_variable_get(:@registry)
+    When "we invoke the absent command"
+    runner.run(["provide-image"], ui: fake_ui)
 
-    Then "the command is absent"
-    !registry.all.key?("provide-image")
+    Then "it is not found"
+    $stderr.string.include?("provide-image")
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.rm_rf(root)
   end
 
   test "usage includes runner-setup when a runner block is declared" do
@@ -189,378 +280,99 @@ class RunnerTest < Minitest::Test
     !out.string.include?("runner-setup")
   end
 
-  test "host integrations register a project-rooted cmake integration" do
-    Given "a Runner"
-    runner = build_runner
-    root = Pathname.new(Dir.mktmpdir("runner-cmake-test-"))
-
-    When "we build the host integrations for a project root"
-    integrations = runner.send(:build_host_integrations, project_root: root)
-
-    Then "cmake plus the newly-wired gems/luarocks/brew integrations are all host-installed"
-    integrations[:cmake].is_a?(Dev::Deps::CmakeIntegration)
-    integrations[:bundler].is_a?(Dev::Deps::BundlerIntegration)
-    integrations[:luarocks].is_a?(Dev::Deps::LuaRocksIntegration)
-    integrations[:brew].is_a?(Dev::Deps::BrewIntegration)
-
-    Cleanup
-    FileUtils.rm_rf(root)
-  end
-
-  test "up is a builtin even when the project defines no up command" do
-    Given "a Runner with no project commands"
-    runner = build_runner(commands: {})
-    out = StringIO.new
-
-    When "we print usage"
-    runner.run([], ui: fake_ui, out: out)
-
-    Then "up is listed as the builtin dependency install"
-    out.string.include?("up")
-    out.string.include?("Install locked dependencies, then run the project's up command")
-  end
-
-  test "usage includes the cd builtin" do
-    Given "a Runner with no project commands"
-    runner = build_runner(commands: {})
-    out = StringIO.new
-
-    When "we print usage"
-    runner.run([], ui: fake_ui, out: out)
-
-    Then "cd is listed"
-    out.string.include?("cd")
-    out.string.include?("Jump to a checkout")
-  end
-
-  test "usage includes the clone builtin" do
-    Given "a Runner with no project commands"
-    runner = build_runner(commands: {})
-    out = StringIO.new
-
-    When "we print usage"
-    runner.run([], ui: fake_ui, out: out)
-
-    Then "clone is listed"
-    out.string.include?("clone")
-    out.string.include?("Clone a GitHub repo")
-  end
-
-  test "the clone builtin dispatches argv to the clone accessor" do
-    Given "a Runner and an expectation on the clone accessor"
-    runner = build_runner(commands: {})
-    Dev::Clone::Accessor.any_instance.expects(:run).with(["acme/widget"]).once
-
-    When "we run dev clone"
-    runner.run(["clone", "acme/widget"], ui: fake_ui)
-
-    Then "the expectation on the accessor holds"
-    true
-  end
-
-  test "up ensures the dev cd shell hook (idempotently)" do
-    Given "a Runner with no project up command and a hook installer expectation"
-    runner = build_runner(commands: {})
-    runner.stubs(:install_locked_deps)
-    Dev::Cd::HookInstaller.any_instance.expects(:ensure_installed).once.returns(:already_present)
-
-    When "we run up"
-    runner.run(["up"], ui: fake_ui)
-
-    Then "the expectation on the hook installer holds"
-    true
-  end
-
-  test "a project up command overrides the builtin: install runs first, then the script" do
-    Given "a Runner whose dev.yml defines up and a spy on both stages"
-    runner = build_runner(commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup", "container" => false } })
-    Dev::Cd::HookInstaller.any_instance.stubs(:ensure_installed).returns(:already_present)
-    execution_order = []
-    runner.stubs(:install_locked_deps).with {
-      execution_order << :builtin_install
-      true }
-    Dev::ShellCommand.any_instance.stubs(:execute).with {
-      execution_order << :project_script
-      true }
-
-    When "we run up"
-    runner.run(["up"], ui: fake_ui)
-
-    Then "OverriddenCommand super()-dispatches the builtin before the project script"
-    execution_order == [:builtin_install, :project_script]
-  end
-
-  # Regression for dev#85: a project-defined `up:` used to exec-replace the
-  # dev process, so Runner#run never reached stamp_installed and the
-  # staleness gate reported "never installed" forever.
-  test "up with a project up command runs it spawn-and-wait and stamps installed" do
-    Given "a Runner whose dev.yml defines up, pinned to an empty project root"
-    original_cwd = Dir.pwd
-    root = Pathname.new(Dir.mktmpdir("runner-up-stamp-"))
-    Dev.stubs(:target_project_root).returns(root)
-    runner = build_runner(commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup", "container" => false } })
-    runner.stubs(:resolve_ruby_version).returns("4.0.1")
-    runner.stubs(:install_locked_deps)
-    Dev::Cd::HookInstaller.any_instance.stubs(:ensure_installed).returns(:already_present)
-    Dev::CommandRunner.any_instance.stubs(:ensure_shadowenv_provisioned!)
-    Dev::Deps::Staleness.any_instance.expects(:stamp_installed!).once
-
-    When "we run up"
-    runner.run(["up"], ui: fake_ui)
-
-    Then "the project script runs as a waited child, never via exec-replace"
-    1 * Kernel.system(anything, "shadowenv", "exec", "--", "sh", "-c", includes("./bin/up.rb")) >> true
-    0 * Kernel.exec(any_parameters)
-
-    Cleanup
-    Dir.chdir(original_cwd)
-    FileUtils.rm_rf(root)
-  end
-
-  test "a failing project up command skips the stamp and exits with the child's status" do
-    Given "a Runner whose dev.yml defines up, whose script exits 7"
-    original_cwd = Dir.pwd
-    root = Pathname.new(Dir.mktmpdir("runner-up-fail-"))
-    Dev.stubs(:target_project_root).returns(root)
-    runner = build_runner(commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup", "container" => false } })
-    runner.stubs(:resolve_ruby_version).returns("4.0.1")
-    runner.stubs(:install_locked_deps)
-    Dev::Cd::HookInstaller.any_instance.stubs(:ensure_installed).returns(:already_present)
-    Dev::CommandRunner.any_instance.stubs(:ensure_shadowenv_provisioned!)
-    Kernel.stubs(:system).returns(false)
-    # Kernel.system is stubbed, so wait on a real child here to leave the
-    # thread-local $? at exit status 7 — what a real failed child would set.
-    Process.wait(Process.spawn("sh", "-c", "exit 7"))
-    Dev::Deps::Staleness.any_instance.expects(:stamp_installed!).never
-    Kernel.expects(:exit).with(7).once
-    # Guard: a regression to exec-replace would otherwise replace the test
-    # process itself (Kernel.system above is stubbed, Kernel.exec is real).
-    Kernel.expects(:exec).never
-
-    When "we run up"
-    runner.run(["up"], ui: fake_ui)
-
-    Then "the expectations hold: no stamp, exit with the child's status"
-    true
-
-    Cleanup
-    Dir.chdir(original_cwd)
-    FileUtils.rm_rf(root)
-  end
-
-  test "generic project commands keep the exec tail-call" do
-    Given "a Runner with a test command, pinned to an empty project root"
-    original_cwd = Dir.pwd
-    root = Pathname.new(Dir.mktmpdir("runner-exec-tail-"))
-    Dev.stubs(:target_project_root).returns(root)
-    runner = build_runner(commands: { "test" => { "run" => "./bin/test.sh", "desc" => "Run tests", "container" => false } })
-    runner.stubs(:resolve_ruby_version).returns("4.0.1")
-    Dev::CommandRunner.any_instance.stubs(:ensure_shadowenv_provisioned!)
-
-    When "we run a non-stamping command"
-    runner.run(["test"], ui: fake_ui)
-
-    Then "the command exec-replaces the process, never spawn-and-wait"
-    1 * Kernel.exec(anything, "shadowenv", "exec", "--", "sh", "-c", includes("./bin/test.sh"))
-    0 * Kernel.system(any_parameters)
-
-    Cleanup
-    Dir.chdir(original_cwd)
-    FileUtils.rm_rf(root)
-  end
-
-  test "up resolves docker build arg credentials before executing" do
-    Given "a Runner with build container build_args and an up command"
-    runner = build_runner(
-      commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup", "container" => false } },
-      build: { "container" => {
-        "image" => "myapp-linux", "registry" => "myregistry",
-        "build_args" => { "WWISE_EMAIL" => "wwise/email" },
-      } },
-    )
-    Dev::ShellCommand.any_instance.stubs(:execute)
-    runner.stubs(:install_locked_deps)
-    Dev::Cd::HookInstaller.any_instance.stubs(:ensure_installed).returns(:already_present)
-
-    When "we run up"
-    runner.run(["up"], ui: fake_ui)
-
-    Then "build args are resolved (prompting and storing on first run)"
-    1 * Dev::Credentials.resolve_build_args({ "WWISE_EMAIL" => "wwise/email" })
-  end
-
-  test "up without build container skips credential provisioning" do
-    Given "a Runner without a build container"
-    runner = build_runner(commands: { "up" => { "run" => "./bin/up.rb", "desc" => "Setup" } })
-    Dev::ShellCommand.any_instance.stubs(:execute)
-    runner.stubs(:install_locked_deps)
-    Dev::Cd::HookInstaller.any_instance.stubs(:ensure_installed).returns(:already_present)
-
-    When "we run up"
-    runner.run(["up"], ui: fake_ui)
-
-    Then "credentials are never resolved"
-    0 * Dev::Credentials.resolve_build_args(anything)
-  end
-
-  test "non-up commands do not provision credentials eagerly" do
-    Given "a Runner with build container build_args and a test command"
-    # Pin the project root to an empty tmpdir so the staleness guard sees no
-    # lockfiles — otherwise it digests the real dev checkout against
-    # ~/.dev/state and aborts the run under CI (a fresh HOME has no stamp).
-    root = Pathname.new(Dir.mktmpdir("runner-non-up-"))
-    Dev.stubs(:target_project_root).returns(root)
-    runner = build_runner(
-      commands: { "test" => { "run" => "./bin/test.sh", "desc" => "Run tests", "container" => false } },
-      build: { "container" => {
-        "image" => "myapp-linux", "registry" => "myregistry",
-        "build_args" => { "WWISE_EMAIL" => "wwise/email" },
-      } },
-    )
-    Dev::ShellCommand.any_instance.stubs(:execute)
-    # The empty tmpdir declares no Ruby; pin resolution so the test never
-    # shells out to brew for the Homebrew-Ruby fallback.
-    runner.stubs(:resolve_ruby_version).returns("4.0.1")
-
-    When "we run a non-up command"
-    runner.run(["test"], ui: fake_ui)
-
-    Then "credentials are not resolved eagerly"
-    0 * Dev::Credentials.resolve_build_args(anything)
-
-    Cleanup
-    FileUtils.rm_rf(root)
-  end
-
-  test "learnings dispatches the subcommand to the learnings accessor" do
-    Given "a Runner pinned to an empty project root"
-    root = Pathname.new(Dir.mktmpdir("runner-learnings-"))
-    Dev.stubs(:target_project_root).returns(root)
-    runner = build_runner(commands: {})
-    runner.stubs(:resolve_ruby_version).returns("4.0.1")
-    Dev::Learnings::Accessor.any_instance.expects(:run).with(["status"]).once
-
-    When "we run dev learnings status"
-    runner.run(["learnings", "status"], ui: fake_ui)
-
-    Then "the expectation on the accessor holds"
-    true
-
-    Cleanup
-    FileUtils.rm_rf(root)
-  end
-
-  test "install-deps finishes by linking gem skills and syncing org learnings" do
-    Given "a Runner pinned to an empty project root, with the installer stubbed"
-    root = Pathname.new(Dir.mktmpdir("runner-install-deps-"))
-    Dev.stubs(:target_project_root).returns(root)
-    runner = build_runner(commands: {})
-    runner.stubs(:resolve_ruby_version).returns("4.0.1")
-    ShadowenvRuby.stubs(:ensure!)
-    Dev::Deps::DependencyInstaller.any_instance.stubs(:install)
-    Dev::Deps::GemSkillLinker.any_instance.expects(:link_all).once
-    Dev::Learnings::Synchronizer.any_instance.expects(:sync).with(project_root: root).once
-
-    When "we run install-deps"
-    runner.run(["install-deps"], ui: fake_ui)
-
-    Then "the expectations on both post-install hooks hold"
-    true
-
-    Cleanup
-    FileUtils.rm_rf(root)
-  end
-
-  # Headless boxes (CI, runner services) reach install-deps before any
-  # dev.yml command has run CommandRunner's provisioning — the builtin must
-  # provision the toolchain itself or bundler installs against whatever
-  # Ruby the service PATH happens to carry.
-  test "install-deps provisions the shadowenv Ruby before installing" do
-    Given "a Runner pinned to an empty project root, with the installer stubbed"
-    root = Pathname.new(Dir.mktmpdir("runner-install-deps-ruby-"))
-    Dev.stubs(:target_project_root).returns(root)
-    runner = build_runner(commands: {})
-    runner.stubs(:resolve_ruby_version).returns("4.0.1")
-    ShadowenvRuby.expects(:ensure!).with(ruby_version: "4.0.1", project_root: root).once
-    Dev::Deps::DependencyInstaller.any_instance.stubs(:install)
-    Dev::Deps::GemSkillLinker.any_instance.stubs(:link_all)
-    Dev::Learnings::Synchronizer.any_instance.stubs(:sync)
-
-    When "we run install-deps"
-    runner.run(["install-deps"], ui: fake_ui)
-
-    Then "the expectation on the provisioning step holds"
-    true
-
-    Cleanup
-    FileUtils.rm_rf(root)
-  end
-
-  test "declared_ruby_version returns the dependencies.rb ruby directive" do
-    Given "a project whose dependencies.rb declares ruby"
-    root = Pathname.new(Dir.mktmpdir("runner-ruby-deps-"))
+  test "run assembles the execution context and hands the command to the service" do
+    Given "a Runner over an expecting command service, with a declared toolchain"
+    root = Pathname.new(Dir.mktmpdir("runner-context-"))
     File.write(root / "dependencies.rb", <<~RUBY)
       require "dev/deps"
-      Dev::Deps.define { ruby "9.9.9" }
+      Dev::Deps.define do
+        ruby "9.9.9"
+        python "3.12"
+      end
     RUBY
     Dev.stubs(:target_project_root).returns(root)
-    runner = build_runner
+    ShadowenvRuby.stubs(:resolve_ruby_version).with("9.9.9").returns("9.9.9")
+    contexts = []
+    command_service = typed_mock(Dev::CommandService)
+    command_service.stubs(:execute).with { |cmd_name, args:, context:|
+      contexts << [cmd_name, args, context]
+      true }
+    runner = build_runner(commands: {}, command_service: command_service)
+    ui = fake_ui
 
-    When "we read the declared ruby version"
-    result = runner.send(:declared_ruby_version)
+    When "we run a command with args"
+    runner.run(["test", "--fast"], ui: ui)
 
-    Then "the dependencies.rb directive is used"
-    result == "9.9.9"
-
-    Cleanup
-    FileUtils.rm_rf(root)
-  end
-
-  test "declared_ruby_version rejects the removed dev.yml ruby: key with a migration error" do
-    Given "a project whose dev.yml still carries the removed ruby: key"
-    root = Pathname.new(Dir.mktmpdir("runner-ruby-devyml-"))
-    Dev.stubs(:target_project_root).returns(root)
-    runner = build_runner(ruby: "4.0.1")
-
-    When "we read the declared ruby version"
-    runner.send(:declared_ruby_version)
-
-    Then "the stale key is rejected, pointing at the dependencies.rb migration"
-    raises Dev::Runner::UnsupportedDevYamlRubyError
+    Then "the service got the name, args, and a fully-assembled context"
+    cmd_name, args, context = contexts.fetch(0)
+    cmd_name == "test"
+    args == ["--fast"]
+    context.ui == ui
+    context.ruby_version == "9.9.9"
+    context.python_version == "3.12"
+    context.project_root == root
 
     Cleanup
     FileUtils.rm_rf(root)
   end
 
-  test "declared_ruby_version ignores a config left over from a previously loaded manifest" do
-    Given "a stale config from an earlier manifest load, and a project whose dependencies.rb never calls Dev::Deps.define (bootstrap constants)"
-    Dev::Deps.define { ruby "9.9.9" }
-    root = Pathname.new(Dir.mktmpdir("runner-ruby-stale-"))
-    File.write(root / "dependencies.rb", "SOME_CONSTANT = 1 unless defined?(SOME_CONSTANT)\n")
+  test "a failed waited child exits with the child's status" do
+    Given "a Runner whose service raises the child's failure"
+    root = Pathname.new(Dir.mktmpdir("runner-exit-map-"))
     Dev.stubs(:target_project_root).returns(root)
-    runner = build_runner
+    ShadowenvRuby.stubs(:resolve_ruby_version).returns("4.0.1")
+    command_service = typed_mock(Dev::CommandService)
+    command_service.stubs(:execute).raises(Dev::CommandRunner::CommandFailedError.new(exit_status: 7))
+    runner = build_runner(commands: {}, command_service: command_service)
+    Kernel.expects(:exit).with(7).once
 
-    When "we read the declared ruby version"
-    result = runner.send(:declared_ruby_version)
+    When "we run the command"
+    runner.run(["up"], ui: fake_ui)
 
-    Then "the stale config is not mistaken for this project's declaration"
-    result == nil
+    Then "the expectation on the exit mapping holds"
+    true
 
     Cleanup
     FileUtils.rm_rf(root)
   end
 
-  test "declared_ruby_version is nil when there is no deps manifest (Homebrew fallback)" do
-    Given "a project with no dependencies.rb"
-    root = Pathname.new(Dir.mktmpdir("runner-ruby-fallback-"))
+  test "an ArgumentError is reported as a clean dev error with exit 1" do
+    Given "a Runner whose service raises a usage error"
+    root = Pathname.new(Dir.mktmpdir("runner-argerror-"))
     Dev.stubs(:target_project_root).returns(root)
-    runner = build_runner
+    ShadowenvRuby.stubs(:resolve_ruby_version).returns("4.0.1")
+    command_service = typed_mock(Dev::CommandService)
+    command_service.stubs(:execute).raises(ArgumentError.new("usage: dev cache gc [--keep N]"))
+    runner = build_runner(commands: {}, command_service: command_service)
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(1).once
 
-    When "we read the declared ruby version"
-    result = runner.send(:declared_ruby_version)
+    When "we run the command"
+    runner.run(["cache"], ui: fake_ui)
 
-    Then "nothing is declared, so resolve_ruby_version will fall back to Homebrew Ruby"
-    result == nil
+    Then "the message reaches stderr under the dev: prefix"
+    $stderr.string.include?("dev: usage: dev cache gc [--keep N]")
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.rm_rf(root)
+  end
+
+  test "an unmapped error is a dev bug and re-raises with its backtrace" do
+    Given "a Runner whose service raises an unmapped error class"
+    root = Pathname.new(Dir.mktmpdir("runner-unmapped-"))
+    Dev.stubs(:target_project_root).returns(root)
+    ShadowenvRuby.stubs(:resolve_ruby_version).returns("4.0.1")
+    command_service = typed_mock(Dev::CommandService)
+    command_service.stubs(:execute).raises(Dev::Deps::Cache::CacheMissError.new("no entry"))
+    runner = build_runner(commands: {}, command_service: command_service)
+
+    When "we run the command"
+    runner.run(["deps"], ui: fake_ui)
+
+    Then
+    raises Dev::Deps::Cache::CacheMissError
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -568,19 +380,15 @@ class RunnerTest < Minitest::Test
 
   private
 
-  def build_runner(name: "testproject", commands: {}, build: nil, runner: nil, ruby: nil)
+  def build_runner(name: "testproject", commands: {}, build: nil, runner: nil, command_service: nil)
     yaml = { "name" => name, "commands" => commands }
-    yaml["ruby"] = ruby if ruby
     yaml["build"] = build if build
     yaml["runner"] = runner if runner
     tmp = Tempfile.new(["dev", ".yml"])
     tmp.write(YAML.dump(yaml))
     tmp.flush
 
-    Dev::Runner.new(
-      dev_yaml_path: Pathname.new(tmp.path),
-      cfg_parser: Dev::ConfigParser.new(command_parser: Dev::CommandParser.new),
-    )
+    Dev::Runner.new(dev_yaml_path: Pathname.new(tmp.path), command_service: command_service)
   end
 
   def fake_ui

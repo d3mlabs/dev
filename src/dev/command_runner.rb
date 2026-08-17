@@ -75,7 +75,7 @@ module Dev
       @wait = T.let(wait, T::Boolean)
     end
 
-    sig { params(cmd: ShellCommand, args: T::Array[String]).void }
+    sig { params(cmd: ProjectCommand, args: T::Array[String]).void }
     def run(cmd, args: [])
       shell_command = build_shell_command(cmd.run, args)
       @ui.print_header(shell_command)
@@ -94,7 +94,7 @@ module Dev
 
     private
 
-    sig { params(cmd: ShellCommand).returns(T::Boolean) }
+    sig { params(cmd: ProjectCommand).returns(T::Boolean) }
     def use_container?(cmd)
       !@build_container.nil? && cmd.container
     end
@@ -111,7 +111,7 @@ module Dev
       ENV["DEV_PUBLISH_IMAGE"] == "1"
     end
 
-    sig { params(_cmd: ShellCommand, shell_command: String).void }
+    sig { params(_cmd: ProjectCommand, shell_command: String).void }
     def run_in_container(_cmd, shell_command)
       config = T.must(@build_container)
       image_tag = BuildContainer.ensure_image!(

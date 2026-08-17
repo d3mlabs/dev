@@ -15,9 +15,11 @@ module Dev
     # link the render into the project at hand. The refresh always precedes
     # distribution, so a hook never renders content it just found stale.
     #
-    # Unconfigured machines (no `knowledge_repo` setting) have no org sync —
+    # Construct through Synchronizer.for: unconfigured machines (no
+    # `knowledge_repo` setting) get an UnconfiguredSynchronizer null object —
     # dev is public and ships only the mechanism; content stays in the
-    # private knowledge repo.
+    # private knowledge repo. The constructor itself requires a cache, so a
+    # real Synchronizer is never in a half-configured state.
     class Synchronizer
       # `dev learnings sync` was asked to sync with no knowledge repo configured.
       class KnowledgeRepoNotConfiguredError < RuntimeError; end
@@ -30,24 +32,36 @@ module Dev
       # every project on the machine through its symlink).
       RENDERED_INVARIANTS_FILENAME = "org-invariants.mdc"
 
+      class << self
+        # The one construction path callers use: the real synchronizer over
+        # the configured knowledge repo's cache, or the unconfigured null
+        # object when no repo is set.
+        #
+        # @param settings [Dev::Settings]
+        # @param skill_installer [Dev::SkillInstaller]
+        # @param renderer [Dev::Learnings::InvariantsRenderer]
+        # @return [Synchronizer, UnconfiguredSynchronizer]
+        def for(settings: Dev::Settings.new, skill_installer: Dev::SkillInstaller.new,
+                renderer: InvariantsRenderer.new)
+          repo = settings.knowledge_repo
+          return UnconfiguredSynchronizer.new(settings: settings) if repo.nil?
+
+          new(settings: settings, cache: Cache.new(repo: repo), skill_installer: skill_installer, renderer: renderer)
+        end
+      end
+
       # @param settings [Dev::Settings]
-      # @param cache [Dev::Learnings::Cache, nil] override for tests; defaults
-      #   to a cache over the configured knowledge repo (nil when unconfigured)
+      # @param cache [Dev::Learnings::Cache] the knowledge repo's machine
+      #   cache — required; unconfigured machines go through .for instead
       # @param skill_installer [Dev::SkillInstaller] target for the org skill
       #   links; defaults to the user-global ~/.cursor/skills
       # @param renderer [Dev::Learnings::InvariantsRenderer]
-      def initialize(settings: Dev::Settings.new, cache: nil, skill_installer: Dev::SkillInstaller.new,
+      def initialize(cache:, settings: Dev::Settings.new, skill_installer: Dev::SkillInstaller.new,
                      renderer: InvariantsRenderer.new)
         @settings = settings
-        repo = settings.knowledge_repo
-        @cache = cache || (repo && Cache.new(repo: repo))
+        @cache = cache
         @skill_installer = skill_installer
         @renderer = renderer
-      end
-
-      # @return [Boolean] whether a knowledge repo is configured
-      def configured?
-        !@cache.nil?
       end
 
       # @return [Pathname] the machine-side invariants render (beside the cache)
@@ -71,8 +85,6 @@ module Dev
       #   invariants render into; nil skips the link (no project context)
       # @return [void]
       def sync(project_root: nil)
-        return unless configured?
-
         @cache.refresh_bounded
         distribute(project_root)
       rescue StandardError => e
@@ -85,16 +97,9 @@ module Dev
       #
       # @param project_root [Pathname, String, nil] as for sync
       # @return [void]
-      # @raise [KnowledgeRepoNotConfiguredError] when no repo is configured
       # @raise [Cache::KnowledgeCloneError] when the initial clone fails
       # @raise [Cache::KnowledgeFetchError] when the refresh fails
       def sync!(project_root: nil)
-        unless configured?
-          raise KnowledgeRepoNotConfiguredError,
-            "no knowledge repo configured — add `knowledge_repo: <owner>/<repo>` " \
-            "to #{@settings.config_path} (or set DEV_KNOWLEDGE_REPO)."
-        end
-
         @cache.refresh
         distribute(project_root)
       end
@@ -119,6 +124,37 @@ module Dev
         return unless project_root
 
         @renderer.link(rendered_file: rendered_invariants_file, rules_file: project_rules_file(project_root))
+      end
+    end
+
+    # The null synchronizer for machines without a `knowledge_repo` setting
+    # (Synchronizer.for hands it out). The passive hook is a silent no-op —
+    # no org sync is a supported state, not an error — while the explicit
+    # `dev learnings sync` raises with configuration instructions.
+    class UnconfiguredSynchronizer
+      # @param settings [Dev::Settings] used only to point the error message
+      #   at the right config file
+      def initialize(settings: Dev::Settings.new)
+        @settings = settings
+      end
+
+      # The passive hook entry: nothing to sync, nothing to say.
+      #
+      # @param project_root [Pathname, String, nil] unused; matches
+      #   Synchronizer#sync
+      # @return [void]
+      def sync(project_root: nil); end
+
+      # The explicit entry: the user asked for a sync that cannot happen.
+      #
+      # @param project_root [Pathname, String, nil] unused; matches
+      #   Synchronizer#sync!
+      # @return [void]
+      # @raise [Synchronizer::KnowledgeRepoNotConfiguredError] always
+      def sync!(project_root: nil)
+        raise Synchronizer::KnowledgeRepoNotConfiguredError,
+          "no knowledge repo configured — add `knowledge_repo: <owner>/<repo>` " \
+          "to #{@settings.config_path} (or set DEV_KNOWLEDGE_REPO)."
       end
     end
   end

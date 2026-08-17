@@ -5,13 +5,16 @@
 
 # SimpleCov must start before any application code loads so every file is tracked.
 require "simplecov"
-require "simplecov_json_formatter"
+require "simplecov-cobertura"
 
+# HTML for local browsing; cobertura for the codecov upload (its parser
+# can't process SimpleCov JSON containing `# :nocov:`-ignored lines —
+# codecov/engineering-team#3592).
 SimpleCov.start do
   add_filter("/test/")
   formatter SimpleCov::Formatter::MultiFormatter.new([
     SimpleCov::Formatter::HTMLFormatter,
-    SimpleCov::Formatter::JSONFormatter,
+    SimpleCov::Formatter::CoberturaFormatter,
   ])
 end
 

@@ -61,4 +61,9 @@ rescue Dev::DevYamlNotFoundError
   warn "dev: no dev.yml found in this directory or any parent."
   warn "Run dev from inside a project that defines a dev.yml."
   exit 1
+rescue Dev::ProjectManifestLoader::UnsupportedDevYamlRubyError => e
+  # Rejected at parse time (Runner construction), before the run loop's own
+  # rescue-to-exit mapping can see it.
+  warn "dev: #{e.message}"
+  exit 1
 end
