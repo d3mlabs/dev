@@ -12,12 +12,12 @@ description: >-
 The codecov/patch gate targets 100% of added lines, and the lines most
 often missed are exactly the ones tests deliberately route around: the
 real body of an injectable executor (every unit test injects a fake) and
-the block of a builtin registered only to surface in `dev --help`. Give
-the real wrapper one test that runs a real subprocess, and execute the
-registration block once through `Runner#run` with a fake accessor
-injected through the Runner's constructor seam (never `any_instance` —
-a block only reachable that way is missing its seam; add one, as
-dev#110 did for every builtin collaborator).
+the body of a builtin that exists mainly to surface in `dev --help`.
+Give the real wrapper one test that runs a real subprocess, and execute
+the builtin body once with a fake collaborator injected through its
+owning class's constructor (never `any_instance` — a body reachable only
+that way is missing its seam; d3mlabs/plans#37 restructures Runner's
+builtins so every one has its own).
 
 Wrong: ship `GhCloner` with tests that only ever inject
 `RecordingCloneExecutor` — the real `Executor#system` line is the
@@ -26,12 +26,12 @@ test passes.
 
 Right: one test runs `Executor.new.system("echo", …)` with a real file
 standing in for `$stderr` (plus a `system("false")` false-return case),
-and one Runner test injects the fake through the constructor —
-`build_runner(clone_accessor: fake)` with
-`fake.expects(:run).with([…])` — then runs `runner.run(["clone", …])`.
+and one dispatch test drives the builtin body end to end with a fake
+injected at the constructor (`fake.expects(:run).with([…])`), asserting
+the argv reaches the collaborator.
 
 learned-from: dev#107 (codecov/patch reported 97.61% vs the 100% target;
 the two misses were the real gh executor body and the clone builtin's
-registration block); dev#110 (the any_instance shortcut replaced by
-constructor seams).
+registration block); dev#110 (an interim constructor-seam sweep,
+superseded by the d3mlabs/plans#37 Runner layering).
 date: 2026-08-15
