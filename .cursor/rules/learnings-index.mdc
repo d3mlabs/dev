@@ -24,6 +24,10 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
   class they silently assert nothing.
   → .agents/skills/gem-rspock--rspock/ (ships in the rspock gem; linked by
   `dev up` / `dev install-deps`)
+- [testing/patch-coverage-boundary-wrappers] codecov/patch targets 100% of
+  added lines — real boundary-wrapper bodies (tests inject fakes) and
+  `--help`-only builtin blocks need one executing test each.
+  → .cursor/skills/learnings/patch-coverage-boundary-wrappers/
 
 ## process
 
