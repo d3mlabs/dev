@@ -3,7 +3,9 @@
 
 require "test_helper"
 require "dev/builtins/deps_command"
+require "fileutils"
 require "pathname"
+require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Builtins::DepsCommandTest < Minitest::Test
@@ -36,6 +38,21 @@ class Dev::Builtins::DepsCommandTest < Minitest::Test
 
     Then "the accessor was scoped to the project root"
     factory_roots == [root]
+  end
+
+  test "the default factory wires a real accessor over the project lockfile" do
+    Given "a command with its default collaborators over an empty project"
+    root = Pathname.new(Dir.mktmpdir("deps-default-"))
+    command = Dev::Builtins::DepsCommand.new
+
+    When "running deps with no subcommand"
+    command.call(args: [], context: build_context(root))
+
+    Then "the real accessor answers with its own usage contract"
+    raises Dev::Deps::Accessor::UsageError
+
+    Cleanup
+    FileUtils.rm_rf(root)
   end
 
   private

@@ -57,6 +57,22 @@ class Dev::Builtins::RunnerSetupCommandTest < Minitest::Test
     org == true
   end
 
+  test "the default factory builds the real setup wired to the resolved scope" do
+    Given "a command with its default collaborators"
+    # RunnerSetup#run registers the host with GitHub, so the test intercepts
+    # the construction boundary and asserts the default factory's wiring.
+    setup = typed_mock(Dev::RunnerSetup)
+    setup.expects(:run).once
+    Dev::RunnerSetup.expects(:new).with(config: runner_config, repo: nil, org: false).returns(setup)
+    command = Dev::Builtins::RunnerSetupCommand.new
+
+    When "running runner-setup with no flags"
+    command.call(args: [], context: build_context(runner_config))
+
+    Then "the expectations on the construction boundary hold"
+    true
+  end
+
   test "call without a runner block raises the usage error" do
     Given "a context whose dev.yml has no runner block"
     _, command = build_recording_command

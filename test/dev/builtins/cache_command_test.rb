@@ -71,6 +71,24 @@ class Dev::Builtins::CacheCommandTest < Minitest::Test
     true
   end
 
+  test "the default factory builds the real GC over the project lockfile" do
+    Given "a command with its default collaborators"
+    # The real CacheGc#gc shells out to docker, so the test intercepts the
+    # construction boundary and asserts the default factory's composition.
+    gc = typed_mock(Dev::Deps::CacheGc)
+    gc.expects(:gc).with(keep: Dev::Deps::CacheGc::DEFAULT_KEEP, image_ref: nil, live_tag: nil).once
+    Dev::Deps::CacheGc.expects(:new)
+      .with { |**kwargs| kwargs.fetch(:lockfile).is_a?(Dev::Deps::Lockfile) }
+      .returns(gc)
+    command = Dev::Builtins::CacheCommand.new
+
+    When "running cache gc"
+    command.call(args: ["gc"], context: build_context)
+
+    Then "the expectations on the construction boundary hold"
+    true
+  end
+
   test "an unknown subcommand raises the usage error" do
     Given "a cache command"
     command = build_command(typed_mock(Dev::Deps::CacheGc))

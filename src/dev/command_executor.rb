@@ -31,7 +31,11 @@ module Dev
         command.builtin.call(args:, context:)
         run_project(command.project, args:, context:, wait: command.stamps?)
       else
+        # :nocov: — the sealed hierarchy leaves no fourth variant to
+        # construct, so this arm is unreachable at runtime; T.absurd keeps
+        # the static exhaustiveness proof.
         T.absurd(command)
+        # :nocov:
       end
     end
 

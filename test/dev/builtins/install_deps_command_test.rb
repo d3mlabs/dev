@@ -87,6 +87,27 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "the default factories build the real installer and skill linker" do
+    Given "a command with default factories over an empty project"
+    # The empty project keeps the real collaborators inert: the lockfile
+    # pins nothing (install dispatches nothing) and no Gemfile exists (the
+    # linker returns before shelling out). Only the machine-global
+    # boundaries — the Ruby provisioner and the learnings synchronizer —
+    # are faked.
+    root = Pathname.new(Dir.mktmpdir("install-deps-default-"))
+    command = Dev::Builtins::InstallDepsCommand.new(synchronizer: stub(sync: nil))
+    ShadowenvRuby.stubs(:ensure!)
+
+    When "running install-deps"
+    command.call(args: [], context: build_context(root))
+
+    Then "the real install pass leaves the empty project untouched"
+    Dir.children(root).empty?
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
   private
 
   def build_command
