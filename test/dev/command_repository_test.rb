@@ -8,6 +8,7 @@ require "dev/command"
 # A named no-op builtin for assembly assertions.
 class RepositoryFakeBuiltin < Dev::BuiltinCommand
   def initialize(desc: "a builtin", hidden: false)
+    super()
     @desc = desc
     @hidden = hidden
   end

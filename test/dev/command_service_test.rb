@@ -12,6 +12,7 @@ class ServiceFakeBuiltin < Dev::BuiltinCommand
   attr_reader :calls
 
   def initialize(staleness_exempt: false, stamps: false)
+    super()
     @staleness_exempt = staleness_exempt
     @stamps = stamps
     @calls = []

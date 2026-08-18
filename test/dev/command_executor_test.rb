@@ -15,6 +15,7 @@ class ExecutorFakeBuiltin < Dev::BuiltinCommand
   attr_reader :calls
 
   def initialize(stamps: false, &body)
+    super()
     @stamps = stamps
     @calls = []
     @body = body

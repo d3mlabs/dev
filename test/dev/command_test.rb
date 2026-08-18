@@ -8,6 +8,7 @@ require "dev/command"
 # open edge, and the OverriddenCommand composition.
 class FakeBuiltin < Dev::BuiltinCommand
   def initialize(desc: "fake builtin", hidden: false, staleness_exempt: false, stamps: false, &body)
+    super()
     @desc = desc
     @hidden = hidden
     @staleness_exempt = staleness_exempt

@@ -106,6 +106,7 @@ module Dev
       params(run: String, desc: String, repl: T::Boolean, container: T::Boolean, hidden: T::Boolean).void
     end
     def initialize(run:, desc: "(no description)", repl: false, container: true, hidden: false)
+      super()
       @run = T.let(run, String)
       @desc = T.let(desc, String)
       @repl = T.let(repl, T::Boolean)
@@ -153,6 +154,7 @@ module Dev
 
     sig(:final) { params(builtin: BuiltinCommand, project: ProjectCommand).void }
     def initialize(builtin:, project:)
+      super()
       @builtin = T.let(builtin, BuiltinCommand)
       @project = T.let(project, ProjectCommand)
     end
