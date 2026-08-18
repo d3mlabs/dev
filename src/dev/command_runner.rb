@@ -21,8 +21,10 @@ module Dev
   #   ✓ Done / ✗ Failed based on exit code
   #
   # In wait mode (wait: true) the same commands run spawn-and-wait instead of
-  # exec-replace: the child is waited on, and a failure raises
-  # CommandFailedError carrying its exit status — so a caller with
+  # exec-replace: the child is waited on, and a failure raises a typed error
+  # describing its shape — CommandFailedError (nonzero exit, carrying the
+  # status), CommandKilledError (signal termination, carrying the signal), or
+  # CommandSpawnError (the child never started) — so a caller with
   # success-contingent post-steps (e.g. Runner's installed stamp) can sequence
   # them after execute while preserving the child's exit code (#85).
   #
@@ -38,10 +40,10 @@ module Dev
   class CommandRunner
     extend T::Sig
 
-    # Raised in wait mode when the child command fails, carrying its exit
-    # status so the caller can skip success-contingent post-steps and exit
-    # with the child's code. (Exec-replace mode never raises — the child's
-    # status becomes the process's own.)
+    # Raised in wait mode when the child command exits nonzero, carrying its
+    # exit status so the caller can skip success-contingent post-steps and
+    # exit with the child's code. (Exec-replace mode never raises — the
+    # child's status becomes the process's own.)
     class CommandFailedError < StandardError
       extend T::Sig
 
@@ -52,6 +54,32 @@ module Dev
       def initialize(exit_status:)
         @exit_status = T.let(exit_status, Integer)
         super("command failed with exit status #{exit_status}")
+      end
+    end
+
+    # Raised in wait mode when a signal terminates the child, carrying the
+    # signal number so the caller can exit 128 + signal (shell convention).
+    class CommandKilledError < StandardError
+      extend T::Sig
+
+      sig { returns(Integer) }
+      attr_reader :signal
+
+      sig { params(signal: Integer).void }
+      def initialize(signal:)
+        @signal = T.let(signal, Integer)
+        super("command killed by signal #{signal}")
+      end
+    end
+
+    # Raised in wait mode when the child could not be spawned at all (e.g.
+    # the executable is missing), so no child exit status exists.
+    class CommandSpawnError < StandardError
+      extend T::Sig
+
+      sig { void }
+      def initialize
+        super("command could not be spawned")
       end
     end
 
@@ -307,16 +335,36 @@ module Dev
     #
     # @param argv [Array] Kernel.exec / Kernel.system argv
     # @return [void]
-    # @raise [CommandFailedError] in wait mode, when the child fails
+    # @raise [CommandFailedError] in wait mode, when the child exits nonzero
+    # @raise [CommandKilledError] in wait mode, when a signal kills the child
+    # @raise [CommandSpawnError] in wait mode, when the child never started
     sig { params(argv: T::Array[T.untyped]).void }
     def run_child(argv)
       return Kernel.exec(*T.unsafe(argv)) unless @wait
 
-      return if Kernel.system(*T.unsafe(argv))
+      # Kernel.system returns true on a zero exit, false when the child ran
+      # and failed ($? has the details), and nil when the child could not be
+      # spawned at all. The nil return is the reliable spawn-failure signal:
+      # $? can still be set then (a synthetic exit-127 status), so it cannot
+      # distinguish "never started" from "ran and failed".
+      spawned = Kernel.system(*T.unsafe(argv))
+      return if spawned
 
-      # $? is nil when the child could not be spawned at all, and exitstatus
-      # is nil for a signal-terminated child; report a generic failure then.
-      raise CommandFailedError.new(exit_status: $?&.exitstatus || 1)
+      raise CommandSpawnError if spawned.nil?
+
+      raise child_failure($?)
+    end
+
+    # Classifies a failed child's status: killed by a signal, or a plain
+    # nonzero exit.
+    #
+    # @param status [Process::Status]
+    # @return [CommandFailedError, CommandKilledError]
+    sig { params(status: Process::Status).returns(T.any(CommandFailedError, CommandKilledError)) }
+    def child_failure(status)
+      return CommandKilledError.new(signal: T.must(status.termsig)) if status.signaled?
+
+      CommandFailedError.new(exit_status: T.must(status.exitstatus))
     end
   end
 end

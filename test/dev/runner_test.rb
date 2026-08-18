@@ -336,6 +336,52 @@ class RunnerTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "a signal-killed child exits 128 plus the signal number" do
+    Given "a Runner whose service raises the child's signal death"
+    root = Pathname.new(Dir.mktmpdir("runner-killed-map-"))
+    Dev.stubs(:target_project_root).returns(root)
+    ShadowenvRuby.stubs(:resolve_ruby_version).returns("4.0.1")
+    command_service = typed_mock(Dev::CommandService)
+    command_service.stubs(:execute).raises(Dev::CommandRunner::CommandKilledError.new(signal: 15))
+    runner = build_runner(commands: {}, command_service: command_service)
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(143).once
+
+    When "we run the command"
+    runner.run(["up"], ui: fake_ui)
+
+    Then "the signal is reported under the dev: prefix"
+    $stderr.string.include?("dev: command killed by signal 15")
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.rm_rf(root)
+  end
+
+  test "a child that never spawned exits 127" do
+    Given "a Runner whose service raises the spawn failure"
+    root = Pathname.new(Dir.mktmpdir("runner-spawn-map-"))
+    Dev.stubs(:target_project_root).returns(root)
+    ShadowenvRuby.stubs(:resolve_ruby_version).returns("4.0.1")
+    command_service = typed_mock(Dev::CommandService)
+    command_service.stubs(:execute).raises(Dev::CommandRunner::CommandSpawnError.new)
+    runner = build_runner(commands: {}, command_service: command_service)
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(127).once
+
+    When "we run the command"
+    runner.run(["up"], ui: fake_ui)
+
+    Then "the spawn failure is reported under the dev: prefix"
+    $stderr.string.include?("dev: command could not be spawned")
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.rm_rf(root)
+  end
+
   test "an ArgumentError is reported as a clean dev error with exit 1" do
     Given "a Runner whose service raises a usage error"
     root = Pathname.new(Dir.mktmpdir("runner-argerror-"))
