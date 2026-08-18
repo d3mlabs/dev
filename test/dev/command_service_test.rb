@@ -12,10 +12,10 @@ class ServiceFakeBuiltin < Dev::BuiltinCommand
   attr_reader :calls
 
   def initialize(staleness_exempt: false, stamps: false)
+    super()
     @staleness_exempt = staleness_exempt
     @stamps = stamps
     @calls = []
-    super()
   end
 
   def desc = "a builtin"
@@ -33,12 +33,9 @@ transform!(RSpock::AST::Transformation)
 class Dev::CommandServiceTest < Minitest::Test
   include SorbetHelper
 
-  CommandRepositoryClass = Dev.const_get(:CommandRepository)
-  CommandNotFoundErrorClass = CommandRepositoryClass.const_get(:CommandNotFoundError)
-
   def build_service(builtins:, dependency_service:, executor: build_executor)
     Dev::CommandService.new(
-      repository: CommandRepositoryClass.new(builtins: builtins, project_commands: {}),
+      repository: Dev::CommandRepository.new(builtins: builtins, project_commands: {}),
       executor: executor,
       dependency_service: dependency_service,
     )
@@ -81,7 +78,7 @@ class Dev::CommandServiceTest < Minitest::Test
     When "executing the command"
     service.execute("deps", args: ["path", "xcode"], context: context)
 
-    Then "the builtin body ran once with the args and context"
+    Then "the builtin ran once with the args and context"
     builtin.calls == [[["path", "xcode"], context]]
   end
 
@@ -93,7 +90,7 @@ class Dev::CommandServiceTest < Minitest::Test
     service.execute("nonexistent", args: [], context: fake_context)
 
     Then "the error bubbles under its native namespace"
-    raises CommandNotFoundErrorClass
+    raises Dev::CommandRepository::CommandNotFoundError
   end
 
   test "execute guards staleness before a non-exempt command" do
@@ -188,7 +185,7 @@ class Dev::CommandServiceTest < Minitest::Test
     builtin = ServiceFakeBuiltin.new
     service = build_service(builtins: { "deps" => builtin }, dependency_service: fake_dependency_service)
 
-    Expect "the usage view flows through the service (the repository stays private)"
+    Expect "the usage view flows through the service (the onion rule)"
     service.visible_commands == { "deps" => builtin }
   end
 end

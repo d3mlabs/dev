@@ -29,6 +29,7 @@ module Dev
           )
         }
       )
+        super()
         @accessor_factory = T.let(accessor_factory, AccessorFactory)
       end
 

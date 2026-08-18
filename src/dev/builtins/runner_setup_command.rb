@@ -36,6 +36,7 @@ module Dev
         runner_setup_factory: ->(config, repo, org) { Dev::RunnerSetup.new(config:, repo:, org:) },
         flag_parser: Cli::FlagParser.new
       )
+        super()
         @runner_setup_factory = T.let(runner_setup_factory, RunnerSetupFactory)
         @flag_parser = T.let(flag_parser, Cli::FlagParser)
       end
