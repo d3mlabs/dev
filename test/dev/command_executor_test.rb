@@ -15,10 +15,10 @@ class ExecutorFakeBuiltin < Dev::BuiltinCommand
   attr_reader :calls
 
   def initialize(stamps: false, &body)
+    super()
     @stamps = stamps
     @calls = []
     @body = body
-    super()
   end
 
   def desc = "a builtin"
@@ -51,7 +51,7 @@ class Dev::CommandExecutorTest < Minitest::Test
     When "executing"
     executor.execute(builtin, args: ["--verbose"], context: context)
 
-    Then "the body received args and context; no child process was involved"
+    Then "the builtin received args and context; no child process was involved"
     builtin.calls == [[["--verbose"], context]]
 
     Cleanup

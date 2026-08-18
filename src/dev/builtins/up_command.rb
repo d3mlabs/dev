@@ -23,6 +23,7 @@ module Dev
         ).void
       end
       def initialize(install_deps_command:, hook_installer: Dev::Cd::HookInstaller.new)
+        super()
         @install_deps_command = T.let(install_deps_command, InstallDepsCommand)
         @hook_installer = T.let(hook_installer, Dev::Cd::HookInstaller)
       end

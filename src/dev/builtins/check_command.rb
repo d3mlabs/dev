@@ -13,6 +13,7 @@ module Dev
 
       sig { params(dependency_service: DependencyService).void }
       def initialize(dependency_service:)
+        super()
         @dependency_service = T.let(dependency_service, DependencyService)
       end
 

@@ -105,10 +105,11 @@ module Dev
       end
     end
 
-    # The composition root: the one place the repository (private to this
-    # onion) and the builtin set are constructed. Which builtins exist is
-    # config-gated here — runner-setup only with a `runner:` block,
-    # provide-image/reset-container only with a build container.
+    # The composition root: the one place the repository (consumed only by
+    # CommandService, the onion rule) and the builtin set are constructed.
+    # Which builtins exist is config-gated here — runner-setup only with a
+    # `runner:` block, provide-image/reset-container only with a build
+    # container.
     #
     # @param manifest [ProjectManifest]
     # @return [CommandService]

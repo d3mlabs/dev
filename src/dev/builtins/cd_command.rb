@@ -14,6 +14,7 @@ module Dev
 
       sig { params(accessor: Dev::Cd::Accessor).void }
       def initialize(accessor: Dev::Cd::Accessor.new)
+        super()
         @accessor = T.let(accessor, Dev::Cd::Accessor)
       end
 

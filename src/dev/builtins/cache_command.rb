@@ -24,6 +24,7 @@ module Dev
         cache_gc_factory: ->(lockfile) { Dev::Deps::CacheGc.new(lockfile:) },
         flag_parser: Cli::FlagParser.new
       )
+        super()
         @cache_gc_factory = T.let(cache_gc_factory, CacheGcFactory)
         @flag_parser = T.let(flag_parser, Cli::FlagParser)
       end

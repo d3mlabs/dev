@@ -10,8 +10,8 @@ module Dev
   # builtin's slot — their OverriddenCommand composition. Data in, never a
   # path, never a parse.
   #
-  # Onion rule: CommandService is the only production consumer; the constant
-  # is private and construction is confined to the composition root.
+  # Onion rule: CommandService is the only production consumer, and
+  # construction is confined to the composition root.
   class CommandRepository
     extend T::Sig
 
@@ -77,6 +77,4 @@ module Dev
       commands
     end
   end
-
-  private_constant :CommandRepository
 end
