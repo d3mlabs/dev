@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require "pathname"
-require "dev/builtin_body"
+require "dev/command"
 require "dev/plan"
 
 module Dev
@@ -10,9 +10,8 @@ module Dev
     # `dev plan` is dispatched globally (before dev.yml lookup) in bin/dev;
     # this builtin only surfaces it in `dev --help` and keeps it callable
     # inside a project.
-    class PlanCommand
+    class PlanCommand < BuiltinCommand
       extend T::Sig
-      include BuiltinBody
 
       # Builds the accessor for the enclosing project (per-call root).
       AccessorFactory = T.type_alias do

@@ -1,8 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "dev/builtin_body"
 require "dev/cli/flag_parser"
+require "dev/command"
 require "dev/runner_setup"
 require "dev/runner_setup_config"
 
@@ -18,9 +18,8 @@ module Dev
     # bespoke setup script. `--labels`/`--dir`/`--name` override the block
     # for hosts that differ from the repo default (e.g. registering the Mac
     # org-wide from a repo whose block describes the CI box).
-    class RunnerSetupCommand
+    class RunnerSetupCommand < BuiltinCommand
       extend T::Sig
-      include BuiltinBody
 
       # Builds the RunnerSetup for the resolved config and flags; injected
       # so tests can observe the wiring without touching gh or the host.

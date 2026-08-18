@@ -2,14 +2,11 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/builtin_body"
 require "dev/command"
 
-# A minimal BuiltinBody for exercising the trait defaults, the
-# BuiltinCommand delegation, and the OverriddenCommand composition.
-class FakeBuiltinBody
-  include Dev::BuiltinBody
-
+# A minimal builtin for exercising the trait defaults, the hierarchy's
+# open edge, and the OverriddenCommand composition.
+class FakeBuiltin < Dev::BuiltinCommand
   def initialize(desc: "fake builtin", hidden: false, staleness_exempt: false, stamps: false, &body)
     @desc = desc
     @hidden = hidden
@@ -29,7 +26,7 @@ class FakeBuiltinBody
   def call(args:, context:)
     @body&.call(args, context)
   end
-end unless defined?(FakeBuiltinBody)
+end unless defined?(FakeBuiltin)
 
 transform!(RSpock::AST::Transformation)
 class CommandTest < Minitest::Test
@@ -102,45 +99,49 @@ class CommandTest < Minitest::Test
     cmd.hidden?
   end
 
-  test "a builtin body without trait overrides gets the defaults" do
-    Given "a body defining only desc and call"
-    body = Class.new do
-      include Dev::BuiltinBody
-
+  test "a builtin without trait overrides gets the Command defaults" do
+    Given "a builtin defining only desc and call"
+    builtin = Class.new(Dev::BuiltinCommand) do
       def desc = "minimal"
 
       def call(args:, context:); end
     end.new
 
-    Expect "the BuiltinBody trait defaults hold"
-    !body.hidden?
-    !body.staleness_exempt?
-    !body.stamps?
+    Expect "the Command trait defaults hold"
+    !builtin.hidden?
+    !builtin.staleness_exempt?
+    !builtin.stamps?
   end
 
-  test "a BuiltinCommand delegates call, desc, and every trait to its body" do
-    Given "a distinctive body wrapped in the sealed hierarchy's final leaf"
-    calls = []
-    body = FakeBuiltinBody.new(desc: "wrapped", hidden: true, staleness_exempt: true, stamps: true) do |args, context|
-      calls << [args, context]
-    end
-    cmd = Dev::BuiltinCommand.new(body: body)
-    context = typed_mock(Dev::ExecutionContext)
+  test "subclassing BuiltinCommand is the hierarchy's declared open edge" do
+    Given "a builtin subclass"
+    builtin = FakeBuiltin.new(desc: "open edge")
 
-    When "calling through the wrapper"
-    cmd.call(args: ["--verbose"], context: context)
-
-    Then "every reading came from the body"
-    cmd.desc == "wrapped"
-    cmd.hidden?
-    cmd.staleness_exempt?
-    cmd.stamps?
-    calls == [[["--verbose"], context]]
+    Expect "it enters the sealed hierarchy through the BuiltinCommand variant"
+    builtin.is_a?(Dev::BuiltinCommand)
+    builtin.is_a?(Dev::Command)
+    builtin.desc == "open edge"
   end
 
-  test "BuiltinCommand is final: subclassing raises, keeping the sealed hierarchy closed" do
-    When "declaring a subclass of the final leaf"
-    Class.new(Dev::BuiltinCommand)
+  test "including Command directly raises: the seal admits only its three declared variants" do
+    When "including the sealed module outside its declaring file"
+    Class.new { include Dev::Command }
+
+    Then "sorbet-runtime rejects the include"
+    raises RuntimeError
+  end
+
+  test "ProjectCommand is final: subclassing raises, keeping descent closed" do
+    When "declaring a subclass of the data leaf"
+    Class.new(Dev::ProjectCommand)
+
+    Then "sorbet-runtime rejects the open edge"
+    raises RuntimeError
+  end
+
+  test "OverriddenCommand is final: subclassing raises, keeping descent closed" do
+    When "declaring a subclass of the data leaf"
+    Class.new(Dev::OverriddenCommand)
 
     Then "sorbet-runtime rejects the open edge"
     raises RuntimeError
@@ -148,7 +149,7 @@ class CommandTest < Minitest::Test
 
   test "an OverriddenCommand takes desc and hidden from the project override" do
     Given "a builtin slot overridden by a hidden project command"
-    builtin = Dev::BuiltinCommand.new(body: FakeBuiltinBody.new(desc: "builtin up"))
+    builtin = FakeBuiltin.new(desc: "builtin up")
     project = Dev::ProjectCommand.new(run: "./bin/up.sh", desc: "project up", hidden: true)
     cmd = Dev::OverriddenCommand.new(builtin: builtin, project: project)
 
@@ -159,7 +160,7 @@ class CommandTest < Minitest::Test
 
   test "an OverriddenCommand takes guard and stamp traits from the builtin slot" do
     Given "a stamping, staleness-exempt builtin slot overridden by a project command"
-    builtin = Dev::BuiltinCommand.new(body: FakeBuiltinBody.new(staleness_exempt: true, stamps: true))
+    builtin = FakeBuiltin.new(staleness_exempt: true, stamps: true)
     project = Dev::ProjectCommand.new(run: "./bin/up.sh", desc: "project up")
     cmd = Dev::OverriddenCommand.new(builtin: builtin, project: project)
 
@@ -170,7 +171,7 @@ class CommandTest < Minitest::Test
 
   test "an OverriddenCommand exposes its typed halves" do
     Given "an overridden command"
-    builtin = Dev::BuiltinCommand.new(body: FakeBuiltinBody.new)
+    builtin = FakeBuiltin.new
     project = Dev::ProjectCommand.new(run: "./bin/up.sh")
     cmd = Dev::OverriddenCommand.new(builtin: builtin, project: project)
 

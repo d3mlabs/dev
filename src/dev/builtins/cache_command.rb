@@ -1,8 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "dev/builtin_body"
 require "dev/cli/flag_parser"
+require "dev/command"
 require "dev/deps/cache_gc"
 require "dev/deps/lockfile"
 require "build_container"
@@ -11,9 +11,8 @@ module Dev
   module Builtins
     # `dev cache gc [--keep N]`: reclaim stale install-dir versions and, when
     # a build container is configured, its stale content-tagged images.
-    class CacheCommand
+    class CacheCommand < BuiltinCommand
       extend T::Sig
-      include BuiltinBody
 
       # Builds the GC over a project's lockfile (per-call project root).
       CacheGcFactory = T.type_alias do

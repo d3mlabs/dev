@@ -1,17 +1,16 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "dev/builtin_body"
 require "dev/cd"
+require "dev/command"
 
 module Dev
   module Builtins
     # `dev cd` is dispatched globally (before dev.yml lookup) in bin/dev;
     # this builtin only surfaces it in `dev --help` and keeps it callable
     # inside a project.
-    class CdCommand
+    class CdCommand < BuiltinCommand
       extend T::Sig
-      include BuiltinBody
 
       sig { params(accessor: Dev::Cd::Accessor).void }
       def initialize(accessor: Dev::Cd::Accessor.new)

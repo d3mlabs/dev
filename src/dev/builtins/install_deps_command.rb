@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require "pathname"
-require "dev/builtin_body"
+require "dev/command"
 require "dev/deps"
 require "dev/deps/cache"
 require "dev/deps/gem_skill_linker"
@@ -18,9 +18,8 @@ module Dev
     # machine — shared with the `up` builtin, which composes this command.
     # Host integrations install on the host (not the build container) so
     # their artifacts can be volume-mounted in.
-    class InstallDepsCommand
+    class InstallDepsCommand < BuiltinCommand
       extend T::Sig
-      include BuiltinBody
 
       # Builds the DependencyInstaller for a lockfile + integrations pair;
       # injected so tests can substitute a fake without touching the host.

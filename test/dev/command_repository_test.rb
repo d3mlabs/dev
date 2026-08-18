@@ -2,15 +2,11 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/builtin_body"
 require "dev/command_repository"
 require "dev/command"
 
-# A named no-op body for assembly assertions; the tests wrap it in
-# BuiltinCommand the same way the composition root does.
-class RepositoryFakeBody
-  include Dev::BuiltinBody
-
+# A named no-op builtin for assembly assertions.
+class RepositoryFakeBuiltin < Dev::BuiltinCommand
   def initialize(desc: "a builtin", hidden: false)
     @desc = desc
     @hidden = hidden
@@ -21,12 +17,12 @@ class RepositoryFakeBody
   def hidden? = @hidden
 
   def call(args:, context:); end
-end unless defined?(RepositoryFakeBody)
+end unless defined?(RepositoryFakeBuiltin)
 
 transform!(RSpock::AST::Transformation)
 class Dev::CommandRepositoryTest < Minitest::Test
   def build_builtin(desc: "a builtin", hidden: false)
-    Dev::BuiltinCommand.new(body: RepositoryFakeBody.new(desc: desc, hidden: hidden))
+    RepositoryFakeBuiltin.new(desc: desc, hidden: hidden)
   end
 
   test "fetch returns a builtin-only command as the builtin" do

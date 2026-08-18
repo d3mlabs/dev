@@ -3,7 +3,6 @@
 
 require "pathname"
 require "stringio"
-require "dev/builtin_body"
 require "dev/builtins"
 require "dev/cli"
 require "dev/command"
@@ -138,7 +137,7 @@ module Dev
     end
     def build_builtins(manifest, dependency_service)
       install_deps = Builtins::InstallDepsCommand.new
-      bodies = T.let({
+      builtins = T.let({
         "update-deps" => Builtins::UpdateDepsCommand.new,
         "install-deps" => install_deps,
         # `up` composes the same install the install-deps builtin runs.
@@ -151,12 +150,11 @@ module Dev
         "cache" => Builtins::CacheCommand.new,
         "cred" => Builtins::CredCommand.new,
         "plan" => Builtins::PlanCommand.new,
-      }, T::Hash[String, BuiltinBody])
-      bodies["provide-image"] = Builtins::ProvideImageCommand.new if manifest.build_container
-      bodies["reset-container"] = Builtins::ResetContainerCommand.new if manifest.build_container&.persist
-      bodies["runner-setup"] = Builtins::RunnerSetupCommand.new if manifest.runner
-      # Each body enters the sealed hierarchy through its final leaf here.
-      bodies.transform_values { |body| BuiltinCommand.new(body:) }
+      }, T::Hash[String, BuiltinCommand])
+      builtins["provide-image"] = Builtins::ProvideImageCommand.new if manifest.build_container
+      builtins["reset-container"] = Builtins::ResetContainerCommand.new if manifest.build_container&.persist
+      builtins["runner-setup"] = Builtins::RunnerSetupCommand.new if manifest.runner
+      builtins
     end
   end
 end
