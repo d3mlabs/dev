@@ -36,11 +36,24 @@ class Dev::CommandServiceTest < Minitest::Test
   CommandRepositoryClass = Dev.const_get(:CommandRepository)
   CommandNotFoundErrorClass = CommandRepositoryClass.const_get(:CommandNotFoundError)
 
-  def build_service(builtins:, dependency_service:, executor: Dev::CommandExecutor.new)
+  def build_service(builtins:, dependency_service:, executor: build_executor)
     Dev::CommandService.new(
       repository: CommandRepositoryClass.new(builtins: builtins, project_commands: {}),
       executor: executor,
       dependency_service: dependency_service,
+    )
+  end
+
+  # A real composite (these tests only dispatch builtins, in-process).
+  def build_executor
+    builtin_executor = Dev::BuiltinExecutor.new
+    project_executor = Dev::ProjectExecutor.new
+    Dev::CommandExecutor.new(
+      builtin_executor: builtin_executor,
+      project_executor: project_executor,
+      overridden_executor: Dev::OverriddenExecutor.new(
+        builtin_executor: builtin_executor, project_executor: project_executor,
+      ),
     )
   end
 

@@ -3,6 +3,7 @@
 
 require "pathname"
 require "stringio"
+require "dev/builtin_executor"
 require "dev/builtins"
 require "dev/cli"
 require "dev/command"
@@ -14,6 +15,8 @@ require "dev/command_service"
 require "dev/dependency_service"
 require "dev/deps/staleness"
 require "dev/execution_context"
+require "dev/overridden_executor"
+require "dev/project_executor"
 require "dev/project_manifest"
 require "dev/project_manifest_loader"
 require "shadowenv_ruby"
@@ -122,8 +125,24 @@ module Dev
           builtins: build_builtins(manifest, dependency_service),
           project_commands: manifest.commands,
         ),
-        executor: CommandExecutor.new,
+        executor: build_executor,
         dependency_service: dependency_service,
+      )
+    end
+
+    # Wire the executor composite: one BuiltinExecutor and one
+    # ProjectExecutor, shared with the OverriddenExecutor that composes
+    # them for the virtual-dispatch arm.
+    #
+    # @return [CommandExecutor]
+    sig { returns(CommandExecutor) }
+    def build_executor
+      builtin_executor = BuiltinExecutor.new
+      project_executor = ProjectExecutor.new
+      CommandExecutor.new(
+        builtin_executor:,
+        project_executor:,
+        overridden_executor: OverriddenExecutor.new(builtin_executor:, project_executor:),
       )
     end
 
