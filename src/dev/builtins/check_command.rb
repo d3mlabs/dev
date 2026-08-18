@@ -1,15 +1,16 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "dev/command"
+require "dev/builtin_body"
 require "dev/dependency_service"
 
 module Dev
   module Builtins
     # `dev check`: report the dependency-state freshness the staleness guard
     # would act on, and exit non-zero when anything drifted.
-    class CheckCommand < BuiltinCommand
+    class CheckCommand
       extend T::Sig
+      include BuiltinBody
 
       sig { params(dependency_service: DependencyService).void }
       def initialize(dependency_service:)

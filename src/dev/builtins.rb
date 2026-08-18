@@ -2,11 +2,12 @@
 # frozen_string_literal: true
 
 module Dev
-  # One class per builtin dev command. Each exposes call(args:, context:)
-  # with its collaborators constructor-injected; per-call values stay
+  # One class per builtin dev command, each implementing BuiltinBody with
+  # its collaborators constructor-injected; per-call values stay
   # method-side. The composition root (Runner) decides which builtins exist
   # for a given project (config-gated: runner-setup only with a `runner:`
-  # block, provide-image/reset-container only with a build container).
+  # block, provide-image/reset-container only with a build container) and
+  # wraps each body in the sealed hierarchy's BuiltinCommand leaf.
   module Builtins; end
 end
 

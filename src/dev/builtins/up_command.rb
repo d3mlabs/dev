@@ -1,8 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "dev/builtin_body"
 require "dev/cd"
-require "dev/command"
 require "dev/credentials"
 
 module Dev
@@ -13,8 +13,9 @@ module Dev
     # provisioning. Projects with only a dependencies.rb get `dev up` for
     # free. `up` also ensures the `dev cd` shell hook (idempotent) —
     # provisioning is where dev's RC hooks land, next to the shadowenv one.
-    class UpCommand < BuiltinCommand
+    class UpCommand
       extend T::Sig
+      include BuiltinBody
 
       sig do
         params(

@@ -3,7 +3,7 @@
 
 require "digest"
 require "pathname"
-require "dev/command"
+require "dev/builtin_body"
 require "dev/deps"
 require "dev/deps/lockfile"
 require "dev/deps/registry"
@@ -14,8 +14,9 @@ module Dev
     # `dev update-deps`: resolve the dependencies.rb declarations and write
     # the lockfiles. Everything here is derived from the per-call project
     # root, so no collaborators need injecting.
-    class UpdateDepsCommand < BuiltinCommand
+    class UpdateDepsCommand
       extend T::Sig
+      include BuiltinBody
 
       sig { override.returns(String) }
       def desc = "Resolve dependency constraints and write lockfiles"

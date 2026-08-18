@@ -2,22 +2,18 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/builtin_body"
 require "dev/command_repository"
 require "dev/command"
 
-# The repository is service-private in production (private_constant, onion
-# rule); tests alias it through const_get rather than weakening the privacy.
-CommandRepositoryUnderTest = Dev.const_get(:CommandRepository) unless defined?(CommandRepositoryUnderTest)
-unless defined?(CommandNotFoundErrorUnderTest)
-  CommandNotFoundErrorUnderTest = CommandRepositoryUnderTest.const_get(:CommandNotFoundError)
-end
+# A named no-op body for assembly assertions; the tests wrap it in
+# BuiltinCommand the same way the composition root does.
+class RepositoryFakeBody
+  include Dev::BuiltinBody
 
-# A named no-op builtin for assembly assertions.
-class RepositoryFakeBuiltin < Dev::BuiltinCommand
   def initialize(desc: "a builtin", hidden: false)
     @desc = desc
     @hidden = hidden
-    super()
   end
 
   attr_reader :desc
@@ -25,14 +21,18 @@ class RepositoryFakeBuiltin < Dev::BuiltinCommand
   def hidden? = @hidden
 
   def call(args:, context:); end
-end unless defined?(RepositoryFakeBuiltin)
+end unless defined?(RepositoryFakeBody)
 
 transform!(RSpock::AST::Transformation)
 class Dev::CommandRepositoryTest < Minitest::Test
+  def build_builtin(desc: "a builtin", hidden: false)
+    Dev::BuiltinCommand.new(body: RepositoryFakeBody.new(desc: desc, hidden: hidden))
+  end
+
   test "fetch returns a builtin-only command as the builtin" do
     Given "a repository with one builtin and no project commands"
-    builtin = RepositoryFakeBuiltin.new(desc: "resolve deps")
-    repository = CommandRepositoryUnderTest.new(builtins: { "update-deps" => builtin }, project_commands: {})
+    builtin = build_builtin(desc: "resolve deps")
+    repository = Dev::CommandRepository.new(builtins: { "update-deps" => builtin }, project_commands: {})
 
     Expect "the builtin occupies its slot"
     repository.fetch("update-deps") == builtin
@@ -41,7 +41,7 @@ class Dev::CommandRepositoryTest < Minitest::Test
   test "fetch returns a project-only command as the ProjectCommand" do
     Given "a repository with one project command and no builtins"
     project = Dev::ProjectCommand.new(run: "./bin/test.sh", desc: "Run tests")
-    repository = CommandRepositoryUnderTest.new(builtins: {}, project_commands: { "test" => project })
+    repository = Dev::CommandRepository.new(builtins: {}, project_commands: { "test" => project })
 
     Expect "the project command occupies its slot"
     repository.fetch("test") == project
@@ -49,9 +49,9 @@ class Dev::CommandRepositoryTest < Minitest::Test
 
   test "a project command on a builtin's name composes into an OverriddenCommand" do
     Given "a repository where a project up: collides with the up builtin"
-    builtin = RepositoryFakeBuiltin.new(desc: "built-in up")
+    builtin = build_builtin(desc: "built-in up")
     project = Dev::ProjectCommand.new(run: "./bin/up.sh", desc: "project up")
-    repository = CommandRepositoryUnderTest.new(
+    repository = Dev::CommandRepository.new(
       builtins: { "up" => builtin },
       project_commands: { "up" => project },
     )
@@ -68,20 +68,20 @@ class Dev::CommandRepositoryTest < Minitest::Test
 
   test "fetch raises CommandNotFoundError for an unknown name" do
     Given "an empty repository"
-    repository = CommandRepositoryUnderTest.new(builtins: {}, project_commands: {})
+    repository = Dev::CommandRepository.new(builtins: {}, project_commands: {})
 
     When "fetching a nonexistent command"
     repository.fetch("nope")
 
     Then
-    raises CommandNotFoundErrorUnderTest
+    raises Dev::CommandRepository::CommandNotFoundError
   end
 
   test "visible_commands lists builtins then project commands, overrides in the builtin's position" do
     Given "a repository with a builtin, a project command, and an override"
-    builtin = RepositoryFakeBuiltin.new(desc: "built-in up")
-    repository = CommandRepositoryUnderTest.new(
-      builtins: { "update-deps" => RepositoryFakeBuiltin.new(desc: "resolve"), "up" => builtin },
+    builtin = build_builtin(desc: "built-in up")
+    repository = Dev::CommandRepository.new(
+      builtins: { "update-deps" => build_builtin(desc: "resolve"), "up" => builtin },
       project_commands: {
         "up" => Dev::ProjectCommand.new(run: "./bin/up.sh", desc: "project up"),
         "test" => Dev::ProjectCommand.new(run: "rspec", desc: "Run tests"),
@@ -98,9 +98,9 @@ class Dev::CommandRepositoryTest < Minitest::Test
 
   test "visible_commands omits hidden commands but fetch still resolves them" do
     Given "a repository with a hidden builtin"
-    hidden = RepositoryFakeBuiltin.new(desc: "plumbing", hidden: true)
-    repository = CommandRepositoryUnderTest.new(
-      builtins: { "provide-image" => hidden, "up" => RepositoryFakeBuiltin.new },
+    hidden = build_builtin(desc: "plumbing", hidden: true)
+    repository = Dev::CommandRepository.new(
+      builtins: { "provide-image" => hidden, "up" => build_builtin },
       project_commands: {},
     )
 

@@ -1,15 +1,16 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "dev/command"
+require "dev/builtin_body"
 require "build_container"
 
 module Dev
   module Builtins
     # Teardown for the persistent build container, only where a project opts
     # in (build.container.persist — the composition root gates it).
-    class ResetContainerCommand < BuiltinCommand
+    class ResetContainerCommand
       extend T::Sig
+      include BuiltinBody
 
       sig { override.returns(String) }
       def desc = "Remove the persistent build container (clears its incremental cache)"

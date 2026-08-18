@@ -3,6 +3,7 @@
 
 require "pathname"
 require "stringio"
+require "dev/builtin_body"
 require "dev/builtins"
 require "dev/cli"
 require "dev/command"
@@ -105,10 +106,11 @@ module Dev
       end
     end
 
-    # The composition root: the one place the repository (private to this
-    # onion) and the builtin set are constructed. Which builtins exist is
-    # config-gated here — runner-setup only with a `runner:` block,
-    # provide-image/reset-container only with a build container.
+    # The composition root: the one place the repository (consumed only by
+    # CommandService, the onion rule) and the builtin set are constructed.
+    # Which builtins exist is config-gated here — runner-setup only with a
+    # `runner:` block, provide-image/reset-container only with a build
+    # container.
     #
     # @param manifest [ProjectManifest]
     # @return [CommandService]
@@ -136,7 +138,7 @@ module Dev
     end
     def build_builtins(manifest, dependency_service)
       install_deps = Builtins::InstallDepsCommand.new
-      builtins = T.let({
+      bodies = T.let({
         "update-deps" => Builtins::UpdateDepsCommand.new,
         "install-deps" => install_deps,
         # `up` composes the same install the install-deps builtin runs.
@@ -149,11 +151,12 @@ module Dev
         "cache" => Builtins::CacheCommand.new,
         "cred" => Builtins::CredCommand.new,
         "plan" => Builtins::PlanCommand.new,
-      }, T::Hash[String, BuiltinCommand])
-      builtins["provide-image"] = Builtins::ProvideImageCommand.new if manifest.build_container
-      builtins["reset-container"] = Builtins::ResetContainerCommand.new if manifest.build_container&.persist
-      builtins["runner-setup"] = Builtins::RunnerSetupCommand.new if manifest.runner
-      builtins
+      }, T::Hash[String, BuiltinBody])
+      bodies["provide-image"] = Builtins::ProvideImageCommand.new if manifest.build_container
+      bodies["reset-container"] = Builtins::ResetContainerCommand.new if manifest.build_container&.persist
+      bodies["runner-setup"] = Builtins::RunnerSetupCommand.new if manifest.runner
+      # Each body enters the sealed hierarchy through its final leaf here.
+      bodies.transform_values { |body| BuiltinCommand.new(body:) }
     end
   end
 end

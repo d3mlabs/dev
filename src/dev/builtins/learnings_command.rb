@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require "pathname"
-require "dev/command"
+require "dev/builtin_body"
 require "dev/learnings"
 
 module Dev
@@ -10,8 +10,9 @@ module Dev
     # `dev learnings` is dispatched globally (before dev.yml lookup) in
     # bin/dev; this builtin only surfaces it in `dev --help` and keeps it
     # callable inside a project.
-    class LearningsCommand < BuiltinCommand
+    class LearningsCommand
       extend T::Sig
+      include BuiltinBody
 
       # Builds the accessor for the enclosing project (per-call root).
       AccessorFactory = T.type_alias do

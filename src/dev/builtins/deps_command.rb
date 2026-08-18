@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require "pathname"
-require "dev/command"
+require "dev/builtin_body"
 require "dev/deps/accessor"
 require "dev/deps/cache"
 require "dev/deps/lockfile"
@@ -11,8 +11,9 @@ module Dev
   module Builtins
     # `dev deps`: read-only lookups over the lockfile + content cache (e.g.
     # `dev deps path ficsit <mod> <platform>`).
-    class DepsCommand < BuiltinCommand
+    class DepsCommand
       extend T::Sig
+      include BuiltinBody
 
       # Builds the accessor over a project's lockfile (the project root is a
       # per-call value, so the collaborator arrives as a factory).

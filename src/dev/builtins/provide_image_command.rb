@@ -1,7 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "dev/command"
+require "dev/builtin_body"
 require "dev/credentials"
 require "build_container"
 
@@ -13,8 +13,9 @@ module Dev
     # tag is capturable). Publishing to the shared registry stays gated on
     # DEV_PUBLISH_IMAGE, same as containerized commands. Exists only when a
     # build container is configured (the composition root gates it).
-    class ProvideImageCommand < BuiltinCommand
+    class ProvideImageCommand
       extend T::Sig
+      include BuiltinBody
 
       sig { override.returns(String) }
       def desc = "Resolve the build container image (local/pull/build) and print its tag"

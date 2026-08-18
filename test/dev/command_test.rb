@@ -2,20 +2,25 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/builtin_body"
 require "dev/command"
 
-# A minimal concrete builtin for exercising the abstract base's defaults
-# and the OverriddenCommand composition.
-class FakeBuiltinCommand < Dev::BuiltinCommand
-  def initialize(desc: "fake builtin", staleness_exempt: false, stamps: false, &body)
+# A minimal BuiltinBody for exercising the trait defaults, the
+# BuiltinCommand delegation, and the OverriddenCommand composition.
+class FakeBuiltinBody
+  include Dev::BuiltinBody
+
+  def initialize(desc: "fake builtin", hidden: false, staleness_exempt: false, stamps: false, &body)
     @desc = desc
+    @hidden = hidden
     @staleness_exempt = staleness_exempt
     @stamps = stamps
     @body = body
-    super()
   end
 
   attr_reader :desc
+
+  def hidden? = @hidden
 
   def staleness_exempt? = @staleness_exempt
 
@@ -24,11 +29,12 @@ class FakeBuiltinCommand < Dev::BuiltinCommand
   def call(args:, context:)
     @body&.call(args, context)
   end
-end unless defined?(FakeBuiltinCommand)
+end unless defined?(FakeBuiltinBody)
 
 transform!(RSpock::AST::Transformation)
 class CommandTest < Minitest::Test
   extend T::Sig
+  include SorbetHelper
 
   test "initialize with only run uses default desc and repl" do
     Given "we build a ProjectCommand with only run"
@@ -96,9 +102,53 @@ class CommandTest < Minitest::Test
     cmd.hidden?
   end
 
+  test "a builtin body without trait overrides gets the defaults" do
+    Given "a body defining only desc and call"
+    body = Class.new do
+      include Dev::BuiltinBody
+
+      def desc = "minimal"
+
+      def call(args:, context:); end
+    end.new
+
+    Expect "the BuiltinBody trait defaults hold"
+    !body.hidden?
+    !body.staleness_exempt?
+    !body.stamps?
+  end
+
+  test "a BuiltinCommand delegates call, desc, and every trait to its body" do
+    Given "a distinctive body wrapped in the sealed hierarchy's final leaf"
+    calls = []
+    body = FakeBuiltinBody.new(desc: "wrapped", hidden: true, staleness_exempt: true, stamps: true) do |args, context|
+      calls << [args, context]
+    end
+    cmd = Dev::BuiltinCommand.new(body: body)
+    context = typed_mock(Dev::ExecutionContext)
+
+    When "calling through the wrapper"
+    cmd.call(args: ["--verbose"], context: context)
+
+    Then "every reading came from the body"
+    cmd.desc == "wrapped"
+    cmd.hidden?
+    cmd.staleness_exempt?
+    cmd.stamps?
+    calls == [[["--verbose"], context]]
+  end
+
+  test "BuiltinCommand is final: subclassing raises, keeping the sealed hierarchy closed" do
+    When "declaring a subclass of the final leaf"
+    Class.new(Dev::BuiltinCommand)
+
+    Then "sorbet-runtime rejects the open edge"
+    raises RuntimeError
+  end
+
   test "an OverriddenCommand takes desc and hidden from the project override" do
     Given "a builtin slot overridden by a hidden project command"
-    builtin = FakeBuiltinCommand.new(desc: "builtin up")
+    builtin = Dev::BuiltinCommand.new(body: FakeBuiltinBody.new(desc: "builtin up"))
     project = Dev::ProjectCommand.new(run: "./bin/up.sh", desc: "project up", hidden: true)
     cmd = Dev::OverriddenCommand.new(builtin: builtin, project: project)
 
@@ -109,7 +159,7 @@ class CommandTest < Minitest::Test
 
   test "an OverriddenCommand takes guard and stamp traits from the builtin slot" do
     Given "a stamping, staleness-exempt builtin slot overridden by a project command"
-    builtin = FakeBuiltinCommand.new(staleness_exempt: true, stamps: true)
+    builtin = Dev::BuiltinCommand.new(body: FakeBuiltinBody.new(staleness_exempt: true, stamps: true))
     project = Dev::ProjectCommand.new(run: "./bin/up.sh", desc: "project up")
     cmd = Dev::OverriddenCommand.new(builtin: builtin, project: project)
 
@@ -120,7 +170,7 @@ class CommandTest < Minitest::Test
 
   test "an OverriddenCommand exposes its typed halves" do
     Given "an overridden command"
-    builtin = FakeBuiltinCommand.new
+    builtin = Dev::BuiltinCommand.new(body: FakeBuiltinBody.new)
     project = Dev::ProjectCommand.new(run: "./bin/up.sh")
     cmd = Dev::OverriddenCommand.new(builtin: builtin, project: project)
 

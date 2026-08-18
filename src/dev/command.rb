@@ -1,13 +1,14 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "builtin_body"
 require_relative "execution_context"
 
 module Dev
   # Sealed command data hierarchy. A command is one of exactly three shapes:
   #
-  # - BuiltinCommand: a Ruby body dev ships (abstract here; concretes live
-  #   under src/dev/builtins/)
+  # - BuiltinCommand: a final wrapper delegating to the BuiltinBody it
+  #   holds (bodies live under src/dev/builtins/)
   # - ProjectCommand: pure data parsed from a dev.yml `commands:` entry
   # - OverriddenCommand: a project command occupying a builtin's slot (the
   #   builtin runs first, like a hardcoded super())
@@ -15,8 +16,8 @@ module Dev
   # Sealing makes any other nesting unrepresentable: CommandExecutor
   # dispatches exhaustively over these three variants (case + T.absurd).
   # Sorbet requires the direct subclasses of a sealed class beside it, which
-  # is why the whole hierarchy shares this file; BuiltinCommand is abstract
-  # but deliberately NOT sealed, so its concretes get their own files.
+  # is why the whole hierarchy shares this file; every leaf is closed
+  # (BuiltinCommand is final!), so the seal holds with no open edge.
   class Command
     extend T::Sig
     extend T::Helpers
@@ -46,27 +47,37 @@ module Dev
     def stamps? = false
   end
 
-  # Built-in command that executes Ruby code. Concretes live under
-  # src/dev/builtins/, one class per builtin, with collaborators injected
-  # through their constructors; per-call values arrive through #call.
+  # Built-in command that executes Ruby code: a concrete, final wrapper
+  # holding the BuiltinBody it delegates everything to. The Ruby bodies
+  # live under src/dev/builtins/, one class per builtin; the composition
+  # root wraps each in this leaf. final! means no subclasses can exist, so
+  # Command's sealed runtime hook has nothing to reject — the hierarchy is
+  # closed without reaching into sorbet-runtime internals.
   class BuiltinCommand < Command
     extend T::Sig
     extend T::Helpers
-    abstract!
+    final!
 
-    sig { abstract.params(args: T::Array[String], context: ExecutionContext).void }
-    def call(args:, context:); end
+    sig(:final) { params(body: BuiltinBody).void }
+    def initialize(body:)
+      @body = T.let(body, BuiltinBody)
+    end
+
+    sig(:final) { override.returns(String) }
+    def desc = @body.desc
+
+    sig(:final) { override.returns(T::Boolean) }
+    def hidden? = @body.hidden?
+
+    sig(:final) { override.returns(T::Boolean) }
+    def staleness_exempt? = @body.staleness_exempt?
+
+    sig(:final) { override.returns(T::Boolean) }
+    def stamps? = @body.stamps?
+
+    sig(:final) { params(args: T::Array[String], context: ExecutionContext).void }
+    def call(args:, context:) = @body.call(args:, context:)
   end
-
-  # Statically, `sealed!` binds only Command's direct subclasses, so
-  # BuiltinCommand concretes may live in their own files — but sorbet-runtime's
-  # inherited hook also rides down to BuiltinCommand's subclasses and would
-  # reject them for lacking a sealed declaration. Registering an empty
-  # decl-file prefix marks BuiltinCommand as the hierarchy's deliberately open
-  # edge: the hook accepts subclasses from any file (src/dev/builtins/, test
-  # fakes), matching the static rule.
-  BuiltinCommand.instance_variable_set(:@sorbet_sealed_module_decl_file, "")
-  BuiltinCommand.instance_variable_set(:@sorbet_sealed_module_all_subclasses, [])
 
   # Project command from a dev.yml `commands:` entry. Pure data: the run
   # string, optional description, repl flag, and container opt-out. When

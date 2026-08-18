@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/builtin_body"
 require "dev/command_executor"
 require "dev/command"
 require "shadowenv_ruby"
@@ -9,16 +10,18 @@ require "fileutils"
 require "pathname"
 require "tmpdir"
 
-# Builtin fake for dispatch-order assertions; traits configurable so the
-# override path can exercise both wait shapes.
-class ExecutorFakeBuiltin < Dev::BuiltinCommand
+# Body fake for dispatch-order assertions; traits configurable so the
+# override path can exercise both wait shapes. Tests wrap it in
+# BuiltinCommand the same way the composition root does.
+class ExecutorFakeBody
+  include Dev::BuiltinBody
+
   attr_reader :calls
 
   def initialize(stamps: false, &body)
     @stamps = stamps
     @calls = []
     @body = body
-    super()
   end
 
   def desc = "a builtin"
@@ -29,7 +32,7 @@ class ExecutorFakeBuiltin < Dev::BuiltinCommand
     @calls << [args, context]
     @body&.call
   end
-end unless defined?(ExecutorFakeBuiltin)
+end unless defined?(ExecutorFakeBody)
 
 transform!(RSpock::AST::Transformation)
 class Dev::CommandExecutorTest < Minitest::Test
@@ -43,16 +46,16 @@ class Dev::CommandExecutorTest < Minitest::Test
 
   test "a builtin command runs its Ruby body in-process" do
     Given "a builtin and an executor"
-    builtin = ExecutorFakeBuiltin.new
+    body = ExecutorFakeBody.new
     executor = Dev::CommandExecutor.new
     root = Pathname.new(Dir.mktmpdir("executor-builtin-"))
     context = build_context(root)
 
     When "executing"
-    executor.execute(builtin, args: ["--verbose"], context: context)
+    executor.execute(Dev::BuiltinCommand.new(body: body), args: ["--verbose"], context: context)
 
     Then "the body received args and context; no child process was involved"
-    builtin.calls == [[["--verbose"], context]]
+    body.calls == [[["--verbose"], context]]
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -88,9 +91,9 @@ class Dev::CommandExecutorTest < Minitest::Test
     original_cwd = Dir.pwd
     root = Pathname.new(Dir.mktmpdir("executor-up-wait-"))
     execution_order = []
-    builtin = ExecutorFakeBuiltin.new(stamps: true) { execution_order << :builtin_install }
+    body = ExecutorFakeBody.new(stamps: true) { execution_order << :builtin_install }
     command = Dev::OverriddenCommand.new(
-      builtin: builtin,
+      builtin: Dev::BuiltinCommand.new(body: body),
       project: Dev::ProjectCommand.new(run: "./bin/up.rb", desc: "Setup", container: false),
     )
     executor = Dev::CommandExecutor.new
@@ -117,7 +120,7 @@ class Dev::CommandExecutorTest < Minitest::Test
     original_cwd = Dir.pwd
     root = Pathname.new(Dir.mktmpdir("executor-up-fail-"))
     command = Dev::OverriddenCommand.new(
-      builtin: ExecutorFakeBuiltin.new(stamps: true),
+      builtin: Dev::BuiltinCommand.new(body: ExecutorFakeBody.new(stamps: true)),
       project: Dev::ProjectCommand.new(run: "./bin/up.rb", desc: "Setup", container: false),
     )
     executor = Dev::CommandExecutor.new
@@ -150,9 +153,9 @@ class Dev::CommandExecutorTest < Minitest::Test
     Given "a non-stamping builtin slot overridden by a project command"
     original_cwd = Dir.pwd
     root = Pathname.new(Dir.mktmpdir("executor-override-exec-"))
-    builtin = ExecutorFakeBuiltin.new(stamps: false)
+    body = ExecutorFakeBody.new(stamps: false)
     command = Dev::OverriddenCommand.new(
-      builtin: builtin,
+      builtin: Dev::BuiltinCommand.new(body: body),
       project: Dev::ProjectCommand.new(run: "./bin/lint.sh", desc: "Lint", container: false),
     )
     executor = Dev::CommandExecutor.new
@@ -162,7 +165,7 @@ class Dev::CommandExecutorTest < Minitest::Test
     executor.execute(command, args: [], context: build_context(root))
 
     Then "nothing sequences after execute, so the exec tail-call is safe and kept"
-    builtin.calls.size == 1
+    body.calls.size == 1
     1 * Kernel.exec(anything, "shadowenv", "exec", "--", "sh", "-c", includes("./bin/lint.sh"))
     0 * Kernel.system(any_parameters)
 
