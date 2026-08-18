@@ -24,6 +24,10 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
   class they silently assert nothing.
   → .agents/skills/gem-rspock--rspock/ (ships in the rspock gem; linked by
   `dev up` / `dev install-deps`)
+- [testing/nested-test-fakes] Test fake classes nest inside the test class
+  they serve — never at file top level with prefixed names and
+  `unless defined?` guards.
+  → .cursor/skills/learnings/nested-test-fakes/
 
 ## process
 
