@@ -6,24 +6,24 @@ require "dev/overridden_executor"
 require "dev/command"
 require "pathname"
 
-# Builtin fake whose stamping trait drives the tail-message choice (the
-# OverriddenCommand delegates stamps? to its builtin slot).
-class OverriddenExecutorFakeBuiltin < Dev::BuiltinCommand
-  def initialize(stamps:)
-    @stamps = stamps
-    super()
-  end
-
-  def desc = "a builtin"
-
-  def stamps? = @stamps
-
-  def call(args:, context:); end
-end unless defined?(OverriddenExecutorFakeBuiltin)
-
 transform!(RSpock::AST::Transformation)
 class Dev::OverriddenExecutorTest < Minitest::Test
   include SorbetHelper
+
+  # Builtin fake whose stamping trait drives the tail-message choice (the
+  # OverriddenCommand delegates stamps? to its builtin slot).
+  class FakeBuiltin < Dev::BuiltinCommand
+    def initialize(stamps:)
+      @stamps = stamps
+      super()
+    end
+
+    def desc = "a builtin"
+
+    def stamps? = @stamps
+
+    def call(args:, context:); end
+  end
 
   def build_context
     ui = typed_mock(Dev::Cli::Ui)
@@ -32,7 +32,7 @@ class Dev::OverriddenExecutorTest < Minitest::Test
 
   def build_command(stamps:)
     Dev::OverriddenCommand.new(
-      builtin: OverriddenExecutorFakeBuiltin.new(stamps: stamps),
+      builtin: FakeBuiltin.new(stamps: stamps),
       project: Dev::ProjectCommand.new(run: "./bin/up.rb", desc: "Setup", container: false),
     )
   end

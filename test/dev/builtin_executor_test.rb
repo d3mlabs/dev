@@ -6,26 +6,26 @@ require "dev/builtin_executor"
 require "dev/command"
 require "pathname"
 
-# Builtin fake whose body records its invocations, so the test can assert
-# the in-process delegation passed args and context through untouched.
-class BuiltinExecutorFakeBuiltin < Dev::BuiltinCommand
-  attr_reader :calls
-
-  def initialize
-    @calls = []
-    super()
-  end
-
-  def desc = "a builtin"
-
-  def call(args:, context:)
-    @calls << [args, context]
-  end
-end unless defined?(BuiltinExecutorFakeBuiltin)
-
 transform!(RSpock::AST::Transformation)
 class Dev::BuiltinExecutorTest < Minitest::Test
   include SorbetHelper
+
+  # Builtin fake whose body records its invocations, so the test can assert
+  # the in-process delegation passed args and context through untouched.
+  class FakeBuiltin < Dev::BuiltinCommand
+    attr_reader :calls
+
+    def initialize
+      @calls = []
+      super()
+    end
+
+    def desc = "a builtin"
+
+    def call(args:, context:)
+      @calls << [args, context]
+    end
+  end
 
   def build_context
     ui = typed_mock(Dev::Cli::Ui)
@@ -34,7 +34,7 @@ class Dev::BuiltinExecutorTest < Minitest::Test
 
   test "execute runs the builtin's Ruby body in-process with args and context" do
     Given "a builtin fake and the executor"
-    builtin = BuiltinExecutorFakeBuiltin.new
+    builtin = FakeBuiltin.new
     executor = Dev::BuiltinExecutor.new
     context = build_context
 

@@ -6,18 +6,18 @@ require "dev/command_executor"
 require "dev/command"
 require "pathname"
 
-# Minimal builtin fake: the composite only dispatches on the variant's
-# type, so the fake carries no behavior — the strategy mock receives it
-# untouched.
-class DispatchFakeBuiltin < Dev::BuiltinCommand
-  def desc = "a builtin"
-
-  def call(args:, context:); end
-end unless defined?(DispatchFakeBuiltin)
-
 transform!(RSpock::AST::Transformation)
 class Dev::CommandExecutorTest < Minitest::Test
   include SorbetHelper
+
+  # Minimal builtin fake: the composite only dispatches on the variant's
+  # type, so the fake carries no behavior — the strategy mock receives it
+  # untouched.
+  class FakeBuiltin < Dev::BuiltinCommand
+    def desc = "a builtin"
+
+    def call(args:, context:); end
+  end
 
   def build_context
     ui = typed_mock(Dev::Cli::Ui)
@@ -36,7 +36,7 @@ class Dev::CommandExecutorTest < Minitest::Test
 
   test "a builtin command dispatches to the builtin strategy with exact args" do
     Given "a composite whose builtin strategy expects the dispatch"
-    command = DispatchFakeBuiltin.new
+    command = FakeBuiltin.new
     context = build_context
     strategies = build_strategies
     strategies.fetch(:builtin_executor)
@@ -69,7 +69,7 @@ class Dev::CommandExecutorTest < Minitest::Test
   test "an overridden command dispatches to the overridden strategy" do
     Given "a composite whose overridden strategy expects the dispatch"
     command = Dev::OverriddenCommand.new(
-      builtin: DispatchFakeBuiltin.new,
+      builtin: FakeBuiltin.new,
       project: Dev::ProjectCommand.new(run: "./bin/up.rb", desc: "Setup", container: false),
     )
     context = build_context

@@ -6,32 +6,32 @@ require "dev/command_service"
 require "dev/command"
 require "pathname"
 
-# Builtin fake whose traits drive the service's guard/stamp decisions and
-# whose call records the dispatch.
-class ServiceFakeBuiltin < Dev::BuiltinCommand
-  attr_reader :calls
-
-  def initialize(staleness_exempt: false, stamps: false)
-    super()
-    @staleness_exempt = staleness_exempt
-    @stamps = stamps
-    @calls = []
-  end
-
-  def desc = "a builtin"
-
-  def staleness_exempt? = @staleness_exempt
-
-  def stamps? = @stamps
-
-  def call(args:, context:)
-    @calls << [args, context]
-  end
-end unless defined?(ServiceFakeBuiltin)
-
 transform!(RSpock::AST::Transformation)
 class Dev::CommandServiceTest < Minitest::Test
   include SorbetHelper
+
+  # Builtin fake whose traits drive the service's guard/stamp decisions and
+  # whose call records the dispatch.
+  class FakeBuiltin < Dev::BuiltinCommand
+    attr_reader :calls
+
+    def initialize(staleness_exempt: false, stamps: false)
+      super()
+      @staleness_exempt = staleness_exempt
+      @stamps = stamps
+      @calls = []
+    end
+
+    def desc = "a builtin"
+
+    def staleness_exempt? = @staleness_exempt
+
+    def stamps? = @stamps
+
+    def call(args:, context:)
+      @calls << [args, context]
+    end
+  end
 
   def build_service(builtins:, dependency_service:, executor: build_executor)
     Dev::CommandService.new(
@@ -71,7 +71,7 @@ class Dev::CommandServiceTest < Minitest::Test
 
   test "execute fetches the command, dispatches it, and passes args and context through" do
     Given "a service over one builtin"
-    builtin = ServiceFakeBuiltin.new(staleness_exempt: true)
+    builtin = FakeBuiltin.new(staleness_exempt: true)
     service = build_service(builtins: { "deps" => builtin }, dependency_service: fake_dependency_service)
     context = fake_context
 
@@ -98,7 +98,7 @@ class Dev::CommandServiceTest < Minitest::Test
     dependency_service = typed_mock(Dev::DependencyService)
     dependency_service.expects(:guard!).once
     service = build_service(
-      builtins: { "build" => ServiceFakeBuiltin.new(staleness_exempt: false) },
+      builtins: { "build" => FakeBuiltin.new(staleness_exempt: false) },
       dependency_service: dependency_service,
     )
 
@@ -115,7 +115,7 @@ class Dev::CommandServiceTest < Minitest::Test
     dependency_service.expects(:guard!).never
     dependency_service.stubs(:lock!)
     service = build_service(
-      builtins: { "update-deps" => ServiceFakeBuiltin.new(staleness_exempt: true) },
+      builtins: { "update-deps" => FakeBuiltin.new(staleness_exempt: true) },
       dependency_service: dependency_service,
     )
 
@@ -132,7 +132,7 @@ class Dev::CommandServiceTest < Minitest::Test
     dependency_service.stubs(:guard!)
     dependency_service.expects(:lock!).once
     service = build_service(
-      builtins: { "install-deps" => ServiceFakeBuiltin.new(staleness_exempt: true, stamps: true) },
+      builtins: { "install-deps" => FakeBuiltin.new(staleness_exempt: true, stamps: true) },
       dependency_service: dependency_service,
     )
 
@@ -149,7 +149,7 @@ class Dev::CommandServiceTest < Minitest::Test
     dependency_service.stubs(:guard!)
     dependency_service.expects(:lock!).never
     service = build_service(
-      builtins: { "deps" => ServiceFakeBuiltin.new },
+      builtins: { "deps" => FakeBuiltin.new },
       dependency_service: dependency_service,
     )
 
@@ -168,7 +168,7 @@ class Dev::CommandServiceTest < Minitest::Test
     executor = typed_mock(Dev::CommandExecutor)
     executor.stubs(:execute).raises(Dev::CommandRunner::CommandFailedError.new(exit_status: 7))
     service = build_service(
-      builtins: { "up" => ServiceFakeBuiltin.new(staleness_exempt: true, stamps: true) },
+      builtins: { "up" => FakeBuiltin.new(staleness_exempt: true, stamps: true) },
       dependency_service: dependency_service,
       executor: executor,
     )
@@ -182,7 +182,7 @@ class Dev::CommandServiceTest < Minitest::Test
 
   test "visible_commands serves the repository's usage view" do
     Given "a service over one visible builtin"
-    builtin = ServiceFakeBuiltin.new
+    builtin = FakeBuiltin.new
     service = build_service(builtins: { "deps" => builtin }, dependency_service: fake_dependency_service)
 
     Expect "the usage view flows through the service (the onion rule)"
