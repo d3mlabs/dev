@@ -13,10 +13,11 @@ module Dev
   # The boundary coercion for a project's declaration files. Two passes,
   # each reading its file exactly once:
   #
-  # - #load parses dev.yml eagerly (usage needs the command list) and
-  #   rejects the removed `ruby:` key at parse time.
-  # - #with_toolchain loads dependencies.rb — arbitrary Ruby, so it runs
-  #   only once a command actually runs, never for `dev --help`.
+  # - #load parses dev.yml (Runner construction) and rejects the removed
+  #   `ruby:` key at parse time.
+  # - #with_toolchain loads dependencies.rb, once per invocation as the
+  #   ExecutionContext is assembled — help included, so dependencies.rb
+  #   must stay cheap and side-effect-free (it is a declaration file).
   #
   # Stateless: reusable across manifests, inputs arrive as method arguments.
   class ProjectManifestLoader

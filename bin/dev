@@ -56,7 +56,7 @@ else
 end
 
 begin
-  Dev::Runner.new.run(ARGV, out: $stdout, ui: ui)
+  Dev::Runner.new(ui: ui).run(ARGV)
 rescue Dev::DevYamlNotFoundError
   warn "dev: no dev.yml found in this directory or any parent."
   warn "Run dev from inside a project that defines a dev.yml."

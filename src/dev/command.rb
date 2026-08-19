@@ -34,8 +34,26 @@ module Dev
     abstract!
     sealed!
 
+    # The usage sections `dev --help` renders. Every command declares its
+    # group explicitly (the trait is abstract, not defaulted) so nothing
+    # lands in a section silently.
+    class Category < T::Enum
+      enums do
+        # Environment provisioning and dependency state (up, check, ...).
+        Lifecycle = new
+        # Day-to-day development tooling (cd, plan, help, ...).
+        Workflow = new
+        # Commands the project defines in dev.yml.
+        Project = new
+      end
+    end
+
     sig { abstract.returns(String) }
     def desc; end
+
+    # The usage section this command lists under.
+    sig { abstract.returns(Category) }
+    def category; end
 
     # Whether this command is callable but omitted from `dev`/`dev --help`
     # usage. Used for internal plumbing (e.g. build primitives) a project
@@ -117,6 +135,9 @@ module Dev
     sig(:final) { override.returns(T::Boolean) }
     def hidden? = @hidden
 
+    sig(:final) { override.returns(Category) }
+    def category = Category::Project
+
     sig(:final) { params(other: Object).returns(T::Boolean) }
     def ==(other)
       return false unless other.is_a?(ProjectCommand)
@@ -175,5 +196,10 @@ module Dev
 
     sig(:final) { override.returns(T::Boolean) }
     def stamps? = @builtin.stamps?
+
+    # The usage section belongs to the slot too: an overriding `up:` still
+    # lists under Lifecycle, with the project's description.
+    sig(:final) { override.returns(Category) }
+    def category = @builtin.category
   end
 end

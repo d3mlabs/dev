@@ -40,7 +40,7 @@ class CommandRunnerTest < Minitest::Test
     cmd = Dev::ProjectCommand.new(run: "./bin/console", repl: true)
 
     When "we run a command"
-    runner.run(cmd)
+    runner.exec_into(cmd)
 
     Then "the declared Ruby is ensured for the project root"
     1 * ShadowenvRuby.ensure!(ruby_version: "4.0.1", project_root: @project_root)
@@ -56,7 +56,7 @@ class CommandRunnerTest < Minitest::Test
     cmd = Dev::ProjectCommand.new(run: "./bin/console", repl: true)
 
     When "we run the command"
-    @runner.run(cmd)
+    @runner.exec_into(cmd)
 
     Then "header is printed and process is replaced via exec"
     1 * @ui.print_header("./bin/console")
@@ -71,7 +71,7 @@ class CommandRunnerTest < Minitest::Test
     cmd = Dev::ProjectCommand.new(run: "./bin/console", repl: true)
 
     When "we run the command with extra args"
-    @runner.run(cmd, args: ["--verbose"])
+    @runner.exec_into(cmd, args: ["--verbose"])
 
     Then "header includes args and exec passes them through"
     1 * @ui.print_header("./bin/console --verbose")
@@ -86,7 +86,7 @@ class CommandRunnerTest < Minitest::Test
     cmd = Dev::ProjectCommand.new(run: "./bin/setup.rb", repl: false)
 
     When "we run the command"
-    @runner.run(cmd)
+    @runner.exec_into(cmd)
 
     Then "header is printed and exec is called with a shell wrapper"
     1 * @ui.print_header("./bin/setup.rb")
@@ -101,7 +101,7 @@ class CommandRunnerTest < Minitest::Test
     cmd = Dev::ProjectCommand.new(run: "./bin/test.sh", repl: false)
 
     When "we run the command"
-    @runner.run(cmd)
+    @runner.exec_into(cmd)
 
     Then "the shell wrapper includes exit code handling and Done/Failed output"
     1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c",
@@ -116,7 +116,7 @@ class CommandRunnerTest < Minitest::Test
     cmd = Dev::ProjectCommand.new(run: "./bin/test.sh", repl: false)
 
     When "we run with args"
-    @runner.run(cmd, args: ["-v"])
+    @runner.exec_into(cmd, args: ["-v"])
 
     Then "header and wrapper both include args"
     1 * @ui.print_header("./bin/test.sh -v")
@@ -126,16 +126,14 @@ class CommandRunnerTest < Minitest::Test
     Dir.chdir(@original_cwd)
   end
 
-  # --- Wait mode (spawn-and-wait for callers with post-execute steps) ---
+  # --- run_waiting (spawn-and-wait for callers with post-execute steps) ---
 
-  test "wait mode spawns and waits instead of exec-replacing the process" do
-    Given "a wait-mode runner and a non-repl command"
-    runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", project_root: @project_root, wait: true)
-    runner.stubs(:ensure_shadowenv_provisioned!)
+  test "run_waiting spawns and waits instead of exec-replacing the process" do
+    Given "a non-repl command"
     cmd = Dev::ProjectCommand.new(run: "./bin/setup.rb", repl: false)
 
-    When "we run the command"
-    runner.run(cmd)
+    When "we run the command waiting"
+    @runner.run_waiting(cmd)
 
     Then "the command runs as a waited child, never via exec"
     1 * Kernel.system(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/setup.rb")) >> true
@@ -145,18 +143,16 @@ class CommandRunnerTest < Minitest::Test
     Dir.chdir(@original_cwd)
   end
 
-  test "wait mode raises CommandFailedError carrying the child's exit status" do
-    Given "a wait-mode runner whose child exits 7"
-    runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", project_root: @project_root, wait: true)
-    runner.stubs(:ensure_shadowenv_provisioned!)
+  test "run_waiting raises CommandFailedError carrying the child's exit status" do
+    Given "a child that exits 7"
     cmd = Dev::ProjectCommand.new(run: "./bin/setup.rb", repl: false)
     Kernel.stubs(:system).returns(false)
     # Kernel.system is stubbed, so wait on a real child here to leave the
     # thread-local $? at exit status 7 — what a real failed child would set.
     Process.wait(Process.spawn("sh", "-c", "exit 7"))
 
-    When "we run the command"
-    error = assert_raises(Dev::CommandRunner::CommandFailedError) { runner.run(cmd) }
+    When "we run the command waiting"
+    error = assert_raises(Dev::CommandRunner::CommandFailedError) { @runner.run_waiting(cmd) }
 
     Then "the error carries the child's exit status"
     error.exit_status == 7
@@ -165,17 +161,17 @@ class CommandRunnerTest < Minitest::Test
     Dir.chdir(@original_cwd)
   end
 
-  test "wait mode runs the containerized command spawn-and-wait" do
-    Given "a wait-mode runner with a build container"
+  test "run_waiting runs the containerized command spawn-and-wait" do
+    Given "a runner with a build container"
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry")
-    runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root, wait: true)
+    runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root)
     cmd = Dev::ProjectCommand.new(run: "./bin/up.sh", repl: false)
 
-    When "the image resolves and we run the command"
+    When "the image resolves and we run the command waiting"
     BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
     BuildContainer.stubs(:docker_run_command)
       .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/up.sh"])
-    runner.run(cmd)
+    runner.run_waiting(cmd)
 
     Then "docker runs as a waited child, never via exec"
     1 * Kernel.system("docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/up.sh") >> true
@@ -200,7 +196,7 @@ class CommandRunnerTest < Minitest::Test
     BuildContainer.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: {})
       .returns(["docker", "run", "--rm", "-v", "#{@project_root}:/project", "-w", "/project", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
-    runner.run(cmd)
+    runner.exec_into(cmd)
 
     Then "exec is called with the docker run command"
     1 * Kernel.exec("docker", "run", "--rm", "-v", "#{@project_root}:/project", "-w", "/project", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh")
@@ -224,7 +220,7 @@ class CommandRunnerTest < Minitest::Test
       .with("dev-myapp-linux-content-abc123", shell_cmd: "./bin/build.sh", env: {})
       .returns(["docker", "exec", "-w", "/project", "dev-myapp-linux-content-abc123", "sh", "-c", "./bin/build.sh"])
     BuildContainer.expects(:docker_run_command).never
-    runner.run(cmd)
+    runner.exec_into(cmd)
 
     Then "exec is called with the docker exec command, not docker run"
     1 * Kernel.exec("docker", "exec", "-w", "/project", "dev-myapp-linux-content-abc123", "sh", "-c", "./bin/build.sh")
@@ -241,7 +237,7 @@ class CommandRunnerTest < Minitest::Test
     cmd = Dev::ProjectCommand.new(run: "./bin/deploy.sh", repl: false, container: false)
 
     When "we run the command"
-    runner.run(cmd)
+    runner.exec_into(cmd)
 
     Then "exec uses shadowenv, not docker"
     1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/deploy.sh"))
@@ -257,7 +253,7 @@ class CommandRunnerTest < Minitest::Test
     cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
 
     When "we run the command"
-    runner.run(cmd)
+    runner.exec_into(cmd)
 
     Then "exec uses shadowenv"
     1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/build.sh"))
@@ -279,7 +275,7 @@ class CommandRunnerTest < Minitest::Test
     BuildContainer.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/test.sh --verbose", volumes: [], env: {})
       .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/test.sh --verbose"])
-    runner.run(cmd, args: ["--verbose"])
+    runner.exec_into(cmd, args: ["--verbose"])
 
     Then "the args are included in the shell command passed to docker"
     1 * @ui.print_header("./bin/test.sh --verbose")
@@ -304,7 +300,7 @@ class CommandRunnerTest < Minitest::Test
     BuildContainer.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: { "WWISE_TOKEN" => "tok-123" })
       .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
-    runner.run(cmd)
+    runner.exec_into(cmd)
 
     Then "the ENV value is passed through to docker run"
     1 * Kernel.exec("docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh")
@@ -326,7 +322,7 @@ class CommandRunnerTest < Minitest::Test
       .with(config, project_root: @project_root, push: false, publish: true, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc))
       .returns("myregistry/myapp-linux:content-abc123")
     BuildContainer.stubs(:docker_run_command).returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
-    runner.run(cmd)
+    runner.exec_into(cmd)
 
     Then "ensure_image! is asked to publish the resolved image"
     1 * Kernel.exec("docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh")
@@ -352,7 +348,7 @@ class CommandRunnerTest < Minitest::Test
     BuildContainer.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: {})
       .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
-    runner.run(cmd)
+    runner.exec_into(cmd)
 
     Then "no env is injected and the command still runs"
     1 * Kernel.exec("docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh")

@@ -1,35 +1,53 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "builtin_executor"
 require_relative "command"
-require_relative "command_runner"
 require_relative "execution_context"
+require_relative "overridden_executor"
+require_relative "project_executor"
 
 module Dev
-  # The process boundary of a command run: exhaustive dispatch over the
-  # sealed Command variants. Builtin bodies run in-process; project commands
-  # hand the process over to the child through CommandRunner.
+  # The dispatching composite over the sealed Command variants: the case +
+  # T.absurd sends each variant to its injected strategy and does nothing
+  # else. Builtin bodies go to BuiltinExecutor (in-process), project
+  # commands to ProjectExecutor's exec tail-call, overridden slots to
+  # OverriddenExecutor (builtin stage, then the project tail).
   class CommandExecutor
     extend T::Sig
 
+    # @param builtin_executor [BuiltinExecutor]
+    # @param project_executor [ProjectExecutor]
+    # @param overridden_executor [OverriddenExecutor]
+    sig do
+      params(
+        builtin_executor: BuiltinExecutor,
+        project_executor: ProjectExecutor,
+        overridden_executor: OverriddenExecutor,
+      ).void
+    end
+    def initialize(builtin_executor:, project_executor:, overridden_executor:)
+      @builtin_executor = T.let(builtin_executor, BuiltinExecutor)
+      @project_executor = T.let(project_executor, ProjectExecutor)
+      @overridden_executor = T.let(overridden_executor, OverriddenExecutor)
+    end
+
+    # Dispatch one command to its strategy.
+    #
     # @param command [Command]
     # @param args [Array<String>] argv after the command name
     # @param context [ExecutionContext]
     # @return [void]
-    # @raise [CommandRunner::CommandFailedError] in wait mode, when the
-    #   child command fails
+    # @raise [CommandRunner::CommandFailedError] when a waited child fails
     sig { params(command: Command, args: T::Array[String], context: ExecutionContext).void }
     def execute(command, args:, context:)
       case command
       when BuiltinCommand
-        command.call(args:, context:)
+        @builtin_executor.execute(command, args:, context:)
       when ProjectCommand
-        run_project(command, args:, context:, wait: false)
+        @project_executor.exec_into(command, args:)
       when OverriddenCommand
-        # Virtual dispatch: the builtin body is the hardcoded super(), then
-        # the project command owns the slot.
-        command.builtin.call(args:, context:)
-        run_project(command.project, args:, context:, wait: command.stamps?)
+        @overridden_executor.execute(command, args:, context:)
       else
         # :nocov: — the sealed hierarchy leaves no fourth variant to
         # construct, so this arm is unreachable at runtime; T.absurd keeps
@@ -37,36 +55,6 @@ module Dev
         T.absurd(command)
         # :nocov:
       end
-    end
-
-    private
-
-    # Run a project command through CommandRunner. Wait-vs-exec derives from
-    # the slot's stamping trait (the dev#85 invariant, enforced here in one
-    # place): a stamping slot must spawn-and-wait so the caller can sequence
-    # the installed stamp after execute — exec-replace would make it
-    # unreachable. Generic project commands keep the exec tail-call (TTY and
-    # signal passthrough, no double process tree).
-    #
-    # @param command [ProjectCommand]
-    # @param args [Array<String>]
-    # @param context [ExecutionContext]
-    # @param wait [Boolean]
-    # @return [void]
-    # @raise [CommandRunner::CommandFailedError] in wait mode, when the
-    #   child command fails
-    sig do
-      params(command: ProjectCommand, args: T::Array[String], context: ExecutionContext, wait: T::Boolean).void
-    end
-    def run_project(command, args:, context:, wait:)
-      CommandRunner.new(
-        ui: context.ui,
-        ruby_version: context.ruby_version,
-        python_version: context.python_version,
-        build_container: context.build_container,
-        project_root: context.project_root,
-        wait: wait,
-      ).run(command, args:)
     end
   end
 end

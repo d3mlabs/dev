@@ -20,6 +20,9 @@ module Dev
       sig { override.returns(String) }
       def desc = "Check dependency state freshness (manifest vs lockfiles vs installed)"
 
+      sig { override.returns(Command::Category) }
+      def category = Command::Category::Lifecycle
+
       # check IS the explicit staleness inspection — guarding before it
       # would report the same thing twice.
       sig { override.returns(T::Boolean) }

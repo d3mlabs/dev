@@ -32,6 +32,9 @@ module Dev
       sig { override.returns(String) }
       def desc = "Manage host caches (e.g. cache gc --keep 2)"
 
+      sig { override.returns(Command::Category) }
+      def category = Command::Category::Workflow
+
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
         subcommand, *rest = args

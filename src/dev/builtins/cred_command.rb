@@ -21,6 +21,9 @@ module Dev
       sig { override.returns(String) }
       def desc = "Resolve a stored credential (e.g. cred get <namespace> <key>)"
 
+      sig { override.returns(Command::Category) }
+      def category = Command::Category::Workflow
+
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
         @accessor.run(args)

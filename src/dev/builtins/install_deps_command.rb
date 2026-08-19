@@ -59,6 +59,9 @@ module Dev
       sig { override.returns(String) }
       def desc = "Install locked dependencies handled on the host (e.g. gh releases)"
 
+      sig { override.returns(Command::Category) }
+      def category = Command::Category::Lifecycle
+
       # install-deps IS the remediation for a stale install — never nag
       # before it.
       sig { override.returns(T::Boolean) }
