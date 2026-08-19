@@ -330,6 +330,44 @@ class RunnerTest < Minitest::Test
     true
   end
 
+  test "a signal-killed child exits 128 plus the signal number" do
+    Given "a Runner whose service raises the child's signal death"
+    command_service = typed_mock(Dev::CommandService)
+    command_service.stubs(:execute).raises(Dev::CommandRunner::CommandKilledError.new(signal: 15))
+    runner = build_runner(commands: {}, command_service: command_service)
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(143).once
+
+    When "we run the command"
+    runner.run(["up"])
+
+    Then "the signal is reported under the dev: prefix"
+    $stderr.string.include?("dev: command killed by signal 15")
+
+    Cleanup
+    $stderr = old_stderr
+  end
+
+  test "a child that never spawned exits 127" do
+    Given "a Runner whose service raises the spawn failure"
+    command_service = typed_mock(Dev::CommandService)
+    command_service.stubs(:execute).raises(Dev::CommandRunner::CommandSpawnError.new)
+    runner = build_runner(commands: {}, command_service: command_service)
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(127).once
+
+    When "we run the command"
+    runner.run(["up"])
+
+    Then "the spawn failure is reported under the dev: prefix"
+    $stderr.string.include?("dev: command could not be spawned")
+
+    Cleanup
+    $stderr = old_stderr
+  end
+
   test "an ArgumentError is reported as a clean dev error with exit 1" do
     Given "a Runner whose service raises a usage error"
     command_service = typed_mock(Dev::CommandService)

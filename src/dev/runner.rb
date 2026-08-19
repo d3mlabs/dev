@@ -118,6 +118,16 @@ module Dev
         # The child already reported its failure (the shell wrapper prints
         # its ✗ Failed footer); preserve the child's exit code.
         Kernel.exit(error.exit_status)
+      when CommandRunner::CommandKilledError
+        # A signal killed the child before its footer could run, so report
+        # here; exit 128 + signal number (shell convention).
+        $stderr.puts "dev: #{error}"
+        Kernel.exit(128 + error.signal)
+      when CommandRunner::CommandSpawnError
+        # The child never started, so nothing was reported; exit 127, the
+        # shell's command-not-found convention.
+        $stderr.puts "dev: #{error}"
+        Kernel.exit(127)
       when CommandRepository::CommandNotFoundError
         $stderr.puts "dev: #{error}"
         $stderr.puts "Run 'dev' or 'dev --help' to see available commands."

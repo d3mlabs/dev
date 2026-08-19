@@ -161,6 +161,40 @@ class CommandRunnerTest < Minitest::Test
     Dir.chdir(@original_cwd)
   end
 
+  test "run_waiting raises CommandKilledError carrying the terminating signal" do
+    Given "a child killed by SIGTERM"
+    cmd = Dev::ProjectCommand.new(run: "./bin/setup.rb", repl: false)
+    Kernel.stubs(:system).returns(false)
+    # Kernel.system is stubbed, so wait on a real signal-killed child here to
+    # leave the thread-local $? signaled — what a real killed child would set.
+    Process.wait(Process.spawn("sh", "-c", "kill -TERM $$"))
+
+    When "we run the command waiting"
+    error = assert_raises(Dev::CommandRunner::CommandKilledError) { @runner.run_waiting(cmd) }
+
+    Then "the error carries the terminating signal number"
+    error.signal == Signal.list.fetch("TERM")
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+  end
+
+  test "run_waiting raises CommandSpawnError when the child never started" do
+    Given "a child that cannot be spawned"
+    cmd = Dev::ProjectCommand.new(run: "./bin/setup.rb", repl: false)
+    # Kernel.system returns nil (not false) when the child never started.
+    Kernel.stubs(:system).returns(nil)
+
+    When "we run the command waiting"
+    @runner.run_waiting(cmd)
+
+    Then
+    raises Dev::CommandRunner::CommandSpawnError
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+  end
+
   test "run_waiting runs the containerized command spawn-and-wait" do
     Given "a runner with a build container"
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry")
