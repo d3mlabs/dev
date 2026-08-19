@@ -36,7 +36,9 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     File.write(config, "knowledge_repo: #{source}\n")
     settings = Dev::Settings.new(config_path: config)
     cache = Dev::Learnings::Cache.new(repo: source, dir: File.join(dir, "cache"))
-    installer = Dev::SkillInstaller.new(skills_dir: File.join(dir, "user-skills"))
+    # The fixture cache lives under the real temp dir; the tmpdir override
+    # keeps the installer's ephemeral-source guard out of these tests' way.
+    installer = Dev::SkillInstaller.new(skills_dir: File.join(dir, "user-skills"), tmpdir: File.join(dir, "tmp"))
     synchronizer = Dev::Learnings::Synchronizer.new(settings: settings, cache: cache, skill_installer: installer)
     project = project_root == :default ? Pathname(dir) / "repo" : project_root
     FileUtils.mkdir_p(project) if project

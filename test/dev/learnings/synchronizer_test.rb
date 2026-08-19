@@ -20,7 +20,9 @@ class Dev::Learnings::SynchronizerTest < Minitest::Test
     File.write(config, "knowledge_repo: #{source}\n")
     settings = Dev::Settings.new(config_path: config)
     cache = Dev::Learnings::Cache.new(repo: source, dir: File.join(dir, "cache"), refresh_floor: refresh_floor)
-    installer = Dev::SkillInstaller.new(skills_dir: File.join(dir, "user-skills"))
+    # The fixture cache lives under the real temp dir; the tmpdir override
+    # keeps the installer's ephemeral-source guard out of these tests' way.
+    installer = Dev::SkillInstaller.new(skills_dir: File.join(dir, "user-skills"), tmpdir: File.join(dir, "tmp"))
     project = Pathname(dir) / "repo"
     FileUtils.mkdir_p(project)
     synchronizer = Dev::Learnings::Synchronizer.new(settings: settings, cache: cache, skill_installer: installer)
@@ -142,7 +144,7 @@ class Dev::Learnings::SynchronizerTest < Minitest::Test
     dir = Dir.mktmpdir("dev-learnings-sync-test-")
     saved_env = ENV.delete("DEV_KNOWLEDGE_REPO")
     settings = Dev::Settings.new(config_path: File.join(dir, "config.yml"))
-    installer = Dev::SkillInstaller.new(skills_dir: File.join(dir, "user-skills"))
+    installer = Dev::SkillInstaller.new(skills_dir: File.join(dir, "user-skills"), tmpdir: File.join(dir, "tmp"))
     synchronizer = Dev::Learnings::Synchronizer.for(settings: settings, skill_installer: installer)
     project = Pathname(dir) / "repo"
     FileUtils.mkdir_p(project)
