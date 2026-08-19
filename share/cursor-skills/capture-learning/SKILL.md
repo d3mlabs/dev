@@ -40,12 +40,12 @@ unfixed. (ai-flow's capture passes declare these on a `FIX:` output
 line; in a session, just say it.)
 
 **Wide angle**: the incident in front of you is one sample, seen from
-inside. Before drafting, step back: skim the repo's recent history
-(`git log --oneline -30`) and the existing index for the same friction
-recurring — an instance of a visible pattern becomes a learning about
-the class, not the instance. Then ask where the cause lives: a failure
-that surfaced here but is owned by another repo's code or tooling is
-that repo's fix, not this repo's coping rule.
+inside. Before drafting, step back and look for the pattern behind the
+instance in whatever evidence is at hand — recent commits and PRs, the
+existing index, open learning drafts. When the same friction recurs,
+capture the class, not the instance. Then ask where the cause lives: a
+failure that surfaced here but is owned by another repo's code or
+tooling is that repo's fix, not this repo's coping rule.
 
 Before drafting, dedup: search the repo's learnings index and the org
 tier (skills under `~/.cursor/skills/`, the generated
