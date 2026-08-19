@@ -29,6 +29,24 @@ learnings. Three kinds, one format:
 
 Diff-local fixes (typos, renames, one-off bugs) are not learnings.
 
+**Root-cause gate**: before recording how to cope with a failure, sharp
+edge, or confusing behavior, ask whether a code, test, or tooling change
+would remove it outright. If one would, the coping procedure is NOT the
+learning — capture the design rule the fix embodies (or nothing), and
+propose the fix itself to the human (in the session, the plan, or an
+issue) instead of encoding the workaround. A workaround-shaped learning
+is valid only when its body names the root cause and why it stays
+unfixed. (ai-flow's capture passes declare these on a `FIX:` output
+line; in a session, just say it.)
+
+**Wide angle**: the incident in front of you is one sample, seen from
+inside. Before drafting, step back: skim the repo's recent history
+(`git log --oneline -30`) and the existing index for the same friction
+recurring — an instance of a visible pattern becomes a learning about
+the class, not the instance. Then ask where the cause lives: a failure
+that surfaced here but is owned by another repo's code or tooling is
+that repo's fix, not this repo's coping rule.
+
 Before drafting, dedup: search the repo's learnings index and the org
 tier (skills under `~/.cursor/skills/`, the generated
 `.cursor/rules/org-invariants.mdc`) for an equivalent or conflicting
