@@ -28,11 +28,19 @@ module Dev
 
     # @param skills_dir [Pathname, String] target dir the symlinks live in;
     #   defaults to the user-global ~/.cursor/skills
-    def initialize(skills_dir: Pathname(Dir.home) / ".cursor" / "skills")
+    # @param tmpdir [Pathname, String] ephemeral temp root that links must
+    #   never target; defaults to Dir.tmpdir (override for tests, whose
+    #   fixture skill trees themselves live under the real temp dir)
+    def initialize(skills_dir: Pathname(Dir.home) / ".cursor" / "skills", tmpdir: Dir.tmpdir)
       @skills_dir = Pathname(skills_dir)
+      @tmpdir_roots = tmpdir_roots(Pathname(tmpdir))
     end
 
-    # Install or refresh one skill symlink. Never raises: a broken skill
+    # Install or refresh one skill symlink. A source that resolves under the
+    # temp dir is never linked (warned and skipped): a durable link to
+    # purgeable state silently dangles later, whatever produced it — e.g. a
+    # dev running from a temp clone would re-point the machine-global links
+    # at itself through SHIPPED_SKILLS_DIR. Never raises: a broken skill
     # install must not block the command it rides (the failure is reported
     # on stderr).
     #
@@ -42,6 +50,12 @@ module Dev
     def install(name, source_dir)
       source = Pathname(source_dir)
       return unless source.directory?
+
+      if ephemeral?(source)
+        $stderr.puts "dev: warning: not linking #{name} — #{source} is under the temp dir " \
+          "and would dangle once it is purged."
+        return
+      end
 
       link = @skills_dir / name
       return if link.symlink? && link.readlink == source
@@ -91,6 +105,29 @@ module Dev
     end
 
     private
+
+    # The temp root in both its raw and fully-resolved forms — on macOS
+    # Dir.tmpdir is under /var/... while realpath resolution reports the
+    # /private/var/... spelling, so containment must check both.
+    #
+    # @param tmpdir [Pathname]
+    # @return [Array<Pathname>]
+    def tmpdir_roots(tmpdir)
+      expanded = tmpdir.expand_path
+      roots = [expanded]
+      roots << expanded.realpath if expanded.exist?
+      roots.uniq
+    end
+
+    # Whether a path resolves under the temp dir — a durable link to it
+    # would dangle once the temp dir is purged, whatever produced it.
+    #
+    # @param path [Pathname]
+    # @return [Boolean]
+    def ephemeral?(path)
+      resolved = path.exist? ? path.realpath : path.expand_path
+      @tmpdir_roots.any? { |root| resolved.to_s.start_with?("#{root}#{File::SEPARATOR}") }
+    end
 
     # Prune symlinks that point under source_root but whose target skill no
     # longer exists (e.g. a skill removed from the knowledge repo). Links

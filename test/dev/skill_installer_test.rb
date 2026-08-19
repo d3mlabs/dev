@@ -15,12 +15,20 @@ class Dev::SkillInstallerTest < Minitest::Test
     source
   end
 
+  # Installer under test. The real Dir.tmpdir contains these tests' own
+  # fixture trees, so every installer gets a tmpdir override pointing inside
+  # the fixture dir — sources built by build_skill read as durable, and a
+  # test opts into ephemerality by building under `<dir>/tmp`.
+  def build_installer(dir, skills_dir:)
+    Dev::SkillInstaller.new(skills_dir: skills_dir, tmpdir: File.join(dir, "tmp"))
+  end
+
   test "install creates the symlink on first run" do
     Given "a skill source and an empty skills dir"
     dir = Dir.mktmpdir("dev-skill-test-")
     source = build_skill(dir, "share", "cursor-skills", "ai-flow")
     skills_dir = File.join(dir, "skills")
-    installer = Dev::SkillInstaller.new(skills_dir: skills_dir)
+    installer = build_installer(dir, skills_dir: skills_dir)
 
     When "installing the skill"
     installer.install("ai-flow", source)
@@ -38,7 +46,7 @@ class Dev::SkillInstallerTest < Minitest::Test
     dir = Dir.mktmpdir("dev-skill-test-")
     source = build_skill(dir, "share", "cursor-skills", "ai-flow")
     skills_dir = File.join(dir, "skills")
-    installer = Dev::SkillInstaller.new(skills_dir: skills_dir)
+    installer = build_installer(dir, skills_dir: skills_dir)
     installer.install("ai-flow", source)
 
     When "installing again"
@@ -58,7 +66,7 @@ class Dev::SkillInstallerTest < Minitest::Test
     skills_dir = File.join(dir, "skills")
     FileUtils.mkdir_p(skills_dir)
     File.symlink(File.join(dir, "old-location"), File.join(skills_dir, "ai-flow"))
-    installer = Dev::SkillInstaller.new(skills_dir: skills_dir)
+    installer = build_installer(dir, skills_dir: skills_dir)
 
     When "installing the skill"
     installer.install("ai-flow", source)
@@ -78,7 +86,7 @@ class Dev::SkillInstallerTest < Minitest::Test
     user_dir = File.join(skills_dir, "ai-flow")
     FileUtils.mkdir_p(user_dir)
     File.write(File.join(user_dir, "SKILL.md"), "user's own\n")
-    installer = Dev::SkillInstaller.new(skills_dir: skills_dir)
+    installer = build_installer(dir, skills_dir: skills_dir)
     old_stderr = $stderr
     $stderr = StringIO.new
 
@@ -99,7 +107,7 @@ class Dev::SkillInstallerTest < Minitest::Test
     Given "an installer and a nonexistent source"
     dir = Dir.mktmpdir("dev-skill-test-")
     skills_dir = File.join(dir, "skills")
-    installer = Dev::SkillInstaller.new(skills_dir: skills_dir)
+    installer = build_installer(dir, skills_dir: skills_dir)
 
     When "installing from the missing source"
     installer.install("ai-flow", File.join(dir, "missing"))
@@ -111,6 +119,71 @@ class Dev::SkillInstallerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "install refuses a source under the temp dir and warns" do
+    Given "a skill source living under the ephemeral temp dir (e.g. a dev checkout in a build workspace)"
+    dir = Dir.mktmpdir("dev-skill-test-")
+    source = build_skill(dir, "tmp", "clone", "share", "cursor-skills", "ai-flow")
+    skills_dir = File.join(dir, "skills")
+    installer = build_installer(dir, skills_dir: skills_dir)
+    old_stderr = $stderr
+    $stderr = StringIO.new
+
+    When "installing the skill"
+    installer.install("ai-flow", source)
+
+    Then "no link is minted and the skip is warned"
+    !File.exist?(File.join(skills_dir, "ai-flow"))
+    $stderr.string.include?("not linking ai-flow")
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install refuses an ephemeral source even when it would replace a dangling link" do
+    Given "a link already dangling, and a refresh source under the temp dir"
+    dir = Dir.mktmpdir("dev-skill-test-")
+    source = build_skill(dir, "tmp", "clone", "share", "cursor-skills", "ai-flow")
+    skills_dir = File.join(dir, "skills")
+    FileUtils.mkdir_p(skills_dir)
+    File.symlink(File.join(dir, "gone"), File.join(skills_dir, "ai-flow"))
+    installer = build_installer(dir, skills_dir: skills_dir)
+    old_stderr = $stderr
+    $stderr = StringIO.new
+
+    When "installing the skill"
+    installer.install("ai-flow", source)
+
+    Then "the existing link is left alone rather than re-pointed at purgeable state"
+    File.readlink(File.join(skills_dir, "ai-flow")) == File.join(dir, "gone")
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.rm_rf(dir)
+  end
+
+  test "temp dir containment sees through symlinked temp roots (macOS /var vs /private/var)" do
+    Given "a tmpdir override that is a symlink to the dir the source lives under"
+    dir = Dir.mktmpdir("dev-skill-test-")
+    source = build_skill(dir, "tmp", "share", "cursor-skills", "ai-flow")
+    tmp_alias = File.join(dir, "tmp-alias")
+    File.symlink(File.join(dir, "tmp"), tmp_alias)
+    skills_dir = File.join(dir, "skills")
+    installer = Dev::SkillInstaller.new(skills_dir: skills_dir, tmpdir: tmp_alias)
+    old_stderr = $stderr
+    $stderr = StringIO.new
+
+    When "installing the skill"
+    installer.install("ai-flow", source)
+
+    Then "the path is recognized as ephemeral and never links"
+    !File.exist?(File.join(skills_dir, "ai-flow"))
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.rm_rf(dir)
+  end
+
   test "install warns instead of raising when the skills dir cannot be created" do
     Given "a skills dir under a read-only parent"
     dir = Dir.mktmpdir("dev-skill-test-")
@@ -118,7 +191,7 @@ class Dev::SkillInstallerTest < Minitest::Test
     read_only_parent = File.join(dir, "read-only")
     FileUtils.mkdir_p(read_only_parent)
     FileUtils.chmod(0o555, read_only_parent)
-    installer = Dev::SkillInstaller.new(skills_dir: File.join(read_only_parent, "skills"))
+    installer = build_installer(dir, skills_dir: File.join(read_only_parent, "skills"))
     old_stderr = $stderr
     $stderr = StringIO.new
 
@@ -141,7 +214,7 @@ class Dev::SkillInstallerTest < Minitest::Test
     build_skill(dir, "source", "typed-errors")
     FileUtils.mkdir_p(File.join(dir, "source", "not-a-skill"))
     skills_dir = File.join(dir, "skills")
-    installer = Dev::SkillInstaller.new(skills_dir: skills_dir)
+    installer = build_installer(dir, skills_dir: skills_dir)
 
     When "installing all skills"
     installer.install_all(File.join(dir, "source"))
@@ -160,7 +233,7 @@ class Dev::SkillInstallerTest < Minitest::Test
     dir = Dir.mktmpdir("dev-skill-test-")
     build_skill(dir, "gems", "rspock-1.2.0", "skills", "rspock")
     skills_dir = File.join(dir, "skills")
-    installer = Dev::SkillInstaller.new(skills_dir: skills_dir)
+    installer = build_installer(dir, skills_dir: skills_dir)
 
     When "installing all skills with a prefix"
     installer.install_all(File.join(dir, "gems", "rspock-1.2.0", "skills"), prefix: "gem-rspock--")
@@ -179,7 +252,7 @@ class Dev::SkillInstallerTest < Minitest::Test
     build_skill(dir, "source", "kept")
     removed = build_skill(dir, "source", "removed")
     skills_dir = File.join(dir, "skills")
-    installer = Dev::SkillInstaller.new(skills_dir: skills_dir)
+    installer = build_installer(dir, skills_dir: skills_dir)
     installer.install_all(source_root)
     FileUtils.rm_rf(removed)
     foreign_target = build_skill(dir, "elsewhere", "mine")
@@ -206,7 +279,7 @@ class Dev::SkillInstallerTest < Minitest::Test
     skills_dir = File.join(dir, "skills")
     FileUtils.mkdir_p(skills_dir)
     FileUtils.chmod(0o000, skills_dir)
-    installer = Dev::SkillInstaller.new(skills_dir: skills_dir)
+    installer = build_installer(dir, skills_dir: skills_dir)
     old_stderr = $stderr
     $stderr = StringIO.new
 
@@ -227,7 +300,7 @@ class Dev::SkillInstallerTest < Minitest::Test
     dir = Dir.mktmpdir("dev-skill-test-")
     source = build_skill(dir, "source", "linked")
     skills_dir = File.join(dir, "skills")
-    installer = Dev::SkillInstaller.new(skills_dir: skills_dir)
+    installer = build_installer(dir, skills_dir: skills_dir)
     installer.install("linked", source)
     user_dir = File.join(skills_dir, "user-owned")
     FileUtils.mkdir_p(user_dir)

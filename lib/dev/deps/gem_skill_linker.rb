@@ -48,33 +48,24 @@ module Dev
       def initialize(project_root:, skills_dir: nil, tmpdir: Dir.tmpdir)
         @project_root = Pathname(project_root)
         @skills_dir = Pathname(skills_dir || @project_root.join(*AGENT_SKILLS_SUBDIRS))
-        @skill_installer = SkillInstaller.new(skills_dir: @skills_dir)
-        @tmpdir_roots = tmpdir_roots(Pathname(tmpdir))
+        @skill_installer = SkillInstaller.new(skills_dir: @skills_dir, tmpdir: tmpdir)
       end
 
       # Scan the locked gem set for shipped skills and refresh the project's
       # links: install one per skill found, prune gem links whose gem left the
-      # lock. A skill that resolves under the temp dir is never linked (warned
-      # and skipped — a persistent link to purgeable state silently dangles
-      # later), but its gem still counts as present for pruning, so an
-      # ephemeral resolution cannot delete a durable link minted earlier.
-      # Never raises — skill links are hygiene riding a dependency install,
-      # and hygiene must not block correctness (failures are reported on
-      # stderr).
+      # lock. A skill that resolves under the temp dir is never linked —
+      # SkillInstaller refuses ephemeral sources at the shared seam — but its
+      # gem still counts as present for pruning, so an ephemeral resolution
+      # cannot delete a durable link minted earlier. Never raises — skill
+      # links are hygiene riding a dependency install, and hygiene must not
+      # block correctness (failures are reported on stderr).
       #
       # @return [void]
       def link_all
         return unless gemfile_path.exist?
 
         expected = expected_links
-        expected.each do |name, skill_dir|
-          if ephemeral?(skill_dir)
-            $stderr.puts "dev: warning: not linking #{name} — #{skill_dir} is under the temp dir " \
-              "and would dangle once it is purged."
-          else
-            @skill_installer.install(name, skill_dir)
-          end
-        end
+        expected.each { |name, skill_dir| @skill_installer.install(name, skill_dir) }
         prune_stale_links(expected.keys)
       rescue StandardError => e
         $stderr.puts "dev: warning: could not refresh gem skill links (#{e.message})."
@@ -160,30 +151,6 @@ module Dev
           end
         end
         names.uniq
-      end
-
-      # The temp root in both its raw and fully-resolved forms — on macOS
-      # Dir.tmpdir is under /var/... while bundler reports the
-      # /private/var/... realpath, so containment must check both spellings.
-      #
-      # @param tmpdir [Pathname]
-      # @return [Array<Pathname>]
-      def tmpdir_roots(tmpdir)
-        expanded = tmpdir.expand_path
-        roots = [expanded]
-        roots << expanded.realpath if expanded.exist?
-        roots.uniq
-      end
-
-      # Whether a resolved skill directory lives under the temp dir — the
-      # signature of a harness resolving the bundle into its own purgeable
-      # cache, whatever produced it.
-      #
-      # @param path [Pathname]
-      # @return [Boolean]
-      def ephemeral?(path)
-        resolved = path.exist? ? path.realpath : path.expand_path
-        @tmpdir_roots.any? { |root| resolved.to_s.start_with?("#{root}#{File::SEPARATOR}") }
       end
 
       # Remove gem links that no current gem accounts for (the gem left the
