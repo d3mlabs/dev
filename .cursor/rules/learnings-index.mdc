@@ -20,16 +20,20 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
 ## testing
 
 - [testing/rspock-bare-assertions] In rspock `transform!`-ed test classes,
-  bare `Then`/`Expect` statements are assertions; outside a transformed
-  class they silently assert nothing.
-  → .agents/skills/gem-rspock--rspock/ (ships in the rspock gem; linked by
-  `dev up` / `dev install-deps`)
+ bare `Then`/`Expect` statements are assertions; outside a transformed
+ class they silently assert nothing.
+ → .agents/skills/gem-rspock--rspock/ (ships in the rspock gem; linked by
+ `dev up` / `dev install-deps`)
+- [testing/scrub-guard-launch-env] BinDevTest's scrub-list guard asserts
+ the suite's launch env; a local agent-shell `dev test` can fail it while
+ the identical tree is green in CI.
+ → .cursor/skills/learnings/scrub-guard-launch-env/
 
 ## process
 
-- [process/ai-flow-gitlink-exclusion] Commit sweeps (`git add -A`) must
-  exclude nested-checkout gitlinks such as `.ai-flow`.
-  → .cursor/skills/learnings/ai-flow-gitlink-exclusion/
+- [process/ai-flow-gitlink-exclusion] Repo-wide sweeps (`git add -A`,
+ `srb tc` over `.`) must exclude nested checkouts such as `.ai-flow`.
+ → .cursor/skills/learnings/ai-flow-gitlink-exclusion/
 
 ## architecture
 
