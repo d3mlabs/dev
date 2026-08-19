@@ -18,7 +18,8 @@ require "tmpdir"
 #    exports must be on it (the drift over time).
 transform!(RSpock::AST::Transformation)
 class Dev::BinDevTest < Minitest::Test
-  BIN_DEV = File.expand_path("../../bin/dev", __dir__)
+  DEV_ROOT = File.expand_path("../..", __dir__)
+  BIN_DEV = File.join(DEV_ROOT, "bin", "dev")
 
   # The scrub list, parsed from the shim's `unset` line (joining its
   # backslash continuations). The sh script is the single source of truth
@@ -66,24 +67,32 @@ class Dev::BinDevTest < Minitest::Test
 
   # The scrub list is a denylist of what `bundle exec` exports, and that
   # set grows across bundler versions — a new exported key would silently
-  # re-open the leak. This suite itself runs under bundle exec, so the
-  # live truth is at hand: every key where ENV differs from
-  # Bundler.original_env was exported by the locked bundler. Subset
-  # direction only: keys the shim lists but this launch didn't export
-  # (config-dependent ones like BUNDLE_PATH) are free no-ops, so exact
-  # equality would only add flake.
-  test "the scrub list covers every key the running bundler exports" do
-    Given "the env diff bundler's activation left on this test process"
-    exported = (ENV.keys | Bundler.original_env.keys).select { |key| ENV[key] != Bundler.original_env[key] }
+  # re-open the leak. The live truth comes from the locked bundler itself:
+  # a child launched under `bundle exec` reports every key its activation
+  # exported (its ENV vs its Bundler.original_env). The launch is
+  # constructed here — the parent's own activation keys are removed first
+  # — because the suite's inherited env is whatever shell started it (an
+  # agent harness, an IDE) and proves nothing about the locked bundler.
+  # Subset direction only: keys the shim lists but this activation didn't
+  # export (config-dependent ones like BUNDLE_PATH) are free no-ops, so
+  # exact equality would only add flake.
+  test "the scrub list covers every key the locked bundler exports" do
+    Given "a child activated by the repo's bundle exec, from a base env with no prior activation"
+    # nil values unset the keys; BUNDLE_GEMFILE especially must be absent,
+    # or bundle exec's BUNDLER_ORIG_* record hides it from the diff.
+    fresh_env = ENV.keys.grep(/\A(?:BUNDLE_|BUNDLER_|RUBYOPT\z|RUBYLIB\z)/).to_h { |key| [key, nil] }
+    report_exported = 'puts((ENV.keys | Bundler.original_env.keys)' \
+      ".select { |key| ENV[key] != Bundler.original_env[key] })"
+    out, _err, status = Open3.capture3(fresh_env, "bundle", "exec", "ruby", "-e", report_exported, chdir: DEV_ROOT)
     # In scope: bundler/ruby activation keys. Out of scope: BUNDLER_ORIG_*
     # (bundler's inert restore records) and GEM_* (legitimate user config,
     # per dev#94).
-    activation_key = /\A(?:BUNDLE_|BUNDLER_(?!ORIG_)|RUBYOPT\z|RUBYLIB\z)/
-    hostile = exported.grep(activation_key)
+    exported = out.split("\n").grep(/\A(?:BUNDLE_|BUNDLER_(?!ORIG_)|RUBYOPT\z|RUBYLIB\z)/)
 
-    Expect "a bundler-activated suite (else this guard proves nothing), fully covered by the scrub list"
-    hostile.include?("BUNDLE_GEMFILE")
-    (hostile - SHIM_UNSET_KEYS).empty?
+    Expect "a fresh activation that exported the Gemfile pin, fully covered by the scrub list"
+    status.success?
+    exported.include?("BUNDLE_GEMFILE")
+    (exported - SHIM_UNSET_KEYS).empty?
   end
 
   # A PATH-front stub standing in for ruby: the shim's version probe
