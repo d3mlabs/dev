@@ -30,6 +30,9 @@ module Dev
           "init: scaffold the index)"
       end
 
+      sig { override.returns(Command::Category) }
+      def category = Command::Category::Workflow
+
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
         @accessor_factory.call(context.project_root).run(args)

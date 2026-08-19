@@ -46,6 +46,9 @@ module Dev
         "Register this host as a self-hosted GitHub Actions runner (repo-scoped, or org-wide with --org)"
       end
 
+      sig { override.returns(Command::Category) }
+      def category = Command::Category::Lifecycle
+
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
         cfg = context.runner

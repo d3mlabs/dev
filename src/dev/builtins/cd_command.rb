@@ -21,6 +21,9 @@ module Dev
       sig { override.returns(String) }
       def desc = "Jump to a checkout under $DEV_CD_ROOT (default ~/src) by fuzzy name"
 
+      sig { override.returns(Command::Category) }
+      def category = Command::Category::Workflow
+
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
         @accessor.run(args)

@@ -21,6 +21,9 @@ module Dev
       sig { override.returns(String) }
       def desc = "Clone a GitHub repo (via gh auth) into $DEV_CD_ROOT (default ~/src), org defaults to d3mlabs"
 
+      sig { override.returns(Command::Category) }
+      def category = Command::Category::Workflow
+
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
         @accessor.run(args)

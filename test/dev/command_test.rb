@@ -7,16 +7,18 @@ require "dev/command"
 # A minimal builtin for exercising the trait defaults, the hierarchy's
 # open edge, and the OverriddenCommand composition.
 class FakeBuiltin < Dev::BuiltinCommand
-  def initialize(desc: "fake builtin", hidden: false, staleness_exempt: false, stamps: false, &body)
+  def initialize(desc: "fake builtin", hidden: false, staleness_exempt: false, stamps: false,
+    category: Dev::Command::Category::Workflow, &body)
     super()
     @desc = desc
     @hidden = hidden
     @staleness_exempt = staleness_exempt
     @stamps = stamps
+    @category = category
     @body = body
   end
 
-  attr_reader :desc
+  attr_reader :desc, :category
 
   def hidden? = @hidden
 
@@ -168,6 +170,24 @@ class CommandTest < Minitest::Test
     Expect "the slot's traits hold: a project up: still is the provisioning command"
     cmd.staleness_exempt?
     cmd.stamps?
+  end
+
+  test "a ProjectCommand's category is the project group" do
+    Given "a plain ProjectCommand"
+    cmd = Dev::ProjectCommand.new(run: "./bin/test.sh")
+
+    Expect "it lists under the project commands section"
+    cmd.category == Dev::Command::Category::Project
+  end
+
+  test "an OverriddenCommand takes its category from the builtin slot" do
+    Given "a lifecycle builtin slot overridden by a project command"
+    builtin = FakeBuiltin.new(category: Dev::Command::Category::Lifecycle)
+    project = Dev::ProjectCommand.new(run: "./bin/up.sh", desc: "project up")
+    cmd = Dev::OverriddenCommand.new(builtin: builtin, project: project)
+
+    Expect "the slot's group holds: an overriding up: still lists under Lifecycle"
+    cmd.category == Dev::Command::Category::Lifecycle
   end
 
   test "an OverriddenCommand exposes its typed halves" do

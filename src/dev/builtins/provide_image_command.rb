@@ -19,6 +19,9 @@ module Dev
       sig { override.returns(String) }
       def desc = "Resolve the build container image (local/pull/build) and print its tag"
 
+      sig { override.returns(Command::Category) }
+      def category = Command::Category::Lifecycle
+
       # Hidden: workflow plumbing, not a developer intent command.
       sig { override.returns(T::Boolean) }
       def hidden? = true

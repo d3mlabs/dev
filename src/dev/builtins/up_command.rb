@@ -31,6 +31,9 @@ module Dev
       sig { override.returns(String) }
       def desc = "Install locked dependencies, then run the project's up command (if defined)"
 
+      sig { override.returns(Command::Category) }
+      def category = Command::Category::Lifecycle
+
       # up IS the staleness remediation — never nag before it.
       sig { override.returns(T::Boolean) }
       def staleness_exempt? = true
