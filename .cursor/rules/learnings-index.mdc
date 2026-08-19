@@ -24,10 +24,6 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  class they silently assert nothing.
  → .agents/skills/gem-rspock--rspock/ (ships in the rspock gem; linked by
  `dev up` / `dev install-deps`)
-- [testing/scrub-guard-launch-env] BinDevTest's scrub-list guard asserts
- the suite's launch env; a local agent-shell `dev test` can fail it while
- the identical tree is green in CI.
- → .cursor/skills/learnings/scrub-guard-launch-env/
 
 ## process
 
