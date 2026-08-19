@@ -16,6 +16,8 @@ class Dev::CommandExecutorTest < Minitest::Test
   class FakeBuiltin < Dev::BuiltinCommand
     def desc = "a builtin"
 
+    def category = Dev::Command::Category::Workflow
+
     def call(args:, context:); end
   end
 

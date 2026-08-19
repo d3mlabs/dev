@@ -5,7 +5,7 @@ require "pathname"
 require "sorbet-runtime"
 
 # Dev CLI: find repo with dev.yml, run declared commands (optionally in a CLI::UI Frame).
-# Entry point: Dev::Runner.new.run(ARGV)
+# Entry point: Dev::Runner.new(ui:).run(ARGV)
 module Dev
   DEV_YAML_FILENAME = "dev.yml"
 

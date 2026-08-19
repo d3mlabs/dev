@@ -20,6 +20,8 @@ class Dev::OverriddenExecutorTest < Minitest::Test
 
     def desc = "a builtin"
 
+    def category = Dev::Command::Category::Workflow
+
     def stamps? = @stamps
 
     def call(args:, context:); end

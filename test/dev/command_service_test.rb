@@ -24,6 +24,8 @@ class Dev::CommandServiceTest < Minitest::Test
 
     def desc = "a builtin"
 
+    def category = Dev::Command::Category::Workflow
+
     def staleness_exempt? = @staleness_exempt
 
     def stamps? = @stamps

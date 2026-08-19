@@ -22,6 +22,8 @@ class Dev::BuiltinExecutorTest < Minitest::Test
 
     def desc = "a builtin"
 
+    def category = Dev::Command::Category::Workflow
+
     def call(args:, context:)
       @calls << [args, context]
     end

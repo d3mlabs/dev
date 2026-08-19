@@ -17,6 +17,8 @@ class RepositoryFakeBuiltin < Dev::BuiltinCommand
 
   def hidden? = @hidden
 
+  def category = Dev::Command::Category::Workflow
+
   def call(args:, context:); end
 end unless defined?(RepositoryFakeBuiltin)
 
