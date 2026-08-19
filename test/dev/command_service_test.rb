@@ -6,41 +6,54 @@ require "dev/command_service"
 require "dev/command"
 require "pathname"
 
-# Builtin fake whose traits drive the service's guard/stamp decisions and
-# whose call records the dispatch.
-class ServiceFakeBuiltin < Dev::BuiltinCommand
-  attr_reader :calls
-
-  def initialize(staleness_exempt: false, stamps: false)
-    @staleness_exempt = staleness_exempt
-    @stamps = stamps
-    @calls = []
-    super()
-  end
-
-  def desc = "a builtin"
-
-  def staleness_exempt? = @staleness_exempt
-
-  def stamps? = @stamps
-
-  def call(args:, context:)
-    @calls << [args, context]
-  end
-end unless defined?(ServiceFakeBuiltin)
-
 transform!(RSpock::AST::Transformation)
 class Dev::CommandServiceTest < Minitest::Test
   include SorbetHelper
 
-  CommandRepositoryClass = Dev.const_get(:CommandRepository)
-  CommandNotFoundErrorClass = CommandRepositoryClass.const_get(:CommandNotFoundError)
+  # Builtin fake whose traits drive the service's guard/stamp decisions and
+  # whose call records the dispatch.
+  class FakeBuiltin < Dev::BuiltinCommand
+    attr_reader :calls
 
-  def build_service(builtins:, dependency_service:, executor: Dev::CommandExecutor.new)
+    def initialize(staleness_exempt: false, stamps: false)
+      super()
+      @staleness_exempt = staleness_exempt
+      @stamps = stamps
+      @calls = []
+    end
+
+    def desc = "a builtin"
+
+    def category = Dev::Command::Category::Workflow
+
+    def staleness_exempt? = @staleness_exempt
+
+    def stamps? = @stamps
+
+    def call(args:, context:)
+      @calls << [args, context]
+    end
+  end
+
+  def build_service(builtins:, dependency_service:, executor: build_executor)
     Dev::CommandService.new(
-      repository: CommandRepositoryClass.new(builtins: builtins, project_commands: {}),
+      repository: Dev::CommandRepository.new(builtins: builtins, project_commands: {}),
       executor: executor,
       dependency_service: dependency_service,
+    )
+  end
+
+  # A real composite (these tests only dispatch builtins, in-process; the
+  # project seam's runner is a strict mock that must stay silent).
+  def build_executor
+    builtin_executor = Dev::BuiltinExecutor.new
+    project_executor = Dev::ProjectExecutor.new(command_runner: typed_mock(Dev::CommandRunner))
+    Dev::CommandExecutor.new(
+      builtin_executor: builtin_executor,
+      project_executor: project_executor,
+      overridden_executor: Dev::OverriddenExecutor.new(
+        builtin_executor: builtin_executor, project_executor: project_executor,
+      ),
     )
   end
 
@@ -61,14 +74,14 @@ class Dev::CommandServiceTest < Minitest::Test
 
   test "execute fetches the command, dispatches it, and passes args and context through" do
     Given "a service over one builtin"
-    builtin = ServiceFakeBuiltin.new(staleness_exempt: true)
+    builtin = FakeBuiltin.new(staleness_exempt: true)
     service = build_service(builtins: { "deps" => builtin }, dependency_service: fake_dependency_service)
     context = fake_context
 
     When "executing the command"
     service.execute("deps", args: ["path", "xcode"], context: context)
 
-    Then "the builtin body ran once with the args and context"
+    Then "the builtin ran once with the args and context"
     builtin.calls == [[["path", "xcode"], context]]
   end
 
@@ -80,7 +93,7 @@ class Dev::CommandServiceTest < Minitest::Test
     service.execute("nonexistent", args: [], context: fake_context)
 
     Then "the error bubbles under its native namespace"
-    raises CommandNotFoundErrorClass
+    raises Dev::CommandRepository::CommandNotFoundError
   end
 
   test "execute guards staleness before a non-exempt command" do
@@ -88,7 +101,7 @@ class Dev::CommandServiceTest < Minitest::Test
     dependency_service = typed_mock(Dev::DependencyService)
     dependency_service.expects(:guard!).once
     service = build_service(
-      builtins: { "build" => ServiceFakeBuiltin.new(staleness_exempt: false) },
+      builtins: { "build" => FakeBuiltin.new(staleness_exempt: false) },
       dependency_service: dependency_service,
     )
 
@@ -105,7 +118,7 @@ class Dev::CommandServiceTest < Minitest::Test
     dependency_service.expects(:guard!).never
     dependency_service.stubs(:lock!)
     service = build_service(
-      builtins: { "update-deps" => ServiceFakeBuiltin.new(staleness_exempt: true) },
+      builtins: { "update-deps" => FakeBuiltin.new(staleness_exempt: true) },
       dependency_service: dependency_service,
     )
 
@@ -122,7 +135,7 @@ class Dev::CommandServiceTest < Minitest::Test
     dependency_service.stubs(:guard!)
     dependency_service.expects(:lock!).once
     service = build_service(
-      builtins: { "install-deps" => ServiceFakeBuiltin.new(staleness_exempt: true, stamps: true) },
+      builtins: { "install-deps" => FakeBuiltin.new(staleness_exempt: true, stamps: true) },
       dependency_service: dependency_service,
     )
 
@@ -139,7 +152,7 @@ class Dev::CommandServiceTest < Minitest::Test
     dependency_service.stubs(:guard!)
     dependency_service.expects(:lock!).never
     service = build_service(
-      builtins: { "deps" => ServiceFakeBuiltin.new },
+      builtins: { "deps" => FakeBuiltin.new },
       dependency_service: dependency_service,
     )
 
@@ -158,7 +171,7 @@ class Dev::CommandServiceTest < Minitest::Test
     executor = typed_mock(Dev::CommandExecutor)
     executor.stubs(:execute).raises(Dev::CommandRunner::CommandFailedError.new(exit_status: 7))
     service = build_service(
-      builtins: { "up" => ServiceFakeBuiltin.new(staleness_exempt: true, stamps: true) },
+      builtins: { "up" => FakeBuiltin.new(staleness_exempt: true, stamps: true) },
       dependency_service: dependency_service,
       executor: executor,
     )
@@ -172,10 +185,10 @@ class Dev::CommandServiceTest < Minitest::Test
 
   test "visible_commands serves the repository's usage view" do
     Given "a service over one visible builtin"
-    builtin = ServiceFakeBuiltin.new
+    builtin = FakeBuiltin.new
     service = build_service(builtins: { "deps" => builtin }, dependency_service: fake_dependency_service)
 
-    Expect "the usage view flows through the service (the repository stays private)"
+    Expect "the usage view flows through the service (the onion rule)"
     service.visible_commands == { "deps" => builtin }
   end
 end

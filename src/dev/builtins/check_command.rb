@@ -13,11 +13,15 @@ module Dev
 
       sig { params(dependency_service: DependencyService).void }
       def initialize(dependency_service:)
+        super()
         @dependency_service = T.let(dependency_service, DependencyService)
       end
 
       sig { override.returns(String) }
       def desc = "Check dependency state freshness (manifest vs lockfiles vs installed)"
+
+      sig { override.returns(Command::Category) }
+      def category = Command::Category::Lifecycle
 
       # check IS the explicit staleness inspection — guarding before it
       # would report the same thing twice.

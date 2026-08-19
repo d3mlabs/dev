@@ -6,37 +6,70 @@ require_relative "../command"
 
 module Dev
   module Cli
-    # The `dev` / `dev --help` usage view. Consumes the visible commands the
-    # CommandService serves (never the repository) and renders the flat
-    # listing; grouped sections (a category on the builtin base) would slot
-    # in here when the usage-groups work lands.
+    # The usage view the help builtin renders. Consumes the visible commands
+    # the CommandService serves (never the repository) and renders them as
+    # sections keyed by each command's Category trait: the project's own
+    # commands first, then the Lifecycle and Development flow builtins.
+    # Alphabetical within a section, so the listing is deterministic
+    # regardless of registration order.
     class UsagePrinter
       extend T::Sig
 
-      sig { params(argv: T::Array[String]).returns(T::Boolean) }
-      def show_usage?(argv)
-        argv.empty? || argv == ["--help"] || argv == ["-h"]
-      end
-
       # @param project_name [String] the dev.yml `name:`
-      # @param commands [Hash{String => Dev::Command}] visible commands, in
-      #   listing order
+      # @param commands [Hash{String => Dev::Command}] visible commands
       # @param out [IO, StringIO]
       # @return [void]
       sig { params(project_name: String, commands: T::Hash[String, Command], out: T.any(IO, StringIO)).void }
       def print(project_name:, commands:, out:)
+        sections = commands.group_by { |_name, command| command.category }
+
         out.puts "Usage: dev <command> [args...]"
         out.puts ""
         out.puts "Commands for #{project_name}:"
-        if commands.empty?
+        project_commands = sections.fetch(Command::Category::Project, [])
+        if project_commands.empty?
           out.puts "  (no commands defined)"
         else
-          commands.each do |cmd_name, command|
-            out.puts "  #{cmd_name.ljust(12)} #{command.desc}"
-          end
+          print_commands(project_commands, out)
         end
+        print_section("Lifecycle", sections.fetch(Command::Category::Lifecycle, []), out)
+        print_section("Development flow", sections.fetch(Command::Category::Workflow, []), out)
         out.puts ""
         out.puts "Examples: dev up    dev up -v    dev update-deps    dev test"
+      end
+
+      private
+
+      # Render one builtin section; sections with no commands are omitted
+      # entirely (some builtins are config-gated, e.g. reset-container).
+      #
+      # @param heading [String]
+      # @param commands [Array<[String, Dev::Command]>]
+      # @param out [IO, StringIO]
+      # @return [void]
+      sig do
+        params(
+          heading: String,
+          commands: T::Array[[String, Command]],
+          out: T.any(IO, StringIO),
+        ).void
+      end
+      def print_section(heading, commands, out)
+        return if commands.empty?
+
+        out.puts ""
+        out.puts "#{heading}:"
+        print_commands(commands, out)
+      end
+
+      # @param commands [Array<[String, Dev::Command]>]
+      # @param out [IO, StringIO]
+      # @return [void]
+      sig { params(commands: T::Array[[String, Command]], out: T.any(IO, StringIO)).void }
+      def print_commands(commands, out)
+        commands.sort_by { |name, _command| name }.each do |name, command|
+          out.puts "  #{name.ljust(12)} #{command.desc}"
+        end
       end
     end
   end

@@ -23,12 +23,16 @@ module Dev
         ).void
       end
       def initialize(install_deps_command:, hook_installer: Dev::Cd::HookInstaller.new)
+        super()
         @install_deps_command = T.let(install_deps_command, InstallDepsCommand)
         @hook_installer = T.let(hook_installer, Dev::Cd::HookInstaller)
       end
 
       sig { override.returns(String) }
       def desc = "Install locked dependencies, then run the project's up command (if defined)"
+
+      sig { override.returns(Command::Category) }
+      def category = Command::Category::Lifecycle
 
       # up IS the staleness remediation — never nag before it.
       sig { override.returns(T::Boolean) }

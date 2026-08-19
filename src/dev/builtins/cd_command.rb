@@ -14,11 +14,15 @@ module Dev
 
       sig { params(accessor: Dev::Cd::Accessor).void }
       def initialize(accessor: Dev::Cd::Accessor.new)
+        super()
         @accessor = T.let(accessor, Dev::Cd::Accessor)
       end
 
       sig { override.returns(String) }
       def desc = "Jump to a checkout under $DEV_CD_ROOT (default ~/src) by fuzzy name"
+
+      sig { override.returns(Command::Category) }
+      def category = Command::Category::Workflow
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)

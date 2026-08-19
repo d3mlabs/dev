@@ -50,6 +50,7 @@ module Dev
         gem_skill_linker_factory: ->(project_root) { Dev::Deps::GemSkillLinker.new(project_root:) },
         synchronizer: Dev::Learnings::Synchronizer.for
       )
+        super()
         @installer_factory = T.let(installer_factory, InstallerFactory)
         @gem_skill_linker_factory = T.let(gem_skill_linker_factory, GemSkillLinkerFactory)
         @synchronizer = T.let(synchronizer, T.untyped)
@@ -57,6 +58,9 @@ module Dev
 
       sig { override.returns(String) }
       def desc = "Install locked dependencies handled on the host (e.g. gh releases)"
+
+      sig { override.returns(Command::Category) }
+      def category = Command::Category::Lifecycle
 
       # install-deps IS the remediation for a stale install — never nag
       # before it.

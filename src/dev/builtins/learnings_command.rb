@@ -20,6 +20,7 @@ module Dev
 
       sig { params(accessor_factory: AccessorFactory).void }
       def initialize(accessor_factory: ->(project_root) { Dev::Learnings::Accessor.new(project_root:) })
+        super()
         @accessor_factory = T.let(accessor_factory, AccessorFactory)
       end
 
@@ -28,6 +29,9 @@ module Dev
         "Learnings read path (sync: refresh now, status: what's linked, invariants: Tier-0 block, " \
           "init: scaffold the index)"
       end
+
+      sig { override.returns(Command::Category) }
+      def category = Command::Category::Workflow
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)

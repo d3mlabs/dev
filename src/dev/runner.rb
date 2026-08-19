@@ -3,6 +3,7 @@
 
 require "pathname"
 require "stringio"
+require "dev/builtin_executor"
 require "dev/builtins"
 require "dev/cli"
 require "dev/command"
@@ -14,69 +15,93 @@ require "dev/command_service"
 require "dev/dependency_service"
 require "dev/deps/staleness"
 require "dev/execution_context"
+require "dev/overridden_executor"
+require "dev/project_executor"
 require "dev/project_manifest"
 require "dev/project_manifest_loader"
 require "shadowenv_ruby"
 
 module Dev
   # The application service behind bin/dev, and the composition root of the
-  # command onion: usage check, argv/context assembly, one call into
-  # CommandService, and the rescue-to-exit mapping at the CLI boundary.
+  # command onion: route argv to a command name (bare/--help/-h mean help),
+  # assemble the ExecutionContext, wire the service graph, make one call
+  # into CommandService, and map rescues to exits at the CLI boundary.
   class Runner
     extend T::Sig
 
     sig do
       params(
+        ui: Dev::Cli::Ui,
+        out: T.any(IO, StringIO),
         dev_yaml_path: Pathname,
         manifest_loader: ProjectManifestLoader,
         command_service: T.nilable(CommandService),
       ).void
     end
     def initialize(
+      ui:,
+      out: $stdout,
       dev_yaml_path: Dev.dev_yaml_file,
       manifest_loader: ProjectManifestLoader.new,
       command_service: nil
     )
+      @ui = T.let(ui, Dev::Cli::Ui)
+      @out = T.let(out, T.any(IO, StringIO))
       @manifest_loader = T.let(manifest_loader, ProjectManifestLoader)
-      # The dev.yml side loads eagerly — usage needs the command list. The
-      # dependencies.rb side waits for #run (see the toolchain pass there).
       @manifest = T.let(manifest_loader.load(dev_yaml_path), ProjectManifest)
-      @command_service = T.let(command_service || build_command_service(@manifest), CommandService)
-      @usage_printer = T.let(Cli::UsagePrinter.new, Cli::UsagePrinter)
+      @command_service = T.let(command_service, T.nilable(CommandService))
     end
 
     # Runs the dev command specified by the given argv.
     #
+    # Composition happens here rather than in the constructor so that
+    # everything — including the toolchain pass over dependencies.rb, which
+    # is arbitrary project Ruby — stays inside the exit_for error mapping.
+    #
     # @param argv [Array[String]] The argv to run the command with.
-    # @param ui [Dev::Cli::Ui] CLI UI implementation for framing and formatting.
-    # @param out [IO, StringIO] Stream for usage output (default: $stdout).
     # @return [void]
-    sig { params(argv: T::Array[String], ui: Dev::Cli::Ui, out: T.any(IO, StringIO)).void }
-    def run(argv, ui:, out: $stdout)
-      if @usage_printer.show_usage?(argv)
-        @usage_printer.print(project_name: @manifest.name, commands: @command_service.visible_commands, out:)
-        return
-      end
+    sig { params(argv: T::Array[String]).void }
+    def run(argv)
+      cmd_name, args = route(argv)
+      context = build_context
+      service = @command_service || build_command_service(@manifest, context)
+      service.execute(cmd_name, args:, context:)
+    rescue StandardError => e
+      exit_for(e)
+    end
 
-      args = T.let(argv.dup, T::Array[String])
-      cmd_name = T.must(args.shift)
-      # The toolchain pass runs here, after the usage check — `dev --help`
-      # never loads the deps manifest (dependencies.rb is arbitrary Ruby).
+    private
+
+    # Split argv into a command name and its arguments. Bare `dev` and the
+    # conventional flags route to the help builtin; every other spelling
+    # (including `dev help`) is a regular command lookup.
+    #
+    # @param argv [Array<String>]
+    # @return [(String, Array<String>)]
+    sig { params(argv: T::Array[String]).returns([String, T::Array[String]]) }
+    def route(argv)
+      return ["help", []] if argv.empty? || argv == ["--help"] || argv == ["-h"]
+
+      args = argv.dup
+      [T.must(args.shift), args]
+    end
+
+    # Assemble the per-run ExecutionContext. The toolchain pass over
+    # dependencies.rb runs unconditionally here, once per invocation.
+    #
+    # @return [ExecutionContext]
+    sig { returns(ExecutionContext) }
+    def build_context
       manifest = @manifest_loader.with_toolchain(@manifest, project_root: Dev.target_project_root)
-      context = ExecutionContext.new(
-        ui:,
+      ExecutionContext.new(
+        ui: @ui,
         ruby_version: ShadowenvRuby.resolve_ruby_version(manifest.declared_ruby_version),
         python_version: manifest.declared_python_version,
         project_root: Dev.target_project_root,
         build_container: manifest.build_container,
         runner: manifest.runner,
       )
-      @command_service.execute(cmd_name, args:, context:)
-    rescue StandardError => e
-      exit_for(e)
     end
-
-    private
 
     # The rescue-to-exit mapping of the CLI boundary, in one place — the
     # counterpart of bin/dev's DevYamlNotFoundError handling. Errors keep
@@ -115,38 +140,80 @@ module Dev
       end
     end
 
-    # The composition root: the one place the repository (private to this
-    # onion) and the builtin set are constructed. Which builtins exist is
-    # config-gated here — runner-setup only with a `runner:` block,
-    # provide-image/reset-container only with a build container.
+    # The composition root: the one place the repository (consumed only by
+    # CommandService, the onion rule) and the builtin set are constructed.
+    # Which builtins exist is config-gated here — runner-setup only with a
+    # `runner:` block, provide-image/reset-container only with a build
+    # container.
     #
     # @param manifest [ProjectManifest]
+    # @param context [ExecutionContext]
     # @return [CommandService]
-    sig { params(manifest: ProjectManifest).returns(CommandService) }
-    def build_command_service(manifest)
+    sig { params(manifest: ProjectManifest, context: ExecutionContext).returns(CommandService) }
+    def build_command_service(manifest, context)
       dependency_service = DependencyService.new(
         staleness: Dev::Deps::Staleness.new(project_root: Dev.target_project_root),
       )
-      CommandService.new(
+      # Help lists the catalog the service serves, and the service's
+      # repository contains help — a self-reference by construction. The
+      # provider captures the `service` local assigned below and
+      # dereferences it only at call time, when it exists.
+      service = T.let(nil, T.nilable(CommandService))
+      help = Builtins::HelpCommand.new(
+        project_name: manifest.name,
+        usage_printer: Cli::UsagePrinter.new,
+        out: @out,
+        commands_provider: -> { T.must(service).visible_commands },
+      )
+      service = CommandService.new(
         repository: CommandRepository.new(
-          builtins: build_builtins(manifest, dependency_service),
+          builtins: build_builtins(manifest, dependency_service, help:),
           project_commands: manifest.commands,
         ),
-        executor: CommandExecutor.new,
+        executor: build_executor(context),
         dependency_service: dependency_service,
+      )
+      service
+    end
+
+    # Wire the executor composite: one CommandRunner (built from the run's
+    # context, the process boundary's collaborators), one BuiltinExecutor,
+    # and one ProjectExecutor, shared with the OverriddenExecutor that
+    # composes them for the virtual-dispatch arm.
+    #
+    # @param context [ExecutionContext]
+    # @return [CommandExecutor]
+    sig { params(context: ExecutionContext).returns(CommandExecutor) }
+    def build_executor(context)
+      command_runner = CommandRunner.new(
+        ui: context.ui,
+        ruby_version: context.ruby_version,
+        python_version: context.python_version,
+        build_container: context.build_container,
+        project_root: context.project_root,
+      )
+      builtin_executor = BuiltinExecutor.new
+      project_executor = ProjectExecutor.new(command_runner:)
+      CommandExecutor.new(
+        builtin_executor:,
+        project_executor:,
+        overridden_executor: OverriddenExecutor.new(builtin_executor:, project_executor:),
       )
     end
 
     # @param manifest [ProjectManifest]
     # @param dependency_service [DependencyService]
-    # @return [Hash{String => BuiltinCommand}] the builtin set, in listing order
+    # @param help [Builtins::HelpCommand] built by the caller, which owns
+    #   the listing self-reference
+    # @return [Hash{String => BuiltinCommand}] the builtin set
     sig do
-      params(manifest: ProjectManifest, dependency_service: DependencyService)
+      params(manifest: ProjectManifest, dependency_service: DependencyService, help: Builtins::HelpCommand)
         .returns(T::Hash[String, BuiltinCommand])
     end
-    def build_builtins(manifest, dependency_service)
+    def build_builtins(manifest, dependency_service, help:)
       install_deps = Builtins::InstallDepsCommand.new
       builtins = T.let({
+        "help" => help,
         "update-deps" => Builtins::UpdateDepsCommand.new,
         "install-deps" => install_deps,
         # `up` composes the same install the install-deps builtin runs.

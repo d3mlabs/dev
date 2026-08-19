@@ -20,6 +20,9 @@ module Dev
       sig { override.returns(String) }
       def desc = "Resolve dependency constraints and write lockfiles"
 
+      sig { override.returns(Command::Category) }
+      def category = Command::Category::Lifecycle
+
       # update-deps IS the remediation for a stale manifest — nagging before
       # it would block the very fix being run.
       sig { override.returns(T::Boolean) }

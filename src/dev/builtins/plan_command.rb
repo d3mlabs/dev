@@ -20,11 +20,15 @@ module Dev
 
       sig { params(accessor_factory: AccessorFactory).void }
       def initialize(accessor_factory: ->(project_root) { Dev::Plan::Accessor.new(project_root:) })
+        super()
         @accessor_factory = T.let(accessor_factory, AccessorFactory)
       end
 
       sig { override.returns(String) }
       def desc = "Sync Cursor plans with GitHub issues (new/link/pull/push/status)"
+
+      sig { override.returns(Command::Category) }
+      def category = Command::Category::Workflow
 
       # plan never touches dependencies and runs headlessly from Cursor
       # hooks, where a staleness warning would only add noise.

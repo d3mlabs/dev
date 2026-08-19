@@ -24,12 +24,16 @@ module Dev
         cache_gc_factory: ->(lockfile) { Dev::Deps::CacheGc.new(lockfile:) },
         flag_parser: Cli::FlagParser.new
       )
+        super()
         @cache_gc_factory = T.let(cache_gc_factory, CacheGcFactory)
         @flag_parser = T.let(flag_parser, Cli::FlagParser)
       end
 
       sig { override.returns(String) }
       def desc = "Manage host caches (e.g. cache gc --keep 2)"
+
+      sig { override.returns(Command::Category) }
+      def category = Command::Category::Workflow
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
