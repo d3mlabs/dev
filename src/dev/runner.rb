@@ -160,21 +160,30 @@ module Dev
           builtins: build_builtins(manifest, dependency_service, help:),
           project_commands: manifest.commands,
         ),
-        executor: build_executor,
+        executor: build_executor(context),
         dependency_service: dependency_service,
       )
       service
     end
 
-    # Wire the executor composite: one BuiltinExecutor and one
-    # ProjectExecutor, shared with the OverriddenExecutor that composes
-    # them for the virtual-dispatch arm.
+    # Wire the executor composite: one CommandRunner (built from the run's
+    # context, the process boundary's collaborators), one BuiltinExecutor,
+    # and one ProjectExecutor, shared with the OverriddenExecutor that
+    # composes them for the virtual-dispatch arm.
     #
+    # @param context [ExecutionContext]
     # @return [CommandExecutor]
-    sig { returns(CommandExecutor) }
-    def build_executor
+    sig { params(context: ExecutionContext).returns(CommandExecutor) }
+    def build_executor(context)
+      command_runner = CommandRunner.new(
+        ui: context.ui,
+        ruby_version: context.ruby_version,
+        python_version: context.python_version,
+        build_container: context.build_container,
+        project_root: context.project_root,
+      )
       builtin_executor = BuiltinExecutor.new
-      project_executor = ProjectExecutor.new
+      project_executor = ProjectExecutor.new(command_runner:)
       CommandExecutor.new(
         builtin_executor:,
         project_executor:,

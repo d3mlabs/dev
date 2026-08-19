@@ -38,9 +38,9 @@ module Dev
     def execute(command, args:, context:)
       @builtin_executor.execute(command.builtin, args:, context:)
       if command.stamps?
-        @project_executor.run_waiting(command.project, args:, context:)
+        @project_executor.run_waiting(command.project, args:)
       else
-        @project_executor.exec_into(command.project, args:, context:)
+        @project_executor.exec_into(command.project, args:)
       end
     end
   end

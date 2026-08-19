@@ -60,8 +60,8 @@ class Dev::OverriddenExecutorTest < Minitest::Test
     context = build_context
     stages = []
     strategies = build_strategies(stages)
-    strategies.fetch(:project_executor).stubs(:run_waiting).with { |cmd, args:, context:|
-      stages << [:project_tail, cmd, args, context]
+    strategies.fetch(:project_executor).stubs(:run_waiting).with { |cmd, args:|
+      stages << [:project_tail, cmd, args]
       true }
     executor = Dev::OverriddenExecutor.new(**strategies)
 
@@ -71,7 +71,7 @@ class Dev::OverriddenExecutorTest < Minitest::Test
     Then "builtin super() ran first, and the tail was run_waiting with the exact project half"
     stages == [
       [:builtin_stage, command.builtin, ["--fast"], context],
-      [:project_tail, command.project, ["--fast"], context],
+      [:project_tail, command.project, ["--fast"]],
     ]
   end
 
@@ -81,8 +81,8 @@ class Dev::OverriddenExecutorTest < Minitest::Test
     context = build_context
     stages = []
     strategies = build_strategies(stages)
-    strategies.fetch(:project_executor).stubs(:exec_into).with { |cmd, args:, context:|
-      stages << [:project_tail, cmd, args, context]
+    strategies.fetch(:project_executor).stubs(:exec_into).with { |cmd, args:|
+      stages << [:project_tail, cmd, args]
       true }
     executor = Dev::OverriddenExecutor.new(**strategies)
 
@@ -92,7 +92,7 @@ class Dev::OverriddenExecutorTest < Minitest::Test
     Then "builtin super() ran first, and the tail was exec_into with the exact project half"
     stages == [
       [:builtin_stage, command.builtin, [], context],
-      [:project_tail, command.project, [], context],
+      [:project_tail, command.project, []],
     ]
   end
 end

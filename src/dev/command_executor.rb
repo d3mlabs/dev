@@ -45,7 +45,7 @@ module Dev
       when BuiltinCommand
         @builtin_executor.execute(command, args:, context:)
       when ProjectCommand
-        @project_executor.exec_into(command, args:, context:)
+        @project_executor.exec_into(command, args:)
       when OverriddenCommand
         @overridden_executor.execute(command, args:, context:)
       else

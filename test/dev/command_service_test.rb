@@ -43,10 +43,11 @@ class Dev::CommandServiceTest < Minitest::Test
     )
   end
 
-  # A real composite (these tests only dispatch builtins, in-process).
+  # A real composite (these tests only dispatch builtins, in-process; the
+  # project seam's runner is a strict mock that must stay silent).
   def build_executor
     builtin_executor = Dev::BuiltinExecutor.new
-    project_executor = Dev::ProjectExecutor.new
+    project_executor = Dev::ProjectExecutor.new(command_runner: typed_mock(Dev::CommandRunner))
     Dev::CommandExecutor.new(
       builtin_executor: builtin_executor,
       project_executor: project_executor,

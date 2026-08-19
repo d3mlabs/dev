@@ -58,7 +58,7 @@ class Dev::CommandExecutorTest < Minitest::Test
     context = build_context
     strategies = build_strategies
     strategies.fetch(:project_executor)
-      .expects(:exec_into).with(command, args: ["--fast", "spec/a"], context: context).once
+      .expects(:exec_into).with(command, args: ["--fast", "spec/a"]).once
     executor = Dev::CommandExecutor.new(**strategies)
 
     When "executing"
