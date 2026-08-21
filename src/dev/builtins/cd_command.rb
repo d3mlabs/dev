@@ -12,6 +12,10 @@ module Dev
     class CdCommand < BuiltinCommand
       extend T::Sig
 
+      # Shared with the global usage listing (GlobalDispatch), which reads
+      # descriptions without instantiating the builtin.
+      DESC = "Jump to a checkout under $DEV_CD_ROOT (default ~/src) by fuzzy name"
+
       sig { params(accessor: Dev::Cd::Accessor).void }
       def initialize(accessor: Dev::Cd::Accessor.new)
         super()
@@ -19,7 +23,7 @@ module Dev
       end
 
       sig { override.returns(String) }
-      def desc = "Jump to a checkout under $DEV_CD_ROOT (default ~/src) by fuzzy name"
+      def desc = DESC
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Workflow

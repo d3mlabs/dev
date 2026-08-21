@@ -2,7 +2,13 @@
 # frozen_string_literal: true
 
 require "pathname"
+require "dev/builtins/cd_command"
+require "dev/builtins/clone_command"
+require "dev/builtins/cred_command"
+require "dev/builtins/learnings_command"
+require "dev/builtins/plan_command"
 require "dev/cd"
+require "dev/cli/global_usage_printer"
 require "dev/clone"
 require "dev/plan"
 require "dev/learnings"
@@ -26,10 +32,27 @@ module Dev
   # Runs before Dev::Runner is constructed, so these commands work from any
   # directory. Project commands (`up`, yaml-declared names) keep the existing
   # "must find dev.yml" failure in the Runner path.
+  #
+  # Help is a conditional citizen here: outside any dev.yml project, the help
+  # spellings (bare `dev`, `--help`, `-h`, `help`) render the global usage —
+  # inside a project they stay with the Runner, which lists the project's
+  # catalog.
   class GlobalDispatch
     extend T::Sig
 
-    GLOBAL_COMMANDS = T.let(%w[cd clone plan cred learnings].freeze, T::Array[String])
+    # Global command name => description. One hash serves both dispatch
+    # membership and the global usage listing; descriptions alias the
+    # builtins' canonical DESC constants so the two help views cannot drift.
+    GLOBAL_COMMANDS = T.let(
+      {
+        "cd" => Builtins::CdCommand::DESC,
+        "clone" => Builtins::CloneCommand::DESC,
+        "cred" => Builtins::CredCommand::DESC,
+        "learnings" => Builtins::LearningsCommand::DESC,
+        "plan" => Builtins::PlanCommand::DESC,
+      }.freeze,
+      T::Hash[String, String],
+    )
 
     # Candidates shown in an ambiguous `dev cd` error before truncating.
     AMBIGUOUS_CANDIDATE_CAP = 10
@@ -37,27 +60,36 @@ module Dev
     # @param cd_accessor [Dev::Cd::Accessor]
     # @param clone_accessor [Dev::Clone::Accessor]
     # @param cred_accessor [Dev::CredentialAccessor]
+    # @param usage_printer [Dev::Cli::GlobalUsagePrinter]
     sig do
       params(
         cd_accessor: Dev::Cd::Accessor,
         clone_accessor: Dev::Clone::Accessor,
         cred_accessor: Dev::CredentialAccessor,
+        usage_printer: Dev::Cli::GlobalUsagePrinter,
       ).void
     end
     def initialize(cd_accessor: Dev::Cd::Accessor.new, clone_accessor: Dev::Clone::Accessor.new,
-                   cred_accessor: Dev::CredentialAccessor.new)
+                   cred_accessor: Dev::CredentialAccessor.new,
+                   usage_printer: Dev::Cli::GlobalUsagePrinter.new)
       @cd_accessor = T.let(cd_accessor, Dev::Cd::Accessor)
       @clone_accessor = T.let(clone_accessor, Dev::Clone::Accessor)
       @cred_accessor = T.let(cred_accessor, Dev::CredentialAccessor)
+      @usage_printer = T.let(usage_printer, Dev::Cli::GlobalUsagePrinter)
     end
 
-    # Whether the argv names a global builtin this dispatcher owns.
+    # Whether the argv is dispatched here, before any dev.yml lookup: a
+    # global builtin from anywhere, or a help spelling outside any project
+    # (inside one, the Runner's help lists the project catalog instead).
     #
     # @param argv [Array<String>]
     # @return [Boolean]
     sig { params(argv: T::Array[String]).returns(T::Boolean) }
     def global_command?(argv)
-      GLOBAL_COMMANDS.include?(argv.first)
+      cmd_name = argv.first
+      return true if cmd_name && GLOBAL_COMMANDS.key?(cmd_name)
+
+      help_argv?(argv) && nearest_dev_yaml_root.nil?
     end
 
     # Run a global builtin. Clean failures (usage errors, unresolved repos)
@@ -67,6 +99,11 @@ module Dev
     # @return [void]
     sig { params(argv: T::Array[String]).void }
     def run(argv)
+      if help_argv?(argv)
+        @usage_printer.print(commands: GLOBAL_COMMANDS, out: $stdout)
+        return
+      end
+
       args = T.let(argv.dup, T::Array[String])
       cmd_name = T.must(args.shift)
       case cmd_name
@@ -92,6 +129,17 @@ module Dev
     end
 
     private
+
+    # Whether the argv is a help spelling. Mirrors the Runner's routing:
+    # bare `dev`, the exact conventional flags, and `help` as the command
+    # name (the help builtin ignores trailing args).
+    #
+    # @param argv [Array<String>]
+    # @return [Boolean]
+    sig { params(argv: T::Array[String]).returns(T::Boolean) }
+    def help_argv?(argv)
+      argv.empty? || argv == ["--help"] || argv == ["-h"] || argv.first == "help"
+    end
 
     # Print an ambiguous `dev cd` result: the candidates (capped, each at its
     # shortest-unique depth) and the escape hatch — refine or Tab-browse.
@@ -125,11 +173,26 @@ module Dev
     # @return [Pathname, nil]
     sig { returns(T.nilable(Pathname)) }
     def enclosing_project_root
-      cwd = Pathname.new(Dir.pwd)
-      cwd.ascend do |path|
+      nearest_dev_yaml_root || nearest_git_root
+    end
+
+    # The nearest ancestor holding a dev.yml, or nil. This is the "inside a
+    # project?" test the help fallback uses: a plain git checkout with no
+    # dev.yml still gets the global usage.
+    #
+    # @return [Pathname, nil]
+    sig { returns(T.nilable(Pathname)) }
+    def nearest_dev_yaml_root
+      Pathname.new(Dir.pwd).ascend do |path|
         return path if (path / Dev::DEV_YAML_FILENAME).exist?
       end
-      cwd.ascend do |path|
+      nil
+    end
+
+    # @return [Pathname, nil] the nearest ancestor holding a .git, or nil
+    sig { returns(T.nilable(Pathname)) }
+    def nearest_git_root
+      Pathname.new(Dir.pwd).ascend do |path|
         return path if (path / ".git").exist?
       end
       nil

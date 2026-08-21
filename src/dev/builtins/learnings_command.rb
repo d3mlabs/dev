@@ -13,6 +13,11 @@ module Dev
     class LearningsCommand < BuiltinCommand
       extend T::Sig
 
+      # Shared with the global usage listing (GlobalDispatch), which reads
+      # descriptions without instantiating the builtin.
+      DESC = "Learnings read path (sync: refresh now, status: what's linked, invariants: Tier-0 block, " \
+        "init: scaffold the index)"
+
       # Builds the accessor for the enclosing project (per-call root).
       AccessorFactory = T.type_alias do
         T.proc.params(project_root: Pathname).returns(Dev::Learnings::Accessor)
@@ -25,10 +30,7 @@ module Dev
       end
 
       sig { override.returns(String) }
-      def desc
-        "Learnings read path (sync: refresh now, status: what's linked, invariants: Tier-0 block, " \
-          "init: scaffold the index)"
-      end
+      def desc = DESC
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Workflow
