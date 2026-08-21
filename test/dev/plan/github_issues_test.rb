@@ -62,6 +62,40 @@ class Dev::Plan::GithubIssuesTest < Minitest::Test
     nil
   end
 
+  test "repo_file fetches raw content from the repo's default branch" do
+    Given "an executor replaying a raw-content response"
+    executor = RecordingPlanExecutor.new([["## Problem\n", "", true]])
+    issues = Dev::Plan::GithubIssues.new(executor: executor)
+
+    When "fetching the file"
+    content = issues.repo_file("d3mlabs/plans", ".github/ISSUE_TEMPLATE/plan.md")
+
+    Then "the raw content comes back and gh was asked for the raw media type"
+    content == "## Problem\n"
+    executor.calls.fetch(0)[:argv] == [
+      "gh", "api", "-H", "Accept: application/vnd.github.raw",
+      "repos/d3mlabs/plans/contents/.github/ISSUE_TEMPLATE/plan.md"
+    ]
+
+    Cleanup
+    nil
+  end
+
+  test "repo_file returns nil when the file is missing or gh fails" do
+    Given "an executor replaying a gh failure"
+    executor = RecordingPlanExecutor.new([["", "gh: Not Found (HTTP 404)", false]])
+    issues = Dev::Plan::GithubIssues.new(executor: executor)
+
+    When "fetching a missing file"
+    content = issues.repo_file("d3mlabs/plans", ".github/ISSUE_TEMPLATE/plan.md")
+
+    Then "absence maps to nil, never an error"
+    content.nil?
+
+    Cleanup
+    nil
+  end
+
   test "an unauthenticated gh maps to an actionable error" do
     Given "an executor replaying gh's auth failure"
     executor = RecordingPlanExecutor.new([["", "To get started with GitHub CLI, please run:  gh auth login", false]])
