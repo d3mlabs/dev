@@ -27,7 +27,9 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
     hook_installer = typed_mock(Dev::Cd::HookInstaller)
     hook_installer.expects(:ensure_installed).once.returns(:already_present)
-    command = Dev::Builtins::UpCommand.new(install_deps_command: install_deps, hook_installer: hook_installer)
+    command = Dev::Builtins::UpCommand.new(
+      install_deps_command: install_deps, hook_installer: hook_installer, baseline: fresh_baseline,
+    )
     context = build_context
 
     When "running up"
@@ -35,6 +37,25 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
 
     Then "the install body received the same args and context"
     1 * install_deps.call(args: ["-v"], context: context)
+  end
+
+  test "call converges a stale host baseline as its first step" do
+    Given "an up command whose baseline expects the staleness-gated converge"
+    baseline = typed_mock(Dev::Deps::Baseline)
+    baseline.expects(:converge_if_stale).once.returns(true)
+    install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
+    install_deps.stubs(:call)
+    hook_installer = typed_mock(Dev::Cd::HookInstaller)
+    hook_installer.stubs(:ensure_installed).returns(:already_present)
+    command = Dev::Builtins::UpCommand.new(
+      install_deps_command: install_deps, hook_installer: hook_installer, baseline: baseline,
+    )
+
+    When "running up"
+    command.call(args: [], context: build_context)
+
+    Then "the expectation on the baseline holds"
+    true
   end
 
   test "call resolves docker build arg credentials before anything else" do
@@ -80,7 +101,15 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     install_deps.stubs(:call)
     hook_installer = typed_mock(Dev::Cd::HookInstaller)
     hook_installer.stubs(:ensure_installed).returns(:already_present)
-    Dev::Builtins::UpCommand.new(install_deps_command: install_deps, hook_installer: hook_installer)
+    Dev::Builtins::UpCommand.new(
+      install_deps_command: install_deps, hook_installer: hook_installer, baseline: fresh_baseline,
+    )
+  end
+
+  def fresh_baseline
+    baseline = typed_mock(Dev::Deps::Baseline)
+    baseline.stubs(:converge_if_stale).returns(false)
+    baseline
   end
 
   def container_config(build_args:)

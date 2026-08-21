@@ -4,6 +4,7 @@
 require "dev/cd"
 require "dev/command"
 require "dev/credentials"
+require "dev/deps/baseline"
 
 module Dev
   module Builtins
@@ -20,12 +21,15 @@ module Dev
         params(
           install_deps_command: InstallDepsCommand,
           hook_installer: Dev::Cd::HookInstaller,
+          baseline: Dev::Deps::Baseline,
         ).void
       end
-      def initialize(install_deps_command:, hook_installer: Dev::Cd::HookInstaller.new)
+      def initialize(install_deps_command:, hook_installer: Dev::Cd::HookInstaller.new,
+        baseline: Dev::Deps::Baseline.new)
         super()
         @install_deps_command = T.let(install_deps_command, InstallDepsCommand)
         @hook_installer = T.let(hook_installer, Dev::Cd::HookInstaller)
+        @baseline = T.let(baseline, Dev::Deps::Baseline)
       end
 
       sig { override.returns(String) }
@@ -45,6 +49,9 @@ module Dev
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
+        # The host baseline converges before project provisioning: project
+        # installs may lean on baseline tools (gh, rbenv). O(1) when warm.
+        @baseline.converge_if_stale
         provision_build_credentials(context)
         @hook_installer.ensure_installed
         @install_deps_command.call(args:, context:)
