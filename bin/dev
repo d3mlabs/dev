@@ -59,6 +59,19 @@ end
 begin
   Dev::Runner.new(ui: ui).run(ARGV)
 rescue Dev::DevYamlNotFoundError
+  # `dev up` stays valid outside any project: it converges the host baseline
+  # (layer 1) only, which IS the fresh-box bootstrap — install dev, `dev up`,
+  # ready. Everything else still needs a project.
+  if ARGV.first == "up"
+    require "dev/deps/baseline"
+    if Dev::Deps::Baseline.new.converge_if_stale
+      puts "dev: host baseline converged."
+    else
+      puts "dev: host baseline already converged."
+    end
+    puts "dev: no dev.yml here — run dev up inside a project to provision it too."
+    exit 0
+  end
   warn "dev: no dev.yml found in this directory or any parent."
   warn "Run dev from inside a project that defines a dev.yml."
   exit 1

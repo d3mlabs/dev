@@ -18,6 +18,8 @@ require_relative "xcode_repository"
 require_relative "xcode_integration"
 require_relative "pip_repository"
 require_relative "pip_integration"
+require_relative "cursor_agent_repository"
+require_relative "cursor_agent_integration"
 
 module Dev
   module Deps
@@ -128,6 +130,12 @@ module Dev
           repository: PipRepository,
           integration: PipIntegration,
           integration_needs: %i[project_root python_version],
+          scope: HOST,
+        ),
+        Entry.new(
+          symbol: :cursor_agent,
+          repository: CursorAgentRepository,
+          integration: CursorAgentIntegration,
           scope: HOST,
         ),
       ].freeze

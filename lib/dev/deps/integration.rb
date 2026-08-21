@@ -99,6 +99,25 @@ module Dev
       rescue Errno::ENOTEMPTY, Errno::EEXIST, Errno::ENOTDIR, Errno::EISDIR
         false
       end
+
+      # Point <install_dir>/current at the just-installed version via a relative
+      # symlink, swapped in atomically. Host consumers (e.g. UE_ROOT for the
+      # engine, AI_FLOW_AGENT_BIN for the agent CLI) reference this stable path
+      # without knowing the locked version; the versioned dirs themselves stay
+      # immutable — only this pointer moves, to the most recently installed
+      # version.
+      #
+      # @param base_dir [Pathname] declared install_dir
+      # @param target_dir [Pathname] the published version dir
+      def publish_current(base_dir, target_dir)
+        link = base_dir / "current"
+        tmp = base_dir / ".current-#{Process.pid}-#{SecureRandom.hex(4)}"
+        File.symlink(target_dir.basename.to_s, tmp.to_s)
+        File.rename(tmp.to_s, link.to_s)
+      rescue StandardError
+        FileUtils.rm_f(tmp.to_s) if tmp
+        raise
+      end
     end
   end
 end

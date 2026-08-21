@@ -375,6 +375,23 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl.constraint["branch"] == "public"
   end
 
+  test "cursor_agent() produces a DependencyDeclaration with cursor_agent integration" do
+    When "defining the agent CLI in a darwin-gated baseline group"
+    config = Dev::Deps.define do
+      group :baseline, host: :darwin do
+        cursor_agent "cursor-agent", install_dir: "~/.dev/tools/cursor-agent"
+      end
+    end
+
+    Then
+    decl = config.declarations[0]
+    decl.name == "cursor-agent"
+    decl.integration == :cursor_agent
+    decl.group == :baseline
+    decl.host == :darwin
+    decl.constraint["install_dir"] == "~/.dev/tools/cursor-agent"
+  end
+
   test "steam() accepts an explicit buildid pin" do
     When "defining a steam dep with a pinned buildid"
     config = Dev::Deps.define do

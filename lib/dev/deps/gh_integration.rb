@@ -145,24 +145,6 @@ module Dev
         FileUtils.rm_rf(staging_dir) if staging_dir
       end
 
-      # Point <install_dir>/current at the just-installed version via a relative
-      # symlink, swapped in atomically. Host consumers (e.g. cellbound's
-      # build-game.sh via UE_ROOT) reference this stable path without knowing the
-      # locked tag; the versioned dirs themselves stay immutable — only this
-      # pointer moves, to the most recently installed version.
-      #
-      # @param base_dir [Pathname] declared install_dir
-      # @param target_dir [Pathname] the published version dir
-      def publish_current(base_dir, target_dir)
-        link = base_dir / "current"
-        tmp = base_dir / ".current-#{Process.pid}-#{SecureRandom.hex(4)}"
-        File.symlink(target_dir.basename.to_s, tmp.to_s)
-        File.rename(tmp.to_s, link.to_s)
-      rescue StandardError
-        FileUtils.rm_f(tmp.to_s) if tmp
-        raise
-      end
-
       # Fetch the tag's source tarball into archive_path. Uses `gh api .../tarball`
       # rather than a bare codeload URL so the request carries gh's auth token and
       # follows the redirect — required for private/Epic-gated repos. Isolated so

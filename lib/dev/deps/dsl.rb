@@ -298,6 +298,20 @@ module Dev
         add_declaration(name, integration.to_sym, spec)
       end
 
+      # Declare the Cursor agent CLI (the headless agent ai-flow spawns),
+      # installed into a version-keyed subdir of install_dir with a stable
+      # `current` symlink (like gh/steam). Resolution pins the version the
+      # served install script currently bakes into its download URL — Cursor
+      # publishes no release feed — so the lock captures an exact version and
+      # hosts install that pin, not whatever is latest at install time.
+      #
+      # @param name [String, Symbol] dependency name (e.g. "cursor-agent")
+      # @param install_dir [String] host directory the CLI is installed into
+      # @param spec [Hash] additional options (e.g. host:)
+      def cursor_agent(name, install_dir:, **spec)
+        add_declaration(name, :cursor_agent, spec.merge(install_dir: install_dir))
+      end
+
       # Pin the Xcode toolchain — a first-class dep like ruby, but riding the
       # normal resolver -> lockfile -> install pipeline. The integration is
       # inherently darwin-scoped (Xcode only exists on macOS; a no-op on other
