@@ -16,8 +16,17 @@ require "stringio"
 class FakePlanIssues
   def initialize
     @issues = {}
+    @files = {}
     @next_number = 1
     @clock = 0
+  end
+
+  def add_file(owner_repo, path, content)
+    @files[[owner_repo, path]] = content
+  end
+
+  def repo_file(owner_repo, path)
+    @files[[owner_repo, path]]
   end
 
   def create(owner_repo, title:, body:)
@@ -106,20 +115,104 @@ class Dev::Plan::AccessorTest < Minitest::Test
     ---
   YAML
 
-  test "new creates the issue and a linked local plan" do
+  test "new scaffolds the tech-design template by default (bundle fallback)" do
+    Given "a workspace whose repo carries no plan template"
+    dir = Dir.mktmpdir("ai-flow-acc-test-")
+    accessor, root, issues = build_env(dir)
+    out = StringIO.new
+
+    When "creating a plan"
+    accessor.run(["new", "Carve system"], out: out)
+
+    Then "the issue body is the H1 plus dev's bundled template, and the file is linked"
+    issues.get(REPO, 1).body.start_with?("# Carve system\n")
+    issues.get(REPO, 1).body.include?("## Problem / Opportunity")
+    issues.get(REPO, 1).body.include?("## Tech design")
+    header, body = read_plan(root, "gh-1-carve-system.plan.md")
+    header.issue_ref == "#{REPO}#1"
+    header.synced_at == issues.get(REPO, 1).updated_at
+    body == issues.get(REPO, 1).body
+    !out.string.include?("stale")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "new --blank creates a bare plan (no template)" do
     Given "a workspace"
     dir = Dir.mktmpdir("ai-flow-acc-test-")
     accessor, root, issues = build_env(dir)
 
-    When "creating a plan"
-    accessor.run(["new", "Carve system"], out: StringIO.new)
+    When "creating a blank plan"
+    accessor.run(["new", "Carve system", "--blank"], out: StringIO.new)
 
-    Then "the issue carries the plan body and the file is linked to it"
+    Then "the issue carries only the H1 and the file is linked to it"
     issues.get(REPO, 1).body == "# Carve system\n"
     header, body = read_plan(root, "gh-1-carve-system.plan.md")
     header.issue_ref == "#{REPO}#1"
     header.synced_at == issues.get(REPO, 1).updated_at
     body == "# Carve system\n"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "new uses a repo-owned plan template when present, silently" do
+    Given "a repo-owned .github/ISSUE_TEMPLATE/plan.md (no dev marker)"
+    dir = Dir.mktmpdir("ai-flow-acc-test-")
+    accessor, root, issues = build_env(dir)
+    mirror = Dev::Plan::Templates.mirror_path(root)
+    FileUtils.mkdir_p(mirror.dirname)
+    mirror.write("---\nname: Custom plan\n---\n\n## Custom section\n\nRepo flavor.\n")
+    out = StringIO.new
+
+    When "creating a plan"
+    accessor.run(["new", "Carve system"], out: out)
+
+    Then "the repo template body is scaffolded and no staleness warning fires"
+    issues.get(REPO, 1).body == "# Carve system\n\n## Custom section\n\nRepo flavor.\n"
+    !out.string.include?("stale")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "new warns when the repo's mirror is stale vs dev's bundle, but still uses it" do
+    Given "a marker-carrying mirror that drifted from the bundle"
+    dir = Dir.mktmpdir("ai-flow-acc-test-")
+    accessor, root, issues = build_env(dir)
+    mirror = Dev::Plan::Templates.mirror_path(root)
+    FileUtils.mkdir_p(mirror.dirname)
+    mirror.write("---\nname: Tech design\n---\n#{Dev::Plan::Templates::MARKER}\n\n## Old template section\n")
+    out = StringIO.new
+
+    When "creating a plan"
+    accessor.run(["new", "Carve system"], out: out)
+
+    Then "the committed (stale) copy is authoritative and the warning points at dev plan init"
+    issues.get(REPO, 1).body == "# Carve system\n\n## Old template section\n"
+    out.string.include?("stale")
+    out.string.include?("dev plan init")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "new --org fetches the plans repo template, falling back to the bundle" do
+    Given "a plans repo carrying its own plan template"
+    dir = Dir.mktmpdir("ai-flow-acc-test-")
+    accessor, _root, issues = build_env(dir)
+    issues.add_file(
+      "d3mlabs/plans", ".github/ISSUE_TEMPLATE/plan.md",
+      "---\nname: Org plan\n---\n\n## Org section\n",
+    )
+
+    When "creating an org-wide plan"
+    accessor.run(["new", "Org roadmap", "--org"], out: StringIO.new)
+
+    Then "the fetched template body follows the Target repos scaffold"
+    issues.get("d3mlabs/plans", 1).body.include?("Target repos:")
+    issues.get("d3mlabs/plans", 1).body.include?("## Org section")
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -188,8 +281,8 @@ class Dev::Plan::AccessorTest < Minitest::Test
     Given "two linked plans with local edits on the first"
     dir = Dir.mktmpdir("ai-flow-acc-test-")
     accessor, root, issues = build_env(dir)
-    accessor.run(["new", "Carve system"], out: StringIO.new)
-    accessor.run(["new", "Second plan"], out: StringIO.new)
+    accessor.run(["new", "Carve system", "--blank"], out: StringIO.new)
+    accessor.run(["new", "Second plan", "--blank"], out: StringIO.new)
     path = root / ".cursor" / "plans" / "gh-1-carve-system.plan.md"
     header, _body = Dev::Plan::Header.split(path.read)
     path.write(header.render + "# Carve system\n\nNew section.\n")
@@ -561,7 +654,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     Given "a linked plan whose only local change is Cursor todos"
     dir = Dir.mktmpdir("ai-flow-acc-test-")
     accessor, root, issues = build_env(dir)
-    accessor.run(["new", "Carve system"], out: StringIO.new)
+    accessor.run(["new", "Carve system", "--blank"], out: StringIO.new)
     path = root / ".cursor" / "plans" / "gh-1-carve-system.plan.md"
     plan = Dev::Plan::Content.parse(path.read)
     path.write(Dev::Plan::Content.new(
@@ -607,6 +700,83 @@ class Dev::Plan::AccessorTest < Minitest::Test
     _header, body, frontmatter = read_plan(root, "gh-1-plan.plan.md")
     body == base.sub("alpha", "alpha LOCAL").sub("omega", "omega REMOTE")
     frontmatter == CURSOR_FRONTMATTER
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "init scaffolds the plan template mirror into the repo" do
+    Given "a repo without a plan template"
+    dir = Dir.mktmpdir("ai-flow-acc-test-")
+    accessor, root, _issues = build_env(dir)
+    out = StringIO.new
+
+    When "running init"
+    accessor.run(["init"], out: out)
+
+    Then "the mirror is written verbatim from the bundle render"
+    Dev::Plan::Templates.mirror_path(root).read == Dev::Plan::Templates.render_mirror
+    out.string.include?("created")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "init is a no-op when the mirror is already up to date" do
+    Given "a freshly scaffolded mirror"
+    dir = Dir.mktmpdir("ai-flow-acc-test-")
+    accessor, root, _issues = build_env(dir)
+    accessor.run(["init"], out: StringIO.new)
+    out = StringIO.new
+
+    When "running init again"
+    accessor.run(["init"], out: out)
+
+    Then
+    Dev::Plan::Templates.mirror_path(root).read == Dev::Plan::Templates.render_mirror
+    out.string.include?("up to date")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "init updates a stale marker-carrying mirror" do
+    Given "a mirror that drifted from the bundle"
+    dir = Dir.mktmpdir("ai-flow-acc-test-")
+    accessor, root, _issues = build_env(dir)
+    mirror = Dev::Plan::Templates.mirror_path(root)
+    FileUtils.mkdir_p(mirror.dirname)
+    mirror.write("---\nname: Tech design\n---\n#{Dev::Plan::Templates::MARKER}\n\n## Old template section\n")
+    out = StringIO.new
+
+    When "running init"
+    accessor.run(["init"], out: out)
+
+    Then "the mirror is overwritten and the output points at git diff for review"
+    mirror.read == Dev::Plan::Templates.render_mirror
+    out.string.include?("updated")
+    out.string.include?("git diff")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "init leaves a repo-owned template (no marker) untouched" do
+    Given "a repo that owns its plan template"
+    dir = Dir.mktmpdir("ai-flow-acc-test-")
+    accessor, root, _issues = build_env(dir)
+    mirror = Dev::Plan::Templates.mirror_path(root)
+    FileUtils.mkdir_p(mirror.dirname)
+    owned = "---\nname: Custom plan\n---\n\n## Custom section\n"
+    mirror.write(owned)
+    out = StringIO.new
+
+    When "running init"
+    accessor.run(["init"], out: out)
+
+    Then "the file is untouched and reported as repo-owned"
+    mirror.read == owned
+    out.string.include?("repo-owned")
 
     Cleanup
     FileUtils.rm_rf(dir)

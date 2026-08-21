@@ -25,7 +25,7 @@ module Dev
       end
 
       sig { override.returns(String) }
-      def desc = "Sync Cursor plans with GitHub issues (new/link/pull/push/status)"
+      def desc = "Sync Cursor plans with GitHub issues (new/link/pull/push/status/init)"
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Workflow

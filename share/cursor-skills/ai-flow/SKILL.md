@@ -22,10 +22,29 @@ conflict guard so local content can never clobber newer remote edits.
 | "load issue 123 as a plan" / "open issue 123 as a plan" | `dev plan pull 123`, then open the file it reports (under `.cursor/plans/`) |
 | "push this plan" / "sync this plan to GitHub" | `dev plan push` (add the issue number or file path if several plans are linked, e.g. `dev plan push 123`; `--org` for org plans pushed by number) |
 | "canonize this plan" / "link this plan to an issue" | `dev plan link <file>` to create a new issue from it, or `dev plan link <n> <file>` to attach it to existing issue #n |
-| "create a plan for X" (canonical from the start) | `dev plan new "X"`, then edit the created file |
+| "create a plan / project brief / tech design for X" | `dev plan new "X"` — templated by default (brief sections + empty `## Tech design`), then edit the created file |
+| "create a blank/freeform plan for X" | `dev plan new "X" --blank` — just the H1, no template |
+| "set up / update the plan template in this repo" | `dev plan init` — writes `.github/ISSUE_TEMPLATE/plan.md`; review with `git diff`, then commit |
 | "is this plan in sync?" | `dev plan status` |
 | "address the open feedback on this plan" | see below |
 | org-wide / cross-repo plan (not tied to this repo) | add `--org` to `new`/`link`/`pull` — targets the configured org plans repo |
+
+## Document stages: brief → tech design
+
+A templated plan is one evolving document: brief sections (Problem /
+Opportunity through Implementation plan — the "should we do this?" half)
+followed by a `## Tech design` skeleton (the "how" half). An empty Tech
+design section means the plan is at brief stage; acceptance (allocating
+people/agents) means filling it in **in place**, deleting each section's
+guidance text as the section is completed. A big project's brief may instead
+link out to separate design plan issues by issue URL. Stage is advisory
+only — nothing gates `/split` or `/build` on it.
+
+Template ownership: a `.github/ISSUE_TEMPLATE/plan.md` carrying dev's
+`<!-- mirrored from dev … -->` marker is a managed mirror — `dev plan init`
+updates it, and `dev plan new` warns when it is stale. A repo customizes its
+template by editing the file and dropping the marker (then it is repo-owned
+and never touched or warned about).
 
 ## Multi-repo plans: the `Target repos:` line
 
