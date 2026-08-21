@@ -18,12 +18,13 @@ module Dev
 
       USAGE = <<~USAGE.strip
         usage: dev plan <subcommand>
-          dev plan new "<title>" [--org]        create an issue + linked local plan
-          dev plan link <n> [<file>] [--org]    attach a plan file to issue #n
-          dev plan link <file> [--org]          create an issue from a plan file
-          dev plan pull <n> [--merge] [--org]   fetch the issue into the local plan
-          dev plan push [<file>|<n>] [--org]    update the issue body (guarded)
-          dev plan status                       sync state of all linked plans
+          dev plan new "<title>" [--blank] [--org]   create a templated issue + linked local plan
+          dev plan link <n> [<file>] [--org]         attach a plan file to issue #n
+          dev plan link <file> [--org]               create an issue from a plan file
+          dev plan pull <n> [--merge] [--org]        fetch the issue into the local plan
+          dev plan push [<file>|<n>] [--org]         update the issue body (guarded)
+          dev plan status                            sync state of all linked plans
+          dev plan init                              scaffold/update the repo's plan template mirror
       USAGE
 
       # @param project_root [Pathname] the workspace root (from dev's context)
@@ -66,6 +67,7 @@ module Dev
         when "pull" then pull(rest, out:)
         when "push" then push(rest, out:)
         when "status" then status(out:)
+        when "init" then init(rest, out:)
         when "hook-after-edit" then hook_after_edit(input, out:)
         else raise UsageError, USAGE
         end
@@ -73,24 +75,81 @@ module Dev
 
       private
 
-      # `dev plan new "<title>" [--org]` — create the issue first (it is
-      # canonical from birth), then materialize the linked local working copy.
-      # Org plans are scaffolded with a `Target repos:` line: they usually
-      # span repos, and the line narrows /split's routing menu (see ai-flow's
-      # docs/plan-lifecycle.md). Left blank it is inert — the menu falls back
-      # to every org repo.
+      # `dev plan new "<title>" [--blank] [--org]` — create the issue first
+      # (it is canonical from birth), then materialize the linked local
+      # working copy. The body is templated by default (the target repo's
+      # committed plan template, else dev's bundle) so every project plan is
+      # born at brief stage with the Tech design skeleton; `--blank` scaffolds
+      # just the H1 for lightweight/freeform plans. Org plans are scaffolded
+      # with a `Target repos:` line: they usually span repos, and the line
+      # narrows /split's routing menu (see ai-flow's docs/plan-lifecycle.md).
+      # Left blank it is inert — the menu falls back to every org repo.
       def new_plan(args, out:)
         org = args.delete("--org") ? true : false
+        blank = args.delete("--blank") ? true : false
         title = args.shift
-        raise UsageError, "usage: dev plan new \"<title>\" [--org]" if title.nil? || title.empty? || !args.empty?
+        raise UsageError, "usage: dev plan new \"<title>\" [--blank] [--org]" if title.nil? || title.empty? || !args.empty?
 
         owner_repo = target_repo(org:)
         body = "# #{title}\n"
         body += "\nTarget repos:\n<!-- comma-separated owner/repo list — declares scope; /split routes sub-issues within it -->\n" if org
+        body += "\n#{template_body(owner_repo, org:, out:)}" unless blank
         issue = @issues.create(owner_repo, title: title, body: Plan.to_issue_body(body))
         path = write_linked_plan(owner_repo, issue, body)
         out.puts "dev: created #{owner_repo}##{issue.number} (#{issue.html_url})"
         out.puts "dev: plan file: #{path}"
+      end
+
+      # Resolve the template body for a new plan: the target repo's committed
+      # `.github/ISSUE_TEMPLATE/plan.md` when present (the gate admitted it,
+      # so it is authoritative even when stale — the warning points at the
+      # update path), else dev's bundle. Repo-tier plans read the local
+      # checkout; org plans fetch from the plans repo, falling back to the
+      # bundle when unreachable so templating never blocks on the network.
+      #
+      # @param owner_repo [String] "owner/repo" the plan targets
+      # @param org [Boolean] true when targeting the org plans repo
+      # @param out [IO]
+      # @return [String] the markdown template body
+      def template_body(owner_repo, org:, out:)
+        content =
+          if org
+            @issues.repo_file(owner_repo, Templates::MIRROR_RELATIVE_PATH)
+          else
+            path = Templates.mirror_path(@project_root)
+            path.read if path.file?
+          end
+        return Templates.bundle_body if content.nil?
+
+        if Templates.stale?(content)
+          out.puts "dev: warning: #{owner_repo}'s plan template is stale vs dev's — " \
+            "run `dev plan init` in that repo, review with `git diff`, then commit."
+        end
+        Templates.body_of(content)
+      end
+
+      # `dev plan init` — materialize dev's plan template mirror into the
+      # repo's `.github/ISSUE_TEMPLATE/plan.md` (working tree only; review
+      # with `git diff` and commit — human merge stays the gate). Only
+      # marker-carrying mirrors are ever overwritten: a repo that edited the
+      # file and dropped the marker owns its template.
+      def init(args, out:)
+        raise UsageError, "usage: dev plan init" unless args.empty?
+
+        path = Templates.mirror_path(@project_root)
+        rendered = Templates.render_mirror
+        if !path.exist?
+          FileUtils.mkdir_p(path.dirname)
+          path.write(rendered)
+          out.puts "dev: created #{path} — commit it to serve the plan template from GitHub too."
+        elsif !Templates.mirrored?(path.read)
+          out.puts "dev: #{path} is repo-owned (no dev marker) — left untouched."
+        elsif path.read == rendered
+          out.puts "dev: #{path} is up to date."
+        else
+          path.write(rendered)
+          out.puts "dev: updated #{path} — review with `git diff`, then commit."
+        end
       end
 
       # `dev plan link <n> [<file>] [--org]` attaches a plan file to an

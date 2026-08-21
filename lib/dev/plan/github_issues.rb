@@ -53,6 +53,21 @@ module Dev
         parse_issue(out)
       end
 
+      # Fetch a file's raw content from a repo's default branch — the same gh
+      # boundary, used for org-plan template resolution. Absence and
+      # unreachability both mean "no repo template here": the caller falls
+      # back to dev's bundle, so this never raises.
+      #
+      # @param owner_repo [String] "owner/repo"
+      # @param path [String] file path inside the repo
+      # @return [String, nil] the file content, or nil when unavailable
+      def repo_file(owner_repo, path)
+        out, _err, ok = @executor.capture(
+          "gh", "api", "-H", "Accept: application/vnd.github.raw", "repos/#{owner_repo}/contents/#{path}"
+        )
+        ok ? out : nil
+      end
+
       private
 
       # @param path [String] API path
