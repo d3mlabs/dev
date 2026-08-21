@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/global_dispatch"
 require "open3"
 require "tmpdir"
 
@@ -9,13 +10,17 @@ require "tmpdir"
 # (dev#94): a harness running under `bundle exec` leaks RUBYOPT/BUNDLE_*
 # into every child, and the Ruby interpreter acts on RUBYOPT before the
 # script's first line — so the defense lives in the sh layer, and only
-# spawning the real shim can exercise it. Three tests, one property each:
+# spawning the real shim can exercise it. Scrub tests, one property each:
 #
 # 1. dev still boots when the caller's env is hostile (the bug's symptom).
 # 2. The shim hands Ruby an env with every scrub key removed (the fix,
 #    key by key).
 # 3. The scrub list keeps up with bundler: whatever the locked bundler
 #    exports must be on it (the drift over time).
+#
+# The shim is also the one place the full argv routing (global dispatch,
+# then Runner) is wired together, so its end-to-end routing behavior —
+# help outside a project — is exercised here too.
 transform!(RSpock::AST::Transformation)
 class Dev::BinDevTest < Minitest::Test
   DEV_ROOT = File.expand_path("../..", __dir__)
@@ -36,13 +41,33 @@ class Dev::BinDevTest < Minitest::Test
       "BUNDLE_GEMFILE" => "/nonexistent/harness/Gemfile",
     }
 
-    When "running bin/dev there"
-    _out, err, status = Open3.capture3(hostile, "sh", BIN_DEV, chdir: dir)
+    When "running a project command (bare dev renders the global usage instead) there"
+    _out, err, status = Open3.capture3(hostile, "sh", BIN_DEV, "up", chdir: dir)
 
     Then "dev reached its own no-dev.yml refusal — not a crash inside the caller's bundler"
     !status.success?
     err.include?("no dev.yml found")
     !err.include?("bundler")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "bare dev and dev --help outside a project print the global usage and exit 0" do
+    Given "a directory with no dev.yml anywhere above it"
+    dir = Dir.mktmpdir("dev-bin-test-")
+
+    When "running bin/dev bare and with --help there"
+    bare_out, _bare_err, bare_status = Open3.capture3("sh", BIN_DEV, chdir: dir)
+    help_out, _help_err, help_status = Open3.capture3("sh", BIN_DEV, "--help", chdir: dir)
+
+    Then "both succeed with the global command listing and the project hint"
+    bare_status.success?
+    help_status.success?
+    bare_out.include?("Global commands (available anywhere):")
+    bare_out.include?("Run dev inside a project that defines a dev.yml to see its commands.")
+    Dev::GlobalDispatch::GLOBAL_COMMANDS.keys.all? { |name| bare_out.include?(name) }
+    help_out == bare_out
 
     Cleanup
     FileUtils.rm_rf(dir)
