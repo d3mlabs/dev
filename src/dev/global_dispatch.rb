@@ -86,7 +86,8 @@ module Dev
     # @return [Boolean]
     sig { params(argv: T::Array[String]).returns(T::Boolean) }
     def global_command?(argv)
-      return true if GLOBAL_COMMANDS.key?(argv.first)
+      cmd_name = argv.first
+      return true if cmd_name && GLOBAL_COMMANDS.key?(cmd_name)
 
       help_argv?(argv) && nearest_dev_yaml_root.nil?
     end
