@@ -12,6 +12,10 @@ module Dev
     class CloneCommand < BuiltinCommand
       extend T::Sig
 
+      # Shared with the global usage listing (GlobalDispatch), which reads
+      # descriptions without instantiating the builtin.
+      DESC = "Clone a GitHub repo (via gh auth) into $DEV_CD_ROOT (default ~/src), org defaults to d3mlabs"
+
       sig { params(accessor: Dev::Clone::Accessor).void }
       def initialize(accessor: Dev::Clone::Accessor.new)
         super()
@@ -19,7 +23,7 @@ module Dev
       end
 
       sig { override.returns(String) }
-      def desc = "Clone a GitHub repo (via gh auth) into $DEV_CD_ROOT (default ~/src), org defaults to d3mlabs"
+      def desc = DESC
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Workflow

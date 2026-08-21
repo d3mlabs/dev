@@ -12,6 +12,10 @@ module Dev
     class CredCommand < BuiltinCommand
       extend T::Sig
 
+      # Shared with the global usage listing (GlobalDispatch), which reads
+      # descriptions without instantiating the builtin.
+      DESC = "Resolve a stored credential (e.g. cred get <namespace> <key>)"
+
       sig { params(accessor: Dev::CredentialAccessor).void }
       def initialize(accessor: Dev::CredentialAccessor.new)
         super()
@@ -19,7 +23,7 @@ module Dev
       end
 
       sig { override.returns(String) }
-      def desc = "Resolve a stored credential (e.g. cred get <namespace> <key>)"
+      def desc = DESC
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Workflow

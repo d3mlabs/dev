@@ -13,6 +13,10 @@ module Dev
     class PlanCommand < BuiltinCommand
       extend T::Sig
 
+      # Shared with the global usage listing (GlobalDispatch), which reads
+      # descriptions without instantiating the builtin.
+      DESC = "Sync Cursor plans with GitHub issues (new/link/pull/push/status/init)"
+
       # Builds the accessor for the enclosing project (per-call root).
       AccessorFactory = T.type_alias do
         T.proc.params(project_root: Pathname).returns(Dev::Plan::Accessor)
@@ -25,7 +29,7 @@ module Dev
       end
 
       sig { override.returns(String) }
-      def desc = "Sync Cursor plans with GitHub issues (new/link/pull/push/status/init)"
+      def desc = DESC
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Workflow
