@@ -41,8 +41,9 @@ $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 require "dev"
 require "dev/global_dispatch"
 
-# Global builtins (cd/plan/cred/learnings) dispatch before any dev.yml
-# lookup — they are host- or workspace-global, not project commands.
+# Global builtins (cd/clone/plan/cred/learnings) dispatch before any dev.yml
+# lookup — they are host- or workspace-global, not project commands. Help
+# spellings join them when no dev.yml encloses the cwd (global usage).
 global_dispatch = Dev::GlobalDispatch.new
 if global_dispatch.global_command?(ARGV)
   global_dispatch.run(ARGV)
