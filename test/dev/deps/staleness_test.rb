@@ -45,6 +45,25 @@ class Dev::Deps::StalenessTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "a fixed state key overrides the per-checkout stamp path" do
+    Given "a synced project with a fixed state key (the host-baseline case)"
+    dir = Dir.mktmpdir("dev-staleness-test-")
+    project = build_synced_project(dir)
+    staleness = Dev::Deps::Staleness.new(
+      project_root: project, state_dir: File.join(dir, "state"), state_key: "host-baseline",
+    )
+
+    When "stamping"
+    staleness.stamp_installed!
+
+    Then "the stamp lives at the fixed key, not a path-derived one, and reads back"
+    File.exist?(File.join(dir, "state", "host-baseline", "installed-digest"))
+    staleness.messages == []
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "editing dependencies.rb after update-deps reports the manifest message" do
     Given "a synced project whose manifest then changes"
     dir = Dir.mktmpdir("dev-staleness-test-")

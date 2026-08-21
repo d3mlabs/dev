@@ -44,9 +44,14 @@ module Dev
 
       # @param project_root [Pathname] repo root (holds dependencies.rb + lockfiles)
       # @param state_dir [Pathname] per-machine state root (default ~/.dev/state)
-      def initialize(project_root:, state_dir: Pathname(File.expand_path("~/.dev/state")))
+      # @param state_key [String, nil] fixed stamp subdir, overriding the
+      #   path-derived per-checkout key — for host-singular state like the
+      #   baseline stamp, which must survive the manifest dir moving with
+      #   each installed dev version
+      def initialize(project_root:, state_dir: Pathname(File.expand_path("~/.dev/state")), state_key: nil)
         @project_root = Pathname(project_root)
         @state_dir = Pathname(state_dir)
+        @state_key = state_key
       end
 
       # All current staleness messages, oldest layer first (a stale manifest
@@ -131,9 +136,12 @@ module Dev
 
       # Per-checkout state key: readable basename + a short path digest so two
       # checkouts of the same project on one machine get independent stamps.
+      # A fixed state_key takes precedence (host-singular consumers).
       #
       # @return [String]
       def project_key
+        return @state_key if @state_key
+
         expanded = File.expand_path(@project_root.to_s)
         "#{File.basename(expanded)}-#{Digest::SHA256.hexdigest(expanded)[0, 8]}"
       end
