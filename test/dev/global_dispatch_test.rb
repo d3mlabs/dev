@@ -72,10 +72,15 @@ class Dev::GlobalDispatchTest < Minitest::Test
   end
 
   test "dev clone against an existing checkout prints a clean error and exits non-zero" do
-    Given "the canonical destination already on disk"
+    Given "the canonical destination already on disk, and a configured default org"
     root = Dir.mktmpdir("dispatch-clone-")
     FileUtils.mkdir_p(File.join(root, "github.com", "d3mlabs", "dev"))
-    clone_accessor = Dev::Clone::Accessor.new(root: root, hook_installer: quiet_hook_installer)
+    config_path = File.join(root, "config.yml")
+    File.write(config_path, "default_org: d3mlabs\n")
+    clone_accessor = Dev::Clone::Accessor.new(
+      root: root, hook_installer: quiet_hook_installer,
+      settings: Dev::Settings.new(config_path: config_path),
+    )
     dispatch = Dev::GlobalDispatch.new(clone_accessor: clone_accessor, cred_accessor: RecordingCredAccessor.new)
     old_stderr = $stderr
     $stderr = StringIO.new

@@ -62,8 +62,8 @@ class Dev::Clone::AccessorTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "a bare repo name defaults the org to d3mlabs" do
-    Given "an empty checkout root"
+  test "a bare repo name expands under the configured default org" do
+    Given "an empty checkout root and default_org: d3mlabs in settings"
     root = Dir.mktmpdir("clone-accessor-")
     cloner = FakeGhCloner.new
     accessor = build_accessor(root, cloner: cloner)
@@ -75,6 +75,27 @@ class Dev::Clone::AccessorTest < Minitest::Test
     cloner.calls == [["d3mlabs/dev", File.join(File.expand_path(root), "github.com", "d3mlabs", "dev")]]
 
     Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "a bare repo name with no default org surfaces RepoSpec's typed error" do
+    Given "settings without a default_org key (and no ENV override in play)"
+    root = Dir.mktmpdir("clone-accessor-")
+    cloner = FakeGhCloner.new
+    accessor = build_accessor(root, cloner: cloner, default_org: nil)
+    saved_env = ENV.delete("DEV_DEFAULT_ORG")
+
+    When "we clone by leaf name"
+    error = assert_raises(Dev::Clone::RepoSpec::MissingDefaultOrgError) do
+      accessor.run(["--path", "dev"], out: StringIO.new, err: StringIO.new)
+    end
+
+    Then "the remediation names the settings key and no clone ran"
+    assert_includes error.message, "default_org"
+    cloner.calls == []
+
+    Cleanup
+    ENV["DEV_DEFAULT_ORG"] = saved_env if saved_env
     FileUtils.rm_rf(root)
   end
 
@@ -185,7 +206,15 @@ class Dev::Clone::AccessorTest < Minitest::Test
 
   private
 
-  def build_accessor(root, cloner: FakeGhCloner.new, hook_installer: FakeCloneHookInstaller.new)
-    Dev::Clone::Accessor.new(root: root, cloner: cloner, hook_installer: hook_installer)
+  # Real Settings over a throwaway config file (no filesystem mocks): the
+  # default_org tests exercise the same read path production uses.
+  def build_accessor(root, cloner: FakeGhCloner.new, hook_installer: FakeCloneHookInstaller.new,
+    default_org: "d3mlabs")
+    config_path = File.join(Dir.mktmpdir("clone-accessor-settings-"), "config.yml")
+    File.write(config_path, default_org ? "default_org: #{default_org}\n" : "")
+    Dev::Clone::Accessor.new(
+      root: root, cloner: cloner, hook_installer: hook_installer,
+      settings: Dev::Settings.new(config_path: config_path),
+    )
   end
 end

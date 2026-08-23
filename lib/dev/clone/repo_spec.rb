@@ -6,9 +6,11 @@ module Dev
   module Clone
     # The parsed target of a `dev clone` invocation.
     #
-    # Accepts "<repo>" (org defaults to d3mlabs) or "<org>/<repo>". The host
-    # is always github.com — clones ride the user's gh auth, and the
-    # canonical checkout layout under the search root is host/org/repo.
+    # Accepts "<org>/<repo>", or a bare "<repo>" when the caller supplies a
+    # default org (the `default_org` setting — dev is public and hardcodes
+    # no org). The host is always github.com — clones ride the user's gh
+    # auth, and the canonical checkout layout under the search root is
+    # host/org/repo.
     #
     # A plain value class rather than Data.define: constants declared inside
     # a define block land on the enclosing module (breaking the nested typed
@@ -17,7 +19,9 @@ module Dev
       # The argument is not a "<repo>" or "<org>/<repo>" clone target.
       class MalformedRepoError < RuntimeError; end
 
-      DEFAULT_ORG = "d3mlabs"
+      # A bare "<repo>" target with no default org configured to expand it.
+      class MissingDefaultOrgError < RuntimeError; end
+
       HOST = "github.com"
 
       # GitHub owner/repo name characters: word chars, dots, hyphens.
@@ -30,10 +34,13 @@ module Dev
         # Parse a clone target argument into a spec.
         #
         # @param arg [String] "<repo>" or "<org>/<repo>"
+        # @param default_org [String, nil] org a bare "<repo>" expands under
+        #   (the `default_org` setting); nil means bare targets are an error
         # @return [Dev::Clone::RepoSpec]
         # @raise [MalformedRepoError] when the argument is not one or two
         #   valid path segments
-        def parse(arg)
+        # @raise [MissingDefaultOrgError] on a bare "<repo>" with no default org
+        def parse(arg, default_org: nil)
           # -1 keeps trailing empty segments, so "repo/" fails validation
           # instead of silently collapsing to "repo".
           segments = arg.split("/", -1)
@@ -41,7 +48,13 @@ module Dev
             raise MalformedRepoError, "expected <repo> or <org>/<repo>, got '#{arg}'"
           end
 
-          org, name = segments.size == 2 ? segments : [DEFAULT_ORG, segments.fetch(0)]
+          if segments.size == 1 && default_org.nil?
+            raise MissingDefaultOrgError,
+              "no default org configured — use <org>/<repo>, or set " \
+              "`default_org: <org>` in ~/.config/dev/config.yml (or DEV_DEFAULT_ORG)"
+          end
+
+          org, name = segments.size == 2 ? segments : [default_org, segments.fetch(0)]
           new(org:, name:)
         end
       end

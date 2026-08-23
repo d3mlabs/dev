@@ -4,6 +4,7 @@ require "pathname"
 require "dev/clone/repo_spec"
 require "dev/clone/gh_cloner"
 require "dev/cd/hook_installer"
+require "dev/settings"
 
 module Dev
   module Clone
@@ -13,9 +14,10 @@ module Dev
     # provisioning stays a deliberate second step, where credential prompts
     # are expected.
     #
-    # The human command is `dev clone [<org>/]<repo>` (org defaults to
-    # d3mlabs), handled by the installed shell wrapper (the same one that
-    # powers `dev cd`); the wrapper calls the hidden plumbing mode:
+    # The human command is `dev clone [<org>/]<repo>` (bare names expand
+    # under the `default_org` setting), handled by the installed shell
+    # wrapper (the same one that powers `dev cd`); the wrapper calls the
+    # hidden plumbing mode:
     #
     # - `--path [<org>/]<repo>`: clone, then print exactly the destination's
     #   absolute path on stdout (the wrapper `builtin cd`s into it)
@@ -35,11 +37,14 @@ module Dev
       # @param root [String, Pathname] checkout root (default: $DEV_CD_ROOT, else ~/src)
       # @param cloner [Dev::Clone::GhCloner]
       # @param hook_installer [Dev::Cd::HookInstaller]
+      # @param settings [Dev::Settings] source of the default_org key
       def initialize(root: ENV["DEV_CD_ROOT"] || (Pathname(Dir.home) / "src"),
-                     cloner: GhCloner.new, hook_installer: Dev::Cd::HookInstaller.new)
+                     cloner: GhCloner.new, hook_installer: Dev::Cd::HookInstaller.new,
+                     settings: Dev::Settings.new)
         @root = Pathname(root).expand_path
         @cloner = cloner
         @hook_installer = hook_installer
+        @settings = settings
       end
 
       # Dispatch a `dev clone …` invocation.
@@ -50,6 +55,7 @@ module Dev
       # @return [void]
       # @raise [UsageError] unless exactly one clone target is given
       # @raise [RepoSpec::MalformedRepoError] when the target isn't "<repo>" or "<org>/<repo>"
+      # @raise [RepoSpec::MissingDefaultOrgError] on a bare "<repo>" with no default_org setting
       # @raise [DestinationExistsError] when the canonical path already exists
       # @raise [GhCloner::CloneFailedError] when the clone itself fails
       def run(args, out: $stdout, err: $stderr)
@@ -57,7 +63,7 @@ module Dev
         query = plumbing ? args.drop(1) : args
         raise UsageError, "usage: dev clone [<org>/]<repo>" unless query.size == 1
 
-        spec = RepoSpec.parse(query.fetch(0))
+        spec = RepoSpec.parse(query.fetch(0), default_org: @settings.default_org)
         destination = @root / spec.relative_path
         if destination.exist?
           raise DestinationExistsError, "#{destination} already exists — jump there with `dev cd #{spec.name}`"

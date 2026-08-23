@@ -128,9 +128,11 @@ Only git repos count as candidates (directories with a `.git` entry — a `.git`
 `dev clone [<org>/]<repo>` clones a GitHub repo (via your `gh` auth — no credentials of dev's own) into the canonical checkout path under the same search root `dev cd` walks — `$DEV_CD_ROOT/github.com/<org>/<repo>`, default `~/src` — and lands your shell in the fresh checkout through the same wrapper:
 
 ```bash
-dev clone myrepo           # org defaults to d3mlabs → ~/src/github.com/d3mlabs/myrepo
+dev clone myrepo           # bare name expands under the default_org setting → ~/src/github.com/<default_org>/myrepo
 dev clone acme/widget      # explicit org
 ```
+
+A bare `<repo>` needs the `default_org` key in `~/.config/dev/config.yml` (or `DEV_DEFAULT_ORG`); without it, dev asks for an explicit `<org>/<repo>` — dev is public and hardcodes no org.
 
 It is clone-only by design — no automatic `dev up`. Provisioning stays a deliberate second step, because a first `dev up` is where credential prompts happen and you should see them coming. The fresh-machine story is three commands: `brew install d3mlabs/d3mlabs/dev` → `dev clone <repo>` → `dev up`.
 
