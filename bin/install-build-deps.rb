@@ -22,68 +22,55 @@ load(deps_file)
 config = Dev::Deps.last_config
 abort "No config found — dependencies.rb must call Dev::Deps.define" unless config
 
-env = "ci"
-build_group = config.group("build")
+ENV_NAME = "ci"
+
+# Host OS of the container being built, for host-gated brew entries. Docker
+# builds are Linux; the constant spares a RUBY_PLATFORM sniff that could never
+# say anything else here.
+HOST = :linux
 
 config.taps.each do |tap|
   puts ">>> Registering tap: #{tap.name}"
   system("brew", "tap", tap.name) || abort("brew tap #{tap.name} failed")
 end
 
-# Collect brew entries: global + matching env scope.
-brew_entries = Array(build_group["brew"])
-env_section = build_group.dig("env", env)
-brew_entries += Array(env_section["brew"]) if env_section
+def install_brew_declaration(decl)
+  tap = decl.constraint["tap"]
+  version = decl.constraint["version"]
 
-# Host OS of the container being built, for host-gated brew entries. Docker
-# builds are Linux; the constant spares a RUBY_PLATFORM sniff that could never
-# say anything else here.
-HOST = "linux"
-
-def install_brew_entry(entry)
-  case entry
-  when String
-    puts ">>> Installing: #{entry}"
-    system("brew", "install", entry) || abort("brew install #{entry} failed")
-  when Hash
-    entry.each do |name, opts|
-      # Host-gated entries (e.g. brew "xcodes", host: :darwin) skip
-      # non-matching hosts — mirrors DependencyInstaller#filter_by_host.
-      host = opts["host"]
-      if host && host.to_s != HOST
-        puts ">>> Skipping #{name} (host: #{host})"
-        next
-      end
-
-      post_install = opts.delete("post_install")
-      tap = opts["tap"]
-      version = opts["version"]
-      cask = opts["cask"]
-
-      if cask
-        puts ">>> Installing cask: #{name}"
-        system("brew", "install", "--cask", name) || abort("brew install --cask #{name} failed")
-      else
-        spec = if tap
-          version_suffix = version ? "@#{version}" : ""
-          "#{tap}/#{name}#{version_suffix}"
-        elsif version
-          "#{name}@#{version}"
-        else
-          name
-        end
-        puts ">>> Installing: #{spec}"
-        system("brew", "install", spec) || abort("brew install #{spec} failed")
-      end
-
-      if post_install
-        puts ">>> Running post_install for #{name}"
-        post_install.call(name, opts)
-      end
+  if decl.constraint["cask"]
+    puts ">>> Installing cask: #{decl.name}"
+    system("brew", "install", "--cask", decl.name) || abort("brew install --cask #{decl.name} failed")
+  else
+    spec = if tap
+      version_suffix = version ? "@#{version}" : ""
+      "#{tap}/#{decl.name}#{version_suffix}"
+    elsif version
+      "#{decl.name}@#{version}"
+    else
+      decl.name
     end
+    puts ">>> Installing: #{spec}"
+    system("brew", "install", spec) || abort("brew install #{spec} failed")
+  end
+
+  if decl.post_install
+    puts ">>> Running post_install for #{decl.name}"
+    decl.post_install.call(decl.name, decl.constraint)
   end
 end
 
-brew_entries.each { |entry| install_brew_entry(entry) }
+# The build image materializes the :build group's brew declarations for this
+# env — the same declarations the resolver/lockfile pipeline reads; env/host
+# filtering mirrors DependencyInstaller (nil means "everywhere").
+build_brews = config.declarations.select do |decl|
+  decl.integration == :brew &&
+    decl.group == :build &&
+    (decl.env.nil? || decl.env == ENV_NAME)
+end
+
+hosted, skipped = build_brews.partition { |decl| decl.host.nil? || decl.host == HOST }
+skipped.each { |decl| puts ">>> Skipping #{decl.name} (host: #{decl.host})" }
+hosted.each { |decl| install_brew_declaration(decl) }
 
 puts ">>> All build dependencies installed"

@@ -4,194 +4,27 @@ require_relative "dependency_declaration"
 
 module Dev
   module Deps
-    # Top-level DSL evaluated inside Dev::Deps.define { ... }.
-    class DSL
-      # Group a top-level `gem` declaration lands in when none is given. Bundler's
-      # default (unscoped) group, mirroring a hand-written Gemfile's top section.
-      DEFAULT_GEM_GROUP = :app
-
-      attr_reader :taps, :groups, :declarations, :ruby_version_requirement,
-        :lua_version_value, :python_version_value, :registered_integrations, :registered_methods
-
-      def initialize
-        @taps   = {}
-        @groups = {}
-        @declarations = []
-        @ruby_version_requirement = nil
-        @lua_version_value = nil
-        @python_version_value = nil
-        @registered_integrations = {}
-        @registered_methods = []
-      end
-
-      # Declare the project's Ruby toolchain — a first-class dependency, on equal
-      # footing with brew/cmake/gh. dev provisions this exact version (rbenv +
-      # shadowenv) before any command and writes it as the generated Gemfile's
-      # `ruby` directive. It is resolved specially (early, pre-dispatch) rather than
-      # through the resolver -> lockfile -> install pipeline because it is the
-      # interpreter every other dependency and command runs under.
-      #
-      # @param version [String, Symbol] exact Ruby version (e.g. "4.0.5")
-      def ruby(version)
-        @ruby_version_requirement = version.to_s.strip
-      end
-
-      # Declare the Lua version for LuaRocks integration.
-      #
-      # @param version [String, Symbol] Lua version (e.g. "5.1")
-      def lua_version(version)
-        @lua_version_value = version.to_s.strip
-      end
-
-      # Declare the project's Python toolchain. Like `ruby`, this is a first-class
-      # toolchain: dev provisions the interpreter (Homebrew python@<version>) and a
-      # project-local .venv (ShadowenvPython) before commands run, and pip deps
-      # (declared with `pip` inside a group) install into that venv. Resolved
-      # specially (pre-dispatch), not through the resolver -> lockfile pipeline.
-      #
-      # @param version [String, Symbol] Python minor version (e.g. "3.12")
-      def python(version)
-        @python_version_value = version.to_s.strip
-      end
-
-      # Declare a Ruby gem. Gems are a first-class dev-managed dependency type
-      # backed by bundler: this records a :bundler declaration that rides the
-      # normal resolver -> lockfile -> install pipeline (dev generates the
-      # Gemfile/Gemfile.lock from these). A top-level gem lands in the default
-      # group; use a group block to scope it (e.g. group(:test) { gem ... }).
-      #
-      # @param name [String, Symbol] gem name
-      # @param version [String, nil] version requirement (e.g. "~> 1.17")
-      # @param opts [Hash] additional bundler options (e.g. require:, git:)
-      def gem(name, version = nil, **opts)
-        constraint = opts.each_with_object({}) { |(k, v), h| h[k.to_s] = v }
-        constraint["version"] = version.to_s if version
-        @declarations << DependencyDeclaration.new(
-          name: name.to_s,
-          integration: :bundler,
-          constraint:,
-          group: DEFAULT_GEM_GROUP,
-        )
-      end
-
-      def tap(name, url: nil)
-        name_str = name.to_s
-        @taps[name_str] = {
-          "name" => name_str,
-          "url"  => url && url.to_s,
-        }
-      end
-
-      # Register a custom integration: maps the name to an Integration class
-      # and creates a DSL method so it can be used inside group blocks.
-      #
-      # @param name [Symbol, String] integration identifier (e.g. :wow_curseforge)
-      # @param klass [Class, String] Integration subclass or its name
-      def register(name, klass)
-        sym = name.to_sym
-        @registered_integrations[sym] = klass
-        @registered_methods << sym
-      end
-
-      # Declare a dependency group, optionally pinned to a platform and/or host OS.
-      #
-      # @param name [String, Symbol] group name (e.g. :app, :test, :integration)
-      # @param platform [String, nil] platform the group's deps target (e.g. "LinuxServer").
-      #   Stamped onto every declaration in the group so the resolver can union platforms
-      #   across groups for multi-arch integrations. nil lets each integration pick its default.
-      # @param host [Symbol, nil] host OS the group's deps install on (:darwin / :linux).
-      #   Sugar that stamps every member declaration, exactly as platform: does; install
-      #   filters against the detected host OS (the lockfile stays universal — all hosts'
-      #   deps are resolved and locked, filtering happens at install, never at resolve).
-      def group(name, platform: nil, host: nil, &block)
-        group_name = name.to_s
-        group_dsl = GroupDSL.new(group: group_name.to_sym, platform:, host:, registered_methods: @registered_methods)
-        group_dsl.instance_eval(&block) if block
-        @groups[group_name] = group_dsl.to_h
-        @declarations.concat(group_dsl.declarations)
-      end
-    end
-
-    # DSL for per-environment entries (inside group :build for env-specific brew).
-    class EnvDSL
+    # The dependency verbs, shared by the top-level DSL (implicit default
+    # group) and named group blocks. Every verb funnels into one
+    # DependencyDeclaration append — the declarations list is the single data
+    # model; consumers (resolver, lockfile, the container image build) derive
+    # their views from it. The includer provides the group context via
+    # @group / @platform / @host and the declaration sink via @declarations.
+    module DependencyVerbs
       class EmptyNameError < StandardError; end
 
       attr_reader :declarations
-
-      # @param group [Symbol] enclosing group, stamped onto declarations
-      # @param platform [String, nil] enclosing group's platform
-      # @param host [Symbol, nil] enclosing group's host OS
-      # @param env [String, nil] environment name ("ci" / "dev"), stamped onto declarations
-      def initialize(group: :app, platform: nil, host: nil, env: nil)
-        @brew = []
-        @declarations = []
-        @group = group
-        @platform = platform
-        @host = host
-        @env = env
-      end
-
-      def brew(name, **opts)
-        name_str = name.to_s
-        raise EmptyNameError, "brew dependency name cannot be empty" if name_str.empty?
-
-        if opts.empty?
-          @brew << name_str
-        else
-          @brew << { name_str => stringify_keys(opts) }
-        end
-        @declarations << DependencyDeclaration.new(
-          name: name_str,
-          integration: :brew,
-          constraint: stringify_keys(opts),
-          group: @group,
-          platform: @platform,
-          host: @host,
-          env: @env,
-        )
-      end
-
-      def to_h
-        { "brew" => @brew }
-      end
-
-      private
-
-      def stringify_keys(hash)
-        hash.each_with_object({}) { |(k, v), h| h[k.to_s] = v }
-      end
-    end
-
-    # DSL for group-scoped deps: declarations (app/test), brew + nested env (build).
-    class GroupDSL
-      class EmptyNameError < StandardError; end
-
-      attr_reader :declarations
-
-      # @param group [Symbol] group name (e.g. :app, :test, :build)
-      # @param platform [String, nil] platform stamped onto every declaration in this group
-      # @param host [Symbol, nil] host OS stamped onto every declaration in this group
-      # @param registered_methods [Array<Symbol>] dynamically registered integration methods
-      def initialize(group:, platform: nil, host: nil, registered_methods: [])
-        @group = group
-        @platform = platform
-        @host = host
-        @declarations = []
-        @brew    = []
-        @envs    = {}
-        @registered_methods = registered_methods
-      end
 
       # Declare a CMake dependency. Expands github: shorthand if present.
       #
       # @param name [String, Symbol] dependency name
       # @param spec [Hash] options (tag:, repo:, url:, github:, etc.)
       def cmake(name, **spec)
-        spec = expand_github(name, spec)
         add_declaration(name, :cmake, spec)
       end
 
-      # Declare a Ruby gem scoped to this group (group name -> bundler group).
+      # Declare a Ruby gem (group name -> bundler group; the top level is
+      # bundler's default group, mirroring a hand-written Gemfile).
       #
       # @param name [String, Symbol] gem name
       # @param version [String, nil] version requirement (e.g. "~> 1.17")
@@ -313,42 +146,15 @@ module Dev
         add_declaration("xcode", :xcode, spec)
       end
 
-      # Declare a Homebrew formula/cask.
-      #
-      # Dual-writes: the existing @brew/groups entry feeds the container build
-      # path (bin/install-build-deps.rb), while the additional :brew declaration
-      # rides the resolver -> lockfile -> install pipeline so `dev install-deps`
-      # installs it on the host too. BrewIntegration skips already-installed
-      # formulae, so the host install is idempotent.
+      # Declare a Homebrew formula/cask. One :brew declaration rides the
+      # resolver -> lockfile -> install pipeline; the container image build
+      # (bin/install-build-deps.rb) derives its list from the same
+      # declarations — there is no separate build-image data structure.
       #
       # @param name [String, Symbol] formula or cask name
-      # @param opts [Hash] options (tap:, version:, cask:)
+      # @param opts [Hash] options (tap:, version:, cask:, post_install:)
       def brew(name, **opts)
-        name_str = name.to_s
-        raise EmptyNameError, "brew dependency name cannot be empty" if name_str.empty?
-
-        if opts.empty?
-          @brew << name_str
-        else
-          @brew << { name_str => stringify_keys(opts) }
-        end
-        add_declaration(name_str, :brew, opts.dup)
-      end
-
-      # Scope member declarations to an environment ("ci" / "dev"). The env
-      # name is a first-class declaration field (like host), landing in the
-      # lockfile's env section so install-deps filters it to the matching
-      # environment — never smuggled through the constraint hash.
-      def env(name, &block)
-        env_name = name.to_s
-        env_dsl = EnvDSL.new(group: @group, platform: @platform, host: @host, env: env_name)
-        env_dsl.instance_eval(&block) if block
-        @envs[env_name] = env_dsl.to_h
-        @declarations.concat(env_dsl.declarations)
-      end
-
-      def to_h
-        { "brew" => @brew, "env" => @envs, "platform" => @platform }
+        add_declaration(name, :brew, opts)
       end
 
       # Dispatch dynamically registered integration methods (e.g. wow_curseforge).
@@ -376,7 +182,9 @@ module Dev
       # host: is peeled off the spec into the first-class declaration field —
       # a per-declaration override of the group's host (e.g. `gh ..., host:
       # :darwin` outside a host-gated group). It never reaches the constraint,
-      # which describes what the dep is, not where it installs.
+      # which describes what the dep is, not where it installs. github: is
+      # expanded to a full repo: URL. env comes from the includer (an env
+      # block), nil elsewhere.
       #
       # @param name [String, Symbol] dependency name
       # @param integration [Symbol] integration type
@@ -397,6 +205,7 @@ module Dev
           group: @group,
           platform: @platform,
           host:,
+          env: @env,
           post_install:,
         )
       end
@@ -423,6 +232,148 @@ module Dev
 
       def stringify_keys(hash)
         hash.each_with_object({}) { |(k, v), h| h[k.to_s] = v }
+      end
+    end
+
+    # Top-level DSL evaluated inside Dev::Deps.define { ... }. Dependency
+    # verbs work here exactly as inside a group block — top-level declarations
+    # land in the default group (bundler's unscoped group, mirroring a
+    # hand-written Gemfile's top section).
+    class DSL
+      include DependencyVerbs
+
+      # Group a top-level declaration lands in when no group block scopes it.
+      DEFAULT_GEM_GROUP = :app
+
+      attr_reader :taps, :ruby_version_requirement,
+        :lua_version_value, :python_version_value, :registered_integrations, :registered_methods
+
+      def initialize
+        @taps = {}
+        @declarations = []
+        @group = DEFAULT_GEM_GROUP
+        @platform = nil
+        @host = nil
+        @env = nil
+        @ruby_version_requirement = nil
+        @lua_version_value = nil
+        @python_version_value = nil
+        @registered_integrations = {}
+        @registered_methods = []
+      end
+
+      # Declare the project's Ruby toolchain — a first-class dependency, on equal
+      # footing with brew/cmake/gh. dev provisions this exact version (rbenv +
+      # shadowenv) before any command and writes it as the generated Gemfile's
+      # `ruby` directive. It is resolved specially (early, pre-dispatch) rather than
+      # through the resolver -> lockfile -> install pipeline because it is the
+      # interpreter every other dependency and command runs under.
+      #
+      # @param version [String, Symbol] exact Ruby version (e.g. "4.0.5")
+      def ruby(version)
+        @ruby_version_requirement = version.to_s.strip
+      end
+
+      # Declare the Lua version for LuaRocks integration.
+      #
+      # @param version [String, Symbol] Lua version (e.g. "5.1")
+      def lua_version(version)
+        @lua_version_value = version.to_s.strip
+      end
+
+      # Declare the project's Python toolchain. Like `ruby`, this is a first-class
+      # toolchain: dev provisions the interpreter (Homebrew python@<version>) and a
+      # project-local .venv (ShadowenvPython) before commands run, and pip deps
+      # (declared with `pip` inside a group) install into that venv. Resolved
+      # specially (pre-dispatch), not through the resolver -> lockfile pipeline.
+      #
+      # @param version [String, Symbol] Python minor version (e.g. "3.12")
+      def python(version)
+        @python_version_value = version.to_s.strip
+      end
+
+      def tap(name, url: nil)
+        name_str = name.to_s
+        @taps[name_str] = {
+          "name" => name_str,
+          "url"  => url && url.to_s,
+        }
+      end
+
+      # Register a custom integration: maps the name to an Integration class
+      # and creates a DSL method so it can be used in any declaration context.
+      #
+      # @param name [Symbol, String] integration identifier (e.g. :wow_curseforge)
+      # @param klass [Class, String] Integration subclass or its name
+      def register(name, klass)
+        sym = name.to_sym
+        @registered_integrations[sym] = klass
+        @registered_methods << sym
+      end
+
+      # Declare a dependency group, optionally pinned to a platform and/or host OS.
+      #
+      # @param name [String, Symbol] group name (e.g. :app, :test, :integration)
+      # @param platform [String, nil] platform the group's deps target (e.g. "LinuxServer").
+      #   Stamped onto every declaration in the group so the resolver can union platforms
+      #   across groups for multi-arch integrations. nil lets each integration pick its default.
+      # @param host [Symbol, nil] host OS the group's deps install on (:darwin / :linux).
+      #   Sugar that stamps every member declaration, exactly as platform: does; install
+      #   filters against the detected host OS (the lockfile stays universal — all hosts'
+      #   deps are resolved and locked, filtering happens at install, never at resolve).
+      def group(name, platform: nil, host: nil, &block)
+        group_dsl = GroupDSL.new(group: name.to_sym, platform:, host:, registered_methods: @registered_methods)
+        group_dsl.instance_eval(&block) if block
+        @declarations.concat(group_dsl.declarations)
+      end
+    end
+
+    # DSL for per-environment entries (inside a group's env block); every
+    # member declaration is stamped with the environment name.
+    class EnvDSL
+      include DependencyVerbs
+
+      # @param group [Symbol] enclosing group, stamped onto declarations
+      # @param platform [String, nil] enclosing group's platform
+      # @param host [Symbol, nil] enclosing group's host OS
+      # @param env [String, nil] environment name ("ci" / "dev"), stamped onto declarations
+      # @param registered_methods [Array<Symbol>] dynamically registered integration methods
+      def initialize(group: :app, platform: nil, host: nil, env: nil, registered_methods: [])
+        @declarations = []
+        @group = group
+        @platform = platform
+        @host = host
+        @env = env
+        @registered_methods = registered_methods
+      end
+    end
+
+    # DSL for group-scoped declarations, plus nested env blocks.
+    class GroupDSL
+      include DependencyVerbs
+
+      # @param group [Symbol] group name (e.g. :app, :test, :build)
+      # @param platform [String, nil] platform stamped onto every declaration in this group
+      # @param host [Symbol, nil] host OS stamped onto every declaration in this group
+      # @param registered_methods [Array<Symbol>] dynamically registered integration methods
+      def initialize(group:, platform: nil, host: nil, registered_methods: [])
+        @group = group
+        @platform = platform
+        @host = host
+        @env = nil
+        @declarations = []
+        @registered_methods = registered_methods
+      end
+
+      # Scope member declarations to an environment ("ci" / "dev"). The env
+      # name is a first-class declaration field (like host), landing in the
+      # lockfile's env section so install-deps filters it to the matching
+      # environment — never smuggled through the constraint hash.
+      def env(name, &block)
+        env_dsl = EnvDSL.new(group: @group, platform: @platform, host: @host,
+          env: name.to_s, registered_methods: @registered_methods)
+        env_dsl.instance_eval(&block) if block
+        @declarations.concat(env_dsl.declarations)
       end
     end
   end

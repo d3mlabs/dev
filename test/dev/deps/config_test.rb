@@ -87,11 +87,11 @@ class Dev::Deps::ConfigTest < Minitest::Test
     end
 
     Then
-    build = config.group("build")
-    build["brew"].size == 3
-    build["brew"][0] == "ccache"
-    build["brew"][1] == "cmake"
-    build["brew"][2] == { "powershell" => { "version" => "7.4.0", "tap" => "d3mlabs/d3mlabs" } }
+    brews = config.declarations.select { |d| d.integration == :brew }
+    brews.map(&:name) == %w[ccache cmake powershell]
+    brews.all? { |d| d.group == :build }
+    brews[0].constraint == {}
+    brews[2].constraint == { "version" => "7.4.0", "tap" => "d3mlabs/d3mlabs" }
   end
 
   test "define build group with env-specific brew" do
@@ -108,10 +108,12 @@ class Dev::Deps::ConfigTest < Minitest::Test
       end
     end
 
-    Then
-    build = config.group("build")
-    build["env"]["ci"]["brew"] == ["ruby"]
-    build["env"]["dev"]["brew"] == [{ "powershell" => { "cask" => true } }]
+    Then "env lands as a first-class field on each declaration"
+    config.declarations.find { |d| d.name == "cmake" }.env.nil?
+    config.declarations.find { |d| d.name == "ruby" }.env == "ci"
+    powershell = config.declarations.find { |d| d.name == "powershell" }
+    powershell.env == "dev"
+    powershell.constraint == { "cask" => true }
   end
 
   test "define app group with cmake deps produces declarations" do
@@ -160,14 +162,12 @@ class Dev::Deps::ConfigTest < Minitest::Test
     decl.constraint["cmake_targets"] == ["gtest", "gmock"]
   end
 
-  test "missing group returns empty defaults" do
+  test "an empty define produces no declarations" do
     When
     config = Dev::Deps.define {}
 
     Then
-    nonexistent = config.group("nonexistent")
-    nonexistent["brew"] == []
-    nonexistent["env"] == {}
+    config.declarations == []
   end
 
   test "cmake dep with commit pin" do
@@ -185,7 +185,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
     decl.constraint["commit"] == "ee3042f8b027"
   end
 
-  test "brew dual-writes to both groups and declarations" do
+  test "brew declarations are the single source for host installs and image builds" do
     When
     config = Dev::Deps.define do
       group :build do
@@ -197,9 +197,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
       end
     end
 
-    Then "the container groups path is unchanged and brew also rides the lockfile pipeline"
-    config.group("build")["brew"].size == 2
-    config.group("build")["env"]["ci"]["brew"] == ["ruby"]
+    Then "every brew entry is one declaration carrying its full install metadata"
     brew_decls = config.declarations.select { |d| d.integration == :brew }
     brew_decls.map(&:name).sort == %w[cmake powershell ruby]
     brew_decls.all? { |d| d.group == :build }
@@ -207,5 +205,35 @@ class Dev::Deps::ConfigTest < Minitest::Test
     # env is a first-class declaration field, never smuggled into the constraint.
     brew_decls.find { |d| d.name == "ruby" }.env == "ci"
     brew_decls.find { |d| d.name == "ruby" }.constraint["env"].nil?
+  end
+
+  test "top-level verbs land in the default group like a top-level gem does" do
+    When "declaring brew and gh deps outside any group block"
+    config = Dev::Deps.define do
+      brew "shellcheck"
+      gh "css-engine", github: "example/css-engine", tag: "v1.0",
+        assets: "*.tar.gz", install_dir: "~/.dev/css-engine"
+    end
+
+    Then "both land in the default group with no platform or host"
+    config.declarations.size == 2
+    config.declarations.all? { |d| d.group == Dev::Deps::DSL::DEFAULT_GEM_GROUP }
+    config.declarations.all? { |d| d.platform.nil? && d.host.nil? }
+    config.declarations[0].integration == :brew
+    config.declarations[1].integration == :gh
+  end
+
+  test "top-level declarations keep source order alongside grouped ones" do
+    When "interleaving top-level and grouped declarations"
+    config = Dev::Deps.define do
+      gem "first"
+      group :test do
+        gem "second"
+      end
+      brew "third"
+    end
+
+    Then "declarations preserve manifest source order (groups append at close)"
+    config.declarations.map(&:name) == %w[first second third]
   end
 end
