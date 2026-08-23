@@ -162,6 +162,7 @@ knowledge_repo: d3mlabs/knowledge      # org learnings sync source
 deployment_formula: d3mlabs/d3mlabs/dev  # the formula `dev up` self-updates (the deployment names itself)
 container_engine: docker               # per-user opt-out from the host's engine ("docker" = bare dockerd; unset = colima on macOS, bare dockerd elsewhere)
 engine_resources: warn                 # "enforce" (default) fails a build on an engine below the repo's resources hint; "warn" prints it and carries on
+default_org: d3mlabs                   # the org a bare `dev clone <repo>` expands under (unset = explicit <org>/<repo> only)
 ```
 
 Leaving a nilable key unset turns its feature off (`plans_repo` is only required by `dev plan --org`). Manage the user file with `dev config` instead of hand-editing YAML: `list` shows every known key with its resolved value and source layer (`env` / `user` / `system` / unset) — the settings debugging tool; `get <key>` prints the resolved value (exit 1 when unset); `set <key> <value>` writes the user file, creating it if missing. Known keys only; global, works without a `dev.yml`. The tool ships as two kinds of formula (the Debian core-package/config-package split, applied to a tap):
@@ -204,9 +205,11 @@ Only git repos count as candidates (directories with a `.git` entry — a `.git`
 `dev clone [<org>/]<repo>` clones a GitHub repo (via your `gh` auth — no credentials of dev's own) into the canonical checkout path under the same search root `dev cd` walks — `$DEV_CD_ROOT/github.com/<org>/<repo>`, default `~/src` — and lands your shell in the fresh checkout through the same wrapper:
 
 ```bash
-dev clone myrepo           # org defaults to d3mlabs → ~/src/github.com/d3mlabs/myrepo
+dev clone myrepo           # bare name expands under the default_org setting → ~/src/github.com/<default_org>/myrepo
 dev clone acme/widget      # explicit org
 ```
+
+A bare `<repo>` needs the `default_org` key in `~/.config/dev/config.yml` (or `DEV_DEFAULT_ORG`); without it, dev asks for an explicit `<org>/<repo>` — dev is public and hardcodes no org.
 
 It is clone-only by design — no automatic `dev up`. Provisioning stays a deliberate second step, because a first `dev up` is where credential prompts happen and you should see them coming. The fresh-machine story is three commands: `brew install d3mlabs/d3mlabs/dev` → `dev clone <repo>` → `dev up`.
 
