@@ -5,11 +5,11 @@ Global CLI tool for d3mlabs projects. Discovers `dev.yml` in your git repos and 
 
 ## Installation
 
-Install via Homebrew (from the d3mlabs tap). This installs `dev` and shadowenv (for per-project Ruby env in repos that use `dev up`):
+Install via Homebrew. Orgs install their deployment formula (tool + org configuration in one command); individuals without an org install the generic `dev-core` and write their own config — see [Org configuration & deployment](#org-configuration--deployment):
 
 ```bash
-brew tap d3mlabs
-brew install d3mlabs/dev
+brew install d3mlabs/d3mlabs/dev        # d3mlabs (or your org's <org>/<tap>/dev)
+brew install d3mlabs/d3mlabs/dev-core   # org-blank tool only
 ```
 
 ### System dependencies
@@ -104,11 +104,18 @@ knowledge_repo: d3mlabs/knowledge  # org learnings sync source
 baseline_repo: d3mlabs/knowledge   # repo whose baseline/dependencies.rb is the host baseline
 ```
 
-Leaving a nilable key unset turns its feature off (`plans_repo` is only required by `dev plan --org`). Three consumption stories:
+Leaving a nilable key unset turns its feature off (`plans_repo` is only required by `dev plan --org`). The tool ships as two kinds of formula (the Debian core-package/config-package split, applied to a tap):
 
-- **Org deployment (recommended):** the org's Homebrew formula is the deployment artifact — it packages the generic tool *and* the org's identity. It installs the org `config.yml` into the prefix's `etc/dev/` (pkgetc — brew preserves locally-modified etc files across upgrades) and declares `depends_on` for the tools dev itself shells out to. One command installs both: `brew install d3mlabs/d3mlabs/dev` is the reference deployment. An org that doesn't want to own a full build formula can publish a thin config-only formula instead (e.g. `acme/tools/acme-dev`: payload is `etc/dev/config.yml`, plus `depends_on "d3mlabs/d3mlabs/dev"`), so `brew install acme/tools/acme-dev` deploys the upstream tool with acme's identity.
-- **Individual / handrolled:** install dev from any org's tap (or source) and write the user file yourself with the keys above — no formula involvement, useful for personal machines or orgs without a tap.
+- **`d3mlabs/d3mlabs/dev-core`** — the generic tool, org-blank: the build payload plus the tools dev itself shells out to (git, gh, ruby, rbenv, ruby-build, shadowenv). It ships no org content.
+- **A deployment formula named `dev` in each org's tap** — `depends_on "d3mlabs/d3mlabs/dev-core"` plus the org's `config.yml` installed into the prefix's `etc/dev/` (pkgetc — brew preserves locally-modified etc files across upgrades). Formula names only need to be unique within a tap, so every org's install is the same shape: `brew install d3mlabs/d3mlabs/dev` is the reference deployment, and an adopting org publishes `acme/tap/dev` with identical structure and its own keys.
+
+Three consumption stories:
+
+- **Org deployment (recommended):** `brew install <org>/<tap>/dev` — one command installs tool + identity, and the org evolves its config by shipping a new deployment formula revision.
+- **Individual / handrolled:** `brew install d3mlabs/d3mlabs/dev-core`, then write the user file yourself with the keys above — no org involvement, useful for personal machines or orgs without a tap.
 - **CI / fleet:** set the ENV vars in the pipeline or MDM profile — no files needed, and they override both file layers.
+
+Installs predating the split (when `dev` was a monolithic tool+config formula) migrate with a hard cut: `brew uninstall dev && brew install d3mlabs/d3mlabs/dev`.
 
 ## Usage
 
