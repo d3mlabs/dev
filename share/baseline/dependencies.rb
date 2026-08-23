@@ -27,13 +27,9 @@ Dev::Deps.define do
     brew "shadowenv"
   end
 
-  # The headless Cursor agent CLI ai-flow spawns, via the upstream
-  # homebrew-cask package (world-readable under /opt/homebrew — the agent
-  # user reads it with no shared-root machinery); AI_FLOW_AGENT_BIN points
-  # at the Caskroom's stable bin/cursor-agent symlink. darwin-gated: agent
-  # jobs route to Mac runners; target hosts (the gamebox) never get agent
-  # pieces.
-  group :agent, host: :darwin do
-    brew "cursor-cli", cask: true
-  end
+  # Deliberately NOT here: the Cursor agent CLI. It is ai-flow's own
+  # dependency (declared in ai-flow's dependencies.rb as the cursor-cli
+  # cask) — converging the ai-flow checkout is what makes a box
+  # agent-capable, so target hosts and plain dev machines never carry
+  # agent pieces they don't serve.
 end
