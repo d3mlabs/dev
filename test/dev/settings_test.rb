@@ -8,12 +8,32 @@ require "fileutils"
 
 transform!(RSpock::AST::Transformation)
 class Dev::SettingsTest < Minitest::Test
-  test "plans_repo reads from the config file" do
-    Given "a config file declaring the org plans repo"
+  # Build Settings with hermetic layer paths: both files live in the temp
+  # dir, so the machine's real user/system config never leaks into a test.
+  def build_settings(dir)
+    Dev::Settings.new(
+      config_path: File.join(dir, "user", "config.yml"),
+      system_config_path: File.join(dir, "system", "config.yml"),
+    )
+  end
+
+  def write_user(dir, content)
+    path = File.join(dir, "user", "config.yml")
+    FileUtils.mkdir_p(File.dirname(path))
+    File.write(path, content)
+  end
+
+  def write_system(dir, content)
+    path = File.join(dir, "system", "config.yml")
+    FileUtils.mkdir_p(File.dirname(path))
+    File.write(path, content)
+  end
+
+  test "plans_repo reads from the user config file" do
+    Given "a user config file declaring the org plans repo"
     dir = Dir.mktmpdir("dev-settings-test-")
-    path = File.join(dir, "config.yml")
-    File.write(path, "plans_repo: d3mlabs/plans\n")
-    settings = Dev::Settings.new(config_path: path)
+    write_user(dir, "plans_repo: d3mlabs/plans\n")
+    settings = build_settings(dir)
 
     Expect
     settings.plans_repo == "d3mlabs/plans"
@@ -25,10 +45,9 @@ class Dev::SettingsTest < Minitest::Test
   test "DEV_PLANS_REPO overrides the config file" do
     Given "a config file and an ENV override"
     dir = Dir.mktmpdir("dev-settings-test-")
-    path = File.join(dir, "config.yml")
-    File.write(path, "plans_repo: d3mlabs/plans\n")
+    write_user(dir, "plans_repo: d3mlabs/plans\n")
     ENV["DEV_PLANS_REPO"] = "acme/plans"
-    settings = Dev::Settings.new(config_path: path)
+    settings = build_settings(dir)
 
     Expect
     settings.plans_repo == "acme/plans"
@@ -39,9 +58,9 @@ class Dev::SettingsTest < Minitest::Test
   end
 
   test "an unset plans_repo raises with instructions" do
-    Given "no config file"
+    Given "no config file in either layer"
     dir = Dir.mktmpdir("dev-settings-test-")
-    settings = Dev::Settings.new(config_path: File.join(dir, "config.yml"))
+    settings = build_settings(dir)
 
     When "reading the plans repo"
     settings.plans_repo
@@ -53,13 +72,42 @@ class Dev::SettingsTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "a key falls through to the system config file" do
+    Given "only the system layer (an org deployment's file) declares the key"
+    dir = Dir.mktmpdir("dev-settings-test-")
+    write_system(dir, "plans_repo: d3mlabs/plans\n")
+    settings = build_settings(dir)
+
+    Expect
+    settings.plans_repo == "d3mlabs/plans"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "the user file wins over the system file per key, gitconfig-style" do
+    Given "both layers set plans_repo, and only the system layer sets knowledge_repo"
+    dir = Dir.mktmpdir("dev-settings-test-")
+    write_system(dir, "plans_repo: d3mlabs/plans\nknowledge_repo: d3mlabs/knowledge\n")
+    write_user(dir, "plans_repo: personal/plans\n")
+    saved_env = ENV.delete("DEV_KNOWLEDGE_REPO")
+    settings = build_settings(dir)
+
+    Expect "the user's plans_repo wins while the system knowledge_repo still applies"
+    settings.plans_repo == "personal/plans"
+    settings.knowledge_repo == "d3mlabs/knowledge"
+
+    Cleanup
+    ENV["DEV_KNOWLEDGE_REPO"] = saved_env if saved_env
+    FileUtils.rm_rf(dir)
+  end
+
   test "knowledge_repo reads from the config file" do
     Given "a config file declaring the org knowledge repo"
     dir = Dir.mktmpdir("dev-settings-test-")
-    path = File.join(dir, "config.yml")
-    File.write(path, "knowledge_repo: d3mlabs/knowledge\n")
+    write_user(dir, "knowledge_repo: d3mlabs/knowledge\n")
     saved_env = ENV.delete("DEV_KNOWLEDGE_REPO")
-    settings = Dev::Settings.new(config_path: path)
+    settings = build_settings(dir)
 
     Expect
     settings.knowledge_repo == "d3mlabs/knowledge"
@@ -72,11 +120,10 @@ class Dev::SettingsTest < Minitest::Test
   test "DEV_KNOWLEDGE_REPO overrides the config file" do
     Given "a config file and an ENV override"
     dir = Dir.mktmpdir("dev-settings-test-")
-    path = File.join(dir, "config.yml")
-    File.write(path, "knowledge_repo: d3mlabs/knowledge\n")
+    write_user(dir, "knowledge_repo: d3mlabs/knowledge\n")
     saved_env = ENV["DEV_KNOWLEDGE_REPO"]
     ENV["DEV_KNOWLEDGE_REPO"] = "acme/knowledge"
-    settings = Dev::Settings.new(config_path: path)
+    settings = build_settings(dir)
 
     Expect
     settings.knowledge_repo == "acme/knowledge"
@@ -90,13 +137,58 @@ class Dev::SettingsTest < Minitest::Test
     Given "no config file"
     dir = Dir.mktmpdir("dev-settings-test-")
     saved_env = ENV.delete("DEV_KNOWLEDGE_REPO")
-    settings = Dev::Settings.new(config_path: File.join(dir, "config.yml"))
+    settings = build_settings(dir)
 
     Expect
     settings.knowledge_repo.nil?
 
     Cleanup
     ENV["DEV_KNOWLEDGE_REPO"] = saved_env if saved_env
+    FileUtils.rm_rf(dir)
+  end
+
+  test "baseline_repo reads from the config file" do
+    Given "a config file declaring the org baseline repo"
+    dir = Dir.mktmpdir("dev-settings-test-")
+    write_user(dir, "baseline_repo: d3mlabs/knowledge\n")
+    saved_env = ENV.delete("DEV_BASELINE_REPO")
+    settings = build_settings(dir)
+
+    Expect
+    settings.baseline_repo == "d3mlabs/knowledge"
+
+    Cleanup
+    ENV["DEV_BASELINE_REPO"] = saved_env if saved_env
+    FileUtils.rm_rf(dir)
+  end
+
+  test "DEV_BASELINE_REPO overrides the config file" do
+    Given "a config file and an ENV override"
+    dir = Dir.mktmpdir("dev-settings-test-")
+    write_user(dir, "baseline_repo: d3mlabs/knowledge\n")
+    saved_env = ENV["DEV_BASELINE_REPO"]
+    ENV["DEV_BASELINE_REPO"] = "acme/baseline"
+    settings = build_settings(dir)
+
+    Expect
+    settings.baseline_repo == "acme/baseline"
+
+    Cleanup
+    saved_env ? ENV["DEV_BASELINE_REPO"] = saved_env : ENV.delete("DEV_BASELINE_REPO")
+    FileUtils.rm_rf(dir)
+  end
+
+  test "an unset baseline_repo is nil — no host baseline is a supported state" do
+    Given "no config file"
+    dir = Dir.mktmpdir("dev-settings-test-")
+    saved_env = ENV.delete("DEV_BASELINE_REPO")
+    settings = build_settings(dir)
+
+    Expect
+    settings.baseline_repo.nil?
+
+    Cleanup
+    ENV["DEV_BASELINE_REPO"] = saved_env if saved_env
     FileUtils.rm_rf(dir)
   end
 end
