@@ -387,7 +387,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     config.declarations[0].constraint["buildid"] == "15321746"
   end
 
-  test "brew with post_install stores callable in opts" do
+  test "brew with post_install stores the callable on the declaration" do
     Given "a post_install callable"
     hook = ->(name, opts) {}
 
@@ -398,11 +398,54 @@ class Dev::Deps::DSLTest < Minitest::Test
       end
     end
 
+    Then "the hook is a first-class field, never a constraint key"
+    decl = config.declarations[0]
+    decl.post_install == hook
+    decl.constraint == { "tap" => "d3mlabs/d3mlabs" }
+  end
+
+  test "env-scoped brew peels post_install and host onto the declaration" do
+    Given "a post_install callable"
+    hook = ->(name, opts) {}
+
+    When "declaring an env-scoped brew dep with post_install and host"
+    config = Dev::Deps.define do
+      group :build do
+        env :ci do
+          brew "wwise-cli", tap: "d3mlabs/d3mlabs", post_install: hook, host: :linux
+        end
+      end
+    end
+
+    Then "both land as first-class fields, exactly like group-level brew"
+    decl = config.declarations[0]
+    decl.env == "ci"
+    decl.host == :linux
+    decl.post_install == hook
+    decl.constraint == { "tap" => "d3mlabs/d3mlabs" }
+  end
+
+  test "registered integration verbs work at the top level" do
+    When "registering an integration and using it outside any group"
+    config = Dev::Deps.define do
+      register :wow_curseforge, "WoWCurseforgeIntegration"
+      wow_curseforge "CombatMode", version: ">=1.0"
+    end
+
+    Then "the declaration lands in the default group"
+    decl = config.declarations[0]
+    decl.integration == :wow_curseforge
+    decl.group == Dev::Deps::DSL::DEFAULT_GEM_GROUP
+  end
+
+  test "top-level brew raises EmptyNameError for empty name" do
+    When "declaring a top-level brew dep with empty name"
+    Dev::Deps.define do
+      brew ""
+    end
+
     Then
-    entry = config.group("build")["brew"][0]
-    entry.is_a?(Hash)
-    entry["wwise-cli"]["post_install"] == hook
-    entry["wwise-cli"]["tap"] == "d3mlabs/d3mlabs"
+    raises Dev::Deps::GroupDSL::EmptyNameError
   end
 
   test "cmake raises EmptyNameError for empty name" do

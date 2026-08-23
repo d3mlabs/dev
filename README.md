@@ -314,6 +314,11 @@ end
 Four orthogonal axes scope a declaration; each answers a different question:
 
 - **`group`** — *purpose* (`:app`, `:test`, `:build`, `:game`, `:editor`, …). User-defined; `:build` installs first.
+  The vocabulary is dev-owned and integrations translate it natively (e.g. group names become bundler groups in the generated Gemfile):
+  - `:app` — runtime dependencies the project needs to run. The default: declarations outside any group block land here, mirroring a hand-written Gemfile's top section.
+  - `:development` / `:test` — the human's workbench and the test suite, per the Gemfile convention.
+  - `:build` — the build-time toolchain (compilers, caches, codegen). Installed before every other group, and the group `bin/install-build-deps.rb` materializes into container build images.
+  - Domain groups (`:game`, `:editor`, `:integration`, …) are welcome — any symbol works; the name is documentation plus a filter handle.
 - **`env`** — *execution context* the dep is for (`"ci"` / `"dev"`), declared via `env :ci do ... end` inside a group. Filtered at install against the detected env (`CI` variable only — a Linux workstation is `dev`, a Mac CI runner is `ci`).
 - **`host`** — *OS of the machine the dep installs on* (`:darwin` / `:linux`). Declared per-group (`group :editor, host: :darwin do ... end`) or per-declaration (`gh ..., host: :linux`). Filtered at install against the detected host OS — deps for other hosts are still resolved and locked, so the lockfile stays the single source of truth for every machine.
 - **`platform`** — *what artifact variant the dep targets* (e.g. `"LinuxServer"`), for multi-arch integrations like ficsit. A resolve-time concern, not an install filter.
@@ -338,7 +343,7 @@ All built-in integrations are declared in one place — `lib/dev/deps/registry.r
 
 `xcode "26.1.1"` pins the Xcode toolchain (macOS only; a no-op on other hosts). dev installs the pin to `/Applications/Xcode-<ver>.app` via the [xcodes](https://github.com/XcodesOrg/xcodes) CLI — declare `brew "xcodes", host: :darwin` in `:build` so it exists first — and publishes `DEVELOPER_DIR` into the project shadowenv. Interactive runs pass any Apple ID/2FA/sudo prompt through to you; headless runs fail fast with remediation instead of hanging (normal practice: pre-install the pin interactively once during machine bring-up, e.g. a CI runner's).
 
-`gem()` declares Ruby gems: dev generates a `Gemfile`/`Gemfile.lock` from your declarations (a top-level `gem` lands in the default group; `group(:test) { gem ... }` scopes it to a bundler group), and `dev install-deps` runs `bundle install`. `brew()` dual-writes — the container build path keeps reading the group structure while `dev install-deps` also installs the formulae on the host (idempotently).
+`gem()` declares Ruby gems: dev generates a `Gemfile`/`Gemfile.lock` from your declarations (a top-level `gem` lands in the default group; `group(:test) { gem ... }` scopes it to a bundler group), and `dev install-deps` runs `bundle install`. Every verb works at the top level too and lands in `:app`. Declarations are the single data model: `brew()` entries ride the resolver → lockfile → install pipeline on the host (idempotently), and the container build path (`bin/install-build-deps.rb`) derives its install list from the same `:build`-group declarations.
 
 `python "3.12"` pins the Python toolchain: dev provisions the interpreter (Homebrew `python@3.12`) and a project-local `.venv`, and publishes it into the project shadowenv (`VIRTUAL_ENV` + `.venv/bin` on `PATH`). `pip()` declares packages installed into that venv — like `luarocks()`, you declare only the top-level packages and pip resolves the transitive tree at install time. Gate heavy, platform-specific stacks (e.g. a PyTorch-backed ML tool) with `host:` so only the machines that use them pay the download.
 
