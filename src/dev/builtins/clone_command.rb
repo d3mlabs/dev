@@ -14,7 +14,8 @@ module Dev
 
       # Shared with the global usage listing (GlobalDispatch), which reads
       # descriptions without instantiating the builtin.
-      DESC = "Clone a GitHub repo (via gh auth) into $DEV_CD_ROOT (default ~/src), org defaults to d3mlabs"
+      DESC = "Clone a GitHub repo (via gh auth) into $DEV_CD_ROOT (default ~/src); " \
+        "bare names expand under the default_org setting"
 
       sig { params(accessor: Dev::Clone::Accessor).void }
       def initialize(accessor: Dev::Clone::Accessor.new)

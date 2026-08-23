@@ -9,13 +9,15 @@ module Dev
   #
   #   plans_repo: d3mlabs/plans
   #   knowledge_repo: d3mlabs/knowledge
+  #   default_org: d3mlabs
   #
   # `plans_repo` is the org-wide plans repo that `dev plan new --org` /
   # `dev plan link --org` target. `knowledge_repo` is the org knowledge repo
   # dev keeps a machine-local cache of; leaving it unset simply means no org
-  # learnings sync (dev is public and hardcodes no org content). ENV
-  # overrides: DEV_PLANS_REPO and DEV_KNOWLEDGE_REPO (matching the
-  # credentials ENV-first convention).
+  # learnings sync (dev is public and hardcodes no org content), and no
+  # `default_org` means `dev clone` needs explicit <org>/<repo> targets.
+  # ENV overrides: DEV_PLANS_REPO, DEV_KNOWLEDGE_REPO and DEV_DEFAULT_ORG
+  # (matching the credentials ENV-first convention).
   class Settings
     class MissingSettingError < RuntimeError; end
 
@@ -52,6 +54,19 @@ module Dev
       return from_env if from_env && !from_env.empty?
 
       value = load_config["knowledge_repo"]
+      (value && !value.empty?) ? value : nil
+    end
+
+    # The GitHub org a bare `dev clone <repo>` expands under. Unset is a
+    # supported state: bare targets then require an explicit <org>/<repo> —
+    # dev is public and hardcodes no org.
+    #
+    # @return [String, nil] the org name, or nil
+    def default_org
+      from_env = ENV["DEV_DEFAULT_ORG"]
+      return from_env if from_env && !from_env.empty?
+
+      value = load_config["default_org"]
       (value && !value.empty?) ? value : nil
     end
 
