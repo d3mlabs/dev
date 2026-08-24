@@ -224,6 +224,7 @@ module Dev
         "check" => Builtins::CheckCommand.new(dependency_service:),
         "deps" => Builtins::DepsCommand.new,
         "cache" => Builtins::CacheCommand.new,
+        "config" => Builtins::ConfigCommand.new,
         "cred" => Builtins::CredCommand.new,
         "plan" => Builtins::PlanCommand.new,
       }, T::Hash[String, BuiltinCommand])

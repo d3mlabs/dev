@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "yaml"
 
 module Dev
@@ -28,6 +29,15 @@ module Dev
   # feature off.
   class Settings
     class MissingSettingError < RuntimeError; end
+
+    # The settings registry: every known key and its ENV override. The one
+    # list `dev config` reads (never a duplicated copy that can drift) —
+    # a new setting joins here and the command picks it up for free.
+    KNOWN_KEYS = {
+      "plans_repo" => "DEV_PLANS_REPO",
+      "knowledge_repo" => "DEV_KNOWLEDGE_REPO",
+      "deployment_formula" => "DEV_DEPLOYMENT_FORMULA",
+    }.freeze
 
     # @return [String] path of the user config file (layer 2)
     attr_reader :config_path
@@ -76,6 +86,38 @@ module Dev
       setting("deployment_formula", "DEV_DEPLOYMENT_FORMULA")
     end
 
+    # Resolve a known key together with the layer it came from — the
+    # `dev config list` view (gitconfig --show-origin style).
+    #
+    # @param key [String] a KNOWN_KEYS key
+    # @return [Array(String, Symbol), Array(nil, Symbol)] value and source
+    #   layer: :env, :user, :system, or :unset (value nil)
+    def lookup(key)
+      env_value = present(ENV[KNOWN_KEYS.fetch(key)])
+      return [env_value, :env] if env_value
+
+      user_value = present(load_yaml(@config_path)[key])
+      return [user_value, :user] if user_value
+
+      system_value = present(load_yaml(@system_config_path)[key])
+      return [system_value, :system] if system_value
+
+      [nil, :unset]
+    end
+
+    # Write a known key into the user file (layer 2), creating it if
+    # missing and preserving its other keys. String-keyed, string-valued
+    # dump only — the file stays hand-readable plain YAML.
+    #
+    # @param key [String] a KNOWN_KEYS key
+    # @param value [String]
+    # @return [void]
+    def set(key, value)
+      KNOWN_KEYS.fetch(key)
+      FileUtils.mkdir_p(File.dirname(@config_path))
+      File.write(@config_path, YAML.dump(load_yaml(@config_path).merge(key => value.to_s)))
+    end
+
     private
 
     # Resolve one key through the layers: ENV → user file → system file.
@@ -90,6 +132,12 @@ module Dev
 
       value = layered_config[key]
       (value && !value.empty?) ? value : nil
+    end
+
+    # @param value [String, nil]
+    # @return [String, nil] the value, with empty strings counting as unset
+    def present(value)
+      (value && !value.to_s.empty?) ? value.to_s : nil
     end
 
     # @return [String]
