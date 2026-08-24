@@ -4,7 +4,7 @@
 require "dev/cd"
 require "dev/command"
 require "dev/credentials"
-require "dev/deps/baseline"
+require "dev/host/converge"
 
 module Dev
   module Builtins
@@ -21,15 +21,15 @@ module Dev
         params(
           install_deps_command: InstallDepsCommand,
           hook_installer: Dev::Cd::HookInstaller,
-          baseline: Dev::Deps::Baseline,
+          host_converge: Dev::Host::Converge,
         ).void
       end
       def initialize(install_deps_command:, hook_installer: Dev::Cd::HookInstaller.new,
-        baseline: Dev::Deps::Baseline.new)
+        host_converge: Dev::Host::Converge.new)
         super()
         @install_deps_command = T.let(install_deps_command, InstallDepsCommand)
         @hook_installer = T.let(hook_installer, Dev::Cd::HookInstaller)
-        @baseline = T.let(baseline, Dev::Deps::Baseline)
+        @host_converge = T.let(host_converge, Dev::Host::Converge)
       end
 
       sig { override.returns(String) }
@@ -49,9 +49,10 @@ module Dev
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
-        # The host baseline converges before project provisioning: project
-        # installs may lean on baseline tools (gh, rbenv). O(1) when warm.
-        @baseline.converge_if_stale
+        # The host layer converges before project provisioning (throttled
+        # self-update + org Brewfile): project installs may lean on host
+        # tools (gh, rbenv). Warn-only — never blocks the project.
+        @host_converge.run
         provision_build_credentials(context)
         @hook_installer.ensure_installed
         @install_deps_command.call(args:, context:)

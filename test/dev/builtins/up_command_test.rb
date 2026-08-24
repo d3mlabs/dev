@@ -28,7 +28,7 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     hook_installer = typed_mock(Dev::Cd::HookInstaller)
     hook_installer.expects(:ensure_installed).once.returns(:already_present)
     command = Dev::Builtins::UpCommand.new(
-      install_deps_command: install_deps, hook_installer: hook_installer, baseline: fresh_baseline,
+      install_deps_command: install_deps, hook_installer: hook_installer, host_converge: quiet_host_converge,
     )
     context = build_context
 
@@ -39,22 +39,22 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     1 * install_deps.call(args: ["-v"], context: context)
   end
 
-  test "call converges a stale host baseline as its first step" do
-    Given "an up command whose baseline expects the staleness-gated converge"
-    baseline = typed_mock(Dev::Deps::Baseline)
-    baseline.expects(:converge_if_stale).once.returns(true)
+  test "call converges the host layer as its first step" do
+    Given "an up command whose host converge expects its run"
+    host_converge = typed_mock(Dev::Host::Converge)
+    host_converge.expects(:run).once
     install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
     install_deps.stubs(:call)
     hook_installer = typed_mock(Dev::Cd::HookInstaller)
     hook_installer.stubs(:ensure_installed).returns(:already_present)
     command = Dev::Builtins::UpCommand.new(
-      install_deps_command: install_deps, hook_installer: hook_installer, baseline: baseline,
+      install_deps_command: install_deps, hook_installer: hook_installer, host_converge: host_converge,
     )
 
     When "running up"
     command.call(args: [], context: build_context)
 
-    Then "the expectation on the baseline holds"
+    Then "the expectation on the host converge holds"
     true
   end
 
@@ -102,14 +102,14 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     hook_installer = typed_mock(Dev::Cd::HookInstaller)
     hook_installer.stubs(:ensure_installed).returns(:already_present)
     Dev::Builtins::UpCommand.new(
-      install_deps_command: install_deps, hook_installer: hook_installer, baseline: fresh_baseline,
+      install_deps_command: install_deps, hook_installer: hook_installer, host_converge: quiet_host_converge,
     )
   end
 
-  def fresh_baseline
-    baseline = typed_mock(Dev::Deps::Baseline)
-    baseline.stubs(:converge_if_stale).returns(false)
-    baseline
+  def quiet_host_converge
+    host_converge = typed_mock(Dev::Host::Converge)
+    host_converge.stubs(:run)
+    host_converge
   end
 
   def container_config(build_args:)

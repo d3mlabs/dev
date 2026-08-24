@@ -34,7 +34,7 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     source = build_source_repo(dir)
     config = File.join(dir, "config.yml")
     File.write(config, "knowledge_repo: #{source}\n")
-    settings = Dev::Settings.new(config_path: config)
+    settings = hermetic_settings(dir)
     cache = Dev::Learnings::Cache.new(repo: source, dir: File.join(dir, "cache"))
     # The fixture cache lives under the real temp dir; the tmpdir override
     # keeps the installer's ephemeral-source guard out of these tests' way.
@@ -48,6 +48,16 @@ class Dev::Learnings::AccessorTest < Minitest::Test
       skill_installer: installer, gem_skill_linker: gem_skill_linker,
     )
     [accessor, cache, project, synchronizer, gem_skill_linker]
+  end
+
+  # Settings with both file layers pinned inside the temp dir — the
+  # machine's real system config (installed by a deployment formula) must
+  # never leak a knowledge_repo into these tests.
+  def hermetic_settings(dir)
+    Dev::Settings.new(
+      config_path: File.join(dir, "config.yml"),
+      system_config_path: File.join(dir, "system-config.yml"),
+    )
   end
 
   def build_source_repo(dir)
@@ -112,9 +122,7 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     Given "an accessor over empty settings"
     dir = Dir.mktmpdir("dev-learnings-acc-test-")
     saved_env = ENV.delete("DEV_KNOWLEDGE_REPO")
-    accessor = Dev::Learnings::Accessor.new(
-      project_root: dir, settings: Dev::Settings.new(config_path: File.join(dir, "config.yml")),
-    )
+    accessor = Dev::Learnings::Accessor.new(project_root: dir, settings: hermetic_settings(dir))
     out = StringIO.new
 
     When "running dev learnings status"
@@ -291,9 +299,7 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     Given "an accessor over empty settings"
     dir = Dir.mktmpdir("dev-learnings-acc-test-")
     saved_env = ENV.delete("DEV_KNOWLEDGE_REPO")
-    accessor = Dev::Learnings::Accessor.new(
-      project_root: dir, settings: Dev::Settings.new(config_path: File.join(dir, "config.yml")),
-    )
+    accessor = Dev::Learnings::Accessor.new(project_root: dir, settings: hermetic_settings(dir))
 
     When "running dev learnings invariants"
     accessor.run(["invariants"], out: StringIO.new)

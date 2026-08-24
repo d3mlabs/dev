@@ -42,8 +42,8 @@ class Dev::BinDevTest < Minitest::Test
     }
 
     # A project command with no global/no-project fallback: `up` outside a
-    # project now converges the host baseline (a real host mutation), so it
-    # can never be spawned from tests.
+    # project converges the host layer (a real host mutation via brew), so
+    # it can never be spawned from tests.
     When "running a project command (bare dev renders the global usage instead) there"
     _out, err, status = Open3.capture3(hostile, "sh", BIN_DEV, "test", chdir: dir)
 

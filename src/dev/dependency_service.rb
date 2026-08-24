@@ -2,7 +2,6 @@
 # frozen_string_literal: true
 
 require "dev/deps"
-require "dev/deps/baseline"
 require "dev/deps/staleness"
 
 module Dev
@@ -10,7 +9,7 @@ module Dev
   # guard policy before a command runs, the current staleness messages, and
   # the installed-stamp write (lock!) after a stamping command succeeds.
   # Deliberately narrow — Lockfile and Deps::Cache consumers stay direct for
-  # now; this fronts only Staleness (plus the host baseline's warn-only nag).
+  # now; this fronts only Staleness.
   class DependencyService
     extend T::Sig
 
@@ -18,10 +17,9 @@ module Dev
     # pipeline bug, not a reminder.
     class StaleDependencyStateError < RuntimeError; end
 
-    sig { params(staleness: Dev::Deps::Staleness, baseline: Dev::Deps::Baseline).void }
-    def initialize(staleness:, baseline: Dev::Deps::Baseline.new)
+    sig { params(staleness: Dev::Deps::Staleness).void }
+    def initialize(staleness:)
       @staleness = T.let(staleness, Dev::Deps::Staleness)
-      @baseline = T.let(baseline, Dev::Deps::Baseline)
     end
 
     # All current staleness messages (see Dev::Deps::Staleness#messages).
@@ -33,18 +31,12 @@ module Dev
     end
 
     # Two O(1) digest checks at every command start: manifest vs lockfile,
-    # lockfile vs installed stamp. Warn on workstations; error in CI. The
-    # host baseline gets its own check with softer semantics: always a
-    # warning, even in CI — a drifted host tool set is never a reason to
-    # block a project command (plans#26).
+    # lockfile vs installed stamp. Warn on workstations; error in CI.
     #
     # @return [void]
     # @raise [StaleDependencyStateError] in CI, when any project layer is stale
     sig { void }
     def guard!
-      baseline_message = @baseline.message
-      $stderr.puts "dev: warning: #{baseline_message}" if baseline_message
-
       stale_messages = messages
       return if stale_messages.empty?
 

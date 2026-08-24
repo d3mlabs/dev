@@ -147,48 +147,60 @@ class Dev::SettingsTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "baseline_repo reads from the config file" do
-    Given "a config file declaring the org baseline repo"
+  test "deployment_formula reads from the system config file (the deployment names itself)" do
+    Given "a system config declaring the deployment's own formula"
     dir = Dir.mktmpdir("dev-settings-test-")
-    write_user(dir, "baseline_repo: d3mlabs/knowledge\n")
-    saved_env = ENV.delete("DEV_BASELINE_REPO")
+    write_system(dir, "deployment_formula: d3mlabs/d3mlabs/dev\n")
+    saved_env = ENV.delete("DEV_DEPLOYMENT_FORMULA")
     settings = build_settings(dir)
 
     Expect
-    settings.baseline_repo == "d3mlabs/knowledge"
+    settings.deployment_formula == "d3mlabs/d3mlabs/dev"
 
     Cleanup
-    ENV["DEV_BASELINE_REPO"] = saved_env if saved_env
+    ENV["DEV_DEPLOYMENT_FORMULA"] = saved_env if saved_env
     FileUtils.rm_rf(dir)
   end
 
-  test "DEV_BASELINE_REPO overrides the config file" do
-    Given "a config file and an ENV override"
+  test "DEV_DEPLOYMENT_FORMULA overrides the config files" do
+    Given "a system config and an ENV override"
     dir = Dir.mktmpdir("dev-settings-test-")
-    write_user(dir, "baseline_repo: d3mlabs/knowledge\n")
-    saved_env = ENV["DEV_BASELINE_REPO"]
-    ENV["DEV_BASELINE_REPO"] = "acme/baseline"
+    write_system(dir, "deployment_formula: d3mlabs/d3mlabs/dev\n")
+    saved_env = ENV["DEV_DEPLOYMENT_FORMULA"]
+    ENV["DEV_DEPLOYMENT_FORMULA"] = "acme/tap/dev"
     settings = build_settings(dir)
 
     Expect
-    settings.baseline_repo == "acme/baseline"
+    settings.deployment_formula == "acme/tap/dev"
 
     Cleanup
-    saved_env ? ENV["DEV_BASELINE_REPO"] = saved_env : ENV.delete("DEV_BASELINE_REPO")
+    saved_env ? ENV["DEV_DEPLOYMENT_FORMULA"] = saved_env : ENV.delete("DEV_DEPLOYMENT_FORMULA")
     FileUtils.rm_rf(dir)
   end
 
-  test "an unset baseline_repo is nil — no host baseline is a supported state" do
+  test "an unset deployment_formula is nil — no deployment to self-update is a supported state" do
     Given "no config file"
     dir = Dir.mktmpdir("dev-settings-test-")
-    saved_env = ENV.delete("DEV_BASELINE_REPO")
+    saved_env = ENV.delete("DEV_DEPLOYMENT_FORMULA")
     settings = build_settings(dir)
 
     Expect
-    settings.baseline_repo.nil?
+    settings.deployment_formula.nil?
 
     Cleanup
-    ENV["DEV_BASELINE_REPO"] = saved_env if saved_env
+    ENV["DEV_DEPLOYMENT_FORMULA"] = saved_env if saved_env
+    FileUtils.rm_rf(dir)
+  end
+
+  test "system_config_path is exposed for the host converge to find the deployment payload" do
+    Given "hermetic settings"
+    dir = Dir.mktmpdir("dev-settings-test-")
+    settings = build_settings(dir)
+
+    Expect
+    settings.system_config_path == File.join(dir, "system", "config.yml")
+
+    Cleanup
     FileUtils.rm_rf(dir)
   end
 end

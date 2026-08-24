@@ -7,8 +7,8 @@ module Dev
   # a generic dev install (dev is public and hardcodes no org content).
   # Per-key resolution is layered, gitconfig-style:
   #
-  #   1. ENV var (DEV_PLANS_REPO, DEV_KNOWLEDGE_REPO, DEV_BASELINE_REPO) —
-  #      CI/fleet management, no files needed
+  #   1. ENV var (DEV_PLANS_REPO, DEV_KNOWLEDGE_REPO,
+  #      DEV_DEPLOYMENT_FORMULA) — CI/fleet management, no files needed
   #   2. user file: ~/.config/dev/config.yml (or $XDG_CONFIG_HOME/dev/…) —
   #      individuals and per-user overrides
   #   3. system file: $(brew --prefix)/etc/dev/config.yml — shipped by an
@@ -18,18 +18,26 @@ module Dev
   #
   #   plans_repo: d3mlabs/plans
   #   knowledge_repo: d3mlabs/knowledge
-  #   baseline_repo: d3mlabs/knowledge
+  #   deployment_formula: d3mlabs/d3mlabs/dev
   #
   # `plans_repo` is the org-wide plans repo that `dev plan new --org` /
   # `dev plan link --org` target. `knowledge_repo` is the org knowledge repo
-  # dev keeps a machine-local cache of. `baseline_repo` is the repo whose
-  # `baseline/dependencies.rb` declares the host baseline `dev up`
-  # converges. Leaving a nilable key unset turns its feature off.
+  # dev keeps a machine-local cache of. `deployment_formula` is the brew
+  # formula `dev up`'s self-update upgrades — the deployment names itself
+  # (see Dev::Host::Converge). Leaving a nilable key unset turns its
+  # feature off.
   class Settings
     class MissingSettingError < RuntimeError; end
 
     # @return [String] path of the user config file (layer 2)
     attr_reader :config_path
+
+    # The system layer's location (layer 3); nil on brewless machines. Its
+    # directory is also where a deployment ships the org Brewfile, so the
+    # host converge reads this to find both.
+    #
+    # @return [String, nil]
+    attr_reader :system_config_path
 
     # @param config_path [String, nil] user file override for tests;
     #   defaults to the XDG config location
@@ -58,13 +66,14 @@ module Dev
       setting("knowledge_repo", "DEV_KNOWLEDGE_REPO")
     end
 
-    # The repo whose baseline/dependencies.rb declares the host baseline.
-    # Unset is a supported state: no baseline to converge, no drift nag —
-    # dev stays generic.
+    # The brew formula the `dev up` self-update upgrades — the org
+    # deployment's own name, shipped in the config.yml it installs. Unset is
+    # a supported state: no deployment to self-update (tapless individuals
+    # fall back to dev-core, source checkouts skip entirely).
     #
-    # @return [String, nil] "owner/repo", or nil
-    def baseline_repo
-      setting("baseline_repo", "DEV_BASELINE_REPO")
+    # @return [String, nil] e.g. "d3mlabs/d3mlabs/dev", or nil
+    def deployment_formula
+      setting("deployment_formula", "DEV_DEPLOYMENT_FORMULA")
     end
 
     private
