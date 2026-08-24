@@ -5,6 +5,7 @@ require "test_helper"
 require "dev/host/converge"
 require "dev/settings"
 require "fileutils"
+require "rbconfig"
 require "stringio"
 require "tmpdir"
 
@@ -16,14 +17,19 @@ class Dev::Host::ConvergeTest < Minitest::Test
   class RecordingExecutor
     attr_reader :commands
 
-    def initialize(run_result: true, quiet_result: false)
+    # @param fail_subcommands [Array<String>] brew subcommands whose run
+    #   reports failure (e.g. ["upgrade"]), for the warn-only branches
+    def initialize(run_result: true, quiet_result: false, fail_subcommands: [])
       @commands = []
       @run_result = run_result
       @quiet_result = quiet_result
+      @fail_subcommands = fail_subcommands
     end
 
     def run(*cmd)
       @commands << cmd
+      return false if @fail_subcommands.include?(cmd[1])
+
       @run_result
     end
 
@@ -138,6 +144,43 @@ class Dev::Host::ConvergeTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "a failed scoped upgrade warns and still converges the Brewfile" do
+    Given "a named deployment whose upgrade fails"
+    dir = Dir.mktmpdir("dev-host-converge-test-")
+    write_system_config(dir, "deployment_formula: d3mlabs/d3mlabs/dev\n")
+    brewfile = write_brewfile(dir, %(cask "cursor-cli"\n))
+    executor = RecordingExecutor.new(fail_subcommands: ["upgrade"])
+    converge = build_converge(dir, executor: executor)
+
+    When "converging"
+    stderr = capture_stderr { converge.run }
+
+    Then "the failure is a warning and the Brewfile step still ran"
+    stderr.include?("brew upgrade d3mlabs/d3mlabs/dev failed")
+    executor.commands.last == ["brew", "bundle", "install", "--file=#{brewfile}"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a failed brew bundle warns instead of blocking" do
+    Given "an org Brewfile whose converge fails"
+    dir = Dir.mktmpdir("dev-host-converge-test-")
+    write_brewfile(dir, %(cask "cursor-cli"\n))
+    executor = RecordingExecutor.new(quiet_result: false, fail_subcommands: ["bundle"])
+    converge = build_converge(dir, executor: executor)
+
+    When "converging"
+    stderr = capture_stderr { converge.run }
+
+    Then "the failure surfaces as a warning naming the Brewfile"
+    stderr.include?("brew bundle failed")
+    stderr.include?("Brewfile")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "a failed brew update warns and skips the upgrade, but the Brewfile still converges" do
     Given "an offline machine (every streamed brew command fails)"
     dir = Dir.mktmpdir("dev-host-converge-test-")
@@ -154,6 +197,26 @@ class Dev::Host::ConvergeTest < Minitest::Test
 
     Cleanup
     FileUtils.rm_rf(dir)
+  end
+
+  test "the real executor's run maps exit status to a boolean" do
+    Given "the production executor"
+    executor = Dev::Host::Converge::Executor.new
+
+    Expect "success and failure map to booleans, and a missing binary is false"
+    executor.run(RbConfig.ruby, "-e", "exit 0") == true
+    executor.run(RbConfig.ruby, "-e", "exit 1") == false
+    executor.run("definitely-not-a-command-#{Process.pid}") == false
+  end
+
+  test "the real executor's quiet? answers success without streaming output" do
+    Given "the production executor"
+    executor = Dev::Host::Converge::Executor.new
+
+    Expect "exit status maps to a boolean and a missing binary is false, not an exception"
+    executor.quiet?(RbConfig.ruby, "-e", "puts :ok") == true
+    executor.quiet?(RbConfig.ruby, "-e", "exit 1") == false
+    executor.quiet?("definitely-not-a-command-#{Process.pid}") == false
   end
 
   test "an etc config.yml without a resolvable deployment_formula warns with the remedy" do
