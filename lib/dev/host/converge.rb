@@ -1,9 +1,7 @@
 # frozen_string_literal: true
 
-require "fileutils"
 require "open3"
 require "pathname"
-require "time"
 require_relative "../settings"
 
 module Dev
@@ -12,7 +10,8 @@ module Dev
     # re-implements host tooling convergence, it only *triggers* brew's, the
     # same way it triggers bundler for gems. Three steps, all brew-executed:
     #
-    #   1. throttled `brew update` (daily stamp), so warm runs stay snappy
+    #   1. `brew update`, so a deployment fix propagates on the very next
+    #      `dev up`
     #   2. scoped `brew upgrade` of the org's deployment formula — the
     #      deployment names itself via the `deployment_formula` setting; the
     #      formula revision delivers dev itself plus the org's config.yml and
@@ -20,18 +19,16 @@ module Dev
     #   3. `brew bundle install` against the etc/dev/Brewfile when one exists
     #      — the org's tooling list beyond the tool's own dependencies
     #
+    # dev owns no throttle: measured no-op costs are sub-second per step
+    # (update ~0.5s, scoped upgrade ~0.4s, bundle ~0.9s), and brew's own
+    # HOMEBREW_AUTO_UPDATE_SECS remains the only network rate limiter —
+    # tunable through brew, not dev.
+    #
     # The Brewfile presence is convention, not configuration: no file (tapless
     # individual, CI) means the step self-skips. The whole layer is warn-only:
     # a failed self-update or tooling converge never blocks project
     # provisioning (offline `dev up` still works).
     class Converge
-      # One self-update check per day keeps warm `dev up` fast; the Brewfile
-      # converge is NOT throttled — an upgrade in step 2 may land a new
-      # Brewfile that step 3 must converge in the same run.
-      UPDATE_INTERVAL_SECONDS = 24 * 60 * 60
-
-      UPDATE_STAMP_FILE = "brew-update-stamp"
-
       # A brew formula token: bare name or tap-qualified org/repo/name. The
       # deployment_formula value crosses a settings boundary into a brew
       # invocation, so validate its shape — a leading `-` must never reach
@@ -64,20 +61,14 @@ module Dev
 
       # @param settings [Dev::Settings] source of deployment_formula and the
       #   system config location (whose directory also holds the Brewfile)
-      # @param state_dir [Pathname, String] host state root (XDG data home,
-      #   the learnings-cache precedent) for the update-throttle stamp
       # @param executor [#run, #quiet?] brew invocation seam, injectable so
       #   tests never call brew
-      # @param clock [#call] () → Time, injectable for throttle tests
-      def initialize(settings: Dev::Settings.new, state_dir: default_state_dir,
-        executor: Executor.new, clock: -> { Time.now })
+      def initialize(settings: Dev::Settings.new, executor: Executor.new)
         @settings = settings
-        @state_dir = Pathname(state_dir)
         @executor = executor
-        @clock = clock
       end
 
-      # The whole host layer, in order: deployment sanity warning, throttled
+      # The whole host layer, in order: deployment sanity warning,
       # self-update, Brewfile converge. A no-op on brewless machines (no
       # prefix means no system config location, no Brewfile, nothing to
       # upgrade).
@@ -87,7 +78,7 @@ module Dev
         return unless system_config_path
 
         warn_unnamed_deployment
-        self_update if update_due?
+        self_update
         converge_brewfile if brewfile_path.file?
       end
 
@@ -110,8 +101,7 @@ module Dev
 
       # `brew update` then a scoped upgrade of exactly one formula — never a
       # blanket `brew upgrade`; the user's unrelated packages are not dev's
-      # business. Stamps only after a successful update so an offline run
-      # retries next time.
+      # business.
       #
       # @return [void]
       def self_update
@@ -124,7 +114,6 @@ module Dev
         if target && !@executor.run("brew", "upgrade", "--quiet", target)
           $stderr.puts "dev: warning: brew upgrade #{target} failed."
         end
-        stamp_update!
       end
 
       # The one formula the self-update may touch: the org's self-named
@@ -154,23 +143,6 @@ module Dev
         $stderr.puts "dev: warning: brew bundle failed for #{brewfile_path} — host tooling may be incomplete."
       end
 
-      # @return [Boolean] whether the daily self-update check is due
-      def update_due?
-        !update_stamp_path.file? ||
-          @clock.call - update_stamp_path.mtime >= UPDATE_INTERVAL_SECONDS
-      end
-
-      # @return [void]
-      def stamp_update!
-        FileUtils.mkdir_p(update_stamp_path.dirname)
-        FileUtils.touch(update_stamp_path)
-      end
-
-      # @return [Pathname]
-      def update_stamp_path
-        @state_dir / "host" / UPDATE_STAMP_FILE
-      end
-
       # The org Brewfile lives beside the system config.yml — both are the
       # deployment formula's payload into the prefix's etc/dev/.
       #
@@ -182,12 +154,6 @@ module Dev
       # @return [String, nil] nil on brewless machines (empty layer)
       def system_config_path
         @settings.system_config_path
-      end
-
-      # @return [String] $XDG_DATA_HOME/dev (the learnings-cache precedent)
-      def default_state_dir
-        data_home = ENV.fetch("XDG_DATA_HOME", File.join(Dir.home, ".local", "share"))
-        File.join(data_home, "dev")
       end
     end
   end

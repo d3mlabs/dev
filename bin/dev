@@ -60,9 +60,8 @@ begin
   Dev::Runner.new(ui: ui).run(ARGV)
 rescue Dev::DevYamlNotFoundError
   # `dev up` stays valid outside any project: it converges the host layer
-  # only (throttled self-update + org Brewfile), which IS the fresh-box
-  # bootstrap — install dev, `dev up`, ready. Everything else still needs a
-  # project.
+  # only (self-update + org Brewfile), which IS the fresh-box bootstrap —
+  # install dev, `dev up`, ready. Everything else still needs a project.
   if ARGV.first == "up"
     require "dev/host/converge"
     Dev::Host::Converge.new.run

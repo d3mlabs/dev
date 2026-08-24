@@ -11,8 +11,8 @@ require "tmpdir"
 transform!(RSpock::AST::Transformation)
 class Dev::Host::ConvergeTest < Minitest::Test
   # Records every brew invocation instead of running it — the executor is
-  # the true boundary; everything else (settings layers, Brewfile, stamp)
-  # uses real files in temp dirs.
+  # the true boundary; everything else (settings layers, Brewfile) uses
+  # real files in temp dirs.
   class RecordingExecutor
     attr_reader :commands
 
@@ -50,7 +50,7 @@ class Dev::Host::ConvergeTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "first run performs the throttled self-update and stamps, but has nothing to upgrade" do
+  test "a bare host runs the self-update but has nothing to upgrade or bundle" do
     Given "no deployment config, no Brewfile, dev-core not brew-installed"
     dir = Dir.mktmpdir("dev-host-converge-test-")
     executor = RecordingExecutor.new(quiet_result: false)
@@ -59,12 +59,11 @@ class Dev::Host::ConvergeTest < Minitest::Test
     When "converging"
     converge.run
 
-    Then "brew update + the dev-core check ran, nothing upgraded or bundled, and the throttle stamp exists"
+    Then "brew update + the dev-core check ran, nothing upgraded or bundled"
     executor.commands == [
       ["brew", "update", "--quiet"],
       ["brew", "list", "--formula", "--versions", "dev-core"],
     ]
-    File.exist?(File.join(dir, "state", "host", "brew-update-stamp"))
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -122,47 +121,24 @@ class Dev::Host::ConvergeTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "a warm rerun inside the throttle window skips the self-update but still converges the Brewfile" do
-    Given "a fresh throttle stamp and an org Brewfile"
+  test "a Brewfile beside the system config converges via brew bundle" do
+    Given "an org Brewfile in etc"
     dir = Dir.mktmpdir("dev-host-converge-test-")
-    stamp = File.join(dir, "state", "host", "brew-update-stamp")
-    FileUtils.mkdir_p(File.dirname(stamp))
-    FileUtils.touch(stamp)
     brewfile = write_brewfile(dir, %(cask "cursor-cli"\n))
-    executor = RecordingExecutor.new
+    executor = RecordingExecutor.new(quiet_result: false)
     converge = build_converge(dir, executor: executor)
 
     When "converging"
     converge.run
 
-    Then "no update or upgrade, but the Brewfile converge is never throttled"
-    executor.commands == [["brew", "bundle", "install", "--file=#{brewfile}"]]
+    Then "brew bundle runs against the etc Brewfile as the last step"
+    executor.commands.last == ["brew", "bundle", "install", "--file=#{brewfile}"]
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
-  test "an expired throttle stamp re-runs the self-update" do
-    Given "a stamp older than the update interval"
-    dir = Dir.mktmpdir("dev-host-converge-test-")
-    stamp = File.join(dir, "state", "host", "brew-update-stamp")
-    FileUtils.mkdir_p(File.dirname(stamp))
-    FileUtils.touch(stamp)
-    late_clock = -> { Time.now + Dev::Host::Converge::UPDATE_INTERVAL_SECONDS + 1 }
-    executor = RecordingExecutor.new
-    converge = build_converge(dir, executor: executor, clock: late_clock)
-
-    When "converging a day later"
-    converge.run
-
-    Then "brew update ran again"
-    executor.commands.first == ["brew", "update", "--quiet"]
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  test "a failed brew update warns and skips the upgrade without stamping, so the next run retries" do
+  test "a failed brew update warns and skips the upgrade, but the Brewfile still converges" do
     Given "an offline machine (every streamed brew command fails)"
     dir = Dir.mktmpdir("dev-host-converge-test-")
     write_system_config(dir, "deployment_formula: d3mlabs/d3mlabs/dev\n")
@@ -172,10 +148,9 @@ class Dev::Host::ConvergeTest < Minitest::Test
     When "converging"
     stderr = capture_stderr { converge.run }
 
-    Then "no upgrade was attempted, the failure is a warning, and no stamp was written"
+    Then "no upgrade was attempted and the failure is a warning"
     executor.commands.none? { |cmd| cmd[0..1] == ["brew", "upgrade"] }
     stderr.include?("brew update failed")
-    !File.exist?(File.join(dir, "state", "host", "brew-update-stamp"))
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -219,19 +194,14 @@ class Dev::Host::ConvergeTest < Minitest::Test
 
   private
 
-  # Hermetic converge: settings layers, throttle stamp, and Brewfile all
-  # live under the test's temp dir; only the executor is faked.
-  def build_converge(dir, executor:, clock: -> { Time.now })
+  # Hermetic converge: settings layers and Brewfile live under the test's
+  # temp dir; only the executor is faked.
+  def build_converge(dir, executor:)
     settings = Dev::Settings.new(
       config_path: File.join(dir, "user", "config.yml"),
       system_config_path: File.join(dir, "etc", "config.yml"),
     )
-    Dev::Host::Converge.new(
-      settings: settings,
-      state_dir: File.join(dir, "state"),
-      executor: executor,
-      clock: clock,
-    )
+    Dev::Host::Converge.new(settings: settings, executor: executor)
   end
 
   def write_system_config(dir, content)

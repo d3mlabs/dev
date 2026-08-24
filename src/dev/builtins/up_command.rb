@@ -49,9 +49,9 @@ module Dev
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
-        # The host layer converges before project provisioning (throttled
-        # self-update + org Brewfile): project installs may lean on host
-        # tools (gh, rbenv). Warn-only — never blocks the project.
+        # The host layer converges before project provisioning (self-update
+        # + org Brewfile): project installs may lean on host tools (gh,
+        # rbenv). Warn-only — never blocks the project.
         @host_converge.run
         provision_build_credentials(context)
         @hook_installer.ensure_installed
