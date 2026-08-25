@@ -29,11 +29,15 @@ module Dev
     # a failed self-update or tooling converge never blocks project
     # provisioning (offline `dev up` still works).
     class Converge
-      # A brew formula token: bare name or tap-qualified org/repo/name. The
+      # A canonical brew formula token: bare name or fully tap-qualified
+      # user/repo/name (exactly one or three segments — a two-segment form is
+      # not a formula reference), lowercase throughout (brew stores taps
+      # downcased, so the canonical spelling is the lowercase one). The
       # deployment_formula value crosses a settings boundary into a brew
       # invocation, so validate its shape — a leading `-` must never reach
       # brew as a flag.
-      FORMULA_PATTERN = %r{\A[A-Za-z0-9][\w.+@-]*(?:/[A-Za-z0-9][\w.-]*){0,2}\z}
+      FORMULA_PATTERN =
+        %r{\A[a-z0-9][a-z0-9_.+@-]*(?:/[a-z0-9][a-z0-9_.+@-]*/[a-z0-9][a-z0-9_.+@-]*)?\z}
 
       # The generic tool's own formula — the self-update target for tapless
       # individuals who installed dev-core directly (no deployment).

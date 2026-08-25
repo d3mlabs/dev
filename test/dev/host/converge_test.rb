@@ -111,6 +111,52 @@ class Dev::Host::ConvergeTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "'#{formula}' (#{shape}) keeps its spelling through to brew upgrade" do
+    Given "a deployment named with that token shape"
+    dir = Dir.mktmpdir("dev-host-converge-test-")
+    write_system_config(dir, "deployment_formula: #{formula}\n")
+    executor = RecordingExecutor.new
+    converge = build_converge(dir, executor: executor)
+
+    When "converging"
+    stderr = capture_stderr { converge.run }
+
+    Then "the scoped upgrade targets the formula as spelled, with no warning"
+    executor.commands.include?(["brew", "upgrade", "--quiet", formula])
+    stderr.empty?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+
+    Where
+    formula             | shape
+    "d3mlabs/tap/dev@2" | "tap-qualified versioned"
+    "org/tap/libc++"    | "tap-qualified plused"
+  end
+
+  test "'#{formula}' (#{reason}) is rejected as malformed" do
+    Given "a deployment_formula that is not a canonical brew token"
+    dir = Dir.mktmpdir("dev-host-converge-test-")
+    write_system_config(dir, "deployment_formula: #{formula}\n")
+    executor = RecordingExecutor.new
+    converge = build_converge(dir, executor: executor)
+
+    When "converging"
+    stderr = capture_stderr { converge.run }
+
+    Then "no upgrade is attempted and the rejection is warned"
+    executor.commands.none? { |cmd| cmd[0..1] == ["brew", "upgrade"] }
+    stderr.include?("malformed deployment_formula")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+
+    Where
+    formula    | reason
+    "foo/bar"  | "two segments is not a formula reference"
+    "Dev-Core" | "brew's canonical tap form is lowercase"
+  end
+
   test "an unset key falls back to dev-core when it is brew-installed" do
     Given "no deployment config, dev-core installed"
     dir = Dir.mktmpdir("dev-host-converge-test-")
