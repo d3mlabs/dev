@@ -14,6 +14,11 @@ module Dev
     # provisioning. Projects with only a dependencies.rb get `dev up` for
     # free. `up` also ensures the `dev cd` shell hook (idempotent) —
     # provisioning is where dev's RC hooks land, next to the shadowenv one.
+    #
+    # `up` is a hybrid command: its host half (converge + RC hook) always
+    # runs, and its project half requires the project context. Outside any
+    # project the host half IS the fresh-box bootstrap — install dev,
+    # `dev up`, ready — so a nil project is a supported state, not an error.
     class UpCommand < BuiltinCommand
       extend T::Sig
 
@@ -53,8 +58,15 @@ module Dev
         # + org Brewfile): project installs may lean on host tools (gh,
         # rbenv). Warn-only — never blocks the project.
         @host_converge.run
-        provision_build_credentials(context)
         @hook_installer.ensure_installed
+        project = context.project
+        if project.nil?
+          puts "dev: host layer converged."
+          puts "dev: no dev.yml here — run dev up inside a project to provision it too."
+          return
+        end
+
+        provision_build_credentials(project)
         @install_deps_command.call(args:, context:)
       end
 
@@ -64,9 +76,9 @@ module Dev
       # command should work unattended. Resolving docker build args here
       # (prompting and storing credentials on first run) keeps the lazily
       # triggered image build in containerized commands non-interactive.
-      sig { params(context: ExecutionContext).void }
-      def provision_build_credentials(context)
-        config = context.project!.build_container
+      sig { params(project: ProjectContext).void }
+      def provision_build_credentials(project)
+        config = project.build_container
         return if config.nil? || config.build_args.empty?
 
         Dev::Credentials.resolve_build_args(config.build_args)

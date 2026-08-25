@@ -7,6 +7,7 @@ require "dev/builtins/up_command"
 require "dev/build_container_config"
 require "dev/credentials"
 require "pathname"
+require "stringio"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Builtins::UpCommandTest < Minitest::Test
@@ -56,6 +57,28 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
 
     Then "the expectation on the host converge holds"
     true
+  end
+
+  test "call without a project converges the host half and skips provisioning" do
+    Given "a projectless context and collaborators expecting only host work"
+    host_converge = typed_mock(Dev::Host::Converge)
+    host_converge.expects(:run).once
+    hook_installer = typed_mock(Dev::Cd::HookInstaller)
+    hook_installer.expects(:ensure_installed).once.returns(:appended)
+    install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
+    command = Dev::Builtins::UpCommand.new(
+      install_deps_command: install_deps, hook_installer: hook_installer, host_converge: host_converge,
+    )
+    context = Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui))
+
+    When "running up outside any project"
+    stdout = capture_stdout { command.call(args: [], context: context) }
+
+    Then "install-deps and credentials never run, and the bootstrap message points at projects"
+    0 * install_deps.call(args: anything, context: anything)
+    0 * Dev::Credentials.resolve_build_args(anything)
+    stdout.include?("dev: host layer converged.")
+    stdout.include?("no dev.yml here — run dev up inside a project to provision it too")
   end
 
   test "call resolves docker build arg credentials before anything else" do
@@ -114,6 +137,15 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
 
   def container_config(build_args:)
     Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry", build_args: build_args)
+  end
+
+  def capture_stdout
+    old_stdout = $stdout
+    $stdout = StringIO.new
+    yield
+    $stdout.string
+  ensure
+    $stdout = old_stdout
   end
 
   def build_context(build_container: nil)
