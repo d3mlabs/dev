@@ -56,9 +56,11 @@ class Dev::Builtins::ResetContainerCommandTest < Minitest::Test
   def build_context(build_container)
     Dev::ExecutionContext.new(
       ui: typed_mock(Dev::Cli::Ui),
-      ruby_version: "4.0.1",
-      project_root: Pathname.new("/tmp/reset-container-test"),
-      build_container: build_container,
+      project: Dev::ProjectContext.new(
+        root: Pathname.new("/tmp/reset-container-test"),
+        ruby_version: "4.0.1",
+        build_container: build_container,
+      ),
     )
   end
 end

@@ -23,7 +23,10 @@ class Dev::CommandExecutorTest < Minitest::Test
 
   def build_context
     ui = typed_mock(Dev::Cli::Ui)
-    Dev::ExecutionContext.new(ui: ui, ruby_version: "4.0.1", project_root: Pathname.new("/tmp/executor-test"))
+    Dev::ExecutionContext.new(
+      ui: ui,
+      project: Dev::ProjectContext.new(root: Pathname.new("/tmp/executor-test"), ruby_version: "4.0.1"),
+    )
   end
 
   # Strategy mocks are strict: any message a test doesn't expect is an

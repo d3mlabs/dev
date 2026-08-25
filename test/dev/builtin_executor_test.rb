@@ -31,7 +31,10 @@ class Dev::BuiltinExecutorTest < Minitest::Test
 
   def build_context
     ui = typed_mock(Dev::Cli::Ui)
-    Dev::ExecutionContext.new(ui: ui, ruby_version: "4.0.1", project_root: Pathname.new("/tmp/builtin-executor"))
+    Dev::ExecutionContext.new(
+      ui: ui,
+      project: Dev::ProjectContext.new(root: Pathname.new("/tmp/builtin-executor"), ruby_version: "4.0.1"),
+    )
   end
 
   test "execute runs the builtin's Ruby body in-process with args and context" do

@@ -109,9 +109,11 @@ class Dev::Builtins::RunnerSetupCommandTest < Minitest::Test
   def build_context(runner)
     Dev::ExecutionContext.new(
       ui: typed_mock(Dev::Cli::Ui),
-      ruby_version: "4.0.1",
-      project_root: Pathname.new("/tmp/runner-setup-test"),
-      runner: runner,
+      project: Dev::ProjectContext.new(
+        root: Pathname.new("/tmp/runner-setup-test"),
+        ruby_version: "4.0.1",
+        runner: runner,
+      ),
     )
   end
 end

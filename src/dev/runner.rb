@@ -95,11 +95,13 @@ module Dev
       manifest = @manifest_loader.with_toolchain(@manifest, project_root: Dev.target_project_root)
       ExecutionContext.new(
         ui: @ui,
-        ruby_version: ShadowenvRuby.resolve_ruby_version(manifest.declared_ruby_version),
-        python_version: manifest.declared_python_version,
-        project_root: Dev.target_project_root,
-        build_container: manifest.build_container,
-        runner: manifest.runner,
+        project: ProjectContext.new(
+          root: Dev.target_project_root,
+          ruby_version: ShadowenvRuby.resolve_ruby_version(manifest.declared_ruby_version),
+          python_version: manifest.declared_python_version,
+          build_container: manifest.build_container,
+          runner: manifest.runner,
+        ),
       )
     end
 
@@ -185,12 +187,13 @@ module Dev
     # @return [CommandExecutor]
     sig { params(context: ExecutionContext).returns(CommandExecutor) }
     def build_executor(context)
+      project = context.project!
       command_runner = CommandRunner.new(
         ui: context.ui,
-        ruby_version: context.ruby_version,
-        python_version: context.python_version,
-        build_container: context.build_container,
-        project_root: context.project_root,
+        ruby_version: project.ruby_version,
+        python_version: project.python_version,
+        build_container: project.build_container,
+        project_root: project.root,
       )
       builtin_executor = BuiltinExecutor.new
       project_executor = ProjectExecutor.new(command_runner:)

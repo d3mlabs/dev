@@ -308,9 +308,9 @@ class RunnerTest < Minitest::Test
     cmd_name == "test"
     args == ["--fast"]
     context.ui == ui
-    context.ruby_version == "9.9.9"
-    context.python_version == "3.12"
-    context.project_root == root
+    context.project!.ruby_version == "9.9.9"
+    context.project!.python_version == "3.12"
+    context.project!.root == root
 
     Cleanup
     FileUtils.rm_rf(root)

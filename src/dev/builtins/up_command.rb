@@ -66,7 +66,7 @@ module Dev
       # triggered image build in containerized commands non-interactive.
       sig { params(context: ExecutionContext).void }
       def provision_build_credentials(context)
-        config = context.build_container
+        config = context.project!.build_container
         return if config.nil? || config.build_args.empty?
 
         Dev::Credentials.resolve_build_args(config.build_args)
