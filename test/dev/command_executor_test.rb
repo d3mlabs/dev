@@ -71,6 +71,33 @@ class Dev::CommandExecutorTest < Minitest::Test
     true
   end
 
+  test "a project command against a builtin-only composite is a wiring bug" do
+    Given "a composite wired without project arms (the projectless wiring)"
+    command = Dev::ProjectCommand.new(run: "./bin/test.sh", desc: "Run tests", container: false)
+    executor = Dev::CommandExecutor.new(builtin_executor: typed_mock(Dev::BuiltinExecutor))
+
+    When "executing"
+    executor.execute(command, args: [], context: build_context)
+
+    Then
+    raises Dev::CommandExecutor::ProjectExecutionUnavailableError
+  end
+
+  test "an overridden command against a builtin-only composite is a wiring bug" do
+    Given "a composite wired without project arms (the projectless wiring)"
+    command = Dev::OverriddenCommand.new(
+      builtin: FakeBuiltin.new,
+      project: Dev::ProjectCommand.new(run: "./bin/up.rb", desc: "Setup", container: false),
+    )
+    executor = Dev::CommandExecutor.new(builtin_executor: typed_mock(Dev::BuiltinExecutor))
+
+    When "executing"
+    executor.execute(command, args: [], context: build_context)
+
+    Then
+    raises Dev::CommandExecutor::ProjectExecutionUnavailableError
+  end
+
   test "an overridden command dispatches to the overridden strategy" do
     Given "a composite whose overridden strategy expects the dispatch"
     command = Dev::OverriddenCommand.new(

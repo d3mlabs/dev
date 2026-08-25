@@ -26,6 +26,12 @@ module Dev
   # command onion: route argv to a command name (bare/--help/-h mean help),
   # assemble the ExecutionContext, wire the service graph, make one call
   # into CommandService, and map rescues to exits at the CLI boundary.
+  #
+  # The Runner is project-optional: with no enclosing dev.yml it still runs,
+  # over the projectless catalog (just `up`, the fresh-box bootstrap) and a
+  # context with no project half. Which commands exist is a registration
+  # concern owned here; whether a command handles a missing project is the
+  # command's own business logic.
   class Runner
     extend T::Sig
 
@@ -33,7 +39,7 @@ module Dev
       params(
         ui: Dev::Cli::Ui,
         out: T.any(IO, StringIO),
-        dev_yaml_path: Pathname,
+        dev_yaml_path: T.nilable(Pathname),
         manifest_loader: ProjectManifestLoader,
         command_service: T.nilable(CommandService),
       ).void
@@ -41,30 +47,32 @@ module Dev
     def initialize(
       ui:,
       out: $stdout,
-      dev_yaml_path: Dev.dev_yaml_file,
+      dev_yaml_path: Dev.find_dev_yaml_file,
       manifest_loader: ProjectManifestLoader.new,
       command_service: nil
     )
       @ui = T.let(ui, Dev::Cli::Ui)
       @out = T.let(out, T.any(IO, StringIO))
+      @dev_yaml_path = T.let(dev_yaml_path, T.nilable(Pathname))
       @manifest_loader = T.let(manifest_loader, ProjectManifestLoader)
-      @manifest = T.let(manifest_loader.load(dev_yaml_path), ProjectManifest)
       @command_service = T.let(command_service, T.nilable(CommandService))
     end
 
     # Runs the dev command specified by the given argv.
     #
     # Composition happens here rather than in the constructor so that
-    # everything — including the toolchain pass over dependencies.rb, which
-    # is arbitrary project Ruby — stays inside the exit_for error mapping.
+    # everything — the dev.yml parse and the toolchain pass over
+    # dependencies.rb, both arbitrary project input — stays inside the
+    # exit_for error mapping.
     #
     # @param argv [Array[String]] The argv to run the command with.
     # @return [void]
     sig { params(argv: T::Array[String]).void }
     def run(argv)
       cmd_name, args = route(argv)
-      context = build_context
-      service = @command_service || build_command_service(@manifest, context)
+      manifest = @dev_yaml_path && @manifest_loader.load(@dev_yaml_path)
+      context = build_context(manifest)
+      service = @command_service || build_command_service(manifest, context)
       service.execute(cmd_name, args:, context:)
     rescue StandardError => e
       exit_for(e)
@@ -86,13 +94,17 @@ module Dev
       [T.must(args.shift), args]
     end
 
-    # Assemble the per-run ExecutionContext. The toolchain pass over
-    # dependencies.rb runs unconditionally here, once per invocation.
+    # Assemble the per-run ExecutionContext: always the host half; the
+    # project half only when a manifest exists (the toolchain pass over
+    # dependencies.rb runs there, once per invocation).
     #
+    # @param manifest [ProjectManifest, nil]
     # @return [ExecutionContext]
-    sig { returns(ExecutionContext) }
-    def build_context
-      manifest = @manifest_loader.with_toolchain(@manifest, project_root: Dev.target_project_root)
+    sig { params(manifest: T.nilable(ProjectManifest)).returns(ExecutionContext) }
+    def build_context(manifest)
+      return ExecutionContext.new(ui: @ui) if manifest.nil?
+
+      manifest = @manifest_loader.with_toolchain(manifest, project_root: Dev.target_project_root)
       ExecutionContext.new(
         ui: @ui,
         project: ProjectContext.new(
@@ -105,9 +117,8 @@ module Dev
       )
     end
 
-    # The rescue-to-exit mapping of the CLI boundary, in one place — the
-    # counterpart of bin/dev's DevYamlNotFoundError handling. Errors keep
-    # their native namespaces all the way up here (no service-layer
+    # The rescue-to-exit mapping of the CLI boundary, in one place. Errors
+    # keep their native namespaces all the way up here (no service-layer
     # wrapping); anything unmapped is a dev bug and re-raises with its
     # backtrace.
     #
@@ -131,8 +142,16 @@ module Dev
         $stderr.puts "dev: #{error}"
         Kernel.exit(127)
       when CommandRepository::CommandNotFoundError
-        $stderr.puts "dev: #{error}"
-        $stderr.puts "Run 'dev' or 'dev --help' to see available commands."
+        # Outside a project the real gap is the missing dev.yml, not the
+        # particular name that failed to resolve against the tiny
+        # projectless catalog.
+        if @dev_yaml_path.nil?
+          $stderr.puts "dev: no dev.yml found in this directory or any parent."
+          $stderr.puts "Run dev from inside a project that defines a dev.yml."
+        else
+          $stderr.puts "dev: #{error}"
+          $stderr.puts "Run 'dev' or 'dev --help' to see available commands."
+        end
         Kernel.exit(1)
       when ArgumentError, RuntimeError
         $stderr.puts "dev: #{error}"
@@ -144,15 +163,17 @@ module Dev
 
     # The composition root: the one place the repository (consumed only by
     # CommandService, the onion rule) and the builtin set are constructed.
-    # Which builtins exist is config-gated here — runner-setup only with a
-    # `runner:` block, provide-image/reset-container only with a build
-    # container.
+    # Which builtins exist is config-gated here — project builtins only with
+    # a manifest, runner-setup only with a `runner:` block,
+    # provide-image/reset-container only with a build container.
     #
-    # @param manifest [ProjectManifest]
+    # @param manifest [ProjectManifest, nil]
     # @param context [ExecutionContext]
     # @return [CommandService]
-    sig { params(manifest: ProjectManifest, context: ExecutionContext).returns(CommandService) }
+    sig { params(manifest: T.nilable(ProjectManifest), context: ExecutionContext).returns(CommandService) }
     def build_command_service(manifest, context)
+      return build_projectless_command_service if manifest.nil?
+
       dependency_service = DependencyService.new(
         staleness: Dev::Deps::Staleness.new(project_root: Dev.target_project_root),
       )
@@ -176,6 +197,26 @@ module Dev
         dependency_service: dependency_service,
       )
       service
+    end
+
+    # The projectless catalog: `up` is the one command that exists without a
+    # project (its host half is the fresh-box bootstrap — install dev, `dev
+    # up`, ready). The truly global commands (cd, clone, cred, ...) are
+    # dispatched before the Runner; everything else requires the project, so
+    # it simply isn't registered — a lookup miss maps to the no-dev.yml
+    # refusal in exit_for.
+    #
+    # @return [CommandService]
+    sig { returns(CommandService) }
+    def build_projectless_command_service
+      CommandService.new(
+        repository: CommandRepository.new(
+          builtins: { "up" => Builtins::UpCommand.new(install_deps_command: Builtins::InstallDepsCommand.new) },
+          project_commands: {},
+        ),
+        executor: CommandExecutor.new(builtin_executor: BuiltinExecutor.new),
+        dependency_service: NoProjectDependencyService.new,
+      )
     end
 
     # Wire the executor composite: one CommandRunner (built from the run's

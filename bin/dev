@@ -56,25 +56,6 @@ else
   Dev::Cli::NoUi.new
 end
 
-begin
-  Dev::Runner.new(ui: ui).run(ARGV)
-rescue Dev::DevYamlNotFoundError
-  # `dev up` stays valid outside any project: it converges the host layer
-  # only (self-update + org Brewfile), which IS the fresh-box bootstrap —
-  # install dev, `dev up`, ready. Everything else still needs a project.
-  if ARGV.first == "up"
-    require "dev/host/converge"
-    Dev::Host::Converge.new.run
-    puts "dev: host layer converged."
-    puts "dev: no dev.yml here — run dev up inside a project to provision it too."
-    exit 0
-  end
-  warn "dev: no dev.yml found in this directory or any parent."
-  warn "Run dev from inside a project that defines a dev.yml."
-  exit 1
-rescue Dev::ProjectManifestLoader::UnsupportedDevYamlRubyError => e
-  # Rejected at parse time (Runner construction), before the run loop's own
-  # rescue-to-exit mapping can see it.
-  warn "dev: #{e.message}"
-  exit 1
-end
+# The Runner is project-optional and owns the rescue-to-exit mapping of the
+# CLI boundary; nothing to handle here.
+Dev::Runner.new(ui: ui).run(ARGV)
