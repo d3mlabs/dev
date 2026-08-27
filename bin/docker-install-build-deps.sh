@@ -40,6 +40,17 @@ echo ">>> Installing Ruby"
 brew install --quiet ruby
 export PATH="$(brew --prefix ruby)/bin:$PATH"
 
+# Current Homebrew refuses to load formulae from untrusted third-party taps
+# ("Refusing to load formula ... from untrusted tap"). Everything below
+# installs from the d3mlabs tap — dev itself on the release channel, and
+# :build deps like wwise-cli — so tap and trust it up front. The || true
+# keeps older brews working: they have no trust subcommand and no policy to
+# satisfy, and if a trust-enforcing brew somehow skips it, the install below
+# still fails loudly.
+echo ">>> Trusting the d3mlabs tap"
+brew tap d3mlabs/d3mlabs
+brew trust d3mlabs/d3mlabs || true
+
 if [ -n "$DEV_REF" ]; then
   echo ">>> Cloning d3mlabs/dev (${DEV_REF}) — source override"
   git clone --depth 1 --branch "$DEV_REF" https://github.com/d3mlabs/dev.git /tmp/dev
