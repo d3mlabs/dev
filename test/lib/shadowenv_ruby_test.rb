@@ -57,6 +57,42 @@ class ShadowenvRubyTest < Minitest::Test
     1 * Kernel.abort("dev: Resolved Ruby 2.6.0 is below dev's minimum (>= 2.7.0). Pin a newer version in dependencies.rb or run: brew upgrade ruby")
   end
 
+  # --- detect_homebrew_ruby_version ---
+
+  test "detect_homebrew_ruby_version returns the keg version from a plain Cellar path" do
+    Given "a brew ruby prefix resolving to a plain version keg"
+    tmpdir = Dir.mktmpdir("shadowenv-detect-test-")
+    keg = File.join(tmpdir, "Cellar", "ruby", "4.0.6")
+    FileUtils.mkdir_p(keg)
+
+    When "we detect the Homebrew Ruby version"
+    result = ShadowenvRuby.detect_homebrew_ruby_version
+
+    Then "the keg's version is returned"
+    _ * ShadowenvRuby.brew_prefix_for("ruby") >> keg
+    result == "4.0.6"
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "detect_homebrew_ruby_version strips a brew formula revision suffix" do
+    Given "a brew ruby prefix resolving to a revision keg (a rebuild of the same upstream Ruby)"
+    tmpdir = Dir.mktmpdir("shadowenv-detect-test-")
+    keg = File.join(tmpdir, "Cellar", "ruby", "4.0.6_1")
+    FileUtils.mkdir_p(keg)
+
+    When "we detect the Homebrew Ruby version"
+    result = ShadowenvRuby.detect_homebrew_ruby_version
+
+    Then "the upstream version is returned - RUBY_VERSION carries no _1, and Gem::Version rejects it"
+    _ * ShadowenvRuby.brew_prefix_for("ruby") >> keg
+    result == "4.0.6"
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
   # --- ensure! ---
 
   test "ensure! skips setup! when the project is already provisioned" do

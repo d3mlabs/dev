@@ -48,10 +48,14 @@ module ShadowenvRuby
   def detect_homebrew_ruby_version
     prefix = brew_prefix_for("ruby")
     return nil unless prefix
-    # /opt/homebrew/Cellar/ruby/4.0.1 -> "4.0.1"
+    # /opt/homebrew/Cellar/ruby/4.0.1   -> "4.0.1"
+    # /opt/homebrew/Cellar/ruby/4.0.6_1 -> "4.0.6"
+    # The keg dirname carries brew's PKG version, whose "_N" formula-revision
+    # suffix (a rebuild of the same upstream Ruby) is not part of RUBY_VERSION
+    # and is rejected by Gem::Version - so only the numeric prefix may leak out.
     realpath = File.realpath(prefix) rescue prefix
-    version = File.basename(realpath)
-    return version if version.match?(/\A\d+\.\d+/)
+    version = File.basename(realpath)[/\A\d+(?:\.\d+)+/]
+    return version if version
     # Fallback: ask the Homebrew ruby binary directly
     ruby_bin = File.join(prefix, "bin", "ruby")
     return nil unless File.executable?(ruby_bin)
