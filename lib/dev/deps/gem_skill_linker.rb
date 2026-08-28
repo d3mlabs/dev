@@ -1,7 +1,9 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "open3"
 require "pathname"
+require "sorbet-runtime"
 require_relative "../skill_installer"
 require_relative "bundler_repository"
 
@@ -19,6 +21,8 @@ module Dev
     # staleness story as any dependency change: the lock digest changes, the
     # `dev up` nag fires, and the install refreshes the links.
     class GemSkillLinker
+      extend T::Sig
+
       LINK_PREFIX = "gem-"
       SKILLS_SUBDIR = "skills"
       AGENT_SKILLS_SUBDIRS = [".agents", "skills"].freeze
@@ -29,15 +33,18 @@ module Dev
       # unset so paths resolve from the project's canonical bundler config —
       # dev never runs under bundler itself, so these unsets are its
       # equivalent of Bundler.original_env (dev#89).
-      HARNESS_ENV_SCRUB = [
-        "BUNDLE_PATH",
-        "BUNDLE_APP_CONFIG",
-        "BUNDLE_BIN",
-        "GEM_HOME",
-        "GEM_PATH",
-        "RUBYOPT",
-        "RUBYLIB",
-      ].to_h { |name| [name, nil] }.freeze
+      HARNESS_ENV_SCRUB = T.let(
+        [
+          "BUNDLE_PATH",
+          "BUNDLE_APP_CONFIG",
+          "BUNDLE_BIN",
+          "GEM_HOME",
+          "GEM_PATH",
+          "RUBYOPT",
+          "RUBYLIB",
+        ].to_h { |name| [name, nil] }.freeze,
+        T::Hash[String, T.nilable(String)],
+      )
 
       # @param project_root [Pathname, String] repo root (Gemfile + link target)
       # @param skills_dir [Pathname, String, nil] override for tests; defaults
@@ -45,10 +52,17 @@ module Dev
       # @param tmpdir [Pathname, String] ephemeral temp root that links must
       #   never target; defaults to Dir.tmpdir (override for tests, whose
       #   fixture gem trees themselves live under the real temp dir)
+      sig do
+        params(
+          project_root: T.any(Pathname, String),
+          skills_dir: T.nilable(T.any(Pathname, String)),
+          tmpdir: T.any(Pathname, String),
+        ).void
+      end
       def initialize(project_root:, skills_dir: nil, tmpdir: Dir.tmpdir)
-        @project_root = Pathname(project_root)
-        @skills_dir = Pathname(skills_dir || @project_root.join(*AGENT_SKILLS_SUBDIRS))
-        @skill_installer = SkillInstaller.new(skills_dir: @skills_dir, tmpdir: tmpdir)
+        @project_root = T.let(Pathname(project_root), Pathname)
+        @skills_dir = T.let(Pathname(skills_dir || @project_root.join(*AGENT_SKILLS_SUBDIRS)), Pathname)
+        @skill_installer = T.let(SkillInstaller.new(skills_dir: @skills_dir, tmpdir: tmpdir), SkillInstaller)
       end
 
       # Scan the locked gem set for shipped skills and refresh the project's
@@ -61,6 +75,7 @@ module Dev
       # block correctness (failures are reported on stderr).
       #
       # @return [void]
+      sig { void }
       def link_all
         return unless gemfile_path.exist?
 
@@ -77,6 +92,7 @@ module Dev
       # skills/*/SKILL.md found in a locked gem's installed tree.
       #
       # @return [Hash{String => Pathname}] link name → skill directory
+      sig { returns(T::Hash[String, Pathname]) }
       def expected_links
         gem_roots.each_with_object({}) do |(gem_name, gem_root), links|
           (gem_root / SKILLS_SUBDIR).glob("*/#{SkillInstaller::SKILL_FILE}").sort.each do |skill_file|
@@ -95,6 +111,7 @@ module Dev
       # with minitest-reporters, not minitest.
       #
       # @return [Array<Array(String, Pathname)>]
+      sig { returns(T::Array[[String, Pathname]]) }
       def gem_roots
         names = locked_gem_names
         bundled_gem_paths.filter_map do |path|
@@ -112,6 +129,7 @@ module Dev
       # resolution into its ephemeral cache.
       #
       # @return [Array<Pathname>] install paths of every gem in the bundle
+      sig { returns(T::Array[Pathname]) }
       def bundled_gem_paths
         out, err, status = Open3.capture3(
           HARNESS_ENV_SCRUB.merge("BUNDLE_GEMFILE" => gemfile_path.to_s),
@@ -136,11 +154,12 @@ module Dev
       # constraints and are skipped.
       #
       # @return [Array<String>]
+      sig { returns(T::Array[String]) }
       def locked_gem_names
         return [] unless lockfile_path.exist?
 
         names = []
-        in_specs = false
+        in_specs = T.let(false, T::Boolean)
         lockfile_path.read.each_line do |line|
           if line.match?(/^\s+specs:\s*$/)
             in_specs = true
@@ -160,6 +179,7 @@ module Dev
       #
       # @param expected_names [Array<String>]
       # @return [void]
+      sig { params(expected_names: T::Array[String]).void }
       def prune_stale_links(expected_names)
         return unless @skills_dir.directory?
 
@@ -172,11 +192,13 @@ module Dev
       end
 
       # @return [Pathname]
+      sig { returns(Pathname) }
       def gemfile_path
         @project_root / BundlerRepository::GEMFILE
       end
 
       # @return [Pathname]
+      sig { returns(Pathname) }
       def lockfile_path
         @project_root / BundlerRepository::LOCKFILE
       end

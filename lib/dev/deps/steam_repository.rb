@@ -1,5 +1,7 @@
+# typed: strict
 # frozen_string_literal: true
 
+require "sorbet-runtime"
 require_relative "repository"
 require_relative "dependency"
 require_relative "steam_cmd"
@@ -21,6 +23,8 @@ module Dev
     #         app: 1690800,
     #         install_dir: "~/.dev/satisfactory-server"
     class SteamRepository < Repository
+      extend T::Sig
+
       # Resolve a Steam app dependency to a pinned Dependency.
       #
       # @param id [Hash] must include "name", "app", "install_dir", "integration",
@@ -28,6 +32,7 @@ module Dev
       #   pin), and "platforms" (the consuming group's platform, e.g. ["LinuxServer"])
       # @return [Dependency]
       # @raise [SteamCmd::SteamCmdError] if resolving the buildid fails
+      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
       def fetch(id)
         app = id["app"]
         branch = id["branch"] || "public"
@@ -55,6 +60,7 @@ module Dev
       # @param app [String, Integer]
       # @param branch [String]
       # @return [String] resolved buildid
+      sig { params(app: T.any(String, Integer), branch: String).returns(String) }
       def resolve_build_id(app:, branch:)
         SteamCmd.resolve_build_id(app:, branch:)
       end
@@ -65,6 +71,7 @@ module Dev
       #
       # @param platforms [Array<String, nil>, nil] platforms from the resolver
       # @return [String] steam platform type ("linux" / "windows")
+      sig { params(platforms: T.nilable(T::Array[T.nilable(String)])).returns(String) }
       def steam_platform_for(platforms)
         group_platform = Array(platforms).compact.first
         case group_platform

@@ -54,7 +54,7 @@ module Dev
 
       sig { params(exit_status: Integer).void }
       def initialize(exit_status:)
-        @exit_status = T.let(exit_status, Integer)
+        @exit_status = exit_status
         super("command failed with exit status #{exit_status}")
       end
     end
@@ -69,7 +69,7 @@ module Dev
 
       sig { params(signal: Integer).void }
       def initialize(signal:)
-        @signal = T.let(signal, Integer)
+        @signal = signal
         super("command killed by signal #{signal}")
       end
     end
@@ -95,11 +95,11 @@ module Dev
       ).void
     end
     def initialize(ui:, ruby_version:, project_root:, python_version: nil, build_container: nil)
-      @ui = T.let(ui, Dev::Cli::Ui)
-      @ruby_version = T.let(ruby_version, String)
-      @python_version = T.let(python_version, T.nilable(String))
-      @build_container = T.let(build_container, T.nilable(Dev::BuildContainerConfig))
-      @project_root = T.let(project_root, Pathname)
+      @ui = ui
+      @ruby_version = ruby_version
+      @python_version = python_version
+      @build_container = build_container
+      @project_root = project_root
     end
 
     # Hand the process over to the command: exec-replace, the right shape

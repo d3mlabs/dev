@@ -1,5 +1,7 @@
+# typed: strict
 # frozen_string_literal: true
 
+require "sorbet-runtime"
 require "tmpdir"
 
 module Dev
@@ -8,7 +10,12 @@ module Dev
     # copy recorded at last sync. Pure function over strings; the temp files
     # exist only because git merge-file works on paths.
     module Merge
+      extend T::Sig
+
       Result = Struct.new(:content, :conflicts, keyword_init: true) do
+        extend T::Sig
+
+        sig { returns(T::Boolean) }
         def conflicts? = conflicts
       end
 
@@ -20,6 +27,7 @@ module Dev
       # @param executor [Dev::Plan::Executor]
       # @return [Result] merged content, with conflict markers when both sides
       #   changed the same lines
+      sig { params(local: String, base: String, remote: String, executor: Executor).returns(Result) }
       def three_way(local:, base:, remote:, executor: Executor.new)
         Dir.mktmpdir("ai-flow-merge-") do |dir|
           local_path = File.join(dir, "local")
@@ -37,7 +45,7 @@ module Dev
             local_path, base_path, remote_path
           )
           conflicts = out.include?("<<<<<<<")
-          raise Workspace::Error, "git merge-file failed: #{err.strip}" if !ok && !conflicts
+          Kernel.raise Workspace::Error, "git merge-file failed: #{err.strip}" if !ok && !conflicts
 
           Result.new(content: out, conflicts: conflicts)
         end

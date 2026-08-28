@@ -1,6 +1,9 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "fileutils"
+require "pathname"
+require "sorbet-runtime"
 
 # Shadowenv Unreal Engine provisioning: resolves the UE engine root, generates
 # .shadowenv.d/530_unreal.lisp so UE_ROOT, UE_PROJECT, and engine binaries
@@ -12,19 +15,26 @@ require "fileutils"
 #
 # Skipped on Linux / CI where builds happen inside a container with UE baked in.
 module ShadowenvUnreal
+  extend T::Sig
+  include Kernel
+
   LISP_FILENAME = "530_unreal.lisp"
 
   # Well-known Unreal Engine locations on macOS, checked in order.
-  SEARCH_PATHS = [
-    File.join(Dir.home, "UnrealEngine"),
-    "/Users/Shared/UnrealEngine",
-    "/opt/unreal-engine",
-  ].freeze
+  SEARCH_PATHS = T.let(
+    [
+      File.join(Dir.home, "UnrealEngine"),
+      "/Users/Shared/UnrealEngine",
+      "/opt/unreal-engine",
+    ].freeze,
+    T::Array[String],
+  )
 
   module_function
 
   # Returns the Unreal Engine root directory, or nil if not found.
   # Checks: explicit env var, then well-known paths.
+  sig { returns(T.nilable(String)) }
   def detect_ue_root
     from_env = ENV["UE_ROOT"]
     return from_env if from_env && valid_ue_root?(from_env)
@@ -38,6 +48,7 @@ module ShadowenvUnreal
 
   # Returns true when .shadowenv.d/530_unreal.lisp exists and provisions
   # from the given UE root.
+  sig { params(ue_root: String, project_root: T.any(String, Pathname)).returns(T::Boolean) }
   def provisioned?(ue_root, project_root:)
     lisp_path = File.join(project_root.to_s, ".shadowenv.d", LISP_FILENAME)
     return false unless File.exist?(lisp_path)
@@ -51,6 +62,13 @@ module ShadowenvUnreal
   # @param project_root [String, Pathname] project root directory
   # @param ue_root      [String, nil]      explicit UE engine root (falls back to detect)
   # @param ue_project   [String, nil]      path to .uproject file (optional)
+  sig do
+    params(
+      project_root: T.any(String, Pathname),
+      ue_root: T.nilable(String),
+      ue_project: T.nilable(String),
+    ).returns(T::Boolean)
+  end
   def setup!(project_root:, ue_root: nil, ue_project: nil)
     root = ue_root || detect_ue_root
     unless root
@@ -73,6 +91,7 @@ module ShadowenvUnreal
   # Returns true on Linux or when CI env is set -- environments where
   # UE is baked into the build container and shadowenv provisioning is
   # unnecessary.
+  sig { returns(T::Boolean) }
   def ci_or_linux?
     !!(ENV["CI"].to_s =~ /\A(true|1)\z/i) || RUBY_PLATFORM.to_s.include?("linux")
   end
@@ -83,6 +102,7 @@ module ShadowenvUnreal
   # @param ue_root    [String] Unreal Engine root directory
   # @param ue_project [String, nil] optional path to .uproject file
   # @return [String]
+  sig { params(ue_root: String, ue_project: T.nilable(String)).returns(String) }
   def generate_unreal_lisp(ue_root, ue_project: nil)
     bin = File.join(ue_root, "Engine", "Binaries", platform_subdir)
     lisp = <<~LISP
@@ -101,11 +121,13 @@ module ShadowenvUnreal
 
   # Validates that a directory looks like a UE engine root by checking
   # for Engine/Build/Build.version.
+  sig { params(path: String).returns(T::Boolean) }
   def valid_ue_root?(path)
     File.directory?(path) && File.exist?(File.join(path, "Engine", "Build", "Build.version"))
   end
 
   # Returns the platform-specific binaries subdirectory.
+  sig { returns(String) }
   def platform_subdir
     if RUBY_PLATFORM.include?("darwin")
       "Mac"

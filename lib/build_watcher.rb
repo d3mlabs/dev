@@ -1,6 +1,9 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "open3"
+require "sorbet-runtime"
+require "stringio"
 
 # Runs a long containerized build with hung-build detection and bounded retries.
 #
@@ -28,6 +31,8 @@ require "open3"
 # Policy (stalled?, classify_failure) is pure and unit-tested; the OS mechanism
 # (run_once and its docker probes) is isolated so it can be overridden in tests.
 class BuildWatcher
+  extend T::Sig
+
   # Seconds without any build output before the build is *eligible* to be judged
   # stalled (combined with near-zero CPU, to avoid killing a slow-but-working
   # compile action).
@@ -40,7 +45,7 @@ class BuildWatcher
   DEFAULT_MAX_ATTEMPTS = 5
 
   # Crash signatures worth retrying (flaky Rosetta/clang emulation failures).
-  CRASH_SIGNATURES = [
+  CRASH_SIGNATURES = T.let([
     /rosetta error/i,
     /segmentation fault/i,
     /caught signal/i,
@@ -48,16 +53,16 @@ class BuildWatcher
     /llvm error/i,
     /internal compiler error|\bICE\b/i,
     /unable to spawn process|posix_spawn failed/i,
-  ].freeze
+  ].freeze, T::Array[Regexp])
 
   # Genuine compile/link errors — fail fast, retrying won't help.
-  COMPILE_ERROR_SIGNATURES = [
+  COMPILE_ERROR_SIGNATURES = T.let([
     /(?:^|\s)error:\s/i,
     /fatal error:/i,
     /undefined reference to/i,
     /ld(?:\.lld)?:\s*error/i,
     /\bUnrealBuildTool\b.*\bERROR\b/,
-  ].freeze
+  ].freeze, T::Array[Regexp])
 
   Result = Struct.new(:outcome, :output) # outcome: :success | :stalled | :failed
 
@@ -67,7 +72,17 @@ class BuildWatcher
   # @param cpu_floor      [Float]   CPU% at/under which counts as idle
   # @param poll           [Integer] probe interval in seconds
   # @param max_attempts   [Integer] retry cap
-  # @param out            [IO]      progress/diagnostic stream
+  # @param out            [IO, StringIO] progress/diagnostic stream
+  sig do
+    params(
+      container_name: String,
+      stall_after: Integer,
+      cpu_floor: Float,
+      poll: Integer,
+      max_attempts: Integer,
+      out: T.any(IO, StringIO),
+    ).void
+  end
   def initialize(container_name:, stall_after: DEFAULT_STALL_AFTER, cpu_floor: DEFAULT_CPU_FLOOR,
                  poll: DEFAULT_POLL, max_attempts: DEFAULT_MAX_ATTEMPTS, out: $stderr)
     @container_name = container_name
@@ -82,6 +97,7 @@ class BuildWatcher
   #
   # @param argv [Array<String>] the docker run command to execute
   # @return [Boolean] true if a run succeeded within the attempt budget
+  sig { params(argv: T::Array[String]).returns(T::Boolean) }
   def run(argv)
     @max_attempts.times do |attempt|
       result = run_once(argv)
@@ -103,6 +119,7 @@ class BuildWatcher
   # @param idle_seconds [Numeric] seconds since the last build output
   # @param cpu_percent  [Numeric] current container CPU percent
   # @return [Boolean]
+  sig { params(idle_seconds: Numeric, cpu_percent: Numeric).returns(T::Boolean) }
   def stalled?(idle_seconds:, cpu_percent:)
     idle_seconds >= @stall_after && cpu_percent <= @cpu_floor
   end
@@ -114,6 +131,7 @@ class BuildWatcher
   #
   # @param output [String] captured combined output
   # @return [Symbol] :retry (transient) or :fail (genuine)
+  sig { params(output: String).returns(Symbol) }
   def classify_failure(output)
     return :retry if CRASH_SIGNATURES.any? { |re| output.match?(re) }
 
@@ -124,6 +142,7 @@ class BuildWatcher
 
   # @param result [Result]
   # @return [String, nil] human reason to retry, or nil to stop
+  sig { params(result: Result).returns(T.nilable(String)) }
   def retry_reason(result)
     return "hung build detected (no output + idle CPU)" if result.outcome == :stalled
     return "transient crash signature" if classify_failure(result.output) == :retry
@@ -137,12 +156,13 @@ class BuildWatcher
   #
   # @param argv [Array<String>]
   # @return [Result]
+  sig { params(argv: T::Array[String]).returns(Result) }
   def run_once(argv)
     free_container_name
     last_output = now
     captured = +""
 
-    Open3.popen2e(*argv) do |stdin, out, wait_thr|
+    Open3.popen2e(*T.unsafe(argv)) do |stdin, out, wait_thr|
       stdin.close
       reader = Thread.new do
         out.each_line do |line|
@@ -165,7 +185,8 @@ class BuildWatcher
   # @param wait_thr [Process::Waiter]
   # @yieldreturn [Numeric] seconds since last output
   # @return [Boolean] true if killed due to stall
-  def wait_or_kill(wait_thr)
+  sig { params(wait_thr: Process::Waiter, blk: T.proc.returns(Float)).returns(T::Boolean) }
+  def wait_or_kill(wait_thr, &blk)
     while wait_thr.alive?
       sleep @poll
       next unless wait_thr.alive?
@@ -182,6 +203,7 @@ class BuildWatcher
   # value reports as idle so a truly silent container can still be reclaimed.
   #
   # @return [Float]
+  sig { returns(Float) }
   def container_cpu
     out, _err, status = Open3.capture3(
       "docker", "stats", "--no-stream", "--format", "{{.CPUPerc}}", @container_name
@@ -194,6 +216,7 @@ class BuildWatcher
   end
 
   # @return [void]
+  sig { void }
   def kill_container
     @out.puts ">>> build-watcher: killing hung container #{@container_name}"
     system("docker", "kill", @container_name, out: File::NULL, err: File::NULL)
@@ -206,6 +229,7 @@ class BuildWatcher
   # Silent no-op on the first attempt, when nothing by this name exists yet.
   #
   # @return [void]
+  sig { void }
   def free_container_name
     system("docker", "rm", "-f", @container_name, out: File::NULL, err: File::NULL)
   end
@@ -213,7 +237,10 @@ class BuildWatcher
   # Monotonic clock so wall-clock changes never skew stall timing.
   #
   # @return [Float]
+  sig { returns(Float) }
   def now
-    Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    # CLOCK_MONOTONIC with the default :float_second unit always yields a
+    # Float; the cast narrows Sorbet's T.any(Float, Integer) stdlib signature.
+    T.cast(Process.clock_gettime(Process::CLOCK_MONOTONIC), Float)
   end
 end

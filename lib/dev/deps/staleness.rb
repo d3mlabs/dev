@@ -1,8 +1,10 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "digest"
 require "fileutils"
 require "pathname"
+require "sorbet-runtime"
 require_relative "lockfile"
 
 module Dev
@@ -30,29 +32,41 @@ module Dev
     # dev up), not out-of-band mutation of installed artifacts — that's a
     # deferred doctor-style per-integration sweep.
     class Staleness
+      extend T::Sig
+
       STAMP_FILE = "installed-digest"
 
       # Lockfiles whose contents constitute "what an install consumed", in
       # fixed order for a deterministic digest. Gemfile.lock is included
       # because dev generates it from the gem declarations — it is a lockfile
       # of this system in everything but name.
-      LOCK_FILES = [
-        Lockfile::DEPS_LOCK_FILE,
-        Lockfile::BUILD_DEPS_LOCK_FILE,
-        "Gemfile.lock",
-      ].freeze
+      LOCK_FILES = T.let(
+        [
+          Lockfile::DEPS_LOCK_FILE,
+          Lockfile::BUILD_DEPS_LOCK_FILE,
+          "Gemfile.lock",
+        ].freeze,
+        T::Array[String],
+      )
 
-      # @param project_root [Pathname] repo root (holds dependencies.rb + lockfiles)
-      # @param state_dir [Pathname] per-machine state root (default ~/.dev/state)
+      # @param project_root [Pathname, String] repo root (holds dependencies.rb + lockfiles)
+      # @param state_dir [Pathname, String] per-machine state root (default ~/.dev/state)
+      sig do
+        params(
+          project_root: T.any(Pathname, String),
+          state_dir: T.any(Pathname, String),
+        ).void
+      end
       def initialize(project_root:, state_dir: Pathname(File.expand_path("~/.dev/state")))
-        @project_root = Pathname(project_root)
-        @state_dir = Pathname(state_dir)
+        @project_root = T.let(Pathname(project_root), Pathname)
+        @state_dir = T.let(Pathname(state_dir), Pathname)
       end
 
       # All current staleness messages, oldest layer first (a stale manifest
       # implies a stale install; fixing them in order is the happy path).
       #
       # @return [Array<String>] empty when everything is in sync
+      sig { returns(T::Array[String]) }
       def messages
         [manifest_message, install_message].compact
       end
@@ -60,6 +74,7 @@ module Dev
       # Layer 1: has dependencies.rb changed since the lockfiles were generated?
       #
       # @return [String, nil]
+      sig { returns(T.nilable(String)) }
       def manifest_message
         manifest = @project_root / "dependencies.rb"
         return nil unless manifest.exist?
@@ -80,6 +95,7 @@ module Dev
       # on this machine?
       #
       # @return [String, nil]
+      sig { returns(T.nilable(String)) }
       def install_message
         current = lockfile_digest
         return nil unless current # no lockfiles: nothing declared, nothing to install
@@ -99,6 +115,7 @@ module Dev
       # none) and the nag persists.
       #
       # @return [void]
+      sig { void }
       def stamp_installed!
         digest = lockfile_digest
         return unless digest
@@ -111,6 +128,7 @@ module Dev
       # files marked absent so adding a lockfile changes the digest).
       #
       # @return [String, nil] hex digest, or nil when no lockfile exists
+      sig { returns(T.nilable(String)) }
       def lockfile_digest
         paths = LOCK_FILES.map { |name| @project_root / name }
         return nil if paths.none?(&:exist?)
@@ -123,6 +141,7 @@ module Dev
       end
 
       # @return [Pathname]
+      sig { returns(Pathname) }
       def stamp_path
         @state_dir / project_key / STAMP_FILE
       end
@@ -133,6 +152,7 @@ module Dev
       # checkouts of the same project on one machine get independent stamps.
       #
       # @return [String]
+      sig { returns(String) }
       def project_key
         expanded = File.expand_path(@project_root.to_s)
         "#{File.basename(expanded)}-#{Digest::SHA256.hexdigest(expanded)[0, 8]}"

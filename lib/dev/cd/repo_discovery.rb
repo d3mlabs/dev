@@ -1,6 +1,8 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "pathname"
+require "sorbet-runtime"
 require "dev/cd/repo"
 
 module Dev
@@ -12,21 +14,25 @@ module Dev
     # descends into a repo) and bounds depth, so it stays fast by construction
     # on the conventional `root/github.com/<org>/<repo>` layout.
     class RepoDiscovery
+      extend T::Sig
+
       # Deep enough for host/org/repo plus one nesting level of grouping dirs.
       MAX_DEPTH = 4
 
       # @param root [String, Pathname] the search root (e.g. $DEV_CD_ROOT)
+      sig { params(root: T.any(String, Pathname)).void }
       def initialize(root:)
-        @root = Pathname(root).expand_path
+        @root = T.let(Pathname(root).expand_path, Pathname)
       end
 
       # All git repos under the root, sorted by path for deterministic output.
       #
       # @return [Array<Dev::Cd::Repo>]
+      sig { returns(T::Array[Repo]) }
       def repos
         return [] unless @root.directory?
 
-        found = []
+        found = T.let([], T::Array[Repo])
         walk(@root, [], found)
         found.sort_by { |repo| repo.path.to_s }
       end
@@ -39,6 +45,7 @@ module Dev
       # @param segments [Array<String>] path segments from the root to dir
       # @param found [Array<Dev::Cd::Repo>] accumulator
       # @return [void]
+      sig { params(dir: Pathname, segments: T::Array[String], found: T::Array[Repo]).void }
       def walk(dir, segments, found)
         if !segments.empty? && (dir / ".git").exist?
           found << Repo.new(path: dir, segments: segments)

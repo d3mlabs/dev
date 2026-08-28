@@ -37,8 +37,8 @@ module Dev
         flag_parser: Cli::FlagParser.new
       )
         super()
-        @runner_setup_factory = T.let(runner_setup_factory, RunnerSetupFactory)
-        @flag_parser = T.let(flag_parser, Cli::FlagParser)
+        @runner_setup_factory = runner_setup_factory
+        @flag_parser = flag_parser
       end
 
       sig { override.returns(String) }

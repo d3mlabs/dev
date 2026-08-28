@@ -1,5 +1,9 @@
+# typed: strict
 # frozen_string_literal: true
 
+require "sorbet-runtime"
+require_relative "cache"
+require_relative "tap"
 require_relative "brew_repository"
 require_relative "brew_integration"
 require_relative "git_repository"
@@ -43,7 +47,7 @@ module Dev
       CONTAINER = :container
       BOTH = :both
 
-      HOST_SCOPES = [HOST, BOTH].freeze
+      HOST_SCOPES = T.let([HOST, BOTH].freeze, T::Array[Symbol])
 
       # @param symbol [Symbol] the DSL/declaration integration symbol (e.g. :brew)
       # @param repository [Class] Repository subclass that resolves this type
@@ -56,88 +60,134 @@ module Dev
       Entry = Data.define(
         :symbol, :repository, :repository_needs, :integration, :integration_needs, :scope,
       ) do
+        extend T::Sig
+
+        # Sorbet's Data.define rewriter can't attach sigs to the generated
+        # member readers (sorbet/sorbet#7272), so strict mode needs explicit
+        # typed readers. Data#to_h reads members at the C level (it does not
+        # call these readers), so the delegation is safe and non-recursive.
+        sig { returns(Symbol) }
+        def symbol = to_h.fetch(:symbol)
+
+        sig { returns(T.class_of(Repository)) }
+        def repository = to_h.fetch(:repository)
+
+        sig { returns(T::Array[Symbol]) }
+        def repository_needs = to_h.fetch(:repository_needs)
+
+        sig { returns(T.nilable(T.class_of(Integration))) }
+        def integration = to_h.fetch(:integration)
+
+        sig { returns(T::Array[Symbol]) }
+        def integration_needs = to_h.fetch(:integration_needs)
+
+        sig { returns(Symbol) }
+        def scope = to_h.fetch(:scope)
+
+        sig do
+          params(
+            symbol: Symbol,
+            repository: T.class_of(Repository),
+            integration: T.nilable(T.class_of(Integration)),
+            scope: Symbol,
+            repository_needs: T::Array[Symbol],
+            integration_needs: T::Array[Symbol],
+          ).void
+        end
         def initialize(symbol:, repository:, integration:, scope:,
                        repository_needs: [], integration_needs: [])
           super
         end
 
         # @return [Boolean] whether this type installs on the host
+        sig { returns(T::Boolean) }
         def host?
           HOST_SCOPES.include?(scope) && !integration.nil?
         end
       end
 
-      INTEGRATIONS = [
-        Entry.new(
-          symbol: :bundler,
-          repository: BundlerRepository,
-          repository_needs: %i[project_root ruby_version_requirement],
-          integration: BundlerIntegration,
-          integration_needs: %i[project_root],
-          scope: HOST,
-        ),
-        Entry.new(
-          symbol: :brew,
-          repository: BrewRepository,
-          integration: BrewIntegration,
-          integration_needs: %i[taps project_dir],
-          scope: BOTH,
-        ),
-        Entry.new(
-          symbol: :cmake,
-          repository: GitRepository,
-          integration: CmakeIntegration,
-          integration_needs: %i[project_root],
-          scope: HOST,
-        ),
-        Entry.new(
-          symbol: :luarocks,
-          repository: LuaRocksRepository,
-          integration: LuaRocksIntegration,
-          integration_needs: %i[project_root],
-          scope: HOST,
-        ),
-        Entry.new(
-          symbol: :ficsit,
-          repository: FicsitRepository,
-          integration: FicsitIntegration,
-          scope: HOST,
-        ),
-        Entry.new(
-          symbol: :gh,
-          repository: GhRepository,
-          integration: GhIntegration,
-          integration_needs: %i[project_root],
-          scope: HOST,
-        ),
-        Entry.new(
-          symbol: :steam,
-          repository: SteamRepository,
-          integration: SteamIntegration,
-          scope: HOST,
-        ),
-        Entry.new(
-          symbol: :xcode,
-          repository: XcodeRepository,
-          integration: XcodeIntegration,
-          integration_needs: %i[project_root],
-          scope: HOST,
-        ),
-        Entry.new(
-          symbol: :pip,
-          repository: PipRepository,
-          integration: PipIntegration,
-          integration_needs: %i[project_root python_version],
-          scope: HOST,
-        ),
-      ].freeze
+      INTEGRATIONS = T.let(
+        [
+          Entry.new(
+            symbol: :bundler,
+            repository: BundlerRepository,
+            repository_needs: %i[project_root ruby_version_requirement],
+            integration: BundlerIntegration,
+            integration_needs: %i[project_root],
+            scope: HOST,
+          ),
+          Entry.new(
+            symbol: :brew,
+            repository: BrewRepository,
+            integration: BrewIntegration,
+            integration_needs: %i[taps project_dir],
+            scope: BOTH,
+          ),
+          Entry.new(
+            symbol: :cmake,
+            repository: GitRepository,
+            integration: CmakeIntegration,
+            integration_needs: %i[project_root],
+            scope: HOST,
+          ),
+          Entry.new(
+            symbol: :luarocks,
+            repository: LuaRocksRepository,
+            integration: LuaRocksIntegration,
+            integration_needs: %i[project_root],
+            scope: HOST,
+          ),
+          Entry.new(
+            symbol: :ficsit,
+            repository: FicsitRepository,
+            integration: FicsitIntegration,
+            scope: HOST,
+          ),
+          Entry.new(
+            symbol: :gh,
+            repository: GhRepository,
+            integration: GhIntegration,
+            integration_needs: %i[project_root],
+            scope: HOST,
+          ),
+          Entry.new(
+            symbol: :steam,
+            repository: SteamRepository,
+            integration: SteamIntegration,
+            scope: HOST,
+          ),
+          Entry.new(
+            symbol: :xcode,
+            repository: XcodeRepository,
+            integration: XcodeIntegration,
+            integration_needs: %i[project_root],
+            scope: HOST,
+          ),
+          Entry.new(
+            symbol: :pip,
+            repository: PipRepository,
+            integration: PipIntegration,
+            integration_needs: %i[project_root python_version],
+            scope: HOST,
+          ),
+        ].freeze,
+        T::Array[Entry],
+      )
 
       class << self
+        extend T::Sig
+
         # Build the integration-type -> Repository hash the Resolver consumes.
         #
         # @param project_root [Pathname] project root (threaded to repositories that need it)
         # @param ruby_version_requirement [String, nil] for the bundler-generated Gemfile
         # @return [Hash{Symbol => Repository}]
+        sig do
+          params(
+            project_root: Pathname,
+            ruby_version_requirement: T.nilable(String),
+          ).returns(T::Hash[Symbol, Repository])
+        end
         def repositories(project_root:, ruby_version_requirement: nil)
           context = { project_root:, ruby_version_requirement: }
           INTEGRATIONS.to_h { |entry| [entry.symbol, build_repository(entry, context)] }
@@ -151,6 +201,15 @@ module Dev
         # @param ruby_version_requirement [String, nil] for the bundler repository
         # @param python_version [String, nil] for the pip integration's venv
         # @return [Hash{Symbol => Integration}]
+        sig do
+          params(
+            project_root: Pathname,
+            cache: Cache,
+            taps: T::Array[Tap],
+            ruby_version_requirement: T.nilable(String),
+            python_version: T.nilable(String),
+          ).returns(T::Hash[Symbol, Integration])
+        end
         def host_integrations(project_root:, cache:, taps: [], ruby_version_requirement: nil, python_version: nil)
           context = {
             project_root:,
@@ -162,10 +221,13 @@ module Dev
           INTEGRATIONS.each_with_object({}) do |entry, integrations|
             next unless entry.host?
 
-            integrations[entry.symbol] = entry.integration.new(
+            # T.unsafe: each entry's constructor takes a runtime-selected
+            # keyword set (integration_needs), which Sorbet cannot check
+            # statically; the constructors' own sigs validate at runtime.
+            integrations[entry.symbol] = T.unsafe(T.must(entry.integration)).new(
               repository: build_repository(entry, context),
               cache:,
-              **context.slice(*entry.integration_needs),
+              **T.unsafe(context).slice(*entry.integration_needs),
             )
           end
         end
@@ -173,8 +235,11 @@ module Dev
         # @param entry [Entry]
         # @param context [Hash{Symbol => Object}] available constructor arguments
         # @return [Repository]
+        sig { params(entry: Entry, context: T::Hash[Symbol, T.untyped]).returns(Repository) }
         def build_repository(entry, context)
-          entry.repository.new(**context.slice(*entry.repository_needs))
+          # T.unsafe: the keyword set is runtime-selected (repository_needs);
+          # the repository constructors' own sigs validate at runtime.
+          T.unsafe(entry.repository).new(**T.unsafe(context).slice(*entry.repository_needs))
         end
       end
     end

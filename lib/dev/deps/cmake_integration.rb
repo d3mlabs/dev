@@ -1,7 +1,9 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "fileutils"
 require "pathname"
+require "sorbet-runtime"
 require "tmpdir"
 require_relative "integration"
 require_relative "dependency"
@@ -15,6 +17,8 @@ module Dev
     #   2. Generates deps.cmake (set variables for each dep: repo+sha or url+hash, dep lists)
     #   3. Generates deps.targets.cmake (cmake_targets, cmake_namespace per dep)
     class CmakeIntegration < Integration
+      extend T::Sig
+
       class GitCloneError < StandardError; end
       class GitCheckoutError < StandardError; end
       class DownloadError < StandardError; end
@@ -37,18 +41,26 @@ module Dev
 
       TEXT
 
-      # @param repository    [Repository] source adapter for cmake deps
-      # @param cache         [Cache]      shared download cache
-      # @param project_root  [Pathname]   project root directory
+      # @param repository    [Repository, nil]   source adapter for cmake deps
+      # @param cache         [Cache, nil]        shared download cache
+      # @param project_root  [String, Pathname]  project root directory
+      sig do
+        params(
+          repository: T.nilable(Repository),
+          cache: T.nilable(Cache),
+          project_root: T.any(String, Pathname),
+        ).void
+      end
       def initialize(repository:, cache:, project_root:)
         super(repository:, cache:)
-        @project_root = Pathname(project_root)
+        @project_root = T.let(Pathname(project_root), Pathname)
       end
 
       # Install all cmake dependencies: fetch sources, run post_install hooks,
       # generate deps.cmake and deps.targets.cmake.
       #
       # @param dependencies [Array<Dependency>] cmake deps to install
+      sig { params(dependencies: T::Array[Dependency]).void }
       def install_all(dependencies)
         dependencies.each do |dep|
           fetch_dep(dep)
@@ -64,6 +76,7 @@ module Dev
       # Each callable receives the dependency and the project root.
       #
       # @param dep [Dependency]
+      sig { params(dep: Dependency).void }
       def run_post_install(dep)
         return unless dep.post_install
 
@@ -75,6 +88,7 @@ module Dev
       # Skips if the destination is already populated.
       #
       # @param dep [Dependency]
+      sig { params(dep: Dependency).void }
       def fetch_dep(dep)
         deps_dir = @project_root / "build" / "_deps"
         dest = deps_dir / "#{dep.name}-src"
@@ -95,6 +109,7 @@ module Dev
       # @param dest [Pathname] destination directory
       # @raise [GitCloneError]   if git clone fails
       # @raise [GitCheckoutError] if git checkout fails
+      sig { params(dep: Dependency, dest: Pathname).void }
       def fetch_git(dep, dest)
         FileUtils.rm_rf(dest)
         system("git", "clone", "--no-checkout", "-q", dep.metadata["repo"], dest.to_s) ||
@@ -109,8 +124,9 @@ module Dev
       # @param dep  [Dependency]
       # @param dest [Pathname] destination directory
       # @raise [DownloadError] if curl download fails
+      sig { params(dep: Dependency, dest: Pathname).void }
       def fetch_tarball(dep, dest)
-        cached = cache.fetch(dep.hash) if dep.hash
+        cached = T.must(cache).fetch(dep.hash) if dep.hash
         if cached
           extract_tarball(cached, dest)
         else
@@ -125,9 +141,10 @@ module Dev
 
       # Extract a tarball into the destination, expecting a single top-level directory.
       #
-      # @param tarball_path [String, Pathname] path to the .tar.gz
-      # @param dest         [Pathname]         extraction destination
+      # @param tarball_path [String, Pathname, File] path to (or cached handle on) the .tar.gz
+      # @param dest         [Pathname]               extraction destination
       # @raise [ExtractError] if tar extraction fails or tarball has no top-level directory
+      sig { params(tarball_path: T.any(String, Pathname, File), dest: Pathname).void }
       def extract_tarball(tarball_path, dest)
         FileUtils.rm_rf(dest)
         Dir.mktmpdir("dev-cmake-extract-") do |tmpdir|
@@ -143,7 +160,8 @@ module Dev
       #
       # @param dest [Pathname]   source directory to check
       # @param dep  [Dependency]
-      # @return [Boolean]
+      # @return [Boolean, nil] nil when a url dep's dir exists but the url check short-circuits
+      sig { params(dest: Pathname, dep: Dependency).returns(T.nilable(T::Boolean)) }
       def populated?(dest, dep)
         return false unless dest.directory?
 
@@ -155,6 +173,7 @@ module Dev
       # Generate deps.cmake with set() variables for each dependency.
       #
       # @param dependencies [Array<Dependency>]
+      sig { params(dependencies: T::Array[Dependency]).void }
       def write_deps_cmake(dependencies)
         path = @project_root / DEPS_CMAKE_FILE
         app_deps = []
@@ -188,6 +207,7 @@ module Dev
       # includes per dependency.
       #
       # @param dependencies [Array<Dependency>]
+      sig { params(dependencies: T::Array[Dependency]).void }
       def write_targets_cmake(dependencies)
         path = @project_root / TARGETS_CMAKE_FILE
         lines = [TARGETS_CMAKE_HEADER]

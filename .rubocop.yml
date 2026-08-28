@@ -5,6 +5,9 @@ inherit_mode:
   merge:
     - Exclude
 
+plugins:
+  - rubocop-sorbet
+
 AllCops:
   SuggestExtensions: false
   Exclude:
@@ -12,6 +15,48 @@ AllCops:
     # `ruby -x`); not parseable as plain Ruby.
     - bin/**/*
     - tmp/**/*
+
+# Every Ruby file must declare a `typed:` sigil (bin/ and tmp/ stay excluded
+# via AllCops above).
+Sorbet/ValidSigil:
+  RequireSigilOnAllFiles: true
+
+# Production code is `typed: strict`. Test files are exempt (RSpock's AST
+# transform and type pinnings in setup methods keep them at `typed: false`);
+# sigil presence is still enforced there by Sorbet/ValidSigil.
+Sorbet/StrictSigil:
+  Enabled: true
+  Include:
+    - src/**/*
+    - lib/**/*
+  Exclude:
+    # The pre-bundle bootstrap chain (dependencies.rb -> dev/deps -> ...,
+    # plus ensure_bundler) is loaded by bin/setup.rb and bin/test.rb BEFORE
+    # the bundle exists, so it must stay stdlib-only: `sig` blocks would
+    # require sorbet-runtime at load time. These files cap at `typed: true`
+    # (or `typed: false` where noted).
+    - lib/ensure_bundler.rb
+    - lib/dev/deps.rb
+    - lib/dev/deps/cli_ui.rb
+    - lib/dev/deps/config.rb
+    - lib/dev/deps/lockfile.rb
+    - lib/dev/deps/tap.rb
+    - lib/dev/deps/dependency_installer.rb
+    # `typed: false` holdouts: Data.define with a keyword-args initialize
+    # override is rejected by Sorbet (error 4010)...
+    - lib/dev/deps/dependency.rb
+    - lib/dev/deps/dependency_declaration.rb
+    # `typed: true` holdout outside the pre-bundle chain: Sorbet demands sigs
+    # on Data.define-synthesized readers at strict, and wrapping them in the
+    # define block would destroy the originals. Fix by converting to a plain
+    # value class, as clone/repo_spec.rb already did.
+    - lib/dev/cd/repo.rb
+    # ...method_missing dispatch into a required-keyword method needs
+    # T.unsafe, which the pre-bundle constraint forbids...
+    - lib/dev/deps/dsl.rb
+    # ...and Fetcher consumes a consumer-repo Lockfile API (parse,
+    # runtime_ref_map) that doesn't resolve against this repo's Lockfile.
+    - lib/dev/deps/fetcher.rb
 
 # dev's tests are written in the RSpock dialect: bare comparisons in
 # Then/Expect blocks, block-name constants (Given/When/Then/Where), and

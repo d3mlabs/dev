@@ -125,11 +125,11 @@ module Dev
     end
     def initialize(run:, desc: "(no description)", repl: false, container: true, hidden: false)
       super()
-      @run = T.let(run, String)
-      @desc = T.let(desc, String)
-      @repl = T.let(repl, T::Boolean)
-      @container = T.let(container, T::Boolean)
-      @hidden = T.let(hidden, T::Boolean)
+      @run = run
+      @desc = desc
+      @repl = repl
+      @container = container
+      @hidden = hidden
     end
 
     sig(:final) { override.returns(T::Boolean) }
@@ -176,8 +176,8 @@ module Dev
     sig(:final) { params(builtin: BuiltinCommand, project: ProjectCommand).void }
     def initialize(builtin:, project:)
       super()
-      @builtin = T.let(builtin, BuiltinCommand)
-      @project = T.let(project, ProjectCommand)
+      @builtin = builtin
+      @project = project
     end
 
     # The override owns the slot, so its description wins — a project `up:`

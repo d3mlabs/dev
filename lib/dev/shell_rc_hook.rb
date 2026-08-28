@@ -1,6 +1,8 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "pathname"
+require "sorbet-runtime"
 
 module Dev
   # Idempotent installer of snippets into the user's shell RC file.
@@ -13,18 +15,22 @@ module Dev
   #
   # Supported shells: zsh, bash, fish — the set every dev RC hook targets.
   class ShellRcHook
-    SUPPORTED_SHELLS = %i[zsh bash fish].freeze
+    extend T::Sig
+
+    SUPPORTED_SHELLS = T.let(%i[zsh bash fish].freeze, T::Array[Symbol])
 
     # @param shell [String] the user's login shell (default: $SHELL)
     # @param home [String, Pathname] the user's home directory (default: $HOME)
+    sig { params(shell: String, home: T.any(String, Pathname)).void }
     def initialize(shell: ENV["SHELL"] || "/bin/sh", home: ENV["HOME"] || Dir.home)
       @shell = shell
-      @home = Pathname(home)
+      @home = T.let(Pathname(home), Pathname)
     end
 
     # The supported shell this user runs, or nil for unsupported shells.
     #
     # @return [Symbol, nil] :zsh, :bash, :fish, or nil
+    sig { returns(T.nilable(Symbol)) }
     def shell_kind
       SUPPORTED_SHELLS.find { |kind| @shell.include?(kind.to_s) }
     end
@@ -40,6 +46,13 @@ module Dev
     # @param present_markers [Array<String>] extra strings whose presence counts as installed
     # @return [Symbol, false] :added, :already_present, or false when the
     #   shell is unsupported or has no snippet
+    sig do
+      params(
+        marker: String,
+        snippets: T::Hash[Symbol, String],
+        present_markers: T::Array[String],
+      ).returns(T.any(Symbol, FalseClass))
+    end
     def ensure_snippet(marker:, snippets:, present_markers: [])
       kind = shell_kind
       snippet = kind && snippets[kind]
@@ -64,6 +77,7 @@ module Dev
     # @param kind [Symbol] :zsh, :bash, or :fish
     # @return [Pathname]
     # @raise [ArgumentError] for an unsupported shell kind
+    sig { params(kind: Symbol).returns(Pathname) }
     def rc_file(kind)
       case kind
       when :zsh then @home / ".zshrc"
@@ -79,6 +93,7 @@ module Dev
     # is no `.bash_profile` yet (matching the historical shadowenv behavior).
     #
     # @return [Pathname]
+    sig { returns(Pathname) }
     def bash_rc_file
       profile = @home / ".bash_profile"
       bashrc = @home / ".bashrc"

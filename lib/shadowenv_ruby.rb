@@ -1,12 +1,18 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "fileutils"
+require "pathname"
+require "sorbet-runtime"
 require "dev/shell_rc_hook"
 
 # Shadowenv Ruby provisioning: installs Ruby via rbenv, generates
 # .shadowenv.d/510_ruby.lisp, trusts, and ensures the shell hook.
 # Used by the dev CLI core as a pre-dispatch step for every command.
 module ShadowenvRuby
+  extend T::Sig
+  include Kernel
+
   MIN_RUBY = Gem::Requirement.new(">= 2.7.0")
   LISP_FILENAME = "510_ruby.lisp"
 
@@ -20,31 +26,42 @@ module ShadowenvRuby
   # Homebrew formulae that supply the headers/libs ruby-build links the required
   # extensions against, mapped to the `--with-<flag>-dir` configure flag that points
   # Ruby's build at the brew copy. Works on macOS and Linuxbrew alike (the box).
-  RUBY_BUILD_BREW_DEPS = {
-    "openssl@3" => "openssl",
-    "readline" => "readline",
-    "libyaml" => "libyaml",
-    "zlib" => "zlib",
-  }.freeze
+  RUBY_BUILD_BREW_DEPS = T.let(
+    {
+      "openssl@3" => "openssl",
+      "readline" => "readline",
+      "libyaml" => "libyaml",
+      "zlib" => "zlib",
+    }.freeze,
+    T::Hash[String, String],
+  )
 
   module_function
 
   # Resolve the Ruby version to provision. Explicit pin wins; falls back to
   # the Homebrew Ruby version; aborts if neither is available or too old.
+  #
+  # The aborts go through T.unsafe (a runtime no-op) because tests stub
+  # Kernel.abort, making the `return` after each one live — Sorbet would
+  # otherwise flag them as dead code after abort's T.noreturn. The return is
+  # T.untyped for the same reason: String in production (abort exits the
+  # process), nil only when abort is stubbed.
+  sig { params(explicit_version: T.nilable(String)).returns(T.untyped) }
   def resolve_ruby_version(explicit_version)
     version = explicit_version || detect_homebrew_ruby_version
     unless version
-      Kernel.abort("dev: No Ruby declared in dependencies.rb and Homebrew Ruby not found. Run: brew install ruby")
+      T.unsafe(Kernel).abort("dev: No Ruby declared in dependencies.rb and Homebrew Ruby not found. Run: brew install ruby")
       return
     end
     unless MIN_RUBY.satisfied_by?(Gem::Version.new(version))
-      Kernel.abort("dev: Resolved Ruby #{version} is below dev's minimum (#{MIN_RUBY}). Pin a newer version in dependencies.rb or run: brew upgrade ruby")
+      T.unsafe(Kernel).abort("dev: Resolved Ruby #{version} is below dev's minimum (#{MIN_RUBY}). Pin a newer version in dependencies.rb or run: brew upgrade ruby")
       return
     end
     version
   end
 
   # Returns the version string of the Homebrew-installed Ruby, or nil.
+  sig { returns(T.nilable(String)) }
   def detect_homebrew_ruby_version
     prefix = brew_prefix_for("ruby")
     return nil unless prefix
@@ -67,6 +84,7 @@ module ShadowenvRuby
   # Guarded provisioning: the O(1) provisioned? check first, so callers on
   # every-command paths (CommandRunner, the up/install-deps builtins) pay
   # nothing after the first run.
+  sig { params(ruby_version: String, project_root: T.any(String, Pathname)).void }
   def ensure!(ruby_version:, project_root:)
     return if provisioned?(ruby_version, project_root: project_root)
 
@@ -75,6 +93,7 @@ module ShadowenvRuby
 
   # Returns true when .shadowenv.d/510_ruby.lisp exists and already
   # provisions the requested version. This is the fast-path check.
+  sig { params(ruby_version: String, project_root: T.any(String, Pathname)).returns(T::Boolean) }
   def provisioned?(ruby_version, project_root:)
     lisp_path = File.join(project_root.to_s, ".shadowenv.d", LISP_FILENAME)
     return false unless File.exist?(lisp_path)
@@ -85,6 +104,7 @@ module ShadowenvRuby
   # Full provisioning: install Ruby via rbenv if needed (with the build deps that
   # guarantee the required extensions compile), verify it is not crippled, write the
   # lisp, trust shadowenv, ensure shell hook. Idempotent.
+  sig { params(ruby_version: String, project_root: T.any(String, Pathname)).returns(T::Boolean) }
   def setup!(ruby_version:, project_root:)
     root = project_root.to_s
     ruby_root = ensure_ruby_installed!(ruby_version)
@@ -108,6 +128,7 @@ module ShadowenvRuby
 
   # --- internal helpers ------------------------------------------------
 
+  sig { params(version: String).returns(T.nilable(String)) }
   def find_ruby_root(version)
     rbenv_path = rbenv_version_prefix(version)
     return rbenv_path if File.directory?(rbenv_path)
@@ -117,11 +138,13 @@ module ShadowenvRuby
   # The prefix rbenv/ruby-build installs (or will install) the version under.
   # Shared by find_ruby_root and ruby_build_env so the rpath baked at build
   # time always names the same directory the install lands in.
+  sig { params(version: String).returns(String) }
   def rbenv_version_prefix(version)
     rbenv_root = ENV["RBENV_ROOT"] || File.join(ENV["HOME"] || Dir.home, ".rbenv")
     File.expand_path(File.join(rbenv_root, "versions", version))
   end
 
+  sig { params(formula: String).returns(T.nilable(String)) }
   def brew_prefix_for(formula)
     return nil unless system("command -v brew >/dev/null 2>&1")
     out = IO.popen(["brew", "--prefix", formula], err: File::NULL, &:read)
@@ -129,6 +152,7 @@ module ShadowenvRuby
     (prefix && !prefix.empty? && File.directory?(prefix)) ? prefix : nil
   end
 
+  sig { returns(T.nilable(String)) }
   def path_with_brew_bin
     prefix = ENV["HOMEBREW_PREFIX"]
     prefix ||= begin
@@ -143,6 +167,7 @@ module ShadowenvRuby
   # pre-existing install is crippled (missing a required extension), and abort with
   # actionable steps if it still can't be made whole. The repair path matters on a
   # long-lived box where a Ruby was first built before its dev libs were present.
+  sig { params(version: String).returns(T.nilable(String)) }
   def ensure_ruby_installed!(version)
     ruby_root = find_ruby_root(version)
 
@@ -174,6 +199,7 @@ module ShadowenvRuby
   # Install (or force-reinstall) the Ruby via rbenv, first ensuring the build-time
   # libraries are present and pointing ruby-build at them, so the required extensions
   # are compiled rather than silently skipped.
+  sig { params(version: String, force: T::Boolean).returns(T.nilable(T::Boolean)) }
   def install_ruby_with_version_manager(version, force: false)
     env = { "PATH" => path_with_brew_bin }
     return false unless system(env, "which", "rbenv", out: File::NULL, err: File::NULL)
@@ -187,6 +213,7 @@ module ShadowenvRuby
   # Abort (loudly, with a fix) if the provisioned Ruby is missing a required
   # extension. A crippled Ruby must never pass silently to surface as a cryptic
   # bundler error later.
+  sig { params(ruby_root: String, version: String).void }
   def verify_extensions!(ruby_root, version)
     missing = missing_extensions(ruby_root)
     return if missing.empty?
@@ -202,6 +229,7 @@ module ShadowenvRuby
 
   # The subset of REQUIRED_EXTENSIONS the given Ruby cannot `require`. A Ruby whose
   # binary is missing entirely counts as missing all of them.
+  sig { params(ruby_root: String).returns(T::Array[String]) }
   def missing_extensions(ruby_root)
     ruby_bin = File.join(ruby_root, "bin", "ruby")
     return REQUIRED_EXTENSIONS.dup unless File.executable?(ruby_bin)
@@ -211,6 +239,7 @@ module ShadowenvRuby
     end
   end
 
+  sig { params(ruby_root: String).returns(T::Boolean) }
   def extensions_ok?(ruby_root)
     missing_extensions(ruby_root).empty?
   end
@@ -222,6 +251,7 @@ module ShadowenvRuby
   # binary silently *run as* that other version. Bundler then fails the
   # Gemfile's ruby pin with a baffling version mismatch; this guard names the
   # real culprit instead.
+  sig { params(ruby_root: String, version: String).void }
   def verify_reported_version!(ruby_root, version)
     reported = reported_ruby_version(ruby_root)
     return if reported == version
@@ -229,6 +259,7 @@ module ShadowenvRuby
     Kernel.abort(version_hijack_message(ruby_root, version, reported))
   end
 
+  sig { params(ruby_root: String, version: String, reported: T.nilable(String)).returns(String) }
   def version_hijack_message(ruby_root, version, reported)
     <<~MSG
       dev: Ruby #{version} at #{ruby_root} runs as RUBY_VERSION #{reported.inspect}.
@@ -237,6 +268,7 @@ module ShadowenvRuby
     MSG
   end
 
+  sig { params(ruby_root: String, version: String).returns(T::Boolean) }
   def reported_version_ok?(ruby_root, version)
     reported_ruby_version(ruby_root) == version
   end
@@ -245,6 +277,7 @@ module ShadowenvRuby
   # nil when the binary is absent or fails to run. This is deliberately the
   # *runtime* answer, not the directory name: the two disagree exactly when
   # the libruby hijack described above is in effect.
+  sig { params(ruby_root: String).returns(T.nilable(String)) }
   def reported_ruby_version(ruby_root)
     ruby_bin = File.join(ruby_root, "bin", "ruby")
     return nil unless File.executable?(ruby_bin)
@@ -256,6 +289,7 @@ module ShadowenvRuby
 
   # Best-effort install of the build-time libraries via Homebrew. A no-op when brew
   # is absent (e.g. an apt-only host) — verify_extensions! still guards the result.
+  sig { params(env: T::Hash[String, T.nilable(String)]).void }
   def ensure_ruby_build_deps!(env)
     return unless system(env, "command -v brew >/dev/null 2>&1")
 
@@ -269,6 +303,12 @@ module ShadowenvRuby
   # `--with-<lib>-dir` for each available formula plus the brew prefix's include/lib/
   # pkgconfig, which is the documented fix for ruby-build on Linuxbrew. Returns the
   # env unchanged when brew isn't present.
+  sig do
+    params(
+      env: T::Hash[String, T.nilable(String)],
+      version: String,
+    ).returns(T::Hash[String, T.nilable(String)])
+  end
   def ruby_build_env(env, version)
     prefix = homebrew_prefix
     return env unless prefix
@@ -302,6 +342,7 @@ module ShadowenvRuby
 
   # The Homebrew prefix (HOMEBREW_PREFIX, else `brew --prefix`), or nil when brew is
   # unavailable.
+  sig { returns(T.nilable(String)) }
   def homebrew_prefix
     prefix = ENV["HOMEBREW_PREFIX"]
     prefix ||= begin
@@ -313,12 +354,14 @@ module ShadowenvRuby
     (prefix && !prefix.empty? && File.directory?(prefix)) ? prefix : nil
   end
 
+  sig { params(ruby_version: String).returns(String) }
   def gem_api_version(ruby_version)
     parts = ruby_version.split(".").map(&:to_i)
     return "#{parts[0]}.#{parts[1]}.0" if parts.size >= 2
     "#{ruby_version}.0"
   end
 
+  sig { params(ruby_root: String, ruby_version: String).returns(String) }
   def generate_ruby_lisp(ruby_root, ruby_version)
     gem_root = File.join(ruby_root, "lib", "ruby", "gems", gem_api_version(ruby_version))
     gem_root = File.join(ruby_root, "lib", "ruby", ruby_version) unless File.directory?(gem_root)
@@ -364,6 +407,7 @@ module ShadowenvRuby
   # hook lines (pre-dating the marker) are never duplicated.
   #
   # @return [Symbol, false] :added, :already_present, or false (unsupported shell)
+  sig { returns(T.any(Symbol, FalseClass)) }
   def ensure_shadowenv_shell_hook!
     Dev::ShellRcHook.new.ensure_snippet(
       marker: "# Shadowenv (added by dev)",

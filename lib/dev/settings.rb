@@ -1,5 +1,7 @@
+# typed: strict
 # frozen_string_literal: true
 
+require "sorbet-runtime"
 require "yaml"
 
 module Dev
@@ -17,19 +19,24 @@ module Dev
   # overrides: DEV_PLANS_REPO and DEV_KNOWLEDGE_REPO (matching the
   # credentials ENV-first convention).
   class Settings
+    extend T::Sig
+
     class MissingSettingError < RuntimeError; end
 
     # @return [String] path of the config file settings are read from
+    sig { returns(String) }
     attr_reader :config_path
 
     # @param config_path [String, nil] override for tests; defaults to the
     #   XDG config location
+    sig { params(config_path: T.nilable(String)).void }
     def initialize(config_path: nil)
-      @config_path = config_path || default_config_path
+      @config_path = T.let(config_path || default_config_path, String)
     end
 
     # @return [String] "owner/repo" of the org-wide plans repo
     # @raise [MissingSettingError] when unset
+    sig { returns(String) }
     def plans_repo
       from_env = ENV["DEV_PLANS_REPO"]
       return from_env if from_env && !from_env.empty?
@@ -47,6 +54,7 @@ module Dev
     # org learnings sync.
     #
     # @return [String, nil] "owner/repo" (or any git-clonable URL), or nil
+    sig { returns(T.nilable(String)) }
     def knowledge_repo
       from_env = ENV["DEV_KNOWLEDGE_REPO"]
       return from_env if from_env && !from_env.empty?
@@ -58,12 +66,14 @@ module Dev
     private
 
     # @return [String]
+    sig { returns(String) }
     def default_config_path
       config_home = ENV.fetch("XDG_CONFIG_HOME", File.join(Dir.home, ".config"))
       File.join(config_home, "dev", "config.yml")
     end
 
     # @return [Hash]
+    sig { returns(T::Hash[String, T.untyped]) }
     def load_config
       return {} unless File.exist?(@config_path)
 

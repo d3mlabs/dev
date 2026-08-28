@@ -19,7 +19,7 @@ module Dev
       sig { params(accessor: Dev::Clone::Accessor).void }
       def initialize(accessor: Dev::Clone::Accessor.new)
         super()
-        @accessor = T.let(accessor, Dev::Clone::Accessor)
+        @accessor = accessor
       end
 
       sig { override.returns(String) }

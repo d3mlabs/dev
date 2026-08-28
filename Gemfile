@@ -25,6 +25,7 @@ gem "pry-byebug", "~> 3.11"
 
 # Style
 gem "rubocop-shopify", "~> 3.0", require: false
+gem "rubocop-sorbet", "~> 0.10", require: false
 
 # Sorbet: static + runtime type checking
 gem "sorbet", group: :development

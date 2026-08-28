@@ -25,8 +25,8 @@ module Dev
         flag_parser: Cli::FlagParser.new
       )
         super()
-        @cache_gc_factory = T.let(cache_gc_factory, CacheGcFactory)
-        @flag_parser = T.let(flag_parser, Cli::FlagParser)
+        @cache_gc_factory = cache_gc_factory
+        @flag_parser = flag_parser
       end
 
       sig { override.returns(String) }

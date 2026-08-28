@@ -86,6 +86,9 @@ GEM
     rubocop-shopify (3.0.1)
       lint_roller
       rubocop (~> 1.72, >= 1.72.1)
+    rubocop-sorbet (0.13.2)
+      lint_roller
+      rubocop (>= 1.75.2)
     ruby-progressbar (1.13.0)
     ruby2_keywords (0.0.5)
     simplecov (0.22.0)
@@ -154,6 +157,7 @@ DEPENDENCIES
   rbs (~> 4.0.0.dev.5)
   rspock (~> 3.0)
   rubocop-shopify (~> 3.0)
+  rubocop-sorbet (~> 0.10)
   simplecov (~> 0.22)
   simplecov-cobertura (~> 3.0)
   sorbet
@@ -200,6 +204,7 @@ CHECKSUMS
   rubocop (1.88.2) sha256=8def251c90cd955feb4daa3edc0ab56893250c4ce90ef81e6c80c03f9a939bbf
   rubocop-ast (1.50.0) sha256=b9ca88300da0803ee222ad20cdb30494c0a784eed06fdc35d254b06d662788db
   rubocop-shopify (3.0.1) sha256=4adffa6313294bd9da2b0896ae44c5eb8e419336b2413de20c38b7691a7e6774
+  rubocop-sorbet (0.13.2) sha256=7901e57b6b8e9e9b970d941dbdbb89f2c9de0183bfd2551460468f8aa9548655
   ruby-progressbar (1.13.0) sha256=80fc9c47a9b640d6834e0dc7b3c94c9df37f08cb072b7761e4a71e22cff29b33
   ruby2_keywords (0.0.5) sha256=ffd13740c573b7301cf7a2e61fc857b2a8e3d3aff32545d6f8300d8bae10e3ef
   simplecov (0.22.0) sha256=fe2622c7834ff23b98066bb0a854284b2729a569ac659f82621fc22ef36213a5

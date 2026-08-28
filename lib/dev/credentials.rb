@@ -1,8 +1,10 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "fileutils"
 require "io/console"
 require "open3"
+require "sorbet-runtime"
 require "yaml"
 
 module Dev
@@ -12,6 +14,8 @@ module Dev
   # Storage backend is macOS Keychain when available, plain text fallback
   # (~/.config/dev/credentials.yml with 0600 permissions) on Linux.
   module Credentials
+    extend T::Sig
+
     class MissingCredentialError < StandardError; end
 
     KEYCHAIN_ACCOUNT = "d3mlabs/dev"
@@ -28,6 +32,15 @@ module Dev
     #   (omitted from prompts when nil)
     # @return [String] the credential value
     # @raise [MissingCredentialError] if non-interactive and no credential found
+    sig do
+      params(
+        namespace: String,
+        key: String,
+        env_var: String,
+        prompt_label: String,
+        create_url: T.nilable(String),
+      ).returns(String)
+    end
     def resolve(namespace:, key:, env_var:, prompt_label:, create_url: nil)
       ENV[env_var] ||
         load(namespace, key) ||
@@ -41,12 +54,13 @@ module Dev
     #
     # @param build_args [Hash{String => String}] arg name => credential reference
     # @return [Hash{String => String}] arg name => resolved value
+    sig { params(build_args: T::Hash[String, String]).returns(T::Hash[String, String]) }
     def resolve_build_args(build_args)
       build_args.to_h do |arg_name, credential_ref|
         namespace, key = credential_ref.split("/", 2)
         value = resolve(
-          namespace: namespace,
-          key: key,
+          namespace: T.must(namespace),
+          key: T.must(key),
           env_var: arg_name,
           prompt_label: "#{namespace} #{key} (docker build arg #{arg_name})",
         )
@@ -61,6 +75,7 @@ module Dev
     # @param namespace [String]
     # @param key [String]
     # @return [String, nil] the credential value, or nil if not found
+    sig { params(namespace: String, key: String).returns(T.nilable(String)) }
     def load(namespace, key)
       value = load_from_keychain(namespace, key) if keychain_available?
       value || load_from_file(namespace, key)
@@ -74,6 +89,7 @@ module Dev
     # @param key [String]
     # @param value [String]
     # @return [void]
+    sig { params(namespace: String, key: String, value: String).void }
     def store(namespace, key, value)
       if keychain_available?
         store_to_keychain(namespace, key, value)
@@ -85,6 +101,7 @@ module Dev
     # Whether the macOS Keychain is available.
     #
     # @return [Boolean]
+    sig { returns(T::Boolean) }
     def keychain_available?
       RUBY_PLATFORM.include?("darwin")
     end
@@ -94,6 +111,7 @@ module Dev
     # @param namespace [String]
     # @param key [String]
     # @return [String, nil] the credential value, or nil if not found
+    sig { params(namespace: String, key: String).returns(T.nilable(String)) }
     def load_from_keychain(namespace, key)
       service = keychain_service(namespace, key)
       stdout, _stderr, status = Open3.capture3(
@@ -116,6 +134,7 @@ module Dev
     # @param key [String]
     # @param value [String]
     # @return [void]
+    sig { params(namespace: String, key: String, value: String).void }
     def store_to_keychain(namespace, key, value)
       service = keychain_service(namespace, key)
       Kernel.system(
@@ -133,6 +152,7 @@ module Dev
     # @param namespace [String]
     # @param key [String]
     # @return [String, nil] the credential value, or nil if not found
+    sig { params(namespace: String, key: String).returns(T.nilable(String)) }
     def load_from_file(namespace, key)
       path = credentials_path
       return nil unless File.exist?(path)
@@ -154,6 +174,7 @@ module Dev
     # @param key [String]
     # @param value [String]
     # @return [void]
+    sig { params(namespace: String, key: String, value: String).void }
     def store_to_file(namespace, key, value)
       path = credentials_path
       dir = File.dirname(path)
@@ -197,12 +218,21 @@ module Dev
     # @param create_url [String, nil]
     # @return [String] the credential value
     # @raise [MissingCredentialError] if non-interactive or empty input
+    sig do
+      params(
+        namespace: String,
+        key: String,
+        env_var: String,
+        prompt_label: String,
+        create_url: T.nilable(String),
+      ).returns(String)
+    end
     def prompt_and_store(namespace, key, env_var, prompt_label, create_url)
       unless $stdin.tty?
         message = "#{prompt_label} required.\n"
         message += "Create one at: #{create_url}\n" if create_url
         message += "Then set: gh secret set #{env_var}"
-        raise MissingCredentialError, message
+        Kernel.raise MissingCredentialError, message
       end
 
       $stdout.puts "\n#{prompt_label} required."
@@ -217,7 +247,7 @@ module Dev
       $stdout.print "\nPaste your #{key}: "
       value = $stdin.noecho { $stdin.gets.chomp }
       $stdout.puts
-      raise MissingCredentialError, "No #{key} provided" if value.empty?
+      Kernel.raise MissingCredentialError, "No #{key} provided" if value.empty?
 
       store(namespace, key, value)
       $stdout.puts "Credential stored.\n\n"
@@ -229,6 +259,7 @@ module Dev
     # Respects XDG_CONFIG_HOME (defaults to ~/.config).
     #
     # @return [String]
+    sig { returns(String) }
     def credentials_path
       config_home = ENV.fetch("XDG_CONFIG_HOME", File.join(Dir.home, ".config"))
       File.join(config_home, "dev", "credentials.yml")
@@ -239,6 +270,7 @@ module Dev
     # @param namespace [String]
     # @param key [String]
     # @return [String] e.g. "curseforge/api_key"
+    sig { params(namespace: String, key: String).returns(String) }
     def keychain_service(namespace, key)
       "#{namespace}/#{key}"
     end

@@ -1,6 +1,9 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "fileutils"
+require "pathname"
+require "sorbet-runtime"
 
 # Shadowenv Python provisioning: installs the interpreter via Homebrew
 # (python@<version>), creates a project-local .venv with it, and generates
@@ -12,6 +15,9 @@ require "fileutils"
 # the package set is installed into that venv by Dev::Deps::PipIntegration on
 # `dev install-deps`, exactly as LuaRocks fills lua_modules/.
 module ShadowenvPython
+  extend T::Sig
+  include Kernel
+
   class BrewInstallError < StandardError; end
 
   LISP_FILENAME = "540_python.lisp"
@@ -26,6 +32,7 @@ module ShadowenvPython
   # @param python_version [String] e.g. "3.12"
   # @param project_root   [Pathname, String]
   # @return [Boolean]
+  sig { params(python_version: String, project_root: T.any(String, Pathname)).returns(T::Boolean) }
   def provisioned?(python_version, project_root:)
     lisp_path = File.join(project_root.to_s, ".shadowenv.d", LISP_FILENAME)
     return false unless File.exist?(lisp_path)
@@ -40,6 +47,7 @@ module ShadowenvPython
   # @param python_version [String] e.g. "3.12"
   # @param project_root   [Pathname, String]
   # @return [true]
+  sig { params(python_version: String, project_root: T.any(String, Pathname)).returns(T::Boolean) }
   def setup!(python_version:, project_root:)
     venv_path = ensure_venv!(python_version:, project_root:)
 
@@ -62,6 +70,7 @@ module ShadowenvPython
   # @param project_root   [Pathname, String]
   # @return [String] absolute path to the venv
   # @raise [BrewInstallError] if the interpreter or venv cannot be created
+  sig { params(python_version: String, project_root: T.any(String, Pathname)).returns(String) }
   def ensure_venv!(python_version:, project_root:)
     python_bin = ensure_homebrew_python!(python_version)
     venv_path = File.join(project_root.to_s, VENV_DIR)
@@ -81,6 +90,7 @@ module ShadowenvPython
   #
   # @param venv_python [String] path to the venv's python
   # @raise [BrewInstallError] if pip cannot be made available
+  sig { params(venv_python: String).void }
   def ensure_pip!(venv_python)
     return if system(venv_python, "-m", "pip", "--version", out: File::NULL, err: File::NULL)
 
@@ -99,6 +109,7 @@ module ShadowenvPython
   # @param python_version [String] e.g. "3.12"
   # @param venv_path      [String] absolute path to the project venv
   # @return [String] lisp source
+  sig { params(python_version: String, venv_path: String).returns(String) }
   def generate_python_lisp(python_version, venv_path)
     venv = File.expand_path(venv_path)
     <<~LISP
@@ -119,6 +130,7 @@ module ShadowenvPython
   # @param python_version [String] e.g. "3.12"
   # @return [String] absolute path to the python interpreter
   # @raise [BrewInstallError] if brew install fails or no interpreter is found
+  sig { params(python_version: String).returns(String) }
   def ensure_homebrew_python!(python_version)
     formula = "python@#{python_version}"
     unless Kernel.system("brew", "list", formula, out: File::NULL, err: File::NULL)
@@ -140,6 +152,7 @@ module ShadowenvPython
 
   # @param formula [String] Homebrew formula name
   # @return [String, nil] brew --prefix for the formula, or nil when unavailable
+  sig { params(formula: String).returns(T.nilable(String)) }
   def brew_prefix_for(formula)
     return nil unless system("command -v brew >/dev/null 2>&1")
 

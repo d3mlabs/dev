@@ -1,5 +1,7 @@
+# typed: strict
 # frozen_string_literal: true
 
+require "sorbet-runtime"
 require "dev/shell_rc_hook"
 
 module Dev
@@ -23,6 +25,8 @@ module Dev
     # registers a `complete -c dev` source (fish applies its own filtering,
     # so fuzzy tokens may complete only literally there).
     class HookInstaller
+      extend T::Sig
+
       # The marker names the snippet generation: RCs carrying only an older
       # marker get the current snippet appended on the next ensure (dev up or
       # any `dev cd`), and the later function definition wins in every
@@ -104,6 +108,7 @@ module Dev
       SNIPPET
 
       # @param rc_hook [Dev::ShellRcHook] the shared RC-snippet installer
+      sig { params(rc_hook: ShellRcHook).void }
       def initialize(rc_hook: ShellRcHook.new)
         @rc_hook = rc_hook
       end
@@ -111,6 +116,7 @@ module Dev
       # Ensure the wrapper function + completer are in the user's shell RC.
       #
       # @return [Symbol, false] :added, :already_present, or false (unsupported shell)
+      sig { returns(T.any(Symbol, FalseClass)) }
       def ensure_installed
         @rc_hook.ensure_snippet(
           marker: MARKER,

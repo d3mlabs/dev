@@ -1,4 +1,9 @@
+# typed: strict
 # frozen_string_literal: true
+
+require "pathname"
+require "sorbet-runtime"
+require_relative "../dependency"
 
 module Dev
   module Deps
@@ -12,8 +17,11 @@ module Dev
       #         post_install: Dev::Deps::Hooks::UnrealModule
       module UnrealModule
         class << self
+          extend T::Sig
+
           # @param dep  [Dependency] the resolved dependency
           # @param root [Pathname]   project root
+          sig { params(dep: Dependency, root: Pathname).void }
           def call(dep, root)
             src_dir = root / "build" / "_deps" / "#{dep.name}-src"
             return unless src_dir.directory?
@@ -29,6 +37,7 @@ module Dev
           #
           # @param name [String]
           # @return [String]
+          sig { params(name: String).returns(String) }
           def to_module_name(name)
             name.gsub(/[^a-zA-Z0-9]/, " ").split.map(&:capitalize).join
           end
@@ -38,6 +47,7 @@ module Dev
           # @param module_name [String]  PascalCase module name
           # @param dep         [Dependency]
           # @return [String]
+          sig { params(module_name: String, dep: Dependency).returns(String) }
           def generate_build_cs(module_name, dep)
             public_includes = dep.metadata["public_includes"] || ["."]
             includes_lines = public_includes.map { |inc| "            \"#{inc}\"" }.join(",\n")

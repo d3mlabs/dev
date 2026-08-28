@@ -20,8 +20,11 @@ class Dev::Deps::PipIntegrationTest < Minitest::Test
     tmpdir = Dir.mktmpdir("pip-integration-")
     integration = Dev::Deps::PipIntegration.new(repository: nil, cache: nil, project_root: tmpdir, python_version: "3.12")
 
-    Expect "nothing is installed and no venv is required"
-    integration.install_all([]).nil?
+    When "installing an empty dep list"
+    integration.install_all([])
+
+    Then "nothing is installed and no venv is created"
+    Dir.children(tmpdir).empty?
 
     Cleanup
     FileUtils.rm_rf(tmpdir)

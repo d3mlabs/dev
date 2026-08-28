@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "digest"
@@ -5,6 +6,7 @@ require "fileutils"
 require "pathname"
 require "securerandom"
 require "shellwords"
+require "sorbet-runtime"
 require_relative "integration"
 
 module Dev
@@ -38,6 +40,8 @@ module Dev
     # parking a second copy in ~/.dev/cache would double disk usage for no benefit.
     # The version-keyed install dir plus its marker file is the cache.
     class GhIntegration < Integration
+      extend T::Sig
+
       class DownloadError < StandardError; end
       class IntegrityError < StandardError; end
       class ExtractionError < StandardError; end
@@ -46,32 +50,43 @@ module Dev
 
       MARKER_FILE = ".dev-gh-release"
 
-      # @param repository [Repository]
-      # @param cache [Cache]
+      # @param repository [Repository, nil]
+      # @param cache [Cache, nil]
       # @param project_root [String, Pathname, nil] repo root, used to resolve a
       #   project-relative build: script path (e.g. "bin/build-ue.sh")
+      sig do
+        params(
+          repository: T.nilable(Repository),
+          cache: T.nilable(Cache),
+          project_root: T.nilable(T.any(String, Pathname)),
+        ).void
+      end
       def initialize(repository:, cache:, project_root: nil)
         super(repository: repository, cache: cache)
-        @project_root = project_root && Pathname(project_root)
+        @project_root = T.let(project_root && Pathname(project_root), T.nilable(Pathname))
       end
 
       # Install all gh dependencies.
       #
       # @param dependencies [Array<Dependency>] gh deps to install
+      sig { params(dependencies: T::Array[Dependency]).void }
       def install_all(dependencies)
         dependencies.each { |dep| install(dep) }
       end
 
       private
 
+      sig { returns(T.nilable(Pathname)) }
       attr_reader :project_root
 
       # @param dep [Dependency]
+      sig { params(dep: Dependency).void }
       def install(dep)
         dep.metadata["assets"] ? install_prebuilt(dep) : install_from_source(dep)
       end
 
       # @param dep [Dependency]
+      sig { params(dep: Dependency).void }
       def install_prebuilt(dep)
         base_dir = Pathname(File.expand_path(dep.metadata["install_dir"]))
         target_dir = versioned_dir(base_dir, dep.version)
@@ -110,6 +125,7 @@ module Dev
       end
 
       # @param dep [Dependency]
+      sig { params(dep: Dependency).void }
       def install_from_source(dep)
         base_dir = Pathname(File.expand_path(dep.metadata["install_dir"]))
         target_dir = versioned_dir(base_dir, dep.version)
@@ -153,6 +169,7 @@ module Dev
       #
       # @param base_dir [Pathname] declared install_dir
       # @param target_dir [Pathname] the published version dir
+      sig { params(base_dir: Pathname, target_dir: Pathname).void }
       def publish_current(base_dir, target_dir)
         link = base_dir / "current"
         tmp = base_dir / ".current-#{Process.pid}-#{SecureRandom.hex(4)}"
@@ -171,6 +188,7 @@ module Dev
       # @param dep [Dependency]
       # @param archive_path [Pathname] destination .tar.gz
       # @raise [DownloadError] if the fetch fails
+      sig { params(dep: Dependency, archive_path: Pathname).void }
       def download_source(dep, archive_path)
         success = system(
           "gh", "api", "repos/#{dep.metadata["repo"]}/tarball/#{dep.version}",
@@ -189,6 +207,7 @@ module Dev
       # @param archive_path [Pathname]
       # @param source_dir [Pathname]
       # @raise [ExtractionError] if tar fails
+      sig { params(archive_path: Pathname, source_dir: Pathname).void }
       def extract_source(archive_path, source_dir)
         success = system(
           "tar", "-xzf", archive_path.to_s, "-C", source_dir.to_s, "--strip-components=1"
@@ -205,6 +224,7 @@ module Dev
       # @param source_dir [Pathname] extracted source ($DEV_SOURCE_DIR)
       # @param install_dir [Pathname] empty output dir ($DEV_INSTALL_DIR)
       # @return [Pathname] the staging dir to publish as the version dir
+      sig { params(dep: Dependency, source_dir: Pathname, install_dir: Pathname).returns(Pathname) }
       def build_source(dep, source_dir, install_dir)
         if dep.metadata["build"] == "none"
           puts ">>> #{dep.name}@#{dep.version}: header-only, publishing source as-is"
@@ -223,13 +243,18 @@ module Dev
       # @param source_dir [Pathname]
       # @param install_dir [Pathname]
       # @raise [BuildError] if the recipe exits non-zero
+      sig { params(dep: Dependency, source_dir: Pathname, install_dir: Pathname).void }
       def run_build(dep, source_dir, install_dir)
         env = {
           "DEV_SOURCE_DIR" => source_dir.to_s,
           "DEV_INSTALL_DIR" => install_dir.to_s,
           "DEV_VERSION" => dep.version,
         }
-        success = system(env, *build_command(dep.metadata["build"]), chdir: source_dir.to_s)
+        # T.unsafe: Sorbet cannot check a runtime-sized argv splat. The call
+        # stays receiverless because Kernel#system is private (and tests stub
+        # it on the instance).
+        argv = [env, *build_command(dep.metadata["build"])]
+        success = system(*T.unsafe(argv), chdir: source_dir.to_s)
         return if success
 
         raise BuildError,
@@ -242,6 +267,7 @@ module Dev
       #
       # @param build [String] script path or inline shell
       # @return [Array<String>] argv for system
+      sig { params(build: String).returns(T::Array[String]) }
       def build_command(build)
         script = project_root&.join(build)
         return ["bash", script.to_s] if script&.file?
@@ -255,6 +281,7 @@ module Dev
       # @param dep [Dependency]
       # @param archives_dir [Pathname] destination for downloaded assets
       # @raise [DownloadError] if gh release download fails
+      sig { params(dep: Dependency, archives_dir: Pathname).void }
       def download_assets(dep, archives_dir)
         success = system(
           "gh", "release", "download", dep.version,
@@ -275,6 +302,7 @@ module Dev
       # @param archives_dir [Pathname]
       # @raise [DownloadError] if a locked asset is missing from the download
       # @raise [IntegrityError] if a digest does not match
+      sig { params(dep: Dependency, archives_dir: Pathname).void }
       def verify_assets(dep, archives_dir)
         dep.metadata["assets"].each do |asset|
           path = archives_dir / asset["name"]
@@ -297,6 +325,7 @@ module Dev
       #
       # @param archives_dir [Pathname]
       # @param extracted_dir [Pathname]
+      sig { params(archives_dir: Pathname, extracted_dir: Pathname).void }
       def extract_archives(archives_dir, extracted_dir)
         groups = archives_dir.children.select(&:file?).group_by { |path| archive_base_name(path) }
         groups.each do |base_name, parts|
@@ -308,6 +337,7 @@ module Dev
       #
       # @param path [Pathname]
       # @return [String]
+      sig { params(path: Pathname).returns(String) }
       def archive_base_name(path)
         path.basename.to_s.sub(/\.\d+\z/, "")
       end
@@ -321,6 +351,7 @@ module Dev
       # @param dest_dir [Pathname] extraction destination
       # @raise [UnsupportedArchiveError] for non-zstd archives
       # @raise [ExtractionError] if the pipeline fails
+      sig { params(base_name: String, parts: T::Array[Pathname], dest_dir: Pathname).void }
       def extract_zstd_tarball(base_name, parts, dest_dir)
         unless base_name.end_with?(".tar.zst")
           raise UnsupportedArchiveError,

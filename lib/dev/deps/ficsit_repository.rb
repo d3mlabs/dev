@@ -1,7 +1,9 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "json"
 require "net/http"
+require "sorbet-runtime"
 require "uri"
 require_relative "repository"
 require_relative "dependency"
@@ -13,13 +15,15 @@ module Dev
     # Uses the GraphQL API at api.ficsit.app/v2/query to resolve a mod_reference
     # to an exact version, integrity hash, and transitive mod dependencies.
     class FicsitRepository < Repository
+      extend T::Sig
+
       class ApiError < StandardError; end
       class ModNotFoundError < StandardError; end
       class NoVersionError < StandardError; end
       class TargetNotFoundError < StandardError; end
 
       API_HOST = "https://api.ficsit.app"
-      GRAPHQL_ENDPOINT = URI("#{API_HOST}/v2/query")
+      GRAPHQL_ENDPOINT = T.let(URI("#{API_HOST}/v2/query"), URI::Generic)
       DEFAULT_TARGET = "Windows"
 
       VERSIONS_QUERY = <<~GRAPHQL
@@ -66,6 +70,7 @@ module Dev
       # @raise [NoVersionError] if no versions are available
       # @raise [TargetNotFoundError] if a requested platform has no published target
       # @raise [ApiError] if the GraphQL request fails
+      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
       def fetch(id)
         mod_reference = id["name"]
         mod_data = query_mod(mod_reference)
@@ -116,6 +121,13 @@ module Dev
       # @param requested [Array<String, nil>] platforms to resolve
       # @return [Hash{String => Hash}] target name → { "hash" => …, "link" => … }
       # @raise [TargetNotFoundError] if a requested platform has no target
+      sig do
+        params(
+          mod_reference: String,
+          version_data: T::Hash[String, T.untyped],
+          requested: T::Array[T.nilable(String)],
+        ).returns(T::Hash[String, T::Hash[String, String]])
+      end
       def resolve_platforms(mod_reference, version_data, requested)
         targets = version_data["targets"] || []
         target_names = requested.map { |platform| platform.nil? ? DEFAULT_TARGET : platform }.uniq
@@ -142,6 +154,12 @@ module Dev
       # @param version_data [Hash]
       # @param target_data [Hash]
       # @return [String] absolute https URL
+      sig do
+        params(
+          version_data: T::Hash[String, T.untyped],
+          target_data: T::Hash[String, T.untyped],
+        ).returns(String)
+      end
       def download_url(version_data, target_data)
         link = target_data["link"]
         return "#{API_HOST}#{link}" if link && !link.empty? && link.start_with?("/")
@@ -156,10 +174,11 @@ module Dev
       # @return [Hash] parsed mod data from the API response
       # @raise [ModNotFoundError] if the mod is not found
       # @raise [ApiError] if the HTTP request fails or returns errors
+      sig { params(mod_reference: String).returns(T::Hash[String, T.untyped]) }
       def query_mod(mod_reference)
         body = { query: VERSIONS_QUERY, variables: { modReference: mod_reference } }
         response = post_graphql(body)
-        parsed = JSON.parse(response.body)
+        parsed = JSON.parse(T.must(response.body))
 
         if parsed.key?("errors")
           messages = parsed["errors"].map { |e| e["message"] }.join("; ")
@@ -177,8 +196,9 @@ module Dev
       # @param body [Hash] request body with query and variables
       # @return [Net::HTTPResponse]
       # @raise [ApiError] if the HTTP response is not 2xx
+      sig { params(body: T::Hash[Symbol, T.untyped]).returns(Net::HTTPResponse) }
       def post_graphql(body)
-        http = Net::HTTP.new(GRAPHQL_ENDPOINT.host, GRAPHQL_ENDPOINT.port)
+        http = Net::HTTP.new(T.must(GRAPHQL_ENDPOINT.host), GRAPHQL_ENDPOINT.port)
         http.use_ssl = true
 
         request = Net::HTTP::Post.new(GRAPHQL_ENDPOINT.path)
@@ -198,6 +218,12 @@ module Dev
       # @param targets [Array<Hash>, nil] target objects from the version
       # @param target_name [String] platform name (e.g. "Windows")
       # @return [Hash, nil] matching target or nil
+      sig do
+        params(
+          targets: T.nilable(T::Array[T::Hash[String, T.untyped]]),
+          target_name: String,
+        ).returns(T.nilable(T::Hash[String, T.untyped]))
+      end
       def find_target(targets, target_name)
         return nil if targets.nil? || targets.empty?
 

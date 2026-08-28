@@ -1,6 +1,8 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "pathname"
+require "sorbet-runtime"
 
 module Dev
   module Plan
@@ -9,18 +11,22 @@ module Dev
     # convention, and resolution of the repo's `owner/repo` from its origin
     # remote (repo-scoped plans target the repo you're standing in).
     class Workspace
+      extend T::Sig
+
       class Error < RuntimeError; end
 
       PLAN_GLOB = "*.plan.md"
 
       # @return [Pathname]
+      sig { returns(Pathname) }
       attr_reader :plans_dir
 
       # @param project_root [Pathname]
       # @param executor [Dev::Plan::Executor] CLI boundary (injectable for tests)
+      sig { params(project_root: Pathname, executor: Executor).void }
       def initialize(project_root:, executor: Executor.new)
         @project_root = project_root
-        @plans_dir = project_root / ".cursor" / "plans"
+        @plans_dir = T.let(project_root / ".cursor" / "plans", Pathname)
         @executor = executor
       end
 
@@ -28,6 +34,7 @@ module Dev
       #
       # @return [String]
       # @raise [Error] when there is no origin remote or it isn't a GitHub URL
+      sig { returns(String) }
       def origin_repo
         out, err, ok = @executor.capture("git", "-C", @project_root.to_s, "remote", "get-url", "origin")
         raise Error, "could not resolve the origin remote: #{err.strip}" unless ok
@@ -41,6 +48,7 @@ module Dev
       # @param number [Integer]
       # @param title [String] issue title, slugified into the filename
       # @return [Pathname]
+      sig { params(owner_repo: String, number: Integer, title: String).returns(Pathname) }
       def plan_path(owner_repo, number, title)
         prefix = (owner_repo == origin_repo_or_nil) ? "" : "#{owner_repo.split("/").fetch(1)}-"
         @plans_dir / "gh-#{prefix}#{number}-#{self.class.slugify(title)}.plan.md"
@@ -49,6 +57,7 @@ module Dev
       # All plan files in the workspace carrying an ai-flow header.
       #
       # @return [Array<Pathname>]
+      sig { returns(T::Array[Pathname]) }
       def linked_plan_files
         return [] unless @plans_dir.directory?
 
@@ -58,8 +67,11 @@ module Dev
       end
 
       class << self
+        extend T::Sig
+
         # @param title [String]
         # @return [String] filesystem-safe slug (bounded length)
+        sig { params(title: String).returns(String) }
         def slugify(title)
           slug = title.downcase.gsub(/[^a-z0-9]+/, "-").gsub(/\A-|-\z/, "")
           slug = slug[0, 40].to_s.sub(/-\z/, "")
@@ -73,6 +85,7 @@ module Dev
       # (org-wide plans still need a filename, so this must not raise).
       #
       # @return [String, nil]
+      sig { returns(T.nilable(String)) }
       def origin_repo_or_nil
         origin_repo
       rescue Error
@@ -82,6 +95,7 @@ module Dev
       # @param url [String] ssh or https remote URL
       # @return [String] "owner/repo"
       # @raise [Error] for non-GitHub remotes
+      sig { params(url: String).returns(String) }
       def parse_github_remote(url)
         match = url.match(%r{github\.com[:/](?<owner>[^/]+)/(?<repo>[^/\s]+?)(?:\.git)?\z})
         raise Error, "origin remote is not a GitHub URL: #{url}" unless match

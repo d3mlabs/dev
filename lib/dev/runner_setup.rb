@@ -1,9 +1,12 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "fileutils"
 require "json"
 require "open3"
 require "socket"
+require "sorbet-runtime"
+require "stringio"
 
 module Dev
   # Registers the current host as a self-hosted GitHub Actions runner — scoped
@@ -26,6 +29,8 @@ module Dev
   # injectable Executor so the orchestration can be exercised in tests without
   # real side effects.
   class RunnerSetup
+    extend T::Sig
+
     class Error < StandardError; end
 
     # Pinned runner version; override per-repo via dev.yml `runner.version`.
@@ -33,18 +38,23 @@ module Dev
 
     # Thin wrapper over the external CLIs RunnerSetup drives. Tests inject a fake.
     class Executor
+      extend T::Sig
+
       # @return [Array(String, String, Boolean)] stdout, stderr, success?
+      sig { params(argv: String).returns([String, String, T::Boolean]) }
       def capture(*argv)
-        out, err, status = Open3.capture3(*argv)
+        out, err, status = Open3.capture3(*T.unsafe(argv))
         [out, err, status.success?]
       rescue Errno::ENOENT => e
         ["", e.message, false]
       end
 
-      # @return [Boolean] whether the command exited 0
+      # @return [Boolean, nil] whether the command exited 0 (nil when it
+      #   could not be spawned)
+      sig { params(argv: String, chdir: T.nilable(String)).returns(T.nilable(T::Boolean)) }
       def system(*argv, chdir: nil)
         opts = chdir ? { chdir: chdir } : {}
-        Kernel.system(*argv, **opts)
+        Kernel.system(*T.unsafe(argv), **opts)
       end
     end
 
@@ -52,11 +62,22 @@ module Dev
     # @param repo [String, nil] "owner/repo" override; defaults to `gh repo view`
     # @param org [Boolean] register at the org scope (the repo's owner) instead
     #   of the repo scope, so the runner serves every repo in the org
-    # @param executor [Executor] CLI boundary (injectable for tests)
-    # @param out [IO] progress stream
+    # @param executor [#capture, #system] CLI boundary (default: Executor;
+    #   injectable for tests)
+    # @param out [IO, StringIO] progress stream
     # @param host_platform [String] actions-runner release platform slug for this
     #   host (e.g. "linux-x64", "osx-arm64"); defaults to detection. Drives both
     #   the tarball choice and the service-install shape (systemd vs LaunchAgent).
+    sig do
+      params(
+        config: Dev::RunnerSetupConfig,
+        repo: T.nilable(String),
+        org: T::Boolean,
+        executor: T.untyped,
+        out: T.any(IO, StringIO),
+        host_platform: String,
+      ).void
+    end
     def initialize(config:, repo: nil, org: false, executor: Executor.new, out: $stdout,
                    host_platform: self.class.detect_host_platform)
       @config = config
@@ -68,10 +89,13 @@ module Dev
     end
 
     class << self
+      extend T::Sig
+
       # The actions-runner release platform slug for the current host (GitHub
       # names macOS "osx").
       #
       # @return [String]
+      sig { returns(String) }
       def detect_host_platform
         os = RUBY_PLATFORM.include?("darwin") ? "osx" : "linux"
         arch = RUBY_PLATFORM.match?(/arm64|aarch64/) ? "arm64" : "x64"
@@ -83,6 +107,7 @@ module Dev
     #
     # @return [void]
     # @raise [Error] on any preflight or step failure
+    sig { void }
     def run
       dir = resolve_dir
       guard_ext4!(dir)
@@ -108,16 +133,19 @@ module Dev
     # repos can register distinct runners on the same box without colliding.
     #
     # @return [String]
+    sig { returns(String) }
     def resolve_dir
       File.expand_path(@config.dir || "~/actions-runner-#{default_dir_suffix}")
     end
 
     # @return [String]
+    sig { returns(String) }
     def resolve_name
       @config.name || Socket.gethostname
     end
 
     # @return [String]
+    sig { returns(String) }
     def resolve_version
       @config.version || DEFAULT_VERSION
     end
@@ -126,6 +154,7 @@ module Dev
     # the registration contract is testable without touching the system.
     #
     # @return [Array<String>]
+    sig { params(url: String, token: String, name: String).returns(T::Array[String]) }
     def config_argv(url:, token:, name:)
       [
         "./config.sh",
@@ -145,6 +174,7 @@ module Dev
     #
     # @param dir [String] resolved install dir
     # @raise [Error] when dir is on a Windows mount
+    sig { params(dir: String).void }
     def guard_ext4!(dir)
       return unless dir.start_with?("/mnt/")
 
@@ -153,6 +183,7 @@ module Dev
     end
 
     # @raise [Error] when gh is missing or unauthenticated
+    sig { void }
     def ensure_gh_authenticated!
       _out, _err, ok = @exec.capture("gh", "auth", "status")
       return if ok
@@ -165,6 +196,7 @@ module Dev
     #
     # @return [String]
     # @raise [Error] when the repo can't be resolved
+    sig { returns(String) }
     def resolve_scope
       repo = resolve_repo
       @org ? repo.split("/").fetch(0) : repo
@@ -172,6 +204,7 @@ module Dev
 
     # @return [String] "owner/repo"
     # @raise [Error] when the repo can't be resolved
+    sig { returns(String) }
     def resolve_repo
       return @repo_override if @repo_override
 
@@ -187,6 +220,7 @@ module Dev
     # @param dir [String] install dir
     # @param version [String] runner version
     # @raise [Error] on download/extract failure
+    sig { params(dir: String, version: String).void }
     def download_runner(dir, version)
       FileUtils.mkdir_p(dir)
       if File.executable?(File.join(dir, "config.sh"))
@@ -215,6 +249,7 @@ module Dev
     # @param scope [String] the target scope ("owner/repo" or "owner"), used as
     #   a fallback when the existing registration's scope can't be read
     # @raise [Error] when the stale config can't be removed
+    sig { params(dir: String, scope: String).void }
     def remove_existing_config(dir, scope)
       return unless File.exist?(File.join(dir, ".runner"))
 
@@ -233,6 +268,7 @@ module Dev
     # whose service was never installed, or already removed, has nothing to undo.
     #
     # @param dir [String] install dir
+    sig { params(dir: String).void }
     def uninstall_existing_service(dir)
       return unless File.exist?(File.join(dir, ".service"))
 
@@ -249,6 +285,7 @@ module Dev
     #
     # @param dir [String] install dir
     # @return [String, nil] "owner/repo" or "owner"
+    sig { params(dir: String).returns(T.nilable(String)) }
     def existing_registration_scope(dir)
       raw = File.read(File.join(dir, ".runner"), encoding: "bom|utf-8")
       url = JSON.parse(raw)["gitHubUrl"].to_s
@@ -261,6 +298,7 @@ module Dev
     # @param scope [String] "owner/repo" or "owner"
     # @return [String] a fresh registration token
     # @raise [Error] when the token can't be minted
+    sig { params(scope: String).returns(String) }
     def mint_registration_token(scope)
       @out.puts ">>> Minting a registration token ..."
       mint_token(scope, "registration-token")
@@ -274,6 +312,7 @@ module Dev
     # @param kind [String]
     # @return [String]
     # @raise [Error] when the token can't be minted
+    sig { params(scope: String, kind: String).returns(String) }
     def mint_token(scope, kind)
       base = scope.include?("/") ? "repos/#{scope}" : "orgs/#{scope}"
       out, err, ok = @exec.capture(
@@ -288,6 +327,7 @@ module Dev
     end
 
     # @raise [Error] when config.sh fails
+    sig { params(dir: String, url: String, token: String, name: String).void }
     def configure_runner(dir:, url:, token:, name:)
       @out.puts ">>> Configuring the runner (--replace) ..."
       return if @exec.system(*config_argv(url: url, token: token, name: name), chdir: dir)
@@ -304,6 +344,7 @@ module Dev
     #
     # @param dir [String] install dir
     # @raise [Error] when the service can't be installed or started
+    sig { params(dir: String).void }
     def install_service(dir)
       @out.puts ">>> Installing + starting the runner service ..."
       raise Error, "svc.sh install failed" unless @exec.system(*service_argv("install"), chdir: dir)
@@ -312,11 +353,13 @@ module Dev
 
     # @param action [String] svc.sh subcommand
     # @return [Array<String>]
+    sig { params(action: String).returns(T::Array[String]) }
     def service_argv(action)
       darwin? ? ["./svc.sh", action] : ["sudo", "./svc.sh", action]
     end
 
     # @return [Boolean]
+    sig { returns(T::Boolean) }
     def darwin?
       @host_platform.start_with?("osx")
     end
@@ -324,6 +367,7 @@ module Dev
     # First label, sanitized for use in a directory name.
     #
     # @return [String]
+    sig { returns(String) }
     def default_dir_suffix
       first = @config.labels.split(",").first.to_s
       sanitized = first.gsub(/[^A-Za-z0-9_.-]/, "-")

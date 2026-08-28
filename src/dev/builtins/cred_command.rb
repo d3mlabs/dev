@@ -19,7 +19,7 @@ module Dev
       sig { params(accessor: Dev::CredentialAccessor).void }
       def initialize(accessor: Dev::CredentialAccessor.new)
         super()
-        @accessor = T.let(accessor, Dev::CredentialAccessor)
+        @accessor = accessor
       end
 
       sig { override.returns(String) }

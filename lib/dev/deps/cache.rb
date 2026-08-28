@@ -1,7 +1,9 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "fileutils"
 require "pathname"
+require "sorbet-runtime"
 
 module Dev
   module Deps
@@ -17,20 +19,24 @@ module Dev
     # accelerator; project-local install directories are managed by
     # each Integration.
     class Cache
+      extend T::Sig
+
       # Raised when a requested key is not in the cache.
       class CacheMissError < StandardError; end
 
-      DEFAULT_DIR = Pathname.new(File.expand_path("~/.dev/cache"))
+      DEFAULT_DIR = T.let(Pathname.new(File.expand_path("~/.dev/cache")), Pathname)
 
-      # @param cache_dir [Pathname] root directory for cached artifacts
+      # @param cache_dir [Pathname, String] root directory for cached artifacts
+      sig { params(cache_dir: T.any(Pathname, String)).void }
       def initialize(cache_dir: DEFAULT_DIR)
-        @cache_dir = Pathname(cache_dir)
+        @cache_dir = T.let(Pathname(cache_dir), Pathname)
       end
 
       # Store an artifact in the cache. Takes ownership (moves the file).
       #
       # @param key  [String] cache key (e.g. "cmake/boost-1.90.0-a1b2c3.tar.gz")
       # @param file [File]   open handle to the source artifact
+      sig { params(key: String, file: File).void }
       def store(key, file)
         dest = path_for(key)
         FileUtils.mkdir_p(dest.dirname)
@@ -42,6 +48,7 @@ module Dev
       # @param key [String] cache key
       # @return [File] read-only handle to the cached artifact
       # @raise [Cache::CacheMissError] if the key is not in the cache
+      sig { params(key: String).returns(File) }
       def fetch(key)
         path = path_for(key)
         raise CacheMissError, "Cache miss: #{key}" unless path.exist?
@@ -53,6 +60,7 @@ module Dev
       #
       # @param key [String] cache key
       # @return [Boolean]
+      sig { params(key: String).returns(T::Boolean) }
       def exists?(key)
         path_for(key).exist?
       end
@@ -63,12 +71,14 @@ module Dev
       #
       # @param key [String] cache key
       # @return [Pathname]
+      sig { params(key: String).returns(Pathname) }
       def path(key)
         path_for(key)
       end
 
       private
 
+      sig { params(key: String).returns(Pathname) }
       def path_for(key)
         @cache_dir / key
       end

@@ -1,4 +1,9 @@
+# typed: strict
 # frozen_string_literal: true
+
+require "sorbet-runtime"
+
+extend T::Sig
 
 # Builds the `bundle exec rake test` argv for bin/test.rb (dev test).
 #
@@ -9,6 +14,7 @@
 # @param test_files [Array<String>] test file paths relative to the repo
 #   root; empty means the full suite
 # @return [Array<String>] argv for the child rake process
+sig { params(test_files: T::Array[String]).returns(T::Array[String]) }
 def rake_test_argv(test_files)
   argv = ["bundle", "exec", "rake", "test"]
   return argv if test_files.empty?

@@ -1,7 +1,9 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "open3"
 require "pathname"
+require "sorbet-runtime"
 require_relative "repository"
 require_relative "dependency"
 
@@ -19,6 +21,8 @@ module Dev
     # pin for each declared gem out of the parsed Gemfile.lock. Transitive gems
     # are left to `bundle install` (they live in Gemfile.lock, not deps.lock).
     class BundlerRepository < Repository
+      extend T::Sig
+
       class LockError < StandardError; end
       class MissingGemError < StandardError; end
 
@@ -34,10 +38,16 @@ module Dev
       # @param project_root [Pathname, String] root the Gemfile/Gemfile.lock live in
       # @param ruby_version_requirement [String, nil] requirement for the Gemfile's
       #   `ruby` directive (from dependencies.rb's ruby_version), or nil to omit it
+      sig do
+        params(
+          project_root: T.any(Pathname, String),
+          ruby_version_requirement: T.nilable(String),
+        ).void
+      end
       def initialize(project_root:, ruby_version_requirement: nil)
-        @project_root = Pathname(project_root)
+        @project_root = T.let(Pathname(project_root), Pathname)
         @ruby_version_requirement = ruby_version_requirement
-        @pins = nil
+        @pins = T.let(nil, T.nilable(T::Hash[String, T::Hash[Symbol, T.nilable(String)]]))
       end
 
       # Batch hook: generate the Gemfile from all gem declarations, lock it, and
@@ -45,6 +55,7 @@ module Dev
       #
       # @param declarations [Array<DependencyDeclaration>] :bundler declarations
       # @return [void]
+      sig { params(declarations: T::Array[DependencyDeclaration]).void }
       def prepare(declarations)
         return if declarations.empty?
 
@@ -58,6 +69,7 @@ module Dev
       # @param id [Hash] must include "name", "integration", "group"
       # @return [Dependency]
       # @raise [MissingGemError] if the gem is absent from the parsed Gemfile.lock
+      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
       def fetch(id)
         name = id["name"]
         pin = pins.fetch(name) do
@@ -81,6 +93,7 @@ module Dev
       # full resolve; this guards direct fetch calls in tests).
       #
       # @return [Hash{String => Hash}]
+      sig { returns(T::Hash[String, T::Hash[Symbol, T.nilable(String)]]) }
       def pins
         @pins ||= parse_lockfile
       end
@@ -91,6 +104,7 @@ module Dev
       #
       # @param declarations [Array<DependencyDeclaration>]
       # @return [void]
+      sig { params(declarations: T::Array[DependencyDeclaration]).void }
       def write_gemfile(declarations)
         lines = [GENERATED_HEADER, %(source "#{RUBYGEMS_SOURCE}")]
         lines << %(ruby "#{@ruby_version_requirement}") if @ruby_version_requirement
@@ -113,6 +127,7 @@ module Dev
       #
       # @param decl [DependencyDeclaration]
       # @return [String]
+      sig { params(decl: DependencyDeclaration).returns(String) }
       def gem_line(decl)
         parts = [%(gem "#{decl.name}")]
         constraint = decl.constraint
@@ -129,6 +144,7 @@ module Dev
       #
       # @raise [LockError] if bundle lock fails
       # @return [void]
+      sig { void }
       def run_bundle_lock
         _out, err, status = Open3.capture3(
           { "BUNDLE_GEMFILE" => gemfile_path.to_s }, "bundle", "lock",
@@ -146,6 +162,7 @@ module Dev
       # gives the integrity hash.
       #
       # @return [Hash{String => Hash}]
+      sig { returns(T::Hash[String, T::Hash[Symbol, T.nilable(String)]]) }
       def parse_lockfile
         return {} unless lockfile_path.exist?
 
@@ -162,9 +179,10 @@ module Dev
       #
       # @param contents [String] raw Gemfile.lock contents
       # @return [Hash{String => String}] gem name => locked version
+      sig { params(contents: String).returns(T::Hash[String, String]) }
       def parse_spec_versions(contents)
         versions = {}
-        in_specs = false
+        in_specs = T.let(false, T::Boolean)
         contents.each_line do |line|
           if line.match?(/^\s+specs:\s*$/)
             in_specs = true
@@ -185,6 +203,7 @@ module Dev
       #
       # @param contents [String] raw Gemfile.lock contents
       # @return [Hash{String => String}]
+      sig { params(contents: String).returns(T::Hash[String, String]) }
       def parse_checksums(contents)
         section = contents[/^CHECKSUMS\n(.*?)(?:\n\n|\z)/m, 1]
         return {} unless section
@@ -197,11 +216,13 @@ module Dev
       end
 
       # @return [Pathname]
+      sig { returns(Pathname) }
       def gemfile_path
         @project_root / GEMFILE
       end
 
       # @return [Pathname]
+      sig { returns(Pathname) }
       def lockfile_path
         @project_root / LOCKFILE
       end

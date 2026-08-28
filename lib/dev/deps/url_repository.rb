@@ -1,7 +1,9 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "digest"
 require "open3"
+require "sorbet-runtime"
 require "tempfile"
 require_relative "repository"
 require_relative "dependency"
@@ -13,6 +15,8 @@ module Dev
     # The artifact is downloaded to a temp file and hashed.
     # Callers (e.g. Integration) are responsible for caching the result.
     class UrlRepository < Repository
+      extend T::Sig
+
       class DownloadError < StandardError; end
 
       # Download a URL dependency and compute its SHA256 integrity hash.
@@ -22,6 +26,7 @@ module Dev
       # @return [Dependency] with hash set to "SHA256=<hex>" and
       #   metadata["downloaded_path"] pointing to the temp file
       # @raise [DownloadError] if the download fails
+      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
       def fetch(id)
         url = id["url"]
         name = id["name"]
@@ -48,15 +53,16 @@ module Dev
       # @param name [String] dependency name (used in temp file naming)
       # @return [String] path to the downloaded temp file
       # @raise [DownloadError] if curl exits non-zero
+      sig { params(url: String, name: String).returns(String) }
       def download_to_tempfile(url, name)
         tmp = Tempfile.new(["dev_deps_#{name}", ".bin"])
         tmp.binmode
         tmp.close
 
-        _out, err, status = Open3.capture3("curl", "-fsSL", "-o", tmp.path, url)
+        _out, err, status = Open3.capture3("curl", "-fsSL", "-o", T.must(tmp.path), url)
         raise DownloadError, "Download failed for #{url}: #{err}" unless status.success?
 
-        tmp.path
+        T.must(tmp.path)
       end
     end
   end

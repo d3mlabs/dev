@@ -23,7 +23,7 @@ module Dev
     #   root from the run's ExecutionContext
     sig { params(command_runner: CommandRunner).void }
     def initialize(command_runner:)
-      @command_runner = T.let(command_runner, CommandRunner)
+      @command_runner = command_runner
     end
 
     # Hand the process over to the project command: exec-replace, the right

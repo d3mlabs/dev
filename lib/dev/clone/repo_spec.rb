@@ -1,6 +1,8 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "pathname"
+require "sorbet-runtime"
 
 module Dev
   module Clone
@@ -14,6 +16,8 @@ module Dev
     # a define block land on the enclosing module (breaking the nested typed
     # error), and Sorbet rejects the `class X < Data.define` form.
     class RepoSpec
+      extend T::Sig
+
       # The argument is not a "<repo>" or "<org>/<repo>" clone target.
       class MalformedRepoError < RuntimeError; end
 
@@ -24,15 +28,19 @@ module Dev
       SEGMENT_PATTERN = /\A[\w.-]+\z/
 
       # @return [String]
+      sig { returns(String) }
       attr_reader :org, :name
 
       class << self
+        extend T::Sig
+
         # Parse a clone target argument into a spec.
         #
         # @param arg [String] "<repo>" or "<org>/<repo>"
         # @return [Dev::Clone::RepoSpec]
         # @raise [MalformedRepoError] when the argument is not one or two
         #   valid path segments
+        sig { params(arg: String).returns(RepoSpec) }
         def parse(arg)
           # -1 keeps trailing empty segments, so "repo/" fails validation
           # instead of silently collapsing to "repo".
@@ -42,12 +50,13 @@ module Dev
           end
 
           org, name = segments.size == 2 ? segments : [DEFAULT_ORG, segments.fetch(0)]
-          new(org:, name:)
+          new(org: T.must(org), name: T.must(name))
         end
       end
 
       # @param org [String] the GitHub owner
       # @param name [String] the repo name
+      sig { params(org: String, name: String).void }
       def initialize(org:, name:)
         @org = org
         @name = name
@@ -56,6 +65,7 @@ module Dev
       # The gh clone target.
       #
       # @return [String] "org/repo"
+      sig { returns(String) }
       def full_name
         "#{org}/#{name}"
       end
@@ -63,6 +73,7 @@ module Dev
       # The canonical checkout location relative to the search root.
       #
       # @return [Pathname] "github.com/<org>/<repo>"
+      sig { returns(Pathname) }
       def relative_path
         Pathname(HOST) / org / name
       end

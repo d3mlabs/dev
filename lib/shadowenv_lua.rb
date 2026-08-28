@@ -1,12 +1,18 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "fileutils"
+require "pathname"
+require "sorbet-runtime"
 
 # Shadowenv Lua provisioning: generates .shadowenv.d/510_lua.lisp so that
 # lua, luarocks, and project-local lua_modules are in PATH / LUA_PATH / LUA_CPATH.
 #
 # Mirrors ShadowenvRuby. Triggered when dev.yml declares `lua: "5.1"`.
 module ShadowenvLua
+  extend T::Sig
+  include Kernel
+
   class BrewInstallError < StandardError; end
 
   LISP_FILENAME = "510_lua.lisp"
@@ -19,6 +25,7 @@ module ShadowenvLua
   # @param lua_version  [String]   e.g. "5.1"
   # @param project_root [Pathname, String] project root directory
   # @return [Boolean]
+  sig { params(lua_version: String, project_root: T.any(String, Pathname)).returns(T::Boolean) }
   def provisioned?(lua_version, project_root:)
     lisp_path = File.join(project_root.to_s, ".shadowenv.d", LISP_FILENAME)
     return false unless File.exist?(lisp_path)
@@ -33,6 +40,7 @@ module ShadowenvLua
   # @param project_root [Pathname, String] project root directory
   # @return [true]
   # @raise [BrewInstallError] if Homebrew lua or luarocks cannot be installed
+  sig { params(lua_version: String, project_root: T.any(String, Pathname)).returns(T::Boolean) }
   def setup!(lua_version:, project_root:)
     ensure_homebrew_lua!(lua_version)
 
@@ -52,6 +60,7 @@ module ShadowenvLua
   #
   # @param lua_version [String] e.g. "5.1"
   # @return [String] lisp source
+  sig { params(lua_version: String).returns(String) }
   def generate_lua_lisp(lua_version)
     lua_formula = "lua@#{lua_version}"
     <<~LISP
@@ -80,6 +89,7 @@ module ShadowenvLua
   #
   # @param lua_version [String] e.g. "5.1"
   # @raise [BrewInstallError] if brew install fails
+  sig { params(lua_version: String).void }
   def ensure_homebrew_lua!(lua_version)
     formula = "lua@#{lua_version}"
     unless Kernel.system("brew", "list", formula, out: File::NULL, err: File::NULL)

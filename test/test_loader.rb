@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 # Entry point when running tests (-r test_loader). Follows RSpock convention: load path, rspock, pry, then ASTTransform.

@@ -1,7 +1,9 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "fileutils"
 require "pathname"
+require "sorbet-runtime"
 
 module Dev
   module Learnings
@@ -24,6 +26,8 @@ module Dev
     #
     # Stateless: one reusable instance renders any index into any target.
     class InvariantsRenderer
+      extend T::Sig
+
       # The heading the invariant lines live under in the knowledge index,
       # and where the next section cuts them off.
       INVARIANTS_HEADING = /^## Invariants\b/
@@ -46,6 +50,7 @@ module Dev
       #
       # @param index_file [Pathname] the cached knowledge index (index.md)
       # @return [String, nil] nil when the index (or the section) doesn't exist
+      sig { params(index_file: Pathname).returns(T.nilable(String)) }
       def prompt_block(index_file)
         lines = invariant_lines(index_file)
         return nil if lines.nil?
@@ -60,6 +65,7 @@ module Dev
       #   (beside the cache; never inside a project)
       # @param repo [String] knowledge repo label for the generated header
       # @return [void]
+      sig { params(index_file: Pathname, rendered_file: Pathname, repo: String).void }
       def render(index_file:, rendered_file:, repo:)
         block = prompt_block(index_file)
         if block.nil?
@@ -81,6 +87,7 @@ module Dev
       # @param rendered_file [Pathname] the machine-local render
       # @param rules_file [Pathname] the target .mdc inside a project
       # @return [void]
+      sig { params(rendered_file: Pathname, rules_file: Pathname).void }
       def link(rendered_file:, rules_file:)
         return unlink(rules_file) unless rendered_file.file?
         return if rules_file.symlink? && rules_file.readlink == rendered_file
@@ -99,11 +106,12 @@ module Dev
       #
       # @param index_file [Pathname]
       # @return [String, nil]
+      sig { params(index_file: Pathname).returns(T.nilable(String)) }
       def invariant_lines(index_file)
         return nil unless index_file.file?
 
-        section = []
-        in_section = false
+        section = T.let([], T::Array[String])
+        in_section = T.let(false, T::Boolean)
         index_file.read.each_line do |line|
           if line.match?(INVARIANTS_HEADING)
             in_section = true
@@ -121,6 +129,7 @@ module Dev
       # @param block [String] the Tier-0 prompt block
       # @param repo [String]
       # @return [String] the full .mdc content
+      sig { params(block: String, repo: String).returns(String) }
       def rule_content(block, repo)
         <<~CONTENT
           ---
@@ -140,6 +149,7 @@ module Dev
       #
       # @param rules_file [Pathname]
       # @return [Boolean]
+      sig { params(rules_file: Pathname).returns(T::Boolean) }
       def user_owned?(rules_file)
         return false if rules_file.symlink? || !rules_file.file?
 
@@ -151,6 +161,7 @@ module Dev
       #
       # @param rules_file [Pathname]
       # @return [void]
+      sig { params(rules_file: Pathname).void }
       def unlink(rules_file)
         return unless rules_file.symlink? || rules_file.file?
         return warn_user_owned(rules_file) if user_owned?(rules_file)
@@ -160,6 +171,7 @@ module Dev
 
       # @param rules_file [Pathname]
       # @return [void]
+      sig { params(rules_file: Pathname).void }
       def warn_user_owned(rules_file)
         $stderr.puts "dev: warning: #{rules_file} exists and is not dev-generated — leaving it in place."
       end

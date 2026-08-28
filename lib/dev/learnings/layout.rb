@@ -1,6 +1,8 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "pathname"
+require "sorbet-runtime"
 require_relative "../skill_installer"
 
 module Dev
@@ -18,6 +20,8 @@ module Dev
     #   headings InvariantsRenderer parses — plus the on-demand skills
     #   corpus beside it.
     module Layout
+      extend T::Sig
+
       REPO_INDEX_SUBDIRS = [".cursor", "rules", "learnings-index.mdc"].freeze
       REPO_SKILLS_SUBDIRS = [".cursor", "skills", "learnings"].freeze
 
@@ -84,32 +88,37 @@ module Dev
 
       # @param repo_root [Pathname, String] a participating repo's root
       # @return [Pathname] the repo tier's always-on index rule
+      sig { params(repo_root: T.any(Pathname, String)).returns(Pathname) }
       def repo_index_file(repo_root)
-        Pathname(repo_root).join(*REPO_INDEX_SUBDIRS)
+        Pathname.new(repo_root).join(*REPO_INDEX_SUBDIRS)
       end
 
       # @param repo_root [Pathname, String] a participating repo's root
       # @param slug [String] the learning's slug
       # @return [Pathname] the repo-tier detail skill for the slug
+      sig { params(repo_root: T.any(Pathname, String), slug: String).returns(Pathname) }
       def repo_skill_file(repo_root, slug)
-        Pathname(repo_root).join(*REPO_SKILLS_SUBDIRS, slug, SkillInstaller::SKILL_FILE)
+        Pathname.new(repo_root).join(*REPO_SKILLS_SUBDIRS, slug, SkillInstaller::SKILL_FILE)
       end
 
       # @param org_root [Pathname, String] a knowledge repo checkout (or cache)
       # @return [Pathname] the org tier's index
+      sig { params(org_root: T.any(Pathname, String)).returns(Pathname) }
       def org_index_file(org_root)
-        Pathname(org_root) / ORG_INDEX_FILENAME
+        Pathname.new(org_root) / ORG_INDEX_FILENAME
       end
 
       # @param org_root [Pathname, String] a knowledge repo checkout (or cache)
       # @return [Pathname] the org tier's on-demand skills corpus
+      sig { params(org_root: T.any(Pathname, String)).returns(Pathname) }
       def org_skills_dir(org_root)
-        Pathname(org_root) / ORG_SKILLS_DIRNAME
+        Pathname.new(org_root) / ORG_SKILLS_DIRNAME
       end
 
       # @param org_root [Pathname, String] a knowledge repo checkout (or cache)
       # @param slug [String] the skill's slug
       # @return [Pathname] the org-tier skill for the slug
+      sig { params(org_root: T.any(Pathname, String), slug: String).returns(Pathname) }
       def org_skill_file(org_root, slug)
         org_skills_dir(org_root) / slug / SkillInstaller::SKILL_FILE
       end

@@ -43,10 +43,10 @@ module Dev
       ).void
     end
     def initialize(labels:, dir: nil, name: nil, version: nil)
-      @labels = T.let(labels, String)
-      @dir = T.let(dir, T.nilable(String))
-      @name = T.let(name, T.nilable(String))
-      @version = T.let(version, T.nilable(String))
+      @labels = labels
+      @dir = dir
+      @name = name
+      @version = version
     end
 
     sig { params(other: Object).returns(T::Boolean) }

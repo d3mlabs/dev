@@ -27,9 +27,9 @@ module Dev
       ).void
     end
     def initialize(builtin_executor:, project_executor:, overridden_executor:)
-      @builtin_executor = T.let(builtin_executor, BuiltinExecutor)
-      @project_executor = T.let(project_executor, ProjectExecutor)
-      @overridden_executor = T.let(overridden_executor, OverriddenExecutor)
+      @builtin_executor = builtin_executor
+      @project_executor = project_executor
+      @overridden_executor = overridden_executor
     end
 
     # Dispatch one command to its strategy.

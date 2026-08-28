@@ -1,6 +1,9 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "pathname"
+require "sorbet-runtime"
+require "stringio"
 require "dev/cd/repo_discovery"
 require "dev/cd/matcher"
 require "dev/cd/hook_installer"
@@ -21,6 +24,8 @@ module Dev
     # so instead of printing a path that does nothing it self-heals the hook
     # and explains how to activate it.
     class Accessor
+      extend T::Sig
+
       # `dev cd` ran without the shell wrapper being active.
       class ShellHookInactiveError < RuntimeError; end
 
@@ -29,21 +34,29 @@ module Dev
 
       # @param root [String, Pathname] search root (default: $DEV_CD_ROOT, else ~/src)
       # @param hook_installer [Dev::Cd::HookInstaller]
+      sig { params(root: T.any(String, Pathname), hook_installer: T.untyped).void }
       def initialize(root: ENV["DEV_CD_ROOT"] || (Pathname(Dir.home) / "src"),
                      hook_installer: HookInstaller.new)
-        @discovery = RepoDiscovery.new(root: root)
+        @discovery = T.let(RepoDiscovery.new(root: root), RepoDiscovery)
         @hook_installer = hook_installer
       end
 
       # Dispatch a `dev cd …` invocation.
       #
       # @param args [Array<String>] argv after the "cd" command
-      # @param out [IO] stdout (the machine-readable payload only)
-      # @param err [IO] stderr (diagnostics and hints)
+      # @param out [IO, StringIO] stdout (the machine-readable payload only)
+      # @param err [IO, StringIO] stderr (diagnostics and hints)
       # @raise [UsageError] on malformed plumbing invocations
       # @raise [ShellHookInactiveError] for bare invocations without the hook
       # @raise [Matcher::RepoNotFoundError] when --resolve matches nothing
       # @raise [Matcher::AmbiguousRepoError] when --resolve matches several repos
+      sig do
+        params(
+          args: T::Array[String],
+          out: T.any(IO, StringIO),
+          err: T.any(IO, StringIO),
+        ).void
+      end
       def run(args, out: $stdout, err: $stderr)
         flag, *rest = args
         case flag
@@ -60,10 +73,17 @@ module Dev
       # still ends up with a working wrapper for their next shell.
       #
       # @param args [Array<String>]
-      # @param out [IO]
-      # @param err [IO]
+      # @param out [IO, StringIO]
+      # @param err [IO, StringIO]
       # @return [void]
       # @raise [UsageError] unless exactly one query argument is given
+      sig do
+        params(
+          args: T::Array[String],
+          out: T.any(IO, StringIO),
+          err: T.any(IO, StringIO),
+        ).void
+      end
       def resolve(args, out:, err:)
         raise UsageError, "usage: dev cd <query>" unless args.size == 1
 
@@ -78,9 +98,10 @@ module Dev
       # ambiguity is the point here, not an error.
       #
       # @param args [Array<String>]
-      # @param out [IO]
+      # @param out [IO, StringIO]
       # @return [void]
       # @raise [UsageError] when more than one query argument is given
+      sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
       def candidates(args, out:)
         raise UsageError, "usage: dev cd --candidates [<query>]" if args.size > 1
 
@@ -90,9 +111,10 @@ module Dev
       # Bare `dev cd` reached the Ruby process: install the hook and tell the
       # user how to activate it, then fail (this process cannot cd for them).
       #
-      # @param err [IO]
+      # @param err [IO, StringIO]
       # @return [void]
       # @raise [ShellHookInactiveError] always
+      sig { params(err: T.any(IO, StringIO)).void }
       def explain_missing_hook(err:)
         case @hook_installer.ensure_installed
         when :added
@@ -110,6 +132,7 @@ module Dev
       # must see the current state of the checkout tree.
       #
       # @return [Dev::Cd::Matcher]
+      sig { returns(Matcher) }
       def matcher
         Matcher.new(repos: @discovery.repos)
       end

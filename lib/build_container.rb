@@ -1,8 +1,10 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "digest"
 require "pathname"
 require "securerandom"
+require "sorbet-runtime"
 require "tmpdir"
 require "yaml"
 
@@ -21,6 +23,11 @@ require "build_watcher"
 #   BuildContainer.content_tag(project_root: Pathname("..."))
 #     # returns the content-addressed tag without side effects
 module BuildContainer
+  extend T::Sig
+  # Kernel is re-included so Sorbet knows its methods (system, raise, backticks,
+  # Pathname) exist on the module's instance-method side under module_function.
+  include Kernel
+
   # Always-hashed inputs. deps.lock (app/test deps, e.g. SML) and build-deps.lock
   # (build deps, e.g. the engine) join the Dockerfile so a dependency bump
   # invalidates a prewarmed image. Missing files are skipped (see content_tag).
@@ -47,6 +54,13 @@ module BuildContainer
   #   (and the tag), while editing a module's dependency list does not. Sorted
   #   for determinism; missing matches contribute nothing.
   # @return [String] tag like "content-a1b2c3d4e5f6"
+  sig do
+    params(
+      project_root: Pathname,
+      extra_globs: T::Array[String],
+      structure_globs: T::Array[String],
+    ).returns(String)
+  end
   def content_tag(project_root:, extra_globs: [], structure_globs: [])
     root = Pathname(project_root)
     file_content = CONTENT_FILES
@@ -82,6 +96,7 @@ module BuildContainer
   # @param config       [Dev::BuildContainerConfig]
   # @param project_root [Pathname]
   # @return [String] e.g. "jpduchesne89/snappy-linux:content-a1b2c3d4e5f6"
+  sig { params(config: Dev::BuildContainerConfig, project_root: Pathname).returns(String) }
   def image_with_tag(config, project_root:)
     globs = config.respond_to?(:content_globs) ? config.content_globs : []
     structure_globs = config.respond_to?(:structure_globs) ? config.structure_globs : []
@@ -122,6 +137,16 @@ module BuildContainer
   # @param build_args_provider [#call, nil] returns Hash{String => String} of build args
   # @param secrets_provider    [#call, nil] returns Hash{String => String} of secret id => value
   # @return [String] the full image:tag string
+  sig do
+    params(
+      config: Dev::BuildContainerConfig,
+      project_root: Pathname,
+      push: T::Boolean,
+      publish: T::Boolean,
+      build_args_provider: T.nilable(T.proc.returns(T::Hash[String, String])),
+      secrets_provider: T.nilable(T.proc.returns(T::Hash[String, String])),
+    ).returns(String)
+  end
   def ensure_image!(config, project_root:, push: true, publish: false,
                     build_args_provider: nil, secrets_provider: nil)
     tag = image_with_tag(config, project_root:)
@@ -172,6 +197,16 @@ module BuildContainer
   # @param build_args   [Hash{String => String}]
   # @param secrets      [Hash{String => String}] secret id => value
   # @param prewarm      [String] shell command to run inside the base container
+  sig do
+    params(
+      tag: String,
+      config: Dev::BuildContainerConfig,
+      project_root: Pathname,
+      build_args: T::Hash[String, String],
+      secrets: T::Hash[String, String],
+      prewarm: String,
+    ).void
+  end
   def build_and_prewarm!(tag, config:, project_root:, build_args:, secrets:, prewarm:)
     base_tag = "#{tag}-base"
     # The base is engine-free and secret-free: no build-contexts, no BuildKit
@@ -181,8 +216,10 @@ module BuildContainer
     prewarm_commit!(base_tag, tag, volumes:, prewarm:, secrets:)
   ensure
     # The committed image references the base's layers, so dropping the base tag
-    # frees the name without removing shared data.
-    remove_image(base_tag)
+    # frees the name without removing shared data. T.must: Sorbet sees base_tag
+    # as possibly uninitialized in ensure, but its assignment is the first
+    # statement and cannot raise.
+    remove_image(T.must(base_tag))
   end
 
   # Named build-contexts derived from build-deps.lock: every build-group
@@ -194,6 +231,7 @@ module BuildContainer
   #
   # @param project_root [Pathname]
   # @return [Hash{String => String}] context name => absolute host path
+  sig { params(project_root: Pathname).returns(T::Hash[String, String]) }
   def build_contexts_from_lockfile(project_root)
     path = Pathname(project_root) / BUILD_DEPS_LOCK
     return {} unless path.exist?
@@ -224,13 +262,14 @@ module BuildContainer
   # @param volumes      [Array<String>] configured "host:container[:opts]" specs
   # @param project_root [Pathname]
   # @return [Array<String>] specs with matching host paths version-resolved
+  sig { params(volumes: T::Array[String], project_root: Pathname).returns(T::Array[String]) }
   def resolve_versioned_volumes(volumes, project_root:)
     versions = install_dir_versions(project_root)
     return volumes if versions.empty?
 
     volumes.map do |spec|
       host, container = spec.split(":", 2)
-      version = versions[File.expand_path(host)]
+      version = versions[File.expand_path(T.must(host))]
       version ? "#{host}/#{version}:#{container}" : spec
     end
   end
@@ -241,6 +280,7 @@ module BuildContainer
   #
   # @param project_root [Pathname]
   # @return [Hash{String => String}] expanded install_dir => version
+  sig { params(project_root: Pathname).returns(T::Hash[String, String]) }
   def install_dir_versions(project_root)
     root = Pathname(project_root)
     LOCKFILES.each_with_object({}) do |file, acc|
@@ -258,6 +298,7 @@ module BuildContainer
   # @param yaml [Hash]
   # @param acc  [Hash{String => String}] accumulator (mutated)
   # @return [void]
+  sig { params(yaml: T::Hash[T.untyped, T.untyped], acc: T::Hash[String, String]).void }
   def collect_install_dir_versions(yaml, acc)
     yaml.each do |name, attrs|
       next unless attrs.is_a?(Hash)
@@ -279,6 +320,15 @@ module BuildContainer
   #   paths may use ~ (e.g. "~/.dev/engines/unreal-engine-css:/ue")
   # @param env          [Hash{String => String}] env vars to inject via `-e`
   # @return [Array<String>] docker run command array
+  sig do
+    params(
+      image_tag: String,
+      project_root: Pathname,
+      shell_cmd: String,
+      volumes: T::Array[String],
+      env: T::Hash[String, String],
+    ).returns(T::Array[String])
+  end
   def docker_run_command(image_tag, project_root:, shell_cmd:, volumes: [], env: {})
     env_flags = env.flat_map { |name, value| ["-e", "#{name}=#{value}"] }
 
@@ -298,10 +348,11 @@ module BuildContainer
   #
   # @param volumes [Array<String>]
   # @return [Array<String>]
+  sig { params(volumes: T::Array[String]).returns(T::Array[String]) }
   def volume_flags(volumes)
     volumes.flat_map do |spec|
       host, container = spec.split(":", 2)
-      ["-v", "#{File.expand_path(host)}:#{container}"]
+      ["-v", "#{File.expand_path(T.must(host))}:#{container}"]
     end
   end
 
@@ -320,6 +371,7 @@ module BuildContainer
   # @param project_root [Pathname] bind-mounted at /project
   # @param volumes      [Array<String>] extra "host:container" mounts (e.g. engine)
   # @return [String] the running container's name
+  sig { params(image_tag: String, project_root: Pathname, volumes: T::Array[String]).returns(String) }
   def ensure_service!(image_tag, project_root:, volumes: [])
     name = service_container_name(image_tag, project_root)
     reap_stale_services!(image_tag, project_root)
@@ -339,6 +391,13 @@ module BuildContainer
   # @param shell_cmd [String]
   # @param env       [Hash{String => String}] env vars to inject via `-e`
   # @return [Array<String>] docker exec command array
+  sig do
+    params(
+      container: String,
+      shell_cmd: String,
+      env: T::Hash[String, String],
+    ).returns(T::Array[String])
+  end
   def docker_exec_command(container, shell_cmd:, env: {})
     env_flags = env.flat_map { |name, value| ["-e", "#{name}=#{value}"] }
     ["docker", "exec", *env_flags, "-w", "/project", container, "sh", "-c", shell_cmd]
@@ -352,6 +411,7 @@ module BuildContainer
   # @param image_tag    [String]
   # @param project_root [Pathname] the checkout whose containers to remove
   # @return [Array<String>] names of the removed containers
+  sig { params(image_tag: String, project_root: Pathname).returns(T::Array[String]) }
   def reset_service!(image_tag, project_root)
     names = service_containers(service_name_prefix(image_tag, project_root))
     names.each { |name| remove_container(name) }
@@ -372,6 +432,15 @@ module BuildContainer
   #   (already version-resolved by the caller via resolve_versioned_volumes)
   # @param prewarm   [String] shell command run via `sh -c`
   # @param secrets   [Hash{String => String}] secret id => value
+  sig do
+    params(
+      base_tag: String,
+      final_tag: String,
+      volumes: T::Array[String],
+      prewarm: String,
+      secrets: T::Hash[String, String],
+    ).void
+  end
   def prewarm_commit!(base_tag, final_tag, volumes:, prewarm:, secrets:)
     container = prewarm_container_name
     secret_files = write_secret_files(secrets)
@@ -388,7 +457,9 @@ module BuildContainer
     raise "Prewarm run failed for #{final_tag}" unless run_watched(run_argv, container: container)
     raise "docker commit failed for #{final_tag}" unless system("docker", "commit", container, final_tag)
   ensure
-    system("docker", "rm", "-f", container, out: File::NULL, err: File::NULL)
+    # T.must: Sorbet sees container as possibly uninitialized in ensure, but
+    # its assignment is the first statement and cannot raise.
+    system("docker", "rm", "-f", T.must(container), out: File::NULL, err: File::NULL)
     secret_files&.each_value { |path| File.delete(path) if File.exist?(path) }
   end
 
@@ -400,6 +471,7 @@ module BuildContainer
   # @param argv      [Array<String>] docker run command
   # @param container [String] the run's --name, so a stall can be killed
   # @return [Boolean] whether a run succeeded within the retry budget
+  sig { params(argv: T::Array[String], container: String).returns(T::Boolean) }
   def run_watched(argv, container:)
     BuildWatcher.new(container_name: container).run(argv)
   end
@@ -409,6 +481,7 @@ module BuildContainer
   #
   # @param secrets [Hash{String => String}]
   # @return [Hash{String => String}] secret id => temp file path
+  sig { params(secrets: T::Hash[String, String]).returns(T::Hash[String, String]) }
   def write_secret_files(secrets)
     secrets.each_with_object({}) do |(id, value), files|
       path = File.join(Dir.tmpdir, "dev-secret-#{SecureRandom.hex(8)}")
@@ -421,10 +494,12 @@ module BuildContainer
 
   # Unique name for the throwaway prewarm container; pid + random suffix so
   # concurrent dev invocations never collide.
+  sig { returns(String) }
   def prewarm_container_name
     "dev-prewarm-#{Process.pid}-#{rand(1_000_000)}"
   end
 
+  sig { params(image_tag: String).void }
   def remove_image(image_tag)
     system("docker", "image", "rm", "-f", image_tag, out: File::NULL, err: File::NULL)
   end
@@ -442,38 +517,43 @@ module BuildContainer
   # silently building and testing the wrong tree on every run. Keying by workspace
   # gives each checkout its own long-lived container, each bound correctly, with
   # no cross-thrash when a machine is both a dev box and a CI runner.
+  sig { params(image_tag: String, project_root: Pathname).returns(String) }
   def service_container_name(image_tag, project_root)
     image = image_basename(image_tag)
-    tag = image_tag.split(":").last
+    tag = T.must(image_tag.split(":").last)
     "dev-#{sanitize_container_name(image)}-#{workspace_id(project_root)}-#{sanitize_container_name(tag)}"
   end
 
   # Image + workspace prefix shared by every tag's container for one checkout,
   # used to find and reap stale ones without touching OTHER checkouts' containers.
   # E.g. "reg/snappy-linux:content-abc" in /work/snappy -> "dev-snappy-linux-9f86d08-".
+  sig { params(image_tag: String, project_root: Pathname).returns(String) }
   def service_name_prefix(image_tag, project_root)
     "dev-#{sanitize_container_name(image_basename(image_tag))}-#{workspace_id(project_root)}-"
   end
 
   # Bare image name (no registry, no tag). E.g.
   # "reg/snappy-linux:content-abc" -> "snappy-linux".
+  sig { params(image_tag: String).returns(String) }
   def image_basename(image_tag)
-    image_tag.split("/").last.split(":").first
+    T.must(T.must(image_tag.split("/").last).split(":").first)
   end
 
   # Short, stable identifier for the checkout a persistent container is bound to,
   # so the container name is unique per workspace (see service_container_name).
   # Hash of the resolved real path: different directories differ, the same
   # directory is stable across runs, and symlinked paths normalize to one id.
+  sig { params(project_root: Pathname).returns(String) }
   def workspace_id(project_root)
     path = begin
       File.realpath(project_root.to_s)
     rescue Errno::ENOENT
       File.expand_path(project_root.to_s)
     end
-    Digest::SHA256.hexdigest(path)[0, 10]
+    T.must(Digest::SHA256.hexdigest(path)[0, 10])
   end
 
+  sig { params(str: String).returns(String) }
   def sanitize_container_name(str)
     str.gsub(/[^a-zA-Z0-9_.-]/, "-")
   end
@@ -482,6 +562,7 @@ module BuildContainer
   # tag's name, so a Dockerfile/dep bump (new tag) doesn't leave the old one
   # running alongside the new. Scoped to the workspace prefix, so a tag bump in
   # one checkout never reaps another checkout's container.
+  sig { params(image_tag: String, project_root: Pathname).void }
   def reap_stale_services!(image_tag, project_root)
     keep = service_container_name(image_tag, project_root)
     service_containers(service_name_prefix(image_tag, project_root)).each do |name|
@@ -491,19 +572,23 @@ module BuildContainer
 
   # Names of existing containers (running or stopped) whose name matches the
   # project prefix. `^` anchors the regex name filter to the start.
+  sig { params(prefix: String).returns(T::Array[String]) }
   def service_containers(prefix)
     out = `docker ps -a --filter name=^#{prefix} --format {{.Names}}`
     out.split("\n").map(&:strip).reject(&:empty?)
   end
 
+  sig { params(name: String).returns(T.nilable(T::Boolean)) }
   def container_exists?(name)
     system("docker", "container", "inspect", name, out: File::NULL, err: File::NULL)
   end
 
+  sig { params(name: String).returns(T::Boolean) }
   def container_running?(name)
     `docker container inspect -f {{.State.Running}} #{name} 2>/dev/null`.strip == "true"
   end
 
+  sig { params(name: String).void }
   def start_container(name)
     system("docker", "start", name, out: File::NULL, err: File::NULL)
   end
@@ -511,23 +596,26 @@ module BuildContainer
   # Create the detached, idle service container: the project at /project, any
   # extra volumes (e.g. the engine), and `sleep infinity` so it stays up for
   # `docker exec`.
+  sig { params(name: String, image_tag: String, project_root: Pathname, volumes: T::Array[String]).void }
   def create_service_container(name, image_tag, project_root:, volumes: [])
-    success = system(
+    argv = [
       "docker", "run", "-d", "--name", name,
       "-v", "#{project_root}:/project",
       *volume_flags(volumes),
       "-w", "/project",
       image_tag,
       "sleep", "infinity",
-      out: File::NULL, err: File::NULL,
-    )
+    ]
+    success = system(*T.unsafe(argv), out: File::NULL, err: File::NULL)
     raise "Failed to create service container #{name}" unless success
   end
 
+  sig { params(name: String).void }
   def remove_container(name)
     system("docker", "rm", "-f", name, out: File::NULL, err: File::NULL)
   end
 
+  sig { params(image_tag: String).returns(T.nilable(T::Boolean)) }
   def local_image?(image_tag)
     system("docker", "image", "inspect", image_tag, out: File::NULL, err: File::NULL)
   end
@@ -536,6 +624,7 @@ module BuildContainer
   # on a fresh CI runner) shows layer-by-layer liveness instead of looking hung.
   # stderr stays silenced: the pull doubles as a cache probe, so "manifest not
   # found" on a miss is expected noise, not an error worth surfacing.
+  sig { params(image_tag: String).returns(T.nilable(T::Boolean)) }
   def pull(image_tag)
     system("docker", "pull", image_tag, err: File::NULL)
   end
@@ -551,6 +640,15 @@ module BuildContainer
   # @param build_args     [Hash{String => String}]
   # @param build_contexts [Hash{String => String}] context name => host path
   # @param secrets        [Hash{String => String}] secret id => value
+  sig do
+    params(
+      image_tag: String,
+      project_root: Pathname,
+      build_args: T::Hash[String, String],
+      build_contexts: T::Hash[String, String],
+      secrets: T::Hash[String, String],
+    ).void
+  end
   def build!(image_tag, project_root:, build_args: {}, build_contexts: {}, secrets: {})
     arg_flags = build_args.flat_map { |name, value| ["--build-arg", "#{name}=#{value}"] }
     context_flags = build_contexts.flat_map { |name, path| ["--build-context", "#{name}=#{path}"] }
@@ -565,17 +663,18 @@ module BuildContainer
     # pipes) and goes near-silent, so a long image build (msvc-wine download,
     # WineHQ install) looks hung for tens of minutes. Plain progress prints every
     # step with timestamps and streams RUN output, giving CI logs a heartbeat.
-    success = system(
-      env,
+    argv = [
       "docker", "build", "--progress=plain", "-t", image_tag,
       *arg_flags, *context_flags, *secret_flags,
       project_root.to_s,
-    )
+    ]
+    success = system(*T.unsafe([env, *argv]))
     raise "Docker build failed for #{image_tag}" unless success
   end
 
   # Stream push progress for the same liveness reason as pull: publishing a
   # multi-GB image can take many minutes and CI logs need a heartbeat.
+  sig { params(image_tag: String).returns(T.nilable(T::Boolean)) }
   def push!(image_tag)
     system("docker", "push", image_tag)
   end
@@ -590,7 +689,9 @@ module BuildContainer
   # retries, since the registry still lacks the tag.
   #
   # @param image_tag [String]
-  # @return [Boolean] whether the registry has the tag after this call
+  # @return [Boolean, nil] whether the registry has the tag after this call
+  #   (nil when the push command itself could not be executed)
+  sig { params(image_tag: String).returns(T.nilable(T::Boolean)) }
   def publish!(image_tag)
     if registry_has?(image_tag)
       $stderr.puts "dev: Container image already published — #{image_tag}"
@@ -608,7 +709,8 @@ module BuildContainer
   # download), so this is a cheap existence check.
   #
   # @param image_tag [String]
-  # @return [Boolean]
+  # @return [Boolean, nil] nil when the docker command could not be executed
+  sig { params(image_tag: String).returns(T.nilable(T::Boolean)) }
   def registry_has?(image_tag)
     system("docker", "manifest", "inspect", image_tag, out: File::NULL, err: File::NULL)
   end

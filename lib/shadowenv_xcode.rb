@@ -1,18 +1,25 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "fileutils"
+require "pathname"
+require "sorbet-runtime"
 
 # Shadowenv Xcode provisioning: generates .shadowenv.d/520_xcode.lisp so
 # DEVELOPER_DIR points at the dev-pinned Xcode (see Dev::Deps::XcodeIntegration)
 # inside the project — xcodebuild/xcrun/UBT then ride the pin instead of
 # whatever xcode-select or the App Store last touched.
 module ShadowenvXcode
+  extend T::Sig
+  include Kernel
+
   LISP_FILENAME = "520_xcode.lisp"
 
   module_function
 
   # Returns true when .shadowenv.d/520_xcode.lisp exists and already
   # provisions the given developer dir.
+  sig { params(developer_dir: String, project_root: T.any(String, Pathname)).returns(T::Boolean) }
   def provisioned?(developer_dir, project_root:)
     lisp_path = File.join(project_root.to_s, ".shadowenv.d", LISP_FILENAME)
     return false unless File.exist?(lisp_path)
@@ -25,6 +32,13 @@ module ShadowenvXcode
   # @param project_root [String, Pathname] project root directory
   # @param version [String] pinned Xcode version (for the provide record)
   # @param developer_dir [String] .../Xcode-<ver>.app/Contents/Developer
+  sig do
+    params(
+      project_root: T.any(String, Pathname),
+      version: String,
+      developer_dir: String,
+    ).returns(T::Boolean)
+  end
   def setup!(project_root:, version:, developer_dir:)
     shadowenv_d = File.join(project_root.to_s, ".shadowenv.d")
     FileUtils.mkdir_p(shadowenv_d)
@@ -40,6 +54,7 @@ module ShadowenvXcode
   # @param version [String]
   # @param developer_dir [String]
   # @return [String]
+  sig { params(version: String, developer_dir: String).returns(String) }
   def generate_xcode_lisp(version, developer_dir)
     <<~LISP
       (provide "xcode" "#{version}")

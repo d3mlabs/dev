@@ -1,9 +1,12 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "set"
 require "fileutils"
 require "open3"
 require "pathname"
+require "sorbet-runtime"
+require "stringio"
 require_relative "lockfile"
 
 module Dev
@@ -29,11 +32,14 @@ module Dev
     # - IN-USE versions (mounted by a running container) are never evicted —
     #   removing a directory a job has mounted would corrupt that job.
     class CacheGc
+      extend T::Sig
+
       DEFAULT_KEEP = 2
       STAGING_GLOB = ".staging-*"
 
       # @param lockfile [Lockfile] source of locked deps (install_dir + version)
-      # @param out      [IO] progress stream
+      # @param out      [IO, StringIO] progress stream
+      sig { params(lockfile: Lockfile, out: T.any(IO, StringIO)).void }
       def initialize(lockfile:, out: $stdout)
         @lockfile = lockfile
         @out = out
@@ -46,6 +52,7 @@ module Dev
       # @param image_ref [String, nil] "registry/image" to prune content tags for
       # @param live_tag  [String, nil] the current content tag to never prune
       # @return [void]
+      sig { params(keep: Integer, image_ref: T.nilable(String), live_tag: T.nilable(String)).void }
       def gc(keep: DEFAULT_KEEP, image_ref: nil, live_tag: nil)
         in_use = running_mount_sources
         gc_install_dirs(keep: keep, in_use: in_use)
@@ -60,6 +67,7 @@ module Dev
       # @param keep   [Integer]
       # @param in_use [Set<String>] absolute host paths mounted by live containers
       # @return [void]
+      sig { params(keep: Integer, in_use: T::Set[String]).void }
       def gc_install_dirs(keep:, in_use:)
         locked_versions_by_base.each do |base, locked|
           next unless Dir.exist?(base)
@@ -70,6 +78,7 @@ module Dev
       end
 
       # @return [Hash{String => Set<String>}] expanded install_dir => locked versions
+      sig { returns(T::Hash[String, T::Set[String]]) }
       def locked_versions_by_base
         @lockfile.read.each_with_object({}) do |dep, acc|
           dir = dep.metadata && dep.metadata["install_dir"]
@@ -83,6 +92,7 @@ module Dev
       # @param locked [Set<String>]
       # @param keep   [Integer]
       # @param in_use [Set<String>]
+      sig { params(base: String, locked: T::Set[String], keep: Integer, in_use: T::Set[String]).void }
       def prune_versions(base, locked:, keep:, in_use:)
         # Newest first, so the retained "others" are the most recently used.
         versions = version_dirs(base).sort_by { |v| -File.mtime(File.join(base, v)).to_f }
@@ -103,6 +113,7 @@ module Dev
       #
       # @param base [String]
       # @return [Array<String>] version directory basenames
+      sig { params(base: String).returns(T::Array[String]) }
       def version_dirs(base)
         Dir.children(base).select do |child|
           File.directory?(File.join(base, child)) && !child.start_with?(".staging-")
@@ -110,6 +121,7 @@ module Dev
       end
 
       # @param base [String]
+      sig { params(base: String).void }
       def remove_orphan_staging(base)
         Dir.glob(File.join(base, STAGING_GLOB)).each do |staging|
           @out.puts ">>> gc: removing orphan staging #{staging}"
@@ -122,6 +134,7 @@ module Dev
       # @param path   [String]
       # @param in_use [Set<String>]
       # @return [Boolean]
+      sig { params(path: String, in_use: T::Set[String]).returns(T::Boolean) }
       def mounted?(path, in_use)
         in_use.any? { |source| source == path || source.start_with?("#{path}/") || path.start_with?("#{source}/") }
       end
@@ -131,11 +144,16 @@ module Dev
       # empty set rather than blocking GC (the locked-version guard still holds).
       #
       # @return [Set<String>]
+      sig { returns(T::Set[String]) }
       def running_mount_sources
         ids = capture("docker", "ps", "-q").split("\n").map(&:strip).reject(&:empty?)
         return Set.new if ids.empty?
 
-        sources = capture("docker", "inspect", "--format", "{{range .Mounts}}{{.Source}}\n{{end}}", *ids)
+        # T.unsafe: Sorbet cannot check a runtime-sized argv splat; #capture's
+        # own sig validates at runtime. The call stays receiverless because
+        # #capture is private.
+        argv = ["docker", "inspect", "--format", "{{range .Mounts}}{{.Source}}\n{{end}}", *ids]
+        sources = capture(*T.unsafe(argv))
         Set.new(sources.split("\n").map(&:strip).reject(&:empty?))
       end
 
@@ -144,6 +162,7 @@ module Dev
       #
       # @param image_ref [String]
       # @param live_tag  [String, nil]
+      sig { params(image_ref: String, live_tag: T.nilable(String)).void }
       def gc_docker(image_ref:, live_tag:)
         tags = capture("docker", "images", image_ref, "--format", "{{.Repository}}:{{.Tag}}")
           .split("\n").map(&:strip).reject(&:empty?)
@@ -159,6 +178,7 @@ module Dev
       end
 
       # @return [Set<String>] image refs of running containers
+      sig { returns(T::Set[String]) }
       def running_image_refs
         Set.new(capture("docker", "ps", "--format", "{{.Image}}").split("\n").map(&:strip).reject(&:empty?))
       end
@@ -166,8 +186,9 @@ module Dev
       # Run a command and capture stdout, returning "" on failure.
       #
       # @return [String]
+      sig { params(argv: String).returns(String) }
       def capture(*argv)
-        out, _err, status = Open3.capture3(*argv)
+        out, _err, status = Open3.capture3(*T.unsafe(argv))
         status.success? ? out : ""
       rescue StandardError
         ""

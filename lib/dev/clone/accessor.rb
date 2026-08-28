@@ -1,6 +1,9 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "pathname"
+require "sorbet-runtime"
+require "stringio"
 require "dev/clone/repo_spec"
 require "dev/clone/gh_cloner"
 require "dev/cd/hook_installer"
@@ -26,6 +29,8 @@ module Dev
     # any hook exists — then the hook self-heals and the destination is
     # explained instead of landed in.
     class Accessor
+      extend T::Sig
+
       # `dev clone` was invoked with the wrong arguments.
       class UsageError < RuntimeError; end
 
@@ -35,9 +40,16 @@ module Dev
       # @param root [String, Pathname] checkout root (default: $DEV_CD_ROOT, else ~/src)
       # @param cloner [Dev::Clone::GhCloner]
       # @param hook_installer [Dev::Cd::HookInstaller]
+      sig do
+        params(
+          root: T.any(String, Pathname),
+          cloner: T.untyped,
+          hook_installer: T.untyped,
+        ).void
+      end
       def initialize(root: ENV["DEV_CD_ROOT"] || (Pathname(Dir.home) / "src"),
                      cloner: GhCloner.new, hook_installer: Dev::Cd::HookInstaller.new)
-        @root = Pathname(root).expand_path
+        @root = T.let(Pathname(root).expand_path, Pathname)
         @cloner = cloner
         @hook_installer = hook_installer
       end
@@ -45,13 +57,20 @@ module Dev
       # Dispatch a `dev clone …` invocation.
       #
       # @param args [Array<String>] argv after the "clone" command
-      # @param out [IO] stdout (the machine-readable payload only)
-      # @param err [IO] stderr (progress, diagnostics and hints)
+      # @param out [IO, StringIO] stdout (the machine-readable payload only)
+      # @param err [IO, StringIO] stderr (progress, diagnostics and hints)
       # @return [void]
       # @raise [UsageError] unless exactly one clone target is given
       # @raise [RepoSpec::MalformedRepoError] when the target isn't "<repo>" or "<org>/<repo>"
       # @raise [DestinationExistsError] when the canonical path already exists
       # @raise [GhCloner::CloneFailedError] when the clone itself fails
+      sig do
+        params(
+          args: T::Array[String],
+          out: T.any(IO, StringIO),
+          err: T.any(IO, StringIO),
+        ).void
+      end
       def run(args, out: $stdout, err: $stderr)
         plumbing = args.first == "--path"
         query = plumbing ? args.drop(1) : args
@@ -75,8 +94,9 @@ module Dev
       #
       # @param spec [Dev::Clone::RepoSpec]
       # @param destination [Pathname]
-      # @param err [IO]
+      # @param err [IO, StringIO]
       # @return [void]
+      sig { params(spec: RepoSpec, destination: Pathname, err: T.any(IO, StringIO)).void }
       def announce(spec, destination, err:)
         err.puts "dev: cloned #{spec.full_name} to #{destination}"
         case @hook_installer.ensure_installed

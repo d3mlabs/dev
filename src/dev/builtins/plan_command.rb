@@ -25,7 +25,7 @@ module Dev
       sig { params(accessor_factory: AccessorFactory).void }
       def initialize(accessor_factory: ->(project_root) { Dev::Plan::Accessor.new(project_root:) })
         super()
-        @accessor_factory = T.let(accessor_factory, AccessorFactory)
+        @accessor_factory = accessor_factory
       end
 
       sig { override.returns(String) }
