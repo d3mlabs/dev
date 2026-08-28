@@ -30,18 +30,19 @@ module Dev
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
-        deps_rb = context.project_root / "dependencies.rb"
+        project_root = context.project!.root
+        deps_rb = project_root / "dependencies.rb"
         Dev::Deps.reset!
         Kernel.load(deps_rb.to_s) if deps_rb.exist?
 
         deps_config = Dev::Deps.last_config || Dev::Deps.define {}
         resolver = Dev::Deps::Resolver.new(
           repositories: Dev::Deps::Registry.repositories(
-            project_root: context.project_root,
+            project_root: project_root,
             ruby_version_requirement: deps_config.ruby_version_requirement,
           ),
         )
-        lockfile = Dev::Deps::Lockfile.new(dir: context.project_root)
+        lockfile = Dev::Deps::Lockfile.new(dir: project_root)
         resolved = resolver.resolve(deps_config.declarations)
         # Record the manifest digest so the staleness check can tell whether
         # dependencies.rb changed after this resolution (Dev::Deps::Staleness).

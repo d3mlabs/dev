@@ -4,6 +4,7 @@
 require "pathname"
 require "dev/builtins/cd_command"
 require "dev/builtins/clone_command"
+require "dev/builtins/config_command"
 require "dev/builtins/cred_command"
 require "dev/builtins/learnings_command"
 require "dev/builtins/plan_command"
@@ -12,6 +13,7 @@ require "dev/cli/global_usage_printer"
 require "dev/clone"
 require "dev/plan"
 require "dev/learnings"
+require "dev/config_accessor"
 require "dev/credentials"
 require "dev/credential_accessor"
 
@@ -23,6 +25,7 @@ module Dev
   # - `dev clone`     — host-global (clones into the canonical checkout layout
   #                     under $DEV_CD_ROOT; on a fresh machine it runs before
   #                     any project exists)
+  # - `dev config`    — host-global (settings live under XDG / ~/.config/dev)
   # - `dev cred`      — host-global (credentials live under XDG / ~/.config/dev)
   # - `dev plan`      — workspace-global (plans live in the enclosing
   #                     workspace, no project config is read)
@@ -47,6 +50,7 @@ module Dev
       {
         "cd" => Builtins::CdCommand::DESC,
         "clone" => Builtins::CloneCommand::DESC,
+        "config" => Builtins::ConfigCommand::DESC,
         "cred" => Builtins::CredCommand::DESC,
         "learnings" => Builtins::LearningsCommand::DESC,
         "plan" => Builtins::PlanCommand::DESC,
@@ -59,21 +63,24 @@ module Dev
 
     # @param cd_accessor [Dev::Cd::Accessor]
     # @param clone_accessor [Dev::Clone::Accessor]
+    # @param config_accessor [Dev::ConfigAccessor]
     # @param cred_accessor [Dev::CredentialAccessor]
     # @param usage_printer [Dev::Cli::GlobalUsagePrinter]
     sig do
       params(
         cd_accessor: Dev::Cd::Accessor,
         clone_accessor: Dev::Clone::Accessor,
+        config_accessor: Dev::ConfigAccessor,
         cred_accessor: Dev::CredentialAccessor,
         usage_printer: Dev::Cli::GlobalUsagePrinter,
       ).void
     end
     def initialize(cd_accessor: Dev::Cd::Accessor.new, clone_accessor: Dev::Clone::Accessor.new,
-                   cred_accessor: Dev::CredentialAccessor.new,
+                   config_accessor: Dev::ConfigAccessor.new, cred_accessor: Dev::CredentialAccessor.new,
                    usage_printer: Dev::Cli::GlobalUsagePrinter.new)
       @cd_accessor = T.let(cd_accessor, Dev::Cd::Accessor)
       @clone_accessor = T.let(clone_accessor, Dev::Clone::Accessor)
+      @config_accessor = T.let(config_accessor, Dev::ConfigAccessor)
       @cred_accessor = T.let(cred_accessor, Dev::CredentialAccessor)
       @usage_printer = T.let(usage_printer, Dev::Cli::GlobalUsagePrinter)
     end
@@ -109,6 +116,7 @@ module Dev
       case cmd_name
       when "cd" then @cd_accessor.run(args)
       when "clone" then @clone_accessor.run(args)
+      when "config" then @config_accessor.run(args)
       # Plan and Learnings accessors are built per run: their workspace root
       # depends on the cwd.
       when "plan" then Dev::Plan::Accessor.new(project_root: workspace_root).run(args)

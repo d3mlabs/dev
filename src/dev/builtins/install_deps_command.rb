@@ -9,7 +9,7 @@ require "dev/deps/gem_skill_linker"
 require "dev/deps/integration"
 require "dev/deps/lockfile"
 require "dev/deps/registry"
-require "dev/learnings"
+require "dev/host_service"
 require "shadowenv_ruby"
 
 module Dev
@@ -40,7 +40,7 @@ module Dev
         params(
           installer_factory: InstallerFactory,
           gem_skill_linker_factory: GemSkillLinkerFactory,
-          synchronizer: T.untyped,
+          host_service: Dev::HostService,
         ).void
       end
       def initialize(
@@ -48,12 +48,12 @@ module Dev
           Dev::Deps::DependencyInstaller.new(lockfile:, integrations:)
         },
         gem_skill_linker_factory: ->(project_root) { Dev::Deps::GemSkillLinker.new(project_root:) },
-        synchronizer: Dev::Learnings::Synchronizer.for
+        host_service: Dev::HostService.new
       )
         super()
         @installer_factory = T.let(installer_factory, InstallerFactory)
         @gem_skill_linker_factory = T.let(gem_skill_linker_factory, GemSkillLinkerFactory)
-        @synchronizer = T.let(synchronizer, T.untyped)
+        @host_service = T.let(host_service, Dev::HostService)
       end
 
       sig { override.returns(String) }
@@ -78,18 +78,19 @@ module Dev
       # engine.
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
+        project = context.project!
         # Headless boxes (CI, runner services) reach install-deps before any
         # dev.yml command has run CommandRunner's provisioning, so the builtin
         # must provision the pinned Ruby itself — bundler installs against it.
-        ShadowenvRuby.ensure!(ruby_version: context.ruby_version, project_root: context.project_root)
+        ShadowenvRuby.ensure!(ruby_version: project.ruby_version, project_root: project.root)
 
-        lockfile = Dev::Deps::Lockfile.new(dir: context.project_root)
+        lockfile = Dev::Deps::Lockfile.new(dir: project.root)
         installer = @installer_factory.call(
           lockfile,
           Dev::Deps::Registry.host_integrations(
-            project_root: context.project_root,
+            project_root: project.root,
             cache: Dev::Deps::Cache.new,
-            python_version: context.python_version,
+            python_version: project.python_version,
           ),
         )
         installer.install(env: Dev::Deps.detect_env, host: Dev::Deps.detect_host)
@@ -99,8 +100,8 @@ module Dev
         # This is hygiene, not a bootstrap contract: workflows that must start
         # on fresh invariants (e.g. ai-flow's runner) run an explicit blocking
         # `dev learnings sync` step instead of relying on this side effect.
-        @gem_skill_linker_factory.call(context.project_root).link_all
-        @synchronizer.sync(project_root: context.project_root)
+        @gem_skill_linker_factory.call(project.root).link_all
+        @host_service.sync_learnings(project_root: project.root)
       end
     end
   end

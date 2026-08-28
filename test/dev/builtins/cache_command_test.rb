@@ -61,7 +61,7 @@ class Dev::Builtins::CacheCommandTest < Minitest::Test
     command = build_command(gc)
     context = build_context(build_container: config)
     BuildContainer.stubs(:image_with_tag)
-      .with(config, project_root: context.project_root)
+      .with(config, project_root: context.project!.root)
       .returns("myregistry/myapp-linux:content-abc123")
 
     When "running cache gc"
@@ -109,9 +109,11 @@ class Dev::Builtins::CacheCommandTest < Minitest::Test
   def build_context(build_container: nil)
     Dev::ExecutionContext.new(
       ui: typed_mock(Dev::Cli::Ui),
-      ruby_version: "4.0.1",
-      project_root: Pathname.new("/tmp/cache-test"),
-      build_container: build_container,
+      project: Dev::ProjectContext.new(
+        root: Pathname.new("/tmp/cache-test"),
+        ruby_version: "4.0.1",
+        build_container: build_container,
+      ),
     )
   end
 end

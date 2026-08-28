@@ -308,12 +308,86 @@ class RunnerTest < Minitest::Test
     cmd_name == "test"
     args == ["--fast"]
     context.ui == ui
-    context.ruby_version == "9.9.9"
-    context.python_version == "3.12"
-    context.project_root == root
+    context.project!.ruby_version == "9.9.9"
+    context.project!.python_version == "3.12"
+    context.project!.root == root
 
     Cleanup
     FileUtils.rm_rf(root)
+  end
+
+  test "run without a dev.yml assembles a projectless context" do
+    Given "a Runner constructed with no dev.yml anywhere"
+    contexts = []
+    command_service = typed_mock(Dev::CommandService)
+    command_service.stubs(:execute).with { |cmd_name, args:, context:|
+      contexts << [cmd_name, context]
+      true }
+    runner = Dev::Runner.new(dev_yaml_path: nil, ui: fake_ui, command_service: command_service)
+
+    When "running up"
+    runner.run(["up"])
+
+    Then "the service got a context with a ui and no project half"
+    cmd_name, context = contexts.fetch(0)
+    cmd_name == "up"
+    context.project.nil?
+  end
+
+  test "a project command without a dev.yml maps to the no-dev.yml refusal" do
+    Given "a Runner with no dev.yml, over its real service graph"
+    runner = Dev::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: StringIO.new)
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(1).once
+
+    When "running a project command"
+    runner.run(["test"])
+
+    Then "the refusal names the missing dev.yml"
+    $stderr.string.include?("no dev.yml found in this directory or any parent")
+    $stderr.string.include?("Run dev from inside a project that defines a dev.yml.")
+
+    Cleanup
+    $stderr = old_stderr
+  end
+
+  test "project builtins are not registered without a dev.yml" do
+    Given "a Runner with no dev.yml, over its real service graph"
+    runner = Dev::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: StringIO.new)
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(1).once
+
+    When "running a project-scoped builtin"
+    runner.run(["install-deps"])
+
+    Then "the lookup fails like any other command outside a project"
+    $stderr.string.include?("no dev.yml found in this directory or any parent")
+
+    Cleanup
+    $stderr = old_stderr
+  end
+
+  test "a dev.yml with the removed ruby: key maps to a clean error inside run" do
+    Given "a Runner over a dev.yml that still carries ruby:"
+    tmp = Tempfile.new(["dev", ".yml"])
+    tmp.write(YAML.dump({ "name" => "testproject", "ruby" => "3.3.0", "commands" => {} }))
+    tmp.flush
+    runner = Dev::Runner.new(dev_yaml_path: Pathname.new(tmp.path), ui: fake_ui, out: StringIO.new)
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(1).once
+
+    When "running any command"
+    runner.run(["test"])
+
+    Then "the migration message reaches stderr as a dev: error"
+    $stderr.string.include?("dev.yml `ruby:` is no longer supported")
+
+    Cleanup
+    $stderr = old_stderr
+    tmp.close!
   end
 
   test "a failed waited child exits with the child's status" do

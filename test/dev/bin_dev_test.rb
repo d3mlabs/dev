@@ -41,8 +41,11 @@ class Dev::BinDevTest < Minitest::Test
       "BUNDLE_GEMFILE" => "/nonexistent/harness/Gemfile",
     }
 
+    # A project command with no global/no-project fallback: `up` outside a
+    # project converges the host layer (a real host mutation via brew), so
+    # it can never be spawned from tests.
     When "running a project command (bare dev renders the global usage instead) there"
-    _out, err, status = Open3.capture3(hostile, "sh", BIN_DEV, "up", chdir: dir)
+    _out, err, status = Open3.capture3(hostile, "sh", BIN_DEV, "test", chdir: dir)
 
     Then "dev reached its own no-dev.yml refusal — not a crash inside the caller's bundler"
     !status.success?

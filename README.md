@@ -5,11 +5,11 @@ Global CLI tool for d3mlabs projects. Discovers `dev.yml` in your git repos and 
 
 ## Installation
 
-Install via Homebrew (from the d3mlabs tap). This installs `dev` and shadowenv (for per-project Ruby env in repos that use `dev up`):
+Install via Homebrew. Orgs install their deployment formula (tool + org configuration in one command); individuals without an org install the generic `dev-core` and write their own config — see [Org configuration & deployment](#org-configuration--deployment):
 
 ```bash
-brew tap d3mlabs
-brew install d3mlabs/dev
+brew install d3mlabs/d3mlabs/dev        # d3mlabs (or your org's <org>/<tap>/dev)
+brew install d3mlabs/d3mlabs/dev-core   # org-blank tool only
 ```
 
 ### System dependencies
@@ -88,6 +88,35 @@ dev's feature set is three independent opt-ins; a repo takes whichever rungs it 
 
 A gem repo typically stops at rungs 1–2 (commands + a pinned Ruby, hand-written gemspec/Gemfile); an app repo usually takes all three.
 
+## Org configuration & deployment
+
+dev's source hardcodes no org content — every org-specific fact enters through **settings**, resolved per key with gitconfig-style layering (`Dev::Settings`):
+
+1. **ENV var** — `DEV_PLANS_REPO`, `DEV_KNOWLEDGE_REPO`, `DEV_DEPLOYMENT_FORMULA`. Highest precedence.
+2. **User file** — `~/.config/dev/config.yml` (or `$XDG_CONFIG_HOME/dev/config.yml`).
+3. **System file** — `$(brew --prefix)/etc/dev/config.yml`, shipped by an org's deployment formula.
+
+Missing files are empty layers; a key set in the user file wins over the system file. The keys:
+
+```yaml
+plans_repo: d3mlabs/plans              # org-wide plans repo (dev plan --org)
+knowledge_repo: d3mlabs/knowledge      # org learnings sync source
+deployment_formula: d3mlabs/d3mlabs/dev  # the formula `dev up` self-updates (the deployment names itself)
+```
+
+Leaving a nilable key unset turns its feature off (`plans_repo` is only required by `dev plan --org`). Manage the user file with `dev config` (`list` / `get <key>` / `set <key> <value>`) instead of hand-editing YAML. The tool ships as two kinds of formula (the Debian core-package/config-package split, applied to a tap):
+
+- **`d3mlabs/d3mlabs/dev-core`** — the generic tool, org-blank: the build payload plus the tools dev itself shells out to (git, gh, ruby, rbenv, ruby-build, shadowenv). It ships no org content.
+- **A deployment formula named `dev` in each org's tap** — `depends_on "d3mlabs/d3mlabs/dev-core"` plus the org's payload installed into the prefix's `etc/dev/` (pkgetc — brew preserves locally-modified etc files across upgrades): a `config.yml` with the org's keys (including `deployment_formula`, its own name — that's how `dev up` knows what to upgrade) and an optional `Brewfile` with the org's host tooling (see [Host tooling: the Brewfile contract](#host-tooling-the-brewfile-contract)). Formula names only need to be unique within a tap, so every org's install is the same shape: `brew install d3mlabs/d3mlabs/dev` is the reference deployment, and an adopting org publishes `acme/tap/dev` with identical structure and its own payload.
+
+Three consumption stories:
+
+- **Org deployment (recommended):** `brew install <org>/<tap>/dev` — one command installs tool + identity, and the org evolves its config and tooling list by shipping a new deployment formula revision; every machine picks it up on its next `dev up`.
+- **Individual / handrolled:** `brew install d3mlabs/d3mlabs/dev-core`, then `dev config set <key> <value>` for the keys you need — no org involvement, useful for personal machines or orgs without a tap. No Brewfile means the host tooling step self-skips.
+- **CI / fleet:** set the ENV vars in the pipeline or MDM profile — no files needed, and they override both file layers.
+
+Installs predating the split (when `dev` was a monolithic tool+config formula) migrate with a hard cut: `brew uninstall dev && brew install d3mlabs/d3mlabs/dev`.
+
 ## Usage
 
 From anywhere under a git repo that has a `dev.yml` at its root:
@@ -101,7 +130,7 @@ dev          # List all available commands
 
 The tool walks up from your current directory until it finds a git repo root (directory containing `.git`), then looks for `dev.yml` there. If found, it parses the commands and executes the `run` string for your chosen subcommand.
 
-A few builtins are global and work from **any** directory, no `dev.yml` needed: `dev cd` (host-global navigation), `dev clone` (host-global checkout creation), `dev cred` (host-global credentials), and `dev plan` (workspace-global plan sync). Project commands (`dev up` and anything declared in `dev.yml`) still require a nearby `dev.yml`.
+A few builtins are global and work from **any** directory, no `dev.yml` needed: `dev cd` (host-global navigation), `dev clone` (host-global checkout creation), `dev config` (host-global settings), `dev cred` (host-global credentials), and `dev plan` (workspace-global plan sync). Project commands (`dev up` and anything declared in `dev.yml`) still require a nearby `dev.yml`.
 
 ## dev cd — jump between checkouts
 
@@ -267,6 +296,17 @@ Two YAML lockfiles, same format, two purposes:
 
 Both files are generated by `dev update-deps` and committed to git. Never edit them by hand.
 
+### Host tooling: the Brewfile contract
+
+Alongside per-project dependencies, an org converges **host tooling** — the org-invariant tools every developer machine needs regardless of which projects it serves (an editor-class agent CLI, say). The principle is **brew converges brew**: dev never re-implements host tooling convergence, it only *triggers* brew's — the same way it triggers bundler for gems.
+
+- **The list lives in the deployment formula's `Brewfile`**, installed into `$(brew --prefix)/etc/dev/` beside `config.yml`. Convention, not configuration: file present means `dev up` runs `brew bundle install` against it; absent (tapless individual, CI) means the step self-skips. No settings key, no fetch, no cache — the file is local, delivered by packaging.
+- **Disjoint sets:** `dev-core`'s `depends_on` answers "what does the tool need" (git, gh, ruby, rbenv, ruby-build, shadowenv); the Brewfile answers "what does the org want beyond that". No entry ever appears in both; if dev drops a dep the org still wants, that fact migrates to the Brewfile. Tools that belong to one piece of software stay in that repo's own `dependencies.rb`.
+- **Private taps:** Brewfiles natively support `tap` entries, including private taps over authenticated git — sensitive tooling goes in a private tap the Brewfile references. `gh auth login` must precede `dev up` in that case (the failure mode is brew's own clear git-auth error).
+- **Trust model:** a Brewfile is brew-evaluated Ruby DSL, so converging it executes org-authored code — the same trust already granted by installing the org's deployment formula. dev adds no new trust surface: the file lives in the brew prefix at a fixed path, never a user-supplied one, and brew's tap-trust gate covers formulas from untrusted taps.
+
+On every `dev up`, before project provisioning, `Dev::HostService` converges the host tooling: **`brew update`**, a **scoped `brew upgrade` of the `deployment_formula`** the deployment named in its own `config.yml` (falling back to `dev-core` for tapless individuals; skipped entirely for source checkouts — never a blanket `brew upgrade` of unrelated packages), then **`brew bundle install`** against the Brewfile when one exists. dev adds no throttle of its own — the no-op steps are sub-second, and brew's `HOMEBREW_AUTO_UPDATE_SECS` remains the only network rate limiter (tune it through brew) — so a deployment fix propagates on the very next `dev up`. The whole layer is warn-only: offline machines and failed upgrades never block project provisioning. Upgrading is symmetric: the org edits one line in its tap's Brewfile (or ships a config change via formula revision) and every machine converges on its next `dev up` — no brew vocabulary required, though a direct `brew upgrade` keeps working for users who prefer it.
+
 ### dependencies.rb
 
 Declare dependencies using a Ruby DSL:
@@ -368,9 +408,10 @@ Custom integrations implement `Dev::Deps::Integration` (with `install_all(pins, 
 
 - **`dev update-deps`** — resolve constraints from `dependencies.rb`, write lockfiles (recording the manifest digest for the staleness check). Always available (no need to define in `dev.yml`).
 - **`dev install-deps`** — install locked deps handled on the host (gh releases, steam apps) into their version-keyed install dirs, filtered to the detected env and host OS. Finishes by refreshing agent skill links (see [Agent skills & org learnings](#agent-skills--org-learnings)).
-- **`dev up`** — auto-installs all deps from lockfiles (build group first), then runs the project's `up:` command from `dev.yml` if defined. On success, stamps the installed lockfile digest (see `dev check`). Finishes by refreshing agent skill links, like `install-deps`.
+- **`dev up`** — first converges the host layer (self-update + org Brewfile, see [Host tooling: the Brewfile contract](#host-tooling-the-brewfile-contract)), then auto-installs all deps from lockfiles (build group first), then runs the project's `up:` command from `dev.yml` if defined. On success, stamps the installed lockfile digest (see `dev check`). Finishes by refreshing agent skill links, like `install-deps`. Also valid outside any project: converges the host layer only — the fresh-box bootstrap (`brew install <org>/<tap>/dev` → `dev up` → ready).
 - **`dev check`** — report dependency-state staleness explicitly: `dependencies.rb` vs lockfiles (digest recorded by `update-deps`), and lockfiles vs the per-machine installed stamp (`~/.dev/state/<project>/installed-digest`, written after a fully-successful `up`/`install-deps`). The same two O(1) checks run at every command start — warning on workstations, erroring in CI.
 - **`dev deps path <integration> <name> <platform>`** — print the absolute path of a locked artifact (e.g. `dev deps path ficsit SML LinuxServer`, or `dev deps path xcode` for the pinned DEVELOPER_DIR) so scripts don't reconstruct cache keys or layout conventions.
+- **`dev config list | get <key> | set <key> <value>`** — manage dev's settings (see [Org configuration & deployment](#org-configuration--deployment)). `list` shows every known key with its resolved value and source layer (`env` / `user` / `system` / unset) — the settings debugging tool; `get` prints the resolved value (exit 1 when unset); `set` writes the user file (`~/.config/dev/config.yml`), creating it if missing. Known keys only. Global: works without a `dev.yml`.
 - **`dev cred get <namespace> <key>`** — resolve a credential through the provider chain (ENV → keychain → file → prompt) and print it. A non-interactive miss errors with `gh secret set` guidance. Mirrors `dev deps path` for shell consumers (e.g. a staging sync). Global: works without a `dev.yml`.
 - **`dev cd <repo>`** — jump to a checkout under `$DEV_CD_ROOT` (default `~/src`) by fuzzy name, with Tab completion (see [dev cd](#dev-cd--jump-between-checkouts)). Global: works without a `dev.yml`.
 - **`dev clone [<org>/]<repo>`** — clone a GitHub repo via your `gh` auth into the canonical `$DEV_CD_ROOT/github.com/<org>/<repo>` path (org defaults to `d3mlabs`) and land there (see [dev clone](#dev-clone--clone-into-the-canonical-layout)). Clone-only — run `dev up` yourself. Global: works without a `dev.yml`.

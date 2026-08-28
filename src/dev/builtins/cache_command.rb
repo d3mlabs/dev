@@ -40,14 +40,15 @@ module Dev
         subcommand, *rest = args
         raise ArgumentError, "usage: dev cache gc [--keep N]" unless subcommand == "gc"
 
-        gc = @cache_gc_factory.call(Dev::Deps::Lockfile.new(dir: context.project_root))
+        project = context.project!
+        gc = @cache_gc_factory.call(Dev::Deps::Lockfile.new(dir: project.root))
         # The build container config (when present) lets GC also prune stale
         # content-tagged images while protecting the live tag.
         image_ref = T.let(nil, T.nilable(String))
         live_tag = T.let(nil, T.nilable(String))
-        if (cfg = context.build_container)
+        if (cfg = project.build_container)
           image_ref = cfg.image_ref
-          live_tag = BuildContainer.image_with_tag(cfg, project_root: context.project_root)
+          live_tag = BuildContainer.image_with_tag(cfg, project_root: project.root)
         end
         gc.gc(keep: parse_keep(rest), image_ref: image_ref, live_tag: live_tag)
       end

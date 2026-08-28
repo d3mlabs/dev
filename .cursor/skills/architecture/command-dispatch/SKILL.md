@@ -14,11 +14,14 @@ routes argv through two layers:
    (`src/dev/global_dispatch.rb`) runs first, before any dev.yml lookup,
    so `cd`, `plan`, `cred`, and `learnings` work from any directory. Each
    owns host- or workspace-global state, never project config.
-2. **Project commands** — everything else builds `Dev::Runner`
-   (`src/dev/runner.rb`), which requires a dev.yml in the cwd's ancestry
-   (`DevYamlNotFoundError` at the CLI boundary) and runs the
-   yaml-declared command, plus project builtins like `up` /
-   `install-deps`.
+2. **Everything else** — builds `Dev::Runner` (`src/dev/runner.rb`), the
+   project-optional composition root. With an enclosing dev.yml it runs
+   the yaml-declared command plus the project builtins (`install-deps`,
+   `deps`, `cache`, ...). Without one, the catalog is just `up` — a
+   hybrid whose host half (converge + cd RC hook) always runs and whose
+   project half needs the project (`ExecutionContext#project`, nil
+   outside a project) — and any other lookup maps to the no-dev.yml
+   refusal in `Runner#exit_for`. `bin/dev` itself rescues nothing.
 
 The seams:
 

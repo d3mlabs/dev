@@ -19,9 +19,10 @@ module Dev
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
-        cfg = T.must(context.build_container)
-        image_tag = BuildContainer.image_with_tag(cfg, project_root: context.project_root)
-        removed = BuildContainer.reset_service!(image_tag, context.project_root)
+        project = context.project!
+        cfg = T.must(project.build_container)
+        image_tag = BuildContainer.image_with_tag(cfg, project_root: project.root)
+        removed = BuildContainer.reset_service!(image_tag, project.root)
         puts(removed.empty? ? "dev: no persistent build container to remove." : "dev: removed #{removed.join(", ")}.")
       end
     end
