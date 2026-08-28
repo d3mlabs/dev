@@ -54,8 +54,17 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  normalization gate: it must recognize every layout Cursor writes, since
  render re-serializes its output and any mis-split compounds on the next
  pull. → .cursor/skills/learnings/plan-parse-normalizes/
+- [architecture/pre-bundle-stdlib-only] The deps bootstrap chain
+ (dependencies.rb → dev/deps closure, ensure_bundler) loads before the
+ bundle exists: stdlib-only, so no sorbet-runtime sigs — it caps below
+ `typed: strict`. → .cursor/skills/learnings/pre-bundle-stdlib-only/
 
 ## toolchain
+
+- [toolchain/sig-retrofit-runtime-semantics] Adding sigs to existing
+ methods changes runtime behavior (void sentinel, param validation,
+ private-receiver T.unsafe(self) calls raising), not just static checks.
+ → .cursor/skills/learnings/sig-retrofit-runtime-semantics/
 
 
 ## org tier
