@@ -32,20 +32,18 @@ module Dev
       # @param issues [Dev::Plan::GithubIssues, nil]
       # @param settings [Dev::Settings, nil]
       # @param merge_base [Dev::Plan::MergeBase, nil]
-      # @param skill_installer [Dev::SkillInstaller, nil] target for dev's
-      #   shipped skill links (defaults to the user-global ~/.cursor/skills)
-      # @param learnings [Dev::Learnings::Synchronizer, Dev::Learnings::UnconfiguredSynchronizer, nil]
+      # @param host_service [Dev::HostService, nil] the machine-convergence
+      #   hook point (shipped skill links + org learnings artifacts)
       # @param executor [Dev::Plan::Executor] CLI boundary (injectable for tests)
       def initialize(project_root:, executor: Executor.new, workspace: nil, issues: nil,
-                     settings: nil, merge_base: nil, skill_installer: nil, learnings: nil)
+                     settings: nil, merge_base: nil, host_service: nil)
         @project_root = project_root
         @executor = executor
         @workspace = workspace || Workspace.new(project_root: project_root, executor: executor)
         @issues = issues || GithubIssues.new(executor: executor)
         @settings = settings || Dev::Settings.new
         @merge_base = merge_base || MergeBase.new
-        @skill_installer = skill_installer || Dev::SkillInstaller.new
-        @learnings = learnings || Learnings::Synchronizer.for(settings: @settings)
+        @host_service = host_service || Dev::HostService.new(settings: @settings)
       end
 
       # Dispatch a `dev plan …` invocation.
@@ -58,8 +56,8 @@ module Dev
         # Hook point: refresh dev's shipped skill links and the org learnings
         # artifacts. Cheap and idempotent (content-compared, the network pull
         # bounded by a short timeout), so every invocation can afford it.
-        @skill_installer.install_all(Dev::SkillInstaller::SHIPPED_SKILLS_DIR)
-        @learnings.sync(project_root: @project_root)
+        @host_service.install_skills
+        @host_service.sync_learnings(project_root: @project_root)
         subcommand, *rest = args
         case subcommand
         when "new" then new_plan(rest, out:)

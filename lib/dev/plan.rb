@@ -1,8 +1,7 @@
 # frozen_string_literal: true
 
 require "dev/settings"
-require "dev/skill_installer"
-require "dev/learnings"
+require "dev/host_service"
 require "dev/plan/executor"
 require "dev/plan/header"
 require "dev/plan/frontmatter"

@@ -29,8 +29,8 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     installer.expects(:install).with(env: Dev::Deps.detect_env, host: Dev::Deps.detect_host).once
     linker = typed_mock(Dev::Deps::GemSkillLinker)
     linker.expects(:link_all).once
-    synchronizer = mock
-    synchronizer.expects(:sync).with(project_root: root).once
+    host_service = typed_mock(Dev::HostService)
+    host_service.expects(:sync_learnings).with(project_root: root).once
     linker_roots = []
     command = Dev::Builtins::InstallDepsCommand.new(
       installer_factory: ->(_lockfile, _integrations) { installer },
@@ -38,7 +38,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
         linker_roots << project_root
         linker
       },
-      synchronizer: synchronizer,
+      host_service: host_service,
     )
     # Headless boxes reach install-deps before any CommandRunner provisioning,
     # so the builtin provisions the toolchain itself — the true boundary.
@@ -70,7 +70,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
         linker.stubs(:link_all)
         linker
       },
-      synchronizer: stub(sync: nil),
+      host_service: quiet_host_service,
     )
     ShadowenvRuby.stubs(:ensure!)
 
@@ -92,10 +92,9 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     # The empty project keeps the real collaborators inert: the lockfile
     # pins nothing (install dispatches nothing) and no Gemfile exists (the
     # linker returns before shelling out). Only the machine-global
-    # boundaries — the Ruby provisioner and the learnings synchronizer —
-    # are faked.
+    # boundaries — the Ruby provisioner and the host service — are faked.
     root = Pathname.new(Dir.mktmpdir("install-deps-default-"))
-    command = Dev::Builtins::InstallDepsCommand.new(synchronizer: stub(sync: nil))
+    command = Dev::Builtins::InstallDepsCommand.new(host_service: quiet_host_service)
     ShadowenvRuby.stubs(:ensure!)
 
     When "running install-deps"
@@ -114,8 +113,14 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     Dev::Builtins::InstallDepsCommand.new(
       installer_factory: ->(_lockfile, _integrations) { typed_mock(Dev::Deps::DependencyInstaller) },
       gem_skill_linker_factory: ->(_project_root) { typed_mock(Dev::Deps::GemSkillLinker) },
-      synchronizer: stub(sync: nil),
+      host_service: quiet_host_service,
     )
+  end
+
+  def quiet_host_service
+    host_service = typed_mock(Dev::HostService)
+    host_service.stubs(:sync_learnings)
+    host_service
   end
 
   def build_context(project_root)

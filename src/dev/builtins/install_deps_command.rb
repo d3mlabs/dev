@@ -9,7 +9,7 @@ require "dev/deps/gem_skill_linker"
 require "dev/deps/integration"
 require "dev/deps/lockfile"
 require "dev/deps/registry"
-require "dev/learnings"
+require "dev/host_service"
 require "shadowenv_ruby"
 
 module Dev
@@ -40,7 +40,7 @@ module Dev
         params(
           installer_factory: InstallerFactory,
           gem_skill_linker_factory: GemSkillLinkerFactory,
-          synchronizer: T.untyped,
+          host_service: Dev::HostService,
         ).void
       end
       def initialize(
@@ -48,12 +48,12 @@ module Dev
           Dev::Deps::DependencyInstaller.new(lockfile:, integrations:)
         },
         gem_skill_linker_factory: ->(project_root) { Dev::Deps::GemSkillLinker.new(project_root:) },
-        synchronizer: Dev::Learnings::Synchronizer.for
+        host_service: Dev::HostService.new
       )
         super()
         @installer_factory = T.let(installer_factory, InstallerFactory)
         @gem_skill_linker_factory = T.let(gem_skill_linker_factory, GemSkillLinkerFactory)
-        @synchronizer = T.let(synchronizer, T.untyped)
+        @host_service = T.let(host_service, Dev::HostService)
       end
 
       sig { override.returns(String) }
@@ -101,7 +101,7 @@ module Dev
         # on fresh invariants (e.g. ai-flow's runner) run an explicit blocking
         # `dev learnings sync` step instead of relying on this side effect.
         @gem_skill_linker_factory.call(project.root).link_all
-        @synchronizer.sync(project_root: project.root)
+        @host_service.sync_learnings(project_root: project.root)
       end
     end
   end
