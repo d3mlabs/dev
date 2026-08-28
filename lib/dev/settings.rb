@@ -25,7 +25,7 @@ module Dev
   # `dev plan link --org` target. `knowledge_repo` is the org knowledge repo
   # dev keeps a machine-local cache of. `deployment_formula` is the brew
   # formula `dev up`'s self-update upgrades — the deployment names itself
-  # (see Dev::Host::Converge). Leaving a nilable key unset turns its
+  # (see Dev::HostService). Leaving a nilable key unset turns its
   # feature off.
   class Settings
     class MissingSettingError < RuntimeError; end

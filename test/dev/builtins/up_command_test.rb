@@ -26,11 +26,10 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
   test "call ensures the dev cd shell hook and composes the install-deps body" do
     Given "an up command with expectations on both collaborators"
     install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
-    hook_installer = typed_mock(Dev::Cd::HookInstaller)
-    hook_installer.expects(:ensure_installed).once.returns(:already_present)
-    command = Dev::Builtins::UpCommand.new(
-      install_deps_command: install_deps, hook_installer: hook_installer, host_converge: quiet_host_converge,
-    )
+    host_service = typed_mock(Dev::HostService)
+    host_service.stubs(:converge_tooling)
+    host_service.expects(:install_rc_hook).once.returns(:already_present)
+    command = Dev::Builtins::UpCommand.new(install_deps_command: install_deps, host_service: host_service)
     context = build_context
 
     When "running up"
@@ -40,35 +39,29 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     1 * install_deps.call(args: ["-v"], context: context)
   end
 
-  test "call converges the host layer as its first step" do
-    Given "an up command whose host converge expects its run"
-    host_converge = typed_mock(Dev::Host::Converge)
-    host_converge.expects(:run).once
+  test "call converges the host tooling as its first step" do
+    Given "an up command whose host service expects the tooling converge"
+    host_service = typed_mock(Dev::HostService)
+    host_service.expects(:converge_tooling).once
+    host_service.stubs(:install_rc_hook).returns(:already_present)
     install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
     install_deps.stubs(:call)
-    hook_installer = typed_mock(Dev::Cd::HookInstaller)
-    hook_installer.stubs(:ensure_installed).returns(:already_present)
-    command = Dev::Builtins::UpCommand.new(
-      install_deps_command: install_deps, hook_installer: hook_installer, host_converge: host_converge,
-    )
+    command = Dev::Builtins::UpCommand.new(install_deps_command: install_deps, host_service: host_service)
 
     When "running up"
     command.call(args: [], context: build_context)
 
-    Then "the expectation on the host converge holds"
+    Then "the expectation on the host service holds"
     true
   end
 
   test "call without a project converges the host half and skips provisioning" do
-    Given "a projectless context and collaborators expecting only host work"
-    host_converge = typed_mock(Dev::Host::Converge)
-    host_converge.expects(:run).once
-    hook_installer = typed_mock(Dev::Cd::HookInstaller)
-    hook_installer.expects(:ensure_installed).once.returns(:appended)
+    Given "a projectless context and a host service expecting only host work"
+    host_service = typed_mock(Dev::HostService)
+    host_service.expects(:converge_tooling).once
+    host_service.expects(:install_rc_hook).once.returns(:appended)
     install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
-    command = Dev::Builtins::UpCommand.new(
-      install_deps_command: install_deps, hook_installer: hook_installer, host_converge: host_converge,
-    )
+    command = Dev::Builtins::UpCommand.new(install_deps_command: install_deps, host_service: host_service)
     context = Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui))
 
     When "running up outside any project"
@@ -122,17 +115,14 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
   def build_command
     install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
     install_deps.stubs(:call)
-    hook_installer = typed_mock(Dev::Cd::HookInstaller)
-    hook_installer.stubs(:ensure_installed).returns(:already_present)
-    Dev::Builtins::UpCommand.new(
-      install_deps_command: install_deps, hook_installer: hook_installer, host_converge: quiet_host_converge,
-    )
+    Dev::Builtins::UpCommand.new(install_deps_command: install_deps, host_service: quiet_host_service)
   end
 
-  def quiet_host_converge
-    host_converge = typed_mock(Dev::Host::Converge)
-    host_converge.stubs(:run)
-    host_converge
+  def quiet_host_service
+    host_service = typed_mock(Dev::HostService)
+    host_service.stubs(:converge_tooling)
+    host_service.stubs(:install_rc_hook).returns(:already_present)
+    host_service
   end
 
   def container_config(build_args:)

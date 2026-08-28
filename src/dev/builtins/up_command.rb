@@ -1,10 +1,9 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "dev/cd"
 require "dev/command"
 require "dev/credentials"
-require "dev/host/converge"
+require "dev/host_service"
 
 module Dev
   module Builtins
@@ -25,16 +24,13 @@ module Dev
       sig do
         params(
           install_deps_command: InstallDepsCommand,
-          hook_installer: Dev::Cd::HookInstaller,
-          host_converge: Dev::Host::Converge,
+          host_service: Dev::HostService,
         ).void
       end
-      def initialize(install_deps_command:, hook_installer: Dev::Cd::HookInstaller.new,
-        host_converge: Dev::Host::Converge.new)
+      def initialize(install_deps_command:, host_service: Dev::HostService.new)
         super()
         @install_deps_command = T.let(install_deps_command, InstallDepsCommand)
-        @hook_installer = T.let(hook_installer, Dev::Cd::HookInstaller)
-        @host_converge = T.let(host_converge, Dev::Host::Converge)
+        @host_service = T.let(host_service, Dev::HostService)
       end
 
       sig { override.returns(String) }
@@ -57,8 +53,8 @@ module Dev
         # The host layer converges before project provisioning (self-update
         # + org Brewfile): project installs may lean on host tools (gh,
         # rbenv). Warn-only — never blocks the project.
-        @host_converge.run
-        @hook_installer.ensure_installed
+        @host_service.converge_tooling
+        @host_service.install_rc_hook
         project = context.project
         if project.nil?
           puts "dev: host layer converged."
