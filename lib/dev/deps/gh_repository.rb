@@ -4,8 +4,11 @@
 require "json"
 require "open3"
 require "sorbet-runtime"
-require_relative "repository"
 require_relative "dependency"
+require_relative "package"
+require_relative "package_id"
+require_relative "package_version"
+require_relative "repository"
 
 module Dev
   module Deps
@@ -26,9 +29,39 @@ module Dev
       class GhMissingError < StandardError; end
       class AuthenticationError < StandardError; end
       class RepoAccessError < StandardError; end
-      class ReleaseNotFoundError < StandardError; end
+      class ReleaseNotFoundError < PackageNotFoundError; end
       class NoMatchingAssetsError < StandardError; end
       class ApiError < StandardError; end
+
+      # Report a GitHub dependency's universe: the declared tag, as a
+      # singleton.
+      #
+      # GitHub refs are not an enumerable version index — the filter's "tag"
+      # locates the one release (prebuilt shape, "assets" glob present) or
+      # ref (source shape, "build" recipe present) the declaration pins.
+      # Integrity is tool-enforced by the authenticated gh CLI; per-asset
+      # API digests ride in metadata for GhIntegration to verify downloads.
+      #
+      # @param id [PackageId] source is the "owner/repo" slug
+      # @param filter [Hash] locator: "tag", "install_dir", "assets" or "build"
+      # @return [Package] a singleton universe
+      # @raise [GhMissingError] if the gh CLI is not installed
+      # @raise [AuthenticationError] if gh is not authenticated
+      # @raise [RepoAccessError] if the repo is not visible to the account
+      # @raise [ReleaseNotFoundError] if the tag has no release/ref
+      # @raise [NoMatchingAssetsError] if no assets match the pattern
+      sig { override.params(id: PackageId, filter: T::Hash[String, T.untyped]).returns(Package) }
+      def find(id, filter: {})
+        repo_slug = T.must(id.source)
+        tag = filter["tag"]
+        version = if filter["assets"]
+          prebuilt_version(repo_slug, tag, filter)
+        else
+          source_version(repo_slug, tag, filter)
+        end
+
+        Package.new(id: id, versions: [version])
+      end
 
       # Resolve a GitHub dependency to a pinned Dependency.
       #
@@ -49,6 +82,67 @@ module Dev
       end
 
       private
+
+      # The prebuilt shape: the tag's release, its glob-matched assets and
+      # their API digests as install facts.
+      #
+      # @param repo_slug [String] "owner/repo"
+      # @param tag [String] release tag
+      # @param filter [Hash] the declaration constraint
+      # @return [PackageVersion]
+      # @raise [NoMatchingAssetsError] if no assets match the pattern
+      sig do
+        params(
+          repo_slug: String,
+          tag: String,
+          filter: T::Hash[String, T.untyped],
+        ).returns(PackageVersion)
+      end
+      def prebuilt_version(repo_slug, tag, filter)
+        pattern = filter["assets"]
+        release = fetch_release(repo_slug, tag)
+        assets = matching_assets(release, pattern)
+        if assets.empty?
+          raise NoMatchingAssetsError,
+            "no assets matching #{pattern.inspect} in #{repo_slug}@#{tag}"
+        end
+
+        PackageVersion.new(
+          version: tag,
+          metadata: {
+            "repo" => repo_slug,
+            "asset_pattern" => pattern,
+            "install_dir" => filter["install_dir"],
+            "assets" => assets.map { |asset| asset_metadata(asset) },
+          },
+        )
+      end
+
+      # The source shape: the tag's commit SHA (provenance) and the build
+      # recipe as install facts.
+      #
+      # @param repo_slug [String] "owner/repo"
+      # @param tag [String] tag/ref
+      # @param filter [Hash] the declaration constraint
+      # @return [PackageVersion]
+      sig do
+        params(
+          repo_slug: String,
+          tag: String,
+          filter: T::Hash[String, T.untyped],
+        ).returns(PackageVersion)
+      end
+      def source_version(repo_slug, tag, filter)
+        PackageVersion.new(
+          version: tag,
+          metadata: {
+            "repo" => repo_slug,
+            "install_dir" => filter["install_dir"],
+            "build" => filter["build"],
+            "commit" => resolve_commit_sha(repo_slug, tag),
+          },
+        )
+      end
 
       # Resolve a prebuilt-release dependency (download + verify path).
       #

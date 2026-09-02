@@ -40,6 +40,77 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
     }.merge(overrides)
   end
 
+  test "find reports the declared tag's release as a singleton universe" do
+    Given "a repository with a stubbed gh api response"
+    repo = Dev::Deps::GhRepository.new
+    repo.stubs(:run_gh_api)
+        .with("repos/satisfactorymodding/UnrealEngine/releases/tags/5.6.1-css-83")
+        .returns([JSON.generate(RELEASE_JSON), "", stub(success?: true)])
+
+    When "finding with the tag and asset glob as locator"
+    package = repo.find(
+      Dev::Deps::PackageId.new(
+        integration: :gh, name: "UnrealEngine", source: "satisfactorymodding/UnrealEngine",
+      ),
+      filter: {
+        "tag" => "5.6.1-css-83",
+        "assets" => "UnrealEngine-CSS-Editor-Linux.tar.zst.*",
+        "install_dir" => "~/.dev/engines/unreal-engine-css",
+      },
+    )
+
+    Then "one version carrying the prebuilt install facts"
+    package.versions.map(&:version) == ["5.6.1-css-83"]
+    version = package.version("5.6.1-css-83")
+    version.digest.nil?
+    version.metadata["repo"] == "satisfactorymodding/UnrealEngine"
+    version.metadata["asset_pattern"] == "UnrealEngine-CSS-Editor-Linux.tar.zst.*"
+    version.metadata["install_dir"] == "~/.dev/engines/unreal-engine-css"
+    version.metadata["assets"].map { |a| a["sha256"] } == ["aaaa1111", "bbbb2222"]
+  end
+
+  test "find pins the source shape to the tag with its commit SHA" do
+    Given "a repository resolving a tag to a commit"
+    repo = Dev::Deps::GhRepository.new
+    repo.stubs(:run_gh_api)
+        .with("repos/EpicGames/UnrealEngine/commits/5.6.1-release")
+        .returns([JSON.generate({ "sha" => "abc123sha" }), "", stub(success?: true)])
+
+    When "finding with a build recipe instead of assets"
+    package = repo.find(
+      Dev::Deps::PackageId.new(integration: :gh, name: "UnrealEngine", source: "EpicGames/UnrealEngine"),
+      filter: { "tag" => "5.6.1-release", "build" => "make", "install_dir" => "~/.dev/engines/ue" },
+    )
+
+    Then "the singleton version carries the source install facts"
+    version = package.version("5.6.1-release")
+    version.metadata["commit"] == "abc123sha"
+    version.metadata["build"] == "make"
+    version.metadata["repo"] == "EpicGames/UnrealEngine"
+  end
+
+  test "find raises ReleaseNotFoundError, a PackageNotFoundError, for a missing tag" do
+    Given "a gh api that 404s the release but sees the repo"
+    repo = Dev::Deps::GhRepository.new
+    repo.stubs(:run_gh_api)
+        .with("repos/satisfactorymodding/UnrealEngine/releases/tags/9.9.9-css-1")
+        .returns(["", "gh: Not Found (HTTP 404)", stub(success?: false)])
+    repo.stubs(:run_gh_api)
+        .with("repos/satisfactorymodding/UnrealEngine")
+        .returns(["{}", "", stub(success?: true)])
+
+    When "finding a nonexistent tag"
+    repo.find(
+      Dev::Deps::PackageId.new(
+        integration: :gh, name: "UnrealEngine", source: "satisfactorymodding/UnrealEngine",
+      ),
+      filter: { "tag" => "9.9.9-css-1", "assets" => "*.tar.zst.*" },
+    )
+
+    Then
+    raises Dev::Deps::Repository::PackageNotFoundError
+  end
+
   test "fetch resolves release to tag, matching assets, and digests" do
     Given "a repository with a stubbed gh api response"
     repo = Dev::Deps::GhRepository.new
