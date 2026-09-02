@@ -5,8 +5,13 @@ require "json"
 require "net/http"
 require "sorbet-runtime"
 require "uri"
-require_relative "repository"
+require_relative "artifact"
 require_relative "dependency"
+require_relative "dependency_edge"
+require_relative "package"
+require_relative "package_id"
+require_relative "package_version"
+require_relative "repository"
 
 module Dev
   module Deps
@@ -18,7 +23,7 @@ module Dev
       extend T::Sig
 
       class ApiError < StandardError; end
-      class ModNotFoundError < StandardError; end
+      class ModNotFoundError < PackageNotFoundError; end
       class NoVersionError < StandardError; end
       class TargetNotFoundError < StandardError; end
 
@@ -51,6 +56,30 @@ module Dev
           }
         }
       GRAPHQL
+
+      # Report a mod's published versions from ficsit.app.
+      #
+      # Each version carries its targets as platforms, each target's download
+      # as an Artifact (dev-enforced integrity: the SHA256 the API publishes),
+      # its required mod dependencies as edges, and the install facts
+      # FicsitIntegration reads (mod_id, game_version, and either a
+      # single-target digest or a per-platform block, per the filter).
+      #
+      # @param id [PackageId] name is the mod_reference
+      # @param filter [Hash] locator only; "platforms" (Array<String, nil>)
+      #   or "target" select which targets the install facts describe
+      # @return [Package]
+      # @raise [ModNotFoundError] if the mod_reference doesn't exist on ficsit.app
+      # @raise [ApiError] if the GraphQL request fails
+      sig { override.params(id: PackageId, filter: T::Hash[String, T.untyped]).returns(Package) }
+      def find(id, filter: {})
+        mod_data = query_mod(id.name)
+        versions = (mod_data["versions"] || []).map do |version_data|
+          package_version(mod_data, version_data, filter)
+        end
+
+        Package.new(id: id, versions: versions)
+      end
 
       # Resolve a ficsit.app mod dependency to a pinned Dependency.
       #
@@ -110,6 +139,86 @@ module Dev
       end
 
       private
+
+      # Map one GraphQL version object to a PackageVersion.
+      #
+      # Universe facts (platforms, artifacts, edges) are unconditional. The
+      # install facts mirror the pin shapes FicsitIntegration reads: with
+      # requested platforms, a metadata["platforms"] block covering the
+      # targets this version actually publishes (the Resolver rejects the
+      # version if a requested one is missing); otherwise the legacy
+      # single-target shape (metadata["target"] plus the digest).
+      #
+      # @param mod_data [Hash] the mod object (for mod_id)
+      # @param version_data [Hash] one version object
+      # @param filter [Hash] the declaration constraint, as a locator
+      # @return [PackageVersion]
+      sig do
+        params(
+          mod_data: T::Hash[String, T.untyped],
+          version_data: T::Hash[String, T.untyped],
+          filter: T::Hash[String, T.untyped],
+        ).returns(PackageVersion)
+      end
+      def package_version(mod_data, version_data, filter)
+        targets = version_data["targets"] || []
+        metadata = {
+          "mod_id" => mod_data["id"],
+          "game_version" => version_data["game_version"],
+        }
+
+        requested = filter["platforms"]
+        if requested && !requested.empty?
+          digest = nil
+          metadata["platforms"] = platform_block(version_data, targets, requested)
+        else
+          target_data = find_target(targets, filter.fetch("target", DEFAULT_TARGET))
+          digest = target_data ? "SHA256=#{target_data["hash"]}" : nil
+          metadata["target"] = filter.fetch("target", DEFAULT_TARGET)
+        end
+
+        PackageVersion.new(
+          version: version_data["version"],
+          platforms: targets.map { |t| t["targetName"] },
+          digest: digest,
+          artifacts: targets.to_h do |t|
+            [t["targetName"], Artifact.new(uri: download_url(version_data, t), digest: "SHA256=#{t["hash"]}")]
+          end,
+          dependencies: (version_data["dependencies"] || [])
+            .reject { |d| d["optional"] }
+            .map { |d| DependencyEdge.new(name: d["mod_id"], constraint: d["condition"]) },
+          metadata: metadata,
+        )
+      end
+
+      # The {hash, link} block for each requested platform this version
+      # publishes. Non-raising: a missing target simply isn't in the block —
+      # whether that disqualifies the version is the Resolver's call.
+      #
+      # @param version_data [Hash] the version object
+      # @param targets [Array<Hash>] its target objects
+      # @param requested [Array<String, nil>] platforms; nil means the default
+      # @return [Hash{String => Hash}] target name → { "hash" => …, "link" => … }
+      sig do
+        params(
+          version_data: T::Hash[String, T.untyped],
+          targets: T::Array[T::Hash[String, T.untyped]],
+          requested: T::Array[T.nilable(String)],
+        ).returns(T::Hash[String, T::Hash[String, String]])
+      end
+      def platform_block(version_data, targets, requested)
+        target_names = requested.map { |platform| platform.nil? ? DEFAULT_TARGET : platform }.uniq
+
+        target_names.each_with_object({}) do |target_name, acc|
+          target_data = targets.find { |t| t["targetName"] == target_name }
+          next unless target_data
+
+          acc[target_name] = {
+            "hash" => "SHA256=#{target_data["hash"]}",
+            "link" => download_url(version_data, target_data),
+          }
+        end
+      end
 
       # Resolve each requested platform to its {hash, link}, keyed by the actual
       # ficsit target name. nil maps to the default target; unlike the legacy
