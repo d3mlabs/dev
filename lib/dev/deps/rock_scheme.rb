@@ -21,9 +21,9 @@ module Dev
       extend T::Sig
 
       # The constraint expression is not parseable rockspec constraint syntax.
-      class InvalidConstraintError < StandardError; end
+      class InvalidConstraintError < VersionScheme::InvalidConstraintError; end
       # The version string is not a luarocks version.
-      class InvalidVersionError < StandardError; end
+      class InvalidVersionError < VersionScheme::InvalidVersionError; end
 
       # The constraint key carrying the expression (the luarocks DSL's
       # positional constraint lands under "constraint").

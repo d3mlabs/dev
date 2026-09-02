@@ -24,6 +24,16 @@ module Dev
     class VersionScheme
       extend T::Sig
 
+      # Base for every scheme's constraint-parse failure. A bad constraint is
+      # the user's declaration being wrong, so the Resolver lets it propagate.
+      class InvalidConstraintError < StandardError; end
+
+      # Base for every scheme's version-parse failure. A universe can contain
+      # versions that predate or ignore the ecosystem's conventions; the
+      # Resolver treats such candidates as non-satisfying rather than failing
+      # the whole resolve.
+      class InvalidVersionError < StandardError; end
+
       # Does one version satisfy the constraint, under this ecosystem's syntax
       # and comparison rules?
       #

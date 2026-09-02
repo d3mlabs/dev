@@ -16,9 +16,9 @@ module Dev
       extend T::Sig
 
       # The requirement string is not valid Gem::Requirement syntax.
-      class InvalidConstraintError < StandardError; end
+      class InvalidConstraintError < VersionScheme::InvalidConstraintError; end
       # The version string is not a valid Gem::Version.
-      class InvalidVersionError < StandardError; end
+      class InvalidVersionError < VersionScheme::InvalidVersionError; end
 
       # The constraint key carrying the version requirement (the gem DSL's
       # positional requirement lands under "version").

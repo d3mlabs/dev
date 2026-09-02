@@ -21,9 +21,9 @@ module Dev
       extend T::Sig
 
       # The specifier is not parseable PEP 440 specifier syntax.
-      class InvalidConstraintError < StandardError; end
+      class InvalidConstraintError < VersionScheme::InvalidConstraintError; end
       # The version string is not a PEP 440 version.
-      class InvalidVersionError < StandardError; end
+      class InvalidVersionError < VersionScheme::InvalidVersionError; end
 
       # The constraint key carrying the specifier (the pip DSL's version:).
       CONSTRAINT_KEY = "version"

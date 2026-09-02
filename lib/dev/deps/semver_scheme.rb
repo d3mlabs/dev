@@ -19,9 +19,9 @@ module Dev
       extend T::Sig
 
       # The range expression is not parseable semver range syntax.
-      class InvalidConstraintError < StandardError; end
+      class InvalidConstraintError < VersionScheme::InvalidConstraintError; end
       # The version string is not a semver version.
-      class InvalidVersionError < StandardError; end
+      class InvalidVersionError < VersionScheme::InvalidVersionError; end
 
       # The constraint key carrying the range (the ficsit DSL's version:).
       CONSTRAINT_KEY = "version"
