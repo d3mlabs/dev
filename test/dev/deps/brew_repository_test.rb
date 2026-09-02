@@ -9,6 +9,68 @@ require "json"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::BrewRepositoryTest < Minitest::Test
+  test "find reports the formula's current stable version as a singleton universe" do
+    Given "a formula on the moving brew registry"
+    repository = Dev::Deps::BrewRepository.new
+    brew_json = [{
+      "name" => "cmake",
+      "versions" => { "stable" => "3.31.4" },
+      "bottle" => {
+        "stable" => { "files" => { "arm64_sonoma" => { "sha256" => "abc123def456" } } },
+      },
+    }].to_json
+    Open3.stubs(:capture3)
+         .with("brew", "info", "--json=v1", "cmake")
+         .returns([brew_json, "", stub(success?: true)])
+
+    When "finding the package"
+    package = repository.find(Dev::Deps::PackageId.new(integration: :brew, name: "cmake"))
+
+    Then "one version, carrying the bottle digest"
+    package.versions.map(&:version) == ["3.31.4"]
+    package.version("3.31.4").digest == "SHA256=abc123def456"
+    package.version("3.31.4").metadata == {}
+  end
+
+  test "find locates the suffixed formula via the version filter" do
+    Given "a formula declared with a version suffix and a tap"
+    repository = Dev::Deps::BrewRepository.new
+    brew_json = [{
+      "name" => "llvm@18",
+      "versions" => { "stable" => "18.1.8" },
+      "bottle" => { "stable" => { "files" => { "arm64_sonoma" => { "sha256" => "llvm18" } } } },
+    }].to_json
+    Open3.stubs(:capture3)
+         .with("brew", "info", "--json=v1", "someorg/sometap/llvm@18")
+         .returns([brew_json, "", stub(success?: true)])
+
+    When "finding with the suffix and tap as locator"
+    package = repository.find(
+      Dev::Deps::PackageId.new(integration: :brew, name: "llvm"),
+      filter: { "version" => "18", "tap" => "someorg/sometap" },
+    )
+
+    Then "the suffixed formula's stable version, with locator facts recorded"
+    package.versions.map(&:version) == ["18.1.8"]
+    package.version("18.1.8").metadata == { "tap" => "someorg/sometap", "version_suffix" => "18" }
+  end
+
+  test "find reports a cask as one unversioned, undigested entry" do
+    Given "a cask declaration"
+    repository = Dev::Deps::BrewRepository.new
+
+    When "finding with the cask flag"
+    package = repository.find(
+      Dev::Deps::PackageId.new(integration: :brew, name: "firefox"),
+      filter: { "cask" => true },
+    )
+
+    Then "brew exposes no cask version here — an empty version stand-in"
+    package.versions.map(&:version) == [Dev::Deps::BrewRepository::UNVERSIONED]
+    package.versions.first.digest.nil?
+    package.versions.first.metadata == { "cask" => true }
+  end
+
   test "fetch parses brew info JSON and returns a Dependency" do
     Given "a brew formula identifier"
     repository = Dev::Deps::BrewRepository.new
