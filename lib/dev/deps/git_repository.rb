@@ -3,8 +3,11 @@
 
 require "open3"
 require "sorbet-runtime"
-require_relative "repository"
 require_relative "dependency"
+require_relative "package"
+require_relative "package_id"
+require_relative "package_version"
+require_relative "repository"
 
 module Dev
   module Deps
@@ -16,7 +19,30 @@ module Dev
     class GitRepository < Repository
       extend T::Sig
 
-      class RefResolutionError < StandardError; end
+      class RefResolutionError < PackageNotFoundError; end
+
+      # Report a git dependency's universe: the declared ref resolved to its
+      # full SHA, as a singleton.
+      #
+      # A git remote is not a version index — the filter's "commit" or "tag"
+      # locates the one ref the declaration pins, and ls-remote turns it into
+      # a SHA. SHAs are identifiers, not integrity digests, so the version
+      # carries no digest.
+      #
+      # @param id [PackageId] source is the git remote URL
+      # @param filter [Hash] locator: one of "commit" or "tag"
+      # @return [Package] a singleton universe
+      # @raise [RefResolutionError] if the ref cannot be resolved via ls-remote
+      sig { override.params(id: PackageId, filter: T::Hash[String, T.untyped]).returns(Package) }
+      def find(id, filter: {})
+        repo_url = T.must(id.source)
+        sha = resolve_ref(repo_url, filter["commit"] || filter["tag"])
+
+        Package.new(
+          id: id,
+          versions: [PackageVersion.new(version: sha, metadata: { "repo" => repo_url })],
+        )
+      end
 
       # Resolve a git dependency identifier to a pinned Dependency.
       #

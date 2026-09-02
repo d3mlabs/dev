@@ -2,8 +2,11 @@
 # frozen_string_literal: true
 
 require "sorbet-runtime"
-require_relative "repository"
 require_relative "dependency"
+require_relative "package"
+require_relative "package_id"
+require_relative "package_version"
+require_relative "repository"
 
 module Dev
   module Deps
@@ -18,6 +21,23 @@ module Dev
       extend T::Sig
 
       class MissingVersionError < StandardError; end
+
+      # Report the Xcode universe: the declared version, as a singleton.
+      #
+      # Apple publishes no queryable version registry, so resolution is the
+      # identity — the filter's "version" IS the universe.
+      #
+      # @param id [PackageId] name is the declaration name
+      # @param filter [Hash] locator: "version" (exact, required)
+      # @return [Package] a singleton universe
+      # @raise [MissingVersionError] when no exact version was declared
+      sig { override.params(id: PackageId, filter: T::Hash[String, T.untyped]).returns(Package) }
+      def find(id, filter: {})
+        version = filter["version"].to_s
+        raise MissingVersionError, "xcode requires an exact version (e.g. xcode \"26.1.1\")" if version.empty?
+
+        Package.new(id: id, versions: [PackageVersion.new(version: version)])
+      end
 
       # @param id [Hash] must include "name", "integration", "group", "version"
       # @return [Dependency]
