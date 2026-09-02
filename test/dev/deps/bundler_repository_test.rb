@@ -64,6 +64,39 @@ class Dev::Deps::BundlerRepositoryTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "find reports the locked pin as a singleton universe" do
+    Given "a project with a materialized Gemfile.lock"
+    dir = Dir.mktmpdir("dev-bundler-repo-test-")
+    (Pathname(dir) / "Gemfile.lock").write(LOCKFILE_FIXTURE)
+    repo = Dev::Deps::BundlerRepository.new(project_root: dir)
+
+    When "finding a declared gem"
+    package = repo.find(Dev::Deps::PackageId.new(integration: :bundler, name: "ffi"))
+
+    Then "one version — the joint solve's choice — with the CHECKSUMS digest"
+    package.versions.map(&:version) == ["1.17.0"]
+    package.version("1.17.0").digest == "SHA256=aaa111"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "find raises MissingGemError, a PackageNotFoundError, for unlocked gems" do
+    Given "a lockfile lacking the gem"
+    dir = Dir.mktmpdir("dev-bundler-repo-test-")
+    (Pathname(dir) / "Gemfile.lock").write(LOCKFILE_FIXTURE)
+    repo = Dev::Deps::BundlerRepository.new(project_root: dir)
+
+    When "finding an unlocked gem"
+    repo.find(Dev::Deps::PackageId.new(integration: :bundler, name: "absent"))
+
+    Then
+    raises Dev::Deps::Repository::PackageNotFoundError
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "fetch returns the locked version and checksum for a declared gem" do
     Given "a prepared repository"
     dir = Dir.mktmpdir("dev-bundler-repo-test-")
