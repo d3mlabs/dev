@@ -16,6 +16,19 @@ class Dev::Deps::PackageVersionTest < Minitest::Test
     version.digest.nil?
     version.artifacts == {}
     version.dependencies == []
+    version.metadata == {}
+  end
+
+  test "carries ecosystem-specific install facts as metadata" do
+    Given "a version with facts its integration needs at install"
+    version = Dev::Deps::PackageVersion.new(
+      version: "3.12.0",
+      metadata: { "mod_id" => "abc123", "game_version" => ">=491125" },
+    )
+
+    Expect "the facts read back and are frozen"
+    version.metadata["mod_id"] == "abc123"
+    version.metadata.frozen?
   end
 
   test "carries the full fact set when the universe provides one" do

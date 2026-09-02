@@ -27,11 +27,21 @@ module Dev
 
       # Report the package under this identity.
       #
+      # The filter is the declaration's constraint hash, passed as a
+      # server-side locator: ecosystems whose constraint names an identity
+      # (a git tag, a release tag, a Steam buildid, a brew formula suffix)
+      # need it to locate their — typically singleton — universe, and
+      # registry-backed ecosystems may use it to narrow an expensive index.
+      # Filtering returns every matching version; it never picks one. A
+      # repository must not evaluate range constraints (VersionScheme's job)
+      # and must not choose among candidates (the Resolver's job).
+      #
       # @param id [PackageId] the package's identity
+      # @param filter [Hash] the declaration constraint, as a locator only
       # @return [Package] the available versions and their facts
       # @raise [PackageNotFoundError] if the universe has no such package
-      sig { params(id: PackageId).returns(Package) }
-      def find(id)
+      sig { params(id: PackageId, filter: T::Hash[String, T.untyped]).returns(Package) }
+      def find(id, filter: {})
         raise NotImplementedError, "#{self.class}#find must be implemented"
       end
 

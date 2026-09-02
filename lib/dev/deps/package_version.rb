@@ -50,11 +50,18 @@ module Dev
       sig { returns(T::Array[DependencyEdge]) }
       attr_reader :dependencies
 
+      # @return [Hash{String => Object}] ecosystem-specific facts the
+      #   integration needs at install time (this becomes the minted pin's
+      #   metadata, before the Resolver stamps host/env)
+      sig { returns(T::Hash[String, T.untyped]) }
+      attr_reader :metadata
+
       # @param version [String] the version string
       # @param platforms [Array<String>] published targets
       # @param digest [String, nil] tool-fetched integrity digest, if published
       # @param artifacts [Hash{String => Artifact}] dev-fetchable bytes by platform
       # @param dependencies [Array<DependencyEdge>] outgoing edges
+      # @param metadata [Hash{String => Object}] ecosystem-specific install facts
       sig do
         params(
           version: String,
@@ -62,14 +69,16 @@ module Dev
           digest: T.nilable(String),
           artifacts: T::Hash[String, Artifact],
           dependencies: T::Array[DependencyEdge],
+          metadata: T::Hash[String, T.untyped],
         ).void
       end
-      def initialize(version:, platforms: [], digest: nil, artifacts: {}, dependencies: [])
+      def initialize(version:, platforms: [], digest: nil, artifacts: {}, dependencies: [], metadata: {})
         @version = version
         @platforms = T.let(platforms.dup.freeze, T::Array[String])
         @digest = digest
         @artifacts = T.let(artifacts.dup.freeze, T::Hash[String, Artifact])
         @dependencies = T.let(dependencies.dup.freeze, T::Array[DependencyEdge])
+        @metadata = T.let(metadata.dup.freeze, T::Hash[String, T.untyped])
         freeze
       end
 
@@ -82,14 +91,15 @@ module Dev
           platforms == other.platforms &&
           digest == other.digest &&
           artifacts == other.artifacts &&
-          dependencies == other.dependencies
+          dependencies == other.dependencies &&
+          metadata == other.metadata
       end
       alias_method :eql?, :==
 
       # @return [Integer] hash code
       sig { returns(Integer) }
       def hash
-        [self.class, version, platforms, digest, artifacts, dependencies].hash
+        [self.class, version, platforms, digest, artifacts, dependencies, metadata].hash
       end
     end
   end
