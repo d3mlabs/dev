@@ -6,7 +6,6 @@ require "open3"
 require "sorbet-runtime"
 require "tempfile"
 require_relative "artifact"
-require_relative "dependency"
 require_relative "package"
 require_relative "package_id"
 require_relative "package_version"
@@ -51,32 +50,6 @@ module Dev
               metadata: { "url" => url, "downloaded_path" => path },
             ),
           ],
-        )
-      end
-
-      # Download a URL dependency and compute its SHA256 integrity hash.
-      #
-      # @param id [Hash] must include "name", "url", "integration", "group";
-      #   optionally "tag" for version
-      # @return [Dependency] with hash set to "SHA256=<hex>" and
-      #   metadata["downloaded_path"] pointing to the temp file
-      # @raise [DownloadError] if the download fails
-      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
-      def fetch(id)
-        url = id["url"]
-        name = id["name"]
-
-        path = download_to_tempfile(url, name)
-        sha256_hex = Digest::SHA256.file(path).hexdigest
-        hash = "SHA256=#{sha256_hex}"
-
-        Dependency.new(
-          name: name,
-          integration: id["integration"].to_sym,
-          group: id["group"].to_sym,
-          version: id["tag"],
-          hash: hash,
-          metadata: { "url" => url, "downloaded_path" => path },
         )
       end
 

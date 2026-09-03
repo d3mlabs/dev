@@ -86,7 +86,7 @@ module Dev
         return wildcard_match?(version, bound.delete_suffix(".*")) == (operator == "==") if bound.end_with?(".*")
         return compatible_release?(version, bound) if operator == "~="
 
-        comparison = T.must(comparison_key(version) <=> comparison_key(bound))
+        comparison = T.let(comparison_key(version) <=> comparison_key(bound), Integer)
         case operator
         when "==" then comparison.zero?
         when "!=" then !comparison.zero?
@@ -123,7 +123,8 @@ module Dev
         raise InvalidConstraintError, "~= needs at least two release segments: #{bound.inspect}" if segments.size < 2
 
         prefix = segments[0..-2].to_a.join(".")
-        (comparison_key(version) <=> comparison_key(bound)) >= 0 && wildcard_match?(version, prefix)
+        comparison = T.let(comparison_key(version) <=> comparison_key(bound), Integer)
+        comparison >= 0 && wildcard_match?(version, prefix)
       end
 
       # @param version [String]
@@ -155,7 +156,7 @@ module Dev
 
         phase, phase_number, post, dev = match[3], match[4], match[5], match[6]
         pre_key = if phase
-          [PHASE_RANKS.fetch(T.must(phase).downcase), phase_number.to_i]
+          [PHASE_RANKS.fetch(phase.downcase), phase_number.to_i]
         elsif post.nil? && dev
           [-1] # dev-only releases sort below every prerelease
         else

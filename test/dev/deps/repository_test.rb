@@ -17,15 +17,4 @@ class Dev::Deps::RepositoryTest < Minitest::Test
     Then
     raises NotImplementedError
   end
-
-  test "base class fetch raises NotImplementedError" do
-    Given "a base Repository instance"
-    repo = Dev::Deps::Repository.new
-
-    When "fetching a dependency"
-    repo.fetch({ "name" => "boost", "constraint" => ">=1.0" })
-
-    Then
-    raises NotImplementedError
-  end
 end

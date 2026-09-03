@@ -3,8 +3,6 @@
 
 require "pathname"
 require "sorbet-runtime"
-require_relative "bundler_locker"
-require_relative "dependency"
 require_relative "package"
 require_relative "package_id"
 require_relative "package_version"
@@ -24,25 +22,15 @@ module Dev
     class BundlerRepository < Repository
       extend T::Sig
 
-      LockError = BundlerLocker::LockError
-
       # The gem is absent from Gemfile.lock — the lock step didn't cover it.
       class MissingGemError < PackageNotFoundError; end
 
       LOCKFILE = "Gemfile.lock"
 
-      # @param project_root [Pathname, String] root the Gemfile/Gemfile.lock live in
-      # @param ruby_version_requirement [String, nil] requirement for the Gemfile's
-      #   `ruby` directive (from dependencies.rb's ruby_version), or nil to omit it
-      sig do
-        params(
-          project_root: T.any(Pathname, String),
-          ruby_version_requirement: T.nilable(String),
-        ).void
-      end
-      def initialize(project_root:, ruby_version_requirement: nil)
+      # @param project_root [Pathname, String] root the Gemfile.lock lives in
+      sig { params(project_root: T.any(Pathname, String)).void }
+      def initialize(project_root:)
         @project_root = T.let(Pathname(project_root), Pathname)
-        @ruby_version_requirement = ruby_version_requirement
         @pins = T.let(nil, T.nilable(T::Hash[String, T::Hash[Symbol, T.nilable(String)]]))
       end
 
@@ -62,50 +50,6 @@ module Dev
         Package.new(
           id: id,
           versions: [PackageVersion.new(version: T.must(pin[:version]), digest: pin[:hash])],
-        )
-      end
-
-      # Batch hook: generate the Gemfile from all gem declarations, lock it, and
-      # parse the resulting pins. Runs once before any #fetch.
-      #
-      # DEPRECATED: the lock step belongs to BundlerLocker, which the pipeline
-      # invokes before resolution; this delegation dies with the cutover.
-      #
-      # @param declarations [Array<DependencyDeclaration>] :bundler declarations
-      # @return [void]
-      sig { params(declarations: T::Array[DependencyDeclaration]).void }
-      def prepare(declarations)
-        return if declarations.empty?
-
-        BundlerLocker.new(
-          project_root: @project_root,
-          ruby_version_requirement: @ruby_version_requirement,
-        ).lock(declarations)
-        @pins = parse_lockfile
-      end
-
-      # Return the locked Dependency for a declared gem.
-      #
-      # DEPRECATED: replaced by #find; dies with the cutover.
-      #
-      # @param id [Hash] must include "name", "integration", "group"
-      # @return [Dependency]
-      # @raise [MissingGemError] if the gem is absent from the parsed Gemfile.lock
-      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
-      def fetch(id)
-        name = id["name"]
-        pin = pins.fetch(name) do
-          raise MissingGemError,
-            "gem #{name.inspect} is not in #{LOCKFILE} — run `dev update-deps`"
-        end
-
-        Dependency.new(
-          name: name,
-          integration: id["integration"].to_sym,
-          group: id["group"].to_sym,
-          version: pin[:version],
-          hash: pin[:hash],
-          metadata: {},
         )
       end
 

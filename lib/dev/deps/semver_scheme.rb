@@ -88,14 +88,15 @@ module Dev
       end
       def term_satisfied?(key, term)
         operator, triple, bound_key = term
+        comparison = T.let(key <=> bound_key, Integer)
         case operator
-        when "^" then (key <=> bound_key) >= 0 && (key <=> release_key(caret_upper(triple))) < 0
-        when "~" then (key <=> bound_key) >= 0 && (key <=> release_key(tilde_upper(triple))) < 0
-        when ">=" then (key <=> bound_key) >= 0
-        when ">" then T.must(key <=> bound_key).positive?
-        when "<=" then (key <=> bound_key) <= 0
-        when "<" then T.must(key <=> bound_key).negative?
-        else T.must(key <=> bound_key).zero?
+        when "^" then comparison >= 0 && T.let(key <=> release_key(caret_upper(triple)), Integer).negative?
+        when "~" then comparison >= 0 && T.let(key <=> release_key(tilde_upper(triple)), Integer).negative?
+        when ">=" then comparison >= 0
+        when ">" then comparison.positive?
+        when "<=" then comparison <= 0
+        when "<" then comparison.negative?
+        else comparison.zero?
         end
       end
 

@@ -2,7 +2,6 @@
 # frozen_string_literal: true
 
 require "sorbet-runtime"
-require_relative "dependency"
 require_relative "package"
 require_relative "package_id"
 require_relative "package_version"
@@ -60,34 +59,6 @@ module Dev
               },
             ),
           ],
-        )
-      end
-
-      # Resolve a Steam app dependency to a pinned Dependency.
-      #
-      # @param id [Hash] must include "name", "app", "install_dir", "integration",
-      #   "group"; optionally "branch" (default "public"), "buildid" (explicit
-      #   pin), and "platforms" (the consuming group's platform, e.g. ["LinuxServer"])
-      # @return [Dependency]
-      # @raise [SteamCmd::SteamCmdError] if resolving the buildid fails
-      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
-      def fetch(id)
-        app = id["app"]
-        branch = id["branch"] || "public"
-        build_id = id["buildid"] || resolve_build_id(app:, branch:)
-
-        Dependency.new(
-          name: id["name"],
-          integration: id["integration"].to_sym,
-          group: id["group"].to_sym,
-          version: build_id.to_s,
-          hash: nil,
-          metadata: {
-            "app" => app.to_s,
-            "branch" => branch,
-            "install_dir" => id["install_dir"],
-            "platform" => steam_platform_for(id["platforms"]),
-          },
         )
       end
 

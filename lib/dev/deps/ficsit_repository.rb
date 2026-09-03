@@ -6,7 +6,6 @@ require "net/http"
 require "sorbet-runtime"
 require "uri"
 require_relative "artifact"
-require_relative "dependency"
 require_relative "dependency_edge"
 require_relative "package"
 require_relative "package_id"
@@ -24,8 +23,6 @@ module Dev
 
       class ApiError < StandardError; end
       class ModNotFoundError < PackageNotFoundError; end
-      class NoVersionError < StandardError; end
-      class TargetNotFoundError < StandardError; end
 
       API_HOST = "https://api.ficsit.app"
       GRAPHQL_ENDPOINT = T.let(URI("#{API_HOST}/v2/query"), URI::Generic)
@@ -79,63 +76,6 @@ module Dev
         end
 
         Package.new(id: id, versions: versions)
-      end
-
-      # Resolve a ficsit.app mod dependency to a pinned Dependency.
-      #
-      # Two shapes, selected by the fetch id:
-      # - Multi-platform (id["platforms"] present): resolve the mod for every
-      #   requested platform and nest each platform's {hash, link} under
-      #   metadata["platforms"]. nil entries map to the default target (Windows).
-      #   The top-level hash is nil since integrity is tracked per platform.
-      # - Single-platform (legacy): resolve one "target" (default Windows) and
-      #   carry the hash on the Dependency, as before.
-      #
-      # @param id [Hash] must include "name" (mod_reference), "integration", "group";
-      #   optionally "version" (semver constraint like "^3.12.0"),
-      #   "target" (e.g. "Windows") or "platforms" (Array<String, nil>)
-      # @return [Dependency]
-      # @raise [ModNotFoundError] if the mod_reference doesn't exist on ficsit.app
-      # @raise [NoVersionError] if no versions are available
-      # @raise [TargetNotFoundError] if a requested platform has no published target
-      # @raise [ApiError] if the GraphQL request fails
-      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
-      def fetch(id)
-        mod_reference = id["name"]
-        mod_data = query_mod(mod_reference)
-        versions = mod_data["versions"]
-        raise NoVersionError, "no versions found for #{mod_reference}" if versions.nil? || versions.empty?
-
-        version_data = versions.first
-        metadata = {
-          "mod_id" => mod_data["id"],
-          "game_version" => version_data["game_version"],
-        }
-
-        requested = id["platforms"]
-        if requested && !requested.empty?
-          metadata["platforms"] = resolve_platforms(mod_reference, version_data, requested)
-          hash = nil
-        else
-          target = id.fetch("target", DEFAULT_TARGET)
-          target_data = find_target(version_data["targets"], target)
-          hash = target_data ? "SHA256=#{target_data["hash"]}" : nil
-          metadata["target"] = target
-        end
-
-        transitive_deps = (version_data["dependencies"] || [])
-          .reject { |d| d["optional"] }
-          .map { |d| { name: d["mod_id"], constraint: d["condition"] } }
-
-        Dependency.new(
-          name: mod_reference,
-          integration: id["integration"].to_sym,
-          group: id["group"].to_sym,
-          version: version_data["version"],
-          hash: hash,
-          metadata: metadata,
-          dependencies: transitive_deps,
-        )
       end
 
       private
@@ -212,42 +152,6 @@ module Dev
         target_names.each_with_object({}) do |target_name, acc|
           target_data = targets.find { |t| t["targetName"] == target_name }
           next unless target_data
-
-          acc[target_name] = {
-            "hash" => "SHA256=#{target_data["hash"]}",
-            "link" => download_url(version_data, target_data),
-          }
-        end
-      end
-
-      # Resolve each requested platform to its {hash, link}, keyed by the actual
-      # ficsit target name. nil maps to the default target; unlike the legacy
-      # single-target path, a missing platform is a hard error here because the
-      # caller asked for that specific arch.
-      #
-      # @param mod_reference [String] for error messages
-      # @param version_data [Hash] the chosen version object
-      # @param requested [Array<String, nil>] platforms to resolve
-      # @return [Hash{String => Hash}] target name → { "hash" => …, "link" => … }
-      # @raise [TargetNotFoundError] if a requested platform has no target
-      sig do
-        params(
-          mod_reference: String,
-          version_data: T::Hash[String, T.untyped],
-          requested: T::Array[T.nilable(String)],
-        ).returns(T::Hash[String, T::Hash[String, String]])
-      end
-      def resolve_platforms(mod_reference, version_data, requested)
-        targets = version_data["targets"] || []
-        target_names = requested.map { |platform| platform.nil? ? DEFAULT_TARGET : platform }.uniq
-
-        target_names.each_with_object({}) do |target_name, acc|
-          target_data = targets.find { |t| t["targetName"] == target_name }
-          unless target_data
-            available = targets.map { |t| t["targetName"] }.join(", ")
-            raise TargetNotFoundError,
-              "#{mod_reference} #{version_data["version"]} has no #{target_name} target (available: #{available})"
-          end
 
           acc[target_name] = {
             "hash" => "SHA256=#{target_data["hash"]}",

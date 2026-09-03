@@ -70,7 +70,7 @@ module Dev
         bound = T.must(match[2])
         return pessimistic_match?(key, bound) if operator == "~>"
 
-        comparison = T.must(key <=> comparison_key(bound))
+        comparison = T.let(key <=> comparison_key(bound), Integer)
         case operator
         when "==", "=" then comparison.zero?
         when ">=" then comparison >= 0
@@ -92,7 +92,8 @@ module Dev
         upper = segments.size > 1 ? segments[0..-2].to_a : segments.dup
         upper[-1] = upper.fetch(-1) + 1
 
-        (key <=> comparison_key(bound)) >= 0 && T.must(key <=> [upper, 0]).negative?
+        lower = T.let(key <=> comparison_key(bound), Integer)
+        lower >= 0 && T.let(key <=> [upper, 0], Integer).negative?
       end
 
       # Comparison key: [release segments (trailing zeros stripped), revision].

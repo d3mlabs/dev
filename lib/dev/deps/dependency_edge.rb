@@ -44,7 +44,9 @@ module Dev
       # @return [Boolean] whether other is the same edge
       sig { params(other: T.untyped).returns(T::Boolean) }
       def ==(other)
-        other.is_a?(DependencyEdge) && name == other.name && constraint == other.constraint
+        return false unless other.is_a?(DependencyEdge)
+
+        [name, constraint] == [other.name, other.constraint]
       end
       alias_method :eql?, :==
 

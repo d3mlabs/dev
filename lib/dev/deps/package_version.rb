@@ -86,13 +86,11 @@ module Dev
       # @return [Boolean] whether other reports the same facts
       sig { params(other: T.untyped).returns(T::Boolean) }
       def ==(other)
-        other.is_a?(PackageVersion) &&
-          version == other.version &&
-          platforms == other.platforms &&
-          digest == other.digest &&
-          artifacts == other.artifacts &&
-          dependencies == other.dependencies &&
-          metadata == other.metadata
+        return false unless other.is_a?(PackageVersion)
+
+        [version, platforms, digest, artifacts, dependencies, metadata] ==
+          [other.version, other.platforms, other.digest, other.artifacts,
+           other.dependencies, other.metadata]
       end
       alias_method :eql?, :==
 

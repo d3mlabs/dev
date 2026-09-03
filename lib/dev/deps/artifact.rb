@@ -45,7 +45,7 @@ module Dev
       def initialize(uri:, digest: nil)
         raise MissingUriError, "an artifact without a uri cannot be fetched" if uri.nil? || uri.empty?
 
-        @uri = uri
+        @uri = T.let(uri, String)
         @digest = digest
         freeze
       end
@@ -54,7 +54,9 @@ module Dev
       # @return [Boolean] whether other describes the same bytes
       sig { params(other: T.untyped).returns(T::Boolean) }
       def ==(other)
-        other.is_a?(Artifact) && uri == other.uri && digest == other.digest
+        return false unless other.is_a?(Artifact)
+
+        [uri, digest] == [other.uri, other.digest]
       end
       alias_method :eql?, :==
 

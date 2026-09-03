@@ -2,7 +2,6 @@
 # frozen_string_literal: true
 
 require "sorbet-runtime"
-require_relative "dependency"
 require_relative "package"
 require_relative "package_id"
 require_relative "package_version"
@@ -37,24 +36,6 @@ module Dev
         raise MissingVersionError, "xcode requires an exact version (e.g. xcode \"26.1.1\")" if version.empty?
 
         Package.new(id: id, versions: [PackageVersion.new(version: version)])
-      end
-
-      # @param id [Hash] must include "name", "integration", "group", "version"
-      # @return [Dependency]
-      # @raise [MissingVersionError] when no exact version was declared
-      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
-      def fetch(id)
-        version = id["version"].to_s
-        raise MissingVersionError, "xcode requires an exact version (e.g. xcode \"26.1.1\")" if version.empty?
-
-        Dependency.new(
-          name: id["name"],
-          integration: id["integration"].to_sym,
-          group: id["group"].to_sym,
-          version: version,
-          hash: nil,
-          metadata: {},
-        )
       end
     end
   end

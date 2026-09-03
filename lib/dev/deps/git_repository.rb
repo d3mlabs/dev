@@ -3,7 +3,6 @@
 
 require "open3"
 require "sorbet-runtime"
-require_relative "dependency"
 require_relative "package"
 require_relative "package_id"
 require_relative "package_version"
@@ -41,31 +40,6 @@ module Dev
         Package.new(
           id: id,
           versions: [PackageVersion.new(version: sha, metadata: { "repo" => repo_url })],
-        )
-      end
-
-      # Resolve a git dependency identifier to a pinned Dependency.
-      #
-      # @param id [Hash] must include "name", "repo", "integration", "group",
-      #   and one of "tag" or "commit"
-      # @return [Dependency] with version set to the resolved full SHA
-      # @raise [RefResolutionError] if the ref cannot be resolved via ls-remote
-      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
-      def fetch(id)
-        repo_url = id["repo"]
-        tag = id["tag"]
-        commit = id["commit"]
-        ref = commit || tag
-
-        sha = resolve_ref(repo_url, ref)
-
-        Dependency.new(
-          name: id["name"],
-          integration: id["integration"].to_sym,
-          group: id["group"].to_sym,
-          version: sha,
-          hash: nil,
-          metadata: { "repo" => repo_url },
         )
       end
 

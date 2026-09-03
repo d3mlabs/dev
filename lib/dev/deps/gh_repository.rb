@@ -4,7 +4,6 @@
 require "json"
 require "open3"
 require "sorbet-runtime"
-require_relative "dependency"
 require_relative "package"
 require_relative "package_id"
 require_relative "package_version"
@@ -61,24 +60,6 @@ module Dev
         end
 
         Package.new(id: id, versions: [version])
-      end
-
-      # Resolve a GitHub dependency to a pinned Dependency.
-      #
-      # Two shapes, distinguished by the declaration: "assets" => prebuilt release
-      # assets (download + verify); "build" => build from the tag's source archive.
-      #
-      # @param id [Hash] must include "name", "repo" (owner/repo slug), "tag",
-      #   "install_dir", "integration", "group", and one of "assets"/"build"
-      # @return [Dependency]
-      # @raise [GhMissingError] if the gh CLI is not installed
-      # @raise [AuthenticationError] if gh is not authenticated
-      # @raise [RepoAccessError] if the repo is not visible to the account
-      # @raise [ReleaseNotFoundError] if the tag has no release/ref
-      # @raise [NoMatchingAssetsError] if no assets match the pattern
-      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
-      def fetch(id)
-        id["assets"] ? fetch_prebuilt(id) : fetch_source(id)
       end
 
       private
@@ -140,66 +121,6 @@ module Dev
             "install_dir" => filter["install_dir"],
             "build" => filter["build"],
             "commit" => resolve_commit_sha(repo_slug, tag),
-          },
-        )
-      end
-
-      # Resolve a prebuilt-release dependency (download + verify path).
-      #
-      # @param id [Hash]
-      # @return [Dependency]
-      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
-      def fetch_prebuilt(id)
-        repo_slug = id["repo"]
-        tag = id["tag"]
-        pattern = id["assets"]
-
-        release = fetch_release(repo_slug, tag)
-        assets = matching_assets(release, pattern)
-        if assets.empty?
-          raise NoMatchingAssetsError,
-            "no assets matching #{pattern.inspect} in #{repo_slug}@#{tag}"
-        end
-
-        Dependency.new(
-          name: id["name"],
-          integration: id["integration"].to_sym,
-          group: id["group"].to_sym,
-          version: tag,
-          hash: nil,
-          metadata: {
-            "repo" => repo_slug,
-            "asset_pattern" => pattern,
-            "install_dir" => id["install_dir"],
-            "assets" => assets.map { |asset| asset_metadata(asset) },
-          },
-        )
-      end
-
-      # Resolve a build-from-source dependency. Pins the tag's commit SHA (for
-      # provenance) and records the build recipe; GhIntegration fetches the source
-      # archive and runs the build. No release is required — the tag just needs to
-      # exist as a ref (Epic ships UE as source, not release assets).
-      #
-      # @param id [Hash]
-      # @return [Dependency]
-      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
-      def fetch_source(id)
-        repo_slug = id["repo"]
-        tag = id["tag"]
-        commit = resolve_commit_sha(repo_slug, tag)
-
-        Dependency.new(
-          name: id["name"],
-          integration: id["integration"].to_sym,
-          group: id["group"].to_sym,
-          version: tag,
-          hash: nil,
-          metadata: {
-            "repo" => repo_slug,
-            "install_dir" => id["install_dir"],
-            "build" => id["build"],
-            "commit" => commit,
           },
         )
       end

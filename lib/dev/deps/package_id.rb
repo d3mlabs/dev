@@ -52,10 +52,9 @@ module Dev
       # @return [Boolean] whether other identifies the same package
       sig { params(other: T.untyped).returns(T::Boolean) }
       def ==(other)
-        other.is_a?(PackageId) &&
-          integration == other.integration &&
-          name == other.name &&
-          source == other.source
+        return false unless other.is_a?(PackageId)
+
+        [integration, name, source] == [other.integration, other.name, other.source]
       end
       alias_method :eql?, :==
 

@@ -2,8 +2,6 @@
 # frozen_string_literal: true
 
 require "sorbet-runtime"
-require_relative "dependency"
-require_relative "dependency_declaration"
 require_relative "package"
 require_relative "package_id"
 
@@ -44,30 +42,6 @@ module Dev
       def find(id, filter: {})
         raise NotImplementedError, "#{self.class}#find must be implemented"
       end
-
-      # Fetch a dependency by its unique identifier.
-      #
-      # DEPRECATED: the per-item pin contract, replaced by #find. It conflates
-      # identity, constraint, and choice in one untyped hash; it is deleted
-      # together with the Resolver cutover to find/VersionScheme.
-      #
-      # @param id [Hash<String, Object>] unique resource identifier within this repository
-      # @return [Dependency]
-      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
-      def fetch(id)
-        raise NotImplementedError, "#{self.class}#fetch must be implemented"
-      end
-
-      # Batch hook called once per integration type before any fetch.
-      #
-      # DEPRECATED: a lifecycle hook smuggling a whole-set solve through a
-      # per-item contract; its bundler use moves to BundlerLocker and the hook
-      # is deleted together with the Resolver cutover.
-      #
-      # @param declarations [Array<DependencyDeclaration>] this type's declarations
-      # @return [void]
-      sig { params(declarations: T::Array[DependencyDeclaration]).void }
-      def prepare(declarations); end
     end
   end
 end
