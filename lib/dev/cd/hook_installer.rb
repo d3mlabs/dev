@@ -1,7 +1,6 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "sorbet-runtime"
 require "dev/shell_rc_hook"
 
 module Dev

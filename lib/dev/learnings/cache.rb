@@ -4,7 +4,6 @@
 require "fileutils"
 require "open3"
 require "pathname"
-require "sorbet-runtime"
 require_relative "layout"
 
 module Dev

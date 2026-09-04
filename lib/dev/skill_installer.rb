@@ -3,7 +3,6 @@
 
 require "fileutils"
 require "pathname"
-require "sorbet-runtime"
 
 module Dev
   # Symlinks skill directories (each carrying a SKILL.md) into a skills dir.

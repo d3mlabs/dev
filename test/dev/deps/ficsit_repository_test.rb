@@ -411,4 +411,22 @@ class Dev::Deps::FicsitRepositoryTest < Minitest::Test
     dep.dependencies.size == 2
     dep.dependencies.map { |d| d[:name] }.sort == ["RequiredLib", "SML"]
   end
+
+  test "post_graphql posts the query over TLS and returns the 2xx response" do
+    Given "a repo and a stubbed HTTP transport"
+    repo = Dev::Deps::FicsitRepository.new
+    response = stub(body: "{}", is_a?: true)
+    response.stubs(:is_a?).with(Net::HTTPSuccess).returns(true)
+    http = mock
+    http.expects(:use_ssl=).with(true)
+    http.expects(:request).with(instance_of(Net::HTTP::Post)).returns(response)
+    endpoint = Dev::Deps::FicsitRepository::GRAPHQL_ENDPOINT
+    Net::HTTP.expects(:new).with(endpoint.host, endpoint.port).returns(http)
+
+    When "posting a query body"
+    result = repo.send(:post_graphql, { query: "query {}", variables: {} })
+
+    Then
+    result == response
+  end
 end

@@ -3,7 +3,6 @@
 
 require "digest"
 require "open3"
-require "sorbet-runtime"
 require "tmpdir"
 require_relative "repository"
 require_relative "dependency"

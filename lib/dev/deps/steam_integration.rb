@@ -3,7 +3,6 @@
 
 require "fileutils"
 require "pathname"
-require "sorbet-runtime"
 require_relative "integration"
 require_relative "steam_cmd"
 

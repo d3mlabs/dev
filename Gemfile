@@ -13,11 +13,15 @@ gem "rspock", "~> 3.0"
 gem "minitest"
 gem "minitest-reporters"
 gem "rake"
-gem "simplecov", "~> 0.22"
-# Codecov can't process SimpleCov's JSON once a `# :nocov:` line appears
+gem "simplecov", "~> 1.0"
+# Codecov can't process SimpleCov's JSON once skipped lines appear
 # (the "ignored" value breaks its parser — codecov/engineering-team#3592),
 # so CI uploads the cobertura report instead.
-gem "simplecov-cobertura", "~> 3.0"
+gem "simplecov-cobertura", "~> 4.0"
+# Skips type-level Sorbet constructs (sig blocks, T.type_alias, T.absurd)
+# so they never read as coverage misses — Sorbet already checks them
+# statically; line coverage on them measures nothing.
+gem "simplecov-sorbet", "~> 0.2", require: false
 
 # bin/console
 gem "pry", "~> 0.14"

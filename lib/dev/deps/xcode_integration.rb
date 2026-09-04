@@ -3,7 +3,6 @@
 
 require "pathname"
 require "shadowenv_xcode"
-require "sorbet-runtime"
 require_relative "integration"
 
 module Dev

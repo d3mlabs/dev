@@ -5,7 +5,6 @@ require "set"
 require "fileutils"
 require "open3"
 require "pathname"
-require "sorbet-runtime"
 require "stringio"
 require_relative "lockfile"
 
@@ -146,14 +145,10 @@ module Dev
       # @return [Set<String>]
       sig { returns(T::Set[String]) }
       def running_mount_sources
-        ids = capture("docker", "ps", "-q").split("\n").map(&:strip).reject(&:empty?)
+        ids = capture(["docker", "ps", "-q"]).split("\n").map(&:strip).reject(&:empty?)
         return Set.new if ids.empty?
 
-        # T.unsafe: Sorbet cannot check a runtime-sized argv splat; #capture's
-        # own sig validates at runtime. The call stays receiverless because
-        # #capture is private.
-        argv = ["docker", "inspect", "--format", "{{range .Mounts}}{{.Source}}\n{{end}}", *ids]
-        sources = capture(*T.unsafe(argv))
+        sources = capture(["docker", "inspect", "--format", "{{range .Mounts}}{{.Source}}\n{{end}}", *ids])
         Set.new(sources.split("\n").map(&:strip).reject(&:empty?))
       end
 
@@ -164,7 +159,7 @@ module Dev
       # @param live_tag  [String, nil]
       sig { params(image_ref: String, live_tag: T.nilable(String)).void }
       def gc_docker(image_ref:, live_tag:)
-        tags = capture("docker", "images", image_ref, "--format", "{{.Repository}}:{{.Tag}}")
+        tags = capture(["docker", "images", image_ref, "--format", "{{.Repository}}:{{.Tag}}"])
           .split("\n").map(&:strip).reject(&:empty?)
         in_use_images = running_image_refs
 
@@ -180,14 +175,21 @@ module Dev
       # @return [Set<String>] image refs of running containers
       sig { returns(T::Set[String]) }
       def running_image_refs
-        Set.new(capture("docker", "ps", "--format", "{{.Image}}").split("\n").map(&:strip).reject(&:empty?))
+        Set.new(capture(["docker", "ps", "--format", "{{.Image}}"]).split("\n").map(&:strip).reject(&:empty?))
       end
 
       # Run a command and capture stdout, returning "" on failure.
       #
+      # Takes the argv as an array (not rest args) so call sites can build it
+      # dynamically: Sorbet rejects splats of runtime-sized arrays (error 7019),
+      # which would force a T.unsafe at every caller.
+      #
+      # @param argv [Array<String>]
       # @return [String]
-      sig { params(argv: String).returns(String) }
-      def capture(*argv)
+      sig { params(argv: T::Array[String]).returns(String) }
+      def capture(argv)
+        # T.unsafe: capture3's fixed first parameter (env-or-command) can't be
+        # matched against an array of statically-unknown size (error 7019).
         out, _err, status = Open3.capture3(*T.unsafe(argv))
         status.success? ? out : ""
       rescue StandardError

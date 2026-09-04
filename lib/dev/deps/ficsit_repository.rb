@@ -3,7 +3,6 @@
 
 require "json"
 require "net/http"
-require "sorbet-runtime"
 require "uri"
 require_relative "repository"
 require_relative "dependency"
@@ -89,7 +88,7 @@ module Dev
           hash = nil
         else
           target = id.fetch("target", DEFAULT_TARGET)
-          target_data = find_target(version_data["targets"], target)
+          target_data = find_target(version_data["targets"] || [], target)
           hash = target_data ? "SHA256=#{target_data["hash"]}" : nil
           metadata["target"] = target
         end
@@ -215,18 +214,16 @@ module Dev
 
       # Find the target matching the requested platform.
       #
-      # @param targets [Array<Hash>, nil] target objects from the version
+      # @param targets [Array<Hash>] target objects from the version
       # @param target_name [String] platform name (e.g. "Windows")
-      # @return [Hash, nil] matching target or nil
+      # @return [Hash, nil] matching target, or nil when targets is empty
       sig do
         params(
-          targets: T.nilable(T::Array[T::Hash[String, T.untyped]]),
+          targets: T::Array[T::Hash[String, T.untyped]],
           target_name: String,
         ).returns(T.nilable(T::Hash[String, T.untyped]))
       end
       def find_target(targets, target_name)
-        return nil if targets.nil? || targets.empty?
-
         targets.find { |t| t["targetName"] == target_name } || targets.first
       end
     end

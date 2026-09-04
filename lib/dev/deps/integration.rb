@@ -4,7 +4,6 @@
 require "fileutils"
 require "pathname"
 require "securerandom"
-require "sorbet-runtime"
 require_relative "cache"
 require_relative "dependency"
 require_relative "repository"

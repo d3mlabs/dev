@@ -3,7 +3,6 @@
 
 require "json"
 require "open3"
-require "sorbet-runtime"
 require_relative "repository"
 require_relative "dependency"
 
@@ -128,6 +127,8 @@ module Dev
       sig { params(tap: String).returns(T::Boolean) }
       def register_tap(tap)
         _out, _err, status = Open3.capture3("brew", "tap", tap)
+        # success? is nil (not false) when the process didn't exit normally,
+        # e.g. it was killed by a signal — coerce that to a failure.
         status.success? || false
       end
 

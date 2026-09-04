@@ -1,7 +1,6 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "sorbet-runtime"
 require_relative "cache"
 require_relative "tap"
 require_relative "brew_repository"

@@ -2,7 +2,6 @@
 # frozen_string_literal: true
 
 require "open3"
-require "sorbet-runtime"
 
 module Dev
   module Plan

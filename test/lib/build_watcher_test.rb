@@ -124,4 +124,41 @@ class BuildWatcherTest < Minitest::Test
     ok == false
     w.calls == 3
   end
+
+  test "run_once spawns the command, streams its output, and reports success" do
+    Given "a watcher with a fast poll and a name no container holds"
+    w = BuildWatcher.new(container_name: "bw-test-#{Process.pid}", out: StringIO.new, poll: 1)
+
+    When "running a real short-lived process"
+    result = w.send(:run_once, ["sh", "-c", "echo built"])
+
+    Then
+    result.outcome == :success
+    result.output.include?("built") == true
+  end
+
+  test "run_once reports a non-zero exit as failed with the captured output" do
+    Given "a watcher with a fast poll and a name no container holds"
+    w = BuildWatcher.new(container_name: "bw-test-#{Process.pid}", out: StringIO.new, poll: 1)
+
+    When "running a real process that fails"
+    result = w.send(:run_once, ["sh", "-c", "echo boom >&2; exit 3"])
+
+    Then "stderr rides the merged capture"
+    result.outcome == :failed
+    result.output.include?("boom") == true
+  end
+
+  test "now returns a monotonic Float for stall timing" do
+    Given "a watcher"
+    w = watcher
+
+    When "sampling the clock twice"
+    first = w.send(:now)
+    second = w.send(:now)
+
+    Then
+    first.is_a?(Float) == true
+    (second >= first) == true
+  end
 end

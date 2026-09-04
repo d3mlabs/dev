@@ -8,8 +8,9 @@ require "stringio"
 require "tmpdir"
 
 # A hook installer stand-in with a scripted ensure result, so accessor flows
-# are tested without touching the user's real shell RC.
-class FakeCdHookInstaller
+# are tested without touching the user's real shell RC. Subclasses the real
+# installer so the accessor's typed constructor accepts it.
+class FakeCdHookInstaller < Dev::Cd::HookInstaller
   attr_reader :ensure_count
 
   def initialize(result: :already_present)

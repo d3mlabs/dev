@@ -2,7 +2,6 @@
 # frozen_string_literal: true
 
 require "open3"
-require "sorbet-runtime"
 require_relative "repository"
 require_relative "dependency"
 

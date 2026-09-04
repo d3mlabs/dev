@@ -3,7 +3,6 @@
 
 require "open3"
 require "pathname"
-require "sorbet-runtime"
 require_relative "integration"
 require_relative "dependency"
 

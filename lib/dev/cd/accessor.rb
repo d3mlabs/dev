@@ -2,7 +2,6 @@
 # frozen_string_literal: true
 
 require "pathname"
-require "sorbet-runtime"
 require "stringio"
 require "dev/cd/repo_discovery"
 require "dev/cd/matcher"
@@ -34,7 +33,7 @@ module Dev
 
       # @param root [String, Pathname] search root (default: $DEV_CD_ROOT, else ~/src)
       # @param hook_installer [Dev::Cd::HookInstaller]
-      sig { params(root: T.any(String, Pathname), hook_installer: T.untyped).void }
+      sig { params(root: T.any(String, Pathname), hook_installer: HookInstaller).void }
       def initialize(root: ENV["DEV_CD_ROOT"] || (Pathname(Dir.home) / "src"),
                      hook_installer: HookInstaller.new)
         @discovery = T.let(RepoDiscovery.new(root: root), RepoDiscovery)

@@ -49,11 +49,11 @@ module Dev
       when OverriddenCommand
         @overridden_executor.execute(command, args:, context:)
       else
-        # :nocov: — the sealed hierarchy leaves no fourth variant to
-        # construct, so this arm is unreachable at runtime; T.absurd keeps
+        # simplecov:disable — the sealed hierarchy leaves no fourth variant
+        # to construct, so this arm is unreachable at runtime; T.absurd keeps
         # the static exhaustiveness proof.
         T.absurd(command)
-        # :nocov:
+        # simplecov:enable
       end
     end
   end

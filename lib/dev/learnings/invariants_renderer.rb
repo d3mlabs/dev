@@ -3,7 +3,6 @@
 
 require "fileutils"
 require "pathname"
-require "sorbet-runtime"
 
 module Dev
   module Learnings

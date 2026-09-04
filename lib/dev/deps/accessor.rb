@@ -1,7 +1,6 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "sorbet-runtime"
 require "stringio"
 require_relative "dependency"
 require_relative "lockfile"
@@ -46,9 +45,11 @@ module Dev
       def run(args, out: $stdout)
         subcommand, *rest = args
         case subcommand
-        # T.unsafe: forwarding a runtime-sized argv splat; #path's own sig
-        # still validates the arguments at runtime.
-        when "path" then out.puts(T.unsafe(self).path(*rest).to_s)
+        when "path"
+          raise UsageError, USAGE if rest.size > 3
+
+          integration, name, platform = rest
+          out.puts(path(integration, name, platform).to_s)
         else raise UsageError, USAGE
         end
       end

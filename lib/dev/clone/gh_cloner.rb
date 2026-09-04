@@ -3,7 +3,6 @@
 
 require "fileutils"
 require "pathname"
-require "sorbet-runtime"
 
 module Dev
   module Clone
@@ -34,7 +33,7 @@ module Dev
       end
 
       # @param executor [Executor] CLI boundary (injectable for tests)
-      sig { params(executor: T.untyped).void }
+      sig { params(executor: Executor).void }
       def initialize(executor: Executor.new)
         @executor = executor
       end
