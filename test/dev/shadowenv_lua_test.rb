@@ -122,4 +122,34 @@ class ShadowenvLuaTest < Minitest::Test
     Cleanup
     FileUtils.rm_rf(tmpdir)
   end
+
+  test "ensure_homebrew_lua! raises BrewInstallError when the luarocks install fails" do
+    Given "a fake brew with lua installed but luarocks missing and uninstallable"
+    tmpdir = Dir.mktmpdir("fake-brew-lua-")
+    fake_brew = File.join(tmpdir, "brew")
+    File.write(fake_brew, <<~SH)
+      #!/bin/sh
+      case "$1 $2" in
+        "list lua@5.1") exit 0 ;;
+        "list luarocks") exit 1 ;;
+        "install luarocks") exit 1 ;;
+      esac
+      exit 0
+    SH
+    FileUtils.chmod(0o755, fake_brew)
+    original_path = ENV["PATH"]
+    ENV["PATH"] = "#{tmpdir}:/usr/bin:/bin"
+
+    When "ensuring the Homebrew lua toolchain"
+    error = assert_raises(Dev::ShadowenvLua::BrewInstallError) do
+      Dev::ShadowenvLua.ensure_homebrew_lua!("5.1")
+    end
+
+    Then "the error names the failing luarocks install"
+    error.message.include?("luarocks")
+
+    Cleanup
+    ENV["PATH"] = original_path
+    FileUtils.rm_rf(tmpdir)
+  end
 end
