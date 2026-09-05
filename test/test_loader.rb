@@ -9,15 +9,19 @@ require "simplecov"
 require "simplecov-cobertura"
 
 # HTML for local browsing; cobertura for the codecov upload (its parser
-# can't process SimpleCov JSON containing `# :nocov:`-ignored lines —
+# can't process SimpleCov JSON containing skipped/ignored lines —
 # codecov/engineering-team#3592).
 SimpleCov.start do
-  add_filter("/test/")
+  skip("/test/")
   formatter SimpleCov::Formatter::MultiFormatter.new([
     SimpleCov::Formatter::HTMLFormatter,
     SimpleCov::Formatter::CoberturaFormatter,
   ])
 end
+
+# simplecov/sorbet skips type-level Sorbet constructs (sig blocks,
+# T.type_alias, T.absurd) so they never read as coverage misses.
+require "simplecov/sorbet"
 
 DEV_ROOT = File.expand_path("..", __dir__)
 $LOAD_PATH.unshift(File.join(DEV_ROOT, "src")) unless $LOAD_PATH.include?(File.join(DEV_ROOT, "src"))

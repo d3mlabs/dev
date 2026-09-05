@@ -60,7 +60,7 @@ class Dev::Builtins::CacheCommandTest < Minitest::Test
     ).once
     command = build_command(gc)
     context = build_context(build_container: config)
-    BuildContainer.stubs(:image_with_tag)
+    Dev::BuildContainer.stubs(:image_with_tag)
       .with(config, project_root: context.project_root)
       .returns("myregistry/myapp-linux:content-abc123")
 

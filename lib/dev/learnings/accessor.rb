@@ -2,7 +2,6 @@
 # frozen_string_literal: true
 
 require "pathname"
-require "sorbet-runtime"
 require "stringio"
 require_relative "../deps/gem_skill_linker"
 require_relative "../settings"

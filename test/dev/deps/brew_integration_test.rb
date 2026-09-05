@@ -6,7 +6,10 @@ require "dev/deps/brew_integration"
 require "dev/deps/brew_repository"
 require "dev/deps/cache"
 require "dev/deps/dependency"
+require "dev/deps/tap"
+require "pathname"
 require "tmpdir"
+require "uri"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::BrewIntegrationTest < Minitest::Test
@@ -101,6 +104,47 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
 
     Then
     raises Dev::Deps::BrewIntegration::InstallError
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all registers a local file:// tap at its resolved path and publishes the tap env" do
+    Given "an integration with a project dir and a local tap"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    tap = Dev::Deps::Tap.new(name: "local/tap", url: "file://#{dir}/brew-tap")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, cache: cache, taps: [tap], project_dir: dir,
+    )
+    integration.expects(:system).with("brew", "tap", "local/tap", "#{dir}/brew-tap").returns(true)
+
+    When "installing all (no deps, taps only)"
+    integration.install_all([])
+
+    Then "the local tap env vars point at the resolved tap"
+    ENV["TAP_NAME"] == "local/tap"
+    ENV["LOCAL_TAP_DIR"] == "#{dir}/brew-tap"
+
+    Cleanup
+    ENV.delete("TAP_NAME")
+    ENV.delete("LOCAL_TAP_DIR")
+    FileUtils.rm_rf(dir)
+  end
+
+  test "resolve_file_url resolves a ./ path against the project dir" do
+    Given "an integration with a project dir and a project-relative file URI"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, cache: Dev::Deps::Cache.new(cache_dir: dir), project_dir: dir,
+    )
+    relative_uri = URI::Generic.new("file", nil, nil, nil, nil, "./brew-tap", nil, nil, nil)
+
+    When "resolving"
+    path = integration.send(:resolve_file_url, relative_uri, Pathname(dir))
+
+    Then
+    path == File.expand_path(File.join(dir, "brew-tap"))
 
     Cleanup
     FileUtils.rm_rf(dir)

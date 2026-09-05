@@ -2,7 +2,6 @@
 # frozen_string_literal: true
 
 require "pathname"
-require "sorbet-runtime"
 require_relative "../settings"
 require_relative "../skill_installer"
 require_relative "cache"

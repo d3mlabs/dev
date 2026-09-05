@@ -3,7 +3,6 @@
 
 require "json"
 require "open3"
-require "sorbet-runtime"
 require_relative "package"
 require_relative "package_id"
 require_relative "package_version"

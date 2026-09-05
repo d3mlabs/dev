@@ -2,7 +2,6 @@
 # frozen_string_literal: true
 
 require "pathname"
-require "sorbet-runtime"
 
 module Dev
   # Idempotent installer of snippets into the user's shell RC file.

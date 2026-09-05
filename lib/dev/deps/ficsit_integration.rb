@@ -3,7 +3,6 @@
 
 require "digest"
 require "fileutils"
-require "sorbet-runtime"
 require "tmpdir"
 require_relative "integration"
 

@@ -1,6 +1,9 @@
 # typed: strict
 # frozen_string_literal: true
 
+# Required here (not just in src/dev.rb) because bin/test.rb loads this
+# helper standalone — it never requires "dev", where sorbet-runtime is
+# centralized for the Dev module tree.
 require "sorbet-runtime"
 
 extend T::Sig

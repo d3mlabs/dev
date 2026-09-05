@@ -6,7 +6,6 @@ require "fileutils"
 require "pathname"
 require "securerandom"
 require "shellwords"
-require "sorbet-runtime"
 require_relative "integration"
 
 module Dev

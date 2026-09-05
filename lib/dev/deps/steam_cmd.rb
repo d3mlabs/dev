@@ -4,7 +4,6 @@
 require "fileutils"
 require "open3"
 require "shellwords"
-require "sorbet-runtime"
 
 module Dev
   module Deps

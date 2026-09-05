@@ -308,4 +308,40 @@ class Dev::RunnerSetupTest < Minitest::Test
       platform.start_with?("linux-")
     end
   end
+
+  test "Executor#capture returns stdout, stderr, and success from a real process" do
+    When "capturing a real shell command"
+    out, err, ok = Dev::RunnerSetup::Executor.new.capture("sh", "-c", "echo out; echo err >&2")
+
+    Then
+    out == "out\n"
+    err == "err\n"
+    ok == true
+  end
+
+  test "Executor#capture reports a missing binary as a failure instead of raising" do
+    When "capturing a command that does not exist"
+    out, err, ok = Dev::RunnerSetup::Executor.new.capture("dev-test-missing-binary-xyz")
+
+    Then "the ENOENT message rides the stderr slot"
+    out == ""
+    err.empty? == false
+    ok == false
+  end
+
+  test "Executor#system runs a real process, honoring chdir" do
+    Given "a temp working directory"
+    dir = Dir.mktmpdir("runner-setup-exec-")
+
+    When "running real commands"
+    ok = Dev::RunnerSetup::Executor.new.system("sh", "-c", "test \"$(pwd)\" = \"$1\"", "--", File.realpath(dir), chdir: dir)
+    failed = Dev::RunnerSetup::Executor.new.system("sh", "-c", "exit 1")
+
+    Then
+    ok == true
+    failed == false
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
 end

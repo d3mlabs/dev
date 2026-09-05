@@ -46,11 +46,6 @@ Sorbet/StrictSigil:
     # override is rejected by Sorbet (error 4010)...
     - lib/dev/deps/dependency.rb
     - lib/dev/deps/dependency_declaration.rb
-    # `typed: true` holdout outside the pre-bundle chain: Sorbet demands sigs
-    # on Data.define-synthesized readers at strict, and wrapping them in the
-    # define block would destroy the originals. Fix by converting to a plain
-    # value class, as clone/repo_spec.rb already did.
-    - lib/dev/cd/repo.rb
     # ...method_missing dispatch into a required-keyword method needs
     # T.unsafe, which the pre-bundle constraint forbids...
     - lib/dev/deps/dsl.rb

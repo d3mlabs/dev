@@ -3,7 +3,7 @@
 
 require "test_helper"
 require "dev/deps/pip_integration"
-require "shadowenv_python"
+require "dev/shadowenv_python"
 require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
@@ -51,7 +51,7 @@ class Dev::Deps::PipIntegrationTest < Minitest::Test
     Given "an integration with one pinned dep and a stubbed venv + pip"
     tmpdir = Dir.mktmpdir("pip-integration-")
     integration = Dev::Deps::PipIntegration.new(repository: nil, cache: nil, project_root: tmpdir, python_version: "3.12")
-    ShadowenvPython.stubs(:ensure_venv!).returns(File.join(tmpdir, ".venv"))
+    Dev::ShadowenvPython.stubs(:ensure_venv!).returns(File.join(tmpdir, ".venv"))
     ok = stub(success?: true)
 
     When "installing"

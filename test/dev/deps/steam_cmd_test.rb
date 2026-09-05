@@ -88,4 +88,69 @@ class Dev::Deps::SteamCmdTest < Minitest::Test
     expected = RUBY_PLATFORM.include?("darwin") ? Dev::Deps::SteamCmd::MACOS_URL : Dev::Deps::SteamCmd::LINUX_URL
     url == expected
   end
+
+  test "ensure! returns the script path without bootstrapping when it is already executable" do
+    Given "a warm install dir with an executable steamcmd.sh"
+    dir = Dir.mktmpdir("steamcmd-test-")
+    script = File.join(dir, "steamcmd.sh")
+    File.write(script, "#!/bin/sh\n")
+    File.chmod(0o755, script)
+
+    When "ensuring"
+    path = Dev::Deps::SteamCmd.ensure!(dir)
+
+    Then
+    path == script
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "ensure! raises BootstrapError when the curl|tar pipeline fails" do
+    Given "an empty install dir and a failing download pipeline"
+    dir = Dir.mktmpdir("steamcmd-test-")
+    Kernel.expects(:system).with("sh", "-c", regexp_matches(/curl -fsSL .+ \| tar -xz -C /)).returns(false)
+
+    When "ensuring"
+    Dev::Deps::SteamCmd.ensure!(dir)
+
+    Then
+    raises Dev::Deps::SteamCmd::BootstrapError
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "run ensures the install and executes steamcmd.sh with the +commands" do
+    Given "a warm install dir whose steamcmd.sh echoes its arguments"
+    dir = Dir.mktmpdir("steamcmd-test-")
+    script = File.join(dir, "steamcmd.sh")
+    File.write(script, "#!/bin/sh\necho \"$@\"\n")
+    File.chmod(0o755, script)
+
+    When "running"
+    out, _err, status = Dev::Deps::SteamCmd.run("+login", "anonymous", dir: dir)
+
+    Then
+    out == "+login anonymous\n"
+    status.success? == true
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "ensure! raises BootstrapError when the pipeline succeeds but produces no script" do
+    Given "an empty install dir and a pipeline that extracts nothing"
+    dir = Dir.mktmpdir("steamcmd-test-")
+    Kernel.expects(:system).with("sh", "-c", regexp_matches(/curl -fsSL .+ \| tar -xz -C /)).returns(true)
+
+    When "ensuring"
+    Dev::Deps::SteamCmd.ensure!(dir)
+
+    Then
+    raises Dev::Deps::SteamCmd::BootstrapError
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
 end

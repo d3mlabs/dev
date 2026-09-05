@@ -1,8 +1,6 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "sorbet-runtime"
-
 module Dev
   module Deps
     # A single downloadable file that dev itself fetches.

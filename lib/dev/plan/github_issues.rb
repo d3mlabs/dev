@@ -2,7 +2,6 @@
 # frozen_string_literal: true
 
 require "json"
-require "sorbet-runtime"
 
 module Dev
   module Plan

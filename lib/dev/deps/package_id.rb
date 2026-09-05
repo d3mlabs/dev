@@ -1,8 +1,6 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "sorbet-runtime"
-
 module Dev
   module Deps
     # Identity of a package within its integration's universe: constraint-free

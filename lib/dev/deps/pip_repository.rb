@@ -3,7 +3,6 @@
 
 require "json"
 require "net/http"
-require "sorbet-runtime"
 require "uri"
 require_relative "package"
 require_relative "package_id"

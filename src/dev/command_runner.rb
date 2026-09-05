@@ -6,10 +6,10 @@ require "shellwords"
 require "dev/cli/ui"
 require "dev/command"
 require "dev/credentials"
-require "build_container"
-require "shadowenv_llvm"
-require "shadowenv_python"
-require "shadowenv_ruby"
+require "dev/build_container"
+require "dev/shadowenv_llvm"
+require "dev/shadowenv_python"
+require "dev/shadowenv_ruby"
 
 module Dev
   # Runs dev commands by handing the process over to the child. Dev prints a

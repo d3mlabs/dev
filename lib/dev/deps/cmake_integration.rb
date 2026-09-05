@@ -3,7 +3,6 @@
 
 require "fileutils"
 require "pathname"
-require "sorbet-runtime"
 require "tmpdir"
 require_relative "integration"
 require_relative "dependency"
@@ -160,14 +159,13 @@ module Dev
       #
       # @param dest [Pathname]   source directory to check
       # @param dep  [Dependency]
-      # @return [Boolean, nil] nil when a url dep's dir exists but the url check short-circuits
-      sig { params(dest: Pathname, dep: Dependency).returns(T.nilable(T::Boolean)) }
+      # @return [Boolean]
+      sig { params(dest: Pathname, dep: Dependency).returns(T::Boolean) }
       def populated?(dest, dep)
         return false unless dest.directory?
+        return true if dest.join(".git").exist? || dest.join("CMakeLists.txt").exist?
 
-        dest.join(".git").exist? ||
-          dest.join("CMakeLists.txt").exist? ||
-          (dep.metadata["url"] && dest.children.any?)
+        dep.metadata["url"] ? dest.children.any? : false
       end
 
       # Generate deps.cmake with set() variables for each dependency.

@@ -1,8 +1,6 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "sorbet-runtime"
-
 require "dev/settings"
 require "dev/skill_installer"
 require "dev/learnings"

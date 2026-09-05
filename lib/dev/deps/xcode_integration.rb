@@ -2,8 +2,7 @@
 # frozen_string_literal: true
 
 require "pathname"
-require "shadowenv_xcode"
-require "sorbet-runtime"
+require "dev/shadowenv_xcode"
 require_relative "integration"
 
 module Dev

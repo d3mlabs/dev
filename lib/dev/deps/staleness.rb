@@ -4,7 +4,6 @@
 require "digest"
 require "fileutils"
 require "pathname"
-require "sorbet-runtime"
 require_relative "lockfile"
 
 module Dev

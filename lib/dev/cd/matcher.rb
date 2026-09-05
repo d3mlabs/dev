@@ -1,7 +1,6 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "sorbet-runtime"
 require "dev/cd/repo"
 
 module Dev
@@ -134,7 +133,9 @@ module Dev
         return nil if query_segments.size > repo.segments.size
 
         tail = repo.segments.last(query_segments.size)
-        scores = query_segments.zip(tail).map { |wanted, actual| segment_score(wanted, actual) }
+        # T.must: the size guard above ensures tail has as many segments as
+        # the query, so zip never pads with nil.
+        scores = query_segments.zip(tail).map { |wanted, actual| segment_score(wanted, T.must(actual)) }
         return nil if scores.any?(&:nil?)
 
         scores.sum

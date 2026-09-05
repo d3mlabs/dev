@@ -19,7 +19,7 @@ require "dev/overridden_executor"
 require "dev/project_executor"
 require "dev/project_manifest"
 require "dev/project_manifest_loader"
-require "shadowenv_ruby"
+require "dev/shadowenv_ruby"
 
 module Dev
   # The application service behind bin/dev, and the composition root of the

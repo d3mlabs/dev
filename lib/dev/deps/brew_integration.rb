@@ -3,7 +3,6 @@
 
 require "open3"
 require "pathname"
-require "sorbet-runtime"
 require "uri"
 require_relative "integration"
 require_relative "dependency"
@@ -76,8 +75,9 @@ module Dev
       # @raise [TapRegistrationError] if `brew tap` fails
       sig { params(tap: Tap).void }
       def register_tap(tap)
-        if tap.local? && @project_dir
-          path = resolve_file_url(tap.url)
+        project_dir = @project_dir
+        if tap.local? && project_dir
+          path = resolve_file_url(tap.url, project_dir)
           success = system("brew", "tap", tap.name, path)
           raise TapRegistrationError, "brew tap #{tap.name} #{path} failed" unless success
         elsif tap.url
@@ -93,23 +93,26 @@ module Dev
       # Set TAP_NAME and LOCAL_TAP_DIR env vars for the first local tap.
       sig { void }
       def setup_tap_env
-        return unless @project_dir
+        project_dir = @project_dir
+        return unless project_dir
 
         local_tap = @taps.find(&:local?)
         return unless local_tap
 
         ENV["TAP_NAME"] = local_tap.name
-        ENV["LOCAL_TAP_DIR"] = resolve_file_url(local_tap.url) if local_tap.url
+        ENV["LOCAL_TAP_DIR"] = resolve_file_url(local_tap.url, project_dir) if local_tap.url
       end
 
       # Resolve a file:// URI to an absolute path relative to project_dir.
       #
       # @param uri [URI::Generic] file:// URI
+      # @param project_dir [Pathname] project root ./ paths resolve against
       # @return [String] absolute path
-      sig { params(uri: URI::Generic).returns(String) }
-      def resolve_file_url(uri)
+      sig { params(uri: URI::Generic, project_dir: Pathname).returns(String) }
+      def resolve_file_url(uri, project_dir)
         path = uri.path.to_s
-        path = (T.must(@project_dir) / T.must(path[2..])).to_s if path.start_with?("./")
+        # T.must: start_with?("./") guarantees at least two leading chars.
+        path = (project_dir / T.must(path[2..])).to_s if path.start_with?("./")
         File.expand_path(path)
       end
 

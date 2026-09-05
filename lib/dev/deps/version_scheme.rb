@@ -1,8 +1,6 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "sorbet-runtime"
-
 module Dev
   module Deps
     # Per-integration constraint semantics — a domain service, deliberately

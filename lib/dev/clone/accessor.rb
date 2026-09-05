@@ -2,7 +2,6 @@
 # frozen_string_literal: true
 
 require "pathname"
-require "sorbet-runtime"
 require "stringio"
 require "dev/clone/repo_spec"
 require "dev/clone/gh_cloner"
@@ -43,8 +42,8 @@ module Dev
       sig do
         params(
           root: T.any(String, Pathname),
-          cloner: T.untyped,
-          hook_installer: T.untyped,
+          cloner: GhCloner,
+          hook_installer: Dev::Cd::HookInstaller,
         ).void
       end
       def initialize(root: ENV["DEV_CD_ROOT"] || (Pathname(Dir.home) / "src"),

@@ -3,7 +3,6 @@
 
 require "open3"
 require "pathname"
-require "sorbet-runtime"
 require_relative "../skill_installer"
 require_relative "bundler_locker"
 

@@ -3,7 +3,6 @@
 
 require "digest"
 require "open3"
-require "sorbet-runtime"
 require "tempfile"
 require_relative "artifact"
 require_relative "package"

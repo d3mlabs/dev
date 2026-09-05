@@ -4,7 +4,6 @@
 require "fileutils"
 require "io/console"
 require "open3"
-require "sorbet-runtime"
 require "yaml"
 
 module Dev

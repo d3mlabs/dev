@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "shadowenv_unreal"
+require "dev/shadowenv_unreal"
 require "fileutils"
 require "tmpdir"
 
@@ -26,11 +26,11 @@ class ShadowenvUnrealTest < Minitest::Test
     FileUtils.mkdir_p(shadowenv_d)
     File.write(
       File.join(shadowenv_d, "530_unreal.lisp"),
-      ShadowenvUnreal.generate_unreal_lisp(ue_root),
+      Dev::ShadowenvUnreal.generate_unreal_lisp(ue_root),
     )
 
     Expect
-    ShadowenvUnreal.provisioned?(ue_root, project_root: tmpdir) == true
+    Dev::ShadowenvUnreal.provisioned?(ue_root, project_root: tmpdir) == true
 
     Cleanup
     FileUtils.rm_rf(tmpdir)
@@ -43,11 +43,11 @@ class ShadowenvUnrealTest < Minitest::Test
     FileUtils.mkdir_p(shadowenv_d)
     File.write(
       File.join(shadowenv_d, "530_unreal.lisp"),
-      ShadowenvUnreal.generate_unreal_lisp("/old/engine"),
+      Dev::ShadowenvUnreal.generate_unreal_lisp("/old/engine"),
     )
 
     Expect
-    ShadowenvUnreal.provisioned?("/new/engine", project_root: tmpdir) == false
+    Dev::ShadowenvUnreal.provisioned?("/new/engine", project_root: tmpdir) == false
 
     Cleanup
     FileUtils.rm_rf(tmpdir)
@@ -58,7 +58,7 @@ class ShadowenvUnrealTest < Minitest::Test
     tmpdir = Dir.mktmpdir("shadowenv-unreal-test-")
 
     Expect
-    ShadowenvUnreal.provisioned?("/opt/UnrealEngine", project_root: tmpdir) == false
+    Dev::ShadowenvUnreal.provisioned?("/opt/UnrealEngine", project_root: tmpdir) == false
 
     Cleanup
     FileUtils.rm_rf(tmpdir)
@@ -68,7 +68,7 @@ class ShadowenvUnrealTest < Minitest::Test
 
   test "generate_unreal_lisp contains provide directive with UE root" do
     When "generating lisp"
-    result = ShadowenvUnreal.generate_unreal_lisp("/opt/UnrealEngine")
+    result = Dev::ShadowenvUnreal.generate_unreal_lisp("/opt/UnrealEngine")
 
     Then
     assert_includes result, '(provide "unreal" "/opt/UnrealEngine")'
@@ -76,7 +76,7 @@ class ShadowenvUnrealTest < Minitest::Test
 
   test "generate_unreal_lisp sets UE_ROOT" do
     When "generating lisp"
-    result = ShadowenvUnreal.generate_unreal_lisp("/opt/UnrealEngine")
+    result = Dev::ShadowenvUnreal.generate_unreal_lisp("/opt/UnrealEngine")
 
     Then
     assert_includes result, '(env/set "UE_ROOT" "/opt/UnrealEngine")'
@@ -84,7 +84,7 @@ class ShadowenvUnrealTest < Minitest::Test
 
   test "generate_unreal_lisp prepends engine binaries to PATH" do
     When "generating lisp"
-    result = ShadowenvUnreal.generate_unreal_lisp("/opt/UnrealEngine")
+    result = Dev::ShadowenvUnreal.generate_unreal_lisp("/opt/UnrealEngine")
 
     Then
     assert_includes result, '(env/prepend-to-pathlist "PATH"'
@@ -93,7 +93,7 @@ class ShadowenvUnrealTest < Minitest::Test
 
   test "generate_unreal_lisp includes UE_PROJECT when specified" do
     When "generating lisp with a project path"
-    result = ShadowenvUnreal.generate_unreal_lisp(
+    result = Dev::ShadowenvUnreal.generate_unreal_lisp(
       "/opt/UnrealEngine",
       ue_project: "/project/FactoryGame.uproject",
     )
@@ -104,7 +104,7 @@ class ShadowenvUnrealTest < Minitest::Test
 
   test "generate_unreal_lisp omits UE_PROJECT when nil" do
     When "generating lisp without a project path"
-    result = ShadowenvUnreal.generate_unreal_lisp("/opt/UnrealEngine")
+    result = Dev::ShadowenvUnreal.generate_unreal_lisp("/opt/UnrealEngine")
 
     Then
     refute_includes result, "UE_PROJECT"
@@ -118,10 +118,10 @@ class ShadowenvUnrealTest < Minitest::Test
     ue_root = create_fake_ue_root(Dir.mktmpdir("fake-ue-"))
 
     When "calling setup!"
-    result = ShadowenvUnreal.setup!(project_root: tmpdir, ue_root: ue_root)
+    result = Dev::ShadowenvUnreal.setup!(project_root: tmpdir, ue_root: ue_root)
 
     Then
-    _ * ShadowenvUnreal.method(:system) >> true
+    _ * Dev::ShadowenvUnreal.method(:system) >> true
     result == true
     lisp_path = File.join(tmpdir, ".shadowenv.d", "530_unreal.lisp")
     assert File.exist?(lisp_path), "Expected lisp file at #{lisp_path}"
@@ -134,13 +134,13 @@ class ShadowenvUnrealTest < Minitest::Test
 
   test "setup! returns false when no UE root is available" do
     When "calling setup! without a root"
-    result = ShadowenvUnreal.setup!(
+    result = Dev::ShadowenvUnreal.setup!(
       project_root: Dir.mktmpdir("shadowenv-unreal-none-"),
       ue_root: nil,
     )
 
     Then
-    _ * ShadowenvUnreal.method(:detect_ue_root) >> nil
+    _ * Dev::ShadowenvUnreal.method(:detect_ue_root) >> nil
     result == false
   end
 
@@ -150,7 +150,7 @@ class ShadowenvUnrealTest < Minitest::Test
     ue_root = create_fake_ue_root(Dir.mktmpdir("fake-ue-"))
 
     When "calling setup! with ue_project"
-    ShadowenvUnreal.setup!(
+    Dev::ShadowenvUnreal.setup!(
       project_root: tmpdir,
       ue_root: ue_root,
       ue_project: "/project/FactoryGame.uproject",
@@ -158,7 +158,7 @@ class ShadowenvUnrealTest < Minitest::Test
     content = File.read(File.join(tmpdir, ".shadowenv.d", "530_unreal.lisp"))
 
     Then
-    _ * ShadowenvUnreal.method(:system) >> true
+    _ * Dev::ShadowenvUnreal.method(:system) >> true
     assert_includes content, "FactoryGame.uproject"
 
     Cleanup
@@ -172,7 +172,7 @@ class ShadowenvUnrealTest < Minitest::Test
     ue_root = create_fake_ue_root(Dir.mktmpdir("fake-ue-"))
 
     Expect
-    ShadowenvUnreal.send(:valid_ue_root?, ue_root) == true
+    Dev::ShadowenvUnreal.send(:valid_ue_root?, ue_root) == true
 
     Cleanup
     FileUtils.rm_rf(ue_root)
@@ -183,7 +183,7 @@ class ShadowenvUnrealTest < Minitest::Test
     tmpdir = Dir.mktmpdir("not-ue-")
 
     Expect
-    ShadowenvUnreal.send(:valid_ue_root?, tmpdir) == false
+    Dev::ShadowenvUnreal.send(:valid_ue_root?, tmpdir) == false
 
     Cleanup
     FileUtils.rm_rf(tmpdir)
@@ -197,7 +197,7 @@ class ShadowenvUnrealTest < Minitest::Test
     ENV["CI"] = "true"
 
     Expect
-    ShadowenvUnreal.ci_or_linux? == true
+    Dev::ShadowenvUnreal.ci_or_linux? == true
 
     Cleanup
     ENV["CI"] = original
@@ -209,12 +209,25 @@ class ShadowenvUnrealTest < Minitest::Test
     ENV.delete("CI")
 
     When "checking ci_or_linux?"
-    result = ShadowenvUnreal.ci_or_linux?
+    result = Dev::ShadowenvUnreal.ci_or_linux?
 
     Then
     result == RUBY_PLATFORM.include?("linux")
 
     Cleanup
     ENV["CI"] = original if original
+  end
+
+  # --- platform_subdir ---
+
+  test "platform_subdir maps #{ruby_platform} to #{subdir}" do
+    Expect "the engine binaries subdirectory matches the platform"
+    Dev::ShadowenvUnreal.platform_subdir(ruby_platform) == subdir
+
+    Where
+    ruby_platform        | subdir
+    "arm64-darwin24"     | "Mac"
+    "x86_64-linux"       | "Linux"
+    "x64-mingw-ucrt"     | "Win64"
   end
 end

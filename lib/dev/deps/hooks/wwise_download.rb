@@ -1,6 +1,9 @@
 # typed: strict
 # frozen_string_literal: true
 
+# Required here (not just in src/dev.rb) because consumer dependencies.rb
+# files load this hook standalone via bin/install-build-deps.rb, where the
+# Dev module root never loads.
 require "sorbet-runtime"
 
 module Dev
@@ -38,6 +41,9 @@ module Dev
           @packages.each { |pkg| argv += ["--filter", "Packages=#{pkg}"] }
           @platforms.each { |plat| argv += ["--filter", "DeploymentPlatforms=#{plat}"] }
 
+          # T.unsafe: Sorbet rejects splats of runtime-sized arrays (error
+          # 7019) — Kernel#system's fixed first parameter (env-or-command)
+          # can't be matched against an array of statically-unknown size.
           system(*T.unsafe(argv)) || abort("wwise-cli download failed for SDK #{@version}")
         end
       end

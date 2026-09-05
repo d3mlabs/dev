@@ -1,8 +1,6 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "sorbet-runtime"
-
 module Dev
   module Deps
     # An outgoing dependency edge of a specific PackageVersion: "this version

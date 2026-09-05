@@ -5,7 +5,6 @@ require "fileutils"
 require "json"
 require "open3"
 require "socket"
-require "sorbet-runtime"
 require "stringio"
 
 module Dev

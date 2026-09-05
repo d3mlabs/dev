@@ -1,7 +1,6 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "sorbet-runtime"
 require_relative "dependency"
 require_relative "dependency_declaration"
 require_relative "package"

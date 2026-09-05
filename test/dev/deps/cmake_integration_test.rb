@@ -12,6 +12,7 @@ require "dev/deps/dependency"
 require "dev/deps/package"
 require "dev/deps/package_version"
 require "dev/deps/pinned_scheme"
+require "pathname"
 require "tmpdir"
 
 # Stub repository for end-to-end resolver tests: name -> [PackageVersion, ...].
@@ -381,5 +382,32 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
 
     Cleanup
     FileUtils.rm_rf(dir)
+  end
+
+  test "populated? treats a url dep's non-empty extract dir as populated: #{expected}" do
+    Given "a source dir without .git or CMakeLists.txt"
+    dir = Dir.mktmpdir("dev-cmake-int-test-")
+    integration = Dev::Deps::CmakeIntegration.new(
+      repository: Dev::Deps::UrlRepository.new, cache: Dev::Deps::Cache.new(cache_dir: dir), project_root: dir,
+    )
+    dest = Pathname(dir) / "boost-src"
+    FileUtils.mkdir_p(dest)
+    File.write(dest / "README.md", "extracted") if has_children
+    dep = Dev::Deps::Dependency.new(
+      name: "boost", integration: :cmake, group: :app,
+      version: "1.90.0", hash: nil, metadata: metadata,
+    )
+
+    Expect "only a url dep with extracted children counts"
+    integration.send(:populated?, dest, dep) == expected
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+
+    Where
+    metadata                                    | has_children | expected
+    { "url" => "https://example.com/b.tar.gz" } | true         | true
+    { "url" => "https://example.com/b.tar.gz" } | false        | false
+    {}                                          | true         | false
   end
 end

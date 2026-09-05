@@ -4,7 +4,6 @@
 require "fileutils"
 require "json"
 require "pathname"
-require "sorbet-runtime"
 require "stringio"
 
 module Dev
