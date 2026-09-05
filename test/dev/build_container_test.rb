@@ -1170,4 +1170,58 @@ class BuildContainerTest < Minitest::Test
     Then
     raises RuntimeError
   end
+
+  test "prewarm_container_name embeds the pid and never repeats" do
+    When "naming two prewarm containers"
+    name_a = Dev::BuildContainer.send(:prewarm_container_name)
+    name_b = Dev::BuildContainer.send(:prewarm_container_name)
+
+    Then "both carry the dev-prewarm-<pid>- prefix and differ in their random suffix"
+    name_a.start_with?("dev-prewarm-#{Process.pid}-")
+    name_b.start_with?("dev-prewarm-#{Process.pid}-")
+    name_a != name_b
+  end
+
+  test "the docker CLI wrappers pass through the command's success" do
+    Given "a docker whose every invocation succeeds"
+    Dev::BuildContainer.stubs(:system).returns(true)
+
+    Expect "each one-command wrapper reports that success"
+    Dev::BuildContainer.send(:remove_image, "img:tag") == true
+    Dev::BuildContainer.send(:container_exists?, "dev-x") == true
+    Dev::BuildContainer.send(:start_container, "dev-x").nil? == false
+    Dev::BuildContainer.send(:remove_container, "dev-x").nil? == false
+    Dev::BuildContainer.send(:local_image?, "img:tag") == true
+    Dev::BuildContainer.send(:pull, "img:tag") == true
+    Dev::BuildContainer.push!("img:tag") == true
+    Dev::BuildContainer.send(:registry_has?, "img:tag") == true
+  end
+
+  test "service_containers parses the newline-separated docker ps names" do
+    Given "docker ps reporting two containers with surrounding noise"
+    Dev::BuildContainer.stubs(:`).returns("dev-snappy-abc-content-1\ndev-snappy-abc-content-2\n\n")
+
+    Expect "the trimmed names are returned"
+    Dev::BuildContainer.send(:service_containers, "dev-snappy-abc-") ==
+      ["dev-snappy-abc-content-1", "dev-snappy-abc-content-2"]
+  end
+
+  test "container_running? reflects the inspected running state" do
+    Given "docker inspect reporting the state"
+    Dev::BuildContainer.stubs(:`).returns("true\n")
+
+    Expect "the container counts as running"
+    Dev::BuildContainer.send(:container_running?, "dev-x") == true
+  end
+
+  test "run_watched delegates the build to a watcher named for the container" do
+    Given "a watcher primed for the prewarm command"
+    argv = ["docker", "run", "--name", "dev-prewarm-1", "img:tag"]
+    watcher = mock
+    watcher.expects(:run).with(argv).returns(true)
+    Dev::BuildWatcher.expects(:new).with(container_name: "dev-prewarm-1").returns(watcher)
+
+    Expect "the watcher's verdict is returned"
+    Dev::BuildContainer.send(:run_watched, argv, container: "dev-prewarm-1") == true
+  end
 end
