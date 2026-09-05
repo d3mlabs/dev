@@ -86,6 +86,68 @@ update-deps ─▶ Locker.lock(decls)          (bundler: Gemfile.lock appears)
 install-deps ─▶ Integration.install_all(pins)
 ```
 
+### Resolution flow (`dev update-deps`)
+
+```mermaid
+sequenceDiagram
+    participant cmd as update_deps_command
+    participant lkr as BundlerLocker
+    participant bundler as bundler CLI
+    participant res as Resolver
+    participant rep as Repository (per integration)
+    participant backing as Backing service
+    participant sch as VersionScheme (per integration)
+    participant lock as Lockfile
+
+    Note over cmd: load dependencies.rb into DependencyDeclaration[]
+    cmd->>lkr: lock(bundler declarations)
+    lkr->>lkr: write Gemfile from declarations
+    lkr->>bundler: shadowenv exec -- bundle lock
+    bundler-->>lkr: Gemfile.lock written (or LockError)
+    cmd->>res: resolve(all declarations)
+    Note over res: reject disagreeing constraints per (integration, name) - ConflictingDeclarationError
+    loop until queue empty (declared + transitive)
+        res->>rep: find(PackageId, filter: constraint)
+        rep->>backing: query universe (registry API / Gemfile.lock / ls-remote / GraphQL)
+        backing-->>rep: raw versions, platforms, edges, digests
+        rep-->>res: Package (PackageVersion facts)
+        res->>sch: satisfies?(version, constraint) each, then sort
+        sch-->>res: ordered satisfying candidates
+        Note over res: drop versions missing an explicitly requested platform, pick max (NoSatisfyingVersionError if none), mint the Dependency pin into the PackageId-keyed resolved set, stamp host/env
+        Note over res: queue the chosen version's edges as declarations in the same integration
+    end
+    res-->>cmd: Dependency[] pins
+    cmd->>lock: lock(pins, manifest_digest)
+    Note over lock: writes deps.lock and build-deps.lock, nested by integration
+```
+
+### Install flow (`dev install-deps`)
+
+```mermaid
+sequenceDiagram
+    participant up as install command
+    participant st as Staleness
+    participant inst as DependencyInstaller
+    participant lock as Lockfile
+    participant integ as Integration (per type)
+    participant tool as Backing tool
+
+    up->>st: install_message (manifest vs lock vs installed-stamp digests)
+    up->>inst: install(env:, host:)
+    inst->>lock: read
+    lock-->>inst: Dependency[] pins
+    Note over inst: filter by env/host, dispatch build group first
+    inst->>integ: install_all(pins)
+    integ->>tool: shadowenv exec -- bundle install / brew / pip / steamcmd ...
+    tool-->>integ: installed (typed InstallError on failure)
+    up->>st: stamp_installed!
+```
+
+The repositories never appear in the install flow: pins are read from the
+lockfiles, and each Integration drives its backing tool. The Locker never
+appears inside the resolution loop: it runs once, before, sequenced by the
+command.
+
 ## Constraint semantics per integration
 
 | Integration | Scheme | Constraint language |
