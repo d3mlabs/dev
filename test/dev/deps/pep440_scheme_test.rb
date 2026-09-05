@@ -36,6 +36,10 @@ class Dev::Deps::Pep440SchemeTest < Minitest::Test
     "2.5"      | ">=2.0,<3.0"   | true
     "3.0"      | ">=2.0,<3.0"   | false
     "2.0"      | "==2.0.0"      | true
+    "2.1"      | ">2.0"         | true
+    "2.0"      | ">2.0"         | false
+    "2.0"      | "<=2.0"        | true
+    "2.1"      | "<=2.0"        | false
   end
 
   test "an empty constraint is satisfied by anything" do

@@ -36,6 +36,8 @@ class Dev::Deps::SemverSchemeTest < Minitest::Test
     "1.0.0"       | "=1.0.0"           | true
     "1.0.0-rc.1"  | ">=1.0.0"          | false
     "1.0.0"       | ">1.0.0-rc.1"      | true
+    "1.0.0"       | "<=1.0.0"          | true
+    "1.0.1"       | "<=1.0.0"          | false
   end
 
   test "an empty constraint is satisfied by anything" do

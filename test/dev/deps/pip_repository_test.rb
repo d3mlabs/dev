@@ -65,4 +65,14 @@ class Dev::Deps::PipRepositoryTest < Minitest::Test
     Then
     raises Dev::Deps::PipRepository::ApiError
   end
+
+  test "get_project asks PyPI's JSON API for the project" do
+    Given "an HTTP layer primed for the project URL"
+    repo = Dev::Deps::PipRepository.new
+    response = Net::HTTPOK.new("1.1", "200", "OK")
+    Net::HTTP.expects(:get_response).with(URI("https://pypi.org/pypi/requests/json")).returns(response)
+
+    Expect "the response comes back from that URL"
+    repo.send(:get_project, "requests").equal?(response)
+  end
 end

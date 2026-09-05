@@ -30,6 +30,10 @@ class Dev::Deps::RockSchemeTest < Minitest::Test
     "1.1-1"   | "~> 1.0.5"      | false
     "3.5-1"   | ">= 3.0, < 4.0" | true
     "4.0-1"   | ">= 3.0, < 4.0" | false
+    "3.1-1"   | "> 3.0"         | true
+    "2.9-1"   | "> 3.0"         | false
+    "2.9-1"   | "<= 3.0"        | true
+    "3.1-1"   | "<= 3.0"        | false
   end
 
   test "an empty constraint is satisfied by anything" do
