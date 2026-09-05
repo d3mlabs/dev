@@ -10,7 +10,7 @@ require "dev/deps/integration"
 require "dev/deps/lockfile"
 require "dev/deps/registry"
 require "dev/learnings"
-require "shadowenv_ruby"
+require "dev/shadowenv_ruby"
 
 module Dev
   module Builtins

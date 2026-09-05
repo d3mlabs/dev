@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "shadowenv_python"
+require "dev/shadowenv_python"
 require "fileutils"
 require "tmpdir"
 
@@ -10,7 +10,7 @@ transform!(RSpock::AST::Transformation)
 class ShadowenvPythonTest < Minitest::Test
   test "generate_python_lisp contains the provide directive" do
     When "generating lisp for 3.12"
-    result = ShadowenvPython.generate_python_lisp("3.12", "/tmp/proj/.venv")
+    result = Dev::ShadowenvPython.generate_python_lisp("3.12", "/tmp/proj/.venv")
 
     Then "the lisp declares the provided version"
     assert_includes result, '(provide "python" "3.12")'
@@ -18,7 +18,7 @@ class ShadowenvPythonTest < Minitest::Test
 
   test "generate_python_lisp activates the venv on PATH and VIRTUAL_ENV by absolute path" do
     When "generating lisp for 3.12"
-    result = ShadowenvPython.generate_python_lisp("3.12", "/tmp/proj/.venv")
+    result = Dev::ShadowenvPython.generate_python_lisp("3.12", "/tmp/proj/.venv")
 
     Then "it sets VIRTUAL_ENV + PYTHONHOME and prepends the venv bin as a literal path"
     assert_includes result, '(env/set "VIRTUAL_ENV" "/tmp/proj/.venv")'
@@ -33,10 +33,10 @@ class ShadowenvPythonTest < Minitest::Test
     FileUtils.mkdir_p(shadowenv_d)
     FileUtils.mkdir_p(File.join(tmpdir, ".venv"))
     File.write(File.join(shadowenv_d, "540_python.lisp"),
-      ShadowenvPython.generate_python_lisp("3.12", File.join(tmpdir, ".venv")))
+      Dev::ShadowenvPython.generate_python_lisp("3.12", File.join(tmpdir, ".venv")))
 
     Expect "provisioned? returns true"
-    ShadowenvPython.provisioned?("3.12", project_root: tmpdir) == true
+    Dev::ShadowenvPython.provisioned?("3.12", project_root: tmpdir) == true
 
     Cleanup
     FileUtils.rm_rf(tmpdir)
@@ -48,10 +48,10 @@ class ShadowenvPythonTest < Minitest::Test
     shadowenv_d = File.join(tmpdir, ".shadowenv.d")
     FileUtils.mkdir_p(shadowenv_d)
     File.write(File.join(shadowenv_d, "540_python.lisp"),
-      ShadowenvPython.generate_python_lisp("3.12", File.join(tmpdir, ".venv")))
+      Dev::ShadowenvPython.generate_python_lisp("3.12", File.join(tmpdir, ".venv")))
 
     Expect "provisioned? returns false"
-    ShadowenvPython.provisioned?("3.12", project_root: tmpdir) == false
+    Dev::ShadowenvPython.provisioned?("3.12", project_root: tmpdir) == false
 
     Cleanup
     FileUtils.rm_rf(tmpdir)
@@ -64,10 +64,10 @@ class ShadowenvPythonTest < Minitest::Test
     FileUtils.mkdir_p(shadowenv_d)
     FileUtils.mkdir_p(File.join(tmpdir, ".venv"))
     File.write(File.join(shadowenv_d, "540_python.lisp"),
-      ShadowenvPython.generate_python_lisp("3.11", File.join(tmpdir, ".venv")))
+      Dev::ShadowenvPython.generate_python_lisp("3.11", File.join(tmpdir, ".venv")))
 
     Expect "provisioned? returns false for a mismatched version"
-    ShadowenvPython.provisioned?("3.12", project_root: tmpdir) == false
+    Dev::ShadowenvPython.provisioned?("3.12", project_root: tmpdir) == false
 
     Cleanup
     FileUtils.rm_rf(tmpdir)

@@ -3,7 +3,7 @@
 
 require "open3"
 require "pathname"
-require "shadowenv_python"
+require "dev/shadowenv_python"
 require_relative "integration"
 require_relative "dependency"
 

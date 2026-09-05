@@ -2,12 +2,12 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "build_watcher"
+require "dev/build_watcher"
 require "stringio"
 
-# BuildWatcher with the OS mechanism (run_once) replaced by a scripted sequence
+# Dev::BuildWatcher with the OS mechanism (run_once) replaced by a scripted sequence
 # of results, so the retry/classify policy is tested without real processes.
-class ScriptedWatcher < BuildWatcher
+class ScriptedWatcher < Dev::BuildWatcher
   attr_reader :calls
 
   def initialize(results:, **kwargs)
@@ -25,7 +25,7 @@ end unless defined?(ScriptedWatcher)
 transform!(RSpock::AST::Transformation)
 class BuildWatcherTest < Minitest::Test
   def watcher(**kwargs)
-    BuildWatcher.new(container_name: "c", out: StringIO.new, stall_after: 300, cpu_floor: 5.0, **kwargs)
+    Dev::BuildWatcher.new(container_name: "c", out: StringIO.new, stall_after: 300, cpu_floor: 5.0, **kwargs)
   end
 
   def scripted(results, max_attempts: 5)
@@ -33,7 +33,7 @@ class BuildWatcherTest < Minitest::Test
   end
 
   def result(outcome, output = "")
-    BuildWatcher::Result.new(outcome, output)
+    Dev::BuildWatcher::Result.new(outcome, output)
   end
 
   test "stalled? is true only when both silent long enough and idle CPU" do
@@ -127,7 +127,7 @@ class BuildWatcherTest < Minitest::Test
 
   test "run_once spawns the command, streams its output, and reports success" do
     Given "a watcher with a fast poll and a name no container holds"
-    w = BuildWatcher.new(container_name: "bw-test-#{Process.pid}", out: StringIO.new, poll: 1)
+    w = Dev::BuildWatcher.new(container_name: "bw-test-#{Process.pid}", out: StringIO.new, poll: 1)
 
     When "running a real short-lived process"
     result = w.send(:run_once, ["sh", "-c", "echo built"])
@@ -139,7 +139,7 @@ class BuildWatcherTest < Minitest::Test
 
   test "run_once reports a non-zero exit as failed with the captured output" do
     Given "a watcher with a fast poll and a name no container holds"
-    w = BuildWatcher.new(container_name: "bw-test-#{Process.pid}", out: StringIO.new, poll: 1)
+    w = Dev::BuildWatcher.new(container_name: "bw-test-#{Process.pid}", out: StringIO.new, poll: 1)
 
     When "running a real process that fails"
     result = w.send(:run_once, ["sh", "-c", "echo boom >&2; exit 3"])

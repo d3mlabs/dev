@@ -5,7 +5,7 @@ require "dev/cli/flag_parser"
 require "dev/command"
 require "dev/deps/cache_gc"
 require "dev/deps/lockfile"
-require "build_container"
+require "dev/build_container"
 
 module Dev
   module Builtins

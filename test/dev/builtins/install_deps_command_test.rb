@@ -5,7 +5,7 @@ require "test_helper"
 require "dev/builtins/install_deps_command"
 require "fileutils"
 require "pathname"
-require "shadowenv_ruby"
+require "dev/shadowenv_ruby"
 require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
@@ -42,7 +42,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     )
     # Headless boxes reach install-deps before any CommandRunner provisioning,
     # so the builtin provisions the toolchain itself — the true boundary.
-    ShadowenvRuby.expects(:ensure!).with(ruby_version: "4.0.1", project_root: root).once
+    Dev::ShadowenvRuby.expects(:ensure!).with(ruby_version: "4.0.1", project_root: root).once
 
     When "running install-deps"
     command.call(args: [], context: build_context(root))
@@ -72,7 +72,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
       },
       synchronizer: stub(sync: nil),
     )
-    ShadowenvRuby.stubs(:ensure!)
+    Dev::ShadowenvRuby.stubs(:ensure!)
 
     When "running install-deps"
     command.call(args: [], context: build_context(root))
@@ -96,7 +96,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     # are faked.
     root = Pathname.new(Dir.mktmpdir("install-deps-default-"))
     command = Dev::Builtins::InstallDepsCommand.new(synchronizer: stub(sync: nil))
-    ShadowenvRuby.stubs(:ensure!)
+    Dev::ShadowenvRuby.stubs(:ensure!)
 
     When "running install-deps"
     command.call(args: [], context: build_context(root))

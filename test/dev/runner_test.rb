@@ -5,7 +5,7 @@ require "test_helper"
 require "dev"
 require "dev/runner"
 require "fileutils"
-require "shadowenv_ruby"
+require "dev/shadowenv_ruby"
 require "stringio"
 require "tempfile"
 require "tmpdir"
@@ -224,7 +224,7 @@ class RunnerTest < Minitest::Test
       build: { "container" => { "image" => "myapp-linux", "registry" => "myregistry" } },
       out: usage,
     )
-    BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
+    Dev::BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
     old_stdout = $stdout
     $stdout = StringIO.new
 
@@ -298,7 +298,7 @@ class RunnerTest < Minitest::Test
       true }
     ui = fake_ui
     runner = build_runner(commands: {}, command_service: command_service, ui: ui, root: root)
-    ShadowenvRuby.stubs(:resolve_ruby_version).with("9.9.9").returns("9.9.9")
+    Dev::ShadowenvRuby.stubs(:resolve_ruby_version).with("9.9.9").returns("9.9.9")
 
     When "we run a command with args"
     runner.run(["test", "--fast"])
@@ -410,7 +410,7 @@ class RunnerTest < Minitest::Test
     ui: fake_ui, out: StringIO.new, root: nil)
     root ||= (@tmp_roots ||= []).push(Pathname.new(Dir.mktmpdir("runner-test-"))).fetch(-1)
     Dev.stubs(:target_project_root).returns(root)
-    ShadowenvRuby.stubs(:resolve_ruby_version).returns("4.0.1")
+    Dev::ShadowenvRuby.stubs(:resolve_ruby_version).returns("4.0.1")
 
     yaml = { "name" => name, "commands" => commands }
     yaml["build"] = build if build

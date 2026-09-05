@@ -7,7 +7,7 @@ require "pathname"
 # "dev" before any lib/dev file, so individual files don't re-require it.
 # Exceptions that load outside this chain carry their own require: the
 # deps hooks (loaded by consumer dependencies.rb via install-build-deps)
-# and the standalone lib/*.rb helpers.
+# and lib/rake_test_argv.rb (loaded standalone by bin/test.rb).
 require "sorbet-runtime"
 
 # Dev CLI: find repo with dev.yml, run declared commands (optionally in a CLI::UI Frame).

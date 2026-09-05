@@ -226,18 +226,16 @@ class Dev::CredentialsTest < Minitest::Test
   end
 
   test "prompt_and_store raises MissingCredentialError when the pasted value is empty" do
-    Given "an interactive stdin that pastes nothing"
-    $stdin.stubs(:tty?).returns(true)
-    $stdin.stubs(:noecho).returns("")
-    $stdout.stubs(:puts)
-    $stdout.stubs(:print)
-
     When "prompting for a credential without a create URL"
     Dev::Credentials.prompt_and_store(
       "curseforge", "api_key", "CF_API_KEY", "CurseForge API key", nil
     )
 
-    Then
+    Then "an interactive stdin that pastes nothing raises"
+    _ * $stdin.tty? >> true
+    _ * $stdin.noecho >> ""
+    _ * $stdout.puts
+    _ * $stdout.print
     error = raises Dev::Credentials::MissingCredentialError
     assert_includes error.message, "No api_key provided"
   end
