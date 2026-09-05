@@ -1,8 +1,10 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "package"
+require_relative "package_id"
+require_relative "package_version"
 require_relative "repository"
-require_relative "dependency"
 
 module Dev
   module Deps
@@ -18,22 +20,21 @@ module Dev
 
       class MissingVersionError < StandardError; end
 
-      # @param id [Hash] must include "name", "integration", "group", "version"
-      # @return [Dependency]
+      # Report the Xcode universe: the declared version, as a singleton.
+      #
+      # Apple publishes no queryable version registry, so resolution is the
+      # identity — the filter's "version" IS the universe.
+      #
+      # @param id [PackageId] name is the declaration name
+      # @param filter [Hash] locator: "version" (exact, required)
+      # @return [Package] a singleton universe
       # @raise [MissingVersionError] when no exact version was declared
-      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
-      def fetch(id)
-        version = id["version"].to_s
+      sig { override.params(id: PackageId, filter: T::Hash[String, T.untyped]).returns(Package) }
+      def find(id, filter: {})
+        version = filter["version"].to_s
         raise MissingVersionError, "xcode requires an exact version (e.g. xcode \"26.1.1\")" if version.empty?
 
-        Dependency.new(
-          name: id["name"],
-          integration: id["integration"].to_sym,
-          group: id["group"].to_sym,
-          version: version,
-          hash: nil,
-          metadata: {},
-        )
+        Package.new(id: id, versions: [PackageVersion.new(version: version)])
       end
     end
   end

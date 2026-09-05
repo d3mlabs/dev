@@ -9,95 +9,69 @@ require "json"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::BrewRepositoryTest < Minitest::Test
-  test "fetch parses brew info JSON and returns a Dependency" do
-    Given "a brew formula identifier"
+  test "find reports the formula's current stable version as a singleton universe" do
+    Given "a formula on the moving brew registry"
     repository = Dev::Deps::BrewRepository.new
     brew_json = [{
       "name" => "cmake",
       "versions" => { "stable" => "3.31.4" },
       "bottle" => {
-        "stable" => {
-          "files" => {
-            "arm64_sonoma" => { "sha256" => "abc123def456" },
-          },
-        },
+        "stable" => { "files" => { "arm64_sonoma" => { "sha256" => "abc123def456" } } },
       },
     }].to_json
-
     Open3.stubs(:capture3)
          .with("brew", "info", "--json=v1", "cmake")
          .returns([brew_json, "", stub(success?: true)])
 
-    When "fetching the dependency"
-    dep = repository.fetch(
-      "name" => "cmake",
-      "integration" => "brew",
-      "group" => "build",
-    )
+    When "finding the package"
+    package = repository.find(Dev::Deps::PackageId.new(integration: :brew, name: "cmake"))
 
-    Then
-    dep.name == "cmake"
-    dep.integration == :brew
-    dep.group == :build
-    dep.version == "3.31.4"
-    dep.hash == "SHA256=abc123def456"
+    Then "one version, carrying the bottle digest"
+    package.versions.map(&:version) == ["3.31.4"]
+    package.version("3.31.4").digest == "SHA256=abc123def456"
+    package.version("3.31.4").metadata == {}
   end
 
-  test "fetch treats declared version as a formula suffix and records the resolved version" do
-    Given "a formula declared with a version suffix"
+  test "find locates the suffixed formula via the version filter" do
+    Given "a formula declared with a version suffix and a tap"
     repository = Dev::Deps::BrewRepository.new
     brew_json = [{
       "name" => "llvm@18",
       "versions" => { "stable" => "18.1.8" },
       "bottle" => { "stable" => { "files" => { "arm64_sonoma" => { "sha256" => "llvm18" } } } },
     }].to_json
-
     Open3.stubs(:capture3)
-         .with("brew", "info", "--json=v1", "llvm@18")
+         .with("brew", "info", "--json=v1", "someorg/sometap/llvm@18")
          .returns([brew_json, "", stub(success?: true)])
 
-    When "fetching with version: 18"
-    dep = repository.fetch(
-      "name" => "llvm",
-      "integration" => "brew",
-      "group" => "build",
-      "version" => "18",
+    When "finding with the suffix and tap as locator"
+    package = repository.find(
+      Dev::Deps::PackageId.new(integration: :brew, name: "llvm"),
+      filter: { "version" => "18", "tap" => "someorg/sometap" },
     )
 
-    Then "the resolved version is recorded and the suffix is kept for install"
-    dep.name == "llvm"
-    dep.version == "18.1.8"
-    dep.hash == "SHA256=llvm18"
-    dep.metadata["version_suffix"] == "18"
+    Then "the suffixed formula's stable version, with locator facts recorded"
+    package.versions.map(&:version) == ["18.1.8"]
+    package.version("18.1.8").metadata == { "tap" => "someorg/sometap", "version_suffix" => "18" }
   end
 
-  test "fetch includes tap in metadata when specified" do
-    Given "a tapped formula identifier"
+  test "find reports a cask as one unversioned, undigested entry" do
+    Given "a cask declaration"
     repository = Dev::Deps::BrewRepository.new
-    brew_json = [{
-      "name" => "powershell",
-      "versions" => { "stable" => "7.4.0" },
-      "bottle" => { "stable" => { "files" => { "arm64_sonoma" => { "sha256" => "ps123" } } } },
-    }].to_json
 
-    Open3.stubs(:capture3)
-         .with("brew", "info", "--json=v1", "d3mlabs/d3mlabs/powershell")
-         .returns([brew_json, "", stub(success?: true)])
-
-    When "fetching with a tap"
-    dep = repository.fetch(
-      "name" => "powershell",
-      "integration" => "brew",
-      "group" => "build",
-      "tap" => "d3mlabs/d3mlabs",
+    When "finding with the cask flag"
+    package = repository.find(
+      Dev::Deps::PackageId.new(integration: :brew, name: "firefox"),
+      filter: { "cask" => true },
     )
 
-    Then
-    dep.name == "powershell"
-    dep.metadata["tap"] == "d3mlabs/d3mlabs"
+    Then "brew exposes no cask version here — an empty version stand-in"
+    package.versions.map(&:version) == [Dev::Deps::BrewRepository::UNVERSIONED]
+    package.versions.first.digest.nil?
+    package.versions.first.metadata == { "cask" => true }
   end
 
-  test "fetch registers the declared tap and retries when brew info fails untapped" do
+  test "find registers the declared tap and retries when brew info fails untapped" do
     Given "a tapped formula on a machine that has never tapped it"
     repository = Dev::Deps::BrewRepository.new
     brew_json = [{
@@ -114,39 +88,18 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
          .with("brew", "tap", "xcodesorg/made")
          .returns(["", "", stub(success?: true)])
 
-    When "fetching with the tap"
-    dep = repository.fetch(
-      "name" => "xcodes",
-      "integration" => "brew",
-      "group" => "build",
-      "tap" => "xcodesorg/made",
+    When "finding with the tap as locator"
+    package = repository.find(
+      Dev::Deps::PackageId.new(integration: :brew, name: "xcodes"),
+      filter: { "tap" => "xcodesorg/made" },
     )
 
     Then "the tap was registered and resolution succeeded on retry"
-    dep.version == "1.6.2"
-    dep.metadata["tap"] == "xcodesorg/made"
+    package.versions.map(&:version) == ["1.6.2"]
+    package.version("1.6.2").metadata["tap"] == "xcodesorg/made"
   end
 
-  test "fetch handles cask entries (no hash)" do
-    Given "a cask identifier"
-    repository = Dev::Deps::BrewRepository.new
-
-    When "fetching a cask"
-    dep = repository.fetch(
-      "name" => "powershell",
-      "integration" => "brew",
-      "group" => "build",
-      "cask" => true,
-    )
-
-    Then
-    dep.name == "powershell"
-    dep.version.nil?
-    dep.hash.nil?
-    dep.metadata["cask"] == true
-  end
-
-  test "fetch raises BrewInfoError when brew info fails" do
+  test "find raises BrewInfoError when brew info fails" do
     Given "a formula that brew info cannot resolve"
     repository = Dev::Deps::BrewRepository.new
     failed_status = stub(success?: false)
@@ -154,12 +107,8 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
          .with("brew", "info", "--json=v1", "nonexistent")
          .returns(["", "Error: No available formula", failed_status])
 
-    When "fetching the dependency"
-    repository.fetch(
-      "name" => "nonexistent",
-      "integration" => "brew",
-      "group" => "build",
-    )
+    When "finding the package"
+    repository.find(Dev::Deps::PackageId.new(integration: :brew, name: "nonexistent"))
 
     Then
     raises Dev::Deps::BrewRepository::BrewInfoError

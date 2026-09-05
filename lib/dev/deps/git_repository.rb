@@ -2,8 +2,10 @@
 # frozen_string_literal: true
 
 require "open3"
+require_relative "package"
+require_relative "package_id"
+require_relative "package_version"
 require_relative "repository"
-require_relative "dependency"
 
 module Dev
   module Deps
@@ -15,30 +17,28 @@ module Dev
     class GitRepository < Repository
       extend T::Sig
 
-      class RefResolutionError < StandardError; end
+      class RefResolutionError < PackageNotFoundError; end
 
-      # Resolve a git dependency identifier to a pinned Dependency.
+      # Report a git dependency's universe: the declared ref resolved to its
+      # full SHA, as a singleton.
       #
-      # @param id [Hash] must include "name", "repo", "integration", "group",
-      #   and one of "tag" or "commit"
-      # @return [Dependency] with version set to the resolved full SHA
+      # A git remote is not a version index — the filter's "commit" or "tag"
+      # locates the one ref the declaration pins, and ls-remote turns it into
+      # a SHA. SHAs are identifiers, not integrity digests, so the version
+      # carries no digest.
+      #
+      # @param id [PackageId] source is the git remote URL
+      # @param filter [Hash] locator: one of "commit" or "tag"
+      # @return [Package] a singleton universe
       # @raise [RefResolutionError] if the ref cannot be resolved via ls-remote
-      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
-      def fetch(id)
-        repo_url = id["repo"]
-        tag = id["tag"]
-        commit = id["commit"]
-        ref = commit || tag
+      sig { override.params(id: PackageId, filter: T::Hash[String, T.untyped]).returns(Package) }
+      def find(id, filter: {})
+        repo_url = T.must(id.source)
+        sha = resolve_ref(repo_url, filter["commit"] || filter["tag"])
 
-        sha = resolve_ref(repo_url, ref)
-
-        Dependency.new(
-          name: id["name"],
-          integration: id["integration"].to_sym,
-          group: id["group"].to_sym,
-          version: sha,
-          hash: nil,
-          metadata: { "repo" => repo_url },
+        Package.new(
+          id: id,
+          versions: [PackageVersion.new(version: sha, metadata: { "repo" => repo_url })],
         )
       end
 

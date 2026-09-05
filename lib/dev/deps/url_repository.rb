@@ -4,8 +4,11 @@
 require "digest"
 require "open3"
 require "tempfile"
+require_relative "artifact"
+require_relative "package"
+require_relative "package_id"
+require_relative "package_version"
 require_relative "repository"
-require_relative "dependency"
 
 module Dev
   module Deps
@@ -18,29 +21,34 @@ module Dev
 
       class DownloadError < StandardError; end
 
-      # Download a URL dependency and compute its SHA256 integrity hash.
+      # Report a URL dependency's universe: the one artifact behind the URL,
+      # as a singleton.
       #
-      # @param id [Hash] must include "name", "url", "integration", "group";
-      #   optionally "tag" for version
-      # @return [Dependency] with hash set to "SHA256=<hex>" and
-      #   metadata["downloaded_path"] pointing to the temp file
+      # Dev-enforced integrity, trust-on-first-use: the artifact is downloaded
+      # and hashed at resolve time, and that SHA256 rides as the version's
+      # digest. The version is the filter's "tag"; URLs with no tag report an
+      # empty version the Resolver mints back to nil.
+      #
+      # @param id [PackageId] source is the download URL
+      # @param filter [Hash] locator: optionally "tag" for version
+      # @return [Package] a singleton universe
       # @raise [DownloadError] if the download fails
-      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
-      def fetch(id)
-        url = id["url"]
-        name = id["name"]
+      sig { override.params(id: PackageId, filter: T::Hash[String, T.untyped]).returns(Package) }
+      def find(id, filter: {})
+        url = T.must(id.source)
+        path = download_to_tempfile(url, id.name)
+        digest = "SHA256=#{Digest::SHA256.file(path).hexdigest}"
 
-        path = download_to_tempfile(url, name)
-        sha256_hex = Digest::SHA256.file(path).hexdigest
-        hash = "SHA256=#{sha256_hex}"
-
-        Dependency.new(
-          name: name,
-          integration: id["integration"].to_sym,
-          group: id["group"].to_sym,
-          version: id["tag"],
-          hash: hash,
-          metadata: { "url" => url, "downloaded_path" => path },
+        Package.new(
+          id: id,
+          versions: [
+            PackageVersion.new(
+              version: filter["tag"].to_s,
+              digest: digest,
+              artifacts: { "default" => Artifact.new(uri: url, digest: digest) },
+              metadata: { "url" => url, "downloaded_path" => path },
+            ),
+          ],
         )
       end
 

@@ -4,8 +4,12 @@
 require "json"
 require "net/http"
 require "uri"
+require_relative "artifact"
+require_relative "dependency_edge"
+require_relative "package"
+require_relative "package_id"
+require_relative "package_version"
 require_relative "repository"
-require_relative "dependency"
 
 module Dev
   module Deps
@@ -17,9 +21,7 @@ module Dev
       extend T::Sig
 
       class ApiError < StandardError; end
-      class ModNotFoundError < StandardError; end
-      class NoVersionError < StandardError; end
-      class TargetNotFoundError < StandardError; end
+      class ModNotFoundError < PackageNotFoundError; end
 
       API_HOST = "https://api.ficsit.app"
       GRAPHQL_ENDPOINT = T.let(URI("#{API_HOST}/v2/query"), URI::Generic)
@@ -51,93 +53,105 @@ module Dev
         }
       GRAPHQL
 
-      # Resolve a ficsit.app mod dependency to a pinned Dependency.
+      # Report a mod's published versions from ficsit.app.
       #
-      # Two shapes, selected by the fetch id:
-      # - Multi-platform (id["platforms"] present): resolve the mod for every
-      #   requested platform and nest each platform's {hash, link} under
-      #   metadata["platforms"]. nil entries map to the default target (Windows).
-      #   The top-level hash is nil since integrity is tracked per platform.
-      # - Single-platform (legacy): resolve one "target" (default Windows) and
-      #   carry the hash on the Dependency, as before.
+      # Each version carries its targets as platforms, each target's download
+      # as an Artifact (dev-enforced integrity: the SHA256 the API publishes),
+      # its required mod dependencies as edges, and the install facts
+      # FicsitIntegration reads (mod_id, game_version, and either a
+      # single-target digest or a per-platform block, per the filter).
       #
-      # @param id [Hash] must include "name" (mod_reference), "integration", "group";
-      #   optionally "version" (semver constraint like "^3.12.0"),
-      #   "target" (e.g. "Windows") or "platforms" (Array<String, nil>)
-      # @return [Dependency]
+      # @param id [PackageId] name is the mod_reference
+      # @param filter [Hash] locator only; "platforms" (Array<String, nil>)
+      #   or "target" select which targets the install facts describe
+      # @return [Package]
       # @raise [ModNotFoundError] if the mod_reference doesn't exist on ficsit.app
-      # @raise [NoVersionError] if no versions are available
-      # @raise [TargetNotFoundError] if a requested platform has no published target
       # @raise [ApiError] if the GraphQL request fails
-      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
-      def fetch(id)
-        mod_reference = id["name"]
-        mod_data = query_mod(mod_reference)
-        versions = mod_data["versions"]
-        raise NoVersionError, "no versions found for #{mod_reference}" if versions.nil? || versions.empty?
+      sig { override.params(id: PackageId, filter: T::Hash[String, T.untyped]).returns(Package) }
+      def find(id, filter: {})
+        mod_data = query_mod(id.name)
+        versions = (mod_data["versions"] || []).map do |version_data|
+          package_version(mod_data, version_data, filter)
+        end
 
-        version_data = versions.first
+        Package.new(id: id, versions: versions)
+      end
+
+      private
+
+      # Map one GraphQL version object to a PackageVersion.
+      #
+      # Universe facts (platforms, artifacts, edges) are unconditional. The
+      # install facts mirror the pin shapes FicsitIntegration reads: with
+      # requested platforms, a metadata["platforms"] block covering the
+      # targets this version actually publishes (the Resolver rejects the
+      # version if a requested one is missing); otherwise the legacy
+      # single-target shape (metadata["target"] plus the digest).
+      #
+      # @param mod_data [Hash] the mod object (for mod_id)
+      # @param version_data [Hash] one version object
+      # @param filter [Hash] the declaration constraint, as a locator
+      # @return [PackageVersion]
+      sig do
+        params(
+          mod_data: T::Hash[String, T.untyped],
+          version_data: T::Hash[String, T.untyped],
+          filter: T::Hash[String, T.untyped],
+        ).returns(PackageVersion)
+      end
+      def package_version(mod_data, version_data, filter)
+        targets = version_data["targets"] || []
         metadata = {
           "mod_id" => mod_data["id"],
           "game_version" => version_data["game_version"],
         }
 
-        requested = id["platforms"]
+        requested = filter["platforms"]
         if requested && !requested.empty?
-          metadata["platforms"] = resolve_platforms(mod_reference, version_data, requested)
-          hash = nil
+          digest = nil
+          metadata["platforms"] = platform_block(version_data, targets, requested)
         else
-          target = id.fetch("target", DEFAULT_TARGET)
-          target_data = find_target(version_data["targets"] || [], target)
-          hash = target_data ? "SHA256=#{target_data["hash"]}" : nil
+          target = filter.fetch("target", DEFAULT_TARGET)
+          target_data = find_target(targets, target)
+          digest = target_data ? "SHA256=#{target_data["hash"]}" : nil
           metadata["target"] = target
         end
 
-        transitive_deps = (version_data["dependencies"] || [])
-          .reject { |d| d["optional"] }
-          .map { |d| { name: d["mod_id"], constraint: d["condition"] } }
-
-        Dependency.new(
-          name: mod_reference,
-          integration: id["integration"].to_sym,
-          group: id["group"].to_sym,
+        PackageVersion.new(
           version: version_data["version"],
-          hash: hash,
+          platforms: targets.map { |t| t["targetName"] },
+          digest: digest,
+          artifacts: targets.to_h do |t|
+            [t["targetName"], Artifact.new(uri: download_url(version_data, t), digest: "SHA256=#{t["hash"]}")]
+          end,
+          dependencies: (version_data["dependencies"] || [])
+            .reject { |d| d["optional"] }
+            .map { |d| DependencyEdge.new(name: d["mod_id"], constraint: d["condition"]) },
           metadata: metadata,
-          dependencies: transitive_deps,
         )
       end
 
-      private
-
-      # Resolve each requested platform to its {hash, link}, keyed by the actual
-      # ficsit target name. nil maps to the default target; unlike the legacy
-      # single-target path, a missing platform is a hard error here because the
-      # caller asked for that specific arch.
+      # The {hash, link} block for each requested platform this version
+      # publishes. Non-raising: a missing target simply isn't in the block —
+      # whether that disqualifies the version is the Resolver's call.
       #
-      # @param mod_reference [String] for error messages
-      # @param version_data [Hash] the chosen version object
-      # @param requested [Array<String, nil>] platforms to resolve
+      # @param version_data [Hash] the version object
+      # @param targets [Array<Hash>] its target objects
+      # @param requested [Array<String, nil>] platforms; nil means the default
       # @return [Hash{String => Hash}] target name → { "hash" => …, "link" => … }
-      # @raise [TargetNotFoundError] if a requested platform has no target
       sig do
         params(
-          mod_reference: String,
           version_data: T::Hash[String, T.untyped],
+          targets: T::Array[T::Hash[String, T.untyped]],
           requested: T::Array[T.nilable(String)],
         ).returns(T::Hash[String, T::Hash[String, String]])
       end
-      def resolve_platforms(mod_reference, version_data, requested)
-        targets = version_data["targets"] || []
+      def platform_block(version_data, targets, requested)
         target_names = requested.map { |platform| platform.nil? ? DEFAULT_TARGET : platform }.uniq
 
         target_names.each_with_object({}) do |target_name, acc|
           target_data = targets.find { |t| t["targetName"] == target_name }
-          unless target_data
-            available = targets.map { |t| t["targetName"] }.join(", ")
-            raise TargetNotFoundError,
-              "#{mod_reference} #{version_data["version"]} has no #{target_name} target (available: #{available})"
-          end
+          next unless target_data
 
           acc[target_name] = {
             "hash" => "SHA256=#{target_data["hash"]}",

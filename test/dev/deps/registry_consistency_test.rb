@@ -24,6 +24,11 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
   # Integrations deliberately not host-wired (none today).
   INTEGRATION_ALLOWLIST = {}.freeze
 
+  # Schemes deliberately not owned by a single integration symbol.
+  SCHEME_ALLOWLIST = {
+    "version_scheme.rb" => "VersionScheme is the abstract base every scheme subclasses",
+  }.freeze
+
   # Every GroupDSL verb that creates a declaration, mapped to its integration
   # symbol. Adding a new declaration verb must add a Registry entry too.
   DECLARATION_INTEGRATIONS = %i[bundler brew cmake luarocks ficsit gh steam pip].freeze
@@ -62,6 +67,33 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
 
     Then "none are left unwired"
     assert_empty unwired, "integration classes missing from Registry::INTEGRATIONS: #{unwired.join(", ")}"
+  end
+
+  test "every version scheme class is wired into the registry or allowlisted" do
+    Given "the scheme files on disk and the registry's referenced schemes"
+    referenced = Dev::Deps::Registry::INTEGRATIONS.map(&:scheme).uniq.map { |k| source_file(k) }
+
+    When "checking each *_scheme.rb file"
+    unwired = deps_files("_scheme").reject do |basename|
+      SCHEME_ALLOWLIST.key?(basename) ||
+        referenced.include?(File.realpath(File.join(DEPS_DIR, basename)))
+    end
+
+    Then "none are left unwired"
+    assert_empty unwired, "scheme classes missing from Registry::INTEGRATIONS: #{unwired.join(", ")}"
+  end
+
+  test "every locker class is wired into the registry" do
+    Given "the locker files on disk and the registry's referenced lockers"
+    referenced = Dev::Deps::Registry::INTEGRATIONS.filter_map(&:locker).uniq.map { |k| source_file(k) }
+
+    When "checking each *_locker.rb file"
+    unwired = deps_files("_locker").reject do |basename|
+      referenced.include?(File.realpath(File.join(DEPS_DIR, basename)))
+    end
+
+    Then "none are left unwired"
+    assert_empty unwired, "locker classes missing from Registry::INTEGRATIONS: #{unwired.join(", ")}"
   end
 
   test "every declaration DSL verb has a registry entry" do

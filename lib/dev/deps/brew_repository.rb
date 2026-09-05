@@ -3,8 +3,10 @@
 
 require "json"
 require "open3"
+require_relative "package"
+require_relative "package_id"
+require_relative "package_version"
 require_relative "repository"
-require_relative "dependency"
 
 module Dev
   module Deps
@@ -17,56 +19,52 @@ module Dev
 
       class BrewInfoError < StandardError; end
 
-      # Resolve a brew dependency identifier to a pinned Dependency.
-      #
-      # For casks, returns a Dependency with nil version/hash.
-      # For formulae, queries `brew info --json=v1` for the stable version
-      # and bottle SHA256.
-      #
-      # @param id [Hash] must include "name", "integration", "group";
-      #   optionally "tap", "cask"
-      # @return [Dependency]
-      # @raise [BrewInfoError] if `brew info` fails for a formula
-      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
-      def fetch(id)
-        name = id["name"]
-        # The declared `version:` is a brew formula version *suffix* (e.g. "18"
-        # selects the llvm@18 formula), not a semver to resolve — same meaning the
-        # container build path gives it. The resolved stable version below is the
-        # exact installed version, recorded for the lockfile.
-        version_suffix = id["version"]
+      # Version stand-in for casks, whose versions Homebrew does not expose
+      # here; the Resolver mints it back to a nil pin version.
+      UNVERSIONED = ""
 
-        if id["cask"]
-          cask_metadata = { "cask" => true }
-          cask_metadata["version_suffix"] = version_suffix if version_suffix
-          return Dependency.new(
-            name: name,
-            integration: id["integration"].to_sym,
-            group: id["group"].to_sym,
-            version: nil,
-            hash: nil,
-            metadata: cask_metadata,
+      # Report a brew package's universe: the one stable version the selected
+      # formula spec currently has.
+      #
+      # Brew is a moving registry — `brew info` answers with a single current
+      # version, so the universe is a singleton. The filter locates which
+      # formula that is: "version" is a formula *suffix* ("18" selects
+      # llvm@18), "tap" scopes the name, "cask" switches to an unversioned
+      # cask entry. PinnedScheme accepts whatever brew reports.
+      #
+      # @param id [PackageId] name is the formula or cask name
+      # @param filter [Hash] locator: "tap", "version" (suffix), "cask"
+      # @return [Package] a singleton universe
+      # @raise [BrewInfoError] if `brew info` fails for a formula
+      sig { override.params(id: PackageId, filter: T::Hash[String, T.untyped]).returns(Package) }
+      def find(id, filter: {})
+        version_suffix = filter["version"]
+
+        if filter["cask"]
+          metadata = { "cask" => true }
+          metadata["version_suffix"] = version_suffix if version_suffix
+          return Package.new(
+            id: id,
+            versions: [PackageVersion.new(version: UNVERSIONED, metadata: metadata)],
           )
         end
 
-        info = brew_info_with_tap(build_formula_spec(name, id["tap"], version_suffix), id["tap"])
-
-        version = info["versions"]["stable"]
+        info = brew_info_with_tap(build_formula_spec(id.name, filter["tap"], version_suffix), filter["tap"])
         bottle_hash = extract_bottle_hash(info)
 
-        # env/host scoping is attached by the Resolver (attach_install_scoping),
-        # not read from the fetch id — the id describes what the dep is.
         metadata = {}
-        metadata["tap"] = id["tap"] if id["tap"]
+        metadata["tap"] = filter["tap"] if filter["tap"]
         metadata["version_suffix"] = version_suffix if version_suffix
 
-        Dependency.new(
-          name: name,
-          integration: id["integration"].to_sym,
-          group: id["group"].to_sym,
-          version: version,
-          hash: bottle_hash ? "SHA256=#{bottle_hash}" : nil,
-          metadata: metadata.empty? ? {} : metadata,
+        Package.new(
+          id: id,
+          versions: [
+            PackageVersion.new(
+              version: info["versions"]["stable"],
+              digest: bottle_hash ? "SHA256=#{bottle_hash}" : nil,
+              metadata: metadata,
+            ),
+          ],
         )
       end
 

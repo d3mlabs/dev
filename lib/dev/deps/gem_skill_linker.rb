@@ -4,7 +4,7 @@
 require "open3"
 require "pathname"
 require_relative "../skill_installer"
-require_relative "bundler_repository"
+require_relative "bundler_locker"
 
 module Dev
   module Deps
@@ -193,7 +193,7 @@ module Dev
       # @return [Pathname]
       sig { returns(Pathname) }
       def gemfile_path
-        @project_root / BundlerRepository::GEMFILE
+        @project_root / BundlerLocker::GEMFILE
       end
 
       # @return [Pathname]

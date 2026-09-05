@@ -1,8 +1,10 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "package"
+require_relative "package_id"
+require_relative "package_version"
 require_relative "repository"
-require_relative "dependency"
 require_relative "steam_cmd"
 
 module Dev
@@ -24,31 +26,38 @@ module Dev
     class SteamRepository < Repository
       extend T::Sig
 
-      # Resolve a Steam app dependency to a pinned Dependency.
+      # Report a Steam app's universe: one buildid, as a singleton.
       #
-      # @param id [Hash] must include "name", "app", "install_dir", "integration",
-      #   "group"; optionally "branch" (default "public"), "buildid" (explicit
-      #   pin), and "platforms" (the consuming group's platform, e.g. ["LinuxServer"])
-      # @return [Dependency]
+      # Steam exposes no enumerable build history — the filter locates the
+      # build: an explicit "buildid" pin, or the current buildid of "branch"
+      # (default public) via SteamCMD. No digest: Steam publishes no stable
+      # per-build hash; integrity is SteamCMD's app_update … validate at
+      # install.
+      #
+      # @param id [PackageId] name is the declaration name
+      # @param filter [Hash] locator: "app", "install_dir", optionally
+      #   "branch", "buildid", "platforms"
+      # @return [Package] a singleton universe
       # @raise [SteamCmd::SteamCmdError] if resolving the buildid fails
-      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
-      def fetch(id)
-        app = id["app"]
-        branch = id["branch"] || "public"
-        build_id = id["buildid"] || resolve_build_id(app:, branch:)
+      sig { override.params(id: PackageId, filter: T::Hash[String, T.untyped]).returns(Package) }
+      def find(id, filter: {})
+        app = filter["app"]
+        branch = filter["branch"] || "public"
+        build_id = filter["buildid"] || resolve_build_id(app:, branch:)
 
-        Dependency.new(
-          name: id["name"],
-          integration: id["integration"].to_sym,
-          group: id["group"].to_sym,
-          version: build_id.to_s,
-          hash: nil,
-          metadata: {
-            "app" => app.to_s,
-            "branch" => branch,
-            "install_dir" => id["install_dir"],
-            "platform" => steam_platform_for(id["platforms"]),
-          },
+        Package.new(
+          id: id,
+          versions: [
+            PackageVersion.new(
+              version: build_id.to_s,
+              metadata: {
+                "app" => app.to_s,
+                "branch" => branch,
+                "install_dir" => filter["install_dir"],
+                "platform" => steam_platform_for(filter["platforms"]),
+              },
+            ),
+          ],
         )
       end
 
