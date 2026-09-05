@@ -76,6 +76,43 @@ class ShadowenvRubyTest < Minitest::Test
     FileUtils.rm_rf(tmpdir)
   end
 
+  test "detect_homebrew_ruby_version asks the keg's ruby when the dirname carries no version" do
+    Given "a keg whose dirname has no numeric version but whose bin/ruby answers"
+    tmpdir = Dir.mktmpdir("shadowenv-detect-test-")
+    keg = File.join(tmpdir, "Cellar", "ruby", "HEAD")
+    bin = File.join(keg, "bin")
+    FileUtils.mkdir_p(bin)
+    File.write(File.join(bin, "ruby"), "#!/bin/sh\nprintf '4.0.6\\n'\n")
+    FileUtils.chmod(0o755, File.join(bin, "ruby"))
+
+    When "we detect the Homebrew Ruby version"
+    result = Dev::ShadowenvRuby.detect_homebrew_ruby_version
+
+    Then "the version comes from running the binary"
+    _ * Dev::ShadowenvRuby.brew_prefix_for("ruby") >> keg
+    result == "4.0.6"
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "detect_homebrew_ruby_version returns nil when the keg has no version and no ruby binary" do
+    Given "a keg whose dirname has no numeric version and no bin/ruby"
+    tmpdir = Dir.mktmpdir("shadowenv-detect-test-")
+    keg = File.join(tmpdir, "Cellar", "ruby", "HEAD")
+    FileUtils.mkdir_p(keg)
+
+    When "we detect the Homebrew Ruby version"
+    result = Dev::ShadowenvRuby.detect_homebrew_ruby_version
+
+    Then "nil is returned"
+    _ * Dev::ShadowenvRuby.brew_prefix_for("ruby") >> keg
+    result.nil? == true
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
   test "detect_homebrew_ruby_version strips a brew formula revision suffix" do
     Given "a brew ruby prefix resolving to a revision keg (a rebuild of the same upstream Ruby)"
     tmpdir = Dir.mktmpdir("shadowenv-detect-test-")
@@ -127,6 +164,61 @@ class ShadowenvRubyTest < Minitest::Test
 
     Cleanup
     FileUtils.rm_rf(tmpdir)
+  end
+
+  # --- setup! ---
+
+  test "setup! writes the lisp and .ruby-version and reports success" do
+    Given "a project root and a resolvable ruby root"
+    tmpdir = Dir.mktmpdir("shadowenv-setup-test-")
+    ruby_root = File.join(tmpdir, "rubies", "4.0.5")
+    FileUtils.mkdir_p(ruby_root)
+
+    When "we run full provisioning"
+    result = Dev::ShadowenvRuby.setup!(ruby_version: "4.0.5", project_root: tmpdir)
+
+    Then "the lisp and .ruby-version are written and setup reports success"
+    _ * Dev::ShadowenvRuby.ensure_ruby_installed!("4.0.5") >> ruby_root
+    _ * Dev::ShadowenvRuby.ensure_shadowenv_shell_hook! >> :added
+    result == true
+    File.read(File.join(tmpdir, ".shadowenv.d", "510_ruby.lisp")).include?('(provide "ruby" "4.0.5")') == true
+    File.read(File.join(tmpdir, ".ruby-version")) == "4.0.5\n"
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "setup! reports failure and writes nothing when the ruby cannot be provisioned" do
+    Given "a project root and no installable ruby"
+    tmpdir = Dir.mktmpdir("shadowenv-setup-test-")
+
+    When "we run full provisioning"
+    result = Dev::ShadowenvRuby.setup!(ruby_version: "4.0.5", project_root: tmpdir)
+
+    Then "setup reports failure and leaves no artifacts behind"
+    _ * Dev::ShadowenvRuby.ensure_ruby_installed!("4.0.5") >> nil
+    result == false
+    File.exist?(File.join(tmpdir, ".shadowenv.d", "510_ruby.lisp")) == false
+    File.exist?(File.join(tmpdir, ".ruby-version")) == false
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  # --- find_ruby_root ---
+
+  test "find_ruby_root returns nil when the version is not installed" do
+    Given "an rbenv root with no versions"
+    tmp_rbenv_root = Dir.mktmpdir("rbenv-root-")
+    original_rbenv_root = ENV["RBENV_ROOT"]
+    ENV["RBENV_ROOT"] = tmp_rbenv_root
+
+    Expect "no ruby root is found"
+    Dev::ShadowenvRuby.find_ruby_root("4.0.5").nil? == true
+
+    Cleanup
+    ENV["RBENV_ROOT"] = original_rbenv_root
+    FileUtils.rm_rf(tmp_rbenv_root)
   end
 
   # --- provisioned? ---
@@ -192,6 +284,178 @@ class ShadowenvRubyTest < Minitest::Test
     "3.2.5"  | "3.2.0"
     "2.7.0"  | "2.7.0"
     "3.3.10" | "3.3.0"
+    "4"      | "4.0"
+  end
+
+  # --- brew_prefix_for / path_with_brew_bin / homebrew_prefix ---
+
+  test "brew_prefix_for returns nil when brew is absent" do
+    Given "a PATH without brew"
+    original_path = ENV["PATH"]
+    ENV["PATH"] = "/usr/bin:/bin"
+
+    Expect "no prefix is found"
+    Dev::ShadowenvRuby.brew_prefix_for("ruby").nil? == true
+
+    Cleanup
+    ENV["PATH"] = original_path
+  end
+
+  test "brew_prefix_for returns the directory brew prints" do
+    Given "a fake brew printing an existing directory"
+    tmpdir = Dir.mktmpdir("fake-brew-")
+    prefix = File.join(tmpdir, "opt", "ruby")
+    FileUtils.mkdir_p(prefix)
+    write_fake_brew(tmpdir, prints: prefix)
+    original_path = ENV["PATH"]
+    ENV["PATH"] = "#{tmpdir}:/usr/bin:/bin"
+
+    Expect "the printed prefix is returned"
+    Dev::ShadowenvRuby.brew_prefix_for("ruby") == prefix
+
+    Cleanup
+    ENV["PATH"] = original_path
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "brew_prefix_for returns nil when brew prints a nonexistent directory" do
+    Given "a fake brew printing a directory that does not exist"
+    tmpdir = Dir.mktmpdir("fake-brew-")
+    write_fake_brew(tmpdir, prints: File.join(tmpdir, "no-such-keg"))
+    original_path = ENV["PATH"]
+    ENV["PATH"] = "#{tmpdir}:/usr/bin:/bin"
+
+    Expect "nil is returned"
+    Dev::ShadowenvRuby.brew_prefix_for("ruby").nil? == true
+
+    Cleanup
+    ENV["PATH"] = original_path
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "path_with_brew_bin prepends the brew bin from HOMEBREW_PREFIX" do
+    Given "HOMEBREW_PREFIX pointing at an existing directory"
+    tmpdir = Dir.mktmpdir("brew-prefix-")
+    original_brew_prefix = ENV["HOMEBREW_PREFIX"]
+    ENV["HOMEBREW_PREFIX"] = tmpdir
+
+    When "we compute the install PATH"
+    result = Dev::ShadowenvRuby.path_with_brew_bin
+
+    Then "the brew bin dir leads the PATH"
+    result == "#{File.join(tmpdir, "bin")}:#{ENV["PATH"]}"
+
+    Cleanup
+    ENV["HOMEBREW_PREFIX"] = original_brew_prefix
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "path_with_brew_bin resolves the prefix via brew when the env var is unset" do
+    Given "no HOMEBREW_PREFIX and a fake brew printing an existing directory"
+    tmpdir = Dir.mktmpdir("fake-brew-")
+    prefix = File.join(tmpdir, "homebrew")
+    FileUtils.mkdir_p(prefix)
+    write_fake_brew(tmpdir, prints: prefix)
+    original_brew_prefix = ENV["HOMEBREW_PREFIX"]
+    original_path = ENV["PATH"]
+    ENV.delete("HOMEBREW_PREFIX")
+    ENV["PATH"] = "#{tmpdir}:/usr/bin:/bin"
+
+    When "we compute the install PATH"
+    result = Dev::ShadowenvRuby.path_with_brew_bin
+
+    Then "the resolved brew bin dir leads the PATH"
+    result == "#{File.join(prefix, "bin")}:#{ENV["PATH"]}"
+
+    Cleanup
+    ENV["HOMEBREW_PREFIX"] = original_brew_prefix
+    ENV["PATH"] = original_path
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "homebrew_prefix resolves via brew when the env var is unset" do
+    Given "no HOMEBREW_PREFIX and a fake brew printing an existing directory"
+    tmpdir = Dir.mktmpdir("fake-brew-")
+    prefix = File.join(tmpdir, "homebrew")
+    FileUtils.mkdir_p(prefix)
+    write_fake_brew(tmpdir, prints: prefix)
+    original_brew_prefix = ENV["HOMEBREW_PREFIX"]
+    original_path = ENV["PATH"]
+    ENV.delete("HOMEBREW_PREFIX")
+    ENV["PATH"] = "#{tmpdir}:/usr/bin:/bin"
+
+    Expect "the printed prefix is returned"
+    Dev::ShadowenvRuby.homebrew_prefix == prefix
+
+    Cleanup
+    ENV["HOMEBREW_PREFIX"] = original_brew_prefix
+    ENV["PATH"] = original_path
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "homebrew_prefix is nil when brew is absent entirely" do
+    Given "no HOMEBREW_PREFIX and no brew on PATH"
+    original_brew_prefix = ENV["HOMEBREW_PREFIX"]
+    original_path = ENV["PATH"]
+    ENV.delete("HOMEBREW_PREFIX")
+    ENV["PATH"] = "/usr/bin:/bin"
+
+    Expect "nil is returned via the ENOENT rescue"
+    Dev::ShadowenvRuby.homebrew_prefix.nil? == true
+
+    Cleanup
+    ENV["HOMEBREW_PREFIX"] = original_brew_prefix
+    ENV["PATH"] = original_path
+  end
+
+  # --- ensure_ruby_build_deps! ---
+
+  test "ensure_ruby_build_deps! installs every missing build library" do
+    Given "a fake brew where no formula is installed yet"
+    tmpdir = Dir.mktmpdir("fake-brew-")
+    log = File.join(tmpdir, "invocations.log")
+    File.write(File.join(tmpdir, "brew"), <<~SCRIPT)
+      #!/bin/sh
+      echo "$@" >> "#{log}"
+      case "$1" in
+        list) exit 1 ;;
+      esac
+      exit 0
+    SCRIPT
+    FileUtils.chmod(0o755, File.join(tmpdir, "brew"))
+    env = { "PATH" => "#{tmpdir}:/usr/bin:/bin" }
+
+    When "we ensure the build deps"
+    Dev::ShadowenvRuby.ensure_ruby_build_deps!(env)
+
+    Then "each formula is brew-installed"
+    invocations = File.read(log)
+    Dev::ShadowenvRuby::RUBY_BUILD_BREW_DEPS.keys.all? { |f| invocations.include?("install #{f}") } == true
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "ensure_ruby_build_deps! skips formulae that are already installed" do
+    Given "a fake brew where every formula is already installed"
+    tmpdir = Dir.mktmpdir("fake-brew-")
+    log = File.join(tmpdir, "invocations.log")
+    File.write(File.join(tmpdir, "brew"), <<~SCRIPT)
+      #!/bin/sh
+      echo "$@" >> "#{log}"
+      exit 0
+    SCRIPT
+    FileUtils.chmod(0o755, File.join(tmpdir, "brew"))
+    env = { "PATH" => "#{tmpdir}:/usr/bin:/bin" }
+
+    When "we ensure the build deps"
+    Dev::ShadowenvRuby.ensure_ruby_build_deps!(env)
+
+    Then "nothing is installed"
+    File.read(log).include?("install") == false
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
   end
 
   # --- generate_ruby_lisp ---
@@ -315,6 +579,28 @@ class ShadowenvRubyTest < Minitest::Test
     Cleanup
     ENV["SHELL"] = original_shell
     ENV["HOME"] = original_home
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "ensure_shadowenv_shell_hook! reports false when the RC file cannot be written" do
+    Given "a zsh shell whose home directory is not writable"
+    tmpdir = Dir.mktmpdir("shadowenv-hook-test-")
+    original_shell = ENV["SHELL"]
+    original_home = ENV["HOME"]
+    ENV["SHELL"] = "/bin/zsh"
+    ENV["HOME"] = tmpdir
+    FileUtils.chmod(0o500, tmpdir)
+
+    When "we ensure the shell hook"
+    result = Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!
+
+    Then "the failure is reported as false instead of raising"
+    result == false
+
+    Cleanup
+    ENV["SHELL"] = original_shell
+    ENV["HOME"] = original_home
+    FileUtils.chmod(0o700, tmpdir)
     FileUtils.rm_rf(tmpdir)
   end
 
@@ -544,6 +830,24 @@ class ShadowenvRubyTest < Minitest::Test
     FileUtils.rm_rf(tmpdir)
   end
 
+  test "ensure_ruby_installed! attempts a fresh install and reports nil when the ruby never appears" do
+    Given "an rbenv root with no installed rubies"
+    tmp_rbenv_root = Dir.mktmpdir("rbenv-root-")
+    original_rbenv_root = ENV["RBENV_ROOT"]
+    ENV["RBENV_ROOT"] = tmp_rbenv_root
+
+    When "we ensure the ruby is installed"
+    result = Dev::ShadowenvRuby.ensure_ruby_installed!("4.0.5")
+
+    Then "a fresh (non-forced) install is attempted and the missing result is nil"
+    1 * Dev::ShadowenvRuby.install_ruby_with_version_manager("4.0.5")
+    result.nil? == true
+
+    Cleanup
+    ENV["RBENV_ROOT"] = original_rbenv_root
+    FileUtils.rm_rf(tmp_rbenv_root)
+  end
+
   test "ensure_ruby_installed! returns a healthy ruby without reinstalling" do
     Given "an installed ruby with healthy extensions that reports the requested version"
     tmp_rbenv_root = Dir.mktmpdir("rbenv-root-")
@@ -565,6 +869,13 @@ class ShadowenvRubyTest < Minitest::Test
   end
 
   private
+
+  # A stand-in brew that prints the given path for any prefix query.
+  def write_fake_brew(dir, prints:)
+    fake_brew = File.join(dir, "brew")
+    File.write(fake_brew, "#!/bin/sh\nprintf '%s\\n' \"#{prints}\"\n")
+    FileUtils.chmod(0o755, fake_brew)
+  end
 
   # A stand-in bin/ruby: prints the given version for `-e "print RUBY_VERSION"`;
   # every other invocation (the extension `require` probes) exits 0 when
