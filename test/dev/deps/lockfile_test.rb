@@ -284,7 +284,7 @@ class Dev::Deps::LockfileTest < Minitest::Test
 
   test "reads legacy flat-format lockfiles" do
     # Migration shim: delete this test with the legacy read path once every
-    # consumer repo's lockfiles have been rewritten by update-deps.
+    # consumer repo's lockfiles have been rewritten by update-deps (issue #146).
     Given "lockfiles in the pre-nested format, name-keyed with integration in the value"
     dir = Dir.mktmpdir("dev-lockfile-test-")
     File.write(File.join(dir, "deps.lock"), <<~YAML)
