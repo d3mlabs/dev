@@ -127,11 +127,14 @@ module Dev
     end
 
     # Returns the platform-specific binaries subdirectory.
-    sig { returns(String) }
-    def platform_subdir
-      if RUBY_PLATFORM.include?("darwin")
+    #
+    # @param ruby_platform [String] the platform triple to map (defaults to
+    #   the running interpreter's)
+    sig { params(ruby_platform: String).returns(String) }
+    def platform_subdir(ruby_platform = RUBY_PLATFORM)
+      if ruby_platform.include?("darwin")
         "Mac"
-      elsif RUBY_PLATFORM.include?("linux")
+      elsif ruby_platform.include?("linux")
         "Linux"
       else
         "Win64"

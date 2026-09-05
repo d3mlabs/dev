@@ -217,4 +217,17 @@ class ShadowenvUnrealTest < Minitest::Test
     Cleanup
     ENV["CI"] = original if original
   end
+
+  # --- platform_subdir ---
+
+  test "platform_subdir maps #{ruby_platform} to #{subdir}" do
+    Expect "the engine binaries subdirectory matches the platform"
+    Dev::ShadowenvUnreal.platform_subdir(ruby_platform) == subdir
+
+    Where
+    ruby_platform        | subdir
+    "arm64-darwin24"     | "Mac"
+    "x86_64-linux"       | "Linux"
+    "x64-mingw-ucrt"     | "Win64"
+  end
 end
