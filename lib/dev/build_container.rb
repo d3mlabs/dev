@@ -8,6 +8,7 @@ require "tmpdir"
 require "yaml"
 
 require "dev/build_watcher"
+require "dev/deps/lockfile"
 
 module Dev
   # Content-addressed Docker image management for build containers.
@@ -33,11 +34,6 @@ module Dev
     # invalidates a prewarmed image. Missing files are skipped (see content_tag).
     CONTENT_FILES = ["Dockerfile", ".dockerignore", "deps.lock", "build-deps.lock"].freeze
     TAG_PREFIX = "content-"
-    BUILD_DEPS_LOCK = "build-deps.lock"
-    # Both lockfiles are scanned for version-keyed install_dir resolution: gh
-    # build deps (e.g. the engine) land in build-deps.lock, while integration
-    # deps (e.g. the Satisfactory server) land in deps.lock.
-    LOCKFILES = ["deps.lock", "build-deps.lock"].freeze
 
     module_function
 
@@ -233,21 +229,20 @@ module Dev
     # @return [Hash{String => String}] context name => absolute host path
     sig { params(project_root: Pathname).returns(T::Hash[String, String]) }
     def build_contexts_from_lockfile(project_root)
-      path = Pathname(project_root) / BUILD_DEPS_LOCK
-      return {} unless path.exist?
-
-      yaml = YAML.safe_load(path.read, permitted_classes: [Symbol]) || {}
-
       contexts = {}
-      yaml.each do |name, attrs|
-        next if name == "env" # env-scoped deps are not whole-image build inputs
-        next unless attrs.is_a?(Hash)
-        next unless attrs["group"] == "build" && attrs["install_dir"]
+      locked_deps(project_root).each do |dep|
+        # Env-scoped deps are not whole-image build inputs; group == :build
+        # limits us to build-deps.lock entries.
+        next unless dep.group == :build
+        next if dep.metadata&.key?("env")
 
-        base = File.expand_path(attrs["install_dir"])
+        install_dir = dep.metadata&.fetch("install_dir", nil)
+        next unless install_dir
+
+        base = File.expand_path(install_dir)
         # Point at the version-keyed subdir the integration publishes to, so the
         # build context tracks the locked version (see resolve_versioned_volumes).
-        contexts[name.downcase] = attrs["version"] ? File.join(base, attrs["version"].to_s) : base
+        contexts[dep.name.downcase] = dep.version ? File.join(base, T.must(dep.version).to_s) : base
       end
       contexts
     end
@@ -282,33 +277,22 @@ module Dev
     # @return [Hash{String => String}] expanded install_dir => version
     sig { params(project_root: Pathname).returns(T::Hash[String, String]) }
     def install_dir_versions(project_root)
-      root = Pathname(project_root)
-      LOCKFILES.each_with_object({}) do |file, acc|
-        path = root / file
-        next unless path.exist?
+      locked_deps(project_root).each_with_object({}) do |dep, acc|
+        install_dir = dep.metadata&.fetch("install_dir", nil)
+        next unless install_dir && dep.version
 
-        yaml = YAML.safe_load(path.read, permitted_classes: [Symbol]) || {}
-        collect_install_dir_versions(yaml, acc)
+        acc[File.expand_path(install_dir)] = T.must(dep.version).to_s
       end
     end
 
-    # Recursively collect {expanded install_dir => version} from a lockfile hash,
-    # descending into the nested env: section of build-deps.lock.
+    # All locked dependencies from both lockfiles, parsed by Lockfile so
+    # format knowledge (including the legacy flat format) lives in one place.
     #
-    # @param yaml [Hash]
-    # @param acc  [Hash{String => String}] accumulator (mutated)
-    # @return [void]
-    sig { params(yaml: T::Hash[T.untyped, T.untyped], acc: T::Hash[String, String]).void }
-    def collect_install_dir_versions(yaml, acc)
-      yaml.each do |name, attrs|
-        next unless attrs.is_a?(Hash)
-
-        if name == "env"
-          attrs.each_value { |env_deps| collect_install_dir_versions(env_deps, acc) }
-        elsif attrs["install_dir"] && attrs["version"]
-          acc[File.expand_path(attrs["install_dir"])] = attrs["version"].to_s
-        end
-      end
+    # @param project_root [Pathname]
+    # @return [Array<Dev::Deps::Dependency>]
+    sig { params(project_root: Pathname).returns(T::Array[Dev::Deps::Dependency]) }
+    def locked_deps(project_root)
+      Dev::Deps::Lockfile.new(dir: project_root).read
     end
 
     # Build a docker run command for executing a shell command inside the container.
