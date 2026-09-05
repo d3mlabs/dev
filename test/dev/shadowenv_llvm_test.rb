@@ -131,6 +131,52 @@ class ShadowenvLlvmTest < Minitest::Test
     result == false
   end
 
+  # --- detect_llvm_prefix / brew_prefix_for ---
+
+  test "detect_llvm_prefix returns the prefix brew reports for an installed formula" do
+    Given "a fake brew printing an existing keg directory"
+    tmpdir = Dir.mktmpdir("fake-brew-llvm-")
+    prefix = File.join(tmpdir, "opt", "llvm@22")
+    FileUtils.mkdir_p(prefix)
+    write_fake_brew(tmpdir, prints: prefix)
+    original_path = ENV["PATH"]
+    ENV["PATH"] = "#{tmpdir}:/usr/bin:/bin"
+
+    Expect "the printed prefix is returned"
+    Dev::ShadowenvLlvm.detect_llvm_prefix == prefix
+
+    Cleanup
+    ENV["PATH"] = original_path
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "detect_llvm_prefix returns nil when no formula resolves to a real keg" do
+    Given "a fake brew printing a directory that does not exist"
+    tmpdir = Dir.mktmpdir("fake-brew-llvm-")
+    write_fake_brew(tmpdir, prints: File.join(tmpdir, "no-such-keg"))
+    original_path = ENV["PATH"]
+    ENV["PATH"] = "#{tmpdir}:/usr/bin:/bin"
+
+    Expect "no prefix is found"
+    Dev::ShadowenvLlvm.detect_llvm_prefix.nil? == true
+
+    Cleanup
+    ENV["PATH"] = original_path
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "detect_llvm_prefix returns nil when brew is absent" do
+    Given "a PATH without brew"
+    original_path = ENV["PATH"]
+    ENV["PATH"] = "/usr/bin:/bin"
+
+    Expect "no prefix is found"
+    Dev::ShadowenvLlvm.detect_llvm_prefix.nil? == true
+
+    Cleanup
+    ENV["PATH"] = original_path
+  end
+
   # --- ci_or_linux? ---
 
   test "ci_or_linux? returns true when CI env is set" do
@@ -158,5 +204,13 @@ class ShadowenvLlvmTest < Minitest::Test
 
     Cleanup
     ENV["CI"] = original if original
+  end
+
+  private
+
+  def write_fake_brew(dir, prints:)
+    fake_brew = File.join(dir, "brew")
+    File.write(fake_brew, "#!/bin/sh\nprintf '%s\\n' \"#{prints}\"\n")
+    FileUtils.chmod(0o755, fake_brew)
   end
 end
