@@ -11,7 +11,9 @@ module Dev
     # want" (DependencyDeclaration) and "what did we choose" (Dependency). It
     # is the Resolver's resolved-set key, which is why identity includes the
     # integration: two ecosystems can each publish a package named "ffi", and
-    # keying on the bare name would silently collapse them.
+    # keying on the bare name would silently collapse them. The lockfile
+    # carries the same identity to disk by nesting entries under their
+    # integration (Lockfile).
     #
     # A plain value class rather than Data.define: `source` carries a default,
     # and Data.define with a keyword-args initialize override is rejected by

@@ -47,9 +47,10 @@ if a `*_repository.rb`, `*_integration.rb`, `*_scheme.rb`, or
    `Gemfile.lock`. After this step, tool-solved universes are materialized
    on disk.
 2. **Resolve** — the `Resolver`, per declaration:
-   - rejects declaration sets where one name carries disagreeing
-     constraints (axes — group/platform/host/env — may differ; constraints
-     may not);
+   - rejects declaration sets where one package (integration + name)
+     carries disagreeing constraints (axes — group/platform/host/env —
+     may differ; constraints may not; the same name under two
+     integrations is two packages, free to differ);
    - builds the `PackageId` (the constraint's `repo`/`url` becomes the
      id's source) and calls `find`, passing the constraint hash as the
      `filter` — a *locator*, not a predicate: pinned ecosystems need the
@@ -63,8 +64,15 @@ if a `*_repository.rb`, `*_integration.rb`, `*_scheme.rb`, or
      → pin metadata), and stamps the declaration's `host`/`env` onto the
      pin's metadata;
    - queues the chosen version's `dependencies` edges as synthetic
-     declarations that inherit the parent's group/host/env.
-3. **Write** — pins go to `deps.lock`.
+     declarations that inherit the parent's group/host/env (edges stay
+     inside the declaring dep's integration — the resolved set is keyed
+     by `PackageId`).
+3. **Write** — pins go to `deps.lock` (app/test groups) and
+   `build-deps.lock` (build group), nested by integration
+   (`brew:` → `zlib:` → attrs) so the on-disk key carries the same
+   (integration, name) identity the resolver keys on. The reader also
+   accepts the pre-nesting flat format; that shim is deleted once every
+   consumer repo's lockfiles have been rewritten by `update-deps`.
 
 `dev install-deps` reads the lockfile and hands each integration its pins;
 no resolution happens at install time.
