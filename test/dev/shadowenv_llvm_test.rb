@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "shadowenv_llvm"
+require "dev/shadowenv_llvm"
 require "fileutils"
 require "tmpdir"
 
@@ -18,11 +18,11 @@ class ShadowenvLlvmTest < Minitest::Test
     FileUtils.mkdir_p(shadowenv_d)
     File.write(
       File.join(shadowenv_d, "520_llvm.lisp"),
-      ShadowenvLlvm.generate_llvm_lisp(llvm_prefix)
+      Dev::ShadowenvLlvm.generate_llvm_lisp(llvm_prefix)
     )
 
     Expect ".provisioned? returns true"
-    ShadowenvLlvm.provisioned?(llvm_prefix, project_root: tmpdir) == true
+    Dev::ShadowenvLlvm.provisioned?(llvm_prefix, project_root: tmpdir) == true
 
     Cleanup
     FileUtils.rm_rf(tmpdir)
@@ -35,11 +35,11 @@ class ShadowenvLlvmTest < Minitest::Test
     FileUtils.mkdir_p(shadowenv_d)
     File.write(
       File.join(shadowenv_d, "520_llvm.lisp"),
-      ShadowenvLlvm.generate_llvm_lisp("/usr/local/opt/llvm")
+      Dev::ShadowenvLlvm.generate_llvm_lisp("/usr/local/opt/llvm")
     )
 
     Expect ".provisioned? returns false for different prefix"
-    ShadowenvLlvm.provisioned?("/opt/homebrew/opt/llvm", project_root: tmpdir) == false
+    Dev::ShadowenvLlvm.provisioned?("/opt/homebrew/opt/llvm", project_root: tmpdir) == false
 
     Cleanup
     FileUtils.rm_rf(tmpdir)
@@ -50,7 +50,7 @@ class ShadowenvLlvmTest < Minitest::Test
     tmpdir = Dir.mktmpdir("shadowenv-llvm-test-")
 
     Expect ".provisioned? returns false"
-    ShadowenvLlvm.provisioned?("/opt/homebrew/opt/llvm", project_root: tmpdir) == false
+    Dev::ShadowenvLlvm.provisioned?("/opt/homebrew/opt/llvm", project_root: tmpdir) == false
 
     Cleanup
     FileUtils.rm_rf(tmpdir)
@@ -60,7 +60,7 @@ class ShadowenvLlvmTest < Minitest::Test
 
   test "generate_llvm_lisp contains provide directive with prefix" do
     When "we generate lisp"
-    result = ShadowenvLlvm.generate_llvm_lisp("/opt/homebrew/opt/llvm")
+    result = Dev::ShadowenvLlvm.generate_llvm_lisp("/opt/homebrew/opt/llvm")
 
     Then "the provide directive includes the prefix"
     assert_includes result, '(provide "llvm" "/opt/homebrew/opt/llvm")'
@@ -68,7 +68,7 @@ class ShadowenvLlvmTest < Minitest::Test
 
   test "generate_llvm_lisp prepends llvm bin to PATH" do
     When "we generate lisp"
-    result = ShadowenvLlvm.generate_llvm_lisp("/opt/homebrew/opt/llvm")
+    result = Dev::ShadowenvLlvm.generate_llvm_lisp("/opt/homebrew/opt/llvm")
 
     Then "PATH includes llvm bin"
     assert_includes result, '(env/prepend-to-pathlist "PATH" "/opt/homebrew/opt/llvm/bin")'
@@ -76,7 +76,7 @@ class ShadowenvLlvmTest < Minitest::Test
 
   test "generate_llvm_lisp sets CC" do
     When "we generate lisp"
-    result = ShadowenvLlvm.generate_llvm_lisp("/opt/homebrew/opt/llvm")
+    result = Dev::ShadowenvLlvm.generate_llvm_lisp("/opt/homebrew/opt/llvm")
 
     Then "CC is set to clang"
     assert_includes result, '(env/set "CC" "/opt/homebrew/opt/llvm/bin/clang")'
@@ -84,7 +84,7 @@ class ShadowenvLlvmTest < Minitest::Test
 
   test "generate_llvm_lisp sets CXX" do
     When "we generate lisp"
-    result = ShadowenvLlvm.generate_llvm_lisp("/opt/homebrew/opt/llvm")
+    result = Dev::ShadowenvLlvm.generate_llvm_lisp("/opt/homebrew/opt/llvm")
 
     Then "CXX is set to clang++"
     assert_includes result, '(env/set "CXX" "/opt/homebrew/opt/llvm/bin/clang++")'
@@ -92,7 +92,7 @@ class ShadowenvLlvmTest < Minitest::Test
 
   test "generate_llvm_lisp sets LDFLAGS with rpath" do
     When "we generate lisp"
-    result = ShadowenvLlvm.generate_llvm_lisp("/opt/homebrew/opt/llvm")
+    result = Dev::ShadowenvLlvm.generate_llvm_lisp("/opt/homebrew/opt/llvm")
 
     Then "LDFLAGS includes the c++ lib path"
     assert_includes result, '(env/set "LDFLAGS" "-L/opt/homebrew/opt/llvm/lib/c++ -Wl,-rpath,/opt/homebrew/opt/llvm/lib/c++")'
@@ -106,10 +106,10 @@ class ShadowenvLlvmTest < Minitest::Test
     llvm_prefix = "/opt/homebrew/opt/llvm"
 
     When "we call setup!"
-    result = ShadowenvLlvm.setup!(project_root: tmpdir, llvm_prefix: llvm_prefix)
+    result = Dev::ShadowenvLlvm.setup!(project_root: tmpdir, llvm_prefix: llvm_prefix)
 
     Then "it returns true and writes the lisp file"
-    _ * ShadowenvLlvm.method(:system) >> true
+    _ * Dev::ShadowenvLlvm.method(:system) >> true
     result == true
     lisp_path = File.join(tmpdir, ".shadowenv.d", "520_llvm.lisp")
     assert File.exist?(lisp_path), "Expected lisp file at #{lisp_path}"
@@ -124,11 +124,57 @@ class ShadowenvLlvmTest < Minitest::Test
     Given "no LLVM prefix"
 
     When "we call setup! without a prefix"
-    result = ShadowenvLlvm.setup!(project_root: Dir.mktmpdir("shadowenv-llvm-none-"), llvm_prefix: nil)
+    result = Dev::ShadowenvLlvm.setup!(project_root: Dir.mktmpdir("shadowenv-llvm-none-"), llvm_prefix: nil)
 
     Then "it returns false"
-    _ * ShadowenvLlvm.detect_llvm_prefix >> nil
+    _ * Dev::ShadowenvLlvm.detect_llvm_prefix >> nil
     result == false
+  end
+
+  # --- detect_llvm_prefix / brew_prefix_for ---
+
+  test "detect_llvm_prefix returns the prefix brew reports for an installed formula" do
+    Given "a fake brew printing an existing keg directory"
+    tmpdir = Dir.mktmpdir("fake-brew-llvm-")
+    prefix = File.join(tmpdir, "opt", "llvm@22")
+    FileUtils.mkdir_p(prefix)
+    write_fake_brew(tmpdir, prints: prefix)
+    original_path = ENV["PATH"]
+    ENV["PATH"] = "#{tmpdir}:/usr/bin:/bin"
+
+    Expect "the printed prefix is returned"
+    Dev::ShadowenvLlvm.detect_llvm_prefix == prefix
+
+    Cleanup
+    ENV["PATH"] = original_path
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "detect_llvm_prefix returns nil when no formula resolves to a real keg" do
+    Given "a fake brew printing a directory that does not exist"
+    tmpdir = Dir.mktmpdir("fake-brew-llvm-")
+    write_fake_brew(tmpdir, prints: File.join(tmpdir, "no-such-keg"))
+    original_path = ENV["PATH"]
+    ENV["PATH"] = "#{tmpdir}:/usr/bin:/bin"
+
+    Expect "no prefix is found"
+    Dev::ShadowenvLlvm.detect_llvm_prefix.nil? == true
+
+    Cleanup
+    ENV["PATH"] = original_path
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "detect_llvm_prefix returns nil when brew is absent" do
+    Given "a PATH without brew"
+    original_path = ENV["PATH"]
+    ENV["PATH"] = "/usr/bin:/bin"
+
+    Expect "no prefix is found"
+    Dev::ShadowenvLlvm.detect_llvm_prefix.nil? == true
+
+    Cleanup
+    ENV["PATH"] = original_path
   end
 
   # --- ci_or_linux? ---
@@ -139,7 +185,7 @@ class ShadowenvLlvmTest < Minitest::Test
     ENV["CI"] = "true"
 
     Expect "ci_or_linux? returns true"
-    ShadowenvLlvm.ci_or_linux? == true
+    Dev::ShadowenvLlvm.ci_or_linux? == true
 
     Cleanup
     ENV["CI"] = original
@@ -151,12 +197,20 @@ class ShadowenvLlvmTest < Minitest::Test
     ENV.delete("CI")
 
     When "we check ci_or_linux?"
-    result = ShadowenvLlvm.ci_or_linux?
+    result = Dev::ShadowenvLlvm.ci_or_linux?
 
     Then "it returns true on Linux, false on macOS"
     result == RUBY_PLATFORM.include?("linux")
 
     Cleanup
     ENV["CI"] = original if original
+  end
+
+  private
+
+  def write_fake_brew(dir, prints:)
+    fake_brew = File.join(dir, "brew")
+    File.write(fake_brew, "#!/bin/sh\nprintf '%s\\n' \"#{prints}\"\n")
+    FileUtils.chmod(0o755, fake_brew)
   end
 end

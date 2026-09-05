@@ -26,7 +26,7 @@ module Dev
 
       sig { params(cli_ui: T.class_of(CLI::UI)).void }
       def initialize(cli_ui:)
-        @cli_ui = T.let(cli_ui, T.class_of(CLI::UI))
+        @cli_ui = cli_ui
         @cli_ui.enable_color = true
       end
 

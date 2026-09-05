@@ -5,8 +5,8 @@ require "test_helper"
 require "dev/command_runner"
 require "dev/build_container_config"
 require "dev/credentials"
-require "build_container"
-require "shadowenv_ruby"
+require "dev/build_container"
+require "dev/shadowenv_ruby"
 
 transform!(RSpock::AST::Transformation)
 class CommandRunnerTest < Minitest::Test
@@ -43,7 +43,7 @@ class CommandRunnerTest < Minitest::Test
     runner.exec_into(cmd)
 
     Then "the declared Ruby is ensured for the project root"
-    1 * ShadowenvRuby.ensure!(ruby_version: "4.0.1", project_root: @project_root)
+    1 * Dev::ShadowenvRuby.ensure!(ruby_version: "4.0.1", project_root: @project_root)
 
     Cleanup
     Dir.chdir(@original_cwd)
@@ -202,8 +202,8 @@ class CommandRunnerTest < Minitest::Test
     cmd = Dev::ProjectCommand.new(run: "./bin/up.sh", repl: false)
 
     When "the image resolves and we run the command waiting"
-    BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
-    BuildContainer.stubs(:docker_run_command)
+    Dev::BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
+    Dev::BuildContainer.stubs(:docker_run_command)
       .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/up.sh"])
     runner.run_waiting(cmd)
 
@@ -223,11 +223,11 @@ class CommandRunnerTest < Minitest::Test
     runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root)
     cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
 
-    When "BuildContainer.ensure_image! returns a tag and we run the command"
-    BuildContainer.expects(:ensure_image!)
+    When "Dev::BuildContainer.ensure_image! returns a tag and we run the command"
+    Dev::BuildContainer.expects(:ensure_image!)
       .with(config, project_root: @project_root, push: false, publish: false, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc))
       .returns("myregistry/myapp-linux:content-abc123")
-    BuildContainer.expects(:docker_run_command)
+    Dev::BuildContainer.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: {})
       .returns(["docker", "run", "--rm", "-v", "#{@project_root}:/project", "-w", "/project", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
     runner.exec_into(cmd)
@@ -246,14 +246,14 @@ class CommandRunnerTest < Minitest::Test
     cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
 
     When "the image resolves and the service container is ensured"
-    BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
-    BuildContainer.expects(:ensure_service!)
+    Dev::BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
+    Dev::BuildContainer.expects(:ensure_service!)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, volumes: ["/e:/e"])
       .returns("dev-myapp-linux-content-abc123")
-    BuildContainer.expects(:docker_exec_command)
+    Dev::BuildContainer.expects(:docker_exec_command)
       .with("dev-myapp-linux-content-abc123", shell_cmd: "./bin/build.sh", env: {})
       .returns(["docker", "exec", "-w", "/project", "dev-myapp-linux-content-abc123", "sh", "-c", "./bin/build.sh"])
-    BuildContainer.expects(:docker_run_command).never
+    Dev::BuildContainer.expects(:docker_run_command).never
     runner.exec_into(cmd)
 
     Then "exec is called with the docker exec command, not docker run"
@@ -302,11 +302,11 @@ class CommandRunnerTest < Minitest::Test
     runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root)
     cmd = Dev::ProjectCommand.new(run: "./bin/test.sh", repl: false)
 
-    When "BuildContainer returns docker command and we run with args"
-    BuildContainer.expects(:ensure_image!)
+    When "Dev::BuildContainer returns docker command and we run with args"
+    Dev::BuildContainer.expects(:ensure_image!)
       .with(config, project_root: @project_root, push: false, publish: false, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc))
       .returns("myregistry/myapp-linux:content-abc123")
-    BuildContainer.expects(:docker_run_command)
+    Dev::BuildContainer.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/test.sh --verbose", volumes: [], env: {})
       .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/test.sh --verbose"])
     runner.exec_into(cmd, args: ["--verbose"])
@@ -330,8 +330,8 @@ class CommandRunnerTest < Minitest::Test
     ENV["WWISE_TOKEN"] = "tok-123"
 
     When "the image is ready and the command runs"
-    BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
-    BuildContainer.expects(:docker_run_command)
+    Dev::BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
+    Dev::BuildContainer.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: { "WWISE_TOKEN" => "tok-123" })
       .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
     runner.exec_into(cmd)
@@ -352,10 +352,10 @@ class CommandRunnerTest < Minitest::Test
     ENV["DEV_PUBLISH_IMAGE"] = "1"
 
     When "the command runs"
-    BuildContainer.expects(:ensure_image!)
+    Dev::BuildContainer.expects(:ensure_image!)
       .with(config, project_root: @project_root, push: false, publish: true, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc))
       .returns("myregistry/myapp-linux:content-abc123")
-    BuildContainer.stubs(:docker_run_command).returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
+    Dev::BuildContainer.stubs(:docker_run_command).returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
     runner.exec_into(cmd)
 
     Then "ensure_image! is asked to publish the resolved image"
@@ -378,8 +378,8 @@ class CommandRunnerTest < Minitest::Test
 
     When "the credential is not stored and the command runs"
     Dev::Credentials.stubs(:load).with("wwise", "token").returns(nil)
-    BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
-    BuildContainer.expects(:docker_run_command)
+    Dev::BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
+    Dev::BuildContainer.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: {})
       .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
     runner.exec_into(cmd)

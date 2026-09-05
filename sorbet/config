@@ -3,3 +3,5 @@
 --ignore=tmp/
 --ignore=vendor/
 --ignore=bin/
+# ai-flow worktrees carry a nested .ai-flow checkout whose RBIs collide with ours.
+--ignore=/.ai-flow

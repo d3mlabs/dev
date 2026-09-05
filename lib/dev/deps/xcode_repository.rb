@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require_relative "repository"
@@ -13,11 +14,14 @@ module Dev
     # resolver -> lockfile pipeline so the pin lands in deps.lock like every
     # other dependency and the installer/accessor can find it there.
     class XcodeRepository < Repository
+      extend T::Sig
+
       class MissingVersionError < StandardError; end
 
       # @param id [Hash] must include "name", "integration", "group", "version"
       # @return [Dependency]
       # @raise [MissingVersionError] when no exact version was declared
+      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
       def fetch(id)
         version = id["version"].to_s
         raise MissingVersionError, "xcode requires an exact version (e.g. xcode \"26.1.1\")" if version.empty?

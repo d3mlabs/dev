@@ -10,7 +10,7 @@ require "dev/deps/integration"
 require "dev/deps/lockfile"
 require "dev/deps/registry"
 require "dev/learnings"
-require "shadowenv_ruby"
+require "dev/shadowenv_ruby"
 
 module Dev
   module Builtins
@@ -51,9 +51,9 @@ module Dev
         synchronizer: Dev::Learnings::Synchronizer.for
       )
         super()
-        @installer_factory = T.let(installer_factory, InstallerFactory)
-        @gem_skill_linker_factory = T.let(gem_skill_linker_factory, GemSkillLinkerFactory)
-        @synchronizer = T.let(synchronizer, T.untyped)
+        @installer_factory = installer_factory
+        @gem_skill_linker_factory = gem_skill_linker_factory
+        @synchronizer = synchronizer
       end
 
       sig { override.returns(String) }

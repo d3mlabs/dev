@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 # dev's own dependency manifest. Loaded in two ways:

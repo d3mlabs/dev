@@ -120,4 +120,56 @@ class Dev::Deps::CacheGcTest < Minitest::Test
     Cleanup
     FileUtils.rm_rf(dir)
   end
+
+  test "running_mount_sources collects every running container's mount sources" do
+    Given "a gc whose docker capture reports two containers with mounts"
+    dir = Dir.mktmpdir("dev-cache-gc-test-")
+    gc = Dev::Deps::CacheGc.new(lockfile: Dev::Deps::Lockfile.new(dir: dir), out: StringIO.new)
+    gc.stubs(:capture).with(["docker", "ps", "-q"]).returns("abc\ndef\n")
+    gc.stubs(:capture)
+      .with(["docker", "inspect", "--format", "{{range .Mounts}}{{.Source}}\n{{end}}", "abc", "def"])
+      .returns("/mnt/engine\n\n/mnt/cache\n")
+
+    When "collecting mount sources"
+    sources = gc.send(:running_mount_sources)
+
+    Then "both sources are present, blank lines dropped"
+    sources == Set.new(["/mnt/engine", "/mnt/cache"])
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "gc_docker leaves non-content tags and in-use images alone" do
+    Given "a gc whose docker capture reports only a live tag and a plain tag"
+    dir = Dir.mktmpdir("dev-cache-gc-test-")
+    gc = Dev::Deps::CacheGc.new(lockfile: Dev::Deps::Lockfile.new(dir: dir), out: StringIO.new)
+    gc.stubs(:capture)
+      .with(["docker", "images", "repo/img", "--format", "{{.Repository}}:{{.Tag}}"])
+      .returns("repo/img:latest\nrepo/img:content-abc\n")
+    gc.stubs(:capture).with(["docker", "ps", "--format", "{{.Image}}"]).returns("repo/img:content-abc\n")
+
+    When "pruning content tags"
+    gc.send(:gc_docker, image_ref: "repo/img", live_tag: nil)
+
+    Then "nothing is removed: latest isn't a content tag, and the content tag is in use"
+    true # reaching here without a docker rmi spawn is the assertion (none is stubbed)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "capture returns stdout on success and empty string on failure or a missing binary" do
+    Given "a gc"
+    dir = Dir.mktmpdir("dev-cache-gc-test-")
+    gc = Dev::Deps::CacheGc.new(lockfile: Dev::Deps::Lockfile.new(dir: dir), out: StringIO.new)
+
+    Expect "real subprocess results ride through; failures collapse to empty"
+    gc.send(:capture, ["sh", "-c", "echo hi"]) == "hi\n"
+    gc.send(:capture, ["sh", "-c", "exit 1"]) == ""
+    gc.send(:capture, ["dev-test-missing-binary-xyz"]) == ""
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
 end

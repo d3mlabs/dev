@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "json"
@@ -12,6 +13,8 @@ module Dev
     # Uses `brew info --json=v1` for formulae. Cask entries get no version
     # or hash (Homebrew doesn't expose bottle hashes for casks in the same way).
     class BrewRepository < Repository
+      extend T::Sig
+
       class BrewInfoError < StandardError; end
 
       # Resolve a brew dependency identifier to a pinned Dependency.
@@ -24,6 +27,7 @@ module Dev
       #   optionally "tap", "cask"
       # @return [Dependency]
       # @raise [BrewInfoError] if `brew info` fails for a formula
+      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
       def fetch(id)
         name = id["name"]
         # The declared `version:` is a brew formula version *suffix* (e.g. "18"
@@ -76,6 +80,13 @@ module Dev
       # @param tap [String, nil] tap slug
       # @param version_suffix [String, nil] brew version suffix (e.g. "18")
       # @return [String]
+      sig do
+        params(
+          name: String,
+          tap: T.nilable(String),
+          version_suffix: T.nilable(String),
+        ).returns(String)
+      end
       def build_formula_spec(name, tap, version_suffix)
         base = tap ? "#{tap}/#{name}" : name
         version_suffix ? "#{base}@#{version_suffix}" : base
@@ -89,6 +100,7 @@ module Dev
       # @param tap [String, nil] tap slug from the declaration
       # @return [Hash] parsed JSON info for the formula
       # @raise [BrewInfoError] if the command fails
+      sig { params(formula: String, tap: T.nilable(String)).returns(T::Hash[String, T.untyped]) }
       def brew_info_with_tap(formula, tap)
         brew_info(formula)
       rescue BrewInfoError
@@ -102,6 +114,7 @@ module Dev
       # @param formula [String] formula spec (e.g. "cmake" or "d3mlabs/d3mlabs/powershell")
       # @return [Hash] parsed JSON info for the formula
       # @raise [BrewInfoError] if the command fails
+      sig { params(formula: String).returns(T::Hash[String, T.untyped]) }
       def brew_info(formula)
         out, _err, status = Open3.capture3("brew", "info", "--json=v1", formula)
         raise BrewInfoError, "brew info --json=v1 #{formula} failed" unless status.success?
@@ -111,15 +124,19 @@ module Dev
 
       # @param tap [String] tap slug (e.g. "xcodesorg/made")
       # @return [Boolean] whether `brew tap` succeeded
+      sig { params(tap: String).returns(T::Boolean) }
       def register_tap(tap)
         _out, _err, status = Open3.capture3("brew", "tap", tap)
-        status.success?
+        # success? is nil (not false) when the process didn't exit normally,
+        # e.g. it was killed by a signal — coerce that to a failure.
+        status.success? || false
       end
 
       # Extract the bottle SHA256 for the current platform.
       #
       # @param info [Hash] parsed brew info JSON
       # @return [String, nil] hex SHA256, or nil if no bottle found
+      sig { params(info: T::Hash[String, T.untyped]).returns(T.nilable(String)) }
       def extract_bottle_hash(info)
         bottles = info.dig("bottle", "stable", "files") || {}
         current_arch = RUBY_PLATFORM.include?("arm") ? "arm64_sonoma" : "sonoma"

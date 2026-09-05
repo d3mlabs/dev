@@ -1,5 +1,7 @@
+# typed: strict
 # frozen_string_literal: true
 
+require_relative "repository"
 require_relative "dependency"
 require_relative "dependency_declaration"
 
@@ -12,9 +14,12 @@ module Dev
     # Registries that support dependency metadata (LuaRocks, CurseForge, Brew)
     # get full transitive resolution. Source-based repos (Git, URL) return [].
     class Resolver
+      extend T::Sig
+
       class UnknownIntegrationError < StandardError; end
 
       # @param repositories [Hash{Symbol => Repository}] integration type → repository
+      sig { params(repositories: T::Hash[Symbol, Repository]).void }
       def initialize(repositories:)
         @repositories = repositories
       end
@@ -27,6 +32,7 @@ module Dev
       # @param declarations [Array<DependencyDeclaration>] declared dependencies to resolve
       # @return [Array<Dependency>]
       # @raise [UnknownIntegrationError] if no repository is registered for a declaration's integration type
+      sig { params(declarations: T::Array[DependencyDeclaration]).returns(T::Array[Dependency]) }
       def resolve(declarations)
         prepare_repositories(declarations)
 
@@ -89,6 +95,7 @@ module Dev
       # @param dependency [Dependency] freshly fetched
       # @param decl [DependencyDeclaration] the declaration it came from
       # @return [Dependency]
+      sig { params(dependency: Dependency, decl: DependencyDeclaration).returns(Dependency) }
       def attach_install_scoping(dependency, decl)
         extra = {}
         extra["host"] = decl.host.to_s if decl.host
@@ -104,6 +111,7 @@ module Dev
       #
       # @param declarations [Array<DependencyDeclaration>] all declarations
       # @return [void]
+      sig { params(declarations: T::Array[DependencyDeclaration]).void }
       def prepare_repositories(declarations)
         declarations.group_by(&:integration).each do |type, typed_declarations|
           @repositories[type]&.prepare(typed_declarations)
@@ -117,6 +125,11 @@ module Dev
       #
       # @param declarations [Array<DependencyDeclaration>]
       # @return [Hash{String => Array<String, nil>}] name → de-duped platform list
+      sig do
+        params(
+          declarations: T::Array[DependencyDeclaration],
+        ).returns(T::Hash[String, T::Array[T.nilable(String)]])
+      end
       def platforms_by_name(declarations)
         result = Hash.new { |h, k| h[k] = [] }
         declarations.each { |decl| result[decl.name] << decl.platform }
@@ -131,6 +144,11 @@ module Dev
       #
       # @param constraint [Hash, String, nil] raw constraint from Dependency#dependencies
       # @return [Hash]
+      sig do
+        params(
+          constraint: T.nilable(T.any(T::Hash[String, T.untyped], String)),
+        ).returns(T::Hash[String, T.untyped])
+      end
       def normalize_constraint(constraint)
         case constraint
         when Hash then constraint

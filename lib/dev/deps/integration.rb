@@ -1,8 +1,12 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "fileutils"
 require "pathname"
 require "securerandom"
+require_relative "cache"
+require_relative "dependency"
+require_relative "repository"
 
 module Dev
   module Deps
@@ -12,8 +16,11 @@ module Dev
     # dependencies for its type at once via install_all — handles per-dep
     # install plus any batch artifacts (e.g. deps.cmake).
     class Integration
-      # @param repository [Repository] source adapter for this integration type
-      # @param cache      [Cache]      shared download cache
+      extend T::Sig
+
+      # @param repository [Repository, nil] source adapter for this integration type
+      # @param cache      [Cache, nil]      shared download cache
+      sig { params(repository: T.nilable(Repository), cache: T.nilable(Cache)).void }
       def initialize(repository:, cache:)
         @repository = repository
         @cache = cache
@@ -22,13 +29,18 @@ module Dev
       # Install all dependencies of this integration type.
       #
       # @param dependencies [Array<Dependency>] all deps for this integration type
+      sig { params(dependencies: T::Array[Dependency]).void }
       def install_all(dependencies)
         raise NotImplementedError, "#{self.class}#install_all must be implemented"
       end
 
       private
 
-      attr_reader :repository, :cache
+      sig { returns(T.nilable(Repository)) }
+      attr_reader :repository
+
+      sig { returns(T.nilable(Cache)) }
+      attr_reader :cache
 
       # --- version-keyed, content-addressed install layout (gh, steam) -------
       #
@@ -50,6 +62,7 @@ module Dev
       # @param base_dir [Pathname] declared install_dir
       # @param version  [String]   locked version (gh tag / steam buildid)
       # @return [Pathname]
+      sig { params(base_dir: Pathname, version: String).returns(Pathname) }
       def versioned_dir(base_dir, version)
         Pathname(base_dir) / version
       end
@@ -60,6 +73,7 @@ module Dev
       #
       # @param base_dir [Pathname]
       # @return [Pathname]
+      sig { params(base_dir: Pathname).returns(Pathname) }
       def new_staging_dir(base_dir)
         Pathname("#{base_dir}/.staging-#{Process.pid}-#{SecureRandom.hex(4)}")
       end
@@ -73,6 +87,7 @@ module Dev
       # @param marker_file  [String]   marker basename
       # @param version      [String]   expected version
       # @return [Boolean]
+      sig { params(dir: Pathname, marker_file: String, version: String).returns(T::Boolean) }
       def version_published?(dir, marker_file, version)
         marker = dir / marker_file
         marker.file? && marker.read.strip == version
@@ -92,6 +107,7 @@ module Dev
       # @param staging   [Pathname] fully-built, marker-stamped staging dir
       # @param versioned [Pathname] destination version dir
       # @return [Boolean] true if this call published, false if another won
+      sig { params(staging: Pathname, versioned: Pathname).returns(T::Boolean) }
       def publish_version(staging, versioned)
         FileUtils.mkdir_p(versioned.dirname)
         File.rename(staging.to_s, versioned.to_s)

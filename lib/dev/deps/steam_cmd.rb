@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "fileutils"
@@ -16,10 +17,12 @@ module Dev
     # The SteamCMD *binary* always matches the host OS; the *depot* platform is a
     # separate axis the caller forces with +@sSteamCmdForcePlatformType.
     module SteamCmd
+      extend T::Sig
+
       class BootstrapError < StandardError; end
       class SteamCmdError < StandardError; end
 
-      DEFAULT_DIR = File.expand_path("~/.dev/steamcmd")
+      DEFAULT_DIR = T.let(File.expand_path("~/.dev/steamcmd"), String)
       LINUX_URL = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz"
       MACOS_URL = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_osx.tar.gz"
 
@@ -32,6 +35,7 @@ module Dev
       # @param dir [String] install dir for the SteamCMD binary
       # @return [String] path to steamcmd.sh
       # @raise [BootstrapError] if the download/extract fails
+      sig { params(dir: String).returns(String) }
       def ensure!(dir = DEFAULT_DIR)
         script = File.join(dir, "steamcmd.sh")
         return script if File.executable?(script)
@@ -39,13 +43,14 @@ module Dev
         FileUtils.mkdir_p(dir)
         url = download_url
         pipeline = "curl -fsSL #{url.shellescape} | tar -xz -C #{dir.shellescape}"
-        system("sh", "-c", pipeline) || raise(BootstrapError, "failed to bootstrap SteamCMD from #{url}")
-        raise BootstrapError, "SteamCMD bootstrap did not produce #{script}" unless File.executable?(script)
+        Kernel.system("sh", "-c", pipeline) || Kernel.raise(BootstrapError, "failed to bootstrap SteamCMD from #{url}")
+        Kernel.raise(BootstrapError, "SteamCMD bootstrap did not produce #{script}") unless File.executable?(script)
 
         script
       end
 
       # @return [String] the SteamCMD tarball URL for the host OS
+      sig { returns(String) }
       def download_url
         RUBY_PLATFORM.include?("darwin") ? MACOS_URL : LINUX_URL
       end
@@ -55,9 +60,10 @@ module Dev
       # @param commands [Array<String>] steamcmd +commands (e.g. "+login", "anonymous")
       # @param dir [String] SteamCMD install dir
       # @return [Array(String, String, Process::Status)] stdout, stderr, status
+      sig { params(commands: String, dir: String).returns([String, String, Process::Status]) }
       def run(*commands, dir: DEFAULT_DIR)
         script = ensure!(dir)
-        Open3.capture3(script, *commands)
+        T.unsafe(Open3).capture3(script, *commands)
       end
 
       # Resolve the buildid published on a branch via +app_info_print.
@@ -67,12 +73,13 @@ module Dev
       # @param dir [String] SteamCMD install dir
       # @return [String] the resolved buildid
       # @raise [SteamCmdError] if the command fails or no buildid is found
+      sig { params(app: T.any(String, Integer), branch: String, dir: String).returns(String) }
       def resolve_build_id(app:, branch: "public", dir: DEFAULT_DIR)
         out, err, status = run("+login", "anonymous", "+app_info_print", app.to_s, "+quit", dir:)
-        raise SteamCmdError, "steamcmd app_info_print #{app} failed: #{err.strip}" unless status.success?
+        Kernel.raise(SteamCmdError, "steamcmd app_info_print #{app} failed: #{err.strip}") unless status.success?
 
         build_id = parse_build_id(out, branch)
-        raise SteamCmdError, "no buildid for app #{app} branch #{branch} in app_info_print output" unless build_id
+        Kernel.raise(SteamCmdError, "no buildid for app #{app} branch #{branch} in app_info_print output") unless build_id
 
         build_id
       end
@@ -84,6 +91,7 @@ module Dev
       # @param output [String] raw app_info_print stdout
       # @param branch [String] branch name
       # @return [String, nil] the buildid, or nil if absent
+      sig { params(output: String, branch: String).returns(T.nilable(String)) }
       def parse_build_id(output, branch)
         match = output.match(/"#{Regexp.escape(branch)}"\s*\{[^}]*?"buildid"\s*"(\d+)"/m)
         match && match[1]

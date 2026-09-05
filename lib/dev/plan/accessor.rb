@@ -1,8 +1,10 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "fileutils"
 require "json"
 require "pathname"
+require "stringio"
 
 module Dev
   module Plan
@@ -12,11 +14,13 @@ module Dev
     # remote body changed since the recorded merge base, so the local copy can
     # never clobber newer remote edits.
     class Accessor
+      extend T::Sig
+
       # RuntimeError so Dev::Runner's clean-error rescue prints the usage
       # instead of a backtrace (same for the other plan error classes).
       class UsageError < RuntimeError; end
 
-      USAGE = <<~USAGE.strip
+      USAGE = T.let(<<~USAGE.strip, String)
         usage: dev plan <subcommand>
           dev plan new "<title>" [--blank] [--org]   create a templated issue + linked local plan
           dev plan link <n> [<file>] [--org]         attach a plan file to issue #n
@@ -36,16 +40,28 @@ module Dev
       #   shipped skill links (defaults to the user-global ~/.cursor/skills)
       # @param learnings [Dev::Learnings::Synchronizer, Dev::Learnings::UnconfiguredSynchronizer, nil]
       # @param executor [Dev::Plan::Executor] CLI boundary (injectable for tests)
+      sig do
+        params(
+          project_root: Pathname,
+          executor: Executor,
+          workspace: T.nilable(Workspace),
+          issues: T.untyped,
+          settings: T.untyped,
+          merge_base: T.nilable(MergeBase),
+          skill_installer: T.nilable(Dev::SkillInstaller),
+          learnings: T.untyped,
+        ).void
+      end
       def initialize(project_root:, executor: Executor.new, workspace: nil, issues: nil,
                      settings: nil, merge_base: nil, skill_installer: nil, learnings: nil)
         @project_root = project_root
         @executor = executor
-        @workspace = workspace || Workspace.new(project_root: project_root, executor: executor)
-        @issues = issues || GithubIssues.new(executor: executor)
-        @settings = settings || Dev::Settings.new
-        @merge_base = merge_base || MergeBase.new
-        @skill_installer = skill_installer || Dev::SkillInstaller.new
-        @learnings = learnings || Learnings::Synchronizer.for(settings: @settings)
+        @workspace = T.let(workspace || Workspace.new(project_root: project_root, executor: executor), Workspace)
+        @issues = T.let(issues || GithubIssues.new(executor: executor), T.untyped)
+        @settings = T.let(settings || Dev::Settings.new, T.untyped)
+        @merge_base = T.let(merge_base || MergeBase.new, MergeBase)
+        @skill_installer = T.let(skill_installer || Dev::SkillInstaller.new, Dev::SkillInstaller)
+        @learnings = T.let(learnings || Learnings::Synchronizer.for(settings: @settings), T.untyped)
       end
 
       # Dispatch a `dev plan …` invocation.
@@ -54,6 +70,13 @@ module Dev
       # @param out [IO] output stream
       # @param input [IO] input stream (the Cursor hook payload for hook-after-edit)
       # @raise [UsageError] on an unrecognized invocation
+      sig do
+        params(
+          args: T::Array[String],
+          out: T.any(IO, StringIO),
+          input: T.any(IO, StringIO),
+        ).void
+      end
       def run(args, out: $stdout, input: $stdin)
         # Hook point: refresh dev's shipped skill links and the org learnings
         # artifacts. Cheap and idempotent (content-compared, the network pull
@@ -84,6 +107,7 @@ module Dev
       # with a `Target repos:` line: they usually span repos, and the line
       # narrows /split's routing menu (see ai-flow's docs/plan-lifecycle.md).
       # Left blank it is inert — the menu falls back to every org repo.
+      sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
       def new_plan(args, out:)
         org = args.delete("--org") ? true : false
         blank = args.delete("--blank") ? true : false
@@ -111,6 +135,7 @@ module Dev
       # @param org [Boolean] true when targeting the org plans repo
       # @param out [IO]
       # @return [String] the markdown template body
+      sig { params(owner_repo: String, org: T::Boolean, out: T.any(IO, StringIO)).returns(String) }
       def template_body(owner_repo, org:, out:)
         content =
           if org
@@ -133,6 +158,7 @@ module Dev
       # with `git diff` and commit — human merge stays the gate). Only
       # marker-carrying mirrors are ever overwritten: a repo that edited the
       # file and dropped the marker owns its template.
+      sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
       def init(args, out:)
         raise UsageError, "usage: dev plan init" unless args.empty?
 
@@ -155,6 +181,7 @@ module Dev
       # `dev plan link <n> [<file>] [--org]` attaches a plan file to an
       # existing issue (local content stays; `push` publishes it), while
       # `dev plan link <file> [--org]` creates the issue from the file.
+      sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
       def link(args, out:)
         org = args.delete("--org") ? true : false
         first, second = args
@@ -167,10 +194,18 @@ module Dev
         end
       end
 
+      sig do
+        params(
+          number: Integer,
+          file: T.nilable(String),
+          org: T::Boolean,
+          out: T.any(IO, StringIO),
+        ).void
+      end
       def link_to_existing(number, file, org:, out:)
         path = file ? Pathname.new(file) : sole_unlinked_plan
         plan = Content.parse(path.read)
-        raise UsageError, "#{path} is already linked to #{plan.header.issue_ref}" if plan.header
+        raise UsageError, "#{path} is already linked to #{T.must(plan.header).issue_ref}" if plan.header
 
         owner_repo = target_repo(org:)
         issue = @issues.get(owner_repo, number)
@@ -184,12 +219,13 @@ module Dev
         out.puts "dev: local content kept — run `dev plan push` to publish it."
       end
 
+      sig { params(file: String, org: T::Boolean, out: T.any(IO, StringIO)).void }
       def create_from_file(file, org:, out:)
         path = Pathname.new(file)
         raise UsageError, "no such plan file: #{path}" unless path.exist?
 
         plan = Content.parse(path.read)
-        raise UsageError, "#{path} is already linked to #{plan.header.issue_ref}" if plan.header
+        raise UsageError, "#{path} is already linked to #{T.must(plan.header).issue_ref}" if plan.header
 
         owner_repo = target_repo(org:)
         title = extract_title(plan.body) || path.basename(".plan.md").to_s
@@ -203,6 +239,7 @@ module Dev
       # `dev plan pull <n> [--merge] [--org]` — fetch the issue into the local
       # plan. A clean local copy is overwritten; a diverged one needs --merge
       # (3-way against the recorded base) so local work is never discarded.
+      sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
       def pull(args, out:)
         org = args.delete("--org") ? true : false
         merge = args.delete("--merge") ? true : false
@@ -239,6 +276,18 @@ module Dev
         end
       end
 
+      sig do
+        params(
+          path: Pathname,
+          issue: GithubIssues::Issue,
+          owner_repo: String,
+          number: Integer,
+          plan: Content,
+          base: String,
+          remote_body: String,
+          out: T.any(IO, StringIO),
+        ).void
+      end
       def merge_pull(path, issue, owner_repo, number, plan, base, remote_body, out:)
         result = Merge.three_way(local: plan.body, base: base, remote: remote_body, executor: @executor)
         # The remote becomes the new base either way: the merged local copy is
@@ -260,6 +309,7 @@ module Dev
       # `pull` uses (`--org` picks the org plans repo, symmetric with pull);
       # a file path never needs `--org` — the target repo comes from the
       # file's header, so org-wide plans push transparently.
+      sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
       def push(args, out:)
         org = args.delete("--org") ? true : false
         target = args.shift
@@ -270,7 +320,7 @@ module Dev
         raise UsageError, "#{path} has no ai-flow header — link it first with `dev plan link`." unless plan.header
         raise "#{path} contains unresolved merge conflict markers — resolve them before pushing." if plan.body.include?("<<<<<<<")
 
-        header = plan.header
+        header = T.must(plan.header)
         issue = @issues.get(header.owner_repo, header.number)
         remote_body = Plan.from_issue_body(issue.body)
         base = @merge_base.read(header.owner_repo, header.number)
@@ -305,8 +355,9 @@ module Dev
       # file is a linked plan in this workspace; a linked plan auto-pushes
       # through the same guarded sync (a guard refusal raises, surfacing in
       # Cursor's Hooks channel — exactly when the user must pull --merge).
+      sig { params(input: T.any(IO, StringIO), out: T.any(IO, StringIO)).void }
       def hook_after_edit(input, out:)
-        payload = JSON.parse(input.read)
+        payload = JSON.parse(T.must(input.read))
         edited = payload["file_path"] || payload["filePath"]
         return if edited.nil? || edited.empty?
 
@@ -322,6 +373,7 @@ module Dev
 
       # `dev plan status` — sync state of every linked plan in the workspace:
       # clean / ahead (local edits) / behind (remote edits) / diverged (both).
+      sig { params(out: T.any(IO, StringIO)).void }
       def status(out:)
         files = @workspace.linked_plan_files
         if files.empty?
@@ -331,12 +383,14 @@ module Dev
 
         files.each do |path|
           plan = Content.parse(path.read)
-          issue = @issues.get(plan.header.owner_repo, plan.header.number)
-          state = sync_state(plan.header, plan.body, Plan.from_issue_body(issue.body))
-          out.puts "#{state.ljust(10)} #{plan.header.issue_ref.ljust(30)} #{path}"
+          header = T.must(plan.header)
+          issue = @issues.get(header.owner_repo, header.number)
+          state = sync_state(header, plan.body, Plan.from_issue_body(issue.body))
+          out.puts "#{state.ljust(10)} #{header.issue_ref.ljust(30)} #{path}"
         end
       end
 
+      sig { params(header: Header, local_body: String, remote_body: String).returns(String) }
       def sync_state(header, local_body, remote_body)
         base = @merge_base.read(header.owner_repo, header.number)
         return "unknown" if base.nil?
@@ -352,6 +406,7 @@ module Dev
 
       # @param org [Boolean] true targets the configured org plans repo
       # @return [String] "owner/repo"
+      sig { params(org: T::Boolean).returns(String) }
       def target_repo(org:)
         org ? @settings.plans_repo : @workspace.origin_repo
       end
@@ -366,6 +421,15 @@ module Dev
       # @param path [Pathname, nil]
       # @param frontmatter [String, nil] Cursor YAML block to preserve locally
       # @return [Pathname] the written path
+      sig do
+        params(
+          owner_repo: String,
+          issue: GithubIssues::Issue,
+          body: String,
+          path: T.nilable(Pathname),
+          frontmatter: T.nilable(String),
+        ).returns(Pathname)
+      end
       def write_linked_plan(owner_repo, issue, body, path: nil, frontmatter: nil)
         path ||= @workspace.plan_path(owner_repo, issue.number, issue.title)
         header = Header.new(owner_repo: owner_repo, number: issue.number, synced_at: issue.updated_at)
@@ -378,15 +442,18 @@ module Dev
       # @param path [Pathname]
       # @param plan [Dev::Plan::Content]
       # @param issue [Dev::Plan::GithubIssues::Issue]
+      sig { params(path: Pathname, plan: Content, issue: GithubIssues::Issue).void }
       def record_sync(path, plan, issue)
+        header = T.must(plan.header)
         path.write(plan.with_synced_at(issue.updated_at).render)
-        @merge_base.write(plan.header.owner_repo, plan.header.number, plan.body)
+        @merge_base.write(header.owner_repo, header.number, plan.body)
       end
 
       # Move a freshly linked file to the `gh-<n>-<slug>.plan.md` convention
       # inside the workspace plans dir (no-op when it's already there).
       #
       # @return [Pathname] the conventional path
+      sig { params(path: Pathname, owner_repo: String, issue: GithubIssues::Issue).returns(Pathname) }
       def move_into_convention(path, owner_repo, issue)
         target = @workspace.plan_path(owner_repo, issue.number, issue.title)
         return path if path.expand_path == target.expand_path
@@ -398,6 +465,7 @@ module Dev
 
       # @param body [String]
       # @return [String, nil] the first H1 heading, which doubles as the title
+      sig { params(body: String).returns(T.nilable(String)) }
       def extract_title(body)
         body[/^# (.+)$/, 1]&.strip
       end
@@ -408,6 +476,7 @@ module Dev
       # @param target [String, nil]
       # @param org [Boolean]
       # @return [Pathname]
+      sig { params(target: T.nilable(String), org: T::Boolean).returns(Pathname) }
       def push_path(target, org:)
         return sole_linked_plan if target.nil?
         return Pathname.new(target) unless target.match?(/\A\d+\z/)
@@ -418,14 +487,16 @@ module Dev
           raise(UsageError, "no linked plan for #{owner_repo}##{number} — run `dev plan pull #{number}` first.")
       end
 
-      # @return [Pathname]
+      # @return [Pathname, nil]
+      sig { params(owner_repo: String, number: Integer).returns(T.nilable(Pathname)) }
       def find_linked_plan(owner_repo, number)
         @workspace.linked_plan_files.find do |path|
-          plan = Content.parse(path.read)
-          plan.header.owner_repo == owner_repo && plan.header.number == number
+          header = T.must(Content.parse(path.read).header)
+          header.owner_repo == owner_repo && header.number == number
         end
       end
 
+      sig { returns(Pathname) }
       def sole_linked_plan
         files = @workspace.linked_plan_files
         raise UsageError, "no linked plans in #{@workspace.plans_dir} — link one first." if files.empty?
@@ -434,6 +505,7 @@ module Dev
         raise UsageError, "multiple linked plans — specify one: dev plan push <file>\n  #{files.join("\n  ")}"
       end
 
+      sig { returns(Pathname) }
       def sole_unlinked_plan
         files =
           if @workspace.plans_dir.directory?

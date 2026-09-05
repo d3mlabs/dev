@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "fileutils"
@@ -21,6 +22,8 @@ module Dev
     # depot platform (e.g. "linux") with +@sSteamCmdForcePlatformType, so a macOS
     # host can still provision the Linux server build.
     class SteamIntegration < Integration
+      extend T::Sig
+
       class ProvisionError < StandardError; end
       class BuildMismatchError < StandardError; end
 
@@ -30,6 +33,7 @@ module Dev
       # Provision all steam dependencies.
       #
       # @param dependencies [Array<Dependency>] steam deps to install
+      sig { params(dependencies: T::Array[Dependency]).void }
       def install_all(dependencies)
         dependencies.each { |dep| install(dep) }
       end
@@ -37,6 +41,7 @@ module Dev
       private
 
       # @param dep [Dependency]
+      sig { params(dep: Dependency).void }
       def install(dep)
         base_dir = Pathname(File.expand_path(dep.metadata["install_dir"]))
         target_dir = versioned_dir(base_dir, dep.version)
@@ -72,6 +77,7 @@ module Dev
       # @param dep [Dependency]
       # @param server_dir [Pathname] depot install dir
       # @raise [ProvisionError] if SteamCMD fails
+      sig { params(dep: Dependency, server_dir: Pathname).void }
       def provision(dep, server_dir)
         _out, err, status = SteamCmd.run(
           "+@sSteamCmdForcePlatformType", dep.metadata["platform"],
@@ -93,6 +99,7 @@ module Dev
       # @param server_dir [Pathname]
       # @raise [ProvisionError] if the appmanifest is missing
       # @raise [BuildMismatchError] if the installed buildid differs from the lock
+      sig { params(dep: Dependency, server_dir: Pathname).void }
       def verify_build_id(dep, server_dir)
         manifest = server_dir / "steamapps" / "appmanifest_#{dep.metadata["app"]}.acf"
         raise ProvisionError, "appmanifest not found at #{manifest}" unless manifest.file?

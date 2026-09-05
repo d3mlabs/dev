@@ -72,10 +72,10 @@ module Dev
     def initialize(cd_accessor: Dev::Cd::Accessor.new, clone_accessor: Dev::Clone::Accessor.new,
                    cred_accessor: Dev::CredentialAccessor.new,
                    usage_printer: Dev::Cli::GlobalUsagePrinter.new)
-      @cd_accessor = T.let(cd_accessor, Dev::Cd::Accessor)
-      @clone_accessor = T.let(clone_accessor, Dev::Clone::Accessor)
-      @cred_accessor = T.let(cred_accessor, Dev::CredentialAccessor)
-      @usage_printer = T.let(usage_printer, Dev::Cli::GlobalUsagePrinter)
+      @cd_accessor = cd_accessor
+      @clone_accessor = clone_accessor
+      @cred_accessor = cred_accessor
+      @usage_printer = usage_printer
     end
 
     # Whether the argv is dispatched here, before any dev.yml lookup: a

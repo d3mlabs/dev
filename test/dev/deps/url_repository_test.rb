@@ -58,4 +58,18 @@ class Dev::Deps::UrlRepositoryTest < Minitest::Test
     Then
     raises Dev::Deps::UrlRepository::DownloadError
   end
+
+  test "download_to_tempfile returns the temp path when curl succeeds" do
+    Given "a stubbed successful curl"
+    repo = Dev::Deps::UrlRepository.new
+    Open3.stubs(:capture3)
+         .with("curl", "-fsSL", "-o", anything, "https://example.com/ok.tar.gz")
+         .returns(["", "", stub(success?: true)])
+
+    When "downloading"
+    path = repo.send(:download_to_tempfile, "https://example.com/ok.tar.gz", "ok")
+
+    Then "the tempfile path comes back for hashing"
+    File.exist?(path) == true
+  end
 end

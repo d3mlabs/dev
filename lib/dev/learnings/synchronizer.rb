@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "pathname"
@@ -21,6 +22,8 @@ module Dev
     # private knowledge repo. The constructor itself requires a cache, so a
     # real Synchronizer is never in a half-configured state.
     class Synchronizer
+      extend T::Sig
+
       # `dev learnings sync` was asked to sync with no knowledge repo configured.
       class KnowledgeRepoNotConfiguredError < RuntimeError; end
 
@@ -33,6 +36,8 @@ module Dev
       RENDERED_INVARIANTS_FILENAME = "org-invariants.mdc"
 
       class << self
+        extend T::Sig
+
         # The one construction path callers use: the real synchronizer over
         # the configured knowledge repo's cache, or the unconfigured null
         # object when no repo is set.
@@ -41,6 +46,13 @@ module Dev
         # @param skill_installer [Dev::SkillInstaller]
         # @param renderer [Dev::Learnings::InvariantsRenderer]
         # @return [Synchronizer, UnconfiguredSynchronizer]
+        sig do
+          params(
+            settings: Dev::Settings,
+            skill_installer: Dev::SkillInstaller,
+            renderer: InvariantsRenderer,
+          ).returns(T.any(Synchronizer, UnconfiguredSynchronizer))
+        end
         def for(settings: Dev::Settings.new, skill_installer: Dev::SkillInstaller.new,
                 renderer: InvariantsRenderer.new)
           repo = settings.knowledge_repo
@@ -56,6 +68,14 @@ module Dev
       # @param skill_installer [Dev::SkillInstaller] target for the org skill
       #   links; defaults to the user-global ~/.cursor/skills
       # @param renderer [Dev::Learnings::InvariantsRenderer]
+      sig do
+        params(
+          cache: Cache,
+          settings: Dev::Settings,
+          skill_installer: Dev::SkillInstaller,
+          renderer: InvariantsRenderer,
+        ).void
+      end
       def initialize(cache:, settings: Dev::Settings.new, skill_installer: Dev::SkillInstaller.new,
                      renderer: InvariantsRenderer.new)
         @settings = settings
@@ -65,12 +85,14 @@ module Dev
       end
 
       # @return [Pathname] the machine-side invariants render (beside the cache)
+      sig { returns(Pathname) }
       def rendered_invariants_file
         @cache.dir.dirname / RENDERED_INVARIANTS_FILENAME
       end
 
       # @param project_root [Pathname, String] the enclosing project
       # @return [Pathname] the project's link to the invariants render
+      sig { params(project_root: T.any(Pathname, String)).returns(Pathname) }
       def project_rules_file(project_root)
         Pathname(project_root).join(*ORG_INVARIANTS_RULE_SUBDIRS)
       end
@@ -84,6 +106,7 @@ module Dev
       # @param project_root [Pathname, String, nil] project to link the
       #   invariants render into; nil skips the link (no project context)
       # @return [void]
+      sig { params(project_root: T.nilable(T.any(Pathname, String))).void }
       def sync(project_root: nil)
         @cache.refresh_bounded
         distribute(project_root)
@@ -99,6 +122,7 @@ module Dev
       # @return [void]
       # @raise [Cache::KnowledgeCloneError] when the initial clone fails
       # @raise [Cache::KnowledgeFetchError] when the refresh fails
+      sig { params(project_root: T.nilable(T.any(Pathname, String))).void }
       def sync!(project_root: nil)
         @cache.refresh
         distribute(project_root)
@@ -112,6 +136,7 @@ module Dev
       #
       # @param project_root [Pathname, String, nil]
       # @return [void]
+      sig { params(project_root: T.nilable(T.any(Pathname, String))).void }
       def distribute(project_root)
         return unless @cache.present?
 
@@ -119,7 +144,7 @@ module Dev
         @renderer.render(
           index_file: @cache.index_file,
           rendered_file: rendered_invariants_file,
-          repo: @settings.knowledge_repo,
+          repo: T.must(@settings.knowledge_repo),
         )
         return unless project_root
 
@@ -132,8 +157,11 @@ module Dev
     # no org sync is a supported state, not an error — while the explicit
     # `dev learnings sync` raises with configuration instructions.
     class UnconfiguredSynchronizer
+      extend T::Sig
+
       # @param settings [Dev::Settings] used only to point the error message
       #   at the right config file
+      sig { params(settings: Dev::Settings).void }
       def initialize(settings: Dev::Settings.new)
         @settings = settings
       end
@@ -143,6 +171,7 @@ module Dev
       # @param project_root [Pathname, String, nil] unused; matches
       #   Synchronizer#sync
       # @return [void]
+      sig { params(project_root: T.nilable(T.any(Pathname, String))).void }
       def sync(project_root: nil); end
 
       # The explicit entry: the user asked for a sync that cannot happen.
@@ -151,6 +180,7 @@ module Dev
       #   Synchronizer#sync!
       # @return [void]
       # @raise [Synchronizer::KnowledgeRepoNotConfiguredError] always
+      sig { params(project_root: T.nilable(T.any(Pathname, String))).void }
       def sync!(project_root: nil)
         raise Synchronizer::KnowledgeRepoNotConfiguredError,
           "no knowledge repo configured — add `knowledge_repo: <owner>/<repo>` " \

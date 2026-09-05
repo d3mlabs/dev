@@ -35,7 +35,7 @@ module Dev
 
     sig { params(command_parser: CommandParser).void }
     def initialize(command_parser: CommandParser.new)
-      @command_parser = T.let(command_parser, CommandParser)
+      @command_parser = command_parser
     end
 
     # Parse dev.yml into a manifest (toolchain fields left nil — see

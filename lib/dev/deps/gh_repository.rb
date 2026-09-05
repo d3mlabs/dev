@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "json"
@@ -19,6 +20,8 @@ module Dev
     #      assets: "UnrealEngine-CSS-Editor-Linux.tar.zst.*",
     #      install_dir: "~/.dev/engines/unreal-engine-css"
     class GhRepository < Repository
+      extend T::Sig
+
       class GhMissingError < StandardError; end
       class AuthenticationError < StandardError; end
       class RepoAccessError < StandardError; end
@@ -39,6 +42,7 @@ module Dev
       # @raise [RepoAccessError] if the repo is not visible to the account
       # @raise [ReleaseNotFoundError] if the tag has no release/ref
       # @raise [NoMatchingAssetsError] if no assets match the pattern
+      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
       def fetch(id)
         id["assets"] ? fetch_prebuilt(id) : fetch_source(id)
       end
@@ -49,6 +53,7 @@ module Dev
       #
       # @param id [Hash]
       # @return [Dependency]
+      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
       def fetch_prebuilt(id)
         repo_slug = id["repo"]
         tag = id["tag"]
@@ -83,6 +88,7 @@ module Dev
       #
       # @param id [Hash]
       # @return [Dependency]
+      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
       def fetch_source(id)
         repo_slug = id["repo"]
         tag = id["tag"]
@@ -108,6 +114,7 @@ module Dev
       # @param repo_slug [String] "owner/repo"
       # @param tag [String] tag/ref
       # @return [String] commit SHA
+      sig { params(repo_slug: String, tag: String).returns(String) }
       def resolve_commit_sha(repo_slug, tag)
         out, err, status = run_gh_api("repos/#{repo_slug}/commits/#{tag}")
         return JSON.parse(out)["sha"] if status.success?
@@ -122,6 +129,7 @@ module Dev
       # @param repo_slug [String] "owner/repo"
       # @param tag [String] release tag
       # @return [Hash] parsed release JSON
+      sig { params(repo_slug: String, tag: String).returns(T::Hash[String, T.untyped]) }
       def fetch_release(repo_slug, tag)
         out, err, status = run_gh_api("repos/#{repo_slug}/releases/tags/#{tag}")
         return JSON.parse(out) if status.success?
@@ -137,6 +145,7 @@ module Dev
       #
       # @param repo_slug [String] "owner/repo"
       # @param tag [String] release tag
+      sig { params(repo_slug: String, tag: String).void }
       def raise_not_found_error!(repo_slug, tag)
         _out, _err, status = run_gh_api("repos/#{repo_slug}")
         if status.success?
@@ -153,6 +162,7 @@ module Dev
       end
 
       # @param err [String] gh stderr output
+      sig { params(err: String).void }
       def raise_auth_error!(err)
         return unless err.include?("gh auth login")
 
@@ -161,6 +171,7 @@ module Dev
 
       # @param err [String] gh stderr output
       # @return [Boolean]
+      sig { params(err: String).returns(T::Boolean) }
       def not_found?(err)
         err.include?("HTTP 404")
       end
@@ -169,6 +180,7 @@ module Dev
       #
       # @param path [String] API path (e.g. "repos/owner/repo/releases/tags/v1")
       # @return [Array(String, String, Process::Status)] stdout, stderr, status
+      sig { params(path: String).returns([String, String, Process::Status]) }
       def run_gh_api(path)
         Open3.capture3("gh", "api", path)
       rescue Errno::ENOENT
@@ -180,6 +192,12 @@ module Dev
       # @param release [Hash] parsed release JSON
       # @param pattern [String] glob pattern (e.g. "*.tar.zst.*")
       # @return [Array<Hash>] matching asset objects
+      sig do
+        params(
+          release: T::Hash[String, T.untyped],
+          pattern: String,
+        ).returns(T::Array[T::Hash[String, T.untyped]])
+      end
       def matching_assets(release, pattern)
         assets = release["assets"] || []
         assets.select { |asset| File.fnmatch(pattern, asset["name"]) }
@@ -191,6 +209,7 @@ module Dev
       #
       # @param asset [Hash] API asset object
       # @return [Hash] { "name", "size", "sha256"? }
+      sig { params(asset: T::Hash[String, T.untyped]).returns(T::Hash[String, T.untyped]) }
       def asset_metadata(asset)
         metadata = { "name" => asset["name"], "size" => asset["size"] }
         digest = asset["digest"]

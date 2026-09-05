@@ -11,7 +11,7 @@ class Dev::Deps::RepositoryTest < Minitest::Test
     repo = Dev::Deps::Repository.new
 
     When "fetching a dependency"
-    repo.fetch("boost>=1.0")
+    repo.fetch({ "name" => "boost", "constraint" => ">=1.0" })
 
     Then
     raises NotImplementedError

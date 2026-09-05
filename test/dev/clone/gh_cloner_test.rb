@@ -8,8 +8,9 @@ require "pathname"
 require "tmpdir"
 
 # An executor stand-in over the gh CLI boundary, recording argv and answering
-# a scripted exit status — the one true boundary this module has.
-class RecordingCloneExecutor
+# a scripted exit status — the one true boundary this module has. Subclasses
+# the real executor so the cloner's typed constructor accepts it.
+class RecordingCloneExecutor < Dev::Clone::GhCloner::Executor
   attr_reader :argvs
 
   def initialize(success: true)

@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "digest"
@@ -17,6 +18,8 @@ module Dev
     # install. Resolution uses whatever python3 is on PATH — update-deps runs on
     # the author's host, before the project venv necessarily exists.
     class PipRepository < Repository
+      extend T::Sig
+
       class DownloadError < StandardError; end
       class NoVersionError < StandardError; end
 
@@ -29,6 +32,7 @@ module Dev
       # @return [Dependency]
       # @raise [DownloadError] if pip download fails or yields no artifact
       # @raise [NoVersionError] if the version can't be read from the artifact
+      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
       def fetch(id)
         name = id["name"]
         spec = "#{name}#{normalize_constraint(id["version"])}"
@@ -53,6 +57,7 @@ module Dev
       #
       # @param constraint [String, nil]
       # @return [String]
+      sig { params(constraint: T.nilable(String)).returns(String) }
       def normalize_constraint(constraint)
         value = constraint.to_s.strip
         return "" if value.empty?
@@ -65,6 +70,7 @@ module Dev
       #
       # @param spec [String] pip requirement specifier (e.g. "totalsegmentator>=2.0")
       # @return [String] path to the downloaded wheel/sdist
+      sig { params(spec: String).returns(String) }
       def download_artifact(spec)
         dir = Dir.mktmpdir("dev_pip_")
         _out, err, status = Open3.capture3(PYTHON, "-m", "pip", "download", "--no-deps", "--dest", dir, spec)
@@ -85,6 +91,7 @@ module Dev
       # @param filename [String]
       # @param _name    [String] declared package name (kept for signature clarity)
       # @return [String, nil]
+      sig { params(filename: String, _name: String).returns(T.nilable(String)) }
       def version_from_filename(filename, _name)
         stem = filename.sub(/\.(?:whl|tar\.gz|tgz|zip)\z/, "")
         stem.split("-").find { |token| token.match?(/\A\d/) }

@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "shadowenv_xcode"
+require "dev/shadowenv_xcode"
 require "fileutils"
 require "tmpdir"
 
@@ -12,7 +12,7 @@ class ShadowenvXcodeTest < Minitest::Test
 
   test "generate_xcode_lisp provides xcode and sets DEVELOPER_DIR" do
     When "generating lisp for the pin"
-    result = ShadowenvXcode.generate_xcode_lisp("26.1.1", DEVELOPER_DIR)
+    result = Dev::ShadowenvXcode.generate_xcode_lisp("26.1.1", DEVELOPER_DIR)
 
     Then "it provides the pinned version and points DEVELOPER_DIR at it"
     assert_includes result, '(provide "xcode" "26.1.1")'
@@ -26,11 +26,11 @@ class ShadowenvXcodeTest < Minitest::Test
     FileUtils.mkdir_p(shadowenv_d)
     File.write(
       File.join(shadowenv_d, "520_xcode.lisp"),
-      ShadowenvXcode.generate_xcode_lisp("26.1.1", DEVELOPER_DIR),
+      Dev::ShadowenvXcode.generate_xcode_lisp("26.1.1", DEVELOPER_DIR),
     )
 
     Expect
-    ShadowenvXcode.provisioned?(DEVELOPER_DIR, project_root: tmpdir) == true
+    Dev::ShadowenvXcode.provisioned?(DEVELOPER_DIR, project_root: tmpdir) == true
 
     Cleanup
     FileUtils.rm_rf(tmpdir)
@@ -41,7 +41,7 @@ class ShadowenvXcodeTest < Minitest::Test
     tmpdir = Dir.mktmpdir("shadowenv-xcode-test-")
 
     Expect
-    ShadowenvXcode.provisioned?(DEVELOPER_DIR, project_root: tmpdir) == false
+    Dev::ShadowenvXcode.provisioned?(DEVELOPER_DIR, project_root: tmpdir) == false
 
     Cleanup
     FileUtils.rm_rf(tmpdir)
@@ -54,11 +54,11 @@ class ShadowenvXcodeTest < Minitest::Test
     FileUtils.mkdir_p(shadowenv_d)
     File.write(
       File.join(shadowenv_d, "520_xcode.lisp"),
-      ShadowenvXcode.generate_xcode_lisp("16.4", "/Applications/Xcode-16.4.app/Contents/Developer"),
+      Dev::ShadowenvXcode.generate_xcode_lisp("16.4", "/Applications/Xcode-16.4.app/Contents/Developer"),
     )
 
     Expect
-    ShadowenvXcode.provisioned?(DEVELOPER_DIR, project_root: tmpdir) == false
+    Dev::ShadowenvXcode.provisioned?(DEVELOPER_DIR, project_root: tmpdir) == false
 
     Cleanup
     FileUtils.rm_rf(tmpdir)
@@ -69,7 +69,7 @@ class ShadowenvXcodeTest < Minitest::Test
     tmpdir = Dir.mktmpdir("shadowenv-xcode-setup-")
 
     When "running setup! with the shadowenv trust call stubbed"
-    result = ShadowenvXcode.setup!(project_root: tmpdir, version: "26.1.1", developer_dir: DEVELOPER_DIR)
+    result = Dev::ShadowenvXcode.setup!(project_root: tmpdir, version: "26.1.1", developer_dir: DEVELOPER_DIR)
 
     Then "the lisp file exists with the pin"
     _ * Kernel.system >> true

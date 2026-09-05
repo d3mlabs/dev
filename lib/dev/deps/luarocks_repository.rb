@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "digest"
@@ -14,6 +15,8 @@ module Dev
     # picks the best match for the constraint, downloads the rock to compute
     # SHA256. Callers are responsible for caching.
     class LuaRocksRepository < Repository
+      extend T::Sig
+
       class SearchError < StandardError; end
       class NoVersionError < StandardError; end
       class DownloadError < StandardError; end
@@ -25,6 +28,7 @@ module Dev
       # @raise [SearchError] if luarocks search fails
       # @raise [NoVersionError] if no versions match
       # @raise [DownloadError] if luarocks download fails
+      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
       def fetch(id)
         name = id["name"]
         version = find_best_version(name, id["constraint"])
@@ -51,14 +55,17 @@ module Dev
       # @return [String] best matching version
       # @raise [SearchError] if luarocks search command fails
       # @raise [NoVersionError] if no versions found
+      sig { params(name: String, _constraint: T.nilable(String)).returns(String) }
       def find_best_version(name, _constraint)
         out, _err, status = Open3.capture3("luarocks", "search", name, "--porcelain")
         raise SearchError, "luarocks search #{name} failed" unless status.success?
 
-        versions = out.scan(/^\s+(\S+)\s+\(/).map(&:first)
+        # String#scan with a capture group always yields arrays of captures.
+        matches = T.cast(out.scan(/^\s+(\S+)\s+\(/), T::Array[T::Array[String]])
+        versions = matches.map(&:first)
         raise NoVersionError, "No versions found for #{name}" if versions.empty?
 
-        versions.first
+        T.must(versions.first)
       end
 
       # Download a source rock to a temp file.
@@ -67,14 +74,15 @@ module Dev
       # @param version [String] exact version
       # @return [String] path to downloaded rock file
       # @raise [DownloadError] if luarocks download command fails
+      sig { params(name: String, version: String).returns(String) }
       def download_rock(name, version)
         tmp = Tempfile.new(["dev_deps_#{name}", ".src.rock"])
         tmp.close
         _out, err, status = Open3.capture3(
-          "luarocks", "download", name, version, "--source", "--to=#{File.dirname(tmp.path)}",
+          "luarocks", "download", name, version, "--source", "--to=#{File.dirname(T.must(tmp.path))}",
         )
         raise DownloadError, "luarocks download #{name} #{version} failed: #{err}" unless status.success?
-        tmp.path
+        T.must(tmp.path)
       end
     end
   end

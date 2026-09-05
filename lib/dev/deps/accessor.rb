@@ -1,5 +1,8 @@
+# typed: strict
 # frozen_string_literal: true
 
+require "stringio"
+require_relative "dependency"
 require_relative "lockfile"
 require_relative "cache"
 require_relative "ficsit_integration"
@@ -13,6 +16,8 @@ module Dev
     # pinned Xcode — so consumers (deploy, build scripts, CI) resolve paths
     # from the lockfile instead of reconstructing dev's layout conventions.
     class Accessor
+      extend T::Sig
+
       class UsageError < StandardError; end
       class NotLockedError < StandardError; end
       class PlatformNotLockedError < StandardError; end
@@ -24,6 +29,7 @@ module Dev
       # @param lockfile [Lockfile]
       # @param cache [Cache]
       # @param xcode_install_root [String] where Xcode bundles live (tests use a tmpdir)
+      sig { params(lockfile: Lockfile, cache: Cache, xcode_install_root: String).void }
       def initialize(lockfile:, cache:, xcode_install_root: XcodeIntegration::INSTALL_ROOT)
         @lockfile = lockfile
         @cache = cache
@@ -33,12 +39,17 @@ module Dev
       # Dispatch a `dev deps …` invocation and print the result.
       #
       # @param args [Array<String>] argv after the "deps" command
-      # @param out [IO] output stream
+      # @param out [IO, StringIO] output stream
       # @raise [UsageError] on an unrecognized invocation
+      sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
       def run(args, out: $stdout)
         subcommand, *rest = args
         case subcommand
-        when "path" then out.puts(path(*rest).to_s)
+        when "path"
+          raise UsageError, USAGE if rest.size > 3
+
+          integration, name, platform = rest
+          out.puts(path(integration, name, platform).to_s)
         else raise UsageError, USAGE
         end
       end
@@ -54,6 +65,13 @@ module Dev
       # @raise [PlatformNotLockedError] if the platform isn't locked for the dep
       # @raise [NotCachedError] if the zip isn't in the cache (run dev up)
       # @raise [NotInstalledError] if the pinned Xcode isn't installed (run dev up)
+      sig do
+        params(
+          integration: T.nilable(String),
+          name: T.nilable(String),
+          platform: T.nilable(String),
+        ).returns(Pathname)
+      end
       def path(integration = nil, name = nil, platform = nil)
         case integration
         when "ficsit" then ficsit_path(name, platform)
@@ -67,6 +85,7 @@ module Dev
       # @param name [String, nil]
       # @param platform [String, nil]
       # @return [Pathname]
+      sig { params(name: T.nilable(String), platform: T.nilable(String)).returns(Pathname) }
       def ficsit_path(name, platform)
         raise UsageError, USAGE unless name && platform
 
@@ -87,6 +106,7 @@ module Dev
       # so xcodebuild rides the pin (e.g. unreal-engine's Mac release job).
       #
       # @return [Pathname]
+      sig { returns(Pathname) }
       def xcode_developer_dir
         dep = find_dep(:xcode, "xcode")
         developer_dir = Pathname(XcodeIntegration.developer_dir(dep.version, root: @xcode_install_root))
@@ -102,6 +122,7 @@ module Dev
       # @param integration [Symbol]
       # @param name [String]
       # @return [Dependency]
+      sig { params(integration: Symbol, name: String).returns(Dependency) }
       def find_dep(integration, name)
         dep = @lockfile.read.find { |d| d.integration == integration && d.name == name }
         raise NotLockedError, "#{name} (#{integration}) is not in the lockfile — run dev update-deps" unless dep
@@ -112,6 +133,7 @@ module Dev
       # @param dep [Dependency]
       # @param platform [String]
       # @return [Hash] the locked { "hash", "link" } for the platform
+      sig { params(dep: Dependency, platform: String).returns(T::Hash[String, T.untyped]) }
       def locked_platform(dep, platform)
         platforms = dep.metadata["platforms"] || {}
         target = platforms[platform]

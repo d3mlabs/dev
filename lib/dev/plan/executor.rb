@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "open3"
@@ -8,16 +9,19 @@ module Dev
     # Dev::RunnerSetup::Executor: the one injectable boundary so orchestration
     # is testable without real subprocesses.
     class Executor
+      extend T::Sig
+
       # @param argv [Array<String>] command and arguments
       # @param stdin [String, nil] data piped to the subprocess (e.g. a JSON
       #   payload for `gh api --input -`)
       # @return [Array(String, String, Boolean)] stdout, stderr, success?
+      sig { params(argv: String, stdin: T.nilable(String)).returns([String, String, T::Boolean]) }
       def capture(*argv, stdin: nil)
         out, err, status =
           if stdin
-            Open3.capture3(*argv, stdin_data: stdin)
+            Open3.capture3(*T.unsafe(argv), stdin_data: stdin)
           else
-            Open3.capture3(*argv)
+            Open3.capture3(*T.unsafe(argv))
           end
         [out, err, status.success?]
       rescue Errno::ENOENT => e
