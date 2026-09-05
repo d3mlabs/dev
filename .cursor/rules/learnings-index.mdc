@@ -54,8 +54,18 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  normalization gate: it must recognize every layout Cursor writes, since
  render re-serializes its output and any mis-split compounds on the next
  pull. → .cursor/skills/learnings/plan-parse-normalizes/
+- [architecture/pre-bundle-stdlib-chain] The dev/deps require chain loads
+ before the bundle exists: stdlib-only, sigils capped at typed: true;
+ sorbet-runtime is required once in src/dev.rb, self-required only by the
+ consumer-loaded deps hooks and bin/test.rb's rake_test_argv helper.
+ → .cursor/skills/learnings/pre-bundle-stdlib-chain/
 
 ## toolchain
+
+- [toolchain/sorbet-splat-unsafe] Sorbet rejects runtime-sized splats
+ (error 7019) — T.let/T.cast never help; take argv as an Array param and
+ keep the one T.unsafe at the stdlib boundary.
+ → .cursor/skills/learnings/sorbet-splat-unsafe/
 
 
 ## org tier
