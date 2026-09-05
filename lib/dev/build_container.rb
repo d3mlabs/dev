@@ -242,7 +242,7 @@ module Dev
         base = File.expand_path(install_dir)
         # Point at the version-keyed subdir the integration publishes to, so the
         # build context tracks the locked version (see resolve_versioned_volumes).
-        contexts[dep.name.downcase] = dep.version ? File.join(base, T.must(dep.version).to_s) : base
+        contexts[dep.name.downcase] = dep.version ? File.join(base, dep.version.to_s) : base
       end
       contexts
     end
@@ -281,7 +281,7 @@ module Dev
         install_dir = dep.metadata&.fetch("install_dir", nil)
         next unless install_dir && dep.version
 
-        acc[File.expand_path(install_dir)] = T.must(dep.version).to_s
+        acc[File.expand_path(install_dir)] = dep.version.to_s
       end
     end
 
