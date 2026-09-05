@@ -3,7 +3,10 @@
 
 require "test_helper"
 require "dev/build_watcher"
+require "fileutils"
+require "open3"
 require "stringio"
+require "tmpdir"
 
 # Dev::BuildWatcher with the OS mechanism (run_once) replaced by a scripted sequence
 # of results, so the retry/classify policy is tested without real processes.
@@ -147,6 +150,66 @@ class BuildWatcherTest < Minitest::Test
     Then "stderr rides the merged capture"
     result.outcome == :failed
     result.output.include?("boom") == true
+  end
+
+  test "wait_or_kill kills a silent idle build and reports the stall" do
+    Given "a fake docker (idle stats, successful kill) and a silent long-running process"
+    tmpdir = Dir.mktmpdir("bw-fake-docker-")
+    fake_docker = File.join(tmpdir, "docker")
+    File.write(fake_docker, "#!/bin/sh\ncase \"$1\" in\n  stats) exit 1 ;;\nesac\nexit 0\n")
+    FileUtils.chmod(0o755, fake_docker)
+    original_path = ENV["PATH"]
+    ENV["PATH"] = "#{tmpdir}:#{original_path}"
+    io = StringIO.new
+    w = Dev::BuildWatcher.new(container_name: "bw-stall-test", out: io, poll: 0)
+    stdin, out, wait_thr = Open3.popen2e("sleep", "1")
+
+    When "waiting on the silent process"
+    killed = w.send(:wait_or_kill, wait_thr) { 999.0 }
+
+    Then "the stall is detected and the container kill is announced"
+    killed == true
+    assert_includes io.string, "killing hung container bw-stall-test"
+
+    Cleanup
+    ENV["PATH"] = original_path
+    stdin.close
+    out.close
+    wait_thr.join
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "container_cpu parses the docker stats percentage" do
+    Given "a fake docker whose stats report 42.5%"
+    tmpdir = Dir.mktmpdir("bw-fake-docker-")
+    fake_docker = File.join(tmpdir, "docker")
+    File.write(fake_docker, "#!/bin/sh\nprintf '42.5%%\\n'\n")
+    FileUtils.chmod(0o755, fake_docker)
+    original_path = ENV["PATH"]
+    ENV["PATH"] = "#{tmpdir}:#{original_path}"
+    w = watcher
+
+    Expect "the percentage is parsed as a Float"
+    w.send(:container_cpu) == 42.5
+
+    Cleanup
+    ENV["PATH"] = original_path
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "container_cpu reports idle when docker cannot be executed at all" do
+    Given "a PATH with no docker"
+    tmpdir = Dir.mktmpdir("bw-empty-path-")
+    original_path = ENV["PATH"]
+    ENV["PATH"] = tmpdir
+    w = watcher
+
+    Expect "the unreadable value counts as idle"
+    w.send(:container_cpu) == 0.0
+
+    Cleanup
+    ENV["PATH"] = original_path
+    FileUtils.rm_rf(tmpdir)
   end
 
   test "now returns a monotonic Float for stall timing" do
