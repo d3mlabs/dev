@@ -51,32 +51,36 @@ module Dev
 
       # Resolve all declarations into a flat Dependency list.
       #
+      # The resolved set is keyed by PackageId, so the same name under two
+      # integrations is two packages — each resolves against its own
+      # integration's universe. Transitive edges likewise stay inside the
+      # declaring dep's integration.
+      #
       # @param declarations [Array<DependencyDeclaration>] declared dependencies to resolve
       # @return [Array<Dependency>]
-      # @raise [ConflictingDeclarationError] if one name is declared with disagreeing constraints
+      # @raise [ConflictingDeclarationError] if one package is declared with disagreeing constraints
       # @raise [UnknownIntegrationError] if a declaration's integration has no repository or scheme
       # @raise [NoSatisfyingVersionError] if a declaration cannot be satisfied
       sig { params(declarations: T::Array[DependencyDeclaration]).returns(T::Array[Dependency]) }
       def resolve(declarations)
         reject_conflicts(declarations)
 
-        platforms_by_name = platforms_by_name(declarations)
-        resolved = T.let({}, T::Hash[String, Dependency])
+        platforms = declared_platforms(declarations)
+        resolved = T.let({}, T::Hash[PackageId, Dependency])
         queue = declarations.dup
 
         while (decl = queue.shift)
-          next if resolved.key?(decl.name)
+          id = package_id(decl)
+          next if resolved.key?(id)
 
-          chosen = choose(decl, platforms_by_name[decl.name] || [])
-          resolved[decl.name] = mint(chosen, decl)
+          chosen = choose(decl, platforms[[decl.integration, decl.name]] || [])
+          resolved[id] = mint(chosen, decl)
 
           # Transitive deps inherit the declaring dep's group, host, and env: a
           # dep only needed on one host/env can't need its transitive closure
           # anywhere else.
           chosen.dependencies.each do |edge|
-            next if resolved.key?(edge.name)
-
-            queue << DependencyDeclaration.new(
+            edge_decl = DependencyDeclaration.new(
               name: edge.name,
               integration: decl.integration,
               constraint: normalize_constraint(edge.constraint),
@@ -84,6 +88,7 @@ module Dev
               host: decl.host,
               env: decl.env,
             )
+            queue << edge_decl unless resolved.key?(package_id(edge_decl))
           end
         end
 
@@ -208,9 +213,11 @@ module Dev
         )
       end
 
-      # Reject sets where one name is declared with disagreeing constraints.
+      # Reject sets where one package is declared with disagreeing constraints.
       # A dep declared in several groups resolves once, so agreement is the
       # precondition for that single resolution being right for everyone.
+      # Grouping is per (integration, name): the same name under two
+      # integrations is two packages, free to carry different constraints.
       # (Platform, group, host, and env may differ — they are axes, not
       # constraints.)
       #
@@ -219,12 +226,13 @@ module Dev
       # @raise [ConflictingDeclarationError]
       sig { params(declarations: T::Array[DependencyDeclaration]).void }
       def reject_conflicts(declarations)
-        declarations.group_by(&:name).each do |name, decls|
+        declarations.group_by { |d| [d.integration, d.name] }.each do |(integration, name), decls|
           constraints = decls.map(&:constraint).uniq
           next if constraints.size <= 1
 
           raise ConflictingDeclarationError,
-            "#{name} is declared with disagreeing constraints: #{constraints.map(&:inspect).join(" vs ")}"
+            "#{integration}/#{name} is declared with disagreeing constraints: " \
+              "#{constraints.map(&:inspect).join(" vs ")}"
         end
       end
 
@@ -247,21 +255,23 @@ module Dev
         dependency.with(metadata: dependency.metadata.merge(extra))
       end
 
-      # Collect, per dependency name, the platforms of every group that declares
-      # it (preserving nils, which mean "integration default"). This is how the
-      # same dep declared in two groups gets resolved for the union of their
-      # platforms without per-dep platform lists.
+      # Collect, per package (integration + name), the platforms of every group
+      # that declares it (preserving nils, which mean "integration default").
+      # This is how the same dep declared in two groups gets resolved for the
+      # union of their platforms without per-dep platform lists — scoped per
+      # integration so one ecosystem's platform pins never leak into another's.
       #
       # @param declarations [Array<DependencyDeclaration>]
-      # @return [Hash{String => Array<String, nil>}] name → de-duped platform list
+      # @return [Hash{Array(Symbol, String) => Array<String, nil>}]
+      #   (integration, name) → de-duped platform list
       sig do
         params(
           declarations: T::Array[DependencyDeclaration],
-        ).returns(T::Hash[String, T::Array[T.nilable(String)]])
+        ).returns(T::Hash[[Symbol, String], T::Array[T.nilable(String)]])
       end
-      def platforms_by_name(declarations)
+      def declared_platforms(declarations)
         result = Hash.new { |h, k| h[k] = [] }
-        declarations.each { |decl| result[decl.name] << decl.platform }
+        declarations.each { |decl| result[[decl.integration, decl.name]] << decl.platform }
         result.transform_values(&:uniq)
       end
 

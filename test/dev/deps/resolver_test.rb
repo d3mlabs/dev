@@ -137,6 +137,74 @@ class Dev::Deps::ResolverTest < Minitest::Test
     raises Dev::Deps::Resolver::ConflictingDeclarationError
   end
 
+  test "resolves the same name declared under two integrations independently" do
+    Given "ffi declared under both bundler and brew"
+    bundler_repo = StubRepository.new(universes: { "ffi" => [version("1.17.0")] })
+    brew_repo = StubRepository.new(universes: { "ffi" => [version("3.4.0")] })
+    resolver = Dev::Deps::Resolver.new(
+      repositories: { bundler: bundler_repo, brew: brew_repo },
+      schemes: { bundler: Dev::Deps::PinnedScheme.new, brew: Dev::Deps::PinnedScheme.new },
+    )
+    declarations = [
+      declaration(name: "ffi", integration: :bundler, group: :app),
+      declaration(name: "ffi", integration: :brew, group: :app),
+    ]
+
+    When "resolving"
+    result = resolver.resolve(declarations)
+
+    Then "both resolve, each in its own integration's universe"
+    result.size == 2
+    result.map { |d| [d.integration, d.version] }.sort == [[:brew, "3.4.0"], [:bundler, "1.17.0"]].sort
+  end
+
+  test "same name under two integrations with different constraints is not a conflict" do
+    Given "each integration constrains its own ffi differently"
+    bundler_repo = StubRepository.new(universes: { "ffi" => [version("1.17.0")] })
+    brew_repo = StubRepository.new(universes: { "ffi" => [version("3.4.0")] })
+    resolver = Dev::Deps::Resolver.new(
+      repositories: { bundler: bundler_repo, brew: brew_repo },
+      schemes: { bundler: Dev::Deps::SemverScheme.new, brew: Dev::Deps::SemverScheme.new },
+    )
+    declarations = [
+      declaration(name: "ffi", integration: :bundler, group: :app, constraint: { "version" => "^1.0.0" }),
+      declaration(name: "ffi", integration: :brew, group: :app, constraint: { "version" => "^3.0.0" }),
+    ]
+
+    When "resolving"
+    result = resolver.resolve(declarations)
+
+    Then "no ConflictingDeclarationError — constraints are scoped per integration"
+    result.size == 2
+  end
+
+  test "transitive edge resolves within its own integration's namespace" do
+    Given "a ficsit mod with an edge to zlib, and brew's zlib also declared"
+    ficsit_repo = StubRepository.new(universes: {
+      "SML" => [version("3.12.0", dependencies: [edge("zlib", nil)])],
+      "zlib" => [version("1.3.1")],
+    })
+    brew_repo = StubRepository.new(universes: { "zlib" => [version("1.2.0")] })
+    resolver = Dev::Deps::Resolver.new(
+      repositories: { ficsit: ficsit_repo, brew: brew_repo },
+      schemes: { ficsit: Dev::Deps::SemverScheme.new, brew: Dev::Deps::PinnedScheme.new },
+    )
+    declarations = [
+      declaration(name: "zlib", integration: :brew, group: :app),
+      declaration(name: "SML", integration: :ficsit, group: :app),
+    ]
+
+    When "resolving"
+    result = resolver.resolve(declarations)
+
+    Then "zlib resolved twice, once per integration, from each one's universe"
+    result.size == 3
+    zlibs = result.select { |d| d.name == "zlib" }
+    zlibs.map(&:integration).sort == [:brew, :ficsit]
+    zlibs.find { |d| d.integration == :ficsit }.version == "1.3.1"
+    zlibs.find { |d| d.integration == :brew }.version == "1.2.0"
+  end
+
   test "raises UnknownIntegrationError for unregistered integration" do
     Given "a declaration referencing an unregistered integration"
     resolver = Dev::Deps::Resolver.new(repositories: {}, schemes: {})
