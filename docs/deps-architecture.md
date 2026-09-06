@@ -7,19 +7,43 @@ integrity works per ecosystem, and what to build when adding a new one.
 
 ## Ontology
 
-Four ideas, kept strictly apart. Each has one class, and no class plays
+Five ideas, kept strictly apart. Each has one class, and no class plays
 two roles.
 
 | Concept | Class | What it is |
 | --- | --- | --- |
 | Identity | `PackageId` | Which package: `integration` + `name`, plus `source` for source-based deps (a git URL, a `owner/repo` slug). Value object, works as a Hash key. |
-| Universe | `Package` → `PackageVersion` | What exists: every version a repository reports, each carrying facts — `platforms`, `digest`, `artifacts` (dev-fetched bytes), `dependencies` (edges), and `metadata` (ecosystem install facts). |
-| Requirement | `DependencyDeclaration` | What the user asked for: name, integration, constraint hash, and the install axes (`group`, `platform`, `host`, `env`). |
+| Universe | `Package` → `PackageVersion` | What exists: every version a repository reports, each carrying facts — `platforms`, `digest`, `artifacts` (dev-fetched bytes), `declarations` (its declared-deps claim), and `metadata` (ecosystem install facts). |
+| Declaration | `Declaration` | The shared atom: name + integration + constraint, always in dev's shape (`{}` = unconstrained). Stated by whoever authored the thing — a project's `dependencies.rb` row or an upstream manifest — and context-free by type: where/when *you* install is not part of what is declared about a package. |
+| Requirement | `ScopedDeclaration` | A `Declaration` married to the context it resolves under: a `Scope` (`group`, `host`, `env` — inherited down the walk as one unit) plus the per-row axes that deliberately don't inherit (`platform`, `post_install`). What the DSL produces and the Resolver consumes. Composition, not a subclass: a scoped declaration must never pass where a context-free `Declaration` is expected. |
 | Pin | `Dependency` | What was chosen: exact version, integrity hash, metadata. What the lockfile serializes and integrations install. |
 
 Supporting types: `Artifact` (one downloadable file with an optional
-published digest), `DependencyEdge` (an outgoing requirement of a
-`PackageVersion`, constraint left in the ecosystem's native syntax).
+published digest), `Scope` (the walk-inherited context, projected onto
+pins as host/env metadata), and `Declarations` — a sealed sum type for a
+version's declared-deps claim: `Resolved([Declaration…])` (facts dev can
+walk; `Resolved([])` affirmatively requires nothing) or `ToolOwned` (the
+ecosystem's tool owns a closure dev never sees). A bare array could not
+keep those last two apart.
+
+```mermaid
+flowchart LR
+  subgraph intent [Intent]
+    Scoped["ScopedDeclaration"] --> ScopeObj["Scope<br/>group, host, env"]
+  end
+  subgraph universe [Universe]
+    PackageId --> Package --> PackageVersion
+    PackageVersion --> Artifact
+    PackageVersion -->|"#declarations"| DeclADT["Declarations<br/>Resolved | ToolOwned"]
+  end
+  subgraph outcome [Pin]
+    Dep["Dependency"] --> Lockfile
+  end
+  Scoped --> Atom["Declaration<br/>name, integration, constraint"]
+  DeclADT -->|Resolved| Atom
+  Scoped -->|Resolver| Dep
+  Atom -.->|"walk marries with parent's Scope"| Scoped
+```
 
 ## Layers and their one question
 
@@ -61,12 +85,13 @@ if a `*_repository.rb`, `*_integration.rb`, `*_scheme.rb`, or
      explicitly requested platform;
    - picks the highest satisfying version (`sort`), mints the
      `Dependency` from that version's facts (digest → pin hash, metadata
-     → pin metadata), and stamps the declaration's `host`/`env` onto the
-     pin's metadata;
-   - queues the chosen version's `dependencies` edges as synthetic
-     declarations that inherit the parent's group/host/env (edges stay
-     inside the declaring dep's integration — the resolved set is keyed
-     by `PackageId`).
+     → pin metadata), and projects the declaration's `Scope` onto the
+     pin's metadata (host/env keys, present only when pinned);
+   - cases on the chosen version's `declarations` claim: a `Resolved`
+     claim's declarations are queued as synthetic `ScopedDeclaration`s
+     inheriting the parent's `Scope` as one unit (each already carries
+     the integration its repository stamped — the resolved set is keyed
+     by `PackageId`); a `ToolOwned` claim has nothing to walk.
 3. **Write** — pins go to `deps.lock` (app/test groups) and
    `build-deps.lock` (build group), nested by integration
    (`brew:` → `zlib:` → attrs) so the on-disk key carries the same
@@ -76,15 +101,6 @@ if a `*_repository.rb`, `*_integration.rb`, `*_scheme.rb`, or
 
 `dev install-deps` reads the lockfile and hands each integration its pins;
 no resolution happens at install time.
-
-```
-update-deps ─▶ Locker.lock(decls)          (bundler: Gemfile.lock appears)
-            ─▶ Resolver.resolve(decls)
-                 ├─▶ Repository.find(id, filter) ─▶ Package{PackageVersion…}
-                 ├─▶ VersionScheme.satisfies?/sort   (choice)
-                 └─▶ Dependency (pin)            ─▶ deps.lock
-install-deps ─▶ Integration.install_all(pins)
-```
 
 ### Resolution flow (`dev update-deps`)
 
@@ -99,7 +115,7 @@ sequenceDiagram
     participant sch as VersionScheme (per integration)
     participant lock as Lockfile
 
-    Note over cmd: load dependencies.rb into DependencyDeclaration[]
+    Note over cmd: load dependencies.rb into ScopedDeclaration[]
     cmd->>lkr: lock(bundler declarations)
     lkr->>lkr: write Gemfile from declarations
     lkr->>bundler: shadowenv exec -- bundle lock
@@ -109,12 +125,15 @@ sequenceDiagram
     loop until queue empty (declared + transitive)
         res->>rep: find(PackageId, filter: constraint)
         rep->>backing: query universe (registry API / Gemfile.lock / ls-remote / GraphQL)
-        backing-->>rep: raw versions, platforms, edges, digests
+        backing-->>rep: raw versions, platforms, declared deps, digests
+        Note over rep: normalize upstream constraints into dev's shape, stamp its integration, state its Declarations claim (Resolved | ToolOwned)
         rep-->>res: Package (PackageVersion facts)
         res->>sch: satisfies?(version, constraint) each, then sort
         sch-->>res: ordered satisfying candidates
-        Note over res: drop versions missing an explicitly requested platform, pick max (NoSatisfyingVersionError if none), mint the Dependency pin into the PackageId-keyed resolved set, stamp host/env
-        Note over res: queue the chosen version's edges as declarations in the same integration
+        Note over res: drop versions missing an explicitly requested platform, pick max (NoSatisfyingVersionError if none), mint the Dependency pin into the PackageId-keyed resolved set, project Scope onto metadata
+        opt claim is Resolved
+            Note over res: queue its Declarations as ScopedDeclarations under the parent's Scope
+        end
     end
     res-->>cmd: Dependency[] pins
     cmd->>lock: lock(pins, manifest_digest)
@@ -127,7 +146,7 @@ sequenceDiagram
 sequenceDiagram
     participant up as install command
     participant st as Staleness
-    participant inst as DependencyInstaller
+    participant inst as Installer
     participant lock as Lockfile
     participant integ as Integration (per type)
     participant tool as Backing tool
@@ -158,6 +177,17 @@ command.
 | luarocks | `RockScheme` | rockspec-style comparators and `~>` |
 | brew, cmake, gh, steam, xcode | `PinnedScheme` | the constraint names an identity (formula suffix, tag/commit, release tag, buildid, exact version); the repository already applied it as the find locator, so every reported version satisfies |
 
+**The constraint standard is a shape plus an interpreter, never a
+grammar.** Every constraint in the system is a dev-shaped hash whose keys
+the integration's `VersionScheme` owns (`{ "version" => "^3.6" }`,
+`{ "tag" => "v1.0" }`, `{}` = unconstrained); repositories mint that shape
+at the `find` seam, normalizing whatever syntax the upstream manifest used
+— constraints cross the system boundary exactly once. A universal
+constraint grammar across semver/PEP 440/buildids would be a lie, so
+cross-ecosystem capability grows by widening the scheme algebra (a future
+`intersect`), never by translating vocabularies. Dev-native territory
+(no upstream scheme to inherit) defaults to SemVer via `SemverScheme`.
+
 Scheme parse failures split by whose fault they are:
 `VersionScheme::InvalidConstraintError` (the user's declaration is wrong —
 propagates) vs `VersionScheme::InvalidVersionError` (the universe contains
@@ -185,14 +215,44 @@ Who guarantees the bytes you install are the bytes that were resolved:
 A nil `PackageVersion#digest` means exactly "upstream publishes none" —
 never "we didn't bother".
 
+## Transitive-dependency regimes
+
+Who owns an installed package's transitive closure. The claim travels
+*with the data*: each repository constructs the `Declarations` variant its
+regime warrants, so construction is the dispatch — there is no registry
+attribute, repository enum, or resolver guard to drift out of sync.
+
+| Regime | Integrations | Claim | How transitives happen |
+| --- | --- | --- | --- |
+| dev-resolved | ficsit | `Resolved(declarations)` | The resolver walks the declarations, inheriting the parent's `Scope`; every transitive becomes its own pin. |
+| tool-locked | bundler | `ToolOwned` | `BundlerLocker` makes the tool solve the whole set up front (`bundle lock`); the repository reads pinned versions back. |
+| tool-at-install | pip, luarocks, brew | `ToolOwned` | The tool resolves the closure when it installs; dev pins top-level packages only. |
+| self-contained | steam, git, xcode, url — and gh | `Resolved([])` | Nothing to resolve: the artifact carries everything it needs. steam/git/xcode/url guarantee it by construction; gh's is a usage contract (prebuilt assets are baked; a source build's needs are declared by the consuming project) until subproject resolution lands. |
+
+Two standing decisions:
+
+- **Lock files are never availability facts.** A repository answers "what
+  exists now"; an integration's lock file is a past solve's snapshot, so
+  its graph is never mined for `Resolved` declarations.
+  `BundlerRepository#find` reading `Gemfile.lock` is consistent with this:
+  the Locker regenerates that file in step 1 of the same run, and even
+  then only pinned versions are read — bundler stays `ToolOwned`.
+- **`Resolved([])` and `ToolOwned` are different claims.** "This version
+  affirmatively requires nothing" and "the tool owns a closure dev can't
+  see" used to collapse into the same empty array; the sum type keeps a
+  future solver from walking a universe that was never observable.
+
 ## Adding a new ecosystem
 
 1. **Repository** — subclass `Repository`, implement
    `find(id, filter:) -> Package`. Report facts for every version you can
    enumerate; if the ecosystem's constraint names an identity, use the
    filter as your locator and report the (usually singleton) universe.
-   Raise a subclass of `Repository::PackageNotFoundError` when the
-   identity doesn't exist. Never pick a version.
+   State your transitive regime by construction: build the `Declarations`
+   variant your ecosystem warrants, normalizing upstream constraint syntax
+   into dev's shape as you do (no upstream scheme means SemVer). Raise a
+   subclass of `Repository::PackageNotFoundError` when the identity
+   doesn't exist. Never pick a version.
 2. **Scheme** — if the ecosystem has a native range language, subclass
    `VersionScheme` with its `satisfies?`/`sort`, nesting
    `InvalidConstraintError`/`InvalidVersionError` under the shared bases.
@@ -229,9 +289,9 @@ install, same fidelity as before.
 
 Revisit (the gate): if we need cross-ecosystem joint solving, offline
 resolution of a foreign project, or reproducible pip/luarocks transitive
-pins, the missing piece is per-ecosystem *edge facts* (dependency
-metadata in `find`) plus a backtracking solver in the Resolver — the
-interfaces already accommodate both (`PackageVersion#dependencies` is the
-slot). No interface change is expected; the cost is per-ecosystem edge
-enumeration and solver work, so pay it per ecosystem when the need is
-real, not up front.
+pins, the missing piece is per-ecosystem *declared-deps facts* (a
+`Resolved` claim in `find`) plus a backtracking solver in the Resolver —
+the interfaces already accommodate both (`PackageVersion#declarations` is
+the slot). No interface change is expected; the cost is per-ecosystem
+declaration enumeration and solver work, so pay it per ecosystem when the
+need is real, not up front.

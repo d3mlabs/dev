@@ -78,7 +78,7 @@ end
 
 # GOOD: parser returns domain object immediately
 def parse(path)
-  DependencyDeclaration.new(name: yaml["name"], version: yaml["version"])
+  Declaration.new(name: yaml["name"], integration: :cmake, constraint: yaml["constraint"])
 end
 ```
 
