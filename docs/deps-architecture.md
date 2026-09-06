@@ -12,10 +12,10 @@ two roles.
 
 | Concept | Class | What it is |
 | --- | --- | --- |
-| Identity | `PackageId` | Which package: `integration` + `name`, plus `source` for source-based deps (a git URL, a `owner/repo` slug). Value object, works as a Hash key. |
-| Universe | `Package` → `PackageVersion` | What exists: every version a repository reports, each carrying facts — `platforms`, `digest`, `artifacts` (dev-fetched bytes), `declarations` (its declared-deps claim), and `metadata` (ecosystem install facts). |
-| Declaration | `Declaration` | The shared atom: name + integration + constraint, always in dev's shape (`{}` = unconstrained). Stated by whoever authored the thing — a project's `dependencies.rb` row or an upstream manifest — and context-free by type: where/when *you* install is not part of what is declared about a package. |
-| Requirement | `ScopedDeclaration` | A `Declaration` married to the context it resolves under: a `Scope` (`group`, `host`, `env` — inherited down the walk as one unit) plus the per-row axes that deliberately don't inherit (`platform`, `post_install`). What the DSL produces and the Resolver consumes. Composition, not a subclass: a scoped declaration must never pass where a context-free `Declaration` is expected. |
+| Identity | `PackageId` | Which package: `integration` + `name`, plus `source` for source-addressed deps (a git URL, an `owner/repo` slug, a tap, a Steam app id). Value object, works as a Hash key. Version is deliberately not identity: two versions of one package are related candidates in one universe, never two packages — keeping selection (semver, ranges) possible over them. If a legitimate same-package-twice case ever appears, the fix is per-context resolution in the solver, not versioned identity. |
+| Universe | `Package` → `PackageVersion` | What exists: every version a repository reports, each carrying facts — `platforms`, `digest`, `artifacts` (dev-fetched bytes), `declarations` (its declared-deps claim), and `metadata` (ecosystem facts). Facts are unconditional: nothing in a universe depends on who asked. |
+| Declaration | `Declaration` | The shared atom: name + integration + constraint + optional `source` coordinate, always in dev's shape (`{}` = unconstrained). Stated by whoever authored the thing — a project's `dependencies.rb` row or an upstream manifest — and context-free by type: where/when *you* install is not part of what is declared about a package. |
+| Requirement | `ScopedDeclaration` | A `Declaration` married to the context it resolves under: a `Scope` (`group`, `host`, `env` — inherited down the walk as one unit) plus the per-row axes that deliberately don't inherit (`platform`, `post_install`, `materialization` — install instructions like `install_dir`, asset globs, build recipes, artifact targets). What the DSL produces and the Resolver consumes. Composition, not a subclass: a scoped declaration must never pass where a context-free `Declaration` is expected. |
 | Pin | `Dependency` | What was chosen: exact version, integrity hash, metadata. What the lockfile serializes and integrations install. |
 
 Supporting types: `Artifact` (one downloadable file with an optional
@@ -49,8 +49,8 @@ flowchart LR
 
 | Layer | Class(es) | The one question it answers | Never does |
 | --- | --- | --- | --- |
-| Repository | `Repository#find(id, filter:) -> Package` | "What versions of this package exist, and what are their facts?" | Evaluate range constraints; choose among candidates |
-| Scheme | `VersionScheme#satisfies?/#sort` | "Does this version satisfy this constraint, and how do versions order?" | Talk to the network; know about declarations |
+| Repository | `Repository#find(id, probe:) -> Package` | "What versions of this package exist, and what are their facts?" | Evaluate range constraints; choose among candidates; see install instructions |
+| Scheme | `VersionScheme#satisfies?/#sort/#pin` | "Does this version satisfy this constraint, how do versions order, and does the constraint name an exact coordinate?" | Talk to the network; know about declarations |
 | Locker | `Locker#lock(declarations)` | "Given this whole declaration set, make the ecosystem tool solve it" | Read the result (that's the repository's find) |
 | Resolver | `Resolver#resolve(declarations) -> [Dependency]` | "Which version do we pin, and what transitives follow?" | Fetch bytes; know ecosystem constraint syntax |
 | Integration | `Integration#install_all` | "How do these pins become installed software on this machine?" | Resolve versions |
@@ -72,21 +72,26 @@ if a `*_repository.rb`, `*_integration.rb`, `*_scheme.rb`, or
    on disk.
 2. **Resolve** — the `Resolver`, per declaration:
    - rejects declaration sets where one package (integration + name)
-     carries disagreeing constraints (axes — group/platform/host/env —
-     may differ; constraints may not; the same name under two
+     carries disagreeing constraints, sources, or materializations (axes
+     — group/platform/host/env — may differ; the same name under two
      integrations is two packages, free to differ);
-   - builds the `PackageId` (the constraint's `repo`/`url` becomes the
-     id's source) and calls `find`, passing the constraint hash as the
-     `filter` — a *locator*, not a predicate: pinned ecosystems need the
-     tag/buildid/suffix to know which singleton universe to report;
+   - builds the `PackageId` (the declaration's `source` rides the id) and
+     calls `find`, passing the scheme-extracted `pin` as the `probe` — a
+     single typed version coordinate, present only for non-enumerable
+     universes (a gh tag, a git ref, a brew suffix); enumerable universes
+     get no coordinate and report everything;
    - filters the reported versions through the integration's scheme
-     (`satisfies?`), treating scheme-unparseable universe versions as
-     non-candidates, and drops versions that don't publish every
-     explicitly requested platform;
+     (`satisfies?`, fact-aware: schemes may match universe facts like a
+     steam branch or a git ref), treating scheme-unparseable universe
+     versions as non-candidates, and drops versions that don't publish
+     every explicitly requested platform;
    - picks the highest satisfying version (`sort`), mints the
-     `Dependency` from that version's facts (digest → pin hash, metadata
-     → pin metadata), and projects the declaration's `Scope` onto the
-     pin's metadata (host/env keys, present only when pinned);
+     `Dependency` from that version's facts merged with the declaration's
+     `materialization` (install instructions meet version facts exactly
+     here), projects the declared platforms/target against the version's
+     artifacts (the per-platform `platforms` block or single-target
+     digest), and projects the declaration's `Scope` onto the pin's
+     metadata (host/env keys, present only when pinned);
    - cases on the chosen version's `declarations` claim: a `Resolved`
      claim's declarations are queued as synthetic `ScopedDeclaration`s
      inheriting the parent's `Scope` as one unit (each already carries
@@ -123,14 +128,14 @@ sequenceDiagram
     cmd->>res: resolve(all declarations)
     Note over res: reject disagreeing constraints per (integration, name) - ConflictingDeclarationError
     loop until queue empty (declared + transitive)
-        res->>rep: find(PackageId, filter: constraint)
+        res->>rep: find(PackageId, probe: scheme.pin(constraint))
         rep->>backing: query universe (registry API / Gemfile.lock / ls-remote / GraphQL)
         backing-->>rep: raw versions, platforms, declared deps, digests
         Note over rep: normalize upstream constraints into dev's shape, stamp its integration, state its Declarations claim (Resolved | ToolOwned)
         rep-->>res: Package (PackageVersion facts)
         res->>sch: satisfies?(version, constraint) each, then sort
         sch-->>res: ordered satisfying candidates
-        Note over res: drop versions missing an explicitly requested platform, pick max (NoSatisfyingVersionError if none), mint the Dependency pin into the PackageId-keyed resolved set, project Scope onto metadata
+        Note over res: drop versions missing an explicitly requested platform, pick max (NoSatisfyingVersionError if none), mint the Dependency pin into the PackageId-keyed resolved set — version facts + declaration materialization + artifact projection + Scope
         opt claim is Resolved
             Note over res: queue its Declarations as ScopedDeclarations under the parent's Scope
         end
@@ -175,7 +180,16 @@ command.
 | ficsit | `SemverScheme` | node-style ranges (`^`, `~`, comparators) |
 | pip | `Pep440Scheme` | PEP 440 specifiers (`==`, `~=`, wildcards, conjunction) |
 | luarocks | `RockScheme` | rockspec-style comparators and `~>` |
-| brew, cmake, gh, steam, xcode | `PinnedScheme` | the constraint names an identity (formula suffix, tag/commit, release tag, buildid, exact version); the repository already applied it as the find locator, so every reported version satisfies |
+| gh, xcode, url | `ExactScheme(key:)` | the constraint names one exact coordinate (release tag, exact version, url label) under the configured key; no range grammar exists by design. The coordinate doubles as the find probe. |
+| cmake | `GitScheme` | `commit:` matches the version (the resolved SHA); `tag:` matches the version's `ref` fact. The ref doubles as the probe — `ls-remote` lists refs, never reachable SHAs. |
+| steam | `SteamScheme` | `branch:` selects by the version's branch fact (default `public`); optional `buildid:` is an exact assertion that fails loudly when it is no longer the branch tip. No probe: branch tips enumerate in one query. |
+| brew, cask | `BrewScheme` | `version:` is a formula *suffix* (`"18"` selects the `llvm@18` formula spec), matched against the `version_suffix` fact; the reported stable version is brew's record, not the coordinate. The suffix doubles as the probe. |
+
+A scheme's `pin(constraint)` answers "does this constraint name one exact
+coordinate?" — non-nil only for ecosystems whose universes are not
+enumerable (gh tags, git refs, brew suffixes), where the Resolver hands it
+to `find` as the `probe`. Enumerable ecosystems return nil and their
+repositories report everything.
 
 **The constraint standard is a shape plus an interpreter, never a
 grammar.** Every constraint in the system is a dev-shaped hash whose keys
@@ -245,18 +259,23 @@ Two standing decisions:
 ## Adding a new ecosystem
 
 1. **Repository** — subclass `Repository`, implement
-   `find(id, filter:) -> Package`. Report facts for every version you can
-   enumerate; if the ecosystem's constraint names an identity, use the
-   filter as your locator and report the (usually singleton) universe.
-   State your transitive regime by construction: build the `Declarations`
-   variant your ecosystem warrants, normalizing upstream constraint syntax
-   into dev's shape as you do (no upstream scheme means SemVer). Raise a
-   subclass of `Repository::PackageNotFoundError` when the identity
-   doesn't exist. Never pick a version.
-2. **Scheme** — if the ecosystem has a native range language, subclass
-   `VersionScheme` with its `satisfies?`/`sort`, nesting
+   `find(id, probe:) -> Package`. Report facts for every version you can
+   enumerate; if the ecosystem's universe is not enumerable (each version
+   must be asked about by coordinate), require the `probe` and report the
+   singleton it addresses. Facts are unconditional — never read install
+   instructions, which don't reach this seam. State your transitive
+   regime by construction: build the `Declarations` variant your
+   ecosystem warrants, normalizing upstream constraint syntax into dev's
+   shape as you do (no upstream scheme means SemVer). Raise a subclass of
+   `Repository::PackageNotFoundError` when the identity doesn't exist.
+   Never pick a version.
+2. **Scheme** — subclass `VersionScheme` with your ecosystem's
+   `satisfies?`/`sort`, nesting
    `InvalidConstraintError`/`InvalidVersionError` under the shared bases.
-   If constraints are identities, use `PinnedScheme`.
+   If the constraint names one exact coordinate, `ExactScheme(key:)`
+   probably already covers you; override `pin` when your universe needs
+   the coordinate as its access path. Every ecosystem states its real
+   constraint semantics — there is no satisfies-everything scheme.
 3. **Locker** — only if the ecosystem's own tool must own the whole-set
    solve (transitive co-resolution you can't reproduce): subclass
    `Locker`, make the tool materialize its lock, and have the repository
