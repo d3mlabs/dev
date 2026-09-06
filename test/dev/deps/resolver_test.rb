@@ -8,7 +8,6 @@ require "dev/deps/package"
 require "dev/deps/package_id"
 require "dev/deps/package_version"
 require "dev/deps/declaration"
-require "dev/deps/dependency_edge"
 require "dev/deps/scope"
 require "dev/deps/scoped_declaration"
 require "dev/deps/pinned_scheme"
@@ -43,8 +42,14 @@ class Dev::Deps::ResolverTest < Minitest::Test
     )
   end
 
-  def edge(name, constraint)
-    Dev::Deps::DependencyEdge.new(name: name, constraint: constraint)
+  # Shorthand: a transitive declaration as a Repository would report it —
+  # integration stamped, constraint already normalized to dev's shape.
+  def edge(name, constraint, integration: :ficsit)
+    Dev::Deps::Declaration.new(
+      name: name,
+      integration: integration,
+      constraint: constraint ? { "version" => constraint } : {},
+    )
   end
 
   # Shorthand: assemble the Declaration + Scope composition from flat kwargs.

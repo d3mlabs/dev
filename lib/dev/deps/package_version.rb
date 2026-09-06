@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require_relative "artifact"
-require_relative "dependency_edge"
+require_relative "declaration"
 
 module Dev
   module Deps
@@ -45,8 +45,10 @@ module Dev
       sig { returns(T::Hash[String, Artifact]) }
       attr_reader :artifacts
 
-      # @return [Array<DependencyEdge>] what this version requires
-      sig { returns(T::Array[DependencyEdge]) }
+      # @return [Array<Declaration>] what this version declares it requires,
+      #   already normalized into dev's constraint shape and stamped with its
+      #   integration by the reporting Repository
+      sig { returns(T::Array[Declaration]) }
       attr_reader :dependencies
 
       # @return [Hash{String => Object}] ecosystem-specific facts the
@@ -59,7 +61,7 @@ module Dev
       # @param platforms [Array<String>] published targets
       # @param digest [String, nil] tool-fetched integrity digest, if published
       # @param artifacts [Hash{String => Artifact}] dev-fetchable bytes by platform
-      # @param dependencies [Array<DependencyEdge>] outgoing edges
+      # @param dependencies [Array<Declaration>] normalized declared deps
       # @param metadata [Hash{String => Object}] ecosystem-specific install facts
       sig do
         params(
@@ -67,7 +69,7 @@ module Dev
           platforms: T::Array[String],
           digest: T.nilable(String),
           artifacts: T::Hash[String, Artifact],
-          dependencies: T::Array[DependencyEdge],
+          dependencies: T::Array[Declaration],
           metadata: T::Hash[String, T.untyped],
         ).void
       end
@@ -76,7 +78,7 @@ module Dev
         @platforms = T.let(platforms.dup.freeze, T::Array[String])
         @digest = digest
         @artifacts = T.let(artifacts.dup.freeze, T::Hash[String, Artifact])
-        @dependencies = T.let(dependencies.dup.freeze, T::Array[DependencyEdge])
+        @dependencies = T.let(dependencies.dup.freeze, T::Array[Declaration])
         @metadata = T.let(metadata.dup.freeze, T::Hash[String, T.untyped])
         freeze
       end

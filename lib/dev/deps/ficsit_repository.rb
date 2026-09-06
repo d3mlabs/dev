@@ -5,7 +5,7 @@ require "json"
 require "net/http"
 require "uri"
 require_relative "artifact"
-require_relative "dependency_edge"
+require_relative "declaration"
 require_relative "package"
 require_relative "package_id"
 require_relative "package_version"
@@ -126,9 +126,24 @@ module Dev
           end,
           dependencies: (version_data["dependencies"] || [])
             .reject { |d| d["optional"] }
-            .map { |d| DependencyEdge.new(name: d["mod_id"], constraint: d["condition"]) },
+            .map { |d| edge_declaration(d) },
           metadata: metadata,
         )
+      end
+
+      # Normalize a ficsit dependency edge into a Declaration: the raw
+      # "condition" (a semver range string, possibly absent) becomes dev's
+      # constraint shape here, at the boundary — upstream syntax crosses into
+      # the system exactly once. The integration is stamped by this
+      # repository: ficsit mods require ficsit mods.
+      #
+      # @param dependency_data [Hash] one GraphQL dependency object
+      # @return [Declaration]
+      sig { params(dependency_data: T::Hash[String, T.untyped]).returns(Declaration) }
+      def edge_declaration(dependency_data)
+        condition = dependency_data["condition"]
+        constraint = condition && !condition.empty? ? { "version" => condition } : {}
+        Declaration.new(name: dependency_data["mod_id"], integration: :ficsit, constraint: constraint)
       end
 
       # The {hash, link} block for each requested platform this version

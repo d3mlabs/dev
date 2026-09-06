@@ -34,7 +34,7 @@ class Dev::Deps::PackageVersionTest < Minitest::Test
   test "carries the full fact set when the universe provides one" do
     Given "a version with platforms, digest, per-platform artifacts, and edges"
     artifact = Dev::Deps::Artifact.new(uri: "https://example.com/sml-linux.zip", digest: "SHA256=abc")
-    edge = Dev::Deps::DependencyEdge.new(name: "SML", constraint: "^3.0.0")
+    edge = Dev::Deps::Declaration.new(name: "SML", integration: :ficsit, constraint: { "version" => "^3.0.0" })
     version = Dev::Deps::PackageVersion.new(
       version: "3.12.0",
       platforms: ["Windows", "LinuxServer"],
@@ -56,7 +56,7 @@ class Dev::Deps::PackageVersionTest < Minitest::Test
       version: "1.0.0",
       platforms: ["Windows"],
       artifacts: { "Windows" => Dev::Deps::Artifact.new(uri: "https://example.com/a.zip") },
-      dependencies: [Dev::Deps::DependencyEdge.new(name: "x", constraint: nil)],
+      dependencies: [Dev::Deps::Declaration.new(name: "x", integration: :ficsit)],
     )
 
     Expect "none of them can be mutated after the fact"

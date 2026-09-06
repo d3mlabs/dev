@@ -54,8 +54,9 @@ module Dev
       #
       # The resolved set is keyed by PackageId, so the same name under two
       # integrations is two packages — each resolves against its own
-      # integration's universe. Transitive edges likewise stay inside the
-      # declaring dep's integration.
+      # integration's universe. Transitive declarations resolve under the
+      # integration their reporting Repository stamped on them (today always
+      # its own).
       #
       # @param declarations [Array<ScopedDeclaration>] declared dependencies to resolve
       # @return [Array<Dependency>]
@@ -79,17 +80,12 @@ module Dev
 
           # Transitive deps inherit the declaring dep's Scope wholesale: a dep
           # only needed in one group/host/env can't need its transitive
-          # closure anywhere else. Context is a property of the path, so it is
-          # stamped here — never by the repository that reported the edge.
+          # closure anywhere else. The Declaration itself arrives finished
+          # from the Repository (integration stamped, constraint normalized);
+          # only the context is stamped here, because context is a property of
+          # the path, not of the fact.
           chosen.dependencies.each do |edge|
-            edge_decl = ScopedDeclaration.new(
-              declaration: Declaration.new(
-                name: edge.name,
-                integration: decl.integration,
-                constraint: normalize_constraint(edge.constraint),
-              ),
-              scope: decl.scope,
-            )
+            edge_decl = ScopedDeclaration.new(declaration: edge, scope: decl.scope)
             queue << edge_decl unless resolved.key?(package_id(edge_decl))
           end
         end
@@ -273,25 +269,6 @@ module Dev
         result = Hash.new { |h, k| h[k] = [] }
         declarations.each { |decl| result[[decl.integration, decl.name]] << decl.platform }
         result.transform_values(&:uniq)
-      end
-
-      # Normalize a transitive edge constraint to a declaration constraint
-      # hash. Edges may express constraints as a bare string (ficsit's
-      # "^3.12.0"), which maps to the ecosystem's "version" key.
-      #
-      # @param constraint [Hash, String, nil] raw constraint from a DependencyEdge
-      # @return [Hash]
-      sig do
-        params(
-          constraint: T.nilable(T.any(T::Hash[String, T.untyped], String)),
-        ).returns(T::Hash[String, T.untyped])
-      end
-      def normalize_constraint(constraint)
-        case constraint
-        when Hash then constraint
-        when String then { "version" => constraint }
-        else {}
-        end
       end
 
       # A NoSatisfyingVersionError message that says why: what was asked,
