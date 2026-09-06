@@ -31,17 +31,17 @@ module Dev
       # ("^3", ">=1.2"); missing segments are zero.
       TERM_PATTERN = /\A(\^|~|>=|<=|>|<|=)?(\d+(?:\.\d+){0,2}(?:-[0-9A-Za-z.-]+)?)\z/
 
-      # @param version [String] a semver version
+      # @param version [PackageVersion] a candidate; only its version string matters
       # @param constraint [Hash] declaration constraint; "version" holds the range
       # @return [Boolean]
       # @raise [InvalidConstraintError] if the range does not parse
       # @raise [InvalidVersionError] if the version does not parse
-      sig { override.params(version: String, constraint: T::Hash[String, T.untyped]).returns(T::Boolean) }
+      sig { override.params(version: PackageVersion, constraint: T::Hash[String, T.untyped]).returns(T::Boolean) }
       def satisfies?(version, constraint)
         expression = constraint[CONSTRAINT_KEY].to_s.strip
         return true if expression.empty?
 
-        key = comparison_key(version)
+        key = comparison_key(version.version)
         terms(expression).all? { |term| term_satisfied?(key, term) }
       end
 

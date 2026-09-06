@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/deps/package_version"
 require "dev/deps/rock_scheme"
 
 transform!(RSpock::AST::Transformation)
@@ -10,9 +11,13 @@ class Dev::Deps::RockSchemeTest < Minitest::Test
     Dev::Deps::RockScheme.new
   end
 
+  def pv(version)
+    Dev::Deps::PackageVersion.new(version: version)
+  end
+
   test "#{version} against #{requirement.inspect} is #{expected}" do
     When "evaluating the requirement under luarocks semantics"
-    result = scheme.satisfies?(version, { "constraint" => requirement })
+    result = scheme.satisfies?(pv(version), { "constraint" => requirement })
 
     Then
     result == expected
@@ -38,7 +43,7 @@ class Dev::Deps::RockSchemeTest < Minitest::Test
 
   test "an empty constraint is satisfied by anything" do
     Expect
-    scheme.satisfies?("3.4-1", {})
+    scheme.satisfies?(pv("3.4-1"), {})
   end
 
   test "a revision counts as a release above the unrevised version" do
@@ -67,7 +72,7 @@ class Dev::Deps::RockSchemeTest < Minitest::Test
 
   test "rejects a constraint it cannot parse" do
     When "evaluating a malformed constraint"
-    scheme.satisfies?("3.4-1", { "constraint" => "~~> 3.0" })
+    scheme.satisfies?(pv("3.4-1"), { "constraint" => "~~> 3.0" })
 
     Then
     raises Dev::Deps::RockScheme::InvalidConstraintError

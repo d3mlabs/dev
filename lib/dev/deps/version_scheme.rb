@@ -1,6 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "package_version"
+
 module Dev
   module Deps
     # Per-integration constraint semantics — a domain service, deliberately
@@ -35,10 +37,15 @@ module Dev
       # Does one version satisfy the constraint, under this ecosystem's syntax
       # and comparison rules?
       #
-      # @param version [String] a version string in this ecosystem's vocabulary
+      # Takes the whole PackageVersion, not the bare string: some ecosystems'
+      # constraints match version facts rather than the version string (a
+      # Steam branch, the git ref a SHA resolved from, a brew formula suffix).
+      # Range schemes read only version.version.
+      #
+      # @param version [PackageVersion] a candidate version with its facts
       # @param constraint [Hash] the declaration's constraint hash
       # @return [Boolean]
-      sig { params(version: String, constraint: T::Hash[String, T.untyped]).returns(T::Boolean) }
+      sig { params(version: PackageVersion, constraint: T::Hash[String, T.untyped]).returns(T::Boolean) }
       def satisfies?(version, constraint)
         raise NotImplementedError, "#{self.class}#satisfies? must be implemented"
       end
@@ -50,6 +57,21 @@ module Dev
       sig { params(versions: T::Array[String]).returns(T::Array[String]) }
       def sort(versions)
         raise NotImplementedError, "#{self.class}#sort must be implemented"
+      end
+
+      # The exact version coordinate this constraint pins, if any — the
+      # Resolver passes it to Repository#find as the probe, the access path
+      # for universes that cannot enumerate (a git commit, a brew @suffix
+      # formula). nil for range constraints and for enumerable ecosystems,
+      # whose schemes never override this. Extraction lives on the scheme
+      # because the constraint keys are the scheme's vocabulary; the raw
+      # constraint hash itself never reaches a Repository.
+      #
+      # @param constraint [Hash] the declaration's constraint hash
+      # @return [String, nil] the pinned coordinate, or nil
+      sig { params(constraint: T::Hash[String, T.untyped]).returns(T.nilable(String)) }
+      def pin(constraint)
+        nil
       end
     end
   end

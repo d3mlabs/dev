@@ -2,13 +2,15 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/deps/package_version"
 require "dev/deps/version_scheme"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::VersionSchemeTest < Minitest::Test
   test "base class satisfies? raises NotImplementedError" do
     When "asking the abstract scheme to evaluate a constraint"
-    Dev::Deps::VersionScheme.new.satisfies?("1.0.0", { "version" => ">= 1.0" })
+    version = Dev::Deps::PackageVersion.new(version: "1.0.0")
+    Dev::Deps::VersionScheme.new.satisfies?(version, { "version" => ">= 1.0" })
 
     Then
     raises NotImplementedError
@@ -20,5 +22,11 @@ class Dev::Deps::VersionSchemeTest < Minitest::Test
 
     Then
     raises NotImplementedError
+  end
+
+  test "base class pin is nil — enumerable ecosystems never pin a probe" do
+    Expect "no constraint shape extracts a probe by default"
+    Dev::Deps::VersionScheme.new.pin({ "version" => ">= 1.0" }).nil?
+    Dev::Deps::VersionScheme.new.pin({}).nil?
   end
 end

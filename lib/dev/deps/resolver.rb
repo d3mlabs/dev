@@ -164,7 +164,7 @@ module Dev
         ).returns(T::Boolean)
       end
       def satisfies?(scheme, version, constraint)
-        scheme.satisfies?(version.version, constraint)
+        scheme.satisfies?(version, constraint)
       rescue VersionScheme::InvalidVersionError
         false
       end

@@ -46,17 +46,18 @@ module Dev
         T::Hash[String, Integer],
       )
 
-      # @param version [String] a PEP 440 version
+      # @param version [PackageVersion] a candidate; only its version string matters
       # @param constraint [Hash] declaration constraint; "version" holds the specifier
       # @return [Boolean]
       # @raise [InvalidConstraintError] if the specifier does not parse
       # @raise [InvalidVersionError] if the version does not parse
-      sig { override.params(version: String, constraint: T::Hash[String, T.untyped]).returns(T::Boolean) }
+      sig { override.params(version: PackageVersion, constraint: T::Hash[String, T.untyped]).returns(T::Boolean) }
       def satisfies?(version, constraint)
         expression = constraint[CONSTRAINT_KEY].to_s.strip
         return true if expression.empty?
 
-        expression.split(",").map(&:strip).all? { |term| term_satisfied?(version, term) }
+        version_string = version.version
+        expression.split(",").map(&:strip).all? { |term| term_satisfied?(version_string, term) }
       end
 
       # @param versions [Array<String>] PEP 440 versions

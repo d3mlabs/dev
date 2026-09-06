@@ -18,10 +18,10 @@ module Dev
     class PinnedScheme < VersionScheme
       extend T::Sig
 
-      # @param version [String] any reported version
+      # @param version [PackageVersion] any reported version
       # @param constraint [Hash] ignored — already applied by the repository
       # @return [Boolean] always true
-      sig { override.params(version: String, constraint: T::Hash[String, T.untyped]).returns(T::Boolean) }
+      sig { override.params(version: PackageVersion, constraint: T::Hash[String, T.untyped]).returns(T::Boolean) }
       def satisfies?(version, constraint)
         true
       end

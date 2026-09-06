@@ -23,18 +23,18 @@ module Dev
       # positional requirement lands under "version").
       CONSTRAINT_KEY = "version"
 
-      # @param version [String] a gem version string
+      # @param version [PackageVersion] a candidate; only its version string matters
       # @param constraint [Hash] declaration constraint; only "version" is a
       #   version requirement (other keys — require:, git: — are gem options)
       # @return [Boolean]
       # @raise [InvalidConstraintError] if the requirement does not parse
       # @raise [InvalidVersionError] if the version does not parse
-      sig { override.params(version: String, constraint: T::Hash[String, T.untyped]).returns(T::Boolean) }
+      sig { override.params(version: PackageVersion, constraint: T::Hash[String, T.untyped]).returns(T::Boolean) }
       def satisfies?(version, constraint)
         expression = constraint[CONSTRAINT_KEY].to_s.strip
         return true if expression.empty?
 
-        requirement(expression).satisfied_by?(gem_version(version))
+        requirement(expression).satisfied_by?(gem_version(version.version))
       end
 
       # @param versions [Array<String>] gem version strings

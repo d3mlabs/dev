@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/deps/package_version"
 require "dev/deps/gem_scheme"
 
 transform!(RSpock::AST::Transformation)
@@ -10,9 +11,13 @@ class Dev::Deps::GemSchemeTest < Minitest::Test
     Dev::Deps::GemScheme.new
   end
 
+  def pv(version)
+    Dev::Deps::PackageVersion.new(version: version)
+  end
+
   test "#{version} against #{requirement.inspect} is #{expected}" do
     When "evaluating the requirement under rubygems semantics"
-    result = scheme.satisfies?(version, { "version" => requirement })
+    result = scheme.satisfies?(pv(version), { "version" => requirement })
 
     Then
     result == expected
@@ -30,8 +35,8 @@ class Dev::Deps::GemSchemeTest < Minitest::Test
 
   test "an empty constraint is satisfied by anything" do
     Expect "no version requirement means unconstrained"
-    scheme.satisfies?("1.17.4", {})
-    scheme.satisfies?("1.17.4", { "require" => false })
+    scheme.satisfies?(pv("1.17.4"), {})
+    scheme.satisfies?(pv("1.17.4"), { "require" => false })
   end
 
   test "sorts by rubygems version ordering, prereleases below their release" do
@@ -55,7 +60,7 @@ class Dev::Deps::GemSchemeTest < Minitest::Test
 
   test "rejects a requirement rubygems cannot parse" do
     When "evaluating a malformed requirement"
-    scheme.satisfies?("1.0.0", { "version" => ">>>= nope" })
+    scheme.satisfies?(pv("1.0.0"), { "version" => ">>>= nope" })
 
     Then
     raises Dev::Deps::GemScheme::InvalidConstraintError

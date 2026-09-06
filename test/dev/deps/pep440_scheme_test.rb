@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/deps/package_version"
 require "dev/deps/pep440_scheme"
 
 transform!(RSpock::AST::Transformation)
@@ -10,9 +11,13 @@ class Dev::Deps::Pep440SchemeTest < Minitest::Test
     Dev::Deps::Pep440Scheme.new
   end
 
+  def pv(version)
+    Dev::Deps::PackageVersion.new(version: version)
+  end
+
   test "#{version} against #{requirement.inspect} is #{expected}" do
     When "evaluating the specifier under PEP 440 semantics"
-    result = scheme.satisfies?(version, { "version" => requirement })
+    result = scheme.satisfies?(pv(version), { "version" => requirement })
 
     Then
     result == expected
@@ -44,7 +49,7 @@ class Dev::Deps::Pep440SchemeTest < Minitest::Test
 
   test "an empty constraint is satisfied by anything" do
     Expect
-    scheme.satisfies?("2.0.5", {})
+    scheme.satisfies?(pv("2.0.5"), {})
   end
 
   test "sorts by PEP 440 ordering: dev < pre < release < post" do
@@ -73,7 +78,7 @@ class Dev::Deps::Pep440SchemeTest < Minitest::Test
 
   test "rejects a specifier it cannot parse" do
     When "evaluating a malformed specifier"
-    scheme.satisfies?("2.0", { "version" => "=>2.0" })
+    scheme.satisfies?(pv("2.0"), { "version" => "=>2.0" })
 
     Then
     raises Dev::Deps::Pep440Scheme::InvalidConstraintError

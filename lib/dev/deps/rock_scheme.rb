@@ -32,17 +32,17 @@ module Dev
       VERSION_PATTERN = /\A(\d+(?:\.\d+)*)(?:-(\d+))?\z/
       TERM_PATTERN = /\A(~>|>=|<=|==|>|<|=)?\s*(\d\S*)\z/
 
-      # @param version [String] a luarocks version ("3.4-1")
+      # @param version [PackageVersion] a candidate; only its version string matters
       # @param constraint [Hash] declaration constraint; "constraint" holds the expression
       # @return [Boolean]
       # @raise [InvalidConstraintError] if the expression does not parse
       # @raise [InvalidVersionError] if the version does not parse
-      sig { override.params(version: String, constraint: T::Hash[String, T.untyped]).returns(T::Boolean) }
+      sig { override.params(version: PackageVersion, constraint: T::Hash[String, T.untyped]).returns(T::Boolean) }
       def satisfies?(version, constraint)
         expression = constraint[CONSTRAINT_KEY].to_s.strip
         return true if expression.empty?
 
-        key = comparison_key(version)
+        key = comparison_key(version.version)
         expression.split(",").map(&:strip).all? { |term| term_satisfied?(key, term) }
       end
 
