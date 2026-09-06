@@ -1,6 +1,7 @@
-# typed: true
+# typed: strict
 # frozen_string_literal: true
 
+require "sorbet-runtime"
 require_relative "deps/config"
 require_relative "deps/cli_ui"
 require_relative "deps/lockfile"
@@ -9,9 +10,16 @@ require_relative "deps/installer"
 
 module Dev
   module Deps
-    @last_config = nil
+    @last_config = T.let(nil, T.nilable(Config))
 
     class << self
+      extend T::Sig
+
+      # Evaluate a dependencies.rb DSL block into a Config and remember it.
+      #
+      # @param block [Proc] DSL block evaluated in DSL context
+      # @return [Config]
+      sig { params(block: T.nilable(T.proc.bind(DSL).void)).returns(Config) }
       def define(&block)
         @last_config = Config.define(&block)
       end
@@ -20,12 +28,16 @@ module Dev
       # Useful for retrieving the config after loading a dependencies.rb file.
       #
       # @return [Config, nil]
+      sig { returns(T.nilable(Config)) }
       attr_reader :last_config
 
       # Clears the last defined config. Call before loading a dependencies.rb:
       # a file that never calls .define (e.g. dev's own bootstrap-constants
       # dependencies.rb) would otherwise leave a previously loaded project's
       # config visible as if it were its own.
+      #
+      # @return [void]
+      sig { void }
       def reset!
         @last_config = nil
       end
@@ -39,6 +51,7 @@ module Dev
       # detecting it — fix by declaration, not detection.
       #
       # @return [String] "ci" or "dev"
+      sig { returns(String) }
       def detect_env
         ENV["CI"].to_s =~ /\A(true|1)\z/i ? "ci" : "dev"
       end
@@ -47,6 +60,7 @@ module Dev
       # declaration axis). Matches the symbols the DSL accepts (:darwin, :linux).
       #
       # @return [String] "darwin", "linux", or "windows"
+      sig { returns(String) }
       def detect_host
         case RUBY_PLATFORM
         when /darwin/ then "darwin"

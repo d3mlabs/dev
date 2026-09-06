@@ -76,12 +76,13 @@ module Dev
       sig { params(tap: Tap).void }
       def register_tap(tap)
         project_dir = @project_dir
-        if tap.local? && project_dir
-          path = resolve_file_url(tap.url, project_dir)
+        url = tap.url
+        if tap.local? && project_dir && url
+          path = resolve_file_url(url, project_dir)
           success = system("brew", "tap", tap.name, path)
           raise TapRegistrationError, "brew tap #{tap.name} #{path} failed" unless success
-        elsif tap.url
-          url_str = tap.url.to_s
+        elsif url
+          url_str = url.to_s
           success = system("brew", "tap", tap.name, url_str)
           raise TapRegistrationError, "brew tap #{tap.name} #{url_str} failed" unless success
         else
@@ -100,7 +101,8 @@ module Dev
         return unless local_tap
 
         ENV["TAP_NAME"] = local_tap.name
-        ENV["LOCAL_TAP_DIR"] = resolve_file_url(local_tap.url, project_dir) if local_tap.url
+        url = local_tap.url
+        ENV["LOCAL_TAP_DIR"] = resolve_file_url(url, project_dir) if url
       end
 
       # Resolve a file:// URI to an absolute path relative to project_dir.

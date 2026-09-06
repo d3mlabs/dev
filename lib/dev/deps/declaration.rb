@@ -1,5 +1,7 @@
-# typed: true
+# typed: strict
 # frozen_string_literal: true
+
+require "sorbet-runtime"
 
 module Dev
   module Deps
@@ -21,35 +23,38 @@ module Dev
     # never nil. Repositories normalize upstream syntax into this shape at
     # construction, so constraints cross the system boundary exactly once.
     #
-    # No sorbet-runtime here: this file rides the dependencies.rb load chain
-    # (deps.rb -> config.rb -> dsl.rb), which must work under bare Ruby before
-    # bundler provisions any gem.
-    #
     # See docs/deps-architecture.md for the ontology this belongs to.
     class Declaration
+      extend T::Sig
+
       # @return [String] the package's name within its integration's universe
+      sig { returns(String) }
       attr_reader :name
 
       # @return [Symbol] the integration whose universe the name lives in
+      sig { returns(Symbol) }
       attr_reader :integration
 
       # @return [Hash{String => Object}] version constraint in dev's shape;
       #   {} means unconstrained
+      sig { returns(T::Hash[String, T.untyped]) }
       attr_reader :constraint
 
       # @param name [String] the package's name
       # @param integration [Symbol] :bundler, :ficsit, :cmake, …
       # @param constraint [Hash{String => Object}] dev-shaped constraint;
       #   defaults to {} (unconstrained)
+      sig { params(name: String, integration: Symbol, constraint: T::Hash[String, T.untyped]).void }
       def initialize(name:, integration:, constraint: {})
         @name = name
         @integration = integration
-        @constraint = constraint.dup.freeze
+        @constraint = T.let(constraint.dup.freeze, T::Hash[String, T.untyped])
         freeze
       end
 
       # @param other [Object]
       # @return [Boolean] whether other states the same declaration
+      sig { params(other: Object).returns(T::Boolean) }
       def ==(other)
         return false unless other.is_a?(Declaration)
 
@@ -58,6 +63,7 @@ module Dev
       alias_method :eql?, :==
 
       # @return [Integer] hash code, so declarations work as Hash keys
+      sig { returns(Integer) }
       def hash
         [self.class, name, integration, constraint].hash
       end

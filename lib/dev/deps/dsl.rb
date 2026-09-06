@@ -1,6 +1,7 @@
-# typed: false
+# typed: strict
 # frozen_string_literal: true
 
+require "sorbet-runtime"
 require_relative "declaration"
 require_relative "scope"
 require_relative "scoped_declaration"
@@ -9,22 +10,54 @@ module Dev
   module Deps
     # Top-level DSL evaluated inside Dev::Deps.define { ... }.
     class DSL
+      extend T::Sig
+
       # Group a top-level `gem` declaration lands in when none is given. Bundler's
       # default (unscoped) group, mirroring a hand-written Gemfile's top section.
       DEFAULT_GEM_GROUP = :app
 
-      attr_reader :taps, :groups, :declarations, :ruby_version_requirement,
-        :lua_version_value, :python_version_value, :registered_integrations, :registered_methods
+      # @return [Hash{String => Hash}] declared taps by name
+      sig { returns(T::Hash[String, T::Hash[String, T.untyped]]) }
+      attr_reader :taps
 
+      # @return [Hash{String => Hash}] group name → group config
+      sig { returns(T::Hash[String, T.untyped]) }
+      attr_reader :groups
+
+      # @return [Array<ScopedDeclaration>] all declared dependencies
+      sig { returns(T::Array[ScopedDeclaration]) }
+      attr_reader :declarations
+
+      # @return [String, nil] declared Ruby version
+      sig { returns(T.nilable(String)) }
+      attr_reader :ruby_version_requirement
+
+      # @return [String, nil] declared Lua version
+      sig { returns(T.nilable(String)) }
+      attr_reader :lua_version_value
+
+      # @return [String, nil] declared Python minor version
+      sig { returns(T.nilable(String)) }
+      attr_reader :python_version_value
+
+      # @return [Hash{Symbol => Class, String}] custom integration registrations
+      sig { returns(T::Hash[Symbol, T.untyped]) }
+      attr_reader :registered_integrations
+
+      # @return [Array<Symbol>] dynamically registered integration method names
+      sig { returns(T::Array[Symbol]) }
+      attr_reader :registered_methods
+
+      sig { void }
       def initialize
-        @taps   = {}
-        @groups = {}
-        @declarations = []
-        @ruby_version_requirement = nil
-        @lua_version_value = nil
-        @python_version_value = nil
-        @registered_integrations = {}
-        @registered_methods = []
+        @taps = T.let({}, T::Hash[String, T::Hash[String, T.untyped]])
+        @groups = T.let({}, T::Hash[String, T.untyped])
+        @declarations = T.let([], T::Array[ScopedDeclaration])
+        @ruby_version_requirement = T.let(nil, T.nilable(String))
+        @lua_version_value = T.let(nil, T.nilable(String))
+        @python_version_value = T.let(nil, T.nilable(String))
+        @registered_integrations = T.let({}, T::Hash[Symbol, T.untyped])
+        @registered_methods = T.let([], T::Array[Symbol])
       end
 
       # Declare the project's Ruby toolchain — a first-class dependency, on equal
@@ -35,6 +68,8 @@ module Dev
       # interpreter every other dependency and command runs under.
       #
       # @param version [String, Symbol] exact Ruby version (e.g. "4.0.5")
+      # @return [void]
+      sig { params(version: T.any(String, Symbol)).void }
       def ruby(version)
         @ruby_version_requirement = version.to_s.strip
       end
@@ -42,6 +77,8 @@ module Dev
       # Declare the Lua version for LuaRocks integration.
       #
       # @param version [String, Symbol] Lua version (e.g. "5.1")
+      # @return [void]
+      sig { params(version: T.any(String, Symbol)).void }
       def lua_version(version)
         @lua_version_value = version.to_s.strip
       end
@@ -53,6 +90,8 @@ module Dev
       # specially (pre-dispatch), not through the resolver -> lockfile pipeline.
       #
       # @param version [String, Symbol] Python minor version (e.g. "3.12")
+      # @return [void]
+      sig { params(version: T.any(String, Symbol)).void }
       def python(version)
         @python_version_value = version.to_s.strip
       end
@@ -66,6 +105,8 @@ module Dev
       # @param name [String, Symbol] gem name
       # @param version [String, nil] version requirement (e.g. "~> 1.17")
       # @param opts [Hash] additional bundler options (e.g. require:, git:)
+      # @return [void]
+      sig { params(name: T.any(String, Symbol), version: T.nilable(String), opts: T.untyped).void }
       def gem(name, version = nil, **opts)
         constraint = opts.each_with_object({}) { |(k, v), h| h[k.to_s] = v }
         constraint["version"] = version.to_s if version
@@ -75,6 +116,12 @@ module Dev
         )
       end
 
+      # Declare a Homebrew tap.
+      #
+      # @param name [String, Symbol] tap identifier (e.g. "d3mlabs/d3mlabs")
+      # @param url [String, nil] tap URL; file:// means a local tap
+      # @return [void]
+      sig { params(name: T.any(String, Symbol), url: T.untyped).void }
       def tap(name, url: nil)
         name_str = name.to_s
         @taps[name_str] = {
@@ -88,6 +135,8 @@ module Dev
       #
       # @param name [Symbol, String] integration identifier (e.g. :wow_curseforge)
       # @param klass [Class, String] Integration subclass or its name
+      # @return [void]
+      sig { params(name: T.any(Symbol, String), klass: T.untyped).void }
       def register(name, klass)
         sym = name.to_sym
         @registered_integrations[sym] = klass
@@ -104,6 +153,15 @@ module Dev
       #   Sugar that stamps every member declaration, exactly as platform: does; install
       #   filters against the detected host OS (the lockfile stays universal — all hosts'
       #   deps are resolved and locked, filtering happens at install, never at resolve).
+      # @return [void]
+      sig do
+        params(
+          name: T.any(String, Symbol),
+          platform: T.nilable(String),
+          host: T.nilable(Symbol),
+          block: T.nilable(T.proc.bind(GroupDSL).void),
+        ).void
+      end
       def group(name, platform: nil, host: nil, &block)
         group_name = name.to_s
         group_dsl = GroupDSL.new(group: group_name.to_sym, platform:, host:, registered_methods: @registered_methods)
@@ -115,23 +173,41 @@ module Dev
 
     # DSL for per-environment entries (inside group :build for env-specific brew).
     class EnvDSL
+      extend T::Sig
+
       class EmptyNameError < StandardError; end
 
+      # @return [Array<ScopedDeclaration>] declarations made inside this env block
+      sig { returns(T::Array[ScopedDeclaration]) }
       attr_reader :declarations
 
       # @param group [Symbol] enclosing group, stamped onto declarations
       # @param platform [String, nil] enclosing group's platform
       # @param host [Symbol, nil] enclosing group's host OS
       # @param env [String, nil] environment name ("ci" / "dev"), stamped onto declarations
+      sig do
+        params(
+          group: Symbol,
+          platform: T.nilable(String),
+          host: T.nilable(Symbol),
+          env: T.nilable(String),
+        ).void
+      end
       def initialize(group: :app, platform: nil, host: nil, env: nil)
-        @brew = []
-        @declarations = []
+        @brew = T.let([], T::Array[T.untyped])
+        @declarations = T.let([], T::Array[ScopedDeclaration])
         @group = group
         @platform = platform
         @host = host
         @env = env
       end
 
+      # Declare a Homebrew formula/cask scoped to this environment.
+      #
+      # @param name [String, Symbol] formula or cask name
+      # @param opts [Hash] options (tap:, version:, cask:)
+      # @return [void]
+      sig { params(name: T.any(String, Symbol), opts: T.untyped).void }
       def brew(name, **opts)
         name_str = name.to_s
         raise EmptyNameError, "brew dependency name cannot be empty" if name_str.empty?
@@ -148,12 +224,17 @@ module Dev
         )
       end
 
+      # @return [Hash] container-build projection of this env block
+      sig { returns(T::Hash[String, T.untyped]) }
       def to_h
         { "brew" => @brew }
       end
 
       private
 
+      # @param hash [Hash] symbol-keyed options
+      # @return [Hash] the same options with string keys
+      sig { params(hash: T::Hash[T.untyped, T.untyped]).returns(T::Hash[String, T.untyped]) }
       def stringify_keys(hash)
         hash.each_with_object({}) { |(k, v), h| h[k.to_s] = v }
       end
@@ -161,21 +242,33 @@ module Dev
 
     # DSL for group-scoped deps: declarations (app/test), brew + nested env (build).
     class GroupDSL
+      extend T::Sig
+
       class EmptyNameError < StandardError; end
 
+      # @return [Array<ScopedDeclaration>] declarations made inside this group
+      sig { returns(T::Array[ScopedDeclaration]) }
       attr_reader :declarations
 
       # @param group [Symbol] group name (e.g. :app, :test, :build)
       # @param platform [String, nil] platform stamped onto every declaration in this group
       # @param host [Symbol, nil] host OS stamped onto every declaration in this group
       # @param registered_methods [Array<Symbol>] dynamically registered integration methods
+      sig do
+        params(
+          group: Symbol,
+          platform: T.nilable(String),
+          host: T.nilable(Symbol),
+          registered_methods: T::Array[Symbol],
+        ).void
+      end
       def initialize(group:, platform: nil, host: nil, registered_methods: [])
         @group = group
         @platform = platform
         @host = host
-        @declarations = []
-        @brew    = []
-        @envs    = {}
+        @declarations = T.let([], T::Array[ScopedDeclaration])
+        @brew = T.let([], T::Array[T.untyped])
+        @envs = T.let({}, T::Hash[String, T.untyped])
         @registered_methods = registered_methods
       end
 
@@ -183,8 +276,10 @@ module Dev
       #
       # @param name [String, Symbol] dependency name
       # @param spec [Hash] options (tag:, repo:, url:, github:, etc.)
+      # @return [void]
+      sig { params(name: T.any(String, Symbol), spec: T.untyped).void }
       def cmake(name, **spec)
-        spec = expand_github(name, spec)
+        spec = expand_github(name.to_s, spec)
         add_declaration(name, :cmake, spec)
       end
 
@@ -193,6 +288,8 @@ module Dev
       # @param name [String, Symbol] gem name
       # @param version [String, nil] version requirement (e.g. "~> 1.17")
       # @param spec [Hash] additional bundler options (e.g. require:, git:)
+      # @return [void]
+      sig { params(name: T.any(String, Symbol), version: T.nilable(String), spec: T.untyped).void }
       def gem(name, version = nil, **spec)
         spec[:version] = version if version
         add_declaration(name, :bundler, spec)
@@ -203,6 +300,8 @@ module Dev
       # @param name [String, Symbol] rock name
       # @param constraint [String, nil] version constraint (e.g. ">=3.5")
       # @param spec [Hash] additional options
+      # @return [void]
+      sig { params(name: T.any(String, Symbol), constraint: T.nilable(String), spec: T.untyped).void }
       def luarocks(name, constraint = nil, **spec)
         spec[:constraint] = constraint if constraint
         add_declaration(name, :luarocks, spec)
@@ -215,6 +314,8 @@ module Dev
       # @param name [String, Symbol] distribution name (e.g. "totalsegmentator")
       # @param version [String, nil] version constraint (e.g. ">=2.0", "2.0.5")
       # @param spec [Hash] additional options (e.g. host:)
+      # @return [void]
+      sig { params(name: T.any(String, Symbol), version: T.nilable(String), spec: T.untyped).void }
       def pip(name, version = nil, **spec)
         spec[:version] = version if version
         add_declaration(name, :pip, spec)
@@ -225,6 +326,8 @@ module Dev
       # @param mod_reference [String, Symbol] mod reference (e.g. "SML", "AreaActions")
       # @param version [String, nil] semver constraint (e.g. "^3.12.0", ">=1.0")
       # @param spec [Hash] additional options (target:, etc.)
+      # @return [void]
+      sig { params(mod_reference: T.any(String, Symbol), version: T.nilable(String), spec: T.untyped).void }
       def ficsit(mod_reference, version: nil, **spec)
         spec[:version] = version if version
         add_declaration(mod_reference, :ficsit, spec)
@@ -253,9 +356,22 @@ module Dev
       # @param assets [String, nil] glob selecting prebuilt release assets
       # @param build [String, Symbol, nil] build-from-source recipe (script path / shell / :none)
       # @param spec [Hash] additional options
+      # @return [void]
+      sig do
+        params(
+          name_or_slug: T.any(String, Symbol),
+          tag: String,
+          install_dir: String,
+          github: T.nilable(String),
+          repo: T.nilable(String),
+          assets: T.nilable(String),
+          build: T.nilable(T.any(String, Symbol)),
+          spec: T.untyped,
+        ).void
+      end
       def gh(name_or_slug, tag:, install_dir:, github: nil, repo: nil, assets: nil, build: nil, **spec)
         slug = (github || repo || name_or_slug).to_s
-        name = (github || repo) ? name_or_slug.to_s : slug.split("/").last
+        name = (github || repo) ? name_or_slug.to_s : T.must(slug.split("/").last)
 
         unless [assets, build].compact.size == 1
           raise ArgumentError,
@@ -281,6 +397,16 @@ module Dev
       # @param install_dir [String] host directory the depot is installed into
       # @param branch [String] Steam branch (default "public")
       # @param spec [Hash] additional options (buildid:, etc.)
+      # @return [void]
+      sig do
+        params(
+          name: T.any(String, Symbol),
+          app: T.any(Integer, String),
+          install_dir: String,
+          branch: String,
+          spec: T.untyped,
+        ).void
+      end
       def steam(name, app:, install_dir:, branch: "public", **spec)
         spec = spec.merge(app:, install_dir:, branch:)
         add_declaration(name, :steam, spec)
@@ -291,6 +417,8 @@ module Dev
       # @param name [String, Symbol] dependency name
       # @param integration [Symbol, String] integration identifier (e.g. :wow_curseforge)
       # @param spec [Hash] additional options
+      # @return [void]
+      sig { params(name: T.any(String, Symbol), integration: T.any(Symbol, String), spec: T.untyped).void }
       def custom(name, integration:, **spec)
         add_declaration(name, integration.to_sym, spec)
       end
@@ -305,6 +433,8 @@ module Dev
       #
       # @param version [String, Symbol] exact Xcode version (e.g. "26.1.1")
       # @param spec [Hash] additional options
+      # @return [void]
+      sig { params(version: T.any(String, Symbol), spec: T.untyped).void }
       def xcode(version, **spec)
         spec[:version] = version.to_s.strip
         add_declaration("xcode", :xcode, spec)
@@ -320,6 +450,8 @@ module Dev
       #
       # @param name [String, Symbol] formula or cask name
       # @param opts [Hash] options (tap:, version:, cask:)
+      # @return [void]
+      sig { params(name: T.any(String, Symbol), opts: T.untyped).void }
       def brew(name, **opts)
         name_str = name.to_s
         raise EmptyNameError, "brew dependency name cannot be empty" if name_str.empty?
@@ -336,6 +468,10 @@ module Dev
       # name is a first-class declaration field (like host), landing in the
       # lockfile's env section so install-deps filters it to the matching
       # environment — never smuggled through the constraint hash.
+      #
+      # @param name [String, Symbol] environment name
+      # @return [void]
+      sig { params(name: T.any(String, Symbol), block: T.nilable(T.proc.bind(EnvDSL).void)).void }
       def env(name, &block)
         env_name = name.to_s
         env_dsl = EnvDSL.new(group: @group, platform: @platform, host: @host, env: env_name)
@@ -344,6 +480,8 @@ module Dev
         @declarations.concat(env_dsl.declarations)
       end
 
+      # @return [Hash] container-build projection of this group
+      sig { returns(T::Hash[String, T.untyped]) }
       def to_h
         { "brew" => @brew, "env" => @envs, "platform" => @platform }
       end
@@ -354,14 +492,20 @@ module Dev
       # @param method_name [Symbol] called method name
       # @param args [Array] positional arguments (first is the dependency name)
       # @param kwargs [Hash] keyword arguments passed to custom()
+      # @return [Object]
+      sig { params(method_name: Symbol, args: T.untyped, kwargs: T.untyped, block: T.untyped).returns(T.untyped) }
       def method_missing(method_name, *args, **kwargs, &block)
         if @registered_methods.include?(method_name.to_sym)
-          custom(args.first, integration: method_name, **kwargs)
+          T.unsafe(self).custom(args.fetch(0), integration: method_name, **kwargs)
         else
           super
         end
       end
 
+      # @param method_name [Symbol] queried method name
+      # @param include_private [Boolean]
+      # @return [Boolean]
+      sig { params(method_name: T.any(Symbol, String), include_private: T::Boolean).returns(T::Boolean) }
       def respond_to_missing?(method_name, include_private = false)
         @registered_methods.include?(method_name.to_sym) || super
       end
@@ -378,6 +522,8 @@ module Dev
       # @param name [String, Symbol] dependency name
       # @param integration [Symbol] integration type
       # @param spec [Hash] constraint spec (symbol keys → stringified)
+      # @return [void]
+      sig { params(name: T.any(String, Symbol), integration: Symbol, spec: T::Hash[Symbol, T.untyped]).void }
       def add_declaration(name, integration, spec)
         name_str = name.to_s
         raise EmptyNameError, "dependency name cannot be empty" if name_str.empty?
@@ -403,6 +549,7 @@ module Dev
       # @param name [String] dependency name (used as repo name for org-only shorthand)
       # @param spec [Hash] spec hash; github: key is consumed and replaced with repo:
       # @return [Hash] spec with github: replaced by repo:
+      sig { params(name: String, spec: T::Hash[Symbol, T.untyped]).returns(T::Hash[Symbol, T.untyped]) }
       def expand_github(name, spec)
         github = spec.delete(:github)
         return spec unless github
@@ -415,6 +562,9 @@ module Dev
         spec.merge(repo: repo_url)
       end
 
+      # @param hash [Hash] symbol-keyed options
+      # @return [Hash] the same options with string keys
+      sig { params(hash: T::Hash[T.untyped, T.untyped]).returns(T::Hash[String, T.untyped]) }
       def stringify_keys(hash)
         hash.each_with_object({}) { |(k, v), h| h[k.to_s] = v }
       end

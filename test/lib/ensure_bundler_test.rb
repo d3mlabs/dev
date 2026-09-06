@@ -11,7 +11,7 @@ load File.join(DEV_ROOT, "dependencies.rb") unless defined?(BUNDLER_VERSION)
 
 transform!(RSpock::AST::Transformation)
 class EnsureBundlerTest < Minitest::Test
-  test "ensure_bundler! returns true when bundler satisfies requirement" do
+  test "EnsureBundler.ensure! returns true when bundler satisfies requirement" do
     Given "a bundle command that reports a satisfying version"
     tmpdir = Dir.mktmpdir("bundler-test-")
     fake_bin = File.join(tmpdir, "bin")
@@ -21,8 +21,8 @@ class EnsureBundlerTest < Minitest::Test
     original_path = ENV["PATH"]
     ENV["PATH"] = "#{fake_bin}:#{original_path}"
 
-    When "we call ensure_bundler!"
-    result = ensure_bundler!(DEV_ROOT)
+    When "we call EnsureBundler.ensure!"
+    result = EnsureBundler.ensure!(DEV_ROOT)
 
     Then "it returns true without attempting install"
     result == true
@@ -32,7 +32,7 @@ class EnsureBundlerTest < Minitest::Test
     FileUtils.rm_rf(tmpdir)
   end
 
-  test "ensure_bundler! installs and returns true when version does not satisfy" do
+  test "EnsureBundler.ensure! installs and returns true when version does not satisfy" do
     Given "bundle reports version 1.0.0 and gem install succeeds"
     tmpdir = Dir.mktmpdir("bundler-test-")
     fake_bin = File.join(tmpdir, "bin")
@@ -44,8 +44,8 @@ class EnsureBundlerTest < Minitest::Test
     original_path = ENV["PATH"]
     ENV["PATH"] = "#{fake_bin}:#{original_path}"
 
-    When "we call ensure_bundler!"
-    result = ensure_bundler!(DEV_ROOT)
+    When "we call EnsureBundler.ensure!"
+    result = EnsureBundler.ensure!(DEV_ROOT)
 
     Then "it returns true after installing"
     _ * $stdout.puts
@@ -56,7 +56,7 @@ class EnsureBundlerTest < Minitest::Test
     FileUtils.rm_rf(tmpdir)
   end
 
-  test "ensure_bundler! raises when gem install fails" do
+  test "EnsureBundler.ensure! raises when gem install fails" do
     Given "bundle reports old version and gem install fails"
     tmpdir = Dir.mktmpdir("bundler-test-")
     fake_bin = File.join(tmpdir, "bin")
@@ -68,12 +68,12 @@ class EnsureBundlerTest < Minitest::Test
     original_path = ENV["PATH"]
     ENV["PATH"] = "#{fake_bin}:#{original_path}"
 
-    When "we call ensure_bundler!"
-    ensure_bundler!(DEV_ROOT)
+    When "we call EnsureBundler.ensure!"
+    EnsureBundler.ensure!(DEV_ROOT)
 
     Then "it raises with a descriptive message"
     _ * $stdout.puts
-    raises BundlerInstallError
+    raises EnsureBundler::BundlerInstallError
 
 
     Cleanup
@@ -81,7 +81,7 @@ class EnsureBundlerTest < Minitest::Test
     FileUtils.rm_rf(tmpdir)
   end
 
-  test "ensure_bundler! installs when bundle command is not found" do
+  test "EnsureBundler.ensure! installs when bundle command is not found" do
     Given "bundle command is not found and gem install succeeds"
     tmpdir = Dir.mktmpdir("bundler-test-")
     fake_bin = File.join(tmpdir, "bin")
@@ -94,8 +94,8 @@ class EnsureBundlerTest < Minitest::Test
     ENV["PATH"] = "#{fake_bin}:#{original_path}"
 
 
-    When "we call ensure_bundler!"
-    result = ensure_bundler!(DEV_ROOT)
+    When "we call EnsureBundler.ensure!"
+    result = EnsureBundler.ensure!(DEV_ROOT)
 
     Then "it returns true"
     _ * $stdout.puts

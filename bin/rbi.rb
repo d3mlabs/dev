@@ -29,14 +29,13 @@ require "cli/ui"
 
 CLI::UI::StdoutRouter.enable
 
-load File.join(DEV_ROOT, "dependencies.rb")
 require "ensure_bundler"
 
 class TapiocaGemError < StandardError; end
 
 CLI::UI.frame("Regenerating gem RBI files...") do
   CLI::UI.spinner("Ensuring bundler is installed...") do
-    ensure_bundler!(DEV_ROOT)
+    EnsureBundler.ensure!(DEV_ROOT)
   end
 
   CLI::UI.spinner("Generating gem RBI files...") do

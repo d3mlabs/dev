@@ -51,7 +51,7 @@ CLI::UI::StdoutRouter.enable
 class BundleInstallError < StandardError; end
 
 CLI::UI.frame("Setting up dev environment...") do
-  unless CLI::UI.spinner("Installing bundler...") { ensure_bundler!(DEV_ROOT) }
+  unless CLI::UI.spinner("Installing bundler...") { EnsureBundler.ensure!(DEV_ROOT) }
     exit 1
   end
 

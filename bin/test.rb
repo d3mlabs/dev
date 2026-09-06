@@ -24,8 +24,6 @@ ENV["PATH"] = "#{File.dirname(RbConfig.ruby)}:#{ENV['PATH']}"
 DEV_ROOT = File.expand_path("..", __dir__)
 $LOAD_PATH.unshift(File.join(DEV_ROOT, "lib")) unless $LOAD_PATH.include?(File.join(DEV_ROOT, "lib"))
 
-load File.join(DEV_ROOT, "dependencies.rb")
-
 ENV["BUNDLE_GEMFILE"] ||= File.join(DEV_ROOT, "Gemfile")
 require "bundler/setup"
 
@@ -47,7 +45,7 @@ TEST_LOG_PATH = File.join(DEV_ROOT, "tmp", "test.log")
 def main
   requested_files = ARGV
   CLI::UI.frame("Running tests...") do
-    unless CLI::UI.spinner("Install Bundler") { ensure_bundler!(DEV_ROOT) }
+    unless CLI::UI.spinner("Install Bundler") { EnsureBundler.ensure!(DEV_ROOT) }
       exit 1
     end
 

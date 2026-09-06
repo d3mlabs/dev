@@ -30,27 +30,9 @@ Sorbet/StrictSigil:
     - src/**/*
     - lib/**/*
   Exclude:
-    # The pre-bundle bootstrap chain (dependencies.rb -> dev/deps -> ...,
-    # plus ensure_bundler) is loaded by bin/setup.rb and bin/test.rb BEFORE
-    # the bundle exists, so it must stay stdlib-only: `sig` blocks would
-    # require sorbet-runtime at load time. These files cap at `typed: true`
-    # (or `typed: false` where noted).
-    - lib/ensure_bundler.rb
-    - lib/dev/deps.rb
-    - lib/dev/deps/cli_ui.rb
-    - lib/dev/deps/config.rb
-    - lib/dev/deps/declaration.rb
-    - lib/dev/deps/lockfile.rb
-    - lib/dev/deps/scope.rb
-    - lib/dev/deps/scoped_declaration.rb
-    - lib/dev/deps/tap.rb
-    - lib/dev/deps/installer.rb
-    # `typed: false` holdouts: Data.define with a keyword-args initialize
+    # `typed: false` holdouts. Data.define with a keyword-args initialize
     # override is rejected by Sorbet (error 4010)...
     - lib/dev/deps/dependency.rb
-    # ...method_missing dispatch into a required-keyword method needs
-    # T.unsafe, which the pre-bundle constraint forbids...
-    - lib/dev/deps/dsl.rb
     # ...and Fetcher consumes a consumer-repo Lockfile API (parse,
     # runtime_ref_map) that doesn't resolve against this repo's Lockfile.
     - lib/dev/deps/fetcher.rb
