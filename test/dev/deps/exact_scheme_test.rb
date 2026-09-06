@@ -23,7 +23,7 @@ class Dev::Deps::ExactSchemeTest < Minitest::Test
     result == expected
 
     Where
-    version       | tag           | expected
+    version | tag | expected
     "5.6.1-css-83" | "5.6.1-css-83" | true
     "5.6.1-css-83" | "5.6.1-css-84" | false
     "5.6.1-css-83" | nil            | true
