@@ -3,6 +3,7 @@
 
 require "json"
 require "open3"
+require_relative "declarations"
 require_relative "package"
 require_relative "package_id"
 require_relative "package_version"
@@ -45,7 +46,14 @@ module Dev
           metadata["version_suffix"] = version_suffix if version_suffix
           return Package.new(
             id: id,
-            versions: [PackageVersion.new(version: UNVERSIONED, metadata: metadata)],
+            versions: [
+              PackageVersion.new(
+                version: UNVERSIONED,
+                metadata: metadata,
+                # brew installs formula dependencies itself.
+                declarations: Declarations::ToolOwned.new,
+              ),
+            ],
           )
         end
 
@@ -63,6 +71,8 @@ module Dev
               version: info["versions"]["stable"],
               digest: bottle_hash ? "SHA256=#{bottle_hash}" : nil,
               metadata: metadata,
+              # brew installs formula dependencies itself.
+              declarations: Declarations::ToolOwned.new,
             ),
           ],
         )

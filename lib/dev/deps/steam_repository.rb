@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "declarations"
 require_relative "package"
 require_relative "package_id"
 require_relative "package_version"
@@ -56,6 +57,9 @@ module Dev
                 "install_dir" => filter["install_dir"],
                 "platform" => steam_platform_for(filter["platforms"]),
               },
+              # Steam depots are self-contained by construction: SteamCMD
+              # delivers the complete installed tree.
+              declarations: Declarations::Resolved.new([]),
             ),
           ],
         )

@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "open3"
+require_relative "declarations"
 require_relative "package"
 require_relative "package_id"
 require_relative "package_version"
@@ -38,7 +39,15 @@ module Dev
 
         Package.new(
           id: id,
-          versions: [PackageVersion.new(version: sha, metadata: { "repo" => repo_url })],
+          versions: [
+            PackageVersion.new(
+              version: sha,
+              metadata: { "repo" => repo_url },
+              # A checked-out source tree carries no manifest dev reads;
+              # consumers declare what they need alongside it.
+              declarations: Declarations::Resolved.new([]),
+            ),
+          ],
         )
       end
 

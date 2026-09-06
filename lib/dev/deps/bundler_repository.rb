@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "pathname"
+require_relative "declarations"
 require_relative "package"
 require_relative "package_id"
 require_relative "package_version"
@@ -48,7 +49,16 @@ module Dev
 
         Package.new(
           id: id,
-          versions: [PackageVersion.new(version: T.must(pin[:version]), digest: pin[:hash])],
+          versions: [
+            PackageVersion.new(
+              version: T.must(pin[:version]),
+              digest: pin[:hash],
+              # bundler owns the transitive closure. Gemfile.lock is read for
+              # pinned versions only — it is the tool's solve snapshot, never
+              # mined for dependency declarations.
+              declarations: Declarations::ToolOwned.new,
+            ),
+          ],
         )
       end
 

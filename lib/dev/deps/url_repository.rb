@@ -5,6 +5,7 @@ require "digest"
 require "open3"
 require "tempfile"
 require_relative "artifact"
+require_relative "declarations"
 require_relative "package"
 require_relative "package_id"
 require_relative "package_version"
@@ -47,6 +48,9 @@ module Dev
               digest: digest,
               artifacts: { "default" => Artifact.new(uri: url, digest: digest) },
               metadata: { "url" => url, "downloaded_path" => path },
+              # A downloaded archive is self-contained: its contents are the
+              # whole dependency.
+              declarations: Declarations::Resolved.new([]),
             ),
           ],
         )

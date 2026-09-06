@@ -33,7 +33,7 @@ class Dev::Deps::PipRepositoryTest < Minitest::Test
     package.version("2.0.5").digest == "SHA256=sdistsha"
     package.version("2.1.0").digest == "SHA256=onlywheel"
     package.version("1.9.0").digest.nil?
-    package.version("2.0.5").declarations == Dev::Deps::Declarations::Resolved.new([])
+    package.version("2.0.5").declarations == Dev::Deps::Declarations::ToolOwned.new
   end
 
   test "find raises ProjectNotFoundError, a PackageNotFoundError, on 404" do

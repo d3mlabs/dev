@@ -24,7 +24,7 @@ class Dev::Deps::LuaRocksRepositoryTest < Minitest::Test
     Then "the universe holds bare versions — no digests, no edges"
     package.versions.map(&:version) == ["3.5-1", "3.4-1"]
     package.version("3.5-1").digest.nil?
-    package.version("3.5-1").declarations == Dev::Deps::Declarations::Resolved.new([])
+    package.version("3.5-1").declarations == Dev::Deps::Declarations::ToolOwned.new
   end
 
   test "find raises RockNotFoundError, a PackageNotFoundError, on empty search" do

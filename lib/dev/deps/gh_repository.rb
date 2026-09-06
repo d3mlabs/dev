@@ -3,6 +3,7 @@
 
 require "json"
 require "open3"
+require_relative "declarations"
 require_relative "package"
 require_relative "package_id"
 require_relative "package_version"
@@ -95,6 +96,9 @@ module Dev
             "install_dir" => filter["install_dir"],
             "assets" => assets.map { |asset| asset_metadata(asset) },
           },
+          # Prebuilt release assets are self-contained: whatever they needed
+          # was baked in at build time.
+          declarations: Declarations::Resolved.new([]),
         )
       end
 
@@ -121,6 +125,10 @@ module Dev
             "build" => filter["build"],
             "commit" => resolve_commit_sha(repo_slug, tag),
           },
+          # Usage contract, not a guarantee: a source build's transitive
+          # needs are declared by the consuming project's own dependencies.rb
+          # rows. Revisit when subproject resolution lands.
+          declarations: Declarations::Resolved.new([]),
         )
       end
 

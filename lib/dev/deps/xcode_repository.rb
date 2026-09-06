@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "declarations"
 require_relative "package"
 require_relative "package_id"
 require_relative "package_version"
@@ -34,7 +35,11 @@ module Dev
         version = filter["version"].to_s
         raise MissingVersionError, "xcode requires an exact version (e.g. xcode \"26.1.1\")" if version.empty?
 
-        Package.new(id: id, versions: [PackageVersion.new(version: version)])
+        # An Xcode install is self-contained: Apple ships the whole toolchain.
+        Package.new(
+          id: id,
+          versions: [PackageVersion.new(version: version, declarations: Declarations::Resolved.new([]))],
+        )
       end
     end
   end

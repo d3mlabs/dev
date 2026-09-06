@@ -41,6 +41,7 @@ class Dev::Deps::BundlerRepositoryTest < Minitest::Test
     Then "one version — the joint solve's choice — with the CHECKSUMS digest"
     package.versions.map(&:version) == ["1.17.0"]
     package.version("1.17.0").digest == "SHA256=aaa111"
+    package.version("1.17.0").declarations == Dev::Deps::Declarations::ToolOwned.new
 
     Cleanup
     FileUtils.rm_rf(dir)

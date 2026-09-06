@@ -4,6 +4,7 @@
 require "json"
 require "net/http"
 require "uri"
+require_relative "declarations"
 require_relative "package"
 require_relative "package_id"
 require_relative "package_version"
@@ -43,7 +44,12 @@ module Dev
       def find(id, filter: {})
         releases = project_json(id.name)["releases"] || {}
         versions = releases.map do |version, files|
-          PackageVersion.new(version: version, digest: release_digest(files))
+          # pip resolves the transitive tree itself at install time.
+          PackageVersion.new(
+            version: version,
+            digest: release_digest(files),
+            declarations: Declarations::ToolOwned.new,
+          )
         end
 
         Package.new(id: id, versions: versions)

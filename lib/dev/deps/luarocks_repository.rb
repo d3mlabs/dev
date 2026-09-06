@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "open3"
+require_relative "declarations"
 require_relative "package"
 require_relative "package_id"
 require_relative "package_version"
@@ -38,7 +39,10 @@ module Dev
 
         Package.new(
           id: id,
-          versions: versions.map { |version| PackageVersion.new(version: version) },
+          versions: versions.map do |version|
+            # luarocks resolves rock dependencies itself at install time.
+            PackageVersion.new(version: version, declarations: Declarations::ToolOwned.new)
+          end,
         )
       end
 
