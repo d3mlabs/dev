@@ -21,13 +21,13 @@ module Dev
     class InstallDepsCommand < BuiltinCommand
       extend T::Sig
 
-      # Builds the DependencyInstaller for a lockfile + integrations pair;
+      # Builds the Installer for a lockfile + integrations pair;
       # injected so tests can substitute a fake without touching the host.
       InstallerFactory = T.type_alias do
         T.proc.params(
           lockfile: Dev::Deps::Lockfile,
           integrations: T::Hash[Symbol, Dev::Deps::Integration],
-        ).returns(Dev::Deps::DependencyInstaller)
+        ).returns(Dev::Deps::Installer)
       end
 
       # Builds the project-scoped gem skill linker (the project root is a
@@ -45,7 +45,7 @@ module Dev
       end
       def initialize(
         installer_factory: ->(lockfile, integrations) {
-          Dev::Deps::DependencyInstaller.new(lockfile:, integrations:)
+          Dev::Deps::Installer.new(lockfile:, integrations:)
         },
         gem_skill_linker_factory: ->(project_root) { Dev::Deps::GemSkillLinker.new(project_root:) },
         synchronizer: Dev::Learnings::Synchronizer.for

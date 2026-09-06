@@ -48,7 +48,7 @@ def install_brew_entry(entry)
   when Hash
     entry.each do |name, opts|
       # Host-gated entries (e.g. brew "xcodes", host: :darwin) skip
-      # non-matching hosts — mirrors DependencyInstaller#filter_by_host.
+      # non-matching hosts — mirrors Installer#filter_by_host.
       host = opts["host"]
       if host && host.to_s != HOST
         puts ">>> Skipping #{name} (host: #{host})"

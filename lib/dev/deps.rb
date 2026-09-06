@@ -5,7 +5,7 @@ require_relative "deps/config"
 require_relative "deps/cli_ui"
 require_relative "deps/lockfile"
 require_relative "deps/fetcher"
-require_relative "deps/dependency_installer"
+require_relative "deps/installer"
 
 module Dev
   module Deps

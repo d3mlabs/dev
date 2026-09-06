@@ -7,7 +7,7 @@ module Dev
     #
     # Cross-cutting install concerns (env filtering, build-first ordering)
     # live here — not in Integration or Lockfile.
-    class DependencyInstaller
+    class Installer
       # @param lockfile [Lockfile] lockfile reader
       # @param integrations [Hash{Symbol => Integration}] integration type → integration
       def initialize(lockfile:, integrations:)

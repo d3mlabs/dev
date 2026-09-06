@@ -59,7 +59,7 @@ end
 
 # GOOD: separate classes for separate layers
 class DependencyResolver   # resolve + lock layer
-class DependencyInstaller  # install layer
+class Installer  # install layer
 ```
 
 ## Integration-specific logic stays in its integration
