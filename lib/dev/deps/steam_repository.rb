@@ -10,13 +10,12 @@ require_relative "steam_cmd"
 
 module Dev
   module Deps
-    # Resolves a Steam application (e.g. the Satisfactory Dedicated Server) to a
-    # pinned build.
+    # Reports a Steam application's universe (e.g. the Satisfactory Dedicated
+    # Server): every branch's current buildid.
     #
-    # The "version" is the Steam buildid: either an explicitly pinned one from
-    # the declaration, or the current public-branch buildid resolved via
-    # SteamCMD's +app_info_print. There is no content hash — Steam exposes no
-    # stable per-build digest, so integrity is delegated to SteamCMD's
+    # The "version" is the Steam buildid, resolved via SteamCMD's
+    # +app_info_print. There is no content hash — Steam exposes no stable
+    # per-build digest, so integrity is delegated to SteamCMD's
     # `app_update … validate` at install time (the same nil-hash shape brew
     # casks use).
     #
@@ -27,71 +26,46 @@ module Dev
     class SteamRepository < Repository
       extend T::Sig
 
-      # Report a Steam app's universe: one buildid, as a singleton.
+      # Report a Steam app's universe: the current buildid of every branch,
+      # one version per branch.
       #
-      # Steam exposes no enumerable build history — the filter locates the
-      # build: an explicit "buildid" pin, or the current buildid of "branch"
-      # (default public) via SteamCMD. No digest: Steam publishes no stable
-      # per-build hash; integrity is SteamCMD's app_update … validate at
-      # install.
+      # Steam exposes no build history, but branch tips ARE enumerable: one
+      # +app_info_print call reports every branch's current buildid, so no
+      # probe is needed. The branch a buildid is the tip of rides metadata as
+      # a fact for SteamScheme's branch selection. No digest: Steam publishes
+      # no stable per-build hash; integrity is SteamCMD's app_update …
+      # validate at install.
       #
-      # @param id [PackageId] name is the declaration name
-      # @param filter [Hash] locator: "app", "install_dir", optionally
-      #   "branch", "buildid", "platforms"
-      # @return [Package] a singleton universe
-      # @raise [SteamCmd::SteamCmdError] if resolving the buildid fails
-      sig { override.params(id: PackageId, filter: T::Hash[String, T.untyped]).returns(Package) }
-      def find(id, filter: {})
-        app = filter["app"]
-        branch = filter["branch"] || "public"
-        build_id = filter["buildid"] || resolve_build_id(app:, branch:)
+      # @param id [PackageId] source is the Steam app id
+      # @param probe [String, nil] ignored — the universe is enumerable
+      # @return [Package] one version per branch
+      # @raise [SteamCmd::SteamCmdError] if querying the app fails
+      sig { override.params(id: PackageId, probe: T.nilable(String)).returns(Package) }
+      def find(id, probe: nil)
+        app = T.must(id.source)
+        versions = resolve_branches(app).map do |branch, build_id|
+          PackageVersion.new(
+            version: build_id,
+            metadata: { "app" => app, "branch" => branch },
+            # Steam depots are self-contained by construction: SteamCMD
+            # delivers the complete installed tree.
+            declarations: Declarations::Resolved.new([]),
+          )
+        end
+        raise PackageNotFoundError, "no branches with a buildid for Steam app #{app}" if versions.empty?
 
-        Package.new(
-          id: id,
-          versions: [
-            PackageVersion.new(
-              version: build_id.to_s,
-              metadata: {
-                "app" => app.to_s,
-                "branch" => branch,
-                "install_dir" => filter["install_dir"],
-                "platform" => steam_platform_for(filter["platforms"]),
-              },
-              # Steam depots are self-contained by construction: SteamCMD
-              # delivers the complete installed tree.
-              declarations: Declarations::Resolved.new([]),
-            ),
-          ],
-        )
+        Package.new(id: id, versions: versions)
       end
 
       private
 
       # Isolated so tests can stub the SteamCMD boundary.
       #
-      # @param app [String, Integer]
-      # @param branch [String]
-      # @return [String] resolved buildid
-      sig { params(app: T.any(String, Integer), branch: String).returns(String) }
-      def resolve_build_id(app:, branch:)
-        SteamCmd.resolve_build_id(app:, branch:)
-      end
-
-      # Map the consuming group's platform to a SteamCMD ForcePlatformType value.
-      # The dedicated server is Linux-only in our pipeline, so a missing platform
-      # defaults to "linux".
-      #
-      # @param platforms [Array<String, nil>, nil] platforms from the resolver
-      # @return [String] steam platform type ("linux" / "windows")
-      sig { params(platforms: T.nilable(T::Array[T.nilable(String)])).returns(String) }
-      def steam_platform_for(platforms)
-        group_platform = Array(platforms).compact.first
-        case group_platform
-        when "LinuxServer" then "linux"
-        when "WindowsServer", "Windows" then "windows"
-        when nil then "linux"
-        else group_platform.downcase
-        end
+      # @param app [String]
+      # @return [Hash{String => String}] branch name → current buildid
+      sig { params(app: String).returns(T::Hash[String, String]) }
+      def resolve_branches(app)
+        SteamCmd.resolve_branches(app: app)
       end
     end
   end

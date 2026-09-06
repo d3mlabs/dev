@@ -76,8 +76,9 @@ module Dev
           id = package_id(decl)
           next if resolved.key?(id)
 
-          chosen = choose(decl, platforms[[decl.integration, decl.name]] || [])
-          resolved[id] = mint(chosen, decl)
+          declared = platforms[[decl.integration, decl.name]] || []
+          chosen = choose(decl, declared)
+          resolved[id] = mint(chosen, decl, declared)
 
           # Transitive deps inherit the declaring dep's Scope wholesale: a dep
           # only needed in one group/host/env can't need its transitive
@@ -126,13 +127,10 @@ module Dev
         scheme = @schemes[decl.integration]
         raise UnknownIntegrationError, "no version scheme registered for #{decl.integration.inspect}" unless scheme
 
-        # The constraint doubles as the repository's locator; platforms ride
-        # along only when at least one group pinned one explicitly, so
-        # single-platform deps keep their default-platform install facts.
-        filter = decl.constraint.dup
-        filter["platforms"] = platforms if platforms.any? { |p| !p.nil? }
-
-        package = repository.find(package_id(decl), filter: filter)
+        # The probe is the constraint's exact coordinate (scheme-extracted),
+        # the access path for universes that cannot enumerate. The constraint
+        # itself never reaches the repository — evaluation happens below.
+        package = repository.find(package_id(decl), probe: scheme.pin(decl.constraint))
         explicit = platforms.compact
         candidates = package.versions.select do |version|
           satisfies?(scheme, version, decl.constraint) && publishes_platforms?(version, explicit)
@@ -181,32 +179,87 @@ module Dev
         explicit.empty? || version.platforms.empty? || (explicit - version.platforms).empty?
       end
 
-      # Mint the pin: the chosen version's facts become the Dependency, with
-      # the declaration contributing name/integration/group, the post-install
+      # Mint the pin: the chosen version's facts become the Dependency, the
+      # declaration contributes name/integration/group, its materialization
+      # (install instructions the repository never saw), the post-install
       # hook, and the install-scoping axes. The version digest becomes the
       # pin's integrity hash uniformly; an empty version string (ecosystems
       # that expose no version, e.g. brew casks) becomes a nil pin version.
+      # Versions carrying per-platform artifacts get them projected into
+      # install facts against the declared platforms.
       #
       # @param chosen [PackageVersion] the version the resolver picked
       # @param decl [ScopedDeclaration] the declaration it satisfies
+      # @param platforms [Array<String, nil>] union of the declaring groups' platforms
       # @return [Dependency]
-      sig { params(chosen: PackageVersion, decl: ScopedDeclaration).returns(Dependency) }
-      def mint(chosen, decl)
+      sig do
+        params(
+          chosen: PackageVersion,
+          decl: ScopedDeclaration,
+          platforms: T::Array[T.nilable(String)],
+        ).returns(Dependency)
+      end
+      def mint(chosen, decl, platforms)
+        metadata = chosen.metadata.merge(decl.materialization)
+        hash = chosen.digest
+        if chosen.artifacts.any? && (platforms.any? { |p| !p.nil? } || metadata.key?("target"))
+          hash = project_artifacts(metadata, chosen, platforms)
+        end
+
         dependency = Dependency.new(
           name: decl.name,
           integration: decl.integration,
           group: decl.scope.group,
           version: chosen.version.empty? ? nil : chosen.version,
-          hash: chosen.digest,
-          metadata: chosen.metadata.dup,
+          hash: hash,
+          metadata: metadata,
         )
         dependency = dependency.with(post_install: decl.post_install) if decl.post_install
         attach_install_scoping(dependency, decl)
       end
 
-      # The package's identity, from the declaration: for source-based deps
-      # the constraint's "repo"/"url" is the source coordinate (which service
-      # to ask), so it rides on the PackageId rather than the filter.
+      # Project the chosen version's per-platform artifacts (universe facts)
+      # into the pin's install facts (what the installer fetches). With
+      # explicitly declared platforms, a metadata["platforms"] block covering
+      # the targets the version actually publishes; otherwise the
+      # single-target shape — the materialization's "target" resolved to its
+      # artifact digest as the pin's hash. Lives here, not in a Repository:
+      # which targets a pin describes is a property of the declarations, and
+      # a repository never sees those.
+      #
+      # @param metadata [Hash] the pin metadata under construction (mutated)
+      # @param chosen [PackageVersion] the chosen version
+      # @param platforms [Array<String, nil>] declared platforms; nil entries
+      #   fall back to the materialization's "target"
+      # @return [String, nil] the pin's integrity hash
+      sig do
+        params(
+          metadata: T::Hash[String, T.untyped],
+          chosen: PackageVersion,
+          platforms: T::Array[T.nilable(String)],
+        ).returns(T.nilable(String))
+      end
+      def project_artifacts(metadata, chosen, platforms)
+        default_target = metadata["target"]
+
+        if platforms.any? { |p| !p.nil? }
+          names = platforms.map { |p| p.nil? ? default_target : p }.compact.uniq
+          metadata["platforms"] = names.each_with_object({}) do |name, acc|
+            artifact = chosen.artifacts[name]
+            acc[name] = { "hash" => artifact.digest, "link" => artifact.uri } if artifact
+          end
+          # The block replaces the single-target shape; no one target is THE pin.
+          metadata.delete("target")
+          nil
+        else
+          artifact = chosen.artifacts[default_target] || chosen.artifacts.values.first
+          artifact&.digest
+        end
+      end
+
+      # The package's identity, from the declaration: the atom's source field
+      # is the source coordinate (which universe to ask), riding on the
+      # PackageId.
       #
       # @param decl [ScopedDeclaration]
       # @return [PackageId]
@@ -215,17 +268,18 @@ module Dev
         PackageId.new(
           integration: decl.integration,
           name: decl.name,
-          source: decl.constraint["repo"] || decl.constraint["url"],
+          source: decl.source,
         )
       end
 
-      # Reject sets where one package is declared with disagreeing constraints.
-      # A dep declared in several groups resolves once, so agreement is the
-      # precondition for that single resolution being right for everyone.
-      # Grouping is per (integration, name): the same name under two
-      # integrations is two packages, free to carry different constraints.
-      # (Platform, group, host, and env may differ — they are axes, not
-      # constraints.)
+      # Reject sets where one package is declared with disagreeing asks —
+      # constraint, source, or materialization. A dep declared in several
+      # groups resolves once, so agreement is the precondition for that single
+      # resolution being right for everyone; disagreeing install dirs would
+      # otherwise let one row's materialization win silently. Grouping is per
+      # (integration, name): the same name under two integrations is two
+      # packages, free to carry different asks. (Platform, group, host, and
+      # env may differ — they are axes, not asks.)
       #
       # @param declarations [Array<ScopedDeclaration>]
       # @return [void]
@@ -233,12 +287,13 @@ module Dev
       sig { params(declarations: T::Array[ScopedDeclaration]).void }
       def reject_conflicts(declarations)
         declarations.group_by { |d| [d.integration, d.name] }.each do |(integration, name), decls|
-          constraints = decls.map(&:constraint).uniq
-          next if constraints.size <= 1
+          asks = decls.map { |d| { constraint: d.constraint, source: d.source, materialization: d.materialization } }
+            .uniq
+          next if asks.size <= 1
 
           raise ConflictingDeclarationError,
-            "#{integration}/#{name} is declared with disagreeing constraints: " \
-              "#{constraints.map(&:inspect).join(" vs ")}"
+            "#{integration}/#{name} is declared with disagreeing asks: " \
+              "#{asks.map(&:inspect).join(" vs ")}"
         end
       end
 

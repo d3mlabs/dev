@@ -24,21 +24,27 @@ module Dev
 
       # Report the package under this identity.
       #
-      # The filter is the declaration's constraint hash, passed as a
-      # server-side locator: ecosystems whose constraint names an identity
-      # (a git tag, a release tag, a Steam buildid, a brew formula suffix)
-      # need it to locate their — typically singleton — universe, and
-      # registry-backed ecosystems may use it to narrow an expensive index.
-      # Filtering returns every matching version; it never picks one. A
-      # repository must not evaluate range constraints (VersionScheme's job)
-      # and must not choose among candidates (the Resolver's job).
+      # The probe is the exact version coordinate the declaration pins (a git
+      # ref, a release tag, a brew formula suffix), extracted by the
+      # integration's VersionScheme#pin. It exists for universes that cannot
+      # enumerate — `git ls-remote` lists refs, never reachable SHAs; brew
+      # answers for one formula spec at a time — where it is the access path
+      # to the version being asked about. Enumerable universes ignore it.
+      #
+      # It is never a constraint and never selection: a repository must not
+      # evaluate range constraints (VersionScheme's job) and must not choose
+      # among candidates (the Resolver's job). The declaration's constraint
+      # hash, source coordinates (they ride PackageId#source), and install
+      # instructions (ScopedDeclaration#materialization, merged into the pin
+      # by the Resolver) never reach a repository.
       #
       # @param id [PackageId] the package's identity
-      # @param filter [Hash] the declaration constraint, as a locator only
+      # @param probe [String, nil] pinned version coordinate, as an access
+      #   path for non-enumerable universes only
       # @return [Package] the available versions and their facts
       # @raise [PackageNotFoundError] if the universe has no such package
-      sig { params(id: PackageId, filter: T::Hash[String, T.untyped]).returns(Package) }
-      def find(id, filter: {})
+      sig { params(id: PackageId, probe: T.nilable(String)).returns(Package) }
+      def find(id, probe: nil)
         raise NotImplementedError, "#{self.class}#find must be implemented"
       end
     end

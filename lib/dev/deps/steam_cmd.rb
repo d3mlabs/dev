@@ -66,35 +66,35 @@ module Dev
         T.unsafe(Open3).capture3(script, *commands)
       end
 
-      # Resolve the buildid published on a branch via +app_info_print.
+      # Resolve every branch's current buildid via +app_info_print — one call
+      # enumerates the whole branch universe.
       #
       # @param app [String, Integer] Steam app id
-      # @param branch [String] branch name (default "public")
       # @param dir [String] SteamCMD install dir
-      # @return [String] the resolved buildid
-      # @raise [SteamCmdError] if the command fails or no buildid is found
-      sig { params(app: T.any(String, Integer), branch: String, dir: String).returns(String) }
-      def resolve_build_id(app:, branch: "public", dir: DEFAULT_DIR)
+      # @return [Hash{String => String}] branch name → current buildid
+      # @raise [SteamCmdError] if the command fails
+      sig { params(app: T.any(String, Integer), dir: String).returns(T::Hash[String, String]) }
+      def resolve_branches(app:, dir: DEFAULT_DIR)
         out, err, status = run("+login", "anonymous", "+app_info_print", app.to_s, "+quit", dir:)
         Kernel.raise(SteamCmdError, "steamcmd app_info_print #{app} failed: #{err.strip}") unless status.success?
 
-        build_id = parse_build_id(out, branch)
-        Kernel.raise(SteamCmdError, "no buildid for app #{app} branch #{branch} in app_info_print output") unless build_id
-
-        build_id
+        parse_branches(out)
       end
 
-      # Parse the buildid for a branch out of app_info_print's VDF output. The
-      # public-branch block holds only scalars (buildid, timeupdated, …), so a
-      # non-greedy match up to the closing brace is enough to scope to the branch.
+      # Parse every branch's buildid out of app_info_print's VDF output. Each
+      # branch block under "branches" holds only scalars (buildid,
+      # timeupdated, …), so a bracket-free match per block is enough; branches
+      # without a buildid (e.g. password-gated ones Steam redacts) are simply
+      # absent from the result.
       #
       # @param output [String] raw app_info_print stdout
-      # @param branch [String] branch name
-      # @return [String, nil] the buildid, or nil if absent
-      sig { params(output: String, branch: String).returns(T.nilable(String)) }
-      def parse_build_id(output, branch)
-        match = output.match(/"#{Regexp.escape(branch)}"\s*\{[^}]*?"buildid"\s*"(\d+)"/m)
-        match && match[1]
+      # @return [Hash{String => String}] branch name → buildid
+      sig { params(output: String).returns(T::Hash[String, String]) }
+      def parse_branches(output)
+        section = output[/"branches"\s*\{(.*)\z/m, 1] || ""
+        section.scan(/"([^"]+)"\s*\{[^{}]*?"buildid"\s*"(\d+)"/m).to_h do |branch, build_id|
+          [branch.to_s, build_id.to_s]
+        end
       end
     end
   end

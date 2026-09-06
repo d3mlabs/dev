@@ -28,12 +28,12 @@ module Dev
       # taking the first version and ignoring the constraint entirely.
       #
       # @param id [PackageId] name is the rock name
-      # @param filter [Hash] unused; the manifest search needs no locator
+      # @param probe [String, nil] ignored — the universe is enumerable
       # @return [Package]
       # @raise [SearchError] if luarocks search fails
       # @raise [RockNotFoundError] if the search yields no versions
-      sig { override.params(id: PackageId, filter: T::Hash[String, T.untyped]).returns(Package) }
-      def find(id, filter: {})
+      sig { override.params(id: PackageId, probe: T.nilable(String)).returns(Package) }
+      def find(id, probe: nil)
         versions = search_versions(id.name)
         raise RockNotFoundError, "no rock named #{id.name} on luarocks.org" if versions.empty?
 

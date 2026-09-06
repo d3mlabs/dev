@@ -16,14 +16,15 @@ class Dev::Deps::DSLTest < Minitest::Test
       end
     end
 
-    Then
+    Then "the url is the source coordinate; only the tag remains a constraint"
     decls = config.declarations
     decls.size == 1
     decls[0].name == "boost"
     decls[0].integration == :cmake
     decls[0].scope.group == :app
-    decls[0].constraint["url"] == "https://example.com/boost.tar.gz"
+    decls[0].source == "https://example.com/boost.tar.gz"
     decls[0].constraint["tag"] == "boost-1.90.0"
+    !decls[0].constraint.key?("url")
   end
 
   test "github: shorthand expands org/repo to full URL" do
@@ -34,10 +35,11 @@ class Dev::Deps::DSLTest < Minitest::Test
       end
     end
 
-    Then
+    Then "the expanded URL lands as the source, not a constraint key"
     decl = config.declarations[0]
-    decl.constraint["repo"] == "https://github.com/USCiLab/cereal"
+    decl.source == "https://github.com/USCiLab/cereal"
     !decl.constraint.key?("github")
+    !decl.constraint.key?("repo")
   end
 
   test "github: shorthand with org only appends dep name" do
@@ -49,7 +51,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     end
 
     Then
-    config.declarations[0].constraint["repo"] == "https://github.com/axmolengine/axmol"
+    config.declarations[0].source == "https://github.com/axmolengine/axmol"
   end
 
   test "luarocks() produces ScopedDeclaration with luarocks integration" do
@@ -141,7 +143,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl.constraint == {}
   end
 
-  test "ficsit() with target passes target in constraint" do
+  test "ficsit() with target rides materialization, not the constraint" do
     When "defining a ficsit dep with target"
     config = Dev::Deps.define do
       group :app do
@@ -149,10 +151,23 @@ class Dev::Deps::DSLTest < Minitest::Test
       end
     end
 
-    Then
+    Then "which artifact to fetch is an install instruction"
     decl = config.declarations[0]
     decl.constraint["version"] == "^1.0"
-    decl.constraint["target"] == "LinuxServer"
+    decl.materialization["target"] == "LinuxServer"
+    !decl.constraint.key?("target")
+  end
+
+  test "ficsit() defaults the materialization target to the Windows game build" do
+    When "defining a ficsit dep with no target"
+    config = Dev::Deps.define do
+      group :app do
+        ficsit "SML", version: "^3.12.0"
+      end
+    end
+
+    Then
+    config.declarations[0].materialization["target"] == "Windows"
   end
 
   test "group platform: stamps the platform onto every declaration in the group" do
@@ -282,15 +297,15 @@ class Dev::Deps::DSLTest < Minitest::Test
       end
     end
 
-    Then
+    Then "slug is source, tag is the constraint, the rest is materialization"
     decl = config.declarations[0]
     decl.name == "UnrealEngine"
     decl.integration == :gh
     decl.scope.group == :build
-    decl.constraint["repo"] == "satisfactorymodding/UnrealEngine"
-    decl.constraint["tag"] == "5.6.1-css-83"
-    decl.constraint["assets"] == "UnrealEngine-CSS-Editor-Linux.tar.zst.*"
-    decl.constraint["install_dir"] == "~/.dev/engines/unreal-engine-css"
+    decl.source == "satisfactorymodding/UnrealEngine"
+    decl.constraint == { "tag" => "5.6.1-css-83" }
+    decl.materialization["asset_pattern"] == "UnrealEngine-CSS-Editor-Linux.tar.zst.*"
+    decl.materialization["install_dir"] == "~/.dev/engines/unreal-engine-css"
   end
 
   test "gh() build-from-source with github: shorthand names the dep and keeps the slug" do
@@ -310,11 +325,11 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl.name == "UnrealEngine"
     decl.integration == :gh
     decl.scope.group == :game
-    decl.constraint["repo"] == "EpicGames/UnrealEngine"
-    decl.constraint["tag"] == "5.6.1-release"
-    decl.constraint["build"] == "bin/build-ue.sh"
-    decl.constraint["install_dir"] == "~/.dev/engines/ue5"
-    !decl.constraint.key?("assets")
+    decl.source == "EpicGames/UnrealEngine"
+    decl.constraint == { "tag" => "5.6.1-release" }
+    decl.materialization["build"] == "bin/build-ue.sh"
+    decl.materialization["install_dir"] == "~/.dev/engines/ue5"
+    !decl.materialization.key?("asset_pattern")
   end
 
   test "gh() stringifies a :none build recipe for header-only deps" do
@@ -327,7 +342,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     end
 
     Then
-    config.declarations[0].constraint["build"] == "none"
+    config.declarations[0].materialization["build"] == "none"
   end
 
   test "gh() raises when neither assets: nor build: is given" do
@@ -364,15 +379,16 @@ class Dev::Deps::DSLTest < Minitest::Test
       end
     end
 
-    Then
+    Then "app id is source, branch is the constraint, install dir + platform materialize"
     decl = config.declarations[0]
     decl.name == "SatisfactoryServer"
     decl.integration == :steam
     decl.scope.group == :integration
     decl.platform == "LinuxServer"
-    decl.constraint["app"] == 1690800
-    decl.constraint["install_dir"] == "~/.dev/satisfactory-server"
-    decl.constraint["branch"] == "public"
+    decl.source == "1690800"
+    decl.constraint == { "branch" => "public" }
+    decl.materialization["install_dir"] == "~/.dev/satisfactory-server"
+    decl.materialization["platform"] == "LinuxServer"
   end
 
   test "steam() accepts an explicit buildid pin" do

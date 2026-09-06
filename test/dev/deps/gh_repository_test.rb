@@ -34,84 +34,94 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
     )
   end
 
-  def prebuilt_filter(overrides = {})
-    {
-      "tag" => "5.6.1-css-83",
-      "assets" => "UnrealEngine-CSS-Editor-Linux.tar.zst.*",
-      "install_dir" => "~/.dev/engines/unreal-engine-css",
-    }.merge(overrides)
-  end
-
   def source_id
     Dev::Deps::PackageId.new(integration: :gh, name: "UnrealEngine", source: "EpicGames/UnrealEngine")
   end
 
-  test "find reports the declared tag's release as a singleton universe" do
+  # Stub both facts the repository gathers for a tag: the commit SHA it
+  # points at and (optionally) the release it publishes.
+  def stub_tag(repo, slug:, tag:, sha: "abc123sha", release: :none)
+    repo.stubs(:run_gh_api)
+        .with("repos/#{slug}/commits/#{tag}")
+        .returns([JSON.generate({ "sha" => sha }), "", stub(success?: true)])
+    release_response = if release == :none
+      ["", "gh: Not Found (HTTP 404)", stub(success?: false)]
+    else
+      [JSON.generate(release), "", stub(success?: true)]
+    end
+    repo.stubs(:run_gh_api)
+        .with("repos/#{slug}/releases/tags/#{tag}")
+        .returns(release_response)
+  end
+
+  test "find reports the probed tag as a singleton with every release asset as facts" do
     Given "a repository with a stubbed gh api response"
     repo = Dev::Deps::GhRepository.new
-    repo.stubs(:run_gh_api)
-        .with("repos/satisfactorymodding/UnrealEngine/releases/tags/5.6.1-css-83")
-        .returns([JSON.generate(RELEASE_JSON), "", stub(success?: true)])
+    stub_tag(repo, slug: "satisfactorymodding/UnrealEngine", tag: "5.6.1-css-83",
+      sha: "css83sha", release: RELEASE_JSON)
 
-    When "finding with the tag and asset glob as locator"
-    package = repo.find(
-      Dev::Deps::PackageId.new(
-        integration: :gh, name: "UnrealEngine", source: "satisfactorymodding/UnrealEngine",
-      ),
-      filter: {
-        "tag" => "5.6.1-css-83",
-        "assets" => "UnrealEngine-CSS-Editor-Linux.tar.zst.*",
-        "install_dir" => "~/.dev/engines/unreal-engine-css",
-      },
-    )
+    When "finding with the tag as the probe"
+    package = repo.find(prebuilt_id, probe: "5.6.1-css-83")
 
-    Then "one version carrying the prebuilt install facts"
+    Then "one version carrying the tag's facts — all assets, unselected"
     package.versions.map(&:version) == ["5.6.1-css-83"]
     version = package.version("5.6.1-css-83")
     version.digest.nil?
     version.metadata["repo"] == "satisfactorymodding/UnrealEngine"
-    version.metadata["asset_pattern"] == "UnrealEngine-CSS-Editor-Linux.tar.zst.*"
-    version.metadata["install_dir"] == "~/.dev/engines/unreal-engine-css"
-    version.metadata["assets"].map { |a| a["sha256"] } == ["aaaa1111", "bbbb2222"]
+    version.metadata["commit"] == "css83sha"
+    version.metadata["assets"].map { |a| a["sha256"] } == ["aaaa1111", "bbbb2222", "cccc3333"]
   end
 
-  test "find pins the source shape to the tag with its commit SHA" do
-    Given "a repository resolving a tag to a commit"
+  test "find reports a release-less tag as a source-only version — no assets fact" do
+    Given "a repository resolving a tag that publishes no release"
     repo = Dev::Deps::GhRepository.new
-    repo.stubs(:run_gh_api)
-        .with("repos/EpicGames/UnrealEngine/commits/5.6.1-release")
-        .returns([JSON.generate({ "sha" => "abc123sha" }), "", stub(success?: true)])
+    stub_tag(repo, slug: "EpicGames/UnrealEngine", tag: "5.6.1-release", sha: "abc123sha")
 
-    When "finding with a build recipe instead of assets"
-    package = repo.find(
-      Dev::Deps::PackageId.new(integration: :gh, name: "UnrealEngine", source: "EpicGames/UnrealEngine"),
-      filter: { "tag" => "5.6.1-release", "build" => "make", "install_dir" => "~/.dev/engines/ue" },
-    )
+    When "finding the tag"
+    package = repo.find(source_id, probe: "5.6.1-release")
 
-    Then "the singleton version carries the source install facts"
+    Then "the singleton version carries the commit and no assets key"
     version = package.version("5.6.1-release")
     version.metadata["commit"] == "abc123sha"
-    version.metadata["build"] == "make"
     version.metadata["repo"] == "EpicGames/UnrealEngine"
+    !version.metadata.key?("assets")
+  end
+
+  test "find claims an empty Resolved declaration set — self-contained by contract" do
+    Given "a repository with a stubbed tag"
+    repo = Dev::Deps::GhRepository.new
+    stub_tag(repo, slug: "EpicGames/UnrealEngine", tag: "v1")
+
+    When "finding"
+    package = repo.find(source_id, probe: "v1")
+
+    Then
+    package.version("v1").declarations == Dev::Deps::Declarations::Resolved.new([])
+  end
+
+  test "find raises MissingTagError without a probe — this universe needs a coordinate" do
+    Given "a repository"
+    repo = Dev::Deps::GhRepository.new
+
+    When "finding without a tag"
+    repo.find(prebuilt_id)
+
+    Then
+    raises Dev::Deps::GhRepository::MissingTagError
   end
 
   test "find raises ReleaseNotFoundError, a PackageNotFoundError, for a missing tag" do
-    Given "a gh api that 404s the release but sees the repo"
+    Given "a gh api that 404s the commit but sees the repo"
     repo = Dev::Deps::GhRepository.new
     repo.stubs(:run_gh_api)
-        .with("repos/satisfactorymodding/UnrealEngine/releases/tags/9.9.9-css-1")
+        .with("repos/satisfactorymodding/UnrealEngine/commits/9.9.9-css-1")
         .returns(["", "gh: Not Found (HTTP 404)", stub(success?: false)])
     repo.stubs(:run_gh_api)
         .with("repos/satisfactorymodding/UnrealEngine")
         .returns(["{}", "", stub(success?: true)])
 
     When "finding a nonexistent tag"
-    repo.find(
-      Dev::Deps::PackageId.new(
-        integration: :gh, name: "UnrealEngine", source: "satisfactorymodding/UnrealEngine",
-      ),
-      filter: { "tag" => "9.9.9-css-1", "assets" => "*.tar.zst.*" },
-    )
+    repo.find(prebuilt_id, probe: "9.9.9-css-1")
 
     Then
     raises Dev::Deps::Repository::PackageNotFoundError
@@ -124,10 +134,10 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
       "tag_name" => "v1.0",
       "assets" => [{ "name" => "tool-Linux.tar.zst", "size" => 100, "digest" => nil }],
     }
-    repo.stubs(:run_gh_api).returns([JSON.generate(release), "", stub(success?: true)])
+    stub_tag(repo, slug: "satisfactorymodding/UnrealEngine", tag: "v1.0", release: release)
 
     When "finding the release"
-    package = repo.find(prebuilt_id, filter: prebuilt_filter("assets" => "tool-Linux.tar.zst", "tag" => "v1.0"))
+    package = repo.find(prebuilt_id, probe: "v1.0")
 
     Then
     assets = package.version("v1.0").metadata["assets"]
@@ -135,25 +145,13 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
     !assets[0].key?("sha256")
   end
 
-  test "find raises NoMatchingAssetsError when the pattern matches nothing" do
-    Given "a release without assets matching the pattern"
-    repo = Dev::Deps::GhRepository.new
-    repo.stubs(:run_gh_api).returns([JSON.generate(RELEASE_JSON), "", stub(success?: true)])
-
-    When "finding with a non-matching pattern"
-    repo.find(prebuilt_id, filter: prebuilt_filter("assets" => "*.7z.*"))
-
-    Then
-    raises Dev::Deps::GhRepository::NoMatchingAssetsError
-  end
-
   test "find raises RepoAccessError when the repo itself is invisible" do
-    Given "a 404 on both the release and the repo"
+    Given "a 404 on both the commit and the repo"
     repo = Dev::Deps::GhRepository.new
     repo.stubs(:run_gh_api).returns(["", "gh: Not Found (HTTP 404)", stub(success?: false)])
 
     When "finding in an inaccessible repo"
-    repo.find(prebuilt_id, filter: prebuilt_filter)
+    repo.find(prebuilt_id, probe: "5.6.1-css-83")
 
     Then
     raises Dev::Deps::GhRepository::RepoAccessError
@@ -166,7 +164,7 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
     repo.stubs(:run_gh_api).returns(["", err, stub(success?: false)])
 
     When "finding without authentication"
-    repo.find(prebuilt_id, filter: prebuilt_filter)
+    repo.find(prebuilt_id, probe: "5.6.1-css-83")
 
     Then
     raises Dev::Deps::GhRepository::AuthenticationError
@@ -178,7 +176,7 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
     repo.stubs(:run_gh_api).returns(["", "gh: Internal Server Error (HTTP 500)", stub(success?: false)])
 
     When "finding during an API outage"
-    repo.find(prebuilt_id, filter: prebuilt_filter)
+    repo.find(prebuilt_id, probe: "5.6.1-css-83")
 
     Then
     raises Dev::Deps::GhRepository::ApiError
@@ -190,38 +188,26 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
     Open3.stubs(:capture3).raises(Errno::ENOENT.new("gh"))
 
     When "finding without gh installed"
-    repo.find(prebuilt_id, filter: prebuilt_filter)
+    repo.find(prebuilt_id, probe: "5.6.1-css-83")
 
     Then
     raises Dev::Deps::GhRepository::GhMissingError
   end
 
-  test "find source raises ReleaseNotFoundError when the tag is missing but repo is visible" do
-    Given "a 404 on the commit and a visible repo"
+  test "find raises ApiError when the release fetch fails for a non-404 reason" do
+    Given "a resolvable commit but a flaky release endpoint"
     repo = Dev::Deps::GhRepository.new
     repo.stubs(:run_gh_api)
-        .with("repos/EpicGames/UnrealEngine/commits/9.9.9")
-        .returns(["", "gh: Not Found (HTTP 404)", stub(success?: false)])
+        .with("repos/EpicGames/UnrealEngine/commits/v1")
+        .returns([JSON.generate({ "sha" => "abc" }), "", stub(success?: true)])
     repo.stubs(:run_gh_api)
-        .with("repos/EpicGames/UnrealEngine")
-        .returns([JSON.generate({ "full_name" => "EpicGames/UnrealEngine" }), "", stub(success?: true)])
+        .with("repos/EpicGames/UnrealEngine/releases/tags/v1")
+        .returns(["", "gh: Internal Server Error (HTTP 500)", stub(success?: false)])
 
-    When "finding a nonexistent tag"
-    repo.find(source_id, filter: { "tag" => "9.9.9", "build" => "make" })
-
-    Then
-    raises Dev::Deps::GhRepository::ReleaseNotFoundError
-  end
-
-  test "find source raises RepoAccessError when the repo is invisible (account not linked)" do
-    Given "a 404 on both the commit and the repo"
-    repo = Dev::Deps::GhRepository.new
-    repo.stubs(:run_gh_api).returns(["", "gh: Not Found (HTTP 404)", stub(success?: false)])
-
-    When "finding in an inaccessible repo"
-    repo.find(source_id, filter: { "tag" => "5.6.1-release", "build" => "make" })
+    When "finding"
+    repo.find(source_id, probe: "v1")
 
     Then
-    raises Dev::Deps::GhRepository::RepoAccessError
+    raises Dev::Deps::GhRepository::ApiError
   end
 end

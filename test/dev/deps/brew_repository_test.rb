@@ -32,7 +32,7 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
     package.version("3.31.4").metadata == {}
   end
 
-  test "find locates the suffixed formula via the version filter" do
+  test "find locates the suffixed formula via the probe" do
     Given "a formula declared with a version suffix and a tap"
     repository = Dev::Deps::BrewRepository.new
     brew_json = [{
@@ -44,31 +44,15 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
          .with("brew", "info", "--json=v1", "someorg/sometap/llvm@18")
          .returns([brew_json, "", stub(success?: true)])
 
-    When "finding with the suffix and tap as locator"
+    When "finding with the suffix as probe and the tap on the id"
     package = repository.find(
-      Dev::Deps::PackageId.new(integration: :brew, name: "llvm"),
-      filter: { "version" => "18", "tap" => "someorg/sometap" },
+      Dev::Deps::PackageId.new(integration: :brew, name: "llvm", source: "someorg/sometap"),
+      probe: "18",
     )
 
-    Then "the suffixed formula's stable version, with locator facts recorded"
+    Then "the suffixed formula's stable version, with the facts recorded"
     package.versions.map(&:version) == ["18.1.8"]
     package.version("18.1.8").metadata == { "tap" => "someorg/sometap", "version_suffix" => "18" }
-  end
-
-  test "find reports a cask as one unversioned, undigested entry" do
-    Given "a cask declaration"
-    repository = Dev::Deps::BrewRepository.new
-
-    When "finding with the cask flag"
-    package = repository.find(
-      Dev::Deps::PackageId.new(integration: :brew, name: "firefox"),
-      filter: { "cask" => true },
-    )
-
-    Then "brew exposes no cask version here — an empty version stand-in"
-    package.versions.map(&:version) == [Dev::Deps::BrewRepository::UNVERSIONED]
-    package.versions.first.digest.nil?
-    package.versions.first.metadata == { "cask" => true }
   end
 
   test "find registers the declared tap and retries when brew info fails untapped" do
@@ -88,10 +72,9 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
          .with("brew", "tap", "xcodesorg/made")
          .returns(["", "", stub(success?: true)])
 
-    When "finding with the tap as locator"
+    When "finding with the tap on the id"
     package = repository.find(
-      Dev::Deps::PackageId.new(integration: :brew, name: "xcodes"),
-      filter: { "tap" => "xcodesorg/made" },
+      Dev::Deps::PackageId.new(integration: :brew, name: "xcodes", source: "xcodesorg/made"),
     )
 
     Then "the tap was registered and resolution succeeded on retry"

@@ -10,10 +10,10 @@ class Dev::Deps::XcodeRepositoryTest < Minitest::Test
     Given "an xcode declaration"
     repo = Dev::Deps::XcodeRepository.new
 
-    When "finding with the exact version as locator"
+    When "finding with the exact version as probe"
     package = repo.find(
       Dev::Deps::PackageId.new(integration: :xcode, name: "xcode"),
-      filter: { "version" => "26.1.1" },
+      probe: "26.1.1",
     )
 
     Then "resolution is the identity — no registry exists to consult"

@@ -13,7 +13,7 @@ require "dev/deps/cache"
 require "dev/deps/dependency"
 require "dev/deps/package"
 require "dev/deps/package_version"
-require "dev/deps/pinned_scheme"
+require "dev/deps/git_scheme"
 require "pathname"
 require "tmpdir"
 
@@ -23,7 +23,7 @@ class StubRepository < Dev::Deps::Repository
     @universes = universes
   end
 
-  def find(id, filter: {})
+  def find(id, probe: nil)
     Dev::Deps::Package.new(id: id, versions: @universes.fetch(id.name))
   end
 end unless defined?(StubRepository)
@@ -336,13 +336,13 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     stub_repo = StubRepository.new(universes: { "googletest" => [universe] })
     resolver = Dev::Deps::Resolver.new(
       repositories: { cmake: stub_repo },
-      schemes: { cmake: Dev::Deps::PinnedScheme.new },
+      schemes: { cmake: Dev::Deps::GitScheme.new },
     )
     declarations = [
       Dev::Deps::ScopedDeclaration.new(
         declaration: Dev::Deps::Declaration.new(
           name: "googletest", integration: :cmake,
-          constraint: { "repo" => "https://github.com/google/googletest" },
+          source: "https://github.com/google/googletest",
         ),
         scope: Dev::Deps::Scope.new(group: :test),
         post_install: hook,

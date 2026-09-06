@@ -4,6 +4,7 @@
 require "test_helper"
 require "dev/deps/resolver"
 require "dev/deps/repository"
+require "dev/deps/artifact"
 require "dev/deps/package"
 require "dev/deps/package_id"
 require "dev/deps/package_version"
@@ -11,11 +12,11 @@ require "dev/deps/declaration"
 require "dev/deps/declarations"
 require "dev/deps/scope"
 require "dev/deps/scoped_declaration"
-require "dev/deps/pinned_scheme"
+require "dev/deps/exact_scheme"
 require "dev/deps/semver_scheme"
 
 # Stub repository over a canned universe: name -> [PackageVersion, ...].
-# Records every find call (id + filter) for assertion.
+# Records every find call (id + probe) for assertion.
 class StubRepository < Dev::Deps::Repository
   attr_reader :finds
 
@@ -24,8 +25,8 @@ class StubRepository < Dev::Deps::Repository
     @finds = []
   end
 
-  def find(id, filter: {})
-    @finds << { id: id, filter: filter }
+  def find(id, probe: nil)
+    @finds << { id: id, probe: probe }
     versions = @universes.fetch(id.name) do
       raise Dev::Deps::Repository::PackageNotFoundError, "no package #{id.name}"
     end
@@ -38,9 +39,9 @@ class Dev::Deps::ResolverTest < Minitest::Test
   # Shorthand: a PackageVersion universe entry. dependencies: takes the
   # Declaration list of a Resolved claim; pass declarations: for ToolOwned.
   def version(v, digest: nil, platforms: [], dependencies: [], metadata: {},
-              declarations: nil)
+              artifacts: {}, declarations: nil)
     Dev::Deps::PackageVersion.new(
-      version: v, digest: digest, platforms: platforms,
+      version: v, digest: digest, platforms: platforms, artifacts: artifacts,
       declarations: declarations || Dev::Deps::Declarations::Resolved.new(dependencies),
       metadata: metadata,
     )
@@ -57,16 +58,16 @@ class Dev::Deps::ResolverTest < Minitest::Test
   end
 
   # Shorthand: assemble the Declaration + Scope composition from flat kwargs.
-  def declaration(name:, integration:, constraint: {}, group: :app, platform: nil,
-                  host: nil, env: nil, post_install: nil)
+  def declaration(name:, integration:, constraint: {}, source: nil, group: :app,
+                  platform: nil, host: nil, env: nil, post_install: nil, materialization: {})
     Dev::Deps::ScopedDeclaration.new(
-      declaration: Dev::Deps::Declaration.new(name:, integration:, constraint:),
+      declaration: Dev::Deps::Declaration.new(name:, integration:, constraint:, source:),
       scope: Dev::Deps::Scope.new(group:, host:, env:),
-      platform:, post_install:,
+      platform:, post_install:, materialization:,
     )
   end
 
-  def resolver_for(integration, repo, scheme: Dev::Deps::PinnedScheme.new)
+  def resolver_for(integration, repo, scheme: Dev::Deps::ExactScheme.new(key: "version"))
     Dev::Deps::Resolver.new(repositories: { integration => repo }, schemes: { integration => scheme })
   end
 
@@ -160,7 +161,10 @@ class Dev::Deps::ResolverTest < Minitest::Test
     brew_repo = StubRepository.new(universes: { "ffi" => [version("3.4.0")] })
     resolver = Dev::Deps::Resolver.new(
       repositories: { bundler: bundler_repo, brew: brew_repo },
-      schemes: { bundler: Dev::Deps::PinnedScheme.new, brew: Dev::Deps::PinnedScheme.new },
+      schemes: {
+        bundler: Dev::Deps::ExactScheme.new(key: "version"),
+        brew: Dev::Deps::ExactScheme.new(key: "version"),
+      },
     )
     declarations = [
       declaration(name: "ffi", integration: :bundler, group: :app),
@@ -204,7 +208,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
     brew_repo = StubRepository.new(universes: { "zlib" => [version("1.2.0")] })
     resolver = Dev::Deps::Resolver.new(
       repositories: { ficsit: ficsit_repo, brew: brew_repo },
-      schemes: { ficsit: Dev::Deps::SemverScheme.new, brew: Dev::Deps::PinnedScheme.new },
+      schemes: { ficsit: Dev::Deps::SemverScheme.new, brew: Dev::Deps::ExactScheme.new(key: "version") },
     )
     declarations = [
       declaration(name: "zlib", integration: :brew, group: :app),
@@ -234,22 +238,36 @@ class Dev::Deps::ResolverTest < Minitest::Test
     raises Dev::Deps::Resolver::UnknownIntegrationError
   end
 
-  test "passes the declaration constraint to find as the locator filter" do
+  test "passes the scheme-extracted pin to find as the probe, and the source on the id" do
     Given "a pinned-identity declaration (gh-style)"
     repo = StubRepository.new(universes: { "engine" => [version("5.8.0")] })
     declarations = [
       declaration(name: "engine", integration: :gh, group: :editor,
-        constraint: { "repo" => "d3mlabs/unreal-engine", "tag" => "5.8.0" }),
+        constraint: { "tag" => "5.8.0" }, source: "d3mlabs/unreal-engine"),
     ]
 
-    When "resolving"
-    resolver_for(:gh, repo).resolve(declarations)
+    When "resolving with the gh exact scheme"
+    resolver_for(:gh, repo, scheme: Dev::Deps::ExactScheme.new(key: "tag")).resolve(declarations)
 
-    Then "the constraint rode along as the filter, and repo/url became the id's source"
-    repo.finds[0][:filter]["tag"] == "5.8.0"
+    Then "the probe is the pinned tag and the declaration's source rides the id"
+    repo.finds[0][:probe] == "5.8.0"
     repo.finds[0][:id].source == "d3mlabs/unreal-engine"
     repo.finds[0][:id].name == "engine"
     repo.finds[0][:id].integration == :gh
+  end
+
+  test "the probe is nil for range constraints — enumerable universes get no coordinate" do
+    Given "a semver-ranged declaration"
+    repo = StubRepository.new(universes: { "SML" => [version("3.12.0")] })
+    declarations = [
+      declaration(name: "SML", integration: :ficsit, group: :app, constraint: { "version" => "^3.0.0" }),
+    ]
+
+    When "resolving"
+    resolver_for(:ficsit, repo, scheme: Dev::Deps::SemverScheme.new).resolve(declarations)
+
+    Then
+    repo.finds[0][:probe].nil?
   end
 
   test "attaches host and env from the declaration onto minted metadata" do
@@ -271,7 +289,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
     mac.metadata["host"] == "darwin"
     mac.metadata["repo"] == "d3mlabs/unreal-engine"
     result.find { |d| d.name == "ruby" }.metadata["env"] == "ci"
-    repo.finds.none? { |call| call[:filter].key?("host") || call[:filter].key?("env") }
+    repo.finds.all? { |call| call[:probe].nil? }
   end
 
   test "walks transitive edges, inheriting group, host, and env" do
@@ -363,23 +381,86 @@ class Dev::Deps::ResolverTest < Minitest::Test
     repo.finds.size == 1
   end
 
-  test "unions platforms across groups and resolves a duplicated dep once" do
+  test "unions platforms across groups into the pin's projected install facts" do
     Given "SML declared in :app (no platform) and :integration (LinuxServer)"
+    artifacts = {
+      "Windows" => Dev::Deps::Artifact.new(uri: "https://x/win.zip", digest: "SHA256=w"),
+      "LinuxServer" => Dev::Deps::Artifact.new(uri: "https://x/linux.zip", digest: "SHA256=l"),
+    }
     repo = StubRepository.new(universes: {
-      "SML" => [version("3.12.0", platforms: ["Windows", "LinuxServer"])],
+      "SML" => [version("3.12.0", platforms: ["Windows", "LinuxServer"], artifacts: artifacts)],
     })
     declarations = [
-      declaration(name: "SML", integration: :ficsit, group: :app),
-      declaration(name: "SML", integration: :ficsit, group: :integration, platform: "LinuxServer"),
+      declaration(name: "SML", integration: :ficsit, group: :app, materialization: { "target" => "Windows" }),
+      declaration(name: "SML", integration: :ficsit, group: :integration, platform: "LinuxServer",
+        materialization: { "target" => "Windows" }),
     ]
 
     When "resolving"
     result = resolver_for(:ficsit, repo).resolve(declarations)
 
-    Then "found once, with the union of both groups' platforms in the filter"
+    Then "found once; the pin's platforms block covers both groups' targets, no single target"
     result.size == 1
     repo.finds.size == 1
-    repo.finds[0][:filter]["platforms"].sort_by(&:to_s) == [nil, "LinuxServer"].sort_by(&:to_s)
+    result[0].metadata["platforms"] == {
+      "LinuxServer" => { "hash" => "SHA256=l", "link" => "https://x/linux.zip" },
+      "Windows" => { "hash" => "SHA256=w", "link" => "https://x/win.zip" },
+    }
+    !result[0].metadata.key?("target")
+    result[0].hash.nil?
+  end
+
+  test "projects the materialization's target into the single-target pin shape" do
+    Given "a mod declared with no group platform"
+    artifacts = {
+      "Windows" => Dev::Deps::Artifact.new(uri: "https://x/win.zip", digest: "SHA256=w"),
+    }
+    repo = StubRepository.new(universes: {
+      "SML" => [version("3.12.0", platforms: ["Windows"], artifacts: artifacts)],
+    })
+    declarations = [
+      declaration(name: "SML", integration: :ficsit, group: :app, materialization: { "target" => "Windows" }),
+    ]
+
+    When "resolving"
+    result = resolver_for(:ficsit, repo).resolve(declarations)
+
+    Then "the pin carries the target and its artifact's digest as the hash"
+    result[0].metadata["target"] == "Windows"
+    result[0].hash == "SHA256=w"
+  end
+
+  test "merges the declaration's materialization into the pin's metadata" do
+    Given "an install-instruction-carrying declaration (gh-style)"
+    repo = StubRepository.new(universes: { "engine" => [version("5.8.0", metadata: { "commit" => "abc" })] })
+    declarations = [
+      declaration(name: "engine", integration: :gh, group: :editor,
+        constraint: { "tag" => "5.8.0" },
+        materialization: { "install_dir" => "~/.dev/engines/ue", "asset_pattern" => "*.tar.zst.*" }),
+    ]
+
+    When "resolving"
+    result = resolver_for(:gh, repo, scheme: Dev::Deps::ExactScheme.new(key: "tag")).resolve(declarations)
+
+    Then "version facts and install instructions meet in the pin, nothing lost"
+    result[0].metadata["commit"] == "abc"
+    result[0].metadata["install_dir"] == "~/.dev/engines/ue"
+    result[0].metadata["asset_pattern"] == "*.tar.zst.*"
+  end
+
+  test "raises ConflictingDeclarationError when one name carries two materializations" do
+    Given "the same dep declared into two install dirs"
+    repo = StubRepository.new(universes: { "engine" => [version("5.8.0")] })
+    declarations = [
+      declaration(name: "engine", integration: :gh, group: :app, materialization: { "install_dir" => "~/a" }),
+      declaration(name: "engine", integration: :gh, group: :test, materialization: { "install_dir" => "~/b" }),
+    ]
+
+    When "resolving"
+    resolver_for(:gh, repo).resolve(declarations)
+
+    Then "one row's install dir must not win silently"
+    raises Dev::Deps::Resolver::ConflictingDeclarationError
   end
 
   test "rejects versions that do not publish an explicitly requested platform" do
@@ -402,16 +483,17 @@ class Dev::Deps::ResolverTest < Minitest::Test
     result[0].version == "3.12.0"
   end
 
-  test "omits platforms from the filter when no group pins a platform" do
-    Given "a dep declared only in groups without a platform"
-    repo = StubRepository.new(universes: { "boost" => [version("1.0")] })
-    declarations = [declaration(name: "boost", integration: :cmake, group: :app)]
+  test "leaves artifact-less pins unprojected — the version digest is the hash" do
+    Given "a dep whose version carries a digest but no artifacts (brew-style)"
+    repo = StubRepository.new(universes: { "cmake" => [version("3.31.4", digest: "SHA256=abc")] })
+    declarations = [declaration(name: "cmake", integration: :brew, group: :build)]
 
     When "resolving"
-    resolver_for(:cmake, repo).resolve(declarations)
+    result = resolver_for(:brew, repo).resolve(declarations)
 
-    Then "no platforms key leaks into the filter"
-    !repo.finds[0][:filter].key?("platforms")
+    Then
+    result[0].hash == "SHA256=abc"
+    !result[0].metadata.key?("platforms")
   end
 
   test "an empty chosen version string becomes a nil pin version" do

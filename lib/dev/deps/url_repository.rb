@@ -27,15 +27,15 @@ module Dev
       #
       # Dev-enforced integrity, trust-on-first-use: the artifact is downloaded
       # and hashed at resolve time, and that SHA256 rides as the version's
-      # digest. The version is the filter's "tag"; URLs with no tag report an
-      # empty version the Resolver mints back to nil.
+      # digest. The version is the probed "tag" label; URLs with no tag report
+      # an empty version the Resolver mints back to nil.
       #
       # @param id [PackageId] source is the download URL
-      # @param filter [Hash] locator: optionally "tag" for version
+      # @param probe [String, nil] optional version label for the artifact
       # @return [Package] a singleton universe
       # @raise [DownloadError] if the download fails
-      sig { override.params(id: PackageId, filter: T::Hash[String, T.untyped]).returns(Package) }
-      def find(id, filter: {})
+      sig { override.params(id: PackageId, probe: T.nilable(String)).returns(Package) }
+      def find(id, probe: nil)
         url = T.must(id.source)
         path = download_to_tempfile(url, id.name)
         digest = "SHA256=#{Digest::SHA256.file(path).hexdigest}"
@@ -44,7 +44,7 @@ module Dev
           id: id,
           versions: [
             PackageVersion.new(
-              version: filter["tag"].to_s,
+              version: probe.to_s,
               digest: digest,
               artifacts: { "default" => Artifact.new(uri: url, digest: digest) },
               metadata: { "url" => url, "downloaded_path" => path },

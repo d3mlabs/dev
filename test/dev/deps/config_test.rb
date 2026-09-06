@@ -134,13 +134,13 @@ class Dev::Deps::ConfigTest < Minitest::Test
     decls.size == 2
 
     decls[0].name == "boost"
-    decls[0].constraint["url"] == "https://example.com/boost.tar.gz"
+    decls[0].source == "https://example.com/boost.tar.gz"
     decls[0].constraint["tag"] == "boost-1.90.0"
     decls[0].constraint["cmake_targets"] == ["stacktrace"]
     decls[0].constraint["cmake_namespace"] == "Boost::"
 
     decls[1].name == "cereal"
-    decls[1].constraint["repo"] == "https://github.com/USCiLab/cereal"
+    decls[1].source == "https://github.com/USCiLab/cereal"
     decls[1].constraint["tag"] == "v1.3.2"
   end
 
@@ -203,7 +203,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
     brew_decls = config.declarations.select { |d| d.integration == :brew }
     brew_decls.map(&:name).sort == %w[cmake powershell ruby]
     brew_decls.all? { |d| d.scope.group == :build }
-    brew_decls.find { |d| d.name == "powershell" }.constraint["tap"] == "d3mlabs/d3mlabs"
+    brew_decls.find { |d| d.name == "powershell" }.source == "d3mlabs/d3mlabs"
     # env is a first-class declaration field, never smuggled into the constraint.
     brew_decls.find { |d| d.name == "ruby" }.scope.env == "ci"
     brew_decls.find { |d| d.name == "ruby" }.constraint["env"].nil?

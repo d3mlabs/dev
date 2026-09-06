@@ -18,12 +18,12 @@ class Dev::Deps::UrlRepositoryTest < Minitest::Test
     expected_hash = "SHA256=#{Digest::SHA256.file(fake_tarball).hexdigest}"
     repo.stubs(:download_to_tempfile).returns(fake_tarball)
 
-    When "finding with the tag as locator"
+    When "finding with the tag as probe"
     package = repo.find(
       Dev::Deps::PackageId.new(
         integration: :cmake, name: "boost", source: "https://example.com/boost-1.90.0.tar.gz",
       ),
-      filter: { "tag" => "1.90.0" },
+      probe: "1.90.0",
     )
 
     Then "dev-enforced integrity: the downloaded bytes' SHA256 is the digest"

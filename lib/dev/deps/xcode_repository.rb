@@ -21,18 +21,18 @@ module Dev
 
       class MissingVersionError < StandardError; end
 
-      # Report the Xcode universe: the declared version, as a singleton.
+      # Report the Xcode universe: the probed version, as a singleton.
       #
       # Apple publishes no queryable version registry, so resolution is the
-      # identity — the filter's "version" IS the universe.
+      # identity — the probe IS the universe.
       #
       # @param id [PackageId] name is the declaration name
-      # @param filter [Hash] locator: "version" (exact, required)
+      # @param probe [String, nil] the pinned exact version; required
       # @return [Package] a singleton universe
       # @raise [MissingVersionError] when no exact version was declared
-      sig { override.params(id: PackageId, filter: T::Hash[String, T.untyped]).returns(Package) }
-      def find(id, filter: {})
-        version = filter["version"].to_s
+      sig { override.params(id: PackageId, probe: T.nilable(String)).returns(Package) }
+      def find(id, probe: nil)
+        version = probe.to_s
         raise MissingVersionError, "xcode requires an exact version (e.g. xcode \"26.1.1\")" if version.empty?
 
         # An Xcode install is self-contained: Apple ships the whole toolchain.

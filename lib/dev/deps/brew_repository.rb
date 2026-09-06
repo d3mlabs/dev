@@ -13,56 +13,38 @@ module Dev
   module Deps
     # Fetches Homebrew formulae to exact version + bottle SHA256.
     #
-    # Uses `brew info --json=v1` for formulae. Cask entries get no version
-    # or hash (Homebrew doesn't expose bottle hashes for casks in the same way).
+    # Uses `brew info --json=v1` for formulae. Casks are a separate universe
+    # (BrewCaskRepository) under the :cask integration.
     class BrewRepository < Repository
       extend T::Sig
 
       class BrewInfoError < StandardError; end
 
-      # Version stand-in for casks, whose versions Homebrew does not expose
-      # here; the Resolver mints it back to a nil pin version.
-      UNVERSIONED = ""
-
-      # Report a brew package's universe: the one stable version the selected
+      # Report a brew formula's universe: the one stable version the selected
       # formula spec currently has.
       #
       # Brew is a moving registry — `brew info` answers with a single current
-      # version, so the universe is a singleton. The filter locates which
-      # formula that is: "version" is a formula *suffix* ("18" selects
-      # llvm@18), "tap" scopes the name, "cask" switches to an unversioned
-      # cask entry. PinnedScheme accepts whatever brew reports.
+      # version per formula spec, so the universe is a singleton. Suffixed
+      # formulae (llvm@18) are distinct formulae brew will not enumerate under
+      # the bare name, which is why the probe (the declared suffix) is the
+      # access path. The tap scoping the name is the package's source
+      # coordinate (PackageId#source). The suffix and tap ride metadata as
+      # facts: BrewScheme matches the suffix, BrewIntegration rebuilds the
+      # install spec from both.
       #
-      # @param id [PackageId] name is the formula or cask name
-      # @param filter [Hash] locator: "tap", "version" (suffix), "cask"
+      # @param id [PackageId] name is the formula name; source is the tap
+      # @param probe [String, nil] formula version suffix ("18" selects llvm@18)
       # @return [Package] a singleton universe
-      # @raise [BrewInfoError] if `brew info` fails for a formula
-      sig { override.params(id: PackageId, filter: T::Hash[String, T.untyped]).returns(Package) }
-      def find(id, filter: {})
-        version_suffix = filter["version"]
-
-        if filter["cask"]
-          metadata = { "cask" => true }
-          metadata["version_suffix"] = version_suffix if version_suffix
-          return Package.new(
-            id: id,
-            versions: [
-              PackageVersion.new(
-                version: UNVERSIONED,
-                metadata: metadata,
-                # brew installs formula dependencies itself.
-                declarations: Declarations::ToolOwned.new,
-              ),
-            ],
-          )
-        end
-
-        info = brew_info_with_tap(build_formula_spec(id.name, filter["tap"], version_suffix), filter["tap"])
+      # @raise [BrewInfoError] if `brew info` fails for the formula
+      sig { override.params(id: PackageId, probe: T.nilable(String)).returns(Package) }
+      def find(id, probe: nil)
+        tap = id.source
+        info = brew_info_with_tap(build_formula_spec(id.name, tap, probe), tap)
         bottle_hash = extract_bottle_hash(info)
 
         metadata = {}
-        metadata["tap"] = filter["tap"] if filter["tap"]
-        metadata["version_suffix"] = version_suffix if version_suffix
+        metadata["tap"] = tap if tap
+        metadata["version_suffix"] = probe if probe
 
         Package.new(
           id: id,

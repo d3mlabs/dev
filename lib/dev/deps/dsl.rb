@@ -204,6 +204,10 @@ module Dev
 
       # Declare a Homebrew formula/cask scoped to this environment.
       #
+      # The options are sorted into the declaration's fields: tap: is the
+      # source coordinate, cask: routes to the :cask integration (a separate
+      # universe), and what remains (version:) is the constraint.
+      #
       # @param name [String, Symbol] formula or cask name
       # @param opts [Hash] options (tap:, version:, cask:)
       # @return [void]
@@ -217,8 +221,17 @@ module Dev
         else
           @brew << { name_str => stringify_keys(opts) }
         end
+
+        constraint = opts.dup
+        cask = constraint.delete(:cask)
+        tap = constraint.delete(:tap)
         @declarations << ScopedDeclaration.new(
-          declaration: Declaration.new(name: name_str, integration: :brew, constraint: stringify_keys(opts)),
+          declaration: Declaration.new(
+            name: name_str,
+            integration: cask ? :cask : :brew,
+            constraint: stringify_keys(constraint),
+            source: tap&.to_s,
+          ),
           scope: Scope.new(group: @group, host: @host, env: @env),
           platform: @platform,
         )
@@ -246,6 +259,10 @@ module Dev
 
       class EmptyNameError < StandardError; end
 
+      # The artifact target a ficsit mod materializes when no group platform
+      # says otherwise: the Windows game build, which every mod publishes.
+      FICSIT_DEFAULT_TARGET = "Windows"
+
       # @return [Array<ScopedDeclaration>] declarations made inside this group
       sig { returns(T::Array[ScopedDeclaration]) }
       attr_reader :declarations
@@ -272,7 +289,9 @@ module Dev
         @registered_methods = registered_methods
       end
 
-      # Declare a CMake dependency. Expands github: shorthand if present.
+      # Declare a CMake dependency. Expands github: shorthand if present; the
+      # resulting repo:/url: is the declaration's source coordinate, leaving
+      # tag:/commit: as the constraint.
       #
       # @param name [String, Symbol] dependency name
       # @param spec [Hash] options (tag:, repo:, url:, github:, etc.)
@@ -280,7 +299,8 @@ module Dev
       sig { params(name: T.any(String, Symbol), spec: T.untyped).void }
       def cmake(name, **spec)
         spec = expand_github(name.to_s, spec)
-        add_declaration(name, :cmake, spec)
+        source = spec.delete(:repo) || spec.delete(:url)
+        add_declaration(name, :cmake, spec, source: source&.to_s)
       end
 
       # Declare a Ruby gem scoped to this group (group name -> bundler group).
@@ -323,6 +343,11 @@ module Dev
 
       # Declare a Satisfactory mod dependency from ficsit.app.
       #
+      # target: is an install instruction — which of the mod's artifacts to
+      # fetch when no group platform says otherwise — so it rides the
+      # declaration's materialization, defaulting to the Windows game build
+      # (the target every ficsit mod publishes for players).
+      #
       # @param mod_reference [String, Symbol] mod reference (e.g. "SML", "AreaActions")
       # @param version [String, nil] semver constraint (e.g. "^3.12.0", ">=1.0")
       # @param spec [Hash] additional options (target:, etc.)
@@ -330,7 +355,8 @@ module Dev
       sig { params(mod_reference: T.any(String, Symbol), version: T.nilable(String), spec: T.untyped).void }
       def ficsit(mod_reference, version: nil, **spec)
         spec[:version] = version if version
-        add_declaration(mod_reference, :ficsit, spec)
+        target = spec.delete(:target) || FICSIT_DEFAULT_TARGET
+        add_declaration(mod_reference, :ficsit, spec, materialization: { "target" => target.to_s })
       end
 
       # Declare a GitHub dependency, materialized one of two ways:
@@ -379,10 +405,14 @@ module Dev
             "or build: (build from source)"
         end
 
-        spec = spec.merge(repo: slug, tag: tag, install_dir: install_dir)
-        spec[:assets] = assets if assets
-        spec[:build] = build.to_s if build
-        add_declaration(name, :gh, spec)
+        # Sorted into fields: the slug is the source coordinate, the tag is
+        # the constraint, and how to materialize (where to install, which
+        # assets to fetch or how to build) is install instruction — the
+        # repository never sees any of it.
+        materialization = { "install_dir" => install_dir }
+        materialization["asset_pattern"] = assets if assets
+        materialization["build"] = build.to_s if build
+        add_declaration(name, :gh, spec.merge(tag: tag), source: slug, materialization: materialization)
       end
 
       # Declare a Steam application dependency (e.g. the Satisfactory Dedicated
@@ -408,8 +438,13 @@ module Dev
         ).void
       end
       def steam(name, app:, install_dir:, branch: "public", **spec)
-        spec = spec.merge(app:, install_dir:, branch:)
-        add_declaration(name, :steam, spec)
+        # Sorted into fields: the app id is the source coordinate (which app's
+        # universe), branch/buildid are the constraint, and the install dir
+        # plus the group's platform (which depot build SteamCMD provisions —
+        # an install instruction, not a version fact) are materialization.
+        materialization = { "install_dir" => install_dir }
+        materialization["platform"] = @platform if @platform
+        add_declaration(name, :steam, spec.merge(branch:), source: app.to_s, materialization: materialization)
       end
 
       # Declare a dependency using any registered integration by name.
@@ -443,10 +478,15 @@ module Dev
       # Declare a Homebrew formula/cask.
       #
       # Dual-writes: the existing @brew/groups entry feeds the container build
-      # path (bin/install-build-deps.rb), while the additional :brew declaration
+      # path (bin/install-build-deps.rb), while the additional declaration
       # rides the resolver -> lockfile -> install pipeline so `dev install-deps`
       # installs it on the host too. BrewIntegration skips already-installed
       # formulae, so the host install is idempotent.
+      #
+      # The options are sorted into the declaration's fields: tap: is the
+      # source coordinate, cask: routes to the :cask integration (a separate
+      # universe — Homebrew publishes no versions or bottle digests for
+      # casks), and what remains (version:) is the constraint.
       #
       # @param name [String, Symbol] formula or cask name
       # @param opts [Hash] options (tap:, version:, cask:)
@@ -461,7 +501,11 @@ module Dev
         else
           @brew << { name_str => stringify_keys(opts) }
         end
-        add_declaration(name_str, :brew, opts.dup)
+
+        constraint = opts.dup
+        cask = constraint.delete(:cask)
+        tap = constraint.delete(:tap)
+        add_declaration(name_str, cask ? :cask : :brew, constraint, source: tap&.to_s)
       end
 
       # Scope member declarations to an environment ("ci" / "dev"). The env
@@ -522,9 +566,19 @@ module Dev
       # @param name [String, Symbol] dependency name
       # @param integration [Symbol] integration type
       # @param spec [Hash] constraint spec (symbol keys → stringified)
+      # @param source [String, nil] source coordinate for the Declaration
+      # @param materialization [Hash{String => Object}] install instructions
       # @return [void]
-      sig { params(name: T.any(String, Symbol), integration: Symbol, spec: T::Hash[Symbol, T.untyped]).void }
-      def add_declaration(name, integration, spec)
+      sig do
+        params(
+          name: T.any(String, Symbol),
+          integration: Symbol,
+          spec: T::Hash[Symbol, T.untyped],
+          source: T.nilable(String),
+          materialization: T::Hash[String, T.untyped],
+        ).void
+      end
+      def add_declaration(name, integration, spec, source: nil, materialization: {})
         name_str = name.to_s
         raise EmptyNameError, "dependency name cannot be empty" if name_str.empty?
 
@@ -534,10 +588,11 @@ module Dev
         constraint = stringify_keys(spec)
 
         @declarations << ScopedDeclaration.new(
-          declaration: Declaration.new(name: name_str, integration:, constraint:),
+          declaration: Declaration.new(name: name_str, integration:, constraint:, source:),
           scope: Scope.new(group: @group, host:),
           platform: @platform,
           post_install:,
+          materialization: materialization,
         )
       end
 

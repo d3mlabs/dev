@@ -22,12 +22,16 @@ require_relative "xcode_repository"
 require_relative "xcode_integration"
 require_relative "pip_repository"
 require_relative "pip_integration"
+require_relative "brew_cask_repository"
+require_relative "brew_scheme"
+require_relative "exact_scheme"
 require_relative "gem_scheme"
+require_relative "git_scheme"
 require_relative "locker"
 require_relative "pep440_scheme"
-require_relative "pinned_scheme"
 require_relative "rock_scheme"
 require_relative "semver_scheme"
+require_relative "steam_scheme"
 require_relative "version_scheme"
 
 module Dev
@@ -61,6 +65,8 @@ module Dev
       # @param repository_needs [Array<Symbol>] extra kwargs the repository takes
       # @param scheme [Class] VersionScheme subclass carrying this type's
       #   constraint semantics — every type must answer "how do constraints work"
+      # @param scheme_args [Hash{Symbol => Object}] constructor kwargs for the
+      #   scheme (e.g. ExactScheme's key:)
       # @param locker [Class, nil] Locker subclass for types whose ecosystem tool
       #   owns the whole-set solve (bundler), or nil
       # @param locker_needs [Array<Symbol>] extra kwargs the locker takes
@@ -70,7 +76,7 @@ module Dev
       #   (beyond the always-passed repository: and cache:)
       # @param scope [Symbol] one of HOST / CONTAINER / BOTH
       Entry = Data.define(
-        :symbol, :repository, :repository_needs, :scheme, :locker, :locker_needs,
+        :symbol, :repository, :repository_needs, :scheme, :scheme_args, :locker, :locker_needs,
         :integration, :integration_needs, :scope,
       ) do
         extend T::Sig
@@ -90,6 +96,9 @@ module Dev
 
         sig { returns(T.class_of(VersionScheme)) }
         def scheme = to_h.fetch(:scheme)
+
+        sig { returns(T::Hash[Symbol, T.untyped]) }
+        def scheme_args = to_h.fetch(:scheme_args)
 
         sig { returns(T.nilable(T.class_of(Locker))) }
         def locker = to_h.fetch(:locker)
@@ -114,13 +123,14 @@ module Dev
             integration: T.nilable(T.class_of(Integration)),
             scope: Symbol,
             repository_needs: T::Array[Symbol],
+            scheme_args: T::Hash[Symbol, T.untyped],
             locker: T.nilable(T.class_of(Locker)),
             locker_needs: T::Array[Symbol],
             integration_needs: T::Array[Symbol],
           ).void
         end
         def initialize(symbol:, repository:, scheme:, integration:, scope:,
-                       repository_needs: [], locker: nil, locker_needs: [], integration_needs: [])
+                       repository_needs: [], scheme_args: {}, locker: nil, locker_needs: [], integration_needs: [])
           super
         end
 
@@ -147,15 +157,25 @@ module Dev
           Entry.new(
             symbol: :brew,
             repository: BrewRepository,
-            scheme: PinnedScheme,
+            scheme: BrewScheme,
             integration: BrewIntegration,
             integration_needs: %i[taps project_dir],
+            scope: BOTH,
+          ),
+          # Casks are declared with the brew DSL verb (cask: true) but are a
+          # separate universe: Homebrew publishes no versions or bottle
+          # digests for casks, so BrewRepository's formula facts don't apply.
+          Entry.new(
+            symbol: :cask,
+            repository: BrewCaskRepository,
+            scheme: BrewScheme,
+            integration: BrewIntegration,
             scope: BOTH,
           ),
           Entry.new(
             symbol: :cmake,
             repository: GitRepository,
-            scheme: PinnedScheme,
+            scheme: GitScheme,
             integration: CmakeIntegration,
             integration_needs: %i[project_root],
             scope: HOST,
@@ -178,7 +198,8 @@ module Dev
           Entry.new(
             symbol: :gh,
             repository: GhRepository,
-            scheme: PinnedScheme,
+            scheme: ExactScheme,
+            scheme_args: { key: "tag" },
             integration: GhIntegration,
             integration_needs: %i[project_root],
             scope: HOST,
@@ -186,14 +207,15 @@ module Dev
           Entry.new(
             symbol: :steam,
             repository: SteamRepository,
-            scheme: PinnedScheme,
+            scheme: SteamScheme,
             integration: SteamIntegration,
             scope: HOST,
           ),
           Entry.new(
             symbol: :xcode,
             repository: XcodeRepository,
-            scheme: PinnedScheme,
+            scheme: ExactScheme,
+            scheme_args: { key: "version" },
             integration: XcodeIntegration,
             integration_needs: %i[project_root],
             scope: HOST,
@@ -224,12 +246,15 @@ module Dev
         end
 
         # Build the integration-type -> VersionScheme hash the Resolver consumes.
-        # Schemes are stateless domain services, so they take no context.
+        # Schemes are stateless domain services; their only context is the
+        # entry's own scheme_args (e.g. which constraint key ExactScheme reads).
         #
         # @return [Hash{Symbol => VersionScheme}]
         sig { returns(T::Hash[Symbol, VersionScheme]) }
         def schemes
-          INTEGRATIONS.to_h { |entry| [entry.symbol, entry.scheme.new] }
+          # T.unsafe: the keyword set is entry-declared (scheme_args); the
+          # scheme constructors' own sigs validate at runtime.
+          INTEGRATIONS.to_h { |entry| [entry.symbol, T.unsafe(entry.scheme).new(**entry.scheme_args)] }
         end
 
         # Build the integration-type -> Locker hash for types whose ecosystem

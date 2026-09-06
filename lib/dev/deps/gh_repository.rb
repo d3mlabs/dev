@@ -13,9 +13,9 @@ module Dev
   module Deps
     # Resolves GitHub release dependencies via the gh CLI.
     #
-    # Resolution is a single metadata API call — no artifact download.
-    # Per-asset SHA256 digests reported by the GitHub API are recorded in
-    # metadata so GhIntegration can verify downloads against the lockfile.
+    # Resolution is metadata API calls only — no artifact download. Per-asset
+    # SHA256 digests reported by the GitHub API are recorded in metadata so
+    # GhIntegration can verify downloads against the lockfile.
     #
     # Declared in dependencies.rb as:
     #   gh "satisfactorymodding/UnrealEngine",
@@ -29,108 +29,54 @@ module Dev
       class AuthenticationError < StandardError; end
       class RepoAccessError < StandardError; end
       class ReleaseNotFoundError < PackageNotFoundError; end
-      class NoMatchingAssetsError < StandardError; end
+      class MissingTagError < StandardError; end
       class ApiError < StandardError; end
 
-      # Report a GitHub dependency's universe: the declared tag, as a
+      # Report a GitHub dependency's universe: the probed tag, as a
       # singleton.
       #
-      # GitHub refs are not an enumerable version index — the filter's "tag"
-      # locates the one release (prebuilt shape, "assets" glob present) or
-      # ref (source shape, "build" recipe present) the declaration pins.
-      # Integrity is tool-enforced by the authenticated gh CLI; per-asset
-      # API digests ride in metadata for GhIntegration to verify downloads.
+      # The probe is required: GitHub refs are enumerable in principle, but
+      # each version's facts (commit SHA, release assets and digests) cost
+      # API calls per version, so this universe answers for one coordinate
+      # at a time. The version's facts are declaration-independent: the
+      # commit SHA the ref points at, and every release asset when the tag
+      # has a release — asset selection against the declared glob happens at
+      # install (GhIntegration), where the glob arrives via the pin's
+      # materialization.
       #
       # @param id [PackageId] source is the "owner/repo" slug
-      # @param filter [Hash] locator: "tag", "install_dir", "assets" or "build"
+      # @param probe [String, nil] the pinned tag; required
       # @return [Package] a singleton universe
+      # @raise [MissingTagError] if the declaration pins no tag
       # @raise [GhMissingError] if the gh CLI is not installed
       # @raise [AuthenticationError] if gh is not authenticated
       # @raise [RepoAccessError] if the repo is not visible to the account
-      # @raise [ReleaseNotFoundError] if the tag has no release/ref
-      # @raise [NoMatchingAssetsError] if no assets match the pattern
-      sig { override.params(id: PackageId, filter: T::Hash[String, T.untyped]).returns(Package) }
-      def find(id, filter: {})
+      # @raise [ReleaseNotFoundError] if the repo has no such tag
+      sig { override.params(id: PackageId, probe: T.nilable(String)).returns(Package) }
+      def find(id, probe: nil)
         repo_slug = T.must(id.source)
-        tag = filter["tag"]
-        version = if filter["assets"]
-          prebuilt_version(repo_slug, tag, filter)
-        else
-          source_version(repo_slug, tag, filter)
-        end
+        raise MissingTagError, "gh dependency #{id.name} declares no tag" if probe.nil?
 
+        metadata = {
+          "repo" => repo_slug,
+          "commit" => resolve_commit_sha(repo_slug, probe),
+        }
+        release = fetch_release(repo_slug, probe)
+        metadata["assets"] = (release["assets"] || []).map { |asset| asset_metadata(asset) } if release
+
+        version = PackageVersion.new(
+          version: probe,
+          metadata: metadata,
+          # Usage contract, not a guarantee: prebuilt assets baked their needs
+          # in at build time, and a source build's transitive needs are
+          # declared by the consuming project's own dependencies.rb rows.
+          # Revisit when subproject resolution lands.
+          declarations: Declarations::Resolved.new([]),
+        )
         Package.new(id: id, versions: [version])
       end
 
       private
-
-      # The prebuilt shape: the tag's release, its glob-matched assets and
-      # their API digests as install facts.
-      #
-      # @param repo_slug [String] "owner/repo"
-      # @param tag [String] release tag
-      # @param filter [Hash] the declaration constraint
-      # @return [PackageVersion]
-      # @raise [NoMatchingAssetsError] if no assets match the pattern
-      sig do
-        params(
-          repo_slug: String,
-          tag: String,
-          filter: T::Hash[String, T.untyped],
-        ).returns(PackageVersion)
-      end
-      def prebuilt_version(repo_slug, tag, filter)
-        pattern = filter["assets"]
-        release = fetch_release(repo_slug, tag)
-        assets = matching_assets(release, pattern)
-        if assets.empty?
-          raise NoMatchingAssetsError,
-            "no assets matching #{pattern.inspect} in #{repo_slug}@#{tag}"
-        end
-
-        PackageVersion.new(
-          version: tag,
-          metadata: {
-            "repo" => repo_slug,
-            "asset_pattern" => pattern,
-            "install_dir" => filter["install_dir"],
-            "assets" => assets.map { |asset| asset_metadata(asset) },
-          },
-          # Prebuilt release assets are self-contained: whatever they needed
-          # was baked in at build time.
-          declarations: Declarations::Resolved.new([]),
-        )
-      end
-
-      # The source shape: the tag's commit SHA (provenance) and the build
-      # recipe as install facts.
-      #
-      # @param repo_slug [String] "owner/repo"
-      # @param tag [String] tag/ref
-      # @param filter [Hash] the declaration constraint
-      # @return [PackageVersion]
-      sig do
-        params(
-          repo_slug: String,
-          tag: String,
-          filter: T::Hash[String, T.untyped],
-        ).returns(PackageVersion)
-      end
-      def source_version(repo_slug, tag, filter)
-        PackageVersion.new(
-          version: tag,
-          metadata: {
-            "repo" => repo_slug,
-            "install_dir" => filter["install_dir"],
-            "build" => filter["build"],
-            "commit" => resolve_commit_sha(repo_slug, tag),
-          },
-          # Usage contract, not a guarantee: a source build's transitive
-          # needs are declared by the consuming project's own dependencies.rb
-          # rows. Revisit when subproject resolution lands.
-          declarations: Declarations::Resolved.new([]),
-        )
-      end
 
       # Resolve a tag to its commit SHA, mapping gh failures to actionable errors.
       #
@@ -147,18 +93,20 @@ module Dev
         raise ApiError, "gh api failed resolving #{repo_slug}@#{tag}: #{err.strip}"
       end
 
-      # Fetch release metadata for a tag, mapping gh failures to actionable errors.
+      # Fetch release metadata for a tag. A 404 is a fact, not a failure: the
+      # tag exists (resolve_commit_sha proved it) but publishes no release, so
+      # the version simply has no assets.
       #
       # @param repo_slug [String] "owner/repo"
       # @param tag [String] release tag
-      # @return [Hash] parsed release JSON
-      sig { params(repo_slug: String, tag: String).returns(T::Hash[String, T.untyped]) }
+      # @return [Hash, nil] parsed release JSON, or nil when the tag has no release
+      sig { params(repo_slug: String, tag: String).returns(T.nilable(T::Hash[String, T.untyped])) }
       def fetch_release(repo_slug, tag)
         out, err, status = run_gh_api("repos/#{repo_slug}/releases/tags/#{tag}")
         return JSON.parse(out) if status.success?
+        return nil if not_found?(err)
 
         raise_auth_error!(err)
-        raise_not_found_error!(repo_slug, tag) if not_found?(err)
         raise ApiError, "gh api failed for #{repo_slug}@#{tag}: #{err.strip}"
       end
 
@@ -208,22 +156,6 @@ module Dev
         Open3.capture3("gh", "api", path)
       rescue Errno::ENOENT
         raise GhMissingError, "gh CLI not found — install it with: brew install gh"
-      end
-
-      # Select release assets whose names match the glob pattern.
-      #
-      # @param release [Hash] parsed release JSON
-      # @param pattern [String] glob pattern (e.g. "*.tar.zst.*")
-      # @return [Array<Hash>] matching asset objects
-      sig do
-        params(
-          release: T::Hash[String, T.untyped],
-          pattern: String,
-        ).returns(T::Array[T::Hash[String, T.untyped]])
-      end
-      def matching_assets(release, pattern)
-        assets = release["assets"] || []
-        assets.select { |asset| File.fnmatch(pattern, asset["name"]) }
       end
 
       # Map an API asset object to lockfile metadata. The API digest is

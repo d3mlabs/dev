@@ -20,29 +20,33 @@ module Dev
 
       class RefResolutionError < PackageNotFoundError; end
 
-      # Report a git dependency's universe: the declared ref resolved to its
+      # Report a git dependency's universe: the probed ref resolved to its
       # full SHA, as a singleton.
       #
-      # A git remote is not a version index — the filter's "commit" or "tag"
-      # locates the one ref the declaration pins, and ls-remote turns it into
-      # a SHA. SHAs are identifiers, not integrity digests, so the version
-      # carries no digest.
+      # The probe is required and is the canonical non-enumerable coordinate:
+      # `git ls-remote` lists refs, never reachable SHAs, so a commit can only
+      # be asked about, not discovered. The ref the SHA resolved from rides
+      # metadata as a fact for GitScheme's tag matching. SHAs are identifiers,
+      # not integrity digests, so the version carries no digest.
       #
       # @param id [PackageId] source is the git remote URL
-      # @param filter [Hash] locator: one of "commit" or "tag"
+      # @param probe [String, nil] the pinned ref (tag, branch, or SHA); required
       # @return [Package] a singleton universe
-      # @raise [RefResolutionError] if the ref cannot be resolved via ls-remote
-      sig { override.params(id: PackageId, filter: T::Hash[String, T.untyped]).returns(Package) }
-      def find(id, filter: {})
+      # @raise [RefResolutionError] if no ref is pinned or it cannot be
+      #   resolved via ls-remote
+      sig { override.params(id: PackageId, probe: T.nilable(String)).returns(Package) }
+      def find(id, probe: nil)
         repo_url = T.must(id.source)
-        sha = resolve_ref(repo_url, filter["commit"] || filter["tag"])
+        raise RefResolutionError, "git dependency #{id.name} declares no tag: or commit:" if probe.nil?
+
+        sha = resolve_ref(repo_url, probe)
 
         Package.new(
           id: id,
           versions: [
             PackageVersion.new(
               version: sha,
-              metadata: { "repo" => repo_url },
+              metadata: { "repo" => repo_url, "ref" => probe },
               # A checked-out source tree carries no manifest dev reads;
               # consumers declare what they need alongside it.
               declarations: Declarations::Resolved.new([]),

@@ -74,7 +74,8 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     parts
   end
 
-  def build_dependency(parts, install_dir, tag: "5.6.1-css-83", sha256_overrides: {})
+  def build_dependency(parts, install_dir, tag: "5.6.1-css-83", sha256_overrides: {},
+                       asset_pattern: "*.tar.zst.*")
     assets = parts.map do |part|
       name = part.basename.to_s
       {
@@ -89,7 +90,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
       version: tag, hash: nil,
       metadata: {
         "repo" => "satisfactorymodding/UnrealEngine",
-        "asset_pattern" => "*.tar.zst.*",
+        "asset_pattern" => asset_pattern,
         "install_dir" => install_dir,
         "assets" => assets,
       },
@@ -202,7 +203,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     zip_path = Pathname(File.join(dir, "engine.zip"))
     zip_path.binwrite("not actually a zip")
     install_dir = File.join(dir, "engines", "unreal-engine-css")
-    dep = build_dependency([zip_path], install_dir)
+    dep = build_dependency([zip_path], install_dir, asset_pattern: "*.zip")
     integration = build_integration([zip_path], File.join(dir, "cache"))
 
     When "installing the unsupported archive"
@@ -210,6 +211,24 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
 
     Then
     raises Dev::Deps::GhIntegration::UnsupportedArchiveError
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all raises NoMatchingAssetsError when the glob selects no locked asset" do
+    Given "a locked asset list the declared glob does not cover"
+    dir = Dir.mktmpdir("dev-gh-int-test-")
+    parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
+    install_dir = File.join(dir, "engines", "unreal-engine-css")
+    dep = build_dependency(parts, install_dir, asset_pattern: "*.7z.*")
+    integration = build_integration(parts, File.join(dir, "cache"))
+
+    When "installing with a glob that matches nothing"
+    integration.install_all([dep])
+
+    Then "the mismatch is loud — never a silently empty install"
+    raises Dev::Deps::GhIntegration::NoMatchingAssetsError
 
     Cleanup
     FileUtils.rm_rf(dir)

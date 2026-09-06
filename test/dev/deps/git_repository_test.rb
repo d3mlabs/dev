@@ -16,18 +16,19 @@ class Dev::Deps::GitRepositoryTest < Minitest::Test
          .with("git", "ls-remote", "--tags", "https://github.com/google/googletest", "v1.17.0")
          .returns(["#{resolved_sha}\trefs/tags/v1.17.0\n", "", stub(success?: true)])
 
-    When "finding with the tag as locator"
+    When "finding with the tag as probe"
     package = repo.find(
       Dev::Deps::PackageId.new(
         integration: :cmake, name: "googletest", source: "https://github.com/google/googletest",
       ),
-      filter: { "tag" => "v1.17.0" },
+      probe: "v1.17.0",
     )
 
-    Then "one version: the SHA, no digest (SHAs are identifiers, not integrity)"
+    Then "one version: the SHA, no digest, the resolved ref riding as a fact"
     package.versions.map(&:version) == [resolved_sha]
     package.version(resolved_sha).digest.nil?
-    package.version(resolved_sha).metadata == { "repo" => "https://github.com/google/googletest" }
+    package.version(resolved_sha).metadata ==
+      { "repo" => "https://github.com/google/googletest", "ref" => "v1.17.0" }
   end
 
   test "find passes a 40-char commit SHA through without network calls" do
@@ -35,16 +36,29 @@ class Dev::Deps::GitRepositoryTest < Minitest::Test
     repo = Dev::Deps::GitRepository.new
     sha = "ee3042f8b0279856061f91069a487e4ed6f69475"
 
-    When "finding with the commit as locator"
+    When "finding with the commit as probe"
     package = repo.find(
       Dev::Deps::PackageId.new(
         integration: :cmake, name: "entityx", source: "https://github.com/alecthomas/entityx",
       ),
-      filter: { "commit" => sha },
+      probe: sha,
     )
 
     Then
     package.versions.map(&:version) == [sha]
+  end
+
+  test "find raises RefResolutionError when no ref is pinned" do
+    Given "a probe-less find"
+    repo = Dev::Deps::GitRepository.new
+
+    When "finding"
+    repo.find(
+      Dev::Deps::PackageId.new(integration: :cmake, name: "boost", source: "https://example.com/boost"),
+    )
+
+    Then "commits are not enumerable — a coordinate is mandatory"
+    raises Dev::Deps::GitRepository::RefResolutionError
   end
 
   test "find raises RefResolutionError, a PackageNotFoundError, for a bad ref" do
@@ -55,7 +69,7 @@ class Dev::Deps::GitRepositoryTest < Minitest::Test
     When "finding with an unresolvable tag"
     repo.find(
       Dev::Deps::PackageId.new(integration: :cmake, name: "ghost", source: "https://example.com/ghost"),
-      filter: { "tag" => "v0.0.0" },
+      probe: "v0.0.0",
     )
 
     Then
