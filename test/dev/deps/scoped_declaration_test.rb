@@ -35,7 +35,7 @@ class Dev::Deps::ScopedDeclarationTest < Minitest::Test
     scoped.constraint == { "version" => "^3.6" }
   end
 
-  test "defaults to the default scope, no platform, no hook" do
+  test "defaults to the default scope, no platform, no hook, no materialization" do
     Given "a scoped declaration with only an atom"
     scoped = Dev::Deps::ScopedDeclaration.new(declaration: atom)
 
@@ -43,6 +43,40 @@ class Dev::Deps::ScopedDeclarationTest < Minitest::Test
     scoped.scope == Dev::Deps::Scope.new
     scoped.platform.nil?
     scoped.post_install.nil?
+    scoped.materialization == {}
+  end
+
+  test "carries install instructions as materialization, frozen" do
+    Given "a row with an install_dir and an asset glob"
+    scoped = Dev::Deps::ScopedDeclaration.new(
+      declaration: atom(name: "UnrealEngine", integration: :gh, constraint: { "tag" => "5.6.1-css-83" }),
+      materialization: { "install_dir" => "~/.dev/engines/ue", "asset_pattern" => "*.tar.zst.*" },
+    )
+
+    Expect "materialization is readable and immutable"
+    scoped.materialization == { "install_dir" => "~/.dev/engines/ue", "asset_pattern" => "*.tar.zst.*" }
+    scoped.materialization.frozen?
+  end
+
+  test "materialization participates in equality — disagreeing install dirs are different asks" do
+    Given "one atom materialized into two directories"
+    a = Dev::Deps::ScopedDeclaration.new(declaration: atom, materialization: { "install_dir" => "~/a" })
+    b = Dev::Deps::ScopedDeclaration.new(declaration: atom, materialization: { "install_dir" => "~/b" })
+
+    Expect
+    a != b
+  end
+
+  test "delegates the atom's source" do
+    Given "a scoped declaration over a source-based atom"
+    scoped = Dev::Deps::ScopedDeclaration.new(
+      declaration: Dev::Deps::Declaration.new(
+        name: "fmt", integration: :cmake, source: "https://github.com/fmtlib/fmt",
+      ),
+    )
+
+    Expect
+    scoped.source == "https://github.com/fmtlib/fmt"
   end
 
   test "is value-equal across independently built compositions" do

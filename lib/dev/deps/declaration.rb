@@ -22,6 +22,13 @@ module Dev
     # { "tag" => "v1.0" }); {} means unconstrained — a present empty form,
     # never nil. Repositories normalize upstream syntax into this shape at
     # construction, so constraints cross the system boundary exactly once.
+    # Only version-shaped keys live here: source coordinates are the `source`
+    # field, and install instructions are ScopedDeclaration's materialization.
+    #
+    # source is on the atom (not ScopedDeclaration) because both authors can
+    # legitimately state it: an upstream manifest edge can point at a source
+    # coordinate (cargo-style git deps) just as a project row can. It is
+    # identity-shaping — Resolver#package_id reads it onto PackageId#source.
     #
     # See docs/deps-architecture.md for the ontology this belongs to.
     class Declaration
@@ -40,15 +47,31 @@ module Dev
       sig { returns(T::Hash[String, T.untyped]) }
       attr_reader :constraint
 
+      # @return [String, nil] source coordinate locating the package's
+      #   universe (a git remote URL, an "owner/repo" slug, a brew tap, a
+      #   Steam app id); nil for registry-backed integrations, where the name
+      #   alone identifies the package
+      sig { returns(T.nilable(String)) }
+      attr_reader :source
+
       # @param name [String] the package's name
       # @param integration [Symbol] :bundler, :ficsit, :cmake, …
       # @param constraint [Hash{String => Object}] dev-shaped constraint;
       #   defaults to {} (unconstrained)
-      sig { params(name: String, integration: Symbol, constraint: T::Hash[String, T.untyped]).void }
-      def initialize(name:, integration:, constraint: {})
+      # @param source [String, nil] source coordinate; defaults to nil
+      sig do
+        params(
+          name: String,
+          integration: Symbol,
+          constraint: T::Hash[String, T.untyped],
+          source: T.nilable(String),
+        ).void
+      end
+      def initialize(name:, integration:, constraint: {}, source: nil)
         @name = name
         @integration = integration
         @constraint = T.let(constraint.dup.freeze, T::Hash[String, T.untyped])
+        @source = source
         freeze
       end
 
@@ -58,14 +81,15 @@ module Dev
       def ==(other)
         return false unless other.is_a?(Declaration)
 
-        [name, integration, constraint] == [other.name, other.integration, other.constraint]
+        [name, integration, constraint, source] ==
+          [other.name, other.integration, other.constraint, other.source]
       end
       alias_method :eql?, :==
 
       # @return [Integer] hash code, so declarations work as Hash keys
       sig { returns(Integer) }
       def hash
-        [self.class, name, integration, constraint].hash
+        [self.class, name, integration, constraint, source].hash
       end
     end
   end

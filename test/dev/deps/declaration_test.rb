@@ -53,4 +53,34 @@ class Dev::Deps::DeclarationTest < Minitest::Test
     decl.frozen?
     decl.constraint.frozen?
   end
+
+  test "carries a source coordinate as an identity field, not a constraint key" do
+    Given "a source-based declaration"
+    decl = Dev::Deps::Declaration.new(
+      name: "fmt", integration: :cmake,
+      constraint: { "tag" => "11.0.2" }, source: "https://github.com/fmtlib/fmt",
+    )
+
+    Expect "source is a field and the constraint holds only version-shaped keys"
+    decl.source == "https://github.com/fmtlib/fmt"
+    decl.constraint == { "tag" => "11.0.2" }
+  end
+
+  test "source defaults to nil for registry-backed packages" do
+    Given "a registry-backed declaration"
+    decl = Dev::Deps::Declaration.new(name: "ffi", integration: :bundler)
+
+    Expect
+    decl.source.nil?
+  end
+
+  test "source participates in equality — same name, different universe, different declaration" do
+    Given "one name declared against two source coordinates"
+    a = Dev::Deps::Declaration.new(name: "fmt", integration: :cmake, source: "https://github.com/fmtlib/fmt")
+    b = Dev::Deps::Declaration.new(name: "fmt", integration: :cmake, source: "https://github.com/fork/fmt")
+
+    Expect
+    a != b
+    a.hash != b.hash
+  end
 end
