@@ -1,9 +1,10 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "declaration"
 require_relative "dependency"
-require_relative "dependency_declaration"
 require_relative "package"
+require_relative "scoped_declaration"
 require_relative "package_id"
 require_relative "package_version"
 require_relative "repository"
@@ -56,12 +57,12 @@ module Dev
       # integration's universe. Transitive edges likewise stay inside the
       # declaring dep's integration.
       #
-      # @param declarations [Array<DependencyDeclaration>] declared dependencies to resolve
+      # @param declarations [Array<ScopedDeclaration>] declared dependencies to resolve
       # @return [Array<Dependency>]
       # @raise [ConflictingDeclarationError] if one package is declared with disagreeing constraints
       # @raise [UnknownIntegrationError] if a declaration's integration has no repository or scheme
       # @raise [NoSatisfyingVersionError] if a declaration cannot be satisfied
-      sig { params(declarations: T::Array[DependencyDeclaration]).returns(T::Array[Dependency]) }
+      sig { params(declarations: T::Array[ScopedDeclaration]).returns(T::Array[Dependency]) }
       def resolve(declarations)
         reject_conflicts(declarations)
 
@@ -76,17 +77,18 @@ module Dev
           chosen = choose(decl, platforms[[decl.integration, decl.name]] || [])
           resolved[id] = mint(chosen, decl)
 
-          # Transitive deps inherit the declaring dep's group, host, and env: a
-          # dep only needed on one host/env can't need its transitive closure
-          # anywhere else.
+          # Transitive deps inherit the declaring dep's Scope wholesale: a dep
+          # only needed in one group/host/env can't need its transitive
+          # closure anywhere else. Context is a property of the path, so it is
+          # stamped here — never by the repository that reported the edge.
           chosen.dependencies.each do |edge|
-            edge_decl = DependencyDeclaration.new(
-              name: edge.name,
-              integration: decl.integration,
-              constraint: normalize_constraint(edge.constraint),
-              group: decl.group,
-              host: decl.host,
-              env: decl.env,
+            edge_decl = ScopedDeclaration.new(
+              declaration: Declaration.new(
+                name: edge.name,
+                integration: decl.integration,
+                constraint: normalize_constraint(edge.constraint),
+              ),
+              scope: decl.scope,
             )
             queue << edge_decl unless resolved.key?(package_id(edge_decl))
           end
@@ -101,7 +103,7 @@ module Dev
       # highest version that satisfies the constraint (per the integration's
       # scheme) and publishes every explicitly requested platform.
       #
-      # @param decl [DependencyDeclaration] the declaration to satisfy
+      # @param decl [ScopedDeclaration] the declaration to satisfy
       # @param platforms [Array<String, nil>] union of the declaring groups'
       #   platforms; nil entries mean "the integration's default"
       # @return [PackageVersion] the chosen version
@@ -109,7 +111,7 @@ module Dev
       # @raise [NoSatisfyingVersionError] if nothing in the universe qualifies
       sig do
         params(
-          decl: DependencyDeclaration,
+          decl: ScopedDeclaration,
           platforms: T::Array[T.nilable(String)],
         ).returns(PackageVersion)
       end
@@ -182,14 +184,14 @@ module Dev
       # that expose no version, e.g. brew casks) becomes a nil pin version.
       #
       # @param chosen [PackageVersion] the version the resolver picked
-      # @param decl [DependencyDeclaration] the declaration it satisfies
+      # @param decl [ScopedDeclaration] the declaration it satisfies
       # @return [Dependency]
-      sig { params(chosen: PackageVersion, decl: DependencyDeclaration).returns(Dependency) }
+      sig { params(chosen: PackageVersion, decl: ScopedDeclaration).returns(Dependency) }
       def mint(chosen, decl)
         dependency = Dependency.new(
           name: decl.name,
           integration: decl.integration,
-          group: decl.group,
+          group: decl.scope.group,
           version: chosen.version.empty? ? nil : chosen.version,
           hash: chosen.digest,
           metadata: chosen.metadata.dup,
@@ -202,9 +204,9 @@ module Dev
       # the constraint's "repo"/"url" is the source coordinate (which service
       # to ask), so it rides on the PackageId rather than the filter.
       #
-      # @param decl [DependencyDeclaration]
+      # @param decl [ScopedDeclaration]
       # @return [PackageId]
-      sig { params(decl: DependencyDeclaration).returns(PackageId) }
+      sig { params(decl: ScopedDeclaration).returns(PackageId) }
       def package_id(decl)
         PackageId.new(
           integration: decl.integration,
@@ -221,10 +223,10 @@ module Dev
       # (Platform, group, host, and env may differ — they are axes, not
       # constraints.)
       #
-      # @param declarations [Array<DependencyDeclaration>]
+      # @param declarations [Array<ScopedDeclaration>]
       # @return [void]
       # @raise [ConflictingDeclarationError]
-      sig { params(declarations: T::Array[DependencyDeclaration]).void }
+      sig { params(declarations: T::Array[ScopedDeclaration]).void }
       def reject_conflicts(declarations)
         declarations.group_by { |d| [d.integration, d.name] }.each do |(integration, name), decls|
           constraints = decls.map(&:constraint).uniq
@@ -243,13 +245,11 @@ module Dev
       # dep IS; where it installs is resolver/installer plumbing.
       #
       # @param dependency [Dependency] freshly minted
-      # @param decl [DependencyDeclaration] the declaration it came from
+      # @param decl [ScopedDeclaration] the declaration it came from
       # @return [Dependency]
-      sig { params(dependency: Dependency, decl: DependencyDeclaration).returns(Dependency) }
+      sig { params(dependency: Dependency, decl: ScopedDeclaration).returns(Dependency) }
       def attach_install_scoping(dependency, decl)
-        extra = {}
-        extra["host"] = decl.host.to_s if decl.host
-        extra["env"] = decl.env if decl.env
+        extra = decl.scope.to_metadata
         return dependency if extra.empty?
 
         dependency.with(metadata: dependency.metadata.merge(extra))
@@ -261,12 +261,12 @@ module Dev
       # union of their platforms without per-dep platform lists — scoped per
       # integration so one ecosystem's platform pins never leak into another's.
       #
-      # @param declarations [Array<DependencyDeclaration>]
+      # @param declarations [Array<ScopedDeclaration>]
       # @return [Hash{Array(Symbol, String) => Array<String, nil>}]
       #   (integration, name) → de-duped platform list
       sig do
         params(
-          declarations: T::Array[DependencyDeclaration],
+          declarations: T::Array[ScopedDeclaration],
         ).returns(T::Hash[[Symbol, String], T::Array[T.nilable(String)]])
       end
       def declared_platforms(declarations)
@@ -297,13 +297,13 @@ module Dev
       # A NoSatisfyingVersionError message that says why: what was asked,
       # what the universe held.
       #
-      # @param decl [DependencyDeclaration]
+      # @param decl [ScopedDeclaration]
       # @param package [Package]
       # @param explicit [Array<String>] explicitly requested platforms
       # @return [String]
       sig do
         params(
-          decl: DependencyDeclaration,
+          decl: ScopedDeclaration,
           package: Package,
           explicit: T::Array[String],
         ).returns(String)

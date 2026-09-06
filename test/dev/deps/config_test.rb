@@ -25,7 +25,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
     gems = config.declarations.select { |d| d.integration == :bundler }
     gems.size == 2
     gems[0].name == "cli-ui"
-    gems[0].group == Dev::Deps::DSL::DEFAULT_GEM_GROUP
+    gems[0].scope.group == Dev::Deps::DSL::DEFAULT_GEM_GROUP
     !gems[0].constraint.key?("version")
     gems[1].name == "rake"
     gems[1].constraint["version"] == "~> 13.0"
@@ -42,7 +42,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
     Then
     decl = config.declarations.find { |d| d.name == "minitest" }
     decl.integration == :bundler
-    decl.group == :test
+    decl.scope.group == :test
     decl.constraint["version"] == "~> 5.0"
   end
 
@@ -130,7 +130,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
     end
 
     Then
-    decls = config.declarations.select { |d| d.group == :app }
+    decls = config.declarations.select { |d| d.scope.group == :app }
     decls.size == 2
 
     decls[0].name == "boost"
@@ -202,10 +202,10 @@ class Dev::Deps::ConfigTest < Minitest::Test
     config.group("build")["env"]["ci"]["brew"] == ["ruby"]
     brew_decls = config.declarations.select { |d| d.integration == :brew }
     brew_decls.map(&:name).sort == %w[cmake powershell ruby]
-    brew_decls.all? { |d| d.group == :build }
+    brew_decls.all? { |d| d.scope.group == :build }
     brew_decls.find { |d| d.name == "powershell" }.constraint["tap"] == "d3mlabs/d3mlabs"
     # env is a first-class declaration field, never smuggled into the constraint.
-    brew_decls.find { |d| d.name == "ruby" }.env == "ci"
+    brew_decls.find { |d| d.name == "ruby" }.scope.env == "ci"
     brew_decls.find { |d| d.name == "ruby" }.constraint["env"].nil?
   end
 end

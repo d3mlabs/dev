@@ -1,7 +1,9 @@
 # typed: false
 # frozen_string_literal: true
 
-require_relative "dependency_declaration"
+require_relative "declaration"
+require_relative "scope"
+require_relative "scoped_declaration"
 
 module Dev
   module Deps
@@ -67,11 +69,9 @@ module Dev
       def gem(name, version = nil, **opts)
         constraint = opts.each_with_object({}) { |(k, v), h| h[k.to_s] = v }
         constraint["version"] = version.to_s if version
-        @declarations << DependencyDeclaration.new(
-          name: name.to_s,
-          integration: :bundler,
-          constraint:,
-          group: DEFAULT_GEM_GROUP,
+        @declarations << ScopedDeclaration.new(
+          declaration: Declaration.new(name: name.to_s, integration: :bundler, constraint:),
+          scope: Scope.new(group: DEFAULT_GEM_GROUP),
         )
       end
 
@@ -141,14 +141,10 @@ module Dev
         else
           @brew << { name_str => stringify_keys(opts) }
         end
-        @declarations << DependencyDeclaration.new(
-          name: name_str,
-          integration: :brew,
-          constraint: stringify_keys(opts),
-          group: @group,
+        @declarations << ScopedDeclaration.new(
+          declaration: Declaration.new(name: name_str, integration: :brew, constraint: stringify_keys(opts)),
+          scope: Scope.new(group: @group, host: @host, env: @env),
           platform: @platform,
-          host: @host,
-          env: @env,
         )
       end
 
@@ -372,12 +368,12 @@ module Dev
 
       private
 
-      # Create a DependencyDeclaration and store it.
+      # Create a ScopedDeclaration and store it.
       #
-      # host: is peeled off the spec into the first-class declaration field —
-      # a per-declaration override of the group's host (e.g. `gh ..., host:
-      # :darwin` outside a host-gated group). It never reaches the constraint,
-      # which describes what the dep is, not where it installs.
+      # host: is peeled off the spec into the Scope — a per-declaration
+      # override of the group's host (e.g. `gh ..., host: :darwin` outside a
+      # host-gated group). It never reaches the constraint, which describes
+      # what the dep is, not where it installs.
       #
       # @param name [String, Symbol] dependency name
       # @param integration [Symbol] integration type
@@ -391,13 +387,10 @@ module Dev
         spec = expand_github(name_str, spec) if spec.key?(:github)
         constraint = stringify_keys(spec)
 
-        @declarations << DependencyDeclaration.new(
-          name: name_str,
-          integration:,
-          constraint:,
-          group: @group,
+        @declarations << ScopedDeclaration.new(
+          declaration: Declaration.new(name: name_str, integration:, constraint:),
+          scope: Scope.new(group: @group, host:),
           platform: @platform,
-          host:,
           post_install:,
         )
       end

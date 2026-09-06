@@ -39,13 +39,15 @@ Sorbet/StrictSigil:
     - lib/dev/deps.rb
     - lib/dev/deps/cli_ui.rb
     - lib/dev/deps/config.rb
+    - lib/dev/deps/declaration.rb
     - lib/dev/deps/lockfile.rb
+    - lib/dev/deps/scope.rb
+    - lib/dev/deps/scoped_declaration.rb
     - lib/dev/deps/tap.rb
     - lib/dev/deps/dependency_installer.rb
     # `typed: false` holdouts: Data.define with a keyword-args initialize
     # override is rejected by Sorbet (error 4010)...
     - lib/dev/deps/dependency.rb
-    - lib/dev/deps/dependency_declaration.rb
     # ...method_missing dispatch into a required-keyword method needs
     # T.unsafe, which the pre-bundle constraint forbids...
     - lib/dev/deps/dsl.rb

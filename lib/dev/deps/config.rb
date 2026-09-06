@@ -13,7 +13,7 @@ module Dev
 
       # @param taps [Array<Tap>] declared Homebrew taps
       # @param groups [Hash] group name → { "brew" => [...], "env" => {...} }
-      # @param declarations [Array<DependencyDeclaration>] all declared dependencies
+      # @param declarations [Array<ScopedDeclaration>] all declared dependencies
       #   (gems are :bundler declarations, brew formulae are :brew declarations, etc.)
       # @param ruby_version_requirement [String, nil] required Ruby version
       # @param lua_version [String, nil] Lua version for LuaRocks

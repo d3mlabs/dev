@@ -8,7 +8,7 @@ module Dev
     #
     # This is the "which package are we talking about" half of the domain,
     # separated from "which versions exist" (Package), "what does the project
-    # want" (DependencyDeclaration) and "what did we choose" (Dependency). It
+    # want" (ScopedDeclaration) and "what did we choose" (Dependency). It
     # is the Resolver's resolved-set key, which is why identity includes the
     # integration: two ecosystems can each publish a package named "ffi", and
     # keying on the bare name would silently collapse them. The lockfile

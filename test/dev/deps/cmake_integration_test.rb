@@ -6,7 +6,9 @@ require "dev/deps/cmake_integration"
 require "dev/deps/git_repository"
 require "dev/deps/url_repository"
 require "dev/deps/resolver"
-require "dev/deps/dependency_declaration"
+require "dev/deps/declaration"
+require "dev/deps/scope"
+require "dev/deps/scoped_declaration"
 require "dev/deps/cache"
 require "dev/deps/dependency"
 require "dev/deps/package"
@@ -337,9 +339,12 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
       schemes: { cmake: Dev::Deps::PinnedScheme.new },
     )
     declarations = [
-      Dev::Deps::DependencyDeclaration.new(
-        name: "googletest", integration: :cmake, group: :test,
-        constraint: { "repo" => "https://github.com/google/googletest" },
+      Dev::Deps::ScopedDeclaration.new(
+        declaration: Dev::Deps::Declaration.new(
+          name: "googletest", integration: :cmake,
+          constraint: { "repo" => "https://github.com/google/googletest" },
+        ),
+        scope: Dev::Deps::Scope.new(group: :test),
         post_install: hook,
       ),
     ]

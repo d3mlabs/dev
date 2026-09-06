@@ -3,8 +3,8 @@
 
 require "open3"
 require "pathname"
-require_relative "dependency_declaration"
 require_relative "locker"
+require_relative "scoped_declaration"
 
 module Dev
   module Deps
@@ -44,10 +44,10 @@ module Dev
 
       # Generate the Gemfile from all gem declarations and lock it.
       #
-      # @param declarations [Array<DependencyDeclaration>] :bundler declarations
+      # @param declarations [Array<ScopedDeclaration>] :bundler declarations
       # @return [void]
       # @raise [LockError] if bundle lock fails
-      sig { override.params(declarations: T::Array[DependencyDeclaration]).void }
+      sig { override.params(declarations: T::Array[ScopedDeclaration]).void }
       def lock(declarations)
         return if declarations.empty?
 
@@ -61,17 +61,17 @@ module Dev
       # bundler group (the default group stays unscoped, like a hand-written
       # Gemfile's top section).
       #
-      # @param declarations [Array<DependencyDeclaration>]
+      # @param declarations [Array<ScopedDeclaration>]
       # @return [void]
-      sig { params(declarations: T::Array[DependencyDeclaration]).void }
+      sig { params(declarations: T::Array[ScopedDeclaration]).void }
       def write_gemfile(declarations)
         lines = [GENERATED_HEADER, %(source "#{RUBYGEMS_SOURCE}")]
         lines << %(ruby "#{@ruby_version_requirement}") if @ruby_version_requirement
 
-        ungrouped, grouped = declarations.partition { |decl| decl.group == DSL::DEFAULT_GEM_GROUP }
+        ungrouped, grouped = declarations.partition { |decl| decl.scope.group == DSL::DEFAULT_GEM_GROUP }
 
         ungrouped.each { |decl| lines << gem_line(decl) }
-        grouped.group_by(&:group).each do |group, group_decls|
+        grouped.group_by { |decl| decl.scope.group }.each do |group, group_decls|
           lines << ""
           lines << "group :#{group} do"
           group_decls.each { |decl| lines << "  #{gem_line(decl)}" }
@@ -84,9 +84,9 @@ module Dev
       # Render a single `gem` line from a declaration's constraint. "version" is
       # the positional requirement; any other constraint keys become gem options.
       #
-      # @param decl [DependencyDeclaration]
+      # @param decl [ScopedDeclaration]
       # @return [String]
-      sig { params(decl: DependencyDeclaration).returns(String) }
+      sig { params(decl: ScopedDeclaration).returns(String) }
       def gem_line(decl)
         parts = [%(gem "#{decl.name}")]
         constraint = decl.constraint

@@ -1,7 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
-require_relative "dependency_declaration"
+require_relative "scoped_declaration"
 
 module Dev
   module Deps
@@ -21,10 +21,10 @@ module Dev
 
       # Solve the whole declaration set, materializing the tool's lockfile.
       #
-      # @param declarations [Array<DependencyDeclaration>] every declaration
+      # @param declarations [Array<ScopedDeclaration>] every declaration
       #   of this integration type
       # @return [void]
-      sig { params(declarations: T::Array[DependencyDeclaration]).void }
+      sig { params(declarations: T::Array[ScopedDeclaration]).void }
       def lock(declarations)
         raise NotImplementedError, "#{self.class}#lock must be implemented"
       end

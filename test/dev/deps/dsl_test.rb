@@ -6,7 +6,7 @@ require "dev/deps"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::DSLTest < Minitest::Test
-  test "cmake() produces DependencyDeclaration with cmake integration" do
+  test "cmake() produces ScopedDeclaration with cmake integration" do
     When "defining a cmake dep"
     config = Dev::Deps.define do
       group :app do
@@ -21,7 +21,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     decls.size == 1
     decls[0].name == "boost"
     decls[0].integration == :cmake
-    decls[0].group == :app
+    decls[0].scope.group == :app
     decls[0].constraint["url"] == "https://example.com/boost.tar.gz"
     decls[0].constraint["tag"] == "boost-1.90.0"
   end
@@ -52,7 +52,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     config.declarations[0].constraint["repo"] == "https://github.com/axmolengine/axmol"
   end
 
-  test "luarocks() produces DependencyDeclaration with luarocks integration" do
+  test "luarocks() produces ScopedDeclaration with luarocks integration" do
     When "defining a luarocks dep"
     config = Dev::Deps.define do
       group :test do
@@ -64,11 +64,11 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl = config.declarations[0]
     decl.name == "luaunit"
     decl.integration == :luarocks
-    decl.group == :test
+    decl.scope.group == :test
     decl.constraint["constraint"] == ">=3.5"
   end
 
-  test "custom() produces DependencyDeclaration with arbitrary integration" do
+  test "custom() produces ScopedDeclaration with arbitrary integration" do
     When "defining a custom integration dep"
     config = Dev::Deps.define do
       group :app do
@@ -110,7 +110,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     config.registered_integrations[:wow_curseforge] == "WoWCurseforgeIntegration"
   end
 
-  test "ficsit() produces DependencyDeclaration with ficsit integration" do
+  test "ficsit() produces ScopedDeclaration with ficsit integration" do
     When "defining a ficsit mod dep"
     config = Dev::Deps.define do
       group :app do
@@ -122,7 +122,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl = config.declarations[0]
     decl.name == "SML"
     decl.integration == :ficsit
-    decl.group == :app
+    decl.scope.group == :app
     decl.constraint["version"] == "^3.12.0"
   end
 
@@ -166,7 +166,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     Then
     decl = config.declarations[0]
     decl.name == "SML"
-    decl.group == :integration
+    decl.scope.group == :integration
     decl.platform == "LinuxServer"
   end
 
@@ -197,7 +197,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     sml = config.declarations.select { |d| d.name == "SML" }
     sml.size == 2
     sml.map(&:platform).sort_by(&:to_s) == [nil, "LinuxServer"].sort_by(&:to_s)
-    sml.map { |d| d.group }.sort == [:app, :integration]
+    sml.map { |d| d.scope.group }.sort == [:app, :integration]
   end
 
   test "group host: stamps the host onto every declaration in the group" do
@@ -215,7 +215,7 @@ class Dev::Deps::DSLTest < Minitest::Test
 
     Then "every member carries the group's host"
     config.declarations.size == 2
-    config.declarations.all? { |d| d.host == :darwin }
+    config.declarations.all? { |d| d.scope.host == :darwin }
     config.declarations.all? { |d| d.constraint["host"].nil? }
   end
 
@@ -234,7 +234,7 @@ class Dev::Deps::DSLTest < Minitest::Test
 
     Then "the declaration carries the host as a first-class field only"
     decl = config.declarations[0]
-    decl.host == :linux
+    decl.scope.host == :linux
     decl.constraint["host"].nil?
   end
 
@@ -251,7 +251,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl.name == "xcode"
     decl.integration == :xcode
     decl.constraint["version"] == "26.1.1"
-    decl.group == :build
+    decl.scope.group == :build
   end
 
   test "env block stamps env as a first-class field, not a constraint key" do
@@ -266,12 +266,12 @@ class Dev::Deps::DSLTest < Minitest::Test
 
     Then "env and the enclosing group's host both land as fields"
     decl = config.declarations[0]
-    decl.env == "ci"
-    decl.host == :linux
+    decl.scope.env == "ci"
+    decl.scope.host == :linux
     decl.constraint["env"].nil?
   end
 
-  test "gh() produces DependencyDeclaration named after the repo basename" do
+  test "gh() produces ScopedDeclaration named after the repo basename" do
     When "defining a gh release dep"
     config = Dev::Deps.define do
       group :build do
@@ -286,7 +286,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl = config.declarations[0]
     decl.name == "UnrealEngine"
     decl.integration == :gh
-    decl.group == :build
+    decl.scope.group == :build
     decl.constraint["repo"] == "satisfactorymodding/UnrealEngine"
     decl.constraint["tag"] == "5.6.1-css-83"
     decl.constraint["assets"] == "UnrealEngine-CSS-Editor-Linux.tar.zst.*"
@@ -309,7 +309,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl = config.declarations[0]
     decl.name == "UnrealEngine"
     decl.integration == :gh
-    decl.group == :game
+    decl.scope.group == :game
     decl.constraint["repo"] == "EpicGames/UnrealEngine"
     decl.constraint["tag"] == "5.6.1-release"
     decl.constraint["build"] == "bin/build-ue.sh"
@@ -356,7 +356,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     raises ArgumentError
   end
 
-  test "steam() produces a DependencyDeclaration with steam integration" do
+  test "steam() produces a ScopedDeclaration with steam integration" do
     When "defining a steam dep in a LinuxServer group"
     config = Dev::Deps.define do
       group :integration, platform: "LinuxServer" do
@@ -368,7 +368,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl = config.declarations[0]
     decl.name == "SatisfactoryServer"
     decl.integration == :steam
-    decl.group == :integration
+    decl.scope.group == :integration
     decl.platform == "LinuxServer"
     decl.constraint["app"] == 1690800
     decl.constraint["install_dir"] == "~/.dev/satisfactory-server"
@@ -442,8 +442,8 @@ class Dev::Deps::DSLTest < Minitest::Test
 
     Then
     config.declarations.size == 2
-    config.declarations[0].group == :app
-    config.declarations[1].group == :test
+    config.declarations[0].scope.group == :app
+    config.declarations[1].scope.group == :test
   end
 
   test "user-defined groups produce declarations with custom group names" do
@@ -456,7 +456,7 @@ class Dev::Deps::DSLTest < Minitest::Test
 
     Then
     config.declarations.size == 1
-    config.declarations[0].group == :deploy
+    config.declarations[0].scope.group == :deploy
   end
 
   test "post_install callable is extracted from spec and stored on declaration" do

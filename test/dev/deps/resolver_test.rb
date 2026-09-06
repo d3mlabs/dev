@@ -7,8 +7,10 @@ require "dev/deps/repository"
 require "dev/deps/package"
 require "dev/deps/package_id"
 require "dev/deps/package_version"
+require "dev/deps/declaration"
 require "dev/deps/dependency_edge"
-require "dev/deps/dependency_declaration"
+require "dev/deps/scope"
+require "dev/deps/scoped_declaration"
 require "dev/deps/pinned_scheme"
 require "dev/deps/semver_scheme"
 
@@ -45,8 +47,14 @@ class Dev::Deps::ResolverTest < Minitest::Test
     Dev::Deps::DependencyEdge.new(name: name, constraint: constraint)
   end
 
-  def declaration(**kwargs)
-    Dev::Deps::DependencyDeclaration.new(**kwargs)
+  # Shorthand: assemble the Declaration + Scope composition from flat kwargs.
+  def declaration(name:, integration:, constraint: {}, group: :app, platform: nil,
+                  host: nil, env: nil, post_install: nil)
+    Dev::Deps::ScopedDeclaration.new(
+      declaration: Dev::Deps::Declaration.new(name:, integration:, constraint:),
+      scope: Dev::Deps::Scope.new(group:, host:, env:),
+      platform:, post_install:,
+    )
   end
 
   def resolver_for(integration, repo, scheme: Dev::Deps::PinnedScheme.new)
