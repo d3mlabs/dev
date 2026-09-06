@@ -6,6 +6,7 @@ require "net/http"
 require "uri"
 require_relative "artifact"
 require_relative "declaration"
+require_relative "declarations"
 require_relative "package"
 require_relative "package_id"
 require_relative "package_version"
@@ -57,7 +58,7 @@ module Dev
       #
       # Each version carries its targets as platforms, each target's download
       # as an Artifact (dev-enforced integrity: the SHA256 the API publishes),
-      # its required mod dependencies as edges, and the install facts
+      # its required mods as a Resolved declarations claim, and the install facts
       # FicsitIntegration reads (mod_id, game_version, and either a
       # single-target digest or a per-platform block, per the filter).
       #
@@ -81,7 +82,7 @@ module Dev
 
       # Map one GraphQL version object to a PackageVersion.
       #
-      # Universe facts (platforms, artifacts, edges) are unconditional. The
+      # Universe facts (platforms, artifacts, declarations) are unconditional. The
       # install facts mirror the pin shapes FicsitIntegration reads: with
       # requested platforms, a metadata["platforms"] block covering the
       # targets this version actually publishes (the Resolver rejects the
@@ -124,9 +125,11 @@ module Dev
           artifacts: targets.to_h do |t|
             [t["targetName"], Artifact.new(uri: download_url(version_data, t), digest: "SHA256=#{t["hash"]}")]
           end,
-          dependencies: (version_data["dependencies"] || [])
-            .reject { |d| d["optional"] }
-            .map { |d| edge_declaration(d) },
+          declarations: Declarations::Resolved.new(
+            (version_data["dependencies"] || [])
+              .reject { |d| d["optional"] }
+              .map { |d| edge_declaration(d) },
+          ),
           metadata: metadata,
         )
       end

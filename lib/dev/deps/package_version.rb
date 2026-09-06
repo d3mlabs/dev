@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require_relative "artifact"
-require_relative "declaration"
+require_relative "declarations"
 
 module Dev
   module Deps
@@ -18,7 +18,10 @@ module Dev
     # Every optional fact is modeled as its empty form rather than nil, because
     # absence here is genuine absence: a version with no platforms has one
     # default target, a version with no artifacts is fetched by its own tool,
-    # and a version with no edges requires nothing. See
+    # and a version whose claim is Resolved([]) affirmatively requires
+    # nothing. Declared deps are a claim, not a collection — Declarations
+    # keeps "requires nothing" and "the tool owns a closure dev can't see"
+    # (ToolOwned) from collapsing into one empty form. See
     # docs/deps-architecture.md.
     class PackageVersion
       extend T::Sig
@@ -45,11 +48,12 @@ module Dev
       sig { returns(T::Hash[String, Artifact]) }
       attr_reader :artifacts
 
-      # @return [Array<Declaration>] what this version declares it requires,
-      #   already normalized into dev's constraint shape and stamped with its
-      #   integration by the reporting Repository
-      sig { returns(T::Array[Declaration]) }
-      attr_reader :dependencies
+      # @return [Declarations] the version's declared-deps claim: Resolved
+      #   (declarations dev can walk, normalized and integration-stamped by
+      #   the reporting Repository) or ToolOwned (the ecosystem's tool owns
+      #   the closure)
+      sig { returns(Declarations) }
+      attr_reader :declarations
 
       # @return [Hash{String => Object}] ecosystem-specific facts the
       #   integration needs at install time (this becomes the minted pin's
@@ -61,7 +65,8 @@ module Dev
       # @param platforms [Array<String>] published targets
       # @param digest [String, nil] tool-fetched integrity digest, if published
       # @param artifacts [Hash{String => Artifact}] dev-fetchable bytes by platform
-      # @param dependencies [Array<Declaration>] normalized declared deps
+      # @param declarations [Declarations] declared-deps claim; defaults to
+      #   the affirmative Resolved([]) — ToolOwned must be stated explicitly
       # @param metadata [Hash{String => Object}] ecosystem-specific install facts
       sig do
         params(
@@ -69,16 +74,17 @@ module Dev
           platforms: T::Array[String],
           digest: T.nilable(String),
           artifacts: T::Hash[String, Artifact],
-          dependencies: T::Array[Declaration],
+          declarations: Declarations,
           metadata: T::Hash[String, T.untyped],
         ).void
       end
-      def initialize(version:, platforms: [], digest: nil, artifacts: {}, dependencies: [], metadata: {})
+      def initialize(version:, platforms: [], digest: nil, artifacts: {},
+                     declarations: Declarations::Resolved.new([]), metadata: {})
         @version = version
         @platforms = T.let(platforms.dup.freeze, T::Array[String])
         @digest = digest
         @artifacts = T.let(artifacts.dup.freeze, T::Hash[String, Artifact])
-        @dependencies = T.let(dependencies.dup.freeze, T::Array[Declaration])
+        @declarations = declarations
         @metadata = T.let(metadata.dup.freeze, T::Hash[String, T.untyped])
         freeze
       end
@@ -89,16 +95,16 @@ module Dev
       def ==(other)
         return false unless other.is_a?(PackageVersion)
 
-        [version, platforms, digest, artifacts, dependencies, metadata] ==
+        [version, platforms, digest, artifacts, declarations, metadata] ==
           [other.version, other.platforms, other.digest, other.artifacts,
-           other.dependencies, other.metadata]
+           other.declarations, other.metadata]
       end
       alias_method :eql?, :==
 
       # @return [Integer] hash code
       sig { returns(Integer) }
       def hash
-        [self.class, version, platforms, digest, artifacts, dependencies, metadata].hash
+        [self.class, version, platforms, digest, artifacts, declarations, metadata].hash
       end
     end
   end

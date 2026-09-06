@@ -8,6 +8,7 @@ require "dev/deps/package"
 require "dev/deps/package_id"
 require "dev/deps/package_version"
 require "dev/deps/declaration"
+require "dev/deps/declarations"
 require "dev/deps/scope"
 require "dev/deps/scoped_declaration"
 require "dev/deps/pinned_scheme"
@@ -34,11 +35,14 @@ end
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::ResolverTest < Minitest::Test
-  # Shorthand: a PackageVersion universe entry.
-  def version(v, digest: nil, platforms: [], dependencies: [], metadata: {})
+  # Shorthand: a PackageVersion universe entry. dependencies: takes the
+  # Declaration list of a Resolved claim; pass declarations: for ToolOwned.
+  def version(v, digest: nil, platforms: [], dependencies: [], metadata: {},
+              declarations: nil)
     Dev::Deps::PackageVersion.new(
       version: v, digest: digest, platforms: platforms,
-      dependencies: dependencies, metadata: metadata,
+      declarations: declarations || Dev::Deps::Declarations::Resolved.new(dependencies),
+      metadata: metadata,
     )
   end
 
@@ -342,6 +346,21 @@ class Dev::Deps::ResolverTest < Minitest::Test
 
     Then
     result.size == 2
+  end
+
+  test "a ToolOwned claim resolves as a single pin with nothing walked" do
+    Given "a bundler-style version whose tool owns the transitive closure"
+    repo = StubRepository.new(universes: {
+      "rails" => [version("7.1.0", declarations: Dev::Deps::Declarations::ToolOwned.new)],
+    })
+    declarations = [declaration(name: "rails", integration: :bundler, group: :app)]
+
+    When "resolving"
+    result = resolver_for(:bundler, repo).resolve(declarations)
+
+    Then "one pin, one find — dev never pretends to see the tool's closure"
+    result.map(&:name) == ["rails"]
+    repo.finds.size == 1
   end
 
   test "unions platforms across groups and resolves a duplicated dep once" do

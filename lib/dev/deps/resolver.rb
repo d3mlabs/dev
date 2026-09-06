@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require_relative "declaration"
+require_relative "declarations"
 require_relative "dependency"
 require_relative "package"
 require_relative "scoped_declaration"
@@ -80,13 +81,20 @@ module Dev
 
           # Transitive deps inherit the declaring dep's Scope wholesale: a dep
           # only needed in one group/host/env can't need its transitive
-          # closure anywhere else. The Declaration itself arrives finished
-          # from the Repository (integration stamped, constraint normalized);
-          # only the context is stamped here, because context is a property of
-          # the path, not of the fact.
-          chosen.dependencies.each do |edge|
-            edge_decl = ScopedDeclaration.new(declaration: edge, scope: decl.scope)
-            queue << edge_decl unless resolved.key?(package_id(edge_decl))
+          # closure anywhere else. Each Declaration arrives finished from the
+          # Repository (integration stamped, constraint normalized); only the
+          # context is stamped here, because context is a property of the
+          # path, not of the fact.
+          case (claim = chosen.declarations)
+          when Declarations::Resolved
+            claim.declarations.each do |edge|
+              edge_decl = ScopedDeclaration.new(declaration: edge, scope: decl.scope)
+              queue << edge_decl unless resolved.key?(package_id(edge_decl))
+            end
+          when Declarations::ToolOwned
+            # The ecosystem's tool owns the closure; there is nothing to walk.
+          else
+            T.absurd(claim)
           end
         end
 
