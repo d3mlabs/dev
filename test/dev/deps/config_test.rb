@@ -129,22 +129,25 @@ class Dev::Deps::ConfigTest < Minitest::Test
       end
     end
 
-    Then
+    Then "the url dep rides :url with the tag as a label; the git dep rides :cmake"
     decls = config.declarations.select { |d| d.scope.group == :app }
     decls.size == 2
 
     decls[0].name == "boost"
+    decls[0].integration == :url
     decls[0].source == "https://example.com/boost.tar.gz"
-    decls[0].constraint["tag"] == "boost-1.90.0"
-    decls[0].constraint["cmake_targets"] == ["stacktrace"]
-    decls[0].constraint["cmake_namespace"] == "Boost::"
+    decls[0].constraint == {}
+    decls[0].materialization["version_label"] == "boost-1.90.0"
+    decls[0].materialization["cmake_targets"] == ["stacktrace"]
+    decls[0].materialization["cmake_namespace"] == "Boost::"
 
     decls[1].name == "cereal"
+    decls[1].integration == :cmake
     decls[1].source == "https://github.com/USCiLab/cereal"
     decls[1].constraint["tag"] == "v1.3.2"
   end
 
-  test "define test group with cmake_targets" do
+  test "define test group with cmake_targets riding materialization" do
     When
     config = Dev::Deps.define do
       group :test do
@@ -155,9 +158,10 @@ class Dev::Deps::ConfigTest < Minitest::Test
       end
     end
 
-    Then
+    Then "install instructions never pollute the constraint"
     decl = config.declarations.find { |d| d.name == "googletest" }
-    decl.constraint["cmake_targets"] == ["gtest", "gmock"]
+    decl.materialization["cmake_targets"] == ["gtest", "gmock"]
+    decl.constraint == { "tag" => "v1.17.0" }
   end
 
   test "missing group returns empty defaults" do

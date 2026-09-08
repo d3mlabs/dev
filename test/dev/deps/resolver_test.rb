@@ -457,6 +457,56 @@ class Dev::Deps::ResolverTest < Minitest::Test
     result[0].metadata["asset_pattern"] == "*.tar.zst.*"
   end
 
+  test "a scheme-less integration resolves an empty ask over the universe as reported" do
+    Given "a url-style singleton universe and no scheme registered"
+    repo = StubRepository.new(universes: {
+      "boost" => [version("", digest: "SHA256=abc", metadata: { "url" => "https://example.com/b.tar.gz" })],
+    })
+    resolver = Dev::Deps::Resolver.new(repositories: { url: repo }, schemes: {})
+    declarations = [
+      declaration(name: "boost", integration: :url, group: :app,
+        source: "https://example.com/b.tar.gz",
+        materialization: { "version_label" => "boost-1.90.0" }),
+    ]
+
+    When "resolving"
+    result = resolver.resolve(declarations)
+
+    Then "the singleton pins; the display label is promoted into the version slot"
+    result.size == 1
+    result[0].version == "boost-1.90.0"
+    result[0].hash == "SHA256=abc"
+    result[0].metadata["url"] == "https://example.com/b.tar.gz"
+    !result[0].metadata.key?("version_label")
+  end
+
+  test "an unlabeled scheme-less singleton mints a nil pin version" do
+    Given "a url dep with no display label"
+    repo = StubRepository.new(universes: { "tool" => [version("", digest: "SHA256=t")] })
+    resolver = Dev::Deps::Resolver.new(repositories: { url: repo }, schemes: {})
+
+    When "resolving"
+    result = resolver.resolve([declaration(name: "tool", integration: :url, group: :app)])
+
+    Then
+    result[0].version.nil?
+  end
+
+  test "a constraint against a scheme-less integration fails loudly" do
+    Given "a url dep declared with a version constraint no grammar can evaluate"
+    repo = StubRepository.new(universes: { "boost" => [version("")] })
+    resolver = Dev::Deps::Resolver.new(repositories: { url: repo }, schemes: {})
+    declarations = [
+      declaration(name: "boost", integration: :url, group: :app, constraint: { "version" => "1.90" }),
+    ]
+
+    When "resolving"
+    resolver.resolve(declarations)
+
+    Then "no scheme means no constraint grammar — the declaration is wrong"
+    raises Dev::Deps::Resolver::UnknownIntegrationError
+  end
+
   test "a revision ask dispatches to at — no universe query, no scheme" do
     Given "a repository with an addressable space and a revision-pinned declaration"
     sha = "ee3042f8b0279856061f91069a487e4ed6f69475"
@@ -475,7 +525,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
     Then "the pin is minted straight from the lifted address, materialization merged as usual"
     repo.finds.empty?
     repo.ats == [{ id: Dev::Deps::PackageId.new(integration: :cmake, name: "opencell",
-                                                source: "https://github.com/d3mlabs/opencell"),
+      source: "https://github.com/d3mlabs/opencell"),
                    revision: sha }]
     result.size == 1
     result[0].version == sha

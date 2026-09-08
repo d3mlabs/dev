@@ -47,6 +47,38 @@ class Dev::Deps::InstallerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "install dispatches types sharing one integration instance in a single call" do
+    Given "cmake and url deps both wired to one integration instance"
+    dir = Dir.mktmpdir("installer-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
+    deps = [
+      Dev::Deps::Dependency.new(name: "cereal", integration: :cmake, group: :app,
+        version: "sha1", hash: nil, metadata: {}),
+      Dev::Deps::Dependency.new(name: "boost", integration: :url, group: :app,
+        version: nil, hash: "SHA256=aaa", metadata: {}),
+    ]
+    lockfile.lock(deps)
+
+    shared = RecordingIntegration.new
+    call_batches = []
+    shared.define_singleton_method(:install_all) do |dependencies|
+      call_batches << dependencies.map(&:name)
+      @installed_deps.concat(dependencies)
+    end
+    installer = Dev::Deps::Installer.new(
+      lockfile:, integrations: { cmake: shared, url: shared },
+    )
+
+    When "running install"
+    installer.install
+
+    Then "one install_all call with the union — batch artifacts (deps.cmake) stay whole"
+    call_batches == [["cereal", "boost"]]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "install dispatches build group before others" do
     Given "lockfiles with build and app deps"
     dir = Dir.mktmpdir("installer-test-")

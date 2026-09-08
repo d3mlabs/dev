@@ -55,14 +55,18 @@ module Dev
 
       private
 
-      # Dispatch deps to their matching integrations, grouped by type.
+      # Dispatch deps to their matching integrations, grouped by integration
+      # INSTANCE rather than by type symbol: types that install through a
+      # shared instance (Registry install_alias — e.g. :url deps through
+      # :cmake's pipeline) must arrive in one install_all call, or an
+      # integration generating batch artifacts (deps.cmake) would overwrite
+      # its own output with each partial group.
       #
       # @param deps [Array<Dependency>] dependencies to install
       # @return [void]
       sig { params(deps: T::Array[Dependency]).void }
       def dispatch(deps)
-        deps.group_by(&:integration).each do |type, typed_deps|
-          integration = @integrations[type]
+        deps.group_by { |dep| @integrations[dep.integration] }.each do |integration, typed_deps|
           integration&.install_all(typed_deps)
         end
       end

@@ -4,6 +4,8 @@
 require "test_helper"
 require "dev/deps/registry"
 require "dev/deps/dsl"
+require "dev/deps/cache"
+require "tmpdir"
 
 # Anti-drift guard for the integration Registry (lib/dev/deps/registry.rb).
 #
@@ -15,11 +17,8 @@ transform!(RSpock::AST::Transformation)
 class Dev::Deps::RegistryConsistencyTest < Minitest::Test
   DEPS_DIR = File.expand_path("../../../../lib/dev/deps", __dir__)
 
-  # Repositories deliberately not owned by a single integration symbol.
-  REPOSITORY_ALLOWLIST = {
-    "url_repository.rb" =>
-      "UrlRepository is a cmake fetch backend chosen per-dep, not its own integration type",
-  }.freeze
+  # Repositories deliberately not owned by a single integration symbol (none today).
+  REPOSITORY_ALLOWLIST = {}.freeze
 
   # Integrations deliberately not host-wired (none today).
   INTEGRATION_ALLOWLIST = {}.freeze
@@ -81,6 +80,23 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
 
     Then "none are left unwired"
     assert_empty unwired, "scheme classes missing from Registry::INTEGRATIONS: #{unwired.join(", ")}"
+  end
+
+  test "install_alias entries share their target's integration instance" do
+    Given "a scratch project root"
+    dir = Dir.mktmpdir("registry-alias-test-")
+
+    When "building host integrations from the registry"
+    integrations = Dev::Deps::Registry.host_integrations(
+      project_root: Pathname(dir),
+      cache: Dev::Deps::Cache.new(cache_dir: dir),
+    )
+
+    Then ":url deps install through :cmake's instance, so deps.cmake stays whole"
+    integrations.fetch(:cmake).equal?(integrations.fetch(:url))
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
   test "every locker class is wired into the registry" do

@@ -303,36 +303,58 @@ module Dev
         @registered_methods = registered_methods
       end
 
-      # Declare a CMake dependency. Expands github: shorthand if present; the
-      # resulting repo:/url: is the declaration's source coordinate, tag:
-      # and branch: are constraints selecting over the remote's enumerated
-      # refs, and commit: is a revision — an address into the continuous
-      # space, full 40-char SHA only.
+      # Declare a CMake dependency. Expands github: shorthand if present.
+      #
+      # Two universes behind one verb, split by the source's shape:
+      #   - repo:/github: — a git universe under :cmake. tag:/branch: are
+      #     constraints selecting over the remote's enumerated refs; commit:
+      #     is a revision — an address into the continuous space, full
+      #     40-char SHA only.
+      #   - url: — an artifact universe under :url. The URL is the entire
+      #     address, so nothing selects: a tag: here is a display label
+      #     riding materialization, not a constraint.
+      #
+      # cmake_targets:/cmake_namespace: are install instructions (they shape
+      # the generated deps.targets.cmake), so they ride materialization for
+      # both universes.
       #
       # @param name [String, Symbol] dependency name
-      # @param spec [Hash] options (tag:, branch:, commit:, repo:, url:, github:, etc.)
+      # @param spec [Hash] options (tag:, branch:, commit:, repo:, url:, github:,
+      #   cmake_targets:, cmake_namespace:, etc.)
       # @return [void]
       # @raise [InvalidRevisionError] if commit: is not a full 40-char SHA
       # @raise [MissingRefError] if a git-backed dep names no ref at all
       sig { params(name: T.any(String, Symbol), spec: T.untyped).void }
       def cmake(name, **spec)
         spec = expand_github(name.to_s, spec)
-        url = spec.delete(:url)
-        source = spec.delete(:repo) || url
+        url = spec.delete(:url)&.to_s
+        repo = spec.delete(:repo)&.to_s
         revision = spec.delete(:commit)&.to_s
+
+        materialization = {}
+        %i[cmake_targets cmake_namespace].each do |key|
+          value = spec.delete(key)
+          materialization[key.to_s] = value if value
+        end
+
+        if url
+          label = spec.delete(:tag)
+          materialization["version_label"] = label.to_s if label
+          return add_declaration(name, :url, spec, source: url, materialization: materialization)
+        end
 
         if revision && !revision.match?(FULL_SHA)
           raise InvalidRevisionError,
             "cmake #{name} pins commit: #{revision.inspect} — a commit is a full 40-char SHA " \
               "(tags select with tag:)"
         end
-        if url.nil? && revision.nil? && !spec.key?(:tag) && !spec.key?(:branch)
+        if revision.nil? && !spec.key?(:tag) && !spec.key?(:branch)
           raise MissingRefError,
             "cmake #{name} names no tag:, branch:, or commit: — an unconstrained git universe " \
               "would pin an arbitrary ref"
         end
 
-        add_declaration(name, :cmake, spec, source: source&.to_s, revision: revision)
+        add_declaration(name, :cmake, spec, source: repo, revision: revision, materialization: materialization)
       end
 
       # Declare a Ruby gem scoped to this group (group name -> bundler group).

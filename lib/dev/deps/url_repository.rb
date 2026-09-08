@@ -13,25 +13,26 @@ require_relative "repository"
 
 module Dev
   module Deps
-    # Fetches URL-based dependencies by downloading and computing SHA256.
+    # Reports URL-based dependencies (:url integration): the URL is the
+    # entire address, and the universe is whatever the URI serves right now —
+    # an observable-now singleton, the same semantics a Steam branch tip has.
     #
-    # The artifact is downloaded to a temp file and hashed.
-    # Callers (e.g. Integration) are responsible for caching the result.
+    # find IS the observation: the artifact is downloaded and hashed
+    # (trust-on-first-use) so the SHA256 rides as the version's digest and
+    # installs verify against the lockfile. The download lives here, in find,
+    # deliberately — find is the I/O operation, and keeping it here is what
+    # keeps Repository#at pure. Versions don't exist in this universe (the
+    # declared tag: is a display label riding materialization), so the
+    # version is empty and the Resolver mints it back from the label.
     class UrlRepository < Repository
       extend T::Sig
 
       class DownloadError < StandardError; end
 
-      # Report a URL dependency's universe: the one artifact behind the URL,
-      # as a singleton.
-      #
-      # Dev-enforced integrity, trust-on-first-use: the artifact is downloaded
-      # and hashed at resolve time, and that SHA256 rides as the version's
-      # digest. The version is the probed "tag" label; URLs with no tag report
-      # an empty version the Resolver mints back to nil.
+      # Report a URL dependency's universe: the one artifact behind the URL.
       #
       # @param id [PackageId] source is the download URL
-      # @param probe [String, nil] optional version label for the artifact
+      # @param probe [String, nil] ignored (the universe is the singleton)
       # @return [Package] a singleton universe
       # @raise [DownloadError] if the download fails
       sig { override.params(id: PackageId, probe: T.nilable(String)).returns(Package) }
@@ -44,10 +45,10 @@ module Dev
           id: id,
           versions: [
             PackageVersion.new(
-              version: probe.to_s,
+              version: "",
               digest: digest,
               artifacts: { "default" => Artifact.new(uri: url, digest: digest) },
-              metadata: { "url" => url, "downloaded_path" => path },
+              metadata: { "url" => url },
               # A downloaded archive is self-contained: its contents are the
               # whole dependency.
               declarations: Declarations::Resolved.new([]),

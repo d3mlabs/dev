@@ -144,16 +144,21 @@ module Dev
         repository = @repositories[decl.integration]
         raise UnknownIntegrationError, "no repository registered for #{decl.integration.inspect}" unless repository
 
+        # Scheme-less integrations (url) have no constraint grammar at all:
+        # an empty ask takes the universe as reported, a non-empty one is the
+        # declaration being wrong.
         scheme = @schemes[decl.integration]
-        raise UnknownIntegrationError, "no version scheme registered for #{decl.integration.inspect}" unless scheme
+        if scheme.nil? && !decl.constraint.empty?
+          raise UnknownIntegrationError,
+            "#{decl.integration.inspect} has no version scheme — it cannot evaluate " \
+              "constraint #{decl.constraint.inspect}"
+        end
 
-        # The probe is the constraint's exact coordinate (scheme-extracted),
-        # the access path for universes that cannot enumerate. The constraint
-        # itself never reaches the repository — evaluation happens below.
-        package = repository.find(package_id(decl), probe: scheme.pin(decl.constraint))
+        package = repository.find(package_id(decl), probe: scheme&.pin(decl.constraint))
         explicit = platforms.compact
         candidates = package.versions.select do |version|
-          satisfies?(scheme, version, decl.constraint) && publishes_platforms?(version, explicit)
+          (scheme.nil? || satisfies?(scheme, version, decl.constraint)) &&
+            publishes_platforms?(version, explicit)
         end
         raise NoSatisfyingVersionError, no_satisfying_message(decl, package, explicit) if candidates.empty?
 
@@ -161,7 +166,18 @@ module Dev
         # rows); selection is over distinct version strings, first fact wins.
         by_version = T.let({}, T::Hash[String, PackageVersion])
         candidates.each { |version| by_version[version.version] ||= version }
-        by_version.fetch(T.must(scheme.sort(by_version.keys).last))
+        by_version.fetch(T.must(sorted_versions(scheme, by_version.keys).last))
+      end
+
+      # Order distinct version strings ascending: the scheme's total order,
+      # or the universe's reported order when no scheme exists.
+      #
+      # @param scheme [VersionScheme, nil] the integration's semantics, if any
+      # @param versions [Array<String>] distinct version strings
+      # @return [Array<String>]
+      sig { params(scheme: T.nilable(VersionScheme), versions: T::Array[String]).returns(T::Array[String]) }
+      def sorted_versions(scheme, versions)
+        scheme ? scheme.sort(versions) : versions
       end
 
       # Constraint satisfaction, treating versions the scheme cannot parse as
@@ -204,7 +220,9 @@ module Dev
       # (install instructions the repository never saw), the post-install
       # hook, and the install-scoping axes. The version digest becomes the
       # pin's integrity hash uniformly; an empty version string (ecosystems
-      # that expose no version, e.g. brew casks) becomes a nil pin version.
+      # that expose no version — brew casks, url artifacts) becomes a nil pin
+      # version, unless the author named a display label (a url tag:), which
+      # is promoted out of the materialization into the version slot.
       # Versions carrying per-platform artifacts get them projected into
       # install facts against the declared platforms.
       #
@@ -221,6 +239,7 @@ module Dev
       end
       def mint(chosen, decl, platforms)
         metadata = chosen.metadata.merge(decl.materialization)
+        pin_version = chosen.version.empty? ? metadata.delete("version_label") : chosen.version
         hash = chosen.digest
         if chosen.artifacts.any? && (platforms.any? { |p| !p.nil? } || metadata.key?("target"))
           hash = project_artifacts(metadata, chosen, platforms)
@@ -230,7 +249,7 @@ module Dev
           name: decl.name,
           integration: decl.integration,
           group: decl.scope.group,
-          version: chosen.version.empty? ? nil : chosen.version,
+          version: pin_version,
           hash: hash,
           metadata: metadata,
         )

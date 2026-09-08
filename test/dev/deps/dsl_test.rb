@@ -6,8 +6,8 @@ require "dev/deps"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::DSLTest < Minitest::Test
-  test "cmake() produces ScopedDeclaration with cmake integration" do
-    When "defining a cmake dep"
+  test "cmake url: routes to the :url integration — the URL is the whole address" do
+    When "defining a url-backed cmake dep"
     config = Dev::Deps.define do
       group :app do
         cmake "boost",
@@ -16,15 +16,15 @@ class Dev::Deps::DSLTest < Minitest::Test
       end
     end
 
-    Then "the url is the source coordinate; only the tag remains a constraint"
+    Then "the url is the source; the tag is a display label, never a constraint"
     decls = config.declarations
     decls.size == 1
     decls[0].name == "boost"
-    decls[0].integration == :cmake
+    decls[0].integration == :url
     decls[0].scope.group == :app
     decls[0].source == "https://example.com/boost.tar.gz"
-    decls[0].constraint["tag"] == "boost-1.90.0"
-    !decls[0].constraint.key?("url")
+    decls[0].constraint == {}
+    decls[0].materialization["version_label"] == "boost-1.90.0"
   end
 
   test "github: shorthand expands org/repo to full URL" do

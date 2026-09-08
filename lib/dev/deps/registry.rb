@@ -22,6 +22,7 @@ require_relative "xcode_repository"
 require_relative "xcode_integration"
 require_relative "pip_repository"
 require_relative "pip_integration"
+require_relative "url_repository"
 require_relative "brew_cask_repository"
 require_relative "brew_scheme"
 require_relative "exact_scheme"
@@ -77,10 +78,16 @@ module Dev
       #   type, or nil for resolve-only / container-only types
       # @param integration_needs [Array<Symbol>] extra kwargs the integration takes
       #   (beyond the always-passed repository: and cache:)
+      # @param install_alias [Symbol, nil] another entry's symbol whose
+      #   integration INSTANCE installs this type's deps too (e.g. :url deps
+      #   install through :cmake's pipeline). Sharing the instance matters:
+      #   integrations that generate batch artifacts (deps.cmake) must see
+      #   both types' deps in one install_all call, and the Installer groups
+      #   dispatch by instance. Mutually exclusive with integration.
       # @param scope [Symbol] one of HOST / CONTAINER / BOTH
       Entry = Data.define(
         :symbol, :repository, :repository_needs, :scheme, :scheme_args, :locker, :locker_needs,
-        :integration, :integration_needs, :scope,
+        :integration, :integration_needs, :install_alias, :scope,
       ) do
         extend T::Sig
 
@@ -115,6 +122,9 @@ module Dev
         sig { returns(T::Array[Symbol]) }
         def integration_needs = to_h.fetch(:integration_needs)
 
+        sig { returns(T.nilable(Symbol)) }
+        def install_alias = to_h.fetch(:install_alias)
+
         sig { returns(Symbol) }
         def scope = to_h.fetch(:scope)
 
@@ -130,10 +140,12 @@ module Dev
             locker: T.nilable(T.class_of(Locker)),
             locker_needs: T::Array[Symbol],
             integration_needs: T::Array[Symbol],
+            install_alias: T.nilable(Symbol),
           ).void
         end
         def initialize(symbol:, repository:, scheme:, integration:, scope:,
-                       repository_needs: [], scheme_args: {}, locker: nil, locker_needs: [], integration_needs: [])
+                       repository_needs: [], scheme_args: {}, locker: nil, locker_needs: [],
+                       integration_needs: [], install_alias: nil)
           super
         end
 
@@ -181,6 +193,20 @@ module Dev
             scheme: GitScheme,
             integration: CmakeIntegration,
             integration_needs: %i[project_root],
+            scope: HOST,
+          ),
+          # url deps are declared with the cmake DSL verb (url:) but are a
+          # separate universe: the URL is the entire address and the artifact
+          # behind it is the one version, downloaded and TOFU-hashed by find.
+          # Scheme-less — a url declaration carries no constraint (the tag:
+          # label is naming, not selection) — and installed through cmake's
+          # integration instance so a mixed project generates one deps.cmake.
+          Entry.new(
+            symbol: :url,
+            repository: UrlRepository,
+            scheme: nil,
+            integration: nil,
+            install_alias: :cmake,
             scope: HOST,
           ),
           Entry.new(
@@ -320,18 +346,27 @@ module Dev
             python_version:,
             taps:,
           }
-          INTEGRATIONS.each_with_object({}) do |entry, integrations|
+          integrations = INTEGRATIONS.each_with_object({}) do |entry, hash|
             next unless entry.host?
 
             # T.unsafe: each entry's constructor takes a runtime-selected
             # keyword set (integration_needs), which Sorbet cannot check
             # statically; the constructors' own sigs validate at runtime.
-            integrations[entry.symbol] = T.unsafe(T.must(entry.integration)).new(
+            hash[entry.symbol] = T.unsafe(T.must(entry.integration)).new(
               repository: build_repository(entry, context),
               cache:,
               **T.unsafe(context).slice(*entry.integration_needs),
             )
           end
+
+          # Aliased types share their target's INSTANCE (not just its class):
+          # the Installer groups dispatch by instance, so both types' deps
+          # arrive in one install_all call and batch artifacts stay whole.
+          INTEGRATIONS.each do |entry|
+            alias_target = entry.install_alias
+            integrations[entry.symbol] = integrations.fetch(alias_target) if alias_target
+          end
+          integrations
         end
 
         # @param entry [Entry]
