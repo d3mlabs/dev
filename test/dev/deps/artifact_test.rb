@@ -24,14 +24,6 @@ class Dev::Deps::ArtifactTest < Minitest::Test
     artifact.digest.nil?
   end
 
-  test "rejects a payload with no uri" do
-    When "a backing service omits the download location"
-    Dev::Deps::Artifact.new(uri: nil)
-
-    Then
-    raises Dev::Deps::Artifact::MissingUriError
-  end
-
   test "rejects a payload with a blank uri" do
     When "a backing service returns an empty download location"
     Dev::Deps::Artifact.new(uri: "")

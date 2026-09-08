@@ -19,7 +19,7 @@ module Dev
     class Artifact
       extend T::Sig
 
-      # The artifact has no URI, so dev cannot locate the bytes.
+      # The artifact's URI is blank, so dev cannot locate the bytes.
       class MissingUriError < StandardError; end
 
       # @return [String] where the bytes live
@@ -31,19 +31,19 @@ module Dev
       sig { returns(T.nilable(String)) }
       attr_reader :digest
 
-      # The uri parameter is typed nilable because artifacts are built from
-      # backing-service payloads (registry JSON, GraphQL responses) where the
-      # field can be absent — validating it here is boundary coercion, not
-      # defensive programming against internal callers.
+      # Absent-uri payloads are the producing repository's problem to coerce
+      # at its parsing seam (ficsit falls back to the canonical download URL);
+      # by this constructor the type demands a String. Non-emptiness is the
+      # one invariant the type can't express, so it stays a guard.
       #
-      # @param uri [String, nil] where the bytes live
+      # @param uri [String] where the bytes live
       # @param digest [String, nil] published integrity digest, if any
-      # @raise [MissingUriError] if uri is missing or blank
-      sig { params(uri: T.nilable(String), digest: T.nilable(String)).void }
+      # @raise [MissingUriError] if uri is blank
+      sig { params(uri: String, digest: T.nilable(String)).void }
       def initialize(uri:, digest: nil)
-        raise MissingUriError, "an artifact without a uri cannot be fetched" if uri.nil? || uri.empty?
+        raise MissingUriError, "an artifact without a uri cannot be fetched" if uri.empty?
 
-        @uri = T.let(uri, String)
+        @uri = uri
         @digest = digest
         freeze
       end
