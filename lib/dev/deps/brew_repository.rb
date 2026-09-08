@@ -115,7 +115,7 @@ module Dev
       # @raise [BrewInfoError] if the command fails
       sig { params(formulae: T::Array[String]).returns(T::Array[T::Hash[String, T.untyped]]) }
       def brew_info_all(formulae)
-        out, _err, status = Open3.capture3("brew", "info", "--json=v1", *formulae)
+        out, _err, status = T.unsafe(Open3).capture3("brew", "info", "--json=v1", *formulae)
         raise BrewInfoError, "brew info --json=v1 #{formulae.join(" ")} failed" unless status.success?
 
         JSON.parse(out)
