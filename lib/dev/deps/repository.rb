@@ -3,6 +3,7 @@
 
 require_relative "package"
 require_relative "package_id"
+require_relative "package_version"
 
 module Dev
   module Deps
@@ -21,6 +22,10 @@ module Dev
 
       # The universe has no package under the requested identity.
       class PackageNotFoundError < StandardError; end
+
+      # A revision was addressed against an integration whose universe has no
+      # continuous space (nothing exists outside the published versions).
+      class NoAddressableSpaceError < StandardError; end
 
       # Report the package under this identity.
       #
@@ -46,6 +51,31 @@ module Dev
       sig { params(id: PackageId, probe: T.nilable(String)).returns(Package) }
       def find(id, probe: nil)
         raise NotImplementedError, "#{self.class}#find must be implemented"
+      end
+
+      # Lift an addressable revision into a version — the continuous-space
+      # counterpart of find.
+      #
+      # Where find queries the discrete published universe (I/O against the
+      # backing service), at lifts an address the author already chose: pure,
+      # no I/O, ever. The address is trusted at resolve time and
+      # dereferenced/verified at install — the same pin-as-assertion
+      # semantics a Steam buildid has. No scheme runs over the result and the
+      # Resolver mints the pin from it directly: a revision forgoes
+      # resolution by definition.
+      #
+      # Overriding this method is what declares that an integration has a
+      # continuous space at all (git commit SHAs, exact Xcode versions); the
+      # base refuses, and the Resolver lets that refusal propagate.
+      #
+      # @param id [PackageId] the package's identity
+      # @param revision [String] address in the ecosystem's canonical spelling
+      # @return [PackageVersion] the lifted version and its facts
+      # @raise [NoAddressableSpaceError] unless the integration overrides
+      sig { params(id: PackageId, revision: String).returns(PackageVersion) }
+      def at(id, revision)
+        raise NoAddressableSpaceError,
+          "#{self.class} has no addressable space: #{id.name} cannot be pinned at #{revision.inspect}"
       end
     end
   end

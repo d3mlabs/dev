@@ -77,7 +77,7 @@ module Dev
           next if resolved.key?(id)
 
           declared = platforms[[decl.integration, decl.name]] || []
-          chosen = choose(decl, declared)
+          chosen = decl.revision ? address(decl) : choose(decl, declared)
           resolved[id] = mint(chosen, decl, declared)
 
           # Transitive deps inherit the declaring dep's Scope wholesale: a dep
@@ -103,6 +103,26 @@ module Dev
       end
 
       private
+
+      # Lift an addressed ask. The author forewent resolution: no universe is
+      # queried, no scheme runs — the repository lifts the revision into a
+      # version (Repository#at is pure) and the pin is minted from it
+      # directly. A repository with no continuous space refuses, and that
+      # refusal propagates: an address into a space that doesn't exist is the
+      # declaration being wrong.
+      #
+      # @param decl [ScopedDeclaration] a revision-pinned declaration
+      # @return [PackageVersion] the lifted version
+      # @raise [UnknownIntegrationError] if the integration has no repository
+      # @raise [Repository::NoAddressableSpaceError] if the integration's
+      #   universe has no continuous space
+      sig { params(decl: ScopedDeclaration).returns(PackageVersion) }
+      def address(decl)
+        repository = @repositories[decl.integration]
+        raise UnknownIntegrationError, "no repository registered for #{decl.integration.inspect}" unless repository
+
+        repository.at(package_id(decl), T.must(decl.revision))
+      end
 
       # Ask the declaration's repository for the package universe and pick the
       # highest version that satisfies the constraint (per the integration's

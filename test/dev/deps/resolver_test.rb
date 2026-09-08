@@ -16,13 +16,17 @@ require "dev/deps/exact_scheme"
 require "dev/deps/semver_scheme"
 
 # Stub repository over a canned universe: name -> [PackageVersion, ...].
-# Records every find call (id + probe) for assertion.
+# Records every find call (id + probe) and at call (id + revision) for
+# assertion. addressed: maps revision -> PackageVersion; an unmapped
+# revision falls through to the base's NoAddressableSpaceError.
 class StubRepository < Dev::Deps::Repository
-  attr_reader :finds
+  attr_reader :finds, :ats
 
-  def initialize(universes: {})
+  def initialize(universes: {}, addressed: {})
     @universes = universes
+    @addressed = addressed
     @finds = []
+    @ats = []
   end
 
   def find(id, probe: nil)
@@ -31,6 +35,11 @@ class StubRepository < Dev::Deps::Repository
       raise Dev::Deps::Repository::PackageNotFoundError, "no package #{id.name}"
     end
     Dev::Deps::Package.new(id: id, versions: versions)
+  end
+
+  def at(id, revision)
+    @ats << { id: id, revision: revision }
+    @addressed.fetch(revision) { super }
   end
 end
 
@@ -446,6 +455,44 @@ class Dev::Deps::ResolverTest < Minitest::Test
     result[0].metadata["commit"] == "abc"
     result[0].metadata["install_dir"] == "~/.dev/engines/ue"
     result[0].metadata["asset_pattern"] == "*.tar.zst.*"
+  end
+
+  test "a revision ask dispatches to at — no universe query, no scheme" do
+    Given "a repository with an addressable space and a revision-pinned declaration"
+    sha = "ee3042f8b0279856061f91069a487e4ed6f69475"
+    repo = StubRepository.new(addressed: {
+      sha => version(sha, metadata: { "repo" => "https://github.com/d3mlabs/opencell" }),
+    })
+    declarations = [
+      declaration(name: "opencell", integration: :cmake, group: :build,
+        source: "https://github.com/d3mlabs/opencell", revision: sha,
+        materialization: { "cmake_targets" => ["opencell"] }),
+    ]
+
+    When "resolving"
+    result = resolver_for(:cmake, repo).resolve(declarations)
+
+    Then "the pin is minted straight from the lifted address, materialization merged as usual"
+    repo.finds.empty?
+    repo.ats == [{ id: Dev::Deps::PackageId.new(integration: :cmake, name: "opencell",
+                                                source: "https://github.com/d3mlabs/opencell"),
+                   revision: sha }]
+    result.size == 1
+    result[0].version == sha
+    result[0].metadata["repo"] == "https://github.com/d3mlabs/opencell"
+    result[0].metadata["cmake_targets"] == ["opencell"]
+  end
+
+  test "a revision ask against an integration with no continuous space fails loudly" do
+    Given "a revision pin on a repository that only enumerates"
+    repo = StubRepository.new(universes: { "llvm" => [version("18.1.8")] })
+    declarations = [declaration(name: "llvm", integration: :brew, group: :build, revision: "18")]
+
+    When "resolving"
+    resolver_for(:brew, repo).resolve(declarations)
+
+    Then "the repository's refusal propagates — no silent fallback to find"
+    raises Dev::Deps::Repository::NoAddressableSpaceError
   end
 
   test "raises ConflictingDeclarationError when one name is pinned at two revisions" do
