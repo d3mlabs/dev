@@ -683,6 +683,27 @@ class BuildContainerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "build_contexts_from_lockfile reads integration-nested lockfiles" do
+    Given "a build-deps.lock in the nested format (integration -> name -> attrs)"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "build-deps.lock"), <<~LOCK)
+      gh:
+        UnrealEngine:
+          group: build
+          version: "5.6.1-css-83"
+          install_dir: "~/.dev/engines/unreal-engine-css"
+    LOCK
+
+    When "computing build contexts"
+    contexts = Dev::BuildContainer.build_contexts_from_lockfile(Pathname(dir))
+
+    Then
+    contexts == { "unrealengine" => File.join(File.expand_path("~/.dev/engines/unreal-engine-css"), "5.6.1-css-83") }
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "build_contexts_from_lockfile points at the version-keyed subdir when a version is locked" do
     Given "a build-deps.lock whose engine dep declares a version"
     dir = Dir.mktmpdir("build-container-test-")
@@ -748,6 +769,29 @@ class BuildContainerTest < Minitest::Test
 
     Then
     resolved == ["/opt/engines/ue:/ue"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_dir_versions collects env-nested deps from nested-format lockfiles" do
+    Given "a nested-format build-deps.lock with an env-scoped install_dir"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "build-deps.lock"), <<~LOCK)
+      env:
+        ci:
+          gh:
+            UnrealEngine:
+              group: build
+              version: "5.6.1-css-83"
+              install_dir: "/opt/engines/ue"
+    LOCK
+
+    When "collecting install_dir versions"
+    versions = Dev::BuildContainer.install_dir_versions(Pathname(dir))
+
+    Then
+    versions == { "/opt/engines/ue" => "5.6.1-css-83" }
 
     Cleanup
     FileUtils.rm_rf(dir)

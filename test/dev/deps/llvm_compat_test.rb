@@ -31,6 +31,26 @@ class LlvmCompatTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "project_needs_llvm? detects llvm nested under its integration" do
+    Given "a nested-format lockfile with llvm under brew"
+    dir = Dir.mktmpdir("dev-llvm-compat-")
+    yaml_content = {
+      "brew" => {
+        "llvm" => { "group" => "build", "version" => "22.1.0" },
+      },
+    }
+    File.write(File.join(dir, "build-deps.lock"), YAML.dump(yaml_content))
+
+    When "checking for llvm"
+    result = Dev::ShadowenvLlvm.project_needs_llvm?(Pathname(dir))
+
+    Then
+    result == true
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "project_needs_llvm? returns false when no llvm in build-deps.lock" do
     Given "a YAML lockfile without llvm"
     dir = Dir.mktmpdir("dev-llvm-compat-")

@@ -24,8 +24,6 @@ ENV["PATH"] = "#{File.dirname(RbConfig.ruby)}:#{ENV['PATH']}"
 DEV_ROOT = File.expand_path("..", __dir__)
 $LOAD_PATH.unshift(File.join(DEV_ROOT, "lib")) unless $LOAD_PATH.include?(File.join(DEV_ROOT, "lib"))
 
-load File.join(DEV_ROOT, "dependencies.rb")
-
 ENV["BUNDLE_GEMFILE"] ||= File.join(DEV_ROOT, "Gemfile")
 require "bundler/setup"
 
@@ -41,7 +39,7 @@ class RbiOutOfDateError < StandardError; end
 # CLI::UI.spinner returns false when the task fails (debrief prints exceptions
 # but never re-raises), so we check each return value explicitly.
 CLI::UI.frame("Type checking...") do
-  unless CLI::UI.spinner("Install Bundler") { ensure_bundler!(DEV_ROOT) }
+  unless CLI::UI.spinner("Install Bundler") { EnsureBundler.ensure!(DEV_ROOT) }
     exit 1
   end
 

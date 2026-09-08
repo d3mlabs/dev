@@ -1,28 +1,63 @@
-# typed: false
+# typed: strict
 # frozen_string_literal: true
 
-require_relative "dependency_declaration"
+require "sorbet-runtime"
+require_relative "declaration"
+require_relative "scope"
+require_relative "scoped_declaration"
 
 module Dev
   module Deps
     # Top-level DSL evaluated inside Dev::Deps.define { ... }.
     class DSL
+      extend T::Sig
+
       # Group a top-level `gem` declaration lands in when none is given. Bundler's
       # default (unscoped) group, mirroring a hand-written Gemfile's top section.
       DEFAULT_GEM_GROUP = :app
 
-      attr_reader :taps, :groups, :declarations, :ruby_version_requirement,
-        :lua_version_value, :python_version_value, :registered_integrations, :registered_methods
+      # @return [Hash{String => Hash}] declared taps by name
+      sig { returns(T::Hash[String, T::Hash[String, T.untyped]]) }
+      attr_reader :taps
 
+      # @return [Hash{String => Hash}] group name → group config
+      sig { returns(T::Hash[String, T.untyped]) }
+      attr_reader :groups
+
+      # @return [Array<ScopedDeclaration>] all declared dependencies
+      sig { returns(T::Array[ScopedDeclaration]) }
+      attr_reader :declarations
+
+      # @return [String, nil] declared Ruby version
+      sig { returns(T.nilable(String)) }
+      attr_reader :ruby_version_requirement
+
+      # @return [String, nil] declared Lua version
+      sig { returns(T.nilable(String)) }
+      attr_reader :lua_version_value
+
+      # @return [String, nil] declared Python minor version
+      sig { returns(T.nilable(String)) }
+      attr_reader :python_version_value
+
+      # @return [Hash{Symbol => Class, String}] custom integration registrations
+      sig { returns(T::Hash[Symbol, T.untyped]) }
+      attr_reader :registered_integrations
+
+      # @return [Array<Symbol>] dynamically registered integration method names
+      sig { returns(T::Array[Symbol]) }
+      attr_reader :registered_methods
+
+      sig { void }
       def initialize
-        @taps   = {}
-        @groups = {}
-        @declarations = []
-        @ruby_version_requirement = nil
-        @lua_version_value = nil
-        @python_version_value = nil
-        @registered_integrations = {}
-        @registered_methods = []
+        @taps = T.let({}, T::Hash[String, T::Hash[String, T.untyped]])
+        @groups = T.let({}, T::Hash[String, T.untyped])
+        @declarations = T.let([], T::Array[ScopedDeclaration])
+        @ruby_version_requirement = T.let(nil, T.nilable(String))
+        @lua_version_value = T.let(nil, T.nilable(String))
+        @python_version_value = T.let(nil, T.nilable(String))
+        @registered_integrations = T.let({}, T::Hash[Symbol, T.untyped])
+        @registered_methods = T.let([], T::Array[Symbol])
       end
 
       # Declare the project's Ruby toolchain — a first-class dependency, on equal
@@ -33,6 +68,8 @@ module Dev
       # interpreter every other dependency and command runs under.
       #
       # @param version [String, Symbol] exact Ruby version (e.g. "4.0.5")
+      # @return [void]
+      sig { params(version: T.any(String, Symbol)).void }
       def ruby(version)
         @ruby_version_requirement = version.to_s.strip
       end
@@ -40,6 +77,8 @@ module Dev
       # Declare the Lua version for LuaRocks integration.
       #
       # @param version [String, Symbol] Lua version (e.g. "5.1")
+      # @return [void]
+      sig { params(version: T.any(String, Symbol)).void }
       def lua_version(version)
         @lua_version_value = version.to_s.strip
       end
@@ -51,6 +90,8 @@ module Dev
       # specially (pre-dispatch), not through the resolver -> lockfile pipeline.
       #
       # @param version [String, Symbol] Python minor version (e.g. "3.12")
+      # @return [void]
+      sig { params(version: T.any(String, Symbol)).void }
       def python(version)
         @python_version_value = version.to_s.strip
       end
@@ -64,17 +105,23 @@ module Dev
       # @param name [String, Symbol] gem name
       # @param version [String, nil] version requirement (e.g. "~> 1.17")
       # @param opts [Hash] additional bundler options (e.g. require:, git:)
+      # @return [void]
+      sig { params(name: T.any(String, Symbol), version: T.nilable(String), opts: T.untyped).void }
       def gem(name, version = nil, **opts)
         constraint = opts.each_with_object({}) { |(k, v), h| h[k.to_s] = v }
         constraint["version"] = version.to_s if version
-        @declarations << DependencyDeclaration.new(
-          name: name.to_s,
-          integration: :bundler,
-          constraint:,
-          group: DEFAULT_GEM_GROUP,
+        @declarations << ScopedDeclaration.new(
+          declaration: Declaration.new(name: name.to_s, integration: :bundler, constraint:),
+          scope: Scope.new(group: DEFAULT_GEM_GROUP),
         )
       end
 
+      # Declare a Homebrew tap.
+      #
+      # @param name [String, Symbol] tap identifier (e.g. "d3mlabs/d3mlabs")
+      # @param url [String, nil] tap URL; file:// means a local tap
+      # @return [void]
+      sig { params(name: T.any(String, Symbol), url: T.untyped).void }
       def tap(name, url: nil)
         name_str = name.to_s
         @taps[name_str] = {
@@ -88,6 +135,8 @@ module Dev
       #
       # @param name [Symbol, String] integration identifier (e.g. :wow_curseforge)
       # @param klass [Class, String] Integration subclass or its name
+      # @return [void]
+      sig { params(name: T.any(Symbol, String), klass: T.untyped).void }
       def register(name, klass)
         sym = name.to_sym
         @registered_integrations[sym] = klass
@@ -104,6 +153,15 @@ module Dev
       #   Sugar that stamps every member declaration, exactly as platform: does; install
       #   filters against the detected host OS (the lockfile stays universal — all hosts'
       #   deps are resolved and locked, filtering happens at install, never at resolve).
+      # @return [void]
+      sig do
+        params(
+          name: T.any(String, Symbol),
+          platform: T.nilable(String),
+          host: T.nilable(Symbol),
+          block: T.nilable(T.proc.bind(GroupDSL).void),
+        ).void
+      end
       def group(name, platform: nil, host: nil, &block)
         group_name = name.to_s
         group_dsl = GroupDSL.new(group: group_name.to_sym, platform:, host:, registered_methods: @registered_methods)
@@ -115,23 +173,45 @@ module Dev
 
     # DSL for per-environment entries (inside group :build for env-specific brew).
     class EnvDSL
+      extend T::Sig
+
       class EmptyNameError < StandardError; end
 
+      # @return [Array<ScopedDeclaration>] declarations made inside this env block
+      sig { returns(T::Array[ScopedDeclaration]) }
       attr_reader :declarations
 
       # @param group [Symbol] enclosing group, stamped onto declarations
       # @param platform [String, nil] enclosing group's platform
       # @param host [Symbol, nil] enclosing group's host OS
       # @param env [String, nil] environment name ("ci" / "dev"), stamped onto declarations
+      sig do
+        params(
+          group: Symbol,
+          platform: T.nilable(String),
+          host: T.nilable(Symbol),
+          env: T.nilable(String),
+        ).void
+      end
       def initialize(group: :app, platform: nil, host: nil, env: nil)
-        @brew = []
-        @declarations = []
+        @brew = T.let([], T::Array[T.untyped])
+        @declarations = T.let([], T::Array[ScopedDeclaration])
         @group = group
         @platform = platform
         @host = host
         @env = env
       end
 
+      # Declare a Homebrew formula/cask scoped to this environment.
+      #
+      # The options are sorted into the declaration's fields: tap: is the
+      # source coordinate, cask: routes to the :cask integration (a separate
+      # universe), and what remains (version:) is the constraint.
+      #
+      # @param name [String, Symbol] formula or cask name
+      # @param opts [Hash] options (tap:, version:, cask:)
+      # @return [void]
+      sig { params(name: T.any(String, Symbol), opts: T.untyped).void }
       def brew(name, **opts)
         name_str = name.to_s
         raise EmptyNameError, "brew dependency name cannot be empty" if name_str.empty?
@@ -141,23 +221,33 @@ module Dev
         else
           @brew << { name_str => stringify_keys(opts) }
         end
-        @declarations << DependencyDeclaration.new(
-          name: name_str,
-          integration: :brew,
-          constraint: stringify_keys(opts),
-          group: @group,
+
+        constraint = opts.dup
+        cask = constraint.delete(:cask)
+        tap = constraint.delete(:tap)
+        @declarations << ScopedDeclaration.new(
+          declaration: Declaration.new(
+            name: name_str,
+            integration: cask ? :cask : :brew,
+            constraint: stringify_keys(constraint),
+            source: tap&.to_s,
+          ),
+          scope: Scope.new(group: @group, host: @host, env: @env),
           platform: @platform,
-          host: @host,
-          env: @env,
         )
       end
 
+      # @return [Hash] container-build projection of this env block
+      sig { returns(T::Hash[String, T.untyped]) }
       def to_h
         { "brew" => @brew }
       end
 
       private
 
+      # @param hash [Hash] symbol-keyed options
+      # @return [Hash] the same options with string keys
+      sig { params(hash: T::Hash[T.untyped, T.untyped]).returns(T::Hash[String, T.untyped]) }
       def stringify_keys(hash)
         hash.each_with_object({}) { |(k, v), h| h[k.to_s] = v }
       end
@@ -165,31 +255,106 @@ module Dev
 
     # DSL for group-scoped deps: declarations (app/test), brew + nested env (build).
     class GroupDSL
+      extend T::Sig
+
       class EmptyNameError < StandardError; end
 
+      # A commit: pin that is not a full 40-char SHA. Conflict rejection
+      # compares revisions textually, so only the canonical spelling keeps
+      # equality trustworthy — and today's silent fall-through (a short
+      # "commit" quietly resolved as a tag) was a lie worth killing.
+      class InvalidRevisionError < StandardError; end
+
+      # A git-backed cmake dep with nothing to select or address: no tag:, no
+      # branch:, no commit:. An unconstrained enumeration would pin an
+      # arbitrary ref, so the ask must say what it wants.
+      class MissingRefError < StandardError; end
+
+      # The canonical git address: a full 40-char lowercase hex SHA.
+      FULL_SHA = /\A[0-9a-f]{40}\z/
+
+      # The artifact target a ficsit mod materializes when no group platform
+      # says otherwise: the Windows game build, which every mod publishes.
+      FICSIT_DEFAULT_TARGET = "Windows"
+
+      # @return [Array<ScopedDeclaration>] declarations made inside this group
+      sig { returns(T::Array[ScopedDeclaration]) }
       attr_reader :declarations
 
       # @param group [Symbol] group name (e.g. :app, :test, :build)
       # @param platform [String, nil] platform stamped onto every declaration in this group
       # @param host [Symbol, nil] host OS stamped onto every declaration in this group
       # @param registered_methods [Array<Symbol>] dynamically registered integration methods
+      sig do
+        params(
+          group: Symbol,
+          platform: T.nilable(String),
+          host: T.nilable(Symbol),
+          registered_methods: T::Array[Symbol],
+        ).void
+      end
       def initialize(group:, platform: nil, host: nil, registered_methods: [])
         @group = group
         @platform = platform
         @host = host
-        @declarations = []
-        @brew    = []
-        @envs    = {}
+        @declarations = T.let([], T::Array[ScopedDeclaration])
+        @brew = T.let([], T::Array[T.untyped])
+        @envs = T.let({}, T::Hash[String, T.untyped])
         @registered_methods = registered_methods
       end
 
       # Declare a CMake dependency. Expands github: shorthand if present.
       #
+      # Two universes behind one verb, split by the source's shape:
+      #   - repo:/github: — a git universe under :cmake. tag:/branch: are
+      #     constraints selecting over the remote's enumerated refs; commit:
+      #     is a revision — an address into the continuous space, full
+      #     40-char SHA only.
+      #   - url: — an artifact universe under :url. The URL is the entire
+      #     address, so nothing selects: a tag: here is a display label
+      #     riding materialization, not a constraint.
+      #
+      # cmake_targets:/cmake_namespace: are install instructions (they shape
+      # the generated deps.targets.cmake), so they ride materialization for
+      # both universes.
+      #
       # @param name [String, Symbol] dependency name
-      # @param spec [Hash] options (tag:, repo:, url:, github:, etc.)
+      # @param spec [Hash] options (tag:, branch:, commit:, repo:, url:, github:,
+      #   cmake_targets:, cmake_namespace:, etc.)
+      # @return [void]
+      # @raise [InvalidRevisionError] if commit: is not a full 40-char SHA
+      # @raise [MissingRefError] if a git-backed dep names no ref at all
+      sig { params(name: T.any(String, Symbol), spec: T.untyped).void }
       def cmake(name, **spec)
-        spec = expand_github(name, spec)
-        add_declaration(name, :cmake, spec)
+        spec = expand_github(name.to_s, spec)
+        url = spec.delete(:url)&.to_s
+        repo = spec.delete(:repo)&.to_s
+        revision = spec.delete(:commit)&.to_s
+
+        materialization = {}
+        %i[cmake_targets cmake_namespace].each do |key|
+          value = spec.delete(key)
+          materialization[key.to_s] = value if value
+        end
+
+        if url
+          label = spec.delete(:tag)
+          materialization["version_label"] = label.to_s if label
+          return add_declaration(name, :url, spec, source: url, materialization: materialization)
+        end
+
+        if revision && !revision.match?(FULL_SHA)
+          raise InvalidRevisionError,
+            "cmake #{name} pins commit: #{revision.inspect} — a commit is a full 40-char SHA " \
+              "(tags select with tag:)"
+        end
+        if revision.nil? && !spec.key?(:tag) && !spec.key?(:branch)
+          raise MissingRefError,
+            "cmake #{name} names no tag:, branch:, or commit: — an unconstrained git universe " \
+              "would pin an arbitrary ref"
+        end
+
+        add_declaration(name, :cmake, spec, source: repo, revision: revision, materialization: materialization)
       end
 
       # Declare a Ruby gem scoped to this group (group name -> bundler group).
@@ -197,6 +362,8 @@ module Dev
       # @param name [String, Symbol] gem name
       # @param version [String, nil] version requirement (e.g. "~> 1.17")
       # @param spec [Hash] additional bundler options (e.g. require:, git:)
+      # @return [void]
+      sig { params(name: T.any(String, Symbol), version: T.nilable(String), spec: T.untyped).void }
       def gem(name, version = nil, **spec)
         spec[:version] = version if version
         add_declaration(name, :bundler, spec)
@@ -207,6 +374,8 @@ module Dev
       # @param name [String, Symbol] rock name
       # @param constraint [String, nil] version constraint (e.g. ">=3.5")
       # @param spec [Hash] additional options
+      # @return [void]
+      sig { params(name: T.any(String, Symbol), constraint: T.nilable(String), spec: T.untyped).void }
       def luarocks(name, constraint = nil, **spec)
         spec[:constraint] = constraint if constraint
         add_declaration(name, :luarocks, spec)
@@ -219,6 +388,8 @@ module Dev
       # @param name [String, Symbol] distribution name (e.g. "totalsegmentator")
       # @param version [String, nil] version constraint (e.g. ">=2.0", "2.0.5")
       # @param spec [Hash] additional options (e.g. host:)
+      # @return [void]
+      sig { params(name: T.any(String, Symbol), version: T.nilable(String), spec: T.untyped).void }
       def pip(name, version = nil, **spec)
         spec[:version] = version if version
         add_declaration(name, :pip, spec)
@@ -226,12 +397,20 @@ module Dev
 
       # Declare a Satisfactory mod dependency from ficsit.app.
       #
+      # target: is an install instruction — which of the mod's artifacts to
+      # fetch when no group platform says otherwise — so it rides the
+      # declaration's materialization, defaulting to the Windows game build
+      # (the target every ficsit mod publishes for players).
+      #
       # @param mod_reference [String, Symbol] mod reference (e.g. "SML", "AreaActions")
       # @param version [String, nil] semver constraint (e.g. "^3.12.0", ">=1.0")
       # @param spec [Hash] additional options (target:, etc.)
+      # @return [void]
+      sig { params(mod_reference: T.any(String, Symbol), version: T.nilable(String), spec: T.untyped).void }
       def ficsit(mod_reference, version: nil, **spec)
         spec[:version] = version if version
-        add_declaration(mod_reference, :ficsit, spec)
+        target = spec.delete(:target) || FICSIT_DEFAULT_TARGET
+        add_declaration(mod_reference, :ficsit, spec, materialization: { "target" => target.to_s })
       end
 
       # Declare a GitHub dependency, materialized one of two ways:
@@ -257,9 +436,22 @@ module Dev
       # @param assets [String, nil] glob selecting prebuilt release assets
       # @param build [String, Symbol, nil] build-from-source recipe (script path / shell / :none)
       # @param spec [Hash] additional options
+      # @return [void]
+      sig do
+        params(
+          name_or_slug: T.any(String, Symbol),
+          tag: String,
+          install_dir: String,
+          github: T.nilable(String),
+          repo: T.nilable(String),
+          assets: T.nilable(String),
+          build: T.nilable(T.any(String, Symbol)),
+          spec: T.untyped,
+        ).void
+      end
       def gh(name_or_slug, tag:, install_dir:, github: nil, repo: nil, assets: nil, build: nil, **spec)
         slug = (github || repo || name_or_slug).to_s
-        name = (github || repo) ? name_or_slug.to_s : slug.split("/").last
+        name = (github || repo) ? name_or_slug.to_s : T.must(slug.split("/").last)
 
         unless [assets, build].compact.size == 1
           raise ArgumentError,
@@ -267,10 +459,14 @@ module Dev
             "or build: (build from source)"
         end
 
-        spec = spec.merge(repo: slug, tag: tag, install_dir: install_dir)
-        spec[:assets] = assets if assets
-        spec[:build] = build.to_s if build
-        add_declaration(name, :gh, spec)
+        # Sorted into fields: the slug is the source coordinate, the tag is
+        # the constraint, and how to materialize (where to install, which
+        # assets to fetch or how to build) is install instruction — the
+        # repository never sees any of it.
+        materialization = { "install_dir" => install_dir }
+        materialization["asset_pattern"] = assets if assets
+        materialization["build"] = build.to_s if build
+        add_declaration(name, :gh, spec.merge(tag: tag), source: slug, materialization: materialization)
       end
 
       # Declare a Steam application dependency (e.g. the Satisfactory Dedicated
@@ -285,9 +481,24 @@ module Dev
       # @param install_dir [String] host directory the depot is installed into
       # @param branch [String] Steam branch (default "public")
       # @param spec [Hash] additional options (buildid:, etc.)
+      # @return [void]
+      sig do
+        params(
+          name: T.any(String, Symbol),
+          app: T.any(Integer, String),
+          install_dir: String,
+          branch: String,
+          spec: T.untyped,
+        ).void
+      end
       def steam(name, app:, install_dir:, branch: "public", **spec)
-        spec = spec.merge(app:, install_dir:, branch:)
-        add_declaration(name, :steam, spec)
+        # Sorted into fields: the app id is the source coordinate (which app's
+        # universe), branch/buildid are the constraint, and the install dir
+        # plus the group's platform (which depot build SteamCMD provisions —
+        # an install instruction, not a version fact) are materialization.
+        materialization = { "install_dir" => install_dir }
+        materialization["platform"] = @platform if @platform
+        add_declaration(name, :steam, spec.merge(branch:), source: app.to_s, materialization: materialization)
       end
 
       # Declare a dependency using any registered integration by name.
@@ -295,6 +506,8 @@ module Dev
       # @param name [String, Symbol] dependency name
       # @param integration [Symbol, String] integration identifier (e.g. :wow_curseforge)
       # @param spec [Hash] additional options
+      # @return [void]
+      sig { params(name: T.any(String, Symbol), integration: T.any(Symbol, String), spec: T.untyped).void }
       def custom(name, integration:, **spec)
         add_declaration(name, integration.to_sym, spec)
       end
@@ -309,21 +522,37 @@ module Dev
       #
       # @param version [String, Symbol] exact Xcode version (e.g. "26.1.1")
       # @param spec [Hash] additional options
+      # @return [void]
+      # @raise [ArgumentError] if the version is blank — Apple publishes no
+      #   registry to select from, so the exact version is the whole ask
+      sig { params(version: T.any(String, Symbol), spec: T.untyped).void }
       def xcode(version, **spec)
-        spec[:version] = version.to_s.strip
-        add_declaration("xcode", :xcode, spec)
+        revision = version.to_s.strip
+        raise ArgumentError, "xcode requires an exact version (e.g. xcode \"26.1.1\")" if revision.empty?
+
+        # The exact version is an address, not a constraint: there is no
+        # universe to select over, so it rides the declaration's revision and
+        # XcodeRepository#at lifts it as the identity.
+        add_declaration("xcode", :xcode, spec, revision: revision)
       end
 
       # Declare a Homebrew formula/cask.
       #
       # Dual-writes: the existing @brew/groups entry feeds the container build
-      # path (bin/install-build-deps.rb), while the additional :brew declaration
+      # path (bin/install-build-deps.rb), while the additional declaration
       # rides the resolver -> lockfile -> install pipeline so `dev install-deps`
       # installs it on the host too. BrewIntegration skips already-installed
       # formulae, so the host install is idempotent.
       #
+      # The options are sorted into the declaration's fields: tap: is the
+      # source coordinate, cask: routes to the :cask integration (a separate
+      # universe — Homebrew publishes no versions or bottle digests for
+      # casks), and what remains (version:) is the constraint.
+      #
       # @param name [String, Symbol] formula or cask name
       # @param opts [Hash] options (tap:, version:, cask:)
+      # @return [void]
+      sig { params(name: T.any(String, Symbol), opts: T.untyped).void }
       def brew(name, **opts)
         name_str = name.to_s
         raise EmptyNameError, "brew dependency name cannot be empty" if name_str.empty?
@@ -333,13 +562,21 @@ module Dev
         else
           @brew << { name_str => stringify_keys(opts) }
         end
-        add_declaration(name_str, :brew, opts.dup)
+
+        constraint = opts.dup
+        cask = constraint.delete(:cask)
+        tap = constraint.delete(:tap)
+        add_declaration(name_str, cask ? :cask : :brew, constraint, source: tap&.to_s)
       end
 
       # Scope member declarations to an environment ("ci" / "dev"). The env
       # name is a first-class declaration field (like host), landing in the
       # lockfile's env section so install-deps filters it to the matching
       # environment — never smuggled through the constraint hash.
+      #
+      # @param name [String, Symbol] environment name
+      # @return [void]
+      sig { params(name: T.any(String, Symbol), block: T.nilable(T.proc.bind(EnvDSL).void)).void }
       def env(name, &block)
         env_name = name.to_s
         env_dsl = EnvDSL.new(group: @group, platform: @platform, host: @host, env: env_name)
@@ -348,6 +585,8 @@ module Dev
         @declarations.concat(env_dsl.declarations)
       end
 
+      # @return [Hash] container-build projection of this group
+      sig { returns(T::Hash[String, T.untyped]) }
       def to_h
         { "brew" => @brew, "env" => @envs, "platform" => @platform }
       end
@@ -358,31 +597,51 @@ module Dev
       # @param method_name [Symbol] called method name
       # @param args [Array] positional arguments (first is the dependency name)
       # @param kwargs [Hash] keyword arguments passed to custom()
+      # @return [Object]
+      sig { params(method_name: Symbol, args: T.untyped, kwargs: T.untyped, block: T.untyped).returns(T.untyped) }
       def method_missing(method_name, *args, **kwargs, &block)
         if @registered_methods.include?(method_name.to_sym)
-          custom(args.first, integration: method_name, **kwargs)
+          T.unsafe(self).custom(args.fetch(0), integration: method_name, **kwargs)
         else
           super
         end
       end
 
+      # @param method_name [Symbol] queried method name
+      # @param include_private [Boolean]
+      # @return [Boolean]
+      sig { params(method_name: T.any(Symbol, String), include_private: T::Boolean).returns(T::Boolean) }
       def respond_to_missing?(method_name, include_private = false)
         @registered_methods.include?(method_name.to_sym) || super
       end
 
       private
 
-      # Create a DependencyDeclaration and store it.
+      # Create a ScopedDeclaration and store it.
       #
-      # host: is peeled off the spec into the first-class declaration field —
-      # a per-declaration override of the group's host (e.g. `gh ..., host:
-      # :darwin` outside a host-gated group). It never reaches the constraint,
-      # which describes what the dep is, not where it installs.
+      # host: is peeled off the spec into the Scope — a per-declaration
+      # override of the group's host (e.g. `gh ..., host: :darwin` outside a
+      # host-gated group). It never reaches the constraint, which describes
+      # what the dep is, not where it installs.
       #
       # @param name [String, Symbol] dependency name
       # @param integration [Symbol] integration type
       # @param spec [Hash] constraint spec (symbol keys → stringified)
-      def add_declaration(name, integration, spec)
+      # @param source [String, nil] source coordinate for the Declaration
+      # @param revision [String, nil] addressable revision for the Declaration
+      # @param materialization [Hash{String => Object}] install instructions
+      # @return [void]
+      sig do
+        params(
+          name: T.any(String, Symbol),
+          integration: Symbol,
+          spec: T::Hash[Symbol, T.untyped],
+          source: T.nilable(String),
+          revision: T.nilable(String),
+          materialization: T::Hash[String, T.untyped],
+        ).void
+      end
+      def add_declaration(name, integration, spec, source: nil, revision: nil, materialization: {})
         name_str = name.to_s
         raise EmptyNameError, "dependency name cannot be empty" if name_str.empty?
 
@@ -391,14 +650,12 @@ module Dev
         spec = expand_github(name_str, spec) if spec.key?(:github)
         constraint = stringify_keys(spec)
 
-        @declarations << DependencyDeclaration.new(
-          name: name_str,
-          integration:,
-          constraint:,
-          group: @group,
+        @declarations << ScopedDeclaration.new(
+          declaration: Declaration.new(name: name_str, integration:, constraint:, source:, revision:),
+          scope: Scope.new(group: @group, host:),
           platform: @platform,
-          host:,
           post_install:,
+          materialization: materialization,
         )
       end
 
@@ -410,6 +667,7 @@ module Dev
       # @param name [String] dependency name (used as repo name for org-only shorthand)
       # @param spec [Hash] spec hash; github: key is consumed and replaced with repo:
       # @return [Hash] spec with github: replaced by repo:
+      sig { params(name: String, spec: T::Hash[Symbol, T.untyped]).returns(T::Hash[Symbol, T.untyped]) }
       def expand_github(name, spec)
         github = spec.delete(:github)
         return spec unless github
@@ -422,6 +680,9 @@ module Dev
         spec.merge(repo: repo_url)
       end
 
+      # @param hash [Hash] symbol-keyed options
+      # @return [Hash] the same options with string keys
+      sig { params(hash: T::Hash[T.untyped, T.untyped]).returns(T::Hash[String, T.untyped]) }
       def stringify_keys(hash)
         hash.each_with_object({}) { |(k, v), h| h[k.to_s] = v }
       end

@@ -155,4 +155,27 @@ class Dev::Deps::SteamIntegrationTest < Minitest::Test
     Cleanup
     FileUtils.rm_rf(dir)
   end
+
+  test "steam_platform_for maps declared platform #{declared.inspect} to #{expected.inspect}" do
+    Given "an integration"
+    dir = Dir.mktmpdir("dev-steam-int-test-")
+    integration = build_integration(dir, manifest_build: "1")
+
+    When "mapping the declared platform to SteamCMD's vocabulary"
+    result = integration.send(:steam_platform_for, declared)
+
+    Then
+    result == expected
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+
+    Where
+    declared        | expected
+    "LinuxServer"   | "linux"
+    "WindowsServer" | "windows"
+    "Windows"       | "windows"
+    nil             | "linux"
+    "MacOS"         | "macos"
+  end
 end

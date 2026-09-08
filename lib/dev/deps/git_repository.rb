@@ -2,67 +2,96 @@
 # frozen_string_literal: true
 
 require "open3"
+require_relative "declarations"
+require_relative "package"
+require_relative "package_id"
+require_relative "package_version"
 require_relative "repository"
-require_relative "dependency"
 
 module Dev
   module Deps
-    # Fetches git-hosted dependencies: tag → SHA, branch → SHA, or commit passthrough.
+    # Reports git-hosted dependencies: the discrete universe is the remote's
+    # refs, the continuous space is its commit SHAs.
     #
-    # Uses `git ls-remote` to resolve tags and branches to full SHAs.
-    # 40-char hex commit SHAs pass through without network calls.
-    # Git SHAs are identifiers, not integrity hashes — hash field is nil.
+    # find enumerates every tag and branch head via one `git ls-remote` call —
+    # each version is the resolved full SHA carrying the ref it resolved from
+    # as a fact, which is what GitScheme's tag/branch matching selects on.
+    # Commit SHAs are unreachable by enumeration (`ls-remote` lists refs,
+    # never reachable commits), so a commit pin arrives as the declaration's
+    # revision and is lifted by at — pure, no network: a full SHA is
+    # self-certifying as an address, and existence surfaces at fetch time.
+    # Git SHAs are identifiers, not integrity hashes — digest is nil.
     class GitRepository < Repository
       extend T::Sig
 
-      class RefResolutionError < StandardError; end
+      class RefResolutionError < PackageNotFoundError; end
 
-      # Resolve a git dependency identifier to a pinned Dependency.
+      # Report a git dependency's universe: every tag and branch head,
+      # resolved to full SHAs.
       #
-      # @param id [Hash] must include "name", "repo", "integration", "group",
-      #   and one of "tag" or "commit"
-      # @return [Dependency] with version set to the resolved full SHA
-      # @raise [RefResolutionError] if the ref cannot be resolved via ls-remote
-      sig { params(id: T::Hash[String, T.untyped]).returns(Dependency) }
-      def fetch(id)
-        repo_url = id["repo"]
-        tag = id["tag"]
-        commit = id["commit"]
-        ref = commit || tag
+      # @param id [PackageId] source is the git remote URL
+      # @return [Package] one version per ref, the ref riding as a fact
+      # @raise [RefResolutionError] if the remote's refs cannot be listed
+      sig { override.params(id: PackageId).returns(Package) }
+      def find(id)
+        repo_url = T.must(id.source)
+        refs = enumerate_refs(repo_url)
+        raise RefResolutionError, "no refs listable for #{id.name} at #{repo_url}" if refs.empty?
 
-        sha = resolve_ref(repo_url, ref)
+        Package.new(
+          id: id,
+          versions: refs.map do |ref, sha|
+            PackageVersion.new(
+              version: sha,
+              metadata: { "repo" => repo_url, "ref" => ref },
+              # A checked-out source tree carries no manifest dev reads;
+              # consumers declare what they need alongside it.
+              declarations: Declarations::Resolved.new([]),
+            )
+          end,
+        )
+      end
 
-        Dependency.new(
-          name: id["name"],
-          integration: id["integration"].to_sym,
-          group: id["group"].to_sym,
-          version: sha,
-          hash: nil,
-          metadata: { "repo" => repo_url },
+      # Lift a commit SHA into a version. Pure — no network: the SHA is the
+      # version, the author already chose it, and a bad address surfaces at
+      # fetch time exactly like a force-pushed ref would.
+      #
+      # @param id [PackageId] source is the git remote URL
+      # @param revision [String] full 40-char commit SHA (DSL-validated)
+      # @return [PackageVersion]
+      sig { override.params(id: PackageId, revision: String).returns(PackageVersion) }
+      def at(id, revision)
+        PackageVersion.new(
+          version: revision,
+          metadata: { "repo" => T.must(id.source) },
+          declarations: Declarations::Resolved.new([]),
         )
       end
 
       private
 
-      # Resolve a git ref (tag, branch, or commit SHA) to a full 40-char SHA.
+      # List every tag and branch head with its commit SHA, in one call.
       #
-      # Tries in order: passthrough for 40-char hex, ls-remote --tags, ls-remote branch.
+      # Annotated tags list twice — the tag object and a peeled "<ref>^{}"
+      # line pointing at the commit; the peeled SHA wins, because the commit
+      # is what a checkout materializes.
       #
       # @param repo [String] git remote URL
-      # @param ref  [String] tag name, branch name, or commit SHA
-      # @return [String] full 40-char SHA
-      # @raise [RefResolutionError] if no match found
-      sig { params(repo: String, ref: String).returns(String) }
-      def resolve_ref(repo, ref)
-        return ref if ref.to_s.length == 40 && ref.to_s.match?(/\A[0-9a-f]+\z/)
+      # @return [Hash{String => String}] ref name (unprefixed) -> full SHA
+      # @raise [RefResolutionError] if ls-remote fails
+      sig { params(repo: String).returns(T::Hash[String, String]) }
+      def enumerate_refs(repo)
+        out, err, status = Open3.capture3("git", "ls-remote", "--tags", "--heads", repo)
+        raise RefResolutionError, "git ls-remote failed for #{repo}: #{err}" unless status.success?
 
-        out, _err, status = Open3.capture3("git", "ls-remote", "--tags", repo, ref.to_s)
-        return T.must(out.lines.first&.split&.first) if status.success? && !out.strip.empty?
+        out.lines.each_with_object({}) do |line, refs|
+          sha, refname = line.split
+          next unless sha && refname
 
-        out, _err, status = Open3.capture3("git", "ls-remote", repo, "refs/heads/#{ref}")
-        return T.must(out.lines.first&.split&.first) if status.success? && !out.strip.empty?
-
-        raise RefResolutionError, "Could not resolve ref '#{ref}' for #{repo}"
+          peeled = refname.end_with?("^{}")
+          name = refname.delete_suffix("^{}").sub(%r{\Arefs/(tags|heads)/}, "")
+          refs[name] = sha if peeled || !refs.key?(name)
+        end
       end
     end
   end

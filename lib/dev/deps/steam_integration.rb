@@ -80,7 +80,7 @@ module Dev
       sig { params(dep: Dependency, server_dir: Pathname).void }
       def provision(dep, server_dir)
         _out, err, status = SteamCmd.run(
-          "+@sSteamCmdForcePlatformType", dep.metadata["platform"],
+          "+@sSteamCmdForcePlatformType", steam_platform_for(dep.metadata["platform"]),
           "+force_install_dir", server_dir.to_s,
           "+login", "anonymous",
           "+app_update", dep.metadata["app"], "validate",
@@ -89,6 +89,24 @@ module Dev
         return if status.success?
 
         raise ProvisionError, "steamcmd app_update #{dep.metadata["app"]} failed: #{err.strip}"
+      end
+
+      # Map the declared platform (a dev platform name, riding the pin via the
+      # declaration's materialization) to a SteamCMD ForcePlatformType value.
+      # The mapping is this integration's vocabulary — the resolver and the
+      # lockfile carry the declared name untranslated. The dedicated server is
+      # Linux-only in our pipeline, so a missing platform defaults to "linux".
+      #
+      # @param platform [String, nil] declared platform (e.g. "LinuxServer")
+      # @return [String] steam platform type ("linux" / "windows")
+      sig { params(platform: T.nilable(String)).returns(String) }
+      def steam_platform_for(platform)
+        case platform
+        when "LinuxServer" then "linux"
+        when "WindowsServer", "Windows" then "windows"
+        when nil then "linux"
+        else platform.downcase
+        end
       end
 
       # Confirm the installed depot matches the locked buildid. A mismatch means

@@ -93,7 +93,9 @@ module Dev
       return false unless lockfile.exist?
 
       content = lockfile.read
-      content.match?(/^llvm:\s*$/) || content.match?(/^brew llvm\b/)
+      # \s* tolerates the dep key's indentation under its integration section
+      # (and matches the legacy top-level key at column 0).
+      content.match?(/^\s*llvm:\s*$/) || content.match?(/^brew llvm\b/)
     end
 
     # --- internal helpers ------------------------------------------------

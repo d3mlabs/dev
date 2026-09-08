@@ -1,5 +1,7 @@
-# typed: true
+# typed: strict
 # frozen_string_literal: true
+
+require "sorbet-runtime"
 
 module Dev
   module Deps
@@ -7,9 +9,12 @@ module Dev
     #
     # Cross-cutting install concerns (env filtering, build-first ordering)
     # live here — not in Integration or Lockfile.
-    class DependencyInstaller
+    class Installer
+      extend T::Sig
+
       # @param lockfile [Lockfile] lockfile reader
       # @param integrations [Hash{Symbol => Integration}] integration type → integration
+      sig { params(lockfile: Lockfile, integrations: T::Hash[Symbol, T.untyped]).void }
       def initialize(lockfile:, integrations:)
         @lockfile = lockfile
         @integrations = integrations
@@ -35,6 +40,8 @@ module Dev
       #
       # @param env [String, nil] environment name for filtering (nil = no filtering)
       # @param host [String, nil] host OS name for filtering (nil = no filtering)
+      # @return [void]
+      sig { params(env: T.nilable(String), host: T.nilable(String)).void }
       def install(env: nil, host: nil)
         all_deps = @lockfile.read
         all_deps = filter_by_env(all_deps, env) if env
@@ -48,12 +55,18 @@ module Dev
 
       private
 
-      # Dispatch deps to their matching integrations, grouped by type.
+      # Dispatch deps to their matching integrations, grouped by integration
+      # INSTANCE rather than by type symbol: types that install through a
+      # shared instance (Registry install_alias — e.g. :url deps through
+      # :cmake's pipeline) must arrive in one install_all call, or an
+      # integration generating batch artifacts (deps.cmake) would overwrite
+      # its own output with each partial group.
       #
       # @param deps [Array<Dependency>] dependencies to install
+      # @return [void]
+      sig { params(deps: T::Array[Dependency]).void }
       def dispatch(deps)
-        deps.group_by(&:integration).each do |type, typed_deps|
-          integration = @integrations[type]
+        deps.group_by { |dep| @integrations[dep.integration] }.each do |integration, typed_deps|
           integration&.install_all(typed_deps)
         end
       end
@@ -64,6 +77,7 @@ module Dev
       # @param deps [Array<Dependency>] all deps
       # @param env [String] target environment
       # @return [Array<Dependency>]
+      sig { params(deps: T::Array[Dependency], env: String).returns(T::Array[Dependency]) }
       def filter_by_env(deps, env)
         deps.select do |dep|
           dep_env = dep.metadata["env"]
@@ -78,6 +92,7 @@ module Dev
       # @param deps [Array<Dependency>] all deps
       # @param host [String] detected host OS ("darwin" / "linux")
       # @return [Array<Dependency>]
+      sig { params(deps: T::Array[Dependency], host: String).returns(T::Array[Dependency]) }
       def filter_by_host(deps, host)
         deps.select do |dep|
           dep_host = dep.metadata["host"]

@@ -132,6 +132,26 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "install_all registers a remote URL tap with its URL" do
+    Given "an integration with a remote (non-file) tap"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    tap = Dev::Deps::Tap.new(name: "org/tap", url: "https://github.com/org/homebrew-tap")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, cache: cache, taps: [tap], project_dir: dir,
+    )
+    integration.expects(:system).with("brew", "tap", "org/tap", "https://github.com/org/homebrew-tap").returns(true)
+
+    When "installing all (no deps, taps only)"
+    integration.install_all([])
+
+    Then "brew tap received the URL (expectation verified by Mocha)"
+    true
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "resolve_file_url resolves a ./ path against the project dir" do
     Given "an integration with a project dir and a project-relative file URI"
     dir = Dir.mktmpdir("dev-brew-int-test-")

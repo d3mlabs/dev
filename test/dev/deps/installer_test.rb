@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/deps/dependency_installer"
+require "dev/deps/installer"
 require "dev/deps/lockfile"
 require "dev/deps/dependency"
 require "dev/deps/integration"
@@ -21,7 +21,7 @@ class RecordingIntegration < Dev::Deps::Integration
 end
 
 transform!(RSpock::AST::Transformation)
-class Dev::Deps::DependencyInstallerTest < Minitest::Test
+class Dev::Deps::InstallerTest < Minitest::Test
   test "install reads lockfiles and dispatches to integrations" do
     Given "a lockfile with one cmake dep"
     dir = Dir.mktmpdir("installer-test-")
@@ -32,7 +32,7 @@ class Dev::Deps::DependencyInstallerTest < Minitest::Test
     ]
     lockfile.lock(deps)
     cmake_integration = RecordingIntegration.new
-    installer = Dev::Deps::DependencyInstaller.new(
+    installer = Dev::Deps::Installer.new(
       lockfile:, integrations: { cmake: cmake_integration },
     )
 
@@ -42,6 +42,38 @@ class Dev::Deps::DependencyInstallerTest < Minitest::Test
     Then "cmake integration received the dep"
     cmake_integration.installed_deps.size == 1
     cmake_integration.installed_deps[0].name == "boost"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install dispatches types sharing one integration instance in a single call" do
+    Given "cmake and url deps both wired to one integration instance"
+    dir = Dir.mktmpdir("installer-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
+    deps = [
+      Dev::Deps::Dependency.new(name: "cereal", integration: :cmake, group: :app,
+        version: "sha1", hash: nil, metadata: {}),
+      Dev::Deps::Dependency.new(name: "boost", integration: :url, group: :app,
+        version: nil, hash: "SHA256=aaa", metadata: {}),
+    ]
+    lockfile.lock(deps)
+
+    shared = RecordingIntegration.new
+    call_batches = []
+    shared.define_singleton_method(:install_all) do |dependencies|
+      call_batches << dependencies.map(&:name)
+      @installed_deps.concat(dependencies)
+    end
+    installer = Dev::Deps::Installer.new(
+      lockfile:, integrations: { cmake: shared, url: shared },
+    )
+
+    When "running install"
+    installer.install
+
+    Then "one install_all call with the union — batch artifacts (deps.cmake) stay whole"
+    call_batches == [["cereal", "boost"]]
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -72,7 +104,7 @@ class Dev::Deps::DependencyInstallerTest < Minitest::Test
       @installed_deps.concat(dependencies)
     end
 
-    installer = Dev::Deps::DependencyInstaller.new(
+    installer = Dev::Deps::Installer.new(
       lockfile:, integrations: { cmake: cmake_int, brew: brew_int },
     )
 
@@ -102,7 +134,7 @@ class Dev::Deps::DependencyInstallerTest < Minitest::Test
     ]
     lockfile.lock(deps)
     brew_int = RecordingIntegration.new
-    installer = Dev::Deps::DependencyInstaller.new(
+    installer = Dev::Deps::Installer.new(
       lockfile:, integrations: { brew: brew_int },
     )
 
@@ -134,7 +166,7 @@ class Dev::Deps::DependencyInstallerTest < Minitest::Test
     lockfile.lock(deps)
     brew_int = RecordingIntegration.new
     gh_int = RecordingIntegration.new
-    installer = Dev::Deps::DependencyInstaller.new(
+    installer = Dev::Deps::Installer.new(
       lockfile:, integrations: { brew: brew_int, gh: gh_int },
     )
 
@@ -165,7 +197,7 @@ class Dev::Deps::DependencyInstallerTest < Minitest::Test
     bundler_int = RecordingIntegration.new
     luarocks_int = RecordingIntegration.new
     brew_int = RecordingIntegration.new
-    installer = Dev::Deps::DependencyInstaller.new(
+    installer = Dev::Deps::Installer.new(
       lockfile:, integrations: { bundler: bundler_int, luarocks: luarocks_int, brew: brew_int },
     )
 
@@ -190,7 +222,7 @@ class Dev::Deps::DependencyInstallerTest < Minitest::Test
         version: "1.0", hash: "SHA256=aaa", metadata: {}),
     ]
     lockfile.lock(deps)
-    installer = Dev::Deps::DependencyInstaller.new(lockfile:, integrations: {})
+    installer = Dev::Deps::Installer.new(lockfile:, integrations: {})
 
     When "running install with no matching integration"
     installer.install

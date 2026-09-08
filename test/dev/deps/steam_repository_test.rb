@@ -6,68 +6,49 @@ require "dev/deps/steam_repository"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::SteamRepositoryTest < Minitest::Test
-  test "fetch uses an explicitly pinned buildid without invoking steamcmd" do
-    Given "a declaration with a pinned buildid"
-    repo = Dev::Deps::SteamRepository.new
-    Dev::Deps::SteamCmd.stubs(:resolve_build_id).raises("steamcmd should not be called")
-
-    When "fetching"
-    dep = repo.fetch(
-      "name" => "SatisfactoryServer",
-      "integration" => "steam",
-      "group" => "integration",
-      "app" => 1690800,
-      "install_dir" => "~/.dev/satisfactory-server",
-      "buildid" => "15321746",
-      "platforms" => ["LinuxServer"],
-    )
-
-    Then
-    dep.name == "SatisfactoryServer"
-    dep.integration == :steam
-    dep.group == :integration
-    dep.version == "15321746"
-    dep.hash.nil?
-    dep.metadata["app"] == "1690800"
-    dep.metadata["branch"] == "public"
-    dep.metadata["install_dir"] == "~/.dev/satisfactory-server"
-    dep.metadata["platform"] == "linux"
+  def id
+    Dev::Deps::PackageId.new(integration: :steam, name: "SatisfactoryServer", source: "1690800")
   end
 
-  test "fetch resolves the current public buildid via steamcmd when not pinned" do
-    Given "no pinned buildid and a stubbed steamcmd resolution"
+  test "find reports every branch's current buildid, one version per branch" do
+    Given "an app with public and experimental branch tips"
     repo = Dev::Deps::SteamRepository.new
-    Dev::Deps::SteamCmd.stubs(:resolve_build_id).with(app: 1690800, branch: "public").returns("99999")
+    Dev::Deps::SteamCmd.stubs(:resolve_branches)
+                       .with(app: "1690800")
+                       .returns({ "public" => "15321746", "experimental" => "15400000" })
 
-    When "fetching"
-    dep = repo.fetch(
-      "name" => "SatisfactoryServer",
-      "integration" => "steam",
-      "group" => "integration",
-      "app" => 1690800,
-      "install_dir" => "~/.dev/satisfactory-server",
-      "platforms" => ["LinuxServer"],
-    )
+    When "finding"
+    package = repo.find(id)
 
-    Then
-    dep.version == "99999"
+    Then "each branch tip is a version, its branch riding metadata as a fact"
+    package.versions.map(&:version).sort == ["15321746", "15400000"]
+    public_tip = package.version("15321746")
+    public_tip.digest.nil?
+    public_tip.metadata == { "app" => "1690800", "branch" => "public" }
+    package.version("15400000").metadata["branch"] == "experimental"
   end
 
-  test "fetch defaults platform to linux when no group platform is set" do
-    Given "a declaration with no platforms"
+  test "find claims self-contained declarations — SteamCMD delivers the whole tree" do
+    Given "a single-branch app"
     repo = Dev::Deps::SteamRepository.new
+    Dev::Deps::SteamCmd.stubs(:resolve_branches).returns({ "public" => "1" })
 
-    When "fetching with a pinned buildid"
-    dep = repo.fetch(
-      "name" => "SatisfactoryServer",
-      "integration" => "steam",
-      "group" => "integration",
-      "app" => 1690800,
-      "install_dir" => "/tmp/server",
-      "buildid" => "1",
-    )
+    When "finding"
+    package = repo.find(id)
 
     Then
-    dep.metadata["platform"] == "linux"
+    package.version("1").declarations == Dev::Deps::Declarations::Resolved.new([])
+  end
+
+  test "find raises PackageNotFoundError when no branch reports a buildid" do
+    Given "an app steamcmd reports no branches for"
+    repo = Dev::Deps::SteamRepository.new
+    Dev::Deps::SteamCmd.stubs(:resolve_branches).returns({})
+
+    When "finding"
+    repo.find(id)
+
+    Then
+    raises Dev::Deps::Repository::PackageNotFoundError
   end
 end

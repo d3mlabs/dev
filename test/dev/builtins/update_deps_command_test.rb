@@ -41,6 +41,32 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "call locks each integration's declarations before resolving" do
+    Given "a manifest with a gem declaration, and a locker wired for :bundler"
+    root = Pathname.new(Dir.mktmpdir("update-deps-lock-"))
+    File.write(root / "dependencies.rb", <<~RUBY)
+      require "dev/deps"
+      Dev::Deps.define { gem "rake" }
+    RUBY
+    locker = mock
+    locker.expects(:lock).with { |*args| args.fetch(0).map(&:name) == ["rake"] }
+    Dev::Deps::Registry.expects(:lockers).returns({ bundler: locker })
+    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: []))
+    command = Dev::Builtins::UpdateDepsCommand.new
+    old_stdout = $stdout
+    $stdout = StringIO.new
+
+    When "running update-deps"
+    command.call(args: [], context: build_context(root))
+
+    Then "the locker received the bundler declarations (asserted on the mock)"
+    $stdout.string.include?("lockfiles updated")
+
+    Cleanup
+    $stdout = old_stdout
+    FileUtils.rm_rf(root)
+  end
+
   test "call does not mistake a previously loaded project's config for this one" do
     Given "a stale config from an earlier load, and a dependencies.rb that never calls Dev::Deps.define"
     Dev::Deps.define { ruby "9.9.9" }

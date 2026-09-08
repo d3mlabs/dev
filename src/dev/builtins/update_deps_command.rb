@@ -35,14 +35,25 @@ module Dev
         Kernel.load(deps_rb.to_s) if deps_rb.exist?
 
         deps_config = Dev::Deps.last_config || Dev::Deps.define {}
+        declarations = deps_config.declarations
+
+        # Lock, then resolve: integrations whose ecosystem tool owns the
+        # whole-set solve (bundler) materialize their tool lockfile first, so
+        # the repositories read an already-solved universe.
+        lockers = Dev::Deps::Registry.lockers(
+          project_root: context.project_root,
+          ruby_version_requirement: deps_config.ruby_version_requirement,
+        )
+        declarations.group_by(&:integration).each do |integration, typed_declarations|
+          lockers[integration]&.lock(typed_declarations)
+        end
+
         resolver = Dev::Deps::Resolver.new(
-          repositories: Dev::Deps::Registry.repositories(
-            project_root: context.project_root,
-            ruby_version_requirement: deps_config.ruby_version_requirement,
-          ),
+          repositories: Dev::Deps::Registry.repositories(project_root: context.project_root),
+          schemes: Dev::Deps::Registry.schemes,
         )
         lockfile = Dev::Deps::Lockfile.new(dir: context.project_root)
-        resolved = resolver.resolve(deps_config.declarations)
+        resolved = resolver.resolve(declarations)
         # Record the manifest digest so the staleness check can tell whether
         # dependencies.rb changed after this resolution (Dev::Deps::Staleness).
         manifest_digest = deps_rb.exist? ? Digest::SHA256.file(deps_rb.to_s).hexdigest : nil

@@ -25,7 +25,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
   test "call provisions the pinned Ruby, installs for the detected env/host, then runs both hygiene hooks" do
     Given "a command with every collaborator faked"
     root = Pathname.new(Dir.mktmpdir("install-deps-"))
-    installer = typed_mock(Dev::Deps::DependencyInstaller)
+    installer = typed_mock(Dev::Deps::Installer)
     installer.expects(:install).with(env: Dev::Deps.detect_env, host: Dev::Deps.detect_host).once
     linker = typed_mock(Dev::Deps::GemSkillLinker)
     linker.expects(:link_all).once
@@ -57,7 +57,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
   test "call builds the installer over the project's lockfile and host integrations" do
     Given "a factory that records its inputs"
     root = Pathname.new(Dir.mktmpdir("install-deps-wiring-"))
-    installer = typed_mock(Dev::Deps::DependencyInstaller)
+    installer = typed_mock(Dev::Deps::Installer)
     installer.stubs(:install)
     factory_inputs = []
     command = Dev::Builtins::InstallDepsCommand.new(
@@ -112,7 +112,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
 
   def build_command
     Dev::Builtins::InstallDepsCommand.new(
-      installer_factory: ->(_lockfile, _integrations) { typed_mock(Dev::Deps::DependencyInstaller) },
+      installer_factory: ->(_lockfile, _integrations) { typed_mock(Dev::Deps::Installer) },
       gem_skill_linker_factory: ->(_project_root) { typed_mock(Dev::Deps::GemSkillLinker) },
       synchronizer: stub(sync: nil),
     )

@@ -46,6 +46,7 @@ module Dev
       class ExtractionError < StandardError; end
       class UnsupportedArchiveError < StandardError; end
       class BuildError < StandardError; end
+      class NoMatchingAssetsError < StandardError; end
 
       MARKER_FILE = ".dev-gh-release"
 
@@ -78,10 +79,15 @@ module Dev
       sig { returns(T.nilable(Pathname)) }
       attr_reader :project_root
 
+      # Dispatch on the declared materialization: an asset glob means the
+      # prebuilt shape, a build recipe means build-from-source. The pin's
+      # "assets" fact list can be present either way (the tag's release
+      # publishes what it publishes); what the declaration MEANT is the glob.
+      #
       # @param dep [Dependency]
       sig { params(dep: Dependency).void }
       def install(dep)
-        dep.metadata["assets"] ? install_prebuilt(dep) : install_from_source(dep)
+        dep.metadata["asset_pattern"] ? install_prebuilt(dep) : install_from_source(dep)
       end
 
       # @param dep [Dependency]
@@ -297,13 +303,18 @@ module Dev
       # Verify downloaded files against the digests locked at resolve time.
       # Assets locked without a digest (older releases) are skipped.
       #
+      # Only glob-matched assets are verified: the lock records every asset
+      # the release publishes (facts), while the declared pattern says which
+      # of them this dep materializes — the same selection `gh release
+      # download --pattern` applied to the download.
+      #
       # @param dep [Dependency]
       # @param archives_dir [Pathname]
       # @raise [DownloadError] if a locked asset is missing from the download
       # @raise [IntegrityError] if a digest does not match
       sig { params(dep: Dependency, archives_dir: Pathname).void }
       def verify_assets(dep, archives_dir)
-        dep.metadata["assets"].each do |asset|
+        matching_assets(dep).each do |asset|
           path = archives_dir / asset["name"]
           raise DownloadError, "expected asset #{asset["name"]} was not downloaded" unless path.file?
 
@@ -316,6 +327,23 @@ module Dev
           raise IntegrityError,
             "SHA256 mismatch for #{asset["name"]}: expected #{expected}, got #{actual}"
         end
+      end
+
+      # The locked assets the declared glob selects.
+      #
+      # @param dep [Dependency]
+      # @return [Array<Hash>] matching locked asset entries
+      # @raise [NoMatchingAssetsError] if the glob selects nothing — the tag's
+      #   release publishes no matching asset, or the tag has no release
+      sig { params(dep: Dependency).returns(T::Array[T::Hash[String, T.untyped]]) }
+      def matching_assets(dep)
+        pattern = dep.metadata["asset_pattern"]
+        matching = (dep.metadata["assets"] || []).select { |asset| File.fnmatch(pattern, asset["name"]) }
+        return matching unless matching.empty?
+
+        raise NoMatchingAssetsError,
+          "no locked assets matching #{pattern.inspect} for #{dep.metadata["repo"]}@#{dep.version} " \
+          "— check the assets: glob, or run dev update-deps"
       end
 
       # Extract all downloaded archives into extracted_dir. Split archives

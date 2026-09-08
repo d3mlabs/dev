@@ -15,12 +15,25 @@ require_relative "gh_repository"
 require_relative "gh_integration"
 require_relative "steam_repository"
 require_relative "steam_integration"
+require_relative "bundler_locker"
 require_relative "bundler_repository"
 require_relative "bundler_integration"
 require_relative "xcode_repository"
 require_relative "xcode_integration"
 require_relative "pip_repository"
 require_relative "pip_integration"
+require_relative "url_repository"
+require_relative "brew_cask_repository"
+require_relative "brew_scheme"
+require_relative "exact_scheme"
+require_relative "gem_scheme"
+require_relative "git_scheme"
+require_relative "locker"
+require_relative "pep440_scheme"
+require_relative "rock_scheme"
+require_relative "semver_scheme"
+require_relative "steam_scheme"
+require_relative "version_scheme"
 
 module Dev
   module Deps
@@ -49,15 +62,32 @@ module Dev
       HOST_SCOPES = T.let([HOST, BOTH].freeze, T::Array[Symbol])
 
       # @param symbol [Symbol] the DSL/declaration integration symbol (e.g. :brew)
-      # @param repository [Class] Repository subclass that resolves this type
+      # @param repository [Class] Repository subclass that reports this type's universes
       # @param repository_needs [Array<Symbol>] extra kwargs the repository takes
+      # @param scheme [Class, nil] VersionScheme subclass carrying this type's
+      #   constraint semantics — every type must answer "how do constraints
+      #   work", and nil is an answer: a purely addressable type (xcode) whose
+      #   declarations carry a revision, never a constraint, has no scheme to
+      #   run
+      # @param scheme_args [Hash{Symbol => Object}] constructor kwargs for the
+      #   scheme (e.g. ExactScheme's key:)
+      # @param locker [Class, nil] Locker subclass for types whose ecosystem tool
+      #   owns the whole-set solve (bundler), or nil
+      # @param locker_needs [Array<Symbol>] extra kwargs the locker takes
       # @param integration [Class, nil] Integration subclass that installs this
       #   type, or nil for resolve-only / container-only types
       # @param integration_needs [Array<Symbol>] extra kwargs the integration takes
       #   (beyond the always-passed repository: and cache:)
+      # @param install_alias [Symbol, nil] another entry's symbol whose
+      #   integration INSTANCE installs this type's deps too (e.g. :url deps
+      #   install through :cmake's pipeline). Sharing the instance matters:
+      #   integrations that generate batch artifacts (deps.cmake) must see
+      #   both types' deps in one install_all call, and the Installer groups
+      #   dispatch by instance. Mutually exclusive with integration.
       # @param scope [Symbol] one of HOST / CONTAINER / BOTH
       Entry = Data.define(
-        :symbol, :repository, :repository_needs, :integration, :integration_needs, :scope,
+        :symbol, :repository, :repository_needs, :scheme, :scheme_args, :locker, :locker_needs,
+        :integration, :integration_needs, :install_alias, :scope,
       ) do
         extend T::Sig
 
@@ -74,11 +104,26 @@ module Dev
         sig { returns(T::Array[Symbol]) }
         def repository_needs = to_h.fetch(:repository_needs)
 
+        sig { returns(T.nilable(T.class_of(VersionScheme))) }
+        def scheme = to_h.fetch(:scheme)
+
+        sig { returns(T::Hash[Symbol, T.untyped]) }
+        def scheme_args = to_h.fetch(:scheme_args)
+
+        sig { returns(T.nilable(T.class_of(Locker))) }
+        def locker = to_h.fetch(:locker)
+
+        sig { returns(T::Array[Symbol]) }
+        def locker_needs = to_h.fetch(:locker_needs)
+
         sig { returns(T.nilable(T.class_of(Integration))) }
         def integration = to_h.fetch(:integration)
 
         sig { returns(T::Array[Symbol]) }
         def integration_needs = to_h.fetch(:integration_needs)
+
+        sig { returns(T.nilable(Symbol)) }
+        def install_alias = to_h.fetch(:install_alias)
 
         sig { returns(Symbol) }
         def scope = to_h.fetch(:scope)
@@ -87,14 +132,20 @@ module Dev
           params(
             symbol: Symbol,
             repository: T.class_of(Repository),
+            scheme: T.nilable(T.class_of(VersionScheme)),
             integration: T.nilable(T.class_of(Integration)),
             scope: Symbol,
             repository_needs: T::Array[Symbol],
+            scheme_args: T::Hash[Symbol, T.untyped],
+            locker: T.nilable(T.class_of(Locker)),
+            locker_needs: T::Array[Symbol],
             integration_needs: T::Array[Symbol],
+            install_alias: T.nilable(Symbol),
           ).void
         end
-        def initialize(symbol:, repository:, integration:, scope:,
-                       repository_needs: [], integration_needs: [])
+        def initialize(symbol:, repository:, scheme:, integration:, scope:,
+                       repository_needs: [], scheme_args: {}, locker: nil, locker_needs: [],
+                       integration_needs: [], install_alias: nil)
           super
         end
 
@@ -110,7 +161,10 @@ module Dev
           Entry.new(
             symbol: :bundler,
             repository: BundlerRepository,
-            repository_needs: %i[project_root ruby_version_requirement],
+            repository_needs: %i[project_root],
+            scheme: GemScheme,
+            locker: BundlerLocker,
+            locker_needs: %i[project_root ruby_version_requirement],
             integration: BundlerIntegration,
             integration_needs: %i[project_root],
             scope: HOST,
@@ -118,20 +172,47 @@ module Dev
           Entry.new(
             symbol: :brew,
             repository: BrewRepository,
+            scheme: BrewScheme,
             integration: BrewIntegration,
             integration_needs: %i[taps project_dir],
+            scope: BOTH,
+          ),
+          # Casks are declared with the brew DSL verb (cask: true) but are a
+          # separate universe: Homebrew publishes no versions or bottle
+          # digests for casks, so BrewRepository's formula facts don't apply.
+          Entry.new(
+            symbol: :cask,
+            repository: BrewCaskRepository,
+            scheme: BrewScheme,
+            integration: BrewIntegration,
             scope: BOTH,
           ),
           Entry.new(
             symbol: :cmake,
             repository: GitRepository,
+            scheme: GitScheme,
             integration: CmakeIntegration,
             integration_needs: %i[project_root],
+            scope: HOST,
+          ),
+          # url deps are declared with the cmake DSL verb (url:) but are a
+          # separate universe: the URL is the entire address and the artifact
+          # behind it is the one version, downloaded and TOFU-hashed by find.
+          # Scheme-less — a url declaration carries no constraint (the tag:
+          # label is naming, not selection) — and installed through cmake's
+          # integration instance so a mixed project generates one deps.cmake.
+          Entry.new(
+            symbol: :url,
+            repository: UrlRepository,
+            scheme: nil,
+            integration: nil,
+            install_alias: :cmake,
             scope: HOST,
           ),
           Entry.new(
             symbol: :luarocks,
             repository: LuaRocksRepository,
+            scheme: RockScheme,
             integration: LuaRocksIntegration,
             integration_needs: %i[project_root],
             scope: HOST,
@@ -139,12 +220,15 @@ module Dev
           Entry.new(
             symbol: :ficsit,
             repository: FicsitRepository,
+            scheme: SemverScheme,
             integration: FicsitIntegration,
             scope: HOST,
           ),
           Entry.new(
             symbol: :gh,
             repository: GhRepository,
+            scheme: ExactScheme,
+            scheme_args: { key: "tag" },
             integration: GhIntegration,
             integration_needs: %i[project_root],
             scope: HOST,
@@ -152,12 +236,16 @@ module Dev
           Entry.new(
             symbol: :steam,
             repository: SteamRepository,
+            scheme: SteamScheme,
             integration: SteamIntegration,
             scope: HOST,
           ),
           Entry.new(
             symbol: :xcode,
             repository: XcodeRepository,
+            # Purely addressable: the DSL mints the exact version as the
+            # declaration's revision, so no constraint ever needs evaluating.
+            scheme: nil,
             integration: XcodeIntegration,
             integration_needs: %i[project_root],
             scope: HOST,
@@ -165,6 +253,7 @@ module Dev
           Entry.new(
             symbol: :pip,
             repository: PipRepository,
+            scheme: Pep440Scheme,
             integration: PipIntegration,
             integration_needs: %i[project_root python_version],
             scope: HOST,
@@ -179,17 +268,56 @@ module Dev
         # Build the integration-type -> Repository hash the Resolver consumes.
         #
         # @param project_root [Pathname] project root (threaded to repositories that need it)
-        # @param ruby_version_requirement [String, nil] for the bundler-generated Gemfile
         # @return [Hash{Symbol => Repository}]
+        sig { params(project_root: Pathname).returns(T::Hash[Symbol, Repository]) }
+        def repositories(project_root:)
+          context = { project_root: }
+          INTEGRATIONS.to_h { |entry| [entry.symbol, build_repository(entry, context)] }
+        end
+
+        # Build the integration-type -> VersionScheme hash the Resolver consumes.
+        # Schemes are stateless domain services; their only context is the
+        # entry's own scheme_args (e.g. which constraint key ExactScheme reads).
+        # Scheme-less (purely addressable) types are absent from the hash, so
+        # a constraint-shaped ask against one fails the Resolver's
+        # no-scheme-registered check loudly.
+        #
+        # @return [Hash{Symbol => VersionScheme}]
+        sig { returns(T::Hash[Symbol, VersionScheme]) }
+        def schemes
+          INTEGRATIONS.each_with_object({}) do |entry, schemes|
+            scheme = entry.scheme
+            next unless scheme
+
+            # T.unsafe: the keyword set is entry-declared (scheme_args); the
+            # scheme constructors' own sigs validate at runtime.
+            schemes[entry.symbol] = T.unsafe(scheme).new(**entry.scheme_args)
+          end
+        end
+
+        # Build the integration-type -> Locker hash for types whose ecosystem
+        # tool owns the whole-set solve. update-deps runs these before the
+        # Resolver so each tool lockfile is materialized when find reads it.
+        #
+        # @param project_root [Pathname] project root (threaded to lockers that need it)
+        # @param ruby_version_requirement [String, nil] for the bundler-generated Gemfile
+        # @return [Hash{Symbol => Locker}]
         sig do
           params(
             project_root: Pathname,
             ruby_version_requirement: T.nilable(String),
-          ).returns(T::Hash[Symbol, Repository])
+          ).returns(T::Hash[Symbol, Locker])
         end
-        def repositories(project_root:, ruby_version_requirement: nil)
+        def lockers(project_root:, ruby_version_requirement: nil)
           context = { project_root:, ruby_version_requirement: }
-          INTEGRATIONS.to_h { |entry| [entry.symbol, build_repository(entry, context)] }
+          INTEGRATIONS.each_with_object({}) do |entry, lockers|
+            locker = entry.locker
+            next unless locker
+
+            # T.unsafe: the keyword set is runtime-selected (locker_needs);
+            # the locker constructors' own sigs validate at runtime.
+            lockers[entry.symbol] = T.unsafe(locker).new(**T.unsafe(context).slice(*entry.locker_needs))
+          end
         end
 
         # Build the integration-type -> Integration hash for host installs.
@@ -197,7 +325,8 @@ module Dev
         # @param project_root [Pathname] project root (threaded to integrations that need it)
         # @param cache [Cache] shared download cache (passed to every integration)
         # @param taps [Array<Tap>] Homebrew taps for the brew integration
-        # @param ruby_version_requirement [String, nil] for the bundler repository
+        # @param ruby_version_requirement [String, nil] accepted for caller
+        #   convenience; install-time integrations don't need it today
         # @param python_version [String, nil] for the pip integration's venv
         # @return [Hash{Symbol => Integration}]
         sig do
@@ -217,18 +346,27 @@ module Dev
             python_version:,
             taps:,
           }
-          INTEGRATIONS.each_with_object({}) do |entry, integrations|
+          integrations = INTEGRATIONS.each_with_object({}) do |entry, hash|
             next unless entry.host?
 
             # T.unsafe: each entry's constructor takes a runtime-selected
             # keyword set (integration_needs), which Sorbet cannot check
             # statically; the constructors' own sigs validate at runtime.
-            integrations[entry.symbol] = T.unsafe(T.must(entry.integration)).new(
+            hash[entry.symbol] = T.unsafe(T.must(entry.integration)).new(
               repository: build_repository(entry, context),
               cache:,
               **T.unsafe(context).slice(*entry.integration_needs),
             )
           end
+
+          # Aliased types share their target's INSTANCE (not just its class):
+          # the Installer groups dispatch by instance, so both types' deps
+          # arrive in one install_all call and batch artifacts stay whole.
+          INTEGRATIONS.each do |entry|
+            alias_target = entry.install_alias
+            integrations[entry.symbol] = integrations.fetch(alias_target) if alias_target
+          end
+          integrations
         end
 
         # @param entry [Entry]
@@ -238,7 +376,7 @@ module Dev
         def build_repository(entry, context)
           # T.unsafe: the keyword set is runtime-selected (repository_needs);
           # the repository constructors' own sigs validate at runtime.
-          T.unsafe(entry.repository).new(**T.unsafe(context).slice(*entry.repository_needs))
+          entry.repository.new(**T.unsafe(context).slice(*entry.repository_needs))
         end
       end
     end

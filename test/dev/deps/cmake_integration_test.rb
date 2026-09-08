@@ -6,20 +6,25 @@ require "dev/deps/cmake_integration"
 require "dev/deps/git_repository"
 require "dev/deps/url_repository"
 require "dev/deps/resolver"
-require "dev/deps/dependency_declaration"
+require "dev/deps/declaration"
+require "dev/deps/scope"
+require "dev/deps/scoped_declaration"
 require "dev/deps/cache"
 require "dev/deps/dependency"
+require "dev/deps/package"
+require "dev/deps/package_version"
+require "dev/deps/git_scheme"
 require "pathname"
 require "tmpdir"
 
-# Stub repository for end-to-end resolver tests.
+# Stub repository for end-to-end resolver tests: name -> [PackageVersion, ...].
 class StubRepository < Dev::Deps::Repository
-  def initialize(deps_by_name: {})
-    @deps_by_name = deps_by_name
+  def initialize(universes: {})
+    @universes = universes
   end
 
-  def fetch(id)
-    @deps_by_name.fetch(id["name"])
+  def find(id)
+    Dev::Deps::Package.new(id: id, versions: @universes.fetch(id.name))
   end
 end unless defined?(StubRepository)
 
@@ -324,17 +329,22 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     hook_calls = []
     hook = ->(dep, root) { hook_calls << { name: dep.name, version: dep.version, root: root.to_s } }
 
-    fetched = Dev::Deps::Dependency.new(
-      name: "googletest", integration: :cmake, group: :test,
-      version: "sha1", hash: nil,
+    universe = Dev::Deps::PackageVersion.new(
+      version: "sha1",
       metadata: { "repo" => "https://github.com/google/googletest" },
     )
-    stub_repo = StubRepository.new(deps_by_name: { "googletest" => fetched })
-    resolver = Dev::Deps::Resolver.new(repositories: { cmake: stub_repo })
+    stub_repo = StubRepository.new(universes: { "googletest" => [universe] })
+    resolver = Dev::Deps::Resolver.new(
+      repositories: { cmake: stub_repo },
+      schemes: { cmake: Dev::Deps::GitScheme.new },
+    )
     declarations = [
-      Dev::Deps::DependencyDeclaration.new(
-        name: "googletest", integration: :cmake, group: :test,
-        constraint: { "repo" => "https://github.com/google/googletest" },
+      Dev::Deps::ScopedDeclaration.new(
+        declaration: Dev::Deps::Declaration.new(
+          name: "googletest", integration: :cmake,
+          source: "https://github.com/google/googletest",
+        ),
+        scope: Dev::Deps::Scope.new(group: :test),
         post_install: hook,
       ),
     ]

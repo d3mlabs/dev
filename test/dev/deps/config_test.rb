@@ -25,7 +25,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
     gems = config.declarations.select { |d| d.integration == :bundler }
     gems.size == 2
     gems[0].name == "cli-ui"
-    gems[0].group == Dev::Deps::DSL::DEFAULT_GEM_GROUP
+    gems[0].scope.group == Dev::Deps::DSL::DEFAULT_GEM_GROUP
     !gems[0].constraint.key?("version")
     gems[1].name == "rake"
     gems[1].constraint["version"] == "~> 13.0"
@@ -42,7 +42,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
     Then
     decl = config.declarations.find { |d| d.name == "minitest" }
     decl.integration == :bundler
-    decl.group == :test
+    decl.scope.group == :test
     decl.constraint["version"] == "~> 5.0"
   end
 
@@ -129,22 +129,25 @@ class Dev::Deps::ConfigTest < Minitest::Test
       end
     end
 
-    Then
-    decls = config.declarations.select { |d| d.group == :app }
+    Then "the url dep rides :url with the tag as a label; the git dep rides :cmake"
+    decls = config.declarations.select { |d| d.scope.group == :app }
     decls.size == 2
 
     decls[0].name == "boost"
-    decls[0].constraint["url"] == "https://example.com/boost.tar.gz"
-    decls[0].constraint["tag"] == "boost-1.90.0"
-    decls[0].constraint["cmake_targets"] == ["stacktrace"]
-    decls[0].constraint["cmake_namespace"] == "Boost::"
+    decls[0].integration == :url
+    decls[0].source == "https://example.com/boost.tar.gz"
+    decls[0].constraint == {}
+    decls[0].materialization["version_label"] == "boost-1.90.0"
+    decls[0].materialization["cmake_targets"] == ["stacktrace"]
+    decls[0].materialization["cmake_namespace"] == "Boost::"
 
     decls[1].name == "cereal"
-    decls[1].constraint["repo"] == "https://github.com/USCiLab/cereal"
+    decls[1].integration == :cmake
+    decls[1].source == "https://github.com/USCiLab/cereal"
     decls[1].constraint["tag"] == "v1.3.2"
   end
 
-  test "define test group with cmake_targets" do
+  test "define test group with cmake_targets riding materialization" do
     When
     config = Dev::Deps.define do
       group :test do
@@ -155,9 +158,10 @@ class Dev::Deps::ConfigTest < Minitest::Test
       end
     end
 
-    Then
+    Then "install instructions never pollute the constraint"
     decl = config.declarations.find { |d| d.name == "googletest" }
-    decl.constraint["cmake_targets"] == ["gtest", "gmock"]
+    decl.materialization["cmake_targets"] == ["gtest", "gmock"]
+    decl.constraint == { "tag" => "v1.17.0" }
   end
 
   test "missing group returns empty defaults" do
@@ -170,19 +174,20 @@ class Dev::Deps::ConfigTest < Minitest::Test
     nonexistent["env"] == {}
   end
 
-  test "cmake dep with commit pin" do
+  test "cmake dep with commit pin lands as the declaration's revision" do
     When
     config = Dev::Deps.define do
       group :app do
         cmake "entityx",
           repo: "https://github.com/alecthomas/entityx",
-          commit: "ee3042f8b027"
+          commit: "ee3042f8b0279856061f91069a487e4ed6f69475"
       end
     end
 
-    Then
+    Then "the address rides the revision slot, never the constraint"
     decl = config.declarations.find { |d| d.name == "entityx" }
-    decl.constraint["commit"] == "ee3042f8b027"
+    decl.revision == "ee3042f8b0279856061f91069a487e4ed6f69475"
+    decl.constraint == {}
   end
 
   test "brew dual-writes to both groups and declarations" do
@@ -202,10 +207,10 @@ class Dev::Deps::ConfigTest < Minitest::Test
     config.group("build")["env"]["ci"]["brew"] == ["ruby"]
     brew_decls = config.declarations.select { |d| d.integration == :brew }
     brew_decls.map(&:name).sort == %w[cmake powershell ruby]
-    brew_decls.all? { |d| d.group == :build }
-    brew_decls.find { |d| d.name == "powershell" }.constraint["tap"] == "d3mlabs/d3mlabs"
+    brew_decls.all? { |d| d.scope.group == :build }
+    brew_decls.find { |d| d.name == "powershell" }.source == "d3mlabs/d3mlabs"
     # env is a first-class declaration field, never smuggled into the constraint.
-    brew_decls.find { |d| d.name == "ruby" }.env == "ci"
+    brew_decls.find { |d| d.name == "ruby" }.scope.env == "ci"
     brew_decls.find { |d| d.name == "ruby" }.constraint["env"].nil?
   end
 end
