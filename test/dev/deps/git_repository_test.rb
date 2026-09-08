@@ -3,76 +3,106 @@
 
 require "test_helper"
 require "dev/deps/git_repository"
-require "dev/deps/cache"
 require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::GitRepositoryTest < Minitest::Test
-  test "find reports the declared tag's SHA as a singleton universe" do
-    Given "a remote resolving the tag via ls-remote"
-    repo = Dev::Deps::GitRepository.new
-    resolved_sha = "abcdef1234567890abcdef1234567890abcdef12"
+  REMOTE = "https://github.com/google/googletest"
+
+  def id(name: "googletest", source: REMOTE)
+    Dev::Deps::PackageId.new(integration: :cmake, name: name, source: source)
+  end
+
+  def stub_ls_remote(output, success: true)
     Open3.stubs(:capture3)
-         .with("git", "ls-remote", "--tags", "https://github.com/google/googletest", "v1.17.0")
-         .returns(["#{resolved_sha}\trefs/tags/v1.17.0\n", "", stub(success?: true)])
-
-    When "finding with the tag as probe"
-    package = repo.find(
-      Dev::Deps::PackageId.new(
-        integration: :cmake, name: "googletest", source: "https://github.com/google/googletest",
-      ),
-      probe: "v1.17.0",
-    )
-
-    Then "one version: the SHA, no digest, the resolved ref riding as a fact"
-    package.versions.map(&:version) == [resolved_sha]
-    package.version(resolved_sha).digest.nil?
-    package.version(resolved_sha).metadata ==
-      { "repo" => "https://github.com/google/googletest", "ref" => "v1.17.0" }
+         .with("git", "ls-remote", "--tags", "--heads", REMOTE)
+         .returns([output, "", stub(success?: success)])
   end
 
-  test "find passes a 40-char commit SHA through without network calls" do
-    Given "a commit-pinned declaration"
+  test "find enumerates every tag and branch head as SHA-versioned facts" do
+    Given "a remote listing tags and heads in one ls-remote call"
     repo = Dev::Deps::GitRepository.new
-    sha = "ee3042f8b0279856061f91069a487e4ed6f69475"
-
-    When "finding with the commit as probe"
-    package = repo.find(
-      Dev::Deps::PackageId.new(
-        integration: :cmake, name: "entityx", source: "https://github.com/alecthomas/entityx",
-      ),
-      probe: sha,
-    )
-
-    Then
-    package.versions.map(&:version) == [sha]
-  end
-
-  test "find raises RefResolutionError when no ref is pinned" do
-    Given "a probe-less find"
-    repo = Dev::Deps::GitRepository.new
+    stub_ls_remote(<<~LS)
+      1111111111111111111111111111111111111111\trefs/heads/main
+      2222222222222222222222222222222222222222\trefs/tags/v1.16.0
+      3333333333333333333333333333333333333333\trefs/tags/v1.17.0
+    LS
 
     When "finding"
-    repo.find(
-      Dev::Deps::PackageId.new(integration: :cmake, name: "boost", source: "https://example.com/boost"),
-    )
+    package = repo.find(id)
 
-    Then "commits are not enumerable — a coordinate is mandatory"
+    Then "one version per ref: the SHA, no digest, the ref riding as a fact"
+    package.versions.size == 3
+    package.version("3" * 40).metadata == { "repo" => REMOTE, "ref" => "v1.17.0" }
+    package.version("1" * 40).metadata == { "repo" => REMOTE, "ref" => "main" }
+    package.versions.all? { |v| v.digest.nil? }
+    package.versions.all? { |v| v.declarations == Dev::Deps::Declarations::Resolved.new([]) }
+  end
+
+  test "find prefers the peeled SHA for annotated tags — the commit a checkout materializes" do
+    Given "an annotated tag listing its tag object and its peeled commit"
+    repo = Dev::Deps::GitRepository.new
+    stub_ls_remote(<<~LS)
+      aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\trefs/tags/v1.17.0
+      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\trefs/tags/v1.17.0^{}
+    LS
+
+    When "finding"
+    package = repo.find(id)
+
+    Then "the peeled commit SHA wins, as one version"
+    package.versions.map(&:version) == ["b" * 40]
+  end
+
+  test "find ignores the probe — refs are enumerable" do
+    Given "a remote with one tag"
+    repo = Dev::Deps::GitRepository.new
+    stub_ls_remote("#{"1" * 40}\trefs/tags/v1.0.0\n")
+
+    When "finding with a leftover probe"
+    package = repo.find(id, probe: "v9.9.9")
+
+    Then "the universe is whatever the remote lists"
+    package.versions.map(&:version) == ["1" * 40]
+  end
+
+  test "find raises RefResolutionError when ls-remote fails" do
+    Given "an unreachable remote"
+    repo = Dev::Deps::GitRepository.new
+    stub_ls_remote("", success: false)
+
+    When "finding"
+    repo.find(id)
+
+    Then
     raises Dev::Deps::GitRepository::RefResolutionError
   end
 
-  test "find raises RefResolutionError, a PackageNotFoundError, for a bad ref" do
-    Given "a remote that knows no such ref"
+  test "find raises RefResolutionError when the remote lists no refs" do
+    Given "an empty remote"
     repo = Dev::Deps::GitRepository.new
-    Open3.stubs(:capture3).returns(["", "", stub(success?: true)])
+    stub_ls_remote("")
 
-    When "finding with an unresolvable tag"
-    repo.find(
-      Dev::Deps::PackageId.new(integration: :cmake, name: "ghost", source: "https://example.com/ghost"),
-      probe: "v0.0.0",
-    )
+    When "finding"
+    repo.find(id)
 
     Then
     raises Dev::Deps::Repository::PackageNotFoundError
+  end
+
+  test "at lifts a commit SHA purely — no network, the SHA is the version" do
+    Given "a commit address"
+    repo = Dev::Deps::GitRepository.new
+    sha = "ee3042f8b0279856061f91069a487e4ed6f69475"
+    Open3.expects(:capture3).never
+
+    When "lifting"
+    version = repo.at(id(name: "opencell", source: "https://github.com/d3mlabs/opencell"), sha)
+
+    Then "the address is trusted at resolve; existence surfaces at fetch"
+    version.version == sha
+    version.digest.nil?
+    version.metadata == { "repo" => "https://github.com/d3mlabs/opencell" }
+    version.declarations == Dev::Deps::Declarations::Resolved.new([])
   end
 end

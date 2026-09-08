@@ -421,6 +421,45 @@ class Dev::Deps::DSLTest < Minitest::Test
     entry["wwise-cli"]["tap"] == "d3mlabs/d3mlabs"
   end
 
+  test "cmake commit: is an address — full SHA to the revision slot, constraint stays empty" do
+    When "pinning a commit"
+    config = Dev::Deps.define do
+      group :app do
+        cmake "opencell", github: "d3mlabs/opencell",
+          commit: "ee3042f8b0279856061f91069a487e4ed6f69475"
+      end
+    end
+
+    Then
+    decl = config.declarations[0]
+    decl.revision == "ee3042f8b0279856061f91069a487e4ed6f69475"
+    decl.constraint == {}
+  end
+
+  test "cmake rejects a short commit — no more silent resolve-as-tag fallthrough" do
+    When "pinning an abbreviated SHA"
+    Dev::Deps.define do
+      group :app do
+        cmake "opencell", github: "d3mlabs/opencell", commit: "ee3042f8b027"
+      end
+    end
+
+    Then
+    raises Dev::Deps::GroupDSL::InvalidRevisionError
+  end
+
+  test "cmake rejects a git dep naming no ref at all" do
+    When "declaring with neither tag:, branch:, nor commit:"
+    Dev::Deps.define do
+      group :app do
+        cmake "boost", github: "boostorg/boost"
+      end
+    end
+
+    Then "an unconstrained git universe would pin an arbitrary ref"
+    raises Dev::Deps::GroupDSL::MissingRefError
+  end
+
   test "cmake raises EmptyNameError for empty name" do
     When "defining a cmake dep with empty name"
     Dev::Deps.define do

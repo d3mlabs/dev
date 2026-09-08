@@ -259,6 +259,20 @@ module Dev
 
       class EmptyNameError < StandardError; end
 
+      # A commit: pin that is not a full 40-char SHA. Conflict rejection
+      # compares revisions textually, so only the canonical spelling keeps
+      # equality trustworthy — and today's silent fall-through (a short
+      # "commit" quietly resolved as a tag) was a lie worth killing.
+      class InvalidRevisionError < StandardError; end
+
+      # A git-backed cmake dep with nothing to select or address: no tag:, no
+      # branch:, no commit:. An unconstrained enumeration would pin an
+      # arbitrary ref, so the ask must say what it wants.
+      class MissingRefError < StandardError; end
+
+      # The canonical git address: a full 40-char lowercase hex SHA.
+      FULL_SHA = /\A[0-9a-f]{40}\z/
+
       # The artifact target a ficsit mod materializes when no group platform
       # says otherwise: the Windows game build, which every mod publishes.
       FICSIT_DEFAULT_TARGET = "Windows"
@@ -290,17 +304,35 @@ module Dev
       end
 
       # Declare a CMake dependency. Expands github: shorthand if present; the
-      # resulting repo:/url: is the declaration's source coordinate, leaving
-      # tag:/commit: as the constraint.
+      # resulting repo:/url: is the declaration's source coordinate, tag:
+      # and branch: are constraints selecting over the remote's enumerated
+      # refs, and commit: is a revision — an address into the continuous
+      # space, full 40-char SHA only.
       #
       # @param name [String, Symbol] dependency name
-      # @param spec [Hash] options (tag:, repo:, url:, github:, etc.)
+      # @param spec [Hash] options (tag:, branch:, commit:, repo:, url:, github:, etc.)
       # @return [void]
+      # @raise [InvalidRevisionError] if commit: is not a full 40-char SHA
+      # @raise [MissingRefError] if a git-backed dep names no ref at all
       sig { params(name: T.any(String, Symbol), spec: T.untyped).void }
       def cmake(name, **spec)
         spec = expand_github(name.to_s, spec)
-        source = spec.delete(:repo) || spec.delete(:url)
-        add_declaration(name, :cmake, spec, source: source&.to_s)
+        url = spec.delete(:url)
+        source = spec.delete(:repo) || url
+        revision = spec.delete(:commit)&.to_s
+
+        if revision && !revision.match?(FULL_SHA)
+          raise InvalidRevisionError,
+            "cmake #{name} pins commit: #{revision.inspect} — a commit is a full 40-char SHA " \
+              "(tags select with tag:)"
+        end
+        if url.nil? && revision.nil? && !spec.key?(:tag) && !spec.key?(:branch)
+          raise MissingRefError,
+            "cmake #{name} names no tag:, branch:, or commit: — an unconstrained git universe " \
+              "would pin an arbitrary ref"
+        end
+
+        add_declaration(name, :cmake, spec, source: source&.to_s, revision: revision)
       end
 
       # Declare a Ruby gem scoped to this group (group name -> bundler group).
@@ -567,6 +599,7 @@ module Dev
       # @param integration [Symbol] integration type
       # @param spec [Hash] constraint spec (symbol keys → stringified)
       # @param source [String, nil] source coordinate for the Declaration
+      # @param revision [String, nil] addressable revision for the Declaration
       # @param materialization [Hash{String => Object}] install instructions
       # @return [void]
       sig do
@@ -575,10 +608,11 @@ module Dev
           integration: Symbol,
           spec: T::Hash[Symbol, T.untyped],
           source: T.nilable(String),
+          revision: T.nilable(String),
           materialization: T::Hash[String, T.untyped],
         ).void
       end
-      def add_declaration(name, integration, spec, source: nil, materialization: {})
+      def add_declaration(name, integration, spec, source: nil, revision: nil, materialization: {})
         name_str = name.to_s
         raise EmptyNameError, "dependency name cannot be empty" if name_str.empty?
 
@@ -588,7 +622,7 @@ module Dev
         constraint = stringify_keys(spec)
 
         @declarations << ScopedDeclaration.new(
-          declaration: Declaration.new(name: name_str, integration:, constraint:, source:),
+          declaration: Declaration.new(name: name_str, integration:, constraint:, source:, revision:),
           scope: Scope.new(group: @group, host:),
           platform: @platform,
           post_install:,

@@ -170,19 +170,20 @@ class Dev::Deps::ConfigTest < Minitest::Test
     nonexistent["env"] == {}
   end
 
-  test "cmake dep with commit pin" do
+  test "cmake dep with commit pin lands as the declaration's revision" do
     When
     config = Dev::Deps.define do
       group :app do
         cmake "entityx",
           repo: "https://github.com/alecthomas/entityx",
-          commit: "ee3042f8b027"
+          commit: "ee3042f8b0279856061f91069a487e4ed6f69475"
       end
     end
 
-    Then
+    Then "the address rides the revision slot, never the constraint"
     decl = config.declarations.find { |d| d.name == "entityx" }
-    decl.constraint["commit"] == "ee3042f8b027"
+    decl.revision == "ee3042f8b0279856061f91069a487e4ed6f69475"
+    decl.constraint == {}
   end
 
   test "brew dual-writes to both groups and declarations" do
