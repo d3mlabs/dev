@@ -63,8 +63,11 @@ module Dev
       # @param symbol [Symbol] the DSL/declaration integration symbol (e.g. :brew)
       # @param repository [Class] Repository subclass that reports this type's universes
       # @param repository_needs [Array<Symbol>] extra kwargs the repository takes
-      # @param scheme [Class] VersionScheme subclass carrying this type's
-      #   constraint semantics — every type must answer "how do constraints work"
+      # @param scheme [Class, nil] VersionScheme subclass carrying this type's
+      #   constraint semantics — every type must answer "how do constraints
+      #   work", and nil is an answer: a purely addressable type (xcode) whose
+      #   declarations carry a revision, never a constraint, has no scheme to
+      #   run
       # @param scheme_args [Hash{Symbol => Object}] constructor kwargs for the
       #   scheme (e.g. ExactScheme's key:)
       # @param locker [Class, nil] Locker subclass for types whose ecosystem tool
@@ -94,7 +97,7 @@ module Dev
         sig { returns(T::Array[Symbol]) }
         def repository_needs = to_h.fetch(:repository_needs)
 
-        sig { returns(T.class_of(VersionScheme)) }
+        sig { returns(T.nilable(T.class_of(VersionScheme))) }
         def scheme = to_h.fetch(:scheme)
 
         sig { returns(T::Hash[Symbol, T.untyped]) }
@@ -119,7 +122,7 @@ module Dev
           params(
             symbol: Symbol,
             repository: T.class_of(Repository),
-            scheme: T.class_of(VersionScheme),
+            scheme: T.nilable(T.class_of(VersionScheme)),
             integration: T.nilable(T.class_of(Integration)),
             scope: Symbol,
             repository_needs: T::Array[Symbol],
@@ -214,8 +217,9 @@ module Dev
           Entry.new(
             symbol: :xcode,
             repository: XcodeRepository,
-            scheme: ExactScheme,
-            scheme_args: { key: "version" },
+            # Purely addressable: the DSL mints the exact version as the
+            # declaration's revision, so no constraint ever needs evaluating.
+            scheme: nil,
             integration: XcodeIntegration,
             integration_needs: %i[project_root],
             scope: HOST,
@@ -248,13 +252,21 @@ module Dev
         # Build the integration-type -> VersionScheme hash the Resolver consumes.
         # Schemes are stateless domain services; their only context is the
         # entry's own scheme_args (e.g. which constraint key ExactScheme reads).
+        # Scheme-less (purely addressable) types are absent from the hash, so
+        # a constraint-shaped ask against one fails the Resolver's
+        # no-scheme-registered check loudly.
         #
         # @return [Hash{Symbol => VersionScheme}]
         sig { returns(T::Hash[Symbol, VersionScheme]) }
         def schemes
-          # T.unsafe: the keyword set is entry-declared (scheme_args); the
-          # scheme constructors' own sigs validate at runtime.
-          INTEGRATIONS.to_h { |entry| [entry.symbol, T.unsafe(entry.scheme).new(**entry.scheme_args)] }
+          INTEGRATIONS.each_with_object({}) do |entry, schemes|
+            scheme = entry.scheme
+            next unless scheme
+
+            # T.unsafe: the keyword set is entry-declared (scheme_args); the
+            # scheme constructors' own sigs validate at runtime.
+            schemes[entry.symbol] = T.unsafe(scheme).new(**entry.scheme_args)
+          end
         end
 
         # Build the integration-type -> Locker hash for types whose ecosystem

@@ -253,7 +253,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl.constraint["host"].nil?
   end
 
-  test "xcode() declares a pinned xcode toolchain dep" do
+  test "xcode() declares a pinned xcode toolchain dep as a revision" do
     When "pinning the Xcode toolchain"
     config = Dev::Deps.define do
       group :build do
@@ -261,12 +261,25 @@ class Dev::Deps::DSLTest < Minitest::Test
       end
     end
 
-    Then "the declaration rides the :xcode integration with the exact version"
+    Then "the declaration rides the :xcode integration; the exact version is an address"
     decl = config.declarations[0]
     decl.name == "xcode"
     decl.integration == :xcode
-    decl.constraint["version"] == "26.1.1"
+    decl.revision == "26.1.1"
+    decl.constraint == {}
     decl.scope.group == :build
+  end
+
+  test "xcode() rejects a blank version — the exact version is the whole ask" do
+    When "pinning nothing"
+    Dev::Deps.define do
+      group :build do
+        xcode "  "
+      end
+    end
+
+    Then
+    raises ArgumentError
   end
 
   test "env block stamps env as a first-class field, not a constraint key" do

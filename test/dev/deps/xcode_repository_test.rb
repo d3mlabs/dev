@@ -6,30 +6,27 @@ require "dev/deps/xcode_repository"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::XcodeRepositoryTest < Minitest::Test
-  test "find reports the declared version as a singleton universe" do
-    Given "an xcode declaration"
+  test "at lifts the declared version as the identity — no registry exists to consult" do
+    Given "an xcode revision"
     repo = Dev::Deps::XcodeRepository.new
 
-    When "finding with the exact version as probe"
-    package = repo.find(
-      Dev::Deps::PackageId.new(integration: :xcode, name: "xcode"),
-      probe: "26.1.1",
-    )
+    When "lifting"
+    version = repo.at(Dev::Deps::PackageId.new(integration: :xcode, name: "xcode"), "26.1.1")
 
-    Then "resolution is the identity — no registry exists to consult"
-    package.versions.map(&:version) == ["26.1.1"]
-    package.version("26.1.1").digest.nil?
-    package.version("26.1.1").metadata == {}
+    Then "the version is the address; Apple ships the whole toolchain"
+    version.version == "26.1.1"
+    version.digest.nil?
+    version.declarations == Dev::Deps::Declarations::Resolved.new([])
   end
 
-  test "find without an exact version raises MissingVersionError" do
-    Given "a declaration missing the version pin"
+  test "find refuses — there is no enumerable Xcode universe" do
+    Given "a constraint-shaped ask"
     repo = Dev::Deps::XcodeRepository.new
 
     When "finding"
     repo.find(Dev::Deps::PackageId.new(integration: :xcode, name: "xcode"))
 
     Then
-    raises Dev::Deps::XcodeRepository::MissingVersionError
+    raises Dev::Deps::XcodeRepository::NoEnumerableUniverseError
   end
 end

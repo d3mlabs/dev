@@ -9,37 +9,41 @@ require_relative "repository"
 
 module Dev
   module Deps
-    # Resolves the `xcode "<version>"` declaration to a pinned Dependency.
+    # Reports the Xcode toolchain: a purely addressable universe.
     #
-    # Xcode has no queryable registry to resolve against (Apple publishes no
-    # version API dev could pin hashes from), so resolution is the identity:
-    # the declared exact version IS the locked version. This still rides the
-    # resolver -> lockfile pipeline so the pin lands in deps.lock like every
-    # other dependency and the installer/accessor can find it there.
+    # Apple publishes no queryable version registry (nothing to enumerate, no
+    # hashes to pin), so there is no discrete universe and find refuses. The
+    # declared exact version is an address — the DSL's xcode verb mints it as
+    # the declaration's revision — and at lifts it as the identity. The pin
+    # still rides the resolver -> lockfile pipeline so it lands in deps.lock
+    # like every other dependency and the installer/accessor can find it
+    # there; existence is verified at install by the xcodes CLI.
     class XcodeRepository < Repository
       extend T::Sig
 
-      class MissingVersionError < StandardError; end
+      # Constraint-shaped asks cannot work here: there is nothing to select
+      # over. Declarations arrive as revisions instead.
+      class NoEnumerableUniverseError < PackageNotFoundError; end
 
-      # Report the Xcode universe: the probed version, as a singleton.
-      #
-      # Apple publishes no queryable version registry, so resolution is the
-      # identity — the probe IS the universe.
-      #
-      # @param id [PackageId] name is the declaration name
-      # @param probe [String, nil] the pinned exact version; required
-      # @return [Package] a singleton universe
-      # @raise [MissingVersionError] when no exact version was declared
+      # @param id [PackageId]
+      # @param probe [String, nil] unused
+      # @return [Package] never returns
+      # @raise [NoEnumerableUniverseError] always
       sig { override.params(id: PackageId, probe: T.nilable(String)).returns(Package) }
       def find(id, probe: nil)
-        version = probe.to_s
-        raise MissingVersionError, "xcode requires an exact version (e.g. xcode \"26.1.1\")" if version.empty?
+        raise NoEnumerableUniverseError,
+          "Apple publishes no queryable Xcode registry — declare an exact version (e.g. xcode \"26.1.1\")"
+      end
 
+      # Lift the declared exact version — resolution is the identity.
+      #
+      # @param id [PackageId] name is the declaration name
+      # @param revision [String] exact Xcode version (e.g. "26.1.1")
+      # @return [PackageVersion]
+      sig { override.params(id: PackageId, revision: String).returns(PackageVersion) }
+      def at(id, revision)
         # An Xcode install is self-contained: Apple ships the whole toolchain.
-        Package.new(
-          id: id,
-          versions: [PackageVersion.new(version: version, declarations: Declarations::Resolved.new([]))],
-        )
+        PackageVersion.new(version: revision, declarations: Declarations::Resolved.new([]))
       end
     end
   end

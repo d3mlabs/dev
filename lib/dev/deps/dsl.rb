@@ -501,10 +501,17 @@ module Dev
       # @param version [String, Symbol] exact Xcode version (e.g. "26.1.1")
       # @param spec [Hash] additional options
       # @return [void]
+      # @raise [ArgumentError] if the version is blank — Apple publishes no
+      #   registry to select from, so the exact version is the whole ask
       sig { params(version: T.any(String, Symbol), spec: T.untyped).void }
       def xcode(version, **spec)
-        spec[:version] = version.to_s.strip
-        add_declaration("xcode", :xcode, spec)
+        revision = version.to_s.strip
+        raise ArgumentError, "xcode requires an exact version (e.g. xcode \"26.1.1\")" if revision.empty?
+
+        # The exact version is an address, not a constraint: there is no
+        # universe to select over, so it rides the declaration's revision and
+        # XcodeRepository#at lifts it as the identity.
+        add_declaration("xcode", :xcode, spec, revision: revision)
       end
 
       # Declare a Homebrew formula/cask.

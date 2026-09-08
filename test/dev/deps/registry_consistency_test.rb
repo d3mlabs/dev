@@ -71,7 +71,7 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
 
   test "every version scheme class is wired into the registry or allowlisted" do
     Given "the scheme files on disk and the registry's referenced schemes"
-    referenced = Dev::Deps::Registry::INTEGRATIONS.map(&:scheme).uniq.map { |k| source_file(k) }
+    referenced = Dev::Deps::Registry::INTEGRATIONS.filter_map(&:scheme).uniq.map { |k| source_file(k) }
 
     When "checking each *_scheme.rb file"
     unwired = deps_files("_scheme").reject do |basename|
