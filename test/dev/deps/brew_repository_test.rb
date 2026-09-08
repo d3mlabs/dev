@@ -3,25 +3,28 @@
 
 require "test_helper"
 require "dev/deps/brew_repository"
-require "dev/deps/cache"
-require "tmpdir"
 require "json"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::BrewRepositoryTest < Minitest::Test
-  test "find reports the formula's current stable version as a singleton universe" do
-    Given "a formula on the moving brew registry"
-    repository = Dev::Deps::BrewRepository.new
-    brew_json = [{
-      "name" => "cmake",
-      "versions" => { "stable" => "3.31.4" },
-      "bottle" => {
-        "stable" => { "files" => { "arm64_sonoma" => { "sha256" => "abc123def456" } } },
-      },
-    }].to_json
+  def formula_json(name, stable:, sha: nil, versioned: [])
+    json = { "name" => name, "versions" => { "stable" => stable }, "versioned_formulae" => versioned }
+    if sha
+      json["bottle"] = { "stable" => { "files" => { "arm64_sonoma" => { "sha256" => sha } } } }
+    end
+    json
+  end
+
+  def stub_brew_info(specs, infos)
     Open3.stubs(:capture3)
-         .with("brew", "info", "--json=v1", "cmake")
-         .returns([brew_json, "", stub(success?: true)])
+         .with("brew", "info", "--json=v1", *specs)
+         .returns([JSON.generate(infos), "", stub(success?: true)])
+  end
+
+  test "find reports a family-less formula as a singleton universe" do
+    Given "a formula with no versioned siblings"
+    repository = Dev::Deps::BrewRepository.new
+    stub_brew_info(["cmake"], [formula_json("cmake", stable: "3.31.4", sha: "abc123def456")])
 
     When "finding the package"
     package = repository.find(Dev::Deps::PackageId.new(integration: :brew, name: "cmake"))
@@ -32,37 +35,71 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
     package.version("3.31.4").metadata == {}
   end
 
-  test "find locates the suffixed formula via the probe" do
-    Given "a formula declared with a version suffix and a tap"
+  test "find enumerates the spec family — siblings' suffixes ride as facts, bare spec last" do
+    Given "llvm with two versioned siblings"
     repository = Dev::Deps::BrewRepository.new
-    brew_json = [{
-      "name" => "llvm@18",
-      "versions" => { "stable" => "18.1.8" },
-      "bottle" => { "stable" => { "files" => { "arm64_sonoma" => { "sha256" => "llvm18" } } } },
-    }].to_json
-    Open3.stubs(:capture3)
-         .with("brew", "info", "--json=v1", "someorg/sometap/llvm@18")
-         .returns([brew_json, "", stub(success?: true)])
+    stub_brew_info(["llvm"],
+      [formula_json("llvm", stable: "21.1.0", sha: "llvm21", versioned: ["llvm@19", "llvm@18"])])
+    stub_brew_info(["llvm@19", "llvm@18"], [
+      formula_json("llvm@19", stable: "19.1.7", sha: "llvm19"),
+      formula_json("llvm@18", stable: "18.1.8", sha: "llvm18"),
+    ])
 
-    When "finding with the suffix as probe and the tap on the id"
+    When "finding"
+    package = repository.find(Dev::Deps::PackageId.new(integration: :brew, name: "llvm"))
+
+    Then "one version per spec; the bare spec sits last as the unconstrained pick"
+    package.versions.map(&:version) == ["19.1.7", "18.1.8", "21.1.0"]
+    package.version("18.1.8").metadata == { "version_suffix" => "18" }
+    package.version("18.1.8").digest == "SHA256=llvm18"
+    package.version("21.1.0").metadata == {}
+  end
+
+  test "find skips head-only siblings without a stable version" do
+    Given "a family whose sibling reports no stable version"
+    repository = Dev::Deps::BrewRepository.new
+    stub_brew_info(["tool"], [formula_json("tool", stable: "2.0.0", versioned: ["tool@head"])])
+    stub_brew_info(["tool@head"], [formula_json("tool@head", stable: nil)])
+
+    When "finding"
+    package = repository.find(Dev::Deps::PackageId.new(integration: :brew, name: "tool"))
+
+    Then "no stable version means not a version"
+    package.versions.map(&:version) == ["2.0.0"]
+  end
+
+  test "find ignores the probe — the spec family is enumerable" do
+    Given "a formula"
+    repository = Dev::Deps::BrewRepository.new
+    stub_brew_info(["cmake"], [formula_json("cmake", stable: "3.31.4")])
+
+    When "finding with a leftover probe"
+    package = repository.find(Dev::Deps::PackageId.new(integration: :brew, name: "cmake"), probe: "18")
+
+    Then
+    package.versions.map(&:version) == ["3.31.4"]
+  end
+
+  test "find qualifies family queries with the tap and records it as a fact" do
+    Given "a tapped formula"
+    repository = Dev::Deps::BrewRepository.new
+    stub_brew_info(["someorg/sometap/mytool"],
+      [formula_json("mytool", stable: "1.2.0", sha: "mt12")])
+
+    When "finding with the tap on the id"
     package = repository.find(
-      Dev::Deps::PackageId.new(integration: :brew, name: "llvm", source: "someorg/sometap"),
-      probe: "18",
+      Dev::Deps::PackageId.new(integration: :brew, name: "mytool", source: "someorg/sometap"),
     )
 
-    Then "the suffixed formula's stable version, with the facts recorded"
-    package.versions.map(&:version) == ["18.1.8"]
-    package.version("18.1.8").metadata == { "tap" => "someorg/sometap", "version_suffix" => "18" }
+    Then
+    package.versions.map(&:version) == ["1.2.0"]
+    package.version("1.2.0").metadata == { "tap" => "someorg/sometap" }
   end
 
   test "find registers the declared tap and retries when brew info fails untapped" do
     Given "a tapped formula on a machine that has never tapped it"
     repository = Dev::Deps::BrewRepository.new
-    brew_json = [{
-      "name" => "xcodes",
-      "versions" => { "stable" => "1.6.2" },
-      "bottle" => { "stable" => { "files" => { "arm64_sonoma" => { "sha256" => "xc123" } } } },
-    }].to_json
+    brew_json = JSON.generate([formula_json("xcodes", stable: "1.6.2", sha: "xc123")])
 
     Open3.stubs(:capture3)
          .with("brew", "info", "--json=v1", "xcodesorg/made/xcodes")
@@ -85,10 +122,9 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
   test "find raises BrewInfoError when brew info fails" do
     Given "a formula that brew info cannot resolve"
     repository = Dev::Deps::BrewRepository.new
-    failed_status = stub(success?: false)
     Open3.stubs(:capture3)
          .with("brew", "info", "--json=v1", "nonexistent")
-         .returns(["", "Error: No available formula", failed_status])
+         .returns(["", "Error: No available formula", stub(success?: false)])
 
     When "finding the package"
     repository.find(Dev::Deps::PackageId.new(integration: :brew, name: "nonexistent"))
