@@ -92,6 +92,10 @@ module Dev
       sig { returns(T.nilable(String)) }
       def source = declaration.source
 
+      # @return [String, nil] the ask's addressable revision (delegated)
+      sig { returns(T.nilable(String)) }
+      def revision = declaration.revision
+
       # @param other [Object]
       # @return [Boolean] whether other is the same ask under the same context
       sig { params(other: Object).returns(T::Boolean) }

@@ -58,10 +58,10 @@ class Dev::Deps::ResolverTest < Minitest::Test
   end
 
   # Shorthand: assemble the Declaration + Scope composition from flat kwargs.
-  def declaration(name:, integration:, constraint: {}, source: nil, group: :app,
+  def declaration(name:, integration:, constraint: {}, source: nil, revision: nil, group: :app,
                   platform: nil, host: nil, env: nil, post_install: nil, materialization: {})
     Dev::Deps::ScopedDeclaration.new(
-      declaration: Dev::Deps::Declaration.new(name:, integration:, constraint:, source:),
+      declaration: Dev::Deps::Declaration.new(name:, integration:, constraint:, source:, revision:),
       scope: Dev::Deps::Scope.new(group:, host:, env:),
       platform:, post_install:, materialization:,
     )
@@ -446,6 +446,21 @@ class Dev::Deps::ResolverTest < Minitest::Test
     result[0].metadata["commit"] == "abc"
     result[0].metadata["install_dir"] == "~/.dev/engines/ue"
     result[0].metadata["asset_pattern"] == "*.tar.zst.*"
+  end
+
+  test "raises ConflictingDeclarationError when one name is pinned at two revisions" do
+    Given "the same dep addressed at two commits"
+    repo = StubRepository.new(universes: { "opencell" => [version("a" * 40)] })
+    declarations = [
+      declaration(name: "opencell", integration: :cmake, group: :app, revision: "a" * 40),
+      declaration(name: "opencell", integration: :cmake, group: :test, revision: "b" * 40),
+    ]
+
+    When "resolving"
+    resolver_for(:cmake, repo).resolve(declarations)
+
+    Then "two addresses cannot both be the pin"
+    raises Dev::Deps::Resolver::ConflictingDeclarationError
   end
 
   test "raises ConflictingDeclarationError when one name carries two materializations" do

@@ -273,7 +273,7 @@ module Dev
       end
 
       # Reject sets where one package is declared with disagreeing asks —
-      # constraint, source, or materialization. A dep declared in several
+      # constraint, source, revision, or materialization. A dep declared in several
       # groups resolves once, so agreement is the precondition for that single
       # resolution being right for everyone; disagreeing install dirs would
       # otherwise let one row's materialization win silently. Grouping is per
@@ -287,8 +287,9 @@ module Dev
       sig { params(declarations: T::Array[ScopedDeclaration]).void }
       def reject_conflicts(declarations)
         declarations.group_by { |d| [d.integration, d.name] }.each do |(integration, name), decls|
-          asks = decls.map { |d| { constraint: d.constraint, source: d.source, materialization: d.materialization } }
-            .uniq
+          asks = decls.map do |d|
+            { constraint: d.constraint, source: d.source, revision: d.revision, materialization: d.materialization }
+          end.uniq
           next if asks.size <= 1
 
           raise ConflictingDeclarationError,

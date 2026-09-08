@@ -79,6 +79,19 @@ class Dev::Deps::ScopedDeclarationTest < Minitest::Test
     scoped.source == "https://github.com/fmtlib/fmt"
   end
 
+  test "delegates the atom's revision" do
+    Given "a scoped declaration over a revision-pinned atom"
+    scoped = Dev::Deps::ScopedDeclaration.new(
+      declaration: Dev::Deps::Declaration.new(
+        name: "opencell", integration: :cmake,
+        source: "https://github.com/d3mlabs/opencell", revision: "a" * 40,
+      ),
+    )
+
+    Expect
+    scoped.revision == "a" * 40
+  end
+
   test "is value-equal across independently built compositions" do
     Given "two scoped declarations from the same parts"
     a = Dev::Deps::ScopedDeclaration.new(declaration: atom, scope: Dev::Deps::Scope.new(group: :test))

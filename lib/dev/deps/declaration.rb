@@ -30,9 +30,23 @@ module Dev
     # coordinate (cargo-style git deps) just as a project row can. It is
     # identity-shaping — Resolver#package_id reads it onto PackageId#source.
     #
+    # revision is the other way to ask: an address into an integration's
+    # continuous space (a git commit SHA, an exact Xcode version) instead of a
+    # selection over its discrete published universe. An address forgoes
+    # resolution — the Resolver hands it to Repository#at and no scheme runs —
+    # so a revision alongside version constraints is a contradiction and is
+    # rejected at construction. The spelling is the ecosystem's canonical one
+    # (dev's only operation on a revision is equality, in conflict rejection),
+    # validated by the DSL verb that mints it.
+    #
     # See docs/deps-architecture.md for the ontology this belongs to.
     class Declaration
       extend T::Sig
+
+      # A declaration states both an address (revision) and a selection
+      # (version constraints) — asking dev to resolve what the author
+      # already forewent resolving.
+      class RevisionWithConstraintError < StandardError; end
 
       # @return [String] the package's name within its integration's universe
       sig { returns(String) }
@@ -54,24 +68,41 @@ module Dev
       sig { returns(T.nilable(String)) }
       attr_reader :source
 
+      # @return [String, nil] address into the integration's continuous space
+      #   (a full git commit SHA, an exact Xcode version); nil for
+      #   constraint-shaped asks, which select over the published universe
+      sig { returns(T.nilable(String)) }
+      attr_reader :revision
+
       # @param name [String] the package's name
       # @param integration [Symbol] :bundler, :ficsit, :cmake, …
       # @param constraint [Hash{String => Object}] dev-shaped constraint;
       #   defaults to {} (unconstrained)
       # @param source [String, nil] source coordinate; defaults to nil
+      # @param revision [String, nil] addressable revision; defaults to nil
+      # @raise [RevisionWithConstraintError] if both a revision and version
+      #   constraints are stated
       sig do
         params(
           name: String,
           integration: Symbol,
           constraint: T::Hash[String, T.untyped],
           source: T.nilable(String),
+          revision: T.nilable(String),
         ).void
       end
-      def initialize(name:, integration:, constraint: {}, source: nil)
+      def initialize(name:, integration:, constraint: {}, source: nil, revision: nil)
+        if revision && !constraint.empty?
+          raise RevisionWithConstraintError,
+            "#{integration}/#{name} pins revision #{revision.inspect} and constrains " \
+              "#{constraint.inspect} — an address forgoes resolution, a constraint asks for it"
+        end
+
         @name = name
         @integration = integration
         @constraint = T.let(constraint.dup.freeze, T::Hash[String, T.untyped])
         @source = source
+        @revision = revision
         freeze
       end
 
@@ -81,15 +112,15 @@ module Dev
       def ==(other)
         return false unless other.is_a?(Declaration)
 
-        [name, integration, constraint, source] ==
-          [other.name, other.integration, other.constraint, other.source]
+        [name, integration, constraint, source, revision] ==
+          [other.name, other.integration, other.constraint, other.source, other.revision]
       end
       alias_method :eql?, :==
 
       # @return [Integer] hash code, so declarations work as Hash keys
       sig { returns(Integer) }
       def hash
-        [self.class, name, integration, constraint, source].hash
+        [self.class, name, integration, constraint, source, revision].hash
       end
     end
   end

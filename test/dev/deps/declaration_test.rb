@@ -83,4 +83,49 @@ class Dev::Deps::DeclarationTest < Minitest::Test
     a != b
     a.hash != b.hash
   end
+
+  test "carries a revision as an address, not a constraint key" do
+    Given "a declaration pinning an addressable revision"
+    decl = Dev::Deps::Declaration.new(
+      name: "opencell", integration: :cmake,
+      source: "https://github.com/d3mlabs/opencell",
+      revision: "ee3042f8b0279856061f91069a487e4ed6f69475",
+    )
+
+    Expect "the revision is a field and the constraint stays empty"
+    decl.revision == "ee3042f8b0279856061f91069a487e4ed6f69475"
+    decl.constraint == {}
+  end
+
+  test "revision defaults to nil — most asks select over a universe" do
+    Given "a constraint-shaped declaration"
+    decl = Dev::Deps::Declaration.new(name: "googletest", integration: :cmake, constraint: { "tag" => "v1.17.0" })
+
+    Expect
+    decl.revision.nil?
+  end
+
+  test "revision participates in equality — two addresses are two asks" do
+    Given "one name pinned at two revisions"
+    a = Dev::Deps::Declaration.new(name: "opencell", integration: :cmake, revision: "a" * 40)
+    b = Dev::Deps::Declaration.new(name: "opencell", integration: :cmake, revision: "b" * 40)
+
+    Expect
+    a != b
+    a.hash != b.hash
+  end
+
+  test "a revision alongside version constraints is a contradiction, rejected loudly" do
+    When "declaring both an address and a selection"
+    act = lambda do
+      Dev::Deps::Declaration.new(
+        name: "opencell", integration: :cmake,
+        constraint: { "tag" => "v1.0" }, revision: "a" * 40,
+      )
+    end
+
+    Then "the atom refuses: an address forgoes resolution, a constraint asks for it"
+    error = assert_raises(Dev::Deps::Declaration::RevisionWithConstraintError) { act.call }
+    error.message.include?("opencell")
+  end
 end
