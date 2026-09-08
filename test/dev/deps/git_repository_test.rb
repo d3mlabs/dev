@@ -54,18 +54,6 @@ class Dev::Deps::GitRepositoryTest < Minitest::Test
     package.versions.map(&:version) == ["b" * 40]
   end
 
-  test "find ignores the probe — refs are enumerable" do
-    Given "a remote with one tag"
-    repo = Dev::Deps::GitRepository.new
-    stub_ls_remote("#{"1" * 40}\trefs/tags/v1.0.0\n")
-
-    When "finding with a leftover probe"
-    package = repo.find(id, probe: "v9.9.9")
-
-    Then "the universe is whatever the remote lists"
-    package.versions.map(&:version) == ["1" * 40]
-  end
-
   test "find raises RefResolutionError when ls-remote fails" do
     Given "an unreachable remote"
     repo = Dev::Deps::GitRepository.new

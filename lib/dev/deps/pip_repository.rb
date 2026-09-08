@@ -36,12 +36,11 @@ module Dev
       # Pep440Scheme.
       #
       # @param id [PackageId] name is the PyPI project name
-      # @param probe [String, nil] ignored — the universe is enumerable
       # @return [Package]
       # @raise [ProjectNotFoundError] if PyPI has no such project
       # @raise [ApiError] if the API request fails otherwise
-      sig { override.params(id: PackageId, probe: T.nilable(String)).returns(Package) }
-      def find(id, probe: nil)
+      sig { override.params(id: PackageId).returns(Package) }
+      def find(id)
         releases = project_json(id.name)["releases"] || {}
         versions = releases.map do |version, files|
           # pip resolves the transitive tree itself at install time.

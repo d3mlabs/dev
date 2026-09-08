@@ -13,7 +13,8 @@ module Dev
     # A pinned buildid that is no longer the branch tip fails resolution
     # loudly: Steam serves only current builds, so a stale pin cannot be
     # honored and pretending otherwise would defer the failure to install.
-    # No probe (see VersionScheme#pin): the tips are enumerable in one query.
+    # The branch tips are enumerable in one query, so a constraint always
+    # selects out of the reported universe.
     class SteamScheme < VersionScheme
       extend T::Sig
 

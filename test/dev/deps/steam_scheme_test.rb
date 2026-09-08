@@ -40,12 +40,4 @@ class Dev::Deps::SteamSchemeTest < Minitest::Test
     Then "buildids are monotonically increasing integers, not lexical strings"
     sorted == ["999", "15321746", "15400000"]
   end
-
-  test "pin is nil — branch tips are enumerable, no probe needed" do
-    When "pinning a fully constrained declaration"
-    result = scheme.pin({ "branch" => "public", "buildid" => "15321746" })
-
-    Then
-    result.nil?
-  end
 end

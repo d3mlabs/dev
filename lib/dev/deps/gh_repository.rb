@@ -48,14 +48,13 @@ module Dev
       # gh dep pins the latest release rather than an arbitrary tag.
       #
       # @param id [PackageId] source is the "owner/repo" slug
-      # @param probe [String, nil] ignored (tags and releases are enumerable)
       # @return [Package] one version per tag/release, facts complete
       # @raise [GhMissingError] if the gh CLI is not installed
       # @raise [AuthenticationError] if gh is not authenticated
       # @raise [RepoAccessError] if the repo is not visible to the account
       # @raise [PackageNotFoundError] if the repo has no tags or releases
-      sig { override.params(id: PackageId, probe: T.nilable(String)).returns(Package) }
-      def find(id, probe: nil)
+      sig { override.params(id: PackageId).returns(Package) }
+      def find(id)
         repo_slug = T.must(id.source)
         releases = list(repo_slug, "releases")
         tags = list(repo_slug, "tags")

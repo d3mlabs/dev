@@ -30,18 +30,17 @@ module Dev
       # one version per branch.
       #
       # Steam exposes no build history, but branch tips ARE enumerable: one
-      # +app_info_print call reports every branch's current buildid, so no
-      # probe is needed. The branch a buildid is the tip of rides metadata as
+      # +app_info_print call reports every branch's current buildid.
+      # The branch a buildid is the tip of rides metadata as
       # a fact for SteamScheme's branch selection. No digest: Steam publishes
       # no stable per-build hash; integrity is SteamCMD's app_update …
       # validate at install.
       #
       # @param id [PackageId] source is the Steam app id
-      # @param probe [String, nil] ignored — the universe is enumerable
       # @return [Package] one version per branch
       # @raise [SteamCmd::SteamCmdError] if querying the app fails
-      sig { override.params(id: PackageId, probe: T.nilable(String)).returns(Package) }
-      def find(id, probe: nil)
+      sig { override.params(id: PackageId).returns(Package) }
+      def find(id)
         app = T.must(id.source)
         versions = resolve_branches(app).map do |branch, build_id|
           PackageVersion.new(

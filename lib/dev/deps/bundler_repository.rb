@@ -37,11 +37,10 @@ module Dev
       # Report a gem's locked pin from Gemfile.lock as a singleton universe.
       #
       # @param id [PackageId] name is the gem name
-      # @param probe [String, nil] ignored — the lockfile is enumerable
       # @return [Package] a singleton universe
       # @raise [MissingGemError] if the gem is absent from the parsed Gemfile.lock
-      sig { override.params(id: PackageId, probe: T.nilable(String)).returns(Package) }
-      def find(id, probe: nil)
+      sig { override.params(id: PackageId).returns(Package) }
+      def find(id)
         pin = pins.fetch(id.name) do
           raise MissingGemError,
             "gem #{id.name.inspect} is not in #{LOCKFILE} — run `dev update-deps`"

@@ -26,11 +26,10 @@ module Dev
       class NoEnumerableUniverseError < PackageNotFoundError; end
 
       # @param id [PackageId]
-      # @param probe [String, nil] unused
       # @return [Package] never returns
       # @raise [NoEnumerableUniverseError] always
-      sig { override.params(id: PackageId, probe: T.nilable(String)).returns(Package) }
-      def find(id, probe: nil)
+      sig { override.params(id: PackageId).returns(Package) }
+      def find(id)
         raise NoEnumerableUniverseError,
           "Apple publishes no queryable Xcode registry — declare an exact version (e.g. xcode \"26.1.1\")"
       end

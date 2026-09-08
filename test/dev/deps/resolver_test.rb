@@ -16,9 +16,9 @@ require "dev/deps/exact_scheme"
 require "dev/deps/semver_scheme"
 
 # Stub repository over a canned universe: name -> [PackageVersion, ...].
-# Records every find call (id + probe) and at call (id + revision) for
-# assertion. addressed: maps revision -> PackageVersion; an unmapped
-# revision falls through to the base's NoAddressableSpaceError.
+# Records every find call (id) and at call (id + revision) for assertion.
+# addressed: maps revision -> PackageVersion; an unmapped revision falls
+# through to the base's NoAddressableSpaceError.
 class StubRepository < Dev::Deps::Repository
   attr_reader :finds, :ats
 
@@ -29,8 +29,8 @@ class StubRepository < Dev::Deps::Repository
     @ats = []
   end
 
-  def find(id, probe: nil)
-    @finds << { id: id, probe: probe }
+  def find(id)
+    @finds << { id: id }
     versions = @universes.fetch(id.name) do
       raise Dev::Deps::Repository::PackageNotFoundError, "no package #{id.name}"
     end
@@ -247,7 +247,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
     raises Dev::Deps::Resolver::UnknownIntegrationError
   end
 
-  test "passes the scheme-extracted pin to find as the probe, and the source on the id" do
+  test "find receives identity only — the source on the id, never the constraint" do
     Given "a pinned-identity declaration (gh-style)"
     repo = StubRepository.new(universes: { "engine" => [version("5.8.0")] })
     declarations = [
@@ -258,25 +258,8 @@ class Dev::Deps::ResolverTest < Minitest::Test
     When "resolving with the gh exact scheme"
     resolver_for(:gh, repo, scheme: Dev::Deps::ExactScheme.new(key: "tag")).resolve(declarations)
 
-    Then "the probe is the pinned tag and the declaration's source rides the id"
-    repo.finds[0][:probe] == "5.8.0"
-    repo.finds[0][:id].source == "d3mlabs/unreal-engine"
-    repo.finds[0][:id].name == "engine"
-    repo.finds[0][:id].integration == :gh
-  end
-
-  test "the probe is nil for range constraints — enumerable universes get no coordinate" do
-    Given "a semver-ranged declaration"
-    repo = StubRepository.new(universes: { "SML" => [version("3.12.0")] })
-    declarations = [
-      declaration(name: "SML", integration: :ficsit, group: :app, constraint: { "version" => "^3.0.0" }),
-    ]
-
-    When "resolving"
-    resolver_for(:ficsit, repo, scheme: Dev::Deps::SemverScheme.new).resolve(declarations)
-
-    Then
-    repo.finds[0][:probe].nil?
+    Then "the declaration's source rides the id; the tag stays scheme-side"
+    repo.finds == [{ id: Dev::Deps::PackageId.new(integration: :gh, name: "engine", source: "d3mlabs/unreal-engine") }]
   end
 
   test "attaches host and env from the declaration onto minted metadata" do
@@ -298,7 +281,6 @@ class Dev::Deps::ResolverTest < Minitest::Test
     mac.metadata["host"] == "darwin"
     mac.metadata["repo"] == "d3mlabs/unreal-engine"
     result.find { |d| d.name == "ruby" }.metadata["env"] == "ci"
-    repo.finds.all? { |call| call[:probe].nil? }
   end
 
   test "walks transitive edges, inheriting group, host, and env" do

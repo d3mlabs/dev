@@ -29,16 +29,6 @@ class Dev::Deps::ExactSchemeTest < Minitest::Test
     "5.6.1-css-83" | nil            | true
   end
 
-  test "pin extracts the coordinate under the configured key" do
-    When "pinning"
-    pinned = scheme.pin({ "tag" => "5.6.1-css-83" })
-    unpinned = scheme.pin({})
-
-    Then "the coordinate doubles as the find probe"
-    pinned == "5.6.1-css-83"
-    unpinned.nil?
-  end
-
   test "sort preserves order — exact coordinates carry none to impose" do
     When "sorting"
     sorted = scheme.sort(["b", "a", "c"])

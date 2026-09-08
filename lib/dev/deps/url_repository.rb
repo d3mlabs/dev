@@ -32,11 +32,10 @@ module Dev
       # Report a URL dependency's universe: the one artifact behind the URL.
       #
       # @param id [PackageId] source is the download URL
-      # @param probe [String, nil] ignored (the universe is the singleton)
       # @return [Package] a singleton universe
       # @raise [DownloadError] if the download fails
-      sig { override.params(id: PackageId, probe: T.nilable(String)).returns(Package) }
-      def find(id, probe: nil)
+      sig { override.params(id: PackageId).returns(Package) }
+      def find(id)
         url = T.must(id.source)
         path = download_to_tempfile(url, id.name)
         digest = "SHA256=#{Digest::SHA256.file(path).hexdigest}"

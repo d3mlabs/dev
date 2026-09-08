@@ -36,16 +36,6 @@ class Dev::Deps::BrewSchemeTest < Minitest::Test
     result == true
   end
 
-  test "pin extracts the suffix as the probe" do
-    When "pinning"
-    pinned = scheme.pin({ "version" => "18" })
-    unpinned = scheme.pin({})
-
-    Then "the suffix is the access path to the llvm@18 formula spec"
-    pinned == "18"
-    unpinned.nil?
-  end
-
   test "sort preserves order — one current version per formula spec" do
     When "sorting"
     sorted = scheme.sort(["b", "a"])

@@ -27,16 +27,17 @@ module Dev
 
       # Report a cask's universe: one unversioned entry.
       #
-      # The declared suffix (rare for casks) rides metadata so BrewScheme can
-      # match it, mirroring the formula shape.
+      # Versioned casks are distinct cask names in Homebrew's own universe
+      # (`temurin@21`), so the name is the whole coordinate — there is no
+      # suffix fact to select over, and a `version:` constraint on a cask is
+      # unsatisfiable by construction (BrewScheme finds no suffix to match,
+      # loudly).
       #
       # @param id [PackageId] name is the cask name
-      # @param probe [String, nil] cask version suffix, if declared
       # @return [Package] a singleton universe
-      sig { override.params(id: PackageId, probe: T.nilable(String)).returns(Package) }
-      def find(id, probe: nil)
+      sig { override.params(id: PackageId).returns(Package) }
+      def find(id)
         metadata = { "cask" => true }
-        metadata["version_suffix"] = probe if probe
 
         Package.new(
           id: id,

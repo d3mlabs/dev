@@ -154,7 +154,7 @@ module Dev
               "constraint #{decl.constraint.inspect}"
         end
 
-        package = repository.find(package_id(decl), probe: scheme&.pin(decl.constraint))
+        package = repository.find(package_id(decl))
         explicit = platforms.compact
         candidates = package.versions.select do |version|
           (scheme.nil? || satisfies?(scheme, version, decl.constraint)) &&

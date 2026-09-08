@@ -12,8 +12,9 @@ module Dev
     #
     # The suffix is matched against the version's "version_suffix" fact (the
     # reported stable version, e.g. "18.1.8", is brew's record, not the
-    # coordinate). Suffixed formulae are not enumerable — brew answers for
-    # one formula spec at a time — so the suffix doubles as the probe.
+    # coordinate). BrewRepository enumerates the whole spec family (the bare
+    # formula plus its versioned_formulae siblings), so the suffix selects a
+    # sibling out of the reported universe.
     class BrewScheme < VersionScheme
       extend T::Sig
 
@@ -33,14 +34,6 @@ module Dev
       sig { override.params(versions: T::Array[String]).returns(T::Array[String]) }
       def sort(versions)
         versions.dup
-      end
-
-      # @param constraint [Hash] declaration constraint
-      # @return [String, nil] the suffix, for Repository#find's probe
-      sig { override.params(constraint: T::Hash[String, T.untyped]).returns(T.nilable(String)) }
-      def pin(constraint)
-        suffix = constraint["version"]
-        suffix&.to_s
       end
     end
   end

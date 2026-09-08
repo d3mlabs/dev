@@ -23,7 +23,7 @@ class StubRepository < Dev::Deps::Repository
     @universes = universes
   end
 
-  def find(id, probe: nil)
+  def find(id)
     Dev::Deps::Package.new(id: id, versions: @universes.fetch(id.name))
   end
 end unless defined?(StubRepository)

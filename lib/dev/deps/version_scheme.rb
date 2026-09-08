@@ -58,21 +58,6 @@ module Dev
       def sort(versions)
         raise NotImplementedError, "#{self.class}#sort must be implemented"
       end
-
-      # The exact version coordinate this constraint pins, if any — the
-      # Resolver passes it to Repository#find as the probe, the access path
-      # for universes that cannot enumerate (a git commit, a brew @suffix
-      # formula). nil for range constraints and for enumerable ecosystems,
-      # whose schemes never override this. Extraction lives on the scheme
-      # because the constraint keys are the scheme's vocabulary; the raw
-      # constraint hash itself never reaches a Repository.
-      #
-      # @param constraint [Hash] the declaration's constraint hash
-      # @return [String, nil] the pinned coordinate, or nil
-      sig { params(constraint: T::Hash[String, T.untyped]).returns(T.nilable(String)) }
-      def pin(constraint)
-        nil
-      end
     end
   end
 end

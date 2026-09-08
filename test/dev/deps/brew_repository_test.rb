@@ -68,18 +68,6 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
     package.versions.map(&:version) == ["2.0.0"]
   end
 
-  test "find ignores the probe — the spec family is enumerable" do
-    Given "a formula"
-    repository = Dev::Deps::BrewRepository.new
-    stub_brew_info(["cmake"], [formula_json("cmake", stable: "3.31.4")])
-
-    When "finding with a leftover probe"
-    package = repository.find(Dev::Deps::PackageId.new(integration: :brew, name: "cmake"), probe: "18")
-
-    Then
-    package.versions.map(&:version) == ["3.31.4"]
-  end
-
   test "find qualifies family queries with the tap and records it as a fact" do
     Given "a tapped formula"
     repository = Dev::Deps::BrewRepository.new

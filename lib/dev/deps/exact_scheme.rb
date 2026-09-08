@@ -5,14 +5,11 @@ require_relative "version_scheme"
 
 module Dev
   module Deps
-    # Exact-coordinate constraint semantics (:gh tags, :xcode versions, :url
-    # labels): the constraint names one version, and a candidate satisfies it
-    # by being that version.
+    # Exact-coordinate constraint semantics (:gh tags): the constraint names
+    # one version, and a candidate satisfies it by being that version.
     #
-    # These ecosystems have no range grammar — a GitHub tag or an Xcode
-    # version is an exact ask by design. The named coordinate doubles as the
-    # probe (see #pin): their universes answer for one version at a time, so
-    # the Resolver hands the coordinate to Repository#find as the access path.
+    # These ecosystems have no range grammar — a GitHub tag is an exact ask
+    # by design, selecting one version out of the enumerated universe.
     class ExactScheme < VersionScheme
       extend T::Sig
 
@@ -42,14 +39,6 @@ module Dev
       sig { override.params(versions: T::Array[String]).returns(T::Array[String]) }
       def sort(versions)
         versions.dup
-      end
-
-      # @param constraint [Hash] declaration constraint
-      # @return [String, nil] the pinned coordinate, for Repository#find's probe
-      sig { override.params(constraint: T::Hash[String, T.untyped]).returns(T.nilable(String)) }
-      def pin(constraint)
-        pinned = constraint[key]
-        pinned&.to_s
       end
     end
   end

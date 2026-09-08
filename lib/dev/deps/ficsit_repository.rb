@@ -63,12 +63,11 @@ module Dev
       # declared platforms against the chosen version's artifacts at mint.
       #
       # @param id [PackageId] name is the mod_reference
-      # @param probe [String, nil] ignored — the universe is enumerable
       # @return [Package]
       # @raise [ModNotFoundError] if the mod_reference doesn't exist on ficsit.app
       # @raise [ApiError] if the GraphQL request fails
-      sig { override.params(id: PackageId, probe: T.nilable(String)).returns(Package) }
-      def find(id, probe: nil)
+      sig { override.params(id: PackageId).returns(Package) }
+      def find(id)
         mod_data = query_mod(id.name)
         versions = (mod_data["versions"] || []).map do |version_data|
           package_version(mod_data, version_data)

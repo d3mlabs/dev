@@ -40,18 +40,6 @@ class Dev::Deps::SteamRepositoryTest < Minitest::Test
     package.version("1").declarations == Dev::Deps::Declarations::Resolved.new([])
   end
 
-  test "find ignores the probe — branch tips are enumerable in one query" do
-    Given "a stubbed branch listing"
-    repo = Dev::Deps::SteamRepository.new
-    Dev::Deps::SteamCmd.stubs(:resolve_branches).returns({ "public" => "99999" })
-
-    When "finding with a probe"
-    package = repo.find(id, probe: "anything")
-
-    Then "the universe is the same, probe or not"
-    package.versions.map(&:version) == ["99999"]
-  end
-
   test "find raises PackageNotFoundError when no branch reports a buildid" do
     Given "an app steamcmd reports no branches for"
     repo = Dev::Deps::SteamRepository.new

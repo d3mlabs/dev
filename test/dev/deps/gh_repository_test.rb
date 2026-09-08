@@ -127,18 +127,6 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
     package.versions.size == 101
   end
 
-  test "find ignores the probe — the universe is enumerable" do
-    Given "a repo with one release"
-    repo = Dev::Deps::GhRepository.new
-    stub_universe(repo, releases: [RELEASE_JSON], tags: [tag_json("5.6.1-css-83", "sha")])
-
-    When "finding with a leftover probe"
-    package = repo.find(prebuilt_id, probe: "9.9.9")
-
-    Then
-    package.versions.map(&:version) == ["5.6.1-css-83"]
-  end
-
   test "find claims an empty Resolved declaration set — self-contained by contract" do
     Given "a repo with one tag"
     repo = Dev::Deps::GhRepository.new

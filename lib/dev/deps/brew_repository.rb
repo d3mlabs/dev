@@ -39,11 +39,10 @@ module Dev
       # and are skipped.
       #
       # @param id [PackageId] name is the formula name; source is the tap
-      # @param probe [String, nil] ignored (the spec family is enumerable)
       # @return [Package] one version per family spec
       # @raise [BrewInfoError] if `brew info` fails for the formula
-      sig { override.params(id: PackageId, probe: T.nilable(String)).returns(Package) }
-      def find(id, probe: nil)
+      sig { override.params(id: PackageId).returns(Package) }
+      def find(id)
         tap = id.source
         base_info = brew_info_with_tap(build_formula_spec(id.name, tap), tap)
 

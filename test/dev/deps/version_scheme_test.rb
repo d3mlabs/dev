@@ -23,10 +23,4 @@ class Dev::Deps::VersionSchemeTest < Minitest::Test
     Then
     raises NotImplementedError
   end
-
-  test "base class pin is nil — enumerable ecosystems never pin a probe" do
-    Expect "no constraint shape extracts a probe by default"
-    Dev::Deps::VersionScheme.new.pin({ "version" => ">= 1.0" }).nil?
-    Dev::Deps::VersionScheme.new.pin({}).nil?
-  end
 end

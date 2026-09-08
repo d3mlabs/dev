@@ -3,6 +3,7 @@
 
 require "test_helper"
 require "dev/deps/brew_cask_repository"
+require "dev/deps/brew_scheme"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::BrewCaskRepositoryTest < Minitest::Test
@@ -20,17 +21,15 @@ class Dev::Deps::BrewCaskRepositoryTest < Minitest::Test
     package.versions.first.declarations == Dev::Deps::Declarations::ToolOwned.new
   end
 
-  test "find records a declared suffix as the version_suffix fact" do
-    Given "a cask pinned to a versioned spec"
+  test "a version constraint on a cask is unsatisfiable — the cask name is the coordinate" do
+    Given "a cask's singleton universe (versioned casks are distinct names, e.g. temurin@21)"
     repository = Dev::Deps::BrewCaskRepository.new
+    package = repository.find(Dev::Deps::PackageId.new(integration: :cask, name: "temurin"))
 
-    When "finding with a probe"
-    package = repository.find(
-      Dev::Deps::PackageId.new(integration: :cask, name: "temurin"),
-      probe: "21",
-    )
+    When "evaluating a suffix constraint against it"
+    satisfied = Dev::Deps::BrewScheme.new.satisfies?(package.versions.first, { "version" => "21" })
 
-    Then
-    package.versions.first.metadata == { "cask" => true, "version_suffix" => "21" }
+    Then "no suffix fact exists to match — the resolve fails loudly, not silently"
+    satisfied == false
   end
 end

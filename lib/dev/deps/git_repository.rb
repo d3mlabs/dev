@@ -30,11 +30,10 @@ module Dev
       # resolved to full SHAs.
       #
       # @param id [PackageId] source is the git remote URL
-      # @param probe [String, nil] ignored (refs are enumerable)
       # @return [Package] one version per ref, the ref riding as a fact
       # @raise [RefResolutionError] if the remote's refs cannot be listed
-      sig { override.params(id: PackageId, probe: T.nilable(String)).returns(Package) }
-      def find(id, probe: nil)
+      sig { override.params(id: PackageId).returns(Package) }
+      def find(id)
         repo_url = T.must(id.source)
         refs = enumerate_refs(repo_url)
         raise RefResolutionError, "no refs listable for #{id.name} at #{repo_url}" if refs.empty?
