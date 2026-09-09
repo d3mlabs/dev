@@ -1,4 +1,7 @@
+# typed: strict
 # frozen_string_literal: true
+
+require "sorbet-runtime"
 
 module Dev
   module Deps
@@ -8,9 +11,18 @@ module Dev
     # that needs progress/status output (integrations, fetcher, orchestrator)
     # should call through this module rather than coupling to CLI::UI directly.
     module CliUI
+      @available = T.let(nil, T.nilable(T::Boolean))
+
       class << self
+        extend T::Sig
+
+        # Whether the optional cli/ui gem is loadable (memoized).
+        #
+        # @return [Boolean]
+        sig { returns(T::Boolean) }
         def available?
-          return @available if defined?(@available)
+          memo = @available
+          return memo unless memo.nil?
 
           @available = begin
             require "cli/ui"
@@ -23,6 +35,8 @@ module Dev
         # Print a success status line.
         #
         # @param name [String] label to display
+        # @return [void]
+        sig { params(name: String).void }
         def step_ok(name)
           if available?
             CLI::UI.puts("#{CLI::UI::Glyph::CHECK} #{name}")
@@ -34,6 +48,8 @@ module Dev
         # Print a failure status line.
         #
         # @param name [String] label to display
+        # @return [void]
+        sig { params(name: String).void }
         def step_fail(name)
           if available?
             CLI::UI.puts("#{CLI::UI::Glyph::X} #{name}")
@@ -46,6 +62,8 @@ module Dev
         #
         # @param title [String] spinner label
         # @yield block to execute during spinner
+        # @return [Object] the spinner's (or block's) return value
+        sig { params(title: String, block: T.untyped).returns(T.untyped) }
         def with_spinner(title, &block)
           if available?
             CLI::UI::Spinner.spin(title, &block)
@@ -59,6 +77,7 @@ module Dev
         #
         # @param str [String, nil] input string
         # @return [String, nil] UTF-8 safe string
+        sig { params(str: T.nilable(String)).returns(T.nilable(String)) }
         def sanitize_utf8(str)
           return str if str.nil? || (str.encoding == Encoding::UTF_8 && str.valid_encoding?)
 

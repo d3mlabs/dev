@@ -10,7 +10,7 @@ require "dev/deps/integration"
 require "dev/deps/lockfile"
 require "dev/deps/registry"
 require "dev/host_service"
-require "shadowenv_ruby"
+require "dev/shadowenv_ruby"
 
 module Dev
   module Builtins
@@ -21,13 +21,13 @@ module Dev
     class InstallDepsCommand < BuiltinCommand
       extend T::Sig
 
-      # Builds the DependencyInstaller for a lockfile + integrations pair;
+      # Builds the Installer for a lockfile + integrations pair;
       # injected so tests can substitute a fake without touching the host.
       InstallerFactory = T.type_alias do
         T.proc.params(
           lockfile: Dev::Deps::Lockfile,
           integrations: T::Hash[Symbol, Dev::Deps::Integration],
-        ).returns(Dev::Deps::DependencyInstaller)
+        ).returns(Dev::Deps::Installer)
       end
 
       # Builds the project-scoped gem skill linker (the project root is a
@@ -45,15 +45,15 @@ module Dev
       end
       def initialize(
         installer_factory: ->(lockfile, integrations) {
-          Dev::Deps::DependencyInstaller.new(lockfile:, integrations:)
+          Dev::Deps::Installer.new(lockfile:, integrations:)
         },
         gem_skill_linker_factory: ->(project_root) { Dev::Deps::GemSkillLinker.new(project_root:) },
         host_service: Dev::HostService.new
       )
         super()
-        @installer_factory = T.let(installer_factory, InstallerFactory)
-        @gem_skill_linker_factory = T.let(gem_skill_linker_factory, GemSkillLinkerFactory)
-        @host_service = T.let(host_service, Dev::HostService)
+        @installer_factory = installer_factory
+        @gem_skill_linker_factory = gem_skill_linker_factory
+        @host_service = host_service
       end
 
       sig { override.returns(String) }

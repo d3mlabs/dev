@@ -5,7 +5,7 @@ require "dev/cli/flag_parser"
 require "dev/command"
 require "dev/deps/cache_gc"
 require "dev/deps/lockfile"
-require "build_container"
+require "dev/build_container"
 
 module Dev
   module Builtins
@@ -25,8 +25,8 @@ module Dev
         flag_parser: Cli::FlagParser.new
       )
         super()
-        @cache_gc_factory = T.let(cache_gc_factory, CacheGcFactory)
-        @flag_parser = T.let(flag_parser, Cli::FlagParser)
+        @cache_gc_factory = cache_gc_factory
+        @flag_parser = flag_parser
       end
 
       sig { override.returns(String) }

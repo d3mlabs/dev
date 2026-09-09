@@ -5,6 +5,9 @@ inherit_mode:
   merge:
     - Exclude
 
+plugins:
+  - rubocop-sorbet
+
 AllCops:
   SuggestExtensions: false
   Exclude:
@@ -12,6 +15,27 @@ AllCops:
     # `ruby -x`); not parseable as plain Ruby.
     - bin/**/*
     - tmp/**/*
+
+# Every Ruby file must declare a `typed:` sigil (bin/ and tmp/ stay excluded
+# via AllCops above).
+Sorbet/ValidSigil:
+  RequireSigilOnAllFiles: true
+
+# Production code is `typed: strict`. Test files are exempt (RSpock's AST
+# transform and type pinnings in setup methods keep them at `typed: false`);
+# sigil presence is still enforced there by Sorbet/ValidSigil.
+Sorbet/StrictSigil:
+  Enabled: true
+  Include:
+    - src/**/*
+    - lib/**/*
+  Exclude:
+    # `typed: false` holdouts. Data.define with a keyword-args initialize
+    # override is rejected by Sorbet (error 4010)...
+    - lib/dev/deps/dependency.rb
+    # ...and Fetcher consumes a consumer-repo Lockfile API (parse,
+    # runtime_ref_map) that doesn't resolve against this repo's Lockfile.
+    - lib/dev/deps/fetcher.rb
 
 # dev's tests are written in the RSpock dialect: bare comparisons in
 # Then/Expect blocks, block-name constants (Given/When/Then/Where), and

@@ -29,6 +29,39 @@ module ASTTransform
   end
 end
 
+# Base class for read-only analysis passes: subclass, harvest state in +on_*+ handlers (always call +super+ so
+# traversal continues), and expose results through readers. The walk still functionally rebuilds the tree —
+# Parser::AST::Processor has no read-only mode — but +run+ discards the rebuilt tree, so handlers never need to
+# care what they return.
+#
+#   class SendCounter < ASTTransform::AbstractAnalysis
+#     attr_reader :count
+#
+#     def initialize
+#       @count = 0
+#       super
+#     end
+#
+#     def on_send(node)
+#       @count += 1
+#       super
+#     end
+#   end
+#
+#   SendCounter.new.run(SourceParser.new.parse(source)).count
+#
+# source://ast_transform//lib/ast_transform/abstract_analysis.rb#26
+class ASTTransform::AbstractAnalysis < ::ASTTransform::AbstractProcessor
+  # Runs this analysis on +node+, discarding the rebuilt tree.
+  # Note: If you want to add one-time setup or result finalization, override this, then call super.
+  #
+  # @param node [Parser::AST::Node] The node to be analyzed.
+  # @return [ASTTransform::AbstractAnalysis] self, so callers can chain result readers off the run.
+  #
+  # source://ast_transform//lib/ast_transform/abstract_analysis.rb#33
+  def run(node); end
+end
+
 # Shared traversal core for tree passes. Parser::AST::Processor is a rewriting walker — every visit functionally
 # rebuilds the tree — so transformation and analysis share one engine and differ only in what they keep:
 # AbstractTransformation's +run+ returns the rebuilt tree, AbstractAnalysis's +run+ discards it and returns the

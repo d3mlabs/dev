@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "fileutils"
@@ -23,6 +24,8 @@ module Dev
     # gh auth (dev is public and carries no credentials of its own); any other
     # source (URL, local path) clones through git directly.
     class Cache
+      extend T::Sig
+
       # `git clone` (via gh or git) of the knowledge repo failed.
       class KnowledgeCloneError < RuntimeError; end
 
@@ -44,24 +47,34 @@ module Dev
       REFRESH_POLL_SECONDS = 0.05
 
       # @return [Pathname] the clone's location
+      sig { returns(Pathname) }
       attr_reader :dir
 
       # @param repo [String] "owner/repo" (cloned via gh, the user's auth) or
       #   any git-clonable URL or local path
       # @param dir [Pathname, String, nil] override for tests; defaults to the
       #   XDG data location
-      # @param refresh_timeout [Numeric] override for tests; how long a
+      # @param refresh_timeout [Integer, Float] override for tests; how long a
       #   bounded refresh blocks before detaching
-      # @param refresh_floor [Numeric] override for tests; minimum age before
-      #   a bounded refresh pulls again
+      # @param refresh_floor [Integer, Float] override for tests; minimum age
+      #   before a bounded refresh pulls again
+      sig do
+        params(
+          repo: String,
+          dir: T.nilable(T.any(Pathname, String)),
+          refresh_timeout: T.any(Integer, Float),
+          refresh_floor: T.any(Integer, Float),
+        ).void
+      end
       def initialize(repo:, dir: nil, refresh_timeout: REFRESH_TIMEOUT_SECONDS, refresh_floor: REFRESH_FLOOR_SECONDS)
         @repo = repo
-        @dir = Pathname(dir || default_dir)
+        @dir = T.let(Pathname(dir || default_dir), Pathname)
         @refresh_timeout = refresh_timeout
         @refresh_floor = refresh_floor
       end
 
       # @return [Boolean] whether the cache has been cloned
+      sig { returns(T::Boolean) }
       def present?
         (@dir / ".git").exist?
       end
@@ -71,11 +84,13 @@ module Dev
       # beside it).
 
       # @return [Pathname] the on-demand skills corpus inside the cache
+      sig { returns(Pathname) }
       def skills_dir
         Layout.org_skills_dir(@dir)
       end
 
       # @return [Pathname] the org learnings index inside the cache
+      sig { returns(Pathname) }
       def index_file
         Layout.org_index_file(@dir)
       end
@@ -87,6 +102,7 @@ module Dev
       # @return [void]
       # @raise [KnowledgeCloneError] when the initial clone fails
       # @raise [KnowledgeFetchError] when the pull fails
+      sig { void }
       def refresh
         if present?
           run_or_raise(pull_command, KnowledgeFetchError)
@@ -105,11 +121,12 @@ module Dev
       # reports errors properly.
       #
       # @return [void]
+      sig { void }
       def refresh_bounded
         return if refreshed_within_floor?
 
         FileUtils.mkdir_p(@dir.dirname)
-        pid = Process.spawn(*(present? ? pull_command : clone_command), out: File::NULL, err: File::NULL)
+        pid = T.unsafe(Process).spawn(*(present? ? pull_command : clone_command), out: File::NULL, err: File::NULL)
         wait_or_detach(pid)
       rescue SystemCallError => e
         $stderr.puts "dev: warning: could not start the knowledge repo cache refresh (#{e.message})."
@@ -119,6 +136,7 @@ module Dev
       # falling back to HEAD's (a fresh clone has no FETCH_HEAD yet).
       #
       # @return [Time, nil] nil when the cache has never been cloned
+      sig { returns(T.nilable(Time)) }
       def synced_at
         marker = [@dir / ".git" / "FETCH_HEAD", @dir / ".git" / "HEAD"].find(&:exist?)
         marker&.mtime
@@ -128,6 +146,7 @@ module Dev
 
       # @return [Boolean] whether the last successful refresh is inside the
       #   courtesy floor
+      sig { returns(T::Boolean) }
       def refreshed_within_floor?
         at = synced_at
         !at.nil? && (Time.now - at) <= @refresh_floor
@@ -138,6 +157,7 @@ module Dev
       #
       # @param pid [Integer]
       # @return [void]
+      sig { params(pid: Integer).void }
       def wait_or_detach(pid)
         deadline = Time.now + @refresh_timeout
         until Process.waitpid(pid, Process::WNOHANG)
@@ -154,12 +174,14 @@ module Dev
       # @param error_class [Class<RuntimeError>]
       # @return [void]
       # @raise [RuntimeError] error_class when the command fails
+      sig { params(command: T::Array[String], error_class: T.class_of(RuntimeError)).void }
       def run_or_raise(command, error_class)
-        _out, err, status = Open3.capture3(*command)
+        _out, err, status = T.unsafe(Open3).capture3(*command)
         raise error_class, "#{command.first} failed for #{@repo}: #{err.strip}" unless status.success?
       end
 
       # @return [Array<String>]
+      sig { returns(T::Array[String]) }
       def clone_command
         if @repo.match?(OWNER_REPO_PATTERN)
           ["gh", "repo", "clone", @repo, @dir.to_s, "--", "--quiet"]
@@ -169,11 +191,13 @@ module Dev
       end
 
       # @return [Array<String>]
+      sig { returns(T::Array[String]) }
       def pull_command
         ["git", "-C", @dir.to_s, "pull", "--ff-only", "--quiet"]
       end
 
       # @return [String]
+      sig { returns(String) }
       def default_dir
         data_home = ENV.fetch("XDG_DATA_HOME", File.join(Dir.home, ".local", "share"))
         File.join(data_home, "dev", "knowledge")

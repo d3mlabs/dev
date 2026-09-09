@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require "dev/command"
-require "build_container"
+require "dev/build_container"
 
 module Dev
   module Builtins

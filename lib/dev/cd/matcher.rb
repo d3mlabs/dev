@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "dev/cd/repo"
@@ -13,9 +14,14 @@ module Dev
     # finds `d3mlabs/dev`. Ties sort by path, keeping ambiguous candidate
     # lists reproducible regardless of filesystem walk order.
     class Matcher
+      extend T::Sig
+
       # No repo matched the query.
       class RepoNotFoundError < StandardError
+        extend T::Sig
+
         # @param query [String]
+        sig { params(query: String).void }
         def initialize(query)
           super("no repo matching '#{query}' found")
         end
@@ -24,11 +30,15 @@ module Dev
       # Multiple repos matched the query equally well; carries the rendered
       # candidates so callers can print them and hint at a deeper suffix.
       class AmbiguousRepoError < StandardError
+        extend T::Sig
+
         # @return [Array<String>] candidates at their shortest-unique depth
+        sig { returns(T::Array[String]) }
         attr_reader :candidates
 
         # @param query [String]
         # @param candidates [Array<String>]
+        sig { params(query: String, candidates: T::Array[String]).void }
         def initialize(query, candidates)
           @candidates = candidates
           super("'#{query}' is ambiguous (#{candidates.size} matches)")
@@ -40,8 +50,9 @@ module Dev
       SUBSTRING_SCORE = 1
 
       # @param repos [Array<Dev::Cd::Repo>] the discovered candidate set
+      sig { params(repos: T::Array[Repo]).void }
       def initialize(repos:)
-        @repos = repos.sort_by { |repo| repo.path.to_s }
+        @repos = T.let(repos.sort_by { |repo| repo.path.to_s }, T::Array[Repo])
       end
 
       # Resolve a query to exactly one repo.
@@ -53,6 +64,7 @@ module Dev
       # @return [Dev::Cd::Repo]
       # @raise [RepoNotFoundError] when nothing matches
       # @raise [AmbiguousRepoError] when the best matches tie
+      sig { params(query: String).returns(Repo) }
       def resolve(query)
         scored = scored_matches(query)
         raise RepoNotFoundError, query if scored.empty?
@@ -69,6 +81,7 @@ module Dev
       #
       # @param query [String]
       # @return [Array<String>]
+      sig { params(query: String).returns(T::Array[String]) }
       def candidates(query)
         scored_matches(query).map { |repo, _score| render(repo) }
       end
@@ -80,6 +93,7 @@ module Dev
       #
       # @param repo [Dev::Cd::Repo]
       # @return [String]
+      sig { params(repo: Repo).returns(String) }
       def render(repo)
         (1..repo.segments.size).each do |depth|
           suffix = repo.suffix(depth)
@@ -95,6 +109,7 @@ module Dev
       #
       # @param query [String]
       # @return [Array<Array(Dev::Cd::Repo, Integer)>]
+      sig { params(query: String).returns(T::Array[[Repo, Integer]]) }
       def scored_matches(query)
         query_segments = query.split("/").reject(&:empty?)
         @repos
@@ -112,12 +127,15 @@ module Dev
       # @param query_segments [Array<String>]
       # @param repo [Dev::Cd::Repo]
       # @return [Integer, nil]
+      sig { params(query_segments: T::Array[String], repo: Repo).returns(T.nilable(Integer)) }
       def score(query_segments, repo)
         return 0 if query_segments.empty?
         return nil if query_segments.size > repo.segments.size
 
         tail = repo.segments.last(query_segments.size)
-        scores = query_segments.zip(tail).map { |wanted, actual| segment_score(wanted, actual) }
+        # T.must: the size guard above ensures tail has as many segments as
+        # the query, so zip never pads with nil.
+        scores = query_segments.zip(tail).map { |wanted, actual| segment_score(wanted, T.must(actual)) }
         return nil if scores.any?(&:nil?)
 
         scores.sum
@@ -129,6 +147,7 @@ module Dev
       # @param wanted [String] the query segment
       # @param actual [String] the repo path segment
       # @return [Integer, nil]
+      sig { params(wanted: String, actual: String).returns(T.nilable(Integer)) }
       def segment_score(wanted, actual)
         wanted = wanted.downcase
         actual = actual.downcase

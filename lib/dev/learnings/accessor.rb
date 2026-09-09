@@ -1,6 +1,8 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "pathname"
+require "stringio"
 require_relative "../deps/gem_skill_linker"
 require_relative "../settings"
 require_relative "../skill_installer"
@@ -36,6 +38,8 @@ module Dev
     # RuntimeError subclasses throughout so the CLI boundary prints clean
     # `dev:` messages instead of backtraces.
     class Accessor
+      extend T::Sig
+
       class UsageError < RuntimeError; end
 
       # `dev learnings invariants` cannot produce the block: no knowledge repo
@@ -46,7 +50,7 @@ module Dev
       # scaffold into.
       class NoEnclosingProjectError < RuntimeError; end
 
-      USAGE = <<~USAGE.strip
+      USAGE = T.let(<<~USAGE.strip, String)
         usage: dev learnings <subcommand>
           dev learnings sync        refresh the whole read path now (blocking): knowledge repo cache, skill links, invariants render
           dev learnings status      configured knowledge repo, cache location/age, what's rendered and linked
@@ -68,20 +72,38 @@ module Dev
       #   tests; defaults to the project's linker (nil outside a project)
       # @param renderer [Dev::Learnings::InvariantsRenderer]
       # @param scaffolder [Dev::Learnings::Scaffolder]
+      sig do
+        params(
+          project_root: T.nilable(T.any(Pathname, String)),
+          settings: Dev::Settings,
+          cache: T.nilable(Cache),
+          synchronizer: T.untyped,
+          skill_installer: Dev::SkillInstaller,
+          gem_skill_linker: T.untyped,
+          renderer: InvariantsRenderer,
+          scaffolder: Scaffolder,
+        ).void
+      end
       def initialize(project_root:, settings: Dev::Settings.new, cache: nil, synchronizer: nil,
                      skill_installer: Dev::SkillInstaller.new, gem_skill_linker: nil,
                      renderer: InvariantsRenderer.new, scaffolder: Scaffolder.new)
-        @project_root = project_root && Pathname(project_root)
+        @project_root = T.let(project_root && Pathname(project_root), T.nilable(Pathname))
         @settings = settings
         repo = settings.knowledge_repo
-        @cache = cache || (repo && Cache.new(repo: repo))
+        @cache = T.let(cache || (repo && Cache.new(repo: repo)), T.nilable(Cache))
         # The synchronizer shares the accessor's cache (status/invariants
         # read it too); an unconfigured machine gets the null synchronizer.
-        @synchronizer = synchronizer ||
-          (@cache ? Synchronizer.new(settings: settings, cache: @cache) : UnconfiguredSynchronizer.new(settings: settings))
+        @synchronizer = T.let(
+          synchronizer ||
+            (@cache ? Synchronizer.new(settings: settings, cache: @cache) : UnconfiguredSynchronizer.new(settings: settings)),
+          T.untyped,
+        )
         @skill_installer = skill_installer
-        @gem_skill_linker = gem_skill_linker ||
-          (@project_root && Dev::Deps::GemSkillLinker.new(project_root: @project_root))
+        @gem_skill_linker = T.let(
+          gem_skill_linker ||
+            (@project_root && Dev::Deps::GemSkillLinker.new(project_root: @project_root)),
+          T.untyped,
+        )
         @renderer = renderer
         @scaffolder = scaffolder
       end
@@ -89,9 +111,10 @@ module Dev
       # Dispatch a `dev learnings …` invocation.
       #
       # @param args [Array<String>] argv after the "learnings" command
-      # @param out [IO] output stream
+      # @param out [IO, StringIO] output stream
       # @return [void]
       # @raise [UsageError] on an unrecognized invocation
+      sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
       def run(args, out: $stdout)
         case args
         when ["sync"] then sync(out:)
@@ -109,18 +132,20 @@ module Dev
       # the org tier (cache pull, org skill links, invariants render + project
       # link), and the project's gem skill relinks.
       #
-      # @param out [IO]
+      # @param out [IO, StringIO]
       # @return [void]
+      sig { params(out: T.any(IO, StringIO)).void }
       def sync(out:)
         @skill_installer.install_all(Dev::SkillInstaller::SHIPPED_SKILLS_DIR)
         @synchronizer.sync!(project_root: @project_root)
         @gem_skill_linker&.link_all
-        out.puts "dev: learnings synced from #{@settings.knowledge_repo} (#{@cache.dir})."
+        out.puts "dev: learnings synced from #{@settings.knowledge_repo} (#{T.must(@cache).dir})."
         out.puts "dev: no enclosing project — skipped the invariants link and gem skill links." if @project_root.nil?
       end
 
-      # @param out [IO]
+      # @param out [IO, StringIO]
       # @return [void]
+      sig { params(out: T.any(IO, StringIO)).void }
       def status(out:)
         repo = @settings.knowledge_repo
         if repo.nil?
@@ -130,32 +155,35 @@ module Dev
         end
 
         out.puts "dev: knowledge repo: #{repo}"
-        unless @cache.present?
-          out.puts "dev: cache: #{@cache.dir} (not cloned yet — run `dev learnings sync`)."
+        cache = T.must(@cache)
+        unless cache.present?
+          out.puts "dev: cache: #{cache.dir} (not cloned yet — run `dev learnings sync`)."
           return
         end
 
-        out.puts "dev: cache: #{@cache.dir} (refreshed #{format_age(Time.now - @cache.synced_at)} ago)."
+        out.puts "dev: cache: #{cache.dir} (refreshed #{format_age(Time.now - T.must(cache.synced_at))} ago)."
         status_org_tier(out)
         status_project_tier(out)
       end
 
-      # @param out [IO]
+      # @param out [IO, StringIO]
       # @return [void]
       # @raise [InvariantsUnavailableError] when the block cannot be produced
+      sig { params(out: T.any(IO, StringIO)).void }
       def invariants(out:)
-        if @cache.nil?
+        cache = @cache
+        if cache.nil?
           raise InvariantsUnavailableError,
             "no knowledge repo configured — add `knowledge_repo: <owner>/<repo>` " \
             "to #{@settings.config_path} (or set DEV_KNOWLEDGE_REPO)."
         end
-        unless @cache.present?
+        unless cache.present?
           raise InvariantsUnavailableError,
             "the knowledge repo cache has not been cloned yet — run `dev learnings sync`."
         end
 
-        block = @renderer.prompt_block(@cache.index_file)
-        raise InvariantsUnavailableError, "#{@cache.index_file} has no `## Invariants` section." if block.nil?
+        block = @renderer.prompt_block(cache.index_file)
+        raise InvariantsUnavailableError, "#{cache.index_file} has no `## Invariants` section." if block.nil?
 
         out.puts block
       end
@@ -166,24 +194,26 @@ module Dev
       # index makes this a reported no-op (exit 0), never an overwrite — so
       # consumers can call init unconditionally before capturing.
       #
-      # @param out [IO]
+      # @param out [IO, StringIO]
       # @param org [Boolean] scaffold the org knowledge-repo layout instead
       #   of the repo tier
       # @return [void]
       # @raise [NoEnclosingProjectError] when run outside any project
+      sig { params(out: T.any(IO, StringIO), org: T::Boolean).void }
       def init(out:, org: false)
-        if @project_root.nil?
+        project_root = @project_root
+        if project_root.nil?
           raise NoEnclosingProjectError,
             "no enclosing project — run `dev learnings init` inside the repo to scaffold."
         end
 
         if org
-          @scaffolder.scaffold_org(@project_root)
-          out.puts "dev: scaffolded #{Layout.org_index_file(@project_root)} and " \
-            "#{Layout.org_skills_dir(@project_root)}/ (the org knowledge-repo layout) — commit them."
+          @scaffolder.scaffold_org(project_root)
+          out.puts "dev: scaffolded #{Layout.org_index_file(project_root)} and " \
+            "#{Layout.org_skills_dir(project_root)}/ (the org knowledge-repo layout) — commit them."
         else
-          @scaffolder.scaffold_repo(@project_root)
-          out.puts "dev: scaffolded #{Layout.repo_index_file(@project_root)} " \
+          @scaffolder.scaffold_repo(project_root)
+          out.puts "dev: scaffolded #{Layout.repo_index_file(project_root)} " \
             "(this repo's empty always-on learnings index) — commit it."
         end
       rescue Scaffolder::IndexAlreadyExistsError => e
@@ -193,8 +223,9 @@ module Dev
       # The org tier's rendered/linked state: the machine-side invariants
       # render and the org skill links.
       #
-      # @param out [IO]
+      # @param out [IO, StringIO]
       # @return [void]
+      sig { params(out: T.any(IO, StringIO)).void }
       def status_org_tier(out)
         rendered = @synchronizer.rendered_invariants_file
         out.puts(if rendered.file?
@@ -208,21 +239,24 @@ module Dev
       # The project tier's linked state: the invariants link and the gem skill
       # links, or a pointer when there is no enclosing project.
       #
-      # @param out [IO]
+      # @param out [IO, StringIO]
       # @return [void]
+      sig { params(out: T.any(IO, StringIO)).void }
       def status_project_tier(out)
-        if @project_root.nil?
+        project_root = @project_root
+        if project_root.nil?
           out.puts "dev: project: none — run inside a repo to see its invariants link and gem skills."
           return
         end
 
-        rules_file = @synchronizer.project_rules_file(@project_root)
+        rules_file = @synchronizer.project_rules_file(project_root)
         out.puts "dev: project invariants link: #{rules_file} (#{invariants_link_state(rules_file)})."
         out.puts "dev: gem skills: #{gem_skill_link_count} linked under #{gem_skills_dir}."
       end
 
       # @param rules_file [Pathname]
       # @return [String]
+      sig { params(rules_file: Pathname).returns(String) }
       def invariants_link_state(rules_file)
         if rules_file.symlink? && rules_file.readlink == @synchronizer.rendered_invariants_file
           "linked"
@@ -237,20 +271,23 @@ module Dev
       # cache's skills corpus.
       #
       # @return [Integer]
+      sig { returns(Integer) }
       def org_skill_link_count
         dir = @skill_installer.skills_dir
         return 0 unless dir.directory?
 
-        corpus_prefix = "#{@cache.skills_dir}#{File::SEPARATOR}"
+        corpus_prefix = "#{T.must(@cache).skills_dir}#{File::SEPARATOR}"
         dir.children.count { |link| link.symlink? && link.readlink.to_s.start_with?(corpus_prefix) }
       end
 
       # @return [Pathname]
+      sig { returns(Pathname) }
       def gem_skills_dir
-        @project_root.join(*Dev::Deps::GemSkillLinker::AGENT_SKILLS_SUBDIRS)
+        T.must(@project_root).join(*Dev::Deps::GemSkillLinker::AGENT_SKILLS_SUBDIRS)
       end
 
       # @return [Integer]
+      sig { returns(Integer) }
       def gem_skill_link_count
         dir = gem_skills_dir
         return 0 unless dir.directory?
@@ -260,8 +297,9 @@ module Dev
         end
       end
 
-      # @param seconds [Numeric]
+      # @param seconds [Float]
       # @return [String] a compact human age, e.g. "42s", "7m", "3h", "2d"
+      sig { params(seconds: Float).returns(String) }
       def format_age(seconds)
         case seconds
         when 0...60 then "#{seconds.to_i}s"

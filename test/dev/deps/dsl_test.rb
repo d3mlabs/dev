@@ -6,8 +6,8 @@ require "dev/deps"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::DSLTest < Minitest::Test
-  test "cmake() produces DependencyDeclaration with cmake integration" do
-    When "defining a cmake dep"
+  test "cmake url: routes to the :url integration — the URL is the whole address" do
+    When "defining a url-backed cmake dep"
     config = Dev::Deps.define do
       group :app do
         cmake "boost",
@@ -16,14 +16,15 @@ class Dev::Deps::DSLTest < Minitest::Test
       end
     end
 
-    Then
+    Then "the url is the source; the tag is a display label, never a constraint"
     decls = config.declarations
     decls.size == 1
     decls[0].name == "boost"
-    decls[0].integration == :cmake
-    decls[0].group == :app
-    decls[0].constraint["url"] == "https://example.com/boost.tar.gz"
-    decls[0].constraint["tag"] == "boost-1.90.0"
+    decls[0].integration == :url
+    decls[0].scope.group == :app
+    decls[0].source == "https://example.com/boost.tar.gz"
+    decls[0].constraint == {}
+    decls[0].materialization["version_label"] == "boost-1.90.0"
   end
 
   test "github: shorthand expands org/repo to full URL" do
@@ -34,10 +35,11 @@ class Dev::Deps::DSLTest < Minitest::Test
       end
     end
 
-    Then
+    Then "the expanded URL lands as the source, not a constraint key"
     decl = config.declarations[0]
-    decl.constraint["repo"] == "https://github.com/USCiLab/cereal"
+    decl.source == "https://github.com/USCiLab/cereal"
     !decl.constraint.key?("github")
+    !decl.constraint.key?("repo")
   end
 
   test "github: shorthand with org only appends dep name" do
@@ -49,10 +51,10 @@ class Dev::Deps::DSLTest < Minitest::Test
     end
 
     Then
-    config.declarations[0].constraint["repo"] == "https://github.com/axmolengine/axmol"
+    config.declarations[0].source == "https://github.com/axmolengine/axmol"
   end
 
-  test "luarocks() produces DependencyDeclaration with luarocks integration" do
+  test "luarocks() produces ScopedDeclaration with luarocks integration" do
     When "defining a luarocks dep"
     config = Dev::Deps.define do
       group :test do
@@ -64,11 +66,11 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl = config.declarations[0]
     decl.name == "luaunit"
     decl.integration == :luarocks
-    decl.group == :test
+    decl.scope.group == :test
     decl.constraint["constraint"] == ">=3.5"
   end
 
-  test "custom() produces DependencyDeclaration with arbitrary integration" do
+  test "custom() produces ScopedDeclaration with arbitrary integration" do
     When "defining a custom integration dep"
     config = Dev::Deps.define do
       group :app do
@@ -110,7 +112,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     config.registered_integrations[:wow_curseforge] == "WoWCurseforgeIntegration"
   end
 
-  test "ficsit() produces DependencyDeclaration with ficsit integration" do
+  test "ficsit() produces ScopedDeclaration with ficsit integration" do
     When "defining a ficsit mod dep"
     config = Dev::Deps.define do
       group :app do
@@ -122,7 +124,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl = config.declarations[0]
     decl.name == "SML"
     decl.integration == :ficsit
-    decl.group == :app
+    decl.scope.group == :app
     decl.constraint["version"] == "^3.12.0"
   end
 
@@ -141,7 +143,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl.constraint == {}
   end
 
-  test "ficsit() with target passes target in constraint" do
+  test "ficsit() with target rides materialization, not the constraint" do
     When "defining a ficsit dep with target"
     config = Dev::Deps.define do
       group :app do
@@ -149,10 +151,23 @@ class Dev::Deps::DSLTest < Minitest::Test
       end
     end
 
-    Then
+    Then "which artifact to fetch is an install instruction"
     decl = config.declarations[0]
     decl.constraint["version"] == "^1.0"
-    decl.constraint["target"] == "LinuxServer"
+    decl.materialization["target"] == "LinuxServer"
+    !decl.constraint.key?("target")
+  end
+
+  test "ficsit() defaults the materialization target to the Windows game build" do
+    When "defining a ficsit dep with no target"
+    config = Dev::Deps.define do
+      group :app do
+        ficsit "SML", version: "^3.12.0"
+      end
+    end
+
+    Then
+    config.declarations[0].materialization["target"] == "Windows"
   end
 
   test "group platform: stamps the platform onto every declaration in the group" do
@@ -166,7 +181,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     Then
     decl = config.declarations[0]
     decl.name == "SML"
-    decl.group == :integration
+    decl.scope.group == :integration
     decl.platform == "LinuxServer"
   end
 
@@ -197,7 +212,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     sml = config.declarations.select { |d| d.name == "SML" }
     sml.size == 2
     sml.map(&:platform).sort_by(&:to_s) == [nil, "LinuxServer"].sort_by(&:to_s)
-    sml.map { |d| d.group }.sort == [:app, :integration]
+    sml.map { |d| d.scope.group }.sort == [:app, :integration]
   end
 
   test "group host: stamps the host onto every declaration in the group" do
@@ -215,7 +230,7 @@ class Dev::Deps::DSLTest < Minitest::Test
 
     Then "every member carries the group's host"
     config.declarations.size == 2
-    config.declarations.all? { |d| d.host == :darwin }
+    config.declarations.all? { |d| d.scope.host == :darwin }
     config.declarations.all? { |d| d.constraint["host"].nil? }
   end
 
@@ -234,11 +249,11 @@ class Dev::Deps::DSLTest < Minitest::Test
 
     Then "the declaration carries the host as a first-class field only"
     decl = config.declarations[0]
-    decl.host == :linux
+    decl.scope.host == :linux
     decl.constraint["host"].nil?
   end
 
-  test "xcode() declares a pinned xcode toolchain dep" do
+  test "xcode() declares a pinned xcode toolchain dep as a revision" do
     When "pinning the Xcode toolchain"
     config = Dev::Deps.define do
       group :build do
@@ -246,12 +261,25 @@ class Dev::Deps::DSLTest < Minitest::Test
       end
     end
 
-    Then "the declaration rides the :xcode integration with the exact version"
+    Then "the declaration rides the :xcode integration; the exact version is an address"
     decl = config.declarations[0]
     decl.name == "xcode"
     decl.integration == :xcode
-    decl.constraint["version"] == "26.1.1"
-    decl.group == :build
+    decl.revision == "26.1.1"
+    decl.constraint == {}
+    decl.scope.group == :build
+  end
+
+  test "xcode() rejects a blank version — the exact version is the whole ask" do
+    When "pinning nothing"
+    Dev::Deps.define do
+      group :build do
+        xcode "  "
+      end
+    end
+
+    Then
+    raises ArgumentError
   end
 
   test "env block stamps env as a first-class field, not a constraint key" do
@@ -266,12 +294,12 @@ class Dev::Deps::DSLTest < Minitest::Test
 
     Then "env and the enclosing group's host both land as fields"
     decl = config.declarations[0]
-    decl.env == "ci"
-    decl.host == :linux
+    decl.scope.env == "ci"
+    decl.scope.host == :linux
     decl.constraint["env"].nil?
   end
 
-  test "gh() produces DependencyDeclaration named after the repo basename" do
+  test "gh() produces ScopedDeclaration named after the repo basename" do
     When "defining a gh release dep"
     config = Dev::Deps.define do
       group :build do
@@ -282,15 +310,15 @@ class Dev::Deps::DSLTest < Minitest::Test
       end
     end
 
-    Then
+    Then "slug is source, tag is the constraint, the rest is materialization"
     decl = config.declarations[0]
     decl.name == "UnrealEngine"
     decl.integration == :gh
-    decl.group == :build
-    decl.constraint["repo"] == "satisfactorymodding/UnrealEngine"
-    decl.constraint["tag"] == "5.6.1-css-83"
-    decl.constraint["assets"] == "UnrealEngine-CSS-Editor-Linux.tar.zst.*"
-    decl.constraint["install_dir"] == "~/.dev/engines/unreal-engine-css"
+    decl.scope.group == :build
+    decl.source == "satisfactorymodding/UnrealEngine"
+    decl.constraint == { "tag" => "5.6.1-css-83" }
+    decl.materialization["asset_pattern"] == "UnrealEngine-CSS-Editor-Linux.tar.zst.*"
+    decl.materialization["install_dir"] == "~/.dev/engines/unreal-engine-css"
   end
 
   test "gh() build-from-source with github: shorthand names the dep and keeps the slug" do
@@ -309,12 +337,12 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl = config.declarations[0]
     decl.name == "UnrealEngine"
     decl.integration == :gh
-    decl.group == :game
-    decl.constraint["repo"] == "EpicGames/UnrealEngine"
-    decl.constraint["tag"] == "5.6.1-release"
-    decl.constraint["build"] == "bin/build-ue.sh"
-    decl.constraint["install_dir"] == "~/.dev/engines/ue5"
-    !decl.constraint.key?("assets")
+    decl.scope.group == :game
+    decl.source == "EpicGames/UnrealEngine"
+    decl.constraint == { "tag" => "5.6.1-release" }
+    decl.materialization["build"] == "bin/build-ue.sh"
+    decl.materialization["install_dir"] == "~/.dev/engines/ue5"
+    !decl.materialization.key?("asset_pattern")
   end
 
   test "gh() stringifies a :none build recipe for header-only deps" do
@@ -327,7 +355,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     end
 
     Then
-    config.declarations[0].constraint["build"] == "none"
+    config.declarations[0].materialization["build"] == "none"
   end
 
   test "gh() raises when neither assets: nor build: is given" do
@@ -356,7 +384,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     raises ArgumentError
   end
 
-  test "steam() produces a DependencyDeclaration with steam integration" do
+  test "steam() produces a ScopedDeclaration with steam integration" do
     When "defining a steam dep in a LinuxServer group"
     config = Dev::Deps.define do
       group :integration, platform: "LinuxServer" do
@@ -364,15 +392,16 @@ class Dev::Deps::DSLTest < Minitest::Test
       end
     end
 
-    Then
+    Then "app id is source, branch is the constraint, install dir + platform materialize"
     decl = config.declarations[0]
     decl.name == "SatisfactoryServer"
     decl.integration == :steam
-    decl.group == :integration
+    decl.scope.group == :integration
     decl.platform == "LinuxServer"
-    decl.constraint["app"] == 1690800
-    decl.constraint["install_dir"] == "~/.dev/satisfactory-server"
-    decl.constraint["branch"] == "public"
+    decl.source == "1690800"
+    decl.constraint == { "branch" => "public" }
+    decl.materialization["install_dir"] == "~/.dev/satisfactory-server"
+    decl.materialization["platform"] == "LinuxServer"
   end
 
   test "steam() accepts an explicit buildid pin" do
@@ -403,6 +432,45 @@ class Dev::Deps::DSLTest < Minitest::Test
     entry.is_a?(Hash)
     entry["wwise-cli"]["post_install"] == hook
     entry["wwise-cli"]["tap"] == "d3mlabs/d3mlabs"
+  end
+
+  test "cmake commit: is an address — full SHA to the revision slot, constraint stays empty" do
+    When "pinning a commit"
+    config = Dev::Deps.define do
+      group :app do
+        cmake "opencell", github: "d3mlabs/opencell",
+          commit: "ee3042f8b0279856061f91069a487e4ed6f69475"
+      end
+    end
+
+    Then
+    decl = config.declarations[0]
+    decl.revision == "ee3042f8b0279856061f91069a487e4ed6f69475"
+    decl.constraint == {}
+  end
+
+  test "cmake rejects a short commit — no more silent resolve-as-tag fallthrough" do
+    When "pinning an abbreviated SHA"
+    Dev::Deps.define do
+      group :app do
+        cmake "opencell", github: "d3mlabs/opencell", commit: "ee3042f8b027"
+      end
+    end
+
+    Then
+    raises Dev::Deps::GroupDSL::InvalidRevisionError
+  end
+
+  test "cmake rejects a git dep naming no ref at all" do
+    When "declaring with neither tag:, branch:, nor commit:"
+    Dev::Deps.define do
+      group :app do
+        cmake "boost", github: "boostorg/boost"
+      end
+    end
+
+    Then "an unconstrained git universe would pin an arbitrary ref"
+    raises Dev::Deps::GroupDSL::MissingRefError
   end
 
   test "cmake raises EmptyNameError for empty name" do
@@ -442,8 +510,8 @@ class Dev::Deps::DSLTest < Minitest::Test
 
     Then
     config.declarations.size == 2
-    config.declarations[0].group == :app
-    config.declarations[1].group == :test
+    config.declarations[0].scope.group == :app
+    config.declarations[1].scope.group == :test
   end
 
   test "user-defined groups produce declarations with custom group names" do
@@ -456,7 +524,7 @@ class Dev::Deps::DSLTest < Minitest::Test
 
     Then
     config.declarations.size == 1
-    config.declarations[0].group == :deploy
+    config.declarations[0].scope.group == :deploy
   end
 
   test "post_install callable is extracted from spec and stored on declaration" do

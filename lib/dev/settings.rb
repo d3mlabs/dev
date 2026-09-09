@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "fileutils"
@@ -28,18 +29,24 @@ module Dev
   # (see Dev::HostService). Leaving a nilable key unset turns its
   # feature off.
   class Settings
+    extend T::Sig
+
     class MissingSettingError < RuntimeError; end
 
     # The settings registry: every known key and its ENV override. The one
     # list `dev config` reads (never a duplicated copy that can drift) —
     # a new setting joins here and the command picks it up for free.
-    KNOWN_KEYS = {
-      "plans_repo" => "DEV_PLANS_REPO",
-      "knowledge_repo" => "DEV_KNOWLEDGE_REPO",
-      "deployment_formula" => "DEV_DEPLOYMENT_FORMULA",
-    }.freeze
+    KNOWN_KEYS = T.let(
+      {
+        "plans_repo" => "DEV_PLANS_REPO",
+        "knowledge_repo" => "DEV_KNOWLEDGE_REPO",
+        "deployment_formula" => "DEV_DEPLOYMENT_FORMULA",
+      }.freeze,
+      T::Hash[String, String],
+    )
 
     # @return [String] path of the user config file (layer 2)
+    sig { returns(String) }
     attr_reader :config_path
 
     # The system layer's location (layer 3); nil on brewless machines. Its
@@ -47,19 +54,22 @@ module Dev
     # host converge reads this to find both.
     #
     # @return [String, nil]
+    sig { returns(T.nilable(String)) }
     attr_reader :system_config_path
 
     # @param config_path [String, nil] user file override for tests;
     #   defaults to the XDG config location
     # @param system_config_path [String, nil] system file override for
     #   tests; defaults to the Homebrew prefix's etc/dev/config.yml
+    sig { params(config_path: T.nilable(String), system_config_path: T.nilable(String)).void }
     def initialize(config_path: nil, system_config_path: nil)
-      @config_path = config_path || default_config_path
-      @system_config_path = system_config_path || default_system_config_path
+      @config_path = T.let(config_path || default_config_path, String)
+      @system_config_path = T.let(system_config_path || default_system_config_path, T.nilable(String))
     end
 
     # @return [String] "owner/repo" of the org-wide plans repo
     # @raise [MissingSettingError] when unset in every layer
+    sig { returns(String) }
     def plans_repo
       setting("plans_repo", "DEV_PLANS_REPO") ||
         raise(MissingSettingError,
@@ -72,6 +82,7 @@ module Dev
     # org learnings sync.
     #
     # @return [String, nil] "owner/repo" (or any git-clonable URL), or nil
+    sig { returns(T.nilable(String)) }
     def knowledge_repo
       setting("knowledge_repo", "DEV_KNOWLEDGE_REPO")
     end
@@ -82,6 +93,7 @@ module Dev
     # fall back to dev-core, source checkouts skip entirely).
     #
     # @return [String, nil] e.g. "d3mlabs/d3mlabs/dev", or nil
+    sig { returns(T.nilable(String)) }
     def deployment_formula
       setting("deployment_formula", "DEV_DEPLOYMENT_FORMULA")
     end
@@ -92,6 +104,7 @@ module Dev
     # @param key [String] a KNOWN_KEYS key
     # @return [Array(String, Symbol), Array(nil, Symbol)] value and source
     #   layer: :env, :user, :system, or :unset (value nil)
+    sig { params(key: String).returns([T.nilable(String), Symbol]) }
     def lookup(key)
       env_value = present(ENV[KNOWN_KEYS.fetch(key)])
       return [env_value, :env] if env_value
@@ -112,6 +125,7 @@ module Dev
     # @param key [String] a KNOWN_KEYS key
     # @param value [String]
     # @return [void]
+    sig { params(key: String, value: String).void }
     def set(key, value)
       KNOWN_KEYS.fetch(key)
       FileUtils.mkdir_p(File.dirname(@config_path))
@@ -126,6 +140,7 @@ module Dev
     # @param key [String] config file key
     # @param env_var [String] ENV override name
     # @return [String, nil]
+    sig { params(key: String, env_var: String).returns(T.nilable(String)) }
     def setting(key, env_var)
       from_env = ENV[env_var]
       return from_env if from_env && !from_env.empty?
@@ -136,11 +151,13 @@ module Dev
 
     # @param value [String, nil]
     # @return [String, nil] the value, with empty strings counting as unset
+    sig { params(value: T.untyped).returns(T.nilable(String)) }
     def present(value)
       (value && !value.to_s.empty?) ? value.to_s : nil
     end
 
     # @return [String]
+    sig { returns(String) }
     def default_config_path
       config_home = ENV.fetch("XDG_CONFIG_HOME", File.join(Dir.home, ".config"))
       File.join(config_home, "dev", "config.yml")
@@ -152,6 +169,7 @@ module Dev
     # layer) on brewless machines.
     #
     # @return [String, nil]
+    sig { returns(T.nilable(String)) }
     def default_system_config_path
       prefix = ENV["HOMEBREW_PREFIX"]
       prefix = nil if prefix && prefix.empty?
@@ -161,12 +179,14 @@ module Dev
 
     # @return [Hash] user keys merged over system keys; missing files are
     #   empty layers
+    sig { returns(T::Hash[String, T.untyped]) }
     def layered_config
       load_yaml(@system_config_path).merge(load_yaml(@config_path))
     end
 
     # @param path [String, nil]
     # @return [Hash]
+    sig { params(path: T.nilable(String)).returns(T::Hash[String, T.untyped]) }
     def load_yaml(path)
       return {} unless path && File.exist?(path)
 

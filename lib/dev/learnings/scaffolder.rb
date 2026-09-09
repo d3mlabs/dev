@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "fileutils"
@@ -14,6 +15,8 @@ module Dev
     #
     # Stateless: one reusable instance scaffolds any root.
     class Scaffolder
+      extend T::Sig
+
       # The tier's index already exists at the target root — the scaffold is
       # write-once and never overwrites a committed index.
       class IndexAlreadyExistsError < RuntimeError; end
@@ -27,6 +30,7 @@ module Dev
       # @param repo_root [Pathname, String] the repo's root
       # @return [void]
       # @raise [IndexAlreadyExistsError] when the repo already has an index
+      sig { params(repo_root: T.any(Pathname, String)).void }
       def scaffold_repo(repo_root)
         write_index(Layout.repo_index_file(repo_root), Layout::REPO_INDEX_SCAFFOLD)
       end
@@ -37,6 +41,7 @@ module Dev
       # @param org_root [Pathname, String] the knowledge repo's root
       # @return [void]
       # @raise [IndexAlreadyExistsError] when the checkout already has an index
+      sig { params(org_root: T.any(Pathname, String)).void }
       def scaffold_org(org_root)
         write_index(Layout.org_index_file(org_root), Layout::ORG_INDEX_SCAFFOLD)
         skills_dir = Layout.org_skills_dir(org_root)
@@ -50,6 +55,7 @@ module Dev
       # @param scaffold [String] the tier's template
       # @return [void]
       # @raise [IndexAlreadyExistsError] when the index already exists
+      sig { params(index_file: Pathname, scaffold: String).void }
       def write_index(index_file, scaffold)
         if index_file.exist?
           raise IndexAlreadyExistsError,

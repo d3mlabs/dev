@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "fileutils"
@@ -21,6 +22,8 @@ module Dev
     # depot platform (e.g. "linux") with +@sSteamCmdForcePlatformType, so a macOS
     # host can still provision the Linux server build.
     class SteamIntegration < Integration
+      extend T::Sig
+
       class ProvisionError < StandardError; end
       class BuildMismatchError < StandardError; end
 
@@ -30,6 +33,7 @@ module Dev
       # Provision all steam dependencies.
       #
       # @param dependencies [Array<Dependency>] steam deps to install
+      sig { params(dependencies: T::Array[Dependency]).void }
       def install_all(dependencies)
         dependencies.each { |dep| install(dep) }
       end
@@ -37,6 +41,7 @@ module Dev
       private
 
       # @param dep [Dependency]
+      sig { params(dep: Dependency).void }
       def install(dep)
         base_dir = Pathname(File.expand_path(dep.metadata["install_dir"]))
         target_dir = versioned_dir(base_dir, dep.version)
@@ -72,9 +77,10 @@ module Dev
       # @param dep [Dependency]
       # @param server_dir [Pathname] depot install dir
       # @raise [ProvisionError] if SteamCMD fails
+      sig { params(dep: Dependency, server_dir: Pathname).void }
       def provision(dep, server_dir)
         _out, err, status = SteamCmd.run(
-          "+@sSteamCmdForcePlatformType", dep.metadata["platform"],
+          "+@sSteamCmdForcePlatformType", steam_platform_for(dep.metadata["platform"]),
           "+force_install_dir", server_dir.to_s,
           "+login", "anonymous",
           "+app_update", dep.metadata["app"], "validate",
@@ -85,6 +91,24 @@ module Dev
         raise ProvisionError, "steamcmd app_update #{dep.metadata["app"]} failed: #{err.strip}"
       end
 
+      # Map the declared platform (a dev platform name, riding the pin via the
+      # declaration's materialization) to a SteamCMD ForcePlatformType value.
+      # The mapping is this integration's vocabulary — the resolver and the
+      # lockfile carry the declared name untranslated. The dedicated server is
+      # Linux-only in our pipeline, so a missing platform defaults to "linux".
+      #
+      # @param platform [String, nil] declared platform (e.g. "LinuxServer")
+      # @return [String] steam platform type ("linux" / "windows")
+      sig { params(platform: T.nilable(String)).returns(String) }
+      def steam_platform_for(platform)
+        case platform
+        when "LinuxServer" then "linux"
+        when "WindowsServer", "Windows" then "windows"
+        when nil then "linux"
+        else platform.downcase
+        end
+      end
+
       # Confirm the installed depot matches the locked buildid. A mismatch means
       # the lock is stale (the public branch moved) — surface it so the user
       # re-runs dev update-deps rather than silently testing a different build.
@@ -93,6 +117,7 @@ module Dev
       # @param server_dir [Pathname]
       # @raise [ProvisionError] if the appmanifest is missing
       # @raise [BuildMismatchError] if the installed buildid differs from the lock
+      sig { params(dep: Dependency, server_dir: Pathname).void }
       def verify_build_id(dep, server_dir)
         manifest = server_dir / "steamapps" / "appmanifest_#{dep.metadata["app"]}.acf"
         raise ProvisionError, "appmanifest not found at #{manifest}" unless manifest.file?

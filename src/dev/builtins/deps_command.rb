@@ -30,7 +30,7 @@ module Dev
         }
       )
         super()
-        @accessor_factory = T.let(accessor_factory, AccessorFactory)
+        @accessor_factory = accessor_factory
       end
 
       sig { override.returns(String) }

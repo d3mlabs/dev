@@ -4,6 +4,8 @@
 require "test_helper"
 require "dev/deps/registry"
 require "dev/deps/dsl"
+require "dev/deps/cache"
+require "tmpdir"
 
 # Anti-drift guard for the integration Registry (lib/dev/deps/registry.rb).
 #
@@ -15,14 +17,16 @@ transform!(RSpock::AST::Transformation)
 class Dev::Deps::RegistryConsistencyTest < Minitest::Test
   DEPS_DIR = File.expand_path("../../../../lib/dev/deps", __dir__)
 
-  # Repositories deliberately not owned by a single integration symbol.
-  REPOSITORY_ALLOWLIST = {
-    "url_repository.rb" =>
-      "UrlRepository is a cmake fetch backend chosen per-dep, not its own integration type",
-  }.freeze
+  # Repositories deliberately not owned by a single integration symbol (none today).
+  REPOSITORY_ALLOWLIST = {}.freeze
 
   # Integrations deliberately not host-wired (none today).
   INTEGRATION_ALLOWLIST = {}.freeze
+
+  # Schemes deliberately not owned by a single integration symbol.
+  SCHEME_ALLOWLIST = {
+    "version_scheme.rb" => "VersionScheme is the abstract base every scheme subclasses",
+  }.freeze
 
   # Every GroupDSL verb that creates a declaration, mapped to its integration
   # symbol. Adding a new declaration verb must add a Registry entry too.
@@ -62,6 +66,50 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
 
     Then "none are left unwired"
     assert_empty unwired, "integration classes missing from Registry::INTEGRATIONS: #{unwired.join(", ")}"
+  end
+
+  test "every version scheme class is wired into the registry or allowlisted" do
+    Given "the scheme files on disk and the registry's referenced schemes"
+    referenced = Dev::Deps::Registry::INTEGRATIONS.filter_map(&:scheme).uniq.map { |k| source_file(k) }
+
+    When "checking each *_scheme.rb file"
+    unwired = deps_files("_scheme").reject do |basename|
+      SCHEME_ALLOWLIST.key?(basename) ||
+        referenced.include?(File.realpath(File.join(DEPS_DIR, basename)))
+    end
+
+    Then "none are left unwired"
+    assert_empty unwired, "scheme classes missing from Registry::INTEGRATIONS: #{unwired.join(", ")}"
+  end
+
+  test "install_alias entries share their target's integration instance" do
+    Given "a scratch project root"
+    dir = Dir.mktmpdir("registry-alias-test-")
+
+    When "building host integrations from the registry"
+    integrations = Dev::Deps::Registry.host_integrations(
+      project_root: Pathname(dir),
+      cache: Dev::Deps::Cache.new(cache_dir: dir),
+    )
+
+    Then ":url deps install through :cmake's instance, so deps.cmake stays whole"
+    integrations.fetch(:cmake).equal?(integrations.fetch(:url))
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "every locker class is wired into the registry" do
+    Given "the locker files on disk and the registry's referenced lockers"
+    referenced = Dev::Deps::Registry::INTEGRATIONS.filter_map(&:locker).uniq.map { |k| source_file(k) }
+
+    When "checking each *_locker.rb file"
+    unwired = deps_files("_locker").reject do |basename|
+      referenced.include?(File.realpath(File.join(DEPS_DIR, basename)))
+    end
+
+    Then "none are left unwired"
+    assert_empty unwired, "locker classes missing from Registry::INTEGRATIONS: #{unwired.join(", ")}"
   end
 
   test "every declaration DSL verb has a registry entry" do

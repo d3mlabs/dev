@@ -25,7 +25,7 @@ class Dev::Builtins::ProvideImageCommandTest < Minitest::Test
     Given "a context with a build container and a stubbed resolution boundary"
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry")
     context = build_context(config)
-    BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
+    Dev::BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
     command = Dev::Builtins::ProvideImageCommand.new
     old_stdout = $stdout
     $stdout = StringIO.new
@@ -54,7 +54,7 @@ class Dev::Builtins::ProvideImageCommandTest < Minitest::Test
     Dev::Credentials.stubs(:resolve_build_args).with({ "GH_TOKEN" => "github/token" })
       .returns({ "GH_TOKEN" => "s3cr3t" })
     captured = {}
-    BuildContainer.stubs(:ensure_image!).with do |_cfg, **kwargs|
+    Dev::BuildContainer.stubs(:ensure_image!).with do |_cfg, **kwargs|
       captured = kwargs
       true
     end.returns("myregistry/myapp-linux:content-abc123")

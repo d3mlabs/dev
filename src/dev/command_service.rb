@@ -23,9 +23,9 @@ module Dev
       ).void
     end
     def initialize(repository:, executor:, dependency_service:)
-      @repository = T.let(repository, CommandRepository)
-      @executor = T.let(executor, CommandExecutor)
-      @dependency_service = T.let(dependency_service, DependencyService)
+      @repository = repository
+      @executor = executor
+      @dependency_service = dependency_service
     end
 
     # Run one command end to end.

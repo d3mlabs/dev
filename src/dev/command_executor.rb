@@ -37,9 +37,9 @@ module Dev
       ).void
     end
     def initialize(builtin_executor:, project_executor: nil, overridden_executor: nil)
-      @builtin_executor = T.let(builtin_executor, BuiltinExecutor)
-      @project_executor = T.let(project_executor, T.nilable(ProjectExecutor))
-      @overridden_executor = T.let(overridden_executor, T.nilable(OverriddenExecutor))
+      @builtin_executor = builtin_executor
+      @project_executor = project_executor
+      @overridden_executor = overridden_executor
     end
 
     # Dispatch one command to its strategy.
@@ -61,11 +61,11 @@ module Dev
       when OverriddenCommand
         overridden_executor.execute(command, args:, context:)
       else
-        # :nocov: — the sealed hierarchy leaves no fourth variant to
-        # construct, so this arm is unreachable at runtime; T.absurd keeps
+        # simplecov:disable — the sealed hierarchy leaves no fourth variant
+        # to construct, so this arm is unreachable at runtime; T.absurd keeps
         # the static exhaustiveness proof.
         T.absurd(command)
-        # :nocov:
+        # simplecov:enable
       end
     end
 

@@ -225,6 +225,21 @@ class Dev::CredentialsTest < Minitest::Test
     assert_includes error.message, "gh secret set CF_API_KEY"
   end
 
+  test "prompt_and_store raises MissingCredentialError when the pasted value is empty" do
+    When "prompting for a credential without a create URL"
+    Dev::Credentials.prompt_and_store(
+      "curseforge", "api_key", "CF_API_KEY", "CurseForge API key", nil
+    )
+
+    Then "an interactive stdin that pastes nothing raises"
+    _ * $stdin.tty? >> true
+    _ * $stdin.noecho >> ""
+    _ * $stdout.puts
+    _ * $stdout.print
+    error = raises Dev::Credentials::MissingCredentialError
+    assert_includes error.message, "No api_key provided"
+  end
+
   test "credentials_path respects XDG_CONFIG_HOME" do
     Given "a custom XDG_CONFIG_HOME"
     ENV["XDG_CONFIG_HOME"] = "/custom/config"

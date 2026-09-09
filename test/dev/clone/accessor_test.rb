@@ -8,8 +8,9 @@ require "stringio"
 require "tmpdir"
 
 # A cloner stand-in recording its calls, so accessor flows are tested without
-# gh or the network.
-class FakeGhCloner
+# gh or the network. Subclasses the real cloner so the accessor's typed
+# constructor accepts it.
+class FakeGhCloner < Dev::Clone::GhCloner
   attr_reader :calls
 
   def initialize
@@ -22,8 +23,9 @@ class FakeGhCloner
 end unless defined?(FakeGhCloner)
 
 # A hook installer stand-in with a scripted ensure result, so accessor flows
-# are tested without touching the user's real shell RC.
-class FakeCloneHookInstaller
+# are tested without touching the user's real shell RC. Subclasses the real
+# installer so the accessor's typed constructor accepts it.
+class FakeCloneHookInstaller < Dev::Cd::HookInstaller
   attr_reader :ensure_count
 
   def initialize(result: :already_present)

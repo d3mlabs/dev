@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 DEV_ROOT = File.expand_path("..", __dir__) unless defined?(DEV_ROOT)

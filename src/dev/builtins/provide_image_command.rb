@@ -3,7 +3,7 @@
 
 require "dev/command"
 require "dev/credentials"
-require "build_container"
+require "dev/build_container"
 
 module Dev
   module Builtins

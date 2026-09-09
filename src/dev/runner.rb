@@ -19,7 +19,7 @@ require "dev/overridden_executor"
 require "dev/project_executor"
 require "dev/project_manifest"
 require "dev/project_manifest_loader"
-require "shadowenv_ruby"
+require "dev/shadowenv_ruby"
 
 module Dev
   # The application service behind bin/dev, and the composition root of the
@@ -51,11 +51,11 @@ module Dev
       manifest_loader: ProjectManifestLoader.new,
       command_service: nil
     )
-      @ui = T.let(ui, Dev::Cli::Ui)
-      @out = T.let(out, T.any(IO, StringIO))
-      @dev_yaml_path = T.let(dev_yaml_path, T.nilable(Pathname))
-      @manifest_loader = T.let(manifest_loader, ProjectManifestLoader)
-      @command_service = T.let(command_service, T.nilable(CommandService))
+      @ui = ui
+      @out = out
+      @dev_yaml_path = dev_yaml_path
+      @manifest_loader = manifest_loader
+      @command_service = command_service
     end
 
     # Runs the dev command specified by the given argv.

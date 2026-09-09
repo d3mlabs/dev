@@ -70,7 +70,7 @@ class Dev::Deps::LockfileTest < Minitest::Test
     File.read(File.join(dir, "build-deps.lock")).include?("# dependencies-digest: #{digest}")
     lockfile.manifest_digest == digest
     # The YAML payload stays pure deps — the digest rides a comment.
-    YAML.safe_load(File.read(File.join(dir, "deps.lock"))).key?("boost")
+    YAML.safe_load(File.read(File.join(dir, "deps.lock")))["cmake"].key?("boost")
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -182,12 +182,12 @@ class Dev::Deps::LockfileTest < Minitest::Test
     lockfile.lock(deps)
     content = File.read(File.join(dir, "build-deps.lock"))
 
-    Then
+    Then "env sections nest integration under env name"
     content.include?("ccache:")
     yaml = YAML.safe_load(content, permitted_classes: [Symbol])
-    yaml["env"]["ci"]["ruby"]["version"] == "3.3.0"
-    yaml["env"]["ci"]["powershell"]["tap"] == "d3mlabs/d3mlabs"
-    yaml["env"]["dev"]["powershell"]["cask"] == true
+    yaml["env"]["ci"]["brew"]["ruby"]["version"] == "3.3.0"
+    yaml["env"]["ci"]["brew"]["powershell"]["tap"] == "d3mlabs/d3mlabs"
+    yaml["env"]["dev"]["brew"]["powershell"]["cask"] == true
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -250,6 +250,76 @@ class Dev::Deps::LockfileTest < Minitest::Test
     !global_dep.nil?
     !env_dep.nil?
     env_dep.metadata["env"] == "ci"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "locks the same name under two integrations into nested sections" do
+    Given "zlib declared under both cmake and brew"
+    dir = Dir.mktmpdir("dev-lockfile-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: dir)
+    deps = [
+      Dev::Deps::Dependency.new(name: "zlib", integration: :cmake, group: :app,
+        version: "1.3.1", hash: "SHA256=aaa", metadata: {}),
+      Dev::Deps::Dependency.new(name: "zlib", integration: :brew, group: :app,
+        version: "1.3", hash: "SHA256=bbb", metadata: {}),
+    ]
+
+    When "locking and reading back"
+    lockfile.lock(deps)
+    yaml = YAML.safe_load(File.read(File.join(dir, "deps.lock")))
+    read_deps = lockfile.read
+
+    Then "each lives in its integration's section, no integration field in values"
+    yaml["cmake"]["zlib"]["version"] == "1.3.1"
+    yaml["brew"]["zlib"]["version"] == "1.3"
+    !yaml["cmake"]["zlib"].key?("integration")
+    read_deps.size == 2
+    read_deps.map { |d| [d.integration, d.version] }.sort == [[:brew, "1.3"], [:cmake, "1.3.1"]].sort
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "reads legacy flat-format lockfiles" do
+    # Migration shim: delete this test with the legacy read path once every
+    # consumer repo's lockfiles have been rewritten by update-deps (issue #146).
+    Given "lockfiles in the pre-nested format, name-keyed with integration in the value"
+    dir = Dir.mktmpdir("dev-lockfile-test-")
+    File.write(File.join(dir, "deps.lock"), <<~YAML)
+      boost:
+        integration: cmake
+        group: app
+        version: 1.90.0
+        hash: SHA256=deadbeef
+    YAML
+    File.write(File.join(dir, "build-deps.lock"), <<~YAML)
+      ccache:
+        integration: brew
+        group: build
+        version: 4.10.2
+      env:
+        ci:
+          ruby:
+            integration: brew
+            group: build
+            version: 3.3.0
+    YAML
+    lockfile = Dev::Deps::Lockfile.new(dir: dir)
+
+    When "reading"
+    deps = lockfile.read
+
+    Then "all entries parse with their recorded integrations"
+    deps.size == 3
+    boost = deps.find { |d| d.name == "boost" }
+    boost.integration == :cmake
+    boost.version == "1.90.0"
+    deps.find { |d| d.name == "ccache" }.integration == :brew
+    ruby_dep = deps.find { |d| d.name == "ruby" }
+    ruby_dep.metadata["env"] == "ci"
+    ruby_dep.integration == :brew
 
     Cleanup
     FileUtils.rm_rf(dir)

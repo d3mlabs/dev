@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "fileutils"
@@ -17,13 +18,19 @@ module Dev
   # refreshes shipped skills automatically (symlinks resolve through the
   # installed tree, wherever brew put it).
   class SkillInstaller
+    extend T::Sig
+
     SKILL_FILE = "SKILL.md"
 
     # Skills shipped inside dev's own package, relative to this file
     # (lib/dev/ → repo or libexec root) — the installed location under brew.
-    SHIPPED_SKILLS_DIR = Pathname(File.expand_path(File.join(__dir__, "..", "..", "share", "cursor-skills")))
+    SHIPPED_SKILLS_DIR = T.let(
+      Pathname(File.expand_path(File.join(T.must(__dir__), "..", "..", "share", "cursor-skills"))),
+      Pathname,
+    )
 
     # @return [Pathname] target dir the symlinks live in
+    sig { returns(Pathname) }
     attr_reader :skills_dir
 
     # @param skills_dir [Pathname, String] target dir the symlinks live in;
@@ -31,9 +38,10 @@ module Dev
     # @param tmpdir [Pathname, String] ephemeral temp root that links must
     #   never target; defaults to Dir.tmpdir (override for tests, whose
     #   fixture skill trees themselves live under the real temp dir)
+    sig { params(skills_dir: T.any(Pathname, String), tmpdir: T.any(Pathname, String)).void }
     def initialize(skills_dir: Pathname(Dir.home) / ".cursor" / "skills", tmpdir: Dir.tmpdir)
-      @skills_dir = Pathname(skills_dir)
-      @tmpdir_roots = tmpdir_roots(Pathname(tmpdir))
+      @skills_dir = T.let(Pathname(skills_dir), Pathname)
+      @tmpdir_roots = T.let(tmpdir_roots(Pathname(tmpdir)), T::Array[Pathname])
     end
 
     # Install or refresh one skill symlink. A source that resolves under the
@@ -47,6 +55,7 @@ module Dev
     # @param name [String] link name inside the skills dir
     # @param source_dir [Pathname, String] skill directory the link points at
     # @return [void]
+    sig { params(name: String, source_dir: T.any(Pathname, String)).void }
     def install(name, source_dir)
       source = Pathname(source_dir)
       return unless source.directory?
@@ -80,6 +89,7 @@ module Dev
     # @param source_root [Pathname, String] directory of skill directories
     # @param prefix [String] prepended to each link name (e.g. "gem-rspock--")
     # @return [void]
+    sig { params(source_root: T.any(Pathname, String), prefix: String).void }
     def install_all(source_root, prefix: "")
       root = Pathname(source_root)
       return unless root.directory?
@@ -99,6 +109,7 @@ module Dev
     #
     # @param name [String] link name inside the skills dir
     # @return [void]
+    sig { params(name: String).void }
     def remove(name)
       link = @skills_dir / name
       FileUtils.rm_f(link) if link.symlink?
@@ -112,6 +123,7 @@ module Dev
     #
     # @param tmpdir [Pathname]
     # @return [Array<Pathname>]
+    sig { params(tmpdir: Pathname).returns(T::Array[Pathname]) }
     def tmpdir_roots(tmpdir)
       expanded = tmpdir.expand_path
       roots = [expanded]
@@ -124,6 +136,7 @@ module Dev
     #
     # @param path [Pathname]
     # @return [Boolean]
+    sig { params(path: Pathname).returns(T::Boolean) }
     def ephemeral?(path)
       resolved = path.exist? ? path.realpath : path.expand_path
       @tmpdir_roots.any? { |root| resolved.to_s.start_with?("#{root}#{File::SEPARATOR}") }
@@ -135,6 +148,7 @@ module Dev
     #
     # @param source_root [Pathname]
     # @return [void]
+    sig { params(source_root: Pathname).void }
     def prune_broken_links(source_root)
       return unless @skills_dir.directory?
 

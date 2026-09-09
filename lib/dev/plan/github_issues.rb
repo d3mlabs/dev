@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "json"
@@ -8,11 +9,14 @@ module Dev
     # (the same boundary the rest of dev uses — no extra token management).
     # JSON payloads go through `--input -` so bodies never hit argv.
     class GithubIssues
+      extend T::Sig
+
       class Error < RuntimeError; end
 
       Issue = Struct.new(:number, :title, :body, :updated_at, :html_url, keyword_init: true)
 
       # @param executor [Dev::Plan::Executor] CLI boundary (injectable for tests)
+      sig { params(executor: T.untyped).void }
       def initialize(executor: Executor.new)
         @executor = executor
       end
@@ -21,6 +25,7 @@ module Dev
       # @param number [Integer]
       # @return [Issue]
       # @raise [Error] when the issue can't be fetched
+      sig { params(owner_repo: String, number: Integer).returns(Issue) }
       def get(owner_repo, number)
         out = gh_api("repos/#{owner_repo}/issues/#{number}")
         parse_issue(out)
@@ -31,6 +36,7 @@ module Dev
       # @param body [String]
       # @return [Issue] the created issue
       # @raise [Error] when creation fails
+      sig { params(owner_repo: String, title: String, body: String).returns(Issue) }
       def create(owner_repo, title:, body:)
         payload = JSON.generate({ title: title, body: body })
         out = gh_api("repos/#{owner_repo}/issues", method: "POST", input: payload)
@@ -46,6 +52,14 @@ module Dev
       # @param title [String, nil] new title, or nil to leave unchanged
       # @return [Issue]
       # @raise [Error] when the update fails
+      sig do
+        params(
+          owner_repo: String,
+          number: Integer,
+          body: String,
+          title: T.nilable(String),
+        ).returns(Issue)
+      end
       def update(owner_repo, number, body:, title: nil)
         fields = { body: body }
         fields[:title] = title if title
@@ -61,6 +75,7 @@ module Dev
       # @param owner_repo [String] "owner/repo"
       # @param path [String] file path inside the repo
       # @return [String, nil] the file content, or nil when unavailable
+      sig { params(owner_repo: String, path: String).returns(T.nilable(String)) }
       def repo_file(owner_repo, path)
         out, _err, ok = @executor.capture(
           "gh", "api", "-H", "Accept: application/vnd.github.raw", "repos/#{owner_repo}/contents/#{path}"
@@ -75,6 +90,7 @@ module Dev
       # @param input [String, nil] JSON payload piped to stdin
       # @return [String] response body
       # @raise [Error] on any gh failure, with an actionable message
+      sig { params(path: String, method: T.nilable(String), input: T.nilable(String)).returns(String) }
       def gh_api(path, method: nil, input: nil)
         argv = ["gh", "api"]
         argv += ["-X", method] if method
@@ -91,6 +107,7 @@ module Dev
 
       # @param json [String]
       # @return [Issue]
+      sig { params(json: String).returns(Issue) }
       def parse_issue(json)
         data = JSON.parse(json)
         Issue.new(

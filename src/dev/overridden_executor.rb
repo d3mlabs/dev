@@ -18,8 +18,8 @@ module Dev
     # @param project_executor [ProjectExecutor]
     sig { params(builtin_executor: BuiltinExecutor, project_executor: ProjectExecutor).void }
     def initialize(builtin_executor:, project_executor:)
-      @builtin_executor = T.let(builtin_executor, BuiltinExecutor)
-      @project_executor = T.let(project_executor, ProjectExecutor)
+      @builtin_executor = builtin_executor
+      @project_executor = project_executor
     end
 
     # Run the builtin stage, then the project tail. The tail's message

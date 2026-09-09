@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "dev/plan/header"
@@ -9,16 +10,23 @@ module Dev
     # Cursor YAML frontmatter, and the markdown body. Sync compares and ships
     # the markdown body only; the header and frontmatter stay local.
     class Content
+      extend T::Sig
+
       # @return [Dev::Plan::Header, nil]
+      sig { returns(T.nilable(Header)) }
       attr_reader :header
 
       # @return [String, nil] raw frontmatter block including `---` fences
+      sig { returns(T.nilable(String)) }
       attr_reader :frontmatter
 
       # @return [String] markdown body (canonical plan prose)
+      sig { returns(String) }
       attr_reader :body
 
       class << self
+        extend T::Sig
+
         # Parse a plan file into its layers. Canonical on-disk order is header,
         # then optional frontmatter, then body. When frontmatter sits above the
         # ai-flow header (Cursor's plan tool writes that layout, with a blank
@@ -29,6 +37,7 @@ module Dev
         #
         # @param content [String]
         # @return [Content]
+        sig { params(content: String).returns(Content) }
         def parse(content)
           header, remainder = Header.split(without_leading_blank_lines(content))
           if header
@@ -60,6 +69,7 @@ module Dev
         # @param content [String]
         # @return [Array(String | nil, String)] the surviving frontmatter block
         #   (or nil) and the remainder
+        sig { params(content: String).returns([T.nilable(String), String]) }
         def split_stacked_frontmatter(content)
           frontmatter, remainder = Frontmatter.split(content)
           return [nil, content] if frontmatter.nil?
@@ -80,6 +90,7 @@ module Dev
         #
         # @param content [String]
         # @return [String]
+        sig { params(content: String).returns(String) }
         def without_leading_blank_lines(content)
           content.sub(/\A(?:[ \t]*\n)+/, "")
         end
@@ -88,6 +99,7 @@ module Dev
       # @param header [Dev::Plan::Header, nil]
       # @param frontmatter [String, nil]
       # @param body [String]
+      sig { params(header: T.nilable(Header), frontmatter: T.nilable(String), body: String).void }
       def initialize(header:, frontmatter:, body:)
         @header = header
         @frontmatter = frontmatter
@@ -98,26 +110,30 @@ module Dev
       # markdown body.
       #
       # @return [String]
+      sig { returns(String) }
       def render
         "#{header&.render}#{frontmatter}#{body}"
       end
 
       # @param header [Dev::Plan::Header, nil]
       # @return [Content]
+      sig { params(header: T.nilable(Header)).returns(Content) }
       def with_header(header)
         self.class.new(header: header, frontmatter: frontmatter, body: body)
       end
 
       # @param body [String]
       # @return [Content]
+      sig { params(body: String).returns(Content) }
       def with_body(body)
         self.class.new(header: header, frontmatter: frontmatter, body: body)
       end
 
       # @param synced_at [String]
       # @return [Content]
+      sig { params(synced_at: String).returns(Content) }
       def with_synced_at(synced_at)
-        with_header(header.with_synced_at(synced_at))
+        with_header(T.must(header).with_synced_at(synced_at))
       end
     end
   end

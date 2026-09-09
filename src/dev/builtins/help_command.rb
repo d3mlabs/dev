@@ -27,10 +27,10 @@ module Dev
       end
       def initialize(project_name:, usage_printer:, out:, commands_provider:)
         super()
-        @project_name = T.let(project_name, String)
-        @usage_printer = T.let(usage_printer, Cli::UsagePrinter)
-        @out = T.let(out, T.any(IO, StringIO))
-        @commands_provider = T.let(commands_provider, CommandsProvider)
+        @project_name = project_name
+        @usage_printer = usage_printer
+        @out = out
+        @commands_provider = commands_provider
       end
 
       sig { override.returns(String) }

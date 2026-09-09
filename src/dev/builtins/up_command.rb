@@ -29,8 +29,8 @@ module Dev
       end
       def initialize(install_deps_command:, host_service: Dev::HostService.new)
         super()
-        @install_deps_command = T.let(install_deps_command, InstallDepsCommand)
-        @host_service = T.let(host_service, Dev::HostService)
+        @install_deps_command = install_deps_command
+        @host_service = host_service
       end
 
       sig { override.returns(String) }

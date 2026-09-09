@@ -1,77 +1,101 @@
+# typed: strict
 # frozen_string_literal: true
 
+require_relative "declaration"
+require_relative "declarations"
 require_relative "dependency"
-require_relative "dependency_declaration"
+require_relative "package"
+require_relative "scoped_declaration"
+require_relative "package_id"
+require_relative "package_version"
+require_relative "repository"
+require_relative "version_scheme"
 
 module Dev
   module Deps
-    # Resolves all dependency declarations into a flat list of Dependencies.
+    # Resolves all dependency declarations into a flat list of pinned
+    # Dependencies.
     #
-    # Iterates declared deps, queries each Repository to fetch the dependency,
-    # then walks transitive deps via Dependency#dependencies.
-    # Registries that support dependency metadata (LuaRocks, CurseForge, Brew)
-    # get full transitive resolution. Source-based repos (Git, URL) return [].
+    # The choice layer of the deps pipeline: repositories report facts (which
+    # versions exist — Repository#find), schemes evaluate predicates (does a
+    # version satisfy a constraint — VersionScheme), and this class chooses:
+    # for each declaration it filters the package's universe through the
+    # integration's scheme, takes the highest satisfying version, mints the
+    # pin, and walks that version's edges to resolve transitives. Whole-set
+    # solves (bundle lock) happen before resolution, in the integration's
+    # Locker — by the time find runs, a tool-locked universe is already
+    # materialized. See docs/deps-architecture.md.
     class Resolver
+      extend T::Sig
+
+      # A declaration names an integration the registry doesn't wire.
       class UnknownIntegrationError < StandardError; end
 
+      # The same dependency is declared twice with disagreeing constraints.
+      class ConflictingDeclarationError < StandardError; end
+
+      # No version in the package's universe satisfies the declaration —
+      # constraint mismatch, missing requested platform, or empty universe.
+      class NoSatisfyingVersionError < StandardError; end
+
       # @param repositories [Hash{Symbol => Repository}] integration type → repository
-      def initialize(repositories:)
+      # @param schemes [Hash{Symbol => VersionScheme}] integration type → constraint semantics
+      sig do
+        params(
+          repositories: T::Hash[Symbol, Repository],
+          schemes: T::Hash[Symbol, VersionScheme],
+        ).void
+      end
+      def initialize(repositories:, schemes:)
         @repositories = repositories
+        @schemes = schemes
       end
 
       # Resolve all declarations into a flat Dependency list.
       #
-      # Iterates declared deps, queries each Repository to fetch the pinned
-      # Dependency, then walks transitive deps via Dependency#dependencies.
+      # The resolved set is keyed by PackageId, so the same name under two
+      # integrations is two packages — each resolves against its own
+      # integration's universe. Transitive declarations resolve under the
+      # integration their reporting Repository stamped on them (today always
+      # its own).
       #
-      # @param declarations [Array<DependencyDeclaration>] declared dependencies to resolve
+      # @param declarations [Array<ScopedDeclaration>] declared dependencies to resolve
       # @return [Array<Dependency>]
-      # @raise [UnknownIntegrationError] if no repository is registered for a declaration's integration type
+      # @raise [ConflictingDeclarationError] if one package is declared with disagreeing constraints
+      # @raise [UnknownIntegrationError] if a declaration's integration has no repository or scheme
+      # @raise [NoSatisfyingVersionError] if a declaration cannot be satisfied
+      sig { params(declarations: T::Array[ScopedDeclaration]).returns(T::Array[Dependency]) }
       def resolve(declarations)
-        prepare_repositories(declarations)
+        reject_conflicts(declarations)
 
-        platforms_by_name = platforms_by_name(declarations)
-        resolved = {}
+        platforms = declared_platforms(declarations)
+        resolved = T.let({}, T::Hash[PackageId, Dependency])
         queue = declarations.dup
 
         while (decl = queue.shift)
-          next if resolved.key?(decl.name)
+          id = package_id(decl)
+          next if resolved.key?(id)
 
-          repo = @repositories[decl.integration]
-          raise UnknownIntegrationError, "no repository registered for #{decl.integration.inspect}" unless repo
+          declared = platforms[[decl.integration, decl.name]] || []
+          chosen = decl.revision ? address(decl) : choose(decl, declared)
+          resolved[id] = mint(chosen, decl, declared)
 
-          id = decl.constraint.merge(
-            "name" => decl.name,
-            "integration" => decl.integration.to_s,
-            "group" => decl.group.to_s,
-          )
-
-          # A dep declared in several groups is resolved once, for the union of
-          # those groups' platforms. nil entries mean "the integration's default
-          # platform" and are passed through so a multi-arch repository can expand
-          # them. We only attach "platforms" when at least one group pinned an
-          # explicit platform, so single-platform deps keep their legacy fetch id.
-          platforms = platforms_by_name[decl.name] || []
-          id["platforms"] = platforms if platforms.any? { |p| !p.nil? }
-
-          dependency = repo.fetch(id)
-          dependency = dependency.with(post_install: decl.post_install) if decl.post_install
-          dependency = attach_install_scoping(dependency, decl)
-          resolved[decl.name] = dependency
-
-          # Transitive deps inherit the declaring dep's group, host, and env: a
-          # dep only needed on one host/env can't need its transitive closure
-          # anywhere else.
-          dependency.dependencies.each do |tdep|
-            next if resolved.key?(tdep[:name])
-            queue << DependencyDeclaration.new(
-              name: tdep[:name],
-              integration: decl.integration,
-              constraint: normalize_constraint(tdep[:constraint]),
-              group: decl.group,
-              host: decl.host,
-              env: decl.env,
-            )
+          # Transitive deps inherit the declaring dep's Scope wholesale: a dep
+          # only needed in one group/host/env can't need its transitive
+          # closure anywhere else. Each Declaration arrives finished from the
+          # Repository (integration stamped, constraint normalized); only the
+          # context is stamped here, because context is a property of the
+          # path, not of the fact.
+          case (claim = chosen.declarations)
+          when Declarations::Resolved
+            claim.declarations.each do |edge|
+              edge_decl = ScopedDeclaration.new(declaration: edge, scope: decl.scope)
+              queue << edge_decl unless resolved.key?(package_id(edge_decl))
+            end
+          when Declarations::ToolOwned
+            # The ecosystem's tool owns the closure; there is nothing to walk.
+          else
+            T.absurd(claim)
           end
         end
 
@@ -80,63 +104,295 @@ module Dev
 
       private
 
+      # Lift an addressed ask. The author forewent resolution: no universe is
+      # queried, no scheme runs — the repository lifts the revision into a
+      # version (Repository#at is pure) and the pin is minted from it
+      # directly. A repository with no continuous space refuses, and that
+      # refusal propagates: an address into a space that doesn't exist is the
+      # declaration being wrong.
+      #
+      # @param decl [ScopedDeclaration] a revision-pinned declaration
+      # @return [PackageVersion] the lifted version
+      # @raise [UnknownIntegrationError] if the integration has no repository
+      # @raise [Repository::NoAddressableSpaceError] if the integration's
+      #   universe has no continuous space
+      sig { params(decl: ScopedDeclaration).returns(PackageVersion) }
+      def address(decl)
+        repository = @repositories[decl.integration]
+        raise UnknownIntegrationError, "no repository registered for #{decl.integration.inspect}" unless repository
+
+        repository.at(package_id(decl), T.must(decl.revision))
+      end
+
+      # Ask the declaration's repository for the package universe and pick the
+      # highest version that satisfies the constraint (per the integration's
+      # scheme) and publishes every explicitly requested platform.
+      #
+      # @param decl [ScopedDeclaration] the declaration to satisfy
+      # @param platforms [Array<String, nil>] union of the declaring groups'
+      #   platforms; nil entries mean "the integration's default"
+      # @return [PackageVersion] the chosen version
+      # @raise [UnknownIntegrationError] if repository or scheme is unwired
+      # @raise [NoSatisfyingVersionError] if nothing in the universe qualifies
+      sig do
+        params(
+          decl: ScopedDeclaration,
+          platforms: T::Array[T.nilable(String)],
+        ).returns(PackageVersion)
+      end
+      def choose(decl, platforms)
+        repository = @repositories[decl.integration]
+        raise UnknownIntegrationError, "no repository registered for #{decl.integration.inspect}" unless repository
+
+        # Scheme-less integrations (url) have no constraint grammar at all:
+        # an empty ask takes the universe as reported, a non-empty one is the
+        # declaration being wrong.
+        scheme = @schemes[decl.integration]
+        if scheme.nil? && !decl.constraint.empty?
+          raise UnknownIntegrationError,
+            "#{decl.integration.inspect} has no version scheme — it cannot evaluate " \
+              "constraint #{decl.constraint.inspect}"
+        end
+
+        package = repository.find(package_id(decl))
+        explicit = platforms.compact
+        candidates = package.versions.select do |version|
+          (scheme.nil? || satisfies?(scheme, version, decl.constraint)) &&
+            publishes_platforms?(version, explicit)
+        end
+        raise NoSatisfyingVersionError, no_satisfying_message(decl, package, explicit) if candidates.empty?
+
+        # A universe can list one version string several times (e.g. per-arch
+        # rows); selection is over distinct version strings, first fact wins.
+        by_version = T.let({}, T::Hash[String, PackageVersion])
+        candidates.each { |version| by_version[version.version] ||= version }
+        by_version.fetch(T.must(sorted_versions(scheme, by_version.keys).last))
+      end
+
+      # Order distinct version strings ascending: the scheme's total order,
+      # or the universe's reported order when no scheme exists.
+      #
+      # @param scheme [VersionScheme, nil] the integration's semantics, if any
+      # @param versions [Array<String>] distinct version strings
+      # @return [Array<String>]
+      sig { params(scheme: T.nilable(VersionScheme), versions: T::Array[String]).returns(T::Array[String]) }
+      def sorted_versions(scheme, versions)
+        scheme ? scheme.sort(versions) : versions
+      end
+
+      # Constraint satisfaction, treating versions the scheme cannot parse as
+      # non-satisfying: a universe can contain versions that predate or ignore
+      # the ecosystem's conventions, and they simply aren't candidates. A
+      # malformed constraint, by contrast, propagates — that's the user's
+      # declaration being wrong.
+      #
+      # @param scheme [VersionScheme] the integration's constraint semantics
+      # @param version [PackageVersion] the candidate
+      # @param constraint [Hash] the declaration constraint
+      # @return [Boolean]
+      sig do
+        params(
+          scheme: VersionScheme,
+          version: PackageVersion,
+          constraint: T::Hash[String, T.untyped],
+        ).returns(T::Boolean)
+      end
+      def satisfies?(scheme, version, constraint)
+        scheme.satisfies?(version, constraint)
+      rescue VersionScheme::InvalidVersionError
+        false
+      end
+
+      # Does the version publish every explicitly requested platform? Versions
+      # that declare no platforms at all are platform-agnostic and always
+      # qualify.
+      #
+      # @param version [PackageVersion] the candidate
+      # @param explicit [Array<String>] explicitly requested platform names
+      # @return [Boolean]
+      sig { params(version: PackageVersion, explicit: T::Array[String]).returns(T::Boolean) }
+      def publishes_platforms?(version, explicit)
+        explicit.empty? || version.platforms.empty? || (explicit - version.platforms).empty?
+      end
+
+      # Mint the pin: the chosen version's facts become the Dependency, the
+      # declaration contributes name/integration/group, its materialization
+      # (install instructions the repository never saw), the post-install
+      # hook, and the install-scoping axes. The version digest becomes the
+      # pin's integrity hash uniformly; an empty version string (ecosystems
+      # that expose no version — brew casks, url artifacts) becomes a nil pin
+      # version, unless the author named a display label (a url tag:), which
+      # is promoted out of the materialization into the version slot.
+      # Versions carrying per-platform artifacts get them projected into
+      # install facts against the declared platforms.
+      #
+      # @param chosen [PackageVersion] the version the resolver picked
+      # @param decl [ScopedDeclaration] the declaration it satisfies
+      # @param platforms [Array<String, nil>] union of the declaring groups' platforms
+      # @return [Dependency]
+      sig do
+        params(
+          chosen: PackageVersion,
+          decl: ScopedDeclaration,
+          platforms: T::Array[T.nilable(String)],
+        ).returns(Dependency)
+      end
+      def mint(chosen, decl, platforms)
+        metadata = chosen.metadata.merge(decl.materialization)
+        pin_version = chosen.version.empty? ? metadata.delete("version_label") : chosen.version
+        hash = chosen.digest
+        if chosen.artifacts.any? && (platforms.any? { |p| !p.nil? } || metadata.key?("target"))
+          hash = project_artifacts(metadata, chosen, platforms)
+        end
+
+        dependency = Dependency.new(
+          name: decl.name,
+          integration: decl.integration,
+          group: decl.scope.group,
+          version: pin_version,
+          hash: hash,
+          metadata: metadata,
+        )
+        dependency = dependency.with(post_install: decl.post_install) if decl.post_install
+        attach_install_scoping(dependency, decl)
+      end
+
+      # Project the chosen version's per-platform artifacts (universe facts)
+      # into the pin's install facts (what the installer fetches). With
+      # explicitly declared platforms, a metadata["platforms"] block covering
+      # the targets the version actually publishes; otherwise the
+      # single-target shape — the materialization's "target" resolved to its
+      # artifact digest as the pin's hash. Lives here, not in a Repository:
+      # which targets a pin describes is a property of the declarations, and
+      # a repository never sees those.
+      #
+      # @param metadata [Hash] the pin metadata under construction (mutated)
+      # @param chosen [PackageVersion] the chosen version
+      # @param platforms [Array<String, nil>] declared platforms; nil entries
+      #   fall back to the materialization's "target"
+      # @return [String, nil] the pin's integrity hash
+      sig do
+        params(
+          metadata: T::Hash[String, T.untyped],
+          chosen: PackageVersion,
+          platforms: T::Array[T.nilable(String)],
+        ).returns(T.nilable(String))
+      end
+      def project_artifacts(metadata, chosen, platforms)
+        default_target = metadata["target"]
+
+        if platforms.any? { |p| !p.nil? }
+          names = platforms.map { |p| p.nil? ? default_target : p }.compact.uniq
+          metadata["platforms"] = names.each_with_object({}) do |name, acc|
+            artifact = chosen.artifacts[name]
+            acc[name] = { "hash" => artifact.digest, "link" => artifact.uri } if artifact
+          end
+          # The block replaces the single-target shape; no one target is THE pin.
+          metadata.delete("target")
+          nil
+        else
+          artifact = chosen.artifacts[default_target] || chosen.artifacts.values.first
+          artifact&.digest
+        end
+      end
+
+      # The package's identity, from the declaration: the atom's source field
+      # is the source coordinate (which universe to ask), riding on the
+      # PackageId.
+      #
+      # @param decl [ScopedDeclaration]
+      # @return [PackageId]
+      sig { params(decl: ScopedDeclaration).returns(PackageId) }
+      def package_id(decl)
+        PackageId.new(
+          integration: decl.integration,
+          name: decl.name,
+          source: decl.source,
+        )
+      end
+
+      # Reject sets where one package is declared with disagreeing asks —
+      # constraint, source, revision, or materialization. A dep declared in several
+      # groups resolves once, so agreement is the precondition for that single
+      # resolution being right for everyone; disagreeing install dirs would
+      # otherwise let one row's materialization win silently. Grouping is per
+      # (integration, name): the same name under two integrations is two
+      # packages, free to carry different asks. (Platform, group, host, and
+      # env may differ — they are axes, not asks.)
+      #
+      # @param declarations [Array<ScopedDeclaration>]
+      # @return [void]
+      # @raise [ConflictingDeclarationError]
+      sig { params(declarations: T::Array[ScopedDeclaration]).void }
+      def reject_conflicts(declarations)
+        declarations.group_by { |d| [d.integration, d.name] }.each do |(integration, name), decls|
+          asks = decls.map do |d|
+            { constraint: d.constraint, source: d.source, revision: d.revision, materialization: d.materialization }
+          end.uniq
+          next if asks.size <= 1
+
+          raise ConflictingDeclarationError,
+            "#{integration}/#{name} is declared with disagreeing asks: " \
+              "#{asks.map(&:inspect).join(" vs ")}"
+        end
+      end
+
       # Stamp the declaration's install-scoping axes (host, env) onto the
       # resolved dependency's metadata so they serialize into the lockfile and
       # the installer can filter on them. Done here, uniformly, so no
       # repository has to know these axes exist — a repository resolves what a
       # dep IS; where it installs is resolver/installer plumbing.
       #
-      # @param dependency [Dependency] freshly fetched
-      # @param decl [DependencyDeclaration] the declaration it came from
+      # @param dependency [Dependency] freshly minted
+      # @param decl [ScopedDeclaration] the declaration it came from
       # @return [Dependency]
+      sig { params(dependency: Dependency, decl: ScopedDeclaration).returns(Dependency) }
       def attach_install_scoping(dependency, decl)
-        extra = {}
-        extra["host"] = decl.host.to_s if decl.host
-        extra["env"] = decl.env if decl.env
+        extra = decl.scope.to_metadata
         return dependency if extra.empty?
 
         dependency.with(metadata: dependency.metadata.merge(extra))
       end
 
-      # Give each repository a chance to batch-resolve all declarations of its
-      # type before per-dependency fetches begin. Most repositories inherit the
-      # no-op; bundler uses it to generate the Gemfile and run `bundle lock` once.
+      # Collect, per package (integration + name), the platforms of every group
+      # that declares it (preserving nils, which mean "integration default").
+      # This is how the same dep declared in two groups gets resolved for the
+      # union of their platforms without per-dep platform lists — scoped per
+      # integration so one ecosystem's platform pins never leak into another's.
       #
-      # @param declarations [Array<DependencyDeclaration>] all declarations
-      # @return [void]
-      def prepare_repositories(declarations)
-        declarations.group_by(&:integration).each do |type, typed_declarations|
-          @repositories[type]&.prepare(typed_declarations)
-        end
+      # @param declarations [Array<ScopedDeclaration>]
+      # @return [Hash{Array(Symbol, String) => Array<String, nil>}]
+      #   (integration, name) → de-duped platform list
+      sig do
+        params(
+          declarations: T::Array[ScopedDeclaration],
+        ).returns(T::Hash[[Symbol, String], T::Array[T.nilable(String)]])
       end
-
-      # Collect, per dependency name, the platforms of every group that declares
-      # it (preserving nils, which mean "integration default"). This is how the
-      # same dep declared in two groups gets resolved for the union of their
-      # platforms without per-dep platform lists.
-      #
-      # @param declarations [Array<DependencyDeclaration>]
-      # @return [Hash{String => Array<String, nil>}] name → de-duped platform list
-      def platforms_by_name(declarations)
+      def declared_platforms(declarations)
         result = Hash.new { |h, k| h[k] = [] }
-        declarations.each { |decl| result[decl.name] << decl.platform }
+        declarations.each { |decl| result[[decl.integration, decl.name]] << decl.platform }
         result.transform_values(&:uniq)
       end
 
-      # Normalize a transitive dep constraint to a Hash.
+      # A NoSatisfyingVersionError message that says why: what was asked,
+      # what the universe held.
       #
-      # Transitive deps from Dependency#dependencies may express constraints as
-      # a string (e.g. ">= 1.0") or a Hash. Strings are wrapped so they are not
-      # silently dropped when merged into the fetch ID.
-      #
-      # @param constraint [Hash, String, nil] raw constraint from Dependency#dependencies
-      # @return [Hash]
-      def normalize_constraint(constraint)
-        case constraint
-        when Hash then constraint
-        when String then { "version" => constraint }
-        else {}
-        end
+      # @param decl [ScopedDeclaration]
+      # @param package [Package]
+      # @param explicit [Array<String>] explicitly requested platforms
+      # @return [String]
+      sig do
+        params(
+          decl: ScopedDeclaration,
+          package: Package,
+          explicit: T::Array[String],
+        ).returns(String)
+      end
+      def no_satisfying_message(decl, package, explicit)
+        wanted = decl.constraint.empty? ? "any version" : decl.constraint.inspect
+        wanted += " on #{explicit.join(", ")}" unless explicit.empty?
+        "no version of #{decl.name} satisfies #{wanted} " \
+          "(universe: #{package.versions.size} version(s))"
       end
     end
   end

@@ -2,6 +2,12 @@
 # frozen_string_literal: true
 
 require "pathname"
+# The one early require of sorbet-runtime for the whole Dev module tree:
+# every in-process entry point (bin/dev, bin/console, test_helper) requires
+# "dev" before any lib/dev file, so individual files don't re-require it.
+# Exceptions that load outside this chain carry their own require: the
+# deps hooks (loaded by consumer dependencies.rb via install-build-deps)
+# and lib/rake_test_argv.rb (loaded standalone by bin/test.rb).
 require "sorbet-runtime"
 
 # Dev CLI: find repo with dev.yml, run declared commands (optionally in a CLI::UI Frame).

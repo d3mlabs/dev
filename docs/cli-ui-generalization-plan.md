@@ -8,7 +8,7 @@ While investigating, two latent bugs surfaced and are already fixed:
 
 - **`content_tag` Errno::EISDIR** — a recursive `content_globs` (`bin/image/**/*`)
   matched the `bin/image/lib` directory; `content_tag` now skips non-files
-  before reading. (`lib/build_container.rb`, test added.)
+  before reading. (`lib/dev/build_container.rb`, test added.)
 - **`release.rb` clobbered resource sha256s** — a `gsub!` over every
   `sha256 "..."` overwrote vendored-gem resource checksums with the tarball sha;
   now anchored to the package url+sha pair. (`bin/release.rb`.)

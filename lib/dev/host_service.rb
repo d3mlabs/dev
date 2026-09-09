@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "open3"
@@ -21,6 +22,8 @@ module Dev
   # with arguments, a reporting surface) is not this class's business —
   # it belongs to its own command accessor.
   class HostService
+    extend T::Sig
+
     # A canonical brew formula token: bare name or fully tap-qualified
     # user/repo/name (exactly one or three segments — a two-segment form is
     # not a formula reference), lowercase throughout (brew stores taps
@@ -28,8 +31,10 @@ module Dev
     # deployment_formula value crosses a settings boundary into a brew
     # invocation, so validate its shape — a leading `-` must never reach
     # brew as a flag.
-    FORMULA_PATTERN =
-      %r{\A[a-z0-9][a-z0-9_.+@-]*(?:/[a-z0-9][a-z0-9_.+@-]*/[a-z0-9][a-z0-9_.+@-]*)?\z}
+    FORMULA_PATTERN = T.let(
+      %r{\A[a-z0-9][a-z0-9_.+@-]*(?:/[a-z0-9][a-z0-9_.+@-]*/[a-z0-9][a-z0-9_.+@-]*)?\z},
+      Regexp,
+    )
 
     # The generic tool's own formula — the self-update target for tapless
     # individuals who installed dev-core directly (no deployment).
@@ -39,16 +44,20 @@ module Dev
     # output to the terminal (installs the user should see), `quiet?` only
     # answers success (existence checks).
     class BrewExecutor
+      extend T::Sig
+
       # @param cmd [Array<String>] argv, never a shell string
       # @return [Boolean]
+      sig { params(cmd: String).returns(T::Boolean) }
       def run(*cmd)
-        !!system(*cmd)
+        !!T.unsafe(Kernel).system(*cmd)
       end
 
       # @param cmd [Array<String>] argv, never a shell string
       # @return [Boolean]
+      sig { params(cmd: String).returns(T::Boolean) }
       def quiet?(*cmd)
-        _out, _err, status = Open3.capture3(*cmd)
+        _out, _err, status = T.unsafe(Open3).capture3(*cmd)
         status.success?
       rescue SystemCallError
         false
@@ -65,6 +74,15 @@ module Dev
     # @param synchronizer [Dev::Learnings::Synchronizer, Dev::Learnings::UnconfiguredSynchronizer]
     #   the org learnings read path (the unconfigured null object when no
     #   knowledge repo is set)
+    sig do
+      params(
+        settings: Dev::Settings,
+        brew_executor: T.untyped,
+        hook_installer: Dev::Cd::HookInstaller,
+        skill_installer: Dev::SkillInstaller,
+        synchronizer: T.untyped,
+      ).void
+    end
     def initialize(settings: Dev::Settings.new, brew_executor: BrewExecutor.new,
                    hook_installer: Dev::Cd::HookInstaller.new,
                    skill_installer: Dev::SkillInstaller.new,
@@ -95,6 +113,7 @@ module Dev
     # config location, no Brewfile, nothing to upgrade).
     #
     # @return [void]
+    sig { void }
     def converge_tooling
       return unless system_config_path
 
@@ -109,6 +128,7 @@ module Dev
     #
     # @return [Symbol, false] :added, :already_present, or false
     #   (unsupported shell)
+    sig { returns(T.any(Symbol, FalseClass)) }
     def install_rc_hook
       @hook_installer.ensure_installed
     end
@@ -119,6 +139,7 @@ module Dev
     # through the installed tree, wherever brew put it).
     #
     # @return [void]
+    sig { void }
     def install_skills
       @skill_installer.install_all(Dev::SkillInstaller::SHIPPED_SKILLS_DIR)
     end
@@ -130,6 +151,7 @@ module Dev
     # @param project_root [Pathname, String, nil] project to link the
     #   invariants render into; nil skips the link (no project context)
     # @return [void]
+    sig { params(project_root: T.nilable(T.any(Pathname, String))).void }
     def sync_learnings(project_root: nil)
       @synchronizer.sync(project_root: project_root)
     end
@@ -142,6 +164,7 @@ module Dev
     # named. Hand-rollers with only a Brewfile in etc never see this.
     #
     # @return [void]
+    sig { void }
     def warn_unnamed_deployment
       return unless File.exist?(system_config_path.to_s)
       return if @settings.deployment_formula
@@ -156,6 +179,7 @@ module Dev
     # business.
     #
     # @return [void]
+    sig { void }
     def self_update
       unless @brew_executor.run("brew", "update", "--quiet")
         $stderr.puts "dev: warning: brew update failed — skipping the dev self-update check."
@@ -173,6 +197,7 @@ module Dev
     # checkouts).
     #
     # @return [String, nil]
+    sig { returns(T.nilable(String)) }
     def upgrade_target
       formula = @settings.deployment_formula
       if formula
@@ -189,6 +214,7 @@ module Dev
     # upgrades outdated entries by default, so org tools stay current.
     #
     # @return [void]
+    sig { void }
     def converge_brewfile
       return if @brew_executor.run("brew", "bundle", "install", "--file=#{brewfile_path}")
 
@@ -199,11 +225,13 @@ module Dev
     # deployment formula's payload into the prefix's etc/dev/.
     #
     # @return [Pathname]
+    sig { returns(Pathname) }
     def brewfile_path
       Pathname(system_config_path.to_s).dirname / "Brewfile"
     end
 
     # @return [String, nil] nil on brewless machines (empty layer)
+    sig { returns(T.nilable(String)) }
     def system_config_path
       @settings.system_config_path
     end

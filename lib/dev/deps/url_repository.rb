@@ -1,42 +1,58 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "digest"
 require "open3"
 require "tempfile"
+require_relative "artifact"
+require_relative "declarations"
+require_relative "package"
+require_relative "package_id"
+require_relative "package_version"
 require_relative "repository"
-require_relative "dependency"
 
 module Dev
   module Deps
-    # Fetches URL-based dependencies by downloading and computing SHA256.
+    # Reports URL-based dependencies (:url integration): the URL is the
+    # entire address, and the universe is whatever the URI serves right now —
+    # an observable-now singleton, the same semantics a Steam branch tip has.
     #
-    # The artifact is downloaded to a temp file and hashed.
-    # Callers (e.g. Integration) are responsible for caching the result.
+    # find IS the observation: the artifact is downloaded and hashed
+    # (trust-on-first-use) so the SHA256 rides as the version's digest and
+    # installs verify against the lockfile. The download lives here, in find,
+    # deliberately — find is the I/O operation, and keeping it here is what
+    # keeps Repository#at pure. Versions don't exist in this universe (the
+    # declared tag: is a display label riding materialization), so the
+    # version is empty and the Resolver mints it back from the label.
     class UrlRepository < Repository
+      extend T::Sig
+
       class DownloadError < StandardError; end
 
-      # Download a URL dependency and compute its SHA256 integrity hash.
+      # Report a URL dependency's universe: the one artifact behind the URL.
       #
-      # @param id [Hash] must include "name", "url", "integration", "group";
-      #   optionally "tag" for version
-      # @return [Dependency] with hash set to "SHA256=<hex>" and
-      #   metadata["downloaded_path"] pointing to the temp file
+      # @param id [PackageId] source is the download URL
+      # @return [Package] a singleton universe
       # @raise [DownloadError] if the download fails
-      def fetch(id)
-        url = id["url"]
-        name = id["name"]
+      sig { override.params(id: PackageId).returns(Package) }
+      def find(id)
+        url = T.must(id.source)
+        path = download_to_tempfile(url, id.name)
+        digest = "SHA256=#{Digest::SHA256.file(path).hexdigest}"
 
-        path = download_to_tempfile(url, name)
-        sha256_hex = Digest::SHA256.file(path).hexdigest
-        hash = "SHA256=#{sha256_hex}"
-
-        Dependency.new(
-          name: name,
-          integration: id["integration"].to_sym,
-          group: id["group"].to_sym,
-          version: id["tag"],
-          hash: hash,
-          metadata: { "url" => url, "downloaded_path" => path },
+        Package.new(
+          id: id,
+          versions: [
+            PackageVersion.new(
+              version: "",
+              digest: digest,
+              artifacts: { "default" => Artifact.new(uri: url, digest: digest) },
+              metadata: { "url" => url },
+              # A downloaded archive is self-contained: its contents are the
+              # whole dependency.
+              declarations: Declarations::Resolved.new([]),
+            ),
+          ],
         )
       end
 
@@ -48,15 +64,16 @@ module Dev
       # @param name [String] dependency name (used in temp file naming)
       # @return [String] path to the downloaded temp file
       # @raise [DownloadError] if curl exits non-zero
+      sig { params(url: String, name: String).returns(String) }
       def download_to_tempfile(url, name)
         tmp = Tempfile.new(["dev_deps_#{name}", ".bin"])
         tmp.binmode
         tmp.close
 
-        _out, err, status = Open3.capture3("curl", "-fsSL", "-o", tmp.path, url)
+        _out, err, status = Open3.capture3("curl", "-fsSL", "-o", T.must(tmp.path), url)
         raise DownloadError, "Download failed for #{url}: #{err}" unless status.success?
 
-        tmp.path
+        T.must(tmp.path)
       end
     end
   end

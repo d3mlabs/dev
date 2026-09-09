@@ -6,33 +6,27 @@ require "dev/deps/xcode_repository"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::XcodeRepositoryTest < Minitest::Test
-  test "fetch resolves the declared exact version as the locked version" do
-    Given "an xcode declaration id"
+  test "at lifts the declared version as the identity — no registry exists to consult" do
+    Given "an xcode revision"
     repo = Dev::Deps::XcodeRepository.new
-    id = { "name" => "xcode", "integration" => "xcode", "group" => "build", "version" => "26.1.1" }
 
-    When "fetching"
-    dep = repo.fetch(id)
+    When "lifting"
+    version = repo.at(Dev::Deps::PackageId.new(integration: :xcode, name: "xcode"), "26.1.1")
 
-    Then "resolution is the identity — no registry exists to consult"
-    dep.name == "xcode"
-    dep.integration == :xcode
-    dep.group == :build
-    dep.version == "26.1.1"
-    dep.hash.nil?
+    Then "the version is the address; Apple ships the whole toolchain"
+    version.version == "26.1.1"
+    version.digest.nil?
+    version.declarations == Dev::Deps::Declarations::Resolved.new([])
   end
 
-  test "fetch without an exact version raises" do
-    Given "a declaration missing the version pin"
+  test "find refuses — there is no enumerable Xcode universe" do
+    Given "a constraint-shaped ask"
     repo = Dev::Deps::XcodeRepository.new
-    id = { "name" => "xcode", "integration" => "xcode", "group" => "build" }
 
-    When "fetching"
-    error = assert_raises(Dev::Deps::XcodeRepository::MissingVersionError) do
-      repo.fetch(id)
-    end
+    When "finding"
+    repo.find(Dev::Deps::PackageId.new(integration: :xcode, name: "xcode"))
 
     Then
-    error.message.include?("exact version")
+    raises Dev::Deps::XcodeRepository::NoEnumerableUniverseError
   end
 end

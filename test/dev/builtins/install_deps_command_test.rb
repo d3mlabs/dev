@@ -5,7 +5,7 @@ require "test_helper"
 require "dev/builtins/install_deps_command"
 require "fileutils"
 require "pathname"
-require "shadowenv_ruby"
+require "dev/shadowenv_ruby"
 require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
@@ -25,7 +25,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
   test "call provisions the pinned Ruby, installs for the detected env/host, then runs both hygiene hooks" do
     Given "a command with every collaborator faked"
     root = Pathname.new(Dir.mktmpdir("install-deps-"))
-    installer = typed_mock(Dev::Deps::DependencyInstaller)
+    installer = typed_mock(Dev::Deps::Installer)
     installer.expects(:install).with(env: Dev::Deps.detect_env, host: Dev::Deps.detect_host).once
     linker = typed_mock(Dev::Deps::GemSkillLinker)
     linker.expects(:link_all).once
@@ -42,7 +42,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     )
     # Headless boxes reach install-deps before any CommandRunner provisioning,
     # so the builtin provisions the toolchain itself — the true boundary.
-    ShadowenvRuby.expects(:ensure!).with(ruby_version: "4.0.1", project_root: root).once
+    Dev::ShadowenvRuby.expects(:ensure!).with(ruby_version: "4.0.1", project_root: root).once
 
     When "running install-deps"
     command.call(args: [], context: build_context(root))
@@ -57,7 +57,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
   test "call builds the installer over the project's lockfile and host integrations" do
     Given "a factory that records its inputs"
     root = Pathname.new(Dir.mktmpdir("install-deps-wiring-"))
-    installer = typed_mock(Dev::Deps::DependencyInstaller)
+    installer = typed_mock(Dev::Deps::Installer)
     installer.stubs(:install)
     factory_inputs = []
     command = Dev::Builtins::InstallDepsCommand.new(
@@ -72,7 +72,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
       },
       host_service: quiet_host_service,
     )
-    ShadowenvRuby.stubs(:ensure!)
+    Dev::ShadowenvRuby.stubs(:ensure!)
 
     When "running install-deps"
     command.call(args: [], context: build_context(root))
@@ -95,7 +95,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     # boundaries — the Ruby provisioner and the host service — are faked.
     root = Pathname.new(Dir.mktmpdir("install-deps-default-"))
     command = Dev::Builtins::InstallDepsCommand.new(host_service: quiet_host_service)
-    ShadowenvRuby.stubs(:ensure!)
+    Dev::ShadowenvRuby.stubs(:ensure!)
 
     When "running install-deps"
     command.call(args: [], context: build_context(root))
@@ -111,7 +111,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
 
   def build_command
     Dev::Builtins::InstallDepsCommand.new(
-      installer_factory: ->(_lockfile, _integrations) { typed_mock(Dev::Deps::DependencyInstaller) },
+      installer_factory: ->(_lockfile, _integrations) { typed_mock(Dev::Deps::Installer) },
       gem_skill_linker_factory: ->(_project_root) { typed_mock(Dev::Deps::GemSkillLinker) },
       host_service: quiet_host_service,
     )

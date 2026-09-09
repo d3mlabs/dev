@@ -29,52 +29,50 @@ class Dev::Deps::SteamCmdTest < Minitest::Test
     }
   VDF
 
-  test "parse_build_id extracts the buildid for the requested branch" do
-    When "parsing the public branch"
-    public_build = Dev::Deps::SteamCmd.parse_build_id(APP_INFO, "public")
-    experimental_build = Dev::Deps::SteamCmd.parse_build_id(APP_INFO, "experimental")
+  test "parse_branches extracts every branch's buildid" do
+    When "parsing the branches section"
+    branches = Dev::Deps::SteamCmd.parse_branches(APP_INFO)
 
     Then
-    public_build == "15321746"
-    experimental_build == "15400000"
+    branches == { "public" => "15321746", "experimental" => "15400000" }
   end
 
-  test "parse_build_id returns nil for an unknown branch" do
-    When "parsing a missing branch"
-    result = Dev::Deps::SteamCmd.parse_build_id(APP_INFO, "nonexistent")
+  test "parse_branches skips branches without a buildid and handles no section" do
+    Given "a redacted branch alongside a normal one, and empty output"
+    vdf = <<~VDF
+      "branches"
+      {
+        "public" { "buildid" "42" }
+        "gated" { "pwdrequired" "1" }
+      }
+    VDF
+
+    When "parsing"
+    branches = Dev::Deps::SteamCmd.parse_branches(vdf)
+    empty = Dev::Deps::SteamCmd.parse_branches("no branches here")
 
     Then
-    result.nil?
+    branches == { "public" => "42" }
+    empty == {}
   end
 
-  test "resolve_build_id returns the parsed buildid on success" do
+  test "resolve_branches returns the parsed branch map on success" do
     Given "a successful app_info_print"
     Dev::Deps::SteamCmd.stubs(:run).returns([APP_INFO, "", stub(success?: true)])
 
     When "resolving"
-    build_id = Dev::Deps::SteamCmd.resolve_build_id(app: 1690800, branch: "public")
+    branches = Dev::Deps::SteamCmd.resolve_branches(app: 1690800)
 
     Then
-    build_id == "15321746"
+    branches == { "public" => "15321746", "experimental" => "15400000" }
   end
 
-  test "resolve_build_id raises when steamcmd fails" do
+  test "resolve_branches raises when steamcmd fails" do
     Given "a failing app_info_print"
     Dev::Deps::SteamCmd.stubs(:run).returns(["", "Connection error", stub(success?: false)])
 
     When "resolving"
-    Dev::Deps::SteamCmd.resolve_build_id(app: 1690800, branch: "public")
-
-    Then
-    raises Dev::Deps::SteamCmd::SteamCmdError
-  end
-
-  test "resolve_build_id raises when the branch has no buildid" do
-    Given "output missing the requested branch"
-    Dev::Deps::SteamCmd.stubs(:run).returns([APP_INFO, "", stub(success?: true)])
-
-    When "resolving a missing branch"
-    Dev::Deps::SteamCmd.resolve_build_id(app: 1690800, branch: "nonexistent")
+    Dev::Deps::SteamCmd.resolve_branches(app: 1690800)
 
     Then
     raises Dev::Deps::SteamCmd::SteamCmdError
@@ -87,5 +85,70 @@ class Dev::Deps::SteamCmdTest < Minitest::Test
     Then "darwin gets the osx tarball, everything else the linux tarball"
     expected = RUBY_PLATFORM.include?("darwin") ? Dev::Deps::SteamCmd::MACOS_URL : Dev::Deps::SteamCmd::LINUX_URL
     url == expected
+  end
+
+  test "ensure! returns the script path without bootstrapping when it is already executable" do
+    Given "a warm install dir with an executable steamcmd.sh"
+    dir = Dir.mktmpdir("steamcmd-test-")
+    script = File.join(dir, "steamcmd.sh")
+    File.write(script, "#!/bin/sh\n")
+    File.chmod(0o755, script)
+
+    When "ensuring"
+    path = Dev::Deps::SteamCmd.ensure!(dir)
+
+    Then
+    path == script
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "ensure! raises BootstrapError when the curl|tar pipeline fails" do
+    Given "an empty install dir and a failing download pipeline"
+    dir = Dir.mktmpdir("steamcmd-test-")
+    Kernel.expects(:system).with("sh", "-c", regexp_matches(/curl -fsSL .+ \| tar -xz -C /)).returns(false)
+
+    When "ensuring"
+    Dev::Deps::SteamCmd.ensure!(dir)
+
+    Then
+    raises Dev::Deps::SteamCmd::BootstrapError
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "run ensures the install and executes steamcmd.sh with the +commands" do
+    Given "a warm install dir whose steamcmd.sh echoes its arguments"
+    dir = Dir.mktmpdir("steamcmd-test-")
+    script = File.join(dir, "steamcmd.sh")
+    File.write(script, "#!/bin/sh\necho \"$@\"\n")
+    File.chmod(0o755, script)
+
+    When "running"
+    out, _err, status = Dev::Deps::SteamCmd.run("+login", "anonymous", dir: dir)
+
+    Then
+    out == "+login anonymous\n"
+    status.success? == true
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "ensure! raises BootstrapError when the pipeline succeeds but produces no script" do
+    Given "an empty install dir and a pipeline that extracts nothing"
+    dir = Dir.mktmpdir("steamcmd-test-")
+    Kernel.expects(:system).with("sh", "-c", regexp_matches(/curl -fsSL .+ \| tar -xz -C /)).returns(true)
+
+    When "ensuring"
+    Dev::Deps::SteamCmd.ensure!(dir)
+
+    Then
+    raises Dev::Deps::SteamCmd::BootstrapError
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 end

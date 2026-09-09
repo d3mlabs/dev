@@ -19,7 +19,7 @@ module Dev
 
     sig { params(staleness: Dev::Deps::Staleness).void }
     def initialize(staleness:)
-      @staleness = T.let(staleness, Dev::Deps::Staleness)
+      @staleness = staleness
     end
 
     # All current staleness messages (see Dev::Deps::Staleness#messages).

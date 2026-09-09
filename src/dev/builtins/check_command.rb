@@ -14,7 +14,7 @@ module Dev
       sig { params(dependency_service: DependencyService).void }
       def initialize(dependency_service:)
         super()
-        @dependency_service = T.let(dependency_service, DependencyService)
+        @dependency_service = dependency_service
       end
 
       sig { override.returns(String) }

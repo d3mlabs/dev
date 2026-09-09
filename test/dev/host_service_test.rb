@@ -314,7 +314,7 @@ class Dev::HostServiceTest < Minitest::Test
     service.install_rc_hook
 
     Then "the installer received ensure_installed"
-    1 * hook_installer.ensure_installed
+    1 * hook_installer.ensure_installed >> :added
 
     Cleanup
     FileUtils.rm_rf(dir)

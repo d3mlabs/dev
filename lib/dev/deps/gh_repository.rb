@@ -1,148 +1,148 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "json"
 require "open3"
+require_relative "declarations"
+require_relative "package"
+require_relative "package_id"
+require_relative "package_version"
 require_relative "repository"
-require_relative "dependency"
 
 module Dev
   module Deps
-    # Resolves GitHub release dependencies via the gh CLI.
+    # Reports GitHub-hosted dependencies via the gh CLI: the discrete
+    # universe is the repo's tags and releases, fully enumerated with facts.
     #
-    # Resolution is a single metadata API call — no artifact download.
-    # Per-asset SHA256 digests reported by the GitHub API are recorded in
-    # metadata so GhIntegration can verify downloads against the lockfile.
+    # Two paginated list calls cover everything: the releases list carries
+    # each release's assets (names, sizes, API-reported SHA256 digests) and
+    # the tags list carries each tag's commit SHA — so enumeration is
+    # facts-complete with no per-version calls. Resolution is metadata only,
+    # no artifact download; digests are recorded so GhIntegration can verify
+    # downloads against the lockfile. Asset selection against the declared
+    # glob happens at install, where the glob arrives via the pin's
+    # materialization.
     #
     # Declared in dependencies.rb as:
-    #   gh "satisfactorymodding/UnrealEngine",
-    #      tag: "5.6.1-css-83",
-    #      assets: "UnrealEngine-CSS-Editor-Linux.tar.zst.*",
-    #      install_dir: "~/.dev/engines/unreal-engine-css"
+    #   gh "UnrealEngine",
+    #      github: "d3mlabs/unreal-engine",
+    #      tag: "5.8.0-wine-7",
+    #      assets: "UnrealEngine-Wine-Editor-Linux.tar.zst.*",
+    #      install_dir: "~/.dev/engines/ue5"
     class GhRepository < Repository
+      extend T::Sig
+
       class GhMissingError < StandardError; end
       class AuthenticationError < StandardError; end
       class RepoAccessError < StandardError; end
-      class ReleaseNotFoundError < StandardError; end
-      class NoMatchingAssetsError < StandardError; end
       class ApiError < StandardError; end
 
-      # Resolve a GitHub dependency to a pinned Dependency.
+      # GitHub's maximum page size; fewer results than this ends pagination.
+      PER_PAGE = 100
+
+      # Report a GitHub dependency's universe: every tag and release.
       #
-      # Two shapes, distinguished by the declaration: "assets" => prebuilt release
-      # assets (download + verify); "build" => build from the tag's source archive.
+      # Universe order feeds the unconstrained pick (ExactScheme preserves
+      # order and the Resolver takes the last sorted version): tag-only
+      # versions first, then releases oldest to newest, so an unconstrained
+      # gh dep pins the latest release rather than an arbitrary tag.
       #
-      # @param id [Hash] must include "name", "repo" (owner/repo slug), "tag",
-      #   "install_dir", "integration", "group", and one of "assets"/"build"
-      # @return [Dependency]
+      # @param id [PackageId] source is the "owner/repo" slug
+      # @return [Package] one version per tag/release, facts complete
       # @raise [GhMissingError] if the gh CLI is not installed
       # @raise [AuthenticationError] if gh is not authenticated
       # @raise [RepoAccessError] if the repo is not visible to the account
-      # @raise [ReleaseNotFoundError] if the tag has no release/ref
-      # @raise [NoMatchingAssetsError] if no assets match the pattern
-      def fetch(id)
-        id["assets"] ? fetch_prebuilt(id) : fetch_source(id)
+      # @raise [PackageNotFoundError] if the repo has no tags or releases
+      sig { override.params(id: PackageId).returns(Package) }
+      def find(id)
+        repo_slug = T.must(id.source)
+        releases = list(repo_slug, "releases")
+        tags = list(repo_slug, "tags")
+        if releases.empty? && tags.empty?
+          raise PackageNotFoundError, "#{repo_slug} publishes no tags or releases"
+        end
+
+        commit_by_tag = tags.to_h { |tag| [tag["name"], tag.dig("commit", "sha")] }
+        # Drafts have no tag yet; they are not part of the published universe.
+        release_by_tag = releases.reject { |release| release["draft"] }
+          .to_h { |release| [release["tag_name"], release] }
+
+        tag_only = commit_by_tag.keys - release_by_tag.keys
+        ordered = tag_only + release_by_tag.keys.reverse
+
+        versions = ordered.map do |tag|
+          version_for(repo_slug, tag, commit_by_tag[tag], release_by_tag[tag])
+        end
+        Package.new(id: id, versions: versions)
       end
 
       private
 
-      # Resolve a prebuilt-release dependency (download + verify path).
+      # Assemble one tag's facts: the commit SHA it points at and, when it
+      # publishes a release, every asset — unselected.
       #
-      # @param id [Hash]
-      # @return [Dependency]
-      def fetch_prebuilt(id)
-        repo_slug = id["repo"]
-        tag = id["tag"]
-        pattern = id["assets"]
+      # @param repo_slug [String] "owner/repo"
+      # @param tag [String] tag name (the version string)
+      # @param commit [String, nil] commit SHA from the tags list
+      # @param release [Hash, nil] release object from the releases list
+      # @return [PackageVersion]
+      sig do
+        params(
+          repo_slug: String,
+          tag: String,
+          commit: T.nilable(String),
+          release: T.nilable(T::Hash[String, T.untyped]),
+        ).returns(PackageVersion)
+      end
+      def version_for(repo_slug, tag, commit, release)
+        metadata = T.let({ "repo" => repo_slug }, T::Hash[String, T.untyped])
+        metadata["commit"] = commit if commit
+        metadata["assets"] = (release["assets"] || []).map { |asset| asset_metadata(asset) } if release
 
-        release = fetch_release(repo_slug, tag)
-        assets = matching_assets(release, pattern)
-        if assets.empty?
-          raise NoMatchingAssetsError,
-            "no assets matching #{pattern.inspect} in #{repo_slug}@#{tag}"
-        end
-
-        Dependency.new(
-          name: id["name"],
-          integration: id["integration"].to_sym,
-          group: id["group"].to_sym,
+        PackageVersion.new(
           version: tag,
-          hash: nil,
-          metadata: {
-            "repo" => repo_slug,
-            "asset_pattern" => pattern,
-            "install_dir" => id["install_dir"],
-            "assets" => assets.map { |asset| asset_metadata(asset) },
-          },
+          metadata: metadata,
+          # Usage contract, not a guarantee: prebuilt assets baked their needs
+          # in at build time, and a source build's transitive needs are
+          # declared by the consuming project's own dependencies.rb rows.
+          # Revisit when subproject resolution lands.
+          declarations: Declarations::Resolved.new([]),
         )
       end
 
-      # Resolve a build-from-source dependency. Pins the tag's commit SHA (for
-      # provenance) and records the build recipe; GhIntegration fetches the source
-      # archive and runs the build. No release is required — the tag just needs to
-      # exist as a ref (Epic ships UE as source, not release assets).
-      #
-      # @param id [Hash]
-      # @return [Dependency]
-      def fetch_source(id)
-        repo_slug = id["repo"]
-        tag = id["tag"]
-        commit = resolve_commit_sha(repo_slug, tag)
-
-        Dependency.new(
-          name: id["name"],
-          integration: id["integration"].to_sym,
-          group: id["group"].to_sym,
-          version: tag,
-          hash: nil,
-          metadata: {
-            "repo" => repo_slug,
-            "install_dir" => id["install_dir"],
-            "build" => id["build"],
-            "commit" => commit,
-          },
-        )
-      end
-
-      # Resolve a tag to its commit SHA, mapping gh failures to actionable errors.
+      # Enumerate a paginated list endpoint to exhaustion.
       #
       # @param repo_slug [String] "owner/repo"
-      # @param tag [String] tag/ref
-      # @return [String] commit SHA
-      def resolve_commit_sha(repo_slug, tag)
-        out, err, status = run_gh_api("repos/#{repo_slug}/commits/#{tag}")
-        return JSON.parse(out)["sha"] if status.success?
+      # @param collection [String] "releases" or "tags"
+      # @return [Array<Hash>] every object the endpoint lists
+      sig { params(repo_slug: String, collection: String).returns(T::Array[T::Hash[String, T.untyped]]) }
+      def list(repo_slug, collection)
+        results = T.let([], T::Array[T::Hash[String, T.untyped]])
+        page = 1
+        loop do
+          out, err, status = run_gh_api("repos/#{repo_slug}/#{collection}?per_page=#{PER_PAGE}&page=#{page}")
+          unless status.success?
+            raise_auth_error!(err)
+            raise_repo_access_error!(repo_slug) if not_found?(err)
+            raise ApiError, "gh api failed listing #{collection} for #{repo_slug}: #{err.strip}"
+          end
 
-        raise_auth_error!(err)
-        raise_not_found_error!(repo_slug, tag) if not_found?(err)
-        raise ApiError, "gh api failed resolving #{repo_slug}@#{tag}: #{err.strip}"
-      end
+          batch = JSON.parse(out)
+          results.concat(batch)
+          break if batch.size < PER_PAGE
 
-      # Fetch release metadata for a tag, mapping gh failures to actionable errors.
-      #
-      # @param repo_slug [String] "owner/repo"
-      # @param tag [String] release tag
-      # @return [Hash] parsed release JSON
-      def fetch_release(repo_slug, tag)
-        out, err, status = run_gh_api("repos/#{repo_slug}/releases/tags/#{tag}")
-        return JSON.parse(out) if status.success?
-
-        raise_auth_error!(err)
-        raise_not_found_error!(repo_slug, tag) if not_found?(err)
-        raise ApiError, "gh api failed for #{repo_slug}@#{tag}: #{err.strip}"
-      end
-
-      # Distinguish "repo invisible" (account not linked) from "tag missing".
-      # Forks of private repos 404 for accounts without access, so a second
-      # probe of the repo itself tells us which problem the user has.
-      #
-      # @param repo_slug [String] "owner/repo"
-      # @param tag [String] release tag
-      def raise_not_found_error!(repo_slug, tag)
-        _out, _err, status = run_gh_api("repos/#{repo_slug}")
-        if status.success?
-          raise ReleaseNotFoundError, "no release or tag #{tag.inspect} in #{repo_slug}"
+          page += 1
         end
+        results
+      end
 
+      # A 404 on a list endpoint means the repo itself is invisible to the
+      # account (list endpoints answer [] for empty collections), which for
+      # Epic-gated repos has a known fix worth spelling out.
+      #
+      # @param repo_slug [String] "owner/repo"
+      sig { params(repo_slug: String).void }
+      def raise_repo_access_error!(repo_slug)
         raise RepoAccessError, <<~MSG
           #{repo_slug} is not visible to your GitHub account.
           For satisfactorymodding/UnrealEngine: link your GitHub account to Epic Games,
@@ -153,6 +153,7 @@ module Dev
       end
 
       # @param err [String] gh stderr output
+      sig { params(err: String).void }
       def raise_auth_error!(err)
         return unless err.include?("gh auth login")
 
@@ -161,28 +162,20 @@ module Dev
 
       # @param err [String] gh stderr output
       # @return [Boolean]
+      sig { params(err: String).returns(T::Boolean) }
       def not_found?(err)
         err.include?("HTTP 404")
       end
 
       # Run a gh api call. Isolated so tests can stub the CLI boundary.
       #
-      # @param path [String] API path (e.g. "repos/owner/repo/releases/tags/v1")
+      # @param path [String] API path (e.g. "repos/owner/repo/releases?per_page=100&page=1")
       # @return [Array(String, String, Process::Status)] stdout, stderr, status
+      sig { params(path: String).returns([String, String, Process::Status]) }
       def run_gh_api(path)
         Open3.capture3("gh", "api", path)
       rescue Errno::ENOENT
         raise GhMissingError, "gh CLI not found — install it with: brew install gh"
-      end
-
-      # Select release assets whose names match the glob pattern.
-      #
-      # @param release [Hash] parsed release JSON
-      # @param pattern [String] glob pattern (e.g. "*.tar.zst.*")
-      # @return [Array<Hash>] matching asset objects
-      def matching_assets(release, pattern)
-        assets = release["assets"] || []
-        assets.select { |asset| File.fnmatch(pattern, asset["name"]) }
       end
 
       # Map an API asset object to lockfile metadata. The API digest is
@@ -191,6 +184,7 @@ module Dev
       #
       # @param asset [Hash] API asset object
       # @return [Hash] { "name", "size", "sha256"? }
+      sig { params(asset: T::Hash[String, T.untyped]).returns(T::Hash[String, T.untyped]) }
       def asset_metadata(asset)
         metadata = { "name" => asset["name"], "size" => asset["size"] }
         digest = asset["digest"]

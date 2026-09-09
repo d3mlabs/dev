@@ -11,6 +11,7 @@ gem:
     - rubocop
     - rubocop-ast
     - rubocop-shopify
+    - rubocop-sorbet
 dsl:
   # Add your `dsl` command parameters here:
   #

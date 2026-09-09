@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "open3"
@@ -18,23 +19,33 @@ module Dev
     # full graph from the Gemfile.lock — so install_all only needs to know there
     # is at least one gem to install.
     class BundlerIntegration < Integration
+      extend T::Sig
+
       class InstallError < StandardError; end
       class BundlerMissingError < StandardError; end
 
       GEMFILE = "Gemfile"
 
-      # @param repository   [Repository] source adapter for bundler deps
-      # @param cache        [Cache]      shared download cache (unused; bundler caches)
-      # @param project_root [Pathname]   root the generated Gemfile lives in
+      # @param repository   [Repository, nil]  source adapter for bundler deps
+      # @param cache        [Cache, nil]       shared download cache (unused; bundler caches)
+      # @param project_root [String, Pathname] root the generated Gemfile lives in
+      sig do
+        params(
+          repository: T.nilable(Repository),
+          cache: T.nilable(Cache),
+          project_root: T.any(String, Pathname),
+        ).void
+      end
       def initialize(repository:, cache:, project_root:)
         super(repository:, cache:)
-        @project_root = Pathname(project_root)
+        @project_root = T.let(Pathname(project_root), Pathname)
       end
 
       # Install all gems via `bundle install` against the generated Gemfile.
       #
       # @param dependencies [Array<Dependency>] bundler deps (presence-only)
       # @return [void]
+      sig { params(dependencies: T::Array[Dependency]).void }
       def install_all(dependencies)
         return if dependencies.empty?
 
@@ -56,6 +67,7 @@ module Dev
       #
       # @raise [BundlerMissingError] if bundler cannot be made available
       # @return [void]
+      sig { void }
       def ensure_bundler!
         _out, _err, status = Open3.capture3(
           "shadowenv", "exec", "--", "bundle", "--version",
@@ -74,6 +86,7 @@ module Dev
       #
       # @raise [InstallError] if bundle install fails
       # @return [void]
+      sig { void }
       def run_bundle_install
         _out, err, status = Open3.capture3(
           { "BUNDLE_GEMFILE" => gemfile_path.to_s, "BUNDLE_FROZEN" => "true" },
@@ -84,6 +97,7 @@ module Dev
       end
 
       # @return [Pathname]
+      sig { returns(Pathname) }
       def gemfile_path
         @project_root / GEMFILE
       end

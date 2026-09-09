@@ -1,4 +1,12 @@
+# typed: strict
 # frozen_string_literal: true
+
+# Required here (not just in src/dev.rb) because bin/test.rb loads this
+# helper standalone — it never requires "dev", where sorbet-runtime is
+# centralized for the Dev module tree.
+require "sorbet-runtime"
+
+extend T::Sig
 
 # Builds the `bundle exec rake test` argv for bin/test.rb (dev test).
 #
@@ -9,6 +17,7 @@
 # @param test_files [Array<String>] test file paths relative to the repo
 #   root; empty means the full suite
 # @return [Array<String>] argv for the child rake process
+sig { params(test_files: T::Array[String]).returns(T::Array[String]) }
 def rake_test_argv(test_files)
   argv = ["bundle", "exec", "rake", "test"]
   return argv if test_files.empty?

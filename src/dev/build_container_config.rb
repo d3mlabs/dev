@@ -116,16 +116,16 @@ module Dev
     end
     def initialize(image:, registry:, volumes: [], build_args: {}, build_secrets: {},
                    run_env: {}, content_globs: [], structure_globs: [], prewarm: nil, persist: false)
-      @image = T.let(image, String)
-      @registry = T.let(registry, String)
-      @volumes = T.let(volumes, T::Array[String])
-      @build_args = T.let(build_args, T::Hash[String, String])
-      @build_secrets = T.let(build_secrets, T::Hash[String, String])
-      @run_env = T.let(run_env, T::Hash[String, String])
-      @content_globs = T.let(content_globs, T::Array[String])
-      @structure_globs = T.let(structure_globs, T::Array[String])
-      @prewarm = T.let(prewarm, T.nilable(String))
-      @persist = T.let(persist, T::Boolean)
+      @image = image
+      @registry = registry
+      @volumes = volumes
+      @build_args = build_args
+      @build_secrets = build_secrets
+      @run_env = run_env
+      @content_globs = content_globs
+      @structure_globs = structure_globs
+      @prewarm = prewarm
+      @persist = persist
     end
 
     # Full image reference without tag (e.g. "jpduchesne89/snappy-linux").
