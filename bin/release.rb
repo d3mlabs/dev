@@ -36,9 +36,8 @@ CLI::UI::StdoutRouter.enable
 
 DEV_ROOT       = Pathname.new(File.expand_path("..", __dir__))
 FORMULA_REPO   = DEV_ROOT.join("..", "homebrew-d3mlabs")
-# Two formulas version in lockstep off the same release tarball: dev-core
-# (the generic tool) and dev (the d3mlabs deployment: org config + a
-# dependency on dev-core).
+# Two formulas version in lockstep off the same release tarball: dev-core (the generic tool) and dev (the d3mlabs
+# deployment: org config + a dependency on dev-core).
 FORMULA_PATHS  = [
   FORMULA_REPO.join("Formula", "dev-core.rb"),
   FORMULA_REPO.join("Formula", "dev.rb"),
@@ -223,20 +222,16 @@ def update_formula(version, sha)
   FORMULA_PATHS.each do |formula_path|
     abort "Homebrew formula not found at #{formula_path}" unless formula_path.exist?
 
-    # Read as UTF-8 explicitly: the formulas have non-ASCII bytes (e.g. an
-    # em-dash in a comment), and when release.rb runs under a non-UTF-8 locale
-    # (such as a piped, login-less subshell) Ruby's default external encoding
-    # is US-ASCII, which makes the sub below raise "invalid byte sequence in
-    # US-ASCII".
+    # Read as UTF-8 explicitly: the formulas have non-ASCII bytes (e.g. an em-dash in a comment), and when release.rb
+    # runs under a non-UTF-8 locale (such as a piped, login-less subshell) Ruby's default external encoding is
+    # US-ASCII, which makes the sub below raise "invalid byte sequence in US-ASCII".
     formula = formula_path.read(encoding: "UTF-8")
 
-    # Update the package url + its sha256 together, anchored to the github
-    # archive url. dev-core also carries one `sha256` line per vendored-gem
-    # `resource`; those are immutable per gem version and must NOT change on a
-    # dev release. (A prior gsub over every `sha256 "..."` replaced the
-    # resource checksums too, with the tarball sha, silently corrupting them —
-    # clean installs then failed resource verification.) Matching the url+sha
-    # as a pair keeps it surgical.
+    # Update the package url + its sha256 together, anchored to the github archive url. dev-core also carries one
+    # `sha256` line per vendored-gem `resource`; those are immutable per gem version and must NOT change on a dev
+    # release. (A prior gsub over every `sha256 "..."` replaced the resource checksums too, with the tarball sha,
+    # silently corrupting them — clean installs then failed resource verification.) Matching the url+sha as a pair
+    # keeps it surgical.
     pattern = %r{(url "https://github\.com/d3mlabs/dev/archive/refs/tags/v)[\d.]+(\.tar\.gz"\n\s+sha256 ")[0-9a-f]+(")}
     updated = formula.sub(pattern) { "#{$1}#{version}#{$2}#{sha}#{$3}" }
     abort "Could not find the package url+sha256 to update in #{formula_path}" if updated == formula
