@@ -192,6 +192,21 @@ class Dev::SettingsTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "an empty user value counts as unset per layer — the system value shows through for getter and lookup alike" do
+    Given "a user file with an empty plans_repo over a system file with a real one"
+    dir = Dir.mktmpdir("dev-settings-test-")
+    write_user(dir, 'plans_repo: ""' + "\n")
+    write_system(dir, "plans_repo: d3mlabs/plans\n")
+    settings = build_settings(dir)
+
+    Expect "the getter and the dev config view agree on the resolved value"
+    settings.plans_repo == "d3mlabs/plans"
+    settings.lookup("plans_repo") == ["d3mlabs/plans", :system]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "system_config_path is exposed for the host converge to find the deployment payload" do
     Given "hermetic settings"
     dir = Dir.mktmpdir("dev-settings-test-")

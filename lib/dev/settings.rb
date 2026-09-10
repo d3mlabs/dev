@@ -71,7 +71,7 @@ module Dev
     # @raise [MissingSettingError] when unset in every layer
     sig { returns(String) }
     def plans_repo
-      setting("plans_repo", "DEV_PLANS_REPO") ||
+      lookup("plans_repo").first ||
         raise(MissingSettingError,
           "no org plans repo configured — add `plans_repo: <owner>/<repo>` " \
           "to #{@config_path} (or set DEV_PLANS_REPO).")
@@ -84,7 +84,7 @@ module Dev
     # @return [String, nil] "owner/repo" (or any git-clonable URL), or nil
     sig { returns(T.nilable(String)) }
     def knowledge_repo
-      setting("knowledge_repo", "DEV_KNOWLEDGE_REPO")
+      lookup("knowledge_repo").first
     end
 
     # The brew formula the `dev up` self-update upgrades — the org
@@ -95,11 +95,14 @@ module Dev
     # @return [String, nil] e.g. "d3mlabs/d3mlabs/dev", or nil
     sig { returns(T.nilable(String)) }
     def deployment_formula
-      setting("deployment_formula", "DEV_DEPLOYMENT_FORMULA")
+      lookup("deployment_formula").first
     end
 
-    # Resolve a known key together with the layer it came from — the
-    # `dev config list` view (gitconfig --show-origin style).
+    # Resolve a known key together with the layer it came from: ENV → user
+    # file → system file, empty strings counting as unset at every layer.
+    # The one resolution path — the typed getters and the `dev config` view
+    # (gitconfig --show-origin style) both read through here, so they can
+    # never disagree.
     #
     # @param key [String] a KNOWN_KEYS key
     # @return [Array(String, Symbol), Array(nil, Symbol)] value and source
@@ -134,21 +137,6 @@ module Dev
 
     private
 
-    # Resolve one key through the layers: ENV → user file → system file.
-    # Empty strings count as unset at every layer.
-    #
-    # @param key [String] config file key
-    # @param env_var [String] ENV override name
-    # @return [String, nil]
-    sig { params(key: String, env_var: String).returns(T.nilable(String)) }
-    def setting(key, env_var)
-      from_env = ENV[env_var]
-      return from_env if from_env && !from_env.empty?
-
-      value = layered_config[key]
-      (value && !value.empty?) ? value : nil
-    end
-
     # @param value [String, nil]
     # @return [String, nil] the value, with empty strings counting as unset
     sig { params(value: T.untyped).returns(T.nilable(String)) }
@@ -175,13 +163,6 @@ module Dev
       prefix = nil if prefix && prefix.empty?
       prefix ||= ["/opt/homebrew", "/usr/local", "/home/linuxbrew/.linuxbrew"].find { |p| Dir.exist?(p) }
       prefix && File.join(prefix, "etc", "dev", "config.yml")
-    end
-
-    # @return [Hash] user keys merged over system keys; missing files are
-    #   empty layers
-    sig { returns(T::Hash[String, T.untyped]) }
-    def layered_config
-      load_yaml(@system_config_path).merge(load_yaml(@config_path))
     end
 
     # @param path [String, nil]
