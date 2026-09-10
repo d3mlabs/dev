@@ -34,6 +34,45 @@ class Dev::BuildContainerConfigTest < Minitest::Test
     a != b
   end
 
+  test "resources defaults to nil (no sizing hint: provisioners use their defaults)" do
+    When "creating a config without resources"
+    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
+
+    Then
+    config.resources.nil?
+  end
+
+  test "resources carries the declared VM sizing" do
+    When "creating a config with a resources block"
+    resources = Dev::BuildContainerConfig::Resources.new(cpus: 8, memory_gib: 24)
+    config = Dev::BuildContainerConfig.new(
+      image: "snappy-linux", registry: "jpduchesne89", resources: resources,
+    )
+
+    Then
+    config.resources.cpus == 8
+    config.resources.memory_gib == 24
+  end
+
+  test "equality includes resources" do
+    Given "two configs differing only by resources"
+    a = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
+    b = Dev::BuildContainerConfig.new(
+      image: "snappy-linux", registry: "jpduchesne89",
+      resources: Dev::BuildContainerConfig::Resources.new(cpus: 8, memory_gib: 24),
+    )
+    c = Dev::BuildContainerConfig.new(
+      image: "snappy-linux", registry: "jpduchesne89",
+      resources: Dev::BuildContainerConfig::Resources.new(cpus: 8, memory_gib: 24),
+    )
+
+    Expect
+    a != b
+    b == c
+    b.hash == c.hash
+    T.must(b.resources).eql?(c.resources)
+  end
+
   test "persist defaults to false" do
     When "creating a config without persist"
     config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")

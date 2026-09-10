@@ -67,8 +67,50 @@ module Dev
   # built. dev owns the container's lifecycle: it is created on demand, reused
   # while the image tag is unchanged, reaped when the tag changes, and removed
   # by `dev reset-container`. Default false (every other repo keeps `--rm`).
+  # resources, when set, sizes the VM a container-engine provisioner creates
+  # for this project's builds (e.g. `colima start --cpu N --memory G`). It is
+  # a *hint from the repo* about what its build needs, consumed at
+  # provisioning time; runtime container invocations ignore it. Absent means
+  # the provisioner's defaults.
   class BuildContainerConfig
     extend T::Sig
+
+    # The optional VM sizing hint under build.container.resources. Both
+    # fields are optional: a repo can pin just the one that matters.
+    class Resources
+      extend T::Sig
+
+      # @return [Integer, nil] CPU count for the engine VM
+      sig { returns(T.nilable(Integer)) }
+      attr_reader :cpus
+
+      # @return [Integer, nil] memory in GiB for the engine VM
+      sig { returns(T.nilable(Integer)) }
+      attr_reader :memory_gib
+
+      # @param cpus [Integer, nil] see #cpus
+      # @param memory_gib [Integer, nil] see #memory_gib
+      sig { params(cpus: T.nilable(Integer), memory_gib: T.nilable(Integer)).void }
+      def initialize(cpus: nil, memory_gib: nil)
+        @cpus = cpus
+        @memory_gib = memory_gib
+      end
+
+      sig { params(other: Object).returns(T::Boolean) }
+      def ==(other)
+        other.is_a?(Resources) && @cpus == other.cpus && @memory_gib == other.memory_gib
+      end
+
+      sig { params(other: Object).returns(T::Boolean) }
+      def eql?(other)
+        self == other
+      end
+
+      sig { returns(Integer) }
+      def hash
+        [@cpus, @memory_gib].hash
+      end
+    end
 
     sig { returns(String) }
     attr_reader :image
@@ -100,6 +142,9 @@ module Dev
     sig { returns(T::Boolean) }
     attr_reader :persist
 
+    sig { returns(T.nilable(Resources)) }
+    attr_reader :resources
+
     sig do
       params(
         image: String,
@@ -112,10 +157,12 @@ module Dev
         structure_globs: T::Array[String],
         prewarm: T.nilable(String),
         persist: T::Boolean,
+        resources: T.nilable(Resources),
       ).void
     end
     def initialize(image:, registry:, volumes: [], build_args: {}, build_secrets: {},
-                   run_env: {}, content_globs: [], structure_globs: [], prewarm: nil, persist: false)
+                   run_env: {}, content_globs: [], structure_globs: [], prewarm: nil, persist: false,
+                   resources: nil)
       @image = image
       @registry = registry
       @volumes = volumes
@@ -126,6 +173,7 @@ module Dev
       @structure_globs = structure_globs
       @prewarm = prewarm
       @persist = persist
+      @resources = resources
     end
 
     # Full image reference without tag (e.g. "jpduchesne89/snappy-linux").
@@ -142,7 +190,7 @@ module Dev
         @volumes == other.volumes && @build_args == other.build_args &&
         @build_secrets == other.build_secrets && @run_env == other.run_env &&
         @content_globs == other.content_globs && @structure_globs == other.structure_globs &&
-        @prewarm == other.prewarm && @persist == other.persist
+        @prewarm == other.prewarm && @persist == other.persist && @resources == other.resources
     end
 
     sig { params(other: Object).returns(T::Boolean) }
@@ -153,7 +201,7 @@ module Dev
     sig { returns(Integer) }
     def hash
       [@image, @registry, @volumes, @build_args, @build_secrets, @run_env,
-       @content_globs, @structure_globs, @prewarm, @persist].hash
+       @content_globs, @structure_globs, @prewarm, @persist, @resources].hash
     end
   end
 end

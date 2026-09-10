@@ -8,6 +8,7 @@ require "tmpdir"
 require "yaml"
 
 require "dev/build_watcher"
+require "dev/container_engine"
 require "dev/deps/lockfile"
 
 module Dev
@@ -17,17 +18,24 @@ module Dev
   # (deps.lock, build-deps.lock) plus any project-declared content globs. Any
   # change to those inputs produces a new tag, guaranteeing a rebuild.
   #
+  # Every docker invocation rides an injected Dev::ContainerEngine (the
+  # per-user container substrate — see that class), so which daemon serves a
+  # build is a provisioning decision, never an assumption here. Pure tag and
+  # name computation stays on the class (no engine, no side effects).
+  #
   # Usage:
-  #   BuildContainer.ensure_image!(config, project_root: Pathname("..."))
+  #   BuildContainer.new(engine:).ensure_image!(config, project_root: Pathname("..."))
   #     # pulls or builds the image, returns the full image:tag string
   #
   #   BuildContainer.content_tag(project_root: Pathname("..."))
   #     # returns the content-addressed tag without side effects
-  module BuildContainer
+  class BuildContainer
     extend T::Sig
-    # Kernel is re-included so Sorbet knows its methods (system, raise, backticks,
-    # Pathname) exist on the module's instance-method side under module_function.
-    include Kernel
+
+    # A bind-mount was composed for an engine whose daemon cannot see local
+    # paths. Both shipped engines answer local_mounts? true; the future
+    # remote engine brings its sync strategy instead of reaching this raise.
+    class LocalMountsUnsupportedError < RuntimeError; end
 
     # Always-hashed inputs. deps.lock (app/test deps, e.g. SML) and build-deps.lock
     # (build deps, e.g. the engine) join the Dockerfile so a dependency bump
@@ -35,68 +43,211 @@ module Dev
     CONTENT_FILES = ["Dockerfile", ".dockerignore", "deps.lock", "build-deps.lock"].freeze
     TAG_PREFIX = "content-"
 
-    module_function
+    # @return [Dev::ContainerEngine] the engine every docker invocation rides
+    sig { returns(Dev::ContainerEngine) }
+    attr_reader :engine
 
-    # Compute the content-addressed tag from Dockerfile + lockfiles + globs.
-    #
-    # @param project_root    [Pathname] project root containing Dockerfile etc.
-    # @param extra_globs      [Array<String>] additional project-relative globs whose
-    #   matched files contribute to the hash (path + content), e.g. a mod's
-    #   *.Build.cs. Sorted for determinism; missing matches contribute nothing.
-    # @param structure_globs  [Array<String>] project-relative globs whose matched
-    #   *paths* (not contents) contribute to the hash. Use for inputs where the set
-    #   of matching files is structural but their contents are not, e.g. one
-    #   *.Build.cs per build module: adding/removing a module changes the path set
-    #   (and the tag), while editing a module's dependency list does not. Sorted
-    #   for determinism; missing matches contribute nothing.
-    # @return [String] tag like "content-a1b2c3d4e5f6"
-    sig do
-      params(
-        project_root: Pathname,
-        extra_globs: T::Array[String],
-        structure_globs: T::Array[String],
-      ).returns(String)
-    end
-    def content_tag(project_root:, extra_globs: [], structure_globs: [])
-      root = Pathname(project_root)
-      file_content = CONTENT_FILES
-        .map { |f| root / f }
-        .select(&:exist?)
-        .map(&:read)
-        .join
-
-      # A recursive glob (e.g. "bin/image/**/*") also matches directories; hash
-      # only files. The files under a matched dir are matched in their own right,
-      # so skipping the dir entry loses nothing — and avoids Errno::EISDIR on read.
-      glob_content = extra_globs
-        .flat_map { |pattern| Dir.glob(pattern, base: root.to_s) }
-        .uniq
-        .select { |rel| (root / rel).file? }
-        .sort
-        .map { |rel| "#{rel}\n#{(root / rel).read}" }
-        .join
-
-      # Paths only: the *existence* of these files matters, not their contents.
-      structure_content = structure_globs
-        .flat_map { |pattern| Dir.glob(pattern, base: root.to_s) }
-        .uniq
-        .sort
-        .join("\n")
-
-      hash = Digest::SHA256.hexdigest(file_content + glob_content + structure_content)[0, 12]
-      "#{TAG_PREFIX}#{hash}"
+    # @param engine [Dev::ContainerEngine] resolved for the invoking user
+    sig { params(engine: Dev::ContainerEngine).void }
+    def initialize(engine:)
+      @engine = engine
     end
 
-    # Full image reference with content-addressed tag.
-    #
-    # @param config       [Dev::BuildContainerConfig]
-    # @param project_root [Pathname]
-    # @return [String] e.g. "jpduchesne89/snappy-linux:content-a1b2c3d4e5f6"
-    sig { params(config: Dev::BuildContainerConfig, project_root: Pathname).returns(String) }
-    def image_with_tag(config, project_root:)
-      globs = config.respond_to?(:content_globs) ? config.content_globs : []
-      structure_globs = config.respond_to?(:structure_globs) ? config.structure_globs : []
-      "#{config.image_ref}:#{content_tag(project_root:, extra_globs: globs, structure_globs:)}"
+    class << self
+      extend T::Sig
+
+      # Compute the content-addressed tag from Dockerfile + lockfiles + globs.
+      #
+      # @param project_root    [Pathname] project root containing Dockerfile etc.
+      # @param extra_globs      [Array<String>] additional project-relative globs whose
+      #   matched files contribute to the hash (path + content), e.g. a mod's
+      #   *.Build.cs. Sorted for determinism; missing matches contribute nothing.
+      # @param structure_globs  [Array<String>] project-relative globs whose matched
+      #   *paths* (not contents) contribute to the hash. Use for inputs where the set
+      #   of matching files is structural but their contents are not, e.g. one
+      #   *.Build.cs per build module: adding/removing a module changes the path set
+      #   (and the tag), while editing a module's dependency list does not. Sorted
+      #   for determinism; missing matches contribute nothing.
+      # @return [String] tag like "content-a1b2c3d4e5f6"
+      sig do
+        params(
+          project_root: Pathname,
+          extra_globs: T::Array[String],
+          structure_globs: T::Array[String],
+        ).returns(String)
+      end
+      def content_tag(project_root:, extra_globs: [], structure_globs: [])
+        root = Pathname(project_root)
+        file_content = CONTENT_FILES
+          .map { |f| root / f }
+          .select(&:exist?)
+          .map(&:read)
+          .join
+
+        # A recursive glob (e.g. "bin/image/**/*") also matches directories; hash
+        # only files. The files under a matched dir are matched in their own right,
+        # so skipping the dir entry loses nothing — and avoids Errno::EISDIR on read.
+        glob_content = extra_globs
+          .flat_map { |pattern| Dir.glob(pattern, base: root.to_s) }
+          .uniq
+          .select { |rel| (root / rel).file? }
+          .sort
+          .map { |rel| "#{rel}\n#{(root / rel).read}" }
+          .join
+
+        # Paths only: the *existence* of these files matters, not their contents.
+        structure_content = structure_globs
+          .flat_map { |pattern| Dir.glob(pattern, base: root.to_s) }
+          .uniq
+          .sort
+          .join("\n")
+
+        hash = Digest::SHA256.hexdigest(file_content + glob_content + structure_content)[0, 12]
+        "#{TAG_PREFIX}#{hash}"
+      end
+
+      # Full image reference with content-addressed tag.
+      #
+      # @param config       [Dev::BuildContainerConfig]
+      # @param project_root [Pathname]
+      # @return [String] e.g. "jpduchesne89/snappy-linux:content-a1b2c3d4e5f6"
+      sig { params(config: Dev::BuildContainerConfig, project_root: Pathname).returns(String) }
+      def image_with_tag(config, project_root:)
+        globs = config.respond_to?(:content_globs) ? config.content_globs : []
+        structure_globs = config.respond_to?(:structure_globs) ? config.structure_globs : []
+        "#{config.image_ref}:#{content_tag(project_root:, extra_globs: globs, structure_globs:)}"
+      end
+
+      # Named build-contexts derived from build-deps.lock: every build-group
+      # dependency with an install_dir becomes "<dep-name>=<expanded host path>".
+      # The context name is lowercased because Docker rejects uppercase build-context
+      # names ("invalid reference format"); the Dockerfile references the lowercased
+      # name (e.g. `--mount=from=unrealengine`). Returns {} when the lockfile is
+      # absent or has no such deps.
+      #
+      # @param project_root [Pathname]
+      # @return [Hash{String => String}] context name => absolute host path
+      sig { params(project_root: Pathname).returns(T::Hash[String, String]) }
+      def build_contexts_from_lockfile(project_root)
+        contexts = {}
+        locked_deps(project_root).each do |dep|
+          # Env-scoped deps are not whole-image build inputs; group == :build
+          # limits us to build-deps.lock entries.
+          next unless dep.group == :build
+          next if dep.metadata&.key?("env")
+
+          install_dir = dep.metadata&.fetch("install_dir", nil)
+          next unless install_dir
+
+          base = File.expand_path(install_dir)
+          # Point at the version-keyed subdir the integration publishes to, so the
+          # build context tracks the locked version (see resolve_versioned_volumes).
+          contexts[dep.name.downcase] = dep.version ? File.join(base, dep.version.to_s) : base
+        end
+        contexts
+      end
+
+      # Rewrite each "host:container[:opts]" volume whose host path is a locked
+      # dependency's install_dir to its version-keyed subdir (install_dir/<version>,
+      # the immutable directory the integration publishes). This is how a command
+      # mounts the exact locked version while the integration keeps every version
+      # side by side. Volumes that don't match a locked install_dir (e.g. the shared
+      # cache mount) pass through unchanged.
+      #
+      # @param volumes      [Array<String>] configured "host:container[:opts]" specs
+      # @param project_root [Pathname]
+      # @return [Array<String>] specs with matching host paths version-resolved
+      sig { params(volumes: T::Array[String], project_root: Pathname).returns(T::Array[String]) }
+      def resolve_versioned_volumes(volumes, project_root:)
+        versions = install_dir_versions(project_root)
+        return volumes if versions.empty?
+
+        volumes.map do |spec|
+          host, container = spec.split(":", 2)
+          version = versions[File.expand_path(T.must(host))]
+          version ? "#{host}/#{version}:#{container}" : spec
+        end
+      end
+
+      # Map every locked dependency install_dir (expanded) to its locked version,
+      # scanning both lockfiles (including env-nested build deps). Only entries with
+      # BOTH an install_dir and a version contribute.
+      #
+      # @param project_root [Pathname]
+      # @return [Hash{String => String}] expanded install_dir => version
+      sig { params(project_root: Pathname).returns(T::Hash[String, String]) }
+      def install_dir_versions(project_root)
+        locked_deps(project_root).each_with_object({}) do |dep, acc|
+          install_dir = dep.metadata&.fetch("install_dir", nil)
+          next unless install_dir && dep.version
+
+          acc[File.expand_path(install_dir)] = dep.version.to_s
+        end
+      end
+
+      # All locked dependencies from both lockfiles, parsed by Lockfile so
+      # format knowledge (including the legacy flat format) lives in one place.
+      #
+      # @param project_root [Pathname]
+      # @return [Array<Dev::Deps::Dependency>]
+      sig { params(project_root: Pathname).returns(T::Array[Dev::Deps::Dependency]) }
+      def locked_deps(project_root)
+        Dev::Deps::Lockfile.new(dir: project_root).read
+      end
+
+      # Container name for image_tag + workspace: "dev-<image>-<workspace>-<tag>",
+      # registry dropped and any char Docker forbids in a name (notably ':') replaced
+      # with '-'. E.g. "reg/snappy-linux:content-abc" in /work/snappy ->
+      # "dev-snappy-linux-9f86d08-content-abc".
+      #
+      # The <workspace> segment is what keys the persistent container to the checkout
+      # it is bind-mounted to. Without it the container is keyed by image tag ALONE,
+      # so a SECOND checkout of the same project (e.g. a CI runner's actions/checkout
+      # vs. a manual clone elsewhere on the same machine) finds the first checkout's
+      # container by name and reuses it — still bind-mounted to the FIRST checkout —
+      # silently building and testing the wrong tree on every run. Keying by workspace
+      # gives each checkout its own long-lived container, each bound correctly, with
+      # no cross-thrash when a machine is both a dev box and a CI runner.
+      sig { params(image_tag: String, project_root: Pathname).returns(String) }
+      def service_container_name(image_tag, project_root)
+        image = image_basename(image_tag)
+        tag = T.must(image_tag.split(":").last)
+        "dev-#{sanitize_container_name(image)}-#{workspace_id(project_root)}-#{sanitize_container_name(tag)}"
+      end
+
+      # Image + workspace prefix shared by every tag's container for one checkout,
+      # used to find and reap stale ones without touching OTHER checkouts' containers.
+      # E.g. "reg/snappy-linux:content-abc" in /work/snappy -> "dev-snappy-linux-9f86d08-".
+      sig { params(image_tag: String, project_root: Pathname).returns(String) }
+      def service_name_prefix(image_tag, project_root)
+        "dev-#{sanitize_container_name(image_basename(image_tag))}-#{workspace_id(project_root)}-"
+      end
+
+      # Bare image name (no registry, no tag). E.g.
+      # "reg/snappy-linux:content-abc" -> "snappy-linux".
+      sig { params(image_tag: String).returns(String) }
+      def image_basename(image_tag)
+        T.must(T.must(image_tag.split("/").last).split(":").first)
+      end
+
+      # Short, stable identifier for the checkout a persistent container is bound to,
+      # so the container name is unique per workspace (see service_container_name).
+      # Hash of the resolved real path: different directories differ, the same
+      # directory is stable across runs, and symlinked paths normalize to one id.
+      sig { params(project_root: Pathname).returns(String) }
+      def workspace_id(project_root)
+        path = begin
+          File.realpath(project_root.to_s)
+        rescue Errno::ENOENT
+          File.expand_path(project_root.to_s)
+        end
+        T.must(Digest::SHA256.hexdigest(path)[0, 10])
+      end
+
+      sig { params(str: String).returns(String) }
+      def sanitize_container_name(str)
+        str.gsub(/[^a-zA-Z0-9_.-]/, "-")
+      end
     end
 
     # Ensure the build container image exists: use a local image if present,
@@ -145,7 +296,7 @@ module Dev
     end
     def ensure_image!(config, project_root:, push: true, publish: false,
                       build_args_provider: nil, secrets_provider: nil)
-      tag = image_with_tag(config, project_root:)
+      tag = self.class.image_with_tag(config, project_root:)
 
       if local_image?(tag)
         $stderr.puts "dev: Container image found locally — #{tag}"
@@ -166,7 +317,7 @@ module Dev
       if prewarm
         build_and_prewarm!(tag, config:, project_root:, build_args:, secrets:, prewarm:)
       else
-        build_contexts = build_contexts_from_lockfile(project_root)
+        build_contexts = self.class.build_contexts_from_lockfile(project_root)
         build!(tag, project_root:, build_args:, build_contexts:, secrets:)
       end
 
@@ -208,7 +359,7 @@ module Dev
       # The base is engine-free and secret-free: no build-contexts, no BuildKit
       # secrets. Those are supplied to the prewarm run, not the Dockerfile.
       build!(base_tag, project_root:, build_args:, build_contexts: {}, secrets: {})
-      volumes = resolve_versioned_volumes(config.volumes, project_root:)
+      volumes = self.class.resolve_versioned_volumes(config.volumes, project_root:)
       prewarm_commit!(base_tag, tag, volumes:, prewarm:, secrets:)
     ensure
       # The committed image references the base's layers, so dropping the base tag
@@ -216,83 +367,6 @@ module Dev
       # as possibly uninitialized in ensure, but its assignment is the first
       # statement and cannot raise.
       remove_image(T.must(base_tag))
-    end
-
-    # Named build-contexts derived from build-deps.lock: every build-group
-    # dependency with an install_dir becomes "<dep-name>=<expanded host path>".
-    # The context name is lowercased because Docker rejects uppercase build-context
-    # names ("invalid reference format"); the Dockerfile references the lowercased
-    # name (e.g. `--mount=from=unrealengine`). Returns {} when the lockfile is
-    # absent or has no such deps.
-    #
-    # @param project_root [Pathname]
-    # @return [Hash{String => String}] context name => absolute host path
-    sig { params(project_root: Pathname).returns(T::Hash[String, String]) }
-    def build_contexts_from_lockfile(project_root)
-      contexts = {}
-      locked_deps(project_root).each do |dep|
-        # Env-scoped deps are not whole-image build inputs; group == :build
-        # limits us to build-deps.lock entries.
-        next unless dep.group == :build
-        next if dep.metadata&.key?("env")
-
-        install_dir = dep.metadata&.fetch("install_dir", nil)
-        next unless install_dir
-
-        base = File.expand_path(install_dir)
-        # Point at the version-keyed subdir the integration publishes to, so the
-        # build context tracks the locked version (see resolve_versioned_volumes).
-        contexts[dep.name.downcase] = dep.version ? File.join(base, dep.version.to_s) : base
-      end
-      contexts
-    end
-
-    # Rewrite each "host:container[:opts]" volume whose host path is a locked
-    # dependency's install_dir to its version-keyed subdir (install_dir/<version>,
-    # the immutable directory the integration publishes). This is how a command
-    # mounts the exact locked version while the integration keeps every version
-    # side by side. Volumes that don't match a locked install_dir (e.g. the shared
-    # cache mount) pass through unchanged.
-    #
-    # @param volumes      [Array<String>] configured "host:container[:opts]" specs
-    # @param project_root [Pathname]
-    # @return [Array<String>] specs with matching host paths version-resolved
-    sig { params(volumes: T::Array[String], project_root: Pathname).returns(T::Array[String]) }
-    def resolve_versioned_volumes(volumes, project_root:)
-      versions = install_dir_versions(project_root)
-      return volumes if versions.empty?
-
-      volumes.map do |spec|
-        host, container = spec.split(":", 2)
-        version = versions[File.expand_path(T.must(host))]
-        version ? "#{host}/#{version}:#{container}" : spec
-      end
-    end
-
-    # Map every locked dependency install_dir (expanded) to its locked version,
-    # scanning both lockfiles (including env-nested build deps). Only entries with
-    # BOTH an install_dir and a version contribute.
-    #
-    # @param project_root [Pathname]
-    # @return [Hash{String => String}] expanded install_dir => version
-    sig { params(project_root: Pathname).returns(T::Hash[String, String]) }
-    def install_dir_versions(project_root)
-      locked_deps(project_root).each_with_object({}) do |dep, acc|
-        install_dir = dep.metadata&.fetch("install_dir", nil)
-        next unless install_dir && dep.version
-
-        acc[File.expand_path(install_dir)] = dep.version.to_s
-      end
-    end
-
-    # All locked dependencies from both lockfiles, parsed by Lockfile so
-    # format knowledge (including the legacy flat format) lives in one place.
-    #
-    # @param project_root [Pathname]
-    # @return [Array<Dev::Deps::Dependency>]
-    sig { params(project_root: Pathname).returns(T::Array[Dev::Deps::Dependency]) }
-    def locked_deps(project_root)
-      Dev::Deps::Lockfile.new(dir: project_root).read
     end
 
     # Build a docker run command for executing a shell command inside the container.
@@ -317,7 +391,7 @@ module Dev
       env_flags = env.flat_map { |name, value| ["-e", "#{name}=#{value}"] }
 
       [
-        "docker", "run", "--rm",
+        *@engine.argv_prefix, "run", "--rm",
         "-v", "#{project_root}:/project",
         *volume_flags(volumes),
         *env_flags,
@@ -328,12 +402,15 @@ module Dev
     end
 
     # "host:container" volume specs -> docker `-v` flags, expanding ~ in the host
-    # path (e.g. "~/.dev/engines/...:/ue").
+    # path (e.g. "~/.dev/engines/...:/ue"). Every `-v` composition site funnels
+    # through here, so this is where the local-mounts capability is enforced.
     #
     # @param volumes [Array<String>]
     # @return [Array<String>]
+    # @raise [LocalMountsUnsupportedError] when the engine cannot see local paths
     sig { params(volumes: T::Array[String]).returns(T::Array[String]) }
     def volume_flags(volumes)
+      assert_local_mounts!
       volumes.flat_map do |spec|
         host, container = spec.split(":", 2)
         ["-v", "#{File.expand_path(T.must(host))}:#{container}"]
@@ -357,7 +434,7 @@ module Dev
     # @return [String] the running container's name
     sig { params(image_tag: String, project_root: Pathname, volumes: T::Array[String]).returns(String) }
     def ensure_service!(image_tag, project_root:, volumes: [])
-      name = service_container_name(image_tag, project_root)
+      name = self.class.service_container_name(image_tag, project_root)
       reap_stale_services!(image_tag, project_root)
 
       if container_exists?(name)
@@ -384,7 +461,7 @@ module Dev
     end
     def docker_exec_command(container, shell_cmd:, env: {})
       env_flags = env.flat_map { |name, value| ["-e", "#{name}=#{value}"] }
-      ["docker", "exec", *env_flags, "-w", "/project", container, "sh", "-c", shell_cmd]
+      [*@engine.argv_prefix, "exec", *env_flags, "-w", "/project", container, "sh", "-c", shell_cmd]
     end
 
     # Remove every service container for this checkout — the current tag's and any
@@ -397,7 +474,7 @@ module Dev
     # @return [Array<String>] names of the removed containers
     sig { params(image_tag: String, project_root: Pathname).returns(T::Array[String]) }
     def reset_service!(image_tag, project_root)
-      names = service_containers(service_name_prefix(image_tag, project_root))
+      names = service_containers(self.class.service_name_prefix(image_tag, project_root))
       names.each { |name| remove_container(name) }
       names
     end
@@ -431,7 +508,7 @@ module Dev
       secret_mounts = secret_files.flat_map { |id, path| ["-v", "#{path}:/run/secrets/#{id}:ro"] }
 
       run_argv = [
-        "docker", "run", "--name", container,
+        *@engine.argv_prefix, "run", "--name", container,
         *volume_flags(volumes),
         *secret_mounts,
         base_tag,
@@ -439,11 +516,11 @@ module Dev
       ]
 
       raise "Prewarm run failed for #{final_tag}" unless run_watched(run_argv, container: container)
-      raise "docker commit failed for #{final_tag}" unless system("docker", "commit", container, final_tag)
+      raise "docker commit failed for #{final_tag}" unless @engine.run(["commit", container, final_tag])
     ensure
       # T.must: Sorbet sees container as possibly uninitialized in ensure, but
       # its assignment is the first statement and cannot raise.
-      system("docker", "rm", "-f", T.must(container), out: File::NULL, err: File::NULL)
+      @engine.run(["rm", "-f", T.must(container)], out: File::NULL, err: File::NULL)
       secret_files&.each_value { |path| File.delete(path) if File.exist?(path) }
     end
 
@@ -457,7 +534,7 @@ module Dev
     # @return [Boolean] whether a run succeeded within the retry budget
     sig { params(argv: T::Array[String], container: String).returns(T::Boolean) }
     def run_watched(argv, container:)
-      BuildWatcher.new(container_name: container).run(argv)
+      BuildWatcher.new(container_name: container, engine: @engine).run(argv)
     end
 
     # Write each secret value to a private host temp file for bind-mounting into
@@ -485,61 +562,7 @@ module Dev
 
     sig { params(image_tag: String).void }
     def remove_image(image_tag)
-      system("docker", "image", "rm", "-f", image_tag, out: File::NULL, err: File::NULL)
-    end
-
-    # Container name for image_tag + workspace: "dev-<image>-<workspace>-<tag>",
-    # registry dropped and any char Docker forbids in a name (notably ':') replaced
-    # with '-'. E.g. "reg/snappy-linux:content-abc" in /work/snappy ->
-    # "dev-snappy-linux-9f86d08-content-abc".
-    #
-    # The <workspace> segment is what keys the persistent container to the checkout
-    # it is bind-mounted to. Without it the container is keyed by image tag ALONE,
-    # so a SECOND checkout of the same project (e.g. a CI runner's actions/checkout
-    # vs. a manual clone elsewhere on the same machine) finds the first checkout's
-    # container by name and reuses it — still bind-mounted to the FIRST checkout —
-    # silently building and testing the wrong tree on every run. Keying by workspace
-    # gives each checkout its own long-lived container, each bound correctly, with
-    # no cross-thrash when a machine is both a dev box and a CI runner.
-    sig { params(image_tag: String, project_root: Pathname).returns(String) }
-    def service_container_name(image_tag, project_root)
-      image = image_basename(image_tag)
-      tag = T.must(image_tag.split(":").last)
-      "dev-#{sanitize_container_name(image)}-#{workspace_id(project_root)}-#{sanitize_container_name(tag)}"
-    end
-
-    # Image + workspace prefix shared by every tag's container for one checkout,
-    # used to find and reap stale ones without touching OTHER checkouts' containers.
-    # E.g. "reg/snappy-linux:content-abc" in /work/snappy -> "dev-snappy-linux-9f86d08-".
-    sig { params(image_tag: String, project_root: Pathname).returns(String) }
-    def service_name_prefix(image_tag, project_root)
-      "dev-#{sanitize_container_name(image_basename(image_tag))}-#{workspace_id(project_root)}-"
-    end
-
-    # Bare image name (no registry, no tag). E.g.
-    # "reg/snappy-linux:content-abc" -> "snappy-linux".
-    sig { params(image_tag: String).returns(String) }
-    def image_basename(image_tag)
-      T.must(T.must(image_tag.split("/").last).split(":").first)
-    end
-
-    # Short, stable identifier for the checkout a persistent container is bound to,
-    # so the container name is unique per workspace (see service_container_name).
-    # Hash of the resolved real path: different directories differ, the same
-    # directory is stable across runs, and symlinked paths normalize to one id.
-    sig { params(project_root: Pathname).returns(String) }
-    def workspace_id(project_root)
-      path = begin
-        File.realpath(project_root.to_s)
-      rescue Errno::ENOENT
-        File.expand_path(project_root.to_s)
-      end
-      T.must(Digest::SHA256.hexdigest(path)[0, 10])
-    end
-
-    sig { params(str: String).returns(String) }
-    def sanitize_container_name(str)
-      str.gsub(/[^a-zA-Z0-9_.-]/, "-")
+      @engine.run(["image", "rm", "-f", image_tag], out: File::NULL, err: File::NULL)
     end
 
     # Remove service containers for this checkout that don't match the current
@@ -548,8 +571,8 @@ module Dev
     # one checkout never reaps another checkout's container.
     sig { params(image_tag: String, project_root: Pathname).void }
     def reap_stale_services!(image_tag, project_root)
-      keep = service_container_name(image_tag, project_root)
-      service_containers(service_name_prefix(image_tag, project_root)).each do |name|
+      keep = self.class.service_container_name(image_tag, project_root)
+      service_containers(self.class.service_name_prefix(image_tag, project_root)).each do |name|
         remove_container(name) unless name == keep
       end
     end
@@ -558,23 +581,23 @@ module Dev
     # project prefix. `^` anchors the regex name filter to the start.
     sig { params(prefix: String).returns(T::Array[String]) }
     def service_containers(prefix)
-      out = `docker ps -a --filter name=^#{prefix} --format {{.Names}}`
+      out = @engine.capture(["ps", "-a", "--filter", "name=^#{prefix}", "--format", "{{.Names}}"])
       out.split("\n").map(&:strip).reject(&:empty?)
     end
 
-    sig { params(name: String).returns(T.nilable(T::Boolean)) }
+    sig { params(name: String).returns(T::Boolean) }
     def container_exists?(name)
-      system("docker", "container", "inspect", name, out: File::NULL, err: File::NULL)
+      @engine.run(["container", "inspect", name], out: File::NULL, err: File::NULL)
     end
 
     sig { params(name: String).returns(T::Boolean) }
     def container_running?(name)
-      `docker container inspect -f {{.State.Running}} #{name} 2>/dev/null`.strip == "true"
+      @engine.capture(["container", "inspect", "-f", "{{.State.Running}}", name]).strip == "true"
     end
 
     sig { params(name: String).void }
     def start_container(name)
-      system("docker", "start", name, out: File::NULL, err: File::NULL)
+      @engine.run(["start", name], out: File::NULL, err: File::NULL)
     end
 
     # Create the detached, idle service container: the project at /project, any
@@ -582,35 +605,35 @@ module Dev
     # `docker exec`.
     sig { params(name: String, image_tag: String, project_root: Pathname, volumes: T::Array[String]).void }
     def create_service_container(name, image_tag, project_root:, volumes: [])
-      argv = [
-        "docker", "run", "-d", "--name", name,
+      args = [
+        "run", "-d", "--name", name,
         "-v", "#{project_root}:/project",
         *volume_flags(volumes),
         "-w", "/project",
         image_tag,
         "sleep", "infinity",
       ]
-      success = system(*T.unsafe(argv), out: File::NULL, err: File::NULL)
+      success = @engine.run(args, out: File::NULL, err: File::NULL)
       raise "Failed to create service container #{name}" unless success
     end
 
     sig { params(name: String).void }
     def remove_container(name)
-      system("docker", "rm", "-f", name, out: File::NULL, err: File::NULL)
+      @engine.run(["rm", "-f", name], out: File::NULL, err: File::NULL)
     end
 
-    sig { params(image_tag: String).returns(T.nilable(T::Boolean)) }
+    sig { params(image_tag: String).returns(T::Boolean) }
     def local_image?(image_tag)
-      system("docker", "image", "inspect", image_tag, out: File::NULL, err: File::NULL)
+      @engine.run(["image", "inspect", image_tag], out: File::NULL, err: File::NULL)
     end
 
     # Stream pull progress to stdout so a multi-GB pull (e.g. a 20GB build image
     # on a fresh CI runner) shows layer-by-layer liveness instead of looking hung.
     # stderr stays silenced: the pull doubles as a cache probe, so "manifest not
     # found" on a miss is expected noise, not an error worth surfacing.
-    sig { params(image_tag: String).returns(T.nilable(T::Boolean)) }
+    sig { params(image_tag: String).returns(T::Boolean) }
     def pull(image_tag)
-      system("docker", "pull", image_tag, err: File::NULL)
+      @engine.run(["pull", image_tag], err: File::NULL)
     end
 
     # Build the image with BuildKit. build_contexts are passed as
@@ -647,20 +670,20 @@ module Dev
       # pipes) and goes near-silent, so a long image build (msvc-wine download,
       # WineHQ install) looks hung for tens of minutes. Plain progress prints every
       # step with timestamps and streams RUN output, giving CI logs a heartbeat.
-      argv = [
-        "docker", "build", "--progress=plain", "-t", image_tag,
+      args = [
+        "build", "--progress=plain", "-t", image_tag,
         *arg_flags, *context_flags, *secret_flags,
         project_root.to_s,
       ]
-      success = system(*T.unsafe([env, *argv]))
+      success = @engine.run(args, env: env)
       raise "Docker build failed for #{image_tag}" unless success
     end
 
     # Stream push progress for the same liveness reason as pull: publishing a
     # multi-GB image can take many minutes and CI logs need a heartbeat.
-    sig { params(image_tag: String).returns(T.nilable(T::Boolean)) }
+    sig { params(image_tag: String).returns(T::Boolean) }
     def push!(image_tag)
-      system("docker", "push", image_tag)
+      @engine.run(["push", image_tag])
     end
 
     # Guarantee the shared registry advertises this content tag, so other
@@ -673,9 +696,8 @@ module Dev
     # retries, since the registry still lacks the tag.
     #
     # @param image_tag [String]
-    # @return [Boolean, nil] whether the registry has the tag after this call
-    #   (nil when the push command itself could not be executed)
-    sig { params(image_tag: String).returns(T.nilable(T::Boolean)) }
+    # @return [Boolean] whether the registry has the tag after this call
+    sig { params(image_tag: String).returns(T::Boolean) }
     def publish!(image_tag)
       if registry_has?(image_tag)
         $stderr.puts "dev: Container image already published — #{image_tag}"
@@ -693,10 +715,23 @@ module Dev
     # download), so this is a cheap existence check.
     #
     # @param image_tag [String]
-    # @return [Boolean, nil] nil when the docker command could not be executed
-    sig { params(image_tag: String).returns(T.nilable(T::Boolean)) }
+    # @return [Boolean]
+    sig { params(image_tag: String).returns(T::Boolean) }
     def registry_has?(image_tag)
-      system("docker", "manifest", "inspect", image_tag, out: File::NULL, err: File::NULL)
+      @engine.run(["manifest", "inspect", image_tag], out: File::NULL, err: File::NULL)
+    end
+
+    private
+
+    # @raise [LocalMountsUnsupportedError] when the engine's daemon cannot see
+    #   the local paths a bind-mount would reference
+    sig { void }
+    def assert_local_mounts!
+      return if @engine.local_mounts?
+
+      raise LocalMountsUnsupportedError,
+        "the resolved container engine (#{@engine.kind}) cannot bind-mount local paths — " \
+        "a remote engine needs its sync strategy before dev can mount workspaces into it."
     end
   end
 end

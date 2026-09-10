@@ -3,10 +3,10 @@
 
 require "set"
 require "fileutils"
-require "open3"
 require "pathname"
 require "stringio"
 require_relative "lockfile"
+require_relative "../container_engine"
 
 module Dev
   module Deps
@@ -37,10 +37,13 @@ module Dev
       STAGING_GLOB = ".staging-*"
 
       # @param lockfile [Lockfile] source of locked deps (install_dir + version)
+      # @param engine   [Dev::ContainerEngine] the invoking user's engine, so
+      #   the in-use probes and image pruning see that user's daemon
       # @param out      [IO, StringIO] progress stream
-      sig { params(lockfile: Lockfile, out: T.any(IO, StringIO)).void }
-      def initialize(lockfile:, out: $stdout)
+      sig { params(lockfile: Lockfile, engine: Dev::ContainerEngine, out: T.any(IO, StringIO)).void }
+      def initialize(lockfile:, engine:, out: $stdout)
         @lockfile = lockfile
+        @engine = engine
         @out = out
       end
 
@@ -138,17 +141,17 @@ module Dev
         in_use.any? { |source| source == path || source.start_with?("#{path}/") || path.start_with?("#{source}/") }
       end
 
-      # Host paths mounted by every running container. Isolated as the docker
-      # boundary so tests can stub it. Best-effort: a docker failure yields an
-      # empty set rather than blocking GC (the locked-version guard still holds).
+      # Host paths mounted by every running container, through the injected
+      # engine (whose capture is best-effort: a docker failure yields an empty
+      # set rather than blocking GC — the locked-version guard still holds).
       #
       # @return [Set<String>]
       sig { returns(T::Set[String]) }
       def running_mount_sources
-        ids = capture(["docker", "ps", "-q"]).split("\n").map(&:strip).reject(&:empty?)
+        ids = @engine.capture(["ps", "-q"]).split("\n").map(&:strip).reject(&:empty?)
         return Set.new if ids.empty?
 
-        sources = capture(["docker", "inspect", "--format", "{{range .Mounts}}{{.Source}}\n{{end}}", *ids])
+        sources = @engine.capture(["inspect", "--format", "{{range .Mounts}}{{.Source}}\n{{end}}", *ids])
         Set.new(sources.split("\n").map(&:strip).reject(&:empty?))
       end
 
@@ -159,7 +162,7 @@ module Dev
       # @param live_tag  [String, nil]
       sig { params(image_ref: String, live_tag: T.nilable(String)).void }
       def gc_docker(image_ref:, live_tag:)
-        tags = capture(["docker", "images", image_ref, "--format", "{{.Repository}}:{{.Tag}}"])
+        tags = @engine.capture(["images", image_ref, "--format", "{{.Repository}}:{{.Tag}}"])
           .split("\n").map(&:strip).reject(&:empty?)
         in_use_images = running_image_refs
 
@@ -168,32 +171,14 @@ module Dev
           next if tag == live_tag || in_use_images.include?(tag)
 
           @out.puts ">>> gc: removing image #{tag}"
-          system("docker", "rmi", tag, out: File::NULL, err: File::NULL)
+          @engine.run(["rmi", tag], out: File::NULL, err: File::NULL)
         end
       end
 
       # @return [Set<String>] image refs of running containers
       sig { returns(T::Set[String]) }
       def running_image_refs
-        Set.new(capture(["docker", "ps", "--format", "{{.Image}}"]).split("\n").map(&:strip).reject(&:empty?))
-      end
-
-      # Run a command and capture stdout, returning "" on failure.
-      #
-      # Takes the argv as an array (not rest args) so call sites can build it
-      # dynamically: Sorbet rejects splats of runtime-sized arrays (error 7019),
-      # which would force a T.unsafe at every caller.
-      #
-      # @param argv [Array<String>]
-      # @return [String]
-      sig { params(argv: T::Array[String]).returns(String) }
-      def capture(argv)
-        # T.unsafe: capture3's fixed first parameter (env-or-command) can't be
-        # matched against an array of statically-unknown size (error 7019).
-        out, _err, status = Open3.capture3(*T.unsafe(argv))
-        status.success? ? out : ""
-      rescue StandardError
-        ""
+        Set.new(@engine.capture(["ps", "--format", "{{.Image}}"]).split("\n").map(&:strip).reject(&:empty?))
       end
     end
   end

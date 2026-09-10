@@ -5,6 +5,7 @@ require "test_helper"
 require "dev/deps/cache_gc"
 require "dev/deps/lockfile"
 require "dev/deps/dependency"
+require "support/fake_container_engine"
 require "set"
 require "tmpdir"
 
@@ -13,7 +14,7 @@ require "tmpdir"
 # docker dependency.
 class FixtureCacheGc < Dev::Deps::CacheGc
   def initialize(in_use: [], **kwargs)
-    super(**kwargs)
+    super(engine: FakeContainerEngine.new, **kwargs)
     @in_use_fixture = Set.new(in_use)
   end
 
@@ -122,13 +123,17 @@ class Dev::Deps::CacheGcTest < Minitest::Test
   end
 
   test "running_mount_sources collects every running container's mount sources" do
-    Given "a gc whose docker capture reports two containers with mounts"
+    Given "an engine whose docker reports two containers with mounts"
     dir = Dir.mktmpdir("dev-cache-gc-test-")
-    gc = Dev::Deps::CacheGc.new(lockfile: Dev::Deps::Lockfile.new(dir: dir), out: StringIO.new)
-    gc.stubs(:capture).with(["docker", "ps", "-q"]).returns("abc\ndef\n")
-    gc.stubs(:capture)
-      .with(["docker", "inspect", "--format", "{{range .Mounts}}{{.Source}}\n{{end}}", "abc", "def"])
-      .returns("/mnt/engine\n\n/mnt/cache\n")
+    engine = FakeContainerEngine.new(capture_result: lambda { |args|
+      case args
+      when ["ps", "-q"] then "abc\ndef\n"
+      when ["inspect", "--format", "{{range .Mounts}}{{.Source}}\n{{end}}", "abc", "def"]
+        "/mnt/engine\n\n/mnt/cache\n"
+      else ""
+      end
+    })
+    gc = Dev::Deps::CacheGc.new(lockfile: Dev::Deps::Lockfile.new(dir: dir), engine: engine, out: StringIO.new)
 
     When "collecting mount sources"
     sources = gc.send(:running_mount_sources)
@@ -141,33 +146,45 @@ class Dev::Deps::CacheGcTest < Minitest::Test
   end
 
   test "gc_docker leaves non-content tags and in-use images alone" do
-    Given "a gc whose docker capture reports only a live tag and a plain tag"
+    Given "an engine whose docker reports only a live tag and a plain tag"
     dir = Dir.mktmpdir("dev-cache-gc-test-")
-    gc = Dev::Deps::CacheGc.new(lockfile: Dev::Deps::Lockfile.new(dir: dir), out: StringIO.new)
-    gc.stubs(:capture)
-      .with(["docker", "images", "repo/img", "--format", "{{.Repository}}:{{.Tag}}"])
-      .returns("repo/img:latest\nrepo/img:content-abc\n")
-    gc.stubs(:capture).with(["docker", "ps", "--format", "{{.Image}}"]).returns("repo/img:content-abc\n")
+    engine = FakeContainerEngine.new(capture_result: lambda { |args|
+      case args
+      when ["images", "repo/img", "--format", "{{.Repository}}:{{.Tag}}"]
+        "repo/img:latest\nrepo/img:content-abc\n"
+      when ["ps", "--format", "{{.Image}}"] then "repo/img:content-abc\n"
+      else ""
+      end
+    })
+    gc = Dev::Deps::CacheGc.new(lockfile: Dev::Deps::Lockfile.new(dir: dir), engine: engine, out: StringIO.new)
 
     When "pruning content tags"
     gc.send(:gc_docker, image_ref: "repo/img", live_tag: nil)
 
     Then "nothing is removed: latest isn't a content tag, and the content tag is in use"
-    true # reaching here without a docker rmi spawn is the assertion (none is stubbed)
+    engine.runs.empty?
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
-  test "capture returns stdout on success and empty string on failure or a missing binary" do
-    Given "a gc"
+  test "gc_docker removes a stale content tag through the engine" do
+    Given "an engine reporting a stale content tag next to the live one"
     dir = Dir.mktmpdir("dev-cache-gc-test-")
-    gc = Dev::Deps::CacheGc.new(lockfile: Dev::Deps::Lockfile.new(dir: dir), out: StringIO.new)
+    engine = FakeContainerEngine.new(capture_result: lambda { |args|
+      case args
+      when ["images", "repo/img", "--format", "{{.Repository}}:{{.Tag}}"]
+        "repo/img:content-old\nrepo/img:content-live\n"
+      else ""
+      end
+    })
+    gc = Dev::Deps::CacheGc.new(lockfile: Dev::Deps::Lockfile.new(dir: dir), engine: engine, out: StringIO.new)
 
-    Expect "real subprocess results ride through; failures collapse to empty"
-    gc.send(:capture, ["sh", "-c", "echo hi"]) == "hi\n"
-    gc.send(:capture, ["sh", "-c", "exit 1"]) == ""
-    gc.send(:capture, ["dev-test-missing-binary-xyz"]) == ""
+    When "pruning content tags"
+    gc.send(:gc_docker, image_ref: "repo/img", live_tag: "repo/img:content-live")
+
+    Then "only the stale tag is removed"
+    engine.runs == [["rmi", "repo/img:content-old"]]
 
     Cleanup
     FileUtils.rm_rf(dir)

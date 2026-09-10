@@ -3,6 +3,7 @@
 
 require "dev/cli/flag_parser"
 require "dev/command"
+require "dev/container_engine"
 require "dev/deps/cache_gc"
 require "dev/deps/lockfile"
 require "dev/build_container"
@@ -21,7 +22,9 @@ module Dev
 
       sig { params(cache_gc_factory: CacheGcFactory, flag_parser: Cli::FlagParser).void }
       def initialize(
-        cache_gc_factory: ->(lockfile) { Dev::Deps::CacheGc.new(lockfile:) },
+        cache_gc_factory: ->(lockfile) {
+          Dev::Deps::CacheGc.new(lockfile:, engine: Dev::ContainerEngine.resolve)
+        },
         flag_parser: Cli::FlagParser.new
       )
         super()

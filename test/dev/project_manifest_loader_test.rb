@@ -148,6 +148,71 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
   end
 
+  test "#load extracts the build.container resources sizing block" do
+    Given "a dev.yml whose container declares VM sizing for its provisioner"
+    tmp = write_dev_yml(<<~YAML)
+      name: snappy
+      build:
+        container:
+          image: snappy-linux
+          registry: jpduchesne89
+          resources:
+            cpus: 8
+            memory_gib: 24
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+
+    When "the manifest is loaded"
+    manifest = build_loader.load(Pathname.new(tmp.path))
+
+    Then "the sizing rides the config as integers"
+    manifest.build_container.resources == Dev::BuildContainerConfig::Resources.new(cpus: 8, memory_gib: 24)
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load leaves resources nil when the block is absent, and partial when half-declared" do
+    Given "one dev.yml without resources and one declaring only cpus"
+    without = write_dev_yml(<<~YAML)
+      name: snappy
+      build:
+        container:
+          image: snappy-linux
+          registry: jpduchesne89
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+    partial = write_dev_yml(<<~YAML)
+      name: snappy
+      build:
+        container:
+          image: snappy-linux
+          registry: jpduchesne89
+          resources:
+            cpus: 6
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+
+    When "the manifests are loaded"
+    no_resources = build_loader.load(Pathname.new(without.path)).build_container.resources
+    partial_resources = build_loader.load(Pathname.new(partial.path)).build_container.resources
+
+    Then
+    no_resources.nil?
+    partial_resources.cpus == 6
+    partial_resources.memory_gib.nil?
+
+    Cleanup
+    without.close!
+    partial.close!
+  end
+
   test "#load extracts build.container build_args credential refs" do
     Given "a dev.yml file with container build_args"
     tmp = write_dev_yml(<<~YAML)

@@ -4,6 +4,7 @@
 require "dev/command"
 require "dev/credentials"
 require "dev/build_container"
+require "dev/container_engine"
 
 module Dev
   module Builtins
@@ -15,6 +16,14 @@ module Dev
     # build container is configured (the composition root gates it).
     class ProvideImageCommand < BuiltinCommand
       extend T::Sig
+
+      # @param container_client [Dev::BuildContainer, nil] override for tests;
+      #   defaults to one over the invoking user's resolved engine
+      sig { params(container_client: T.nilable(Dev::BuildContainer)).void }
+      def initialize(container_client: nil)
+        super()
+        @container_client = container_client
+      end
 
       sig { override.returns(String) }
       def desc = "Resolve the build container image (local/pull/build) and print its tag"
@@ -36,7 +45,8 @@ module Dev
       def call(args:, context:)
         project = context.project!
         cfg = T.must(project.build_container)
-        image_tag = BuildContainer.ensure_image!(
+        client = @container_client ||= BuildContainer.new(engine: Dev::ContainerEngine.resolve)
+        image_tag = client.ensure_image!(
           cfg,
           project_root: project.root,
           push: false,

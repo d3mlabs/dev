@@ -7,6 +7,7 @@ require "dev/build_container_config"
 require "dev/credentials"
 require "dev/build_container"
 require "dev/shadowenv_ruby"
+require "support/fake_container_engine"
 
 transform!(RSpock::AST::Transformation)
 class CommandRunnerTest < Minitest::Test
@@ -27,6 +28,17 @@ class CommandRunnerTest < Minitest::Test
 
   def teardown
     FileUtils.rm_rf(@project_root) if @project_root&.exist?
+  end
+
+  # A containerized runner with its engine-injected BuildContainer client
+  # injected, so tests stub the client instance instead of class methods.
+  def container_runner(config)
+    client = Dev::BuildContainer.new(engine: FakeContainerEngine.new)
+    runner = Dev::CommandRunner.new(
+      ui: @ui, ruby_version: "4.0.1", build_container: config,
+      project_root: @project_root, container_client: client,
+    )
+    [runner, client]
   end
 
   # --- Toolchain provisioning ---
@@ -198,17 +210,17 @@ class CommandRunnerTest < Minitest::Test
   test "run_waiting runs the containerized command spawn-and-wait" do
     Given "a runner with a build container"
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry")
-    runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root)
+    runner, client = container_runner(config)
     cmd = Dev::ProjectCommand.new(run: "./bin/up.sh", repl: false)
 
     When "the image resolves and we run the command waiting"
-    Dev::BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
-    Dev::BuildContainer.stubs(:docker_run_command)
+    client.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
+    client.stubs(:docker_run_command)
       .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/up.sh"])
     runner.run_waiting(cmd)
 
-    Then "docker runs as a waited child, never via exec"
-    1 * Kernel.system("docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/up.sh") >> true
+    Then "docker runs as a waited child under the engine's env, never via exec"
+    1 * Kernel.system({}, "docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/up.sh") >> true
     0 * Kernel.exec(any_parameters)
 
     Cleanup
@@ -220,20 +232,20 @@ class CommandRunnerTest < Minitest::Test
   test "run execs docker run when build_container is configured and command opts in" do
     Given "a runner with build_container and a command with container: true (default)"
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry")
-    runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root)
+    runner, client = container_runner(config)
     cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
 
-    When "Dev::BuildContainer.ensure_image! returns a tag and we run the command"
-    Dev::BuildContainer.expects(:ensure_image!)
+    When "the client's ensure_image! returns a tag and we run the command"
+    client.expects(:ensure_image!)
       .with(config, project_root: @project_root, push: false, publish: false, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc))
       .returns("myregistry/myapp-linux:content-abc123")
-    Dev::BuildContainer.expects(:docker_run_command)
+    client.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: {})
       .returns(["docker", "run", "--rm", "-v", "#{@project_root}:/project", "-w", "/project", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
     runner.exec_into(cmd)
 
-    Then "exec is called with the docker run command"
-    1 * Kernel.exec("docker", "run", "--rm", "-v", "#{@project_root}:/project", "-w", "/project", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh")
+    Then "exec is called with the engine env and the docker run command"
+    1 * Kernel.exec({}, "docker", "run", "--rm", "-v", "#{@project_root}:/project", "-w", "/project", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh")
 
     Cleanup
     Dir.chdir(@original_cwd)
@@ -242,22 +254,22 @@ class CommandRunnerTest < Minitest::Test
   test "run execs docker exec into the persistent container when persist is set" do
     Given "a runner whose build_container opts into persist"
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry", persist: true, volumes: ["/e:/e"])
-    runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root)
+    runner, client = container_runner(config)
     cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
 
     When "the image resolves and the service container is ensured"
-    Dev::BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
-    Dev::BuildContainer.expects(:ensure_service!)
+    client.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
+    client.expects(:ensure_service!)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, volumes: ["/e:/e"])
       .returns("dev-myapp-linux-content-abc123")
-    Dev::BuildContainer.expects(:docker_exec_command)
+    client.expects(:docker_exec_command)
       .with("dev-myapp-linux-content-abc123", shell_cmd: "./bin/build.sh", env: {})
       .returns(["docker", "exec", "-w", "/project", "dev-myapp-linux-content-abc123", "sh", "-c", "./bin/build.sh"])
-    Dev::BuildContainer.expects(:docker_run_command).never
+    client.expects(:docker_run_command).never
     runner.exec_into(cmd)
 
     Then "exec is called with the docker exec command, not docker run"
-    1 * Kernel.exec("docker", "exec", "-w", "/project", "dev-myapp-linux-content-abc123", "sh", "-c", "./bin/build.sh")
+    1 * Kernel.exec({}, "docker", "exec", "-w", "/project", "dev-myapp-linux-content-abc123", "sh", "-c", "./bin/build.sh")
 
     Cleanup
     Dir.chdir(@original_cwd)
@@ -299,21 +311,21 @@ class CommandRunnerTest < Minitest::Test
   test "container execution includes args in shell command" do
     Given "a runner with build_container and a command with args"
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry")
-    runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root)
+    runner, client = container_runner(config)
     cmd = Dev::ProjectCommand.new(run: "./bin/test.sh", repl: false)
 
-    When "Dev::BuildContainer returns docker command and we run with args"
-    Dev::BuildContainer.expects(:ensure_image!)
+    When "the client returns a docker command and we run with args"
+    client.expects(:ensure_image!)
       .with(config, project_root: @project_root, push: false, publish: false, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc))
       .returns("myregistry/myapp-linux:content-abc123")
-    Dev::BuildContainer.expects(:docker_run_command)
+    client.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/test.sh --verbose", volumes: [], env: {})
       .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/test.sh --verbose"])
     runner.exec_into(cmd, args: ["--verbose"])
 
     Then "the args are included in the shell command passed to docker"
     1 * @ui.print_header("./bin/test.sh --verbose")
-    1 * Kernel.exec("docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/test.sh --verbose")
+    1 * Kernel.exec({}, "docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/test.sh --verbose")
 
     Cleanup
     Dir.chdir(@original_cwd)
@@ -325,19 +337,19 @@ class CommandRunnerTest < Minitest::Test
       image: "myapp-linux", registry: "myregistry",
       run_env: { "WWISE_TOKEN" => "wwise/token" },
     )
-    runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root)
+    runner, client = container_runner(config)
     cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
     ENV["WWISE_TOKEN"] = "tok-123"
 
     When "the image is ready and the command runs"
-    Dev::BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
-    Dev::BuildContainer.expects(:docker_run_command)
+    client.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
+    client.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: { "WWISE_TOKEN" => "tok-123" })
       .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
     runner.exec_into(cmd)
 
     Then "the ENV value is passed through to docker run"
-    1 * Kernel.exec("docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh")
+    1 * Kernel.exec({}, "docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh")
 
     Cleanup
     ENV.delete("WWISE_TOKEN")
@@ -347,19 +359,19 @@ class CommandRunnerTest < Minitest::Test
   test "container execution opts into publishing when DEV_PUBLISH_IMAGE is set" do
     Given "a runner with build_container and DEV_PUBLISH_IMAGE=1 in the env"
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry")
-    runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root)
+    runner, client = container_runner(config)
     cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
     ENV["DEV_PUBLISH_IMAGE"] = "1"
 
     When "the command runs"
-    Dev::BuildContainer.expects(:ensure_image!)
+    client.expects(:ensure_image!)
       .with(config, project_root: @project_root, push: false, publish: true, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc))
       .returns("myregistry/myapp-linux:content-abc123")
-    Dev::BuildContainer.stubs(:docker_run_command).returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
+    client.stubs(:docker_run_command).returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
     runner.exec_into(cmd)
 
     Then "ensure_image! is asked to publish the resolved image"
-    1 * Kernel.exec("docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh")
+    1 * Kernel.exec({}, "docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh")
 
     Cleanup
     ENV.delete("DEV_PUBLISH_IMAGE")
@@ -372,20 +384,20 @@ class CommandRunnerTest < Minitest::Test
       image: "myapp-linux", registry: "myregistry",
       run_env: { "WWISE_TOKEN" => "wwise/token" },
     )
-    runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root)
+    runner, client = container_runner(config)
     cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
     ENV.delete("WWISE_TOKEN")
 
     When "the credential is not stored and the command runs"
     Dev::Credentials.stubs(:load).with("wwise", "token").returns(nil)
-    Dev::BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
-    Dev::BuildContainer.expects(:docker_run_command)
+    client.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
+    client.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: {})
       .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
     runner.exec_into(cmd)
 
     Then "no env is injected and the command still runs"
-    1 * Kernel.exec("docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh")
+    1 * Kernel.exec({}, "docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh")
 
     Cleanup
     Dir.chdir(@original_cwd)
