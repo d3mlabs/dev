@@ -26,8 +26,7 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
   test "call ensures the dev cd shell hook and composes the install-deps body" do
     Given "an up command with expectations on both collaborators"
     install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
-    host_service = typed_mock(Dev::HostService)
-    host_service.stubs(:converge_tooling)
+    host_service = quiet_host_service
     host_service.expects(:install_rc_hook).once.returns(:already_present)
     command = Dev::Builtins::UpCommand.new(install_deps_command: install_deps, host_service: host_service)
     context = build_context
@@ -39,11 +38,11 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     1 * install_deps.call(args: ["-v"], context: context)
   end
 
-  test "call converges the host tooling as its first step" do
-    Given "an up command whose host service expects the tooling converge"
-    host_service = typed_mock(Dev::HostService)
+  test "call converges the host tooling and links shipped skills as its host half" do
+    Given "an up command whose host service expects the converge and the skill links"
+    host_service = quiet_host_service
     host_service.expects(:converge_tooling).once
-    host_service.stubs(:install_rc_hook).returns(:already_present)
+    host_service.expects(:install_skills).once
     install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
     install_deps.stubs(:call)
     command = Dev::Builtins::UpCommand.new(install_deps_command: install_deps, host_service: host_service)
@@ -51,15 +50,17 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     When "running up"
     command.call(args: [], context: build_context)
 
-    Then "the expectation on the host service holds"
+    Then "the expectations on the host service hold"
     true
   end
 
-  test "call without a project converges the host half and skips provisioning" do
+  test "call without a project converges the host half, syncs org learnings, and skips provisioning" do
     Given "a projectless context and a host service expecting only host work"
     host_service = typed_mock(Dev::HostService)
     host_service.expects(:converge_tooling).once
-    host_service.expects(:install_rc_hook).once.returns(:appended)
+    host_service.expects(:install_rc_hook).once.returns(:added)
+    host_service.expects(:install_skills).once
+    host_service.expects(:sync_learnings).with(project_root: nil).once
     install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
     command = Dev::Builtins::UpCommand.new(install_deps_command: install_deps, host_service: host_service)
     context = Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui))
@@ -122,6 +123,7 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     host_service = typed_mock(Dev::HostService)
     host_service.stubs(:converge_tooling)
     host_service.stubs(:install_rc_hook).returns(:already_present)
+    host_service.stubs(:install_skills)
     host_service
   end
 

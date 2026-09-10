@@ -52,11 +52,18 @@ module Dev
       def call(args:, context:)
         # The host layer converges before project provisioning (self-update
         # + org Brewfile): project installs may lean on host tools (gh,
-        # rbenv). Warn-only — never blocks the project.
+        # rbenv). Warn-only — never blocks the project. Shipped skills link
+        # here too: `up` is the fresh-box bootstrap, so the machine's skill
+        # links must exist after it, not after the first `dev plan`.
         @host_service.converge_tooling
         @host_service.install_rc_hook
+        @host_service.install_skills
         project = context.project
         if project.nil?
+          # In-project runs sync learnings via the composed install-deps
+          # (project-linked); the projectless bootstrap syncs the machine
+          # artifacts here or a fresh box would have none.
+          @host_service.sync_learnings(project_root: nil)
           puts "dev: host layer converged."
           puts "dev: no dev.yml here — run dev up inside a project to provision it too."
           return
