@@ -136,7 +136,7 @@ module Dev
       # @return [void]
       sig { params(out: T.any(IO, StringIO)).void }
       def sync(out:)
-        @skill_installer.install_all(Dev::SkillInstaller::SHIPPED_SKILLS_DIR)
+        @skill_installer.install_shipped
         @synchronizer.sync!(project_root: @project_root)
         @gem_skill_linker&.link_all
         out.puts "dev: learnings synced from #{@settings.knowledge_repo} (#{T.must(@cache).dir})."

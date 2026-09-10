@@ -51,7 +51,7 @@ module Dev
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
-        cfg = context.runner
+        cfg = context.project!.runner
         raise ArgumentError, "no `runner:` block in dev.yml" if cfg.nil?
 
         @runner_setup_factory.call(

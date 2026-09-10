@@ -37,7 +37,7 @@ module Dev
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
-        @accessor_factory.call(context.project_root).run(args)
+        @accessor_factory.call(context.project!.root).run(args)
       end
     end
   end

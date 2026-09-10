@@ -68,11 +68,16 @@ class FakePlanSettings
   def plans_repo = "d3mlabs/plans"
 end unless defined?(FakePlanSettings)
 
-# A learnings synchronizer stand-in: plan flows are under test here, and the
-# real synchronizer would read the machine's config and touch user-global dirs.
-class NoopLearningsSynchronizer
-  def sync(project_root: nil); end
-end unless defined?(NoopLearningsSynchronizer)
+# A host service stand-in: plan flows are under test here, and the real
+# service would read the machine's config and touch user-global dirs.
+# A real HostService subclass so the accessor's typed seam accepts it; the
+# hook-point verbs the plan command calls are no-ops (host hygiene is not
+# under test here). No super in initialize: a noop needs no collaborators.
+class NoopHostService < Dev::HostService
+  def initialize; end
+  def install_skills; end
+  def sync_learnings(project_root: nil); end
+end unless defined?(NoopHostService)
 
 transform!(RSpock::AST::Transformation)
 class Dev::Plan::AccessorTest < Minitest::Test
@@ -92,8 +97,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
       issues: issues,
       settings: FakePlanSettings.new,
       merge_base: Dev::Plan::MergeBase.new(state_dir: File.join(dir, "state")),
-      skill_installer: Dev::SkillInstaller.new(skills_dir: File.join(dir, "skills")),
-      learnings: NoopLearningsSynchronizer.new,
+      host_service: NoopHostService.new,
     )
     [accessor, root, issues]
   end

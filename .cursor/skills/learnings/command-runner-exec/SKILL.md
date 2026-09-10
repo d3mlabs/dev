@@ -18,7 +18,7 @@ command must run in CommandRunner's wait mode.
 Wrong — a follow-up step after execute, expecting it for every command:
 
     cmd.execute(args:, context:)
-    stamp_installed(cmd_name, context.project_root) # skipped on exec
+    stamp_installed(cmd_name, context.project!.root) # skipped on exec
 
 Also wrong: hoisting the step before execute when it records an outcome
 (the stamp means "provisioning *succeeded*" — stamping first marks a

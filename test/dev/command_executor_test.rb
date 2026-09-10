@@ -23,7 +23,10 @@ class Dev::CommandExecutorTest < Minitest::Test
 
   def build_context
     ui = typed_mock(Dev::Cli::Ui)
-    Dev::ExecutionContext.new(ui: ui, ruby_version: "4.0.1", project_root: Pathname.new("/tmp/executor-test"))
+    Dev::ExecutionContext.new(
+      ui: ui,
+      project: Dev::ProjectContext.new(root: Pathname.new("/tmp/executor-test"), ruby_version: "4.0.1"),
+    )
   end
 
   # Strategy mocks are strict: any message a test doesn't expect is an
@@ -66,6 +69,33 @@ class Dev::CommandExecutorTest < Minitest::Test
 
     Then "the expectation held and no other strategy was consulted"
     true
+  end
+
+  test "a project command against a builtin-only composite is a wiring bug" do
+    Given "a composite wired without project arms (the projectless wiring)"
+    command = Dev::ProjectCommand.new(run: "./bin/test.sh", desc: "Run tests", container: false)
+    executor = Dev::CommandExecutor.new(builtin_executor: typed_mock(Dev::BuiltinExecutor))
+
+    When "executing"
+    executor.execute(command, args: [], context: build_context)
+
+    Then
+    raises Dev::CommandExecutor::ProjectExecutionUnavailableError
+  end
+
+  test "an overridden command against a builtin-only composite is a wiring bug" do
+    Given "a composite wired without project arms (the projectless wiring)"
+    command = Dev::OverriddenCommand.new(
+      builtin: FakeBuiltin.new,
+      project: Dev::ProjectCommand.new(run: "./bin/up.rb", desc: "Setup", container: false),
+    )
+    executor = Dev::CommandExecutor.new(builtin_executor: typed_mock(Dev::BuiltinExecutor))
+
+    When "executing"
+    executor.execute(command, args: [], context: build_context)
+
+    Then
+    raises Dev::CommandExecutor::ProjectExecutionUnavailableError
   end
 
   test "an overridden command dispatches to the overridden strategy" do

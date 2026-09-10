@@ -30,7 +30,8 @@ module Dev
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
-        deps_rb = context.project_root / "dependencies.rb"
+        project_root = context.project!.root
+        deps_rb = project_root / "dependencies.rb"
         Dev::Deps.reset!
         Kernel.load(deps_rb.to_s) if deps_rb.exist?
 
@@ -41,7 +42,7 @@ module Dev
         # whole-set solve (bundler) materialize their tool lockfile first, so
         # the repositories read an already-solved universe.
         lockers = Dev::Deps::Registry.lockers(
-          project_root: context.project_root,
+          project_root: project_root,
           ruby_version_requirement: deps_config.ruby_version_requirement,
         )
         declarations.group_by(&:integration).each do |integration, typed_declarations|
@@ -49,10 +50,10 @@ module Dev
         end
 
         resolver = Dev::Deps::Resolver.new(
-          repositories: Dev::Deps::Registry.repositories(project_root: context.project_root),
+          repositories: Dev::Deps::Registry.repositories(project_root: project_root),
           schemes: Dev::Deps::Registry.schemes,
         )
-        lockfile = Dev::Deps::Lockfile.new(dir: context.project_root)
+        lockfile = Dev::Deps::Lockfile.new(dir: project_root)
         resolved = resolver.resolve(declarations)
         # Record the manifest digest so the staleness check can tell whether
         # dependencies.rb changed after this resolution (Dev::Deps::Staleness).

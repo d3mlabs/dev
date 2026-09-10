@@ -34,7 +34,7 @@ module Dev
     # lockfile vs installed stamp. Warn on workstations; error in CI.
     #
     # @return [void]
-    # @raise [StaleDependencyStateError] in CI, when any layer is stale
+    # @raise [StaleDependencyStateError] in CI, when any project layer is stale
     sig { void }
     def guard!
       stale_messages = messages
@@ -57,5 +57,31 @@ module Dev
     def lock!
       @staleness.stamp_installed!
     end
+  end
+
+  # The null service for runs outside any project: with no dev.yml there is
+  # no dependency state to check or stamp, so the guard and the stamp are
+  # honest no-ops — the command pipeline stays uniform instead of branching
+  # on project presence at every staleness touchpoint.
+  class NoProjectDependencyService < DependencyService
+    extend T::Sig
+
+    # No staleness collaborator: there is no project to be stale about.
+    sig { void }
+    def initialize; end
+
+    # @return [Array<String>] always empty
+    sig { returns(T::Array[String]) }
+    def messages
+      []
+    end
+
+    # @return [void]
+    sig { void }
+    def guard!; end
+
+    # @return [void]
+    sig { void }
+    def lock!; end
   end
 end

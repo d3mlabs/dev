@@ -19,6 +19,17 @@ class RecordingCredAccessor < Dev::CredentialAccessor
   end
 end unless defined?(RecordingCredAccessor)
 
+# A config accessor stand-in recording its argv, so dispatch is tested
+# without touching the real config files. Subclasses the real accessor to
+# satisfy the dispatcher's typed constructor.
+class RecordingConfigAccessor < Dev::ConfigAccessor
+  attr_reader :last_args
+
+  def run(args, out: $stdout)
+    @last_args = args
+  end
+end unless defined?(RecordingConfigAccessor)
+
 # A clone accessor stand-in recording its argv, so dispatch is tested without
 # gh or shell RC writes. Subclasses the real accessor to satisfy the
 # dispatcher's typed constructor.
@@ -47,6 +58,7 @@ class Dev::GlobalDispatchTest < Minitest::Test
     name          | expected
     "cd"          | true
     "clone"       | true
+    "config"      | true
     "plan"        | true
     "cred"        | true
     "learnings"   | true
@@ -209,6 +221,22 @@ class Dev::GlobalDispatchTest < Minitest::Test
 
     Then "the accessor received the subcommand argv"
     creds.last_args == ["get", "ns", "key"]
+
+    Cleanup
+    FileUtils.rm_rf(cwd)
+  end
+
+  test "dev config dispatches globally without a dev.yml lookup" do
+    Given "a recording config accessor and a cwd with no dev.yml"
+    config = RecordingConfigAccessor.new
+    dispatch = Dev::GlobalDispatch.new(config_accessor: config, cred_accessor: RecordingCredAccessor.new)
+    cwd = Dir.mktmpdir("dispatch-cwd-")
+
+    When "we dispatch dev config"
+    Dir.chdir(cwd) { dispatch.run(["config", "get", "plans_repo"]) }
+
+    Then "the accessor received the subcommand argv"
+    config.last_args == ["get", "plans_repo"]
 
     Cleanup
     FileUtils.rm_rf(cwd)

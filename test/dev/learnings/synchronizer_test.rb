@@ -18,7 +18,7 @@ class Dev::Learnings::SynchronizerTest < Minitest::Test
     source = build_source_repo(dir)
     config = File.join(dir, "config.yml")
     File.write(config, "knowledge_repo: #{source}\n")
-    settings = Dev::Settings.new(config_path: config)
+    settings = hermetic_settings(dir)
     cache = Dev::Learnings::Cache.new(repo: source, dir: File.join(dir, "cache"), refresh_floor: refresh_floor)
     # The fixture cache lives under the real temp dir; the tmpdir override
     # keeps the installer's ephemeral-source guard out of these tests' way.
@@ -43,6 +43,16 @@ class Dev::Learnings::SynchronizerTest < Minitest::Test
     system("git", "-C", source, "add", ".", exception: true)
     system("git", "-C", source, "-c", "user.email=dev@test", "-c", "user.name=dev",
       "commit", "-qm", message, exception: true)
+  end
+
+  # Settings with both file layers pinned inside the temp dir — the
+  # machine's real system config (installed by a deployment formula) must
+  # never leak a knowledge_repo into these tests.
+  def hermetic_settings(dir)
+    Dev::Settings.new(
+      config_path: File.join(dir, "config.yml"),
+      system_config_path: File.join(dir, "system-config.yml"),
+    )
   end
 
   test "sync! refreshes the cache, links org skills, renders machine-side, and links the project" do
@@ -127,7 +137,7 @@ class Dev::Learnings::SynchronizerTest < Minitest::Test
     dir = Dir.mktmpdir("dev-learnings-sync-test-")
     config = File.join(dir, "config.yml")
     File.write(config, "knowledge_repo: d3mlabs/knowledge\n")
-    settings = Dev::Settings.new(config_path: config)
+    settings = hermetic_settings(dir)
 
     When "constructing through the factory"
     synchronizer = Dev::Learnings::Synchronizer.for(settings: settings)
@@ -143,7 +153,7 @@ class Dev::Learnings::SynchronizerTest < Minitest::Test
     Given "settings without a knowledge repo"
     dir = Dir.mktmpdir("dev-learnings-sync-test-")
     saved_env = ENV.delete("DEV_KNOWLEDGE_REPO")
-    settings = Dev::Settings.new(config_path: File.join(dir, "config.yml"))
+    settings = hermetic_settings(dir)
     installer = Dev::SkillInstaller.new(skills_dir: File.join(dir, "user-skills"), tmpdir: File.join(dir, "tmp"))
     synchronizer = Dev::Learnings::Synchronizer.for(settings: settings, skill_installer: installer)
     project = Pathname(dir) / "repo"
@@ -166,7 +176,7 @@ class Dev::Learnings::SynchronizerTest < Minitest::Test
     Given "the null synchronizer of an unconfigured machine"
     dir = Dir.mktmpdir("dev-learnings-sync-test-")
     saved_env = ENV.delete("DEV_KNOWLEDGE_REPO")
-    settings = Dev::Settings.new(config_path: File.join(dir, "config.yml"))
+    settings = hermetic_settings(dir)
     synchronizer = Dev::Learnings::Synchronizer.for(settings: settings)
 
     When "forcing a sync"

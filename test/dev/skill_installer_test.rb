@@ -321,4 +321,21 @@ class Dev::SkillInstallerTest < Minitest::Test
     Expect "the shipped ai-flow skill resolves under it"
     (Dev::SkillInstaller::SHIPPED_SKILLS_DIR / "ai-flow" / "SKILL.md").file?
   end
+
+  test "install_shipped links dev's own packaged skill set" do
+    Given "an installer over an empty skills dir"
+    dir = Dir.mktmpdir("dev-skill-test-")
+    skills_dir = File.join(dir, "skills")
+    installer = build_installer(dir, skills_dir: skills_dir)
+
+    When "installing the shipped set"
+    installer.install_shipped
+
+    Then "the shipped ai-flow skill is linked into the target"
+    File.readlink(File.join(skills_dir, "ai-flow")) ==
+      (Dev::SkillInstaller::SHIPPED_SKILLS_DIR / "ai-flow").to_s
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
 end

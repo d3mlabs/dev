@@ -26,23 +26,31 @@ module Dev
   class << self
     extend T::Sig
 
-    # Pathname of dev.yml current working directory. Walks back parents until it finds a dev.yml file. Memoized on first call.
-    sig { returns(Pathname) }
-    def dev_yaml_file
-      @dev_yaml_file = T.let(@dev_yaml_file, T.nilable(Pathname))
-      return @dev_yaml_file if @dev_yaml_file
+    # Pathname of the dev.yml enclosing the current working directory, or
+    # nil when no parent carries one — dev's project-optional entry point
+    # (running outside any project is a supported state, not an error).
+    # Memoized on first hit.
+    sig { returns(T.nilable(Pathname)) }
+    def find_dev_yaml_file
+      @dev_yaml_file ||= T.let(search_dev_yaml_file, T.nilable(Pathname))
+    end
 
-      result = T.let(nil, T.nilable(Pathname))
+    # The ascent itself, un-memoized: for callers that classify against the
+    # cwd per invocation (GlobalDispatch's help fallback) rather than once
+    # per process.
+    sig { returns(T.nilable(Pathname)) }
+    def search_dev_yaml_file
       Pathname.new(Dir.pwd).ascend do |path|
         dev_yaml_path = path / DEV_YAML_FILENAME
-        if dev_yaml_path.exist?
-          result = dev_yaml_path
-          break
-        end
+        return dev_yaml_path if dev_yaml_path.exist?
       end
-      raise DevYamlNotFoundError unless result
+      nil
+    end
 
-      @dev_yaml_file = result
+    # Pathname of the enclosing dev.yml, for callers that require a project.
+    sig { returns(Pathname) }
+    def dev_yaml_file
+      find_dev_yaml_file || raise(DevYamlNotFoundError)
     end
 
     # Target project root (directory containing dev.yml).

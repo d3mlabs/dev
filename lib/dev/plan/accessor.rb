@@ -36,9 +36,8 @@ module Dev
       # @param issues [Dev::Plan::GithubIssues, nil]
       # @param settings [Dev::Settings, nil]
       # @param merge_base [Dev::Plan::MergeBase, nil]
-      # @param skill_installer [Dev::SkillInstaller, nil] target for dev's
-      #   shipped skill links (defaults to the user-global ~/.cursor/skills)
-      # @param learnings [Dev::Learnings::Synchronizer, Dev::Learnings::UnconfiguredSynchronizer, nil]
+      # @param host_service [Dev::HostService, nil] the machine-convergence
+      #   hook point (shipped skill links + org learnings artifacts)
       # @param executor [Dev::Plan::Executor] CLI boundary (injectable for tests)
       sig do
         params(
@@ -48,20 +47,18 @@ module Dev
           issues: T.untyped,
           settings: T.untyped,
           merge_base: T.nilable(MergeBase),
-          skill_installer: T.nilable(Dev::SkillInstaller),
-          learnings: T.untyped,
+          host_service: T.nilable(Dev::HostService),
         ).void
       end
       def initialize(project_root:, executor: Executor.new, workspace: nil, issues: nil,
-                     settings: nil, merge_base: nil, skill_installer: nil, learnings: nil)
+                     settings: nil, merge_base: nil, host_service: nil)
         @project_root = project_root
         @executor = executor
         @workspace = T.let(workspace || Workspace.new(project_root: project_root, executor: executor), Workspace)
         @issues = T.let(issues || GithubIssues.new(executor: executor), T.untyped)
         @settings = T.let(settings || Dev::Settings.new, T.untyped)
         @merge_base = T.let(merge_base || MergeBase.new, MergeBase)
-        @skill_installer = T.let(skill_installer || Dev::SkillInstaller.new, Dev::SkillInstaller)
-        @learnings = T.let(learnings || Learnings::Synchronizer.for(settings: @settings), T.untyped)
+        @host_service = T.let(host_service || Dev::HostService.new(settings: @settings), Dev::HostService)
       end
 
       # Dispatch a `dev plan …` invocation.
@@ -81,8 +78,8 @@ module Dev
         # Hook point: refresh dev's shipped skill links and the org learnings
         # artifacts. Cheap and idempotent (content-compared, the network pull
         # bounded by a short timeout), so every invocation can afford it.
-        @skill_installer.install_all(Dev::SkillInstaller::SHIPPED_SKILLS_DIR)
-        @learnings.sync(project_root: @project_root)
+        @host_service.install_skills
+        @host_service.sync_learnings(project_root: @project_root)
         subcommand, *rest = args
         case subcommand
         when "new" then new_plan(rest, out:)

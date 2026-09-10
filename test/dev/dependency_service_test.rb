@@ -17,6 +17,24 @@ class Dev::DependencyServiceTest < Minitest::Test
     service.messages == ["lockfiles are stale"]
   end
 
+  test "the no-project service has nothing to guard, report, or stamp" do
+    Given "the null service for runs outside any project"
+    service = Dev::NoProjectDependencyService.new
+    old_stderr = $stderr
+    $stderr = StringIO.new
+
+    When "running both lifecycle calls"
+    service.guard!
+    service.lock!
+
+    Then "no messages, no warnings, no raise"
+    service.messages == []
+    $stderr.string.empty?
+
+    Cleanup
+    $stderr = old_stderr
+  end
+
   test "guard! is silent when everything is in sync" do
     Given "an in-sync staleness"
     service = build_service(messages: [])

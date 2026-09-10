@@ -29,7 +29,10 @@ class Dev::OverriddenExecutorTest < Minitest::Test
 
   def build_context
     ui = typed_mock(Dev::Cli::Ui)
-    Dev::ExecutionContext.new(ui: ui, ruby_version: "4.0.1", project_root: Pathname.new("/tmp/overridden-executor"))
+    Dev::ExecutionContext.new(
+      ui: ui,
+      project: Dev::ProjectContext.new(root: Pathname.new("/tmp/overridden-executor"), ruby_version: "4.0.1"),
+    )
   end
 
   def build_command(stamps:)

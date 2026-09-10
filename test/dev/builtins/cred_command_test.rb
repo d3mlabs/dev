@@ -26,7 +26,8 @@ class Dev::Builtins::CredCommandTest < Minitest::Test
 
   def build_context
     Dev::ExecutionContext.new(
-      ui: typed_mock(Dev::Cli::Ui), ruby_version: "4.0.1", project_root: Pathname.new("/tmp/cred-test"),
+      ui: typed_mock(Dev::Cli::Ui),
+      project: Dev::ProjectContext.new(root: Pathname.new("/tmp/cred-test"), ruby_version: "4.0.1"),
     )
   end
 end

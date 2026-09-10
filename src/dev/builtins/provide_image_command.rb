@@ -34,10 +34,11 @@ module Dev
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
-        cfg = T.must(context.build_container)
+        project = context.project!
+        cfg = T.must(project.build_container)
         image_tag = BuildContainer.ensure_image!(
           cfg,
-          project_root: context.project_root,
+          project_root: project.root,
           push: false,
           publish: ENV["DEV_PUBLISH_IMAGE"] == "1",
           build_args_provider: -> { Dev::Credentials.resolve_build_args(cfg.build_args) },

@@ -102,6 +102,17 @@ module Dev
       prune_broken_links(root)
     end
 
+    # Install or refresh the links to dev's own shipped skill set. What
+    # "installing dev's shipped skills" means is defined once, here, so the
+    # hook-point surface (Dev::HostService) and the blocking manual surface
+    # (`dev learnings sync`) can never drift apart.
+    #
+    # @return [void]
+    sig { void }
+    def install_shipped
+      install_all(SHIPPED_SKILLS_DIR)
+    end
+
     # Remove a skill symlink by name. Only symlinks are removed — anything
     # user-owned in the skills dir survives. Never raises: symlink? reports
     # false instead of raising, and rm_f's force semantics swallow
