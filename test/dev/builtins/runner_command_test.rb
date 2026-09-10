@@ -118,6 +118,26 @@ class Dev::Builtins::RunnerCommandTest < Minitest::Test
     wirings.fetch(0).fetch(2) == true
   end
 
+  test "status inspects with the resolved config and the container fact" do
+    Given "a status factory recording its wiring"
+    seen = []
+    status = typed_mock(Dev::RunnerStatus)
+    status.expects(:report).once
+    command = Dev::Builtins::RunnerCommand.new(
+      runner_status_factory: ->(config, container_required) {
+        seen << [config, container_required]
+        status
+      },
+    )
+    container = Dev::BuildContainerConfig.new(image: "img", registry: "reg")
+
+    When "running status"
+    command.call(args: ["status"], context: build_context(runner_config, build_container: container))
+
+    Then "the block and the container fact reach the inspector"
+    seen == [[runner_config, true]]
+  end
+
   test "an unknown subcommand raises the usage error" do
     Given "a runner command"
     _wirings, _events, command = build_recording_command

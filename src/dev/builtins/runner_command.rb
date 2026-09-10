@@ -6,6 +6,7 @@ require "dev/command"
 require "dev/label_contracts"
 require "dev/runner_setup"
 require "dev/runner_setup_config"
+require "dev/runner_status"
 
 module Dev
   module Builtins
@@ -44,10 +45,19 @@ module Dev
         ).returns(T::Array[Dev::LabelContracts::AgentPostureContract])
       end
 
+      # Builds the status inspector; injected for tests.
+      StatusFactory = T.type_alias do
+        T.proc.params(
+          config: RunnerSetupConfig,
+          container_required: T::Boolean,
+        ).returns(Dev::RunnerStatus)
+      end
+
       sig do
         params(
           runner_setup_factory: RunnerSetupFactory,
           contracts_factory: ContractsFactory,
+          runner_status_factory: StatusFactory,
           flag_parser: Cli::FlagParser,
           implied_subcommand: T.nilable(String),
         ).void
@@ -55,19 +65,23 @@ module Dev
       def initialize(
         runner_setup_factory: ->(config, repo, org) { Dev::RunnerSetup.new(config:, repo:, org:) },
         contracts_factory: ->(labels, agent_user) { Dev::LabelContracts.for(labels, agent_user: agent_user) },
+        runner_status_factory: ->(config, container_required) {
+          Dev::RunnerStatus.new(config: config, container_required: container_required)
+        },
         flag_parser: Cli::FlagParser.new,
         implied_subcommand: nil
       )
         super()
         @runner_setup_factory = runner_setup_factory
         @contracts_factory = contracts_factory
+        @runner_status_factory = runner_status_factory
         @flag_parser = flag_parser
         @implied_subcommand = implied_subcommand
       end
 
       sig { override.returns(String) }
       def desc
-        "Enroll this host as a self-hosted runner (runner register [--org]), converging its label contracts"
+        "Enroll or inspect this host as a self-hosted runner (runner register|status), converging label contracts"
       end
 
       sig { override.returns(Command::Category) }
@@ -79,8 +93,10 @@ module Dev
         case subcommand
         when "register"
           register(rest, context)
+        when "status"
+          status(rest, context)
         else
-          raise ArgumentError, "usage: dev runner register [flags]"
+          raise ArgumentError, "usage: dev runner <register|status> [flags]"
         end
       end
 
@@ -128,6 +144,20 @@ module Dev
         setup.run
 
         contracts.each { |contract| contract.after_enroll!(runner_dir: setup.resolve_dir) }
+      end
+
+      # Inspect-only: the block's expected identity vs the enrolled reality
+      # plus every advertised label's contract facts.
+      #
+      # @param args [Array<String>]
+      # @param context [Dev::ExecutionContext]
+      sig { params(args: T::Array[String], context: ExecutionContext).void }
+      def status(args, context)
+        cfg = context.project!.runner
+        raise ArgumentError, "no `runner:` block in dev.yml" if cfg.nil?
+
+        cfg = config_with_flag_overrides(cfg, args)
+        @runner_status_factory.call(cfg, !context.project!.build_container.nil?).report
       end
 
       # A copy of the dev.yml runner block with any `--labels` / `--dir` /

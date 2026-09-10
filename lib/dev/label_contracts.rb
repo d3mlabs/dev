@@ -70,12 +70,20 @@ module Dev
         ).returns(T::Array[AgentPostureContract])
       end
       def for(labels, agent_user: nil, bootstrap: nil)
-        advertised = labels.split(",").map(&:strip)
-        return [] unless advertised.intersect?(AGENT_CAPABILITY_LABELS)
+        return [] unless agent_posture?(labels)
 
         resolved = bootstrap ||
           (agent_user ? AgentBootstrap.new(agent_user: agent_user) : AgentBootstrap.new)
         [AgentPostureContract.new(bootstrap: resolved)]
+      end
+
+      # Whether an advertised label set carries the agent posture obligation.
+      #
+      # @param labels [String] comma-separated labels (config.sh shape)
+      # @return [Boolean]
+      sig { params(labels: String).returns(T::Boolean) }
+      def agent_posture?(labels)
+        labels.split(",").map(&:strip).intersect?(AGENT_CAPABILITY_LABELS)
       end
     end
   end
