@@ -184,7 +184,21 @@ module Dev
         build_args: build_args, build_secrets: build_secrets,
         run_env: run_env, content_globs: content_globs,
         structure_globs: structure_globs, prewarm: prewarm,
-        persist: persist,
+        persist: persist, resources: parse_resources(container["resources"]),
+      )
+    end
+
+    # Coerce the optional resources sizing block to integers at the parse
+    # boundary; a missing or non-hash block is no hint at all.
+    sig { params(raw: T.untyped).returns(T.nilable(BuildContainerConfig::Resources)) }
+    def parse_resources(raw)
+      return nil unless raw.is_a?(Hash)
+
+      cpus = raw["cpus"]
+      memory_gib = raw["memory_gib"]
+      BuildContainerConfig::Resources.new(
+        cpus: cpus.nil? ? nil : Integer(cpus),
+        memory_gib: memory_gib.nil? ? nil : Integer(memory_gib),
       )
     end
   end
