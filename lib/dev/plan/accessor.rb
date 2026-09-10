@@ -47,7 +47,7 @@ module Dev
           issues: T.untyped,
           settings: T.untyped,
           merge_base: T.nilable(MergeBase),
-          host_service: T.untyped,
+          host_service: T.nilable(Dev::HostService),
         ).void
       end
       def initialize(project_root:, executor: Executor.new, workspace: nil, issues: nil,
@@ -58,7 +58,7 @@ module Dev
         @issues = T.let(issues || GithubIssues.new(executor: executor), T.untyped)
         @settings = T.let(settings || Dev::Settings.new, T.untyped)
         @merge_base = T.let(merge_base || MergeBase.new, MergeBase)
-        @host_service = T.let(host_service || Dev::HostService.new(settings: @settings), T.untyped)
+        @host_service = T.let(host_service || Dev::HostService.new(settings: @settings), Dev::HostService)
       end
 
       # Dispatch a `dev plan …` invocation.

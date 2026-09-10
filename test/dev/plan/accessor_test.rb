@@ -70,7 +70,11 @@ end unless defined?(FakePlanSettings)
 
 # A host service stand-in: plan flows are under test here, and the real
 # service would read the machine's config and touch user-global dirs.
-class NoopHostService
+# A real HostService subclass so the accessor's typed seam accepts it; the
+# hook-point verbs the plan command calls are no-ops (host hygiene is not
+# under test here). No super in initialize: a noop needs no collaborators.
+class NoopHostService < Dev::HostService
+  def initialize; end # rubocop:disable Lint/MissingSuper
   def install_skills; end
   def sync_learnings(project_root: nil); end
 end unless defined?(NoopHostService)
