@@ -408,6 +408,38 @@ class Dev::AgentBootstrapTest < Minitest::Test
     out.string.include?("WARNING")
   end
 
+  # The real executor is the true admin-CLI boundary; prove the thin wrapper
+  # with cheap real processes instead of mocking Kernel/Open3.
+  test "Executor#run reports the child's success, honoring chdir" do
+    Given "the real executor"
+    executor = Dev::AgentBootstrap::Executor.new
+
+    Expect "success and failure map to true/false, in and out of a chdir"
+    executor.run("true")
+    !executor.run("false")
+    executor.run("true", chdir: Dir.mktmpdir)
+  end
+
+  test "Executor#quiet? probes silently and survives a missing binary" do
+    Given "the real executor"
+    executor = Dev::AgentBootstrap::Executor.new
+
+    Expect
+    executor.quiet?("true")
+    !executor.quiet?("false")
+    !executor.quiet?("dev-test-no-such-binary-#{Process.pid}")
+  end
+
+  test "Executor#capture returns stdout on success and empty otherwise" do
+    Given "the real executor"
+    executor = Dev::AgentBootstrap::Executor.new
+
+    Expect
+    executor.capture("echo", "posture") == "posture\n"
+    executor.capture("false") == ""
+    executor.capture("dev-test-no-such-binary-#{Process.pid}") == ""
+  end
+
   test "sudoers content grants the one-way SETENV edge with the agent umask defaults" do
     Given "a bootstrap"
     content = Dev::AgentBootstrap.new(runner_user: "human", darwin: true).sudoers_content

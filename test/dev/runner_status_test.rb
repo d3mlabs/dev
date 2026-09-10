@@ -149,6 +149,14 @@ class Dev::RunnerStatusTest < Minitest::Test
     out_none.string.include?("no org Brewfile")
   end
 
+  test "the default Brewfile location sits beside the system config, when one exists" do
+    Given "the machine's real settings layer"
+    path = Dev::RunnerStatus.default_brewfile_path
+
+    Expect "brewless machines get nil; deployments get the etc sibling"
+    path.nil? || path.end_with?("/Brewfile")
+  end
+
   private
 
   def existing_file

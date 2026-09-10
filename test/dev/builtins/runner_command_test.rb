@@ -138,6 +138,30 @@ class Dev::Builtins::RunnerCommandTest < Minitest::Test
     seen == [[runner_config, true]]
   end
 
+  test "the default factories build the real collaborators" do
+    Given "a command with its default wiring"
+    # RunnerSetup#run registers the host and RunnerStatus#report inspects it,
+    # so the test intercepts both construction boundaries and asserts the
+    # default factories' wiring (the bare ue-engine label makes the default
+    # contracts factory resolve to no contracts).
+    setup = typed_mock(Dev::RunnerSetup)
+    setup.expects(:run).once
+    setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
+    Dev::RunnerSetup.expects(:new).with(config: runner_config, repo: nil, org: false).returns(setup)
+    status = typed_mock(Dev::RunnerStatus)
+    status.expects(:report).once
+    Dev::RunnerStatus.expects(:new)
+      .with(config: runner_config, container_required: false).returns(status)
+    command = Dev::Builtins::RunnerCommand.new
+
+    When "running register, then status"
+    command.call(args: ["register"], context: build_context(runner_config))
+    command.call(args: ["status"], context: build_context(runner_config))
+
+    Then "the expectations on both construction boundaries hold"
+    true
+  end
+
   test "an unknown subcommand raises the usage error" do
     Given "a runner command"
     _wirings, _events, command = build_recording_command
