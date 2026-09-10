@@ -1,6 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "open3"
+
 require "dev/settings"
 
 module Dev
@@ -87,6 +89,34 @@ module Dev
       @kind = kind
       @argv_prefix = argv_prefix
       @env = env
+    end
+
+    # Execute a docker invocation through this engine: the engine's env and
+    # argv prefix, then the docker args. The engine is the executor boundary,
+    # so tests fake it (recording argv) instead of stubbing Kernel#system —
+    # the docker CLI is a true boundary.
+    #
+    # @param args [Array<String>] docker args after the prefix (e.g. ["pull", tag])
+    # @param env [Hash{String => String}] per-call env merged over the engine's
+    #   (e.g. DOCKER_BUILDKIT and build secrets)
+    # @param opts [Hash] spawn options passed through (e.g. out:, err: File::NULL)
+    # @return [Boolean] whether the invocation succeeded (nil collapses to false)
+    sig { params(args: T::Array[String], env: T::Hash[String, String], opts: T.untyped).returns(T::Boolean) }
+    def run(args, env: {}, **opts)
+      !!T.unsafe(Kernel).system(@env.merge(env), *@argv_prefix, *args, **opts)
+    end
+
+    # Capture a docker invocation's stdout through this engine, discarding
+    # stderr (probes double as existence checks; their misses are expected
+    # noise, not errors worth surfacing).
+    #
+    # @param args [Array<String>] docker args after the prefix
+    # @param env [Hash{String => String}] per-call env merged over the engine's
+    # @return [String] the child's stdout ("" on failure)
+    sig { params(args: T::Array[String], env: T::Hash[String, String]).returns(String) }
+    def capture(args, env: {})
+      stdout, _stderr, _status = T.unsafe(Open3).capture3(@env.merge(env), *@argv_prefix, *args)
+      stdout
     end
 
     # Whether local paths bind-mounted into containers reach this engine's

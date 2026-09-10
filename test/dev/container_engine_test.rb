@@ -114,6 +114,36 @@ class Dev::ContainerEngineTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "run executes through the engine's argv prefix and reports success as a boolean" do
+    Given "engines whose prefix is a command with a known exit code"
+    truthy = Dev::ContainerEngine.new(kind: :test, argv_prefix: ["true"])
+    falsy = Dev::ContainerEngine.new(kind: :test, argv_prefix: ["false"])
+
+    Expect "the child's status as true/false, never nil"
+    truthy.run([]) == true
+    falsy.run([]) == false
+  end
+
+  test "run and capture carry the engine's env to the child" do
+    Given "an engine whose env declares a marker variable"
+    engine = Dev::ContainerEngine.new(
+      kind: :test, argv_prefix: ["sh", "-c"], env: { "DEV_ENGINE_MARKER" => "on" },
+    )
+
+    Expect "the child sees the engine env, and per-call env merges over it"
+    engine.capture(['echo "$DEV_ENGINE_MARKER"']) == "on\n"
+    engine.run(['test "$DEV_ENGINE_MARKER" = on'])
+    engine.capture(['echo "$DEV_ENGINE_MARKER"'], env: { "DEV_ENGINE_MARKER" => "override" }) == "override\n"
+  end
+
+  test "capture returns stdout and discards stderr" do
+    Given "an engine that writes to both streams"
+    engine = Dev::ContainerEngine.new(kind: :test, argv_prefix: ["sh", "-c"])
+
+    Expect
+    engine.capture(["echo out; echo noise >&2"]) == "out\n"
+  end
+
   test "DEV_CONTAINER_ENGINE env layer overrides the user file, like every settings key" do
     Given "a docker record in the file and a colima override in dev's env layer"
     dir = Dir.mktmpdir("dev-engine-test-")
