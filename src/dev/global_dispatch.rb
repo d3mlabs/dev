@@ -186,15 +186,13 @@ module Dev
 
     # The nearest ancestor holding a dev.yml, or nil. This is the "inside a
     # project?" test the help fallback uses: a plain git checkout with no
-    # dev.yml still gets the global usage.
+    # dev.yml still gets the global usage. Same ascent Runner uses, through
+    # the same helper.
     #
     # @return [Pathname, nil]
     sig { returns(T.nilable(Pathname)) }
     def nearest_dev_yaml_root
-      Pathname.new(Dir.pwd).ascend do |path|
-        return path if (path / Dev::DEV_YAML_FILENAME).exist?
-      end
-      nil
+      Dev.find_dev_yaml_file&.dirname
     end
 
     # @return [Pathname, nil] the nearest ancestor holding a .git, or nil

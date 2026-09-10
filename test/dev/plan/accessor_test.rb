@@ -74,7 +74,7 @@ end unless defined?(FakePlanSettings)
 # hook-point verbs the plan command calls are no-ops (host hygiene is not
 # under test here). No super in initialize: a noop needs no collaborators.
 class NoopHostService < Dev::HostService
-  def initialize; end # rubocop:disable Lint/MissingSuper
+  def initialize; end
   def install_skills; end
   def sync_learnings(project_root: nil); end
 end unless defined?(NoopHostService)
