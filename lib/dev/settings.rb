@@ -41,6 +41,7 @@ module Dev
         "plans_repo" => "DEV_PLANS_REPO",
         "knowledge_repo" => "DEV_KNOWLEDGE_REPO",
         "deployment_formula" => "DEV_DEPLOYMENT_FORMULA",
+        "container_engine" => "DEV_CONTAINER_ENGINE",
       }.freeze,
       T::Hash[String, String],
     )
@@ -96,6 +97,18 @@ module Dev
     sig { returns(T.nilable(String)) }
     def deployment_formula
       lookup("deployment_formula").first
+    end
+
+    # The per-user container engine record ("docker" or "colima"), written at
+    # provisioning time (e.g. the agent user's colima, by `dev runner
+    # register`'s bootstrap). Resolution reads the invoking user's own config,
+    # so nothing crosses the sudo boundary. Unset is a supported state: the
+    # bare-docker default (see Dev::ContainerEngine.resolve).
+    #
+    # @return [String, nil] engine name, or nil for the default
+    sig { returns(T.nilable(String)) }
+    def container_engine
+      lookup("container_engine").first
     end
 
     # Resolve a known key together with the layer it came from: ENV → user

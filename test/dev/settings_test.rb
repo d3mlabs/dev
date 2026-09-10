@@ -207,6 +207,35 @@ class Dev::SettingsTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "container_engine reads the per-user engine record" do
+    Given "a user config naming the invoking user's container engine"
+    dir = Dir.mktmpdir("dev-settings-test-")
+    write_user(dir, "container_engine: colima\n")
+    saved_env = ENV.delete("DEV_CONTAINER_ENGINE")
+    settings = build_settings(dir)
+
+    Expect
+    settings.container_engine == "colima"
+
+    Cleanup
+    ENV["DEV_CONTAINER_ENGINE"] = saved_env if saved_env
+    FileUtils.rm_rf(dir)
+  end
+
+  test "an unset container_engine is nil — the bare-docker default is a supported state" do
+    Given "no config file"
+    dir = Dir.mktmpdir("dev-settings-test-")
+    saved_env = ENV.delete("DEV_CONTAINER_ENGINE")
+    settings = build_settings(dir)
+
+    Expect
+    settings.container_engine.nil?
+
+    Cleanup
+    ENV["DEV_CONTAINER_ENGINE"] = saved_env if saved_env
+    FileUtils.rm_rf(dir)
+  end
+
   test "system_config_path is exposed for the host converge to find the deployment payload" do
     Given "hermetic settings"
     dir = Dir.mktmpdir("dev-settings-test-")
