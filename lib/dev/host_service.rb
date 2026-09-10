@@ -141,7 +141,7 @@ module Dev
     # @return [void]
     sig { void }
     def install_skills
-      @skill_installer.install_all(Dev::SkillInstaller::SHIPPED_SKILLS_DIR)
+      @skill_installer.install_shipped
     end
 
     # Refresh the machine's org learnings artifacts, best-effort (the

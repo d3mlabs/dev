@@ -330,7 +330,7 @@ class Dev::HostServiceTest < Minitest::Test
     service.install_skills
 
     Then "the installer received the shipped skills dir"
-    1 * skill_installer.install_all(Dev::SkillInstaller::SHIPPED_SKILLS_DIR)
+    1 * skill_installer.install_shipped
 
     Cleanup
     FileUtils.rm_rf(dir)
