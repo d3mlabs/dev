@@ -253,6 +253,85 @@ class Dev::AgentBootstrapTest < Minitest::Test
     )
   end
 
+  test "ensure_agent_engine! converges colima, the agent's engine record, and its VM" do
+    Given "a host with none of the engine leg present"
+    executor = RecordedBootstrapExecutor.new
+
+    When "converging the engine"
+    bootstrap(executor).ensure_agent_engine!
+
+    Then "sudo primed; colima installed; record written agent-owned; VM started at defaults"
+    executor.runs.fetch(0) == ["sudo", "-v"]
+    executor.runs.fetch(1) == ["brew", "install", "colima"]
+    executor.runs.fetch(2) ==
+      ["sudo", "-H", "-u", "ai-agent", "--", "mkdir", "-p", "/Users/ai-agent/.config/dev"]
+    executor.runs.fetch(3).first(6) == ["sudo", "install", "-m", "0644", "-o", "ai-agent"]
+    executor.runs.fetch(3).last == "/Users/ai-agent/.config/dev/config.yml"
+    executor.runs.fetch(4) == [
+      "sudo", "-H", "-u", "ai-agent", "--",
+      "colima", "start",
+      "--cpu", Dev::ColimaProvisioner::DEFAULT_CPUS.to_s,
+      "--memory", Dev::ColimaProvisioner::DEFAULT_MEMORY_GIB.to_s,
+      "--vm-type", "vz", "--vz-rosetta",
+    ]
+    executor.runs.length == 5
+  end
+
+  test "ensure_agent_engine! sizes the VM from the repo's resources hint" do
+    Given "a resources hint"
+    executor = RecordedBootstrapExecutor.new
+
+    When "converging the engine with sizing"
+    bootstrap(executor).ensure_agent_engine!(cpus: 12, memory_gib: 24)
+
+    Then
+    executor.runs.last == [
+      "sudo", "-H", "-u", "ai-agent", "--",
+      "colima", "start", "--cpu", "12", "--memory", "24", "--vm-type", "vz", "--vz-rosetta",
+    ]
+  end
+
+  test "ensure_agent_engine! is a no-op (bar the sudo prime) when the leg is converged" do
+    Given "colima installed, record written, VM running"
+    executor = RecordedBootstrapExecutor.new(
+      probe_results: {
+        ["brew", "list", "--formula", "colima"] => true,
+        ["sudo", "-n", "-H", "-u", "ai-agent", "--", "colima", "status"] => true,
+      },
+      capture_results: {
+        ["sudo", "cat", "/Users/ai-agent/.config/dev/config.yml"] => "container_engine: colima\n",
+      },
+    )
+
+    When "converging the engine"
+    bootstrap(executor).ensure_agent_engine!
+
+    Then
+    executor.runs == [["sudo", "-v"]]
+  end
+
+  test "ensure_agent_engine! merges the record into an existing agent config" do
+    Given "an agent config carrying another key"
+    executor = RecordedBootstrapExecutor.new(
+      probe_results: {
+        ["brew", "list", "--formula", "colima"] => true,
+        ["sudo", "-n", "-H", "-u", "ai-agent", "--", "colima", "status"] => true,
+      },
+      capture_results: {
+        ["sudo", "cat", "/Users/ai-agent/.config/dev/config.yml"] => "plans_repo: d3mlabs/plans\n",
+      },
+    )
+    bs = bootstrap(executor)
+
+    When "converging the engine"
+    bs.ensure_agent_engine!
+
+    Then "the staged content keeps the existing key alongside the record"
+    staged = bs.agent_config_content("plans_repo: d3mlabs/plans\n")
+    staged.include?("plans_repo: d3mlabs/plans")
+    staged.include?("container_engine: colima")
+  end
+
   test "sudoers content grants the one-way SETENV edge with the agent umask defaults" do
     Given "a bootstrap"
     content = Dev::AgentBootstrap.new(runner_user: "human", darwin: true).sudoers_content

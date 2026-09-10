@@ -6,7 +6,9 @@ require "fileutils"
 require "open3"
 require "stringio"
 require "tempfile"
+require "yaml"
 
+require "dev/colima_provisioner"
 require "dev/data_root"
 
 module Dev
@@ -78,6 +80,37 @@ module Dev
       end
     end
 
+    # Adapts the bootstrap executor into ColimaProvisioner's seam, crossing
+    # the user boundary: every colima invocation runs as the agent (its VM,
+    # its socket). Probes use `sudo -n` so a missing credential fails fast
+    # instead of hanging on a swallowed password prompt — the caller primes
+    # sudo first.
+    class SudoAgentExecutor
+      extend T::Sig
+
+      # @param executor [#run, #quiet?] the bootstrap's admin CLI seam
+      # @param agent_user [String]
+      sig { params(executor: T.untyped, agent_user: String).void }
+      def initialize(executor:, agent_user:)
+        @executor = executor
+        @agent_user = agent_user
+      end
+
+      # @param cmd [Array<String>] argv, never a shell string
+      # @return [Boolean]
+      sig { params(cmd: String).returns(T::Boolean) }
+      def run(*cmd)
+        T.unsafe(@executor).run("sudo", "-H", "-u", @agent_user, "--", *cmd)
+      end
+
+      # @param cmd [Array<String>] argv, never a shell string
+      # @return [Boolean]
+      sig { params(cmd: String).returns(T::Boolean) }
+      def quiet?(*cmd)
+        T.unsafe(@executor).quiet?("sudo", "-n", "-H", "-u", @agent_user, "--", *cmd)
+      end
+    end
+
     sig { returns(String) }
     attr_reader :agent_user
 
@@ -125,6 +158,45 @@ module Dev
       ensure_group!
       ensure_sudoers!
       ensure_shared_root!
+    end
+
+    # Step 6, invoked by the label contract only when a served repo declares
+    # `build.container` (the only place local-vs-remote is expressed):
+    # converge the agent's own engine — colima installed (Docker Desktop
+    # cannot serve a no-GUI user), the agent's `container_engine: colima`
+    # record written into its own config (resolution never crosses the sudo
+    # boundary), and its VM provisioned, sized from the repo's resources
+    # hint. Every colima invocation crosses to the agent via sudo.
+    #
+    # @param cpus [Integer, nil] VM sizing hint (repo resources block)
+    # @param memory_gib [Integer, nil] VM sizing hint
+    # @return [void]
+    # @raise [UnsupportedPlatformError] off macOS
+    # @raise [StepFailedError] when a converge step fails
+    # @raise [Dev::ColimaProvisioner::StartFailedError] when the VM won't start
+    sig { params(cpus: T.nilable(Integer), memory_gib: T.nilable(Integer)).void }
+    def ensure_agent_engine!(cpus: nil, memory_gib: nil)
+      assert_darwin!
+      # Prime the sudo credential once, visibly, so the -n probes below
+      # never hang on a captured password prompt.
+      step!("sudo", "-v")
+      ensure_colima_installed!
+      ensure_agent_engine_record!
+      ColimaProvisioner
+        .new(executor: SudoAgentExecutor.new(executor: @executor, agent_user: @agent_user))
+        .provision!(cpus: cpus, memory_gib: memory_gib)
+    end
+
+    # The agent config content carrying the engine record, merged over
+    # whatever the agent's config already holds (never clobbers other keys).
+    #
+    # @param existing [String] current agent config YAML ("" when absent)
+    # @return [String]
+    sig { params(existing: String).returns(String) }
+    def agent_config_content(existing)
+      parsed = YAML.safe_load(existing)
+      config = parsed.is_a?(Hash) ? parsed : {}
+      YAML.dump(config.merge("container_engine" => "colima"))
     end
 
     # The sudoers drop-in content: the one-way NOPASSWD SETENV edge (env is
@@ -244,6 +316,39 @@ module Dev
 
         @out.puts ">>> Migrating ~/.dev/#{entry} to #{destination} ..."
         FileUtils.mv(File.join(@home_dev, entry), destination)
+      end
+    end
+
+    # @return [String] the agent's own settings file
+    sig { returns(String) }
+    def agent_config_path
+      "/Users/#{@agent_user}/.config/dev/config.yml"
+    end
+
+    # colima arrives via brew like every host tool ("brew converges brew").
+    sig { void }
+    def ensure_colima_installed!
+      return if @executor.quiet?("brew", "list", "--formula", "colima")
+
+      @out.puts ">>> Installing colima ..."
+      step!("brew", "install", "colima")
+    end
+
+    # Write `container_engine: colima` into the agent's own config, agent-
+    # owned, preserving any other keys already there.
+    sig { void }
+    def ensure_agent_engine_record!
+      existing = @executor.capture("sudo", "cat", agent_config_path)
+      parsed = YAML.safe_load(existing)
+      return if parsed.is_a?(Hash) && parsed["container_engine"] == "colima"
+
+      @out.puts ">>> Recording container_engine: colima for #{@agent_user} ..."
+      step!("sudo", "-H", "-u", @agent_user, "--", "mkdir", "-p", File.dirname(agent_config_path))
+      Tempfile.create("agent-dev-config") do |staging|
+        staging.write(agent_config_content(existing))
+        staging.flush
+        File.chmod(0o644, staging.path)
+        step!("sudo", "install", "-m", "0644", "-o", @agent_user, staging.path, agent_config_path)
       end
     end
 
