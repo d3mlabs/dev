@@ -109,6 +109,8 @@ Leaving a nilable key unset turns its feature off (`plans_repo` is only required
 - **`d3mlabs/d3mlabs/dev-core`** — the generic tool, org-blank: the build payload plus the tools dev itself shells out to (git, gh, ruby, rbenv, ruby-build, shadowenv). It ships no org content.
 - **A deployment formula named `dev` in each org's tap** — `depends_on "d3mlabs/d3mlabs/dev-core"` plus the org's payload installed into the prefix's `etc/dev/` (pkgetc — brew preserves locally-modified etc files across upgrades): a `config.yml` with the org's keys (including `deployment_formula`, its own name — that's how `dev up` knows what to upgrade) and an optional `Brewfile` with the org's host tooling (see [Host tooling: the Brewfile contract](#host-tooling-the-brewfile-contract)). Formula names only need to be unique within a tap, so every org's install is the same shape: `brew install d3mlabs/d3mlabs/dev` is the reference deployment, and an adopting org publishes `acme/tap/dev` with identical structure and its own payload.
 
+  Two authoring rules for that formula: print a "run `dev up` to converge this machine" pointer in `caveats` (the fresh-box signal — install alone converges nothing), and never converge from `post_install` — running `brew bundle` inside a brew install is a nested brew invocation that deadlocks on brew's own lock. Converging is `dev up`'s job, on the user's side of the install boundary.
+
 Three consumption stories:
 
 - **Org deployment (recommended):** `brew install <org>/<tap>/dev` — one command installs tool + identity, and the org evolves its config and tooling list by shipping a new deployment formula revision; every machine picks it up on its next `dev up`.

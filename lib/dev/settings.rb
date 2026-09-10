@@ -14,7 +14,7 @@ module Dev
   #   2. user file: ~/.config/dev/config.yml (or $XDG_CONFIG_HOME/dev/…) —
   #      individuals and per-user overrides
   #   3. system file: $(brew --prefix)/etc/dev/config.yml — shipped by an
-  #      org's deployment formula (see README "Deploying dev to an org")
+  #      org's deployment formula (see README "Org configuration & deployment")
   #
   # Keys:
   #
