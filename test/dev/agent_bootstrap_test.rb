@@ -22,8 +22,8 @@ class RecordedBootstrapExecutor
     @probes = []
   end
 
-  def run(*cmd)
-    @runs << cmd
+  def run(*cmd, chdir: nil)
+    @runs << (chdir ? cmd + [{ chdir: chdir }] : cmd)
     return false if @fail_matching && cmd.any? { |arg| arg.include?(@fail_matching) }
 
     true
@@ -330,6 +330,82 @@ class Dev::AgentBootstrapTest < Minitest::Test
     staged = bs.agent_config_content("plans_repo: d3mlabs/plans\n")
     staged.include?("plans_repo: d3mlabs/plans")
     staged.include?("container_engine: colima")
+  end
+
+  test "after_enroll! grants the _work tree cooperatively and wires the service" do
+    Given "a freshly enrolled runner dir"
+    executor = RecordedBootstrapExecutor.new
+    runner_dir = Dir.mktmpdir
+    File.write(File.join(runner_dir, ".service"), "actions.runner.d3mlabs-x.mac\n")
+    agents_dir = Dir.mktmpdir
+    plist = File.join(agents_dir, "actions.runner.d3mlabs-x.mac.plist")
+    work = File.join(runner_dir, "_work")
+
+    When "converging the post-enrollment posture"
+    bootstrap(executor, launch_agents_dir: agents_dir).after_enroll!(runner_dir: runner_dir)
+
+    Then "the _work tree gets the cooperative grant; the plist gets the posture; the service restarts"
+    File.directory?(work)
+    executor.runs.include?(["sudo", "chgrp", "-R", "ai", work])
+    executor.runs.include?(["sudo", "chmod", "-R", "g+rwX", work])
+    executor.runs.include?(["sudo", "find", work, "-type", "d", "-exec", "chmod", "g+s", "{}", "+"])
+    executor.runs.include?(["./svc.sh", "stop", { chdir: runner_dir }])
+    executor.runs.include?(["/usr/libexec/PlistBuddy", "-c", "Set :Umask 2", plist])
+    executor.runs.include?(
+      ["/usr/libexec/PlistBuddy", "-c", "Set :EnvironmentVariables:AI_FLOW_AGENT_USER ai-agent", plist],
+    )
+    executor.runs.last == ["./svc.sh", "start", { chdir: runner_dir }]
+  end
+
+  test "after_enroll! adds plist keys when Set finds none" do
+    Given "PlistBuddy Set failing (fresh plist without the keys)"
+    executor = RecordedBootstrapExecutor.new(fail_matching: "Set :")
+    runner_dir = Dir.mktmpdir
+    File.write(File.join(runner_dir, ".service"), "actions.runner.d3mlabs-x.mac\n")
+    agents_dir = Dir.mktmpdir
+    plist = File.join(agents_dir, "actions.runner.d3mlabs-x.mac.plist")
+
+    When "converging the post-enrollment posture"
+    bootstrap(executor, launch_agents_dir: agents_dir).after_enroll!(runner_dir: runner_dir)
+
+    Then "Add fallbacks ran"
+    executor.runs.include?(["/usr/libexec/PlistBuddy", "-c", "Add :Umask integer 2", plist])
+    executor.runs.include?(
+      ["/usr/libexec/PlistBuddy", "-c",
+       "Add :EnvironmentVariables:AI_FLOW_AGENT_USER string ai-agent", plist],
+    )
+  end
+
+  test "after_enroll! raises when the runner dir carries no service record" do
+    Given "a runner dir the ceremony never installed a service into"
+    executor = RecordedBootstrapExecutor.new
+    runner_dir = Dir.mktmpdir
+
+    When "converging the post-enrollment posture"
+    bootstrap(executor).after_enroll!(runner_dir: runner_dir)
+
+    Then
+    raises Dev::AgentBootstrap::StepFailedError
+  end
+
+  test "after_enroll! warns (never raises) when the agent CLI is unresolvable" do
+    Given "no cursor-agent on the host"
+    executor = RecordedBootstrapExecutor.new
+    runner_dir = Dir.mktmpdir
+    File.write(File.join(runner_dir, ".service"), "actions.runner.d3mlabs-x.mac\n")
+    out = StringIO.new
+    bs = Dev::AgentBootstrap.new(
+      runner_user: "human", executor: executor, out: out, darwin: true,
+      shared_root: Dir.mktmpdir, home_dev: File.join(Dir.mktmpdir, "absent"),
+      launch_agents_dir: Dir.mktmpdir,
+    )
+
+    When "converging the post-enrollment posture"
+    bs.after_enroll!(runner_dir: runner_dir)
+
+    Then "a warning names the missing CLI"
+    out.string.include?("cursor-agent")
+    out.string.include?("WARNING")
   end
 
   test "sudoers content grants the one-way SETENV edge with the agent umask defaults" do

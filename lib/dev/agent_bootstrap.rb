@@ -53,10 +53,12 @@ module Dev
       extend T::Sig
 
       # @param cmd [Array<String>] argv, never a shell string
+      # @param chdir [String, nil] working directory for the child
       # @return [Boolean]
-      sig { params(cmd: String).returns(T::Boolean) }
-      def run(*cmd)
-        !!T.unsafe(Kernel).system(*cmd)
+      sig { params(cmd: String, chdir: T.nilable(String)).returns(T::Boolean) }
+      def run(*cmd, chdir: nil)
+        opts = chdir ? { chdir: chdir } : {}
+        !!T.unsafe(Kernel).system(*cmd, **opts)
       end
 
       # @param cmd [Array<String>] argv, never a shell string
@@ -122,6 +124,7 @@ module Dev
     # @param darwin [Boolean] host platform fact (injectable for tests)
     # @param shared_root [String] where the shared data root is provisioned
     # @param home_dev [String] the per-user data dir migrated out of
+    # @param launch_agents_dir [String] where svc.sh installs runner plists
     sig do
       params(
         agent_user: String,
@@ -131,11 +134,13 @@ module Dev
         darwin: T::Boolean,
         shared_root: String,
         home_dev: String,
+        launch_agents_dir: String,
       ).void
     end
     def initialize(agent_user: DEFAULT_AGENT_USER, runner_user: T.must(Etc.getpwuid(Process.uid)).name,
                    executor: Executor.new, out: $stdout, darwin: RUBY_PLATFORM.include?("darwin"),
-                   shared_root: DataRoot::SHARED_ROOT, home_dev: File.expand_path(DataRoot::HOME_ROOT))
+                   shared_root: DataRoot::SHARED_ROOT, home_dev: File.expand_path(DataRoot::HOME_ROOT),
+                   launch_agents_dir: File.join(Dir.home, "Library", "LaunchAgents"))
       @agent_user = agent_user
       @runner_user = runner_user
       @executor = executor
@@ -143,6 +148,7 @@ module Dev
       @darwin = darwin
       @shared_root = shared_root
       @home_dev = home_dev
+      @launch_agents_dir = launch_agents_dir
     end
 
     # Converge the host-singular posture: agent user, group, sudoers edge,
@@ -185,6 +191,28 @@ module Dev
       ColimaProvisioner
         .new(executor: SudoAgentExecutor.new(executor: @executor, agent_user: @agent_user))
         .provision!(cpus: cpus, memory_gib: memory_gib)
+    end
+
+    # Steps 4 and 7, run after the enrollment ceremony (they touch artifacts
+    # config.sh/svc.sh just created): the `_work` job-checkout tree becomes a
+    # cooperative read-write space (the @workdir that /ask, /split, and
+    # PR-mode /build edit in place), and the runner service records the
+    # posture — Umask 002 so re-checkouts stay group-accessible, and
+    # AI_FLOW_AGENT_USER as the single record of "jobs landing here execute
+    # as X" (no manual env step). The agent CLI resolution check is
+    # warn-only: the cursor-cli cask arrives via the ai-flow checkout's
+    # `dev up`, which may legitimately not have run yet.
+    #
+    # @param runner_dir [String] the enrolled runner's install dir
+    # @return [void]
+    # @raise [UnsupportedPlatformError] off macOS
+    # @raise [StepFailedError] when a converge step fails
+    sig { params(runner_dir: String).void }
+    def after_enroll!(runner_dir:)
+      assert_darwin!
+      grant_work_tree!(runner_dir)
+      configure_service!(runner_dir)
+      verify_agent_cli!
     end
 
     # The agent config content carrying the engine record, merged over
@@ -352,13 +380,80 @@ module Dev
       end
     end
 
+    # Step 4: the `_work` tree as a cooperative read-write space — group ai,
+    # group-writable, setgid dirs so re-checkouts inherit the group.
+    #
+    # @param runner_dir [String]
+    sig { params(runner_dir: String).void }
+    def grant_work_tree!(runner_dir)
+      work = File.join(runner_dir, "_work")
+      FileUtils.mkdir_p(work)
+      @out.puts ">>> Granting the #{GROUP} group cooperative access to #{work} ..."
+      step!("sudo", "chgrp", "-R", GROUP, work)
+      step!("sudo", "chmod", "-R", "g+rwX", work)
+      step!("sudo", "find", work, "-type", "d", "-exec", "chmod", "g+s", "{}", "+")
+    end
+
+    # Step 7: the runner service plist carries the posture — Umask 002 and
+    # AI_FLOW_AGENT_USER — applied between a service stop/start so launchd
+    # rereads it. The plist name comes from the `.service` record svc.sh
+    # wrote at install.
+    #
+    # @param runner_dir [String]
+    # @raise [StepFailedError] when no service was installed in runner_dir
+    sig { params(runner_dir: String).void }
+    def configure_service!(runner_dir)
+      service_file = File.join(runner_dir, ".service")
+      unless File.exist?(service_file)
+        raise StepFailedError,
+          "no runner service record at #{service_file} — did the enrollment ceremony run?"
+      end
+
+      service = File.read(service_file).strip
+      plist = File.join(@launch_agents_dir, "#{service}.plist")
+      @out.puts ">>> Writing Umask 002 + AI_FLOW_AGENT_USER=#{@agent_user} into #{plist} ..."
+      step!("./svc.sh", "stop", chdir: runner_dir)
+      plist_set!(plist, "Umask", "integer", "2")
+      # The EnvironmentVariables dict may not exist yet; a failed Add just
+      # means it already does.
+      @executor.run("/usr/libexec/PlistBuddy", "-c", "Add :EnvironmentVariables dict", plist)
+      plist_set!(plist, "EnvironmentVariables:AI_FLOW_AGENT_USER", "string", @agent_user)
+      step!("./svc.sh", "start", chdir: runner_dir)
+    end
+
+    # Set a plist key, adding it when Set finds none (PlistBuddy's Set fails
+    # on missing keys; Add fails on existing ones — together they converge).
+    #
+    # @param plist [String] plist path
+    # @param key [String] colon-path below the root
+    # @param type [String] PlistBuddy type for Add
+    # @param value [String]
+    sig { params(plist: String, key: String, type: String, value: String).void }
+    def plist_set!(plist, key, type, value)
+      return if @executor.run("/usr/libexec/PlistBuddy", "-c", "Set :#{key} #{value}", plist)
+
+      step!("/usr/libexec/PlistBuddy", "-c", "Add :#{key} #{type} #{value}", plist)
+    end
+
+    # Warn when the agent CLI does not resolve — the cursor-cli cask arrives
+    # via the ai-flow checkout's `dev up`, so absence is an ordering fact,
+    # not a bootstrap failure.
+    sig { void }
+    def verify_agent_cli!
+      return if @executor.quiet?("which", "cursor-agent")
+
+      @out.puts ">>> WARNING: the agent CLI (cursor-agent) does not resolve on this host. " \
+                "Run `dev up` in the ai-flow checkout to install it."
+    end
+
     # Run an admin command, raising when it fails.
     #
     # @param cmd [Array<String>] argv
+    # @param chdir [String, nil] working directory for the child
     # @raise [StepFailedError]
-    sig { params(cmd: String).void }
-    def step!(*cmd)
-      return if T.unsafe(@executor).run(*cmd)
+    sig { params(cmd: String, chdir: T.nilable(String)).void }
+    def step!(*cmd, chdir: nil)
+      return if T.unsafe(@executor).run(*cmd, chdir: chdir)
 
       raise StepFailedError, "bootstrap step failed: #{cmd.join(" ")}"
     end
