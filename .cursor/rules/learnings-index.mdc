@@ -55,6 +55,13 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  render re-serializes its output and any mis-split compounds on the next
  pull. → .cursor/skills/learnings/plan-parse-normalizes/
 
+## style
+
+- [style/comment-line-width] Code comments fill the 120-char rubocop
+ width; don't pattern-match the legacy ~80-column wrapping left unswept
+ from the 80→120 expansion (sweep: dev#156).
+ → .cursor/skills/learnings/comment-line-width/
+
 ## toolchain
 
 
