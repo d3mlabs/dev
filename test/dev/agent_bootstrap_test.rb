@@ -4,6 +4,7 @@
 require "test_helper"
 require "dev/agent_bootstrap"
 require "stringio"
+require "tmpdir"
 
 # Records every host invocation; the admin CLIs (sysadminctl, dseditgroup,
 # visudo, ...) are a true boundary — tests never mutate the host.
@@ -40,9 +41,13 @@ end unless defined?(RecordedBootstrapExecutor)
 
 transform!(RSpock::AST::Transformation)
 class Dev::AgentBootstrapTest < Minitest::Test
+  # Filesystem-facing params always point at tmp paths: an already-provisioned
+  # shared root and no ~/.dev to migrate, so identity-step tests stay focused.
   def bootstrap(executor, darwin: true, **kwargs)
+    defaults = { shared_root: Dir.mktmpdir, home_dev: File.join(Dir.mktmpdir, "absent-home-dev") }
     Dev::AgentBootstrap.new(
-      runner_user: "human", executor: executor, out: StringIO.new, darwin: darwin, **kwargs,
+      runner_user: "human", executor: executor, out: StringIO.new, darwin: darwin,
+      **defaults.merge(kwargs)
     )
   end
 
@@ -164,6 +169,88 @@ class Dev::AgentBootstrapTest < Minitest::Test
 
     Then "it raises and no install ran"
     raises Dev::AgentBootstrap::StepFailedError
+  end
+
+  test "converge! provisions a fresh shared root with cooperative modes" do
+    Given "a converged identity posture but no shared root"
+    executor = converged_identity_executor
+    shared_root = File.join(Dir.mktmpdir, "dev")
+
+    When "converging"
+    bootstrap(executor, shared_root: shared_root).converge!
+
+    Then "the root exists, human-owned, group ai, setgid group-writable"
+    File.directory?(shared_root)
+    executor.runs == [
+      ["sudo", "chown", "human", shared_root],
+      ["sudo", "chgrp", "ai", shared_root],
+      ["sudo", "chmod", "2775", shared_root],
+    ]
+  end
+
+  test "converge! migrates ~/.dev artifacts into the shared root, leaving per-user state" do
+    Given "a home data dir carrying artifacts and mutable state"
+    executor = converged_identity_executor
+    home_dev = Dir.mktmpdir
+    FileUtils.mkdir_p(File.join(home_dev, "engines", "ue5"))
+    FileUtils.mkdir_p(File.join(home_dev, "cache"))
+    FileUtils.mkdir_p(File.join(home_dev, "state"))
+    shared_root = File.join(Dir.mktmpdir, "dev")
+
+    When "converging"
+    bootstrap(executor, shared_root: shared_root, home_dev: home_dev).converge!
+
+    Then "artifacts moved once; state stays per-user"
+    File.directory?(File.join(shared_root, "engines", "ue5"))
+    File.directory?(File.join(shared_root, "cache"))
+    !File.exist?(File.join(home_dev, "engines"))
+    File.directory?(File.join(home_dev, "state"))
+    !File.exist?(File.join(shared_root, "state"))
+  end
+
+  test "migration skips entries the shared root already holds" do
+    Given "a shared root that already carries an engines tree"
+    executor = converged_identity_executor
+    home_dev = Dir.mktmpdir
+    FileUtils.mkdir_p(File.join(home_dev, "engines", "stale"))
+    shared_root = Dir.mktmpdir
+    FileUtils.mkdir_p(File.join(shared_root, "engines", "current"))
+
+    When "converging"
+    bootstrap(executor, shared_root: shared_root, home_dev: home_dev).converge!
+
+    Then "the existing tree is untouched and the home copy stays put"
+    File.directory?(File.join(shared_root, "engines", "current"))
+    !File.exist?(File.join(shared_root, "engines", "stale"))
+    File.directory?(File.join(home_dev, "engines", "stale"))
+  end
+
+  test "an existing shared root is left alone (no mode churn)" do
+    Given "an already-provisioned shared root"
+    executor = converged_identity_executor
+
+    When "converging (bootstrap helper defaults to an existing shared root)"
+    bootstrap(executor).converge!
+
+    Then
+    executor.runs.empty?
+  end
+
+  # An executor whose identity probes (user, group, memberships, sudoers) all
+  # answer converged, so shared-root tests isolate their own step.
+  def converged_identity_executor
+    RecordedBootstrapExecutor.new(
+      probe_results: {
+        ["id", "-u", "ai-agent"] => true,
+        ["dseditgroup", "-o", "read", "ai"] => true,
+        ["dseditgroup", "-o", "checkmember", "-m", "human", "ai"] => true,
+        ["dseditgroup", "-o", "checkmember", "-m", "ai-agent", "ai"] => true,
+      },
+      capture_results: {
+        ["sudo", "cat", "/etc/sudoers.d/ai-flow-agent"] =>
+          Dev::AgentBootstrap.new(runner_user: "human", darwin: true).sudoers_content,
+      },
+    )
   end
 
   test "sudoers content grants the one-way SETENV edge with the agent umask defaults" do

@@ -2,9 +2,12 @@
 # frozen_string_literal: true
 
 require "etc"
+require "fileutils"
 require "open3"
 require "stringio"
 require "tempfile"
+
+require "dev/data_root"
 
 module Dev
   # The agent posture bootstrap (plans#26 layer 3), converged by
@@ -84,6 +87,8 @@ module Dev
     # @param executor [#run, #quiet?, #capture] admin CLI seam
     # @param out [IO, StringIO] progress stream
     # @param darwin [Boolean] host platform fact (injectable for tests)
+    # @param shared_root [String] where the shared data root is provisioned
+    # @param home_dev [String] the per-user data dir migrated out of
     sig do
       params(
         agent_user: String,
@@ -91,18 +96,24 @@ module Dev
         executor: T.untyped,
         out: T.any(IO, StringIO),
         darwin: T::Boolean,
+        shared_root: String,
+        home_dev: String,
       ).void
     end
     def initialize(agent_user: DEFAULT_AGENT_USER, runner_user: T.must(Etc.getpwuid(Process.uid)).name,
-                   executor: Executor.new, out: $stdout, darwin: RUBY_PLATFORM.include?("darwin"))
+                   executor: Executor.new, out: $stdout, darwin: RUBY_PLATFORM.include?("darwin"),
+                   shared_root: DataRoot::SHARED_ROOT, home_dev: File.expand_path(DataRoot::HOME_ROOT))
       @agent_user = agent_user
       @runner_user = runner_user
       @executor = executor
       @out = out
       @darwin = darwin
+      @shared_root = shared_root
+      @home_dev = home_dev
     end
 
-    # Converge the host-singular posture: agent user, group, sudoers edge.
+    # Converge the host-singular posture: agent user, group, sudoers edge,
+    # shared root (with the one-off ~/.dev migration).
     #
     # @return [void]
     # @raise [UnsupportedPlatformError] off macOS
@@ -113,6 +124,7 @@ module Dev
       ensure_agent_user!
       ensure_group!
       ensure_sudoers!
+      ensure_shared_root!
     end
 
     # The sudoers drop-in content: the one-way NOPASSWD SETENV edge (env is
@@ -186,6 +198,52 @@ module Dev
         File.chmod(0o644, staging.path)
         step!("sudo", "visudo", "-c", "-f", staging.path)
         step!("sudo", "install", "-m", "0440", "-o", "root", staging.path, SUDOERS_PATH)
+      end
+    end
+
+    # Step 5: the shared data root both identities resolve (see
+    # Dev::DataRoot — presence is the record). Fresh roots get cooperative
+    # modes: human-owned so `dev up` writes it, group ai + setgid +
+    # group-writable so cooperative caches (the shared DDC) work, world-
+    # readable so the agent reads it like /opt/homebrew. An existing root is
+    # left alone — drift shows up in `dev runner status`, and deleting the
+    # root re-converges. Then the one-off migration.
+    sig { void }
+    def ensure_shared_root!
+      unless File.directory?(@shared_root)
+        @out.puts ">>> Provisioning the shared root at #{@shared_root} ..."
+        FileUtils.mkdir_p(@shared_root)
+        step!("sudo", "chown", @runner_user, @shared_root)
+        step!("sudo", "chgrp", GROUP, @shared_root)
+        step!("sudo", "chmod", "2775", @shared_root)
+      end
+
+      migrate_home_artifacts!
+    end
+
+    # The one-off ~/.dev migration: artifact trees (engines, caches, steam
+    # depots) move to the shared root — a rename, so multi-GB engine trees
+    # cost nothing — while mutable per-user state (`state`) stays per-home
+    # (plans#26 pollution rule: sharing is for immutable artifacts and
+    # cooperative caches, never mutable state). Entries the shared root
+    # already holds are skipped: anything cheap is simply re-materialized by
+    # the next `dev up`, and a newer shared tree must never be clobbered by
+    # a stale home one.
+    sig { void }
+    def migrate_home_artifacts!
+      return unless File.directory?(@home_dev)
+
+      Dir.children(@home_dev).sort.each do |entry|
+        next if entry == "state"
+
+        destination = File.join(@shared_root, entry)
+        if File.exist?(destination)
+          @out.puts ">>> Skipping ~/.dev/#{entry} (already present in the shared root)."
+          next
+        end
+
+        @out.puts ">>> Migrating ~/.dev/#{entry} to #{destination} ..."
+        FileUtils.mv(File.join(@home_dev, entry), destination)
       end
     end
 
