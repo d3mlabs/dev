@@ -3,6 +3,7 @@
 
 require "fileutils"
 require "pathname"
+require_relative "../data_root"
 
 module Dev
   module Deps
@@ -23,7 +24,9 @@ module Dev
       # Raised when a requested key is not in the cache.
       class CacheMissError < StandardError; end
 
-      DEFAULT_DIR = T.let(Pathname.new(File.expand_path("~/.dev/cache")), Pathname)
+      # Resolved through the data root so an agent-posture host's shared root
+      # holds one download cache for both identities.
+      DEFAULT_DIR = T.let(Pathname.new(Dev::DataRoot.expand("~/.dev/cache")), Pathname)
 
       # @param cache_dir [Pathname, String] root directory for cached artifacts
       sig { params(cache_dir: T.any(Pathname, String)).void }

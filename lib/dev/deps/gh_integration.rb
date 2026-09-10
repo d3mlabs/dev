@@ -6,6 +6,7 @@ require "fileutils"
 require "pathname"
 require "securerandom"
 require "shellwords"
+require_relative "../data_root"
 require_relative "integration"
 
 module Dev
@@ -93,7 +94,7 @@ module Dev
       # @param dep [Dependency]
       sig { params(dep: Dependency).void }
       def install_prebuilt(dep)
-        base_dir = Pathname(File.expand_path(dep.metadata["install_dir"]))
+        base_dir = Pathname(Dev::DataRoot.expand(dep.metadata["install_dir"]))
         target_dir = versioned_dir(base_dir, dep.version)
         if version_published?(target_dir, MARKER_FILE, dep.version)
           puts ">>> #{dep.name}@#{dep.version} already installed at #{target_dir}"
@@ -132,7 +133,7 @@ module Dev
       # @param dep [Dependency]
       sig { params(dep: Dependency).void }
       def install_from_source(dep)
-        base_dir = Pathname(File.expand_path(dep.metadata["install_dir"]))
+        base_dir = Pathname(Dev::DataRoot.expand(dep.metadata["install_dir"]))
         target_dir = versioned_dir(base_dir, dep.version)
         if version_published?(target_dir, MARKER_FILE, dep.version)
           puts ">>> #{dep.name}@#{dep.version} already installed at #{target_dir}"

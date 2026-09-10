@@ -7,6 +7,7 @@ require "pathname"
 require "stringio"
 require_relative "lockfile"
 require_relative "../container_engine"
+require_relative "../data_root"
 
 module Dev
   module Deps
@@ -86,7 +87,7 @@ module Dev
           dir = dep.metadata && dep.metadata["install_dir"]
           next unless dir && dep.version
 
-          (acc[File.expand_path(dir)] ||= Set.new) << dep.version
+          (acc[Dev::DataRoot.expand(dir)] ||= Set.new) << dep.version
         end
       end
 
