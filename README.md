@@ -92,7 +92,7 @@ A gem repo typically stops at rungs 1–2 (commands + a pinned Ruby, hand-writte
 
 dev's source hardcodes no org content — every org-specific fact enters through **settings**, resolved per key with gitconfig-style layering (`Dev::Settings`):
 
-1. **ENV var** — `DEV_PLANS_REPO`, `DEV_KNOWLEDGE_REPO`, `DEV_DEPLOYMENT_FORMULA`. Highest precedence.
+1. **ENV var** — `DEV_PLANS_REPO`, `DEV_KNOWLEDGE_REPO`, `DEV_DEPLOYMENT_FORMULA`, `DEV_CONTAINER_ENGINE`. Highest precedence.
 2. **User file** — `~/.config/dev/config.yml` (or `$XDG_CONFIG_HOME/dev/config.yml`).
 3. **System file** — `$(brew --prefix)/etc/dev/config.yml`, shipped by an org's deployment formula.
 
@@ -102,6 +102,7 @@ Missing files are empty layers; a key set in the user file wins over the system 
 plans_repo: d3mlabs/plans              # org-wide plans repo (dev plan --org)
 knowledge_repo: d3mlabs/knowledge      # org learnings sync source
 deployment_formula: d3mlabs/d3mlabs/dev  # the formula `dev up` self-updates (the deployment names itself)
+container_engine: colima               # per-user container engine record ("docker" or "colima"; unset = bare docker)
 ```
 
 Leaving a nilable key unset turns its feature off (`plans_repo` is only required by `dev plan --org`). Manage the user file with `dev config` (`list` / `get <key>` / `set <key> <value>`) instead of hand-editing YAML. The tool ships as two kinds of formula (the Debian core-package/config-package split, applied to a tap):
@@ -437,6 +438,12 @@ Alongside the distributed channels, a repo can carry **committed learnings** —
 ## Build container & caching model
 
 For repos that declare a `build.container`, dev builds and runs commands inside a content-addressed Docker image, backed by host-side caches it owns end to end. The guiding principle throughout is **content-addressing**: an artifact's identity is a hash of its inputs, so distinct versions coexist instead of overwriting, and identical inputs are never rebuilt.
+
+### The container engine (per-user)
+
+*Which daemon serves a build* is a per-user provisioning decision, not a repo-shape detail: every docker invocation rides a resolved `Dev::ContainerEngine` (argv prefix + env + capabilities). Resolution is config-first, per invoking user: an explicit `DOCKER_HOST` in the environment wins; otherwise the user's `container_engine` settings record (`docker` or `colima`); otherwise bare docker. The human rides Docker Desktop; a no-GUI account (the agent user) records `colima` and gets `DOCKER_HOST` pointed at its **own** `~/.colima/default/docker.sock` — nothing crosses the sudo boundary, and both engines coexist on one machine. The engine's one capability flag, `local_mounts?`, names the single remote-poisoned assumption (bind-mounting local paths); both shipped engines answer true, and a future remote engine joins as config with its own sync strategy rather than an architecture fork.
+
+Provisioning is engine-shaped: `DockerDesktopProvisioner` is verify-only (`docker info` — dev never starts the GUI app), while `ColimaProvisioner` idempotently starts the user's VM (`colima start --vm-type vz --vz-rosetta`, so amd64 build images run on Apple silicon), sized from the repo's optional `build.container.resources` hint (`cpus`, `memory_gib`; defaults 4 / 8 GiB — colima applies sizing at VM creation).
 
 ### Content-addressed image tag
 
