@@ -70,6 +70,7 @@ class Dev::BuildContainerConfigTest < Minitest::Test
     a != b
     b == c
     b.hash == c.hash
+    T.must(b.resources).eql?(c.resources)
   end
 
   test "persist defaults to false" do

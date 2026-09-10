@@ -81,6 +81,27 @@ class Dev::ColimaProvisionerTest < Minitest::Test
     executor.runs.first.include?(Dev::ColimaProvisioner::DEFAULT_MEMORY_GIB.to_s)
   end
 
+  # The real executor is a thin wrapper over the process boundary; prove it
+  # with cheap real processes, mirroring the ContainerEngine run/capture tests.
+  test "Executor#run reports the child's success" do
+    Given "the real executor"
+    executor = Dev::ColimaProvisioner::Executor.new
+
+    Expect "success and failure map to true/false"
+    executor.run("true")
+    !executor.run("false")
+  end
+
+  test "Executor#quiet? probes silently and survives a missing binary" do
+    Given "the real executor"
+    executor = Dev::ColimaProvisioner::Executor.new
+
+    Expect "exit status maps to the boolean; ENOENT reads as not-running"
+    executor.quiet?("true")
+    !executor.quiet?("false")
+    !executor.quiet?("dev-test-no-such-binary-#{Process.pid}")
+  end
+
   test "provision! raises when colima start fails" do
     Given "a start that fails"
     executor = RecordedColimaExecutor.new(running: false, start_ok: false)
