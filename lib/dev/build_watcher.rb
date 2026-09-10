@@ -4,6 +4,8 @@
 require "open3"
 require "stringio"
 
+require "dev/container_engine"
+
 module Dev
   # Runs a long containerized build with hung-build detection and bounded retries.
   #
@@ -68,6 +70,9 @@ module Dev
 
     # @param container_name [String] the `docker run --name` of the watched build,
     #   so a stall can be killed by name
+    # @param engine         [Dev::ContainerEngine] the engine the watched build
+    #   rides — its probes (stats) and interventions (kill, rm) must reach the
+    #   same daemon the build runs on
     # @param stall_after    [Integer] seconds of no output before stall-eligible
     # @param cpu_floor      [Float]   CPU% at/under which counts as idle
     # @param poll           [Integer] probe interval in seconds
@@ -76,6 +81,7 @@ module Dev
     sig do
       params(
         container_name: String,
+        engine: Dev::ContainerEngine,
         stall_after: Integer,
         cpu_floor: Float,
         poll: Integer,
@@ -83,9 +89,10 @@ module Dev
         out: T.any(IO, StringIO),
       ).void
     end
-    def initialize(container_name:, stall_after: DEFAULT_STALL_AFTER, cpu_floor: DEFAULT_CPU_FLOOR,
+    def initialize(container_name:, engine:, stall_after: DEFAULT_STALL_AFTER, cpu_floor: DEFAULT_CPU_FLOOR,
                    poll: DEFAULT_POLL, max_attempts: DEFAULT_MAX_ATTEMPTS, out: $stderr)
       @container_name = container_name
+      @engine = engine
       @stall_after = stall_after
       @cpu_floor = cpu_floor
       @poll = poll
@@ -162,7 +169,11 @@ module Dev
       last_output = now
       captured = +""
 
-      Open3.popen2e(*T.unsafe(argv)) do |stdin, out, wait_thr|
+      # The argv already carries the engine's argv prefix (the composer built
+      # it); the engine's env (e.g. the colima DOCKER_HOST) rides the spawn.
+      # T.unsafe: popen2e's fixed env-or-command first parameter can't be
+      # matched against a runtime-sized splat (error 7019).
+      T.unsafe(Open3).popen2e(@engine.env, *argv) do |stdin, out, wait_thr|
         stdin.close
         reader = Thread.new do
           out.each_line do |line|
@@ -200,26 +211,21 @@ module Dev
     end
 
     # Current container CPU percent via `docker stats`. Best-effort: an unreadable
-    # value reports as idle so a truly silent container can still be reclaimed.
+    # value reports as idle so a truly silent container can still be reclaimed
+    # (the engine's capture already collapses failures to empty output).
     #
     # @return [Float]
     sig { returns(Float) }
     def container_cpu
-      out, _err, status = Open3.capture3(
-        "docker", "stats", "--no-stream", "--format", "{{.CPUPerc}}", @container_name
-      )
-      return 0.0 unless status.success?
-
+      out = @engine.capture(["stats", "--no-stream", "--format", "{{.CPUPerc}}", @container_name])
       out.strip.delete("%").to_f
-    rescue StandardError
-      0.0
     end
 
     # @return [void]
     sig { void }
     def kill_container
       @out.puts ">>> build-watcher: killing hung container #{@container_name}"
-      system("docker", "kill", @container_name, out: File::NULL, err: File::NULL)
+      @engine.run(["kill", @container_name], out: File::NULL, err: File::NULL)
     end
 
     # Remove any container left by a previous attempt so this attempt's
@@ -231,7 +237,7 @@ module Dev
     # @return [void]
     sig { void }
     def free_container_name
-      system("docker", "rm", "-f", @container_name, out: File::NULL, err: File::NULL)
+      @engine.run(["rm", "-f", @container_name], out: File::NULL, err: File::NULL)
     end
 
     # Monotonic clock so wall-clock changes never skew stall timing.

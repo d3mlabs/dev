@@ -1318,14 +1318,15 @@ class BuildContainerTest < Minitest::Test
     build_container(engine: engine).container_running?("dev-x") == true
   end
 
-  test "run_watched delegates the build to a watcher named for the container" do
+  test "run_watched delegates the build to a watcher named for the container, riding the same engine" do
     Given "a watcher primed for the prewarm command"
     argv = ["docker", "run", "--name", "dev-prewarm-1", "img:tag"]
+    engine = FakeContainerEngine.new
     watcher = mock
     watcher.expects(:run).with(argv).returns(true)
-    Dev::BuildWatcher.expects(:new).with(container_name: "dev-prewarm-1").returns(watcher)
+    Dev::BuildWatcher.expects(:new).with(container_name: "dev-prewarm-1", engine: engine).returns(watcher)
 
     Expect "the watcher's verdict is returned"
-    build_container.run_watched(argv, container: "dev-prewarm-1") == true
+    build_container(engine: engine).run_watched(argv, container: "dev-prewarm-1") == true
   end
 end

@@ -534,7 +534,7 @@ module Dev
     # @return [Boolean] whether a run succeeded within the retry budget
     sig { params(argv: T::Array[String], container: String).returns(T::Boolean) }
     def run_watched(argv, container:)
-      BuildWatcher.new(container_name: container).run(argv)
+      BuildWatcher.new(container_name: container, engine: @engine).run(argv)
     end
 
     # Write each secret value to a private host temp file for bind-mounting into

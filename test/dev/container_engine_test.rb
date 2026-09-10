@@ -144,6 +144,24 @@ class Dev::ContainerEngineTest < Minitest::Test
     engine.capture(["echo out; echo noise >&2"]) == "out\n"
   end
 
+  test "capture collapses failures to empty output (probes are best-effort)" do
+    Given "engines whose invocations fail or cannot start at all"
+    failing = Dev::ContainerEngine.new(kind: :test, argv_prefix: ["sh", "-c"])
+    missing = Dev::ContainerEngine.new(kind: :test, argv_prefix: ["dev-test-missing-binary-xyz"])
+
+    Expect "a nonzero exit and a missing binary both read as no output"
+    failing.capture(["echo partial; exit 1"]) == ""
+    missing.capture(["anything"]) == ""
+  end
+
+  test "run reports a missing binary as failure, not an exception" do
+    Given "an engine whose prefix does not exist"
+    engine = Dev::ContainerEngine.new(kind: :test, argv_prefix: ["dev-test-missing-binary-xyz"])
+
+    Expect
+    engine.run(["anything"]) == false
+  end
+
   test "DEV_CONTAINER_ENGINE env layer overrides the user file, like every settings key" do
     Given "a docker record in the file and a colima override in dev's env layer"
     dir = Dir.mktmpdir("dev-engine-test-")

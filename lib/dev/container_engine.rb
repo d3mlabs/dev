@@ -112,15 +112,19 @@ module Dev
 
     # Capture a docker invocation's stdout through this engine, discarding
     # stderr (probes double as existence checks; their misses are expected
-    # noise, not errors worth surfacing).
+    # noise, not errors worth surfacing). Best-effort by contract: a nonzero
+    # exit or an unspawnable command reads as no output, so callers like cache
+    # GC and stall probes degrade instead of raising.
     #
     # @param args [Array<String>] docker args after the prefix
     # @param env [Hash{String => String}] per-call env merged over the engine's
     # @return [String] the child's stdout ("" on failure)
     sig { params(args: T::Array[String], env: T::Hash[String, String]).returns(String) }
     def capture(args, env: {})
-      stdout, _stderr, _status = T.unsafe(Open3).capture3(@env.merge(env), *@argv_prefix, *args)
-      stdout
+      stdout, _stderr, status = T.unsafe(Open3).capture3(@env.merge(env), *@argv_prefix, *args)
+      status.success? ? stdout : ""
+    rescue SystemCallError
+      ""
     end
 
     # Whether local paths bind-mounted into containers reach this engine's

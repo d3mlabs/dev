@@ -3,6 +3,7 @@
 
 require "test_helper"
 require "dev/build_watcher"
+require "dev/container_engine"
 require "fileutils"
 require "open3"
 require "stringio"
@@ -27,12 +28,20 @@ end unless defined?(ScriptedWatcher)
 
 transform!(RSpock::AST::Transformation)
 class BuildWatcherTest < Minitest::Test
+  # A real bare-docker engine, so the PATH-fake-docker tests below intercept
+  # the actual spawn (the docker CLI is the boundary under test there).
+  def engine
+    Dev::ContainerEngine.new(kind: :docker_desktop)
+  end
+
   def watcher(**kwargs)
-    Dev::BuildWatcher.new(container_name: "c", out: StringIO.new, stall_after: 300, cpu_floor: 5.0, **kwargs)
+    Dev::BuildWatcher.new(container_name: "c", engine: engine, out: StringIO.new,
+      stall_after: 300, cpu_floor: 5.0, **kwargs)
   end
 
   def scripted(results, max_attempts: 5)
-    ScriptedWatcher.new(results: results, container_name: "c", out: StringIO.new, max_attempts: max_attempts)
+    ScriptedWatcher.new(results: results, container_name: "c", engine: engine,
+      out: StringIO.new, max_attempts: max_attempts)
   end
 
   def result(outcome, output = "")
@@ -130,7 +139,7 @@ class BuildWatcherTest < Minitest::Test
 
   test "run_once spawns the command, streams its output, and reports success" do
     Given "a watcher with a fast poll and a name no container holds"
-    w = Dev::BuildWatcher.new(container_name: "bw-test-#{Process.pid}", out: StringIO.new, poll: 1)
+    w = Dev::BuildWatcher.new(container_name: "bw-test-#{Process.pid}", engine: engine, out: StringIO.new, poll: 1)
 
     When "running a real short-lived process"
     result = w.send(:run_once, ["sh", "-c", "echo built"])
@@ -142,7 +151,7 @@ class BuildWatcherTest < Minitest::Test
 
   test "run_once reports a non-zero exit as failed with the captured output" do
     Given "a watcher with a fast poll and a name no container holds"
-    w = Dev::BuildWatcher.new(container_name: "bw-test-#{Process.pid}", out: StringIO.new, poll: 1)
+    w = Dev::BuildWatcher.new(container_name: "bw-test-#{Process.pid}", engine: engine, out: StringIO.new, poll: 1)
 
     When "running a real process that fails"
     result = w.send(:run_once, ["sh", "-c", "echo boom >&2; exit 3"])
@@ -161,7 +170,7 @@ class BuildWatcherTest < Minitest::Test
     original_path = ENV["PATH"]
     ENV["PATH"] = "#{tmpdir}:#{original_path}"
     io = StringIO.new
-    w = Dev::BuildWatcher.new(container_name: "bw-stall-test", out: io, poll: 0)
+    w = Dev::BuildWatcher.new(container_name: "bw-stall-test", engine: engine, out: io, poll: 0)
     stdin, out, wait_thr = Open3.popen2e("sleep", "1")
 
     When "waiting on the silent process"
