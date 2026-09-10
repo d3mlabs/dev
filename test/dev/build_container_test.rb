@@ -4,10 +4,17 @@
 require "test_helper"
 require "dev/build_container"
 require "dev/build_container_config"
+require "support/fake_container_engine"
 require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
 class BuildContainerTest < Minitest::Test
+  # Engine-injected instance under test: the docker CLI is a true boundary,
+  # so the fake engine records argv instead of tests stubbing Kernel#system.
+  def build_container(engine: FakeContainerEngine.new)
+    Dev::BuildContainer.new(engine: engine)
+  end
+
   test "content_tag produces deterministic hash from Dockerfile and lockfile" do
     Given "a project with Dockerfile and build-deps.lock"
     dir = Dir.mktmpdir("build-container-test-")
@@ -91,7 +98,7 @@ class BuildContainerTest < Minitest::Test
 
   test "docker_run_command produces correct command array" do
     When "building a docker run command"
-    cmd = Dev::BuildContainer.docker_run_command(
+    cmd = build_container.docker_run_command(
       "jpduchesne89/snappy:content-abc123",
       project_root: Pathname("/project"),
       shell_cmd: "./bin/build.sh",
@@ -108,7 +115,7 @@ class BuildContainerTest < Minitest::Test
 
   test "docker_run_command renders extra volume mounts" do
     When "building a docker run command with volumes"
-    cmd = Dev::BuildContainer.docker_run_command(
+    cmd = build_container.docker_run_command(
       "jpduchesne89/snappy:content-abc123",
       project_root: Pathname("/project"),
       shell_cmd: "./bin/build.sh",
@@ -125,7 +132,7 @@ class BuildContainerTest < Minitest::Test
 
   test "docker_run_command renders env vars as -e flags" do
     When "building a docker run command with env"
-    cmd = Dev::BuildContainer.docker_run_command(
+    cmd = build_container.docker_run_command(
       "jpduchesne89/snappy:content-abc123",
       project_root: Pathname("/project"),
       shell_cmd: "./bin/build.sh",
@@ -140,7 +147,7 @@ class BuildContainerTest < Minitest::Test
 
   test "docker_run_command expands ~ in volume host paths" do
     When "building a docker run command with a ~ volume"
-    cmd = Dev::BuildContainer.docker_run_command(
+    cmd = build_container.docker_run_command(
       "jpduchesne89/snappy:content-abc123",
       project_root: Pathname("/project"),
       shell_cmd: "./bin/build.sh",
@@ -152,16 +159,43 @@ class BuildContainerTest < Minitest::Test
     !cmd.any? { |part| part.start_with?("~") }
   end
 
+  test "docker_run_command carries the engine's argv prefix" do
+    Given "an engine whose docker rides a custom prefix"
+    engine = FakeContainerEngine.new
+    engine.instance_variable_set(:@argv_prefix, ["docker", "--context", "remote"])
+
+    When "building a docker run command"
+    cmd = build_container(engine: engine).docker_run_command(
+      "img:tag", project_root: Pathname("/project"), shell_cmd: "true",
+    )
+
+    Then "the prefix leads the argv"
+    cmd[0, 3] == ["docker", "--context", "remote"]
+    cmd[3] == "run"
+  end
+
+  test "mount composition refuses an engine without local mounts (the remote-poisoned assumption, named)" do
+    Given "an engine whose daemon cannot see local paths"
+    bc = build_container(engine: FakeContainerEngine.new(local_mounts: false))
+
+    When "composing a run command (which always mounts the project)"
+    bc.docker_run_command("img:tag", project_root: Pathname("/project"), shell_cmd: "true")
+
+    Then
+    raises Dev::BuildContainer::LocalMountsUnsupportedError
+  end
+
   test "ensure_image! returns existing image on pull hit" do
     Given "a project and config where pull succeeds"
     dir = Dir.mktmpdir("build-container-test-")
     File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
     config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
+    bc = build_container
 
     When "ensuring the image"
-    Dev::BuildContainer.stubs(:local_image?).returns(false)
-    Dev::BuildContainer.stubs(:pull).returns(true)
-    result = Dev::BuildContainer.ensure_image!(config, project_root: Pathname(dir))
+    bc.stubs(:local_image?).returns(false)
+    bc.stubs(:pull).returns(true)
+    result = bc.ensure_image!(config, project_root: Pathname(dir))
 
     Then
     result.start_with?("jpduchesne89/snappy-linux:content-")
@@ -177,15 +211,16 @@ class BuildContainerTest < Minitest::Test
     config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
     provider_calls = 0
     received_args = nil
+    bc = build_container
 
     When "ensuring the image with a build args provider"
-    Dev::BuildContainer.stubs(:local_image?).returns(false)
-    Dev::BuildContainer.stubs(:pull).returns(false)
-    Dev::BuildContainer.stubs(:build!).with { |_tag, build_args:, **_|
+    bc.stubs(:local_image?).returns(false)
+    bc.stubs(:pull).returns(false)
+    bc.stubs(:build!).with { |_tag, build_args:, **_|
       received_args = build_args
       true }
-    Dev::BuildContainer.stubs(:push!).returns(true)
-    Dev::BuildContainer.ensure_image!(
+    bc.stubs(:push!).returns(true)
+    bc.ensure_image!(
       config,
       project_root: Pathname(dir),
       build_args_provider: -> {
@@ -207,11 +242,12 @@ class BuildContainerTest < Minitest::Test
     File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
     config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
     provider_calls = 0
+    bc = build_container
 
     When "ensuring the image"
-    Dev::BuildContainer.stubs(:local_image?).returns(false)
-    Dev::BuildContainer.stubs(:pull).returns(true)
-    Dev::BuildContainer.ensure_image!(
+    bc.stubs(:local_image?).returns(false)
+    bc.stubs(:pull).returns(true)
+    bc.ensure_image!(
       config,
       project_root: Pathname(dir),
       build_args_provider: -> {
@@ -227,44 +263,37 @@ class BuildContainerTest < Minitest::Test
   end
 
   test "build! passes build args as --build-arg flags" do
-    Given "a project root and captured docker invocation"
+    Given "a project root and a recording engine"
     dir = Dir.mktmpdir("build-container-test-")
-    captured = nil
+    engine = FakeContainerEngine.new
 
     When "building with build args"
-    Dev::BuildContainer.stubs(:system).with { |*argv|
-      captured = argv
-      true }.returns(true)
-    Dev::BuildContainer.send(
-      :build!,
+    build_container(engine: engine).build!(
       "img:tag",
       project_root: Pathname(dir),
       build_args: { "WWISE_EMAIL" => "me@example.com", "WWISE_PASSWORD" => "hunter2" },
     )
 
     Then
-    captured.include?("--build-arg")
-    captured.include?("WWISE_EMAIL=me@example.com")
-    captured.include?("WWISE_PASSWORD=hunter2")
-    captured.last == dir
+    engine.runs.last.include?("--build-arg")
+    engine.runs.last.include?("WWISE_EMAIL=me@example.com")
+    engine.runs.last.include?("WWISE_PASSWORD=hunter2")
+    engine.runs.last.last == dir
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
   test "build! uses plain BuildKit progress so CI logs stream every step" do
-    Given "a project root and captured docker invocation"
+    Given "a project root and a recording engine"
     dir = Dir.mktmpdir("build-container-test-")
-    captured = nil
+    engine = FakeContainerEngine.new
 
     When "building"
-    Dev::BuildContainer.stubs(:system).with { |*argv|
-      captured = argv
-      true }.returns(true)
-    Dev::BuildContainer.send(:build!, "img:tag", project_root: Pathname(dir))
+    build_container(engine: engine).build!("img:tag", project_root: Pathname(dir))
 
     Then "the non-TTY-silent auto renderer is overridden"
-    captured.include?("--progress=plain")
+    engine.runs.last.include?("--progress=plain")
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -276,13 +305,14 @@ class BuildContainerTest < Minitest::Test
     File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
     config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
     pulled = []
+    bc = build_container
 
     When "ensuring the image"
-    Dev::BuildContainer.stubs(:local_image?).returns(true)
-    Dev::BuildContainer.stubs(:pull).with { |tag|
+    bc.stubs(:local_image?).returns(true)
+    bc.stubs(:pull).with { |tag|
       pulled << tag
       true }
-    result = Dev::BuildContainer.ensure_image!(config, project_root: Pathname(dir))
+    result = bc.ensure_image!(config, project_root: Pathname(dir))
 
     Then
     result.start_with?("jpduchesne89/snappy-linux:content-")
@@ -299,17 +329,18 @@ class BuildContainerTest < Minitest::Test
     config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
     built = []
     pushed = []
+    bc = build_container
 
     When "ensuring the image"
-    Dev::BuildContainer.stubs(:local_image?).returns(false)
-    Dev::BuildContainer.stubs(:pull).returns(false)
-    Dev::BuildContainer.stubs(:build!).with { |tag, **_|
+    bc.stubs(:local_image?).returns(false)
+    bc.stubs(:pull).returns(false)
+    bc.stubs(:build!).with { |tag, **_|
       built << tag
       true }
-    Dev::BuildContainer.stubs(:push!).with { |tag|
+    bc.stubs(:push!).with { |tag|
       pushed << tag
       true }
-    result = Dev::BuildContainer.ensure_image!(config, project_root: Pathname(dir))
+    result = bc.ensure_image!(config, project_root: Pathname(dir))
 
     Then
     result.start_with?("jpduchesne89/snappy-linux:content-")
@@ -327,15 +358,16 @@ class BuildContainerTest < Minitest::Test
     File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
     config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
     pushed = []
+    bc = build_container
 
     When "ensuring the image with push: false"
-    Dev::BuildContainer.stubs(:local_image?).returns(false)
-    Dev::BuildContainer.stubs(:pull).returns(false)
-    Dev::BuildContainer.stubs(:build!).returns(true)
-    Dev::BuildContainer.stubs(:push!).with { |tag|
+    bc.stubs(:local_image?).returns(false)
+    bc.stubs(:pull).returns(false)
+    bc.stubs(:build!).returns(true)
+    bc.stubs(:push!).with { |tag|
       pushed << tag
       true }
-    Dev::BuildContainer.ensure_image!(config, project_root: Pathname(dir), push: false)
+    bc.ensure_image!(config, project_root: Pathname(dir), push: false)
 
     Then
     pushed.empty?
@@ -350,16 +382,17 @@ class BuildContainerTest < Minitest::Test
     File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
     config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
     tag = Dev::BuildContainer.image_with_tag(config, project_root: Pathname(dir))
+    bc = build_container
 
     When "ensuring the image with publish: true"
-    result = Dev::BuildContainer.ensure_image!(config, project_root: Pathname(dir), publish: true)
+    result = bc.ensure_image!(config, project_root: Pathname(dir), publish: true)
 
     Then "the local image is honored, then published to the registry (no pull, no build)"
     result == tag
-    1 * Dev::BuildContainer.local_image?(tag) >> true
-    0 * Dev::BuildContainer.pull(tag)
-    1 * Dev::BuildContainer.registry_has?(tag) >> false
-    1 * Dev::BuildContainer.push!(tag) >> true
+    1 * bc.local_image?(tag) >> true
+    0 * bc.pull(tag)
+    1 * bc.registry_has?(tag) >> false
+    1 * bc.push!(tag) >> true
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -371,15 +404,16 @@ class BuildContainerTest < Minitest::Test
     File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
     config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
     tag = Dev::BuildContainer.image_with_tag(config, project_root: Pathname(dir))
+    bc = build_container
 
     When "ensuring the image with publish: true"
-    result = Dev::BuildContainer.ensure_image!(config, project_root: Pathname(dir), publish: true)
+    result = bc.ensure_image!(config, project_root: Pathname(dir), publish: true)
 
     Then "the registry check short-circuits the push"
     result == tag
-    1 * Dev::BuildContainer.local_image?(tag) >> true
-    1 * Dev::BuildContainer.registry_has?(tag) >> true
-    0 * Dev::BuildContainer.push!(tag)
+    1 * bc.local_image?(tag) >> true
+    1 * bc.registry_has?(tag) >> true
+    0 * bc.push!(tag)
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -391,15 +425,16 @@ class BuildContainerTest < Minitest::Test
     File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
     config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
     tag = Dev::BuildContainer.image_with_tag(config, project_root: Pathname(dir))
+    bc = build_container
 
     When "ensuring the image"
-    result = Dev::BuildContainer.ensure_image!(config, project_root: Pathname(dir))
+    result = bc.ensure_image!(config, project_root: Pathname(dir))
 
     Then "no registry interaction happens — a plain local run never publishes"
     result == tag
-    1 * Dev::BuildContainer.local_image?(tag) >> true
-    0 * Dev::BuildContainer.registry_has?(tag)
-    0 * Dev::BuildContainer.push!(tag)
+    1 * bc.local_image?(tag) >> true
+    0 * bc.registry_has?(tag)
+    0 * bc.push!(tag)
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -411,59 +446,69 @@ class BuildContainerTest < Minitest::Test
     File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
     config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
     tag = Dev::BuildContainer.image_with_tag(config, project_root: Pathname(dir))
+    bc = build_container
 
     When "ensuring the image with push: false (the only real caller) and publish: true"
-    result = Dev::BuildContainer.ensure_image!(config, project_root: Pathname(dir), push: false, publish: true)
+    result = bc.ensure_image!(config, project_root: Pathname(dir), push: false, publish: true)
 
     Then "it builds, then publishes via the registry-guarded path"
     result == tag
-    1 * Dev::BuildContainer.local_image?(tag) >> false
-    1 * Dev::BuildContainer.pull(tag) >> false
-    1 * Dev::BuildContainer.build!(tag, project_root: Pathname(dir), build_args: {}, build_contexts: {}, secrets: {}) >> true
-    1 * Dev::BuildContainer.registry_has?(tag) >> false
-    1 * Dev::BuildContainer.push!(tag) >> true
+    1 * bc.local_image?(tag) >> false
+    1 * bc.pull(tag) >> false
+    1 * bc.build!(tag, project_root: Pathname(dir), build_args: {}, build_contexts: {}, secrets: {}) >> true
+    1 * bc.registry_has?(tag) >> false
+    1 * bc.push!(tag) >> true
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
   test "publish! is a no-op when the registry already advertises the tag" do
+    Given "the instance under test"
+    bc = build_container
+
     When "publishing a tag the registry already has"
-    result = Dev::BuildContainer.publish!("img:tag")
+    result = bc.publish!("img:tag")
 
     Then "the manifest check short-circuits and nothing is pushed"
     result == true
-    1 * Dev::BuildContainer.registry_has?("img:tag") >> true
-    0 * Dev::BuildContainer.push!("img:tag")
+    1 * bc.registry_has?("img:tag") >> true
+    0 * bc.push!("img:tag")
   end
 
   test "publish! pushes when the registry lacks the tag" do
+    Given "the instance under test"
+    bc = build_container
+
     When "publishing a tag the registry lacks"
-    result = Dev::BuildContainer.publish!("img:tag")
+    result = bc.publish!("img:tag")
 
     Then "it pushes the local image"
     result == true
-    1 * Dev::BuildContainer.registry_has?("img:tag") >> false
-    1 * Dev::BuildContainer.push!("img:tag") >> true
+    1 * bc.registry_has?("img:tag") >> false
+    1 * bc.push!("img:tag") >> true
   end
 
   test "publish! warns but does not raise when the push fails" do
+    Given "the instance under test"
+    bc = build_container
+
     When "the registry lacks the tag and the push fails"
-    result = Dev::BuildContainer.publish!("img:tag")
+    result = bc.publish!("img:tag")
 
     Then "the failure is surfaced as a falsey return, not an exception"
     result == false
-    1 * Dev::BuildContainer.registry_has?("img:tag") >> false
-    1 * Dev::BuildContainer.push!("img:tag") >> false
+    1 * bc.registry_has?("img:tag") >> false
+    1 * bc.push!("img:tag") >> false
   end
 
   test "build! raises when docker build fails" do
-    Given "a project root"
+    Given "a project root and an engine whose builds fail"
     dir = Dir.mktmpdir("build-container-test-")
+    engine = FakeContainerEngine.new { |_args| false }
 
     When "docker build fails"
-    Dev::BuildContainer.stubs(:system).returns(false)
-    Dev::BuildContainer.send(:build!, "bad:tag", project_root: Pathname(dir))
+    build_container(engine: engine).build!("bad:tag", project_root: Pathname(dir))
 
     Then
     raises RuntimeError
@@ -835,16 +880,12 @@ class BuildContainerTest < Minitest::Test
   end
 
   test "build! passes build contexts and secrets with BuildKit enabled" do
-    Given "a project root and captured docker invocation"
+    Given "a project root and a recording engine"
     dir = Dir.mktmpdir("build-container-test-")
-    captured = nil
+    engine = FakeContainerEngine.new
 
     When "building with contexts and secrets"
-    Dev::BuildContainer.stubs(:system).with { |*argv|
-      captured = argv
-      true }.returns(true)
-    Dev::BuildContainer.send(
-      :build!,
+    build_container(engine: engine).build!(
       "img:tag",
       project_root: Pathname(dir),
       build_contexts: { "UnrealEngine" => "/engines/ue" },
@@ -852,34 +893,29 @@ class BuildContainerTest < Minitest::Test
     )
 
     Then "BuildKit env, build-context flag, and secret flag are present"
-    captured[0].is_a?(Hash)
-    captured[0]["DOCKER_BUILDKIT"] == "1"
-    captured[0]["WWISE_TOKEN"] == "tok-123"
-    captured.include?("--build-context")
-    captured.include?("UnrealEngine=/engines/ue")
-    captured.include?("--secret")
-    captured.include?("id=WWISE_TOKEN,env=WWISE_TOKEN")
-    captured.last == dir
+    engine.run_envs.last["DOCKER_BUILDKIT"] == "1"
+    engine.run_envs.last["WWISE_TOKEN"] == "tok-123"
+    engine.runs.last.include?("--build-context")
+    engine.runs.last.include?("UnrealEngine=/engines/ue")
+    engine.runs.last.include?("--secret")
+    engine.runs.last.include?("id=WWISE_TOKEN,env=WWISE_TOKEN")
+    engine.runs.last.last == dir
   end
 
   test "build! keeps the secret value off argv" do
-    Given "a project root and captured docker invocation"
+    Given "a project root and a recording engine"
     dir = Dir.mktmpdir("build-container-test-")
-    captured = nil
+    engine = FakeContainerEngine.new
 
     When "building with a secret"
-    Dev::BuildContainer.stubs(:system).with { |*argv|
-      captured = argv
-      true }.returns(true)
-    Dev::BuildContainer.send(
-      :build!,
+    build_container(engine: engine).build!(
       "img:tag",
       project_root: Pathname(dir),
       secrets: { "WWISE_TOKEN" => "super-secret" },
     )
 
     Then "the value travels via env, never as an argument"
-    captured.drop(1).none? { |part| part.is_a?(String) && part.include?("super-secret") }
+    engine.runs.last.none? { |part| part.include?("super-secret") }
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -899,17 +935,18 @@ class BuildContainerTest < Minitest::Test
     secret_calls = 0
     received_secrets = nil
     received_contexts = nil
+    bc = build_container
 
     When "ensuring the image with a secrets provider"
-    Dev::BuildContainer.stubs(:local_image?).returns(false)
-    Dev::BuildContainer.stubs(:pull).returns(false)
-    Dev::BuildContainer.stubs(:build!).with do |_tag, secrets:, build_contexts:, **_|
+    bc.stubs(:local_image?).returns(false)
+    bc.stubs(:pull).returns(false)
+    bc.stubs(:build!).with do |_tag, secrets:, build_contexts:, **_|
       received_secrets = secrets
       received_contexts = build_contexts
       true
     end
-    Dev::BuildContainer.stubs(:push!).returns(true)
-    Dev::BuildContainer.ensure_image!(
+    bc.stubs(:push!).returns(true)
+    bc.ensure_image!(
       config,
       project_root: Pathname(dir),
       build_args_provider: -> { {} },
@@ -933,11 +970,12 @@ class BuildContainerTest < Minitest::Test
     File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
     config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
     secret_calls = 0
+    bc = build_container
 
     When "ensuring the image"
-    Dev::BuildContainer.stubs(:local_image?).returns(false)
-    Dev::BuildContainer.stubs(:pull).returns(true)
-    Dev::BuildContainer.ensure_image!(
+    bc.stubs(:local_image?).returns(false)
+    bc.stubs(:pull).returns(true)
+    bc.ensure_image!(
       config,
       project_root: Pathname(dir),
       secrets_provider: -> {
@@ -961,68 +999,67 @@ class BuildContainerTest < Minitest::Test
       volumes: ["/engines/ue:/ue"], prewarm: "bash /work/bin/prewarm.sh",
     )
     tag = Dev::BuildContainer.image_with_tag(config, project_root: Pathname(dir))
+    bc = build_container
 
     When "ensuring the image"
-    result = Dev::BuildContainer.ensure_image!(config, project_root: Pathname(dir))
+    result = bc.ensure_image!(config, project_root: Pathname(dir))
 
     Then "the base is built engine-free, the prewarm runs against it, and the base tag is dropped"
     result == tag
-    1 * Dev::BuildContainer.local_image?(tag) >> false
-    1 * Dev::BuildContainer.pull(tag) >> false
-    1 * Dev::BuildContainer.build!("#{tag}-base", project_root: Pathname(dir), build_args: {},
+    1 * bc.local_image?(tag) >> false
+    1 * bc.pull(tag) >> false
+    1 * bc.build!("#{tag}-base", project_root: Pathname(dir), build_args: {},
       build_contexts: {}, secrets: {}) >> true
-    1 * Dev::BuildContainer.prewarm_commit!("#{tag}-base", tag, volumes: ["/engines/ue:/ue"],
+    1 * bc.prewarm_commit!("#{tag}-base", tag, volumes: ["/engines/ue:/ue"],
       prewarm: "bash /work/bin/prewarm.sh", secrets: {}) >> true
-    1 * Dev::BuildContainer.remove_image("#{tag}-base") >> true
-    1 * Dev::BuildContainer.push!(tag) >> true
+    1 * bc.remove_image("#{tag}-base") >> true
+    1 * bc.push!(tag) >> true
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
   test "prewarm_commit! runs the prewarm with dep volumes and secret files, commits, and cleans up" do
-    Given "resolved dep volumes and a secret"
+    Given "resolved dep volumes, a secret, and a recording engine"
+    engine = FakeContainerEngine.new
+    bc = build_container(engine: engine)
 
     When "running the prewarm commit"
-    Dev::BuildContainer.send(
-      :prewarm_commit!, "img:tag-base", "img:tag",
+    bc.prewarm_commit!(
+      "img:tag-base", "img:tag",
       volumes: ["/engines/ue:/ue"], prewarm: "bash /work/bin/prewarm.sh", secrets: { "WWISE_TOKEN" => "tok" }
     )
 
     Then "the run mounts the engine + secret file (never -e: commit would bake env), runs under the watcher, commits, and removes it"
-    1 * Dev::BuildContainer.prewarm_container_name >> "dev-prewarm-test"
-    1 * Dev::BuildContainer.write_secret_files({ "WWISE_TOKEN" => "tok" }) >> { "WWISE_TOKEN" => "/tmp/dev-secret-xyz" }
-    1 * Dev::BuildContainer.run_watched(["docker", "run", "--name", "dev-prewarm-test",
+    1 * bc.prewarm_container_name >> "dev-prewarm-test"
+    1 * bc.write_secret_files({ "WWISE_TOKEN" => "tok" }) >> { "WWISE_TOKEN" => "/tmp/dev-secret-xyz" }
+    1 * bc.run_watched(["docker", "run", "--name", "dev-prewarm-test",
       "-v", "/engines/ue:/ue",
       "-v", "/tmp/dev-secret-xyz:/run/secrets/WWISE_TOKEN:ro",
       "img:tag-base", "sh", "-c", "bash /work/bin/prewarm.sh"], container: "dev-prewarm-test") >> true
-    1 * Dev::BuildContainer.system("docker", "commit", "dev-prewarm-test", "img:tag") >> true
-    1 * Dev::BuildContainer.system("docker", "rm", "-f", "dev-prewarm-test",
-      out: File::NULL, err: File::NULL) >> true
+    engine.runs == [["commit", "dev-prewarm-test", "img:tag"], ["rm", "-f", "dev-prewarm-test"]]
   end
 
   test "prewarm_commit! raises when the prewarm run fails, still removing the container" do
-    Given "a prewarm command that fails"
+    Given "a prewarm command that fails and a recording engine"
+    engine = FakeContainerEngine.new
+    bc = build_container(engine: engine)
 
     When "running the prewarm commit"
-    Dev::BuildContainer.send(
-      :prewarm_commit!, "img:tag-base", "img:tag",
-      volumes: [], prewarm: "false", secrets: {}
-    )
+    bc.prewarm_commit!("img:tag-base", "img:tag", volumes: [], prewarm: "false", secrets: {})
 
     Then "it surfaces the failure and the ensure block removes the container (no commit)"
     raises RuntimeError
-    1 * Dev::BuildContainer.prewarm_container_name >> "dev-prewarm-test"
-    1 * Dev::BuildContainer.write_secret_files({}) >> {}
-    1 * Dev::BuildContainer.run_watched(["docker", "run", "--name", "dev-prewarm-test",
+    1 * bc.prewarm_container_name >> "dev-prewarm-test"
+    1 * bc.write_secret_files({}) >> {}
+    1 * bc.run_watched(["docker", "run", "--name", "dev-prewarm-test",
       "img:tag-base", "sh", "-c", "false"], container: "dev-prewarm-test") >> false
-    1 * Dev::BuildContainer.system("docker", "rm", "-f", "dev-prewarm-test",
-      out: File::NULL, err: File::NULL) >> true
+    engine.runs == [["rm", "-f", "dev-prewarm-test"]]
   end
 
   test "write_secret_files writes each secret to a private temp file" do
     When "writing secret files"
-    files = Dev::BuildContainer.send(:write_secret_files, { "TOK" => "s3cr3t" })
+    files = build_container.write_secret_files({ "TOK" => "s3cr3t" })
 
     Then "the value is on disk with owner-only permissions"
     File.read(files["TOK"]) == "s3cr3t"
@@ -1070,7 +1107,7 @@ class BuildContainerTest < Minitest::Test
 
   test "docker_exec_command targets the container with /project workdir" do
     When "building a docker exec command"
-    cmd = Dev::BuildContainer.docker_exec_command(
+    cmd = build_container.docker_exec_command(
       "dev-snappy-linux-content-abc", shell_cmd: "./bin/build.sh",
     )
 
@@ -1085,7 +1122,7 @@ class BuildContainerTest < Minitest::Test
 
   test "docker_exec_command renders env vars as -e flags before the container" do
     When "building a docker exec command with env"
-    cmd = Dev::BuildContainer.docker_exec_command(
+    cmd = build_container.docker_exec_command(
       "dev-snappy-linux-content-abc", shell_cmd: "./bin/build.sh",
       env: { "WWISE_TOKEN" => "tok-123" },
     )
@@ -1101,17 +1138,18 @@ class BuildContainerTest < Minitest::Test
     tag = "jpduchesne89/snappy-linux:content-abc"
     root = Pathname("/proj")
     name = Dev::BuildContainer.service_container_name(tag, root)
+    bc = build_container
 
     When "ensuring the service"
-    result = Dev::BuildContainer.ensure_service!(tag, project_root: root, volumes: ["/e:/e"])
+    result = bc.ensure_service!(tag, project_root: root, volumes: ["/e:/e"])
 
     Then "stale containers are reaped, then the container is created (never started)"
     result == name
-    1 * Dev::BuildContainer.reap_stale_services!(tag, root) >> nil
-    1 * Dev::BuildContainer.container_exists?(name) >> false
-    1 * Dev::BuildContainer.create_service_container(name, tag,
+    1 * bc.reap_stale_services!(tag, root) >> nil
+    1 * bc.container_exists?(name) >> false
+    1 * bc.create_service_container(name, tag,
       project_root: root, volumes: ["/e:/e"]) >> true
-    0 * Dev::BuildContainer.start_container(name)
+    0 * bc.start_container(name)
   end
 
   test "ensure_service! starts the container when it exists but is stopped" do
@@ -1119,16 +1157,17 @@ class BuildContainerTest < Minitest::Test
     tag = "jpduchesne89/snappy-linux:content-abc"
     root = Pathname("/proj")
     name = Dev::BuildContainer.service_container_name(tag, root)
+    bc = build_container
 
     When "ensuring the service"
-    Dev::BuildContainer.ensure_service!(tag, project_root: root)
+    bc.ensure_service!(tag, project_root: root)
 
     Then "the existing container is started, not recreated"
-    1 * Dev::BuildContainer.reap_stale_services!(tag, root) >> nil
-    1 * Dev::BuildContainer.container_exists?(name) >> true
-    1 * Dev::BuildContainer.container_running?(name) >> false
-    1 * Dev::BuildContainer.start_container(name) >> true
-    0 * Dev::BuildContainer.create_service_container(name, tag,
+    1 * bc.reap_stale_services!(tag, root) >> nil
+    1 * bc.container_exists?(name) >> true
+    1 * bc.container_running?(name) >> false
+    1 * bc.start_container(name) >> true
+    0 * bc.create_service_container(name, tag,
       project_root: root, volumes: [])
   end
 
@@ -1137,15 +1176,16 @@ class BuildContainerTest < Minitest::Test
     tag = "jpduchesne89/snappy-linux:content-abc"
     root = Pathname("/proj")
     name = Dev::BuildContainer.service_container_name(tag, root)
+    bc = build_container
 
     When "ensuring the service"
-    Dev::BuildContainer.ensure_service!(tag, project_root: root)
+    bc.ensure_service!(tag, project_root: root)
 
     Then "neither start nor create is invoked"
-    1 * Dev::BuildContainer.reap_stale_services!(tag, root) >> nil
-    1 * Dev::BuildContainer.container_exists?(name) >> true
-    1 * Dev::BuildContainer.container_running?(name) >> true
-    0 * Dev::BuildContainer.start_container(name)
+    1 * bc.reap_stale_services!(tag, root) >> nil
+    1 * bc.container_exists?(name) >> true
+    1 * bc.container_running?(name) >> true
+    0 * bc.start_container(name)
   end
 
   test "reap_stale_services! removes other-tag containers but keeps the current tag" do
@@ -1155,14 +1195,15 @@ class BuildContainerTest < Minitest::Test
     prefix = Dev::BuildContainer.service_name_prefix(tag, root)
     keep = "#{prefix}content-new"
     stale = "#{prefix}content-old"
+    bc = build_container
 
     When "reaping"
-    Dev::BuildContainer.send(:reap_stale_services!, tag, root)
+    bc.reap_stale_services!(tag, root)
 
     Then "only the non-current container is removed"
-    1 * Dev::BuildContainer.service_containers(prefix) >> [stale, keep]
-    1 * Dev::BuildContainer.remove_container(stale) >> true
-    0 * Dev::BuildContainer.remove_container(keep)
+    1 * bc.service_containers(prefix) >> [stale, keep]
+    1 * bc.remove_container(stale) >> true
+    0 * bc.remove_container(keep)
   end
 
   test "reset_service! removes every container for the checkout prefix" do
@@ -1172,43 +1213,43 @@ class BuildContainerTest < Minitest::Test
     prefix = Dev::BuildContainer.service_name_prefix(tag, root)
     current = "#{prefix}content-abc"
     stale = "#{prefix}content-old"
+    bc = build_container
 
     When "resetting"
-    result = Dev::BuildContainer.reset_service!(tag, root)
+    result = bc.reset_service!(tag, root)
 
     Then "all matching containers are removed and their names returned"
     result == [stale, current]
-    1 * Dev::BuildContainer.service_containers(prefix) >> [stale, current]
-    1 * Dev::BuildContainer.remove_container(stale) >> true
-    1 * Dev::BuildContainer.remove_container(current) >> true
+    1 * bc.service_containers(prefix) >> [stale, current]
+    1 * bc.remove_container(stale) >> true
+    1 * bc.remove_container(current) >> true
   end
 
   test "create_service_container runs detached, mounts project + volumes, and idles" do
-    Given "captured docker invocation"
-    captured = nil
+    Given "a recording engine"
+    engine = FakeContainerEngine.new
 
     When "creating the service container"
-    Dev::BuildContainer.stubs(:system).with { |*argv, **_kw|
-      captured = argv
-      true }.returns(true)
-    Dev::BuildContainer.send(
-      :create_service_container, "dev-x", "img:tag",
+    build_container(engine: engine).create_service_container(
+      "dev-x", "img:tag",
       project_root: Pathname("/project"), volumes: ["/engines/ue:/ue"],
     )
 
     Then "it is a detached, named run that bind-mounts the project + engine and sleeps"
-    captured[0, 5] == ["docker", "run", "-d", "--name", "dev-x"]
-    captured.include?("/project:/project")
-    captured.include?("/engines/ue:/ue")
-    captured.include?("img:tag")
-    captured.last(2) == ["sleep", "infinity"]
+    engine.runs.last[0, 4] == ["run", "-d", "--name", "dev-x"]
+    engine.runs.last.include?("/project:/project")
+    engine.runs.last.include?("/engines/ue:/ue")
+    engine.runs.last.include?("img:tag")
+    engine.runs.last.last(2) == ["sleep", "infinity"]
   end
 
   test "create_service_container raises when docker run fails" do
+    Given "an engine whose runs fail"
+    engine = FakeContainerEngine.new { |_args| false }
+
     When "docker run fails"
-    Dev::BuildContainer.stubs(:system).returns(false)
-    Dev::BuildContainer.send(
-      :create_service_container, "dev-x", "img:tag", project_root: Pathname("/project"),
+    build_container(engine: engine).create_service_container(
+      "dev-x", "img:tag", project_root: Pathname("/project"),
     )
 
     Then
@@ -1216,9 +1257,12 @@ class BuildContainerTest < Minitest::Test
   end
 
   test "prewarm_container_name embeds the pid and never repeats" do
+    Given "the instance under test"
+    bc = build_container
+
     When "naming two prewarm containers"
-    name_a = Dev::BuildContainer.send(:prewarm_container_name)
-    name_b = Dev::BuildContainer.send(:prewarm_container_name)
+    name_a = bc.prewarm_container_name
+    name_b = bc.prewarm_container_name
 
     Then "both carry the dev-prewarm-<pid>- prefix and differ in their random suffix"
     name_a.start_with?("dev-prewarm-#{Process.pid}-")
@@ -1226,36 +1270,52 @@ class BuildContainerTest < Minitest::Test
     name_a != name_b
   end
 
-  test "the docker CLI wrappers pass through the command's success" do
-    Given "a docker whose every invocation succeeds"
-    Dev::BuildContainer.stubs(:system).returns(true)
+  test "the docker CLI wrappers compose their args through the engine and pass its success through" do
+    Given "an engine whose every invocation succeeds"
+    engine = FakeContainerEngine.new
+    bc = build_container(engine: engine)
 
-    Expect "each one-command wrapper reports that success"
-    Dev::BuildContainer.send(:remove_image, "img:tag") == true
-    Dev::BuildContainer.send(:container_exists?, "dev-x") == true
-    Dev::BuildContainer.send(:start_container, "dev-x").nil? == false
-    Dev::BuildContainer.send(:remove_container, "dev-x").nil? == false
-    Dev::BuildContainer.send(:local_image?, "img:tag") == true
-    Dev::BuildContainer.send(:pull, "img:tag") == true
-    Dev::BuildContainer.push!("img:tag") == true
-    Dev::BuildContainer.send(:registry_has?, "img:tag") == true
+    When "invoking every one-command wrapper"
+    bc.remove_image("img:tag")
+    exists = bc.container_exists?("dev-x")
+    bc.start_container("dev-x")
+    bc.remove_container("dev-x")
+    local = bc.local_image?("img:tag")
+    pulled = bc.pull("img:tag")
+    pushed = bc.push!("img:tag")
+    advertised = bc.registry_has?("img:tag")
+
+    Then "each predicate reports the engine's success, and the recorded argv names each docker subcommand"
+    exists && local && pulled && pushed && advertised
+    engine.runs == [
+      ["image", "rm", "-f", "img:tag"],
+      ["container", "inspect", "dev-x"],
+      ["start", "dev-x"],
+      ["rm", "-f", "dev-x"],
+      ["image", "inspect", "img:tag"],
+      ["pull", "img:tag"],
+      ["push", "img:tag"],
+      ["manifest", "inspect", "img:tag"],
+    ]
   end
 
   test "service_containers parses the newline-separated docker ps names" do
     Given "docker ps reporting two containers with surrounding noise"
-    Dev::BuildContainer.stubs(:`).returns("dev-snappy-abc-content-1\ndev-snappy-abc-content-2\n\n")
+    engine = FakeContainerEngine.new(capture_result: "dev-snappy-abc-content-1\ndev-snappy-abc-content-2\n\n")
+    bc = build_container(engine: engine)
 
-    Expect "the trimmed names are returned"
-    Dev::BuildContainer.send(:service_containers, "dev-snappy-abc-") ==
+    Expect "the trimmed names are returned, from an anchored name filter"
+    bc.service_containers("dev-snappy-abc-") ==
       ["dev-snappy-abc-content-1", "dev-snappy-abc-content-2"]
+    engine.captures.last == ["ps", "-a", "--filter", "name=^dev-snappy-abc-", "--format", "{{.Names}}"]
   end
 
   test "container_running? reflects the inspected running state" do
     Given "docker inspect reporting the state"
-    Dev::BuildContainer.stubs(:`).returns("true\n")
+    engine = FakeContainerEngine.new(capture_result: "true\n")
 
     Expect "the container counts as running"
-    Dev::BuildContainer.send(:container_running?, "dev-x") == true
+    build_container(engine: engine).container_running?("dev-x") == true
   end
 
   test "run_watched delegates the build to a watcher named for the container" do
@@ -1266,6 +1326,6 @@ class BuildContainerTest < Minitest::Test
     Dev::BuildWatcher.expects(:new).with(container_name: "dev-prewarm-1").returns(watcher)
 
     Expect "the watcher's verdict is returned"
-    Dev::BuildContainer.send(:run_watched, argv, container: "dev-prewarm-1") == true
+    build_container.run_watched(argv, container: "dev-prewarm-1") == true
   end
 end

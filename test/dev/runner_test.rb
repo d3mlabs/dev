@@ -224,7 +224,9 @@ class RunnerTest < Minitest::Test
       build: { "container" => { "image" => "myapp-linux", "registry" => "myregistry" } },
       out: usage,
     )
-    Dev::BuildContainer.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
+    # The composition root builds its own engine-injected client here, so the
+    # docker boundary is stubbed across instances.
+    Dev::BuildContainer.any_instance.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
     old_stdout = $stdout
     $stdout = StringIO.new
 

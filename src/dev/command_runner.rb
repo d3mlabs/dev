@@ -7,6 +7,7 @@ require "dev/cli/ui"
 require "dev/command"
 require "dev/credentials"
 require "dev/build_container"
+require "dev/container_engine"
 require "dev/shadowenv_llvm"
 require "dev/shadowenv_python"
 require "dev/shadowenv_ruby"
@@ -92,14 +93,17 @@ module Dev
         project_root: Pathname,
         python_version: T.nilable(String),
         build_container: T.nilable(Dev::BuildContainerConfig),
+        container_client: T.nilable(Dev::BuildContainer),
       ).void
     end
-    def initialize(ui:, ruby_version:, project_root:, python_version: nil, build_container: nil)
+    def initialize(ui:, ruby_version:, project_root:, python_version: nil, build_container: nil,
+                   container_client: nil)
       @ui = ui
       @ruby_version = ruby_version
       @python_version = python_version
       @build_container = build_container
       @project_root = project_root
+      @container_client = container_client
     end
 
     # Hand the process over to the command: exec-replace, the right shape
@@ -172,7 +176,8 @@ module Dev
     sig { params(shell_command: String, wait: T::Boolean).void }
     def run_in_container(shell_command, wait:)
       config = T.must(@build_container)
-      image_tag = BuildContainer.ensure_image!(
+      client = container_client
+      image_tag = client.ensure_image!(
         config,
         project_root: @project_root,
         push: false,
@@ -183,7 +188,20 @@ module Dev
       docker_argv = container_command(config, image_tag, shell_command)
 
       Dir.chdir(@project_root)
-      run_child(docker_argv, wait:)
+      # The child argv carries the engine's argv prefix; its env (e.g. the
+      # colima DOCKER_HOST) rides the spawn env, same as child_env locally.
+      run_child([client.engine.env, *docker_argv], wait:)
+    end
+
+    # The engine-injected docker operations, constructed at this seam (the
+    # composition point plans#26 names): the engine resolves per invoking
+    # user, lazily, so commands that never touch a container never read the
+    # engine record.
+    #
+    # @return [Dev::BuildContainer]
+    sig { returns(Dev::BuildContainer) }
+    def container_client
+      @container_client ||= Dev::BuildContainer.new(engine: Dev::ContainerEngine.resolve)
     end
 
     # docker argv for a containerized command: a `docker exec` into the reused
@@ -205,14 +223,14 @@ module Dev
       volumes = BuildContainer.resolve_versioned_volumes(config.volumes, project_root: @project_root)
 
       if config.persist
-        container = BuildContainer.ensure_service!(
+        container = container_client.ensure_service!(
           image_tag, project_root: @project_root, volumes: volumes,
         )
-        BuildContainer.docker_exec_command(
+        container_client.docker_exec_command(
           container, shell_cmd: shell_command, env: resolve_run_env(config),
         )
       else
-        BuildContainer.docker_run_command(
+        container_client.docker_run_command(
           image_tag,
           project_root: @project_root,
           shell_cmd: shell_command,

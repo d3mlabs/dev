@@ -4,6 +4,7 @@
 require "test_helper"
 require "dev/builtins/reset_container_command"
 require "dev/build_container_config"
+require "support/fake_container_engine"
 require "pathname"
 require "stringio"
 
@@ -16,8 +17,9 @@ class Dev::Builtins::ResetContainerCommandTest < Minitest::Test
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry", persist: true)
     context = build_context(config)
     Dev::BuildContainer.stubs(:image_with_tag).returns("myregistry/myapp-linux:content-abc123")
-    Dev::BuildContainer.stubs(:reset_service!).returns(["dev-myapp-linux-content-abc123"])
-    command = Dev::Builtins::ResetContainerCommand.new
+    client = Dev::BuildContainer.new(engine: FakeContainerEngine.new)
+    client.stubs(:reset_service!).returns(["dev-myapp-linux-content-abc123"])
+    command = Dev::Builtins::ResetContainerCommand.new(container_client: client)
     old_stdout = $stdout
     $stdout = StringIO.new
 
@@ -36,8 +38,9 @@ class Dev::Builtins::ResetContainerCommandTest < Minitest::Test
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry", persist: true)
     context = build_context(config)
     Dev::BuildContainer.stubs(:image_with_tag).returns("myregistry/myapp-linux:content-abc123")
-    Dev::BuildContainer.stubs(:reset_service!).returns([])
-    command = Dev::Builtins::ResetContainerCommand.new
+    client = Dev::BuildContainer.new(engine: FakeContainerEngine.new)
+    client.stubs(:reset_service!).returns([])
+    command = Dev::Builtins::ResetContainerCommand.new(container_client: client)
     old_stdout = $stdout
     $stdout = StringIO.new
 

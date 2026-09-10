@@ -45,40 +45,44 @@ module Dev
     sig { returns(T::Hash[String, String]) }
     attr_reader :env
 
-    # Resolve the invoking user's engine: an explicit DOCKER_HOST wins (the
-    # docker CLI reads it from the inherited environment, so the engine adds
-    # nothing) → the per-user settings record → the bare-docker default.
-    # Empty strings count as unset, matching Settings' layer semantics.
-    #
-    # @param settings [Dev::Settings] the invoking user's settings
-    # @param env [Hash{String => String}] environment to consult (tests inject)
-    # @return [Dev::ContainerEngine]
-    # @raise [UnknownEngineError] when the record names an unshipped engine
-    sig { params(settings: Dev::Settings, env: T::Hash[String, String]).returns(ContainerEngine) }
-    def self.resolve(settings: Dev::Settings.new, env: ENV.to_h)
-      docker_host = env["DOCKER_HOST"]
-      return new(kind: :explicit) if docker_host && !docker_host.empty?
+    class << self
+      extend T::Sig
 
-      record = settings.container_engine
-      case record
-      when nil, "docker" then new(kind: :docker_desktop)
-      when "colima" then colima
-      else
-        raise UnknownEngineError,
-          "unknown container_engine #{record.inspect} — dev ships \"docker\" and \"colima\"."
+      # Resolve the invoking user's engine: an explicit DOCKER_HOST wins (the
+      # docker CLI reads it from the inherited environment, so the engine adds
+      # nothing) → the per-user settings record → the bare-docker default.
+      # Empty strings count as unset, matching Settings' layer semantics.
+      #
+      # @param settings [Dev::Settings] the invoking user's settings
+      # @param env [Hash{String => String}] environment to consult (tests inject)
+      # @return [Dev::ContainerEngine]
+      # @raise [UnknownEngineError] when the record names an unshipped engine
+      sig { params(settings: Dev::Settings, env: T::Hash[String, String]).returns(ContainerEngine) }
+      def resolve(settings: Dev::Settings.new, env: ENV.to_h)
+        docker_host = env["DOCKER_HOST"]
+        return new(kind: :explicit) if docker_host && !docker_host.empty?
+
+        record = settings.container_engine
+        case record
+        when nil, "docker" then new(kind: :docker_desktop)
+        when "colima" then colima
+        else
+          raise UnknownEngineError,
+            "unknown container_engine #{record.inspect} — dev ships \"docker\" and \"colima\"."
+        end
       end
-    end
 
-    # The invoking user's colima engine: bare docker pointed at the user's
-    # own VM socket. Per-user by construction — the socket lives under the
-    # caller's home, so the agent resolves its own engine from its own home
-    # like it resolves its own $HOME.
-    #
-    # @return [Dev::ContainerEngine]
-    sig { returns(ContainerEngine) }
-    def self.colima
-      socket = File.join(Dir.home, ".colima", COLIMA_PROFILE, "docker.sock")
-      new(kind: :colima, env: { "DOCKER_HOST" => "unix://#{socket}" })
+      # The invoking user's colima engine: bare docker pointed at the user's
+      # own VM socket. Per-user by construction — the socket lives under the
+      # caller's home, so the agent resolves its own engine from its own home
+      # like it resolves its own $HOME.
+      #
+      # @return [Dev::ContainerEngine]
+      sig { returns(ContainerEngine) }
+      def colima
+        socket = File.join(Dir.home, ".colima", COLIMA_PROFILE, "docker.sock")
+        new(kind: :colima, env: { "DOCKER_HOST" => "unix://#{socket}" })
+      end
     end
 
     # @param kind [Symbol] see #kind
