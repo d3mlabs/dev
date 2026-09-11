@@ -11,18 +11,19 @@ module Dev
   # so future labels slot in without touching register itself.
   #
   # Today one contract exists: the agent capability labels (`ai-build`,
-  # `ai-learn`) require the agent posture bootstrap. A bare label (e.g. the
-  # gamebox's target-host label) requires nothing.
+  # `ai-learn`) make the box an agent host and require the agent host
+  # bootstrap. A bare label (e.g. the gamebox's target-host label) requires
+  # nothing.
   class LabelContracts
     extend T::Sig
 
-    # The capability labels whose contract is the agent posture.
+    # The capability labels whose contract is the agent host bootstrap.
     AGENT_CAPABILITY_LABELS = T.let(%w[ai-build ai-learn].freeze, T::Array[String])
 
-    # The agent posture obligation: the host-singular bootstrap, the agent's
+    # The agent host obligation: the host-singular bootstrap, the agent's
     # own container engine when the served repo builds in one, and the
-    # post-enrollment service/workdir posture.
-    class AgentPostureContract
+    # post-enrollment service/workdir setup.
+    class AgentHostContract
       extend T::Sig
 
       # @param bootstrap [Dev::AgentBootstrap]
@@ -31,7 +32,7 @@ module Dev
         @bootstrap = bootstrap
       end
 
-      # Converge the pre-enrollment posture.
+      # Converge the pre-enrollment requirements.
       #
       # @param container [Boolean] whether the served repo declares build.container
       # @param cpus [Integer, nil] engine VM sizing hint
@@ -43,7 +44,7 @@ module Dev
         @bootstrap.ensure_agent_engine!(cpus: cpus, memory_gib: memory_gib) if container
       end
 
-      # Converge the post-enrollment posture (needs the enrolled runner dir).
+      # Converge the post-enrollment requirements (needs the enrolled runner dir).
       #
       # @param runner_dir [String]
       # @return [void]
@@ -61,28 +62,28 @@ module Dev
       # @param labels [String] comma-separated labels (config.sh shape)
       # @param agent_user [String, nil] run-as user override (default ai-agent)
       # @param bootstrap [Dev::AgentBootstrap, nil] injectable for tests
-      # @return [Array<AgentPostureContract>]
+      # @return [Array<AgentHostContract>]
       sig do
         params(
           labels: String,
           agent_user: T.nilable(String),
           bootstrap: T.nilable(Dev::AgentBootstrap),
-        ).returns(T::Array[AgentPostureContract])
+        ).returns(T::Array[AgentHostContract])
       end
       def for(labels, agent_user: nil, bootstrap: nil)
-        return [] unless agent_posture?(labels)
+        return [] unless agent_host?(labels)
 
         resolved = bootstrap ||
           (agent_user ? AgentBootstrap.new(agent_user: agent_user) : AgentBootstrap.new)
-        [AgentPostureContract.new(bootstrap: resolved)]
+        [AgentHostContract.new(bootstrap: resolved)]
       end
 
-      # Whether an advertised label set carries the agent posture obligation.
+      # Whether an advertised label set makes this box an agent host.
       #
       # @param labels [String] comma-separated labels (config.sh shape)
       # @return [Boolean]
       sig { params(labels: String).returns(T::Boolean) }
-      def agent_posture?(labels)
+      def agent_host?(labels)
         labels.split(",").map(&:strip).intersect?(AGENT_CAPABILITY_LABELS)
       end
     end

@@ -14,7 +14,7 @@ class Dev::LabelContractsTest < Minitest::Test
     Dev::LabelContracts.for("ue-engine,x64").empty?
   end
 
-  test "agent capability labels carry the agent posture contract" do
+  test "agent capability labels carry the agent host contract" do
     Expect
     Dev::LabelContracts.for("ai-build", bootstrap: typed_mock(Dev::AgentBootstrap)).length == 1
     Dev::LabelContracts.for("macos,ai-learn", bootstrap: typed_mock(Dev::AgentBootstrap)).length == 1
@@ -53,7 +53,7 @@ class Dev::LabelContractsTest < Minitest::Test
     bootstrap = typed_mock(Dev::AgentBootstrap)
     contract = Dev::LabelContracts.for("ai-learn", bootstrap: bootstrap).fetch(0)
 
-    When "converging the post-enrollment posture"
+    When "converging the post-enrollment steps"
     bootstrap.expects(:after_enroll!).with(runner_dir: "/tmp/runner").once
     contract.after_enroll!(runner_dir: "/tmp/runner")
 

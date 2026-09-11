@@ -42,9 +42,9 @@ class Dev::RunnerStatusTest < Minitest::Test
     When "reporting"
     status.report
 
-    Then "the registration line says so and no posture section appears"
+    Then "the registration line says so and no agent host section appears"
     out.string.include?("not registered")
-    !out.string.include?("Agent posture")
+    !out.string.include?("Agent host")
   end
 
   test "reports the registered scope read from the runner's own record" do
@@ -64,7 +64,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     out.string.include?("registered: d3mlabs/cellbound-3d")
   end
 
-  test "inspects the full agent posture for agent-capability labels" do
+  test "inspects the full agent host for agent-capability labels" do
     Given "an agent-labeled config over an all-green host"
     out = StringIO.new
     runner_dir = Dir.mktmpdir
@@ -88,8 +88,8 @@ class Dev::RunnerStatusTest < Minitest::Test
     When "reporting"
     status.report
 
-    Then "every posture fact reads ok"
-    out.string.include?("Agent posture")
+    Then "every agent host fact reads ok"
+    out.string.include?("Agent host")
     !out.string.include?("[!!]")
     out.string.include?("agent user ai-agent")
     out.string.include?("sudoers edge")
@@ -98,7 +98,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     out.string.include?("colima")
   end
 
-  test "flags every missing posture fact" do
+  test "flags every missing agent host fact" do
     Given "an agent-labeled config over a cold host"
     out = StringIO.new
     status = build_status(

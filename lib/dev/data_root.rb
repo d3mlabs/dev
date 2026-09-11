@@ -4,11 +4,11 @@
 module Dev
   # Where dev's host-side artifacts (engines, dep caches, steam depots) live.
   #
-  # On a plain machine that is `~/.dev`. On an agent-posture host the register
+  # On a plain machine that is `~/.dev`. On an agent host the register
   # bootstrap provisions a shared root (plans#26: anything both identities use
   # is system-visible, not per-user) and the data root points there — for the
   # human *and* the agent, so one engine tree serves both. Resolution is
-  # derivable, never recorded (posture doctrine: inspected, no posture file):
+  # derivable, never recorded (plans#26: inspected, no record file):
   # explicit `DEV_DATA_ROOT` env → the shared root when it exists → `~/.dev`.
   #
   # `expand` is the seam every dev-managed path takes: a configured path under

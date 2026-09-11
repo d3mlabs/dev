@@ -23,7 +23,7 @@ module Dev
       class BootstrapError < StandardError; end
       class SteamCmdError < StandardError; end
 
-      # Resolved through the data root (shared on agent-posture hosts).
+      # Resolved through the data root (shared on agent hosts).
       DEFAULT_DIR = T.let(Dev::DataRoot.expand("~/.dev/steamcmd"), String)
       LINUX_URL = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz"
       MACOS_URL = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_osx.tar.gz"

@@ -62,7 +62,7 @@ class Dev::AgentBootstrapTest < Minitest::Test
     raises Dev::AgentBootstrap::UnsupportedPlatformError
   end
 
-  test "converge! is a no-op when the posture already holds" do
+  test "converge! is a no-op when the host is already converged" do
     Given "a host where every probe answers converged"
     executor = RecordedBootstrapExecutor.new(
       probe_results: {
@@ -172,7 +172,7 @@ class Dev::AgentBootstrapTest < Minitest::Test
   end
 
   test "converge! provisions a fresh shared root with cooperative modes" do
-    Given "a converged identity posture but no shared root"
+    Given "converged identities but no shared root"
     executor = converged_identity_executor
     shared_root = File.join(Dir.mktmpdir, "dev")
 
@@ -341,10 +341,10 @@ class Dev::AgentBootstrapTest < Minitest::Test
     plist = File.join(agents_dir, "actions.runner.d3mlabs-x.mac.plist")
     work = File.join(runner_dir, "_work")
 
-    When "converging the post-enrollment posture"
+    When "converging the post-enrollment steps"
     bootstrap(executor, launch_agents_dir: agents_dir).after_enroll!(runner_dir: runner_dir)
 
-    Then "the _work tree gets the cooperative grant; the plist gets the posture; the service restarts"
+    Then "the _work tree gets the cooperative grant; the plist gets the service env; the service restarts"
     File.directory?(work)
     executor.runs.include?(["sudo", "chgrp", "-R", "ai", work])
     executor.runs.include?(["sudo", "chmod", "-R", "g+rwX", work])
@@ -365,7 +365,7 @@ class Dev::AgentBootstrapTest < Minitest::Test
     agents_dir = Dir.mktmpdir
     plist = File.join(agents_dir, "actions.runner.d3mlabs-x.mac.plist")
 
-    When "converging the post-enrollment posture"
+    When "converging the post-enrollment steps"
     bootstrap(executor, launch_agents_dir: agents_dir).after_enroll!(runner_dir: runner_dir)
 
     Then "Add fallbacks ran"
@@ -381,7 +381,7 @@ class Dev::AgentBootstrapTest < Minitest::Test
     executor = RecordedBootstrapExecutor.new
     runner_dir = Dir.mktmpdir
 
-    When "converging the post-enrollment posture"
+    When "converging the post-enrollment steps"
     bootstrap(executor).after_enroll!(runner_dir: runner_dir)
 
     Then
@@ -400,7 +400,7 @@ class Dev::AgentBootstrapTest < Minitest::Test
       launch_agents_dir: Dir.mktmpdir,
     )
 
-    When "converging the post-enrollment posture"
+    When "converging the post-enrollment steps"
     bs.after_enroll!(runner_dir: runner_dir)
 
     Then "a warning names the missing CLI"
@@ -435,7 +435,7 @@ class Dev::AgentBootstrapTest < Minitest::Test
     executor = Dev::AgentBootstrap::Executor.new
 
     Expect
-    executor.capture("echo", "posture") == "posture\n"
+    executor.capture("echo", "hello") == "hello\n"
     executor.capture("false") == ""
     executor.capture("dev-test-no-such-binary-#{Process.pid}") == ""
   end

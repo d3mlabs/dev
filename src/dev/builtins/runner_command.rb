@@ -14,10 +14,10 @@ module Dev
     # (plans#26): converge, then enroll.
     #
     # `register` first converges the label contracts of every advertised
-    # label (agent-capability labels carry the agent posture bootstrap; bare
+    # label (agent-capability labels carry the agent host bootstrap; bare
     # labels converge nothing), then performs the enrollment ceremony —
     # unchanged from the old `runner-setup`, which survives as an alias —
-    # and finally the post-enrollment posture against the enrolled runner
+    # and finally the post-enrollment steps against the enrolled runner
     # dir. Repo-scoped by default, org-scoped with `--org`;
     # `--labels`/`--dir`/`--name`/`--repo` override the dev.yml block;
     # `--agent-user` overrides the ai-agent default run-as user.
@@ -42,7 +42,7 @@ module Dev
         T.proc.params(
           labels: String,
           agent_user: T.nilable(String),
-        ).returns(T::Array[Dev::LabelContracts::AgentPostureContract])
+        ).returns(T::Array[Dev::LabelContracts::AgentHostContract])
       end
 
       # Builds the status inspector; injected for tests.
@@ -114,7 +114,7 @@ module Dev
         [args.first, args.drop(1)]
       end
 
-      # Converge, then enroll, then the posture the enrollment enables.
+      # Converge, then enroll, then the steps the enrollment enables.
       #
       # @param args [Array<String>]
       # @param context [Dev::ExecutionContext]

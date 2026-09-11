@@ -12,12 +12,12 @@ require "dev/colima_provisioner"
 require "dev/data_root"
 
 module Dev
-  # The agent posture bootstrap (plans#26 layer 3), converged by
+  # The agent host bootstrap (plans#26 layer 3), converged by
   # `dev runner register` when an advertised label carries the agent
   # contract. Host-singular, idempotent, admin-prompting: every step probes
   # before it mutates, so re-running register re-converges — which is also
-  # the drift repair. The posture is inspected, never recorded: there is no
-  # posture file, every fact here is re-derivable from the host.
+  # the drift repair. The result is inspected, never recorded: there is no
+  # record file, every fact here is re-derivable from the host.
   #
   # What it converges: the hidden non-admin agent OS user, the shared `ai`
   # group, and the one-way sudoers edge (runner user → agent, SETENV, with
@@ -26,15 +26,15 @@ module Dev
   # group names.
   #
   # macOS-only today: the admin CLIs (sysadminctl, dseditgroup, visudo) are
-  # Darwin's, and the only agent-posture hosts are Macs (plans#26 approach
+  # Darwin's, and the only agent hosts are Macs (plans#26 approach
   # A). A bare registration (no agent labels) never reaches this class.
   class AgentBootstrap
     extend T::Sig
 
-    # Agent posture was requested on a host this bootstrap cannot converge.
+    # The agent host bootstrap was requested on a host it cannot converge.
     class UnsupportedPlatformError < RuntimeError; end
 
-    # An admin command exited nonzero — the posture is not converged.
+    # An admin command exited nonzero — the host is not converged.
     class StepFailedError < RuntimeError; end
 
     # The run-as identity jobs execute under; a register-time parameter.
@@ -151,7 +151,7 @@ module Dev
       @launch_agents_dir = launch_agents_dir
     end
 
-    # Converge the host-singular posture: agent user, group, sudoers edge,
+    # Converge the host-singular facts: agent user, group, sudoers edge,
     # shared root (with the one-off ~/.dev migration).
     #
     # @return [void]
@@ -196,8 +196,8 @@ module Dev
     # Steps 4 and 7, run after the enrollment ceremony (they touch artifacts
     # config.sh/svc.sh just created): the `_work` job-checkout tree becomes a
     # cooperative read-write space (the @workdir that /ask, /split, and
-    # PR-mode /build edit in place), and the runner service records the
-    # posture — Umask 002 so re-checkouts stay group-accessible, and
+    # PR-mode /build edit in place), and the runner service gets its
+    # env — Umask 002 so re-checkouts stay group-accessible, and
     # AI_FLOW_AGENT_USER as the single record of "jobs landing here execute
     # as X" (no manual env step). The agent CLI resolution check is
     # warn-only: the cursor-cli cask arrives via the ai-flow checkout's
@@ -249,7 +249,7 @@ module Dev
       return if @darwin
 
       raise UnsupportedPlatformError,
-        "the agent posture bootstrap is macOS-only today (plans#26 approach A); " \
+        "the agent host bootstrap is macOS-only today (plans#26 approach A); " \
         "agent-capability labels cannot be served by this host."
     end
 
@@ -394,7 +394,7 @@ module Dev
       step!("sudo", "find", work, "-type", "d", "-exec", "chmod", "g+s", "{}", "+")
     end
 
-    # Step 7: the runner service plist carries the posture — Umask 002 and
+    # Step 7: the runner service plist carries the service env — Umask 002 and
     # AI_FLOW_AGENT_USER — applied between a service stop/start so launchd
     # rereads it. The plist name comes from the `.service` record svc.sh
     # wrote at install.

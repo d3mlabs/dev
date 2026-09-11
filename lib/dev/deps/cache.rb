@@ -24,7 +24,7 @@ module Dev
       # Raised when a requested key is not in the cache.
       class CacheMissError < StandardError; end
 
-      # Resolved through the data root so an agent-posture host's shared root
+      # Resolved through the data root so an agent host's shared root
       # holds one download cache for both identities.
       DEFAULT_DIR = T.let(Pathname.new(Dev::DataRoot.expand("~/.dev/cache")), Pathname)
 

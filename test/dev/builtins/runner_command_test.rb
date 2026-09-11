@@ -74,7 +74,7 @@ class Dev::Builtins::RunnerCommandTest < Minitest::Test
     org == true
   end
 
-  test "register converges contracts before the ceremony and finishes the posture after it" do
+  test "register converges contracts before the ceremony and finishes the post-enrollment steps after it" do
     Given "an agent-labeled block over a recording contract"
     _wirings, events, command = build_recording_command(contracts: 1)
     context = build_context(runner_config)

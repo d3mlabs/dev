@@ -13,10 +13,10 @@ require "dev/runner_setup_config"
 require "dev/settings"
 
 module Dev
-  # `dev runner status` — the inspect-only half of the posture doctrine:
+  # `dev runner status` — register's inspect-only counterpart:
   # the checkout's `runner:` block vs this host's registration, plus the
   # inspected reality of each advertised label's contract. Nothing here
-  # mutates and nothing is recorded — posture facts are re-derived from the
+  # mutates and nothing is recorded — every fact is re-derived from the
   # host every time (plans#26: inspected, never recorded).
   class RunnerStatus
     extend T::Sig
@@ -78,13 +78,13 @@ module Dev
       end
     end
 
-    # Print the report: registration, per-label posture, host tooling.
+    # Print the report: registration, per-label facts, host tooling.
     #
     # @return [void]
     sig { void }
     def report
       report_registration
-      report_agent_posture if LabelContracts.agent_posture?(@config.labels)
+      report_agent_host if LabelContracts.agent_host?(@config.labels)
       report_host_tooling
     end
 
@@ -123,8 +123,8 @@ module Dev
 
     # Every fact the agent contract obliges, re-derived from the host.
     sig { void }
-    def report_agent_posture
-      @out.puts "Agent posture (#{@agent_user}):"
+    def report_agent_host
+      @out.puts "Agent host (#{@agent_user}):"
       line(@executor.quiet?("id", "-u", @agent_user), "agent user #{@agent_user} exists")
       [@runner_user, @agent_user].each do |member|
         member_ok = @executor.quiet?(
