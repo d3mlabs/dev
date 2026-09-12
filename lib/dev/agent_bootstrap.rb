@@ -46,6 +46,13 @@ module Dev
     # The sudoers drop-in carrying the one-way spawn edge.
     SUDOERS_PATH = "/etc/sudoers.d/ai-flow-agent"
 
+    # The shared DDC directory under the shared root. UE disables a shared
+    # cache store whose path is missing rather than creating it (probed on
+    # ue5-mac 5.8), so register provisions the leaf; cellbound-3d's committed
+    # DDC config points here (a cross-repo literal, duplicated knowingly like
+    # the shared root itself — d3mlabs/cellbound-3d#157).
+    DDC_DIR = "ddc"
+
     # Runs the admin CLIs. `run` streams (sudo password prompts must reach
     # the terminal), `quiet?` probes success silently, `capture` returns
     # stdout ("" on failure) — the recorded-executor seam tests fake.
@@ -302,23 +309,34 @@ module Dev
     end
 
     # Step 5: the shared data root both identities resolve (see
-    # Dev::DataRoot — presence is the record). Fresh roots get cooperative
+    # Dev::DataRoot — presence is the record), plus the shared DDC leaf the
+    # engine expects to pre-exist (DDC_DIR). Fresh dirs get cooperative
     # modes: human-owned so `dev up` writes it, group ai + setgid +
     # group-writable so cooperative caches (the shared DDC) work, world-
-    # readable so the agent reads it like /opt/homebrew. An existing root is
-    # left alone — drift shows up in `dev runner status`, and deleting the
-    # root re-converges. Then the one-off migration.
+    # readable so the agent reads it like /opt/homebrew. An existing dir is
+    # left alone — drift shows up in `dev runner status`, and deleting it
+    # re-converges. Then the one-off migration.
     sig { void }
     def ensure_shared_root!
-      unless File.directory?(@shared_root)
-        @out.puts ">>> Provisioning the shared root at #{@shared_root} ..."
-        FileUtils.mkdir_p(@shared_root)
-        step!("sudo", "chown", @runner_user, @shared_root)
-        step!("sudo", "chgrp", GROUP, @shared_root)
-        step!("sudo", "chmod", "2775", @shared_root)
-      end
+      ensure_cooperative_dir!(@shared_root, "the shared root")
+      ensure_cooperative_dir!(File.join(@shared_root, DDC_DIR), "the shared DDC")
 
       migrate_home_artifacts!
+    end
+
+    # mkdir + cooperative modes for a shared directory, first time only.
+    #
+    # @param path [String] absolute directory to provision
+    # @param description [String] what the progress line calls it
+    sig { params(path: String, description: String).void }
+    def ensure_cooperative_dir!(path, description)
+      return if File.directory?(path)
+
+      @out.puts ">>> Provisioning #{description} at #{path} ..."
+      FileUtils.mkdir_p(path)
+      step!("sudo", "chown", @runner_user, path)
+      step!("sudo", "chgrp", GROUP, path)
+      step!("sudo", "chmod", "2775", path)
     end
 
     # The one-off ~/.dev migration: artifact trees (engines, caches, steam
