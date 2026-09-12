@@ -4,6 +4,7 @@
 require "fileutils"
 require "open3"
 require "shellwords"
+require_relative "../data_root"
 
 module Dev
   module Deps
@@ -22,7 +23,8 @@ module Dev
       class BootstrapError < StandardError; end
       class SteamCmdError < StandardError; end
 
-      DEFAULT_DIR = T.let(File.expand_path("~/.dev/steamcmd"), String)
+      # Resolved through the data root (shared on agent hosts).
+      DEFAULT_DIR = T.let(Dev::DataRoot.expand("~/.dev/steamcmd"), String)
       LINUX_URL = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz"
       MACOS_URL = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_osx.tar.gz"
 

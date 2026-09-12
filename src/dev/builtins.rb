@@ -6,7 +6,7 @@ module Dev
   # the sealed Command hierarchy's declared open edge — with its
   # collaborators constructor-injected; per-call values stay method-side.
   # The composition root (Runner) decides which builtins exist for a given
-  # project (config-gated: runner-setup only with a `runner:` block,
+  # project (config-gated: runner only with a `runner:` block,
   # provide-image/reset-container only with a build container).
   module Builtins; end
 end
@@ -24,6 +24,6 @@ require_relative "builtins/learnings_command"
 require_relative "builtins/plan_command"
 require_relative "builtins/provide_image_command"
 require_relative "builtins/reset_container_command"
-require_relative "builtins/runner_setup_command"
+require_relative "builtins/runner_command"
 require_relative "builtins/up_command"
 require_relative "builtins/update_deps_command"

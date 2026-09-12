@@ -4,7 +4,7 @@
 module Dev
   # Value object for the `runner` block in dev.yml.
   #
-  # When present, `dev runner-setup` registers the current host as the repo's
+  # When present, `dev runner register` registers the current host as the repo's
   # self-hosted GitHub Actions runner with these labels. dev owns the install
   # logic (Dev::RunnerSetup), so every repo declares only its runner identity
   # here instead of vendoring a bespoke setup script.

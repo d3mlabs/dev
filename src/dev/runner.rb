@@ -164,7 +164,7 @@ module Dev
     # The composition root: the one place the repository (consumed only by
     # CommandService, the onion rule) and the builtin set are constructed.
     # Which builtins exist is config-gated here — project builtins only with
-    # a manifest, runner-setup only with a `runner:` block,
+    # a manifest, runner (+ its runner-setup alias) only with a `runner:` block,
     # provide-image/reset-container only with a build container.
     #
     # @param manifest [ProjectManifest, nil]
@@ -274,7 +274,11 @@ module Dev
       }, T::Hash[String, BuiltinCommand])
       builtins["provide-image"] = Builtins::ProvideImageCommand.new if manifest.build_container
       builtins["reset-container"] = Builtins::ResetContainerCommand.new if manifest.build_container&.persist
-      builtins["runner-setup"] = Builtins::RunnerSetupCommand.new if manifest.runner
+      if manifest.runner
+        builtins["runner"] = Builtins::RunnerCommand.new
+        # The pre-register name survives as an alias for `runner register`.
+        builtins["runner-setup"] = Builtins::RunnerCommand.new(implied_subcommand: "register")
+      end
       builtins
     end
   end

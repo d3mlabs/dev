@@ -9,6 +9,7 @@ require "yaml"
 
 require "dev/build_watcher"
 require "dev/container_engine"
+require "dev/data_root"
 require "dev/deps/lockfile"
 
 module Dev
@@ -139,7 +140,7 @@ module Dev
           install_dir = dep.metadata&.fetch("install_dir", nil)
           next unless install_dir
 
-          base = File.expand_path(install_dir)
+          base = Dev::DataRoot.expand(install_dir)
           # Point at the version-keyed subdir the integration publishes to, so the
           # build context tracks the locked version (see resolve_versioned_volumes).
           contexts[dep.name.downcase] = dep.version ? File.join(base, dep.version.to_s) : base
@@ -164,7 +165,7 @@ module Dev
 
         volumes.map do |spec|
           host, container = spec.split(":", 2)
-          version = versions[File.expand_path(T.must(host))]
+          version = versions[Dev::DataRoot.expand(T.must(host))]
           version ? "#{host}/#{version}:#{container}" : spec
         end
       end
@@ -181,7 +182,7 @@ module Dev
           install_dir = dep.metadata&.fetch("install_dir", nil)
           next unless install_dir && dep.version
 
-          acc[File.expand_path(install_dir)] = dep.version.to_s
+          acc[Dev::DataRoot.expand(install_dir)] = dep.version.to_s
         end
       end
 
@@ -413,7 +414,7 @@ module Dev
       assert_local_mounts!
       volumes.flat_map do |spec|
         host, container = spec.split(":", 2)
-        ["-v", "#{File.expand_path(T.must(host))}:#{container}"]
+        ["-v", "#{Dev::DataRoot.expand(T.must(host))}:#{container}"]
       end
     end
 
