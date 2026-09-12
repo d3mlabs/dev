@@ -42,9 +42,11 @@ end unless defined?(RecordedBootstrapExecutor)
 transform!(RSpock::AST::Transformation)
 class Dev::AgentBootstrapTest < Minitest::Test
   # Filesystem-facing params always point at tmp paths: an already-provisioned
-  # shared root and no ~/.dev to migrate, so identity-step tests stay focused.
+  # shared root (DDC dir included) and no ~/.dev to migrate, so identity-step
+  # tests stay focused.
   def bootstrap(executor, darwin: true, **kwargs)
-    defaults = { shared_root: Dir.mktmpdir, home_dev: File.join(Dir.mktmpdir, "absent-home-dev") }
+    provisioned_root = Dir.mktmpdir.tap { |root| FileUtils.mkdir_p(File.join(root, "ddc")) }
+    defaults = { shared_root: provisioned_root, home_dev: File.join(Dir.mktmpdir, "absent-home-dev") }
     Dev::AgentBootstrap.new(
       runner_user: "human", executor: executor, out: StringIO.new, darwin: darwin,
       **defaults.merge(kwargs)
@@ -179,12 +181,33 @@ class Dev::AgentBootstrapTest < Minitest::Test
     When "converging"
     bootstrap(executor, shared_root: shared_root).converge!
 
-    Then "the root exists, human-owned, group ai, setgid group-writable"
+    Then "root and DDC dir exist, human-owned, group ai, setgid group-writable"
     File.directory?(shared_root)
+    File.directory?(File.join(shared_root, "ddc"))
     executor.runs == [
       ["sudo", "chown", "human", shared_root],
       ["sudo", "chgrp", "ai", shared_root],
       ["sudo", "chmod", "2775", shared_root],
+      ["sudo", "chown", "human", File.join(shared_root, "ddc")],
+      ["sudo", "chgrp", "ai", File.join(shared_root, "ddc")],
+      ["sudo", "chmod", "2775", File.join(shared_root, "ddc")],
+    ]
+  end
+
+  test "converge! provisions the DDC dir under an existing shared root" do
+    Given "a shared root provisioned before the DDC dir existed"
+    executor = converged_identity_executor
+    shared_root = Dir.mktmpdir
+
+    When "converging"
+    bootstrap(executor, shared_root: shared_root).converge!
+
+    Then "only the DDC dir is provisioned (the root itself is left alone)"
+    File.directory?(File.join(shared_root, "ddc"))
+    executor.runs == [
+      ["sudo", "chown", "human", File.join(shared_root, "ddc")],
+      ["sudo", "chgrp", "ai", File.join(shared_root, "ddc")],
+      ["sudo", "chmod", "2775", File.join(shared_root, "ddc")],
     ]
   end
 
@@ -226,11 +249,13 @@ class Dev::AgentBootstrapTest < Minitest::Test
   end
 
   test "an existing shared root is left alone (no mode churn)" do
-    Given "an already-provisioned shared root"
+    Given "an already-provisioned shared root carrying its DDC dir"
     executor = converged_identity_executor
+    shared_root = Dir.mktmpdir
+    FileUtils.mkdir_p(File.join(shared_root, "ddc"))
 
-    When "converging (bootstrap helper defaults to an existing shared root)"
-    bootstrap(executor).converge!
+    When "converging"
+    bootstrap(executor, shared_root: shared_root).converge!
 
     Then
     executor.runs.empty?
