@@ -319,6 +319,34 @@ class Dev::Builtins::RunnerCommandTest < Minitest::Test
     true
   end
 
+  test "the default factories build the real collaborators" do
+    Given "a command with its default wiring, every construction boundary intercepted"
+    # RunnerSetup#run registers the host and RunnerStatus#report inspects it,
+    # so the test intercepts both construction boundaries and asserts the
+    # default factories' wiring (the bare ue-engine label makes the default
+    # contracts factory resolve to no contracts). Discovery is redirected at
+    # an empty home so the run never depends on this machine's enrollments.
+    empty_discovery = Dev::RunnerDiscovery.new(home: Dir.mktmpdir)
+    Dev::RunnerDiscovery.expects(:new).returns(empty_discovery)
+    setup = typed_mock(Dev::RunnerSetup)
+    setup.expects(:run).once
+    setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
+    setup.stubs(:resolve_scope).returns("owner/repo")
+    Dev::RunnerSetup.expects(:new)
+      .with(config: Dev::RunnerSetupConfig.new(labels: "ue-engine"), repo: nil, org: false).returns(setup)
+    status = typed_mock(Dev::RunnerStatus)
+    status.expects(:report).once
+    Dev::RunnerStatus.expects(:new).with(container_required: false).returns(status)
+    command = Dev::Builtins::RunnerCommand.new
+
+    When "running register, then status"
+    command.call(args: ["register", "--labels", "ue-engine"], context: projectless_context)
+    command.call(args: ["status"], context: projectless_context)
+
+    Then "the expectations on the construction boundaries hold"
+    true
+  end
+
   test "an unknown subcommand raises the usage error" do
     Given "a harness"
     harness = build_harness
