@@ -382,6 +382,24 @@ class Dev::AgentBootstrapTest < Minitest::Test
     executor.runs.last == ["./svc.sh", "start", { chdir: runner_dir }]
   end
 
+  test "after_enroll! uses the .service record verbatim when it is a plist path (macOS svc.sh shape)" do
+    Given "a runner dir whose .service records the full plist path, as macOS svc.sh writes it"
+    executor = RecordedBootstrapExecutor.new
+    runner_dir = Dir.mktmpdir
+    agents_dir = Dir.mktmpdir
+    plist = File.join(agents_dir, "actions.runner.d3mlabs.mac.plist")
+    File.write(File.join(runner_dir, ".service"), "#{plist}\n")
+
+    When "converging the post-enrollment steps"
+    bootstrap(executor, launch_agents_dir: agents_dir).after_enroll!(runner_dir: runner_dir)
+
+    Then "PlistBuddy targets the recorded path, not a re-joined one"
+    executor.runs.include?(["/usr/libexec/PlistBuddy", "-c", "Set :Umask 2", plist])
+    executor.runs.include?(
+      ["/usr/libexec/PlistBuddy", "-c", "Set :EnvironmentVariables:AI_FLOW_AGENT_USER ai-agent", plist],
+    )
+  end
+
   test "after_enroll! adds plist keys when Set finds none" do
     Given "PlistBuddy Set failing (fresh plist without the keys)"
     executor = RecordedBootstrapExecutor.new(fail_matching: "Set :")
