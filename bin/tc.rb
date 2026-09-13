@@ -45,11 +45,28 @@ CLI::UI.frame("Type checking...") do
 
   unless CLI::UI.spinner("Verifying gem RBIs are in sync...") do
     Dir.chdir(DEV_ROOT) do
-      _, _, status = Open3.capture3("bundle", "exec", "tapioca", "gem", "--verify")
+      out, err, status = Open3.capture3("bundle", "exec", "tapioca", "gem", "--verify")
 
       unless status.success?
+        # Only tapioca's own verdict ("RBI files are out-of-date", printed to
+        # stderr) means stale RBIs. Any other failure — rbenv shim miss,
+        # bundler missing gems, ruby-pin mismatch, tapioca crash — is a
+        # tooling problem: surface the real output instead of misdiagnosing
+        # it as stale RBIs and sending the reader chasing `dev rbi`.
+        if err.include?("out-of-date")
+          raise RbiOutOfDateError,
+            "RBI files are out of date. Run: dev rbi\nThen commit the updated sorbet/rbi/gems/ files.\n\n#{err.strip}"
+        end
+
+        hint = if err.include?("command not found")
+          "\nThis looks like a shell-activation problem — run through `dev tc` or " \
+            "`shadowenv exec -- bin/tc.rb` so the project Ruby activates."
+        else
+          ""
+        end
         raise RbiOutOfDateError,
-          "RBI files are out of date. Run: dev rbi\nThen commit the updated sorbet/rbi/gems/ files."
+          "tapioca gem --verify failed (exit #{status.exitstatus}), but not because RBIs " \
+            "are stale — fix the underlying error:\n#{[out, err].map(&:strip).reject(&:empty?).join("\n")}#{hint}"
       end
     end
   end
