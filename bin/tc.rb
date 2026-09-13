@@ -45,7 +45,17 @@ CLI::UI.frame("Type checking...") do
 
   unless CLI::UI.spinner("Verifying gem RBIs are in sync...") do
     Dir.chdir(DEV_ROOT) do
-      _, _, status = Open3.capture3("bundle", "exec", "tapioca", "gem", "--verify")
+      _, err, status = Open3.capture3("bundle", "exec", "tapioca", "gem", "--verify")
+
+      # A tapioca that could not run at all (rbenv shim miss, exit 127) is
+      # an environment problem, not stale RBIs — say so, or the error sends
+      # the reader chasing `dev rbi` when the fix is shell activation.
+      if !status.success? && (status.exitstatus == 127 || err.include?("command not found"))
+        raise RbiOutOfDateError,
+          "tapioca could not run (#{err.strip.lines.first&.strip}). This is a shell-environment " \
+            "problem, not stale RBIs — run through `dev tc` or `shadowenv exec -- bin/tc.rb` " \
+            "so the project Ruby activates."
+      end
 
       unless status.success?
         raise RbiOutOfDateError,
