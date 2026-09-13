@@ -5,7 +5,7 @@
 # on the runner (every ai-flow run also prints the list in its job log).
 # Precedence per command: models.<command> > models.default > CLI default.
 models:
-  default: claude-fable-5-high
+  default: claude-fable-5
 
 # The org knowledge repo that /learn --promote and capture-declared
 # PROMOTE: route org-tier lessons to (proposal PRs opened there, the
