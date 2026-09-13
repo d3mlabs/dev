@@ -178,8 +178,16 @@ module Dev
       sig { params(base_dir: Pathname, target_dir: Pathname).void }
       def publish_current(base_dir, target_dir)
         link = base_dir / "current"
+        desired = target_dir.basename.to_s
+        # A pointer that already resolves to the target is converged — skip
+        # the rewrite. The swap is not free idempotence but a write, and
+        # identities that can only read the shared tree (the ai-agent user
+        # on the human-owned engine tree, plans#26) crash on it (caught
+        # live at the plans#36 ceremony via dev install-deps).
+        return if File.symlink?(link.to_s) && File.readlink(link.to_s) == desired
+
         tmp = base_dir / ".current-#{Process.pid}-#{SecureRandom.hex(4)}"
-        File.symlink(target_dir.basename.to_s, tmp.to_s)
+        File.symlink(desired, tmp.to_s)
         File.rename(tmp.to_s, link.to_s)
       rescue StandardError
         FileUtils.rm_f(tmp.to_s) if tmp

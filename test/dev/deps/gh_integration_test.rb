@@ -150,6 +150,33 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "install_all leaves an already-correct current pointer untouched — a read-only shared tree stays usable" do
+    Given "a published version whose current pointer already resolves to it, in a base dir the " \
+          "caller cannot write (the agent identity on the human-owned shared engine tree, plans#26)"
+    dir = Dir.mktmpdir("dev-gh-int-test-")
+    parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
+    install_dir = File.join(dir, "engines", "unreal-engine-css")
+    version_dir = File.join(install_dir, "5.6.1-css-83")
+    FileUtils.mkdir_p(version_dir)
+    File.write(File.join(version_dir, ".dev-gh-release"), "5.6.1-css-83")
+    File.symlink("5.6.1-css-83", File.join(install_dir, "current"))
+    FileUtils.chmod(0o555, install_dir)
+    dep = build_dependency(parts, install_dir)
+    integration = build_integration(parts, File.join(dir, "cache"))
+
+    When "installing again"
+    integration.install_all([dep])
+
+    Then "the converged pointer was recognized, not rewritten (caught live at the plans#36 " \
+         "ceremony: the unconditional rewrite crashed dev install-deps with EACCES)"
+    File.readlink(File.join(install_dir, "current")) == "5.6.1-css-83"
+    integration.download_count == 0
+
+    Cleanup
+    FileUtils.chmod(0o755, install_dir)
+    FileUtils.rm_rf(dir)
+  end
+
   test "install_all installs a new version alongside the existing one when the locked tag changes" do
     Given "an existing version dir for an older tag"
     dir = Dir.mktmpdir("dev-gh-int-test-")
