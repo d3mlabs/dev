@@ -414,8 +414,9 @@ module Dev
 
     # Step 7: the runner service plist carries the service env — Umask 002 and
     # AI_FLOW_AGENT_USER — applied between a service stop/start so launchd
-    # rereads it. The plist name comes from the `.service` record svc.sh
-    # wrote at install.
+    # rereads it. The plist location comes from the `.service` record svc.sh
+    # wrote at install: on macOS that record is the full plist path; on Linux
+    # it is the bare service name, which we resolve under launch_agents_dir.
     #
     # @param runner_dir [String]
     # @raise [StepFailedError] when no service was installed in runner_dir
@@ -428,7 +429,7 @@ module Dev
       end
 
       service = File.read(service_file).strip
-      plist = File.join(@launch_agents_dir, "#{service}.plist")
+      plist = service.end_with?(".plist") ? service : File.join(@launch_agents_dir, "#{service}.plist")
       @out.puts ">>> Writing Umask 002 + AI_FLOW_AGENT_USER=#{@agent_user} into #{plist} ..."
       step!("./svc.sh", "stop", chdir: runner_dir)
       plist_set!(plist, "Umask", "integer", "2")
