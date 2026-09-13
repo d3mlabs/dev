@@ -20,6 +20,15 @@ module Dev
     # The capability labels whose contract is the agent host bootstrap.
     AGENT_CAPABILITY_LABELS = T.let(%w[ai-build ai-learn].freeze, T::Array[String])
 
+    # The full ai-flow label vocabulary — one label per slash command,
+    # routed by ai-flow's reusable workflow (`runner="ai-${word}"`). ai-flow
+    # defines the vocabulary (its README "Adoption checklist" names this
+    # list as the contract); this is dev's documented mirror — a cross-repo
+    # literal duplicated knowingly, like the agent user/group names —
+    # behind `dev runner register --org --ai-flow` (the agent host enrolls
+    # with the full set; a partitioned topology passes --labels instead).
+    AI_FLOW_LABELS = T.let(%w[ai-ask ai-edit ai-split ai-build ai-learn].freeze, T::Array[String])
+
     # The agent host obligation: the host-singular bootstrap, the agent's
     # own container engine when the served repo builds in one, and the
     # post-enrollment service/workdir setup.

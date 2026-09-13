@@ -259,28 +259,35 @@ class RunnerTest < Minitest::Test
     $stderr = old_stderr
   end
 
-  test "usage includes runner-setup when a runner block is declared" do
-    Given "a Runner whose dev.yml declares a runner block"
-    out = StringIO.new
-    runner = build_runner(commands: {}, runner: { "labels" => "ue-engine" }, out: out)
-
-    When "we print usage"
-    runner.run([])
-
-    Then "the runner-setup command is listed"
-    out.string.include?("runner-setup")
-  end
-
-  test "runner-setup is not registered without a runner block" do
-    Given "a Runner with no runner block"
+  test "runner is ungated: every project catalog lists it" do
+    Given "a Runner with a plain dev.yml (no runner block — the key is retired)"
     out = StringIO.new
     runner = build_runner(commands: {}, out: out)
 
     When "we print usage"
     runner.run([])
 
-    Then "no runner-setup command is listed"
-    !out.string.include?("runner-setup")
+    Then "the runner command (and its runner-setup alias) is listed"
+    out.string.include?("runner")
+    out.string.include?("runner-setup")
+  end
+
+  test "a leftover dev.yml runner block warns and is ignored" do
+    Given "a dev.yml still carrying the retired key"
+    out = StringIO.new
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    runner = build_runner(commands: {}, runner: { "labels" => "ue-engine" }, out: out)
+
+    When "we print usage"
+    runner.run([])
+
+    Then "the run proceeds with a retirement warning"
+    $stderr.string.include?("`runner:` is retired")
+    out.string.include?("runner-setup")
+
+    Cleanup
+    $stderr = old_stderr
   end
 
   test "run assembles the execution context and hands the command to the service" do

@@ -108,11 +108,11 @@ module Dev
       ExecutionContext.new(
         ui: @ui,
         project: ProjectContext.new(
+          name: manifest.name,
           root: Dev.target_project_root,
           ruby_version: ShadowenvRuby.resolve_ruby_version(manifest.declared_ruby_version),
           python_version: manifest.declared_python_version,
           build_container: manifest.build_container,
-          runner: manifest.runner,
         ),
       )
     end
@@ -164,8 +164,7 @@ module Dev
     # The composition root: the one place the repository (consumed only by
     # CommandService, the onion rule) and the builtin set are constructed.
     # Which builtins exist is config-gated here — project builtins only with
-    # a manifest, runner (+ its runner-setup alias) only with a `runner:` block,
-    # provide-image/reset-container only with a build container.
+    # a manifest, provide-image/reset-container only with a build container.
     #
     # @param manifest [ProjectManifest, nil]
     # @param context [ExecutionContext]
@@ -199,9 +198,10 @@ module Dev
       service
     end
 
-    # The projectless catalog: `up` is the one command that exists without a
-    # project (its host half is the fresh-box bootstrap — install dev, `dev
-    # up`, ready). The truly global commands (cd, clone, cred, ...) are
+    # The projectless catalog: `up` (its host half is the fresh-box
+    # bootstrap — install dev, `dev up`, ready) and `runner` (enrollment is
+    # a machine concern; `--org` registration and `status` need no
+    # project). The truly global commands (cd, clone, cred, ...) are
     # dispatched before the Runner; everything else requires the project, so
     # it simply isn't registered — a lookup miss maps to the no-dev.yml
     # refusal in exit_for.
@@ -209,9 +209,14 @@ module Dev
     # @return [CommandService]
     sig { returns(CommandService) }
     def build_projectless_command_service
+      builtins = T.let(
+        { "up" => Builtins::UpCommand.new(install_deps_command: Builtins::InstallDepsCommand.new) },
+        T::Hash[String, BuiltinCommand],
+      )
+      builtins.merge!(runner_builtins)
       CommandService.new(
         repository: CommandRepository.new(
-          builtins: { "up" => Builtins::UpCommand.new(install_deps_command: Builtins::InstallDepsCommand.new) },
+          builtins: builtins,
           project_commands: {},
         ),
         executor: CommandExecutor.new(builtin_executor: BuiltinExecutor.new),
@@ -274,12 +279,23 @@ module Dev
       }, T::Hash[String, BuiltinCommand])
       builtins["provide-image"] = Builtins::ProvideImageCommand.new if manifest.build_container
       builtins["reset-container"] = Builtins::ResetContainerCommand.new if manifest.build_container&.persist
-      if manifest.runner
-        builtins["runner"] = Builtins::RunnerCommand.new
-        # The pre-register name survives as an alias for `runner register`.
-        builtins["runner-setup"] = Builtins::RunnerCommand.new(implied_subcommand: "register")
-      end
+      builtins.merge!(runner_builtins)
       builtins
+    end
+
+    # `runner` is ungated: enrollment is a machine concern (register derives
+    # the repo label from the enclosing project; --org needs no project at
+    # all), so the command exists everywhere — including the projectless
+    # catalog.
+    #
+    # @return [Hash{String => BuiltinCommand}]
+    sig { returns(T::Hash[String, BuiltinCommand]) }
+    def runner_builtins
+      {
+        "runner" => Builtins::RunnerCommand.new,
+        # The pre-register name survives as an alias for `runner register`.
+        "runner-setup" => Builtins::RunnerCommand.new(implied_subcommand: "register"),
+      }
     end
   end
 end

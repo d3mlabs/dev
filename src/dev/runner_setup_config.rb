@@ -2,23 +2,12 @@
 # frozen_string_literal: true
 
 module Dev
-  # Value object for the `runner` block in dev.yml.
-  #
-  # When present, `dev runner register` registers the current host as the repo's
-  # self-hosted GitHub Actions runner with these labels. dev owns the install
-  # logic (Dev::RunnerSetup), so every repo declares only its runner identity
-  # here instead of vendoring a bespoke setup script.
-  #
-  # dev.yml example:
-  #   runner:
-  #     labels: ue-engine
-  #     dir: "~/actions-runner-ue"   # optional; defaults to ~/actions-runner-<label>
-  #     name: my-box                 # optional; defaults to the hostname
-  #     version: "2.335.1"           # optional; defaults to RunnerSetup::DEFAULT_VERSION
-  #
-  # labels may be a single string ("ue-engine") or a YAML list ([ue-engine, x64]);
-  # both normalize to the comma-separated form `config.sh --labels` expects. dir,
-  # name, and version are optional overrides (see Dev::RunnerSetup for defaults).
+  # Value object for one enrollment's identity, resolved by `dev runner
+  # register` from its flags and derivations (never a file — the dev.yml
+  # `runner:` block is retired): the comma-separated labels config.sh
+  # expects, plus optional dir/name/version overrides (see Dev::RunnerSetup
+  # for their defaults: ~/actions-runner-<first label>, the hostname, and
+  # the pinned runner version).
   class RunnerSetupConfig
     extend T::Sig
 
