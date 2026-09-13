@@ -2,27 +2,29 @@
 # frozen_string_literal: true
 
 require "etc"
-require "json"
 require "stringio"
 
 require "dev/agent_bootstrap"
 require "dev/data_root"
 require "dev/label_contracts"
-require "dev/runner_setup"
-require "dev/runner_setup_config"
+require "dev/runner_discovery"
+require "dev/runner_registry"
 require "dev/settings"
 
 module Dev
-  # `dev runner status` — register's inspect-only counterpart:
-  # the checkout's `runner:` block vs this host's registration, plus the
-  # inspected reality of each advertised label's contract. Nothing here
-  # mutates and nothing is recorded — every fact is re-derived from the
-  # host every time (plans#26: inspected, never recorded).
+  # `dev runner status` — register's inspect-only counterpart: this
+  # machine's discovered enrollments (every ~/actions-runner-*/.runner),
+  # each one's labels read from GitHub (their single home — unknown when
+  # offline), and the inspected reality of every agent-labeled enrollment's
+  # contract. Nothing here mutates and nothing is recorded — every fact is
+  # re-derived from the host or GitHub every time (plans#26: inspected,
+  # never recorded). No dev.yml involved: status is the machine's view,
+  # not any repo's.
   class RunnerStatus
     extend T::Sig
 
-    # @param config [Dev::RunnerSetupConfig] the checkout's runner block
-    # @param runner_dir [String] resolved runner install dir
+    # @param discovery [Dev::RunnerDiscovery] this host's enrollments
+    # @param registry [#find] the GitHub-side label reader (never mutates here)
     # @param out [IO, StringIO] report stream
     # @param executor [#quiet?, #capture] probe seam (never mutates)
     # @param agent_user [String] expected run-as user
@@ -33,8 +35,8 @@ module Dev
     # @param container_required [Boolean] whether the served repo declares build.container
     sig do
       params(
-        config: Dev::RunnerSetupConfig,
-        runner_dir: String,
+        discovery: Dev::RunnerDiscovery,
+        registry: T.untyped,
         out: T.any(IO, StringIO),
         executor: T.untyped,
         agent_user: String,
@@ -45,7 +47,7 @@ module Dev
         container_required: T::Boolean,
       ).void
     end
-    def initialize(config:, runner_dir: Dev::RunnerSetup.new(config: config).resolve_dir,
+    def initialize(discovery: Dev::RunnerDiscovery.new, registry: Dev::RunnerRegistry.new,
                    out: $stdout, executor: AgentBootstrap::Executor.new,
                    agent_user: AgentBootstrap::DEFAULT_AGENT_USER,
                    runner_user: T.must(Etc.getpwuid(Process.uid)).name,
@@ -53,8 +55,8 @@ module Dev
                    sudoers_path: AgentBootstrap::SUDOERS_PATH,
                    brewfile_path: self.class.default_brewfile_path,
                    container_required: false)
-      @config = config
-      @runner_dir = runner_dir
+      @discovery = discovery
+      @registry = registry
       @out = out
       @executor = executor
       @agent_user = agent_user
@@ -78,13 +80,13 @@ module Dev
       end
     end
 
-    # Print the report: registration, per-label facts, host tooling.
+    # Print the report: every enrollment, per-label facts, host tooling.
     #
     # @return [void]
     sig { void }
     def report
-      report_registration
-      report_agent_host if LabelContracts.agent_host?(@config.labels)
+      agent_dirs = report_enrollments
+      report_agent_host(agent_dirs) unless agent_dirs.empty?
       report_host_tooling
     end
 
@@ -97,33 +99,54 @@ module Dev
       @out.puts "  #{ok ? "[ok]" : "[!!]"} #{description}"
     end
 
-    # The checkout's expected identity vs the enrolled reality, read from
-    # the runner's own .runner record (never GitHub — status works offline).
-    sig { void }
-    def report_registration
-      @out.puts "Runner (labels: #{@config.labels}, dir: #{@runner_dir}):"
-      scope = registered_scope
-      if scope
-        line(true, "registered: #{scope}")
-      else
-        line(false, "not registered (run `dev runner register`)")
+    # Each discovered enrollment: scope from its own .runner record (works
+    # offline), labels from GitHub. Returns the dirs of enrollments whose
+    # labels carry the agent contract, so the agent host section can check
+    # each one's work tree.
+    #
+    # @return [Array<String>] agent-labeled enrollment dirs
+    sig { returns(T::Array[String]) }
+    def report_enrollments
+      enrollments = @discovery.enrollments
+      if enrollments.empty?
+        @out.puts "No runners enrolled on this host (run `dev runner register`)."
+        return []
+      end
+
+      enrollments.filter_map do |enrollment|
+        @out.puts "Runner '#{enrollment.name}' (#{enrollment.dir}):"
+        line(true, "registered: #{enrollment.scope}")
+        labels = report_labels(enrollment)
+        enrollment.dir if labels && LabelContracts.agent_host?(labels.join(","))
       end
     end
 
-    # @return [String, nil] "owner/repo" or "owner" when enrolled, else nil
-    sig { returns(T.nilable(String)) }
-    def registered_scope
-      raw = File.read(File.join(@runner_dir, ".runner"), encoding: "bom|utf-8")
-      url = JSON.parse(raw)["gitHubUrl"].to_s
-      scope = url.sub(%r{\Ahttps://github\.com/}, "").chomp("/")
-      scope.empty? || scope == url ? nil : scope
-    rescue JSON::ParserError, Errno::ENOENT
+    # The enrollment's custom labels, read from their single home — GitHub.
+    # nil when they can't be known (offline) or the runner is gone
+    # server-side (a stale local dir).
+    #
+    # @param enrollment [Dev::RunnerDiscovery::Enrollment]
+    # @return [Array<String>, nil]
+    sig { params(enrollment: Dev::RunnerDiscovery::Enrollment).returns(T.nilable(T::Array[String])) }
+    def report_labels(enrollment)
+      runner = @registry.find(scope: enrollment.scope, name: enrollment.name)
+      if runner.nil?
+        line(false, "gone on GitHub — stale enrollment (re-run `dev runner register`)")
+        return nil
+      end
+
+      line(true, "labels: #{runner.custom_labels.join(", ")}")
+      runner.custom_labels
+    rescue RunnerRegistry::QueryError => e
+      line(false, "labels unknown (#{e.message})")
       nil
     end
 
     # Every fact the agent contract obliges, re-derived from the host.
-    sig { void }
-    def report_agent_host
+    #
+    # @param runner_dirs [Array<String>] the agent-labeled enrollment dirs
+    sig { params(runner_dirs: T::Array[String]).void }
+    def report_agent_host(runner_dirs)
       @out.puts "Agent host (#{@agent_user}):"
       line(@executor.quiet?("id", "-u", @agent_user), "agent user #{@agent_user} exists")
       [@runner_user, @agent_user].each do |member|
@@ -133,7 +156,9 @@ module Dev
         line(member_ok, "#{member} in the #{AgentBootstrap::GROUP} group")
       end
       line(File.exist?(@sudoers_path), "sudoers edge present (#{@sudoers_path})")
-      line(work_tree_cooperative?, "_work tree cooperative (group #{AgentBootstrap::GROUP}, setgid)")
+      runner_dirs.each do |dir|
+        line(work_tree_cooperative?(dir), "_work tree cooperative in #{dir} (group #{AgentBootstrap::GROUP}, setgid)")
+      end
       line(File.directory?(@shared_root), "shared root present (#{@shared_root})")
       return unless @container_required
 
@@ -142,10 +167,11 @@ module Dev
 
     # Group + setgid facts via stat, so inspection needs no privileges.
     #
+    # @param runner_dir [String]
     # @return [Boolean]
-    sig { returns(T::Boolean) }
-    def work_tree_cooperative?
-      work = File.join(@runner_dir, "_work")
+    sig { params(runner_dir: String).returns(T::Boolean) }
+    def work_tree_cooperative?(runner_dir)
+      work = File.join(runner_dir, "_work")
       return false unless File.directory?(work)
 
       group, perms = @executor.capture("stat", "-f", "%Sg %Sp", work).strip.split(" ", 2)

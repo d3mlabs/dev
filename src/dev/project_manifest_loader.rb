@@ -7,7 +7,6 @@ require "dev/deps"
 require_relative "build_container_config"
 require_relative "command_parser"
 require_relative "project_manifest"
-require_relative "runner_setup_config"
 
 module Dev
   # The boundary coercion for a project's declaration files. Two passes,
@@ -29,10 +28,6 @@ module Dev
     # clean `dev:` error.
     class UnsupportedDevYamlRubyError < RuntimeError; end
 
-    # Host OS keys a `runner` block may be keyed by (one runner identity per
-    # host OS — e.g. unreal-engine's linux build box vs mac editor builder).
-    RUNNER_HOST_KEYS = T.let(%w[linux darwin].freeze, T::Array[String])
-
     sig { params(command_parser: CommandParser).void }
     def initialize(command_parser: CommandParser.new)
       @command_parser = command_parser
@@ -49,12 +44,12 @@ module Dev
     def load(dev_yml_path)
       yaml = YAML.load_file(dev_yml_path)
       reject_removed_ruby_key(yaml)
+      warn_retired_runner_key(yaml)
       raw_commands = yaml["commands"] || {}
       ProjectManifest.new(
         name: T.cast(yaml["name"], String),
         commands: raw_commands.transform_values { |h| @command_parser.parse(h) },
         build_container: parse_build_container(yaml),
-        runner: parse_runner(yaml),
       )
     end
 
@@ -85,7 +80,6 @@ module Dev
         name: manifest.name,
         commands: manifest.commands,
         build_container: manifest.build_container,
-        runner: manifest.runner,
         declared_ruby_version: presence(deps_config&.ruby_version_requirement),
         declared_python_version: presence(deps_config&.python_version),
       )
@@ -112,43 +106,20 @@ module Dev
           'Dev::Deps.define { ruby "x.y.z" }'
     end
 
-    # Parse the top-level `runner` block into a RunnerSetupConfig. Returns nil
-    # when absent or labelless (labels are what make a runner registration
-    # meaningful). labels accept a string or a YAML list, normalized to the
-    # comma-separated form config.sh expects.
+    # `runner:` is a retired dev.yml key — enrollment identity is a machine
+    # fact, not a repo declaration: the repo label derives from `name:` and
+    # everything else is flags (`dev runner register`). A warning, not an
+    # error: the block simply means nothing now, and existing enrollments
+    # keep working untouched.
     #
-    # Two shapes: a flat block (one identity for any host), or a host-keyed
-    # block (`runner: { linux: {...}, darwin: {...} }`) where `dev runner-setup`
-    # registers the identity matching the current host OS — and doesn't exist
-    # on hosts without one.
-    sig { params(yaml: T::Hash[String, T.untyped]).returns(T.nilable(RunnerSetupConfig)) }
-    def parse_runner(yaml)
-      runner = yaml["runner"]
-      return nil unless runner.is_a?(Hash)
+    # @param yaml [Hash]
+    # @return [void]
+    sig { params(yaml: T::Hash[String, T.untyped]).void }
+    def warn_retired_runner_key(yaml)
+      return unless yaml.key?("runner")
 
-      runner = runner[current_host_key] if host_keyed_runner?(runner)
-      return nil unless runner.is_a?(Hash)
-
-      labels = Array(runner["labels"]).map(&:to_s).reject(&:empty?).join(",")
-      return nil if labels.empty?
-
-      RunnerSetupConfig.new(
-        labels: labels,
-        dir: presence(runner["dir"]),
-        name: presence(runner["name"]),
-        version: presence(runner["version"]),
-      )
-    end
-
-    # A runner block is host-keyed when any top-level key is a host OS name.
-    sig { params(runner: T::Hash[String, T.untyped]).returns(T::Boolean) }
-    def host_keyed_runner?(runner)
-      runner.keys.any? { |key| RUNNER_HOST_KEYS.include?(key.to_s) }
-    end
-
-    sig { returns(String) }
-    def current_host_key
-      RUBY_PLATFORM.include?("darwin") ? "darwin" : "linux"
+      $stderr.puts "dev: dev.yml `runner:` is retired and ignored — the repo runner label now derives " \
+                   "from `name:` (`dev runner register`); delete the block."
     end
 
     # Coerce a scalar to a non-empty String, or nil.

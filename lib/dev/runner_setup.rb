@@ -149,6 +149,19 @@ module Dev
       @config.version || DEFAULT_VERSION
     end
 
+    # The registration scope: "owner/repo" (repo mode) or "owner" (org mode —
+    # the org is the resolved repo's owner, so `--org` needs no extra flag).
+    # Public so register can look for an existing enrollment at the target
+    # scope before deciding between the amend path and a fresh enrollment.
+    #
+    # @return [String]
+    # @raise [Error] when the repo can't be resolved
+    sig { returns(String) }
+    def resolve_scope
+      repo = resolve_repo
+      @org ? repo.split("/").fetch(0) : repo
+    end
+
     # The argv `config.sh` is invoked with (relative to the runner dir). Pure, so
     # the registration contract is testable without touching the system.
     #
@@ -188,17 +201,6 @@ module Dev
       return if ok
 
       raise Error, "gh is not authenticated — run: gh auth login"
-    end
-
-    # The registration scope: "owner/repo" (repo mode) or "owner" (org mode —
-    # the org is the resolved repo's owner, so `--org` needs no extra flag).
-    #
-    # @return [String]
-    # @raise [Error] when the repo can't be resolved
-    sig { returns(String) }
-    def resolve_scope
-      repo = resolve_repo
-      @org ? repo.split("/").fetch(0) : repo
     end
 
     # @return [String] "owner/repo"

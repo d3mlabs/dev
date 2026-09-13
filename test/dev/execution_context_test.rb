@@ -10,7 +10,7 @@ class Dev::ExecutionContextTest < Minitest::Test
 
   test "project! unwraps the project half when one exists" do
     Given "a context with a project half"
-    project = Dev::ProjectContext.new(root: Pathname.new("/tmp/ctx-test"), ruby_version: "4.0.1")
+    project = Dev::ProjectContext.new(name: "TestProject", root: Pathname.new("/tmp/ctx-test"), ruby_version: "4.0.1")
     context = Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui), project: project)
 
     Expect "the non-nil project"

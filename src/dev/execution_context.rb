@@ -4,7 +4,6 @@
 require "pathname"
 require_relative "build_container_config"
 require_relative "cli/ui"
-require_relative "runner_setup_config"
 
 module Dev
   # The project half of an execution context: everything resolved from the
@@ -13,11 +12,13 @@ module Dev
   # builtins, yaml commands) or handle its absence as their own business
   # logic (hybrids like `up`).
   class ProjectContext < T::Struct
+    # The manifest-declared project name — the package identity (see
+    # ProjectManifest#slug for its normalized form).
+    const :name, String
     const :root, Pathname
     const :ruby_version, String
     const :python_version, T.nilable(String), default: nil
     const :build_container, T.nilable(Dev::BuildContainerConfig), default: nil
-    const :runner, T.nilable(Dev::RunnerSetupConfig), default: nil
   end
 
   # Context passed to a command execution: the host half (always present)

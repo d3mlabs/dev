@@ -503,129 +503,37 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
   end
 
-  test "#load extracts a runner block with string labels" do
-    Given "a dev.yml file with a runner block"
+  test "#load warns and ignores the retired runner block" do
+    Given "a dev.yml still carrying the retired key"
     tmp = write_dev_yml(<<~YAML)
       name: unreal-engine
       runner:
         labels: ue-engine
-        dir: "~/actions-runner-ue"
-        name: gaming-box
-        version: "2.335.1"
     YAML
+    old_stderr = $stderr
+    $stderr = StringIO.new
 
     When "the manifest is loaded"
     manifest = build_loader.load(Pathname.new(tmp.path))
 
-    Then
-    manifest.runner == Dev::RunnerSetupConfig.new(
-      labels: "ue-engine", dir: "~/actions-runner-ue", name: "gaming-box", version: "2.335.1",
-    )
+    Then "the manifest loads without it, with a retirement warning"
+    manifest.name == "unreal-engine"
+    $stderr.string.include?("`runner:` is retired")
 
     Cleanup
+    $stderr = old_stderr
     tmp.close!
   end
 
-  test "#load normalizes a runner labels list to comma-separated" do
-    Given "a dev.yml file with a runner labels list"
-    tmp = write_dev_yml(<<~YAML)
-      name: snappy
-      runner:
-        labels:
-          - snappy
-          - x64
-    YAML
+  test "#slug normalizes the manifest name into the canonical project id" do
+    Given "manifests whose names carry case and separators"
+    cellbound = Dev::ProjectManifest.new(name: "Cellbound3D", commands: {})
+    unreal = Dev::ProjectManifest.new(name: "unreal-engine", commands: {})
 
-    When "the manifest is loaded"
-    manifest = build_loader.load(Pathname.new(tmp.path))
-
-    Then
-    manifest.runner.labels == "snappy,x64"
-    manifest.runner.dir.nil?
-
-    Cleanup
-    tmp.close!
-  end
-
-  test "#load selects the current host's identity from a host-keyed runner block" do
-    Given "a dev.yml with one runner identity per host OS"
-    tmp = write_dev_yml(<<~YAML)
-      name: unreal-engine
-      runner:
-        linux:
-          labels: ue-engine
-        darwin:
-          labels:
-            - macos
-            - ue-editor
-    YAML
-
-    When "the manifest is loaded"
-    manifest = build_loader.load(Pathname.new(tmp.path))
-
-    Then "the identity matches the OS the test is running on"
-    expected_labels = RUBY_PLATFORM.include?("darwin") ? "macos,ue-editor" : "ue-engine"
-    manifest.runner.labels == expected_labels
-
-    Cleanup
-    tmp.close!
-  end
-
-  test "#load returns nil runner when a host-keyed block has no entry for this host" do
-    Given "a dev.yml keyed only for the other host OS"
-    other_host = RUBY_PLATFORM.include?("darwin") ? "linux" : "darwin"
-    tmp = write_dev_yml(<<~YAML)
-      name: unreal-engine
-      runner:
-        #{other_host}:
-          labels: ue-engine
-    YAML
-
-    When "the manifest is loaded"
-    manifest = build_loader.load(Pathname.new(tmp.path))
-
-    Then "this host has no runner identity"
-    manifest.runner.nil?
-
-    Cleanup
-    tmp.close!
-  end
-
-  test "#load returns nil runner when not declared" do
-    Given "a dev.yml without a runner block"
-    tmp = write_dev_yml(<<~YAML)
-      name: myproject
-      commands:
-        up:
-          run: ./bin/setup.rb
-    YAML
-
-    When "the manifest is loaded"
-    manifest = build_loader.load(Pathname.new(tmp.path))
-
-    Then
-    manifest.runner.nil?
-
-    Cleanup
-    tmp.close!
-  end
-
-  test "#load returns nil runner when labels are absent" do
-    Given "a dev.yml with a labelless runner block"
-    tmp = write_dev_yml(<<~YAML)
-      name: myproject
-      runner:
-        dir: "~/actions-runner"
-    YAML
-
-    When "the manifest is loaded"
-    manifest = build_loader.load(Pathname.new(tmp.path))
-
-    Then
-    manifest.runner.nil?
-
-    Cleanup
-    tmp.close!
+    Expect "downcased, non-alphanumerics stripped — the repo runner label"
+    cellbound.slug == "cellbound3d"
+    unreal.slug == "unrealengine"
+    Dev::ProjectManifest.slug("Cellbound3D") == "cellbound3d"
   end
 
   test "#load handles container: false on individual commands" do
