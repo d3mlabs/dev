@@ -316,6 +316,97 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "a URL-less tap registers by name alone and a failure raises without the escalation hint" do
+    Given "a tap with no URL and a writable brew prefix, where brew tap fails"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    tap = Dev::Deps::Tap.new(name: "org/tap")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new,
+      cache: Dev::Deps::Cache.new(cache_dir: dir),
+      taps: [tap], project_dir: dir, brew_prefix: dir,
+    )
+    integration.stubs(:system).with("brew", "tap", "org/tap").returns(false)
+
+    When "installing all (no deps, taps only)"
+    error = assert_raises(Dev::Deps::BrewIntegration::TapRegistrationError) do
+      integration.install_all([])
+    end
+
+    Then "the error names the tap and carries no escalation hint (we were not escalated)"
+    error.message.include?("brew tap org/tap")
+    !error.message.include?("dev runner register")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "an escalated tap failure carries the sudoers-edge remediation hint" do
+    Given "a URL-less tap and an unwritable brew prefix, where the escalated brew tap fails"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    FileUtils.mkdir_p(prefix)
+    FileUtils.chmod(0o555, prefix)
+    owner = Etc.getpwuid(File.stat(prefix).uid).name
+    tap = Dev::Deps::Tap.new(name: "org/tap")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new,
+      cache: Dev::Deps::Cache.new(cache_dir: dir),
+      taps: [tap], project_dir: dir, brew_prefix: prefix,
+    )
+    integration.stubs(:system).with("sudo", "-n", "-u", owner, "brew", "tap", "org/tap").returns(false)
+
+    When "installing all (no deps, taps only)"
+    error = assert_raises(Dev::Deps::BrewIntegration::TapRegistrationError) do
+      integration.install_all([])
+    end
+
+    Then "the error points at the sudoers brew edge remediation"
+    error.message.include?("dev runner register")
+
+    Cleanup
+    FileUtils.chmod(0o755, prefix)
+    FileUtils.rm_rf(dir)
+  end
+
+  test "brew_prefix is discovered from brew --prefix once and memoized" do
+    Given "an integration with no injected prefix and a brew that answers --prefix"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, cache: Dev::Deps::Cache.new(cache_dir: dir),
+    )
+    Open3.expects(:capture3).with("brew", "--prefix").once.returns(["#{dir}\n", "", stub(success?: true)])
+
+    When "resolving the prefix twice"
+    first = integration.send(:brew_prefix)
+    second = integration.send(:brew_prefix)
+
+    Then "both resolutions return the discovered prefix from a single brew call (Mocha-verified once)"
+    first == dir
+    second == dir
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "brew_prefix is nil when brew is absent, so writes run unescalated" do
+    Given "an integration with no injected prefix and no brew on PATH"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, cache: Dev::Deps::Cache.new(cache_dir: dir),
+    )
+    Open3.stubs(:capture3).with("brew", "--prefix").raises(Errno::ENOENT)
+
+    When "resolving the prefix"
+    prefix = integration.send(:brew_prefix)
+
+    Then "the prefix is nil and escalation is empty"
+    prefix.nil?
+    integration.send(:escalation) == []
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "resolve_file_url resolves a ./ path against the project dir" do
     Given "an integration with a project dir and a project-relative file URI"
     dir = Dir.mktmpdir("dev-brew-int-test-")

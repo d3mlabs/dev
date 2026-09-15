@@ -102,14 +102,14 @@ module Dev
         url = tap.url
         if tap.local? && project_dir && url
           path = resolve_file_url(url, project_dir)
-          success = system(*escalation, "brew", "tap", tap.name, path)
+          success = system(*T.unsafe(escalation), "brew", "tap", tap.name, path)
           raise TapRegistrationError, "brew tap #{tap.name} #{path} failed#{escalation_hint}" unless success
         elsif url
           url_str = url.to_s
-          success = system(*escalation, "brew", "tap", tap.name, url_str)
+          success = system(*T.unsafe(escalation), "brew", "tap", tap.name, url_str)
           raise TapRegistrationError, "brew tap #{tap.name} #{url_str} failed#{escalation_hint}" unless success
         else
-          success = system(*escalation, "brew", "tap", tap.name)
+          success = system(*T.unsafe(escalation), "brew", "tap", tap.name)
           raise TapRegistrationError, "brew tap #{tap.name} failed#{escalation_hint}" unless success
         end
       end
