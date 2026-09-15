@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "etc"
 require "open3"
 require "pathname"
 require "uri"
@@ -15,6 +16,15 @@ module Dev
     # install_all installs each formula/cask via brew. Registers taps
     # (if configured) before the first install.
     #
+    # Homebrew assumes exactly one non-root owner of exactly one prefix, so
+    # on cooperative shared machines (plans#26) a sandboxed agent user
+    # cannot write /opt/homebrew. Brew *writes* (tap, install) therefore
+    # escalate to the prefix owner via `sudo -n` when the prefix is not
+    # writable by the current user — the owner is stat'd at runtime, never
+    # hardcoded, and the NOPASSWD edge is converged by the agent host
+    # bootstrap (Dev::AgentBootstrap). On a single-user machine the prefix
+    # is writable and nothing changes.
+    #
     # Env filtering (install vs skip based on ci/dev) is the caller's
     # responsibility — only pass deps that should be installed.
     class BrewIntegration < Integration
@@ -27,19 +37,24 @@ module Dev
       # @param cache [Cache, nil] shared download cache
       # @param taps [Array<Tap>] Homebrew taps to register before installing
       # @param project_dir [String, Pathname, nil] project root for resolving file:// tap URLs
+      # @param brew_prefix [String, Pathname, nil] the Homebrew prefix
+      #   (discovered via `brew --prefix` when nil; injectable for tests)
       sig do
         params(
           repository: T.nilable(Repository),
           cache: T.nilable(Cache),
           taps: T::Array[Tap],
           project_dir: T.nilable(T.any(String, Pathname)),
+          brew_prefix: T.nilable(T.any(String, Pathname)),
         ).void
       end
-      def initialize(repository:, cache:, taps: [], project_dir: nil)
+      def initialize(repository:, cache:, taps: [], project_dir: nil, brew_prefix: nil)
         super(repository:, cache:)
         @taps = taps
         @project_dir = T.let(project_dir ? Pathname(project_dir) : nil, T.nilable(Pathname))
         @taps_registered = T.let(false, T::Boolean)
+        @brew_prefix = T.let(brew_prefix&.to_s, T.nilable(String))
+        @brew_prefix_resolved = T.let(!brew_prefix.nil?, T::Boolean)
       end
 
       # Install all brew dependencies. Registers taps on first call.
@@ -76,7 +91,8 @@ module Dev
         @taps_registered = true
       end
 
-      # Register a single Homebrew tap.
+      # Register a single Homebrew tap (escalated to the prefix owner when
+      # the prefix is not ours — see the class doc).
       #
       # @param tap [Tap] tap to register
       # @raise [TapRegistrationError] if `brew tap` fails
@@ -86,15 +102,15 @@ module Dev
         url = tap.url
         if tap.local? && project_dir && url
           path = resolve_file_url(url, project_dir)
-          success = system("brew", "tap", tap.name, path)
-          raise TapRegistrationError, "brew tap #{tap.name} #{path} failed" unless success
+          success = system(*escalation, "brew", "tap", tap.name, path)
+          raise TapRegistrationError, "brew tap #{tap.name} #{path} failed#{escalation_hint}" unless success
         elsif url
           url_str = url.to_s
-          success = system("brew", "tap", tap.name, url_str)
-          raise TapRegistrationError, "brew tap #{tap.name} #{url_str} failed" unless success
+          success = system(*escalation, "brew", "tap", tap.name, url_str)
+          raise TapRegistrationError, "brew tap #{tap.name} #{url_str} failed#{escalation_hint}" unless success
         else
-          success = system("brew", "tap", tap.name)
-          raise TapRegistrationError, "brew tap #{tap.name} failed" unless success
+          success = system(*escalation, "brew", "tap", tap.name)
+          raise TapRegistrationError, "brew tap #{tap.name} failed#{escalation_hint}" unless success
         end
       end
 
@@ -163,15 +179,73 @@ module Dev
         system("brew list #{name} >/dev/null 2>&1")
       end
 
-      # Run `brew install` with the given spec.
+      # Run `brew install` with the given spec (escalated to the prefix
+      # owner when the prefix is not ours — see the class doc).
       #
       # @param name [String] dependency name (for error messages)
       # @param spec [String] full install spec (e.g. "cmake@3.31.4")
       # @raise [InstallError] if brew exits non-zero
       sig { params(name: String, spec: String).void }
       def run_brew_install(name, spec)
-        _out, err, status = T.unsafe(Open3).capture3("brew", "install", *spec.split)
-        raise InstallError, "brew install #{spec} failed: #{err}" unless status.success?
+        _out, err, status = T.unsafe(Open3).capture3(*escalation, "brew", "install", *spec.split)
+        return if status.success?
+
+        if sudo_refused?(err)
+          raise InstallError,
+            "brew install #{spec} needs the prefix owner and sudo -n was refused — " \
+            "the brew sudoers edge is missing on this host; run `dev runner register` to re-converge it"
+        end
+
+        raise InstallError, "brew install #{spec} failed: #{err}"
+      end
+
+      # argv prefix for brew write commands: empty when the prefix is
+      # writable by the current user, `sudo -n` to the stat'd prefix owner
+      # otherwise. -n so a missing sudoers edge fails fast instead of
+      # hanging on a password prompt no one is watching.
+      #
+      # @return [Array<String>]
+      sig { returns(T::Array[String]) }
+      def escalation
+        prefix = brew_prefix
+        return [] if prefix.nil? || File.writable?(prefix)
+
+        ["sudo", "-n", "-u", T.must(Etc.getpwuid(File.stat(prefix).uid)).name]
+      end
+
+      # Remediation appended to escalated-write failures: the two host facts
+      # that break them (missing sudoers edge, a path the owner cannot read).
+      #
+      # @return [String] "" when not escalated
+      sig { returns(String) }
+      def escalation_hint
+        return "" if escalation.empty?
+
+        " (escalated to the brew prefix owner: ensure any local tap path is readable " \
+          "by them and the sudoers brew edge exists — run `dev runner register` to re-converge it)"
+      end
+
+      # The Homebrew prefix, resolved once: injected (tests), else asked of
+      # brew itself. nil when brew is absent — writes then run unescalated
+      # and surface brew's own error.
+      #
+      # @return [String, nil]
+      sig { returns(T.nilable(String)) }
+      def brew_prefix
+        return @brew_prefix if @brew_prefix_resolved
+
+        @brew_prefix_resolved = true
+        out, _err, status = Open3.capture3("brew", "--prefix")
+        @brew_prefix = (out.strip if status.success? && !out.strip.empty?)
+      rescue Errno::ENOENT
+        @brew_prefix = nil
+      end
+
+      # @param err [String] a brew invocation's stderr
+      # @return [Boolean] whether sudo -n refused for lack of a NOPASSWD rule
+      sig { params(err: String).returns(T::Boolean) }
+      def sudo_refused?(err)
+        err.include?("a password is required")
       end
     end
   end
