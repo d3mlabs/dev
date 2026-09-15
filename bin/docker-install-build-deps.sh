@@ -47,9 +47,15 @@ export PATH="$(brew --prefix ruby)/bin:$PATH"
 # keeps older brews working: they have no trust subcommand and no policy to
 # satisfy, and if a trust-enforcing brew somehow skips it, the install below
 # still fails loudly.
+#
+# Trust MUST precede tap: current brew evaluates a new tap's formulae at tap
+# time and refuses to load them from an untrusted tap, failing the tap itself
+# ("Cannot tap ...: invalid syntax in tap!") — so trusting afterwards never
+# gets the chance to run. `brew trust` records trust by name before the tap
+# exists.
 echo ">>> Trusting the d3mlabs tap"
-brew tap d3mlabs/d3mlabs
 brew trust d3mlabs/d3mlabs || true
+brew tap d3mlabs/d3mlabs
 
 if [ -n "$DEV_REF" ]; then
   echo ">>> Cloning d3mlabs/dev (${DEV_REF}) — source override"
