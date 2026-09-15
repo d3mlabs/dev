@@ -2,9 +2,9 @@
 # frozen_string_literal: true
 
 require "digest"
+require "fileutils"
 require "pathname"
 require "securerandom"
-require "tmpdir"
 require "yaml"
 
 require "dev/build_watcher"
@@ -541,12 +541,26 @@ module Dev
     # Write each secret value to a private host temp file for bind-mounting into
     # the prewarm container. Returns {id => path}; caller deletes the files.
     #
+    # The files live under the data root, NOT Dir.tmpdir: on macOS + colima the
+    # VM shares $HOME and /Users/Shared but not /var/folders, and docker turns a
+    # bind mount from an unshared host path into an empty directory — the
+    # prewarm then reads an empty secret and fails far from the cause. The tmp
+    # dir is sticky world-writable (like /tmp) because the data root is shared
+    # between the human and agent users; each file itself is 0600.
+    #
     # @param secrets [Hash{String => String}]
     # @return [Hash{String => String}] secret id => temp file path
     sig { params(secrets: T::Hash[String, String]).returns(T::Hash[String, String]) }
     def write_secret_files(secrets)
+      dir = File.join(Dev::DataRoot.path, "tmp")
+      FileUtils.mkdir_p(dir)
+      begin
+        File.chmod(0o1777, dir)
+      rescue Errno::EPERM
+        # Another user owns the dir; it was created with these bits already.
+      end
       secrets.each_with_object({}) do |(id, value), files|
-        path = File.join(Dir.tmpdir, "dev-secret-#{SecureRandom.hex(8)}")
+        path = File.join(dir, "dev-secret-#{SecureRandom.hex(8)}")
         File.open(path, File::WRONLY | File::CREAT | File::EXCL, 0o600) { |f| f.write(value) }
         files[id] = path
       end

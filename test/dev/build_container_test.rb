@@ -1069,6 +1069,23 @@ class BuildContainerTest < Minitest::Test
     files.each_value { |p| File.delete(p) if File.exist?(p) }
   end
 
+  test "write_secret_files places files under the data root, never Dir.tmpdir" do
+    Given "a container VM that shares the data root but not the host tmpdir"
+    # macOS + colima: the VM shares $HOME and /Users/Shared, NOT /var/folders
+    # (Dir.tmpdir). A bind mount from an unshared path silently mounts an empty
+    # directory, so the prewarm reads an empty secret and fails downstream.
+
+    When "writing secret files"
+    files = build_container.write_secret_files({ "TOK" => "s3cr3t" })
+
+    Then "each file lives under the resolved data root"
+    files.values.all? { |p| p.start_with?(Dev::DataRoot.path) }
+    files.values.none? { |p| p.start_with?(Dir.tmpdir) }
+
+    Cleanup
+    files.each_value { |p| File.delete(p) if File.exist?(p) }
+  end
+
   test "service_container_name keys the name by image, workspace, and tag" do
     Given "a full image:tag and the checkout it runs in"
     root = Pathname("/work/snappy")
