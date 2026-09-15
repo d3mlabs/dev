@@ -46,6 +46,17 @@ module Dev
     # The sudoers drop-in carrying the one-way spawn edge.
     SUDOERS_PATH = "/etc/sudoers.d/ai-flow-agent"
 
+    # Where brew lives on supported hosts, in discovery order (Apple
+    # Silicon, Intel mac, Linuxbrew).
+    BREW_LOCATIONS = T.let(
+      [
+        "/opt/homebrew/bin/brew",
+        "/usr/local/bin/brew",
+        "/home/linuxbrew/.linuxbrew/bin/brew",
+      ].freeze,
+      T::Array[String],
+    )
+
     # The shared DDC directory under the shared root. UE disables a shared
     # cache store whose path is missing rather than creating it (probed on
     # ue5-mac 5.8), so register provisions the leaf; cellbound-3d's committed
@@ -132,6 +143,8 @@ module Dev
     # @param shared_root [String] where the shared data root is provisioned
     # @param home_dev [String] the per-user data dir migrated out of
     # @param launch_agents_dir [String] where svc.sh installs runner plists
+    # @param brew_executable [String, nil] the host's brew binary (discovered
+    #   from BREW_LOCATIONS; injectable for tests; nil = no brew edge)
     sig do
       params(
         agent_user: String,
@@ -142,12 +155,14 @@ module Dev
         shared_root: String,
         home_dev: String,
         launch_agents_dir: String,
+        brew_executable: T.nilable(String),
       ).void
     end
     def initialize(agent_user: DEFAULT_AGENT_USER, runner_user: T.must(Etc.getpwuid(Process.uid)).name,
                    executor: Executor.new, out: $stdout, darwin: RUBY_PLATFORM.include?("darwin"),
                    shared_root: DataRoot::SHARED_ROOT, home_dev: File.expand_path(DataRoot::HOME_ROOT),
-                   launch_agents_dir: File.join(Dir.home, "Library", "LaunchAgents"))
+                   launch_agents_dir: File.join(Dir.home, "Library", "LaunchAgents"),
+                   brew_executable: BREW_LOCATIONS.find { |path| File.exist?(path) })
       @agent_user = agent_user
       @runner_user = runner_user
       @executor = executor
@@ -156,6 +171,7 @@ module Dev
       @shared_root = shared_root
       @home_dev = home_dev
       @launch_agents_dir = launch_agents_dir
+      @brew_executable = brew_executable
     end
 
     # Converge the host-singular facts: agent user, group, sudoers edge,
@@ -237,18 +253,44 @@ module Dev
     # The sudoers drop-in content: the one-way NOPASSWD SETENV edge (env is
     # allowlisted by the caller's --preserve-env, which is why SETENV is
     # safe here), plus the agent-side umask defaults that keep agent-created
-    # dirs group-accessible for the dispatcher's cleanup and `git add`.
+    # dirs group-accessible for the dispatcher's cleanup and `git add`,
+    # plus the brew escalation edge (when the host has brew).
     #
     # @return [String]
     sig { returns(String) }
     def sudoers_content
-      <<~SUDOERS
-        #{@runner_user} ALL=(#{@agent_user}) NOPASSWD:SETENV: ALL
-        Defaults>#{@agent_user} env_reset, umask=0002, umask_override
-      SUDOERS
+      lines = [
+        "#{@runner_user} ALL=(#{@agent_user}) NOPASSWD:SETENV: ALL",
+        "Defaults>#{@agent_user} env_reset, umask=0002, umask_override",
+      ]
+      edge = brew_edge
+      lines << edge if edge
+      "#{lines.join("\n")}\n"
     end
 
     private
+
+    # The brew escalation edge (the Homebrew single-user gap on cooperative
+    # machines): the agent may run exactly brew as the prefix owner,
+    # NOPASSWD, so `dev install-deps` converges formulae without a human
+    # even though the prefix belongs to the enrolling user. The owner is
+    # stat'd here at bootstrap time — never hardcoded — and re-running
+    # register re-converges the edge. Omitted when the host has no brew or
+    # the agent owns the prefix itself (nothing to escalate). Consumed by
+    # Dev::Deps::BrewIntegration's `sudo -n` escalation.
+    #
+    # @return [String, nil]
+    sig { returns(T.nilable(String)) }
+    def brew_edge
+      brew = @brew_executable
+      return nil unless brew && File.exist?(brew)
+
+      prefix = File.dirname(File.dirname(brew))
+      owner = T.must(Etc.getpwuid(File.stat(prefix).uid)).name
+      return nil if owner == @agent_user
+
+      "#{@agent_user} ALL=(#{owner}) NOPASSWD: #{brew}"
+    end
 
     # @raise [UnsupportedPlatformError] off macOS
     sig { void }

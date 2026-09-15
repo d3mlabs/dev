@@ -7,6 +7,7 @@ require "dev/deps/brew_repository"
 require "dev/deps/cache"
 require "dev/deps/dependency"
 require "dev/deps/tap"
+require "etc"
 require "pathname"
 require "tmpdir"
 require "uri"
@@ -18,7 +19,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     dir = Dir.mktmpdir("dev-brew-int-test-")
     cache = Dev::Deps::Cache.new(cache_dir: dir)
     repository = Dev::Deps::BrewRepository.new
-    integration = Dev::Deps::BrewIntegration.new(repository: repository, cache: cache)
+    integration = Dev::Deps::BrewIntegration.new(repository: repository, cache: cache, brew_prefix: dir)
     deps = [
       Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
         version: "3.31.4", hash: "SHA256=abc", metadata: {}),
@@ -41,7 +42,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     Given "an unversioned brew dependency (resolved version recorded, no suffix)"
     dir = Dir.mktmpdir("dev-brew-int-test-")
     cache = Dev::Deps::Cache.new(cache_dir: dir)
-    integration = Dev::Deps::BrewIntegration.new(repository: Dev::Deps::BrewRepository.new, cache: cache)
+    integration = Dev::Deps::BrewIntegration.new(repository: Dev::Deps::BrewRepository.new, cache: cache, brew_prefix: dir)
     deps = [
       Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
         version: "4.3.4", hash: "SHA256=abc", metadata: {}),
@@ -63,7 +64,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     Given "a versioned brew dependency (resolved 18.1.8, suffix 18)"
     dir = Dir.mktmpdir("dev-brew-int-test-")
     cache = Dev::Deps::Cache.new(cache_dir: dir)
-    integration = Dev::Deps::BrewIntegration.new(repository: Dev::Deps::BrewRepository.new, cache: cache)
+    integration = Dev::Deps::BrewIntegration.new(repository: Dev::Deps::BrewRepository.new, cache: cache, brew_prefix: dir)
     deps = [
       Dev::Deps::Dependency.new(name: "llvm", integration: :brew, group: :build,
         version: "18.1.8", hash: "SHA256=abc",
@@ -87,7 +88,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     dir = Dir.mktmpdir("dev-brew-int-test-")
     cache = Dev::Deps::Cache.new(cache_dir: dir)
     repository = Dev::Deps::BrewRepository.new
-    integration = Dev::Deps::BrewIntegration.new(repository: repository, cache: cache)
+    integration = Dev::Deps::BrewIntegration.new(repository: repository, cache: cache, brew_prefix: dir)
     deps = [
       Dev::Deps::Dependency.new(name: "bad_formula", integration: :brew, group: :build,
         version: "1.0.0", hash: nil, metadata: { "version_suffix" => "1" }),
@@ -115,7 +116,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     Given "two brew dependencies, the first of which fails to install"
     dir = Dir.mktmpdir("dev-brew-int-test-")
     cache = Dev::Deps::Cache.new(cache_dir: dir)
-    integration = Dev::Deps::BrewIntegration.new(repository: Dev::Deps::BrewRepository.new, cache: cache)
+    integration = Dev::Deps::BrewIntegration.new(repository: Dev::Deps::BrewRepository.new, cache: cache, brew_prefix: dir)
     deps = [
       Dev::Deps::Dependency.new(name: "bad_formula", integration: :brew, group: :build,
         version: "1.0.0", hash: nil, metadata: {}),
@@ -153,7 +154,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     cache = Dev::Deps::Cache.new(cache_dir: dir)
     tap = Dev::Deps::Tap.new(name: "local/tap", url: "file://#{dir}/brew-tap")
     integration = Dev::Deps::BrewIntegration.new(
-      repository: Dev::Deps::BrewRepository.new, cache: cache, taps: [tap], project_dir: dir,
+      repository: Dev::Deps::BrewRepository.new, cache: cache, taps: [tap], project_dir: dir, brew_prefix: dir,
     )
     integration.expects(:system).with("brew", "tap", "local/tap", "#{dir}/brew-tap").returns(true)
 
@@ -176,7 +177,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     cache = Dev::Deps::Cache.new(cache_dir: dir)
     tap = Dev::Deps::Tap.new(name: "org/tap", url: "https://github.com/org/homebrew-tap")
     integration = Dev::Deps::BrewIntegration.new(
-      repository: Dev::Deps::BrewRepository.new, cache: cache, taps: [tap], project_dir: dir,
+      repository: Dev::Deps::BrewRepository.new, cache: cache, taps: [tap], project_dir: dir, brew_prefix: dir,
     )
     integration.expects(:system).with("brew", "tap", "org/tap", "https://github.com/org/homebrew-tap").returns(true)
 
@@ -185,6 +186,222 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
 
     Then "brew tap received the URL (expectation verified by Mocha)"
     true
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "brew writes run unescalated when the prefix is writable by the current user" do
+    Given "an integration whose brew prefix is writable"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    FileUtils.mkdir_p(prefix)
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new,
+      cache: Dev::Deps::Cache.new(cache_dir: dir),
+      brew_prefix: prefix,
+    )
+    deps = [
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
+        version: "4.3.4", hash: nil, metadata: {}),
+    ]
+    integration.stubs(:brew_installed?).returns(false)
+    Open3.expects(:capture3).with("brew", "install", "cmake").returns(["", "", stub(success?: true)])
+
+    When "installing all"
+    integration.install_all(deps)
+
+    Then "brew ran directly, no sudo (Mocha-verified)"
+    true
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "brew writes escalate to the prefix owner when the prefix is not writable" do
+    Given "an integration whose brew prefix is owned read-only"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    FileUtils.mkdir_p(prefix)
+    FileUtils.chmod(0o555, prefix)
+    owner = Etc.getpwuid(File.stat(prefix).uid).name
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new,
+      cache: Dev::Deps::Cache.new(cache_dir: dir),
+      brew_prefix: prefix,
+    )
+    deps = [
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
+        version: "4.3.4", hash: nil, metadata: {}),
+    ]
+    integration.stubs(:brew_installed?).returns(false)
+    Open3.expects(:capture3)
+         .with("sudo", "-n", "-u", owner, "brew", "install", "cmake")
+         .returns(["", "", stub(success?: true)])
+
+    When "installing all"
+    integration.install_all(deps)
+
+    Then "brew ran through sudo -n as the prefix owner (Mocha-verified)"
+    true
+
+    Cleanup
+    FileUtils.chmod(0o755, prefix)
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a sudo refusal surfaces the agent bootstrap remediation" do
+    Given "an unwritable prefix and a sudo -n that refuses (no sudoers edge)"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    FileUtils.mkdir_p(prefix)
+    FileUtils.chmod(0o555, prefix)
+    owner = Etc.getpwuid(File.stat(prefix).uid).name
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new,
+      cache: Dev::Deps::Cache.new(cache_dir: dir),
+      brew_prefix: prefix,
+    )
+    deps = [
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
+        version: "4.3.4", hash: nil, metadata: {}),
+    ]
+    integration.stubs(:brew_installed?).returns(false)
+    Open3.stubs(:capture3)
+         .with("sudo", "-n", "-u", owner, "brew", "install", "cmake")
+         .returns(["", "sudo: a password is required\n", stub(success?: false)])
+
+    When "installing all and capturing the aggregate error"
+    error = nil
+    begin
+      integration.install_all(deps)
+    rescue StandardError => e
+      error = e
+    end
+
+    Then "the failure names the missing sudoers edge and its remediation"
+    error.is_a?(Dev::Deps::Integration::PartialInstallError)
+    error.failures[0][1].message.include?("dev runner register")
+
+    Cleanup
+    FileUtils.chmod(0o755, prefix)
+    FileUtils.rm_rf(dir)
+  end
+
+  test "tap registration escalates with the same prefix-owner rule" do
+    Given "a remote tap and an unwritable brew prefix"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    FileUtils.mkdir_p(prefix)
+    FileUtils.chmod(0o555, prefix)
+    owner = Etc.getpwuid(File.stat(prefix).uid).name
+    tap = Dev::Deps::Tap.new(name: "org/tap", url: "https://github.com/org/homebrew-tap")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new,
+      cache: Dev::Deps::Cache.new(cache_dir: dir),
+      taps: [tap], project_dir: dir, brew_prefix: prefix,
+    )
+    integration.expects(:system)
+               .with("sudo", "-n", "-u", owner, "brew", "tap", "org/tap", "https://github.com/org/homebrew-tap")
+               .returns(true)
+
+    When "installing all (no deps, taps only)"
+    integration.install_all([])
+
+    Then "brew tap ran through sudo -n as the prefix owner (Mocha-verified)"
+    true
+
+    Cleanup
+    FileUtils.chmod(0o755, prefix)
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a URL-less tap registers by name alone and a failure raises without the escalation hint" do
+    Given "a tap with no URL and a writable brew prefix, where brew tap fails"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    tap = Dev::Deps::Tap.new(name: "org/tap")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new,
+      cache: Dev::Deps::Cache.new(cache_dir: dir),
+      taps: [tap], project_dir: dir, brew_prefix: dir,
+    )
+    integration.stubs(:system).with("brew", "tap", "org/tap").returns(false)
+
+    When "installing all (no deps, taps only)"
+    error = assert_raises(Dev::Deps::BrewIntegration::TapRegistrationError) do
+      integration.install_all([])
+    end
+
+    Then "the error names the tap and carries no escalation hint (we were not escalated)"
+    error.message.include?("brew tap org/tap")
+    !error.message.include?("dev runner register")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "an escalated tap failure carries the sudoers-edge remediation hint" do
+    Given "a URL-less tap and an unwritable brew prefix, where the escalated brew tap fails"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    FileUtils.mkdir_p(prefix)
+    FileUtils.chmod(0o555, prefix)
+    owner = Etc.getpwuid(File.stat(prefix).uid).name
+    tap = Dev::Deps::Tap.new(name: "org/tap")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new,
+      cache: Dev::Deps::Cache.new(cache_dir: dir),
+      taps: [tap], project_dir: dir, brew_prefix: prefix,
+    )
+    integration.stubs(:system).with("sudo", "-n", "-u", owner, "brew", "tap", "org/tap").returns(false)
+
+    When "installing all (no deps, taps only)"
+    error = assert_raises(Dev::Deps::BrewIntegration::TapRegistrationError) do
+      integration.install_all([])
+    end
+
+    Then "the error points at the sudoers brew edge remediation"
+    error.message.include?("dev runner register")
+
+    Cleanup
+    FileUtils.chmod(0o755, prefix)
+    FileUtils.rm_rf(dir)
+  end
+
+  test "brew_prefix is discovered from brew --prefix once and memoized" do
+    Given "an integration with no injected prefix and a brew that answers --prefix"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, cache: Dev::Deps::Cache.new(cache_dir: dir),
+    )
+    Open3.expects(:capture3).with("brew", "--prefix").once.returns(["#{dir}\n", "", stub(success?: true)])
+
+    When "resolving the prefix twice"
+    first = integration.send(:brew_prefix)
+    second = integration.send(:brew_prefix)
+
+    Then "both resolutions return the discovered prefix from a single brew call (Mocha-verified once)"
+    first == dir
+    second == dir
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "brew_prefix is nil when brew is absent, so writes run unescalated" do
+    Given "an integration with no injected prefix and no brew on PATH"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, cache: Dev::Deps::Cache.new(cache_dir: dir),
+    )
+    Open3.stubs(:capture3).with("brew", "--prefix").raises(Errno::ENOENT)
+
+    When "resolving the prefix"
+    prefix = integration.send(:brew_prefix)
+
+    Then "the prefix is nil and escalation is empty"
+    prefix.nil?
+    integration.send(:escalation) == []
 
     Cleanup
     FileUtils.rm_rf(dir)
