@@ -58,13 +58,21 @@ module Dev
       # Install all cmake dependencies: fetch sources, run post_install hooks,
       # generate deps.cmake and deps.targets.cmake.
       #
+      # On any per-dep failure the batch artifacts are NOT rewritten: a file
+      # generated from a partial set would silently drop the failed deps'
+      # variables. The previous files stay in place — stale but consistent,
+      # the same philosophy as the install stamp.
+      #
       # @param dependencies [Array<Dependency>] cmake deps to install
+      # @raise [PartialInstallError] if any dep fails; the rest were attempted
       sig { params(dependencies: T::Array[Dependency]).void }
       def install_all(dependencies)
-        dependencies.each do |dep|
+        failures = collect_failures(dependencies) do |dep|
           fetch_dep(dep)
           run_post_install(dep)
         end
+        raise PartialInstallError, failures if failures.any?
+
         write_deps_cmake(dependencies)
         write_targets_cmake(dependencies)
       end
