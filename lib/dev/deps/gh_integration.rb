@@ -70,9 +70,11 @@ module Dev
       # Install all gh dependencies.
       #
       # @param dependencies [Array<Dependency>] gh deps to install
+      # @raise [PartialInstallError] if any dep fails; the rest were attempted
       sig { params(dependencies: T::Array[Dependency]).void }
       def install_all(dependencies)
-        dependencies.each { |dep| install(dep) }
+        failures = collect_failures(dependencies) { |dep| install(dep) }
+        raise PartialInstallError, failures if failures.any?
       end
 
       private

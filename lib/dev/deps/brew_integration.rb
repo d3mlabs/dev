@@ -44,17 +44,24 @@ module Dev
 
       # Install all brew dependencies. Registers taps on first call.
       #
+      # Tap registration stays outside the per-dep isolation: every install
+      # is predetermined to fail for the same root cause, so it surfaces as
+      # one integration-level failure instead of N per-dep echoes.
+      #
       # @param dependencies [Array<Dependency>] brew deps to install
+      # @raise [TapRegistrationError] if a tap cannot be registered
+      # @raise [PartialInstallError] if any dep fails; the rest were attempted
       sig { params(dependencies: T::Array[Dependency]).void }
       def install_all(dependencies)
         ensure_taps_registered
-        dependencies.each do |dep|
+        failures = collect_failures(dependencies) do |dep|
           if dep.metadata["cask"]
             install_cask(dep)
           else
             install_formula(dep)
           end
         end
+        raise PartialInstallError, failures if failures.any?
       end
 
       private
