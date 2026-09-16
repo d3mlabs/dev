@@ -213,6 +213,117 @@ class Dev::Deps::InstallerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "install still runs the remaining integrations when one raises" do
+    Given "a failing brew integration and a healthy cmake integration"
+    dir = Dir.mktmpdir("installer-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
+    deps = [
+      Dev::Deps::Dependency.new(name: "wwise-cli", integration: :brew, group: :build,
+        version: "1.0", hash: "SHA256=aaa", metadata: {}),
+      Dev::Deps::Dependency.new(name: "googletest", integration: :cmake, group: :test,
+        version: "sha1", hash: nil, metadata: {}),
+    ]
+    lockfile.lock(deps)
+    brew_int = RecordingIntegration.new
+    brew_int.define_singleton_method(:install_all) do |_dependencies|
+      raise "Homebrew prefix is not writable"
+    end
+    cmake_int = RecordingIntegration.new
+    installer = Dev::Deps::Installer.new(
+      lockfile:, integrations: { brew: brew_int, cmake: cmake_int },
+    )
+
+    When "running install and capturing the aggregate error"
+    error = nil
+    begin
+      installer.install
+    rescue StandardError => e
+      error = e
+    end
+
+    Then "cmake still installed its dep and the aggregate error names the brew failure"
+    cmake_int.installed_deps.map(&:name) == ["googletest"]
+    error.is_a?(Dev::Deps::Installer::InstallFailedError)
+    error.message.include?("brew: Homebrew prefix is not writable")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install flattens an integration's per-dep failures into individual entries" do
+    Given "an integration raising PartialInstallError for one of its two deps"
+    dir = Dir.mktmpdir("installer-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
+    deps = [
+      Dev::Deps::Dependency.new(name: "wwise-cli", integration: :brew, group: :build,
+        version: "1.0", hash: "SHA256=aaa", metadata: {}),
+      Dev::Deps::Dependency.new(name: "ccache", integration: :brew, group: :build,
+        version: "4.10", hash: "SHA256=bbb", metadata: {}),
+    ]
+    lockfile.lock(deps)
+    brew_int = RecordingIntegration.new
+    brew_int.define_singleton_method(:install_all) do |_dependencies|
+      raise Dev::Deps::Integration::PartialInstallError.new(
+        [["wwise-cli", RuntimeError.new("no bottle available")]],
+      )
+    end
+    installer = Dev::Deps::Installer.new(lockfile:, integrations: { brew: brew_int })
+
+    When "running install and capturing the aggregate error"
+    error = nil
+    begin
+      installer.install
+    rescue StandardError => e
+      error = e
+    end
+
+    Then "the entry names the failing dep, not just the integration"
+    error.is_a?(Dev::Deps::Installer::InstallFailedError)
+    error.entries == ["brew: wwise-cli — no bottle available"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install orders aggregate entries build wave first" do
+    Given "a failing build-wave integration and a failing app-wave integration"
+    dir = Dir.mktmpdir("installer-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
+    deps = [
+      Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
+        version: "1.90.0", hash: "SHA256=aaa", metadata: {}),
+      Dev::Deps::Dependency.new(name: "ccache", integration: :brew, group: :build,
+        version: "4.10", hash: "SHA256=bbb", metadata: {}),
+    ]
+    lockfile.lock(deps)
+    brew_int = RecordingIntegration.new
+    brew_int.define_singleton_method(:install_all) do |_dependencies|
+      raise "build wave failure"
+    end
+    cmake_int = RecordingIntegration.new
+    cmake_int.define_singleton_method(:install_all) do |_dependencies|
+      raise "app wave failure"
+    end
+    installer = Dev::Deps::Installer.new(
+      lockfile:, integrations: { brew: brew_int, cmake: cmake_int },
+    )
+
+    When "running install and capturing the aggregate error"
+    error = nil
+    begin
+      installer.install
+    rescue StandardError => e
+      error = e
+    end
+
+    Then "root causes (build wave) come before derivative failures (later waves)"
+    error.is_a?(Dev::Deps::Installer::InstallFailedError)
+    error.entries == ["brew: build wave failure", "cmake: app wave failure"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "install skips integration types with no registered integration" do
     Given "a lockfile with an unregistered integration type"
     dir = Dir.mktmpdir("installer-test-")

@@ -135,10 +135,12 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     integration.stubs(:system).returns(false)
 
     When "installing all"
-    integration.install_all(deps)
+    error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
+      integration.install_all(deps)
+    end
 
-    Then
-    raises Dev::Deps::CmakeIntegration::GitCloneError
+    Then "the per-dep failure is the clone error"
+    error.failures[0][1].is_a?(Dev::Deps::CmakeIntegration::GitCloneError)
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -165,10 +167,12 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
                .returns(false)
 
     When "installing all"
-    integration.install_all(deps)
+    error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
+      integration.install_all(deps)
+    end
 
-    Then
-    raises Dev::Deps::CmakeIntegration::GitCheckoutError
+    Then "the per-dep failure is the checkout error"
+    error.failures[0][1].is_a?(Dev::Deps::CmakeIntegration::GitCheckoutError)
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -192,10 +196,12 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
                .returns(false)
 
     When "installing all"
-    integration.install_all(deps)
+    error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
+      integration.install_all(deps)
+    end
 
-    Then
-    raises Dev::Deps::CmakeIntegration::DownloadError
+    Then "the per-dep failure is the download error"
+    error.failures[0][1].is_a?(Dev::Deps::CmakeIntegration::DownloadError)
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -219,10 +225,12 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     integration.stubs(:system).with { |cmd, *_| cmd == "tar" }.returns(false)
 
     When "installing all"
-    integration.install_all(deps)
+    error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
+      integration.install_all(deps)
+    end
 
-    Then
-    raises Dev::Deps::CmakeIntegration::ExtractError
+    Then "the per-dep failure is the extract error"
+    error.failures[0][1].is_a?(Dev::Deps::CmakeIntegration::ExtractError)
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -414,5 +422,56 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     { "url" => "https://example.com/b.tar.gz" } | true         | true
     { "url" => "https://example.com/b.tar.gz" } | false        | false
     {}                                          | true         | false
+  end
+
+  test "install_all leaves batch artifacts untouched when any dep fails, still attempting the rest" do
+    Given "two git deps (first fails to clone) and pre-existing batch artifacts"
+    dir = Dir.mktmpdir("dev-cmake-int-test-")
+    cache = Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache"))
+    integration = Dev::Deps::CmakeIntegration.new(
+      repository: Dev::Deps::GitRepository.new, cache: cache, project_root: dir,
+    )
+    previous_deps_cmake = "# previous consistent deps.cmake\n"
+    previous_targets_cmake = "# previous consistent deps.targets.cmake\n"
+    File.write(File.join(dir, "deps.cmake"), previous_deps_cmake)
+    File.write(File.join(dir, "deps.targets.cmake"), previous_targets_cmake)
+    deps = [
+      Dev::Deps::Dependency.new(
+        name: "bad_repo", integration: :cmake, group: :app,
+        version: "abc123", hash: nil,
+        metadata: { "repo" => "https://example.com/bad_repo" },
+      ),
+      Dev::Deps::Dependency.new(
+        name: "good_repo", integration: :cmake, group: :test,
+        version: "def456", hash: nil,
+        metadata: { "repo" => "https://example.com/good_repo" },
+      ),
+    ]
+    integration.stubs(:system)
+               .with("git", "clone", "--no-checkout", "-q", "https://example.com/bad_repo", anything)
+               .returns(false)
+    integration.expects(:system)
+               .with("git", "clone", "--no-checkout", "-q", "https://example.com/good_repo", anything)
+               .returns(true)
+    integration.stubs(:system)
+               .with("git", "-c", "advice.detachedHead=false", "checkout", anything, chdir: anything)
+               .returns(true)
+
+    When "installing all and capturing the aggregate error"
+    error = nil
+    begin
+      integration.install_all(deps)
+    rescue StandardError => e
+      error = e
+    end
+
+    Then "good_repo was still cloned (Mocha-verified), artifacts are stale-but-consistent"
+    error.is_a?(Dev::Deps::Integration::PartialInstallError)
+    error.failures.map(&:first) == ["bad_repo"]
+    File.read(File.join(dir, "deps.cmake")) == previous_deps_cmake
+    File.read(File.join(dir, "deps.targets.cmake")) == previous_targets_cmake
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 end

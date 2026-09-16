@@ -100,10 +100,48 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
          .returns(["", "Error: No available formula", failed_status])
 
     When "installing all"
-    integration.install_all(deps)
+    error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
+      integration.install_all(deps)
+    end
 
-    Then
-    raises Dev::Deps::BrewIntegration::InstallError
+    Then "the per-dep failure is the brew install error"
+    error.failures[0][1].is_a?(Dev::Deps::BrewIntegration::InstallError)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all attempts the remaining formulae when one fails, then raises the aggregate" do
+    Given "two brew dependencies, the first of which fails to install"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    integration = Dev::Deps::BrewIntegration.new(repository: Dev::Deps::BrewRepository.new, cache: cache)
+    deps = [
+      Dev::Deps::Dependency.new(name: "bad_formula", integration: :brew, group: :build,
+        version: "1.0.0", hash: nil, metadata: {}),
+      Dev::Deps::Dependency.new(name: "good_formula", integration: :brew, group: :build,
+        version: "2.0.0", hash: nil, metadata: {}),
+    ]
+    integration.stubs(:brew_installed?).returns(false)
+    Open3.stubs(:capture3)
+         .with("brew", "install", "bad_formula")
+         .returns(["", "Error: No available formula", stub(success?: false)])
+    Open3.expects(:capture3)
+         .with("brew", "install", "good_formula")
+         .returns(["", "", stub(success?: true)])
+
+    When "installing all and capturing the aggregate error"
+    error = nil
+    begin
+      integration.install_all(deps)
+    rescue StandardError => e
+      error = e
+    end
+
+    Then "good_formula was still installed (Mocha-verified) and the aggregate lists bad_formula"
+    error.is_a?(Dev::Deps::Integration::PartialInstallError)
+    error.failures.map(&:first) == ["bad_formula"]
+    error.failures[0][1].is_a?(Dev::Deps::BrewIntegration::InstallError)
 
     Cleanup
     FileUtils.rm_rf(dir)

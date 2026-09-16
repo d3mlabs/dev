@@ -49,6 +49,26 @@ class FixtureSourceGhIntegration < Dev::Deps::GhIntegration
   end
 end unless defined?(FixtureSourceGhIntegration)
 
+# GhIntegration with per-dep install replaced by a recorder that raises for
+# configured dep names — exercises install_all's failure isolation without
+# any download machinery.
+class ExplodingGhIntegration < Dev::Deps::GhIntegration
+  attr_reader :attempted
+
+  def initialize(fail_names:, **kwargs)
+    super(**kwargs)
+    @fail_names = fail_names
+    @attempted = []
+  end
+
+  private
+
+  def install(dep)
+    @attempted << dep.name
+    raise "release asset missing for #{dep.name}" if @fail_names.include?(dep.name)
+  end
+end unless defined?(ExplodingGhIntegration)
+
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::GhIntegrationTest < Minitest::Test
   # Build a real split zstd tarball: tar + zstd the content dir, then split
@@ -211,11 +231,12 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     integration = build_integration(parts, File.join(dir, "cache"))
 
     When "installing tampered assets"
-    error = assert_raises(Dev::Deps::GhIntegration::IntegrityError) do
+    error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
       integration.install_all([dep])
     end
 
     Then "no version dir is published and the staging dir is cleaned up"
+    error.failures[0][1].is_a?(Dev::Deps::GhIntegration::IntegrityError)
     error.message.include?(parts.first.basename.to_s)
     !File.exist?(File.join(install_dir, "5.6.1-css-83"))
     Dir.glob(File.join(install_dir, ".staging-*")).empty?
@@ -234,10 +255,12 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     integration = build_integration([zip_path], File.join(dir, "cache"))
 
     When "installing the unsupported archive"
-    integration.install_all([dep])
+    error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
+      integration.install_all([dep])
+    end
 
-    Then
-    raises Dev::Deps::GhIntegration::UnsupportedArchiveError
+    Then "the per-dep failure is the archive rejection"
+    error.failures[0][1].is_a?(Dev::Deps::GhIntegration::UnsupportedArchiveError)
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -252,10 +275,12 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     integration = build_integration(parts, File.join(dir, "cache"))
 
     When "installing with a glob that matches nothing"
-    integration.install_all([dep])
+    error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
+      integration.install_all([dep])
+    end
 
     Then "the mismatch is loud — never a silently empty install"
-    raises Dev::Deps::GhIntegration::NoMatchingAssetsError
+    error.failures[0][1].is_a?(Dev::Deps::GhIntegration::NoMatchingAssetsError)
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -385,14 +410,47 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     integration = build_source_integration(tarball, File.join(dir, "project"), File.join(dir, "cache"))
 
     When "installing"
-    error = assert_raises(Dev::Deps::GhIntegration::BuildError) do
+    error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
       integration.install_all([dep])
     end
 
     Then "no version dir is published and staging is cleaned up"
+    error.failures[0][1].is_a?(Dev::Deps::GhIntegration::BuildError)
     error.message.include?("UnrealEngine")
     !File.exist?(File.join(install_dir, "5.6.1-release"))
     Dir.glob(File.join(install_dir, ".staging-*")).empty?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all attempts the remaining deps when one fails, then raises the aggregate" do
+    Given "two gh dependencies, the first of which fails to install"
+    dir = Dir.mktmpdir("dev-gh-int-test-")
+    integration = ExplodingGhIntegration.new(
+      fail_names: ["UnrealEngine"],
+      repository: Dev::Deps::GhRepository.new,
+      cache: Dev::Deps::Cache.new(cache_dir: dir),
+    )
+    deps = [
+      Dev::Deps::Dependency.new(name: "UnrealEngine", integration: :gh, group: :build,
+        version: "5.6.1-css-83", hash: nil, metadata: {}),
+      Dev::Deps::Dependency.new(name: "OtherTool", integration: :gh, group: :build,
+        version: "1.0.0", hash: nil, metadata: {}),
+    ]
+
+    When "installing all and capturing the aggregate error"
+    error = nil
+    begin
+      integration.install_all(deps)
+    rescue StandardError => e
+      error = e
+    end
+
+    Then "the second dep was still attempted and the aggregate lists only the first"
+    integration.attempted == ["UnrealEngine", "OtherTool"]
+    error.is_a?(Dev::Deps::Integration::PartialInstallError)
+    error.failures.map(&:first) == ["UnrealEngine"]
 
     Cleanup
     FileUtils.rm_rf(dir)

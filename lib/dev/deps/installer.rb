@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "sorbet-runtime"
+require_relative "integration"
 
 module Dev
   module Deps
@@ -11,6 +12,28 @@ module Dev
     # live here — not in Integration or Lockfile.
     class Installer
       extend T::Sig
+
+      # Aggregate of every failure across the whole install run, raised after
+      # all integrations were attempted. Entries are ordered by wave (build
+      # first), so root causes appear before derivative failures. Raising
+      # keeps the caller contract unchanged: a failed run exits non-zero and
+      # never writes the installed stamp.
+      class InstallFailedError < StandardError
+        extend T::Sig
+
+        # @return [Array<String>] one human-readable line per failure
+        sig { returns(T::Array[String]) }
+        attr_reader :entries
+
+        # @param entries [Array<String>]
+        sig { params(entries: T::Array[String]).void }
+        def initialize(entries)
+          @entries = entries
+          super("#{entries.size} dependency install failure(s) — " \
+            "installs are idempotent, fix the causes and rerun:\n" \
+            "#{entries.map { |entry| "  #{entry}" }.join("\n")}")
+        end
+      end
 
       # @param lockfile [Lockfile] lockfile reader
       # @param integrations [Hash{Symbol => Integration}] integration type → integration
@@ -41,6 +64,8 @@ module Dev
       # @param env [String, nil] environment name for filtering (nil = no filtering)
       # @param host [String, nil] host OS name for filtering (nil = no filtering)
       # @return [void]
+      # @raise [InstallFailedError] if any integration reported failures; every
+      #   integration was still attempted (failure isolation)
       sig { params(env: T.nilable(String), host: T.nilable(String)).void }
       def install(env: nil, host: nil)
         all_deps = @lockfile.read
@@ -49,8 +74,8 @@ module Dev
 
         build_deps, other_deps = all_deps.partition { |d| d.group == :build }
 
-        dispatch(build_deps)
-        dispatch(other_deps)
+        failures = dispatch(build_deps) + dispatch(other_deps)
+        raise InstallFailedError, failures if failures.any?
       end
 
       private
@@ -62,12 +87,29 @@ module Dev
       # integration generating batch artifacts (deps.cmake) would overwrite
       # its own output with each partial group.
       #
+      # A failing integration never blocks the others: the manifest declares
+      # no cross-integration edges, so the correct failure policy for the
+      # (degenerate) dependency DAG is attempt-all. Failures are collected —
+      # per-dep entries when the integration isolated them
+      # (PartialInstallError), one entry when it failed whole (e.g. a tap
+      # registration preamble) — and reported by the caller's aggregate.
+      #
       # @param deps [Array<Dependency>] dependencies to install
-      # @return [void]
-      sig { params(deps: T::Array[Dependency]).void }
+      # @return [Array<String>] one entry per failure, in dispatch order
+      sig { params(deps: T::Array[Dependency]).returns(T::Array[String]) }
       def dispatch(deps)
-        deps.group_by { |dep| @integrations[dep.integration] }.each do |integration, typed_deps|
-          integration&.install_all(typed_deps)
+        deps.group_by { |dep| @integrations[dep.integration] }.flat_map do |integration, typed_deps|
+          next [] unless integration
+
+          label = typed_deps.map(&:integration).uniq.join("+")
+          begin
+            integration.install_all(typed_deps)
+            []
+          rescue Integration::PartialInstallError => e
+            e.failures.map { |name, error| "#{label}: #{name} — #{error.message}" }
+          rescue StandardError => e
+            ["#{label}: #{e.message}"]
+          end
         end
       end
 

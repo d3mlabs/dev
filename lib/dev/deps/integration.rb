@@ -18,6 +18,27 @@ module Dev
     class Integration
       extend T::Sig
 
+      # Aggregate of per-dep failures within one install_all call: the loop
+      # attempts every dep (one bad formula must not block an unrelated
+      # engine download), collects what failed, and raises this at the end
+      # so the run still fails loudly. The Installer flattens the failures
+      # into its cross-integration report.
+      class PartialInstallError < StandardError
+        extend T::Sig
+
+        # @return [Array<[String, StandardError]>] failed dep name → its error
+        sig { returns(T::Array[[String, StandardError]]) }
+        attr_reader :failures
+
+        # @param failures [Array<[String, StandardError]>]
+        sig { params(failures: T::Array[[String, StandardError]]).void }
+        def initialize(failures)
+          @failures = failures
+          lines = failures.map { |name, error| "  #{name}: #{error.message}" }
+          super("#{failures.size} dep install(s) failed:\n#{lines.join("\n")}")
+        end
+      end
+
       # @param repository [Repository, nil] source adapter for this integration type
       # @param cache      [Cache, nil]      shared download cache
       sig { params(repository: T.nilable(Repository), cache: T.nilable(Cache)).void }
@@ -35,6 +56,30 @@ module Dev
       end
 
       private
+
+      # Attempt the block for every dep, isolating failures so one bad dep
+      # never blocks the rest of the batch. Callers raise PartialInstallError
+      # themselves (after skipping any batch post-processing that requires a
+      # fully-successful set).
+      #
+      # @param dependencies [Array<Dependency>]
+      # @yieldparam dep [Dependency] the dep to install
+      # @return [Array<[String, StandardError]>] failed dep name → its error
+      sig do
+        params(
+          dependencies: T::Array[Dependency],
+          blk: T.proc.params(dep: Dependency).void,
+        ).returns(T::Array[[String, StandardError]])
+      end
+      def collect_failures(dependencies, &blk)
+        failures = T.let([], T::Array[[String, StandardError]])
+        dependencies.each do |dep|
+          blk.call(dep)
+        rescue StandardError => e
+          failures << [dep.name, e]
+        end
+        failures
+      end
 
       sig { returns(T.nilable(Repository)) }
       attr_reader :repository
