@@ -44,6 +44,20 @@ module Dev
     CONTENT_FILES = ["Dockerfile", ".dockerignore", "deps.lock", "build-deps.lock"].freeze
     TAG_PREFIX = "content-"
 
+    # Rosetta-for-Linux forwards cross-thread signals through rt_tgsigqueueinfo
+    # and aborts the whole process when the kernel answers EAGAIN ("rosetta
+    # error: rt_tgsigqueueinfo failed in pend_signal: 11") — no backoff, because
+    # retrying inside its own signal-forwarding path risks deadlock. The queue
+    # fills because .NET GC suspensions across UBT/UHT's hundreds of threads
+    # each become a queued signal under emulation, and RLIMIT_SIGPENDING is one
+    # per-UID bucket shared by every build process (RAM-scaled default, ~96k on
+    # a 24GB VM). The bursts are transient — the queue drains in milliseconds
+    # once a suspension completes — so a wide bucket absorbs them. The limit is
+    # a cap, not a reservation: ~80 bytes of kernel memory per actually-queued
+    # signal, worst case ~80MB, nothing at rest. Applied to every build/prewarm
+    # run; harmless on native hosts.
+    SIGPENDING_ULIMIT = ["--ulimit", "sigpending=1000000"].freeze
+
     # @return [Dev::ContainerEngine] the engine every docker invocation rides
     sig { returns(Dev::ContainerEngine) }
     attr_reader :engine
@@ -393,6 +407,7 @@ module Dev
 
       [
         *@engine.argv_prefix, "run", "--rm",
+        *SIGPENDING_ULIMIT,
         "-v", "#{project_root}:/project",
         *volume_flags(volumes),
         *env_flags,
@@ -510,6 +525,7 @@ module Dev
 
       run_argv = [
         *@engine.argv_prefix, "run", "--name", container,
+        *SIGPENDING_ULIMIT,
         *volume_flags(volumes),
         *secret_mounts,
         base_tag,
