@@ -113,6 +113,19 @@ class BuildContainerTest < Minitest::Test
     cmd.last(3) == ["sh", "-c", "./bin/build.sh"]
   end
 
+  test "docker_run_command widens the pending-signal ulimit (Rosetta pend_signal aborts)" do
+    When "building a docker run command"
+    cmd = build_container.docker_run_command(
+      "jpduchesne89/snappy:content-abc123",
+      project_root: Pathname("/project"),
+      shell_cmd: "./bin/build.sh",
+    )
+
+    Then "the run carries the widened sigpending bucket"
+    cmd.include?("sigpending=1000000")
+    cmd[cmd.index("sigpending=1000000") - 1] == "--ulimit"
+  end
+
   test "docker_run_command renders extra volume mounts" do
     When "building a docker run command with volumes"
     cmd = build_container.docker_run_command(
@@ -1034,6 +1047,7 @@ class BuildContainerTest < Minitest::Test
     1 * bc.prewarm_container_name >> "dev-prewarm-test"
     1 * bc.write_secret_files({ "WWISE_TOKEN" => "tok" }) >> { "WWISE_TOKEN" => "/tmp/dev-secret-xyz" }
     1 * bc.run_watched(["docker", "run", "--name", "dev-prewarm-test",
+      "--ulimit", "sigpending=1000000",
       "-v", "/engines/ue:/ue",
       "-v", "/tmp/dev-secret-xyz:/run/secrets/WWISE_TOKEN:ro",
       "img:tag-base", "sh", "-c", "bash /work/bin/prewarm.sh"], container: "dev-prewarm-test") >> true
@@ -1053,6 +1067,7 @@ class BuildContainerTest < Minitest::Test
     1 * bc.prewarm_container_name >> "dev-prewarm-test"
     1 * bc.write_secret_files({}) >> {}
     1 * bc.run_watched(["docker", "run", "--name", "dev-prewarm-test",
+      "--ulimit", "sigpending=1000000",
       "img:tag-base", "sh", "-c", "false"], container: "dev-prewarm-test") >> false
     engine.runs == [["rm", "-f", "dev-prewarm-test"]]
   end
