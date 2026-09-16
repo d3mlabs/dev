@@ -1058,6 +1058,11 @@ class BuildContainerTest < Minitest::Test
   end
 
   test "write_secret_files writes each secret to a private temp file" do
+    Given "a scratch data root"
+    root = Dir.mktmpdir("bc-data-root-")
+    original = ENV["DEV_DATA_ROOT"]
+    ENV["DEV_DATA_ROOT"] = root
+
     When "writing secret files"
     files = build_container.write_secret_files({ "TOK" => "s3cr3t" })
 
@@ -1066,24 +1071,107 @@ class BuildContainerTest < Minitest::Test
     (File.stat(files["TOK"]).mode & 0o777) == 0o600
 
     Cleanup
-    files.each_value { |p| File.delete(p) if File.exist?(p) }
+    ENV["DEV_DATA_ROOT"] = original
+    FileUtils.rm_rf(root)
   end
 
-  test "write_secret_files places files under the data root, never Dir.tmpdir" do
-    Given "a container VM that shares the data root but not the host tmpdir"
+  test "write_secret_files places files in a private per-uid dir under the data root, never Dir.tmpdir" do
+    Given "a scratch data root"
     # macOS + colima: the VM shares $HOME and /Users/Shared, NOT /var/folders
     # (Dir.tmpdir). A bind mount from an unshared path silently mounts an empty
     # directory, so the prewarm reads an empty secret and fails downstream.
+    root = Dir.mktmpdir("bc-data-root-")
+    original = ENV["DEV_DATA_ROOT"]
+    ENV["DEV_DATA_ROOT"] = root
 
     When "writing secret files"
     files = build_container.write_secret_files({ "TOK" => "s3cr3t" })
 
-    Then "each file lives under the resolved data root"
-    files.values.all? { |p| p.start_with?(Dev::DataRoot.path) }
-    files.values.none? { |p| p.start_with?(Dir.tmpdir) }
+    Then "each file lives in secrets-<uid>, a real dir owned by us, mode 0700"
+    dir = File.join(root, "secrets-#{Process.uid}")
+    files.values.all? { |p| File.dirname(p) == dir }
+    st = File.lstat(dir)
+    st.directory? == true
+    st.uid == Process.uid
+    (st.mode & 0o7777) == 0o700
 
     Cleanup
-    files.each_value { |p| File.delete(p) if File.exist?(p) }
+    ENV["DEV_DATA_ROOT"] = original
+    FileUtils.rm_rf(root)
+  end
+
+  test "write_secret_files refuses a symlinked secrets dir (planted redirect)" do
+    Given "an attacker-planted symlink where the per-uid dir belongs"
+    # The data root's parent (/Users/Shared) ships world-writable on macOS: on
+    # an unprovisioned machine any local user can pre-own the tree and plant a
+    # symlink so our 0600 files land in a directory they control.
+    root = Dir.mktmpdir("bc-data-root-")
+    original = ENV["DEV_DATA_ROOT"]
+    ENV["DEV_DATA_ROOT"] = root
+    elsewhere = File.join(root, "attacker-controlled")
+    FileUtils.mkdir_p(elsewhere)
+    File.symlink(elsewhere, File.join(root, "secrets-#{Process.uid}"))
+
+    When "writing secret files"
+    build_container.write_secret_files({ "TOK" => "s3cr3t" })
+
+    Then "the planted dir is refused, not used"
+    raises Dev::BuildContainer::SecretDirCompromisedError
+
+    Cleanup
+    ENV["DEV_DATA_ROOT"] = original
+    FileUtils.rm_rf(root)
+  end
+
+  test "write_secret_files refuses a secrets dir owned by another user" do
+    Given "a per-uid dir whose owner is not us"
+    root = Dir.mktmpdir("bc-data-root-")
+    original = ENV["DEV_DATA_ROOT"]
+    ENV["DEV_DATA_ROOT"] = root
+    dir = File.join(root, "secrets-#{Process.uid}")
+    FileUtils.mkdir_p(dir)
+    foreign = stub(directory?: true, uid: Process.uid + 1, mode: 0o40700)
+    File.stubs(:lstat).with(dir).returns(foreign)
+
+    When "writing secret files"
+    build_container.write_secret_files({ "TOK" => "s3cr3t" })
+
+    Then "the foreign dir is refused — its owner could swap files under us"
+    raises Dev::BuildContainer::SecretDirCompromisedError
+
+    Cleanup
+    File.unstub(:lstat)
+    ENV["DEV_DATA_ROOT"] = original
+    FileUtils.rm_rf(root)
+  end
+
+  test "write_secret_files sweeps stale secret files a killed run left behind" do
+    Given "a leftover secret file from a SIGKILLed run, and a fresh one"
+    # The ensure-block deletion covers normal failures, but SIGKILL leaves 0600
+    # files under the data root, which macOS never purges (unlike /var/folders).
+    root = Dir.mktmpdir("bc-data-root-")
+    original = ENV["DEV_DATA_ROOT"]
+    ENV["DEV_DATA_ROOT"] = root
+    dir = File.join(root, "secrets-#{Process.uid}")
+    FileUtils.mkdir_p(dir)
+    FileUtils.chmod(0o700, dir)
+    stale = File.join(dir, "dev-secret-stale")
+    fresh = File.join(dir, "dev-secret-fresh")
+    File.write(stale, "old")
+    File.write(fresh, "new")
+    File.utime(Time.now - 172_800, Time.now - 172_800, stale)
+
+    When "writing secret files"
+    files = build_container.write_secret_files({ "TOK" => "s3cr3t" })
+
+    Then "the day-old file is gone; the recent one (a concurrent run's) survives"
+    !File.exist?(stale)
+    File.exist?(fresh)
+    File.read(files["TOK"]) == "s3cr3t"
+
+    Cleanup
+    ENV["DEV_DATA_ROOT"] = original
+    FileUtils.rm_rf(root)
   end
 
   test "service_container_name keys the name by image, workspace, and tag" do
