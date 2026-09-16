@@ -3,6 +3,7 @@
 
 require "test_helper"
 require "dev/agent_bootstrap"
+require "etc"
 require "stringio"
 require "tmpdir"
 
@@ -491,6 +492,53 @@ class Dev::AgentBootstrapTest < Minitest::Test
     content.include?("human ALL=(ai-agent) NOPASSWD:SETENV: ALL")
     content.include?("Defaults>ai-agent env_reset, umask=0002, umask_override")
     content.end_with?("\n")
+  end
+
+  test "sudoers content grants the agent a brew edge to the prefix owner" do
+    Given "a host with brew at a known prefix owned by the human"
+    dir = Dir.mktmpdir
+    brew = File.join(dir, "bin", "brew")
+    FileUtils.mkdir_p(File.dirname(brew))
+    File.write(brew, "")
+    owner = Etc.getpwuid(File.stat(dir).uid).name
+    content = Dev::AgentBootstrap.new(
+      runner_user: "human", darwin: true, brew_executable: brew,
+    ).sudoers_content
+
+    Expect "the agent may run exactly brew as the prefix owner, NOPASSWD"
+    content.include?("ai-agent ALL=(#{owner}) NOPASSWD: #{brew}")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "sudoers content omits the brew edge when brew is absent" do
+    Given "a host with no brew executable"
+    content = Dev::AgentBootstrap.new(
+      runner_user: "human", darwin: true,
+      brew_executable: File.join(Dir.mktmpdir, "no-brew"),
+    ).sudoers_content
+
+    Expect "only the spawn edge and the umask defaults remain"
+    content.lines.size == 2
+  end
+
+  test "sudoers content omits the brew edge when the agent already owns the prefix" do
+    Given "a brew prefix owned by the agent user itself"
+    dir = Dir.mktmpdir
+    brew = File.join(dir, "bin", "brew")
+    FileUtils.mkdir_p(File.dirname(brew))
+    File.write(brew, "")
+    owner = Etc.getpwuid(File.stat(dir).uid).name
+    content = Dev::AgentBootstrap.new(
+      runner_user: "human", agent_user: owner, darwin: true, brew_executable: brew,
+    ).sudoers_content
+
+    Expect "no self-edge is emitted"
+    !content.include?("NOPASSWD: #{brew}")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
   test "the agent user is a register-time parameter" do
