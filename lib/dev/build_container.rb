@@ -2,9 +2,9 @@
 # frozen_string_literal: true
 
 require "digest"
+require "fileutils"
 require "pathname"
 require "securerandom"
-require "tmpdir"
 require "yaml"
 
 require "dev/build_watcher"
@@ -37,6 +37,12 @@ module Dev
     # paths. Both shipped engines answer local_mounts? true; the future
     # remote engine brings its sync strategy instead of reaching this raise.
     class LocalMountsUnsupportedError < RuntimeError; end
+
+    # The per-uid secrets dir under the data root failed verification (symlink,
+    # non-directory, or owned by another user). Writing 0600 secret files into
+    # a dir someone else controls lets its owner swap contents between file
+    # write and container bind mount, so this is a hard stop, never a fallback.
+    class SecretDirCompromisedError < RuntimeError; end
 
     # Always-hashed inputs. deps.lock (app/test deps, e.g. SML) and build-deps.lock
     # (build deps, e.g. the engine) join the Dockerfile so a dependency bump
@@ -557,14 +563,71 @@ module Dev
     # Write each secret value to a private host temp file for bind-mounting into
     # the prewarm container. Returns {id => path}; caller deletes the files.
     #
+    # The files live under the data root, NOT Dir.tmpdir: on macOS + colima the
+    # VM shares $HOME and /Users/Shared but not /var/folders, and docker turns a
+    # bind mount from an unshared host path into an empty directory — the
+    # prewarm then reads an empty secret and fails far from the cause.
+    #
     # @param secrets [Hash{String => String}]
     # @return [Hash{String => String}] secret id => temp file path
+    # @raise [SecretDirCompromisedError] when the per-uid dir fails verification
     sig { params(secrets: T::Hash[String, String]).returns(T::Hash[String, String]) }
     def write_secret_files(secrets)
+      dir = secrets_dir
+      sweep_stale_secrets(dir)
       secrets.each_with_object({}) do |(id, value), files|
-        path = File.join(Dir.tmpdir, "dev-secret-#{SecureRandom.hex(8)}")
+        path = File.join(dir, "dev-secret-#{SecureRandom.hex(8)}")
         File.open(path, File::WRONLY | File::CREAT | File::EXCL, 0o600) { |f| f.write(value) }
         files[id] = path
+      end
+    end
+
+    # The per-identity secrets dir under the data root: secrets-<uid>, 0700,
+    # verified before use. Per-uid rather than a shared sticky-1777 dir because
+    # a shared dir's owner can unlink and replace anyone's files (sticky only
+    # stops non-owners) — a secret-substitution vector between file write and
+    # bind mount. Verification guards the unprovisioned-machine case: the data
+    # root's parent (/Users/Shared) ships world-writable, so any local user can
+    # pre-own the tree before provisioning; a pre-existing entry here is
+    # attacker-suspect until lstat proves it a real directory we own. The dir
+    # sits directly under the data root (not a shared tmp/) so no world-writable
+    # parent can rename a verified dir out from under us post-check.
+    #
+    # @return [String] verified dir path
+    # @raise [SecretDirCompromisedError]
+    sig { returns(String) }
+    def secrets_dir
+      dir = File.join(Dev::DataRoot.path, "secrets-#{Process.uid}")
+      begin
+        Dir.mkdir(dir, 0o700)
+      rescue Errno::EEXIST
+        # Pre-existing entry: verified below like everything else.
+      end
+      st = File.lstat(dir)
+      unless st.directory? && st.uid == Process.uid
+        raise SecretDirCompromisedError,
+          "#{dir} is not a directory owned by uid #{Process.uid} " \
+          "(found #{st.directory? ? "dir" : "non-dir"} owned by uid #{st.uid}). " \
+          "Refusing to write secrets there — remove it and re-run."
+      end
+      # Ours, but normalize the mode (a setgid data root propagates g+s on
+      # Linux; older dev versions never created this dir, so no legacy modes).
+      File.chmod(0o700, dir) if (st.mode & 0o7777) != 0o700
+      dir
+    end
+
+    # Delete day-old dev-secret-* leftovers. The caller's ensure covers normal
+    # failures, but SIGKILL strands 0600 files under the data root, which —
+    # unlike /var/folders — macOS never purges. A day's grace keeps concurrent
+    # runs' live files safe (they exist for minutes, not hours).
+    #
+    # @param dir [String] the verified per-uid secrets dir
+    sig { params(dir: String).void }
+    def sweep_stale_secrets(dir)
+      Dir.glob(File.join(dir, "dev-secret-*")).each do |path|
+        File.delete(path) if Time.now - File.mtime(path) > 86_400
+      rescue Errno::ENOENT
+        # A concurrent sweep won the race; the file is gone either way.
       end
     end
 
