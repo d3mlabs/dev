@@ -48,14 +48,23 @@ class BuildWatcherTest < Minitest::Test
     Dev::BuildWatcher::Result.new(outcome, output)
   end
 
-  test "stalled? is true only when both silent long enough and idle CPU" do
+  test "stalled? is true only when silent long enough, idle CPU, and idle load" do
     Given "a watcher with default thresholds"
     w = watcher
 
-    Expect "silent + idle is a stall; busy CPU or recent output is not"
-    w.stalled?(idle_seconds: 400, cpu_percent: 0.0) == true
-    w.stalled?(idle_seconds: 400, cpu_percent: 80.0) == false
-    w.stalled?(idle_seconds: 10, cpu_percent: 0.0) == false
+    Expect "all three signals idle is a stall; any sign of life is not"
+    w.stalled?(idle_seconds: 400, cpu_percent: 0.0, load_avg: 0.0) == true
+    w.stalled?(idle_seconds: 400, cpu_percent: 80.0, load_avg: 0.0) == false
+    w.stalled?(idle_seconds: 10, cpu_percent: 0.0, load_avg: 0.0) == false
+    w.stalled?(idle_seconds: 400, cpu_percent: 0.0, load_avg: 8.0) == false
+  end
+
+  test "stalled? treats I/O-bound builds (idle CPU, busy load) as alive" do
+    Given "a watcher with default thresholds"
+    w = watcher
+
+    Expect "virtiofs-bound compile starts: container CPU ~0 but D-state work keeps load up"
+    w.stalled?(idle_seconds: 2000, cpu_percent: 1.0, load_avg: 3.2) == false
   end
 
   test "classify_failure retries on a Rosetta/clang crash signature" do
@@ -215,6 +224,39 @@ class BuildWatcherTest < Minitest::Test
 
     Expect "the unreadable value counts as idle"
     w.send(:container_cpu) == 0.0
+
+    Cleanup
+    ENV["PATH"] = original_path
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "container_load parses the 1-minute load average from /proc/loadavg" do
+    Given "a fake docker whose exec reports a loadavg line"
+    tmpdir = Dir.mktmpdir("bw-fake-docker-")
+    fake_docker = File.join(tmpdir, "docker")
+    File.write(fake_docker, "#!/bin/sh\nprintf '3.36 2.90 2.50 4/1290 12345\\n'\n")
+    FileUtils.chmod(0o755, fake_docker)
+    original_path = ENV["PATH"]
+    ENV["PATH"] = "#{tmpdir}:#{original_path}"
+    w = watcher
+
+    Expect "the first field is parsed as a Float"
+    w.send(:container_load) == 3.36
+
+    Cleanup
+    ENV["PATH"] = original_path
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "container_load reports idle when docker cannot be executed at all" do
+    Given "a PATH with no docker"
+    tmpdir = Dir.mktmpdir("bw-empty-path-")
+    original_path = ENV["PATH"]
+    ENV["PATH"] = tmpdir
+    w = watcher
+
+    Expect "the unreadable value counts as idle so a dead container is reclaimable"
+    w.send(:container_load) == 0.0
 
     Cleanup
     ENV["PATH"] = original_path
