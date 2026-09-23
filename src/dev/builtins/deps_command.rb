@@ -34,7 +34,7 @@ module Dev
       end
 
       sig { override.returns(String) }
-      def desc = "Inspect locked dependencies (e.g. deps path ficsit <mod> <platform>)"
+      def desc = "Inspect locked dependencies (e.g. deps path ficsit <mod> <platform>, deps path gh <name>)"
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle

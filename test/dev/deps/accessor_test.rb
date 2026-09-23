@@ -8,6 +8,7 @@ require "dev/deps/cache"
 require "dev/deps/dependency"
 require "dev/deps/ficsit_integration"
 require "dev/deps/xcode_integration"
+require "dev/deps/gh_integration"
 require "pathname"
 require "tmpdir"
 require "stringio"
@@ -62,6 +63,128 @@ class Dev::Deps::AccessorTest < Minitest::Test
       xcode_install_root: install_root,
     )
     [accessor, developer_dir]
+  end
+
+  GH_ENGINE_TAG = "5.8.0-mac-editor-1"
+
+  # Lock a gh engine dep whose `~/.dev` install_dir re-roots onto dir (the
+  # injected data root), optionally publishing the version dir + marker.
+  def setup_locked_gh(dir, installed: true, marker_version: GH_ENGINE_TAG)
+    lockfile = Dev::Deps::Lockfile.new(dir: dir)
+    lockfile.lock([
+      Dev::Deps::Dependency.new(
+        name: "UnrealEngineMac", integration: :gh, group: :editor,
+        version: GH_ENGINE_TAG, hash: nil,
+        metadata: { "repo" => "d3mlabs/unreal-engine", "install_dir" => "~/.dev/engines/ue5-mac" },
+      ),
+    ])
+    version_dir = File.join(dir, "engines", "ue5-mac", GH_ENGINE_TAG)
+    if installed
+      FileUtils.mkdir_p(version_dir)
+      File.write(File.join(version_dir, Dev::Deps::GhIntegration::MARKER_FILE), marker_version)
+    end
+
+    accessor = Dev::Deps::Accessor.new(
+      lockfile: lockfile,
+      cache: Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache")),
+      data_root: dir,
+    )
+    [accessor, version_dir]
+  end
+
+  test "path gh returns the locked version dir under the data root" do
+    Given "a locked and installed gh engine"
+    dir = Dir.mktmpdir("dev-accessor-test-")
+    accessor, version_dir = setup_locked_gh(dir)
+
+    When "asking for the engine path"
+    result = accessor.path("gh", "UnrealEngineMac")
+
+    Then "it is the version-keyed dir, not a current pointer"
+    result == Pathname(version_dir)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "path gh raises NotInstalledError when the version dir is absent" do
+    Given "a locked but uninstalled gh engine"
+    dir = Dir.mktmpdir("dev-accessor-test-")
+    accessor, = setup_locked_gh(dir, installed: false)
+
+    When "asking for the engine path"
+    error = assert_raises(Dev::Deps::Accessor::NotInstalledError) do
+      accessor.path("gh", "UnrealEngineMac")
+    end
+
+    Then "the fix is dev up"
+    error.message.include?("run dev up")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "path gh raises NotInstalledError when the marker records another version" do
+    Given "a version dir whose marker was stamped by a different tag (half-published)"
+    dir = Dir.mktmpdir("dev-accessor-test-")
+    accessor, = setup_locked_gh(dir, marker_version: "5.8.0-mac-editor-0")
+
+    When "asking for the engine path"
+    accessor.path("gh", "UnrealEngineMac")
+
+    Then
+    raises Dev::Deps::Accessor::NotInstalledError
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "path gh raises NotLockedError without the dep in the lockfile" do
+    Given "a lockfile without any gh dep"
+    dir = Dir.mktmpdir("dev-accessor-test-")
+    accessor, = setup_locked_sml(dir, platforms: linux_platforms)
+
+    When "asking for an engine path"
+    error = assert_raises(Dev::Deps::Accessor::NotLockedError) do
+      accessor.path("gh", "UnrealEngineMac")
+    end
+
+    Then "the fix is update-deps"
+    error.message.include?("run dev update-deps")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "path gh raises UsageError without a dep name" do
+    Given "an accessor"
+    dir = Dir.mktmpdir("dev-accessor-test-")
+    accessor, = setup_locked_gh(dir)
+
+    When "asking for a gh path with no name"
+    accessor.path("gh")
+
+    Then
+    raises Dev::Deps::Accessor::UsageError
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "run path gh prints the version dir to the output stream" do
+    Given "a locked and installed gh engine"
+    dir = Dir.mktmpdir("dev-accessor-test-")
+    accessor, version_dir = setup_locked_gh(dir)
+    out = StringIO.new
+
+    When "running deps path gh UnrealEngineMac"
+    accessor.run(["path", "gh", "UnrealEngineMac"], out: out)
+
+    Then
+    out.string.strip == version_dir
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
   test "path xcode returns the pinned DEVELOPER_DIR" do
