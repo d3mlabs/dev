@@ -4,7 +4,6 @@
 require "digest"
 require "fileutils"
 require "pathname"
-require "securerandom"
 require "shellwords"
 require_relative "../data_root"
 require_relative "integration"
@@ -39,6 +38,11 @@ module Dev
     # multi-gigabyte (the UE engine is ~8GB compressed; a built tree far more), so
     # parking a second copy in ~/.dev/cache would double disk usage for no benefit.
     # The version-keyed install dir plus its marker file is the cache.
+    #
+    # Nothing else is written under install_dir: consumers locate the version
+    # dir through `dev deps path gh <name>` (Accessor), so an install is a pure
+    # read once the marker matches — a read-only shared tree (the agent identity
+    # on the human-owned engine tree, plans#26) needs no write to stay usable.
     class GhIntegration < Integration
       extend T::Sig
 
@@ -100,7 +104,6 @@ module Dev
         target_dir = versioned_dir(base_dir, dep.version)
         if version_published?(target_dir, MARKER_FILE, dep.version)
           puts ">>> #{dep.name}@#{dep.version} already installed at #{target_dir}"
-          publish_current(base_dir, target_dir)
           return
         end
 
@@ -127,7 +130,6 @@ module Dev
         else
           puts ">>> #{dep.name}@#{dep.version} published concurrently at #{target_dir}"
         end
-        publish_current(base_dir, target_dir)
       ensure
         FileUtils.rm_rf(staging_dir) if staging_dir
       end
@@ -139,7 +141,6 @@ module Dev
         target_dir = versioned_dir(base_dir, dep.version)
         if version_published?(target_dir, MARKER_FILE, dep.version)
           puts ">>> #{dep.name}@#{dep.version} already installed at #{target_dir}"
-          publish_current(base_dir, target_dir)
           return
         end
 
@@ -164,36 +165,8 @@ module Dev
         else
           puts ">>> #{dep.name}@#{dep.version} published concurrently at #{target_dir}"
         end
-        publish_current(base_dir, target_dir)
       ensure
         FileUtils.rm_rf(staging_dir) if staging_dir
-      end
-
-      # Point <install_dir>/current at the just-installed version via a relative
-      # symlink, swapped in atomically. Host consumers (e.g. cellbound's
-      # build-game.sh via UE_ROOT) reference this stable path without knowing the
-      # locked tag; the versioned dirs themselves stay immutable — only this
-      # pointer moves, to the most recently installed version.
-      #
-      # @param base_dir [Pathname] declared install_dir
-      # @param target_dir [Pathname] the published version dir
-      sig { params(base_dir: Pathname, target_dir: Pathname).void }
-      def publish_current(base_dir, target_dir)
-        link = base_dir / "current"
-        desired = target_dir.basename.to_s
-        # A pointer that already resolves to the target is converged — skip
-        # the rewrite. The swap is not free idempotence but a write, and
-        # identities that can only read the shared tree (the ai-agent user
-        # on the human-owned engine tree, plans#26) crash on it (caught
-        # live at the plans#36 ceremony via dev install-deps).
-        return if File.symlink?(link.to_s) && File.readlink(link.to_s) == desired
-
-        tmp = base_dir / ".current-#{Process.pid}-#{SecureRandom.hex(4)}"
-        File.symlink(desired, tmp.to_s)
-        File.rename(tmp.to_s, link.to_s)
-      rescue StandardError
-        FileUtils.rm_f(tmp.to_s) if tmp
-        raise
       end
 
       # Fetch the tag's source tarball into archive_path. Uses `gh api .../tarball`
