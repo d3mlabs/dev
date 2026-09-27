@@ -1,10 +1,10 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "open3"
 require "pathname"
 require_relative "../skill_installer"
 require_relative "bundler_locker"
+require_relative "shadowenv_exec"
 
 module Dev
   module Deps
@@ -26,42 +26,27 @@ module Dev
       SKILLS_SUBDIR = "skills"
       AGENT_SKILLS_SUBDIRS = [".agents", "skills"].freeze
 
-      # Env overrides a harness (e.g. a sandboxed agent session) may have
-      # exported into dev's own environment, redirecting bundler to an
-      # ephemeral gem cache. The `bundle list` child gets them explicitly
-      # unset so paths resolve from the project's canonical bundler config —
-      # dev never runs under bundler itself, so these unsets are its
-      # equivalent of Bundler.original_env (dev#89).
-      HARNESS_ENV_SCRUB = T.let(
-        [
-          "BUNDLE_PATH",
-          "BUNDLE_APP_CONFIG",
-          "BUNDLE_BIN",
-          "GEM_HOME",
-          "GEM_PATH",
-          "RUBYOPT",
-          "RUBYLIB",
-        ].to_h { |name| [name, nil] }.freeze,
-        T::Hash[String, T.nilable(String)],
-      )
-
       # @param project_root [Pathname, String] repo root (Gemfile + link target)
       # @param skills_dir [Pathname, String, nil] override for tests; defaults
       #   to <project_root>/.agents/skills
       # @param tmpdir [Pathname, String] ephemeral temp root that links must
       #   never target; defaults to Dir.tmpdir (override for tests, whose
       #   fixture gem trees themselves live under the real temp dir)
+      # @param shadowenv_exec [ShadowenvExec] spawn seam for the project's Ruby toolchain
       sig do
         params(
           project_root: T.any(Pathname, String),
           skills_dir: T.nilable(T.any(Pathname, String)),
           tmpdir: T.any(Pathname, String),
+          shadowenv_exec: ShadowenvExec,
         ).void
       end
-      def initialize(project_root:, skills_dir: nil, tmpdir: Dir.tmpdir)
+      def initialize(project_root:, skills_dir: nil, tmpdir: Dir.tmpdir,
+        shadowenv_exec: ShadowenvExec.new(project_root: project_root))
         @project_root = T.let(Pathname(project_root), Pathname)
         @skills_dir = T.let(Pathname(skills_dir || @project_root.join(*AGENT_SKILLS_SUBDIRS)), Pathname)
         @skill_installer = T.let(SkillInstaller.new(skills_dir: @skills_dir, tmpdir: tmpdir), SkillInstaller)
+        @shadowenv_exec = shadowenv_exec
       end
 
       # Scan the locked gem set for shipped skills and refresh the project's
@@ -120,20 +105,17 @@ module Dev
         end
       end
 
-      # Runs under the project's shadowenv for the same reason as
-      # BundlerIntegration: the dev process's own PATH is the invoking
-      # service's, which on headless boxes carries the wrong Ruby. Harness
-      # bundler/gem overrides are scrubbed from the child env (see
-      # HARNESS_ENV_SCRUB) so a sandboxed session cannot redirect the
-      # resolution into its ephemeral cache.
+      # Goes through the ShadowenvExec seam for the same reason as
+      # BundlerIntegration: the project's provisioned Ruby, with dev's own
+      # and any harness's gem env scrubbed so a sandboxed session cannot
+      # redirect the resolution into its ephemeral cache (dev#89).
       #
       # @return [Array<Pathname>] install paths of every gem in the bundle
       sig { returns(T::Array[Pathname]) }
       def bundled_gem_paths
-        out, err, status = Open3.capture3(
-          HARNESS_ENV_SCRUB.merge("BUNDLE_GEMFILE" => gemfile_path.to_s),
-          "shadowenv", "exec", "--", "bundle", "list", "--paths",
-          chdir: @project_root.to_s,
+        out, err, status = @shadowenv_exec.capture3(
+          "bundle", "list", "--paths",
+          env: { "BUNDLE_GEMFILE" => gemfile_path.to_s },
         )
         unless status.success?
           $stderr.puts "dev: warning: could not list bundled gems for skill links (#{err.strip})."
