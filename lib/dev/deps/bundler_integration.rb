@@ -1,10 +1,10 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "open3"
 require "pathname"
 require_relative "integration"
 require_relative "dependency"
+require_relative "shadowenv_exec"
 
 module Dev
   module Deps
@@ -26,19 +26,22 @@ module Dev
 
       GEMFILE = "Gemfile"
 
-      # @param repository   [Repository, nil]  source adapter for bundler deps
-      # @param cache        [Cache, nil]       shared download cache (unused; bundler caches)
-      # @param project_root [String, Pathname] root the generated Gemfile lives in
+      # @param repository     [Repository, nil]  source adapter for bundler deps
+      # @param cache          [Cache, nil]       shared download cache (unused; bundler caches)
+      # @param project_root   [String, Pathname] root the generated Gemfile lives in
+      # @param shadowenv_exec [ShadowenvExec]    spawn seam for the project's Ruby toolchain
       sig do
         params(
           repository: T.nilable(Repository),
           cache: T.nilable(Cache),
           project_root: T.any(String, Pathname),
+          shadowenv_exec: ShadowenvExec,
         ).void
       end
-      def initialize(repository:, cache:, project_root:)
+      def initialize(repository:, cache:, project_root:, shadowenv_exec: ShadowenvExec.new(project_root: project_root))
         super(repository:, cache:)
         @project_root = T.let(Pathname(project_root), Pathname)
+        @shadowenv_exec = shadowenv_exec
       end
 
       # Install all gems via `bundle install` against the generated Gemfile.
@@ -55,11 +58,10 @@ module Dev
 
       private
 
-      # Every subprocess below runs through `shadowenv exec` in the project
-      # root: the dev process inherits the invoking shell's PATH — headless
-      # services (CI, runners) have no shadowenv hook — so a bare `bundle`
-      # or `gem` would resolve to whatever Ruby the host carries instead of
-      # the provisioned toolchain the installed gems must target.
+      # Every subprocess below goes through the ShadowenvExec seam: the
+      # project's provisioned Ruby (not whatever the host's PATH carries),
+      # with dev's own gem env kept out of the child so the installed gems
+      # land in the project's gem home, never dev's (dev#180).
 
       # Ensure a bundler executable is available in the provisioned Ruby.
       # Bundler ships with modern Ruby, so this is normally a no-op; install
@@ -69,16 +71,10 @@ module Dev
       # @return [void]
       sig { void }
       def ensure_bundler!
-        _out, _err, status = Open3.capture3(
-          "shadowenv", "exec", "--", "bundle", "--version",
-          chdir: @project_root.to_s,
-        )
+        _out, _err, status = @shadowenv_exec.capture3("bundle", "--version")
         return if status.success?
 
-        _out, err, status = Open3.capture3(
-          "shadowenv", "exec", "--", "gem", "install", "bundler", "--no-document",
-          chdir: @project_root.to_s,
-        )
+        _out, err, status = @shadowenv_exec.capture3("gem", "install", "bundler", "--no-document")
         raise BundlerMissingError, "failed to install bundler: #{err}" unless status.success?
       end
 
@@ -88,10 +84,9 @@ module Dev
       # @return [void]
       sig { void }
       def run_bundle_install
-        _out, err, status = Open3.capture3(
-          { "BUNDLE_GEMFILE" => gemfile_path.to_s, "BUNDLE_FROZEN" => "true" },
-          "shadowenv", "exec", "--", "bundle", "install",
-          chdir: @project_root.to_s,
+        _out, err, status = @shadowenv_exec.capture3(
+          "bundle", "install",
+          env: { "BUNDLE_GEMFILE" => gemfile_path.to_s, "BUNDLE_FROZEN" => "true" },
         )
         raise InstallError, "bundle install failed: #{err}" unless status.success?
       end
