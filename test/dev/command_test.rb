@@ -126,7 +126,7 @@ class CommandTest < Minitest::Test
     builtin.desc == "open edge"
   end
 
-  test "including Command directly raises: the seal admits only its three declared variants" do
+  test "including Command directly raises: the seal admits only its four declared variants" do
     When "including the sealed module outside its declaring file"
     Class.new { include Dev::Command }
 
@@ -199,6 +199,94 @@ class CommandTest < Minitest::Test
     Expect "both halves are reachable for the executor's dispatch"
     cmd.builtin == builtin
     cmd.project == project
+  end
+
+  test "CommandGroup is final: subclassing raises, keeping descent closed" do
+    When "declaring a subclass of the composite node"
+    Class.new(Dev::CommandGroup)
+
+    Then "sorbet-runtime rejects the open edge"
+    raises RuntimeError
+  end
+
+  test "a CommandGroup is a Command holding its path, children, and declared listing traits" do
+    Given "a pure group of two builtins"
+    path = FakeBuiltin.new(desc: "print a path")
+    group = Dev::CommandGroup.new(
+      path: ["deps"],
+      desc: "Dependency lookups",
+      category: Dev::Command::Category::Lifecycle,
+      children: { "path" => path },
+      hidden: true,
+    )
+
+    Expect "it enters the sealed hierarchy as its own variant, traits as declared"
+    group.is_a?(Dev::Command)
+    group.path == ["deps"]
+    group.children == { "path" => path }
+    group.own.nil?
+    group.desc == "Dependency lookups"
+    group.category == Dev::Command::Category::Lifecycle
+    group.hidden?
+  end
+
+  test "a pure group is staleness-exempt and never stamps: invoked bare it only prints usage" do
+    Given "a group with children and no own run"
+    group = build_group(children: { "path" => FakeBuiltin.new })
+
+    Expect "the guard traits are the usage-print traits"
+    group.staleness_exempt?
+    !group.stamps?
+  end
+
+  test "a runnable group takes its guard and stamp traits from its own run" do
+    Given "a group whose own run is a stamping, guarded builtin"
+    own = FakeBuiltin.new(staleness_exempt: false, stamps: true)
+    group = build_group(children: { "unit" => FakeBuiltin.new }, own: own)
+
+    Expect "the traits are the leaf's: invoked bare, the group IS that command"
+    group.own == own
+    !group.staleness_exempt?
+    group.stamps?
+  end
+
+  test "a group's own run cannot itself be a group" do
+    Given "an inner group"
+    inner = build_group(children: { "x" => FakeBuiltin.new })
+
+    When "declaring it as another group's own run"
+    build_group(children: { "y" => FakeBuiltin.new }, own: inner)
+
+    Then
+    raises Dev::CommandGroup::NestedOwnError
+  end
+
+  test "a group with neither children nor an own run is unrepresentable" do
+    When "declaring an empty group"
+    build_group(children: {})
+
+    Then
+    raises Dev::CommandGroup::EmptyGroupError
+  end
+
+  test "a group may nest another group as a child" do
+    Given "a two-level tree"
+    inner = build_group(children: { "unit" => FakeBuiltin.new })
+    outer = build_group(children: { "test" => inner })
+
+    Expect "the child is reachable by name"
+    outer.children.fetch("test") == inner
+  end
+
+  sig { params(children: T::Hash[String, Dev::Command], own: T.nilable(Dev::Command)).returns(Dev::CommandGroup) }
+  def build_group(children:, own: nil)
+    Dev::CommandGroup.new(
+      path: ["group"],
+      desc: "a group",
+      category: Dev::Command::Category::Workflow,
+      children: children,
+      own: own,
+    )
   end
 
   test "#== returns #{expected} for #{cmd1} vs #{cmd2}" do

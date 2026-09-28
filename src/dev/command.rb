@@ -4,7 +4,7 @@
 require_relative "execution_context"
 
 module Dev
-  # Sealed command hierarchy. A command is one of exactly three shapes:
+  # Sealed command hierarchy. A command is one of exactly four shapes:
   #
   # - BuiltinCommand: a Ruby body dev ships (an abstract class, the
   #   hierarchy's one declared open edge; subclasses live under
@@ -12,9 +12,13 @@ module Dev
   # - ProjectCommand: pure data parsed from a dev.yml `commands:` entry
   # - OverriddenCommand: a project command occupying a builtin's slot (the
   #   builtin runs first, like a hardcoded super())
+  # - CommandGroup: a node of the command tree — named children (any of
+  #   the four shapes) plus an optional leaf of its own for the bare
+  #   invocation (`dev deps path` descends; bare `dev test` runs the
+  #   group's own run, or prints its usage when it has none)
   #
-  # Sealing makes a fourth variant unrepresentable: CommandExecutor
-  # dispatches exhaustively over these three (case + T.absurd), and Sorbet
+  # Sealing makes a fifth variant unrepresentable: CommandExecutor
+  # dispatches exhaustively over these four (case + T.absurd), and Sorbet
   # requires a sealed module's direct heirs beside it, which is why the
   # hierarchy shares this file.
   #
@@ -23,11 +27,11 @@ module Dev
   # descendant, so builtins subclassing an abstract BuiltinCommand class
   # raise at definition time unless sorbet-runtime internals are faked open
   # (the ivar pokes this file used to carry). A sealed module's `included`
-  # hook fires only for its direct includers — the three heirs below —
+  # hook fires only for its direct includers — the four heirs below —
   # because `include` never transfers singleton methods, so subclassing
   # BuiltinCommand is an honest open edge with nothing to suppress. Descent
-  # is closed everywhere it is not explicitly declared: the two data leaves
-  # are final!.
+  # is closed everywhere it is not explicitly declared: the data leaves and
+  # the group node are final!.
   module Command
     extend T::Sig
     extend T::Helpers
@@ -201,5 +205,93 @@ module Dev
     # lists under Lifecycle, with the project's description.
     sig(:final) { override.returns(Category) }
     def category = @builtin.category
+  end
+
+  # A node of the command tree: named children plus an optional leaf of its
+  # own. Resolution descends into a child named by the next argv token;
+  # otherwise the bare invocation runs `own` (a runnable group, e.g. a
+  # project `test:` with both `run:` and `commands:`) or, for a pure group,
+  # prints the group's usage. Builtin groups are declared in the
+  # composition root; project groups are parsed from nested dev.yml
+  # `commands:`; a project group on a builtin group's name merges child by
+  # child in CommandRepository. Immutable, like the data leaves: merging
+  # constructs a new node.
+  class CommandGroup
+    extend T::Sig
+    extend T::Helpers
+    include Command
+    final!
+
+    # The bare invocation of a group must resolve to a leaf: an own run
+    # that is itself a group would make `dev x` recurse into a second
+    # bare invocation with no argv left to descend on.
+    class NestedOwnError < ArgumentError; end
+
+    # A group with neither children nor an own run can never do anything;
+    # rejecting it here keeps every resolved node meaningful.
+    class EmptyGroupError < ArgumentError; end
+
+    # The command path from the root (`["deps"]`, `["test", "unit"]`);
+    # what the group's usage line renders.
+    sig(:final) { returns(T::Array[String]) }
+    attr_reader :path
+
+    # The named children, in listing order.
+    sig(:final) { returns(T::Hash[String, Command]) }
+    attr_reader :children
+
+    # The leaf the bare invocation runs, when the group is runnable.
+    sig(:final) { returns(T.nilable(Command)) }
+    attr_reader :own
+
+    sig(:final) { override.returns(String) }
+    attr_reader :desc
+
+    sig(:final) { override.returns(Category) }
+    attr_reader :category
+
+    sig(:final) do
+      params(
+        path: T::Array[String],
+        desc: String,
+        category: Category,
+        children: T::Hash[String, Command],
+        own: T.nilable(Command),
+        hidden: T::Boolean,
+      ).void
+    end
+    def initialize(path:, desc:, category:, children:, own: nil, hidden: false)
+      super()
+      raise NestedOwnError, "command '#{path.join(" ")}': a group's own run cannot be a group" if own.is_a?(CommandGroup)
+      if children.empty? && own.nil?
+        raise EmptyGroupError, "command '#{path.join(" ")}': a group needs children or an own run"
+      end
+
+      @path = path
+      @desc = desc
+      @category = category
+      @children = T.let(children.freeze, T::Hash[String, Command])
+      @own = own
+      @hidden = hidden
+    end
+
+    sig(:final) { override.returns(T::Boolean) }
+    def hidden? = @hidden
+
+    # Guard and stamp traits belong to whatever the bare invocation runs:
+    # the own leaf when there is one, else the usage print — which must
+    # work while stale (it is how the children get discovered) and records
+    # nothing.
+    sig(:final) { override.returns(T::Boolean) }
+    def staleness_exempt?
+      own = @own
+      own ? own.staleness_exempt? : true
+    end
+
+    sig(:final) { override.returns(T::Boolean) }
+    def stamps?
+      own = @own
+      own ? own.stamps? : false
+    end
   end
 end
