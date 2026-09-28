@@ -11,8 +11,9 @@ require "dev/build_container"
 module Dev
   module Builtins
     # `dev cache gc [--keep N]`: reclaim stale install-dir versions and, when
-    # a build container is configured, its stale content-tagged images.
-    class CacheCommand < BuiltinCommand
+    # a build container is configured, its stale content-tagged images. A
+    # leaf of the `cache` group.
+    class CacheGcCommand < BuiltinCommand
       extend T::Sig
 
       # Builds the GC over a project's lockfile (per-call project root).
@@ -33,16 +34,13 @@ module Dev
       end
 
       sig { override.returns(String) }
-      def desc = "Manage host caches (e.g. cache gc --keep 2)"
+      def desc = "Reclaim stale install-dir versions and build images (--keep N)"
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Workflow
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
-        subcommand, *rest = args
-        raise ArgumentError, "usage: dev cache gc [--keep N]" unless subcommand == "gc"
-
         project = context.project!
         gc = @cache_gc_factory.call(Dev::Deps::Lockfile.new(dir: project.root))
         # The build container config (when present) lets GC also prune stale
@@ -53,7 +51,7 @@ module Dev
           image_ref = cfg.image_ref
           live_tag = BuildContainer.image_with_tag(cfg, project_root: project.root)
         end
-        gc.gc(keep: parse_keep(rest), image_ref: image_ref, live_tag: live_tag)
+        gc.gc(keep: parse_keep(args), image_ref: image_ref, live_tag: live_tag)
       end
 
       private

@@ -11,7 +11,7 @@ module Dev
   module Builtins; end
 end
 
-require_relative "builtins/cache_command"
+require_relative "builtins/cache_gc_command"
 require_relative "builtins/cd_command"
 require_relative "builtins/check_command"
 require_relative "builtins/clone_command"

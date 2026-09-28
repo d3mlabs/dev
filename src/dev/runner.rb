@@ -283,7 +283,12 @@ module Dev
           category: Command::Category::Lifecycle,
           children: { "path" => Builtins::DepsPathCommand.new },
         ),
-        "cache" => Builtins::CacheCommand.new,
+        "cache" => CommandGroup.new(
+          path: ["cache"],
+          desc: "Manage host caches",
+          category: Command::Category::Workflow,
+          children: { "gc" => Builtins::CacheGcCommand.new },
+        ),
         "config" => Builtins::ConfigCommand.new,
         "cred" => Builtins::CredCommand.new,
         "plan" => Builtins::PlanCommand.new,

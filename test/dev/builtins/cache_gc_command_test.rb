@@ -2,12 +2,12 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/builtins/cache_command"
+require "dev/builtins/cache_gc_command"
 require "dev/build_container_config"
 require "pathname"
 
 transform!(RSpock::AST::Transformation)
-class Dev::Builtins::CacheCommandTest < Minitest::Test
+class Dev::Builtins::CacheGcCommandTest < Minitest::Test
   include SorbetHelper
 
   test "gc runs with the default retention when --keep is absent" do
@@ -17,7 +17,7 @@ class Dev::Builtins::CacheCommandTest < Minitest::Test
     command = build_command(gc)
 
     When "running cache gc"
-    command.call(args: ["gc"], context: build_context)
+    command.call(args: [], context: build_context)
 
     Then "the expectation on the GC holds"
     true
@@ -30,7 +30,7 @@ class Dev::Builtins::CacheCommandTest < Minitest::Test
     command = build_command(gc)
 
     When "running cache gc --keep 5"
-    command.call(args: ["gc", "--keep", "5"], context: build_context)
+    command.call(args: ["--keep", "5"], context: build_context)
 
     Then "the expectation on the GC holds"
     true
@@ -43,7 +43,7 @@ class Dev::Builtins::CacheCommandTest < Minitest::Test
     command = build_command(gc)
 
     When "running cache gc --keep=3"
-    command.call(args: ["gc", "--keep=3"], context: build_context)
+    command.call(args: ["--keep=3"], context: build_context)
 
     Then "the expectation on the GC holds"
     true
@@ -65,7 +65,7 @@ class Dev::Builtins::CacheCommandTest < Minitest::Test
       .returns("myregistry/myapp-linux:content-abc123")
 
     When "running cache gc"
-    command.call(args: ["gc"], context: context)
+    command.call(args: [], context: context)
 
     Then "the expectation on the GC holds"
     true
@@ -80,30 +80,19 @@ class Dev::Builtins::CacheCommandTest < Minitest::Test
     Dev::Deps::CacheGc.expects(:new)
       .with { |**kwargs| kwargs.fetch(:lockfile).is_a?(Dev::Deps::Lockfile) }
       .returns(gc)
-    command = Dev::Builtins::CacheCommand.new
+    command = Dev::Builtins::CacheGcCommand.new
 
     When "running cache gc"
-    command.call(args: ["gc"], context: build_context)
+    command.call(args: [], context: build_context)
 
     Then "the expectations on the construction boundary hold"
     true
   end
 
-  test "an unknown subcommand raises the usage error" do
-    Given "a cache command"
-    command = build_command(typed_mock(Dev::Deps::CacheGc))
-
-    When "running an unsupported subcommand"
-    command.call(args: ["warm"], context: build_context)
-
-    Then
-    raises ArgumentError
-  end
-
   private
 
   def build_command(gc)
-    Dev::Builtins::CacheCommand.new(cache_gc_factory: ->(_lockfile) { gc })
+    Dev::Builtins::CacheGcCommand.new(cache_gc_factory: ->(_lockfile) { gc })
   end
 
   def build_context(build_container: nil)
