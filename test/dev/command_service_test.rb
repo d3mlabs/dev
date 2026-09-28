@@ -5,6 +5,7 @@ require "test_helper"
 require "dev/command_service"
 require "dev/command"
 require "pathname"
+require "stringio"
 
 transform!(RSpock::AST::Transformation)
 class Dev::CommandServiceTest < Minitest::Test
@@ -50,6 +51,7 @@ class Dev::CommandServiceTest < Minitest::Test
     project_executor = Dev::ProjectExecutor.new(command_runner: typed_mock(Dev::CommandRunner))
     Dev::CommandExecutor.new(
       builtin_executor: builtin_executor,
+      group_executor: Dev::GroupExecutor.new(usage_printer: Dev::Cli::UsagePrinter.new, out: StringIO.new),
       project_executor: project_executor,
       overridden_executor: Dev::OverriddenExecutor.new(
         builtin_executor: builtin_executor, project_executor: project_executor,
@@ -78,7 +80,7 @@ class Dev::CommandServiceTest < Minitest::Test
     context = fake_context
 
     When "executing the command"
-    service.execute("deps", args: ["path", "xcode"], context: context)
+    service.execute(["deps", "path", "xcode"], context: context)
 
     Then "the builtin ran once with the args and context"
     builtin.calls == [[["path", "xcode"], context]]
@@ -89,7 +91,7 @@ class Dev::CommandServiceTest < Minitest::Test
     service = build_service(builtins: {}, dependency_service: fake_dependency_service)
 
     When "executing an unknown command"
-    service.execute("nonexistent", args: [], context: fake_context)
+    service.execute(["nonexistent"], context: fake_context)
 
     Then "the error bubbles under its native namespace"
     raises Dev::CommandRepository::CommandNotFoundError
@@ -105,7 +107,7 @@ class Dev::CommandServiceTest < Minitest::Test
     )
 
     When "executing"
-    service.execute("build", args: [], context: fake_context)
+    service.execute(["build"], context: fake_context)
 
     Then "the expectation on the guard holds"
     true
@@ -122,7 +124,7 @@ class Dev::CommandServiceTest < Minitest::Test
     )
 
     When "executing"
-    service.execute("update-deps", args: [], context: fake_context)
+    service.execute(["update-deps"], context: fake_context)
 
     Then "the guard was never consulted"
     true
@@ -139,7 +141,7 @@ class Dev::CommandServiceTest < Minitest::Test
     )
 
     When "executing"
-    service.execute("install-deps", args: [], context: fake_context)
+    service.execute(["install-deps"], context: fake_context)
 
     Then "the stamp was recorded"
     true
@@ -156,7 +158,7 @@ class Dev::CommandServiceTest < Minitest::Test
     )
 
     When "executing"
-    service.execute("deps", args: [], context: fake_context)
+    service.execute(["deps"], context: fake_context)
 
     Then "no stamp was recorded"
     true
@@ -176,10 +178,66 @@ class Dev::CommandServiceTest < Minitest::Test
     )
 
     When "executing"
-    service.execute("up", args: [], context: fake_context)
+    service.execute(["up"], context: fake_context)
 
     Then "the failure bubbled and the stamp was skipped"
     raises Dev::CommandRunner::CommandFailedError
+  end
+
+  test "execute descends a group to the child named by argv" do
+    Given "a service over a deps group with a path child"
+    path = FakeBuiltin.new(staleness_exempt: true)
+    group = build_group(children: { "path" => path })
+    service = build_service(builtins: { "deps" => group }, dependency_service: fake_dependency_service)
+    context = fake_context
+
+    When "executing the full path"
+    service.execute(["deps", "path", "xcode"], context: context)
+
+    Then "the child ran with the args after it"
+    path.calls == [[["xcode"], context]]
+  end
+
+  test "a runnable group invoked bare runs its own leaf, guarding and stamping by that leaf's traits" do
+    Given "a group whose own leaf is guarded and stamping"
+    own = FakeBuiltin.new(staleness_exempt: false, stamps: true)
+    group = build_group(children: { "unit" => FakeBuiltin.new }, own: own)
+    dependency_service = typed_mock(Dev::DependencyService)
+    dependency_service.expects(:guard!).once
+    dependency_service.expects(:lock!).once
+    service = build_service(builtins: { "test" => group }, dependency_service: dependency_service)
+    context = fake_context
+
+    When "executing the group bare with a flag"
+    service.execute(["test", "--fast"], context: context)
+
+    Then "the own leaf ran with the flag; the guard and stamp expectations hold"
+    own.calls == [[["--fast"], context]]
+  end
+
+  test "a pure group invoked bare is handed to the executor as itself, unguarded and unstamped" do
+    Given "a pure group and an executor expecting the group node"
+    group = build_group(children: { "path" => FakeBuiltin.new })
+    dependency_service = typed_mock(Dev::DependencyService)
+    dependency_service.expects(:guard!).never
+    dependency_service.expects(:lock!).never
+    executor = typed_mock(Dev::CommandExecutor)
+    context = fake_context
+    executor.expects(:execute).with(group, args: [], context: context).once
+    service = build_service(builtins: { "deps" => group }, dependency_service: dependency_service, executor: executor)
+
+    When "executing the group bare"
+    service.execute(["deps"], context: context)
+
+    Then "the expectations hold"
+    true
+  end
+
+  def build_group(children:, own: nil)
+    Dev::CommandGroup.new(
+      path: ["group"], desc: "a group", category: Dev::Command::Category::Workflow,
+      children: children, own: own,
+    )
   end
 
   test "visible_commands serves the repository's usage view" do

@@ -4,6 +4,7 @@
 require_relative "builtin_executor"
 require_relative "command"
 require_relative "execution_context"
+require_relative "group_executor"
 require_relative "overridden_executor"
 require_relative "project_executor"
 
@@ -12,7 +13,8 @@ module Dev
   # T.absurd sends each variant to its injected strategy and does nothing
   # else. Builtin bodies go to BuiltinExecutor (in-process), project
   # commands to ProjectExecutor's exec tail-call, overridden slots to
-  # OverriddenExecutor (builtin stage, then the project tail).
+  # OverriddenExecutor (builtin stage, then the project tail), and pure
+  # groups to GroupExecutor (their usage).
   class CommandExecutor
     extend T::Sig
 
@@ -27,17 +29,21 @@ module Dev
     # the builtin arm.
     #
     # @param builtin_executor [BuiltinExecutor]
+    # @param group_executor [GroupExecutor] builtin groups exist in both
+    #   wirings (e.g. `runner`), so the group arm is never optional
     # @param project_executor [ProjectExecutor, nil]
     # @param overridden_executor [OverriddenExecutor, nil]
     sig do
       params(
         builtin_executor: BuiltinExecutor,
+        group_executor: GroupExecutor,
         project_executor: T.nilable(ProjectExecutor),
         overridden_executor: T.nilable(OverriddenExecutor),
       ).void
     end
-    def initialize(builtin_executor:, project_executor: nil, overridden_executor: nil)
+    def initialize(builtin_executor:, group_executor:, project_executor: nil, overridden_executor: nil)
       @builtin_executor = builtin_executor
+      @group_executor = group_executor
       @project_executor = project_executor
       @overridden_executor = overridden_executor
     end
@@ -60,8 +66,12 @@ module Dev
         project_executor.exec_into(command, args:)
       when OverriddenCommand
         overridden_executor.execute(command, args:, context:)
+      when CommandGroup
+        # A pure group takes no args (the repository already rejected any as
+        # an unknown subcommand), so only the node itself is dispatched.
+        @group_executor.execute(command)
       else
-        # simplecov:disable — the sealed hierarchy leaves no fourth variant
+        # simplecov:disable — the sealed hierarchy leaves no fifth variant
         # to construct, so this arm is unreachable at runtime; T.absurd keeps
         # the static exhaustiveness proof.
         T.absurd(command)

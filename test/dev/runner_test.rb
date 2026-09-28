@@ -290,6 +290,48 @@ class RunnerTest < Minitest::Test
     $stderr = old_stderr
   end
 
+  test "a project group invoked bare prints its usage, and lists as a group in the top-level usage" do
+    Given "a dev.yml with a nested test group"
+    out = StringIO.new
+    runner = build_runner(
+      commands: {
+        "test" => {
+          "desc" => "Test suites",
+          "commands" => { "unit" => { "run" => "rspec spec/unit", "desc" => "Unit tests" } },
+        },
+      },
+      out: out,
+    )
+
+    When "running the group bare, then the top-level usage"
+    runner.run(["test"])
+    runner.run([])
+
+    Then "the group's usage renders, and the top-level marks it as a group"
+    out.string.include?("Usage: dev test <command> [args...]")
+    out.string.include?("  unit         Unit tests")
+    out.string.include?("  test …       Test suites")
+  end
+
+  test "an unknown child of a pure project group is reported with its full path" do
+    Given "a dev.yml with a nested test group"
+    runner = build_runner(
+      commands: { "test" => { "commands" => { "unit" => { "run" => "rspec" } } } },
+    )
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(1).once
+
+    When "running an unknown child"
+    runner.run(["test", "bogus"])
+
+    Then "the error names the path as typed"
+    $stderr.string.include?("Command 'test bogus' not found")
+
+    Cleanup
+    $stderr = old_stderr
+  end
+
   test "run assembles the execution context and hands the command to the service" do
     Given "a Runner over an expecting command service, with a declared toolchain"
     root = Pathname.new(Dir.mktmpdir("runner-context-"))
@@ -302,8 +344,8 @@ class RunnerTest < Minitest::Test
     RUBY
     contexts = []
     command_service = typed_mock(Dev::CommandService)
-    command_service.stubs(:execute).with { |cmd_name, args:, context:|
-      contexts << [cmd_name, args, context]
+    command_service.stubs(:execute).with { |argv, context:|
+      contexts << [argv, context]
       true }
     ui = fake_ui
     runner = build_runner(commands: {}, command_service: command_service, ui: ui, root: root)
@@ -312,10 +354,9 @@ class RunnerTest < Minitest::Test
     When "we run a command with args"
     runner.run(["test", "--fast"])
 
-    Then "the service got the name, args, and a fully-assembled context"
-    cmd_name, args, context = contexts.fetch(0)
-    cmd_name == "test"
-    args == ["--fast"]
+    Then "the service got the argv and a fully-assembled context"
+    argv, context = contexts.fetch(0)
+    argv == ["test", "--fast"]
     context.ui == ui
     context.project!.ruby_version == "9.9.9"
     context.project!.python_version == "3.12"
@@ -329,8 +370,8 @@ class RunnerTest < Minitest::Test
     Given "a Runner constructed with no dev.yml anywhere"
     contexts = []
     command_service = typed_mock(Dev::CommandService)
-    command_service.stubs(:execute).with { |cmd_name, args:, context:|
-      contexts << [cmd_name, context]
+    command_service.stubs(:execute).with { |argv, context:|
+      contexts << [argv, context]
       true }
     runner = Dev::Runner.new(dev_yaml_path: nil, ui: fake_ui, command_service: command_service)
 
@@ -338,8 +379,8 @@ class RunnerTest < Minitest::Test
     runner.run(["up"])
 
     Then "the service got a context with a ui and no project half"
-    cmd_name, context = contexts.fetch(0)
-    cmd_name == "up"
+    argv, context = contexts.fetch(0)
+    argv == ["up"]
     context.project.nil?
   end
 

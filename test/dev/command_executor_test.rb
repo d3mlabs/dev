@@ -30,13 +30,31 @@ class Dev::CommandExecutorTest < Minitest::Test
   end
 
   # Strategy mocks are strict: any message a test doesn't expect is an
-  # unexpected invocation, so each arm proves the other two stayed silent.
+  # unexpected invocation, so each arm proves the other three stayed silent.
   def build_strategies
     {
       builtin_executor: typed_mock(Dev::BuiltinExecutor),
+      group_executor: typed_mock(Dev::GroupExecutor),
       project_executor: typed_mock(Dev::ProjectExecutor),
       overridden_executor: typed_mock(Dev::OverriddenExecutor),
     }
+  end
+
+  test "a command group dispatches to the group strategy" do
+    Given "a composite whose group strategy expects the dispatch"
+    command = Dev::CommandGroup.new(
+      path: ["deps"], desc: "Dependency lookups", category: Dev::Command::Category::Lifecycle,
+      children: { "path" => FakeBuiltin.new },
+    )
+    strategies = build_strategies
+    strategies.fetch(:group_executor).expects(:execute).with(command).once
+    executor = Dev::CommandExecutor.new(**strategies)
+
+    When "executing"
+    executor.execute(command, args: [], context: build_context)
+
+    Then "the expectation held and no other strategy was consulted"
+    true
   end
 
   test "a builtin command dispatches to the builtin strategy with exact args" do
@@ -74,7 +92,7 @@ class Dev::CommandExecutorTest < Minitest::Test
   test "a project command against a builtin-only composite is a wiring bug" do
     Given "a composite wired without project arms (the projectless wiring)"
     command = Dev::ProjectCommand.new(run: "./bin/test.sh", desc: "Run tests", container: false)
-    executor = Dev::CommandExecutor.new(builtin_executor: typed_mock(Dev::BuiltinExecutor))
+    executor = build_builtin_only_executor
 
     When "executing"
     executor.execute(command, args: [], context: build_context)
@@ -89,13 +107,21 @@ class Dev::CommandExecutorTest < Minitest::Test
       builtin: FakeBuiltin.new,
       project: Dev::ProjectCommand.new(run: "./bin/up.rb", desc: "Setup", container: false),
     )
-    executor = Dev::CommandExecutor.new(builtin_executor: typed_mock(Dev::BuiltinExecutor))
+    executor = build_builtin_only_executor
 
     When "executing"
     executor.execute(command, args: [], context: build_context)
 
     Then
     raises Dev::CommandExecutor::ProjectExecutionUnavailableError
+  end
+
+  # The projectless wiring: builtin and group arms only.
+  def build_builtin_only_executor
+    Dev::CommandExecutor.new(
+      builtin_executor: typed_mock(Dev::BuiltinExecutor),
+      group_executor: typed_mock(Dev::GroupExecutor),
+    )
   end
 
   test "an overridden command dispatches to the overridden strategy" do

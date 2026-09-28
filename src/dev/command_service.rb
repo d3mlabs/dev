@@ -9,9 +9,9 @@ require_relative "execution_context"
 
 module Dev
   # The command use case, and the only production consumer of the
-  # CommandRepository (onion rule): fetch the command, guard dependency
-  # staleness, hand execution to the process boundary, and record the
-  # installed stamp when the command stamps.
+  # CommandRepository (onion rule): resolve argv down the command tree,
+  # guard dependency staleness, hand execution to the process boundary,
+  # and record the installed stamp when the command stamps.
   class CommandService
     extend T::Sig
 
@@ -35,19 +35,24 @@ module Dev
     # runs stamping slots spawn-and-wait; an exec-replaced project command
     # never returns here, which is exactly why it must not stamp, #85).
     #
-    # @param cmd_name [String] the command name from argv
-    # @param args [Array<String>] argv after the command name
+    # A runnable group invoked bare IS its own leaf: that leaf is what runs,
+    # guards, and stamps. A pure group invoked bare reaches the executor as
+    # itself (its group arm prints the usage).
+    #
+    # @param argv [Array<String>] the command path followed by its args
     # @param context [ExecutionContext]
     # @return [void]
-    # @raise [CommandRepository::CommandNotFoundError] for an unknown name
+    # @raise [CommandRepository::CommandNotFoundError] for an unknown path
     # @raise [DependencyService::StaleDependencyStateError] in CI, when the
     #   dependency state is stale
     # @raise [CommandRunner::CommandFailedError] when a waited child fails
-    sig { params(cmd_name: String, args: T::Array[String], context: ExecutionContext).void }
-    def execute(cmd_name, args:, context:)
-      command = @repository.fetch(cmd_name)
+    sig { params(argv: T::Array[String], context: ExecutionContext).void }
+    def execute(argv, context:)
+      resolution = @repository.resolve(argv)
+      command = resolution.command
+      command = command.own || command if command.is_a?(CommandGroup)
       @dependency_service.guard! unless command.staleness_exempt?
-      @executor.execute(command, args:, context:)
+      @executor.execute(command, args: resolution.args, context:)
       @dependency_service.lock! if command.stamps?
     end
 

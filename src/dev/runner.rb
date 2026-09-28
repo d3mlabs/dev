@@ -15,6 +15,7 @@ require "dev/command_service"
 require "dev/dependency_service"
 require "dev/deps/staleness"
 require "dev/execution_context"
+require "dev/group_executor"
 require "dev/overridden_executor"
 require "dev/project_executor"
 require "dev/project_manifest"
@@ -69,29 +70,27 @@ module Dev
     # @return [void]
     sig { params(argv: T::Array[String]).void }
     def run(argv)
-      cmd_name, args = route(argv)
       manifest = @dev_yaml_path && @manifest_loader.load(@dev_yaml_path)
       context = build_context(manifest)
       service = @command_service || build_command_service(manifest, context)
-      service.execute(cmd_name, args:, context:)
+      service.execute(route(argv), context:)
     rescue StandardError => e
       exit_for(e)
     end
 
     private
 
-    # Split argv into a command name and its arguments. Bare `dev` and the
-    # conventional flags route to the help builtin; every other spelling
-    # (including `dev help`) is a regular command lookup.
+    # Bare `dev` and the conventional flags route to the help builtin; every
+    # other spelling (including `dev help`) is the command path the service
+    # resolves down the tree.
     #
     # @param argv [Array<String>]
-    # @return [(String, Array<String>)]
-    sig { params(argv: T::Array[String]).returns([String, T::Array[String]]) }
+    # @return [Array<String>]
+    sig { params(argv: T::Array[String]).returns(T::Array[String]) }
     def route(argv)
-      return ["help", []] if argv.empty? || argv == ["--help"] || argv == ["-h"]
+      return ["help"] if argv.empty? || argv == ["--help"] || argv == ["-h"]
 
-      args = argv.dup
-      [T.must(args.shift), args]
+      argv
     end
 
     # Assemble the per-run ExecutionContext: always the host half; the
@@ -181,9 +180,10 @@ module Dev
       # provider captures the `service` local assigned below and
       # dereferences it only at call time, when it exists.
       service = T.let(nil, T.nilable(CommandService))
+      usage_printer = Cli::UsagePrinter.new
       help = Builtins::HelpCommand.new(
         project_name: manifest.name,
-        usage_printer: Cli::UsagePrinter.new,
+        usage_printer: usage_printer,
         out: @out,
         commands_provider: -> { T.must(service).visible_commands },
       )
@@ -192,7 +192,7 @@ module Dev
           builtins: build_builtins(manifest, dependency_service, help:),
           project_commands: manifest.commands,
         ),
-        executor: build_executor(context),
+        executor: build_executor(context, usage_printer),
         dependency_service: dependency_service,
       )
       service
@@ -211,7 +211,7 @@ module Dev
     def build_projectless_command_service
       builtins = T.let(
         { "up" => Builtins::UpCommand.new(install_deps_command: Builtins::InstallDepsCommand.new) },
-        T::Hash[String, BuiltinCommand],
+        T::Hash[String, Command],
       )
       builtins.merge!(runner_builtins)
       CommandService.new(
@@ -219,7 +219,10 @@ module Dev
           builtins: builtins,
           project_commands: {},
         ),
-        executor: CommandExecutor.new(builtin_executor: BuiltinExecutor.new),
+        executor: CommandExecutor.new(
+          builtin_executor: BuiltinExecutor.new,
+          group_executor: GroupExecutor.new(usage_printer: Cli::UsagePrinter.new, out: @out),
+        ),
         dependency_service: NoProjectDependencyService.new,
       )
     end
@@ -227,12 +230,14 @@ module Dev
     # Wire the executor composite: one CommandRunner (built from the run's
     # context, the process boundary's collaborators), one BuiltinExecutor,
     # and one ProjectExecutor, shared with the OverriddenExecutor that
-    # composes them for the virtual-dispatch arm.
+    # composes them for the virtual-dispatch arm; the GroupExecutor shares
+    # help's printer and stream.
     #
     # @param context [ExecutionContext]
+    # @param usage_printer [Cli::UsagePrinter]
     # @return [CommandExecutor]
-    sig { params(context: ExecutionContext).returns(CommandExecutor) }
-    def build_executor(context)
+    sig { params(context: ExecutionContext, usage_printer: Cli::UsagePrinter).returns(CommandExecutor) }
+    def build_executor(context, usage_printer)
       project = context.project!
       command_runner = CommandRunner.new(
         ui: context.ui,
@@ -245,6 +250,7 @@ module Dev
       project_executor = ProjectExecutor.new(command_runner:)
       CommandExecutor.new(
         builtin_executor:,
+        group_executor: GroupExecutor.new(usage_printer:, out: @out),
         project_executor:,
         overridden_executor: OverriddenExecutor.new(builtin_executor:, project_executor:),
       )
@@ -254,10 +260,10 @@ module Dev
     # @param dependency_service [DependencyService]
     # @param help [Builtins::HelpCommand] built by the caller, which owns
     #   the listing self-reference
-    # @return [Hash{String => BuiltinCommand}] the builtin set
+    # @return [Hash{String => Command}] the builtin tree
     sig do
       params(manifest: ProjectManifest, dependency_service: DependencyService, help: Builtins::HelpCommand)
-        .returns(T::Hash[String, BuiltinCommand])
+        .returns(T::Hash[String, Command])
     end
     def build_builtins(manifest, dependency_service, help:)
       install_deps = Builtins::InstallDepsCommand.new
@@ -276,7 +282,7 @@ module Dev
         "config" => Builtins::ConfigCommand.new,
         "cred" => Builtins::CredCommand.new,
         "plan" => Builtins::PlanCommand.new,
-      }, T::Hash[String, BuiltinCommand])
+      }, T::Hash[String, Command])
       builtins["provide-image"] = Builtins::ProvideImageCommand.new if manifest.build_container
       builtins["reset-container"] = Builtins::ResetContainerCommand.new if manifest.build_container&.persist
       builtins.merge!(runner_builtins)
@@ -288,8 +294,8 @@ module Dev
     # all), so the command exists everywhere — including the projectless
     # catalog.
     #
-    # @return [Hash{String => BuiltinCommand}]
-    sig { returns(T::Hash[String, BuiltinCommand]) }
+    # @return [Hash{String => Command}]
+    sig { returns(T::Hash[String, Command]) }
     def runner_builtins
       {
         "runner" => Builtins::RunnerCommand.new,

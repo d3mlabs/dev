@@ -120,4 +120,71 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
     lines.index("Lifecycle:") < lines.index("  up           Project setup")
     !out.string.include?("builtin up")
   end
+
+  test "a group lists under its section with a trailing ellipsis marking it as a group" do
+    Given "a lifecycle group"
+    printer = Dev::Cli::UsagePrinter.new
+    group = build_group(["deps"], category: Dev::Command::Category::Lifecycle, desc: "Dependency lookups")
+    out = StringIO.new
+
+    When "printing usage"
+    printer.print(project_name: "myproject", commands: { "deps" => group }, out: out)
+
+    Then "the marker tells the reader there is more beneath"
+    lines = out.string.lines.map(&:chomp)
+    lines.index("Lifecycle:") < lines.index("  deps …       Dependency lookups")
+  end
+
+  test "print_group renders a pure group's usage line and its visible children" do
+    Given "a pure group with a hidden child"
+    printer = Dev::Cli::UsagePrinter.new
+    group = build_group(
+      ["deps"],
+      desc: "Dependency lookups",
+      children: {
+        "path" => lifecycle_builtin(desc: "Print a locked artifact's path"),
+        "plumbing" => Dev::ProjectCommand.new(run: "x", desc: "internal", hidden: true),
+        "check" => build_group(["deps", "check"], desc: "Checks"),
+      },
+    )
+    out = StringIO.new
+
+    When "printing the group"
+    printer.print_group(group: group, out: out)
+
+    Then "usage names the path, the desc follows, children list alphabetically, hidden ones omitted, groups marked"
+    lines = out.string.lines.map(&:chomp)
+    lines.fetch(0) == "Usage: dev deps <command> [args...]"
+    lines.include?("Dependency lookups")
+    lines.index("Commands:") < lines.index("  check …      Checks")
+    lines.index("  check …      Checks") < lines.index("  path         Print a locked artifact's path")
+    !out.string.include?("plumbing")
+  end
+
+  test "print_group renders both invocations of a runnable group" do
+    Given "a runnable group"
+    printer = Dev::Cli::UsagePrinter.new
+    group = build_group(
+      ["test"], desc: "Run every suite",
+      children: { "unit" => Dev::ProjectCommand.new(run: "rspec", desc: "Unit") },
+      own: Dev::ProjectCommand.new(run: "./bin/test.sh", desc: "Run every suite"),
+    )
+    out = StringIO.new
+
+    When "printing the group"
+    printer.print_group(group: group, out: out)
+
+    Then "the bare form leads, the subcommand form follows"
+    lines = out.string.lines.map(&:chomp)
+    lines.fetch(0) == "Usage: dev test [args...]"
+    lines.fetch(1) == "       dev test <command> [args...]"
+    lines.include?("  unit         Unit")
+  end
+
+  def build_group(path, desc: "a group", category: Dev::Command::Category::Project, children: nil, own: nil)
+    Dev::CommandGroup.new(
+      path: path, desc: desc, category: category,
+      children: children || { "child" => workflow_builtin }, own: own,
+    )
+  end
 end
