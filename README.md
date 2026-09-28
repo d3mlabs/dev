@@ -17,84 +17,11 @@ That is the whole fresh-machine story. The formula carries every tool dev itself
 
 Some projects need more than the formula ships — Docker for containerized builds, `zstd` for `.tar.zst` engine archives, 32-bit libs for SteamCMD on Linux. Those are that project's facts, declared in its `dependencies.rb` or documented in its README; a missing one surfaces from `dev up` with the fix.
 
-## How provisioning works
-
-### Ruby version resolution
-
-A project declares its Ruby toolchain in exactly one place: the `ruby "x.y.z"` directive in `dependencies.rb` (see [Dependency management](#dependency-management)). The toolchain is a project dependency, so it lives in the dependency manifest — even when nothing else is declared there. A ruby-only manifest is the minimal form and engages nothing else (no Gemfile generation, no lockfiles, no other integrations):
-
-```ruby
-require "dev/deps"
-
-Dev::Deps.define do
-  ruby "4.0.6"
-end
-```
-
-Repos with no `dependencies.rb` (or no `ruby` directive) fall back to the machine's Homebrew Ruby. A `ruby:` key in `dev.yml` is no longer supported; dev refuses to run and points at the `dependencies.rb` migration.
-
-On `dev up`, dev provisions the declared version through rbenv (installing it if needed) and generates two artifacts at the repo root:
-
-- **`.shadowenv.d/510_ruby.lisp`** — the per-project environment. Contains machine-specific absolute paths; always gitignored.
-- **`.ruby-version`** — the standard rbenv pin, so everything that is not shadowenv-aware (a plain rbenv shell, RubyMine's SDK detection, Bundler's `ruby file:`, GitHub's setup-ruby) agrees with dev.
-
-**Commit `.ruby-version` when the project declares its Ruby.** It is deterministic generated output — same idea as a lockfile — and it is exactly what contributors without dev consume. Do not commit it for fallback-Ruby repos: there it reflects whatever Ruby the machine happens to have.
-
-Keep the file a bare version string. rbenv only reads the first word, but other consumers (setup-ruby, Bundler, editors) parse the file strictly, so comments would break them. There is no drift risk in the other direction either: `dev up` rewrites the file from the declared version every run, so a hand edit never survives — to change the Ruby, edit `dependencies.rb`, run `dev update-deps`, then `dev up`.
-
-### Supported shells
-
-All dev shell RC hooks — shadowenv activation (`eval "$(shadowenv init <shell>)"`) and the `dev cd` wrapper + completers — are installed automatically and idempotently by `dev up` (and by `dev cd` itself) for **zsh, bash, and fish** (`~/.zshrc`, `~/.bash_profile` or `~/.bashrc`, `~/.config/fish/config.fish`); see [Shell hook install](#shell-hook-install). Other shells are unsupported for hooks: `dev` project commands still run, but there is no env activation and no `dev cd`.
-
-**Formula maintainers:** `dev-core` carries `depends_on "shadowenv"` so developers get shadowenv with the tool. Formulas must never edit shell RCs — dev installs its hooks itself on its own command paths (`dev up`, `dev cd`).
-
-## Adoption model
-
-dev's feature set is three independent opt-ins; a repo takes whichever rungs it needs, in any combination:
-
-1. **Command running** — add a `dev.yml` with a `commands:` map. That alone gets you `dev up` / `dev test` / etc. with the standard UI, from anywhere in the repo. dev does not touch your toolchain or dependencies; your scripts keep doing whatever they did before.
-2. **Toolchain provisioning** — add a `dependencies.rb` with just a `ruby` directive (see [Ruby version resolution](#ruby-version-resolution)). dev provisions that exact Ruby (rbenv + shadowenv) and every `dev <cmd>` runs under it. This does *not* hand your Gemfile to dev — a hand-written Gemfile stays yours, managed by plain bundler.
-3. **Dependency management** — declare gems, brew formulae, engine artifacts, etc. in `dependencies.rb`. `dev update-deps` locks them and `dev up` installs them; for `gem()` declarations dev generates and owns the `Gemfile`.
-
-A gem repo typically stops at rungs 1–2 (commands + a pinned Ruby, hand-written gemspec/Gemfile); an app repo usually takes all three.
-
-## Org configuration & deployment
-
-dev's source hardcodes no org content — every org-specific fact enters through **settings**, resolved per key with gitconfig-style layering (`Dev::Settings`):
-
-1. **ENV var** — `DEV_PLANS_REPO`, `DEV_KNOWLEDGE_REPO`, `DEV_DEPLOYMENT_FORMULA`, `DEV_CONTAINER_ENGINE`. Highest precedence.
-2. **User file** — `~/.config/dev/config.yml` (or `$XDG_CONFIG_HOME/dev/config.yml`).
-3. **System file** — `$(brew --prefix)/etc/dev/config.yml`, shipped by an org's deployment formula.
-
-Missing files are empty layers; a key set in the user file wins over the system file. The keys:
-
-```yaml
-plans_repo: d3mlabs/plans              # org-wide plans repo (dev plan --org)
-knowledge_repo: d3mlabs/knowledge      # org learnings sync source
-deployment_formula: d3mlabs/d3mlabs/dev  # the formula `dev up` self-updates (the deployment names itself)
-container_engine: colima               # per-user container engine record ("docker" or "colima"; unset = bare docker)
-```
-
-Leaving a nilable key unset turns its feature off (`plans_repo` is only required by `dev plan --org`). Manage the user file with `dev config` instead of hand-editing YAML: `list` shows every known key with its resolved value and source layer (`env` / `user` / `system` / unset) — the settings debugging tool; `get <key>` prints the resolved value (exit 1 when unset); `set <key> <value>` writes the user file, creating it if missing. Known keys only; global, works without a `dev.yml`. The tool ships as two kinds of formula (the Debian core-package/config-package split, applied to a tap):
-
-- **`d3mlabs/d3mlabs/dev-core`** — the generic tool, org-blank: the build payload plus the tools dev itself shells out to (git, gh, ruby, rbenv, ruby-build, shadowenv). It ships no org content.
-- **A deployment formula named `dev` in each org's tap** — `depends_on "d3mlabs/d3mlabs/dev-core"` plus the org's payload installed into the prefix's `etc/dev/` (pkgetc — brew preserves locally-modified etc files across upgrades): a `config.yml` with the org's keys (including `deployment_formula`, its own name — that's how `dev up` knows what to upgrade) and an optional `Brewfile` with the org's host tooling (see [Host tooling: the Brewfile contract](#host-tooling-the-brewfile-contract)). Formula names only need to be unique within a tap, so every org's install is the same shape: `brew install d3mlabs/d3mlabs/dev` is the reference deployment, and an adopting org publishes `acme/tap/dev` with identical structure and its own payload.
-
-  Two authoring rules for that formula: print a "run `dev up` to converge this machine" pointer in `caveats` (the fresh-box signal — install alone converges nothing), and never converge from `post_install` — running `brew bundle` inside a brew install is a nested brew invocation that deadlocks on brew's own lock. Converging is `dev up`'s job, on the user's side of the install boundary.
-
-Three consumption stories:
-
-- **Org deployment (recommended):** `brew install <org>/<tap>/dev` — one command installs tool + identity, and the org evolves its config and tooling list by shipping a new deployment formula revision; every machine picks it up on its next `dev up`.
-- **Individual / handrolled:** `brew install d3mlabs/d3mlabs/dev-core`, then `dev config set <key> <value>` for the keys you need — no org involvement, useful for personal machines or orgs without a tap. No Brewfile means the host tooling step self-skips.
-- **CI / fleet:** set the ENV vars in the pipeline or MDM profile — no files needed, and they override both file layers.
-
-Installs predating the split (when `dev` was a monolithic tool+config formula) migrate with a hard cut: `brew uninstall dev && brew install d3mlabs/d3mlabs/dev`.
-
 ## Usage
 
 ```bash
-dev <command> [args...]   # extra args are forwarded to the command
 dev                       # list every command available here (same as `dev help`)
+dev <command> [args...]   # extra args are forwarded to the command
 ```
 
 dev walks up from your current directory to the git repo root and reads the `dev.yml` there. Every command is one of two kinds: a **project command** declared in that `dev.yml` (`dev test`, `dev build`, …), or a **builtin** that ships with dev. A project may declare a command on a builtin's name (typically `up`); the builtin body runs first, then the project's `run:` — a hardcoded `super()`.
@@ -166,6 +93,79 @@ commands:
     - `repl`: *(optional, default `false`)* When `true`, the command execs directly without a status footer. Use this for long-running interactive sessions like consoles and REPLs where a trailing `✓ Done` doesn't make sense.
     - `container`: *(optional, default `true` when `build.container` is configured)* When `false`, the command runs on the host (via `shadowenv exec`) instead of inside the build container. Use for host-side commands like provisioning (`up`) or deploying.
     - `hidden`: *(optional, default `false`)* When `true`, the command is still callable (`dev <cmd>`) but omitted from `dev` / `dev --help` output. Use for internal plumbing — e.g. a `build` primitive that an intent command (`test`, `release`) calls but that developers shouldn't invoke directly.
+
+## Adoption model
+
+dev's feature set is three independent opt-ins; a repo takes whichever rungs it needs, in any combination:
+
+1. **Command running** — add a `dev.yml` with a `commands:` map. That alone gets you `dev up` / `dev test` / etc. with the standard UI, from anywhere in the repo. dev does not touch your toolchain or dependencies; your scripts keep doing whatever they did before.
+2. **Toolchain provisioning** — add a `dependencies.rb` with just a `ruby` directive (see [Ruby version resolution](#ruby-version-resolution)). dev provisions that exact Ruby (rbenv + shadowenv) and every `dev <cmd>` runs under it. This does *not* hand your Gemfile to dev — a hand-written Gemfile stays yours, managed by plain bundler.
+3. **Dependency management** — declare gems, brew formulae, engine artifacts, etc. in `dependencies.rb`. `dev update-deps` locks them and `dev up` installs them; for `gem()` declarations dev generates and owns the `Gemfile`.
+
+A gem repo typically stops at rungs 1–2 (commands + a pinned Ruby, hand-written gemspec/Gemfile); an app repo usually takes all three.
+
+## How provisioning works
+
+### Ruby version resolution
+
+A project declares its Ruby toolchain in exactly one place: the `ruby "x.y.z"` directive in `dependencies.rb` (see [Dependency management](#dependency-management)). The toolchain is a project dependency, so it lives in the dependency manifest — even when nothing else is declared there. A ruby-only manifest is the minimal form and engages nothing else (no Gemfile generation, no lockfiles, no other integrations):
+
+```ruby
+require "dev/deps"
+
+Dev::Deps.define do
+  ruby "4.0.6"
+end
+```
+
+Repos with no `dependencies.rb` (or no `ruby` directive) fall back to the machine's Homebrew Ruby. A `ruby:` key in `dev.yml` is no longer supported; dev refuses to run and points at the `dependencies.rb` migration.
+
+On `dev up`, dev provisions the declared version through rbenv (installing it if needed) and generates two artifacts at the repo root:
+
+- **`.shadowenv.d/510_ruby.lisp`** — the per-project environment. Contains machine-specific absolute paths; always gitignored.
+- **`.ruby-version`** — the standard rbenv pin, so everything that is not shadowenv-aware (a plain rbenv shell, RubyMine's SDK detection, Bundler's `ruby file:`, GitHub's setup-ruby) agrees with dev.
+
+**Commit `.ruby-version` when the project declares its Ruby.** It is deterministic generated output — same idea as a lockfile — and it is exactly what contributors without dev consume. Do not commit it for fallback-Ruby repos: there it reflects whatever Ruby the machine happens to have.
+
+Keep the file a bare version string. rbenv only reads the first word, but other consumers (setup-ruby, Bundler, editors) parse the file strictly, so comments would break them. There is no drift risk in the other direction either: `dev up` rewrites the file from the declared version every run, so a hand edit never survives — to change the Ruby, edit `dependencies.rb`, run `dev update-deps`, then `dev up`.
+
+### Supported shells
+
+All dev shell RC hooks — shadowenv activation (`eval "$(shadowenv init <shell>)"`) and the `dev cd` wrapper + completers — are installed automatically and idempotently by `dev up` (and by `dev cd` itself) for **zsh, bash, and fish** (`~/.zshrc`, `~/.bash_profile` or `~/.bashrc`, `~/.config/fish/config.fish`); see [Shell hook install](#shell-hook-install). Other shells are unsupported for hooks: `dev` project commands still run, but there is no env activation and no `dev cd`.
+
+**Formula maintainers:** `dev-core` carries `depends_on "shadowenv"` so developers get shadowenv with the tool. Formulas must never edit shell RCs — dev installs its hooks itself on its own command paths (`dev up`, `dev cd`).
+
+## Org configuration & deployment
+
+dev's source hardcodes no org content — every org-specific fact enters through **settings**, resolved per key with gitconfig-style layering (`Dev::Settings`):
+
+1. **ENV var** — `DEV_PLANS_REPO`, `DEV_KNOWLEDGE_REPO`, `DEV_DEPLOYMENT_FORMULA`, `DEV_CONTAINER_ENGINE`. Highest precedence.
+2. **User file** — `~/.config/dev/config.yml` (or `$XDG_CONFIG_HOME/dev/config.yml`).
+3. **System file** — `$(brew --prefix)/etc/dev/config.yml`, shipped by an org's deployment formula.
+
+Missing files are empty layers; a key set in the user file wins over the system file. The keys:
+
+```yaml
+plans_repo: d3mlabs/plans              # org-wide plans repo (dev plan --org)
+knowledge_repo: d3mlabs/knowledge      # org learnings sync source
+deployment_formula: d3mlabs/d3mlabs/dev  # the formula `dev up` self-updates (the deployment names itself)
+container_engine: colima               # per-user container engine record ("docker" or "colima"; unset = bare docker)
+```
+
+Leaving a nilable key unset turns its feature off (`plans_repo` is only required by `dev plan --org`). Manage the user file with `dev config` instead of hand-editing YAML: `list` shows every known key with its resolved value and source layer (`env` / `user` / `system` / unset) — the settings debugging tool; `get <key>` prints the resolved value (exit 1 when unset); `set <key> <value>` writes the user file, creating it if missing. Known keys only; global, works without a `dev.yml`. The tool ships as two kinds of formula (the Debian core-package/config-package split, applied to a tap):
+
+- **`d3mlabs/d3mlabs/dev-core`** — the generic tool, org-blank: the build payload plus the tools dev itself shells out to (git, gh, ruby, rbenv, ruby-build, shadowenv). It ships no org content.
+- **A deployment formula named `dev` in each org's tap** — `depends_on "d3mlabs/d3mlabs/dev-core"` plus the org's payload installed into the prefix's `etc/dev/` (pkgetc — brew preserves locally-modified etc files across upgrades): a `config.yml` with the org's keys (including `deployment_formula`, its own name — that's how `dev up` knows what to upgrade) and an optional `Brewfile` with the org's host tooling (see [Host tooling: the Brewfile contract](#host-tooling-the-brewfile-contract)). Formula names only need to be unique within a tap, so every org's install is the same shape: `brew install d3mlabs/d3mlabs/dev` is the reference deployment, and an adopting org publishes `acme/tap/dev` with identical structure and its own payload.
+
+  Two authoring rules for that formula: print a "run `dev up` to converge this machine" pointer in `caveats` (the fresh-box signal — install alone converges nothing), and never converge from `post_install` — running `brew bundle` inside a brew install is a nested brew invocation that deadlocks on brew's own lock. Converging is `dev up`'s job, on the user's side of the install boundary.
+
+Three consumption stories:
+
+- **Org deployment (recommended):** `brew install <org>/<tap>/dev` — one command installs tool + identity, and the org evolves its config and tooling list by shipping a new deployment formula revision; every machine picks it up on its next `dev up`.
+- **Individual / handrolled:** `brew install d3mlabs/d3mlabs/dev-core`, then `dev config set <key> <value>` for the keys you need — no org involvement, useful for personal machines or orgs without a tap. No Brewfile means the host tooling step self-skips.
+- **CI / fleet:** set the ENV vars in the pipeline or MDM profile — no files needed, and they override both file layers.
+
+Installs predating the split (when `dev` was a monolithic tool+config formula) migrate with a hard cut: `brew uninstall dev && brew install d3mlabs/d3mlabs/dev`.
 
 ## dev cd — jump between checkouts
 
