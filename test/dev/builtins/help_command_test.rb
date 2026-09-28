@@ -56,7 +56,53 @@ class Dev::Builtins::HelpCommandTest < Minitest::Test
     printed.fetch(0) == catalog
   end
 
+  test "help <path> renders the group's usage when the path reaches a group" do
+    Given "a two-level tree and a printer expecting the inner group"
+    inner = build_group(["test", "unit"], children: { "fast" => Dev::ProjectCommand.new(run: "rspec") })
+    outer = build_group(["test"], children: { "unit" => inner })
+    out = StringIO.new
+    usage_printer = typed_mock(Dev::Cli::UsagePrinter)
+    usage_printer.expects(:print_group).with(group: inner, out: out).once
+    command = build_help(usage_printer: usage_printer, out: out, commands_provider: -> { { "test" => outer } })
+
+    When "asking for help on the nested path"
+    command.call(args: ["test", "unit"], context: build_context)
+
+    Then "the printer expectation holds"
+    true
+  end
+
+  test "help <path> on a leaf prints its invocation and description" do
+    Given "a leaf under a group"
+    leaf = Dev::ProjectCommand.new(run: "rspec", desc: "Unit tests")
+    out = StringIO.new
+    command = build_help(out: out, commands_provider: -> { { "test" => build_group(["test"], children: { "unit" => leaf }) } })
+
+    When "asking for help on the leaf"
+    command.call(args: ["test", "unit"], context: build_context)
+
+    Then "the leaf's one-line usage renders"
+    out.string == "Usage: dev test unit [args...]\n\nUnit tests\n"
+  end
+
+  test "help <path> on an unknown path raises UnknownCommandError naming the path" do
+    Given "a catalog without the asked name"
+    command = build_help(commands_provider: -> { { "up" => Dev::ProjectCommand.new(run: "x") } })
+
+    When "asking for help on a missing path"
+    error = assert_raises(Dev::Builtins::HelpCommand::UnknownCommandError) do
+      command.call(args: ["up", "nope"], context: build_context)
+    end
+
+    Then
+    error.message.include?("'up nope'")
+  end
+
   private
+
+  def build_group(path, children:)
+    Dev::CommandGroup.new(path: path, desc: "group", category: Dev::Command::Category::Project, children: children)
+  end
 
   def build_help(project_name: "testproject", usage_printer: typed_mock(Dev::Cli::UsagePrinter),
     out: StringIO.new, commands_provider: -> { {} })
