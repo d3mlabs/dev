@@ -56,6 +56,54 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
   end
 
+  test "#load parses nested commands into a ProjectCommandGroup, naming the entry on error" do
+    Given "a dev.yml with a runnable test group and a broken nested child"
+    tmp = write_dev_yml(<<~YAML)
+      name: myproject
+      commands:
+        test:
+          desc: Test suites
+          run: ./bin/test.sh
+          commands:
+            unit:
+              run: rspec spec/unit
+    YAML
+
+    When "the manifest is loaded"
+    manifest = build_loader.load(Pathname.new(tmp.path))
+
+    Then "the tree is the parsed group"
+    manifest.commands["test"] == Dev::ProjectCommandGroup.new(
+      children: { "unit" => Dev::ProjectCommand.new(run: "rspec spec/unit") },
+      desc: "Test suites",
+      own: Dev::ProjectCommand.new(run: "./bin/test.sh", desc: "Test suites"),
+    )
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load names the nested entry when a child is malformed" do
+    Given "a dev.yml whose nested child has no body"
+    tmp = write_dev_yml(<<~YAML)
+      name: myproject
+      commands:
+        test:
+          commands:
+            unit:
+              desc: nothing to run
+    YAML
+
+    When "loading the manifest"
+    error = assert_raises(Dev::CommandParser::MissingBodyError) { build_loader.load(Pathname.new(tmp.path)) }
+
+    Then "the error names the path as typed"
+    error.message.include?("'test unit'")
+
+    Cleanup
+    tmp.close!
+  end
+
   test "#load with repl flag passes it through to the command" do
     Given "a dev.yml file with repl set"
     tmp = write_dev_yml(<<~YAML)

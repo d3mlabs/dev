@@ -3,6 +3,7 @@
 
 require_relative "build_container_config"
 require_relative "command"
+require_relative "project_command_group"
 
 module Dev
   # The whole project declaration, coerced once at the boundary: the dev.yml
@@ -14,7 +15,8 @@ module Dev
     extend T::Sig
 
     const :name, String
-    const :commands, T::Hash[String, ProjectCommand]
+    # The project's command tree as declared: leaves and nested groups.
+    const :commands, T::Hash[String, ProjectNode]
     const :build_container, T.nilable(Dev::BuildContainerConfig), default: nil
 
     # The `ruby` / `python` directives from dependencies.rb, nil until the
