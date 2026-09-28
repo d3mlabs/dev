@@ -277,7 +277,12 @@ module Dev
         "clone" => Builtins::CloneCommand.new,
         "learnings" => Builtins::LearningsCommand.new,
         "check" => Builtins::CheckCommand.new(dependency_service:),
-        "deps" => Builtins::DepsCommand.new,
+        "deps" => CommandGroup.new(
+          path: ["deps"],
+          desc: "Inspect locked dependencies",
+          category: Command::Category::Lifecycle,
+          children: { "path" => Builtins::DepsPathCommand.new },
+        ),
         "cache" => Builtins::CacheCommand.new,
         "config" => Builtins::ConfigCommand.new,
         "cred" => Builtins::CredCommand.new,

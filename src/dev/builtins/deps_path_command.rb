@@ -9,9 +9,10 @@ require "dev/deps/lockfile"
 
 module Dev
   module Builtins
-    # `dev deps`: read-only lookups over the lockfile + content cache (e.g.
-    # `dev deps path ficsit <mod> <platform>`).
-    class DepsCommand < BuiltinCommand
+    # `dev deps path <integration> …`: print a locked artifact's absolute
+    # path, read from the lockfile + content cache (e.g. `dev deps path
+    # ficsit <mod> <platform>`). A leaf of the `deps` group.
+    class DepsPathCommand < BuiltinCommand
       extend T::Sig
 
       # Builds the accessor over a project's lockfile (the project root is a
@@ -34,14 +35,14 @@ module Dev
       end
 
       sig { override.returns(String) }
-      def desc = "Inspect locked dependencies (e.g. deps path ficsit <mod> <platform>, deps path gh <name>)"
+      def desc = "Print a locked artifact's path (path ficsit <mod> <platform> | path xcode | path gh <name>)"
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
-        @accessor_factory.call(context.project!.root).run(args)
+        @accessor_factory.call(context.project!.root).print_path(args)
       end
     end
   end

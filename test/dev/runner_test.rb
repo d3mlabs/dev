@@ -313,6 +313,19 @@ class RunnerTest < Minitest::Test
     out.string.include?("  test …       Test suites")
   end
 
+  test "the deps builtin is a group: bare it prints its usage, listing the path leaf" do
+    Given "a Runner"
+    out = StringIO.new
+    runner = build_runner(commands: {}, out: out)
+
+    When "running deps bare"
+    runner.run(["deps"])
+
+    Then "the group usage renders"
+    out.string.include?("Usage: dev deps <command> [args...]")
+    out.string.include?("  path         Print a locked artifact's path")
+  end
+
   test "an unknown child of a pure project group is reported with its full path" do
     Given "a dev.yml with a nested test group"
     runner = build_runner(

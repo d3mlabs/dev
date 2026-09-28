@@ -171,14 +171,14 @@ class Dev::Deps::AccessorTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "run path gh prints the version dir to the output stream" do
+  test "print_path gh prints the version dir to the output stream" do
     Given "a locked and installed gh engine"
     dir = Dir.mktmpdir("dev-accessor-test-")
     accessor, version_dir = setup_locked_gh(dir)
     out = StringIO.new
 
     When "running deps path gh UnrealEngineMac"
-    accessor.run(["path", "gh", "UnrealEngineMac"], out: out)
+    accessor.print_path(["gh", "UnrealEngineMac"], out: out)
 
     Then
     out.string.strip == version_dir
@@ -255,14 +255,14 @@ class Dev::Deps::AccessorTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "run path prints the cached path to the output stream" do
+  test "print_path prints the cached path to the output stream" do
     Given "a locked SML with a cached Windows zip"
     dir = Dir.mktmpdir("dev-accessor-test-")
     accessor, = setup_locked_sml(dir, platforms: linux_platforms)
     out = StringIO.new
 
     When "running deps path ficsit SML Windows"
-    accessor.run(["path", "ficsit", "SML", "Windows"], out: out)
+    accessor.print_path(["ficsit", "SML", "Windows"], out: out)
 
     Then
     out.string.strip.end_with?("Windows-#{"a" * 64}.zip")
@@ -319,7 +319,7 @@ class Dev::Deps::AccessorTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "run raises UsageError for an unknown subcommand" do
+  test "print_path raises UsageError for #{label}" do
     Given "an accessor"
     dir = Dir.mktmpdir("dev-accessor-test-")
     accessor = Dev::Deps::Accessor.new(
@@ -327,13 +327,19 @@ class Dev::Deps::AccessorTest < Minitest::Test
       cache: Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache")),
     )
 
-    When "running an unknown subcommand"
-    accessor.run(["bogus"])
+    When "printing the path"
+    accessor.print_path(args, out: StringIO.new)
 
     Then
     raises Dev::Deps::Accessor::UsageError
 
     Cleanup
     FileUtils.rm_rf(dir)
+
+    Where
+    label | args
+    "an unknown integration" | ["bogus"]
+    "no integration" | []
+    "too many arguments" | ["ficsit", "SML", "Windows", "extra"]
   end
 end
