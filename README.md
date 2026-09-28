@@ -5,49 +5,19 @@ Global CLI tool for d3mlabs projects. Discovers `dev.yml` in your git repos and 
 
 ## Installation
 
-Install via Homebrew. Orgs install their deployment formula (tool + org configuration in one command); individuals without an org install the generic `dev-core` and write their own config — see [Org configuration & deployment](#org-configuration--deployment):
-
 ```bash
-brew install d3mlabs/d3mlabs/dev        # d3mlabs (or your org's <org>/<tap>/dev)
-brew install d3mlabs/d3mlabs/dev-core   # org-blank tool only
+brew install d3mlabs/d3mlabs/dev   # your org's <org>/<tap>/dev; `d3mlabs/d3mlabs/dev-core` for the org-blank tool
+gh auth login                      # dev pulls gated assets and syncs plans through your gh auth
+dev up                             # converges host tooling + installs the shell hooks; open a new shell after
 ```
 
-### System dependencies
+Then per project: `dev clone <repo>` → `dev up`.
 
-`dev` shells out to a few external tools during `dev up` / dependency installs.
-A fresh machine is often missing some, and each surfaces as a mid-run failure,
-so install them up front:
+That is the whole fresh-machine story. The formula carries every tool dev itself shells out to (git, gh, ruby, rbenv, ruby-build, shadowenv), and `dev up` provisions the rest — the project's Ruby, the shadowenv and `dev cd` shell hooks, the org's host tooling. Orgs install their deployment formula (tool + org configuration in one command); individuals without an org install `dev-core` and write their own config — see [Org configuration & deployment](#org-configuration--deployment).
 
-```bash
-# macOS and Linux (Homebrew):
-brew install gh zstd            # gh: gated GitHub release downloads; zstd: engine .tar.zst extraction
+Some projects need more than the formula ships — Docker for containerized builds, `zstd` for `.tar.zst` engine archives, 32-bit libs for SteamCMD on Linux. Those are that project's facts, declared in its `dependencies.rb` or documented in its README; a missing one surfaces from `dev up` with the fix.
 
-# Linux runners only (git/curl preinstalled on macOS; lib32gcc-s1 = 32-bit support for SteamCMD):
-sudo apt-get update && sudo apt-get install -y git curl sqlite3 lib32gcc-s1
-
-# gh must be authenticated — dev pulls gated assets (e.g. the custom Unreal Engine) with no explicit token:
-gh auth login
-```
-
-Docker is also required for repos whose builds run in containers (e.g. `dev up`
-building a prewarmed image): Docker Desktop on macOS / Windows+WSL2, or Docker
-Engine on Linux.
-
-**Ruby:** We use **rbenv** as the standard Ruby version manager. If you run `dev up` in a repo that needs Ruby, have rbenv installed first:
-
-```bash
-brew install rbenv ruby-build
-# Then e.g. rbenv install 2.7.6  (version comes from the repo's dependencies)
-```
-
-After installing, add the shadowenv hook to your shell so project Rubies activate when you `cd` into a repo:
-
-```bash
-# Add to ~/.zshrc (or ~/.bash_profile / config.fish)
-eval "$(shadowenv init zsh)"
-```
-
-dev also ensures this hook (and the `dev cd` hook below) automatically and idempotently when you run `dev up` in a project, so a manual edit is only needed if you want it before your first `dev up`.
+## How provisioning works
 
 ### Ruby version resolution
 
@@ -74,9 +44,9 @@ Keep the file a bare version string. rbenv only reads the first word, but other 
 
 ### Supported shells
 
-All dev shell RC hooks — shadowenv activation and the `dev cd` wrapper + completers — are installed for **zsh, bash, and fish** (`~/.zshrc`, `~/.bash_profile` or `~/.bashrc`, `~/.config/fish/config.fish`). Other shells are unsupported for hooks: `dev` project commands still run, but there is no env activation and no `dev cd`.
+All dev shell RC hooks — shadowenv activation (`eval "$(shadowenv init <shell>)"`) and the `dev cd` wrapper + completers — are installed automatically and idempotently by `dev up` (and by `dev cd` itself) for **zsh, bash, and fish** (`~/.zshrc`, `~/.bash_profile` or `~/.bashrc`, `~/.config/fish/config.fish`); see [Shell hook install](#shell-hook-install). Other shells are unsupported for hooks: `dev` project commands still run, but there is no env activation and no `dev cd`.
 
-**Formula maintainers:** The Homebrew formula for `d3mlabs/dev` should include `depends_on "shadowenv"` so developers get shadowenv when they install dev. Formulas must never edit shell RCs — dev installs its hooks itself on its own command paths (`dev up`, `dev cd`).
+**Formula maintainers:** `dev-core` carries `depends_on "shadowenv"` so developers get shadowenv with the tool. Formulas must never edit shell RCs — dev installs its hooks itself on its own command paths (`dev up`, `dev cd`).
 
 ## Adoption model
 
