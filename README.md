@@ -17,6 +17,93 @@ That is the whole fresh-machine story. The formula carries every tool dev itself
 
 Some projects need more than the formula ships — Docker for containerized builds, `zstd` for `.tar.zst` engine archives, 32-bit libs for SteamCMD on Linux. Those are that project's facts, declared in its `dependencies.rb` or documented in its README; a missing one surfaces from `dev up` with the fix.
 
+## Usage
+
+```bash
+dev                       # list every command available here (same as `dev help`)
+dev <command> [args...]   # extra args are forwarded to the command
+```
+
+dev walks up from your current directory to the git repo root and reads the `dev.yml` there. Every command is one of two kinds: a **project command** declared in that `dev.yml` (`dev test`, `dev build`, …), or a **builtin** that ships with dev. A project may declare a command on a builtin's name (typically `up`); the builtin body runs first, then the project's `run:` — a hardcoded `super()`.
+
+### Built-in commands
+
+Grouped as `dev help` lists them. **Scope** says where the command works: *anywhere* needs no `dev.yml`; *project* needs one; *gated* exists only when the `dev.yml` declares the named config.
+
+**Lifecycle** — provisioning, dependency state, and machine enrollment:
+
+| Command | Scope | Purpose | Details |
+|---|---|---|---|
+| `dev up` | project, or anywhere (host layer only) | Converge host tooling, install locked deps, run the project's `up:` | [Dependency commands](#dependency-commands) |
+| `dev update-deps` | project | Resolve `dependencies.rb` and write the lockfiles | [Dependency commands](#dependency-commands) |
+| `dev install-deps` | project | Install host-handled locked deps (gh releases, steam apps, …) | [Dependency commands](#dependency-commands) |
+| `dev check` | project | Report dependency staleness (manifest vs lockfiles vs installed) | [Dependency commands](#dependency-commands) |
+| `dev deps path <integration> <name> [<platform>]` | project | Print a locked artifact's absolute path | [Dependency commands](#dependency-commands) |
+| `dev runner register\|status` | anywhere | Enroll or inspect this host as a self-hosted runner (`runner-setup` is an alias for `register`) | [dev runner](#dev-runner--enroll-a-host-as-a-self-hosted-runner) |
+| `dev provide-image` | gated: `build.container` (hidden) | Resolve the build image (local → pull → build) and print its tag | [Container commands](#container-commands) |
+| `dev reset-container` | gated: `build.container.persist` | Remove the persistent build container | [Container commands](#container-commands) |
+
+**Development flow** — navigation, settings, agent workflow, housekeeping:
+
+| Command | Scope | Purpose | Details |
+|---|---|---|---|
+| `dev cd <repo>` | anywhere | Jump to a checkout under `$DEV_CD_ROOT` by fuzzy name, with Tab completion | [dev cd](#dev-cd--jump-between-checkouts) |
+| `dev clone [<org>/]<repo>` | anywhere | Clone via `gh` into the canonical checkout path and land there | [dev clone](#dev-clone--clone-into-the-canonical-layout) |
+| `dev config list\|get <key>\|set <key> <value>` | anywhere | Manage dev's layered settings | [Org configuration & deployment](#org-configuration--deployment) |
+| `dev cred get <namespace> <key>` | anywhere | Resolve a stored credential and print it | [dev cred](#dev-cred--resolve-a-credential) |
+| `dev plan new\|link\|pull\|push\|status\|init` | anywhere | Sync Cursor plans with GitHub issues | [dev plan](#dev-plan--sync-plans-with-github-issues) |
+| `dev learnings sync\|status\|invariants\|init` | anywhere | The org learnings read path | [dev learnings](#dev-learnings) |
+| `dev cache gc [--keep N]` | project | Reclaim host caches dev owns | [`dev cache gc`](#dev-cache-gc) |
+| `dev help` | anywhere | Show usage: project commands plus the builtins available here | — |
+
+### Errors
+
+- No git repo above the current directory: `dev: no git repo (with dev.yml) found above <path>`
+- A git repo without a `dev.yml` (and the command is not an *anywhere* builtin): `dev: found git repo at <path> but no dev.yml there`
+- Unknown command: `dev: unknown command: <name>`, followed by the available commands
+
+## dev.yml convention
+
+Each repo that wants to support `dev` should have a `dev.yml` at its git root:
+
+```yaml
+name: myproject
+
+commands:
+  up:
+    desc: Setup dev environment
+    run: ./bin/setup.rb
+  build:
+    desc: Build the project
+    run: ./bin/build.sh
+  test:
+    desc: Run tests
+    run: ./bin/test.sh
+  console:
+    desc: Start Ruby console
+    run: ./bin/console
+    repl: true
+```
+
+- `name`: Display name for the repo (used in help output).
+- `commands`: Map of command names to specs.
+  - Each command has:
+    - `desc`: Short description (shown in `dev` / `dev --help`).
+    - `run`: Shell command to execute (from the repo root). Any extra args passed to `dev <cmd> [args...]` are forwarded to this command.
+    - `repl`: *(optional, default `false`)* When `true`, the command execs directly without a status footer. Use this for long-running interactive sessions like consoles and REPLs where a trailing `✓ Done` doesn't make sense.
+    - `container`: *(optional, default `true` when `build.container` is configured)* When `false`, the command runs on the host (via `shadowenv exec`) instead of inside the build container. Use for host-side commands like provisioning (`up`) or deploying.
+    - `hidden`: *(optional, default `false`)* When `true`, the command is still callable (`dev <cmd>`) but omitted from `dev` / `dev --help` output. Use for internal plumbing — e.g. a `build` primitive that an intent command (`test`, `release`) calls but that developers shouldn't invoke directly.
+
+## Adoption model
+
+dev's feature set is three independent opt-ins; a repo takes whichever rungs it needs, in any combination:
+
+1. **Command running** — add a `dev.yml` with a `commands:` map. That alone gets you `dev up` / `dev test` / etc. with the standard UI, from anywhere in the repo. dev does not touch your toolchain or dependencies; your scripts keep doing whatever they did before.
+2. **Toolchain provisioning** — add a `dependencies.rb` with just a `ruby` directive (see [Ruby version resolution](#ruby-version-resolution)). dev provisions that exact Ruby (rbenv + shadowenv) and every `dev <cmd>` runs under it. This does *not* hand your Gemfile to dev — a hand-written Gemfile stays yours, managed by plain bundler.
+3. **Dependency management** — declare gems, brew formulae, engine artifacts, etc. in `dependencies.rb`. `dev update-deps` locks them and `dev up` installs them; for `gem()` declarations dev generates and owns the `Gemfile`.
+
+A gem repo typically stops at rungs 1–2 (commands + a pinned Ruby, hand-written gemspec/Gemfile); an app repo usually takes all three.
+
 ## How provisioning works
 
 ### Ruby version resolution
@@ -48,16 +135,6 @@ All dev shell RC hooks — shadowenv activation (`eval "$(shadowenv init <shell>
 
 **Formula maintainers:** `dev-core` carries `depends_on "shadowenv"` so developers get shadowenv with the tool. Formulas must never edit shell RCs — dev installs its hooks itself on its own command paths (`dev up`, `dev cd`).
 
-## Adoption model
-
-dev's feature set is three independent opt-ins; a repo takes whichever rungs it needs, in any combination:
-
-1. **Command running** — add a `dev.yml` with a `commands:` map. That alone gets you `dev up` / `dev test` / etc. with the standard UI, from anywhere in the repo. dev does not touch your toolchain or dependencies; your scripts keep doing whatever they did before.
-2. **Toolchain provisioning** — add a `dependencies.rb` with just a `ruby` directive (see [Ruby version resolution](#ruby-version-resolution)). dev provisions that exact Ruby (rbenv + shadowenv) and every `dev <cmd>` runs under it. This does *not* hand your Gemfile to dev — a hand-written Gemfile stays yours, managed by plain bundler.
-3. **Dependency management** — declare gems, brew formulae, engine artifacts, etc. in `dependencies.rb`. `dev update-deps` locks them and `dev up` installs them; for `gem()` declarations dev generates and owns the `Gemfile`.
-
-A gem repo typically stops at rungs 1–2 (commands + a pinned Ruby, hand-written gemspec/Gemfile); an app repo usually takes all three.
-
 ## Org configuration & deployment
 
 dev's source hardcodes no org content — every org-specific fact enters through **settings**, resolved per key with gitconfig-style layering (`Dev::Settings`):
@@ -75,7 +152,7 @@ deployment_formula: d3mlabs/d3mlabs/dev  # the formula `dev up` self-updates (th
 container_engine: colima               # per-user container engine record ("docker" or "colima"; unset = bare docker)
 ```
 
-Leaving a nilable key unset turns its feature off (`plans_repo` is only required by `dev plan --org`). Manage the user file with `dev config` (`list` / `get <key>` / `set <key> <value>`) instead of hand-editing YAML. The tool ships as two kinds of formula (the Debian core-package/config-package split, applied to a tap):
+Leaving a nilable key unset turns its feature off (`plans_repo` is only required by `dev plan --org`). Manage the user file with `dev config` instead of hand-editing YAML: `list` shows every known key with its resolved value and source layer (`env` / `user` / `system` / unset) — the settings debugging tool; `get <key>` prints the resolved value (exit 1 when unset); `set <key> <value>` writes the user file, creating it if missing. Known keys only; global, works without a `dev.yml`. The tool ships as two kinds of formula (the Debian core-package/config-package split, applied to a tap):
 
 - **`d3mlabs/d3mlabs/dev-core`** — the generic tool, org-blank: the build payload plus the tools dev itself shells out to (git, gh, ruby, rbenv, ruby-build, shadowenv). It ships no org content.
 - **A deployment formula named `dev` in each org's tap** — `depends_on "d3mlabs/d3mlabs/dev-core"` plus the org's payload installed into the prefix's `etc/dev/` (pkgetc — brew preserves locally-modified etc files across upgrades): a `config.yml` with the org's keys (including `deployment_formula`, its own name — that's how `dev up` knows what to upgrade) and an optional `Brewfile` with the org's host tooling (see [Host tooling: the Brewfile contract](#host-tooling-the-brewfile-contract)). Formula names only need to be unique within a tap, so every org's install is the same shape: `brew install d3mlabs/d3mlabs/dev` is the reference deployment, and an adopting org publishes `acme/tap/dev` with identical structure and its own payload.
@@ -89,21 +166,6 @@ Three consumption stories:
 - **CI / fleet:** set the ENV vars in the pipeline or MDM profile — no files needed, and they override both file layers.
 
 Installs predating the split (when `dev` was a monolithic tool+config formula) migrate with a hard cut: `brew uninstall dev && brew install d3mlabs/d3mlabs/dev`.
-
-## Usage
-
-From anywhere under a git repo that has a `dev.yml` at its root:
-
-```bash
-dev up       # Run the 'up' command (e.g. setup)
-dev build    # Run the 'build' command
-dev test     # Run the 'test' command
-dev          # List all available commands
-```
-
-The tool walks up from your current directory until it finds a git repo root (directory containing `.git`), then looks for `dev.yml` there. If found, it parses the commands and executes the `run` string for your chosen subcommand.
-
-A few builtins are global and work from **any** directory, no `dev.yml` needed: `dev cd` (host-global navigation), `dev clone` (host-global checkout creation), `dev config` (host-global settings), `dev cred` (host-global credentials), and `dev plan` (workspace-global plan sync). Project commands (`dev up` and anything declared in `dev.yml`) still require a nearby `dev.yml`.
 
 ## dev cd — jump between checkouts
 
@@ -145,6 +207,10 @@ If the canonical destination already exists, `dev clone` errors and points you a
 Tab completion is registered per shell: zsh gets a navigable menu-select list scoped to the `dev` command only (your other commands' completion is untouched; registration is skipped quietly if your zshrc never runs `compinit`), bash fills `COMPREPLY` directly, and fish registers a standard pager completion (fish applies its own filtering, so fuzzy tokens may only complete literally there). Completion fills the argument only — it never runs the `cd` for you — and inserts `org/repo` (or deeper) forms when a short name would collide.
 
 Because the wrapper runs `builtin cd` in your interactive shell, shadowenv activation after `dev cd` behaves exactly like a manual `cd`: if the shadowenv hook is in your RC (see above), the project env loads; if it's missing, `dev cd` still changes directory but no env activates — same as plain `cd`.
+
+## dev cred — resolve a credential
+
+`dev cred get <namespace> <key>` resolves a credential through the provider chain (ENV → keychain → file → prompt) and prints it. A non-interactive miss errors with `gh secret set` guidance. It mirrors `dev deps path` for shell consumers (e.g. a staging sync script), so scripts never embed lookup logic of their own. Global: works without a `dev.yml`.
 
 ## dev runner — enroll a host as a self-hosted runner
 
@@ -215,59 +281,6 @@ end
 | Dev terminal | `dev` uses Homebrew Ruby (shell trampoline in `bin/dev`). Child commands get the project's Ruby via `shadowenv exec --`. |
 | CI | Docker image provides Ruby. Scripts run directly (not via `dev`). |
 | Cursor sandbox | `dev <cmd>` resolves Ruby correctly. `.cursor/rules/dev.mdc` instructs the AI agent to always use `dev <cmd>`. Shell trampolines in child scripts are NOT needed — only `d3mlabs/dev`'s own bin/ scripts need them (bootstrapping: can't use `dev` to run `dev` itself). |
-
-## dev.yml convention
-
-Each repo that wants to support `dev` should have a `dev.yml` at its git root:
-
-```yaml
-name: myproject
-
-commands:
-  up:
-    desc: Setup dev environment
-    run: ./bin/setup.rb
-  build:
-    desc: Build the project
-    run: ./bin/build.sh
-  test:
-    desc: Run tests
-    run: ./bin/test.sh
-  console:
-    desc: Start Ruby console
-    run: ./bin/console
-    repl: true
-```
-
-- `name`: Display name for the repo (used in help output).
-- `commands`: Map of command names to specs.
-  - Each command has:
-    - `desc`: Short description (shown in `dev` / `dev --help`).
-    - `run`: Shell command to execute (from the repo root). Any extra args passed to `dev <cmd> [args...]` are forwarded to this command.
-    - `repl`: *(optional, default `false`)* When `true`, the command execs directly without a status footer. Use this for long-running interactive sessions like consoles and REPLs where a trailing `✓ Done` doesn't make sense.
-    - `container`: *(optional, default `true` when `build.container` is configured)* When `false`, the command runs on the host (via `shadowenv exec`) instead of inside the build container. Use for host-side commands like provisioning (`up`) or deploying.
-    - `hidden`: *(optional, default `false`)* When `true`, the command is still callable (`dev <cmd>`) but omitted from `dev` / `dev --help` output. Use for internal plumbing — e.g. a `build` primitive that an intent command (`test`, `release`) calls but that developers shouldn't invoke directly.
-
-## Examples
-
-```bash
-# From repo root or any subdirectory
-cd /path/to/myproject
-dev up          # Runs ./bin/setup.rb
-dev up -v       # Runs ./bin/setup.rb -v
-dev test        # Runs ./bin/test.sh
-dev build       # Runs ./bin/build.sh
-
-# Help
-dev             # Lists all commands
-dev --help      # Same
-```
-
-## Error handling
-
-- If no git repo is found above your current directory: `dev: no git repo (with dev.yml) found above <path>`
-- If a git repo is found but has no `dev.yml`: `dev: found git repo at <path> but no dev.yml there`
-- If you run an unknown command: `dev: unknown command: <name>` (and shows available commands)
 
 ## Dependency management
 
@@ -401,22 +414,28 @@ Custom integrations implement `Dev::Deps::Integration` (with `install_all(pins, 
 
 `github: "org/repo"` expands to `repo: "https://github.com/org/repo"`. If only org is given (`github: "org"`), the dep name is appended as the repo name.
 
-### Built-in commands
+### Dependency commands
+
+The Lifecycle builtins (see [Built-in commands](#built-in-commands)) that drive the four stages above:
 
 - **`dev update-deps`** — resolve constraints from `dependencies.rb`, write lockfiles (recording the manifest digest for the staleness check). Always available (no need to define in `dev.yml`).
 - **`dev install-deps`** — install locked deps handled on the host (gh releases, steam apps) into their version-keyed install dirs, filtered to the detected env and host OS. Finishes by refreshing agent skill links (see [Agent skills & org learnings](#agent-skills--org-learnings)).
 - **`dev up`** — first converges the host layer (self-update + org Brewfile, see [Host tooling: the Brewfile contract](#host-tooling-the-brewfile-contract)), then auto-installs all deps from lockfiles (build group first), then runs the project's `up:` command from `dev.yml` if defined. On success, stamps the installed lockfile digest (see `dev check`). Finishes by refreshing agent skill links, like `install-deps`. Also valid outside any project: converges the host layer only — the fresh-box bootstrap (`brew install <org>/<tap>/dev` → `dev up` → ready).
 - **`dev check`** — report dependency-state staleness explicitly: `dependencies.rb` vs lockfiles (digest recorded by `update-deps`), and lockfiles vs the per-machine installed stamp (`~/.dev/state/<project>/installed-digest`, written after a fully-successful `up`/`install-deps`). The same two O(1) checks run at every command start — warning on workstations, erroring in CI.
 - **`dev deps path <integration> <name> <platform>`** — print the absolute path of a locked artifact (e.g. `dev deps path ficsit SML LinuxServer`, `dev deps path xcode` for the pinned DEVELOPER_DIR, or `dev deps path gh UnrealEngineMac` for a gh release's version-keyed install dir under the data root) so scripts don't reconstruct cache keys or layout conventions.
-- **`dev config list | get <key> | set <key> <value>`** — manage dev's settings (see [Org configuration & deployment](#org-configuration--deployment)). `list` shows every known key with its resolved value and source layer (`env` / `user` / `system` / unset) — the settings debugging tool; `get` prints the resolved value (exit 1 when unset); `set` writes the user file (`~/.config/dev/config.yml`), creating it if missing. Known keys only. Global: works without a `dev.yml`.
-- **`dev cred get <namespace> <key>`** — resolve a credential through the provider chain (ENV → keychain → file → prompt) and print it. A non-interactive miss errors with `gh secret set` guidance. Mirrors `dev deps path` for shell consumers (e.g. a staging sync). Global: works without a `dev.yml`.
-- **`dev cd <repo>`** — jump to a checkout under `$DEV_CD_ROOT` (default `~/src`) by fuzzy name, with Tab completion (see [dev cd](#dev-cd--jump-between-checkouts)). Global: works without a `dev.yml`.
-- **`dev clone [<org>/]<repo>`** — clone a GitHub repo via your `gh` auth into the canonical `$DEV_CD_ROOT/github.com/<org>/<repo>` path (org defaults to `d3mlabs`) and land there (see [dev clone](#dev-clone--clone-into-the-canonical-layout)). Clone-only — run `dev up` yourself. Global: works without a `dev.yml`.
-- **`dev cache gc [--keep N]`** — reclaim host caches dev owns (see below).
-- **`dev runner register|status`** — enroll this host as a self-hosted GitHub Actions runner (repo-scoped with a label derived from the project name, or `--org` with `--ai-flow`/`--labels`; contracts converge first, existing enrollments are label-amended in place), or inspect this machine's enrollments and host facts (see [dev runner](#dev-runner--enroll-a-host-as-a-self-hosted-runner)). Ungated — exists everywhere; `dev runner-setup` is an alias for `register`.
-- **`dev reset-container`** — remove the persistent build container (clears its incremental cache); registered only when `build.container.persist` is set.
-- **`dev plan …`** — global (works without a `dev.yml`; the workspace is the nearest dev.yml or git root). Sync Cursor plans with GitHub issues (ai-flow): the issue is the canonical plan, the local `.cursor/plans/gh-<n>-<slug>.plan.md` is a transient working copy carrying an `<!-- ai-flow … -->` header. Subcommands: `new "<title>" [--blank] [--org]` (create issue + linked plan — templated by default with the tech-design document (brief sections + `## Tech design` skeleton), resolved from the target repo's committed `.github/ISSUE_TEMPLATE/plan.md` when present (with a staleness warning when that mirror lags dev's bundle) else dev's bundled `share/plan-templates/tech-design.md`; `--blank` scaffolds just the H1; `--org` scaffolds a `Target repos:` line), `link <n> [<file>]` / `link <file>` (attach a draft to an existing issue / create one from it), `pull <n> [--merge]` (fetch, 3-way merging when both sides changed — the merge base lives at `~/.local/state/ai-flow/`), `push [<file>|<n>]` (guarded body PATCH — refuses to clobber newer remote edits; a number resolves the linked plan like `pull`), `status` (clean / ahead / behind / diverged, per linked plan), and `init` (materialize/update the plan template mirror at `.github/ISSUE_TEMPLATE/plan.md` in the working tree — review with `git diff`, then commit; only mirrors still carrying dev's marker comment are ever overwritten, so a repo customizes its template by editing the file and dropping the marker). `Dev::Plan::Templates` is the canonical owner of the template and mirror layout. `--org` targets the org plans repo (`plans_repo:` in `~/.config/dev/config.yml`, or `DEV_PLANS_REPO`) instead of the current repo's origin. Every invocation also refreshes the user-global links for dev's shipped skills (`share/cursor-skills/*` → `~/.cursor/skills/`, so the Cursor agent knows these verbs) and the org learnings artifacts (see [Agent skills & org learnings](#agent-skills--org-learnings)). For auto-push, a participating repo adds a Cursor `afterFileEdit` hook to `.cursor/hooks.json` running `dev plan hook-after-edit` — it reads the hook payload from stdin and no-ops unless the edited file is a linked plan. What happens to a plan after it's canonical — `/ask`, `/edit`, `/split` (two-phase dry/apply), `/build` — is ai-flow's remote half: see [plan-lifecycle.md](https://github.com/d3mlabs/ai-flow/blob/HEAD/docs/plan-lifecycle.md) and [commands.md](https://github.com/d3mlabs/ai-flow/blob/HEAD/docs/commands.md).
-- **`dev learnings sync|status|invariants|init`** — global (works without a `dev.yml`). `sync` refreshes the whole learnings read path now, blocking, errors bubbling: pull the machine cache of the knowledge repo, relink skills (shipped, org, and the project's gem skills), render the invariants rule and link it into the enclosing project. Outside a project the machine-global parts run and the project-scoped ones are skipped. `status` reports the configured knowledge repo, cache location and age, and what's rendered/linked per tier. `invariants` prints the Tier-0 prompt block (the invariants section extracted from the org index) — the seam prompt-building consumers like ai-flow shell out to instead of parsing the cache themselves. `init` scaffolds the canonical empty learnings layout at the enclosing repo's root: the repo-tier index (`.cursor/rules/learnings-index.mdc` with its `alwaysApply: true` front matter, capture/curation preamble, soft cap, and org-tier trailer — no entries), or with `--org` the knowledge-repo layout (`index.md` with the fixed `## Invariants (always-on)` / `## Knowledge (on-demand)` section structure `dev learnings sync` parses, plus the `skills/` corpus directory) for a new org adopting the loop. The scaffold is **write-once-committed**: an existing index is reported and left untouched (exit 0), so consumers such as ai-flow's `/learn` call `init` unconditionally before capturing into an unseeded repo. `Dev::Learnings::Layout` is the canonical owner of both tiers' paths and templates. See [Agent skills & org learnings](#agent-skills--org-learnings).
+
+## dev plan — sync plans with GitHub issues
+
+Global (works without a `dev.yml`; the workspace is the nearest dev.yml or git root). Sync Cursor plans with GitHub issues (ai-flow): the issue is the canonical plan, the local `.cursor/plans/gh-<n>-<slug>.plan.md` is a transient working copy carrying an `<!-- ai-flow … -->` header.
+
+- **`new "<title>" [--blank] [--org]`** — create an issue + linked plan. Templated by default with the tech-design document (brief sections + `## Tech design` skeleton), resolved from the target repo's committed `.github/ISSUE_TEMPLATE/plan.md` when present (with a staleness warning when that mirror lags dev's bundle) else dev's bundled `share/plan-templates/tech-design.md`; `--blank` scaffolds just the H1; `--org` scaffolds a `Target repos:` line.
+- **`link <n> [<file>]`** / **`link <file>`** — attach a draft to an existing issue / create one from it.
+- **`pull <n> [--merge]`** — fetch, 3-way merging when both sides changed (the merge base lives at `~/.local/state/ai-flow/`).
+- **`push [<file>|<n>]`** — guarded body PATCH; refuses to clobber newer remote edits. A number resolves the linked plan like `pull`.
+- **`status`** — clean / ahead / behind / diverged, per linked plan.
+- **`init`** — materialize/update the plan template mirror at `.github/ISSUE_TEMPLATE/plan.md` in the working tree — review with `git diff`, then commit. Only mirrors still carrying dev's marker comment are ever overwritten, so a repo customizes its template by editing the file and dropping the marker. `Dev::Plan::Templates` is the canonical owner of the template and mirror layout.
+
+`--org` targets the org plans repo (`plans_repo:` in `~/.config/dev/config.yml`, or `DEV_PLANS_REPO`) instead of the current repo's origin. Every invocation also refreshes the user-global links for dev's shipped skills (`share/cursor-skills/*` → `~/.cursor/skills/`, so the Cursor agent knows these verbs) and the org learnings artifacts (see [Agent skills & org learnings](#agent-skills--org-learnings)). For auto-push, a participating repo adds a Cursor `afterFileEdit` hook to `.cursor/hooks.json` running `dev plan hook-after-edit` — it reads the hook payload from stdin and no-ops unless the edited file is a linked plan. What happens to a plan after it's canonical — `/ask`, `/edit`, `/split` (two-phase dry/apply), `/build` — is ai-flow's remote half: see [plan-lifecycle.md](https://github.com/d3mlabs/ai-flow/blob/HEAD/docs/plan-lifecycle.md) and [commands.md](https://github.com/d3mlabs/ai-flow/blob/HEAD/docs/commands.md).
 
 ## Agent skills & org learnings
 
@@ -429,6 +448,15 @@ dev distributes agent-facing skills (Cursor-style `SKILL.md` directories) over t
 ### Repo learnings
 
 Alongside the distributed channels, a repo can carry **committed learnings** — lessons distilled from review feedback, builds, and scans — as an always-on index (`.cursor/rules/learnings-index.mdc`, one `[domain/slug]` line + trigger sentence per learning) pointing at on-demand detail skills (`.cursor/skills/learnings/<slug>/SKILL.md`; architecture digests under `.cursor/skills/architecture/<topic>/`). Committed files need no distribution step: every checkout — IDE, runner, worktree — has them by construction. The index defines its own format in its preamble; this repo's copy is the reference, and `dev learnings init` seeds an unseeded repo with the same canonical (empty) index — write-once: after the scaffold is committed, humans and capture passes own the file. Capture goes through the `capture-learning` skill (shipped in `share/cursor-skills/`, so it is available in every IDE session) or ai-flow's `/learn` command on GitHub surfaces — both stage learnings as proposal PRs, and human merge is the curation gate.
+
+### dev learnings
+
+Global (works without a `dev.yml`); the read-path verbs for everything above:
+
+- **`sync`** — refresh the whole learnings read path now, blocking, errors bubbling: pull the machine cache of the knowledge repo, relink skills (shipped, org, and the project's gem skills), render the invariants rule and link it into the enclosing project. Outside a project the machine-global parts run and the project-scoped ones are skipped.
+- **`status`** — report the configured knowledge repo, cache location and age, and what's rendered/linked per tier.
+- **`invariants`** — print the Tier-0 prompt block (the invariants section extracted from the org index) — the seam prompt-building consumers like ai-flow shell out to instead of parsing the cache themselves.
+- **`init [--org]`** — scaffold the canonical empty learnings layout at the enclosing repo's root: the repo-tier index (`.cursor/rules/learnings-index.mdc` with its `alwaysApply: true` front matter, capture/curation preamble, soft cap, and org-tier trailer — no entries), or with `--org` the knowledge-repo layout (`index.md` with the fixed `## Invariants (always-on)` / `## Knowledge (on-demand)` section structure `sync` parses, plus the `skills/` corpus directory) for a new org adopting the loop. The scaffold is **write-once-committed**: an existing index is reported and left untouched (exit 0), so consumers such as ai-flow's `/learn` call `init` unconditionally before capturing into an unseeded repo. `Dev::Learnings::Layout` is the canonical owner of both tiers' paths and templates.
 
 ## Build container & caching model
 
@@ -480,6 +508,13 @@ dev owns the cache layout, so it owns reclamation. `dev cache gc [--keep N]` app
 - **docker content tags** for the project image are pruned down to the live tag (never one backing a running container).
 
 A workflow/cron only *schedules* `dev cache gc`; it never reaches into the layout itself.
+
+### Container commands
+
+Two builtins exist only when the `dev.yml` declares a `build.container`:
+
+- **`dev provide-image`** — run the `ensure_image!` resolution above (local → pull → build) and print the resulting tag to stdout (progress goes to stderr, so the tag is capturable). Hidden from `dev help`: it is CI plumbing for the image-provisioning step, not a developer intent command. Publishing stays gated on `DEV_PUBLISH_IMAGE`, same as containerized commands.
+- **`dev reset-container`** — remove the persistent build container (clears its incremental cache). Registered only when `build.container.persist` is set.
 
 ## Releasing a new version
 
