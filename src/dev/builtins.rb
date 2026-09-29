@@ -5,10 +5,11 @@ module Dev
   # One class per builtin leaf, each subclassing BuiltinCommand — the
   # sealed Command hierarchy's declared open edge — with its collaborators
   # constructor-injected; per-call values stay method-side. Builtin groups
-  # (`deps`, `cache`, `runner`) are CommandGroups declared in the
-  # composition root (Runner) over these leaves; the Runner also decides
-  # which builtins exist for a given project (config-gated:
-  # provide-image/reset-container only with a build container).
+  # are CommandGroups declared in a composition root over these leaves:
+  # `deps`, `cache`, `runner` in the Runner (which also decides which
+  # builtins exist for a given project — config-gated: provide-image /
+  # reset-container only with a build container), the global nouns
+  # (`config`, `cred`, `learnings`, `plan`) in GlobalCatalog.
   module Builtins; end
 end
 
