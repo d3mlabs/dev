@@ -16,6 +16,7 @@ require "dev/learnings"
 require "dev/config_accessor"
 require "dev/credentials"
 require "dev/credential_accessor"
+require "dev/workspace_root"
 
 module Dev
   # Early dispatch for global builtins that must not require a dev.yml:
@@ -96,7 +97,7 @@ module Dev
       cmd_name = argv.first
       return true if cmd_name && GLOBAL_COMMANDS.key?(cmd_name)
 
-      help_argv?(argv) && nearest_dev_yaml_root.nil?
+      help_argv?(argv) && WorkspaceRoot.nearest_dev_yaml.nil?
     end
 
     # Run a global builtin. Clean failures (usage errors, unresolved repos)
@@ -119,8 +120,8 @@ module Dev
       when "config" then @config_accessor.run(args)
       # Plan and Learnings accessors are built per run: their workspace root
       # depends on the cwd.
-      when "plan" then Dev::Plan::Accessor.new(project_root: workspace_root).run(args)
-      when "learnings" then Dev::Learnings::Accessor.new(project_root: enclosing_project_root).run(args)
+      when "plan" then Dev::Plan::Accessor.new(project_root: WorkspaceRoot.workspace).run(args)
+      when "learnings" then Dev::Learnings::Accessor.new(project_root: WorkspaceRoot.enclosing_project).run(args)
       when "cred" then @cred_accessor.run(args)
       else raise ArgumentError, "not a global command: #{cmd_name}"
       end
@@ -162,46 +163,6 @@ module Dev
       remaining = error.candidates.size - shown.size
       $stderr.puts "  … and #{remaining} more" if remaining.positive?
       $stderr.puts "dev: refine the query (e.g. org/repo) or press Tab to browse matches."
-    end
-
-    # The workspace root for workspace-global commands: the nearest ancestor
-    # with a dev.yml, else the nearest git repo root, else the cwd itself —
-    # so `dev plan` works in any checkout, dev.yml or not.
-    #
-    # @return [Pathname]
-    sig { returns(Pathname) }
-    def workspace_root
-      enclosing_project_root || Pathname.new(Dir.pwd)
-    end
-
-    # The enclosing project (nearest dev.yml, else nearest git root), or nil
-    # when the cwd sits in no project at all — `dev learnings` outside any
-    # checkout does only the machine-global work.
-    #
-    # @return [Pathname, nil]
-    sig { returns(T.nilable(Pathname)) }
-    def enclosing_project_root
-      nearest_dev_yaml_root || nearest_git_root
-    end
-
-    # The nearest ancestor holding a dev.yml, or nil. This is the "inside a
-    # project?" test the help fallback uses: a plain git checkout with no
-    # dev.yml still gets the global usage. Same ascent Runner uses, but
-    # un-memoized — dispatch classifies against the cwd per invocation.
-    #
-    # @return [Pathname, nil]
-    sig { returns(T.nilable(Pathname)) }
-    def nearest_dev_yaml_root
-      Dev.search_dev_yaml_file&.dirname
-    end
-
-    # @return [Pathname, nil] the nearest ancestor holding a .git, or nil
-    sig { returns(T.nilable(Pathname)) }
-    def nearest_git_root
-      Pathname.new(Dir.pwd).ascend do |path|
-        return path if (path / ".git").exist?
-      end
-      nil
     end
   end
 end
