@@ -23,14 +23,28 @@ routes argv through two layers:
    outside a project) — and any other lookup maps to the no-dev.yml
    refusal in `Runner#exit_for`. `bin/dev` itself rescues nothing.
 
+Inside the Runner, commands form a **tree** (dev#188). The sealed
+`Dev::Command` has four shapes (`src/dev/command.rb`): `BuiltinCommand`,
+`ProjectCommand`, `OverriddenCommand`, and `CommandGroup` — named
+children plus an optional own leaf. `CommandRepository#resolve` walks
+argv down the tree (child → own run → usage); `CommandService` swaps a
+runnable group for its own leaf before guard/stamp; a pure group reaches
+`CommandExecutor`'s group arm, whose `GroupExecutor` prints the usage.
+
 The seams:
 
 - A new global command joins `GlobalDispatch::GLOBAL_COMMANDS` and gets a
   feature module under `lib/dev/<name>/` whose `Accessor` is its only CLI
   surface (usage, arg parsing, clean failures) — see `Cd::Accessor`,
   `Plan::Accessor`, `Learnings::Accessor`.
+- A new builtin with subcommands is a `CommandGroup` declared in
+  `Runner#build_builtins` over one leaf class per verb
+  (`deps` → `DepsPathCommand`; `runner` → `RunnerRegisterCommand`,
+  `RunnerStatusCommand`; `cache` → `CacheGcCommand`). Never hand-roll
+  `case args.first` dispatch inside a builtin.
 - Project commands are declared in each repo's dev.yml, never hardcoded
-  in dev's core.
+  in dev's core; nested `commands:` parse to `ProjectCommandGroup` and
+  merge with a same-named builtin child by child in the repository.
 - Workspace-global commands resolve their root as nearest dev.yml, else
   nearest `.git`, else cwd (`GlobalDispatch#workspace_root`).
 

@@ -26,6 +26,8 @@ dev <command> [args...]   # extra args are forwarded to the command
 
 dev walks up from your current directory to the git repo root and reads the `dev.yml` there. Every command is one of two kinds: a **project command** declared in that `dev.yml` (`dev test`, `dev build`, …), or a **builtin** that ships with dev. A project may declare a command on a builtin's name (typically `up`); the builtin body runs first, then the project's `run:` — a hardcoded `super()`.
 
+Commands form a **tree**: a command may group subcommands (`dev deps path`, `dev runner status`, a project's `dev test unit`). Resolution follows argv one token at a time — a token naming a child descends; the first token that doesn't is where the args begin. A group invoked bare runs its own `run:` when it has one, otherwise it prints its usage (so `dev deps` lists `deps path`); `dev help <path…>` does the same for any node. Groups show with a trailing `…` in `dev help`.
+
 ### Built-in commands
 
 Grouped as `dev help` lists them. **Scope** says where the command works: *anywhere* needs no `dev.yml`; *project* needs one; *gated* exists only when the `dev.yml` declares the named config.
@@ -60,7 +62,7 @@ Grouped as `dev help` lists them. **Scope** says where the command works: *anywh
 
 - No git repo above the current directory: `dev: no git repo (with dev.yml) found above <path>`
 - A git repo without a `dev.yml` (and the command is not an *anywhere* builtin): `dev: found git repo at <path> but no dev.yml there`
-- Unknown command: `dev: unknown command: <name>`, followed by the available commands
+- Unknown command: `dev: Command '<name>' not found` (the full path for an unknown subcommand, e.g. `'deps bogus'`), with a pointer to `dev --help`
 
 ## dev.yml convention
 
@@ -83,16 +85,23 @@ commands:
     desc: Start Ruby console
     run: ./bin/console
     repl: true
+  db:                          # a group: `dev db` prints its usage
+    desc: Database chores
+    commands:
+      reset:
+        desc: Reset the dev database
+        run: ./bin/db_reset.sh
 ```
 
 - `name`: Display name for the repo (used in help output).
-- `commands`: Map of command names to specs.
-  - Each command has:
-    - `desc`: Short description (shown in `dev` / `dev --help`).
-    - `run`: Shell command to execute (from the repo root). Any extra args passed to `dev <cmd> [args...]` are forwarded to this command.
-    - `repl`: *(optional, default `false`)* When `true`, the command execs directly without a status footer. Use this for long-running interactive sessions like consoles and REPLs where a trailing `✓ Done` doesn't make sense.
-    - `container`: *(optional, default `true` when `build.container` is configured)* When `false`, the command runs on the host (via `shadowenv exec`) instead of inside the build container. Use for host-side commands like provisioning (`up`) or deploying.
-    - `hidden`: *(optional, default `false`)* When `true`, the command is still callable (`dev <cmd>`) but omitted from `dev` / `dev --help` output. Use for internal plumbing — e.g. a `build` primitive that an intent command (`test`, `release`) calls but that developers shouldn't invoke directly.
+- `commands`: Map of command names to specs. A spec declares `run`, `commands`, or both — never neither.
+  - `desc`: Short description (shown in `dev` / `dev --help`).
+  - `run`: Shell command to execute (from the repo root). Any extra args passed to `dev <cmd> [args...]` are forwarded to this command.
+  - `commands`: *(optional)* Nested map of subcommand specs, same shape, any depth. `dev <cmd> <sub> [args...]` runs the child. With `run` beside it the group is **runnable**: bare `dev <cmd>` runs `run`, and a first arg that isn't a child's name is forwarded to it (`dev test --fast`). Without `run`, bare `dev <cmd>` prints the group's usage and an unknown first arg is an error. A child cannot be named `help`, and a group cannot be a `repl`.
+  - `repl`: *(optional, default `false`)* When `true`, the command execs directly without a status footer. Use this for long-running interactive sessions like consoles and REPLs where a trailing `✓ Done` doesn't make sense.
+  - `container`: *(optional, default `true` when `build.container` is configured)* When `false`, the command runs on the host (via `shadowenv exec`) instead of inside the build container. Use for host-side commands like provisioning (`up`) or deploying.
+  - `hidden`: *(optional, default `false`)* When `true`, the command is still callable (`dev <cmd>`) but omitted from `dev` / `dev --help` output. Use for internal plumbing — e.g. a `build` primitive that an intent command (`test`, `release`) calls but that developers shouldn't invoke directly.
+- A project spec on a **builtin's name** merges with it: leaf on leaf is the `super()` override above; a project group on a builtin group (`deps:`, `cache:`, `runner:`) merges child by child (new children are added, same-named children override); a project group on a builtin leaf (`up:` with `commands:`) keeps bare `dev up` as the override and adds the children.
 
 ## Adoption model
 
