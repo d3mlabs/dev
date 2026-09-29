@@ -330,6 +330,47 @@ class RunnerTest < Minitest::Test
     out.string.include?("  path         Print a locked artifact's path")
   end
 
+  test "dev complete walks the project catalog: top level, then a group's children" do
+    Given "a dev.yml with a nested test group"
+    out = StringIO.new
+    runner = build_runner(
+      commands: {
+        "test" => {
+          "desc" => "Test suites",
+          "commands" => { "unit" => { "run" => "rspec spec/unit" }, "e2e" => { "run" => "rspec spec/e2e" } },
+        },
+      },
+      out: out,
+    )
+
+    When "completing at the top level, then inside the group"
+    runner.run(["complete"])
+    top = out.string.lines.map(&:chomp)
+    out.truncate(0)
+    out.rewind
+    runner.run(%w[complete test])
+    inside = out.string.lines.map(&:chomp)
+
+    Then "builtins, groups and project commands at the top; the group's children inside; complete itself hidden"
+    (%w[help up deps plan test] - top).empty?
+    !top.include?("complete")
+    inside == %w[e2e unit]
+  end
+
+  test "dev complete outside a project offers the projectless catalog, global commands included" do
+    Given "a Runner with no dev.yml, over its real service graph"
+    out = StringIO.new
+    runner = Dev::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: out)
+
+    When "completing at the top level"
+    runner.run(["complete"])
+
+    Then "up, runner and the global nouns are offered; project-only builtins are not"
+    names = out.string.lines.map(&:chomp)
+    (%w[up runner cd clone config cred learnings plan] - names).empty?
+    !names.include?("install-deps")
+  end
+
   test "an unknown child of a pure project group is reported with its full path" do
     Given "a dev.yml with a nested test group"
     runner = build_runner(

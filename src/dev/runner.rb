@@ -188,9 +188,10 @@ module Dev
         out: @out,
         commands_provider: -> { T.must(service).visible_commands },
       )
+      complete = Builtins::CompleteCommand.new(out: @out, commands_provider: -> { T.must(service).visible_commands })
       service = CommandService.new(
         repository: CommandRepository.new(
-          builtins: build_builtins(manifest, dependency_service, help:),
+          builtins: build_builtins(manifest, dependency_service, help:, complete:),
           project_commands: manifest.commands,
         ),
         executor: build_executor(context, usage_printer),
@@ -200,22 +201,30 @@ module Dev
     end
 
     # The projectless catalog: `up` (its host half is the fresh-box
-    # bootstrap — install dev, `dev up`, ready) and `runner` (enrollment is
-    # a machine concern; `--org` registration and `status` need no
-    # project). The truly global commands (cd, clone, cred, ...) are
-    # dispatched before the Runner; everything else requires the project, so
-    # it simply isn't registered — a lookup miss maps to the no-dev.yml
-    # refusal in exit_for.
+    # bootstrap — install dev, `dev up`, ready), `runner` (enrollment is a
+    # machine concern; `--org` registration and `status` need no project),
+    # and the global commands (dispatched before the Runner in bin/dev, but
+    # listed here so `complete` offers one whole tree outside a project).
+    # Everything else requires the project, so it simply isn't registered —
+    # a lookup miss maps to the no-dev.yml refusal in exit_for.
     #
     # @return [CommandService]
     sig { returns(CommandService) }
     def build_projectless_command_service
+      service = T.let(nil, T.nilable(CommandService))
       builtins = T.let(
-        { "up" => Builtins::UpCommand.new(install_deps_command: Builtins::InstallDepsCommand.new) },
+        {
+          "up" => Builtins::UpCommand.new(install_deps_command: Builtins::InstallDepsCommand.new),
+          "complete" => Builtins::CompleteCommand.new(
+            out: @out,
+            commands_provider: -> { T.must(service).visible_commands },
+          ),
+        },
         T::Hash[String, Command],
       )
       builtins.merge!(runner_builtins)
-      CommandService.new(
+      builtins.merge!(GlobalCatalog.new(out: @out).commands)
+      service = CommandService.new(
         repository: CommandRepository.new(
           builtins: builtins,
           project_commands: {},
@@ -226,6 +235,7 @@ module Dev
         ),
         dependency_service: NoProjectDependencyService.new,
       )
+      service
     end
 
     # Wire the executor composite: one CommandRunner (built from the run's
@@ -261,15 +271,22 @@ module Dev
     # @param dependency_service [DependencyService]
     # @param help [Builtins::HelpCommand] built by the caller, which owns
     #   the listing self-reference
+    # @param complete [Builtins::CompleteCommand] likewise (the completion
+    #   plumbing walks the same catalog)
     # @return [Hash{String => Command}] the builtin tree
     sig do
-      params(manifest: ProjectManifest, dependency_service: DependencyService, help: Builtins::HelpCommand)
-        .returns(T::Hash[String, Command])
+      params(
+        manifest: ProjectManifest,
+        dependency_service: DependencyService,
+        help: Builtins::HelpCommand,
+        complete: Builtins::CompleteCommand,
+      ).returns(T::Hash[String, Command])
     end
-    def build_builtins(manifest, dependency_service, help:)
+    def build_builtins(manifest, dependency_service, help:, complete:)
       install_deps = Builtins::InstallDepsCommand.new
       builtins = T.let({
         "help" => help,
+        "complete" => complete,
         "update-deps" => Builtins::UpdateDepsCommand.new,
         "install-deps" => install_deps,
         # `up` composes the same install the install-deps builtin runs.

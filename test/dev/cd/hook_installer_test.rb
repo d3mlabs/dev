@@ -20,11 +20,12 @@ class Dev::Cd::HookInstallerTest < Minitest::Test
     Then "the wrapper, completer and dev-scoped menu-select are installed"
     result == :added
     content = File.read(File.join(home, ".zshrc"))
-    assert_includes content, "# dev cd + clone (added by dev)"
+    assert_includes content, "# dev cd + clone + completion (added by dev)"
     assert_includes content, 'command dev cd --resolve "$@"'
     assert_includes content, 'command dev clone --path "$@"'
     assert_includes content, "builtin cd"
     assert_includes content, "compadd -U"
+    assert_includes content, 'command dev complete "${(@)words[2,CURRENT-1]}"'
     assert_includes content, "zstyle ':completion:*:*:dev:*' menu select"
 
     Cleanup
@@ -65,7 +66,7 @@ class Dev::Cd::HookInstallerTest < Minitest::Test
     FileUtils.rm_rf(home)
   end
 
-  test "installs the bash wrapper with direct COMPREPLY (no compgen filtering)" do
+  test "installs the bash wrapper: direct COMPREPLY for cd, compgen-filtered tree names elsewhere" do
     Given "a bash user"
     home = Dir.mktmpdir("cd-hook-test-")
     installer = build_installer(shell: "/bin/bash", home: home)
@@ -79,8 +80,8 @@ class Dev::Cd::HookInstallerTest < Minitest::Test
     assert_includes content, 'command dev cd --resolve "$@"'
     assert_includes content, 'command dev clone --path "$@"'
     assert_includes content, "COMPREPLY=($(command dev cd --candidates"
-    assert_includes content, "complete -F _dev_cd_completion dev"
-    refute_includes content, "compgen -W"
+    assert_includes content, 'compgen -W "$(command dev complete "${COMP_WORDS[@]:1:COMP_CWORD-1}"'
+    assert_includes content, "complete -F _dev_completion dev"
 
     Cleanup
     FileUtils.rm_rf(home)
@@ -100,7 +101,8 @@ class Dev::Cd::HookInstallerTest < Minitest::Test
     assert_includes content, "function dev"
     assert_includes content, "command dev cd --resolve $argv"
     assert_includes content, "command dev clone --path $argv"
-    assert_includes content, "complete -c dev"
+    assert_includes content, "complete -c dev -n '__fish_seen_subcommand_from cd'"
+    assert_includes content, "complete -c dev -n 'not __fish_seen_subcommand_from cd' -f -a '(command dev complete (commandline -opc)[2..]"
 
     Cleanup
     FileUtils.rm_rf(home)
@@ -132,13 +134,13 @@ class Dev::Cd::HookInstallerTest < Minitest::Test
     result == :added
     content = File.read(File.join(home, ".zshrc"))
     assert_includes content, "# Shadowenv (added by dev)"
-    assert_includes content, "# dev cd + clone (added by dev)"
+    assert_includes content, "# dev cd + clone + completion (added by dev)"
 
     Cleanup
     FileUtils.rm_rf(home)
   end
 
-  test "an RC carrying the pre-clone snippet self-heals to the current wrapper" do
+  test "an RC carrying an older-generation snippet self-heals to the current wrapper" do
     Given "a zsh user with the old cd-only snippet under its old marker"
     home = Dir.mktmpdir("cd-hook-test-")
     File.write(File.join(home, ".zshrc"), <<~RC)
@@ -162,7 +164,7 @@ class Dev::Cd::HookInstallerTest < Minitest::Test
     Then "the current wrapper is appended (its later definition wins in the shell)"
     result == :added
     content = File.read(File.join(home, ".zshrc"))
-    assert_includes content, "# dev cd + clone (added by dev)"
+    assert_includes content, "# dev cd + clone + completion (added by dev)"
     assert_includes content, 'command dev clone --path "$@"'
 
     Cleanup
