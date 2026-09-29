@@ -4,7 +4,9 @@
 require "stringio"
 require "dev/builtins/cd_command"
 require "dev/builtins/clone_command"
-require "dev/builtins/config_command"
+require "dev/builtins/config_get_command"
+require "dev/builtins/config_list_command"
+require "dev/builtins/config_set_command"
 require "dev/builtins/cred_command"
 require "dev/builtins/learnings_command"
 require "dev/builtins/plan_command"
@@ -70,7 +72,16 @@ module Dev
       @commands ||= {
         "cd" => Builtins::CdCommand.new(accessor: @cd_accessor),
         "clone" => Builtins::CloneCommand.new(accessor: @clone_accessor),
-        "config" => Builtins::ConfigCommand.new(accessor: @config_accessor),
+        "config" => CommandGroup.new(
+          path: ["config"],
+          desc: "Manage dev settings",
+          category: Command::Category::Workflow,
+          children: {
+            "list" => Builtins::ConfigListCommand.new(accessor: @config_accessor, out: @out),
+            "get" => Builtins::ConfigGetCommand.new(accessor: @config_accessor, out: @out),
+            "set" => Builtins::ConfigSetCommand.new(accessor: @config_accessor, out: @out),
+          },
+        ),
         "cred" => Builtins::CredCommand.new(accessor: @cred_accessor),
         "learnings" => Builtins::LearningsCommand.new,
         "plan" => Builtins::PlanCommand.new,

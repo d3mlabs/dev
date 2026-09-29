@@ -10,8 +10,10 @@ module Dev
   # YAML). Mirrors Dev::CredentialAccessor's shape: a global command whose
   # clean failures raise and are mapped to exit 1 at the dispatch boundary.
   #
-  # Known-keys only: the registry is Settings::KNOWN_KEYS, so the command
-  # and the resolver can never disagree about what exists. `list` doubles
+  # One public method per verb; the `config` group in the command tree
+  # routes `list` / `get` / `set` to them. Known-keys only: the registry is
+  # Settings::KNOWN_KEYS, so the command and the resolver can never
+  # disagree about what exists. `list` doubles
   # as the settings debugging tool — every key with its resolved value and
   # the layer it came from, gitconfig `--show-origin` style.
   class ConfigAccessor
@@ -35,30 +37,13 @@ module Dev
       @settings = settings
     end
 
-    # Dispatch a `dev config …` invocation.
-    #
-    # @param args [Array<String>] argv after the "config" command
-    # @param out  [IO] output stream
-    # @raise [UsageError] on an unrecognized invocation
-    sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
-    def run(args, out: $stdout)
-      subcommand, *rest = args
-      case subcommand
-      when "list" then list(out)
-      when "get" then get(out, rest)
-      when "set" then set(out, rest)
-      else raise UsageError, USAGE
-      end
-    end
-
-    private
-
-    # Every known key with its resolved value and source layer.
+    # `dev config list`: every known key with its resolved value and source
+    # layer.
     #
     # @param out [IO]
     # @return [void]
     sig { params(out: T.any(IO, StringIO)).void }
-    def list(out)
+    def list(out: $stdout)
       width = T.must(Dev::Settings::KNOWN_KEYS.keys.map(&:length).max)
       Dev::Settings::KNOWN_KEYS.each_key do |key|
         value, source = @settings.lookup(key)
@@ -67,14 +52,16 @@ module Dev
       end
     end
 
+    # `dev config get <key>`: print the key's resolved value.
+    #
+    # @param args [Array<String>] argv after "get" — exactly one key
     # @param out [IO]
-    # @param rest [Array<String>] argv after "get" — exactly one key
     # @return [void]
     # @raise [UsageError] without exactly one key
     # @raise [UnsetKeyError] when the key resolves unset
-    sig { params(out: T.any(IO, StringIO), rest: T::Array[String]).void }
-    def get(out, rest)
-      key, *extra = rest
+    sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
+    def get(args, out: $stdout)
+      key, *extra = args
       raise UsageError, USAGE unless key && extra.empty?
 
       value, _source = @settings.lookup(validated(key))
@@ -83,18 +70,22 @@ module Dev
       out.puts value
     end
 
+    # `dev config set <key> <value>`: write the key to the user config file.
+    #
+    # @param args [Array<String>] argv after "set" — exactly a key and a value
     # @param out [IO]
-    # @param rest [Array<String>] argv after "set" — exactly a key and a value
     # @return [void]
     # @raise [UsageError] without exactly a key and value
-    sig { params(out: T.any(IO, StringIO), rest: T::Array[String]).void }
-    def set(out, rest)
-      key, value, *extra = rest
+    sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
+    def set(args, out: $stdout)
+      key, value, *extra = args
       raise UsageError, USAGE unless key && value && extra.empty?
 
       @settings.set(validated(key), value)
       out.puts "#{key} set in #{@settings.config_path}"
     end
+
+    private
 
     # @param key [String]
     # @return [String] the key, when known

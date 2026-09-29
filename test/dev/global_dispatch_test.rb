@@ -19,14 +19,14 @@ class RecordingCredAccessor < Dev::CredentialAccessor
   end
 end unless defined?(RecordingCredAccessor)
 
-# A config accessor stand-in recording its argv, so dispatch is tested
-# without touching the real config files. Subclasses the real accessor to
-# satisfy the dispatcher's typed constructor.
+# A config accessor stand-in recording the verb it received, so dispatch is
+# tested without touching the real config files. Subclasses the real
+# accessor to satisfy the catalog's typed constructor.
 class RecordingConfigAccessor < Dev::ConfigAccessor
-  attr_reader :last_args
+  attr_reader :last_call
 
-  def run(args, out: $stdout)
-    @last_args = args
+  def get(args, out: $stdout)
+    @last_call = [:get, args]
   end
 end unless defined?(RecordingConfigAccessor)
 
@@ -224,17 +224,56 @@ class Dev::GlobalDispatchTest < Minitest::Test
     FileUtils.rm_rf(cwd)
   end
 
-  test "dev config dispatches globally without a dev.yml lookup" do
+  test "dev config get resolves down the config group without a dev.yml lookup" do
     Given "a recording config accessor and a cwd with no dev.yml"
     config = RecordingConfigAccessor.new
     dispatch = build_dispatch(config_accessor: config)
     cwd = Dir.mktmpdir("dispatch-cwd-")
 
-    When "we dispatch dev config"
+    When "we dispatch dev config get"
     Dir.chdir(cwd) { dispatch.run(["config", "get", "plans_repo"]) }
 
-    Then "the accessor received the subcommand argv"
-    config.last_args == ["get", "plans_repo"]
+    Then "the get verb received the leaf's argv"
+    config.last_call == [:get, ["plans_repo"]]
+
+    Cleanup
+    FileUtils.rm_rf(cwd)
+  end
+
+  test "an unknown child of a global group prints the tree's not-found error and exits non-zero" do
+    Given "a dispatcher and a cwd with no dev.yml"
+    dispatch = build_dispatch(config_accessor: RecordingConfigAccessor.new)
+    cwd = Dir.mktmpdir("dispatch-cwd-")
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(1).once
+
+    When "we dispatch a verb the config group lacks"
+    Dir.chdir(cwd) { dispatch.run(["config", "frobnicate"]) }
+
+    Then "the full path is named, with the hint to list the group"
+    $stderr.string.include?("Command 'config frobnicate' not found")
+    $stderr.string.include?("Run 'dev config' to see its commands.")
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.rm_rf(cwd)
+  end
+
+  test "a bare global group prints its usage and exits cleanly" do
+    Given "a dispatcher printing to a buffer"
+    out = StringIO.new
+    dispatch = build_dispatch(out: out, config_accessor: RecordingConfigAccessor.new)
+    cwd = Dir.mktmpdir("dispatch-cwd-")
+
+    When "we dispatch the bare group"
+    Dir.chdir(cwd) { dispatch.run(["config"]) }
+
+    Then "the group usage lists its verbs"
+    out.string.include?("Usage: dev config <command> [args...]")
+    out.string.include?("  list")
+    out.string.include?("  get")
+    out.string.include?("  set")
 
     Cleanup
     FileUtils.rm_rf(cwd)
@@ -320,6 +359,7 @@ class Dev::GlobalDispatchTest < Minitest::Test
     out.string.include?("Global commands (available anywhere):")
     out.string.include?("  cd           #{Dev::Builtins::CdCommand::DESC}")
     out.string.include?("  clone        #{Dev::Builtins::CloneCommand::DESC}")
+    out.string.include?("  config …     Manage dev settings")
     out.string.include?("  cred         #{Dev::Builtins::CredCommand::DESC}")
     out.string.include?("  learnings    #{Dev::Builtins::LearningsCommand::DESC}")
     out.string.include?("  plan         #{Dev::Builtins::PlanCommand::DESC}")
