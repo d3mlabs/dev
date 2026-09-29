@@ -8,14 +8,14 @@ require "fileutils"
 require "stringio"
 require "tmpdir"
 
-# A credential accessor stand-in recording its argv, so dispatch is tested
-# without hitting the real provider chain. Subclasses the real accessor to
-# satisfy the dispatcher's typed constructor.
+# A credential accessor stand-in recording the verb it received, so dispatch
+# is tested without hitting the real provider chain. Subclasses the real
+# accessor to satisfy the catalog's typed constructor.
 class RecordingCredAccessor < Dev::CredentialAccessor
-  attr_reader :last_args
+  attr_reader :last_call
 
-  def run(args)
-    @last_args = args
+  def get(args, out: $stdout)
+    @last_call = [:get, args]
   end
 end unless defined?(RecordingCredAccessor)
 
@@ -208,17 +208,17 @@ class Dev::GlobalDispatchTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "dev cred dispatches globally without a dev.yml lookup" do
+  test "dev cred get resolves down the cred group without a dev.yml lookup" do
     Given "a recording cred accessor and a cwd with no dev.yml"
     creds = RecordingCredAccessor.new
     dispatch = build_dispatch(cred_accessor: creds)
     cwd = Dir.mktmpdir("dispatch-cwd-")
 
-    When "we dispatch dev cred"
+    When "we dispatch dev cred get"
     Dir.chdir(cwd) { dispatch.run(["cred", "get", "ns", "key"]) }
 
-    Then "the accessor received the subcommand argv"
-    creds.last_args == ["get", "ns", "key"]
+    Then "the get verb received the leaf's argv"
+    creds.last_call == [:get, ["ns", "key"]]
 
     Cleanup
     FileUtils.rm_rf(cwd)
@@ -360,7 +360,7 @@ class Dev::GlobalDispatchTest < Minitest::Test
     out.string.include?("  cd           #{Dev::Builtins::CdCommand::DESC}")
     out.string.include?("  clone        #{Dev::Builtins::CloneCommand::DESC}")
     out.string.include?("  config …     Manage dev settings")
-    out.string.include?("  cred         #{Dev::Builtins::CredCommand::DESC}")
+    out.string.include?("  cred …       Resolve stored credentials")
     out.string.include?("  learnings    #{Dev::Builtins::LearningsCommand::DESC}")
     out.string.include?("  plan         #{Dev::Builtins::PlanCommand::DESC}")
     out.string.include?("Run dev inside a project that defines a dev.yml to see its commands.")

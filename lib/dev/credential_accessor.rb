@@ -4,7 +4,8 @@
 require "stringio"
 
 module Dev
-  # Read accessor over the Credentials provider, surfaced as `dev cred get`.
+  # Read accessor over the Credentials provider, surfaced as `dev cred get`
+  # (the `get` leaf of the `cred` group calls the public verb here).
   #
   # Mirrors Dev::Deps::Accessor (`dev deps path`): it exposes an internal
   # resolution detail — here the ENV → keychain → file → prompt fallback chain —
@@ -27,37 +28,25 @@ module Dev
       @credentials = T.let(credentials || Dev::Credentials, T.untyped)
     end
 
-    # Dispatch a `dev cred …` invocation and print the resolved value.
+    # `dev cred get <namespace> <key>`: print the resolved value.
     #
-    # @param args [Array<String>] argv after the "cred" command
+    # @param args [Array<String>] argv after "get" — exactly a namespace and key
     # @param out  [IO, StringIO] output stream
-    # @raise [UsageError] on an unrecognized invocation
+    # @raise [UsageError] without exactly a namespace and key
     sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
-    def run(args, out: $stdout)
-      subcommand, *rest = args
-      case subcommand
-      when "get" then out.puts(get(*T.unsafe(rest)))
-      else raise UsageError, USAGE
-      end
-    end
+    def get(args, out: $stdout)
+      namespace, key, *extra = args
+      raise UsageError, USAGE unless namespace && key && extra.empty?
 
-    private
-
-    # @param namespace [String]
-    # @param key [String]
-    # @return [String] resolved credential value
-    # @raise [UsageError] for a missing namespace/key
-    sig { params(namespace: T.nilable(String), key: T.nilable(String)).returns(String) }
-    def get(namespace = nil, key = nil)
-      raise UsageError, USAGE unless namespace && key
-
-      @credentials.resolve(
+      out.puts @credentials.resolve(
         namespace: namespace,
         key: key,
         env_var: default_env_var(namespace, key),
         prompt_label: "#{namespace} #{key}",
       )
     end
+
+    private
 
     # Conventional ENV override name for a credential, so `NAMESPACE_KEY=…`
     # overrides the stored value (matching how build_args use the arg name).

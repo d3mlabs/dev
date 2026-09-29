@@ -7,7 +7,7 @@ require "dev/builtins/clone_command"
 require "dev/builtins/config_get_command"
 require "dev/builtins/config_list_command"
 require "dev/builtins/config_set_command"
-require "dev/builtins/cred_command"
+require "dev/builtins/cred_get_command"
 require "dev/builtins/learnings_command"
 require "dev/builtins/plan_command"
 require "dev/cd"
@@ -82,7 +82,12 @@ module Dev
             "set" => Builtins::ConfigSetCommand.new(accessor: @config_accessor, out: @out),
           },
         ),
-        "cred" => Builtins::CredCommand.new(accessor: @cred_accessor),
+        "cred" => CommandGroup.new(
+          path: ["cred"],
+          desc: "Resolve stored credentials",
+          category: Command::Category::Workflow,
+          children: { "get" => Builtins::CredGetCommand.new(accessor: @cred_accessor, out: @out) },
+        ),
         "learnings" => Builtins::LearningsCommand.new,
         "plan" => Builtins::PlanCommand.new,
       }.freeze

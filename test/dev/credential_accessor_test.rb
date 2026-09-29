@@ -31,7 +31,7 @@ class Dev::CredentialAccessorTest < Minitest::Test
     out = StringIO.new
 
     When "getting a credential"
-    accessor.run(["get", "staging", "ssh_key"], out: out)
+    accessor.get(["staging", "ssh_key"], out: out)
 
     Then "the value is printed and the provider was asked for that namespace/key"
     out.string == "s3cr3t\n"
@@ -48,7 +48,7 @@ class Dev::CredentialAccessorTest < Minitest::Test
     accessor = Dev::CredentialAccessor.new(credentials: creds)
 
     When "getting a credential whose key has separators"
-    accessor.run(["get", "wwise", "token"], out: StringIO.new)
+    accessor.get(["wwise", "token"], out: StringIO.new)
 
     Then "the env_var is the upcased namespace_key"
     creds.last_resolve[:env_var] == "WWISE_TOKEN"
@@ -57,12 +57,12 @@ class Dev::CredentialAccessorTest < Minitest::Test
     nil
   end
 
-  test "an unknown subcommand raises UsageError" do
+  test "cred get with trailing arguments raises UsageError" do
     Given "an accessor"
     accessor = Dev::CredentialAccessor.new(credentials: FakeCredentials.new(value: "v"))
 
-    When "running an unrecognized subcommand"
-    accessor.run(["list"], out: StringIO.new)
+    When "getting with an extra argument"
+    accessor.get(["staging", "ssh_key", "junk"], out: StringIO.new)
 
     Then
     raises Dev::CredentialAccessor::UsageError
@@ -76,7 +76,7 @@ class Dev::CredentialAccessorTest < Minitest::Test
     accessor = Dev::CredentialAccessor.new(credentials: FakeCredentials.new(value: "v"))
 
     When "getting with a namespace but no key"
-    accessor.run(["get", "staging"], out: StringIO.new)
+    accessor.get(["staging"], out: StringIO.new)
 
     Then
     raises Dev::CredentialAccessor::UsageError
