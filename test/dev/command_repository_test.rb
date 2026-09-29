@@ -298,6 +298,18 @@ class Dev::CommandRepositoryTest < Minitest::Test
     repository.fetch("x").own.builtin == builtin_own
   end
 
+  test "a project run cannot override a builtin group's own leaf that is not a builtin: a wiring bug" do
+    Given "a builtin group whose own leaf is (wrongly) a project command"
+    stray_own = Dev::ProjectCommand.new(run: "./bin/stray.sh")
+    group = build_group(["x"], children: { "a" => build_builtin }, own: stray_own)
+
+    When "a project leaf lands on the group's name"
+    Dev::CommandRepository.new(builtins: { "x" => group }, project_commands: { "x" => Dev::ProjectCommand.new(run: "y") })
+
+    Then
+    raises Dev::CommandRepository::UnoverridableCommandError
+  end
+
   # --- the tree: resolution ------------------------------------------------
 
   test "resolve descends the tree while argv names children, returning the node, its path, and the rest" do
