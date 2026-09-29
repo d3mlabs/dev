@@ -17,14 +17,14 @@ module Dev
     class CompleteCommand < BuiltinCommand
       extend T::Sig
 
-      # The catalog to walk, read at call time (the same self-reference help
-      # resolves: the catalog contains this command).
-      CommandsProvider = T.type_alias { T.proc.returns(T::Hash[String, Command]) }
+      # The tree to walk, read at call time (the same self-reference help
+      # resolves: the tree contains this command).
+      RootProvider = T.type_alias { T.proc.returns(Command) }
 
-      sig { params(commands_provider: CommandsProvider, out: T.any(IO, StringIO)).void }
-      def initialize(commands_provider:, out: $stdout)
+      sig { params(root_provider: RootProvider, out: T.any(IO, StringIO)).void }
+      def initialize(root_provider:, out: $stdout)
         super()
-        @commands_provider = commands_provider
+        @root_provider = root_provider
         @out = out
       end
 
@@ -52,14 +52,14 @@ module Dev
       # @return [Array<String>] the visible child names at the node reached
       sig { params(words: T::Array[String]).returns(T::Array[String]) }
       def candidates(words)
-        commands = @commands_provider.call
+        node = T.let(@root_provider.call, Command)
         words.each do |word|
-          node = commands[word]
-          return [] if node.nil? || node.hidden?
+          child = node.children[word]
+          return [] if child.nil? || child.hidden?
 
-          commands = node.children
+          node = child
         end
-        commands.reject { |_name, command| command.hidden? }.keys.sort
+        node.children.reject { |_name, command| command.hidden? }.keys.sort
       end
     end
   end

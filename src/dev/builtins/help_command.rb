@@ -8,34 +8,32 @@ require "dev/command"
 
 module Dev
   module Builtins
-    # `dev help` (also routed from bare `dev`, `--help`, and `-h`): render
-    # the grouped usage listing; `dev help <path…>` renders the usage of
-    # the node at that path (its invocation forms, description, children).
-    # Help lists the very catalog that contains it, so the listing arrives
-    # as a provider resolved at call time — the composition root closes the
-    # self-reference, not this class.
+    # `dev help <path…>`: render the usage of the node at that path — its
+    # invocation forms, description, children; with no path, the root
+    # (the same view bare `dev`, `--help`, and `-h` reach by resolving to
+    # the root). Help walks the very tree that contains it, so the root
+    # arrives as a provider resolved at call time — the composition root
+    # closes the self-reference, not this class.
     class HelpCommand < BuiltinCommand
       extend T::Sig
 
       # `dev help <path…>` named something the tree does not hold.
       class UnknownCommandError < ArgumentError; end
 
-      CommandsProvider = T.type_alias { T.proc.returns(T::Hash[String, Command]) }
+      RootProvider = T.type_alias { T.proc.returns(Command) }
 
       sig do
         params(
-          project_name: String,
           usage_printer: Cli::UsagePrinter,
           out: T.any(IO, StringIO),
-          commands_provider: CommandsProvider,
+          root_provider: RootProvider,
         ).void
       end
-      def initialize(project_name:, usage_printer:, out:, commands_provider:)
+      def initialize(usage_printer:, out:, root_provider:)
         super()
-        @project_name = project_name
         @usage_printer = usage_printer
         @out = out
-        @commands_provider = commands_provider
+        @root_provider = root_provider
       end
 
       sig { override.returns(String) }
@@ -51,32 +49,23 @@ module Dev
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
-        commands = @commands_provider.call
-        return @usage_printer.print(project_name: @project_name, commands: commands, out: @out) if args.empty?
-
-        @usage_printer.print_node(path: args, command: walk(commands, args), out: @out)
+        @usage_printer.print_node(path: args, command: walk(@root_provider.call, args), out: @out)
       end
 
       private
 
-      # Follow the path through the listing, one child per token.
+      # Follow the path down from the root, one child per token.
       #
-      # @param commands [Hash{String => Command}] the top-level listing
+      # @param root [Command]
       # @param path [Array<String>]
-      # @return [Command] the node at the path
+      # @return [Command] the node at the path (the root for an empty path)
       # @raise [UnknownCommandError]
-      sig { params(commands: T::Hash[String, Command], path: T::Array[String]).returns(Command) }
-      def walk(commands, path)
-        children = commands
-        node = T.let(nil, T.nilable(Command))
-        path.each do |name|
-          node = children[name]
-          raise UnknownCommandError, "help: unknown command '#{path.join(" ")}'" if node.nil?
-
+      sig { params(root: Command, path: T::Array[String]).returns(Command) }
+      def walk(root, path)
+        path.reduce(root) do |node, name|
           # A leaf has no children: any further token falls through to the raise.
-          children = node.children
+          node.children[name] || raise(UnknownCommandError, "help: unknown command '#{path.join(" ")}'")
         end
-        T.must(node)
       end
     end
   end

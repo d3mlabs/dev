@@ -295,75 +295,27 @@ class Dev::GlobalDispatchTest < Minitest::Test
     FileUtils.rm_rf(cwd)
   end
 
-  test "help argvs dispatch globally when no dev.yml encloses the cwd" do
-    Given "a cwd with a .git dir but no dev.yml above it (a plain checkout)"
+  test "help spelling #{argv.inspect} never dispatches globally: the Runner's tree lists the global commands too" do
+    Given "a cwd with no dev.yml anywhere above it (where help used to be global)"
     cwd = Dir.mktmpdir("dispatch-help-")
-    FileUtils.mkdir_p(File.join(cwd, ".git"))
     dispatch = build_dispatch
 
-    When "classifying every help spelling from that cwd"
-    classified = Dir.chdir(cwd) do
-      {
-        bare: dispatch.global_command?([]),
-        long_flag: dispatch.global_command?(["--help"]),
-        short_flag: dispatch.global_command?(["-h"]),
-        word: dispatch.global_command?(["help"]),
-      }
-    end
+    When "classifying the spelling from that cwd"
+    classified = Dir.chdir(cwd) { dispatch.global_command?(argv) }
 
-    Then "all classify as global"
-    classified.values.all?
+    Then "it is the Runner's"
+    classified == false
 
     Cleanup
     FileUtils.rm_rf(cwd)
-  end
 
-  test "help argvs stay with the Runner when a dev.yml encloses the cwd" do
-    Given "a cwd whose parent holds a dev.yml"
-    root = Dir.mktmpdir("dispatch-help-")
-    File.write(File.join(root, "dev.yml"), "name: someproject\n")
-    cwd = File.join(root, "nested")
-    FileUtils.mkdir_p(cwd)
-    dispatch = build_dispatch
-
-    When "classifying every help spelling from that cwd"
-    classified = Dir.chdir(cwd) do
-      {
-        bare: dispatch.global_command?([]),
-        long_flag: dispatch.global_command?(["--help"]),
-        short_flag: dispatch.global_command?(["-h"]),
-        word: dispatch.global_command?(["help"]),
-      }
-    end
-
-    Then "none classify as global — project help renders the project catalog"
-    classified.values.none?
-
-    Cleanup
-    FileUtils.rm_rf(root)
-  end
-
-  test "bare dev outside a project prints the global usage" do
-    Given "a cwd with no dev.yml anywhere above it"
-    cwd = Dir.mktmpdir("dispatch-help-")
-    out = StringIO.new
-    dispatch = build_dispatch(out: out)
-
-    When "we dispatch the bare argv"
-    Dir.chdir(cwd) { dispatch.run([]) }
-
-    Then "the global commands render with their canonical descriptions and the project hint"
-    out.string.include?("Global commands (available anywhere):")
-    out.string.include?("  cd           #{Dev::Builtins::CdCommand::DESC}")
-    out.string.include?("  clone        #{Dev::Builtins::CloneCommand::DESC}")
-    out.string.include?("  config …     Manage dev settings")
-    out.string.include?("  cred …       Resolve stored credentials")
-    out.string.include?("  learnings …  The learnings read path: org knowledge cache, skill links, invariants")
-    out.string.include?("  plan …       Sync Cursor plans with GitHub issues")
-    out.string.include?("Run dev inside a project that defines a dev.yml to see its commands.")
-
-    Cleanup
-    FileUtils.rm_rf(cwd)
+    Where
+    argv
+    []
+    ["--help"]
+    ["-h"]
+    ["help"]
+    ["help", "plan"]
   end
 
   test "project commands still require a nearby dev.yml" do

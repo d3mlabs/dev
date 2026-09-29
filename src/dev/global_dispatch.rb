@@ -4,9 +4,9 @@
 require "stringio"
 require "dev/builtin_executor"
 require "dev/cd"
-require "dev/cli/global_usage_printer"
 require "dev/cli/ui"
 require "dev/cli/usage_printer"
+require "dev/command"
 require "dev/command_executor"
 require "dev/command_repository"
 require "dev/command_service"
@@ -15,7 +15,6 @@ require "dev/dependency_service"
 require "dev/execution_context"
 require "dev/global_catalog"
 require "dev/group_executor"
-require "dev/workspace_root"
 
 module Dev
   # Early dispatch for the global builtins (see GlobalCatalog): runs before
@@ -27,12 +26,8 @@ module Dev
   # Runner uses: the global catalog is served by a CommandService over a
   # CommandRepository with no project half, so `dev plan status` resolves
   # down the tree exactly as it would inside a project, and a bare group
-  # (`dev plan`) prints its usage.
-  #
-  # Help is a conditional citizen here: outside any dev.yml project, the help
-  # spellings (bare `dev`, `--help`, `-h`, `help`) render the global usage —
-  # inside a project they stay with the Runner, which lists the project's
-  # catalog.
+  # (`dev plan`) prints its usage. Help (bare `dev`, `--help`, `-h`,
+  # `help`) is the Runner's everywhere: its tree lists these commands too.
   class GlobalDispatch
     extend T::Sig
 
@@ -40,38 +35,25 @@ module Dev
     AMBIGUOUS_CANDIDATE_CAP = 10
 
     # @param catalog [Dev::GlobalCatalog] the global command tree
-    # @param usage_printer [Dev::Cli::GlobalUsagePrinter]
     # @param ui [Dev::Cli::Ui] the host half of the execution context (the
     #   global leaves print plainly, so the silent UI is the default)
-    # @param out [IO, StringIO] where usage prints
-    sig do
-      params(
-        catalog: Dev::GlobalCatalog,
-        usage_printer: Dev::Cli::GlobalUsagePrinter,
-        ui: Dev::Cli::Ui,
-        out: T.any(IO, StringIO),
-      ).void
-    end
-    def initialize(catalog: Dev::GlobalCatalog.new, usage_printer: Dev::Cli::GlobalUsagePrinter.new,
-                   ui: Dev::Cli::NoUi.new, out: $stdout)
+    # @param out [IO, StringIO] where group usage prints
+    sig { params(catalog: Dev::GlobalCatalog, ui: Dev::Cli::Ui, out: T.any(IO, StringIO)).void }
+    def initialize(catalog: Dev::GlobalCatalog.new, ui: Dev::Cli::NoUi.new, out: $stdout)
       @catalog = catalog
-      @usage_printer = usage_printer
       @ui = ui
       @out = out
     end
 
-    # Whether the argv is dispatched here, before any dev.yml lookup: a
-    # global builtin from anywhere, or a help spelling outside any project
-    # (inside one, the Runner's help lists the project catalog instead).
+    # Whether the argv is dispatched here, before any dev.yml lookup: its
+    # first token names a global builtin.
     #
     # @param argv [Array<String>]
     # @return [Boolean]
     sig { params(argv: T::Array[String]).returns(T::Boolean) }
     def global_command?(argv)
       cmd_name = argv.first
-      return true if cmd_name && @catalog.commands.key?(cmd_name)
-
-      help_argv?(argv) && WorkspaceRoot.nearest_dev_yaml.nil?
+      !cmd_name.nil? && @catalog.commands.key?(cmd_name)
     end
 
     # Run a global builtin. Clean failures (usage errors, unresolved repos,
@@ -82,11 +64,6 @@ module Dev
     # @return [void]
     sig { params(argv: T::Array[String]).void }
     def run(argv)
-      if help_argv?(argv)
-        @usage_printer.print(commands: @catalog.commands, out: @out)
-        return
-      end
-
       build_command_service.execute(argv, context: ExecutionContext.new(ui: @ui))
     rescue Dev::Cd::Matcher::AmbiguousRepoError => e
       print_ambiguous(e)
@@ -108,29 +85,23 @@ module Dev
 
     # The projectless service over the global catalog: builtins and groups
     # only (no project half, so no project or overridden executor arms).
+    # Its root is never reached — global_command? admits only argv naming
+    # a child — so it needs no epilogue.
     #
     # @return [CommandService]
     sig { returns(CommandService) }
     def build_command_service
       CommandService.new(
-        repository: CommandRepository.new(builtins: @catalog.commands, project_commands: {}),
+        repository: CommandRepository.new(
+          root: CommandGroup.root(desc: "Global commands (available anywhere)", children: @catalog.commands),
+          project_commands: {},
+        ),
         executor: CommandExecutor.new(
           builtin_executor: BuiltinExecutor.new,
           group_executor: GroupExecutor.new(usage_printer: Cli::UsagePrinter.new, out: @out),
         ),
         dependency_service: NoProjectDependencyService.new,
       )
-    end
-
-    # Whether the argv is a help spelling. Mirrors the Runner's routing:
-    # bare `dev`, the exact conventional flags, and `help` as the command
-    # name (the help builtin ignores trailing args).
-    #
-    # @param argv [Array<String>]
-    # @return [Boolean]
-    sig { params(argv: T::Array[String]).returns(T::Boolean) }
-    def help_argv?(argv)
-      argv.empty? || argv == ["--help"] || argv == ["-h"] || argv.first == "help"
     end
 
     # Print an ambiguous `dev cd` result: the candidates (capped, each at its

@@ -38,7 +38,9 @@ class Dev::CommandServiceTest < Minitest::Test
 
   def build_service(builtins:, dependency_service:, executor: build_executor)
     Dev::CommandService.new(
-      repository: Dev::CommandRepository.new(builtins: builtins, project_commands: {}),
+      repository: Dev::CommandRepository.new(
+        root: Dev::CommandGroup.root(desc: "commands", children: builtins), project_commands: {},
+      ),
       executor: executor,
       dependency_service: dependency_service,
     )
@@ -87,8 +89,8 @@ class Dev::CommandServiceTest < Minitest::Test
   end
 
   test "execute raises CommandNotFoundError (the repository's own) for an unknown name" do
-    Given "a service over an empty repository"
-    service = build_service(builtins: {}, dependency_service: fake_dependency_service)
+    Given "a service over one builtin"
+    service = build_service(builtins: { "deps" => FakeBuiltin.new }, dependency_service: fake_dependency_service)
 
     When "executing an unknown command"
     service.execute(["nonexistent"], context: fake_context)
@@ -238,12 +240,28 @@ class Dev::CommandServiceTest < Minitest::Test
     )
   end
 
-  test "visible_commands serves the repository's usage view" do
-    Given "a service over one visible builtin"
+  test "root serves the repository's tree" do
+    Given "a service over one builtin"
     builtin = FakeBuiltin.new
     service = build_service(builtins: { "deps" => builtin }, dependency_service: fake_dependency_service)
 
-    Expect "the usage view flows through the service (the onion rule)"
-    service.visible_commands == { "deps" => builtin }
+    Expect "the tree flows through the service (the onion rule)"
+    service.root.children == { "deps" => builtin }
+  end
+
+  test "empty argv resolves to the root, handed to the executor as a group" do
+    Given "an executor expecting the root"
+    dependency_service = typed_mock(Dev::DependencyService)
+    dependency_service.expects(:guard!).never
+    executor = typed_mock(Dev::CommandExecutor)
+    context = fake_context
+    service = build_service(builtins: { "up" => FakeBuiltin.new }, dependency_service: dependency_service, executor: executor)
+    executor.expects(:execute).with(service.root, args: [], context: context).once
+
+    When "executing bare"
+    service.execute([], context: context)
+
+    Then "the expectations hold"
+    true
   end
 end

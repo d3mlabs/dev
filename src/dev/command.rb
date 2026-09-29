@@ -311,8 +311,25 @@ module Dev
     # keeps every resolved node meaningful.
     class EmptyGroupError < ArgumentError; end
 
-    # The command path from the root (`["deps"]`, `["test", "unit"]`);
-    # what the group's usage line renders.
+    class << self
+      extend T::Sig
+
+      # The tree's root: `dev` itself, a group whose children are the
+      # top-level commands. Bare `dev` resolves to it and prints its usage;
+      # `dev nope` is a leftover token on a group, like any unknown child.
+      # It lists nowhere, so its category is never read.
+      #
+      # @param desc [String] the line the usage prints under the invocation
+      # @param children [Hash{String => Command}] the top-level commands
+      # @return [CommandGroup]
+      sig(:final) { params(desc: String, children: T::Hash[String, Command]).returns(CommandGroup) }
+      def root(desc:, children:)
+        new(path: [], desc:, category: Command::Category::Workflow, children:)
+      end
+    end
+
+    # The command path from the root (`["deps"]`, `["test", "unit"]`;
+    # empty for the root itself); what the group's usage line renders.
     sig(:final) { returns(T::Array[String]) }
     attr_reader :path
 

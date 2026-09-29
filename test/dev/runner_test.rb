@@ -23,11 +23,12 @@ class RunnerTest < Minitest::Test
     When "we run with empty argv"
     runner.run([])
 
-    Then "usage is printed"
+    Then "the root's usage is printed: the tool's invocation, the project's name, its commands, the examples"
     out.string.include?("Usage: dev <command> [args...]")
-    out.string.include?("Commands for testproject:")
+    out.string.include?("Development commands for testproject")
     out.string.include?("up")
     out.string.include?("Setup")
+    out.string.lines.last == "#{Dev::Runner::PROJECT_EPILOGUE}\n"
   end
 
   test "run with --help prints usage" do
@@ -78,8 +79,29 @@ class RunnerTest < Minitest::Test
 
     Then "the three sections render in order"
     lines = out.string.lines.map(&:chomp)
-    lines.index("Commands for testproject:") < lines.index("Lifecycle:")
+    lines.index("Project commands:") < lines.index("Lifecycle:")
     lines.index("Lifecycle:") < lines.index("Development flow:")
+  end
+
+  test "#{argv.inspect} prints the same root usage as bare dev" do
+    Given "two Runners over the same dev.yml"
+    commands = { "test" => { "run" => "rspec", "desc" => "Run tests" } }
+    bare_out = StringIO.new
+    out = StringIO.new
+
+    When "running bare and with the spelling"
+    build_runner(commands: commands, out: bare_out).run([])
+    build_runner(commands: commands, out: out).run(argv)
+
+    Then "one rendering"
+    out.string == bare_out.string
+    out.string.include?("  test         Run tests")
+
+    Where
+    argv
+    ["--help"]
+    ["-h"]
+    ["help"]
   end
 
   test "run with unknown command prints error to stderr and exits 1" do
@@ -365,10 +387,45 @@ class RunnerTest < Minitest::Test
     When "completing at the top level"
     runner.run(["complete"])
 
-    Then "up, runner and the global nouns are offered; project-only builtins are not"
+    Then "help, up, runner and the global nouns are offered; project-only builtins are not"
     names = out.string.lines.map(&:chomp)
-    (%w[up runner cd clone config cred learnings plan] - names).empty?
+    (%w[help up runner cd clone config cred learnings plan] - names).empty?
     !names.include?("install-deps")
+  end
+
+  test "bare dev outside a project prints the projectless root: the global commands and the dev.yml hint" do
+    Given "a Runner with no dev.yml, over its real service graph"
+    out = StringIO.new
+    runner = Dev::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: out)
+
+    When "running bare"
+    runner.run([])
+
+    Then "the global commands render with their canonical descriptions, in sections, closing with the hint"
+    out.string.include?("Usage: dev <command> [args...]")
+    out.string.include?("Commands available outside a project")
+    out.string.include?("  cd           #{Dev::Builtins::CdCommand::DESC}")
+    out.string.include?("  clone        #{Dev::Builtins::CloneCommand::DESC}")
+    out.string.include?("  config …     Manage dev settings")
+    out.string.include?("  cred …       Resolve stored credentials")
+    out.string.include?("  learnings …  The learnings read path: org knowledge cache, skill links, invariants")
+    out.string.include?("  plan …       Sync Cursor plans with GitHub issues")
+    out.string.include?("  runner …     Enroll or inspect this host as a self-hosted runner")
+    out.string.include?("Lifecycle:")
+    out.string.lines.last == "#{Dev::Runner::PROJECTLESS_EPILOGUE}\n"
+  end
+
+  test "dev help <path> outside a project renders a global group's usage" do
+    Given "a Runner with no dev.yml, over its real service graph"
+    out = StringIO.new
+    runner = Dev::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: out)
+
+    When "asking for help on plan"
+    runner.run(["help", "plan"])
+
+    Then
+    out.string.include?("Usage: dev plan <command> [args...]")
+    out.string.include?("  pull")
   end
 
   test "an unknown child of a pure project group is reported with its full path" do

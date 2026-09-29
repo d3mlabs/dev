@@ -51,12 +51,13 @@ module Dev
       @dependency_service.lock! if command.stamps?
     end
 
-    # The commands usage advertises (the repository stays service-private).
+    # The tree help and completion walk (the repository stays
+    # service-private).
     #
-    # @return [Hash{String => Command}]
-    sig { returns(T::Hash[String, Command]) }
-    def visible_commands
-      @repository.visible_commands
+    # @return [CommandGroup] the root node
+    sig { returns(CommandGroup) }
+    def root
+      @repository.root
     end
   end
 end

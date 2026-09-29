@@ -56,7 +56,7 @@ class Dev::BinDevTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "bare dev and dev --help outside a project print the global usage and exit 0" do
+  test "bare dev and dev --help outside a project print the projectless usage and exit 0" do
     Given "a directory with no dev.yml anywhere above it"
     dir = Dir.mktmpdir("dev-bin-test-")
 
@@ -64,10 +64,10 @@ class Dev::BinDevTest < Minitest::Test
     bare_out, _bare_err, bare_status = Open3.capture3("sh", BIN_DEV, chdir: dir)
     help_out, _help_err, help_status = Open3.capture3("sh", BIN_DEV, "--help", chdir: dir)
 
-    Then "both succeed with the global command listing and the project hint"
+    Then "both succeed with the projectless listing (global commands included) and the project hint"
     bare_status.success?
     help_status.success?
-    bare_out.include?("Global commands (available anywhere):")
+    bare_out.include?("Commands available outside a project")
     bare_out.include?("Run dev inside a project that defines a dev.yml to see its commands.")
     Dev::GlobalCatalog.new.commands.keys.all? { |name| bare_out.include?(name) }
     help_out == bare_out

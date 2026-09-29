@@ -5,11 +5,12 @@ require_relative "command"
 
 module Dev
   # Assembles the command tree a project exposes: the builtin nodes the
-  # composition root gated into existence, the project nodes parsed from
-  # dev.yml, and — where a project node occupies a builtin's name — their
-  # merge (OverriddenCommand for run on builtin body; children merge child
-  # by child). Data in, never a path, never a parse. Resolution walks the
-  # assembled tree along argv.
+  # composition root gated into existence (as the root node's children),
+  # the project nodes parsed from dev.yml, and — where a project node
+  # occupies a builtin's name — their merge (OverriddenCommand for run on
+  # builtin body; children merge child by child). Data in, never a path,
+  # never a parse. Resolution walks the assembled tree along argv, from
+  # the root.
   #
   # Onion rule: CommandService is the only production consumer, and
   # construction is confined to the composition root.
@@ -32,49 +33,48 @@ module Dev
       const :args, T::Array[String]
     end
 
-    # @param builtins [Hash{String => Command}] the builtin tree for this
-    #   project, in listing order (leaves and CommandGroups)
+    # The assembled tree: the root the composition root declared, its
+    # children merged with the project's.
+    sig { returns(CommandGroup) }
+    attr_reader :root
+
+    # @param root [CommandGroup] the builtin tree for this project as the
+    #   root node (see CommandGroup.root), children in listing order
     # @param project_commands [Hash{String => ProjectNode}] the parsed
     #   dev.yml tree, in declaration order
     sig do
       params(
-        builtins: T::Hash[String, Command],
+        root: CommandGroup,
         project_commands: T::Hash[String, ProjectNode],
       ).void
     end
-    def initialize(builtins:, project_commands:)
-      @commands = T.let(assemble(builtins, project_commands, []).freeze, T::Hash[String, Command])
+    def initialize(root:, project_commands:)
+      @root = T.let(
+        CommandGroup.new(
+          path: [],
+          desc: root.desc,
+          category: root.category,
+          children: assemble(root.children, project_commands, []),
+        ),
+        CommandGroup,
+      )
     end
 
-    # Look up a top-level command by name.
-    #
-    # @param name [String] command name
-    # @return [Command]
-    # @raise [CommandNotFoundError] if no command exists with that name
-    sig { params(name: String).returns(Command) }
-    def fetch(name)
-      @commands.fetch(name) do
-        raise CommandNotFoundError, "Command '#{name}' not found"
-      end
-    end
-
-    # Walk the tree along argv: descend while the next token names a child
-    # of the current node; the first token that doesn't is where the args
-    # begin. A group cannot take args — it only prints usage — so a
-    # leftover token there is an unknown subcommand.
+    # Walk the tree along argv from the root: descend while the next token
+    # names a child of the current node; the first token that doesn't is
+    # where the args begin. A group cannot take args — it only prints
+    # usage — so a leftover token there is an unknown subcommand (at the
+    # root: an unknown command). Empty argv resolves to the root.
     #
     # @param argv [Array<String>] the full argv, command path first
     # @return [Resolution]
-    # @raise [CommandNotFoundError] for an unknown top-level name, an unknown
-    #   child of a group, or empty argv
+    # @raise [CommandNotFoundError] for an unknown top-level name or an
+    #   unknown child of a group
     sig { params(argv: T::Array[String]).returns(Resolution) }
     def resolve(argv)
-      first = argv.first
-      raise CommandNotFoundError, "no command given" if first.nil?
-
-      node = T.let(fetch(first), Command)
-      path = [first]
-      rest = argv.drop(1)
+      node = T.let(@root, Command)
+      path = T.let([], T::Array[String])
+      rest = argv.dup
       loop do
         token = rest.first
         child = token && node.children[token]
@@ -88,15 +88,6 @@ module Dev
         path << T.must(rest.shift)
       end
       Resolution.new(command: node, path: path, args: rest)
-    end
-
-    # The top-level commands usage advertises, in listing order (hidden ones
-    # stay callable but unlisted).
-    #
-    # @return [Hash{String => Command}]
-    sig { returns(T::Hash[String, Command]) }
-    def visible_commands
-      @commands.reject { |_name, command| command.hidden? }
     end
 
     private

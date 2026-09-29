@@ -24,7 +24,7 @@ class Dev::Builtins::CompleteCommandTest < Minitest::Test
 
   test "traits: hidden plumbing, staleness-exempt, never stamps" do
     Given "the builtin"
-    command = Dev::Builtins::CompleteCommand.new(commands_provider: -> { {} }, out: StringIO.new)
+    command = Dev::Builtins::CompleteCommand.new(root_provider: -> { FakeBuiltin.new }, out: StringIO.new)
 
     Expect "the declarative traits"
     command.hidden? == true
@@ -51,8 +51,9 @@ class Dev::Builtins::CompleteCommandTest < Minitest::Test
         ),
       }),
     }
+    root = Dev::CommandGroup.root(desc: "dev", children: tree)
     out = StringIO.new
-    command = Dev::Builtins::CompleteCommand.new(commands_provider: -> { tree }, out: out)
+    command = Dev::Builtins::CompleteCommand.new(root_provider: -> { root }, out: out)
 
     When "completing after the words typed so far"
     command.call(args: words, context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui)))
