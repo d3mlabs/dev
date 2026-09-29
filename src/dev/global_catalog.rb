@@ -8,7 +8,10 @@ require "dev/builtins/config_get_command"
 require "dev/builtins/config_list_command"
 require "dev/builtins/config_set_command"
 require "dev/builtins/cred_get_command"
-require "dev/builtins/learnings_command"
+require "dev/builtins/learnings_init_command"
+require "dev/builtins/learnings_invariants_command"
+require "dev/builtins/learnings_status_command"
+require "dev/builtins/learnings_sync_command"
 require "dev/builtins/plan_command"
 require "dev/cd"
 require "dev/clone"
@@ -88,7 +91,17 @@ module Dev
           category: Command::Category::Workflow,
           children: { "get" => Builtins::CredGetCommand.new(accessor: @cred_accessor, out: @out) },
         ),
-        "learnings" => Builtins::LearningsCommand.new,
+        "learnings" => CommandGroup.new(
+          path: ["learnings"],
+          desc: "The learnings read path: org knowledge cache, skill links, invariants",
+          category: Command::Category::Workflow,
+          children: {
+            "sync" => Builtins::LearningsSyncCommand.new(out: @out),
+            "status" => Builtins::LearningsStatusCommand.new(out: @out),
+            "invariants" => Builtins::LearningsInvariantsCommand.new(out: @out),
+            "init" => Builtins::LearningsInitCommand.new(out: @out),
+          },
+        ),
         "plan" => Builtins::PlanCommand.new,
       }.freeze
     end

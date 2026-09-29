@@ -123,10 +123,8 @@ class Dev::GlobalDispatchTest < Minitest::Test
     ENV["DEV_KNOWLEDGE_REPO"] = File.join(dir, "knowledge")
     ENV["XDG_DATA_HOME"] = File.join(dir, "data")
     ENV["XDG_CONFIG_HOME"] = File.join(dir, "config")
-    dispatch = build_dispatch
     out = StringIO.new
-    old_stdout = $stdout
-    $stdout = out
+    dispatch = build_dispatch(out: out)
 
     When "we dispatch dev learnings status from a cwd with no dev.yml"
     Dir.chdir(dir) { dispatch.run(["learnings", "status"]) }
@@ -136,7 +134,6 @@ class Dev::GlobalDispatchTest < Minitest::Test
     out.string.include?("not cloned yet")
 
     Cleanup
-    $stdout = old_stdout
     saved.each { |key, value| value ? ENV[key] = value : ENV.delete(key) }
     FileUtils.rm_rf(dir)
   end
@@ -361,7 +358,7 @@ class Dev::GlobalDispatchTest < Minitest::Test
     out.string.include?("  clone        #{Dev::Builtins::CloneCommand::DESC}")
     out.string.include?("  config …     Manage dev settings")
     out.string.include?("  cred …       Resolve stored credentials")
-    out.string.include?("  learnings    #{Dev::Builtins::LearningsCommand::DESC}")
+    out.string.include?("  learnings …  The learnings read path: org knowledge cache, skill links, invariants")
     out.string.include?("  plan         #{Dev::Builtins::PlanCommand::DESC}")
     out.string.include?("Run dev inside a project that defines a dev.yml to see its commands.")
 
