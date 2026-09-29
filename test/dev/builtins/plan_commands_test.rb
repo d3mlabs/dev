@@ -9,7 +9,9 @@ require "dev/builtins/plan_new_command"
 require "dev/builtins/plan_pull_command"
 require "dev/builtins/plan_push_command"
 require "dev/builtins/plan_status_command"
+require "fileutils"
 require "stringio"
+require "tmpdir"
 
 # The `plan` verbs share PlanVerbCommand's shape (per-call accessor, host
 # refresh first, then the verb), so one Where-driven file covers them: each
@@ -112,6 +114,25 @@ class Dev::Builtins::PlanCommandsTest < Minitest::Test
     klass           | _
     LEAVES[:status] | 0
     LEAVES[:hook]   | 0
+  end
+
+  test "the default factory builds a real accessor anchored at the workspace" do
+    Given "a plain git checkout as cwd and tmpdir-scoped config"
+    dir = Dir.mktmpdir("plan-leaf-default-")
+    FileUtils.mkdir_p(File.join(dir, "repo", ".git"))
+    saved = { "XDG_CONFIG_HOME" => ENV["XDG_CONFIG_HOME"], "XDG_DATA_HOME" => ENV["XDG_DATA_HOME"] }
+    ENV["XDG_CONFIG_HOME"] = File.join(dir, "config")
+    ENV["XDG_DATA_HOME"] = File.join(dir, "data")
+
+    When "calling the production factory from inside the checkout"
+    accessor = Dir.chdir(File.join(dir, "repo")) { Dev::Builtins::PlanVerbCommand::DEFAULT_ACCESSOR_FACTORY.call }
+
+    Then "a real accessor comes back"
+    accessor.is_a?(Dev::Plan::Accessor)
+
+    Cleanup
+    saved.each { |key, value| value ? ENV[key] = value : ENV.delete(key) }
+    FileUtils.rm_rf(dir)
   end
 
   private

@@ -22,11 +22,15 @@ module Dev
 
       AccessorFactory = T.type_alias { T.proc.returns(Dev::Plan::Accessor) }
 
-      sig { params(accessor_factory: AccessorFactory, out: T.any(IO, StringIO)).void }
-      def initialize(
-        accessor_factory: -> { Dev::Plan::Accessor.new(project_root: WorkspaceRoot.workspace) },
-        out: $stdout
+      # The production factory; a constant so its wiring is testable apart
+      # from any verb.
+      DEFAULT_ACCESSOR_FACTORY = T.let(
+        -> { Dev::Plan::Accessor.new(project_root: WorkspaceRoot.workspace) },
+        AccessorFactory,
       )
+
+      sig { params(accessor_factory: AccessorFactory, out: T.any(IO, StringIO)).void }
+      def initialize(accessor_factory: DEFAULT_ACCESSOR_FACTORY, out: $stdout)
         super()
         @accessor_factory = accessor_factory
         @out = out

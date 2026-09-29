@@ -6,7 +6,9 @@ require "dev/builtins/learnings_init_command"
 require "dev/builtins/learnings_invariants_command"
 require "dev/builtins/learnings_status_command"
 require "dev/builtins/learnings_sync_command"
+require "fileutils"
 require "stringio"
+require "tmpdir"
 
 # The four `learnings` verbs share one shape (a per-call accessor factory +
 # out, one verb call), so one Where-driven file covers them.
@@ -82,6 +84,25 @@ class Dev::Builtins::LearningsCommandsTest < Minitest::Test
     LEAVES[2] | ["extra"]
     LEAVES[3] | ["--bogus"]
     LEAVES[3] | ["--org", "extra"]
+  end
+
+  test "the default factory builds a real accessor anchored at the enclosing project" do
+    Given "a plain git checkout as cwd and tmpdir-scoped config"
+    dir = Dir.mktmpdir("learnings-leaf-default-")
+    FileUtils.mkdir_p(File.join(dir, "repo", ".git"))
+    saved = { "XDG_CONFIG_HOME" => ENV["XDG_CONFIG_HOME"], "XDG_DATA_HOME" => ENV["XDG_DATA_HOME"] }
+    ENV["XDG_CONFIG_HOME"] = File.join(dir, "config")
+    ENV["XDG_DATA_HOME"] = File.join(dir, "data")
+
+    When "calling the production factory from inside the checkout"
+    accessor = Dir.chdir(File.join(dir, "repo")) { Dev::Builtins::LearningsVerbCommand::DEFAULT_ACCESSOR_FACTORY.call }
+
+    Then "a real accessor comes back"
+    accessor.is_a?(Dev::Learnings::Accessor)
+
+    Cleanup
+    saved.each { |key, value| value ? ENV[key] = value : ENV.delete(key) }
+    FileUtils.rm_rf(dir)
   end
 
   private

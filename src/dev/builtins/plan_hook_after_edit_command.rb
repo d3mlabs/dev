@@ -19,11 +19,7 @@ module Dev
           input: T.any(IO, StringIO),
         ).void
       end
-      def initialize(
-        accessor_factory: -> { Dev::Plan::Accessor.new(project_root: WorkspaceRoot.workspace) },
-        out: $stdout,
-        input: $stdin
-      )
+      def initialize(accessor_factory: DEFAULT_ACCESSOR_FACTORY, out: $stdout, input: $stdin)
         super(accessor_factory:, out:)
         @input = input
       end
