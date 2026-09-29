@@ -1,8 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "pathname"
 require "dev/command"
+require "dev/workspace_root"
 require "dev/learnings"
 
 module Dev
@@ -18,13 +18,12 @@ module Dev
       DESC = "Learnings read path (sync: refresh now, status: what's linked, invariants: Tier-0 block, " \
         "init: scaffold the index)"
 
-      # Builds the accessor for the enclosing project (per-call root).
-      AccessorFactory = T.type_alias do
-        T.proc.params(project_root: Pathname).returns(Dev::Learnings::Accessor)
-      end
+      # Builds the accessor anchored at the enclosing project (nearest dev.yml, else git root; nil outside any checkout): a per-call value, since a global
+      # command runs from any directory.
+      AccessorFactory = T.type_alias { T.proc.returns(Dev::Learnings::Accessor) }
 
       sig { params(accessor_factory: AccessorFactory).void }
-      def initialize(accessor_factory: ->(project_root) { Dev::Learnings::Accessor.new(project_root:) })
+      def initialize(accessor_factory: -> { Dev::Learnings::Accessor.new(project_root: WorkspaceRoot.enclosing_project) })
         super()
         @accessor_factory = accessor_factory
       end
@@ -37,7 +36,7 @@ module Dev
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
-        @accessor_factory.call(context.project!.root).run(args)
+        @accessor_factory.call.run(args)
       end
     end
   end

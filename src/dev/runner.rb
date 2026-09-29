@@ -15,6 +15,7 @@ require "dev/command_service"
 require "dev/dependency_service"
 require "dev/deps/staleness"
 require "dev/execution_context"
+require "dev/global_catalog"
 require "dev/group_executor"
 require "dev/overridden_executor"
 require "dev/project_executor"
@@ -273,9 +274,6 @@ module Dev
         "install-deps" => install_deps,
         # `up` composes the same install the install-deps builtin runs.
         "up" => Builtins::UpCommand.new(install_deps_command: install_deps),
-        "cd" => Builtins::CdCommand.new,
-        "clone" => Builtins::CloneCommand.new,
-        "learnings" => Builtins::LearningsCommand.new,
         "check" => Builtins::CheckCommand.new(dependency_service:),
         "deps" => CommandGroup.new(
           path: ["deps"],
@@ -289,13 +287,13 @@ module Dev
           category: Command::Category::Workflow,
           children: { "gc" => Builtins::CacheGcCommand.new },
         ),
-        "config" => Builtins::ConfigCommand.new,
-        "cred" => Builtins::CredCommand.new,
-        "plan" => Builtins::PlanCommand.new,
       }, T::Hash[String, Command])
       builtins["provide-image"] = Builtins::ProvideImageCommand.new if manifest.build_container
       builtins["reset-container"] = Builtins::ResetContainerCommand.new if manifest.build_container&.persist
       builtins.merge!(runner_builtins)
+      # The global builtins are dispatched before the Runner (bin/dev); they
+      # join the project catalog so help lists one complete tree.
+      builtins.merge!(GlobalCatalog.new(out: @out).commands)
       builtins
     end
 

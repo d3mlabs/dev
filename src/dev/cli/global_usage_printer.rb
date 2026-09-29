@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "stringio"
+require "dev/command"
 
 module Dev
   module Cli
@@ -10,20 +11,25 @@ module Dev
     # work from any directory, plus the hint that project commands need a
     # dev.yml. A dedicated view rather than a UsagePrinter variant — that
     # printer is shaped around a project catalog (project name, sections),
-    # and this listing is a flat, fixed set.
+    # and this listing is a flat set.
     class GlobalUsagePrinter
       extend T::Sig
 
-      # @param commands [Hash{String => String}] global command name => description
+      # @param commands [Hash{String => Dev::Command}] the global command tree
       # @param out [IO, StringIO]
       # @return [void]
-      sig { params(commands: T::Hash[String, String], out: T.any(IO, StringIO)).void }
+      sig { params(commands: T::Hash[String, Command], out: T.any(IO, StringIO)).void }
       def print(commands:, out:)
         out.puts "Usage: dev <command> [args...]"
         out.puts ""
         out.puts "Global commands (available anywhere):"
-        commands.sort.each do |name, desc|
-          out.puts "  #{name.ljust(12)} #{desc}"
+        commands.sort.each do |name, command|
+          next if command.hidden?
+
+          # Groups carry the `…` marker so the listing reads as a tree: the
+          # name alone is not (usually) runnable, its children are.
+          label = command.is_a?(CommandGroup) ? "#{name} …" : name
+          out.puts "  #{label.ljust(12)} #{command.desc}"
         end
         out.puts ""
         out.puts "Run dev inside a project that defines a dev.yml to see its commands."

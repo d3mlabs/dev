@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/global_dispatch"
+require "dev/global_catalog"
 require "open3"
 require "tmpdir"
 
@@ -69,7 +69,7 @@ class Dev::BinDevTest < Minitest::Test
     help_status.success?
     bare_out.include?("Global commands (available anywhere):")
     bare_out.include?("Run dev inside a project that defines a dev.yml to see its commands.")
-    Dev::GlobalDispatch::GLOBAL_COMMANDS.keys.all? { |name| bare_out.include?(name) }
+    Dev::GlobalCatalog.new.commands.keys.all? { |name| bare_out.include?(name) }
     help_out == bare_out
 
     Cleanup

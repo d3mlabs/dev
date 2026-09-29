@@ -3,7 +3,6 @@
 
 require "test_helper"
 require "dev/builtins/plan_command"
-require "pathname"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Builtins::PlanCommandTest < Minitest::Test
@@ -18,32 +17,20 @@ class Dev::Builtins::PlanCommandTest < Minitest::Test
     command.stamps? == false
   end
 
-  test "call builds the accessor for the project in hand and dispatches argv" do
-    Given "a factory that records its root and an expecting accessor"
-    root = Pathname.new("/tmp/plan-test")
+  test "call builds the accessor per call (no project needed) and dispatches argv" do
+    Given "a counting factory and an expecting accessor"
     accessor = typed_mock(Dev::Plan::Accessor)
     accessor.expects(:run).with(["status"]).once
-    factory_roots = []
-    command = Dev::Builtins::PlanCommand.new(
-      accessor_factory: ->(project_root) {
-        factory_roots << project_root
-        accessor
-      },
-    )
+    calls = 0
+    command = Dev::Builtins::PlanCommand.new(accessor_factory: lambda {
+      calls += 1
+      accessor
+    })
 
-    When "running plan"
-    command.call(args: ["status"], context: build_context(root))
+    When "running plan in a projectless context"
+    command.call(args: ["status"], context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui)))
 
-    Then "the accessor was scoped to the project root"
-    factory_roots == [root]
-  end
-
-  private
-
-  def build_context(project_root)
-    Dev::ExecutionContext.new(
-      ui: typed_mock(Dev::Cli::Ui),
-      project: Dev::ProjectContext.new(name: "TestProject", root: project_root, ruby_version: "4.0.1"),
-    )
+    Then "the factory was consulted once"
+    calls == 1
   end
 end

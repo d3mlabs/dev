@@ -47,9 +47,16 @@ end unless defined?(RecordingCloneAccessor)
 
 transform!(RSpock::AST::Transformation)
 class Dev::GlobalDispatchTest < Minitest::Test
+  # A dispatcher over a catalog whose accessors never touch the real
+  # providers unless a test passes real ones in; usage goes to `out`.
+  def build_dispatch(out: StringIO.new, **accessors)
+    accessors = { cred_accessor: RecordingCredAccessor.new }.merge(accessors)
+    Dev::GlobalDispatch.new(catalog: Dev::GlobalCatalog.new(out: out, **accessors), out: out)
+  end
+
   test "#{name} is a global command: #{expected}" do
     Given "a dispatcher"
-    dispatch = Dev::GlobalDispatch.new(cred_accessor: RecordingCredAccessor.new)
+    dispatch = build_dispatch
 
     Expect "the command is classified"
     dispatch.global_command?([name]) == expected
@@ -70,7 +77,7 @@ class Dev::GlobalDispatchTest < Minitest::Test
   test "dev clone dispatches globally without a dev.yml lookup" do
     Given "a recording clone accessor and a cwd with no dev.yml"
     clone = RecordingCloneAccessor.new
-    dispatch = Dev::GlobalDispatch.new(clone_accessor: clone, cred_accessor: RecordingCredAccessor.new)
+    dispatch = build_dispatch(clone_accessor: clone)
     cwd = Dir.mktmpdir("dispatch-cwd-")
 
     When "we dispatch dev clone"
@@ -88,7 +95,7 @@ class Dev::GlobalDispatchTest < Minitest::Test
     root = Dir.mktmpdir("dispatch-clone-")
     FileUtils.mkdir_p(File.join(root, "github.com", "d3mlabs", "dev"))
     clone_accessor = Dev::Clone::Accessor.new(root: root, hook_installer: quiet_hook_installer)
-    dispatch = Dev::GlobalDispatch.new(clone_accessor: clone_accessor, cred_accessor: RecordingCredAccessor.new)
+    dispatch = build_dispatch(clone_accessor: clone_accessor)
     old_stderr = $stderr
     $stderr = StringIO.new
     Kernel.expects(:exit).with(1).once
@@ -116,7 +123,7 @@ class Dev::GlobalDispatchTest < Minitest::Test
     ENV["DEV_KNOWLEDGE_REPO"] = File.join(dir, "knowledge")
     ENV["XDG_DATA_HOME"] = File.join(dir, "data")
     ENV["XDG_CONFIG_HOME"] = File.join(dir, "config")
-    dispatch = Dev::GlobalDispatch.new(cred_accessor: RecordingCredAccessor.new)
+    dispatch = build_dispatch
     out = StringIO.new
     old_stdout = $stdout
     $stdout = out
@@ -140,10 +147,7 @@ class Dev::GlobalDispatchTest < Minitest::Test
     repo = File.join(root, "github.com", "d3mlabs", "dev")
     FileUtils.mkdir_p(File.join(repo, ".git"))
     cwd = Dir.mktmpdir("dispatch-cwd-")
-    dispatch = Dev::GlobalDispatch.new(
-      cd_accessor: Dev::Cd::Accessor.new(root: root, hook_installer: quiet_hook_installer),
-      cred_accessor: RecordingCredAccessor.new,
-    )
+    dispatch = build_dispatch(cd_accessor: Dev::Cd::Accessor.new(root: root, hook_installer: quiet_hook_installer))
     out = StringIO.new
     old_stdout = $stdout
     $stdout = out
@@ -166,10 +170,7 @@ class Dev::GlobalDispatchTest < Minitest::Test
     12.times do |i|
       FileUtils.mkdir_p(File.join(root, "github.com", "org#{i}", "dev", ".git"))
     end
-    dispatch = Dev::GlobalDispatch.new(
-      cd_accessor: Dev::Cd::Accessor.new(root: root, hook_installer: quiet_hook_installer),
-      cred_accessor: RecordingCredAccessor.new,
-    )
+    dispatch = build_dispatch(cd_accessor: Dev::Cd::Accessor.new(root: root, hook_installer: quiet_hook_installer))
     old_stderr = $stderr
     $stderr = StringIO.new
     Kernel.expects(:exit).with(1).once
@@ -191,10 +192,7 @@ class Dev::GlobalDispatchTest < Minitest::Test
   test "dev cd with no match prints a clear error and exits non-zero" do
     Given "an empty src tree"
     root = Dir.mktmpdir("dispatch-cd-")
-    dispatch = Dev::GlobalDispatch.new(
-      cd_accessor: Dev::Cd::Accessor.new(root: root, hook_installer: quiet_hook_installer),
-      cred_accessor: RecordingCredAccessor.new,
-    )
+    dispatch = build_dispatch(cd_accessor: Dev::Cd::Accessor.new(root: root, hook_installer: quiet_hook_installer))
     old_stderr = $stderr
     $stderr = StringIO.new
     Kernel.expects(:exit).with(1).once
@@ -213,7 +211,7 @@ class Dev::GlobalDispatchTest < Minitest::Test
   test "dev cred dispatches globally without a dev.yml lookup" do
     Given "a recording cred accessor and a cwd with no dev.yml"
     creds = RecordingCredAccessor.new
-    dispatch = Dev::GlobalDispatch.new(cred_accessor: creds)
+    dispatch = build_dispatch(cred_accessor: creds)
     cwd = Dir.mktmpdir("dispatch-cwd-")
 
     When "we dispatch dev cred"
@@ -229,7 +227,7 @@ class Dev::GlobalDispatchTest < Minitest::Test
   test "dev config dispatches globally without a dev.yml lookup" do
     Given "a recording config accessor and a cwd with no dev.yml"
     config = RecordingConfigAccessor.new
-    dispatch = Dev::GlobalDispatch.new(config_accessor: config, cred_accessor: RecordingCredAccessor.new)
+    dispatch = build_dispatch(config_accessor: config)
     cwd = Dir.mktmpdir("dispatch-cwd-")
 
     When "we dispatch dev config"
@@ -244,7 +242,7 @@ class Dev::GlobalDispatchTest < Minitest::Test
 
   test "dev plan usage errors surface cleanly from a directory with no dev.yml" do
     Given "a cwd with no dev.yml anywhere above it"
-    dispatch = Dev::GlobalDispatch.new(cred_accessor: RecordingCredAccessor.new)
+    dispatch = build_dispatch
     cwd = Dir.mktmpdir("dispatch-cwd-")
     old_stderr = $stderr
     $stderr = StringIO.new
@@ -265,7 +263,7 @@ class Dev::GlobalDispatchTest < Minitest::Test
     Given "a cwd with a .git dir but no dev.yml above it (a plain checkout)"
     cwd = Dir.mktmpdir("dispatch-help-")
     FileUtils.mkdir_p(File.join(cwd, ".git"))
-    dispatch = Dev::GlobalDispatch.new(cred_accessor: RecordingCredAccessor.new)
+    dispatch = build_dispatch
 
     When "classifying every help spelling from that cwd"
     classified = Dir.chdir(cwd) do
@@ -290,7 +288,7 @@ class Dev::GlobalDispatchTest < Minitest::Test
     File.write(File.join(root, "dev.yml"), "name: someproject\n")
     cwd = File.join(root, "nested")
     FileUtils.mkdir_p(cwd)
-    dispatch = Dev::GlobalDispatch.new(cred_accessor: RecordingCredAccessor.new)
+    dispatch = build_dispatch
 
     When "classifying every help spelling from that cwd"
     classified = Dir.chdir(cwd) do
@@ -312,10 +310,8 @@ class Dev::GlobalDispatchTest < Minitest::Test
   test "bare dev outside a project prints the global usage" do
     Given "a cwd with no dev.yml anywhere above it"
     cwd = Dir.mktmpdir("dispatch-help-")
-    dispatch = Dev::GlobalDispatch.new(cred_accessor: RecordingCredAccessor.new)
     out = StringIO.new
-    old_stdout = $stdout
-    $stdout = out
+    dispatch = build_dispatch(out: out)
 
     When "we dispatch the bare argv"
     Dir.chdir(cwd) { dispatch.run([]) }
@@ -330,7 +326,6 @@ class Dev::GlobalDispatchTest < Minitest::Test
     out.string.include?("Run dev inside a project that defines a dev.yml to see its commands.")
 
     Cleanup
-    $stdout = old_stdout
     FileUtils.rm_rf(cwd)
   end
 
