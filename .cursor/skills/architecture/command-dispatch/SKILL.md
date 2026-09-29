@@ -2,51 +2,38 @@
 name: command-dispatch
 description: >-
   MUST be used when adding a dev command or changing how bin/dev routes
-  argv — global builtins vs project (dev.yml) commands.
+  argv — global builtins vs project (dev.yml) commands, and the command tree.
 ---
 
-# dev command dispatch: two classes of command
+# dev command dispatch: two layers, one tree
 
 `bin/dev` (sh shim → Ruby) puts `src/` and `lib/` on the load path, then
 routes argv through two layers:
 
-1. **Global builtins** — `Dev::GlobalDispatch`
-   (`src/dev/global_dispatch.rb`) runs first, before any dev.yml lookup,
-   so `cd`, `plan`, `cred`, and `learnings` work from any directory. Each
-   owns host- or workspace-global state, never project config.
-2. **Everything else** — builds `Dev::Runner` (`src/dev/runner.rb`), the
-   project-optional composition root. With an enclosing dev.yml it runs
-   the yaml-declared command plus the project builtins (`install-deps`,
-   `deps`, `cache`, ...). Without one, the catalog is just `up` — a
-   hybrid whose host half (converge + cd RC hook) always runs and whose
-   project half needs the project (`ExecutionContext#project`, nil
-   outside a project) — and any other lookup maps to the no-dev.yml
-   refusal in `Runner#exit_for`. `bin/dev` itself rescues nothing.
+1. **Global builtins** — `Dev::GlobalDispatch` runs first, before any
+   dev.yml lookup, so `cd`, `plan`, `cred`, `learnings` work anywhere.
+   Each owns host- or workspace-global state, never project config.
+2. **Everything else** — `Dev::Runner`, the project-optional composition
+   root. With a dev.yml: the yaml commands plus the project builtins.
+   Without one: `up` and `runner` only; other lookups map to the
+   no-dev.yml refusal in `Runner#exit_for`. `bin/dev` rescues nothing.
 
-Inside the Runner, commands form a **tree** (dev#188). The sealed
-`Dev::Command` has four shapes (`src/dev/command.rb`): `BuiltinCommand`,
-`ProjectCommand`, `OverriddenCommand`, and `CommandGroup` — named
-children plus an optional own leaf. `CommandRepository#resolve` walks
-argv down the tree (child → own run → usage); `CommandService` swaps a
-runnable group for its own leaf before guard/stamp; a pure group reaches
-`CommandExecutor`'s group arm, whose `GroupExecutor` prints the usage.
+Inside the Runner, commands form a **tree** (dev#188). Sealed
+`Dev::Command` (`src/dev/command.rb`) has four shapes: `BuiltinCommand`,
+`ProjectCommand`, `OverriddenCommand`, `CommandGroup` (children + optional
+own leaf). `CommandRepository#resolve` walks argv (child → own run →
+usage); `CommandService` swaps a runnable group for its own leaf before
+guard/stamp; a pure group hits `CommandExecutor`'s group arm
+(`GroupExecutor` prints usage).
 
 The seams:
 
-- A new global command joins `GlobalDispatch::GLOBAL_COMMANDS` and gets a
-  feature module under `lib/dev/<name>/` whose `Accessor` is its only CLI
-  surface (usage, arg parsing, clean failures) — see `Cd::Accessor`,
-  `Plan::Accessor`, `Learnings::Accessor`.
-- A new builtin with subcommands is a `CommandGroup` declared in
-  `Runner#build_builtins` over one leaf class per verb
-  (`deps` → `DepsPathCommand`; `runner` → `RunnerRegisterCommand`,
-  `RunnerStatusCommand`; `cache` → `CacheGcCommand`). Never hand-roll
-  `case args.first` dispatch inside a builtin.
-- Project commands are declared in each repo's dev.yml, never hardcoded
-  in dev's core; nested `commands:` parse to `ProjectCommandGroup` and
-  merge with a same-named builtin child by child in the repository.
-- Workspace-global commands resolve their root as nearest dev.yml, else
-  nearest `.git`, else cwd (`GlobalDispatch#workspace_root`).
-
-origin: seeded by the dev#58 architecture pass
-date: 2026-07-25
+- A new global command joins `GlobalDispatch::GLOBAL_COMMANDS` with a
+  `lib/dev/<name>/Accessor` as its only CLI surface.
+- A builtin with subcommands is a `CommandGroup` in `Runner#build_builtins`
+  over one leaf class per verb (`deps` → `DepsPathCommand`, `runner` →
+  `RunnerRegisterCommand`/`RunnerStatusCommand`, `cache` → `CacheGcCommand`).
+  Never hand-roll `case args.first` dispatch inside a builtin.
+- Project commands live in dev.yml, never in dev's core; nested
+  `commands:` parse to `ProjectCommandGroup` and merge child by child
+  with a same-named builtin in the repository.
