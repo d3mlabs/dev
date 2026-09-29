@@ -9,12 +9,11 @@ require "dev/runner_discovery"
 require "dev/runner_registry"
 require "dev/runner_setup"
 require "dev/runner_setup_config"
-require "dev/runner_status"
 
 module Dev
   module Builtins
-    # `dev runner <register|status>` — layers 3+4 of the machine doctrine
-    # (plans#26): converge, then enroll. Scope and labels compose
+    # `dev runner register` — layers 3+4 of the machine doctrine (plans#26):
+    # converge, then enroll. Scope and labels compose
     # orthogonally, with derived defaults so the common enrollments need no
     # declaration anywhere (the dev.yml `runner:` block is retired):
     #
@@ -30,7 +29,8 @@ module Dev
     # dir, so dir names never matter) and amends its labels in place on
     # GitHub (RunnerRegistry) instead of re-enrolling; only a scope nothing
     # serves gets the full enrollment ceremony (RunnerSetup, unchanged from
-    # the old `runner-setup`, which survives as an alias).
+    # the old `runner-setup`, which survives as a top-level alias of this
+    # leaf).
     #
     # Enrollment state is inspected, never recorded: the labels live on
     # GitHub, the scope in the runner dir's own .runner record — nothing in
@@ -39,8 +39,8 @@ module Dev
     # `--org` needs no project; bare register derives its label from the
     # enclosing checkout's manifest name. `--dir`/`--name`/`--repo` override
     # the enrollment identity; `--agent-user` the ai-agent default run-as
-    # user.
-    class RunnerCommand < BuiltinCommand
+    # user. A leaf of the `runner` group (RunnerStatusCommand is the other).
+    class RunnerRegisterCommand < BuiltinCommand
       extend T::Sig
 
       # Builds the RunnerSetup for the resolved config and flags; injected
@@ -61,87 +61,44 @@ module Dev
         ).returns(T::Array[Dev::LabelContracts::AgentHostContract])
       end
 
-      # Builds the status inspector; injected for tests.
-      StatusFactory = T.type_alias do
-        T.proc.params(container_required: T::Boolean).returns(Dev::RunnerStatus)
-      end
-
       sig do
         params(
           runner_setup_factory: RunnerSetupFactory,
           contracts_factory: ContractsFactory,
-          runner_status_factory: StatusFactory,
           discovery: Dev::RunnerDiscovery,
           registry: T.untyped,
           flag_parser: Cli::FlagParser,
           out: T.any(IO, StringIO),
-          implied_subcommand: T.nilable(String),
         ).void
       end
       def initialize(
         runner_setup_factory: ->(config, repo, org) { Dev::RunnerSetup.new(config:, repo:, org:) },
         contracts_factory: ->(labels, agent_user) { Dev::LabelContracts.for(labels, agent_user: agent_user) },
-        runner_status_factory: ->(container_required) { Dev::RunnerStatus.new(container_required:) },
         discovery: Dev::RunnerDiscovery.new,
         # The GitHub boundary (#find/#amend!); T.untyped so tests fake it.
         registry: Dev::RunnerRegistry.new,
         flag_parser: Cli::FlagParser.new,
-        out: $stdout,
-        implied_subcommand: nil
+        out: $stdout
       )
         super()
         @runner_setup_factory = runner_setup_factory
         @contracts_factory = contracts_factory
-        @runner_status_factory = runner_status_factory
         @discovery = discovery
         @registry = registry
         @flag_parser = flag_parser
         @out = out
-        @implied_subcommand = implied_subcommand
       end
 
       sig { override.returns(String) }
-      def desc
-        "Enroll or inspect this host as a self-hosted runner (runner register|status), converging label contracts"
-      end
+      def desc = "Enroll this host as a self-hosted runner, converging label contracts (--org, --labels, --ai-flow)"
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
 
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
-      def call(args:, context:)
-        subcommand, rest = resolve_subcommand(args)
-        case subcommand
-        when "register"
-          register(rest, context)
-        when "status"
-          status(rest, context)
-        else
-          raise ArgumentError, "usage: dev runner <register|status> [flags]"
-        end
-      end
-
-      private
-
-      # The subcommand and its args: implied for aliases (`dev runner-setup`
-      # is `dev runner register`), else the first arg.
-      #
-      # @param args [Array<String>]
-      # @return [Array(String, Array<String>)]
-      sig { params(args: T::Array[String]).returns([T.nilable(String), T::Array[String]]) }
-      def resolve_subcommand(args)
-        return [@implied_subcommand, args] if @implied_subcommand
-
-        [args.first, args.drop(1)]
-      end
-
       # Converge, then enroll (or amend), then the steps the enrollment
       # enables.
-      #
-      # @param args [Array<String>]
-      # @param context [Dev::ExecutionContext]
-      sig { params(args: T::Array[String], context: ExecutionContext).void }
-      def register(args, context)
+      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      def call(args:, context:)
         org = args.include?("--org")
         labels = resolve_labels(args, context, org)
         config = RunnerSetupConfig.new(
@@ -176,6 +133,8 @@ module Dev
         setup.run
         contracts.each { |contract| contract.after_enroll!(runner_dir: setup.resolve_dir) }
       end
+
+      private
 
       # The amend path: when the discovered enrollment still exists on
       # GitHub, converge its custom labels in place — the service, name,
@@ -238,17 +197,6 @@ module Dev
             "the repo label derives from the enclosing project — run inside a checkout or pass --labels"
         end
         ProjectManifest.slug(project.name)
-      end
-
-      # Inspect-only: this machine's discovered enrollments and their
-      # contract facts (see Dev::RunnerStatus).
-      #
-      # @param args [Array<String>]
-      # @param context [Dev::ExecutionContext]
-      sig { params(args: T::Array[String], context: ExecutionContext).void }
-      def status(args, context)
-        _ = args
-        @runner_status_factory.call(!context.project&.build_container.nil?).report
       end
     end
   end

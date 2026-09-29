@@ -264,12 +264,16 @@ class RunnerTest < Minitest::Test
     out = StringIO.new
     runner = build_runner(commands: {}, out: out)
 
-    When "we print usage"
+    When "we print usage, then the runner group's usage"
     runner.run([])
+    runner.run(["runner"])
 
-    Then "the runner command (and its runner-setup alias) is listed"
-    out.string.include?("runner")
+    Then "the runner group (and its runner-setup alias) is listed, with register and status beneath"
+    out.string.include?("  runner …     Enroll or inspect this host as a self-hosted runner")
     out.string.include?("runner-setup")
+    out.string.include?("Usage: dev runner <command> [args...]")
+    out.string.include?("  register     Enroll this host")
+    out.string.include?("  status       Inspect this host's runner enrollments")
   end
 
   test "a leftover dev.yml runner block warns and is ignored" do
