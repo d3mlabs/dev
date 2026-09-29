@@ -12,7 +12,13 @@ require "dev/builtins/learnings_init_command"
 require "dev/builtins/learnings_invariants_command"
 require "dev/builtins/learnings_status_command"
 require "dev/builtins/learnings_sync_command"
-require "dev/builtins/plan_command"
+require "dev/builtins/plan_hook_after_edit_command"
+require "dev/builtins/plan_init_command"
+require "dev/builtins/plan_link_command"
+require "dev/builtins/plan_new_command"
+require "dev/builtins/plan_pull_command"
+require "dev/builtins/plan_push_command"
+require "dev/builtins/plan_status_command"
 require "dev/cd"
 require "dev/clone"
 require "dev/command"
@@ -102,7 +108,20 @@ module Dev
             "init" => Builtins::LearningsInitCommand.new(out: @out),
           },
         ),
-        "plan" => Builtins::PlanCommand.new,
+        "plan" => CommandGroup.new(
+          path: ["plan"],
+          desc: "Sync Cursor plans with GitHub issues",
+          category: Command::Category::Workflow,
+          children: {
+            "new" => Builtins::PlanNewCommand.new(out: @out),
+            "link" => Builtins::PlanLinkCommand.new(out: @out),
+            "pull" => Builtins::PlanPullCommand.new(out: @out),
+            "push" => Builtins::PlanPushCommand.new(out: @out),
+            "status" => Builtins::PlanStatusCommand.new(out: @out),
+            "init" => Builtins::PlanInitCommand.new(out: @out),
+            "hook-after-edit" => Builtins::PlanHookAfterEditCommand.new(out: @out),
+          },
+        ),
       }.freeze
     end
   end

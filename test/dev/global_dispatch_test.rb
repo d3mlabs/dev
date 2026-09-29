@@ -287,8 +287,8 @@ class Dev::GlobalDispatchTest < Minitest::Test
     When "we dispatch an unknown plan subcommand"
     Dir.chdir(cwd) { dispatch.run(["plan", "bogus"]) }
 
-    Then "the plan usage is printed (no DevYamlNotFoundError)"
-    $stderr.string.include?("usage: dev plan")
+    Then "the tree's not-found error is printed (no DevYamlNotFoundError)"
+    $stderr.string.include?("Command 'plan bogus' not found")
 
     Cleanup
     $stderr = old_stderr
@@ -359,7 +359,7 @@ class Dev::GlobalDispatchTest < Minitest::Test
     out.string.include?("  config …     Manage dev settings")
     out.string.include?("  cred …       Resolve stored credentials")
     out.string.include?("  learnings …  The learnings read path: org knowledge cache, skill links, invariants")
-    out.string.include?("  plan         #{Dev::Builtins::PlanCommand::DESC}")
+    out.string.include?("  plan …       Sync Cursor plans with GitHub issues")
     out.string.include?("Run dev inside a project that defines a dev.yml to see its commands.")
 
     Cleanup
