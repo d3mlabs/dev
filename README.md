@@ -26,7 +26,7 @@ dev <command> [args...]   # extra args are forwarded to the command
 
 dev walks up from your current directory to the git repo root and reads the `dev.yml` there. Every command is one of two kinds: a **project command** declared in that `dev.yml` (`dev test`, `dev build`, …), or a **builtin** that ships with dev. A project may declare a command on a builtin's name (typically `up`); the builtin body runs first, then the project's `run:` — a hardcoded `super()`.
 
-Commands form a **tree**: a command may group subcommands (`dev deps path`, `dev runner status`, a project's `dev test unit`). Resolution follows argv one token at a time — a token naming a child descends; the first token that doesn't is where the args begin. A group invoked bare runs its own `run:` when it has one, otherwise it prints its usage (so `dev deps` lists `deps path`, `dev plan` lists the plan verbs); `dev help <path…>` does the same for any node. Groups show with a trailing `…` in `dev help`, and Tab completion follows the same tree (`dev plan <Tab>` offers `new link pull push status init`) once the [shell hook](#shell-hook-install) is installed.
+Commands form a **tree**, and `dev` itself is its root: any command may have subcommands (`dev deps path`, `dev runner status`, a project's `dev test unit`). Resolution follows argv one token at a time from the root — a token naming a child descends; the first token that doesn't is where the args begin. A command with nothing of its own to run prints its usage when invoked bare (so bare `dev` lists everything, `dev deps` lists `deps path`, `dev plan` lists the plan verbs); `dev help <path…>` prints the same view for any node. Commands with subcommands show a trailing `…` in the listing, and Tab completion follows the same tree (`dev plan <Tab>` offers `new link pull push status init`) once the [shell hook](#shell-hook-install) is installed.
 
 ### Built-in commands
 
@@ -85,7 +85,7 @@ commands:
     desc: Start Ruby console
     run: ./bin/console
     repl: true
-  db:                          # a group: `dev db` prints its usage
+  db:                          # no run: bare `dev db` prints its usage
     desc: Database chores
     commands:
       reset:
@@ -97,11 +97,11 @@ commands:
 - `commands`: Map of command names to specs. A spec declares `run`, `commands`, or both — never neither.
   - `desc`: Short description (shown in `dev` / `dev --help`).
   - `run`: Shell command to execute (from the repo root). Any extra args passed to `dev <cmd> [args...]` are forwarded to this command.
-  - `commands`: *(optional)* Nested map of subcommand specs, same shape, any depth. `dev <cmd> <sub> [args...]` runs the child. With `run` beside it the group is **runnable**: bare `dev <cmd>` runs `run`, and a first arg that isn't a child's name is forwarded to it (`dev test --fast`). Without `run`, bare `dev <cmd>` prints the group's usage and an unknown first arg is an error. A child cannot be named `help`, and a group cannot be a `repl`.
+  - `commands`: *(optional)* Nested map of subcommand specs, same shape, any depth. `dev <cmd> <sub> [args...]` runs the child. With `run` beside it, bare `dev <cmd>` runs `run` and a first arg that isn't a child's name is forwarded to it (`dev test --fast`; `dev help <cmd>` shows both forms). Without `run`, bare `dev <cmd>` prints the usage and an unknown first arg is an error. A child cannot be named `help`, and a command with subcommands cannot be a `repl`.
   - `repl`: *(optional, default `false`)* When `true`, the command execs directly without a status footer. Use this for long-running interactive sessions like consoles and REPLs where a trailing `✓ Done` doesn't make sense.
   - `container`: *(optional, default `true` when `build.container` is configured)* When `false`, the command runs on the host (via `shadowenv exec`) instead of inside the build container. Use for host-side commands like provisioning (`up`) or deploying.
   - `hidden`: *(optional, default `false`)* When `true`, the command is still callable (`dev <cmd>`) but omitted from `dev` / `dev --help` output. Use for internal plumbing — e.g. a `build` primitive that an intent command (`test`, `release`) calls but that developers shouldn't invoke directly.
-- A project spec on a **builtin's name** merges with it: leaf on leaf is the `super()` override above; a project group on a builtin group (`deps:`, `cache:`, `runner:`) merges child by child (new children are added, same-named children override); a project group on a builtin leaf (`up:` with `commands:`) keeps bare `dev up` as the override and adds the children.
+- A project spec on a **builtin's name** merges with it: `run` on a builtin is the `super()` override above; subcommands always merge child by child (new children are added, same-named children override — `deps:`, `cache:`, `runner:` accept new verbs this way); `up:` with only `commands:` keeps bare `dev up` as the builtin and adds the children.
 
 ## Adoption model
 

@@ -2,14 +2,15 @@
 # frozen_string_literal: true
 
 module Dev
-  # One class per builtin leaf, each subclassing BuiltinCommand — the
-  # sealed Command hierarchy's declared open edge — with its collaborators
-  # constructor-injected; per-call values stay method-side. Builtin groups
-  # are CommandGroups declared in a composition root over these leaves:
-  # `deps`, `cache`, `runner` in the Runner (which also decides which
-  # builtins exist for a given project — config-gated: provide-image /
-  # reset-container only with a build container), the global nouns
-  # (`config`, `cred`, `learnings`, `plan`) in GlobalCatalog.
+  # One class per builtin, each subclassing BuiltinCommand — the sealed
+  # Command hierarchy's declared open edge — with its collaborators
+  # constructor-injected; per-call values stay method-side. Nouns with
+  # verbs are CommandGroups declared in a composition root over these
+  # leaves: `deps`, `cache`, `runner` in the Runner (which also decides
+  # which builtins exist for a given project — config-gated: provide-image
+  # / reset-container only with a build container), the global nouns
+  # (`config`, `cred`, `learnings`, `plan`) in GlobalCatalog. A builtin
+  # heads a subtree of its own via `children:` / `with_children`.
   module Builtins; end
 end
 

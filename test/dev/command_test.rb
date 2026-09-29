@@ -287,7 +287,7 @@ class CommandTest < Minitest::Test
   end
 
   test "a CommandGroup is a Command holding its path, children, and declared listing traits" do
-    Given "a pure group of two builtins"
+    Given "a group over a builtin"
     path = FakeBuiltin.new(desc: "print a path")
     group = Dev::CommandGroup.new(
       path: ["deps"],
