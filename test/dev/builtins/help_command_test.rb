@@ -56,13 +56,13 @@ class Dev::Builtins::HelpCommandTest < Minitest::Test
     printed.fetch(0) == catalog
   end
 
-  test "help <path> renders the group's usage when the path reaches a group" do
-    Given "a two-level tree and a printer expecting the inner group"
+  test "help <path> renders the usage of the node the path reaches" do
+    Given "a two-level tree and a printer expecting the inner group at its path"
     inner = build_group(["test", "unit"], children: { "fast" => Dev::ProjectCommand.new(run: "rspec") })
     outer = build_group(["test"], children: { "unit" => inner })
     out = StringIO.new
     usage_printer = typed_mock(Dev::Cli::UsagePrinter)
-    usage_printer.expects(:print_group).with(group: inner, out: out).once
+    usage_printer.expects(:print_node).with(path: ["test", "unit"], command: inner, out: out).once
     command = build_help(usage_printer: usage_printer, out: out, commands_provider: -> { { "test" => outer } })
 
     When "asking for help on the nested path"
@@ -72,17 +72,20 @@ class Dev::Builtins::HelpCommandTest < Minitest::Test
     true
   end
 
-  test "help <path> on a leaf prints its invocation and description" do
-    Given "a leaf under a group"
+  test "help <path> walks through a runnable command's children to a leaf" do
+    Given "a leaf under a runnable project command"
     leaf = Dev::ProjectCommand.new(run: "rspec", desc: "Unit tests")
+    test = Dev::ProjectCommand.new(run: "./bin/test.sh", children: { "unit" => leaf })
     out = StringIO.new
-    command = build_help(out: out, commands_provider: -> { { "test" => build_group(["test"], children: { "unit" => leaf }) } })
+    usage_printer = typed_mock(Dev::Cli::UsagePrinter)
+    usage_printer.expects(:print_node).with(path: ["test", "unit"], command: leaf, out: out).once
+    command = build_help(usage_printer: usage_printer, out: out, commands_provider: -> { { "test" => test } })
 
     When "asking for help on the leaf"
     command.call(args: ["test", "unit"], context: build_context)
 
-    Then "the leaf's one-line usage renders"
-    out.string == "Usage: dev test unit [args...]\n\nUnit tests\n"
+    Then "the printer expectation holds"
+    true
   end
 
   test "help <path> on an unknown path raises UnknownCommandError naming the path" do

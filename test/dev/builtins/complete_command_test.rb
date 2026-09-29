@@ -34,7 +34,7 @@ class Dev::Builtins::CompleteCommandTest < Minitest::Test
   end
 
   test "given #{words.inspect}, the candidates are #{expected.inspect}" do
-    Given "a tree: leaves, a pure group, a runnable group, and hidden nodes at both levels"
+    Given "a tree: leaves, a group, a runnable command with children, and hidden nodes at both levels"
     tree = {
       "up" => FakeBuiltin.new,
       "help" => FakeBuiltin.new,
@@ -43,16 +43,13 @@ class Dev::Builtins::CompleteCommandTest < Minitest::Test
         path: ["deps"], desc: "d", category: Dev::Command::Category::Lifecycle,
         children: { "path" => FakeBuiltin.new, "plumbing" => FakeBuiltin.new(hidden: true) },
       ),
-      "test" => Dev::CommandGroup.new(
-        path: ["test"], desc: "t", category: Dev::Command::Category::Project, own: FakeBuiltin.new,
-        children: {
-          "unit" => FakeBuiltin.new,
-          "e2e" => Dev::CommandGroup.new(
-            path: %w[test e2e], desc: "e", category: Dev::Command::Category::Project,
-            children: { "smoke" => FakeBuiltin.new },
-          ),
-        },
-      ),
+      "test" => FakeBuiltin.new.with_children({
+        "unit" => FakeBuiltin.new,
+        "e2e" => Dev::CommandGroup.new(
+          path: %w[test e2e], desc: "e", category: Dev::Command::Category::Project,
+          children: { "smoke" => FakeBuiltin.new },
+        ),
+      }),
     }
     out = StringIO.new
     command = Dev::Builtins::CompleteCommand.new(commands_provider: -> { tree }, out: out)

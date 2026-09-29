@@ -28,7 +28,7 @@ module Dev
 
           # Groups carry the `…` marker so the listing reads as a tree: the
           # name alone is not (usually) runnable, its children are.
-          label = command.is_a?(CommandGroup) ? "#{name} …" : name
+          label = command.children.empty? ? name : "#{name} …"
           out.puts "  #{label.ljust(12)} #{command.desc}"
         end
         out.puts ""

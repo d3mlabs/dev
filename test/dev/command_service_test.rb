@@ -198,25 +198,24 @@ class Dev::CommandServiceTest < Minitest::Test
     path.calls == [[["xcode"], context]]
   end
 
-  test "a runnable group invoked bare runs its own leaf, guarding and stamping by that leaf's traits" do
-    Given "a group whose own leaf is guarded and stamping"
-    own = FakeBuiltin.new(staleness_exempt: false, stamps: true)
-    group = build_group(children: { "unit" => FakeBuiltin.new }, own: own)
+  test "a command with children invoked bare runs itself, guarding and stamping by its own traits" do
+    Given "a guarded, stamping builtin heading a child"
+    parent = FakeBuiltin.new(staleness_exempt: false, stamps: true).with_children({ "unit" => FakeBuiltin.new })
     dependency_service = typed_mock(Dev::DependencyService)
     dependency_service.expects(:guard!).once
     dependency_service.expects(:lock!).once
-    service = build_service(builtins: { "test" => group }, dependency_service: dependency_service)
+    service = build_service(builtins: { "test" => parent }, dependency_service: dependency_service)
     context = fake_context
 
-    When "executing the group bare with a flag"
+    When "executing it bare with a flag"
     service.execute(["test", "--fast"], context: context)
 
-    Then "the own leaf ran with the flag; the guard and stamp expectations hold"
-    own.calls == [[["--fast"], context]]
+    Then "it ran with the flag; the guard and stamp expectations hold"
+    parent.calls == [[["--fast"], context]]
   end
 
-  test "a pure group invoked bare is handed to the executor as itself, unguarded and unstamped" do
-    Given "a pure group and an executor expecting the group node"
+  test "a group invoked bare is handed to the executor as itself, unguarded and unstamped" do
+    Given "a group and an executor expecting the group node"
     group = build_group(children: { "path" => FakeBuiltin.new })
     dependency_service = typed_mock(Dev::DependencyService)
     dependency_service.expects(:guard!).never
@@ -233,10 +232,9 @@ class Dev::CommandServiceTest < Minitest::Test
     true
   end
 
-  def build_group(children:, own: nil)
+  def build_group(children:)
     Dev::CommandGroup.new(
-      path: ["group"], desc: "a group", category: Dev::Command::Category::Workflow,
-      children: children, own: own,
+      path: ["group"], desc: "a group", category: Dev::Command::Category::Workflow, children: children,
     )
   end
 

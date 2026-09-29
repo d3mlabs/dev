@@ -26,7 +26,7 @@ class Dev::GroupExecutorTest < Minitest::Test
     )
     out = StringIO.new
     usage_printer = typed_mock(Dev::Cli::UsagePrinter)
-    usage_printer.expects(:print_group).with(group: group, out: out).once
+    usage_printer.expects(:print_node).with(path: ["deps"], command: group, out: out).once
     executor = Dev::GroupExecutor.new(usage_printer: usage_printer, out: out)
 
     When "executing the group"

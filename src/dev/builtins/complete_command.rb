@@ -9,9 +9,10 @@ module Dev
     # `dev complete <words…>`: shell-completion plumbing. Given the words
     # typed after `dev` so far (not the one under the cursor), print the
     # names that can come next — the visible children of the node those
-    # words reach — one per line; the shell does the prefix filtering. A
-    # leaf, an unknown word, or a hidden node ends the walk with nothing to
-    # offer. Hidden itself: the completers installed by Cd::HookInstaller
+    # words reach — one per line; the shell does the prefix filtering. An
+    # unknown word or a hidden node ends the walk with nothing to offer (so
+    # does a leaf: it has no children to list). Hidden itself: the
+    # completers installed by Cd::HookInstaller
     # call it, users never do.
     class CompleteCommand < BuiltinCommand
       extend T::Sig
@@ -54,7 +55,7 @@ module Dev
         commands = @commands_provider.call
         words.each do |word|
           node = commands[word]
-          return [] unless node.is_a?(CommandGroup) && !node.hidden?
+          return [] if node.nil? || node.hidden?
 
           commands = node.children
         end

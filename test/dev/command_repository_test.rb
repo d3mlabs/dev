@@ -110,49 +110,25 @@ class Dev::CommandRepositoryTest < Minitest::Test
 
   # --- the tree: assembly --------------------------------------------------
 
-  test "a project group assembles into a CommandGroup with its path, project category, and parsed children" do
-    Given "a pure project group with a nested group inside"
+  test "a project group stands as itself, nested groups included" do
+    Given "a project group with a nested group inside"
     fast = Dev::ProjectCommand.new(run: "rspec --tag fast", desc: "fast")
-    project_commands = {
-      "test" => Dev::ProjectCommandGroup.new(
-        desc: "Test suites",
-        children: {
-          "unit" => Dev::ProjectCommandGroup.new(children: { "fast" => fast }),
-          "e2e" => Dev::ProjectCommand.new(run: "./bin/e2e.sh", hidden: true),
-        },
-      ),
-    }
-    repository = Dev::CommandRepository.new(builtins: {}, project_commands: project_commands)
+    unit = build_group(["test", "unit"], children: { "fast" => fast }, category: Dev::Command::Category::Project)
+    e2e = Dev::ProjectCommand.new(run: "./bin/e2e.sh", hidden: true)
+    test_group = build_group(["test"], children: { "unit" => unit, "e2e" => e2e }, category: Dev::Command::Category::Project)
+    repository = Dev::CommandRepository.new(builtins: {}, project_commands: { "test" => test_group })
 
-    When "fetching the group"
-    group = repository.fetch("test")
-
-    Then "it is a CommandGroup mirroring the declaration, paths accumulated"
-    group.is_a?(Dev::CommandGroup)
-    group.path == ["test"]
-    group.desc == "Test suites"
-    group.category == Dev::Command::Category::Project
-    group.own.nil?
-    group.children.keys == ["unit", "e2e"]
-    group.children["e2e"].hidden?
-    group.children["unit"].path == ["test", "unit"]
-    group.children["unit"].children["fast"] == fast
+    Expect "the parsed node is the resolved node"
+    repository.fetch("test") == test_group
   end
 
-  test "a runnable project group keeps its own leaf" do
-    Given "a group with run beside commands"
-    own = Dev::ProjectCommand.new(run: "./bin/test.sh", desc: "All tests")
-    repository = Dev::CommandRepository.new(
-      builtins: {},
-      project_commands: {
-        "test" => Dev::ProjectCommandGroup.new(
-          desc: "All tests", own: own, children: { "unit" => Dev::ProjectCommand.new(run: "rspec") },
-        ),
-      },
-    )
+  test "a project command with children stands as itself" do
+    Given "a runnable project command heading a child"
+    cmd = Dev::ProjectCommand.new(run: "./bin/test.sh", children: { "unit" => Dev::ProjectCommand.new(run: "rspec") })
+    repository = Dev::CommandRepository.new(builtins: {}, project_commands: { "test" => cmd })
 
-    Expect "the bare invocation's leaf is the project run"
-    repository.fetch("test").own == own
+    Expect
+    repository.fetch("test") == cmd
   end
 
   test "a builtin group survives assembly untouched when the project declares nothing on its name" do
@@ -172,8 +148,9 @@ class Dev::CommandRepositoryTest < Minitest::Test
     repository = Dev::CommandRepository.new(
       builtins: { "deps" => build_group(["deps"], children: { "path" => builtin_path }) },
       project_commands: {
-        "deps" => Dev::ProjectCommandGroup.new(
-          desc: "project deps", children: { "audit" => audit, "path" => project_path },
+        "deps" => build_group(
+          ["deps"], desc: "project deps", hidden: true, category: Dev::Command::Category::Project,
+          children: { "audit" => audit, "path" => project_path },
         ),
       },
     )
@@ -181,130 +158,109 @@ class Dev::CommandRepositoryTest < Minitest::Test
     When "fetching the merged group"
     merged = repository.fetch("deps")
 
-    Then "the slot's category holds, the override's desc wins, children merge in builtin-then-project order"
+    Then "the slot's category holds; the project's desc and visibility win; children merge builtin-then-project"
     merged.is_a?(Dev::CommandGroup)
     merged.path == ["deps"]
     merged.category == Dev::Command::Category::Workflow
     merged.desc == "project deps"
+    merged.hidden?
     merged.children.keys == ["path", "audit"]
-    merged.children["path"].is_a?(Dev::OverriddenCommand)
-    merged.children["path"].builtin == builtin_path
-    merged.children["path"].project == project_path
+    merged.children["path"] == Dev::OverriddenCommand.new(builtin: builtin_path, project: project_path)
     merged.children["audit"] == audit
   end
 
-  test "own leaves merge like slots: builtin own + project own compose into an OverriddenCommand" do
-    Given "a runnable builtin group and a runnable project group of the same name"
-    builtin_own = build_builtin(desc: "builtin own")
-    project_own = Dev::ProjectCommand.new(run: "./bin/own.sh", desc: "project own")
-    repository = Dev::CommandRepository.new(
-      builtins: { "x" => build_group(["x"], children: { "a" => build_builtin }, own: builtin_own) },
-      project_commands: {
-        "x" => Dev::ProjectCommandGroup.new(own: project_own, children: { "b" => Dev::ProjectCommand.new(run: "b") }),
-      },
-    )
+  test "a project command with children on a builtin's name is an OverriddenCommand heading the merged children" do
+    Given "a builtin up with a child, and a project up with a run and another child"
+    builtin_child = build_builtin(desc: "builtin child")
+    builtin = build_builtin(desc: "builtin up").with_children({ "a" => builtin_child })
+    db = Dev::ProjectCommand.new(run: "./bin/db.sh")
+    project = Dev::ProjectCommand.new(run: "./bin/up.sh", desc: "project up", children: { "db" => db })
+    repository = Dev::CommandRepository.new(builtins: { "up" => builtin }, project_commands: { "up" => project })
 
-    When "fetching the merged group"
-    merged = repository.fetch("x")
+    When "fetching"
+    merged = repository.fetch("up")
 
-    Then "the own slot is the composition; either side alone would have won it outright"
-    merged.own.is_a?(Dev::OverriddenCommand)
-    merged.own.builtin == builtin_own
-    merged.own.project == project_own
-    merged.children.keys == ["a", "b"]
+    Then "bare `dev up` still runs the builtin first, then the project run; both children descend"
+    merged.is_a?(Dev::OverriddenCommand)
+    merged.builtin == builtin
+    merged.project == project
+    merged.children == { "a" => builtin_child, "db" => db }
   end
 
-  test "a project group on a builtin group keeps the builtin's own leaf when it declares none" do
-    Given "a runnable builtin group and a pure project group"
-    builtin_own = build_builtin(desc: "builtin own")
-    repository = Dev::CommandRepository.new(
-      builtins: { "x" => build_group(["x"], children: { "a" => build_builtin }, own: builtin_own) },
-      project_commands: {
-        "x" => Dev::ProjectCommandGroup.new(children: { "b" => Dev::ProjectCommand.new(run: "b") }),
-      },
-    )
-
-    Expect
-    repository.fetch("x").own == builtin_own
-  end
-
-  test "a project group on a builtin leaf's name makes a group whose own leaf is the overridden builtin" do
-    Given "a builtin up leaf and a project up group with its own run"
+  test "a project group on a builtin's name keeps the builtin, heading the merged children" do
+    Given "a builtin up and a project up group with only children"
     builtin = build_builtin(desc: "builtin up")
-    project_own = Dev::ProjectCommand.new(run: "./bin/up.sh", desc: "project up")
     db = Dev::ProjectCommand.new(run: "./bin/db.sh")
     repository = Dev::CommandRepository.new(
       builtins: { "up" => builtin },
-      project_commands: {
-        "up" => Dev::ProjectCommandGroup.new(desc: "project up", own: project_own, children: { "db" => db }),
-      },
+      project_commands: { "up" => build_group(["up"], children: { "db" => db }, category: Dev::Command::Category::Project) },
     )
 
     When "fetching"
-    group = repository.fetch("up")
+    merged = repository.fetch("up")
 
-    Then "bare `dev up` still runs the builtin first, then the project run; `dev up db` descends"
-    group.is_a?(Dev::CommandGroup)
-    group.own.is_a?(Dev::OverriddenCommand)
-    group.own.builtin == builtin
-    group.own.project == project_own
-    group.category == Dev::Command::Category::Workflow
-    group.children == { "db" => db }
+    Then "bare `dev up` is unchanged; the project only added a subcommand"
+    merged.is_a?(RepositoryFakeBuiltin)
+    merged.desc == "builtin up"
+    merged.children == { "db" => db }
+    builtin.children == {}
   end
 
-  test "a pure project group on a builtin leaf's name keeps the builtin as the own leaf" do
-    Given "a builtin up leaf and a project up group with only children"
-    builtin = build_builtin(desc: "builtin up")
-    repository = Dev::CommandRepository.new(
-      builtins: { "up" => builtin },
-      project_commands: {
-        "up" => Dev::ProjectCommandGroup.new(children: { "db" => Dev::ProjectCommand.new(run: "./bin/db.sh") }),
-      },
-    )
-
-    Expect "bare `dev up` is unchanged"
-    repository.fetch("up").own == builtin
-  end
-
-  test "a project leaf on a builtin group's name becomes the group's own leaf" do
-    Given "a builtin deps group and a project deps leaf"
+  test "a project command on a builtin group's name heads the merged children itself" do
+    Given "a builtin deps group and a project deps command"
+    path = build_builtin
     project = Dev::ProjectCommand.new(run: "./bin/deps.sh", desc: "project deps")
     repository = Dev::CommandRepository.new(
-      builtins: { "deps" => build_group(["deps"], children: { "path" => build_builtin }) },
+      builtins: { "deps" => build_group(["deps"], children: { "path" => path }) },
       project_commands: { "deps" => project },
     )
 
-    When "fetching"
-    group = repository.fetch("deps")
-
-    Then "the children survive; the bare invocation runs the project leaf"
-    group.is_a?(Dev::CommandGroup)
-    group.own == project
-    group.desc == "project deps"
-    group.children.keys == ["path"]
+    Expect "the children survive; the bare invocation runs the project command (nothing builtin to run first)"
+    repository.fetch("deps") == project.with_children({ "path" => path })
   end
 
-  test "a project leaf on a runnable builtin group's name composes with the builtin's own leaf" do
-    Given "a runnable builtin group and a project leaf"
-    builtin_own = build_builtin(desc: "builtin own")
-    project = Dev::ProjectCommand.new(run: "./bin/x.sh")
+  test "merging recurses: a project child on a builtin child's name composes at any depth" do
+    Given "a two-level builtin tree and a project override two levels down"
+    builtin_fast = build_builtin(desc: "builtin fast")
+    project_fast = Dev::ProjectCommand.new(run: "rspec --tag fast")
     repository = Dev::CommandRepository.new(
-      builtins: { "x" => build_group(["x"], children: { "a" => build_builtin }, own: builtin_own) },
-      project_commands: { "x" => project },
+      builtins: {
+        "test" => build_group(["test"], children: {
+          "unit" => build_group(["test", "unit"], children: { "fast" => builtin_fast }),
+        }),
+      },
+      project_commands: {
+        "test" => build_group(["test"], category: Dev::Command::Category::Project, children: {
+          "unit" => build_group(["test", "unit"], category: Dev::Command::Category::Project, children: {
+            "fast" => project_fast,
+          }),
+        }),
+      },
     )
 
     Expect
-    repository.fetch("x").own.is_a?(Dev::OverriddenCommand)
-    repository.fetch("x").own.builtin == builtin_own
+    repository.fetch("test").children["unit"].children["fast"] ==
+      Dev::OverriddenCommand.new(builtin: builtin_fast, project: project_fast)
   end
 
-  test "a project run cannot override a builtin group's own leaf that is not a builtin: a wiring bug" do
-    Given "a builtin group whose own leaf is (wrongly) a project command"
-    stray_own = Dev::ProjectCommand.new(run: "./bin/stray.sh")
-    group = build_group(["x"], children: { "a" => build_builtin }, own: stray_own)
+  test "a project node cannot land on a builtin-side node that is neither a builtin nor a group: a wiring bug" do
+    Given "a builtin tree holding (wrongly) an already-overridden command"
+    stray = Dev::OverriddenCommand.new(builtin: build_builtin, project: Dev::ProjectCommand.new(run: "s"))
 
-    When "a project leaf lands on the group's name"
-    Dev::CommandRepository.new(builtins: { "x" => group }, project_commands: { "x" => Dev::ProjectCommand.new(run: "y") })
+    When "a project command lands on its name"
+    Dev::CommandRepository.new(builtins: { "x" => stray }, project_commands: { "x" => Dev::ProjectCommand.new(run: "y") })
+
+    Then
+    raises Dev::CommandRepository::UnoverridableCommandError
+  end
+
+  test "a project-side node that is not a parsed project node cannot merge: a wiring bug" do
+    Given "a project command whose child is (wrongly) a builtin, colliding with a builtin child"
+    project = Dev::ProjectCommand.new(run: "x", children: { "a" => build_builtin })
+    builtin = build_builtin.with_children({ "a" => build_builtin })
+
+    When "assembling"
+    Dev::CommandRepository.new(builtins: { "x" => builtin }, project_commands: { "x" => project })
 
     Then
     raises Dev::CommandRepository::UnoverridableCommandError
@@ -333,7 +289,7 @@ class Dev::CommandRepositoryTest < Minitest::Test
     resolution.args == ["--seed", "1"]
   end
 
-  test "resolve stops at a leaf: a leaf's args are never descended into" do
+  test "resolve stops at a childless command: its args are never descended into" do
     Given "a leaf"
     leaf = build_builtin
     repository = Dev::CommandRepository.new(builtins: { "up" => leaf }, project_commands: {})
@@ -347,21 +303,37 @@ class Dev::CommandRepositoryTest < Minitest::Test
     resolution.args == ["deps"]
   end
 
-  test "resolve stops at a runnable group when the next token is not a child, forwarding it as args" do
-    Given "a runnable group"
-    group = build_group(["test"], children: { "unit" => build_builtin }, own: build_builtin)
-    repository = Dev::CommandRepository.new(builtins: { "test" => group }, project_commands: {})
+  test "resolve descends through a runnable command's children" do
+    Given "a builtin with a child"
+    child = build_builtin(desc: "child")
+    repository = Dev::CommandRepository.new(
+      builtins: { "test" => build_builtin.with_children({ "unit" => child }) }, project_commands: {},
+    )
 
-    When "resolving with a flag after the group name"
+    When "resolving the child"
+    resolution = repository.resolve(["test", "unit", "-v"])
+
+    Then
+    resolution.command == child
+    resolution.path == ["test", "unit"]
+    resolution.args == ["-v"]
+  end
+
+  test "resolve stops at a runnable command with children when the next token is not a child, forwarding it" do
+    Given "a runnable command with children"
+    cmd = build_builtin.with_children({ "unit" => build_builtin })
+    repository = Dev::CommandRepository.new(builtins: { "test" => cmd }, project_commands: {})
+
+    When "resolving with a flag after the name"
     resolution = repository.resolve(["test", "--fast"])
 
-    Then "the group is the node; the flag goes to whatever the bare invocation runs"
-    resolution.command == group
+    Then "the command is the node; the flag is its arg"
+    resolution.command == cmd
     resolution.args == ["--fast"]
   end
 
-  test "resolve returns a pure group invoked bare" do
-    Given "a pure group"
+  test "resolve returns a group invoked bare" do
+    Given "a group"
     group = build_group(["deps"], children: { "path" => build_builtin })
     repository = Dev::CommandRepository.new(builtins: { "deps" => group }, project_commands: {})
 
@@ -374,8 +346,8 @@ class Dev::CommandRepositoryTest < Minitest::Test
     resolution.args == []
   end
 
-  test "resolve raises CommandNotFoundError naming the full path for an unknown child of a pure group" do
-    Given "a pure group"
+  test "resolve raises CommandNotFoundError naming the full path for an unknown child of a group" do
+    Given "a group"
     repository = Dev::CommandRepository.new(
       builtins: { "deps" => build_group(["deps"], children: { "path" => build_builtin }) },
       project_commands: {},
@@ -404,10 +376,7 @@ class Dev::CommandRepositoryTest < Minitest::Test
     "empty argv" | []
   end
 
-  def build_group(path, children:, own: nil)
-    Dev::CommandGroup.new(
-      path: path, desc: "group #{path.join(" ")}", category: Dev::Command::Category::Workflow,
-      children: children, own: own,
-    )
+  def build_group(path, children:, desc: "group #{path.join(" ")}", category: Dev::Command::Category::Workflow, hidden: false)
+    Dev::CommandGroup.new(path: path, desc: desc, category: category, children: children, hidden: hidden)
   end
 end

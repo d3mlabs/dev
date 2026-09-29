@@ -135,8 +135,21 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
     lines.index("Lifecycle:") < lines.index("  deps …       Dependency lookups")
   end
 
-  test "print_group renders a pure group's usage line and its visible children" do
-    Given "a pure group with a hidden child"
+  test "a runnable command with children lists with the same ellipsis marker" do
+    Given "a project command heading a child"
+    printer = Dev::Cli::UsagePrinter.new
+    test = Dev::ProjectCommand.new(run: "./bin/test.sh", desc: "All tests", children: { "unit" => workflow_builtin })
+    out = StringIO.new
+
+    When "printing usage"
+    printer.print(project_name: "myproject", commands: { "test" => test }, out: out)
+
+    Then
+    out.string.include?("  test …       All tests")
+  end
+
+  test "print_node renders a group's usage line and its visible children" do
+    Given "a group with a hidden child"
     printer = Dev::Cli::UsagePrinter.new
     group = build_group(
       ["deps"],
@@ -149,42 +162,54 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
     )
     out = StringIO.new
 
-    When "printing the group"
-    printer.print_group(group: group, out: out)
+    When "printing the node"
+    printer.print_node(path: ["deps"], command: group, out: out)
 
     Then "usage names the path, the desc follows, children list alphabetically, hidden ones omitted, groups marked"
     lines = out.string.lines.map(&:chomp)
     lines.fetch(0) == "Usage: dev deps <command> [args...]"
-    lines.include?("Dependency lookups")
+    lines.fetch(1) == ""
+    lines.fetch(2) == "Dependency lookups"
     lines.index("Commands:") < lines.index("  check …      Checks")
     lines.index("  check …      Checks") < lines.index("  path         Print a locked artifact's path")
     !out.string.include?("plumbing")
   end
 
-  test "print_group renders both invocations of a runnable group" do
-    Given "a runnable group"
+  test "print_node renders both invocations of a runnable command with children" do
+    Given "a project command heading a child"
     printer = Dev::Cli::UsagePrinter.new
-    group = build_group(
-      ["test"], desc: "Run every suite",
+    test = Dev::ProjectCommand.new(
+      run: "./bin/test.sh", desc: "Run every suite",
       children: { "unit" => Dev::ProjectCommand.new(run: "rspec", desc: "Unit") },
-      own: Dev::ProjectCommand.new(run: "./bin/test.sh", desc: "Run every suite"),
     )
     out = StringIO.new
 
-    When "printing the group"
-    printer.print_group(group: group, out: out)
+    When "printing the node"
+    printer.print_node(path: ["test"], command: test, out: out)
 
     Then "the bare form leads, the subcommand form follows"
     lines = out.string.lines.map(&:chomp)
     lines.fetch(0) == "Usage: dev test [args...]"
     lines.fetch(1) == "       dev test <command> [args...]"
+    lines.fetch(3) == "Run every suite"
     lines.include?("  unit         Unit")
   end
 
-  def build_group(path, desc: "a group", category: Dev::Command::Category::Project, children: nil, own: nil)
+  test "print_node renders a childless command as its one invocation and description" do
+    Given "a leaf"
+    printer = Dev::Cli::UsagePrinter.new
+    out = StringIO.new
+
+    When "printing the node"
+    printer.print_node(path: ["test", "unit"], command: Dev::ProjectCommand.new(run: "rspec", desc: "Unit tests"), out: out)
+
+    Then "no Commands section"
+    out.string == "Usage: dev test unit [args...]\n\nUnit tests\n"
+  end
+
+  def build_group(path, desc: "a group", category: Dev::Command::Category::Project, children: nil)
     Dev::CommandGroup.new(
-      path: path, desc: desc, category: category,
-      children: children || { "child" => workflow_builtin }, own: own,
+      path: path, desc: desc, category: category, children: children || { "child" => workflow_builtin },
     )
   end
 end

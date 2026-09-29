@@ -56,8 +56,8 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
   end
 
-  test "#load parses nested commands into a ProjectCommandGroup, naming the entry on error" do
-    Given "a dev.yml with a runnable test group and a broken nested child"
+  test "#load parses nested commands into the entry's children" do
+    Given "a dev.yml with a runnable test command that nests a unit command"
     tmp = write_dev_yml(<<~YAML)
       name: myproject
       commands:
@@ -72,11 +72,11 @@ class ProjectManifestLoaderTest < Minitest::Test
     When "the manifest is loaded"
     manifest = build_loader.load(Pathname.new(tmp.path))
 
-    Then "the tree is the parsed group"
-    manifest.commands["test"] == Dev::ProjectCommandGroup.new(
-      children: { "unit" => Dev::ProjectCommand.new(run: "rspec spec/unit") },
+    Then "the tree is the parsed command heading its children"
+    manifest.commands["test"] == Dev::ProjectCommand.new(
+      run: "./bin/test.sh",
       desc: "Test suites",
-      own: Dev::ProjectCommand.new(run: "./bin/test.sh", desc: "Test suites"),
+      children: { "unit" => Dev::ProjectCommand.new(run: "rspec spec/unit") },
     )
 
     Cleanup

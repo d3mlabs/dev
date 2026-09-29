@@ -10,7 +10,7 @@ module Dev
   module Builtins
     # `dev help` (also routed from bare `dev`, `--help`, and `-h`): render
     # the grouped usage listing; `dev help <path…>` renders the usage of
-    # the node at that path (a group's children, or a leaf's one line).
+    # the node at that path (its invocation forms, description, children).
     # Help lists the very catalog that contains it, so the listing arrives
     # as a provider resolved at call time — the composition root closes the
     # self-reference, not this class.
@@ -54,14 +54,7 @@ module Dev
         commands = @commands_provider.call
         return @usage_printer.print(project_name: @project_name, commands: commands, out: @out) if args.empty?
 
-        command = walk(commands, args)
-        if command.is_a?(CommandGroup)
-          @usage_printer.print_group(group: command, out: @out)
-        else
-          @out.puts "Usage: dev #{args.join(" ")} [args...]"
-          @out.puts ""
-          @out.puts command.desc
-        end
+        @usage_printer.print_node(path: args, command: walk(commands, args), out: @out)
       end
 
       private
@@ -81,7 +74,7 @@ module Dev
           raise UnknownCommandError, "help: unknown command '#{path.join(" ")}'" if node.nil?
 
           # A leaf has no children: any further token falls through to the raise.
-          children = node.is_a?(CommandGroup) ? node.children : {}
+          children = node.children
         end
         T.must(node)
       end

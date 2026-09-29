@@ -38,27 +38,28 @@ module Dev
         out.puts "Examples: dev up    dev up -v    dev update-deps    dev test"
       end
 
-      # The usage view of one group — what a pure group prints when invoked
-      # bare: how to invoke it (a runnable group has two forms), its
-      # description, and its visible children.
+      # The usage view of one node — what a group prints when invoked bare,
+      # and what `dev help <path>` prints for any node: how to invoke it (a
+      # runnable node with children has two forms), its description, and
+      # its visible children when it has any.
       #
-      # @param group [Dev::CommandGroup]
+      # @param path [Array<String>] the path that reached the node
+      # @param command [Dev::Command]
       # @param out [IO, StringIO]
       # @return [void]
-      sig { params(group: CommandGroup, out: T.any(IO, StringIO)).void }
-      def print_group(group:, out:)
-        invocation = "dev #{group.path.join(" ")}"
-        if group.own
-          out.puts "Usage: #{invocation} [args...]"
-          out.puts "       #{invocation} <command> [args...]"
-        else
-          out.puts "Usage: #{invocation} <command> [args...]"
-        end
+      sig { params(path: T::Array[String], command: Command, out: T.any(IO, StringIO)).void }
+      def print_node(path:, command:, out:)
+        invocation = "dev #{path.join(" ")}"
+        children = command.children.reject { |_name, child| child.hidden? }.to_a
+        out.puts "Usage: #{invocation} [args...]" unless command.is_a?(CommandGroup)
+        out.puts "#{command.is_a?(CommandGroup) ? "Usage:" : "      "} #{invocation} <command> [args...]" unless children.empty?
         out.puts ""
-        out.puts group.desc
+        out.puts command.desc
+        return if children.empty?
+
         out.puts ""
         out.puts "Commands:"
-        print_commands(group.children.reject { |_name, command| command.hidden? }.to_a, out)
+        print_commands(children, out)
       end
 
       private
@@ -85,8 +86,8 @@ module Dev
         print_commands(commands, out)
       end
 
-      # Groups carry a trailing ellipsis: the reader learns there is more
-      # beneath without the listing expanding the whole tree.
+      # Nodes with children carry a trailing ellipsis: the reader learns
+      # there is more beneath without the listing expanding the whole tree.
       #
       # @param commands [Array<[String, Dev::Command]>]
       # @param out [IO, StringIO]
@@ -94,7 +95,7 @@ module Dev
       sig { params(commands: T::Array[[String, Command]], out: T.any(IO, StringIO)).void }
       def print_commands(commands, out)
         commands.sort_by { |name, _command| name }.each do |name, command|
-          label = command.is_a?(CommandGroup) ? "#{name} …" : name
+          label = command.children.empty? ? name : "#{name} …"
           out.puts "  #{label.ljust(12)} #{command.desc}"
         end
       end

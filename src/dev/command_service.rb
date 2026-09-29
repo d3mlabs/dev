@@ -35,10 +35,6 @@ module Dev
     # runs stamping slots spawn-and-wait; an exec-replaced project command
     # never returns here, which is exactly why it must not stamp, #85).
     #
-    # A runnable group invoked bare IS its own leaf: that leaf is what runs,
-    # guards, and stamps. A pure group invoked bare reaches the executor as
-    # itself (its group arm prints the usage).
-    #
     # @param argv [Array<String>] the command path followed by its args
     # @param context [ExecutionContext]
     # @return [void]
@@ -50,7 +46,6 @@ module Dev
     def execute(argv, context:)
       resolution = @repository.resolve(argv)
       command = resolution.command
-      command = command.own || command if command.is_a?(CommandGroup)
       @dependency_service.guard! unless command.staleness_exempt?
       @executor.execute(command, args: resolution.args, context:)
       @dependency_service.lock! if command.stamps?

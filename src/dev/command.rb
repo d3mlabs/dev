@@ -12,10 +12,14 @@ module Dev
   # - ProjectCommand: pure data parsed from a dev.yml `commands:` entry
   # - OverriddenCommand: a project command occupying a builtin's slot (the
   #   builtin runs first, like a hardcoded super())
-  # - CommandGroup: a node of the command tree — named children (any of
-  #   the four shapes) plus an optional leaf of its own for the bare
-  #   invocation (`dev deps path` descends; bare `dev test` runs the
-  #   group's own run, or prints its usage when it has none)
+  # - CommandGroup: a command with nothing to run — invoked bare it prints
+  #   its usage; it exists to hold children
+  #
+  # Every command is a node of the command tree: each has `children`
+  # (usually none). Resolution descends while the next argv token names a
+  # child, so `dev deps path` reaches the leaf and `dev test --fast` runs a
+  # `test` that happens to have children, forwarding the flag. The shapes
+  # differ only in what the bare invocation does.
   #
   # Sealing makes a fifth variant unrepresentable: CommandExecutor
   # dispatches exhaustively over these four (case + T.absurd), and Sorbet
@@ -30,17 +34,21 @@ module Dev
   # hook fires only for its direct includers — the four heirs below —
   # because `include` never transfers singleton methods, so subclassing
   # BuiltinCommand is an honest open edge with nothing to suppress. Descent
-  # is closed everywhere it is not explicitly declared: the data leaves and
-  # the group node are final!.
+  # is closed everywhere it is not explicitly declared: the data shapes are
+  # final!.
   module Command
     extend T::Sig
     extend T::Helpers
     # Every includer is an Object, so this changes nothing at runtime; it
     # tells Sorbet that `is_a?`/`nil?` exist on a value typed as the
-    # interface, which the tree code narrows on (group vs leaf).
+    # interface, which the tree code narrows on.
     include Kernel
     abstract!
     sealed!
+
+    # The named subcommands, in listing order. Empty for most commands.
+    sig { abstract.returns(T::Hash[String, Command]) }
+    def children; end
 
     # The usage sections `dev --help` renders. Every command declares its
     # group explicitly (the trait is abstract, not defaulted) so nothing
@@ -100,14 +108,37 @@ module Dev
     include Command
     abstract!
 
+    # @param children [Hash{String => Command}] subcommands, when the
+    #   builtin heads a subtree (most leaves pass nothing)
+    sig { params(children: T::Hash[String, Command]).void }
+    def initialize(children: {})
+      @children = T.let(children.freeze, T::Hash[String, Command])
+    end
+
+    sig { override.returns(T::Hash[String, Command]) }
+    attr_reader :children
+
+    # The same builtin heading a different subtree — how a project's
+    # `commands:` attach under a builtin's name (the body stays the
+    # builtin's; the repository computes the merged children).
+    #
+    # @param children [Hash{String => Command}]
+    # @return [BuiltinCommand] a copy; the receiver is untouched
+    sig { params(children: T::Hash[String, Command]).returns(T.self_type) }
+    def with_children(children)
+      copy = dup
+      copy.instance_variable_set(:@children, children.freeze)
+      copy
+    end
+
     sig { abstract.params(args: T::Array[String], context: ExecutionContext).void }
     def call(args:, context:); end
   end
 
   # Project command from a dev.yml `commands:` entry. Pure data: the run
-  # string, optional description, repl flag, and container opt-out. When
-  # build.container is declared, commands run inside the container by
-  # default unless container: false.
+  # string, optional description, repl flag, container opt-out, and the
+  # nested `commands:` as children. When build.container is declared,
+  # commands run inside the container by default unless container: false.
   class ProjectCommand
     extend T::Sig
     extend T::Helpers
@@ -128,16 +159,27 @@ module Dev
     sig(:final) { returns(T::Boolean) }
     attr_reader :container
 
+    sig(:final) { override.returns(T::Hash[String, Command]) }
+    attr_reader :children
+
     sig(:final) do
-      params(run: String, desc: String, repl: T::Boolean, container: T::Boolean, hidden: T::Boolean).void
+      params(
+        run: String,
+        desc: String,
+        repl: T::Boolean,
+        container: T::Boolean,
+        hidden: T::Boolean,
+        children: T::Hash[String, Command],
+      ).void
     end
-    def initialize(run:, desc: "(no description)", repl: false, container: true, hidden: false)
+    def initialize(run:, desc: "(no description)", repl: false, container: true, hidden: false, children: {})
       super()
       @run = run
       @desc = desc
       @repl = repl
       @container = container
       @hidden = hidden
+      @children = T.let(children.freeze, T::Hash[String, Command])
     end
 
     sig(:final) { override.returns(T::Boolean) }
@@ -146,12 +188,22 @@ module Dev
     sig(:final) { override.returns(Category) }
     def category = Category::Project
 
+    # The same command heading a different subtree (the repository's merge
+    # of a project `run:` over a builtin group's children).
+    #
+    # @param children [Hash{String => Command}]
+    # @return [ProjectCommand]
+    sig(:final) { params(children: T::Hash[String, Command]).returns(ProjectCommand) }
+    def with_children(children)
+      ProjectCommand.new(run: @run, desc: @desc, repl: @repl, container: @container, hidden: @hidden, children:)
+    end
+
     sig(:final) { params(other: Object).returns(T::Boolean) }
     def ==(other)
       return false unless other.is_a?(ProjectCommand)
 
       @run == other.run && @desc == other.desc && @repl == other.repl &&
-        @container == other.container && @hidden == other.hidden?
+        @container == other.container && @hidden == other.hidden? && @children == other.children
     end
 
     sig(:final) { params(other: Object).returns(T::Boolean) }
@@ -161,7 +213,7 @@ module Dev
 
     sig(:final) { returns(Integer) }
     def hash
-      [@run, @desc, @repl, @container, @hidden].hash
+      [@run, @desc, @repl, @container, @hidden, @children].hash
     end
   end
 
@@ -181,11 +233,22 @@ module Dev
     sig(:final) { returns(ProjectCommand) }
     attr_reader :project
 
-    sig(:final) { params(builtin: BuiltinCommand, project: ProjectCommand).void }
-    def initialize(builtin:, project:)
+    sig(:final) { override.returns(T::Hash[String, Command]) }
+    attr_reader :children
+
+    # @param builtin [BuiltinCommand] the slot
+    # @param project [ProjectCommand] the override
+    # @param children [Hash{String => Command}] the merged subtree; defaults
+    #   to the project's children over the builtin's (the repository passes
+    #   its recursive merge)
+    sig(:final) do
+      params(builtin: BuiltinCommand, project: ProjectCommand, children: T::Hash[String, Command]).void
+    end
+    def initialize(builtin:, project:, children: builtin.children.merge(project.children))
       super()
       @builtin = builtin
       @project = project
+      @children = T.let(children.freeze, T::Hash[String, Command])
     end
 
     # The override owns the slot, so its description wins — a project `up:`
@@ -209,30 +272,43 @@ module Dev
     # lists under Lifecycle, with the project's description.
     sig(:final) { override.returns(Category) }
     def category = @builtin.category
+
+    # Value equality over the halves and the subtree (builtins compare by
+    # identity — they are the wired instances).
+    sig(:final) { params(other: Object).returns(T::Boolean) }
+    def ==(other)
+      return false unless other.is_a?(OverriddenCommand)
+
+      @builtin == other.builtin && @project == other.project && @children == other.children
+    end
+
+    sig(:final) { params(other: Object).returns(T::Boolean) }
+    def eql?(other)
+      self == other
+    end
+
+    sig(:final) { returns(Integer) }
+    def hash
+      [@builtin, @project, @children].hash
+    end
   end
 
-  # A node of the command tree: named children plus an optional leaf of its
-  # own. Resolution descends into a child named by the next argv token;
-  # otherwise the bare invocation runs `own` (a runnable group, e.g. a
-  # project `test:` with both `run:` and `commands:`) or, for a pure group,
-  # prints the group's usage. Builtin groups are declared in the
-  # composition root; project groups are parsed from nested dev.yml
-  # `commands:`; a project group on a builtin group's name merges child by
-  # child in CommandRepository. Immutable, like the data leaves: merging
-  # constructs a new node.
+  # A command with nothing of its own to run: pure data (children, desc),
+  # interpreted by CommandExecutor's group arm as "print this node's
+  # usage" — the same way ProjectCommand is data interpreted by
+  # ProjectExecutor. Builtin groups are declared in the composition roots;
+  # project groups are parsed from a dev.yml entry with `commands:` and no
+  # `run:`; a project group on a builtin's name merges child by child in
+  # CommandRepository. Immutable, like the data leaves: merging constructs
+  # a new node.
   class CommandGroup
     extend T::Sig
     extend T::Helpers
     include Command
     final!
 
-    # The bare invocation of a group must resolve to a leaf: an own run
-    # that is itself a group would make `dev x` recurse into a second
-    # bare invocation with no argv left to descend on.
-    class NestedOwnError < ArgumentError; end
-
-    # A group with neither children nor an own run can never do anything;
-    # rejecting it here keeps every resolved node meaningful.
+    # A group with no children can never do anything; rejecting it here
+    # keeps every resolved node meaningful.
     class EmptyGroupError < ArgumentError; end
 
     # The command path from the root (`["deps"]`, `["test", "unit"]`);
@@ -240,13 +316,8 @@ module Dev
     sig(:final) { returns(T::Array[String]) }
     attr_reader :path
 
-    # The named children, in listing order.
-    sig(:final) { returns(T::Hash[String, Command]) }
+    sig(:final) { override.returns(T::Hash[String, Command]) }
     attr_reader :children
-
-    # The leaf the bare invocation runs, when the group is runnable.
-    sig(:final) { returns(T.nilable(Command)) }
-    attr_reader :own
 
     sig(:final) { override.returns(String) }
     attr_reader :desc
@@ -260,42 +331,48 @@ module Dev
         desc: String,
         category: Category,
         children: T::Hash[String, Command],
-        own: T.nilable(Command),
         hidden: T::Boolean,
       ).void
     end
-    def initialize(path:, desc:, category:, children:, own: nil, hidden: false)
+    def initialize(path:, desc:, category:, children:, hidden: false)
       super()
-      raise NestedOwnError, "command '#{path.join(" ")}': a group's own run cannot be a group" if own.is_a?(CommandGroup)
-      if children.empty? && own.nil?
-        raise EmptyGroupError, "command '#{path.join(" ")}': a group needs children or an own run"
-      end
+      raise EmptyGroupError, "command '#{path.join(" ")}': a group needs children" if children.empty?
 
       @path = path
       @desc = desc
       @category = category
       @children = T.let(children.freeze, T::Hash[String, Command])
-      @own = own
       @hidden = hidden
     end
 
     sig(:final) { override.returns(T::Boolean) }
     def hidden? = @hidden
 
-    # Guard and stamp traits belong to whatever the bare invocation runs:
-    # the own leaf when there is one, else the usage print — which must
-    # work while stale (it is how the children get discovered) and records
-    # nothing.
+    # Usage must work while stale — it is how the children get discovered
+    # (same reason as HelpCommand) — and records nothing.
     sig(:final) { override.returns(T::Boolean) }
-    def staleness_exempt?
-      own = @own
-      own ? own.staleness_exempt? : true
+    def staleness_exempt? = true
+
+    sig(:final) { params(other: Object).returns(T::Boolean) }
+    def ==(other)
+      return false unless other.is_a?(CommandGroup)
+
+      @path == other.path && @desc == other.desc && @category == other.category &&
+        @children == other.children && @hidden == other.hidden?
     end
 
-    sig(:final) { override.returns(T::Boolean) }
-    def stamps?
-      own = @own
-      own ? own.stamps? : false
+    sig(:final) { params(other: Object).returns(T::Boolean) }
+    def eql?(other)
+      self == other
+    end
+
+    sig(:final) { returns(Integer) }
+    def hash
+      [@path, @desc, @category, @children, @hidden].hash
     end
   end
+
+  # What a dev.yml `commands:` entry parses to: a runnable command (with or
+  # without children) or a group.
+  ProjectNode = T.type_alias { T.any(ProjectCommand, CommandGroup) }
 end

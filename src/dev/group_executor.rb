@@ -6,9 +6,8 @@ require_relative "cli/usage_printer"
 require_relative "command"
 
 module Dev
-  # The group arm of CommandExecutor: a pure group invoked bare has nothing
-  # to run, so its execution is its usage. (A runnable group never reaches
-  # here — CommandService swaps in its own leaf before dispatch.)
+  # The group arm of CommandExecutor: a group invoked bare has nothing to
+  # run, so its execution is its usage.
   class GroupExecutor
     extend T::Sig
 
@@ -24,7 +23,7 @@ module Dev
     # @return [void]
     sig { params(group: CommandGroup).void }
     def execute(group)
-      @usage_printer.print_group(group:, out: @out)
+      @usage_printer.print_node(path: group.path, command: group, out: @out)
     end
   end
 end

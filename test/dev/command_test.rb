@@ -201,6 +201,83 @@ class CommandTest < Minitest::Test
     cmd.project == project
   end
 
+  test "OverriddenCommands compare by value: same builtin instance, equal project, equal children" do
+    Given "one builtin, and overrides built alike and differently"
+    builtin = FakeBuiltin.new
+    a = Dev::OverriddenCommand.new(builtin: builtin, project: Dev::ProjectCommand.new(run: "x"))
+    b = Dev::OverriddenCommand.new(builtin: builtin, project: Dev::ProjectCommand.new(run: "x"))
+    other_project = Dev::OverriddenCommand.new(builtin: builtin, project: Dev::ProjectCommand.new(run: "y"))
+    other_builtin = Dev::OverriddenCommand.new(builtin: FakeBuiltin.new, project: Dev::ProjectCommand.new(run: "x"))
+    other_children = Dev::OverriddenCommand.new(
+      builtin: builtin, project: Dev::ProjectCommand.new(run: "x"), children: { "c" => FakeBuiltin.new },
+    )
+
+    Expect
+    a == b
+    a.eql?(b)
+    a.hash == b.hash
+    a != other_project
+    a != other_builtin
+    a != other_children
+    a != Dev::ProjectCommand.new(run: "x")
+  end
+
+  test "every command has children, empty by default" do
+    Given "one of each shape built without children"
+    builtin = FakeBuiltin.new
+    project = Dev::ProjectCommand.new(run: "./bin/up.sh")
+    overridden = Dev::OverriddenCommand.new(builtin: builtin, project: project)
+
+    Expect "each is a childless node of the tree"
+    builtin.children == {}
+    project.children == {}
+    overridden.children == {}
+  end
+
+  test "a builtin heads a subtree when given children, and #with_children copies it over another" do
+    Given "a builtin with one child"
+    child = FakeBuiltin.new(desc: "child")
+    builtin = FakeBuiltin.new(desc: "parent")
+    headed = builtin.with_children({ "child" => child })
+
+    Expect "the copy heads the subtree with the same body; the original is untouched"
+    headed.children == { "child" => child }
+    headed.desc == "parent"
+    headed.is_a?(FakeBuiltin)
+    builtin.children == {}
+  end
+
+  test "a ProjectCommand carries its nested commands as children and #with_children rebuilds it" do
+    Given "a project command with a child"
+    child = Dev::ProjectCommand.new(run: "rspec spec/unit")
+    cmd = Dev::ProjectCommand.new(run: "./bin/test.sh", desc: "All tests", container: false, hidden: true)
+    headed = cmd.with_children({ "unit" => child })
+
+    Expect "children are part of the value; every other attribute carries over"
+    cmd.children == {}
+    headed.children == { "unit" => child }
+    headed == Dev::ProjectCommand.new(
+      run: "./bin/test.sh", desc: "All tests", container: false, hidden: true, children: { "unit" => child },
+    )
+    headed != cmd
+  end
+
+  test "an OverriddenCommand's children default to the project's over the builtin's, and can be given" do
+    Given "a builtin and a project override, each with a child"
+    builtin_child = FakeBuiltin.new(desc: "builtin child")
+    project_child = Dev::ProjectCommand.new(run: "b")
+    builtin = FakeBuiltin.new.with_children({ "a" => builtin_child, "b" => FakeBuiltin.new })
+    project = Dev::ProjectCommand.new(run: "./bin/up.sh", children: { "b" => project_child })
+
+    When "composed with and without explicit children"
+    defaulted = Dev::OverriddenCommand.new(builtin: builtin, project: project)
+    given = Dev::OverriddenCommand.new(builtin: builtin, project: project, children: { "c" => project_child })
+
+    Then "the default is a plain merge; an explicit subtree replaces it"
+    defaulted.children == { "a" => builtin_child, "b" => project_child }
+    given.children == { "c" => project_child }
+  end
+
   test "CommandGroup is final: subclassing raises, keeping descent closed" do
     When "declaring a subclass of the composite node"
     Class.new(Dev::CommandGroup)
@@ -224,14 +301,13 @@ class CommandTest < Minitest::Test
     group.is_a?(Dev::Command)
     group.path == ["deps"]
     group.children == { "path" => path }
-    group.own.nil?
     group.desc == "Dependency lookups"
     group.category == Dev::Command::Category::Lifecycle
     group.hidden?
   end
 
-  test "a pure group is staleness-exempt and never stamps: invoked bare it only prints usage" do
-    Given "a group with children and no own run"
+  test "a group is staleness-exempt and never stamps: invoked bare it only prints usage" do
+    Given "a group"
     group = build_group(children: { "path" => FakeBuiltin.new })
 
     Expect "the guard traits are the usage-print traits"
@@ -239,29 +315,7 @@ class CommandTest < Minitest::Test
     !group.stamps?
   end
 
-  test "a runnable group takes its guard and stamp traits from its own run" do
-    Given "a group whose own run is a stamping, guarded builtin"
-    own = FakeBuiltin.new(staleness_exempt: false, stamps: true)
-    group = build_group(children: { "unit" => FakeBuiltin.new }, own: own)
-
-    Expect "the traits are the leaf's: invoked bare, the group IS that command"
-    group.own == own
-    !group.staleness_exempt?
-    group.stamps?
-  end
-
-  test "a group's own run cannot itself be a group" do
-    Given "an inner group"
-    inner = build_group(children: { "x" => FakeBuiltin.new })
-
-    When "declaring it as another group's own run"
-    build_group(children: { "y" => FakeBuiltin.new }, own: inner)
-
-    Then
-    raises Dev::CommandGroup::NestedOwnError
-  end
-
-  test "a group with neither children nor an own run is unrepresentable" do
+  test "a group with no children is unrepresentable" do
     When "declaring an empty group"
     build_group(children: {})
 
@@ -278,14 +332,28 @@ class CommandTest < Minitest::Test
     outer.children.fetch("test") == inner
   end
 
-  sig { params(children: T::Hash[String, Dev::Command], own: T.nilable(Dev::Command)).returns(Dev::CommandGroup) }
-  def build_group(children:, own: nil)
+  test "groups compare by value" do
+    Given "two groups built alike and one that differs in a child"
+    child = FakeBuiltin.new
+    a = build_group(children: { "x" => child })
+    b = build_group(children: { "x" => child })
+    c = build_group(children: { "y" => child })
+
+    Expect "equality and hash follow the declared attributes"
+    a == b
+    a.eql?(b)
+    a.hash == b.hash
+    a != c
+    a != Dev::ProjectCommand.new(run: "x")
+  end
+
+  sig { params(children: T::Hash[String, Dev::Command]).returns(Dev::CommandGroup) }
+  def build_group(children:)
     Dev::CommandGroup.new(
       path: ["group"],
       desc: "a group",
       category: Dev::Command::Category::Workflow,
       children: children,
-      own: own,
     )
   end
 
