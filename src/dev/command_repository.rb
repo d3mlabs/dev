@@ -73,14 +73,17 @@ module Dev
       first = argv.first
       raise CommandNotFoundError, "no command given" if first.nil?
 
-      node = fetch(first)
+      node = T.let(fetch(first), Command)
       path = [first]
       rest = argv.drop(1)
-      while node.is_a?(CommandGroup)
-        child = rest.first && node.children[T.must(rest.first)]
+      loop do
+        break unless node.is_a?(CommandGroup)
+
+        token = rest.first
+        child = token && node.children[token]
         if child.nil?
-          if node.own.nil? && !rest.empty?
-            raise CommandNotFoundError, "Command '#{(path + [rest.fetch(0)]).join(" ")}' not found"
+          if node.own.nil? && token
+            raise CommandNotFoundError, "Command '#{(path + [token]).join(" ")}' not found"
           end
           break
         end

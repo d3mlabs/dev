@@ -35,6 +35,10 @@ module Dev
   module Command
     extend T::Sig
     extend T::Helpers
+    # Every includer is an Object, so this changes nothing at runtime; it
+    # tells Sorbet that `is_a?`/`nil?` exist on a value typed as the
+    # interface, which the tree code narrows on (group vs leaf).
+    include Kernel
     abstract!
     sealed!
 
