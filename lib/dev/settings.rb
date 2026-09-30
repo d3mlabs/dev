@@ -21,6 +21,8 @@ module Dev
   #   plans_repo: d3mlabs/plans
   #   knowledge_repo: d3mlabs/knowledge
   #   deployment_formula: d3mlabs/d3mlabs/dev
+  #   container_engine: colima
+  #   engine_resources: enforce
   #
   # `plans_repo` is the org-wide plans repo that `dev plan new --org` /
   # `dev plan link --org` target. `knowledge_repo` is the org knowledge repo
@@ -33,6 +35,15 @@ module Dev
 
     class MissingSettingError < RuntimeError; end
 
+    # A key is set, in some layer, to a value outside its allowed set.
+    class InvalidSettingError < RuntimeError; end
+
+    # What `engine_resources` may be set to: `enforce` (default) fails a
+    # containerized command on an engine below the repo's resources hint;
+    # `warn` prints the shortfall and carries on — the escape hatch for a
+    # machine that simply cannot meet the hint.
+    ENGINE_RESOURCES_MODES = T.let(%w[enforce warn].freeze, T::Array[String])
+
     # The settings registry: every known key and its ENV override. The one
     # list `dev config` reads (never a duplicated copy that can drift) —
     # a new setting joins here and the command picks it up for free.
@@ -42,6 +53,7 @@ module Dev
         "knowledge_repo" => "DEV_KNOWLEDGE_REPO",
         "deployment_formula" => "DEV_DEPLOYMENT_FORMULA",
         "container_engine" => "DEV_CONTAINER_ENGINE",
+        "engine_resources" => "DEV_ENGINE_RESOURCES",
       }.freeze,
       T::Hash[String, String],
     )
@@ -109,6 +121,22 @@ module Dev
     sig { returns(T.nilable(String)) }
     def container_engine
       lookup("container_engine").first
+    end
+
+    # How an engine below a repo's build.container.resources hint is treated
+    # (see Dev::EngineResourcesCheck). Unset means `enforce`.
+    #
+    # @return [String] one of ENGINE_RESOURCES_MODES
+    # @raise [InvalidSettingError] when set to anything else
+    sig { returns(String) }
+    def engine_resources
+      value, source = lookup("engine_resources")
+      return "enforce" if value.nil?
+      return value if ENGINE_RESOURCES_MODES.include?(value)
+
+      raise InvalidSettingError,
+        "engine_resources is `#{value}` (from #{source}); it must be one of: " \
+        "#{ENGINE_RESOURCES_MODES.join(', ')}."
     end
 
     # Resolve a known key together with the layer it came from: ENV → user

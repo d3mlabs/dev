@@ -67,11 +67,12 @@ module Dev
   # built. dev owns the container's lifecycle: it is created on demand, reused
   # while the image tag is unchanged, reaped when the tag changes, and removed
   # by `dev reset-container`. Default false (every other repo keeps `--rm`).
-  # resources, when set, sizes the VM a container-engine provisioner creates
-  # for this project's builds (e.g. `colima start --cpu N --memory G`). It is
-  # a *hint from the repo* about what its build needs, consumed at
-  # provisioning time; runtime container invocations ignore it. Absent means
-  # the provisioner's defaults.
+  # resources, when set, is the *floor* this project's build was tuned for:
+  # `dev up` brings a colima VM up to at least it (ColimaProvisioner's
+  # ratchet), and every containerized command measures the engine against
+  # it first (EngineResourcesCheck — a hard failure, or a warning under the
+  # `engine_resources: warn` setting). Absent means the provisioner's
+  # defaults and no check.
   class BuildContainerConfig
     extend T::Sig
 

@@ -4,6 +4,7 @@
 require "open3"
 
 require "dev/deps"
+require "dev/engine_resources"
 require "dev/settings"
 
 module Dev
@@ -137,6 +138,23 @@ module Dev
       status.success? ? stdout : ""
     rescue SystemCallError
       ""
+    end
+
+    # What the daemon behind this engine has to offer, read live from
+    # `docker info` — the one inspection that works for every engine (a
+    # colima VM, bare dockerd, an explicit DOCKER_HOST). This is the fact the
+    # repo's `build.container.resources` minimum is checked against.
+    #
+    # @return [EngineResources, nil] nil when the daemon does not answer
+    sig { returns(T.nilable(EngineResources)) }
+    def resources
+      out = capture(["info", "--format", "{{.NCPU}} {{.MemTotal}}"])
+      cpus, memory = out.split
+      return nil if cpus.nil? || memory.nil?
+
+      EngineResources.from_bytes(cpus: Integer(cpus), memory_bytes: Integer(memory))
+    rescue ArgumentError
+      nil
     end
 
     # Whether local paths bind-mounted into containers reach this engine's

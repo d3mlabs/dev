@@ -108,7 +108,7 @@ module Dev
     class SudoAgentExecutor
       extend T::Sig
 
-      # @param executor [#run, #quiet?] the bootstrap's admin CLI seam
+      # @param executor [#run, #quiet?, #capture] the bootstrap's admin CLI seam
       # @param agent_user [String]
       sig { params(executor: T.untyped, agent_user: String).void }
       def initialize(executor:, agent_user:)
@@ -128,6 +128,13 @@ module Dev
       sig { params(cmd: String).returns(T::Boolean) }
       def quiet?(*cmd)
         T.unsafe(@executor).quiet?("sudo", "-n", "-H", "-u", @agent_user, "--", *cmd)
+      end
+
+      # @param cmd [Array<String>] argv, never a shell string
+      # @return [String] stdout on success, "" otherwise
+      sig { params(cmd: String).returns(String) }
+      def capture(*cmd)
+        T.unsafe(@executor).capture("sudo", "-n", "-H", "-u", @agent_user, "--", *cmd)
       end
     end
 

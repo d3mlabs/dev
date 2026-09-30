@@ -236,6 +236,51 @@ class Dev::SettingsTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "engine_resources defaults to enforce and reads the layers like every other key" do
+    Given "an engine_resources value in one layer"
+    dir = Dir.mktmpdir("dev-settings-test-")
+    saved_env = ENV.delete("DEV_ENGINE_RESOURCES")
+    write_user(dir, user) if user
+    ENV["DEV_ENGINE_RESOURCES"] = env if env
+    settings = build_settings(dir)
+
+    Expect
+    settings.engine_resources == expected
+
+    Cleanup
+    ENV.delete("DEV_ENGINE_RESOURCES")
+    ENV["DEV_ENGINE_RESOURCES"] = saved_env if saved_env
+    FileUtils.rm_rf(dir)
+
+    Where
+    user                        | env    | expected
+    nil                         | nil    | "enforce"
+    "engine_resources: warn\n"  | nil    | "warn"
+    "engine_resources: warn\n"  | "enforce" | "enforce"
+    nil                         | "warn" | "warn"
+  end
+
+  test "an engine_resources value outside enforce/warn is a typed error naming the layer it came from" do
+    Given "a misspelt user value"
+    dir = Dir.mktmpdir("dev-settings-test-")
+    saved_env = ENV.delete("DEV_ENGINE_RESOURCES")
+    write_user(dir, "engine_resources: ignore\n")
+    settings = build_settings(dir)
+
+    When "reading it"
+    settings.engine_resources
+
+    Then
+    error = raises Dev::Settings::InvalidSettingError
+    error.message.include?("`ignore`")
+    error.message.include?("from user")
+    error.message.include?("enforce, warn")
+
+    Cleanup
+    ENV["DEV_ENGINE_RESOURCES"] = saved_env if saved_env
+    FileUtils.rm_rf(dir)
+  end
+
   test "system_config_path is exposed for the host converge to find the deployment payload" do
     Given "hermetic settings"
     dir = Dir.mktmpdir("dev-settings-test-")

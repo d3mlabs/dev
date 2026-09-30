@@ -16,10 +16,12 @@ class FakeContainerEngine < Dev::ContainerEngine
   # @param local_mounts [Boolean] what #local_mounts? answers
   # @param capture_result [String, Proc] stdout for capture calls (a proc
   #   receives the args and returns the stdout for that call)
+  # @param kind [Symbol] the engine kind to report (default :fake; pass a
+  #   real kind when the code under test branches on it)
   # @param run_handler [Proc, nil] decides each run's boolean result from its
   #   args; defaults to always succeeding
-  def initialize(local_mounts: true, capture_result: "", &run_handler)
-    super(kind: :fake)
+  def initialize(local_mounts: true, capture_result: "", kind: :fake, &run_handler)
+    super(kind: kind)
     @local_mounts = local_mounts
     @capture_result = capture_result
     @run_handler = run_handler || ->(_args) { true }

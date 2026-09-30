@@ -4,11 +4,14 @@
 require "test_helper"
 require "dev/build_container"
 require "dev/build_container_config"
+require "dev/engine_resources_check"
 require "support/fake_container_engine"
 require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
 class BuildContainerTest < Minitest::Test
+  include SorbetHelper
+
   # Engine-injected instance under test: the docker CLI is a true boundary,
   # so the fake engine records argv instead of tests stubbing Kernel#system.
   def build_container(engine: FakeContainerEngine.new)
@@ -158,7 +161,12 @@ class BuildContainerTest < Minitest::Test
     cmd.index("-w") > cmd.index("WWISE_TOKEN=tok-123")
   end
 
-  test "docker_run_command expands ~ in volume host paths" do
+  test "docker_run_command expands ~ in volume host paths, re-rooting ~/.dev onto the data root" do
+    Given "a scratch data root"
+    root = Dir.mktmpdir("bc-data-root-")
+    original = ENV["DEV_DATA_ROOT"]
+    ENV["DEV_DATA_ROOT"] = root
+
     When "building a docker run command with a ~ volume"
     cmd = build_container.docker_run_command(
       "jpduchesne89/snappy:content-abc123",
@@ -168,8 +176,12 @@ class BuildContainerTest < Minitest::Test
     )
 
     Then
-    cmd.include?("#{File.expand_path("~/.dev/engines/unreal-engine-css")}:/ue")
+    cmd.include?("#{File.join(root, "engines/unreal-engine-css")}:/ue")
     !cmd.any? { |part| part.start_with?("~") }
+
+    Cleanup
+    ENV["DEV_DATA_ROOT"] = original
+    FileUtils.rm_rf(root)
   end
 
   test "docker_run_command carries the engine's argv prefix" do
@@ -196,6 +208,51 @@ class BuildContainerTest < Minitest::Test
 
     Then
     raises Dev::BuildContainer::LocalMountsUnsupportedError
+  end
+
+  test "ensure_image! gates on the engine's resources before touching any image" do
+    Given "a config with a resources hint and a check that finds the engine short"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
+    resources = Dev::BuildContainerConfig::Resources.new(cpus: 12, memory_gib: 24)
+    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89", resources: resources)
+    engine = FakeContainerEngine.new
+    check = typed_mock(Dev::EngineResourcesCheck)
+    check.expects(:check!).once.with(engine: engine, hint: resources)
+      .raises(Dev::EngineResourcesCheck::UndersizedEngineError, "4 cpus")
+    bc = Dev::BuildContainer.new(engine: engine, resources_check: check)
+
+    When "ensuring the image"
+    bc.ensure_image!(config, project_root: Pathname(dir))
+
+    Then "the refusal is the outcome; no docker call was made"
+    raises Dev::EngineResourcesCheck::UndersizedEngineError
+    engine.runs.empty?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "ensure_image! hands the config's (possibly absent) hint to the check every time" do
+    Given "a config without a hint and a pull hit"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
+    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
+    engine = FakeContainerEngine.new
+    check = typed_mock(Dev::EngineResourcesCheck)
+    check.expects(:check!).once.with(engine: engine, hint: nil)
+    bc = Dev::BuildContainer.new(engine: engine, resources_check: check)
+    bc.stubs(:local_image?).returns(false)
+    bc.stubs(:pull).returns(true)
+
+    When "ensuring the image"
+    result = bc.ensure_image!(config, project_root: Pathname(dir))
+
+    Then
+    result.start_with?("jpduchesne89/snappy-linux:content-")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
   test "ensure_image! returns existing image on pull hit" do
@@ -719,8 +776,11 @@ class BuildContainerTest < Minitest::Test
   end
 
   test "build_contexts_from_lockfile returns build-group install_dirs" do
-    Given "a build-deps.lock with an engine install_dir and a context-less dep"
+    Given "a build-deps.lock with an engine install_dir and a context-less dep, under a scratch data root"
     dir = Dir.mktmpdir("build-container-test-")
+    root = Dir.mktmpdir("bc-data-root-")
+    original = ENV["DEV_DATA_ROOT"]
+    ENV["DEV_DATA_ROOT"] = root
     File.write(File.join(dir, "build-deps.lock"), <<~LOCK)
       UnrealEngine:
         integration: gh
@@ -735,15 +795,20 @@ class BuildContainerTest < Minitest::Test
     contexts = Dev::BuildContainer.build_contexts_from_lockfile(Pathname(dir))
 
     Then "the context name is lowercased (Docker rejects uppercase)"
-    contexts == { "unrealengine" => File.expand_path("~/.dev/engines/unreal-engine-css") }
+    contexts == { "unrealengine" => File.join(root, "engines/unreal-engine-css") }
 
     Cleanup
+    ENV["DEV_DATA_ROOT"] = original
     FileUtils.rm_rf(dir)
+    FileUtils.rm_rf(root)
   end
 
   test "build_contexts_from_lockfile reads integration-nested lockfiles" do
-    Given "a build-deps.lock in the nested format (integration -> name -> attrs)"
+    Given "a build-deps.lock in the nested format (integration -> name -> attrs), under a scratch data root"
     dir = Dir.mktmpdir("build-container-test-")
+    root = Dir.mktmpdir("bc-data-root-")
+    original = ENV["DEV_DATA_ROOT"]
+    ENV["DEV_DATA_ROOT"] = root
     File.write(File.join(dir, "build-deps.lock"), <<~LOCK)
       gh:
         UnrealEngine:
@@ -756,15 +821,20 @@ class BuildContainerTest < Minitest::Test
     contexts = Dev::BuildContainer.build_contexts_from_lockfile(Pathname(dir))
 
     Then
-    contexts == { "unrealengine" => File.join(File.expand_path("~/.dev/engines/unreal-engine-css"), "5.6.1-css-83") }
+    contexts == { "unrealengine" => File.join(root, "engines/unreal-engine-css", "5.6.1-css-83") }
 
     Cleanup
+    ENV["DEV_DATA_ROOT"] = original
     FileUtils.rm_rf(dir)
+    FileUtils.rm_rf(root)
   end
 
   test "build_contexts_from_lockfile points at the version-keyed subdir when a version is locked" do
-    Given "a build-deps.lock whose engine dep declares a version"
+    Given "a build-deps.lock whose engine dep declares a version, under a scratch data root"
     dir = Dir.mktmpdir("build-container-test-")
+    root = Dir.mktmpdir("bc-data-root-")
+    original = ENV["DEV_DATA_ROOT"]
+    ENV["DEV_DATA_ROOT"] = root
     File.write(File.join(dir, "build-deps.lock"), <<~LOCK)
       UnrealEngine:
         integration: gh
@@ -777,10 +847,12 @@ class BuildContainerTest < Minitest::Test
     contexts = Dev::BuildContainer.build_contexts_from_lockfile(Pathname(dir))
 
     Then "the host path includes the locked version"
-    contexts == { "unrealengine" => File.join(File.expand_path("~/.dev/engines/unreal-engine-css"), "5.6.1-css-83") }
+    contexts == { "unrealengine" => File.join(root, "engines/unreal-engine-css", "5.6.1-css-83") }
 
     Cleanup
+    ENV["DEV_DATA_ROOT"] = original
     FileUtils.rm_rf(dir)
+    FileUtils.rm_rf(root)
   end
 
   test "resolve_versioned_volumes rewrites a locked install_dir volume to its versioned subdir" do
