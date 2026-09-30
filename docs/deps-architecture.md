@@ -102,11 +102,16 @@ ecosystem's canonical form and validated at the DSL boundary (a cmake
 
 `dev deps update` runs:
 
-1. **Lock** — for each integration with a registered `Locker`, run it over
-   that integration's declarations. Today that is bundler only:
-   `BundlerLocker` writes the Gemfile and runs `bundle lock`, producing
-   `Gemfile.lock`. After this step, tool-solved universes are materialized
-   on disk.
+1. **Lock** — first provision the project's pinned Ruby
+   (`ShadowenvRuby.ensure!`, the same call `dev deps install` makes), then
+   for each integration with a registered `Locker`, run it over that
+   integration's declarations. Today that is bundler only: `BundlerLocker`
+   writes the Gemfile and runs `bundle lock` through the `ShadowenvExec`
+   seam — under the pinned Ruby and its bundler, never the invoking
+   shell's — producing `Gemfile.lock`. Provisioning comes first because a
+   fresh checkout has no `.shadowenv.d` yet; wrapping alone would still
+   solve under the ambient Ruby. After this step, tool-solved universes
+   are materialized on disk.
 2. **Resolve** — the `Resolver`, per declaration:
    - rejects declaration sets where one package (integration + name)
      carries disagreeing constraints, sources, revisions, or
