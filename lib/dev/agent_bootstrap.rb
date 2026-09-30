@@ -191,8 +191,8 @@ module Dev
 
     # Step 6, invoked by the label contract only when a served repo declares
     # `build.container` (the only place local-vs-remote is expressed):
-    # converge the agent's own engine — colima installed (Docker Desktop
-    # cannot serve a no-GUI user), the agent's `container_engine: colima`
+    # converge the agent's own engine — colima installed (the macOS engine,
+    # per-user by nature), the agent's `container_engine: colima`
     # record written into its own config (resolution never crosses the sudo
     # boundary), and its VM provisioned, sized from the repo's resources
     # hint. Every colima invocation crosses to the agent via sudo.

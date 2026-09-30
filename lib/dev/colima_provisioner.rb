@@ -5,10 +5,11 @@ require "open3"
 
 module Dev
   # Per-user provisioning for the colima engine: idempotently ensure the
-  # invoking user's own colima VM is running. This is what gives a no-GUI
-  # user (the agent account) a docker daemon of its own — Docker Desktop
-  # cannot serve it. The VM is vz-virtualized with Rosetta so amd64 build
-  # images (e.g. the linux cross-compile image) run on Apple silicon.
+  # invoking user's own colima VM is running. colima is the one macOS
+  # engine: it serves a human's `dev up` and a no-GUI agent account alike,
+  # and dev owns its whole lifecycle. The VM is vz-virtualized with Rosetta
+  # so amd64 build images (e.g. the linux cross-compile image) run on Apple
+  # silicon.
   #
   # Sizing comes from the repo's build.container.resources hint when given
   # (a UE compile wants more than the shipped defaults); colima applies
@@ -73,7 +74,7 @@ module Dev
       ]
       return if T.unsafe(@executor).run(*args)
 
-      raise StartFailedError, "colima start failed — the agent's engine VM could not be brought up."
+      raise StartFailedError, "colima start failed — the container engine VM could not be brought up."
     end
 
     private

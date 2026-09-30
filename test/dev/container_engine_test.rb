@@ -23,19 +23,25 @@ class Dev::ContainerEngineTest < Minitest::Test
     )
   end
 
-  test "no env override and no record resolves the bare-docker default" do
-    Given "empty settings and no DOCKER_HOST"
+  test "no record on #{host_os} resolves #{kind}: the host OS picks the engine" do
+    Given "empty settings, no DOCKER_HOST, a #{host_os} host"
     dir = Dir.mktmpdir("dev-engine-test-")
-    engine = Dev::ContainerEngine.resolve(settings: build_settings(dir), env: {})
+    engine = Dev::ContainerEngine.resolve(settings: build_settings(dir), env: {}, host_os: host_os)
 
-    Expect "the Docker Desktop default: bare docker, no extra env, local mounts"
-    engine.kind == :docker_desktop
+    Expect "bare docker argv; only colima adds env (its socket)"
+    engine.kind == kind
     engine.argv_prefix == ["docker"]
-    engine.env == {}
+    engine.env.key?("DOCKER_HOST") == (kind == :colima)
     engine.local_mounts?
 
     Cleanup
     FileUtils.rm_rf(dir)
+
+    Where
+    host_os   | kind
+    "darwin"  | :colima
+    "linux"   | :docker
+    "windows" | :docker
   end
 
   test "an explicit DOCKER_HOST wins over any per-user record" do
@@ -85,15 +91,28 @@ class Dev::ContainerEngineTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "a docker record resolves the same default engine explicitly" do
-    Given "a per-user engine record naming docker"
+  test "a docker record resolves bare dockerd on any host, overriding the macOS colima default" do
+    Given "a per-user engine record naming docker, on a darwin host"
     dir = Dir.mktmpdir("dev-engine-test-")
     settings = build_settings(dir, user_yaml: "container_engine: docker\n")
-    engine = Dev::ContainerEngine.resolve(settings: settings, env: {})
+    engine = Dev::ContainerEngine.resolve(settings: settings, env: {}, host_os: "darwin")
+
+    Expect "bare docker with no env — whatever daemon the CLI's own context reaches"
+    engine.kind == :docker
+    engine.env == {}
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a colima record on a non-macOS host still resolves colima (the record is the user's call)" do
+    Given "a colima record on linux"
+    dir = Dir.mktmpdir("dev-engine-test-")
+    settings = build_settings(dir, user_yaml: "container_engine: colima\n")
+    engine = Dev::ContainerEngine.resolve(settings: settings, env: {}, host_os: "linux")
 
     Expect
-    engine.kind == :docker_desktop
-    engine.env == {}
+    engine.kind == :colima
 
     Cleanup
     FileUtils.rm_rf(dir)

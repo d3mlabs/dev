@@ -162,7 +162,7 @@ module Dev
       line(File.directory?(@shared_root), "shared root present (#{@shared_root})")
       return unless @container_required
 
-      line(@executor.quiet?("brew", "list", "--formula", "colima"), "colima installed (agent engine)")
+      line(@executor.quiet?("brew", "list", "--formula", "colima"), "colima installed (container engine)")
     end
 
     # Group + setgid facts via stat, so inspection needs no privileges.

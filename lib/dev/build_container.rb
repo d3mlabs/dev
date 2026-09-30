@@ -356,7 +356,7 @@ module Dev
     # build-context? BuildKit *streams* a build-context from the client on demand;
     # for a large, randomly-read dependency (e.g. a ~30GB engine read during
     # compilation) that transport stalls/deadlocks, especially under emulation. A
-    # plain `-v` volume (virtiofs on Docker Desktop) is the robust path the runtime
+    # plain `-v` volume (virtiofs on colima) is the robust path the runtime
     # already uses, so the prewarm reuses it.
     #
     # @param tag          [String] final content-addressed tag to commit

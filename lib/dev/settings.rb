@@ -102,8 +102,8 @@ module Dev
     # The per-user container engine record ("docker" or "colima"), written at
     # provisioning time (e.g. the agent user's colima, by `dev runner
     # register`'s bootstrap). Resolution reads the invoking user's own config,
-    # so nothing crosses the sudo boundary. Unset is a supported state: the
-    # bare-docker default (see Dev::ContainerEngine.resolve).
+    # so nothing crosses the sudo boundary. Unset is the normal state: the
+    # host OS's engine (see Dev::ContainerEngine.resolve).
     #
     # @return [String, nil] engine name, or nil for the default
     sig { returns(T.nilable(String)) }
