@@ -21,11 +21,16 @@ module Dev
     class Accessor
       extend T::Sig
 
-      class UsageError < StandardError; end
-      class NotLockedError < StandardError; end
-      class PlatformNotLockedError < StandardError; end
-      class NotCachedError < StandardError; end
-      class NotInstalledError < StandardError; end
+      # All five are the caller's problem, not dev's, so they descend from
+      # the two roots Runner#exit_for prints as a clean `dev: …` line (exit
+      # 1): a malformed invocation or an operand the lockfile does not know
+      # is an ArgumentError; a locked dep whose artifact is not provisioned
+      # yet ("run dev up") is a RuntimeError.
+      class UsageError < RuntimeError; end
+      class NotLockedError < ArgumentError; end
+      class PlatformNotLockedError < ArgumentError; end
+      class NotCachedError < RuntimeError; end
+      class NotInstalledError < RuntimeError; end
 
       USAGE = "usage: dev deps path ficsit <mod> <platform> | dev deps path xcode | dev deps path gh <name>"
 
