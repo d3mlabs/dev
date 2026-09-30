@@ -159,6 +159,7 @@ plans_repo: d3mlabs/plans              # org-wide plans repo (dev plan --org)
 knowledge_repo: d3mlabs/knowledge      # org learnings sync source
 deployment_formula: d3mlabs/d3mlabs/dev  # the formula `dev up` self-updates (the deployment names itself)
 container_engine: docker               # per-user opt-out from the host's engine ("docker" = bare dockerd; unset = colima on macOS, bare dockerd elsewhere)
+engine_resources: warn                 # "enforce" (default) fails a build on an engine below the repo's resources hint; "warn" prints it and carries on
 ```
 
 Leaving a nilable key unset turns its feature off (`plans_repo` is only required by `dev plan --org`). Manage the user file with `dev config` instead of hand-editing YAML: `list` shows every known key with its resolved value and source layer (`env` / `user` / `system` / unset) — the settings debugging tool; `get <key>` prints the resolved value (exit 1 when unset); `set <key> <value>` writes the user file, creating it if missing. Known keys only; global, works without a `dev.yml`. The tool ships as two kinds of formula (the Debian core-package/config-package split, applied to a tap):
@@ -477,13 +478,29 @@ For repos that declare a `build.container`, dev builds and runs commands inside 
 
 | Host | Engine | What `dev up` does |
 |---|---|---|
-| macOS | **colima** (per-user VM, `vz` + Rosetta so amd64 build images run on Apple silicon) | registers brew's `docker-buildx` with the brew `docker` CLI (`cliPluginsExtraDirs` in `~/.docker/config.json`, merged, never clobbered); starts the VM if it isn't running, sized from the repo's `build.container.resources` hint (`cpus`, `memory_gib`; defaults 4 / 8 GiB — colima applies sizing at VM creation) |
-| Linux | **bare dockerd** (the distro's docker packages, a system service) | nothing — there is no VM to own |
-| Windows | **bare dockerd inside the WSL2 distro** dev runs in | nothing — same as Linux; the distro's `docker-ce` + `docker-buildx-plugin`, enabled under systemd |
+| macOS | **colima** (per-user VM, `vz` + Rosetta so amd64 build images run on Apple silicon) | registers brew's `docker-buildx` with the brew `docker` CLI (`cliPluginsExtraDirs` in `~/.docker/config.json`, merged, never clobbered); brings the VM to at least the repo's `build.container.resources` hint (`cpus`, `memory_gib`; defaults 4 / 8 GiB) — see the sizing rules below |
+| Linux | **bare dockerd** (the distro's docker packages, a system service) | nothing to start — there is no VM to own; the engine is still measured against the hint |
+| Windows | **bare dockerd inside the WSL2 distro** dev runs in | same as Linux; the distro's `docker-ce` + `docker-buildx-plugin`, enabled under systemd. The VM's size is WSL's (`%USERPROFILE%\.wslconfig`), not dev's |
 
 Resolution is per invoking user: an explicit `DOCKER_HOST` in the environment wins and is left entirely alone (your engine, your problem); otherwise the `container_engine` settings record; otherwise the host OS's engine above. The only record worth writing is `docker` — the opt-out to bare docker with no env, reaching whatever daemon the CLI's own context does. That is where a Docker Desktop user lands: **unsupported but not blocked**. Two colima users on one Mac (a human and the agent account) each get `DOCKER_HOST` pointed at their **own** `~/.colima/default/docker.sock` — nothing crosses the sudo boundary. The engine's one capability flag, `local_mounts?`, names the single remote-poisoned assumption (bind-mounting local paths); every local engine answers true, and a future remote engine joins as config with its own sync strategy rather than an architecture fork.
 
-**Migrating a Mac off Docker Desktop.** Quit Docker Desktop (and stop it launching at login); `brew upgrade d3mlabs/d3mlabs/dev` brings `colima`, `docker` and `docker-buildx` in as formula dependencies; `dev up` in a containerized repo wires the CLI and starts the VM. Images are re-pulled/rebuilt once into the new engine's store, and a `persist: true` warm container is recreated on first use. Uninstall Desktop whenever you like — dev never touches it. An agent host ends up with two colima VMs (the human's and the agent's), each sized from the repo hint; stopping an idle one is engine-lifecycle work tracked in #187.
+**Engine resources: the repo's hint is a floor, and dev enforces it.** A repo's `build.container.resources` is the minimum its build was tuned for; a build on half the cores it expects is a slow, silent failure, so dev makes it loud instead. Two pieces:
+
+- **Sizing (colima, `dev up` only).** The one VM is shared by every project the user works on, so `dev up` sizes it as a *ratchet* — it never shrinks a VM anyone might be using:
+
+  | VM at `dev up` | What happens |
+  |---|---|
+  | absent | created at the hint (defaults for fields the repo leaves out) |
+  | stopped | started at exactly the hint — nobody is using a stopped VM, so this is where a VM **shrinks** back after a large project (leave a field out and the VM keeps its current value for it) |
+  | running, at or above the hint | nothing |
+  | running, undersized, no containers running | stopped and restarted at max(current, hint) per field |
+  | running, undersized, containers running | **refused** (`EngineBusyError`) naming the containers — bring those projects down (`dev reset-container` there, or `docker stop`), or `colima stop` yourself, then `dev up` again |
+
+  So the reclaim path after a big project is `colima stop` (or let the busy refusal tell you to) followed by `dev up` in the smaller one. Bare dockerd has nothing dev can resize: on WSL2 the knobs are `processors` / `memory` in `.wslconfig` (then `wsl --shutdown`); on Linux the daemon already has the machine.
+
+- **The check (every engine, every containerized command).** After the sizing step, and again before every image resolution (`dev <containerized command>`, `dev provide-image`), dev compares what the daemon reports (`docker info` cpus / memory) with the hint. A shortfall is a hard failure whose message says how to fix it for that engine kind. The escape hatch is the `engine_resources` setting — `enforce` (default) or `warn`; `DEV_ENGINE_RESOURCES` overrides — which turns the failure into a printed warning naming the layer that relaxed it, for a machine that simply cannot meet the hint. The check never resizes anything.
+
+**Migrating a Mac off Docker Desktop.** Quit Docker Desktop (and stop it launching at login); `brew upgrade d3mlabs/d3mlabs/dev` brings `colima`, `docker` and `docker-buildx` in as formula dependencies; `dev up` in a containerized repo wires the CLI and starts the VM. Images are re-pulled/rebuilt once into the new engine's store, and a `persist: true` warm container is recreated on first use. Uninstall Desktop whenever you like — dev never touches it. An agent host ends up with two colima VMs (the human's and the agent's), each sized per the rules above; `dev engine` / `dev container` lifecycle commands are the rest of #187.
 
 ### Content-addressed image tag
 
