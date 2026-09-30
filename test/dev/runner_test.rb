@@ -23,11 +23,12 @@ class RunnerTest < Minitest::Test
     When "we run with empty argv"
     runner.run([])
 
-    Then "usage is printed"
+    Then "the root's usage is printed: the tool's invocation, the project's name, its commands, the examples"
     out.string.include?("Usage: dev <command> [args...]")
-    out.string.include?("Commands for testproject:")
+    out.string.include?("Development commands for testproject")
     out.string.include?("up")
     out.string.include?("Setup")
+    out.string.lines.last == "#{Dev::Runner::PROJECT_EPILOGUE}\n"
   end
 
   test "run with --help prints usage" do
@@ -78,8 +79,29 @@ class RunnerTest < Minitest::Test
 
     Then "the three sections render in order"
     lines = out.string.lines.map(&:chomp)
-    lines.index("Commands for testproject:") < lines.index("Lifecycle:")
+    lines.index("Project commands:") < lines.index("Lifecycle:")
     lines.index("Lifecycle:") < lines.index("Development flow:")
+  end
+
+  test "#{argv.inspect} prints the same root usage as bare dev" do
+    Given "two Runners over the same dev.yml"
+    commands = { "test" => { "run" => "rspec", "desc" => "Run tests" } }
+    bare_out = StringIO.new
+    out = StringIO.new
+
+    When "running bare and with the spelling"
+    build_runner(commands: commands, out: bare_out).run([])
+    build_runner(commands: commands, out: out).run(argv)
+
+    Then "one rendering"
+    out.string == bare_out.string
+    out.string.include?("  test         Run tests")
+
+    Where
+    argv
+    ["--help"]
+    ["-h"]
+    ["help"]
   end
 
   test "run with unknown command prints error to stderr and exits 1" do
@@ -264,12 +286,16 @@ class RunnerTest < Minitest::Test
     out = StringIO.new
     runner = build_runner(commands: {}, out: out)
 
-    When "we print usage"
+    When "we print usage, then the runner group's usage"
     runner.run([])
+    runner.run(["runner"])
 
-    Then "the runner command (and its runner-setup alias) is listed"
-    out.string.include?("runner")
+    Then "the runner group (and its runner-setup alias) is listed, with register and status beneath"
+    out.string.include?("  runner …     Enroll or inspect this host as a self-hosted runner")
     out.string.include?("runner-setup")
+    out.string.include?("Usage: dev runner <command> [args...]")
+    out.string.include?("  register     Enroll this host")
+    out.string.include?("  status       Inspect this host's runner enrollments")
   end
 
   test "a leftover dev.yml runner block warns and is ignored" do
@@ -290,6 +316,137 @@ class RunnerTest < Minitest::Test
     $stderr = old_stderr
   end
 
+  test "a project group invoked bare prints its usage, and lists as a group in the top-level usage" do
+    Given "a dev.yml with a nested test group"
+    out = StringIO.new
+    runner = build_runner(
+      commands: {
+        "test" => {
+          "desc" => "Test suites",
+          "commands" => { "unit" => { "run" => "rspec spec/unit", "desc" => "Unit tests" } },
+        },
+      },
+      out: out,
+    )
+
+    When "running the group bare, then the top-level usage"
+    runner.run(["test"])
+    runner.run([])
+
+    Then "the group's usage renders, and the top-level marks it as a group"
+    out.string.include?("Usage: dev test <command> [args...]")
+    out.string.include?("  unit         Unit tests")
+    out.string.include?("  test …       Test suites")
+  end
+
+  test "the deps builtin is a group: bare it prints its usage, listing the path leaf" do
+    Given "a Runner"
+    out = StringIO.new
+    runner = build_runner(commands: {}, out: out)
+
+    When "running deps bare"
+    runner.run(["deps"])
+
+    Then "the group usage renders"
+    out.string.include?("Usage: dev deps <command> [args...]")
+    out.string.include?("  path         Print a locked artifact's path")
+  end
+
+  test "dev complete walks the project catalog: top level, then a group's children" do
+    Given "a dev.yml with a nested test group"
+    out = StringIO.new
+    runner = build_runner(
+      commands: {
+        "test" => {
+          "desc" => "Test suites",
+          "commands" => { "unit" => { "run" => "rspec spec/unit" }, "e2e" => { "run" => "rspec spec/e2e" } },
+        },
+      },
+      out: out,
+    )
+
+    When "completing at the top level, then inside the group"
+    runner.run(["complete"])
+    top = out.string.lines.map(&:chomp)
+    out.truncate(0)
+    out.rewind
+    runner.run(%w[complete test])
+    inside = out.string.lines.map(&:chomp)
+
+    Then "builtins, groups and project commands at the top; the group's children inside; complete itself hidden"
+    (%w[help up deps plan test] - top).empty?
+    !top.include?("complete")
+    inside == %w[e2e unit]
+  end
+
+  test "dev complete outside a project offers the projectless catalog, global commands included" do
+    Given "a Runner with no dev.yml, over its real service graph"
+    out = StringIO.new
+    runner = Dev::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: out)
+
+    When "completing at the top level"
+    runner.run(["complete"])
+
+    Then "help, up, runner and the global nouns are offered; project-only builtins are not"
+    names = out.string.lines.map(&:chomp)
+    (%w[help up runner cd clone config cred learnings plan] - names).empty?
+    !names.include?("install-deps")
+  end
+
+  test "bare dev outside a project prints the projectless root: the global commands and the dev.yml hint" do
+    Given "a Runner with no dev.yml, over its real service graph"
+    out = StringIO.new
+    runner = Dev::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: out)
+
+    When "running bare"
+    runner.run([])
+
+    Then "the global commands render with their canonical descriptions, in sections, closing with the hint"
+    out.string.include?("Usage: dev <command> [args...]")
+    out.string.include?("Commands available outside a project")
+    out.string.include?("  cd           #{Dev::Builtins::CdCommand::DESC}")
+    out.string.include?("  clone        #{Dev::Builtins::CloneCommand::DESC}")
+    out.string.include?("  config …     Manage dev settings")
+    out.string.include?("  cred …       Resolve stored credentials")
+    out.string.include?("  learnings …  The learnings read path: org knowledge cache, skill links, invariants")
+    out.string.include?("  plan …       Sync Cursor plans with GitHub issues")
+    out.string.include?("  runner …     Enroll or inspect this host as a self-hosted runner")
+    out.string.include?("Lifecycle:")
+    out.string.lines.last == "#{Dev::Runner::PROJECTLESS_EPILOGUE}\n"
+  end
+
+  test "dev help <path> outside a project renders a global group's usage" do
+    Given "a Runner with no dev.yml, over its real service graph"
+    out = StringIO.new
+    runner = Dev::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: out)
+
+    When "asking for help on plan"
+    runner.run(["help", "plan"])
+
+    Then
+    out.string.include?("Usage: dev plan <command> [args...]")
+    out.string.include?("  pull")
+  end
+
+  test "an unknown child of a pure project group is reported with its full path" do
+    Given "a dev.yml with a nested test group"
+    runner = build_runner(
+      commands: { "test" => { "commands" => { "unit" => { "run" => "rspec" } } } },
+    )
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(1).once
+
+    When "running an unknown child"
+    runner.run(["test", "bogus"])
+
+    Then "the error names the path as typed"
+    $stderr.string.include?("Command 'test bogus' not found")
+
+    Cleanup
+    $stderr = old_stderr
+  end
+
   test "run assembles the execution context and hands the command to the service" do
     Given "a Runner over an expecting command service, with a declared toolchain"
     root = Pathname.new(Dir.mktmpdir("runner-context-"))
@@ -302,8 +459,8 @@ class RunnerTest < Minitest::Test
     RUBY
     contexts = []
     command_service = typed_mock(Dev::CommandService)
-    command_service.stubs(:execute).with { |cmd_name, args:, context:|
-      contexts << [cmd_name, args, context]
+    command_service.stubs(:execute).with { |argv, context:|
+      contexts << [argv, context]
       true }
     ui = fake_ui
     runner = build_runner(commands: {}, command_service: command_service, ui: ui, root: root)
@@ -312,10 +469,9 @@ class RunnerTest < Minitest::Test
     When "we run a command with args"
     runner.run(["test", "--fast"])
 
-    Then "the service got the name, args, and a fully-assembled context"
-    cmd_name, args, context = contexts.fetch(0)
-    cmd_name == "test"
-    args == ["--fast"]
+    Then "the service got the argv and a fully-assembled context"
+    argv, context = contexts.fetch(0)
+    argv == ["test", "--fast"]
     context.ui == ui
     context.project!.ruby_version == "9.9.9"
     context.project!.python_version == "3.12"
@@ -329,8 +485,8 @@ class RunnerTest < Minitest::Test
     Given "a Runner constructed with no dev.yml anywhere"
     contexts = []
     command_service = typed_mock(Dev::CommandService)
-    command_service.stubs(:execute).with { |cmd_name, args:, context:|
-      contexts << [cmd_name, context]
+    command_service.stubs(:execute).with { |argv, context:|
+      contexts << [argv, context]
       true }
     runner = Dev::Runner.new(dev_yaml_path: nil, ui: fake_ui, command_service: command_service)
 
@@ -338,8 +494,8 @@ class RunnerTest < Minitest::Test
     runner.run(["up"])
 
     Then "the service got a context with a ui and no project half"
-    cmd_name, context = contexts.fetch(0)
-    cmd_name == "up"
+    argv, context = contexts.fetch(0)
+    argv == ["up"]
     context.project.nil?
   end
 

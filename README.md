@@ -26,6 +26,8 @@ dev <command> [args...]   # extra args are forwarded to the command
 
 dev walks up from your current directory to the git repo root and reads the `dev.yml` there. Every command is one of two kinds: a **project command** declared in that `dev.yml` (`dev test`, `dev build`, …), or a **builtin** that ships with dev. A project may declare a command on a builtin's name (typically `up`); the builtin body runs first, then the project's `run:` — a hardcoded `super()`.
 
+Commands form a **tree**, and `dev` itself is its root: any command may have subcommands (`dev deps path`, `dev runner status`, a project's `dev test unit`). Resolution follows argv one token at a time from the root — a token naming a child descends; the first token that doesn't is where the args begin. A command with nothing of its own to run prints its usage when invoked bare (so bare `dev` lists everything, `dev deps` lists `deps path`, `dev plan` lists the plan verbs); `dev help <path…>` prints the same view for any node. Commands with subcommands show a trailing `…` in the listing, and Tab completion follows the same tree (`dev plan <Tab>` offers `new link pull push status init`) once the [shell hook](#shell-hook-install) is installed.
+
 ### Built-in commands
 
 Grouped as `dev help` lists them. **Scope** says where the command works: *anywhere* needs no `dev.yml`; *project* needs one; *gated* exists only when the `dev.yml` declares the named config.
@@ -60,7 +62,7 @@ Grouped as `dev help` lists them. **Scope** says where the command works: *anywh
 
 - No git repo above the current directory: `dev: no git repo (with dev.yml) found above <path>`
 - A git repo without a `dev.yml` (and the command is not an *anywhere* builtin): `dev: found git repo at <path> but no dev.yml there`
-- Unknown command: `dev: unknown command: <name>`, followed by the available commands
+- Unknown command: `dev: Command '<name>' not found` (the full path for an unknown subcommand, e.g. `'deps bogus'`), with a pointer to `dev --help`
 
 ## dev.yml convention
 
@@ -83,16 +85,23 @@ commands:
     desc: Start Ruby console
     run: ./bin/console
     repl: true
+  db:                          # no run: bare `dev db` prints its usage
+    desc: Database chores
+    commands:
+      reset:
+        desc: Reset the dev database
+        run: ./bin/db_reset.sh
 ```
 
 - `name`: Display name for the repo (used in help output).
-- `commands`: Map of command names to specs.
-  - Each command has:
-    - `desc`: Short description (shown in `dev` / `dev --help`).
-    - `run`: Shell command to execute (from the repo root). Any extra args passed to `dev <cmd> [args...]` are forwarded to this command.
-    - `repl`: *(optional, default `false`)* When `true`, the command execs directly without a status footer. Use this for long-running interactive sessions like consoles and REPLs where a trailing `✓ Done` doesn't make sense.
-    - `container`: *(optional, default `true` when `build.container` is configured)* When `false`, the command runs on the host (via `shadowenv exec`) instead of inside the build container. Use for host-side commands like provisioning (`up`) or deploying.
-    - `hidden`: *(optional, default `false`)* When `true`, the command is still callable (`dev <cmd>`) but omitted from `dev` / `dev --help` output. Use for internal plumbing — e.g. a `build` primitive that an intent command (`test`, `release`) calls but that developers shouldn't invoke directly.
+- `commands`: Map of command names to specs. A spec declares `run`, `commands`, or both — never neither.
+  - `desc`: Short description (shown in `dev` / `dev --help`).
+  - `run`: Shell command to execute (from the repo root). Any extra args passed to `dev <cmd> [args...]` are forwarded to this command.
+  - `commands`: *(optional)* Nested map of subcommand specs, same shape, any depth. `dev <cmd> <sub> [args...]` runs the child. With `run` beside it, bare `dev <cmd>` runs `run` and a first arg that isn't a child's name is forwarded to it (`dev test --fast`; `dev help <cmd>` shows both forms). Without `run`, bare `dev <cmd>` prints the usage and an unknown first arg is an error. A child cannot be named `help`, and a command with subcommands cannot be a `repl`.
+  - `repl`: *(optional, default `false`)* When `true`, the command execs directly without a status footer. Use this for long-running interactive sessions like consoles and REPLs where a trailing `✓ Done` doesn't make sense.
+  - `container`: *(optional, default `true` when `build.container` is configured)* When `false`, the command runs on the host (via `shadowenv exec`) instead of inside the build container. Use for host-side commands like provisioning (`up`) or deploying.
+  - `hidden`: *(optional, default `false`)* When `true`, the command is still callable (`dev <cmd>`) but omitted from `dev` / `dev --help` output. Use for internal plumbing — e.g. a `build` primitive that an intent command (`test`, `release`) calls but that developers shouldn't invoke directly.
+- A project spec on a **builtin's name** merges with it: `run` on a builtin is the `super()` override above; subcommands always merge child by child (new children are added, same-named children override — `deps:`, `cache:`, `runner:` accept new verbs this way); `up:` with only `commands:` keeps bare `dev up` as the builtin and adds the children.
 
 ## Adoption model
 
@@ -202,9 +211,9 @@ If the canonical destination already exists, `dev clone` errors and points you a
 
 ### Shell hook install
 
-`dev cd` and the landing half of `dev clone` need a small shell wrapper — a Ruby child process cannot change your shell's directory. dev installs the wrapper function and Tab completers into your shell RC automatically and idempotently: on `dev up` in any project, and on `dev cd` / a hook-less `dev clone` themselves (so a first use self-heals the hook; open a new shell after the install hint). The snippet is marker-guarded (`# dev cd + clone (added by dev)`) next to the shadowenv one, and re-runs never duplicate it; when the snippet itself evolves, the marker changes with it and the next ensure appends the updated wrapper, whose later definition wins.
+`dev cd` and the landing half of `dev clone` need a small shell wrapper — a Ruby child process cannot change your shell's directory. dev installs the wrapper function and Tab completers into your shell RC automatically and idempotently: on `dev up` in any project, and on `dev cd` / a hook-less `dev clone` themselves (so a first use self-heals the hook; open a new shell after the install hint). The snippet is marker-guarded (`# dev cd + clone + completion (added by dev)`) next to the shadowenv one, and re-runs never duplicate it; when the snippet itself evolves, the marker changes with it and the next ensure appends the updated wrapper, whose later definition wins.
 
-Tab completion is registered per shell: zsh gets a navigable menu-select list scoped to the `dev` command only (your other commands' completion is untouched; registration is skipped quietly if your zshrc never runs `compinit`), bash fills `COMPREPLY` directly, and fish registers a standard pager completion (fish applies its own filtering, so fuzzy tokens may only complete literally there). Completion fills the argument only — it never runs the `cd` for you — and inserts `org/repo` (or deeper) forms when a short name would collide.
+Tab completion is registered per shell: zsh gets a navigable menu-select list scoped to the `dev` command only (your other commands' completion is untouched; registration is skipped quietly if your zshrc never runs `compinit`), bash fills `COMPREPLY` directly, and fish registers a standard pager completion (fish applies its own filtering, so fuzzy tokens may only complete literally there). For `dev cd <repo>`, completion fills the argument only — it never runs the `cd` for you — and inserts `org/repo` (or deeper) forms when a short name would collide. Everywhere else it completes command names down the tree: `dev <Tab>` offers the commands available here (project ones included), `dev plan <Tab>` a group's children, backed by the hidden `dev complete <words…>` plumbing.
 
 Because the wrapper runs `builtin cd` in your interactive shell, shadowenv activation after `dev cd` behaves exactly like a manual `cd`: if the shadowenv hook is in your RC (see above), the project env loads; if it's missing, `dev cd` still changes directory but no env activates — same as plain `cd`.
 

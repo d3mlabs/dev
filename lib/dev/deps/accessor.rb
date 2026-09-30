@@ -13,7 +13,7 @@ require_relative "../data_root"
 module Dev
   module Deps
     # Read-only accessor over the lockfile + content cache, surfaced as
-    # `dev deps <subcommand>`. It answers "where is a locked dep's artifact?"
+    # `dev deps path`. It answers "where is a locked dep's artifact?"
     # — the cached zip for a ficsit mod platform, the DEVELOPER_DIR for the
     # pinned Xcode, the version-keyed install dir of a gh release — so
     # consumers (deploy, build scripts, CI) resolve paths from the lockfile
@@ -48,22 +48,18 @@ module Dev
         @data_root = data_root
       end
 
-      # Dispatch a `dev deps …` invocation and print the result.
+      # Print the artifact path a `dev deps path …` invocation asks for.
       #
-      # @param args [Array<String>] argv after the "deps" command
+      # @param args [Array<String>] argv after `deps path`: the integration,
+      #   then its name/platform operands
       # @param out [IO, StringIO] output stream
       # @raise [UsageError] on an unrecognized invocation
       sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
-      def run(args, out: $stdout)
-        subcommand, *rest = args
-        case subcommand
-        when "path"
-          raise UsageError, USAGE if rest.size > 3
+      def print_path(args, out: $stdout)
+        raise UsageError, USAGE if args.size > 3
 
-          integration, name, platform = rest
-          out.puts(path(integration, name, platform).to_s)
-        else raise UsageError, USAGE
-        end
+        integration, name, platform = args
+        out.puts(path(integration, name, platform).to_s)
       end
 
       # Resolve the artifact path for a locked dependency.

@@ -79,6 +79,19 @@ class NoopHostService < Dev::HostService
   def sync_learnings(project_root: nil); end
 end unless defined?(NoopHostService)
 
+# A host service recording the hook-point calls, for the refresh test.
+class RecordingHostService < NoopHostService
+  attr_reader :calls
+
+  def initialize
+    super
+    @calls = []
+  end
+
+  def install_skills = @calls << :install_skills
+  def sync_learnings(project_root: nil) = @calls << [:sync_learnings, project_root]
+end unless defined?(RecordingHostService)
+
 transform!(RSpock::AST::Transformation)
 class Dev::Plan::AccessorTest < Minitest::Test
   REPO = "d3mlabs/demo"
@@ -126,7 +139,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     out = StringIO.new
 
     When "creating a plan"
-    accessor.run(["new", "Carve system"], out: out)
+    accessor.new_plan(["Carve system"], out: out)
 
     Then "the issue body is the H1 plus dev's bundled template, and the file is linked"
     issues.get(REPO, 1).body.start_with?("# Carve system\n")
@@ -148,7 +161,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     accessor, root, issues = build_env(dir)
 
     When "creating a blank plan"
-    accessor.run(["new", "Carve system", "--blank"], out: StringIO.new)
+    accessor.new_plan(["Carve system", "--blank"], out: StringIO.new)
 
     Then "the issue carries only the H1 and the file is linked to it"
     issues.get(REPO, 1).body == "# Carve system\n"
@@ -171,7 +184,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     out = StringIO.new
 
     When "creating a plan"
-    accessor.run(["new", "Carve system"], out: out)
+    accessor.new_plan(["Carve system"], out: out)
 
     Then "the repo template body is scaffolded and no staleness warning fires"
     issues.get(REPO, 1).body == "# Carve system\n\n## Custom section\n\nRepo flavor.\n"
@@ -191,7 +204,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     out = StringIO.new
 
     When "creating a plan"
-    accessor.run(["new", "Carve system"], out: out)
+    accessor.new_plan(["Carve system"], out: out)
 
     Then "the committed (stale) copy is authoritative and the warning points at dev plan init"
     issues.get(REPO, 1).body == "# Carve system\n\n## Old template section\n"
@@ -212,7 +225,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     )
 
     When "creating an org-wide plan"
-    accessor.run(["new", "Org roadmap", "--org"], out: StringIO.new)
+    accessor.new_plan(["Org roadmap", "--org"], out: StringIO.new)
 
     Then "the fetched template body follows the Target repos scaffold"
     issues.get("d3mlabs/plans", 1).body.include?("Target repos:")
@@ -228,7 +241,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     accessor, root, issues = build_env(dir)
 
     When "creating an org-wide plan"
-    accessor.run(["new", "Org roadmap", "--org"], out: StringIO.new)
+    accessor.new_plan(["Org roadmap", "--org"], out: StringIO.new)
 
     Then "the issue lands in the plans repo, scaffolded with a Target repos line, and the filename disambiguates"
     issues.get("d3mlabs/plans", 1).title == "Org roadmap"
@@ -245,13 +258,13 @@ class Dev::Plan::AccessorTest < Minitest::Test
     Given "a linked plan with local edits"
     dir = Dir.mktmpdir("ai-flow-acc-test-")
     accessor, root, issues = build_env(dir)
-    accessor.run(["new", "Carve system"], out: StringIO.new)
+    accessor.new_plan(["Carve system"], out: StringIO.new)
     path = root / ".cursor" / "plans" / "gh-1-carve-system.plan.md"
     header, _body = Dev::Plan::Header.split(path.read)
     path.write(header.render + "# Carve system\n\nNew section.\n")
 
     When "pushing"
-    accessor.run(["push"], out: StringIO.new)
+    accessor.push([], out: StringIO.new)
 
     Then "the issue body is updated and synced_at advances to the new updated_at"
     issues.get(REPO, 1).body == "# Carve system\n\nNew section.\n"
@@ -266,13 +279,13 @@ class Dev::Plan::AccessorTest < Minitest::Test
     Given "a linked plan whose H1 was edited"
     dir = Dir.mktmpdir("ai-flow-acc-test-")
     accessor, root, issues = build_env(dir)
-    accessor.run(["new", "Old title"], out: StringIO.new)
+    accessor.new_plan(["Old title"], out: StringIO.new)
     path = root / ".cursor" / "plans" / "gh-1-old-title.plan.md"
     header, _body = Dev::Plan::Header.split(path.read)
     path.write(header.render + "# New title\n")
 
     When "pushing"
-    accessor.run(["push"], out: StringIO.new)
+    accessor.push([], out: StringIO.new)
 
     Then
     issues.get(REPO, 1).title == "New title"
@@ -285,14 +298,14 @@ class Dev::Plan::AccessorTest < Minitest::Test
     Given "two linked plans with local edits on the first"
     dir = Dir.mktmpdir("ai-flow-acc-test-")
     accessor, root, issues = build_env(dir)
-    accessor.run(["new", "Carve system", "--blank"], out: StringIO.new)
-    accessor.run(["new", "Second plan", "--blank"], out: StringIO.new)
+    accessor.new_plan(["Carve system", "--blank"], out: StringIO.new)
+    accessor.new_plan(["Second plan", "--blank"], out: StringIO.new)
     path = root / ".cursor" / "plans" / "gh-1-carve-system.plan.md"
     header, _body = Dev::Plan::Header.split(path.read)
     path.write(header.render + "# Carve system\n\nNew section.\n")
 
     When "pushing by number"
-    accessor.run(["push", "1"], out: StringIO.new)
+    accessor.push(["1"], out: StringIO.new)
 
     Then "the right issue is updated even though the workspace holds several plans"
     issues.get(REPO, 1).body == "# Carve system\n\nNew section.\n"
@@ -306,13 +319,13 @@ class Dev::Plan::AccessorTest < Minitest::Test
     Given "a linked org plan with local edits"
     dir = Dir.mktmpdir("ai-flow-acc-test-")
     accessor, root, issues = build_env(dir)
-    accessor.run(["new", "Org roadmap", "--org"], out: StringIO.new)
+    accessor.new_plan(["Org roadmap", "--org"], out: StringIO.new)
     path = root / ".cursor" / "plans" / "gh-plans-1-org-roadmap.plan.md"
     header, _body = Dev::Plan::Header.split(path.read)
     path.write(header.render + "# Org roadmap\n\nScoped.\n")
 
     When "pushing by number with --org"
-    accessor.run(["push", "1", "--org"], out: StringIO.new)
+    accessor.push(["1", "--org"], out: StringIO.new)
 
     Then
     issues.get("d3mlabs/plans", 1).body == "# Org roadmap\n\nScoped.\n"
@@ -327,7 +340,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     accessor, _root, _issues = build_env(dir)
 
     When "pushing by that number"
-    accessor.run(["push", "7"], out: StringIO.new)
+    accessor.push(["7"], out: StringIO.new)
 
     Then
     raises Dev::Plan::Accessor::UsageError
@@ -340,14 +353,14 @@ class Dev::Plan::AccessorTest < Minitest::Test
     Given "a linked plan whose issue was edited remotely"
     dir = Dir.mktmpdir("ai-flow-acc-test-")
     accessor, root, issues = build_env(dir)
-    accessor.run(["new", "Carve system"], out: StringIO.new)
+    accessor.new_plan(["Carve system"], out: StringIO.new)
     issues.edit_remotely(REPO, 1, body: "# Carve system\n\nRemote addition.\n")
     path = root / ".cursor" / "plans" / "gh-1-carve-system.plan.md"
     header, _body = Dev::Plan::Header.split(path.read)
     path.write(header.render + "# Carve system\n\nLocal addition.\n")
 
     When "pushing"
-    accessor.run(["push"], out: StringIO.new)
+    accessor.push([], out: StringIO.new)
 
     Then "the guard rejects the clobber"
     raises RuntimeError
@@ -360,11 +373,11 @@ class Dev::Plan::AccessorTest < Minitest::Test
     Given "a clean linked plan whose issue moved ahead"
     dir = Dir.mktmpdir("ai-flow-acc-test-")
     accessor, root, issues = build_env(dir)
-    accessor.run(["new", "Carve system"], out: StringIO.new)
+    accessor.new_plan(["Carve system"], out: StringIO.new)
     issues.edit_remotely(REPO, 1, body: "# Carve system\n\nRemote addition.\n")
 
     When "pulling"
-    accessor.run(["pull", "1"], out: StringIO.new)
+    accessor.pull(["1"], out: StringIO.new)
 
     Then "the local body matches the remote and synced_at advances"
     header, body = read_plan(root, "gh-1-carve-system.plan.md")
@@ -382,7 +395,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     issues.create(REPO, title: "Remote-born plan", body: "# Remote-born plan\n")
 
     When "pulling it"
-    accessor.run(["pull", "1"], out: StringIO.new)
+    accessor.pull(["1"], out: StringIO.new)
 
     Then "a linked plan file materializes"
     header, body = read_plan(root, "gh-1-remote-born-plan.plan.md")
@@ -397,14 +410,14 @@ class Dev::Plan::AccessorTest < Minitest::Test
     Given "a diverged plan"
     dir = Dir.mktmpdir("ai-flow-acc-test-")
     accessor, root, issues = build_env(dir)
-    accessor.run(["new", "Carve system"], out: StringIO.new)
+    accessor.new_plan(["Carve system"], out: StringIO.new)
     issues.edit_remotely(REPO, 1, body: "# Carve system\n\nRemote addition.\n")
     path = root / ".cursor" / "plans" / "gh-1-carve-system.plan.md"
     header, _body = Dev::Plan::Header.split(path.read)
     path.write(header.render + "# Carve system\n\nLocal addition.\n")
 
     When "pulling without --merge"
-    accessor.run(["pull", "1"], out: StringIO.new)
+    accessor.pull(["1"], out: StringIO.new)
 
     Then
     raises RuntimeError
@@ -419,15 +432,15 @@ class Dev::Plan::AccessorTest < Minitest::Test
     accessor, root, issues = build_env(dir)
     base = "# Plan\n\nalpha\n\none\ntwo\nthree\nfour\n\nomega\n"
     issues.create(REPO, title: "Plan", body: "#{base}\n")
-    accessor.run(["pull", "1"], out: StringIO.new)
+    accessor.pull(["1"], out: StringIO.new)
     issues.edit_remotely(REPO, 1, body: "#{base.sub("omega", "omega REMOTE")}\n")
     path = root / ".cursor" / "plans" / "gh-1-plan.plan.md"
     header, _body = Dev::Plan::Header.split(path.read)
     path.write(header.render + base.sub("alpha", "alpha LOCAL"))
 
     When "pulling with --merge, then pushing the merged result"
-    accessor.run(["pull", "1", "--merge"], out: StringIO.new)
-    accessor.run(["push"], out: StringIO.new)
+    accessor.pull(["1", "--merge"], out: StringIO.new)
+    accessor.push([], out: StringIO.new)
 
     Then "both edits are in the issue"
     issues.get(REPO, 1).body == base.sub("alpha", "alpha LOCAL").sub("omega", "omega REMOTE")
@@ -440,15 +453,15 @@ class Dev::Plan::AccessorTest < Minitest::Test
     Given "a merge that conflicted"
     dir = Dir.mktmpdir("ai-flow-acc-test-")
     accessor, root, issues = build_env(dir)
-    accessor.run(["new", "Plan"], out: StringIO.new)
+    accessor.new_plan(["Plan"], out: StringIO.new)
     issues.edit_remotely(REPO, 1, body: "# Plan remote\n")
     path = root / ".cursor" / "plans" / "gh-1-plan.plan.md"
     header, _body = Dev::Plan::Header.split(path.read)
     path.write(header.render + "# Plan local\n")
-    accessor.run(["pull", "1", "--merge"], out: StringIO.new)
+    accessor.pull(["1", "--merge"], out: StringIO.new)
 
     When "pushing without resolving the markers"
-    accessor.run(["push"], out: StringIO.new)
+    accessor.push([], out: StringIO.new)
 
     Then
     raises RuntimeError
@@ -467,8 +480,8 @@ class Dev::Plan::AccessorTest < Minitest::Test
     draft.write("# My draft\n\nLocal thinking.\n")
 
     When "linking the draft to issue 1 and pushing"
-    accessor.run(["link", "1", draft.to_s], out: StringIO.new)
-    accessor.run(["push"], out: StringIO.new)
+    accessor.link(["1", draft.to_s], out: StringIO.new)
+    accessor.push([], out: StringIO.new)
 
     Then "the draft moved to the conventional name and its content is published"
     !draft.exist?
@@ -489,7 +502,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     draft.write("# Fresh plan\n\nContent.\n")
 
     When "canonizing it"
-    accessor.run(["link", draft.to_s], out: StringIO.new)
+    accessor.link([draft.to_s], out: StringIO.new)
 
     Then "the issue is created from the H1 title with the draft's body"
     issues.get(REPO, 1).title == "Fresh plan"
@@ -505,10 +518,10 @@ class Dev::Plan::AccessorTest < Minitest::Test
     Given "four linked plans in each sync state"
     dir = Dir.mktmpdir("ai-flow-acc-test-")
     accessor, root, issues = build_env(dir)
-    accessor.run(["new", "Clean plan"], out: StringIO.new)
-    accessor.run(["new", "Ahead plan"], out: StringIO.new)
-    accessor.run(["new", "Behind plan"], out: StringIO.new)
-    accessor.run(["new", "Diverged plan"], out: StringIO.new)
+    accessor.new_plan(["Clean plan"], out: StringIO.new)
+    accessor.new_plan(["Ahead plan"], out: StringIO.new)
+    accessor.new_plan(["Behind plan"], out: StringIO.new)
+    accessor.new_plan(["Diverged plan"], out: StringIO.new)
     plans = root / ".cursor" / "plans"
     [["gh-2-ahead-plan.plan.md", 2], ["gh-4-diverged-plan.plan.md", 4]].each do |name, _n|
       path = plans / name
@@ -520,7 +533,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     out = StringIO.new
 
     When "listing status"
-    accessor.run(["status"], out: out)
+    accessor.status(out: out)
 
     Then "each plan reports its state"
     out.string.match?(/^clean\s+#{REPO}#1/)
@@ -536,14 +549,14 @@ class Dev::Plan::AccessorTest < Minitest::Test
     Given "a linked plan with fresh local edits, as the afterFileEdit hook sees it"
     dir = Dir.mktmpdir("ai-flow-acc-test-")
     accessor, root, issues = build_env(dir)
-    accessor.run(["new", "Carve system"], out: StringIO.new)
+    accessor.new_plan(["Carve system"], out: StringIO.new)
     path = root / ".cursor" / "plans" / "gh-1-carve-system.plan.md"
     header, _body = Dev::Plan::Header.split(path.read)
     path.write(header.render + "# Carve system\n\nAgent edit.\n")
     payload = StringIO.new(JSON.generate(file_path: path.to_s))
 
     When "the hook fires"
-    accessor.run(["hook-after-edit"], out: StringIO.new, input: payload)
+    accessor.hook_after_edit(payload, out: StringIO.new)
 
     Then "the edit is on the issue"
     issues.get(REPO, 1).body == "# Carve system\n\nAgent edit.\n"
@@ -563,26 +576,11 @@ class Dev::Plan::AccessorTest < Minitest::Test
     source.write("puts 1\n")
 
     When "the hook fires for each"
-    accessor.run(["hook-after-edit"], out: StringIO.new, input: StringIO.new(JSON.generate(file_path: draft.to_s)))
-    accessor.run(["hook-after-edit"], out: StringIO.new, input: StringIO.new(JSON.generate(file_path: source.to_s)))
+    accessor.hook_after_edit(StringIO.new(JSON.generate(file_path: draft.to_s)), out: StringIO.new)
+    accessor.hook_after_edit(StringIO.new(JSON.generate(file_path: source.to_s)), out: StringIO.new)
 
     Then "nothing raises and nothing syncs (no issues exist to sync to)"
     draft.read == "# Draft\n"
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  test "an unknown subcommand raises UsageError" do
-    Given "an accessor"
-    dir = Dir.mktmpdir("ai-flow-acc-test-")
-    accessor, _root, _issues = build_env(dir)
-
-    When "running an unrecognized subcommand"
-    accessor.run(["sync"], out: StringIO.new)
-
-    Then
-    raises Dev::Plan::Accessor::UsageError
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -597,7 +595,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     draft.write("# Draft\n")
 
     When "pushing it explicitly"
-    accessor.run(["push", draft.to_s], out: StringIO.new)
+    accessor.push([draft.to_s], out: StringIO.new)
 
     Then
     raises Dev::Plan::Accessor::UsageError
@@ -615,7 +613,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     draft.write("#{CURSOR_FRONTMATTER}# Squeeze visual\n\nImprove the membrane.\n")
 
     When "canonizing and pushing"
-    accessor.run(["link", draft.to_s], out: StringIO.new)
+    accessor.link([draft.to_s], out: StringIO.new)
 
     Then "the issue body is markdown-only and the local file keeps frontmatter"
     issues.get(REPO, 1).title == "Squeeze visual"
@@ -634,7 +632,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     Given "a linked plan with local frontmatter whose issue moved ahead"
     dir = Dir.mktmpdir("ai-flow-acc-test-")
     accessor, root, issues = build_env(dir)
-    accessor.run(["new", "Carve system"], out: StringIO.new)
+    accessor.new_plan(["Carve system"], out: StringIO.new)
     path = root / ".cursor" / "plans" / "gh-1-carve-system.plan.md"
     plan = Dev::Plan::Content.parse(path.read)
     path.write(Dev::Plan::Content.new(
@@ -643,7 +641,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     issues.edit_remotely(REPO, 1, body: "# Carve system\n\nRemote addition.\n")
 
     When "pulling"
-    accessor.run(["pull", "1"], out: StringIO.new)
+    accessor.pull(["1"], out: StringIO.new)
 
     Then "the markdown matches the remote and frontmatter is untouched"
     _header, body, frontmatter = read_plan(root, "gh-1-carve-system.plan.md")
@@ -658,7 +656,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     Given "a linked plan whose only local change is Cursor todos"
     dir = Dir.mktmpdir("ai-flow-acc-test-")
     accessor, root, issues = build_env(dir)
-    accessor.run(["new", "Carve system", "--blank"], out: StringIO.new)
+    accessor.new_plan(["Carve system", "--blank"], out: StringIO.new)
     path = root / ".cursor" / "plans" / "gh-1-carve-system.plan.md"
     plan = Dev::Plan::Content.parse(path.read)
     path.write(Dev::Plan::Content.new(
@@ -667,8 +665,8 @@ class Dev::Plan::AccessorTest < Minitest::Test
     out = StringIO.new
 
     When "checking status and pushing"
-    accessor.run(["status"], out: out)
-    accessor.run(["push"], out: StringIO.new)
+    accessor.status(out: out)
+    accessor.push([], out: StringIO.new)
 
     Then "status is clean, the issue is unchanged, and frontmatter remains local"
     out.string.match?(/^clean\s+#{REPO}#1/)
@@ -687,7 +685,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     accessor, root, issues = build_env(dir)
     base = "# Plan\n\nalpha\n\none\ntwo\nthree\nfour\n\nomega\n"
     issues.create(REPO, title: "Plan", body: "#{base}\n")
-    accessor.run(["pull", "1"], out: StringIO.new)
+    accessor.pull(["1"], out: StringIO.new)
     path = root / ".cursor" / "plans" / "gh-1-plan.plan.md"
     plan = Dev::Plan::Content.parse(path.read)
     path.write(Dev::Plan::Content.new(
@@ -698,7 +696,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     issues.edit_remotely(REPO, 1, body: "#{base.sub("omega", "omega REMOTE")}\n")
 
     When "pulling with --merge"
-    accessor.run(["pull", "1", "--merge"], out: StringIO.new)
+    accessor.pull(["1", "--merge"], out: StringIO.new)
 
     Then "both markdown edits land and frontmatter is preserved"
     _header, body, frontmatter = read_plan(root, "gh-1-plan.plan.md")
@@ -716,7 +714,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     out = StringIO.new
 
     When "running init"
-    accessor.run(["init"], out: out)
+    accessor.init([], out: out)
 
     Then "the mirror is written verbatim from the bundle render"
     Dev::Plan::Templates.mirror_path(root).read == Dev::Plan::Templates.render_mirror
@@ -730,11 +728,11 @@ class Dev::Plan::AccessorTest < Minitest::Test
     Given "a freshly scaffolded mirror"
     dir = Dir.mktmpdir("ai-flow-acc-test-")
     accessor, root, _issues = build_env(dir)
-    accessor.run(["init"], out: StringIO.new)
+    accessor.init([], out: StringIO.new)
     out = StringIO.new
 
     When "running init again"
-    accessor.run(["init"], out: out)
+    accessor.init([], out: out)
 
     Then
     Dev::Plan::Templates.mirror_path(root).read == Dev::Plan::Templates.render_mirror
@@ -754,7 +752,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     out = StringIO.new
 
     When "running init"
-    accessor.run(["init"], out: out)
+    accessor.init([], out: out)
 
     Then "the mirror is overwritten and the output points at git diff for review"
     mirror.read == Dev::Plan::Templates.render_mirror
@@ -776,7 +774,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     out = StringIO.new
 
     When "running init"
-    accessor.run(["init"], out: out)
+    accessor.init([], out: out)
 
     Then "the file is untouched and reported as repo-owned"
     mirror.read == owned
@@ -802,11 +800,29 @@ class Dev::Plan::AccessorTest < Minitest::Test
     merge_base.write(REPO, 1, polluted)
 
     When "pushing the linked plan"
-    accessor.run(["push", path.to_s], out: StringIO.new)
+    accessor.push([path.to_s], out: StringIO.new)
 
     Then "the issue is cleaned to markdown-only"
     issues.get(REPO, 1).body == "# Carve system\n"
     !issues.get(REPO, 1).body.include?("---\n")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "refresh_host converges the shipped skills and the org learnings for the workspace" do
+    Given "an accessor over a recording host service"
+    dir = Dir.mktmpdir("ai-flow-acc-test-")
+    host = RecordingHostService.new
+    root = Pathname.new(dir)
+    accessor = Dev::Plan::Accessor.new(project_root: root, issues: FakePlanIssues.new,
+      settings: FakePlanSettings.new, host_service: host)
+
+    When "refreshing"
+    accessor.refresh_host
+
+    Then "skills first, then learnings scoped to the workspace root"
+    host.calls == [:install_skills, [:sync_learnings, root]]
 
     Cleanup
     FileUtils.rm_rf(dir)

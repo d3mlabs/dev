@@ -15,6 +15,8 @@ require "dev/command_service"
 require "dev/dependency_service"
 require "dev/deps/staleness"
 require "dev/execution_context"
+require "dev/global_catalog"
+require "dev/group_executor"
 require "dev/overridden_executor"
 require "dev/project_executor"
 require "dev/project_manifest"
@@ -23,17 +25,22 @@ require "dev/shadowenv_ruby"
 
 module Dev
   # The application service behind bin/dev, and the composition root of the
-  # command onion: route argv to a command name (bare/--help/-h mean help),
-  # assemble the ExecutionContext, wire the service graph, make one call
-  # into CommandService, and map rescues to exits at the CLI boundary.
+  # command onion: assemble the ExecutionContext, wire the service graph
+  # (the command tree under its root node), make one call into
+  # CommandService with argv, and map rescues to exits at the CLI boundary.
   #
   # The Runner is project-optional: with no enclosing dev.yml it still runs,
-  # over the projectless catalog (just `up`, the fresh-box bootstrap) and a
+  # over the projectless tree (`up`, `runner`, the global commands) and a
   # context with no project half. Which commands exist is a registration
   # concern owned here; whether a command handles a missing project is the
   # command's own business logic.
   class Runner
     extend T::Sig
+
+    # The root usage's closing line inside a project.
+    PROJECT_EPILOGUE = "Examples: dev up    dev up -v    dev update-deps    dev test"
+    # …and outside one: the real gap is the missing dev.yml.
+    PROJECTLESS_EPILOGUE = "Run dev inside a project that defines a dev.yml to see its commands."
 
     sig do
       params(
@@ -69,29 +76,27 @@ module Dev
     # @return [void]
     sig { params(argv: T::Array[String]).void }
     def run(argv)
-      cmd_name, args = route(argv)
       manifest = @dev_yaml_path && @manifest_loader.load(@dev_yaml_path)
       context = build_context(manifest)
       service = @command_service || build_command_service(manifest, context)
-      service.execute(cmd_name, args:, context:)
+      service.execute(route(argv), context:)
     rescue StandardError => e
       exit_for(e)
     end
 
     private
 
-    # Split argv into a command name and its arguments. Bare `dev` and the
-    # conventional flags route to the help builtin; every other spelling
-    # (including `dev help`) is a regular command lookup.
+    # The conventional help flags are spellings of bare `dev`, which
+    # resolves to the tree's root and prints its usage; every other argv is
+    # the command path the service resolves down the tree.
     #
     # @param argv [Array<String>]
-    # @return [(String, Array<String>)]
-    sig { params(argv: T::Array[String]).returns([String, T::Array[String]]) }
+    # @return [Array<String>]
+    sig { params(argv: T::Array[String]).returns(T::Array[String]) }
     def route(argv)
-      return ["help", []] if argv.empty? || argv == ["--help"] || argv == ["-h"]
+      return [] if argv == ["--help"] || argv == ["-h"]
 
-      args = argv.dup
-      [T.must(args.shift), args]
+      argv
     end
 
     # Assemble the per-run ExecutionContext: always the host half; the
@@ -143,8 +148,8 @@ module Dev
         Kernel.exit(127)
       when CommandRepository::CommandNotFoundError
         # Outside a project the real gap is the missing dev.yml, not the
-        # particular name that failed to resolve against the tiny
-        # projectless catalog.
+        # particular name that failed to resolve against the projectless
+        # tree.
         if @dev_yaml_path.nil?
           $stderr.puts "dev: no dev.yml found in this directory or any parent."
           $stderr.puts "Run dev from inside a project that defines a dev.yml."
@@ -162,9 +167,10 @@ module Dev
     end
 
     # The composition root: the one place the repository (consumed only by
-    # CommandService, the onion rule) and the builtin set are constructed.
-    # Which builtins exist is config-gated here — project builtins only with
-    # a manifest, provide-image/reset-container only with a build container.
+    # CommandService, the onion rule) and the builtin tree under its root
+    # node are constructed. Which builtins exist is config-gated here —
+    # project builtins only with a manifest, provide-image/reset-container
+    # only with a build container.
     #
     # @param manifest [ProjectManifest, nil]
     # @param context [ExecutionContext]
@@ -176,63 +182,80 @@ module Dev
       dependency_service = DependencyService.new(
         staleness: Dev::Deps::Staleness.new(project_root: Dev.target_project_root),
       )
-      # Help lists the catalog the service serves, and the service's
-      # repository contains help — a self-reference by construction. The
-      # provider captures the `service` local assigned below and
-      # dereferences it only at call time, when it exists.
+      # Help and completion walk the tree the service serves, and that tree
+      # contains them — a self-reference by construction. The provider
+      # captures the `service` local assigned below and dereferences it
+      # only at call time, when it exists.
       service = T.let(nil, T.nilable(CommandService))
-      help = Builtins::HelpCommand.new(
-        project_name: manifest.name,
-        usage_printer: Cli::UsagePrinter.new,
-        out: @out,
-        commands_provider: -> { T.must(service).visible_commands },
-      )
+      usage_printer = Cli::UsagePrinter.new(epilogue: PROJECT_EPILOGUE)
+      root_provider = -> { T.must(service).root }
+      help = Builtins::HelpCommand.new(usage_printer:, out: @out, root_provider:)
+      complete = Builtins::CompleteCommand.new(out: @out, root_provider:)
       service = CommandService.new(
         repository: CommandRepository.new(
-          builtins: build_builtins(manifest, dependency_service, help:),
+          root: CommandGroup.root(
+            desc: "Development commands for #{manifest.name}",
+            children: build_builtins(manifest, dependency_service, help:, complete:),
+          ),
           project_commands: manifest.commands,
         ),
-        executor: build_executor(context),
+        executor: build_executor(context, usage_printer),
         dependency_service: dependency_service,
       )
       service
     end
 
-    # The projectless catalog: `up` (its host half is the fresh-box
-    # bootstrap — install dev, `dev up`, ready) and `runner` (enrollment is
-    # a machine concern; `--org` registration and `status` need no
-    # project). The truly global commands (cd, clone, cred, ...) are
-    # dispatched before the Runner; everything else requires the project, so
-    # it simply isn't registered — a lookup miss maps to the no-dev.yml
-    # refusal in exit_for.
+    # The projectless tree: `up` (its host half is the fresh-box bootstrap
+    # — install dev, `dev up`, ready), `runner` (enrollment is a machine
+    # concern; `--org` registration and `status` need no project), the
+    # global commands (dispatched before the Runner in bin/dev, but listed
+    # here so the root usage and `complete` show one whole tree outside a
+    # project), and help/completion over that tree. Everything else
+    # requires the project, so it simply isn't registered — a lookup miss
+    # maps to the no-dev.yml refusal in exit_for.
     #
     # @return [CommandService]
     sig { returns(CommandService) }
     def build_projectless_command_service
+      service = T.let(nil, T.nilable(CommandService))
+      usage_printer = Cli::UsagePrinter.new(epilogue: PROJECTLESS_EPILOGUE)
+      root_provider = -> { T.must(service).root }
       builtins = T.let(
-        { "up" => Builtins::UpCommand.new(install_deps_command: Builtins::InstallDepsCommand.new) },
-        T::Hash[String, BuiltinCommand],
+        {
+          "help" => Builtins::HelpCommand.new(usage_printer:, out: @out, root_provider:),
+          "complete" => Builtins::CompleteCommand.new(out: @out, root_provider:),
+          "up" => Builtins::UpCommand.new(install_deps_command: Builtins::InstallDepsCommand.new),
+        },
+        T::Hash[String, Command],
       )
       builtins.merge!(runner_builtins)
-      CommandService.new(
+      builtins.merge!(GlobalCatalog.new(out: @out).commands)
+      service = CommandService.new(
         repository: CommandRepository.new(
-          builtins: builtins,
+          root: CommandGroup.root(desc: "Commands available outside a project", children: builtins),
           project_commands: {},
         ),
-        executor: CommandExecutor.new(builtin_executor: BuiltinExecutor.new),
+        executor: CommandExecutor.new(
+          builtin_executor: BuiltinExecutor.new,
+          group_executor: GroupExecutor.new(usage_printer:, out: @out),
+        ),
         dependency_service: NoProjectDependencyService.new,
       )
+      service
     end
 
     # Wire the executor composite: one CommandRunner (built from the run's
     # context, the process boundary's collaborators), one BuiltinExecutor,
     # and one ProjectExecutor, shared with the OverriddenExecutor that
-    # composes them for the virtual-dispatch arm.
+    # composes them for the virtual-dispatch arm; the GroupExecutor shares
+    # help's printer and stream (bare `dev` and `dev help` print the same
+    # root usage).
     #
     # @param context [ExecutionContext]
+    # @param usage_printer [Cli::UsagePrinter]
     # @return [CommandExecutor]
-    sig { params(context: ExecutionContext).returns(CommandExecutor) }
-    def build_executor(context)
+    sig { params(context: ExecutionContext, usage_printer: Cli::UsagePrinter).returns(CommandExecutor) }
+    def build_executor(context, usage_printer)
       project = context.project!
       command_runner = CommandRunner.new(
         ui: context.ui,
@@ -245,6 +268,7 @@ module Dev
       project_executor = ProjectExecutor.new(command_runner:)
       CommandExecutor.new(
         builtin_executor:,
+        group_executor: GroupExecutor.new(usage_printer:, out: @out),
         project_executor:,
         overridden_executor: OverriddenExecutor.new(builtin_executor:, project_executor:),
       )
@@ -253,33 +277,47 @@ module Dev
     # @param manifest [ProjectManifest]
     # @param dependency_service [DependencyService]
     # @param help [Builtins::HelpCommand] built by the caller, which owns
-    #   the listing self-reference
-    # @return [Hash{String => BuiltinCommand}] the builtin set
+    #   the tree self-reference
+    # @param complete [Builtins::CompleteCommand] likewise (the completion
+    #   plumbing walks the same tree)
+    # @return [Hash{String => Command}] the root's children
     sig do
-      params(manifest: ProjectManifest, dependency_service: DependencyService, help: Builtins::HelpCommand)
-        .returns(T::Hash[String, BuiltinCommand])
+      params(
+        manifest: ProjectManifest,
+        dependency_service: DependencyService,
+        help: Builtins::HelpCommand,
+        complete: Builtins::CompleteCommand,
+      ).returns(T::Hash[String, Command])
     end
-    def build_builtins(manifest, dependency_service, help:)
+    def build_builtins(manifest, dependency_service, help:, complete:)
       install_deps = Builtins::InstallDepsCommand.new
       builtins = T.let({
         "help" => help,
+        "complete" => complete,
         "update-deps" => Builtins::UpdateDepsCommand.new,
         "install-deps" => install_deps,
         # `up` composes the same install the install-deps builtin runs.
         "up" => Builtins::UpCommand.new(install_deps_command: install_deps),
-        "cd" => Builtins::CdCommand.new,
-        "clone" => Builtins::CloneCommand.new,
-        "learnings" => Builtins::LearningsCommand.new,
         "check" => Builtins::CheckCommand.new(dependency_service:),
-        "deps" => Builtins::DepsCommand.new,
-        "cache" => Builtins::CacheCommand.new,
-        "config" => Builtins::ConfigCommand.new,
-        "cred" => Builtins::CredCommand.new,
-        "plan" => Builtins::PlanCommand.new,
-      }, T::Hash[String, BuiltinCommand])
+        "deps" => CommandGroup.new(
+          path: ["deps"],
+          desc: "Inspect locked dependencies",
+          category: Command::Category::Lifecycle,
+          children: { "path" => Builtins::DepsPathCommand.new },
+        ),
+        "cache" => CommandGroup.new(
+          path: ["cache"],
+          desc: "Manage host caches",
+          category: Command::Category::Workflow,
+          children: { "gc" => Builtins::CacheGcCommand.new },
+        ),
+      }, T::Hash[String, Command])
       builtins["provide-image"] = Builtins::ProvideImageCommand.new if manifest.build_container
       builtins["reset-container"] = Builtins::ResetContainerCommand.new if manifest.build_container&.persist
       builtins.merge!(runner_builtins)
+      # The global builtins are dispatched before the Runner (bin/dev); they
+      # join the project tree so help lists one complete tree.
+      builtins.merge!(GlobalCatalog.new(out: @out).commands)
       builtins
     end
 
@@ -288,13 +326,20 @@ module Dev
     # all), so the command exists everywhere — including the projectless
     # catalog.
     #
-    # @return [Hash{String => BuiltinCommand}]
-    sig { returns(T::Hash[String, BuiltinCommand]) }
+    # @return [Hash{String => Command}]
+    sig { returns(T::Hash[String, Command]) }
     def runner_builtins
+      register = Builtins::RunnerRegisterCommand.new
       {
-        "runner" => Builtins::RunnerCommand.new,
-        # The pre-register name survives as an alias for `runner register`.
-        "runner-setup" => Builtins::RunnerCommand.new(implied_subcommand: "register"),
+        "runner" => CommandGroup.new(
+          path: ["runner"],
+          desc: "Enroll or inspect this host as a self-hosted runner",
+          category: Command::Category::Lifecycle,
+          children: { "register" => register, "status" => Builtins::RunnerStatusCommand.new },
+        ),
+        # The pre-register name survives as a top-level alias of the
+        # register leaf (retirement tracked in #184).
+        "runner-setup" => register,
       }
     end
   end

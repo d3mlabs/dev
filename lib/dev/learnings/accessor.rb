@@ -35,6 +35,10 @@ module Dev
     #                  consumers (e.g. ai-flow's /learn) can call it
     #                  unconditionally before capturing
     #
+    # One public method per verb; the `learnings` group in the command tree
+    # routes `sync` / `status` / `invariants` / `init` to them, and the
+    # leaves own the argv shape (flags, no stray arguments).
+    #
     # RuntimeError subclasses throughout so the CLI boundary prints clean
     # `dev:` messages instead of backtraces.
     class Accessor
@@ -49,15 +53,6 @@ module Dev
       # `dev learnings init` ran outside any project — there is no root to
       # scaffold into.
       class NoEnclosingProjectError < RuntimeError; end
-
-      USAGE = T.let(<<~USAGE.strip, String)
-        usage: dev learnings <subcommand>
-          dev learnings sync        refresh the whole read path now (blocking): knowledge repo cache, skill links, invariants render
-          dev learnings status      configured knowledge repo, cache location/age, what's rendered and linked
-          dev learnings invariants  print the always-on org invariants block (the Tier-0 prompt seam)
-          dev learnings init        scaffold this repo's empty learnings index (write-once: an existing index is left untouched)
-          dev learnings init --org  scaffold the org knowledge-repo layout (index.md + skills/) here, same write-once semantics
-      USAGE
 
       # @param project_root [Pathname, String, nil] the enclosing project for
       #   the project-scoped artifacts (invariants link, gem skill links);
@@ -108,29 +103,10 @@ module Dev
         @scaffolder = scaffolder
       end
 
-      # Dispatch a `dev learnings …` invocation.
-      #
-      # @param args [Array<String>] argv after the "learnings" command
-      # @param out [IO, StringIO] output stream
-      # @return [void]
-      # @raise [UsageError] on an unrecognized invocation
-      sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
-      def run(args, out: $stdout)
-        case args
-        when ["sync"] then sync(out:)
-        when ["status"] then status(out:)
-        when ["invariants"] then invariants(out:)
-        when ["init"] then init(out:)
-        when ["init", "--org"] then init(out:, org: true)
-        else raise UsageError, USAGE
-        end
-      end
-
-      private
-
-      # The whole read path, blocking, errors bubbling: shipped skill links,
-      # the org tier (cache pull, org skill links, invariants render + project
-      # link), and the project's gem skill relinks.
+      # `dev learnings sync`: the whole read path, blocking, errors bubbling:
+      # shipped skill links, the org tier (cache pull, org skill links,
+      # invariants render + project link), and the project's gem skill
+      # relinks.
       #
       # @param out [IO, StringIO]
       # @return [void]
@@ -143,6 +119,9 @@ module Dev
         out.puts "dev: no enclosing project — skipped the invariants link and gem skill links." if @project_root.nil?
       end
 
+      # `dev learnings status`: the configured repo, cache location/age, and
+      # what is rendered and linked.
+      #
       # @param out [IO, StringIO]
       # @return [void]
       sig { params(out: T.any(IO, StringIO)).void }
@@ -219,6 +198,8 @@ module Dev
       rescue Scaffolder::IndexAlreadyExistsError => e
         out.puts "dev: #{e.message}"
       end
+
+      private
 
       # The org tier's rendered/linked state: the machine-side invariants
       # render and the org skill links.

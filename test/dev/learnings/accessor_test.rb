@@ -86,7 +86,7 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     out = StringIO.new
 
     When "running dev learnings sync"
-    accessor.run(["sync"], out: out)
+    accessor.sync(out: out)
 
     Then "cache cloned, org skill linked, invariants rendered + linked, gem skills relinked, and reported"
     cache.present?
@@ -107,7 +107,7 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     out = StringIO.new
 
     When "running dev learnings sync"
-    accessor.run(["sync"], out: out)
+    accessor.sync(out: out)
 
     Then "cache and machine-side render exist; the project-scoped parts were skipped"
     cache.present?
@@ -126,7 +126,7 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     out = StringIO.new
 
     When "running dev learnings status"
-    accessor.run(["status"], out: out)
+    accessor.status(out: out)
 
     Then "the message names the setting and the ENV override"
     out.string.include?("knowledge_repo:")
@@ -144,7 +144,7 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     out = StringIO.new
 
     When "running dev learnings status"
-    accessor.run(["status"], out: out)
+    accessor.status(out: out)
 
     Then
     out.string.include?("not cloned yet")
@@ -158,11 +158,11 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     Given "a fully synced read path"
     dir = Dir.mktmpdir("dev-learnings-acc-test-")
     accessor, = build_env(dir)
-    accessor.run(["sync"], out: StringIO.new)
+    accessor.sync(out: StringIO.new)
     out = StringIO.new
 
     When "running dev learnings status"
-    accessor.run(["status"], out: out)
+    accessor.status(out: out)
 
     Then "cache age, the machine-side render, the org skill links, and the project link are all reported"
     out.string.include?("refreshed")
@@ -185,7 +185,7 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     out = StringIO.new
 
     When "running dev learnings status"
-    accessor.run(["status"], out: out)
+    accessor.status(out: out)
 
     Then "the org render and the project link are both reported missing"
     out.string.include?("invariants: not rendered")
@@ -199,14 +199,14 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     Given "a synced project whose rules file was replaced by a plain file"
     dir = Dir.mktmpdir("dev-learnings-acc-test-")
     accessor, _cache, project, synchronizer, = build_env(dir)
-    accessor.run(["sync"], out: StringIO.new)
+    accessor.sync(out: StringIO.new)
     rules_file = synchronizer.project_rules_file(project)
     rules_file.delete
     rules_file.write("# hand-rolled, not dev's symlink\n")
     out = StringIO.new
 
     When "running dev learnings status"
-    accessor.run(["status"], out: out)
+    accessor.status(out: out)
 
     Then
     out.string.include?("present but not dev's link")
@@ -219,7 +219,7 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     Given "a synced project with one gem skill link and one unrelated file"
     dir = Dir.mktmpdir("dev-learnings-acc-test-")
     accessor, _cache, project, = build_env(dir)
-    accessor.run(["sync"], out: StringIO.new)
+    accessor.sync(out: StringIO.new)
     gem_skills_dir = project.join(*Dev::Deps::GemSkillLinker::AGENT_SKILLS_SUBDIRS)
     FileUtils.mkdir_p(gem_skills_dir)
     File.symlink(File.join(dir, "knowledge", "skills", "srp"), gem_skills_dir / "gem-rspock--rspock")
@@ -227,7 +227,7 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     out = StringIO.new
 
     When "running dev learnings status"
-    accessor.run(["status"], out: out)
+    accessor.status(out: out)
 
     Then
     out.string.include?("gem skills: 1 linked")
@@ -240,13 +240,13 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     Given "a synced accessor"
     dir = Dir.mktmpdir("dev-learnings-acc-test-")
     accessor, cache, = build_env(dir)
-    accessor.run(["sync"], out: StringIO.new)
+    accessor.sync(out: StringIO.new)
 
     When "running status with the cache's sync marker backdated to each granularity"
     reports = { 5 * 60 => StringIO.new, 3 * 3600 => StringIO.new, 2 * 86_400 => StringIO.new }
     reports.each do |age_seconds, out|
       backdate_cache(cache, age_seconds)
-      accessor.run(["status"], out: out)
+      accessor.status(out: out)
     end
 
     Then "each report carries the compact age"
@@ -262,11 +262,11 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     Given "a synced accessor with no enclosing project"
     dir = Dir.mktmpdir("dev-learnings-acc-test-")
     accessor, = build_env(dir, project_root: nil)
-    accessor.run(["sync"], out: StringIO.new)
+    accessor.sync(out: StringIO.new)
     out = StringIO.new
 
     When "running dev learnings status"
-    accessor.run(["status"], out: out)
+    accessor.status(out: out)
 
     Then
     out.string.include?("invariants: rendered at")
@@ -284,7 +284,7 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     out = StringIO.new
 
     When "running dev learnings invariants"
-    accessor.run(["invariants"], out: out)
+    accessor.invariants(out: out)
 
     Then "the block carries the invariant lines and the skill-pointer note, no mdc framing"
     out.string.include?("[design/srp]")
@@ -302,7 +302,7 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     accessor = Dev::Learnings::Accessor.new(project_root: dir, settings: hermetic_settings(dir))
 
     When "running dev learnings invariants"
-    accessor.run(["invariants"], out: StringIO.new)
+    accessor.invariants(out: StringIO.new)
 
     Then
     raises Dev::Learnings::Accessor::InvariantsUnavailableError
@@ -318,7 +318,7 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     accessor, = build_env(dir)
 
     When "running dev learnings invariants"
-    accessor.run(["invariants"], out: StringIO.new)
+    accessor.invariants(out: StringIO.new)
 
     Then
     raises Dev::Learnings::Accessor::InvariantsUnavailableError
@@ -335,7 +335,7 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     cache.index_file.write("# Org learnings index\n\n## Knowledge (on-demand)\n\n- a line\n")
 
     When "running dev learnings invariants"
-    accessor.run(["invariants"], out: StringIO.new)
+    accessor.invariants(out: StringIO.new)
 
     Then
     raises Dev::Learnings::Accessor::InvariantsUnavailableError
@@ -351,7 +351,7 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     out = StringIO.new
 
     When "running dev learnings init"
-    accessor.run(["init"], out: out)
+    accessor.init(out: out)
 
     Then "the canonical always-on index exists and the report points at committing it"
     index = Dev::Learnings::Layout.repo_index_file(project)
@@ -371,7 +371,7 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     out = StringIO.new
 
     When "running dev learnings init --org"
-    accessor.run(["init", "--org"], out: out)
+    accessor.init(out: out, org: true)
 
     Then "index.md carries the fixed section structure and skills/ exists beside it"
     index = Dev::Learnings::Layout.org_index_file(project)
@@ -389,13 +389,13 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     Given "a scaffolded project whose index has since been hand-edited"
     dir = Dir.mktmpdir("dev-learnings-acc-test-")
     accessor, _cache, project, = build_env(dir)
-    accessor.run(["init"], out: StringIO.new)
+    accessor.init(out: StringIO.new)
     index = Dev::Learnings::Layout.repo_index_file(project)
     index.write("# hand-curated entries\n")
     out = StringIO.new
 
     When "running dev learnings init again"
-    accessor.run(["init"], out: out)
+    accessor.init(out: out)
 
     Then "the run reports the write-once no-op and the index is untouched"
     out.string.include?("already exists")
@@ -412,55 +412,10 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     accessor, = build_env(dir, project_root: nil)
 
     When "running dev learnings init"
-    accessor.run(["init"], out: StringIO.new)
+    accessor.init(out: StringIO.new)
 
     Then
     raises Dev::Learnings::Accessor::NoEnclosingProjectError
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  test "init with an unknown flag is rejected with usage" do
-    Given "a configured accessor"
-    dir = Dir.mktmpdir("dev-learnings-acc-test-")
-    accessor, = build_env(dir)
-
-    When "running init with a flag that isn't --org"
-    accessor.run(["init", "--bogus"], out: StringIO.new)
-
-    Then
-    raises Dev::Learnings::Accessor::UsageError
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  test "an unrecognized invocation is rejected with usage" do
-    Given "a configured accessor"
-    dir = Dir.mktmpdir("dev-learnings-acc-test-")
-    accessor, = build_env(dir)
-
-    When "running an unknown subcommand"
-    accessor.run(["bogus"], out: StringIO.new)
-
-    Then
-    raises Dev::Learnings::Accessor::UsageError
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  test "extra arguments to a subcommand are rejected with usage" do
-    Given "a configured accessor"
-    dir = Dir.mktmpdir("dev-learnings-acc-test-")
-    accessor, = build_env(dir)
-
-    When "running sync with a stray argument"
-    accessor.run(["sync", "extra"], out: StringIO.new)
-
-    Then
-    raises Dev::Learnings::Accessor::UsageError
 
     Cleanup
     FileUtils.rm_rf(dir)

@@ -20,16 +20,8 @@ module Dev
       # instead of a backtrace (same for the other plan error classes).
       class UsageError < RuntimeError; end
 
-      USAGE = T.let(<<~USAGE.strip, String)
-        usage: dev plan <subcommand>
-          dev plan new "<title>" [--blank] [--org]   create a templated issue + linked local plan
-          dev plan link <n> [<file>] [--org]         attach a plan file to issue #n
-          dev plan link <file> [--org]               create an issue from a plan file
-          dev plan pull <n> [--merge] [--org]        fetch the issue into the local plan
-          dev plan push [<file>|<n>] [--org]         update the issue body (guarded)
-          dev plan status                            sync state of all linked plans
-          dev plan init                              scaffold/update the repo's plan template mirror
-      USAGE
+      # One public method per verb; the `plan` group in the command tree
+      # routes each to its leaf, which calls #refresh_host and then the verb.
 
       # @param project_root [Pathname] the workspace root (from dev's context)
       # @param workspace [Dev::Plan::Workspace, nil]
@@ -61,39 +53,17 @@ module Dev
         @host_service = T.let(host_service || Dev::HostService.new(settings: @settings), Dev::HostService)
       end
 
-      # Dispatch a `dev plan …` invocation.
+      # The hook point every `dev plan` verb runs first: refresh dev's shipped
+      # skill links and the org learnings artifacts. Cheap and idempotent
+      # (content-compared, the network pull bounded by a short timeout), so
+      # every invocation can afford it.
       #
-      # @param args [Array<String>] argv after the "plan" command
-      # @param out [IO] output stream
-      # @param input [IO] input stream (the Cursor hook payload for hook-after-edit)
-      # @raise [UsageError] on an unrecognized invocation
-      sig do
-        params(
-          args: T::Array[String],
-          out: T.any(IO, StringIO),
-          input: T.any(IO, StringIO),
-        ).void
-      end
-      def run(args, out: $stdout, input: $stdin)
-        # Hook point: refresh dev's shipped skill links and the org learnings
-        # artifacts. Cheap and idempotent (content-compared, the network pull
-        # bounded by a short timeout), so every invocation can afford it.
+      # @return [void]
+      sig { void }
+      def refresh_host
         @host_service.install_skills
         @host_service.sync_learnings(project_root: @project_root)
-        subcommand, *rest = args
-        case subcommand
-        when "new" then new_plan(rest, out:)
-        when "link" then link(rest, out:)
-        when "pull" then pull(rest, out:)
-        when "push" then push(rest, out:)
-        when "status" then status(out:)
-        when "init" then init(rest, out:)
-        when "hook-after-edit" then hook_after_edit(input, out:)
-        else raise UsageError, USAGE
-        end
       end
-
-      private
 
       # `dev plan new "<title>" [--blank] [--org]` — create the issue first
       # (it is canonical from birth), then materialize the linked local
@@ -386,6 +356,8 @@ module Dev
           out.puts "#{state.ljust(10)} #{header.issue_ref.ljust(30)} #{path}"
         end
       end
+
+      private
 
       sig { params(header: Header, local_body: String, remote_body: String).returns(String) }
       def sync_state(header, local_body, remote_body)

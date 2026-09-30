@@ -48,7 +48,7 @@ module Dev
       raw_commands = yaml["commands"] || {}
       ProjectManifest.new(
         name: T.cast(yaml["name"], String),
-        commands: raw_commands.transform_values { |h| @command_parser.parse(h) },
+        commands: raw_commands.to_h { |name, h| [name.to_s, @command_parser.parse([name.to_s], h)] },
         build_container: parse_build_container(yaml),
       )
     end

@@ -36,7 +36,7 @@ class Dev::ConfigAccessorTest < Minitest::Test
     out = StringIO.new
 
     When "listing"
-    accessor.run(["list"], out: out)
+    accessor.list(out: out)
 
     Then "each key names its value and origin, gitconfig --show-origin style"
     out.string.include?("plans_repo") && out.string.include?("acme/plans  (system)")
@@ -56,7 +56,7 @@ class Dev::ConfigAccessorTest < Minitest::Test
     out = StringIO.new
 
     When "listing"
-    accessor.run(["list"], out: out)
+    accessor.list(out: out)
 
     Then "the deployment key reads unset"
     out.string.match?(/deployment_formula\s+\(unset\)/)
@@ -74,7 +74,7 @@ class Dev::ConfigAccessorTest < Minitest::Test
     out = StringIO.new
 
     When "getting the key"
-    accessor.run(["get", "plans_repo"], out: out)
+    accessor.get(["plans_repo"], out: out)
 
     Then "the bare value prints (script-consumable)"
     out.string == "acme/plans\n"
@@ -90,7 +90,7 @@ class Dev::ConfigAccessorTest < Minitest::Test
     accessor = build_accessor(dir)
 
     When "getting an unset key"
-    accessor.run(["get", "knowledge_repo"], out: StringIO.new)
+    accessor.get(["knowledge_repo"], out: StringIO.new)
 
     Then
     raises Dev::ConfigAccessor::UnsetKeyError
@@ -107,8 +107,8 @@ class Dev::ConfigAccessorTest < Minitest::Test
     out = StringIO.new
 
     When "setting then getting the key"
-    accessor.run(["set", "deployment_formula", "acme/tap/dev"], out: out)
-    accessor.run(["get", "deployment_formula"], out: out)
+    accessor.set(["deployment_formula", "acme/tap/dev"], out: out)
+    accessor.get(["deployment_formula"], out: out)
 
     Then "the set confirmed its destination and the value round-tripped"
     out.string.include?("deployment_formula set in #{File.join(dir, "user", "config.yml")}")
@@ -125,7 +125,7 @@ class Dev::ConfigAccessorTest < Minitest::Test
     accessor = build_accessor(dir)
 
     When "setting a different key"
-    accessor.run(["set", "knowledge_repo", "acme/knowledge"], out: StringIO.new)
+    accessor.set(["knowledge_repo", "acme/knowledge"], out: StringIO.new)
 
     Then "both keys live in the file as plain string-keyed YAML"
     reloaded = YAML.safe_load(File.read(File.join(dir, "user", "config.yml")))
@@ -143,7 +143,7 @@ class Dev::ConfigAccessorTest < Minitest::Test
     When "setting a key outside the registry"
     error = nil
     begin
-      accessor.run(["set", "favorite_color", "teal"], out: StringIO.new)
+      accessor.set(["favorite_color", "teal"], out: StringIO.new)
     rescue Dev::ConfigAccessor::UnknownKeyError => e
       error = e
     end
@@ -157,13 +157,13 @@ class Dev::ConfigAccessorTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "unrecognized invocations raise the usage error" do
+  test "malformed verb arguments raise the usage error" do
     Given "an accessor"
     dir = Dir.mktmpdir("dev-config-acc-test-")
     accessor = build_accessor(dir)
 
-    When "running #{args.inspect}"
-    accessor.run(args, out: StringIO.new)
+    When "running #{verb} with #{args.inspect}"
+    accessor.public_send(verb, args, out: StringIO.new)
 
     Then
     raises Dev::ConfigAccessor::UsageError
@@ -172,11 +172,10 @@ class Dev::ConfigAccessorTest < Minitest::Test
     FileUtils.rm_rf(dir)
 
     Where
-    args                          | _
-    []                            | 0
-    ["frobnicate"]                | 0
-    ["get"]                       | 0
-    ["set", "plans_repo"]         | 0
-    ["get", "plans_repo", "junk"] | 0
+    verb | args
+    :get | []
+    :get | ["plans_repo", "junk"]
+    :set | ["plans_repo"]
+    :set | ["plans_repo", "x", "junk"]
   end
 end

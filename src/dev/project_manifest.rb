@@ -14,7 +14,9 @@ module Dev
     extend T::Sig
 
     const :name, String
-    const :commands, T::Hash[String, ProjectCommand]
+    # The project's command tree as declared: runnable commands (with any
+    # nested `commands:` as children) and groups.
+    const :commands, T::Hash[String, ProjectNode]
     const :build_container, T.nilable(Dev::BuildContainerConfig), default: nil
 
     # The `ruby` / `python` directives from dependencies.rb, nil until the

@@ -16,13 +16,19 @@ module Dev
     # shell — so chpwd hooks (e.g. shadowenv) fire exactly as they would for
     # a manual `cd`. Everything else falls through to `command dev`.
     #
-    # Each snippet also registers Tab completion backed by `--candidates`.
-    # Completion replaces the typed token with the rendered candidate (fuzzy
-    # completion is token replacement, not literal prefix extension):
-    # zsh uses `compadd -U` with menu-select scoped to `dev` only (guarded on
-    # compsys being initialized), bash sets COMPREPLY directly, and fish
-    # registers a `complete -c dev` source (fish applies its own filtering,
-    # so fuzzy tokens may complete only literally there).
+    # Each snippet also registers Tab completion, in two modes:
+    #
+    # - `dev cd <token>` is backed by `cd --candidates`. Completion replaces
+    #   the typed token with the rendered candidate (fuzzy completion is
+    #   token replacement, not literal prefix extension): zsh uses
+    #   `compadd -U` with menu-select scoped to `dev` only (guarded on
+    #   compsys being initialized), bash sets COMPREPLY directly, and fish
+    #   registers a `complete -c dev` source (fish applies its own
+    #   filtering, so fuzzy tokens may complete only literally there).
+    # - Every other position is backed by `dev complete <words so far>`,
+    #   which prints the command names that can come next down the command
+    #   tree (`dev <Tab>`, `dev plan <Tab>`, `dev test <Tab>`); the shell
+    #   prefix-filters against the word under the cursor.
     class HookInstaller
       extend T::Sig
 
@@ -30,7 +36,7 @@ module Dev
       # marker get the current snippet appended on the next ensure (dev up or
       # any `dev cd`), and the later function definition wins in every
       # supported shell — self-healing updates without RC surgery.
-      MARKER = "# dev cd + clone (added by dev)"
+      MARKER = "# dev cd + clone + completion (added by dev)"
 
       ZSH_SNIPPET = <<~'SNIPPET'
         dev() {
@@ -54,6 +60,10 @@ module Dev
               local -a __dev_cd_candidates
               __dev_cd_candidates=(${(f)"$(command dev cd --candidates "${words[CURRENT]}" 2>/dev/null)"})
               (( ${#__dev_cd_candidates} )) && compadd -U -- "${__dev_cd_candidates[@]}"
+            else
+              local -a __dev_candidates
+              __dev_candidates=(${(f)"$(command dev complete "${(@)words[2,CURRENT-1]}" 2>/dev/null)"})
+              (( ${#__dev_candidates} )) && compadd -- "${__dev_candidates[@]}"
             fi
           }
           compdef _dev dev
@@ -77,14 +87,16 @@ module Dev
             command dev "$@"
           fi
         }
-        _dev_cd_completion() {
+        _dev_completion() {
           COMPREPLY=()
+          local IFS=$'\n'
           if [ "${COMP_WORDS[1]}" = cd ] && [ "$COMP_CWORD" -eq 2 ]; then
-            local IFS=$'\n'
             COMPREPLY=($(command dev cd --candidates "${COMP_WORDS[2]}" 2>/dev/null))
+          else
+            COMPREPLY=($(compgen -W "$(command dev complete "${COMP_WORDS[@]:1:COMP_CWORD-1}" 2>/dev/null)" -- "${COMP_WORDS[COMP_CWORD]}"))
           fi
         }
-        complete -F _dev_cd_completion dev
+        complete -F _dev_completion dev
       SNIPPET
 
       FISH_SNIPPET = <<~'SNIPPET'
@@ -104,6 +116,7 @@ module Dev
             end
         end
         complete -c dev -n '__fish_seen_subcommand_from cd' -f -a '(command dev cd --candidates (commandline -ct) 2>/dev/null)'
+        complete -c dev -n 'not __fish_seen_subcommand_from cd' -f -a '(command dev complete (commandline -opc)[2..] 2>/dev/null)'
       SNIPPET
 
       # @param rc_hook [Dev::ShellRcHook] the shared RC-snippet installer

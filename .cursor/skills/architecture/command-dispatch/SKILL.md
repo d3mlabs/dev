@@ -2,37 +2,39 @@
 name: command-dispatch
 description: >-
   MUST be used when adding a dev command or changing how bin/dev routes
-  argv — global builtins vs project (dev.yml) commands.
+  argv — global builtins vs project (dev.yml) commands, and the command tree.
 ---
 
-# dev command dispatch: two classes of command
+# dev command dispatch: two roots, one tree
 
-`bin/dev` (sh shim → Ruby) puts `src/` and `lib/` on the load path, then
-routes argv through two layers:
+`bin/dev` (sh shim → Ruby) routes argv through two composition roots
+over the same tree machinery:
 
-1. **Global builtins** — `Dev::GlobalDispatch`
-   (`src/dev/global_dispatch.rb`) runs first, before any dev.yml lookup,
-   so `cd`, `plan`, `cred`, and `learnings` work from any directory. Each
-   owns host- or workspace-global state, never project config.
-2. **Everything else** — builds `Dev::Runner` (`src/dev/runner.rb`), the
-   project-optional composition root. With an enclosing dev.yml it runs
-   the yaml-declared command plus the project builtins (`install-deps`,
-   `deps`, `cache`, ...). Without one, the catalog is just `up` — a
-   hybrid whose host half (converge + cd RC hook) always runs and whose
-   project half needs the project (`ExecutionContext#project`, nil
-   outside a project) — and any other lookup maps to the no-dev.yml
-   refusal in `Runner#exit_for`. `bin/dev` itself rescues nothing.
+1. **Global builtins** — `Dev::GlobalDispatch` runs first when argv's
+   first token names a `Dev::GlobalCatalog` command (`cd`, `clone`,
+   `config`, `cred`, `learnings`, `plan`), before any dev.yml lookup. Each
+   owns host- or workspace-global state (anchored via `Dev::WorkspaceRoot`).
+2. **Everything else** — `Dev::Runner`, the project-optional root. With a
+   dev.yml: yaml commands + project builtins + the global catalog. Without
+   one: `help`, `up`, `runner`, the global catalog; other lookups map to
+   the no-dev.yml refusal in `Runner#exit_for`. `bin/dev` rescues nothing.
+
+Commands form a **tree** (dev#188) and `dev` is its root node. Sealed
+`Dev::Command` (`src/dev/command.rb`): every shape has `children`;
+`BuiltinCommand`, `ProjectCommand`, `OverriddenCommand` run something,
+`CommandGroup` is "children and nothing to run" (`CommandGroup.root` for
+the root). `CommandRepository#resolve` walks argv from the root; a group
+with a leftover token is not-found (top level included). A resolved group
+hits `CommandExecutor`'s group arm (`GroupExecutor` → `UsagePrinter#print_node`,
+the one usage view; `help <path>` prints the same). `--help`/`-h` route to
+bare `dev`. The hidden `complete` builtin walks the same tree.
 
 The seams:
 
-- A new global command joins `GlobalDispatch::GLOBAL_COMMANDS` and gets a
-  feature module under `lib/dev/<name>/` whose `Accessor` is its only CLI
-  surface (usage, arg parsing, clean failures) — see `Cd::Accessor`,
-  `Plan::Accessor`, `Learnings::Accessor`.
-- Project commands are declared in each repo's dev.yml, never hardcoded
-  in dev's core.
-- Workspace-global commands resolve their root as nearest dev.yml, else
-  nearest `.git`, else cwd (`GlobalDispatch#workspace_root`).
-
-origin: seeded by the dev#58 architecture pass
-date: 2026-07-25
+- A noun with verbs is a `CommandGroup` over one leaf class per verb
+  (`deps` → `DepsPathCommand`; `plan` → `PlanNewCommand`…); accessors expose
+  one public method per verb — never hand-roll `case args.first` dispatch.
+  Global nouns register in `GlobalCatalog`, project builtins in the Runner.
+- Project commands live in dev.yml, never in dev's core; `commands:` parse
+  to the node's `children` (`CommandGroup` when no `run:`) and merge child
+  by child with a same-named builtin in the repository.
