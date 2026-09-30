@@ -23,12 +23,12 @@ class RunnerTest < Minitest::Test
     When "we run with empty argv"
     runner.run([])
 
-    Then "the root's usage is printed: the tool's invocation, the project's name, its commands, the examples"
+    Then "the root's usage is printed: the tool's invocation, the project's name, its commands, the help hint"
     out.string.include?("Usage: dev <command> [args...]")
     out.string.include?("Development commands for testproject")
     out.string.include?("up")
     out.string.include?("Setup")
-    out.string.lines.last == "#{Dev::Runner::PROJECT_EPILOGUE}\n"
+    out.string.lines.last == "Run 'dev help <command>' for a command's usage.\n"
   end
 
   test "run with --help prints usage" do

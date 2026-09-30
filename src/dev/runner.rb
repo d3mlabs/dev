@@ -38,7 +38,9 @@ module Dev
     extend T::Sig
 
     # The root usage's closing line inside a project.
-    PROJECT_EPILOGUE = "Examples: dev up    dev up -v    dev deps update    dev test"
+    # The root listing already shows every command with its description, so
+    # the closing line points into the tree rather than repeating rows.
+    PROJECT_EPILOGUE = "Run 'dev help <command>' for a command's usage."
     # …and outside one: the real gap is the missing dev.yml.
     PROJECTLESS_EPILOGUE = "Run dev inside a project that defines a dev.yml to see its commands."
 
