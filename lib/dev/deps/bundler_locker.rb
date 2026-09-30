@@ -1,10 +1,10 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "open3"
 require "pathname"
 require_relative "locker"
 require_relative "scoped_declaration"
+require_relative "shadowenv_exec"
 
 module Dev
   module Deps
@@ -30,16 +30,21 @@ module Dev
       # @param project_root [Pathname, String] root the Gemfile/Gemfile.lock live in
       # @param ruby_version_requirement [String, nil] requirement for the Gemfile's
       #   `ruby` directive (from dependencies.rb's ruby_version), or nil to omit it
+      # @param shadowenv_exec [ShadowenvExec] spawn seam for the project's Ruby
+      #   toolchain — `bundle lock` must solve under the pinned Ruby and its
+      #   bundler, not whatever the invoking shell carries (dev#76)
       sig do
         params(
           project_root: T.any(Pathname, String),
           ruby_version_requirement: T.nilable(String),
+          shadowenv_exec: ShadowenvExec,
         ).void
       end
-      def initialize(project_root:, ruby_version_requirement: nil)
+      def initialize(project_root:, ruby_version_requirement: nil, shadowenv_exec: ShadowenvExec.new(project_root: Pathname(project_root)))
         super()
         @project_root = T.let(Pathname(project_root), Pathname)
         @ruby_version_requirement = ruby_version_requirement
+        @shadowenv_exec = shadowenv_exec
       end
 
       # Generate the Gemfile from all gem declarations and lock it.
@@ -98,16 +103,18 @@ module Dev
         parts.join(", ")
       end
 
-      # Run `bundle lock` against the generated Gemfile to write Gemfile.lock.
-      # Isolated so tests can stub the bundler boundary.
+      # Run `bundle lock` against the generated Gemfile to write Gemfile.lock,
+      # through the ShadowenvExec seam for the same reason BundlerIntegration
+      # does: the resolve must happen under the project's provisioned Ruby, and
+      # the Gemfile.lock's BUNDLED WITH must record that Ruby's bundler.
       #
       # @raise [LockError] if bundle lock fails
       # @return [void]
       sig { void }
       def run_bundle_lock
-        _out, err, status = Open3.capture3(
-          { "BUNDLE_GEMFILE" => gemfile_path.to_s }, "bundle", "lock",
-          chdir: @project_root.to_s,
+        _out, err, status = @shadowenv_exec.capture3(
+          "bundle", "lock",
+          env: { "BUNDLE_GEMFILE" => gemfile_path.to_s },
         )
         raise LockError, "bundle lock failed: #{err}" unless status.success?
       end

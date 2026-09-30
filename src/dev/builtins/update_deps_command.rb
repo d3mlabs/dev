@@ -8,6 +8,7 @@ require "dev/deps"
 require "dev/deps/lockfile"
 require "dev/deps/registry"
 require "dev/deps/resolver"
+require "dev/shadowenv_ruby"
 
 module Dev
   module Builtins
@@ -30,7 +31,13 @@ module Dev
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
-        project_root = context.project!.root
+        project = context.project!
+        project_root = project.root
+        # Provision before locking: the lockers run their ecosystem tool under
+        # the project's shadowenv, and a fresh checkout has no .shadowenv.d
+        # yet — wrapping alone would still solve under the ambient Ruby (dev#76).
+        ShadowenvRuby.ensure!(ruby_version: project.ruby_version, project_root: project_root)
+
         deps_rb = project_root / "dependencies.rb"
         Dev::Deps.reset!
         Kernel.load(deps_rb.to_s) if deps_rb.exist?

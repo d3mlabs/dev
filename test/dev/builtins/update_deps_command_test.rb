@@ -26,6 +26,7 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
   test "call resolves an empty manifest and reports the update" do
     Given "a project root with no dependencies.rb"
     root = Pathname.new(Dir.mktmpdir("update-deps-empty-"))
+    Dev::ShadowenvRuby.stubs(:ensure!)
     command = Dev::Builtins::UpdateDepsCommand.new
     old_stdout = $stdout
     $stdout = StringIO.new
@@ -52,6 +53,7 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     locker.expects(:lock).with { |*args| args.fetch(0).map(&:name) == ["rake"] }
     Dev::Deps::Registry.expects(:lockers).returns({ bundler: locker })
     Dev::Deps::Resolver.expects(:new).returns(stub(resolve: []))
+    Dev::ShadowenvRuby.stubs(:ensure!)
     command = Dev::Builtins::UpdateDepsCommand.new
     old_stdout = $stdout
     $stdout = StringIO.new
@@ -67,11 +69,40 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "call provisions the project's Ruby before any locker runs" do
+    Given "a manifest with a gem declaration; provisioning and locking both observed in order"
+    root = Pathname.new(Dir.mktmpdir("update-deps-provision-"))
+    File.write(root / "dependencies.rb", <<~RUBY)
+      require "dev/deps"
+      Dev::Deps.define { gem "rake" }
+    RUBY
+    order = sequence("provision then lock")
+    Dev::ShadowenvRuby.expects(:ensure!).with(ruby_version: "4.0.1", project_root: root).once.in_sequence(order)
+    locker = mock
+    locker.expects(:lock).in_sequence(order)
+    Dev::Deps::Registry.expects(:lockers).returns({ bundler: locker })
+    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: []))
+    command = Dev::Builtins::UpdateDepsCommand.new
+    old_stdout = $stdout
+    $stdout = StringIO.new
+
+    When "running dev deps update"
+    command.call(args: [], context: build_context(root))
+
+    Then "a fresh checkout has a .shadowenv.d before bundle lock is wrapped in it (asserted on the mocks)"
+    $stdout.string.include?("lockfiles updated")
+
+    Cleanup
+    $stdout = old_stdout
+    FileUtils.rm_rf(root)
+  end
+
   test "call does not mistake a previously loaded project's config for this one" do
     Given "a stale config from an earlier load, and a dependencies.rb that never calls Dev::Deps.define"
     Dev::Deps.define { ruby "9.9.9" }
     root = Pathname.new(Dir.mktmpdir("update-deps-stale-"))
     File.write(root / "dependencies.rb", "UPDATE_DEPS_TEST_CONSTANT = 1 unless defined?(UPDATE_DEPS_TEST_CONSTANT)\n")
+    Dev::ShadowenvRuby.stubs(:ensure!)
     command = Dev::Builtins::UpdateDepsCommand.new
     old_stdout = $stdout
     $stdout = StringIO.new
