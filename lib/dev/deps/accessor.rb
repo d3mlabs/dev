@@ -162,7 +162,7 @@ module Dev
       sig { params(integration: Symbol, name: String).returns(Dependency) }
       def find_dep(integration, name)
         dep = @lockfile.read.find { |d| d.integration == integration && d.name == name }
-        raise NotLockedError, "#{name} (#{integration}) is not in the lockfile — run dev update-deps" unless dep
+        raise NotLockedError, "#{name} (#{integration}) is not in the lockfile — run dev deps update" unless dep
 
         dep
       end

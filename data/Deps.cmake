@@ -9,7 +9,7 @@
 # (e.g. "Boost::"), targets are prefixed automatically. This replaces hardcoded dep checks.
 
 if(NOT EXISTS "${CMAKE_SOURCE_DIR}/deps.lock.cmake")
-  message(FATAL_ERROR "deps.lock.cmake not found. Run: dev update-deps, commit the lockfile, then run dev up or build.")
+  message(FATAL_ERROR "deps.lock.cmake not found. Run: dev deps update, commit the lockfile, then run dev up or build.")
 endif()
 include("${CMAKE_SOURCE_DIR}/deps.lock.cmake")
 

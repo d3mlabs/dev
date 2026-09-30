@@ -187,7 +187,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     integration.install_all([dep])
 
     Then "the marker was recognized and no write was attempted (the retired current-pointer " \
-         "rewrite crashed dev install-deps here with EACCES at the plans#36 ceremony)"
+         "rewrite crashed dev deps install here with EACCES at the plans#36 ceremony)"
     !File.exist?(File.join(install_dir, "current"))
     integration.download_count == 0
 

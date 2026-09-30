@@ -43,7 +43,7 @@ module Dev
       def find(id)
         pin = pins.fetch(id.name) do
           raise MissingGemError,
-            "gem #{id.name.inspect} is not in #{LOCKFILE} — run `dev update-deps`"
+            "gem #{id.name.inspect} is not in #{LOCKFILE} — run `dev deps update`"
         end
 
         Package.new(

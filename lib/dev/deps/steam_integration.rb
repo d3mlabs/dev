@@ -112,7 +112,7 @@ module Dev
 
       # Confirm the installed depot matches the locked buildid. A mismatch means
       # the lock is stale (the public branch moved) — surface it so the user
-      # re-runs dev update-deps rather than silently testing a different build.
+      # re-runs dev deps update rather than silently testing a different build.
       #
       # @param dep [Dependency]
       # @param server_dir [Pathname]
@@ -128,7 +128,7 @@ module Dev
 
         raise BuildMismatchError,
           "#{dep.name}: expected buildid #{dep.version}, installed #{installed_build.inspect} " \
-          "— run dev update-deps to re-pin"
+          "— run dev deps update to re-pin"
       end
     end
   end

@@ -82,7 +82,7 @@ module Dev
     end
 
     # Guarded provisioning: the O(1) provisioned? check first, so callers on
-    # every-command paths (CommandRunner, the up/install-deps builtins) pay
+    # every-command paths (CommandRunner, the up/deps install builtins) pay
     # nothing after the first run.
     sig { params(ruby_version: String, project_root: T.any(String, Pathname)).void }
     def ensure!(ruby_version:, project_root:)

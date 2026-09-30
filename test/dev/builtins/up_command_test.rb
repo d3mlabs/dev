@@ -23,7 +23,7 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     !command.hidden?
   end
 
-  test "call ensures the dev cd shell hook and composes the install-deps body" do
+  test "call ensures the dev cd shell hook and composes the deps install body" do
     Given "an up command with expectations on both collaborators"
     install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
     host_service = quiet_host_service
@@ -68,7 +68,7 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     When "running up outside any project"
     stdout = capture_stdout { command.call(args: [], context: context) }
 
-    Then "install-deps and credentials never run, and the bootstrap message points at projects"
+    Then "deps install and credentials never run, and the bootstrap message points at projects"
     0 * install_deps.call(args: anything, context: anything)
     0 * Dev::Credentials.resolve_build_args(anything)
     stdout.include?("dev: host layer converged.")

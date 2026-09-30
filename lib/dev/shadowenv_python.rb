@@ -13,7 +13,7 @@ module Dev
   # Mirrors ShadowenvRuby/ShadowenvLua. Triggered when dependencies.rb declares
   # `python "3.12"`. This module owns only the interpreter + the (empty) venv;
   # the package set is installed into that venv by Dev::Deps::PipIntegration on
-  # `dev install-deps`, exactly as LuaRocks fills lua_modules/.
+  # `dev deps install`, exactly as LuaRocks fills lua_modules/.
   module ShadowenvPython
     extend T::Sig
     include Kernel
@@ -63,7 +63,7 @@ module Dev
 
     # Ensure Homebrew python@<version> is installed and a project-local .venv
     # exists, built with that exact interpreter. Idempotent and safe to call from
-    # both setup! (per command) and PipIntegration (install-deps), so the venv is
+    # both setup! (per command) and PipIntegration (deps install), so the venv is
     # guaranteed present before packages install into it.
     #
     # @param python_version [String] e.g. "3.12"

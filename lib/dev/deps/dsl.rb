@@ -540,7 +540,7 @@ module Dev
       #
       # Dual-writes: the existing @brew/groups entry feeds the container build
       # path (bin/install-build-deps.rb), while the additional declaration
-      # rides the resolver -> lockfile -> install pipeline so `dev install-deps`
+      # rides the resolver -> lockfile -> install pipeline so `dev deps install`
       # installs it on the host too. BrewIntegration skips already-installed
       # formulae, so the host install is idempotent.
       #
@@ -571,7 +571,7 @@ module Dev
 
       # Scope member declarations to an environment ("ci" / "dev"). The env
       # name is a first-class declaration field (like host), landing in the
-      # lockfile's env section so install-deps filters it to the matching
+      # lockfile's env section so deps install filters it to the matching
       # environment — never smuggled through the constraint hash.
       #
       # @param name [String, Symbol] environment name

@@ -53,7 +53,7 @@ module Dev
 
           if out_of_sync.any?
             puts ""
-            msg = "Run update-deps and commit deps.lock.cmake."
+            msg = "Run dev deps update and commit deps.lock.cmake."
             if CliUI.available?
               CLI::UI.puts(CLI::UI.fmt("{{yellow:#{msg}}}"))
             else

@@ -55,7 +55,8 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     integration.install_all(deps)
     cmake_content = File.read(File.join(dir, "deps.cmake"))
 
-    Then
+    Then "the entries land under a header naming the verb that regenerates the file"
+    cmake_content.include?("run dev deps update to change")
     cmake_content.include?('set(dep_cereal_repo "https://github.com/USCiLab/cereal")')
     cmake_content.include?('set(dep_cereal_sha "abc123def456")')
 

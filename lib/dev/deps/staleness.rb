@@ -13,8 +13,8 @@ module Dev
     # with two O(1) digest comparisons at every command start:
     #
     #   1. manifest vs lockfile: dependencies.rb digest against the digest
-    #      recorded in the lockfile header by `dev update-deps` →
-    #      "declarations changed — run dev update-deps".
+    #      recorded in the lockfile header by `dev deps update` →
+    #      "declarations changed — run dev deps update".
     #   2. lockfile vs installed stamp: a digest of the lockfile contents
     #      against the stamp written after the last fully-successful install →
     #      "lock changed since last install — run dev up".
@@ -27,7 +27,7 @@ module Dev
     # semantics — CI environments install fresh, so a mismatch there is a
     # pipeline bug, not a reminder).
     #
-    # Stamps catch sequence drift (edit without update-deps, lock bump without
+    # Stamps catch sequence drift (edit without deps update, lock bump without
     # dev up), not out-of-band mutation of installed artifacts — that's a
     # deferred doctor-style per-integration sweep.
     class Staleness
@@ -80,14 +80,14 @@ module Dev
 
         recorded = Lockfile.new(dir: @project_root).manifest_digest
         # No digest recorded: a legacy lockfile (predates the check) — stay
-        # quiet until its next update-deps stamps one. No lockfile at all is
+        # quiet until its next deps update stamps one. No lockfile at all is
         # layer-2's problem (nothing was ever installed either).
         return nil unless recorded
 
         current = Digest::SHA256.file(manifest.to_s).hexdigest
         return nil if current == recorded
 
-        "dependencies.rb changed since the lockfiles were generated — run dev update-deps"
+        "dependencies.rb changed since the lockfiles were generated — run dev deps update"
       end
 
       # Layer 2: have the lockfiles changed since the last successful install
