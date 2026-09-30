@@ -53,7 +53,7 @@ module Dev
     module Registry
       # Install location for a type:
       #   :host      installed on the host by `dev deps install`
-      #   :container installed inside the build container (not by deps install)
+      #   :container installed inside the build container (not by dev deps install)
       #   :both      installed on the host and, separately, in the container
       HOST = :host
       CONTAINER = :container
@@ -296,7 +296,7 @@ module Dev
         end
 
         # Build the integration-type -> Locker hash for types whose ecosystem
-        # tool owns the whole-set solve. deps update runs these before the
+        # tool owns the whole-set solve. dev deps update runs these before the
         # Resolver so each tool lockfile is materialized when find reads it.
         #
         # @param project_root [Pathname] project root (threaded to lockers that need it)

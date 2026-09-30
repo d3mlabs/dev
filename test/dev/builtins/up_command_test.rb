@@ -23,7 +23,7 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     !command.hidden?
   end
 
-  test "call ensures the dev cd shell hook and composes the deps install body" do
+  test "call ensures the dev cd shell hook and composes the dev deps install body" do
     Given "an up command with expectations on both collaborators"
     install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
     host_service = quiet_host_service

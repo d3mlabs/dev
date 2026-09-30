@@ -63,7 +63,7 @@ module Dev
 
     # Ensure Homebrew python@<version> is installed and a project-local .venv
     # exists, built with that exact interpreter. Idempotent and safe to call from
-    # both setup! (per command) and PipIntegration (deps install), so the venv is
+    # both setup! (per command) and PipIntegration (dev deps install), so the venv is
     # guaranteed present before packages install into it.
     #
     # @param python_version [String] e.g. "3.12"

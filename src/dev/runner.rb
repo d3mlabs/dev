@@ -294,7 +294,7 @@ module Dev
       builtins = T.let({
         "help" => help,
         "complete" => complete,
-        # `up` composes the same install `deps install` runs.
+        # `up` composes the same install `dev deps install` runs.
         "up" => Builtins::UpCommand.new(install_deps_command: install_deps),
         # Bundler's verbs: update ≈ bundle update, install ≈ bundle install,
         # check ≈ bundle check (inspect and exit non-zero when unsatisfied).

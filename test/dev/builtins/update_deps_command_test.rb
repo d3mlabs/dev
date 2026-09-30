@@ -30,7 +30,7 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     old_stdout = $stdout
     $stdout = StringIO.new
 
-    When "running deps update"
+    When "running dev deps update"
     command.call(args: [], context: build_context(root))
 
     Then "the run completes and points at dev up"
@@ -56,7 +56,7 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     old_stdout = $stdout
     $stdout = StringIO.new
 
-    When "running deps update"
+    When "running dev deps update"
     command.call(args: [], context: build_context(root))
 
     Then "the locker received the bundler declarations (asserted on the mock)"
@@ -76,7 +76,7 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     old_stdout = $stdout
     $stdout = StringIO.new
 
-    When "running deps update"
+    When "running dev deps update"
     command.call(args: [], context: build_context(root))
 
     Then "the run resolved an empty config (a leaked ruby pin would try to resolve it)"

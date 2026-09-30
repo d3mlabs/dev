@@ -35,6 +35,6 @@ passthrough, no double process tree). Diagnostic signature of a missing
 wait: an exec-style provisioning command "succeeds" but the staleness
 gate keeps reporting "never installed" — fatal in a CI=true shell.
 
-learned-from: dev#73 build pass (dev up never stamped; deps install
+learned-from: dev#73 build pass (dev up never stamped; dev deps install
 did); fixed by CommandRunner wait mode in dev#85
 date: 2026-08-03

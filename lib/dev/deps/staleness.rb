@@ -27,7 +27,7 @@ module Dev
     # semantics — CI environments install fresh, so a mismatch there is a
     # pipeline bug, not a reminder).
     #
-    # Stamps catch sequence drift (edit without deps update, lock bump without
+    # Stamps catch sequence drift (edit without dev deps update, lock bump without
     # dev up), not out-of-band mutation of installed artifacts — that's a
     # deferred doctor-style per-integration sweep.
     class Staleness
@@ -80,7 +80,7 @@ module Dev
 
         recorded = Lockfile.new(dir: @project_root).manifest_digest
         # No digest recorded: a legacy lockfile (predates the check) — stay
-        # quiet until its next deps update stamps one. No lockfile at all is
+        # quiet until its next dev deps update stamps one. No lockfile at all is
         # layer-2's problem (nothing was ever installed either).
         return nil unless recorded
 

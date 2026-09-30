@@ -13,7 +13,7 @@ module Dev
   # - org knowledge skills (machine knowledge cache)   → ~/.cursor/skills
   # - gem-shipped skills (lockfile-matched gems)       → <project>/.agents/skills
   #
-  # Called from cheap, idempotent hook points (`dev up` / `deps install` /
+  # Called from cheap, idempotent hook points (`dev up` / `dev deps install` /
   # `dev plan`), so there is no separate setup step and `brew upgrade`
   # refreshes shipped skills automatically (symlinks resolve through the
   # installed tree, wherever brew put it).

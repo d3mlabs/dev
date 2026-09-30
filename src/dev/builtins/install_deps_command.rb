@@ -62,7 +62,7 @@ module Dev
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
 
-      # deps install IS the remediation for a stale install — never nag
+      # dev deps install IS the remediation for a stale install — never nag
       # before it.
       sig { override.returns(T::Boolean) }
       def staleness_exempt? = true
@@ -79,7 +79,7 @@ module Dev
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
         project = context.project!
-        # Headless boxes (CI, runner services) reach deps install before any
+        # Headless boxes (CI, runner services) reach dev deps install before any
         # dev.yml command has run CommandRunner's provisioning, so the builtin
         # must provision the pinned Ruby itself — bundler installs against it.
         ShadowenvRuby.ensure!(ruby_version: project.ruby_version, project_root: project.root)

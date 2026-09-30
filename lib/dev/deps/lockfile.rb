@@ -27,7 +27,7 @@ module Dev
     # The reader also accepts the legacy flat format (name-keyed, integration
     # recorded in the value hash) so repos keep installing from lockfiles
     # written before the nesting; that shim is deleted once every consumer
-    # repo's lockfiles have been rewritten by deps update (issue #146).
+    # repo's lockfiles have been rewritten by dev deps update (issue #146).
     class Lockfile
       extend T::Sig
 
@@ -39,7 +39,7 @@ module Dev
       # Header line recording the SHA-256 of the dependencies.rb the lockfiles
       # were generated from. The staleness check (Dev::Deps::Staleness) compares
       # it against the current manifest to detect "declarations changed but
-      # deps update wasn't run". A comment so the YAML payload stays pure deps.
+      # dev deps update wasn't run". A comment so the YAML payload stays pure deps.
       MANIFEST_DIGEST_PREFIX = "# dependencies-digest: "
 
       DEPS_LOCK_FILE = "deps.lock"
@@ -69,7 +69,7 @@ module Dev
 
       # The manifest digest recorded when the lockfiles were generated, or nil
       # for lockfiles predating the staleness check (treated as unknown, not
-      # stale — legacy locks shouldn't nag until their next deps update).
+      # stale — legacy locks shouldn't nag until their next dev deps update).
       #
       # @return [String, nil] SHA-256 hex
       sig { returns(T.nilable(String)) }

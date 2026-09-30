@@ -60,7 +60,7 @@ module Dev
         @host_service.install_skills
         project = context.project
         if project.nil?
-          # In-project runs sync learnings via the composed deps install
+          # In-project runs sync learnings via the composed dev deps install
           # (project-linked); the projectless bootstrap syncs the machine
           # artifacts here or a fresh box would have none.
           @host_service.sync_learnings(project_root: nil)

@@ -40,11 +40,11 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
       },
       host_service: host_service,
     )
-    # Headless boxes reach deps install before any CommandRunner provisioning,
+    # Headless boxes reach dev deps install before any CommandRunner provisioning,
     # so the builtin provisions the toolchain itself — the true boundary.
     Dev::ShadowenvRuby.expects(:ensure!).with(ruby_version: "4.0.1", project_root: root).once
 
-    When "running deps install"
+    When "running dev deps install"
     command.call(args: [], context: build_context(root))
 
     Then "the linker was scoped to the project in hand"
@@ -74,7 +74,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     )
     Dev::ShadowenvRuby.stubs(:ensure!)
 
-    When "running deps install"
+    When "running dev deps install"
     command.call(args: [], context: build_context(root))
 
     Then "the installer got the project-rooted lockfile and the host integration set"
@@ -97,7 +97,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     command = Dev::Builtins::InstallDepsCommand.new(host_service: quiet_host_service)
     Dev::ShadowenvRuby.stubs(:ensure!)
 
-    When "running deps install"
+    When "running dev deps install"
     command.call(args: [], context: build_context(root))
 
     Then "the real install pass leaves the empty project untouched"

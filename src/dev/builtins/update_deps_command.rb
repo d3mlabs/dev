@@ -23,7 +23,7 @@ module Dev
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
 
-      # deps update IS the remediation for a stale manifest — nagging before
+      # dev deps update IS the remediation for a stale manifest — nagging before
       # it would block the very fix being run.
       sig { override.returns(T::Boolean) }
       def staleness_exempt? = true
