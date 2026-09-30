@@ -342,4 +342,17 @@ class Dev::Deps::AccessorTest < Minitest::Test
     "no integration" | []
     "too many arguments" | ["ficsit", "SML", "Windows", "extra"]
   end
+
+  test "#{error} is a #{parent}: the CLI boundary prints it as a clean `dev:` line, never a backtrace" do
+    Expect "operand errors are ArgumentErrors, not-yet-provisioned states RuntimeErrors (both exit 1 in Runner#exit_for)"
+    error.superclass == parent
+
+    Where
+    error | parent
+    Dev::Deps::Accessor::UsageError | RuntimeError
+    Dev::Deps::Accessor::NotLockedError | ArgumentError
+    Dev::Deps::Accessor::PlatformNotLockedError | ArgumentError
+    Dev::Deps::Accessor::NotCachedError | RuntimeError
+    Dev::Deps::Accessor::NotInstalledError | RuntimeError
+  end
 end
