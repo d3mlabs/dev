@@ -3,6 +3,7 @@
 
 require "dev/command"
 require "dev/credentials"
+require "dev/engine_provisioner"
 require "dev/host_service"
 
 module Dev
@@ -25,12 +26,15 @@ module Dev
         params(
           install_deps_command: InstallDepsCommand,
           host_service: Dev::HostService,
+          engine_provisioner: Dev::EngineProvisioner,
         ).void
       end
-      def initialize(install_deps_command:, host_service: Dev::HostService.new)
+      def initialize(install_deps_command:, host_service: Dev::HostService.new,
+        engine_provisioner: Dev::EngineProvisioner.new)
         super()
         @install_deps_command = install_deps_command
         @host_service = host_service
+        @engine_provisioner = engine_provisioner
       end
 
       sig { override.returns(String) }
@@ -70,10 +74,23 @@ module Dev
         end
 
         provision_build_credentials(project)
+        provision_engine(project)
         @install_deps_command.call(args:, context:)
       end
 
       private
+
+      # A containerized project needs a running engine before its first
+      # `docker build`; `dev up` is where that VM starts (on macOS), sized
+      # from the repo's resources hint. Non-containerized projects have no
+      # engine to bring up.
+      sig { params(project: ProjectContext).void }
+      def provision_engine(project)
+        config = project.build_container
+        return if config.nil?
+
+        @engine_provisioner.provision!(resources: config.resources)
+      end
 
       # `dev up` is the provisioning command: after it succeeds, every other
       # command should work unattended. Resolving docker build args here

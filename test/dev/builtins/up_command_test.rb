@@ -111,12 +111,53 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     0 * Dev::Credentials.resolve_build_args(anything)
   end
 
+  test "call brings the container engine up for a containerized project, sized from its resources, before installing deps" do
+    Given "a build container with a resources hint; engine and deps install both observed in order"
+    order = sequence("engine before deps")
+    engine = typed_mock(Dev::EngineProvisioner)
+    resources = Dev::BuildContainerConfig::Resources.new(cpus: 8, memory_gib: 24)
+    engine.expects(:provision!).with(resources: resources).once.in_sequence(order)
+    install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
+    install_deps.expects(:call).once.in_sequence(order)
+    command = Dev::Builtins::UpCommand.new(
+      install_deps_command: install_deps, host_service: quiet_host_service, engine_provisioner: engine,
+    )
+    config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry", resources: resources)
+
+    When "running up"
+    command.call(args: [], context: build_context(build_container: config))
+
+    Then "asserted on the mocks: the engine is up before anything needs it"
+    true
+  end
+
+  test "call leaves the engine alone for a project without a build container" do
+    Given "a plain project"
+    engine = typed_mock(Dev::EngineProvisioner)
+    engine.expects(:provision!).never
+    install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
+    install_deps.stubs(:call)
+    command = Dev::Builtins::UpCommand.new(
+      install_deps_command: install_deps, host_service: quiet_host_service, engine_provisioner: engine,
+    )
+
+    When "running up"
+    command.call(args: [], context: build_context)
+
+    Then
+    true
+  end
+
   private
 
   def build_command
     install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
     install_deps.stubs(:call)
-    Dev::Builtins::UpCommand.new(install_deps_command: install_deps, host_service: quiet_host_service)
+    engine = typed_mock(Dev::EngineProvisioner)
+    engine.stubs(:provision!)
+    Dev::Builtins::UpCommand.new(
+      install_deps_command: install_deps, host_service: quiet_host_service, engine_provisioner: engine,
+    )
   end
 
   def quiet_host_service
