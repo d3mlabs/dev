@@ -161,7 +161,12 @@ class BuildContainerTest < Minitest::Test
     cmd.index("-w") > cmd.index("WWISE_TOKEN=tok-123")
   end
 
-  test "docker_run_command expands ~ in volume host paths" do
+  test "docker_run_command expands ~ in volume host paths, re-rooting ~/.dev onto the data root" do
+    Given "a scratch data root"
+    root = Dir.mktmpdir("bc-data-root-")
+    original = ENV["DEV_DATA_ROOT"]
+    ENV["DEV_DATA_ROOT"] = root
+
     When "building a docker run command with a ~ volume"
     cmd = build_container.docker_run_command(
       "jpduchesne89/snappy:content-abc123",
@@ -171,8 +176,12 @@ class BuildContainerTest < Minitest::Test
     )
 
     Then
-    cmd.include?("#{File.expand_path("~/.dev/engines/unreal-engine-css")}:/ue")
+    cmd.include?("#{File.join(root, "engines/unreal-engine-css")}:/ue")
     !cmd.any? { |part| part.start_with?("~") }
+
+    Cleanup
+    ENV["DEV_DATA_ROOT"] = original
+    FileUtils.rm_rf(root)
   end
 
   test "docker_run_command carries the engine's argv prefix" do
@@ -767,8 +776,11 @@ class BuildContainerTest < Minitest::Test
   end
 
   test "build_contexts_from_lockfile returns build-group install_dirs" do
-    Given "a build-deps.lock with an engine install_dir and a context-less dep"
+    Given "a build-deps.lock with an engine install_dir and a context-less dep, under a scratch data root"
     dir = Dir.mktmpdir("build-container-test-")
+    root = Dir.mktmpdir("bc-data-root-")
+    original = ENV["DEV_DATA_ROOT"]
+    ENV["DEV_DATA_ROOT"] = root
     File.write(File.join(dir, "build-deps.lock"), <<~LOCK)
       UnrealEngine:
         integration: gh
@@ -783,15 +795,20 @@ class BuildContainerTest < Minitest::Test
     contexts = Dev::BuildContainer.build_contexts_from_lockfile(Pathname(dir))
 
     Then "the context name is lowercased (Docker rejects uppercase)"
-    contexts == { "unrealengine" => File.expand_path("~/.dev/engines/unreal-engine-css") }
+    contexts == { "unrealengine" => File.join(root, "engines/unreal-engine-css") }
 
     Cleanup
+    ENV["DEV_DATA_ROOT"] = original
     FileUtils.rm_rf(dir)
+    FileUtils.rm_rf(root)
   end
 
   test "build_contexts_from_lockfile reads integration-nested lockfiles" do
-    Given "a build-deps.lock in the nested format (integration -> name -> attrs)"
+    Given "a build-deps.lock in the nested format (integration -> name -> attrs), under a scratch data root"
     dir = Dir.mktmpdir("build-container-test-")
+    root = Dir.mktmpdir("bc-data-root-")
+    original = ENV["DEV_DATA_ROOT"]
+    ENV["DEV_DATA_ROOT"] = root
     File.write(File.join(dir, "build-deps.lock"), <<~LOCK)
       gh:
         UnrealEngine:
@@ -804,15 +821,20 @@ class BuildContainerTest < Minitest::Test
     contexts = Dev::BuildContainer.build_contexts_from_lockfile(Pathname(dir))
 
     Then
-    contexts == { "unrealengine" => File.join(File.expand_path("~/.dev/engines/unreal-engine-css"), "5.6.1-css-83") }
+    contexts == { "unrealengine" => File.join(root, "engines/unreal-engine-css", "5.6.1-css-83") }
 
     Cleanup
+    ENV["DEV_DATA_ROOT"] = original
     FileUtils.rm_rf(dir)
+    FileUtils.rm_rf(root)
   end
 
   test "build_contexts_from_lockfile points at the version-keyed subdir when a version is locked" do
-    Given "a build-deps.lock whose engine dep declares a version"
+    Given "a build-deps.lock whose engine dep declares a version, under a scratch data root"
     dir = Dir.mktmpdir("build-container-test-")
+    root = Dir.mktmpdir("bc-data-root-")
+    original = ENV["DEV_DATA_ROOT"]
+    ENV["DEV_DATA_ROOT"] = root
     File.write(File.join(dir, "build-deps.lock"), <<~LOCK)
       UnrealEngine:
         integration: gh
@@ -825,10 +847,12 @@ class BuildContainerTest < Minitest::Test
     contexts = Dev::BuildContainer.build_contexts_from_lockfile(Pathname(dir))
 
     Then "the host path includes the locked version"
-    contexts == { "unrealengine" => File.join(File.expand_path("~/.dev/engines/unreal-engine-css"), "5.6.1-css-83") }
+    contexts == { "unrealengine" => File.join(root, "engines/unreal-engine-css", "5.6.1-css-83") }
 
     Cleanup
+    ENV["DEV_DATA_ROOT"] = original
     FileUtils.rm_rf(dir)
+    FileUtils.rm_rf(root)
   end
 
   test "resolve_versioned_volumes rewrites a locked install_dir volume to its versioned subdir" do
