@@ -42,6 +42,11 @@ end unless defined?(RecordedBootstrapExecutor)
 
 transform!(RSpock::AST::Transformation)
 class Dev::AgentBootstrapTest < Minitest::Test
+  # `colima list -j` answer for a running VM already at the agent's hint
+  # (12 cpus / 24 GiB), so the provisioner has nothing to do.
+  RUNNING_AGENT_VM_JSON = '{"name":"default","status":"Running","arch":"aarch64","cpus":12,' \
+    '"memory":25769803776,"disk":107374182400,"runtime":"docker"}'
+
   # Filesystem-facing params always point at tmp paths: an already-provisioned
   # shared root (DDC dir included) and no ~/.dev to migrate, so identity-step
   # tests stay focused.
@@ -320,11 +325,9 @@ class Dev::AgentBootstrapTest < Minitest::Test
   test "ensure_agent_engine! is a no-op (bar the sudo prime) when the leg is converged" do
     Given "colima installed, record written, VM running"
     executor = RecordedBootstrapExecutor.new(
-      probe_results: {
-        ["brew", "list", "--formula", "colima"] => true,
-        ["sudo", "-n", "-H", "-u", "ai-agent", "--", "colima", "status"] => true,
-      },
+      probe_results: { ["brew", "list", "--formula", "colima"] => true },
       capture_results: {
+        ["sudo", "-n", "-H", "-u", "ai-agent", "--", "colima", "list", "-j"] => RUNNING_AGENT_VM_JSON,
         ["sudo", "cat", "/Users/ai-agent/.config/dev/config.yml"] => "container_engine: colima\n",
       },
     )
@@ -339,11 +342,9 @@ class Dev::AgentBootstrapTest < Minitest::Test
   test "ensure_agent_engine! merges the record into an existing agent config" do
     Given "an agent config carrying another key"
     executor = RecordedBootstrapExecutor.new(
-      probe_results: {
-        ["brew", "list", "--formula", "colima"] => true,
-        ["sudo", "-n", "-H", "-u", "ai-agent", "--", "colima", "status"] => true,
-      },
+      probe_results: { ["brew", "list", "--formula", "colima"] => true },
       capture_results: {
+        ["sudo", "-n", "-H", "-u", "ai-agent", "--", "colima", "list", "-j"] => RUNNING_AGENT_VM_JSON,
         ["sudo", "cat", "/Users/ai-agent/.config/dev/config.yml"] => "plans_repo: d3mlabs/plans\n",
       },
     )
