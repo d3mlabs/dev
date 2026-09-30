@@ -31,7 +31,7 @@ class BuildWatcherTest < Minitest::Test
   # A real bare-docker engine, so the PATH-fake-docker tests below intercept
   # the actual spawn (the docker CLI is the boundary under test there).
   def engine
-    Dev::ContainerEngine.new(kind: :docker_desktop)
+    Dev::ContainerEngine.new(kind: :docker)
   end
 
   def watcher(**kwargs)

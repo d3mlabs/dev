@@ -3,6 +3,7 @@
 
 require "open3"
 
+require "dev/deps"
 require "dev/settings"
 
 module Dev
@@ -11,13 +12,15 @@ module Dev
   # detail; *which daemon serves it* is a per-user provisioning decision, so
   # the engine is resolved from the invoking user's own config and injected
   # into everything that composes docker argv (BuildContainer, BuildWatcher,
-  # CacheGc). The human rides Docker Desktop; the agent user rides its own
-  # colima VM (Docker Desktop cannot serve a no-GUI user); a remote engine
-  # later joins as config, never an architecture fork.
+  # CacheGc). One engine per host OS: macOS users (human and agent alike)
+  # ride their own colima VM — the only macOS engine whose whole lifecycle
+  # dev can own (start, idle-stop, resize); Linux and WSL2 ride the bare
+  # dockerd already running on the host, where there is no VM to own. A
+  # remote engine later joins as config, never an architecture fork.
   #
   # Resolution order (see .resolve): explicit DOCKER_HOST in the caller's
-  # environment → the per-user `container_engine` settings record → the
-  # bare-docker default.
+  # environment → the per-user `container_engine` settings record → the host
+  # OS's default engine.
   #
   # The load-bearing capability predicate is #local_mounts?: bind-mounting
   # local paths (`-v project_root:/project`) is the single remote-poisoned
@@ -32,7 +35,8 @@ module Dev
     # The colima profile dev provisions and points at (colima's own default).
     COLIMA_PROFILE = "default"
 
-    # @return [Symbol] :docker_desktop, :colima, or :explicit (DOCKER_HOST)
+    # @return [Symbol] :colima (the user's own VM), :docker (bare dockerd —
+    #   whatever daemon the CLI's own context reaches), or :explicit (DOCKER_HOST)
     sig { returns(Symbol) }
     attr_reader :kind
 
@@ -50,25 +54,33 @@ module Dev
 
       # Resolve the invoking user's engine: an explicit DOCKER_HOST wins (the
       # docker CLI reads it from the inherited environment, so the engine adds
-      # nothing) → the per-user settings record → the bare-docker default.
-      # Empty strings count as unset, matching Settings' layer semantics.
+      # nothing) → the per-user settings record → the host OS's default
+      # (colima on darwin, bare dockerd elsewhere). Empty strings count as
+      # unset, matching Settings' layer semantics. A `docker` record is the
+      # opt-out from the macOS default: bare docker with no env, which reaches
+      # whatever daemon the CLI's own context does — unsupported but not
+      # blocked (Docker Desktop users land here).
       #
       # @param settings [Dev::Settings] the invoking user's settings
       # @param env [Hash{String => String}] environment to consult (tests inject)
+      # @param host_os [String] "darwin" / "linux" / "windows" (tests inject)
       # @return [Dev::ContainerEngine]
       # @raise [UnknownEngineError] when the record names an unshipped engine
-      sig { params(settings: Dev::Settings, env: T::Hash[String, String]).returns(ContainerEngine) }
-      def resolve(settings: Dev::Settings.new, env: ENV.to_h)
+      sig do
+        params(settings: Dev::Settings, env: T::Hash[String, String], host_os: String).returns(ContainerEngine)
+      end
+      def resolve(settings: Dev::Settings.new, env: ENV.to_h, host_os: Dev::Deps.detect_host)
         docker_host = env["DOCKER_HOST"]
         return new(kind: :explicit) if docker_host && !docker_host.empty?
 
         record = settings.container_engine
         case record
-        when nil, "docker" then new(kind: :docker_desktop)
+        when nil then host_os == "darwin" ? colima : new(kind: :docker)
+        when "docker" then new(kind: :docker)
         when "colima" then colima
         else
           raise UnknownEngineError,
-            "unknown container_engine #{record.inspect} — dev ships \"docker\" and \"colima\"."
+            "unknown container_engine #{record.inspect} — dev ships \"colima\" and \"docker\"."
         end
       end
 
@@ -128,7 +140,7 @@ module Dev
     end
 
     # Whether local paths bind-mounted into containers reach this engine's
-    # daemon. True for every shipped engine (Docker Desktop, colima, explicit
+    # daemon. True for every shipped engine (colima, bare dockerd, explicit
     # local DOCKER_HOST); the future remote engine answers false and brings
     # its sync strategy with it — mount call sites guard on this rather than
     # assume it.
