@@ -11,6 +11,7 @@ require "dev/build_watcher"
 require "dev/container_engine"
 require "dev/data_root"
 require "dev/deps/lockfile"
+require "dev/engine_resources_check"
 
 module Dev
   # Content-addressed Docker image management for build containers.
@@ -69,9 +70,12 @@ module Dev
     attr_reader :engine
 
     # @param engine [Dev::ContainerEngine] resolved for the invoking user
-    sig { params(engine: Dev::ContainerEngine).void }
-    def initialize(engine:)
+    # @param resources_check [Dev::EngineResourcesCheck] the engine-vs-hint
+    #   gate every image resolution passes through first
+    sig { params(engine: Dev::ContainerEngine, resources_check: Dev::EngineResourcesCheck).void }
+    def initialize(engine:, resources_check: Dev::EngineResourcesCheck.new)
       @engine = engine
+      @resources_check = resources_check
     end
 
     class << self
@@ -297,6 +301,11 @@ module Dev
     # image; `publish:` subsumes it and additionally covers the local hit, so the
     # provisioning step sets `publish: true` while build/run steps leave both off.
     #
+    # Before any image work, the engine is measured against the config's
+    # resources hint (EngineResourcesCheck) — read-only; `dev up` is the one
+    # place a VM gets resized. A build on half the cores the repo tuned for is
+    # a slow, silent failure, and this is the last place to make it loud.
+    #
     # @param config              [Dev::BuildContainerConfig]
     # @param project_root        [Pathname]
     # @param push                [Boolean] whether to push a freshly built image (default: true)
@@ -305,6 +314,7 @@ module Dev
     # @param build_args_provider [#call, nil] returns Hash{String => String} of build args
     # @param secrets_provider    [#call, nil] returns Hash{String => String} of secret id => value
     # @return [String] the full image:tag string
+    # @raise [EngineResourcesCheck::UndersizedEngineError] when the engine falls short of the hint (enforce mode)
     sig do
       params(
         config: Dev::BuildContainerConfig,
@@ -317,6 +327,7 @@ module Dev
     end
     def ensure_image!(config, project_root:, push: true, publish: false,
                       build_args_provider: nil, secrets_provider: nil)
+      @resources_check.check!(engine: @engine, hint: config.resources)
       tag = self.class.image_with_tag(config, project_root:)
 
       if local_image?(tag)

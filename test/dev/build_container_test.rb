@@ -4,11 +4,14 @@
 require "test_helper"
 require "dev/build_container"
 require "dev/build_container_config"
+require "dev/engine_resources_check"
 require "support/fake_container_engine"
 require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
 class BuildContainerTest < Minitest::Test
+  include SorbetHelper
+
   # Engine-injected instance under test: the docker CLI is a true boundary,
   # so the fake engine records argv instead of tests stubbing Kernel#system.
   def build_container(engine: FakeContainerEngine.new)
@@ -196,6 +199,51 @@ class BuildContainerTest < Minitest::Test
 
     Then
     raises Dev::BuildContainer::LocalMountsUnsupportedError
+  end
+
+  test "ensure_image! gates on the engine's resources before touching any image" do
+    Given "a config with a resources hint and a check that finds the engine short"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
+    resources = Dev::BuildContainerConfig::Resources.new(cpus: 12, memory_gib: 24)
+    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89", resources: resources)
+    engine = FakeContainerEngine.new
+    check = typed_mock(Dev::EngineResourcesCheck)
+    check.expects(:check!).once.with(engine: engine, hint: resources)
+      .raises(Dev::EngineResourcesCheck::UndersizedEngineError, "4 cpus")
+    bc = Dev::BuildContainer.new(engine: engine, resources_check: check)
+
+    When "ensuring the image"
+    bc.ensure_image!(config, project_root: Pathname(dir))
+
+    Then "the refusal is the outcome; no docker call was made"
+    raises Dev::EngineResourcesCheck::UndersizedEngineError
+    engine.runs.empty?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "ensure_image! hands the config's (possibly absent) hint to the check every time" do
+    Given "a config without a hint and a pull hit"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
+    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
+    engine = FakeContainerEngine.new
+    check = typed_mock(Dev::EngineResourcesCheck)
+    check.expects(:check!).once.with(engine: engine, hint: nil)
+    bc = Dev::BuildContainer.new(engine: engine, resources_check: check)
+    bc.stubs(:local_image?).returns(false)
+    bc.stubs(:pull).returns(true)
+
+    When "ensuring the image"
+    result = bc.ensure_image!(config, project_root: Pathname(dir))
+
+    Then
+    result.start_with?("jpduchesne89/snappy-linux:content-")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
   test "ensure_image! returns existing image on pull hit" do
