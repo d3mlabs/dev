@@ -158,7 +158,7 @@ Missing files are empty layers; a key set in the user file wins over the system 
 plans_repo: d3mlabs/plans              # org-wide plans repo (dev plan --org)
 knowledge_repo: d3mlabs/knowledge      # org learnings sync source
 deployment_formula: d3mlabs/d3mlabs/dev  # the formula `dev up` self-updates (the deployment names itself)
-container_engine: colima               # per-user container engine record ("docker" or "colima"; unset = bare docker)
+container_engine: docker               # per-user opt-out from the host's engine ("docker" = bare dockerd; unset = colima on macOS, bare dockerd elsewhere)
 ```
 
 Leaving a nilable key unset turns its feature off (`plans_repo` is only required by `dev plan --org`). Manage the user file with `dev config` instead of hand-editing YAML: `list` shows every known key with its resolved value and source layer (`env` / `user` / `system` / unset) — the settings debugging tool; `get <key>` prints the resolved value (exit 1 when unset); `set <key> <value>` writes the user file, creating it if missing. Known keys only; global, works without a `dev.yml`. The tool ships as two kinds of formula (the Debian core-package/config-package split, applied to a tap):
@@ -473,9 +473,17 @@ For repos that declare a `build.container`, dev builds and runs commands inside 
 
 ### The container engine (per-user)
 
-*Which daemon serves a build* is a per-user provisioning decision, not a repo-shape detail: every docker invocation rides a resolved `Dev::ContainerEngine` (argv prefix + env + capabilities). Resolution is config-first, per invoking user: an explicit `DOCKER_HOST` in the environment wins; otherwise the user's `container_engine` settings record (`docker` or `colima`); otherwise bare docker. The human rides Docker Desktop; a no-GUI account (the agent user) records `colima` and gets `DOCKER_HOST` pointed at its **own** `~/.colima/default/docker.sock` — nothing crosses the sudo boundary, and both engines coexist on one machine. The engine's one capability flag, `local_mounts?`, names the single remote-poisoned assumption (bind-mounting local paths); both shipped engines answer true, and a future remote engine joins as config with its own sync strategy rather than an architecture fork.
+*Which daemon serves a build* is a per-user provisioning decision, not a repo-shape detail: every docker invocation rides a resolved `Dev::ContainerEngine` (argv prefix + env + capabilities). There is **one supported engine per host OS**, and dev owns its lifecycle end to end — that is what lets `dev up` leave a machine where `docker build` just works, for a human and for the no-GUI agent account alike:
 
-Provisioning is engine-shaped: `DockerDesktopProvisioner` is verify-only (`docker info` — dev never starts the GUI app), while `ColimaProvisioner` idempotently starts the user's VM (`colima start --vm-type vz --vz-rosetta`, so amd64 build images run on Apple silicon), sized from the repo's optional `build.container.resources` hint (`cpus`, `memory_gib`; defaults 4 / 8 GiB — colima applies sizing at VM creation).
+| Host | Engine | What `dev up` does |
+|---|---|---|
+| macOS | **colima** (per-user VM, `vz` + Rosetta so amd64 build images run on Apple silicon) | registers brew's `docker-buildx` with the brew `docker` CLI (`cliPluginsExtraDirs` in `~/.docker/config.json`, merged, never clobbered); starts the VM if it isn't running, sized from the repo's `build.container.resources` hint (`cpus`, `memory_gib`; defaults 4 / 8 GiB — colima applies sizing at VM creation) |
+| Linux | **bare dockerd** (the distro's docker packages, a system service) | nothing — there is no VM to own |
+| Windows | **bare dockerd inside the WSL2 distro** dev runs in | nothing — same as Linux; the distro's `docker-ce` + `docker-buildx-plugin`, enabled under systemd |
+
+Resolution is per invoking user: an explicit `DOCKER_HOST` in the environment wins and is left entirely alone (your engine, your problem); otherwise the `container_engine` settings record; otherwise the host OS's engine above. The only record worth writing is `docker` — the opt-out to bare docker with no env, reaching whatever daemon the CLI's own context does. That is where a Docker Desktop user lands: **unsupported but not blocked**. Two colima users on one Mac (a human and the agent account) each get `DOCKER_HOST` pointed at their **own** `~/.colima/default/docker.sock` — nothing crosses the sudo boundary. The engine's one capability flag, `local_mounts?`, names the single remote-poisoned assumption (bind-mounting local paths); every local engine answers true, and a future remote engine joins as config with its own sync strategy rather than an architecture fork.
+
+**Migrating a Mac off Docker Desktop.** Quit Docker Desktop (and stop it launching at login); `brew upgrade d3mlabs/d3mlabs/dev` brings `colima`, `docker` and `docker-buildx` in as formula dependencies; `dev up` in a containerized repo wires the CLI and starts the VM. Images are re-pulled/rebuilt once into the new engine's store, and a `persist: true` warm container is recreated on first use. Uninstall Desktop whenever you like — dev never touches it. An agent host ends up with two colima VMs (the human's and the agent's), each sized from the repo hint; stopping an idle one is engine-lifecycle work tracked in #187.
 
 ### Content-addressed image tag
 
