@@ -100,7 +100,7 @@ ecosystem's canonical form and validated at the DSL boundary (a cmake
 
 ## The resolve pipeline
 
-`dev update-deps` runs:
+`dev deps update` runs:
 
 1. **Lock** — for each integration with a registered `Locker`, run it over
    that integration's declarations. Today that is bundler only:
@@ -146,12 +146,12 @@ ecosystem's canonical form and validated at the DSL boundary (a cmake
    (`brew:` → `zlib:` → attrs) so the on-disk key carries the same
    (integration, name) identity the resolver keys on. The reader also
    accepts the pre-nesting flat format; that shim is deleted once every
-   consumer repo's lockfiles have been rewritten by `update-deps`.
+   consumer repo's lockfiles have been rewritten by `dev deps update`.
 
-`dev install-deps` reads the lockfile and hands each integration its pins;
+`dev deps install` reads the lockfile and hands each integration its pins;
 no resolution happens at install time.
 
-### Resolution flow (`dev update-deps`)
+### Resolution flow (`dev deps update`)
 
 ```mermaid
 sequenceDiagram
@@ -196,7 +196,7 @@ sequenceDiagram
     Note over lock: writes deps.lock and build-deps.lock, nested by integration
 ```
 
-### Install flow (`dev install-deps`)
+### Install flow (`dev deps install`)
 
 ```mermaid
 sequenceDiagram

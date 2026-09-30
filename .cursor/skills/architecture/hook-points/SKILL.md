@@ -2,12 +2,12 @@
 name: hook-points
 description: >-
   MUST be used when adding side-work (links, syncs, renders) to dev up,
-  dev install-deps, or dev plan — the rules hygiene rides by.
+  dev deps install, or dev plan — the rules hygiene rides by.
 ---
 
 # dev hook points: hygiene rides, never blocks
 
-`dev up` / `dev install-deps` (`Runner#install_locked_deps`) and every
+`dev up` / `dev deps install` (`Runner#install_locked_deps`) and every
 `dev plan` invocation (`Plan::Accessor#run`) double as the refresh points
 for agent-facing hygiene: shipped-skill links, gem-skill links, the
 knowledge repo cache pull, and the org-invariants render + project link.

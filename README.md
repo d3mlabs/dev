@@ -26,7 +26,7 @@ dev <command> [args...]   # extra args are forwarded to the command
 
 dev walks up from your current directory to the git repo root and reads the `dev.yml` there. Every command is one of two kinds: a **project command** declared in that `dev.yml` (`dev test`, `dev build`, …), or a **builtin** that ships with dev. A project may declare a command on a builtin's name (typically `up`); the builtin body runs first, then the project's `run:` — a hardcoded `super()`.
 
-Commands form a **tree**, and `dev` itself is its root: any command may have subcommands (`dev deps path`, `dev runner status`, a project's `dev test unit`). Resolution follows argv one token at a time from the root — a token naming a child descends; the first token that doesn't is where the args begin. A command with nothing of its own to run prints its usage when invoked bare (so bare `dev` lists everything, `dev deps` lists `deps path`, `dev plan` lists the plan verbs); `dev help <path…>` prints the same view for any node. Commands with subcommands show a trailing `…` in the listing, and Tab completion follows the same tree (`dev plan <Tab>` offers `new link pull push status init`) once the [shell hook](#shell-hook-install) is installed.
+Commands form a **tree**, and `dev` itself is its root: any command may have subcommands (`dev deps path`, `dev runner status`, a project's `dev test unit`). Resolution follows argv one token at a time from the root — a token naming a child descends; the first token that doesn't is where the args begin. A command with nothing of its own to run prints its usage when invoked bare (so bare `dev` lists everything, `dev deps` lists `deps update install check path`, `dev plan` lists the plan verbs); `dev help <path…>` prints the same view for any node. Commands with subcommands show a trailing `…` in the listing, and Tab completion follows the same tree (`dev plan <Tab>` offers `new link pull push status init`) once the [shell hook](#shell-hook-install) is installed.
 
 ### Built-in commands
 
@@ -37,9 +37,9 @@ Grouped as `dev help` lists them. **Scope** says where the command works: *anywh
 | Command | Scope | Purpose | Details |
 |---|---|---|---|
 | `dev up` | project, or anywhere (host layer only) | Converge host tooling, install locked deps, run the project's `up:` | [Dependency commands](#dependency-commands) |
-| `dev update-deps` | project | Resolve `dependencies.rb` and write the lockfiles | [Dependency commands](#dependency-commands) |
-| `dev install-deps` | project | Install host-handled locked deps (gh releases, steam apps, …) | [Dependency commands](#dependency-commands) |
-| `dev check` | project | Report dependency staleness (manifest vs lockfiles vs installed) | [Dependency commands](#dependency-commands) |
+| `dev deps update` | project | Resolve `dependencies.rb` and write the lockfiles (≈ `bundle update`) | [Dependency commands](#dependency-commands) |
+| `dev deps install` | project | Install host-handled locked deps (gh releases, steam apps, …) (≈ `bundle install`) | [Dependency commands](#dependency-commands) |
+| `dev deps check` | project | Report dependency staleness (manifest vs lockfiles vs installed); exits non-zero when stale (≈ `bundle check`) | [Dependency commands](#dependency-commands) |
 | `dev deps path <integration> <name> [<platform>]` | project | Print a locked artifact's absolute path | [Dependency commands](#dependency-commands) |
 | `dev runner register\|status` | anywhere | Enroll or inspect this host as a self-hosted runner (`runner-setup` is an alias for `register`) | [dev runner](#dev-runner--enroll-a-host-as-a-self-hosted-runner) |
 | `dev provide-image` | gated: `build.container` (hidden) | Resolve the build image (local → pull → build) and print its tag | [Container commands](#container-commands) |
@@ -109,7 +109,7 @@ dev's feature set is three independent opt-ins; a repo takes whichever rungs it 
 
 1. **Command running** — add a `dev.yml` with a `commands:` map. That alone gets you `dev up` / `dev test` / etc. with the standard UI, from anywhere in the repo. dev does not touch your toolchain or dependencies; your scripts keep doing whatever they did before.
 2. **Toolchain provisioning** — add a `dependencies.rb` with just a `ruby` directive (see [Ruby version resolution](#ruby-version-resolution)). dev provisions that exact Ruby (rbenv + shadowenv) and every `dev <cmd>` runs under it. This does *not* hand your Gemfile to dev — a hand-written Gemfile stays yours, managed by plain bundler.
-3. **Dependency management** — declare gems, brew formulae, engine artifacts, etc. in `dependencies.rb`. `dev update-deps` locks them and `dev up` installs them; for `gem()` declarations dev generates and owns the `Gemfile`.
+3. **Dependency management** — declare gems, brew formulae, engine artifacts, etc. in `dependencies.rb`. `dev deps update` locks them and `dev up` installs them; for `gem()` declarations dev generates and owns the `Gemfile`.
 
 A gem repo typically stops at rungs 1–2 (commands + a pinned Ruby, hand-written gemspec/Gemfile); an app repo usually takes all three.
 
@@ -136,7 +136,7 @@ On `dev up`, dev provisions the declared version through rbenv (installing it if
 
 **Commit `.ruby-version` when the project declares its Ruby.** It is deterministic generated output — same idea as a lockfile — and it is exactly what contributors without dev consume. Do not commit it for fallback-Ruby repos: there it reflects whatever Ruby the machine happens to have.
 
-Keep the file a bare version string. rbenv only reads the first word, but other consumers (setup-ruby, Bundler, editors) parse the file strictly, so comments would break them. There is no drift risk in the other direction either: `dev up` rewrites the file from the declared version every run, so a hand edit never survives — to change the Ruby, edit `dependencies.rb`, run `dev update-deps`, then `dev up`.
+Keep the file a bare version string. rbenv only reads the first word, but other consumers (setup-ruby, Bundler, editors) parse the file strictly, so comments would break them. There is no drift risk in the other direction either: `dev up` rewrites the file from the declared version every run, so a hand edit never survives — to change the Ruby, edit `dependencies.rb`, run `dev deps update`, then `dev up`.
 
 ### Supported shells
 
@@ -300,11 +300,11 @@ Dev includes a built-in dependency management system for reproducible builds acr
 Dependencies flow through four stages:
 
 1. **Declare** — list what you need in `dependencies.rb` using the Ruby DSL
-2. **Resolve & lock** — `dev update-deps` resolves constraints to exact versions and writes lockfiles
+2. **Resolve & lock** — `dev deps update` resolves constraints to exact versions and writes lockfiles
 3. **Install** — `dev up` installs pinned dependencies from lockfiles (build group first)
 4. **Use** — `dev <command>` provisions the project's toolchain environment and runs your command
 
-Lockfiles are the source of truth for stages 3 and 4. After changing `dependencies.rb`, run `dev update-deps` to re-resolve before building.
+Lockfiles are the source of truth for stages 3 and 4. After changing `dependencies.rb`, run `dev deps update` to re-resolve before building.
 
 ### Lockfiles
 
@@ -313,7 +313,7 @@ Two YAML lockfiles, same format, two purposes:
 - **`deps.lock`** — pins every runtime dependency (app + test groups) to exact version + SHA256 integrity hash.
 - **`build-deps.lock`** — pins every build dependency (build group). Separate file for CI cache convenience — `hashFiles('build-deps.lock')` as Docker image cache key means runtime dep changes don't invalidate build tooling.
 
-Both files are generated by `dev update-deps` and committed to git. Never edit them by hand.
+Both files are generated by `dev deps update` and committed to git. Never edit them by hand.
 
 ### Host tooling: the Brewfile contract
 
@@ -381,7 +381,7 @@ Four orthogonal axes scope a declaration; each answers a different question:
 
 ### Built-in integrations
 
-All built-in integrations are declared in one place — `lib/dev/deps/registry.rb` — and `dev install-deps` installs every host-scoped one. `registry_consistency_test.rb` fails the build if a repository/integration class or a declaration DSL verb is added without a registry entry.
+All built-in integrations are declared in one place — `lib/dev/deps/registry.rb` — and `dev deps install` installs every host-scoped one. `registry_consistency_test.rb` fails the build if a repository/integration class or a declaration DSL verb is added without a registry entry.
 
 | DSL method | Integration | Repository | Lockfile |
 |---|---|---|---|
@@ -397,7 +397,7 @@ All built-in integrations are declared in one place — `lib/dev/deps/registry.r
 
 `xcode "26.1.1"` pins the Xcode toolchain (macOS only; a no-op on other hosts). dev installs the pin to `/Applications/Xcode-<ver>.app` via the [xcodes](https://github.com/XcodesOrg/xcodes) CLI — declare `brew "xcodes", host: :darwin` in `:build` so it exists first — and publishes `DEVELOPER_DIR` into the project shadowenv. Interactive runs pass any Apple ID/2FA/sudo prompt through to you; headless runs fail fast with remediation instead of hanging (normal practice: pre-install the pin interactively once during machine bring-up, e.g. a CI runner's).
 
-`gem()` declares Ruby gems: dev generates a `Gemfile`/`Gemfile.lock` from your declarations (a top-level `gem` lands in the default group; `group(:test) { gem ... }` scopes it to a bundler group), and `dev install-deps` runs `bundle install`. `brew()` dual-writes — the container build path keeps reading the group structure while `dev install-deps` also installs the formulae on the host (idempotently).
+`gem()` declares Ruby gems: dev generates a `Gemfile`/`Gemfile.lock` from your declarations (a top-level `gem` lands in the default group; `group(:test) { gem ... }` scopes it to a bundler group), and `dev deps install` runs `bundle install`. `brew()` dual-writes — the container build path keeps reading the group structure while `dev deps install` also installs the formulae on the host (idempotently).
 
 `python "3.12"` pins the Python toolchain: dev provisions the interpreter (Homebrew `python@3.12`) and a project-local `.venv`, and publishes it into the project shadowenv (`VIRTUAL_ENV` + `.venv/bin` on `PATH`). `pip()` declares packages installed into that venv — like `luarocks()`, you declare only the top-level packages and pip resolves the transitive tree at install time. Gate heavy, platform-specific stacks (e.g. a PyTorch-backed ML tool) with `host:` so only the machines that use them pay the download.
 
@@ -425,12 +425,12 @@ Custom integrations implement `Dev::Deps::Integration` (with `install_all(pins, 
 
 ### Dependency commands
 
-The Lifecycle builtins (see [Built-in commands](#built-in-commands)) that drive the four stages above:
+The Lifecycle builtins (see [Built-in commands](#built-in-commands)) that drive the four stages above. The dependency verbs live under one noun, `dev deps` (bare `dev deps` lists them), and are Bundler's, because that is the model every Rubyist already carries:
 
-- **`dev update-deps`** — resolve constraints from `dependencies.rb`, write lockfiles (recording the manifest digest for the staleness check). Always available (no need to define in `dev.yml`).
-- **`dev install-deps`** — install locked deps handled on the host (gh releases, steam apps) into their version-keyed install dirs, filtered to the detected env and host OS. Finishes by refreshing agent skill links (see [Agent skills & org learnings](#agent-skills--org-learnings)).
-- **`dev up`** — first converges the host layer (self-update + org Brewfile, see [Host tooling: the Brewfile contract](#host-tooling-the-brewfile-contract)), then auto-installs all deps from lockfiles (build group first), then runs the project's `up:` command from `dev.yml` if defined. On success, stamps the installed lockfile digest (see `dev check`). Finishes by refreshing agent skill links, like `install-deps`. Also valid outside any project: converges the host layer only — the fresh-box bootstrap (`brew install <org>/<tap>/dev` → `dev up` → ready).
-- **`dev check`** — report dependency-state staleness explicitly: `dependencies.rb` vs lockfiles (digest recorded by `update-deps`), and lockfiles vs the per-machine installed stamp (`~/.dev/state/<project>/installed-digest`, written after a fully-successful `up`/`install-deps`). The same two O(1) checks run at every command start — warning on workstations, erroring in CI.
+- **`dev deps update`** — resolve constraints from `dependencies.rb`, write lockfiles (recording the manifest digest for the staleness check). Always available (no need to define in `dev.yml`).
+- **`dev deps install`** — install locked deps handled on the host (gh releases, steam apps) into their version-keyed install dirs, filtered to the detected env and host OS. Finishes by refreshing agent skill links (see [Agent skills & org learnings](#agent-skills--org-learnings)).
+- **`dev up`** — first converges the host layer (self-update + org Brewfile, see [Host tooling: the Brewfile contract](#host-tooling-the-brewfile-contract)), then auto-installs all deps from lockfiles (build group first), then runs the project's `up:` command from `dev.yml` if defined. On success, stamps the installed lockfile digest (see `dev deps check`). Finishes by refreshing agent skill links, like `deps install`. Also valid outside any project: converges the host layer only — the fresh-box bootstrap (`brew install <org>/<tap>/dev` → `dev up` → ready).
+- **`dev deps check`** — report dependency-state staleness explicitly and exit non-zero when anything drifted: `dependencies.rb` vs lockfiles (digest recorded by `deps update`), and lockfiles vs the per-machine installed stamp (`~/.dev/state/<project>/installed-digest`, written after a fully-successful `up`/`deps install`). The same two O(1) checks run at every command start — warning on workstations, erroring in CI.
 - **`dev deps path <integration> <name> <platform>`** — print the absolute path of a locked artifact (e.g. `dev deps path ficsit SML LinuxServer`, `dev deps path xcode` for the pinned DEVELOPER_DIR, or `dev deps path gh UnrealEngineMac` for a gh release's version-keyed install dir under the data root) so scripts don't reconstruct cache keys or layout conventions.
 
 ## dev plan — sync plans with GitHub issues
@@ -448,11 +448,11 @@ Global (works without a `dev.yml`; the workspace is the nearest dev.yml or git r
 
 ## Agent skills & org learnings
 
-dev distributes agent-facing skills (Cursor-style `SKILL.md` directories) over three channels, all refreshed at the same cheap, idempotent hook points — `dev up`, `dev install-deps`, and `dev plan` — so there is no separate setup step:
+dev distributes agent-facing skills (Cursor-style `SKILL.md` directories) over three channels, all refreshed at the same cheap, idempotent hook points — `dev up`, `dev deps install`, and `dev plan` — so there is no separate setup step:
 
 - **dev's own skills** (`share/cursor-skills/*`) link user-globally into `~/.cursor/skills/`; `brew upgrade` refreshes them automatically because the symlinks resolve through the installed tree.
-- **Gem-shipped skills.** A gem's skill is part of what installing that dependency means, so `dev up` / `dev install-deps` finish by scanning the resolved (lockfile-matched) gem set for `skills/*/SKILL.md` and linking each project-scoped as `.agents/skills/gem-<gem>--<skill>` (gitignored; an agent-neutral dir, so the mechanism isn't Cursor-locked). Links for gems that leave the lock are pruned on the next install — a skill-set change rides the same staleness story as any dependency change.
-- **Org learnings** (opt-in). With `knowledge_repo: <owner>/<repo>` in `~/.config/dev/config.yml` (or `DEV_KNOWLEDGE_REPO`), dev keeps a machine-local cache of the org knowledge repo under `~/.local/share/dev/knowledge`. Hooks refresh it inline with a short timeout (~2s, with a hardcoded ~30s courtesy floor between pulls — the repo is tiny, so there is no TTL knob): the pull happens *before* distribution, so a hook never renders content it just found stale, and on timeout or offline the current cache is served (the pull finishes detached). The fetch rides the user's `gh` auth. From the cache, dev links the repo's `skills/*` user-globally into `~/.cursor/skills/` and renders the index's `## Invariants (always-on)` section **once, cache-side**, then links each project's `.cursor/rules/org-invariants.mdc` at that render as a symlink — one refresh updates every project on the machine simultaneously, nothing is committed (a participating repo's only footprint is one `.gitignore` line), and drift from the canonical repo is structurally impossible. Machines without the setting simply have no org sync: dev is public and ships only the mechanism, never the content. `dev learnings sync` forces a blocking refresh of the whole read path; `dev learnings status` reports what's cached, rendered, and linked; `dev learnings invariants` prints the Tier-0 prompt block. **Runner bootstrap contract:** an agent-runner workflow (e.g. ai-flow's) runs an explicit blocking `dev learnings sync` step before starting agent sessions, so they never start on stale invariants — the dependency is stated in the workflow instead of hiding as a side effect of `install-deps`.
+- **Gem-shipped skills.** A gem's skill is part of what installing that dependency means, so `dev up` / `dev deps install` finish by scanning the resolved (lockfile-matched) gem set for `skills/*/SKILL.md` and linking each project-scoped as `.agents/skills/gem-<gem>--<skill>` (gitignored; an agent-neutral dir, so the mechanism isn't Cursor-locked). Links for gems that leave the lock are pruned on the next install — a skill-set change rides the same staleness story as any dependency change.
+- **Org learnings** (opt-in). With `knowledge_repo: <owner>/<repo>` in `~/.config/dev/config.yml` (or `DEV_KNOWLEDGE_REPO`), dev keeps a machine-local cache of the org knowledge repo under `~/.local/share/dev/knowledge`. Hooks refresh it inline with a short timeout (~2s, with a hardcoded ~30s courtesy floor between pulls — the repo is tiny, so there is no TTL knob): the pull happens *before* distribution, so a hook never renders content it just found stale, and on timeout or offline the current cache is served (the pull finishes detached). The fetch rides the user's `gh` auth. From the cache, dev links the repo's `skills/*` user-globally into `~/.cursor/skills/` and renders the index's `## Invariants (always-on)` section **once, cache-side**, then links each project's `.cursor/rules/org-invariants.mdc` at that render as a symlink — one refresh updates every project on the machine simultaneously, nothing is committed (a participating repo's only footprint is one `.gitignore` line), and drift from the canonical repo is structurally impossible. Machines without the setting simply have no org sync: dev is public and ships only the mechanism, never the content. `dev learnings sync` forces a blocking refresh of the whole read path; `dev learnings status` reports what's cached, rendered, and linked; `dev learnings invariants` prints the Tier-0 prompt block. **Runner bootstrap contract:** an agent-runner workflow (e.g. ai-flow's) runs an explicit blocking `dev learnings sync` step before starting agent sessions, so they never start on stale invariants — the dependency is stated in the workflow instead of hiding as a side effect of `deps install`.
 
 ### Repo learnings
 
