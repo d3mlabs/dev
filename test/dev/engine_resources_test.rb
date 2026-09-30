@@ -34,6 +34,20 @@ class Dev::EngineResourcesTest < Minitest::Test
     engine.satisfies?(nil)
   end
 
+  test "it is a value: equal sizes are one Hash key" do
+    Given "two readings of the same size and one of another"
+    a = Dev::EngineResources.new(cpus: 12, memory_gib: 24)
+    b = Dev::EngineResources.new(cpus: 12, memory_gib: 24)
+    c = Dev::EngineResources.new(cpus: 12, memory_gib: 16)
+
+    Expect
+    a.eql?(b)
+    a.hash == b.hash
+    !a.eql?(c)
+    { a => :seen }.key?(b)
+    [a, b, c].uniq.size == 2
+  end
+
   test "to_s reads as the operator would say it" do
     Expect
     Dev::EngineResources.new(cpus: 12, memory_gib: 24).to_s == "12 cpus / 24 GiB"

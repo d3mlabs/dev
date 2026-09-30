@@ -17,11 +17,14 @@ class RecordedColimaExecutor
   # @param containers [Array<String>] names `docker ps` inside the VM reports
   # @param start_ok [Boolean] whether `colima start` succeeds
   # @param stop_ok [Boolean] whether `colima stop` succeeds
-  def initialize(vm: nil, containers: [], start_ok: true, stop_ok: true)
+  # @param list_output [String, nil] raw `colima list -j` stdout, overriding
+  #   the JSON derived from +vm+ (for malformed-output cases)
+  def initialize(vm: nil, containers: [], start_ok: true, stop_ok: true, list_output: nil)
     @vm = vm
     @containers = containers
     @start_ok = start_ok
     @stop_ok = stop_ok
+    @list_output = list_output
     @runs = []
   end
 
@@ -41,6 +44,7 @@ class RecordedColimaExecutor
   def capture(*cmd)
     case cmd
     when %w[colima list -j]
+      return @list_output if @list_output
       return "" if @vm.nil?
 
       JSON.generate(
@@ -98,6 +102,24 @@ class Dev::ColimaProvisionerTest < Minitest::Test
     8    | 24         | 8             | 24
     6    | nil        | 6             | Dev::ColimaProvisioner::DEFAULT_MEMORY_GIB
     nil  | 16         | Dev::ColimaProvisioner::DEFAULT_CPUS | 16
+  end
+
+  test "no VM: unreadable `colima list -j` output counts as no profile — start at the hint rather than guess" do
+    Given "colima answering #{shape}"
+    executor = RecordedColimaExecutor.new(list_output: list_output)
+
+    When "provisioning with a hint"
+    Dev::ColimaProvisioner.new(executor: executor).provision!(cpus: 8, memory_gib: 16)
+
+    Then
+    starts(executor) == [start_cmd(8, 16)]
+    stops(executor).empty?
+
+    Where
+    shape                     | list_output
+    "not JSON at all"         | "colima: command not found\n"
+    "JSON missing the sizes"  | '{"name":"default","status":"Running"}' + "\n"
+    "JSON with non-numeric sizes" | '{"name":"default","status":"Running","cpus":"many","memory":"lots"}' + "\n"
   end
 
   # --- VM running ----------------------------------------------------------

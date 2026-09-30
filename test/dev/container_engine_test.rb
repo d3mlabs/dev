@@ -184,12 +184,17 @@ class Dev::ContainerEngineTest < Minitest::Test
     resources == Dev::EngineResources.new(cpus: 12, memory_gib: 24)
   end
 
-  test "resources is nil when the daemon does not answer (no engine to size against)" do
-    Given "an engine whose docker fails"
-    engine = Dev::ContainerEngine.new(kind: :test, argv_prefix: ["false"])
+  test "resources is nil when the daemon does not answer usefully (no engine to size against)" do
+    Given "an engine whose docker #{shape}"
+    engine = Dev::ContainerEngine.new(kind: :test, argv_prefix: argv_prefix)
 
     Expect
     engine.resources.nil?
+
+    Where
+    shape                         | argv_prefix
+    "fails outright"              | ["false"]
+    "answers something unparsable" | ["sh", "-c", "echo 'Cannot connect to the Docker daemon' #"]
   end
 
   test "run reports a missing binary as failure, not an exception" do
