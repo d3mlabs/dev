@@ -149,8 +149,8 @@ class Dev::Deps::AccessorTest < Minitest::Test
       accessor.path("gh", "UnrealEngineMac")
     end
 
-    Then "the fix is update-deps"
-    error.message.include?("run dev update-deps")
+    Then "the fix is dev deps update"
+    error.message.include?("run dev deps update")
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -229,8 +229,8 @@ class Dev::Deps::AccessorTest < Minitest::Test
       accessor.path("xcode")
     end
 
-    Then "the fix is update-deps"
-    error.message.include?("run dev update-deps")
+    Then "the fix is dev deps update"
+    error.message.include?("run dev deps update")
 
     Cleanup
     FileUtils.rm_rf(dir)

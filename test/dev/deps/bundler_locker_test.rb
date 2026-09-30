@@ -29,7 +29,8 @@ class Dev::Deps::BundlerLockerTest < Minitest::Test
     locker.lock(decls)
     gemfile = (Pathname(dir) / "Gemfile").read
 
-    Then "the Gemfile pins the source, ruby, default gem, and grouped gem with options"
+    Then "the Gemfile names the verb that regenerates it, and pins the source, ruby, default gem, and grouped gem with options"
+    gemfile.include?("run `dev deps update`")
     gemfile.include?(%(source "https://rubygems.org"))
     gemfile.include?(%(ruby "~> 4.0"))
     gemfile.include?(%(gem "ffi", "~> 1.17"))

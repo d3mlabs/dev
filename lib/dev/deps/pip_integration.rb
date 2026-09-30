@@ -14,7 +14,7 @@ module Dev
     # Installs each locked package into the project-local venv (.venv) that
     # ShadowenvPython provisions — the Python analogue of LuaRocks installing
     # into lua_modules/. The venv is ensured here (created if absent) so
-    # `dev install-deps` works on a fresh clone, before any command has run
+    # `dev deps install` works on a fresh clone, before any command has run
     # ShadowenvPython.setup!. pip resolves the transitive tree at install.
     class PipIntegration < Integration
       extend T::Sig

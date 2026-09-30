@@ -65,9 +65,10 @@ class Dev::Deps::LockfileTest < Minitest::Test
     When "locking with the digest"
     lockfile.lock(deps, manifest_digest: digest)
 
-    Then "both lockfiles carry it as a header comment and it reads back"
+    Then "both lockfiles carry it as a header comment, name the verb that rewrites them, and it reads back"
     File.read(File.join(dir, "deps.lock")).include?("# dependencies-digest: #{digest}")
     File.read(File.join(dir, "build-deps.lock")).include?("# dependencies-digest: #{digest}")
+    File.read(File.join(dir, "deps.lock")).include?("run dev deps update to change")
     lockfile.manifest_digest == digest
     # The YAML payload stays pure deps — the digest rides a comment.
     YAML.safe_load(File.read(File.join(dir, "deps.lock")))["cmake"].key?("boost")
@@ -284,7 +285,7 @@ class Dev::Deps::LockfileTest < Minitest::Test
 
   test "reads legacy flat-format lockfiles" do
     # Migration shim: delete this test with the legacy read path once every
-    # consumer repo's lockfiles have been rewritten by update-deps (issue #146).
+    # consumer repo's lockfiles have been rewritten by dev deps update (issue #146).
     Given "lockfiles in the pre-nested format, name-keyed with integration in the value"
     dir = Dir.mktmpdir("dev-lockfile-test-")
     File.write(File.join(dir, "deps.lock"), <<~YAML)

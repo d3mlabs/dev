@@ -26,7 +26,7 @@ failed `dev up` as installed). Only outcome-independent work may move
 before the exec point.
 
 Right (dev#85): Runner sets `wait: true` on ExecutionContext for
-`STAMPING_COMMANDS` (`up`, `install-deps`); CommandRunner then runs the
+`STAMPING_COMMANDS` (`dev up`, `dev deps install`); CommandRunner then runs the
 child spawn-and-wait (`Kernel.system`) instead of exec-replace, raising
 `CommandFailedError` with the child's exit status on failure, which
 Runner turns into `Kernel.exit` — stamp only on success, exit code
@@ -35,6 +35,6 @@ passthrough, no double process tree). Diagnostic signature of a missing
 wait: an exec-style provisioning command "succeeds" but the staleness
 gate keeps reporting "never installed" — fatal in a CI=true shell.
 
-learned-from: dev#73 build pass (dev up never stamped; install-deps
+learned-from: dev#73 build pass (dev up never stamped; dev deps install
 did); fixed by CommandRunner wait mode in dev#85
 date: 2026-08-03

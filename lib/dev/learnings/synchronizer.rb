@@ -97,7 +97,7 @@ module Dev
         Pathname(project_root).join(*ORG_INVARIANTS_RULE_SUBDIRS)
       end
 
-      # The passive hook entry (`dev up` / `install-deps` / `dev plan`): pull
+      # The passive hook entry (`dev up` / `dev deps install` / `dev plan`): pull
       # inline within the cache's short timeout (falling back to the current
       # cache when the network is slower, or offline), then distribute.
       # Never raises: learnings sync is hygiene riding another command, and

@@ -15,7 +15,7 @@ module Dev
   # operation shares the same contract: no user arguments, idempotent, and
   # warn-only (host hygiene rides other commands and must never block
   # them). Commands compose these verbs — `dev up`'s host half is
-  # converge_tooling + install_rc_hook; `dev plan` and `install-deps`
+  # converge_tooling + install_rc_hook; `dev plan` and `dev deps install`
   # refresh the cheap artifact pair on every invocation.
   #
   # Anything host-scoped but not convergence-shaped (a user-facing verb

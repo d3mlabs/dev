@@ -327,7 +327,7 @@ module Dev
 
         raise NoMatchingAssetsError,
           "no locked assets matching #{pattern.inspect} for #{dep.metadata["repo"]}@#{dep.version} " \
-          "— check the assets: glob, or run dev update-deps"
+          "— check the assets: glob, or run dev deps update"
       end
 
       # Extract all downloaded archives into extracted_dir. Split archives

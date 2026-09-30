@@ -16,7 +16,7 @@ module Dev
   module Learnings
     # Dispatch for `dev learnings …` — the explicit surface over the learnings
     # read path. Passive distribution rides dev's hook points (`dev up` /
-    # `install-deps` / `dev plan`); these verbs are the manual override and
+    # `dev deps install` / `dev plan`); these verbs are the manual override and
     # the inspection:
     #
     # - `sync`       — refresh the whole read path now (blocking): pull the

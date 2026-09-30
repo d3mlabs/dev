@@ -11,7 +11,7 @@ require "dev/deps/resolver"
 
 module Dev
   module Builtins
-    # `dev update-deps`: resolve the dependencies.rb declarations and write
+    # `dev deps update`: resolve the dependencies.rb declarations and write
     # the lockfiles. Everything here is derived from the per-call project
     # root, so no collaborators need injecting.
     class UpdateDepsCommand < BuiltinCommand
@@ -23,7 +23,7 @@ module Dev
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
 
-      # update-deps IS the remediation for a stale manifest — nagging before
+      # dev deps update IS the remediation for a stale manifest — nagging before
       # it would block the very fix being run.
       sig { override.returns(T::Boolean) }
       def staleness_exempt? = true

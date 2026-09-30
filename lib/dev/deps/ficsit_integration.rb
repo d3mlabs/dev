@@ -78,7 +78,7 @@ module Dev
         if platforms.nil? || platforms.empty?
           raise MissingPlatformsError,
             "#{dep.name}@#{dep.version} has no resolved platforms — declare it in a " \
-            "group with a platform and run dev update-deps"
+            "group with a platform and run dev deps update"
         end
 
         platforms.each { |platform, target| install_platform(dep, platform, target) }

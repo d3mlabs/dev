@@ -272,7 +272,7 @@ module Dev
 
     # The brew escalation edge (the Homebrew single-user gap on cooperative
     # machines): the agent may run exactly brew as the prefix owner,
-    # NOPASSWD, so `dev install-deps` converges formulae without a human
+    # NOPASSWD, so `dev deps install` converges formulae without a human
     # even though the prefix belongs to the enrolling user. The owner is
     # stat'd here at bootstrap time — never hardcoded — and re-running
     # register re-converges the edge. Omitted when the host has no brew or

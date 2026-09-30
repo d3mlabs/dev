@@ -13,7 +13,7 @@ module Dev
     # Installs the locked gems with `bundle install` against the Gemfile/
     # Gemfile.lock that BundlerRepository generated and committed. The install is
     # frozen: it must match the committed lockfile exactly, so install never
-    # silently re-resolves (re-resolution is `dev update-deps`'s job).
+    # silently re-resolves (re-resolution is `dev deps update`'s job).
     #
     # The individual locked deps are informational here — bundler installs the
     # full graph from the Gemfile.lock — so install_all only needs to know there

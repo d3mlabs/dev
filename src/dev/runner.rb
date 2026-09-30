@@ -38,7 +38,9 @@ module Dev
     extend T::Sig
 
     # The root usage's closing line inside a project.
-    PROJECT_EPILOGUE = "Examples: dev up    dev up -v    dev update-deps    dev test"
+    # The root listing already shows every command with its description, so
+    # the closing line points into the tree rather than repeating rows.
+    PROJECT_EPILOGUE = "Run 'dev help <command>' for a command's usage."
     # …and outside one: the real gap is the missing dev.yml.
     PROJECTLESS_EPILOGUE = "Run dev inside a project that defines a dev.yml to see its commands."
 
@@ -294,16 +296,20 @@ module Dev
       builtins = T.let({
         "help" => help,
         "complete" => complete,
-        "update-deps" => Builtins::UpdateDepsCommand.new,
-        "install-deps" => install_deps,
-        # `up` composes the same install the install-deps builtin runs.
+        # `up` composes the same install `dev deps install` runs.
         "up" => Builtins::UpCommand.new(install_deps_command: install_deps),
-        "check" => Builtins::CheckCommand.new(dependency_service:),
+        # Bundler's verbs: update ≈ bundle update, install ≈ bundle install,
+        # check ≈ bundle check (inspect and exit non-zero when unsatisfied).
         "deps" => CommandGroup.new(
           path: ["deps"],
-          desc: "Inspect locked dependencies",
+          desc: "Manage dependencies (update | install | check | path)",
           category: Command::Category::Lifecycle,
-          children: { "path" => Builtins::DepsPathCommand.new },
+          children: {
+            "update" => Builtins::UpdateDepsCommand.new,
+            "install" => install_deps,
+            "check" => Builtins::CheckCommand.new(dependency_service:),
+            "path" => Builtins::DepsPathCommand.new,
+          },
         ),
         "cache" => CommandGroup.new(
           path: ["cache"],

@@ -13,7 +13,7 @@ module Dev
     # A gem's skill is part of what installing that dependency means —
     # installing rspock without its skill would be an incomplete install,
     # exactly like installing it without its executables. So `dev up` /
-    # `dev install-deps` finish by scanning the resolved (lockfile-matched)
+    # `dev deps install` finish by scanning the resolved (lockfile-matched)
     # gem set for skills/*/SKILL.md and linking each one project-scoped as
     # .agents/skills/gem-<gem>--<skill> (gitignored; an agent-neutral dir so
     # the mechanism isn't Cursor-locked). A skill-set change rides the same

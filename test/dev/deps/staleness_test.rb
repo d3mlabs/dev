@@ -12,7 +12,7 @@ require "fileutils"
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::StalenessTest < Minitest::Test
   # A project dir with dependencies.rb plus lockfiles generated from it (the
-  # manifest digest recorded in the header, like dev update-deps does).
+  # manifest digest recorded in the header, like dev deps update does).
   def build_synced_project(dir)
     project = File.join(dir, "project")
     FileUtils.mkdir_p(project)
@@ -45,7 +45,7 @@ class Dev::Deps::StalenessTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "editing dependencies.rb after update-deps reports the manifest message" do
+  test "editing dependencies.rb after dev deps update reports the manifest message" do
     Given "a synced project whose manifest then changes"
     dir = Dir.mktmpdir("dev-staleness-test-")
     project = build_synced_project(dir)
@@ -53,8 +53,8 @@ class Dev::Deps::StalenessTest < Minitest::Test
     staleness.stamp_installed!
     File.write(File.join(project, "dependencies.rb"), "group :app do\nend\n")
 
-    Expect "the fix points at update-deps"
-    staleness.messages == ["dependencies.rb changed since the lockfiles were generated — run dev update-deps"]
+    Expect "the fix points at dev deps update"
+    staleness.messages == ["dependencies.rb changed since the lockfiles were generated — run dev deps update"]
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -106,7 +106,7 @@ class Dev::Deps::StalenessTest < Minitest::Test
     staleness = build_staleness(dir, project)
     staleness.stamp_installed!
 
-    Expect "no nag until the next update-deps records a digest"
+    Expect "no nag until the next dev deps update records a digest"
     staleness.messages == []
 
     Cleanup
