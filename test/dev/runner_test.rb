@@ -122,7 +122,7 @@ class RunnerTest < Minitest::Test
     $stderr = old_stderr
   end
 
-  test "usage includes built-in update-deps command" do
+  test "usage lists the deps group in Lifecycle, not the retired flat dependency verbs" do
     Given "a Runner with no project commands"
     out = StringIO.new
     runner = build_runner(commands: {}, out: out)
@@ -130,9 +130,32 @@ class RunnerTest < Minitest::Test
     When "we print usage"
     runner.run([])
 
-    Then "update-deps is listed"
-    out.string.include?("update-deps")
-    out.string.include?("Resolve dependency constraints")
+    Then "deps is one row; update-deps / install-deps / check are gone"
+    out.string.include?("  deps …       Manage dependencies (update | install | check | path)")
+    !out.string.include?("update-deps")
+    !out.string.include?("install-deps")
+    !out.string.match?(/^  check /)
+  end
+
+  test "the retired flat dependency verbs are not found" do
+    Given "a Runner"
+    runner = build_runner(commands: {})
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(1).times(3)
+
+    When "running each flat name"
+    runner.run(["update-deps"])
+    runner.run(["install-deps"])
+    runner.run(["check"])
+
+    Then "each falls through to the not-found error"
+    $stderr.string.include?("Command 'update-deps' not found")
+    $stderr.string.include?("Command 'install-deps' not found")
+    $stderr.string.include?("Command 'check' not found")
+
+    Cleanup
+    $stderr = old_stderr
   end
 
   test "usage includes both built-in and project commands" do
@@ -147,7 +170,7 @@ class RunnerTest < Minitest::Test
     runner.run([])
 
     Then "all commands appear"
-    out.string.include?("update-deps")
+    out.string.include?("deps …")
     out.string.include?("test")
     out.string.include?("up")
   end
@@ -339,7 +362,7 @@ class RunnerTest < Minitest::Test
     out.string.include?("  test …       Test suites")
   end
 
-  test "the deps builtin is a group: bare it prints its usage, listing the path leaf" do
+  test "the deps builtin is a group: bare it prints its usage, listing update, install, check and path" do
     Given "a Runner"
     out = StringIO.new
     runner = build_runner(commands: {}, out: out)
@@ -347,8 +370,13 @@ class RunnerTest < Minitest::Test
     When "running deps bare"
     runner.run(["deps"])
 
-    Then "the group usage renders"
+    Then "the group usage renders the four leaves and nothing else"
     out.string.include?("Usage: dev deps <command> [args...]")
+    rows = out.string.lines.map(&:chomp).select { |l| l.start_with?("  ") }
+    rows.map { |l| l.split.first } == %w[check install path update]
+    out.string.include?("  update       Resolve dependency constraints and write lockfiles")
+    out.string.include?("  install      Install locked dependencies handled on the host")
+    out.string.include?("  check        Check dependency state freshness")
     out.string.include?("  path         Print a locked artifact's path")
   end
 
@@ -390,7 +418,7 @@ class RunnerTest < Minitest::Test
     Then "help, up, runner and the global nouns are offered; project-only builtins are not"
     names = out.string.lines.map(&:chomp)
     (%w[help up runner cd clone config cred learnings plan] - names).empty?
-    !names.include?("install-deps")
+    !names.include?("deps")
   end
 
   test "bare dev outside a project prints the projectless root: the global commands and the dev.yml hint" do
@@ -525,7 +553,7 @@ class RunnerTest < Minitest::Test
     Kernel.expects(:exit).with(1).once
 
     When "running a project-scoped builtin"
-    runner.run(["install-deps"])
+    runner.run(%w[deps install])
 
     Then "the lookup fails like any other command outside a project"
     $stderr.string.include?("no dev.yml found in this directory or any parent")

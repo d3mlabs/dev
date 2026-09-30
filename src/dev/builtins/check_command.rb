@@ -6,7 +6,7 @@ require "dev/dependency_service"
 
 module Dev
   module Builtins
-    # `dev check`: report the dependency-state freshness the staleness guard
+    # `dev deps check`: report the dependency-state freshness the staleness guard
     # would act on, and exit non-zero when anything drifted.
     class CheckCommand < BuiltinCommand
       extend T::Sig
