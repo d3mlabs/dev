@@ -74,13 +74,16 @@ module Dev
     #
     # @param cpus [Integer, nil] VM cpu minimum (repo resources hint)
     # @param memory_gib [Integer, nil] VM memory minimum in GiB
+    # @param force [Boolean] write even while containers are running (the
+    #   `dev engine up --force` of #187); the restart is still the user's, so
+    #   nothing is stopped here
     # @return [void]
     # @raise [UnsatisfiableHintError] when the hint exceeds the hardware
     # @raise [EngineBusyError] when a resize is needed but containers are running
     # @raise [RestartRequiredError] when `.wslconfig` is ahead of the running VM
     # @raise [WslHost::InteropError] when a Windows-side probe fails mid-way
-    sig { params(cpus: T.nilable(Integer), memory_gib: T.nilable(Integer)).void }
-    def provision!(cpus: nil, memory_gib: nil)
+    sig { params(cpus: T.nilable(Integer), memory_gib: T.nilable(Integer), force: T::Boolean).void }
+    def provision!(cpus: nil, memory_gib: nil, force: false)
       unless @host.interop?
         @out.puts "dev: WSL interop is disabled, so %USERPROFILE%\\.wslconfig cannot be converged — " \
           "size the VM yourself ([wsl2] processors= / memory=)."
@@ -113,7 +116,7 @@ module Dev
         return
       end
 
-      if restart_needed
+      if restart_needed && !force
         busy = running_containers
         unless busy.empty?
           raise EngineBusyError,

@@ -151,6 +151,59 @@ class Dev::WslHostTest < Minitest::Test
     "not a number"  | nil
   end
 
+  test "status gathers configured, observed, and hardware, and knows when a written resize is unapplied" do
+    Given "a profile with a .wslconfig and a VM at some size"
+    profile = File.join(@dir, "profile")
+    FileUtils.mkdir_p(profile)
+    File.write(File.join(profile, ".wslconfig"), config)
+    cpus, memory_gib = observed
+    executor = RecordedWslExecutor.new(profile_dir: profile, nproc: cpus.to_s, hardware: "28 68719476736")
+    wsl = host(executor: executor, meminfo: "MemTotal:       #{memory_gib * 1024 * 1024} kB\n")
+
+    When "asking for status"
+    status = wsl.status
+
+    Then "every fact is there and restart_pending? reads the gap between configured and observed"
+    status.interop == true
+    status.configured_cpus == configured_cpus
+    status.configured_memory_gib == configured_memory_gib
+    status.observed == Dev::EngineResources.new(cpus: cpus, memory_gib: memory_gib)
+    status.hardware == Dev::EngineResources.new(cpus: 28, memory_gib: 64)
+    status.restart_pending? == pending
+
+    Cleanup
+    nil
+
+    Where
+    config                                 | observed | configured_cpus | configured_memory_gib | pending
+    "[wsl2]\nprocessors=28\nmemory=64GB\n" | [28, 64] | 28              | 64                    | false
+    "[wsl2]\nprocessors=12\nmemory=24GB\n" | [4, 8]   | 12              | 24                    | true
+    "[wsl2]\nmemory=24GB\n"                | [28, 8]  | nil             | 24                    | true
+    "[wsl2]\nprocessors=8\nmemory=16GB\n"  | [28, 64] | 8               | 16                    | false
+    "[wsl2]\nnetworkingMode=mirrored\n"    | [4, 8]   | nil             | nil                   | false
+  end
+
+  test "status with interop off reports only what the VM itself can tell" do
+    Given "a distro with interop disabled"
+    executor = RecordedWslExecutor.new(nproc: "4")
+    wsl = host(executor: executor, interop: "disabled", meminfo: "MemTotal:       8388608 kB\n")
+
+    When "asking for status"
+    status = wsl.status
+
+    Then "no Windows binary is called; configured and hardware are unknown; nothing is pending"
+    status.interop == false
+    status.configured_cpus.nil?
+    status.configured_memory_gib.nil?
+    status.hardware.nil?
+    status.observed == Dev::EngineResources.new(cpus: 4, memory_gib: 8)
+    status.restart_pending? == false
+    executor.runs.none? { |bin, *_rest| bin.end_with?(".exe") }
+
+    Cleanup
+    nil
+  end
+
   test "observed is the VM's own nproc and MemTotal, rounded up like any engine" do
     Given "a VM that reports 28 cpus and 65890048 kB (62.8 GiB)"
     wsl = host(executor: RecordedWslExecutor.new(nproc: "28"), meminfo: "MemTotal:       65890048 kB\n")

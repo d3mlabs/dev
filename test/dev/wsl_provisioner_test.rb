@@ -172,6 +172,25 @@ class Dev::WslProvisionerTest < Minitest::Test
     nil
   end
 
+  test "undersized and busy with force: writes anyway and asks for the restart — the containers' fate is the user's" do
+    Given "an undersized VM with containers running"
+    text = "[wsl2]\nmemory=8GB\nprocessors=4\n"
+    prov, executor = provisioner(config: text, observed: [4, 8], containers: %w[snappy-build])
+
+    When "provisioning with force"
+    error = assert_raises(Dev::WslProvisioner::RestartRequiredError) do
+      prov.provision!(cpus: 12, memory_gib: 24, force: true)
+    end
+
+    Then "the file is ratcheted, docker ps was not even consulted, and the message names the restart"
+    wslconfig == "[wsl2]\nmemory=24GB\nprocessors=12\nautoMemoryReclaim=gradual\n"
+    executor.runs.none? { |bin, *_rest| bin == "docker" }
+    error.message.include?("wsl --shutdown")
+
+    Cleanup
+    nil
+  end
+
   test "a hint above the Windows hardware is unsatisfiable: nothing written" do
     Given "a 28-thread / 64 GiB box"
     prov, _executor = provisioner(config: nil, observed: [4, 8], hardware: [28, 64])

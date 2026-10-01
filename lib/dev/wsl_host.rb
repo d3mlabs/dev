@@ -23,6 +23,31 @@ module Dev
     # usable — interop is off or broken.
     class InteropError < RuntimeError; end
 
+    # The WSL side of `dev engine status`: what the user configured, what the
+    # VM got, what the box could give. Configured and hardware are unknown
+    # (nil) when interop is off.
+    class Status < T::Struct
+      extend T::Sig
+
+      const :interop, T::Boolean
+      const :configured_cpus, T.nilable(Integer)
+      const :configured_memory_gib, T.nilable(Integer)
+      const :observed, EngineResources
+      const :hardware, T.nilable(EngineResources)
+
+      # Whether `.wslconfig` asks for more than the VM is running — a resize
+      # that was written but not applied by `wsl --shutdown` yet. A configured
+      # value *below* the observed one (a pending shrink) is not dev's concern.
+      #
+      # @return [Boolean]
+      sig { returns(T::Boolean) }
+      def restart_pending?
+        cpus_behind = !configured_cpus.nil? && observed.cpus < T.must(configured_cpus)
+        memory_behind = !configured_memory_gib.nil? && observed.memory_gib < T.must(configured_memory_gib)
+        cpus_behind || memory_behind
+      end
+    end
+
     PROC_VERSION = "/proc/version"
     BINFMT_DIR = "/proc/sys/fs/binfmt_misc"
     MEMINFO = "/proc/meminfo"
@@ -147,6 +172,28 @@ module Dev
       cpus = Integer(T.unsafe(@executor).capture("nproc").strip)
       kib = File.read(@meminfo_path)[/^MemTotal:\s+(\d+)\s+kB/, 1]
       EngineResources.from_bytes(cpus: cpus, memory_bytes: Integer(T.must(kib)) * 1024)
+    end
+
+    # Everything `dev engine status` shows for the WSL side. With interop off
+    # only the VM's own facts are available.
+    #
+    # @return [Status]
+    # @raise [WslConfig::MalformedValueError]
+    sig { returns(Status) }
+    def status
+      unless interop?
+        return Status.new(interop: false, configured_cpus: nil, configured_memory_gib: nil, observed: observed,
+          hardware: nil)
+      end
+
+      configured = config
+      Status.new(
+        interop: true,
+        configured_cpus: configured.processors,
+        configured_memory_gib: configured.memory_gib,
+        observed: observed,
+        hardware: hardware,
+      )
     end
   end
 end
