@@ -2,53 +2,10 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "support/recorded_wsl_executor"
 require "dev/wsl_host"
 require "tmpdir"
 require "fileutils"
-
-# Records every interop invocation; cmd.exe / powershell.exe / wslpath / nproc
-# are true boundaries. The Windows side it describes is a profile directory
-# and a hardware line.
-class RecordedWslExecutor
-  attr_reader :runs
-
-  # @param userprofile [String, nil] what `cmd.exe /c echo %USERPROFILE%` prints (nil: interop broken, prints nothing)
-  # @param profile_dir [String] what `wslpath -u` maps that Windows path to
-  # @param hardware [String] what the powershell probe prints: "<logical cpus> <ram bytes>"
-  # @param nproc [String] what `nproc` prints
-  def initialize(userprofile: "C:\\Users\\jpduc", profile_dir: "/mnt/c/Users/jpduc", hardware: "28 68719476736",
-    nproc: "28")
-    @userprofile = userprofile
-    @profile_dir = profile_dir
-    @hardware = hardware
-    @nproc = nproc
-    @runs = []
-  end
-
-  def run(*cmd)
-    @runs << cmd
-    true
-  end
-
-  def quiet?(*cmd)
-    @runs << cmd
-    true
-  end
-
-  def capture(*cmd)
-    @runs << cmd
-    case cmd
-    when ["cmd.exe", "/c", "echo %USERPROFILE%"]
-      @userprofile ? "#{@userprofile}\r\n" : ""
-    when ["wslpath", "-u", @userprofile]
-      "#{@profile_dir}\n"
-    when ["nproc"]
-      "#{@nproc}\n"
-    else
-      cmd.first == "powershell.exe" ? "#{@hardware}\r\n" : ""
-    end
-  end
-end unless defined?(RecordedWslExecutor)
 
 transform!(RSpock::AST::Transformation)
 class Dev::WslHostTest < Minitest::Test
