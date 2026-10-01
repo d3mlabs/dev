@@ -198,7 +198,10 @@ module Dev
         title = extract_title(plan.body) || path.basename(".plan.md").to_s
         issue = @issues.create(owner_repo, title: title, body: Plan.to_issue_body(plan.body))
         target = move_into_convention(path, owner_repo, issue)
-        write_linked_plan(owner_repo, issue, plan.body, path: target, frontmatter: plan.frontmatter)
+        write_linked_plan(
+          owner_repo, issue, plan.body,
+          path: target, frontmatter: plan.frontmatter, session_comment: plan.session_comment
+        )
         out.puts "dev: created #{owner_repo}##{issue.number} from #{path} (#{issue.html_url})"
         out.puts "dev: plan file: #{target}"
       end
@@ -231,7 +234,10 @@ module Dev
         remote_dirty = base.nil? ? true : remote_body != base
 
         if !local_dirty
-          write_linked_plan(owner_repo, issue, remote_body, path: path, frontmatter: plan.frontmatter)
+          write_linked_plan(
+            owner_repo, issue, remote_body,
+            path: path, frontmatter: plan.frontmatter, session_comment: plan.session_comment
+          )
           out.puts(remote_dirty ? "dev: pulled #{owner_repo}##{number} into #{path}" : "dev: #{path} is already up to date.")
         elsif !remote_dirty
           out.puts "dev: local plan is ahead of #{owner_repo}##{number} — nothing to pull. Run `dev plan push`."
@@ -380,15 +386,16 @@ module Dev
         org ? @settings.plans_repo : @workspace.origin_repo
       end
 
-      # Write the plan file (header + optional frontmatter + markdown body) and
-      # refresh the merge base — the single definition of "synced". The merge
-      # base stores the markdown body only.
+      # Write the plan file (header + optional Cursor local layers + markdown
+      # body) and refresh the merge base — the single definition of "synced".
+      # The merge base stores the markdown body only.
       #
       # @param owner_repo [String]
       # @param issue [Dev::Plan::GithubIssues::Issue]
       # @param body [String] markdown body
       # @param path [Pathname, nil]
       # @param frontmatter [String, nil] Cursor YAML block to preserve locally
+      # @param session_comment [String, nil] Cursor session comment to preserve locally
       # @return [Pathname] the written path
       sig do
         params(
@@ -397,13 +404,15 @@ module Dev
           body: String,
           path: T.nilable(Pathname),
           frontmatter: T.nilable(String),
+          session_comment: T.nilable(String),
         ).returns(Pathname)
       end
-      def write_linked_plan(owner_repo, issue, body, path: nil, frontmatter: nil)
+      def write_linked_plan(owner_repo, issue, body, path: nil, frontmatter: nil, session_comment: nil)
         path ||= @workspace.plan_path(owner_repo, issue.number, issue.title)
         header = Header.new(owner_repo: owner_repo, number: issue.number, synced_at: issue.updated_at)
         FileUtils.mkdir_p(path.dirname)
-        path.write(Content.new(header: header, frontmatter: frontmatter, body: body).render)
+        content = Content.new(header: header, session_comment: session_comment, frontmatter: frontmatter, body: body)
+        path.write(content.render)
         @merge_base.write(owner_repo, issue.number, body)
         path
       end

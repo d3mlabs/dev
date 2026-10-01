@@ -514,6 +514,31 @@ class Dev::Plan::AccessorTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "link <file> ships only the markdown body when Cursor put a session comment above the frontmatter (dev#198)" do
+    Given "an unlinked draft in the layout Cursor's plan tool writes: session comment, frontmatter, markdown"
+    dir = Dir.mktmpdir("ai-flow-acc-test-")
+    accessor, root, issues = build_env(dir)
+    draft = root / ".cursor" / "plans" / "draft.plan.md"
+    FileUtils.mkdir_p(draft.dirname)
+    session_comment = "<!-- 0396ea46-2344-40be-8e3b-e14cb3d4ffa5 -->\n"
+    frontmatter = "---\ntodos:\n  - id: \"a\"\n    content: \"do it\"\n    status: pending\nisProject: false\n---\n"
+    draft.write("#{session_comment}#{frontmatter}# Fresh plan\n\nContent.\n")
+
+    When "canonizing it"
+    accessor.link([draft.to_s], out: StringIO.new)
+
+    Then "the issue body is the markdown alone, and the local file keeps the comment and frontmatter under the header"
+    issues.get(REPO, 1).body == "# Fresh plan\n\nContent.\n"
+    linked = Dev::Plan::Content.parse((root / ".cursor" / "plans" / "gh-1-fresh-plan.plan.md").read)
+    linked.header.issue_ref == "#{REPO}#1"
+    linked.session_comment == session_comment
+    linked.frontmatter == frontmatter
+    linked.body == "# Fresh plan\n\nContent.\n"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "status reports clean, ahead, behind, and diverged plans" do
     Given "four linked plans in each sync state"
     dir = Dir.mktmpdir("ai-flow-acc-test-")
