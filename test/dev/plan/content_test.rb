@@ -130,6 +130,63 @@ class Dev::Plan::ContentTest < Minitest::Test
     nil
   end
 
+  SESSION_COMMENT = "<!-- 0396ea46-2344-40be-8e3b-e14cb3d4ffa5 -->\n"
+
+  test "parse peels Cursor's session comment above the frontmatter of an unlinked draft (dev#198)" do
+    Given "the layout that shipped frontmatter into dev#197's body: session comment, frontmatter, markdown"
+    body = "# Linux/WSL engine parity\n\nprose\n"
+    raw = "#{SESSION_COMMENT}#{FRONTMATTER}#{body}"
+
+    When "parsing it"
+    plan = Dev::Plan::Content.parse(raw)
+
+    Then "the comment is its own local layer and the body starts at the title"
+    plan.header.nil?
+    plan.session_comment == SESSION_COMMENT
+    plan.frontmatter == FRONTMATTER
+    plan.body == body
+
+    Cleanup
+    nil
+  end
+
+  test "render keeps the session comment on disk after the ai-flow header, and parse reads that back" do
+    Given "a draft with a session comment that gets linked"
+    header = Dev::Plan::Header.new(owner_repo: "d3mlabs/demo", number: 4, synced_at: "2026-01-01T00:00:00Z")
+    body = "# Title\n"
+    draft = Dev::Plan::Content.parse("#{SESSION_COMMENT}#{FRONTMATTER}#{body}")
+
+    When "adding the header and re-rendering, then parsing the rendered file"
+    rendered = draft.with_header(header).render
+    reparsed = Dev::Plan::Content.parse(rendered)
+
+    Then "canonical order is header, session comment, frontmatter, body — and every layer survives the round trip"
+    rendered == "#{header.render}#{SESSION_COMMENT}#{FRONTMATTER}#{body}"
+    reparsed.header.number == 4
+    reparsed.session_comment == SESSION_COMMENT
+    reparsed.frontmatter == FRONTMATTER
+    reparsed.body == body
+
+    Cleanup
+    nil
+  end
+
+  test "parse does not mistake a body that opens with an ordinary HTML comment for a session comment" do
+    Given "a body whose first line is a non-UUID comment"
+    body = "<!-- mirrored from dev share/plan-templates/tech-design.md -->\n# Title\n"
+    raw = "#{FRONTMATTER}#{body}"
+
+    When "parsing it"
+    plan = Dev::Plan::Content.parse(raw)
+
+    Then "the comment stays in the body"
+    plan.session_comment.nil?
+    plan.body == body
+
+    Cleanup
+    nil
+  end
+
   test "parse tolerates a draft with frontmatter and no ai-flow header" do
     Given "an unlinked Cursor draft"
     body = "# Draft\n"
