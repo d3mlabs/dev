@@ -114,7 +114,7 @@ class Dev::EngineResourcesCheckTest < Minitest::Test
     Where
     kind      | remedy
     :colima   | "Run `dev up` to resize the VM"
-    :docker   | ".wslconfig"
+    :docker   | "Run `dev up`: on WSL2 it raises `processors` / `memory` in %USERPROFILE%\\.wslconfig"
     :explicit | "yours to resize"
   end
 

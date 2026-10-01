@@ -3,6 +3,7 @@
 
 require "dev/cli/flag_parser"
 require "dev/command"
+require "dev/engine_provisioner"
 require "dev/label_contracts"
 require "dev/project_manifest"
 require "dev/runner_discovery"
@@ -22,9 +23,14 @@ module Dev
     #   dev runner register --org --ai-flow    # org agent host, the full ai-flow set
     #   dev runner register --org --labels ai-build  # org custom pool
     #
-    # register is idempotent and self-healing: it converges every advertised
-    # label's contract (agent-capability labels carry the agent host
-    # bootstrap; bare labels converge nothing), then looks for an existing
+    # register is idempotent and self-healing: when the enclosing checkout
+    # declares `build.container`, it first brings the engine up for that
+    # repo's resources hint — the same EngineProvisioner step as `dev up`,
+    # for the invoking user, on every OS (the runner runs as that user, as
+    # GitHub's config.sh/svc.sh do; sizes ratchet across the repos a host
+    # serves). Then it converges every advertised label's contract
+    # (agent-capability labels carry the agent host bootstrap; bare labels
+    # converge nothing), then looks for an existing
     # enrollment at the target scope (RunnerDiscovery — every local runner
     # dir, so dir names never matter) and amends its labels in place on
     # GitHub (RunnerRegistry) instead of re-enrolling; only a scope nothing
@@ -67,6 +73,7 @@ module Dev
           contracts_factory: ContractsFactory,
           discovery: Dev::RunnerDiscovery,
           registry: T.untyped,
+          engine_provisioner: Dev::EngineProvisioner,
           flag_parser: Cli::FlagParser,
           out: T.any(IO, StringIO),
         ).void
@@ -77,6 +84,8 @@ module Dev
         discovery: Dev::RunnerDiscovery.new,
         # The GitHub boundary (#find/#amend!); T.untyped so tests fake it.
         registry: Dev::RunnerRegistry.new,
+        # `dev up`'s engine step, run here for the checked-out repo's hint.
+        engine_provisioner: Dev::EngineProvisioner.new,
         flag_parser: Cli::FlagParser.new,
         out: $stdout
       )
@@ -85,6 +94,7 @@ module Dev
         @contracts_factory = contracts_factory
         @discovery = discovery
         @registry = registry
+        @engine_provisioner = engine_provisioner
         @flag_parser = flag_parser
         @out = out
       end
@@ -107,8 +117,12 @@ module Dev
           name: @flag_parser.value(args, "--name"),
         )
 
-        contracts = @contracts_factory.call(labels, @flag_parser.value(args, "--agent-user"))
         container = context.project&.build_container
+        # The engine this host will build in, sized for this repo, before any
+        # label contract (whose agent-host steps assume an engine exists).
+        @engine_provisioner.provision!(resources: container.resources) if container
+
+        contracts = @contracts_factory.call(labels, @flag_parser.value(args, "--agent-user"))
         contracts.each do |contract|
           contract.converge!(
             container: !container.nil?,
