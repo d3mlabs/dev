@@ -165,8 +165,8 @@ class Dev::WslHostTest < Minitest::Test
 
     Then "every fact is there and restart_pending? reads the gap between configured and observed"
     status.interop == true
-    status.configured_cpus == configured_cpus
-    status.configured_memory_gib == configured_memory_gib
+    status.configured_cpus.eql?(configured_cpus)
+    status.configured_memory_gib.eql?(configured_memory_gib)
     status.observed == Dev::EngineResources.new(cpus: cpus, memory_gib: memory_gib)
     status.hardware == Dev::EngineResources.new(cpus: 28, memory_gib: 64)
     status.restart_pending? == pending
