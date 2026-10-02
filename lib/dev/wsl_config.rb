@@ -5,9 +5,11 @@ require "dev/ini_file"
 
 module Dev
   # The user's `%USERPROFILE%\.wslconfig` — WSL2's VM-wide settings — as an
-  # editable value. dev only cares about three `[wsl2]` keys (`processors`,
-  # `memory`, `autoMemoryReclaim`); everything else in the file is preserved
-  # byte for byte (see IniFile). `with` is the one way in.
+  # editable value. dev only cares about three keys: `[wsl2] processors` and
+  # `memory`, and `[experimental] autoMemoryReclaim` (WSL reads it there and
+  # only there — under `[wsl2]` it warns "Unknown key" and ignores it, which
+  # is what the first real box had). Everything else in the file is
+  # preserved byte for byte (see IniFile). `with` is the one way in.
   class WslConfig
     extend T::Sig
 
@@ -15,6 +17,7 @@ module Dev
     class MalformedValueError < RuntimeError; end
 
     SECTION = "wsl2"
+    EXPERIMENTAL_SECTION = "experimental"
     MEMORY_PATTERN = /\A(\d+)\s*(GB|MB|TB)\z/i
     MIB_PER_GIB = 1024
 
@@ -47,10 +50,10 @@ module Dev
     sig { returns(T.nilable(Integer)) }
     attr_reader :memory_gib
 
-    # @return [String, nil] `[wsl2] autoMemoryReclaim`
+    # @return [String, nil] `[experimental] autoMemoryReclaim`
     sig { returns(T.nilable(String)) }
     def auto_memory_reclaim
-      @ini.value(SECTION, "autoMemoryReclaim")
+      @ini.value(EXPERIMENTAL_SECTION, "autoMemoryReclaim")
     end
 
     # A copy with the given keys set. Nil fields are left as they are.
@@ -67,7 +70,7 @@ module Dev
       ini = @ini
       ini = ini.set(SECTION, "processors", processors.to_s) if processors
       ini = ini.set(SECTION, "memory", "#{memory_gib}GB") if memory_gib
-      ini = ini.set(SECTION, "autoMemoryReclaim", auto_memory_reclaim) if auto_memory_reclaim
+      ini = ini.set(EXPERIMENTAL_SECTION, "autoMemoryReclaim", auto_memory_reclaim) if auto_memory_reclaim
       self.class.new(ini)
     end
 

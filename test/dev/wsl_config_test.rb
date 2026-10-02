@@ -19,13 +19,24 @@ class Dev::WslConfigTest < Minitest::Test
     Given "the gamebox's .wslconfig"
     config = Dev::WslConfig.parse(GAMEBOX)
 
-    Expect "the three keys dev cares about are typed, render is byte-exact, and equality is by content"
+    Expect "the sizing keys are typed, render is byte-exact, and equality is by content"
     config.processors == 28
     config.memory_gib == 64
-    config.auto_memory_reclaim == "gradual"
     config.render == GAMEBOX
     config == Dev::WslConfig.parse(GAMEBOX)
     config != Dev::WslConfig.parse("")
+  end
+
+  test "autoMemoryReclaim lives under [experimental]; the same key under [wsl2] is one WSL ignores and so does dev" do
+    Expect "only the [experimental] placement reads back (the gamebox's own file had it under [wsl2] — WSL warned 'Unknown key')"
+    Dev::WslConfig.parse(text).auto_memory_reclaim.eql?(value)
+
+    Where
+    text                                                        | value
+    "[experimental]\nautoMemoryReclaim=gradual\n"               | "gradual"
+    "[wsl2]\nmemory=8GB\n\n[Experimental]\nautoMemoryReclaim=dropCache\n" | "dropCache"
+    GAMEBOX                                                     | nil
+    ""                                                          | nil
   end
 
   test "parse answers nil for keys that are absent" do
@@ -91,9 +102,10 @@ class Dev::WslConfigTest < Minitest::Test
     When "setting the sizes and the reclaim mode"
     updated = Dev::WslConfig.parse(text).with(processors: 8, memory_gib: 16, auto_memory_reclaim: "gradual")
 
-    Then "the keys land inside [wsl2] and the blank line still separates the sections"
+    Then "the sizes land inside [wsl2], the reclaim mode inside [experimental], and the blank separator stays"
     updated.render ==
-      "[wsl2]\nnetworkingMode=mirrored\nprocessors=8\nmemory=16GB\nautoMemoryReclaim=gradual\n\n[experimental]\nsparseVhd=true\n"
+      "[wsl2]\nnetworkingMode=mirrored\nprocessors=8\nmemory=16GB\n\n[experimental]\nsparseVhd=true\nautoMemoryReclaim=gradual\n"
+    updated.auto_memory_reclaim == "gradual"
 
     Cleanup
     nil
@@ -116,9 +128,9 @@ class Dev::WslConfigTest < Minitest::Test
     When "setting only the memory"
     updated = config.with(memory_gib: 96)
 
-    Then "processors and autoMemoryReclaim are as they were"
+    Then "processors are as they were and no [experimental] section appears"
     updated.processors == 28
-    updated.auto_memory_reclaim == "gradual"
+    updated.auto_memory_reclaim.nil?
     updated.render == GAMEBOX.sub("memory=64GB", "memory=96GB")
 
     Cleanup
@@ -132,8 +144,8 @@ class Dev::WslConfigTest < Minitest::Test
     When "ratcheting and adding the reclaim mode"
     updated = Dev::WslConfig.parse(text).with(processors: 8, memory_gib: 16, auto_memory_reclaim: "gradual")
 
-    Then "existing lines keep their spelling; the new line uses CRLF too"
-    updated.render == "[WSL2]\r\nMemory=16GB\r\nProcessors=8\r\nautoMemoryReclaim=gradual\r\n"
+    Then "existing lines keep their spelling; the new section uses CRLF too"
+    updated.render == "[WSL2]\r\nMemory=16GB\r\nProcessors=8\r\n\r\n[experimental]\r\nautoMemoryReclaim=gradual\r\n"
     updated.processors == 8
     updated.memory_gib == 16
 

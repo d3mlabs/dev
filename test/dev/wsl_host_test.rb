@@ -118,7 +118,8 @@ class Dev::WslHostTest < Minitest::Test
     Then "the read saw nothing and the write created the file"
     config.memory_gib.nil?
     config.processors.nil?
-    File.read(File.join(profile, ".wslconfig")) == "[wsl2]\nprocessors=8\nmemory=16GB\nautoMemoryReclaim=gradual\n"
+    File.read(File.join(profile, ".wslconfig")) ==
+      "[wsl2]\nprocessors=8\nmemory=16GB\n\n[experimental]\nautoMemoryReclaim=gradual\n"
 
     Cleanup
     nil
@@ -163,7 +164,8 @@ class Dev::WslHostTest < Minitest::Test
     When "asking for status"
     status = wsl.status
 
-    Then "every fact is there and restart_pending? reads the gap between configured and observed"
+    Then "every fact is there and restart_pending? reads the gap between configured and observed, " \
+         "allowing for the memory the guest kernel keeps (the gamebox: 64 GB configured, 63 GiB observed)"
     status.interop == true
     status.configured_cpus.eql?(configured_cpus)
     status.configured_memory_gib.eql?(configured_memory_gib)
@@ -177,6 +179,9 @@ class Dev::WslHostTest < Minitest::Test
     Where
     config                                 | observed | configured_cpus | configured_memory_gib | pending
     "[wsl2]\nprocessors=28\nmemory=64GB\n" | [28, 64] | 28              | 64                    | false
+    "[wsl2]\nprocessors=28\nmemory=64GB\n" | [28, 63] | 28              | 64                    | false
+    "[wsl2]\nprocessors=28\nmemory=64GB\n" | [28, 59] | 28              | 64                    | true
+    "[wsl2]\nprocessors=28\nmemory=64GB\n" | [27, 64] | 28              | 64                    | true
     "[wsl2]\nprocessors=12\nmemory=24GB\n" | [4, 8]   | 12              | 24                    | true
     "[wsl2]\nmemory=24GB\n"                | [28, 8]  | nil             | 24                    | true
     "[wsl2]\nprocessors=8\nmemory=16GB\n"  | [28, 64] | 8               | 16                    | false

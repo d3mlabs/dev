@@ -42,9 +42,39 @@ module Dev
       # @return [Boolean]
       sig { returns(T::Boolean) }
       def restart_pending?
-        cpus_behind = !configured_cpus.nil? && observed.cpus < T.must(configured_cpus)
-        memory_behind = !configured_memory_gib.nil? && observed.memory_gib < T.must(configured_memory_gib)
-        cpus_behind || memory_behind
+        !WslHost.runs_at_least?(observed, cpus: configured_cpus, memory_gib: configured_memory_gib)
+      end
+    end
+
+    # The share of configured memory the guest kernel may keep for itself
+    # before dev reads the VM as smaller than configured. A `memory=64GB` VM
+    # reports ~63 GiB (more than colima's guest keeps, so rounding up to the
+    # GiB does not absorb it); comparing exactly would ask for a restart
+    # that can never satisfy it.
+    MEMORY_SLACK = 0.05
+
+    class << self
+      extend T::Sig
+
+      # Whether the VM observably runs at least the given size, allowing for
+      # the guest kernel's share of memory. Nil fields require nothing.
+      #
+      # @param observed [EngineResources] what the VM runs
+      # @param cpus [Integer, nil]
+      # @param memory_gib [Integer, nil]
+      # @return [Boolean]
+      sig { params(observed: EngineResources, cpus: T.nilable(Integer), memory_gib: T.nilable(Integer)).returns(T::Boolean) }
+      def runs_at_least?(observed, cpus:, memory_gib:)
+        cpus_ok = cpus.nil? || observed.cpus >= cpus
+        memory_ok = memory_gib.nil? || observed.memory_gib >= memory_gib - memory_slack_gib(memory_gib)
+        cpus_ok && memory_ok
+      end
+
+      # @param memory_gib [Integer] a configured or requested size
+      # @return [Integer] how far below it the VM may report, at least 1 GiB
+      sig { params(memory_gib: Integer).returns(Integer) }
+      def memory_slack_gib(memory_gib)
+        [(memory_gib * MEMORY_SLACK).ceil, 1].max
       end
     end
 
