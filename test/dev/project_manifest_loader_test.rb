@@ -564,9 +564,11 @@ class ProjectManifestLoaderTest < Minitest::Test
     When "the manifest is loaded"
     manifest = build_loader.load(Pathname.new(tmp.path))
 
-    Then "the manifest loads without it, with a retirement warning"
+    Then "the manifest loads without it, with a retirement warning that names the label's real source"
     manifest.name == "unreal-engine"
     $stderr.string.include?("`runner:` is retired")
+    $stderr.string.include?("derives from the repo name")
+    !$stderr.string.include?("`name:`")
 
     Cleanup
     $stderr = old_stderr
