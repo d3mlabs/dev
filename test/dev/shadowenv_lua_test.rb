@@ -107,7 +107,8 @@ class ShadowenvLuaTest < Minitest::Test
   end
 
   test "setup! raises BrewInstallError when lua formula install fails" do
-    Given "a temporary project directory"
+    Given "a temporary project directory; this test drives the install seam, so the guard is lifted"
+    guard = allow_provisioning
     tmpdir = Dir.mktmpdir("shadowenv-lua-setup-")
 
     When "brew list returns false and brew install also fails"
@@ -120,11 +121,42 @@ class ShadowenvLuaTest < Minitest::Test
     error.message.include?("lua@5.1")
 
     Cleanup
+    restore_provisioning_guard(guard)
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "ensure_homebrew_lua! refuses to brew install under the harness kill-switch (#208)" do
+    Given "a fake brew with lua missing, and the guard armed as every test runs"
+    tmpdir = Dir.mktmpdir("fake-brew-lua-")
+    log = File.join(tmpdir, "invocations.log")
+    fake_brew = File.join(tmpdir, "brew")
+    File.write(fake_brew, <<~SH)
+      #!/bin/sh
+      echo "$@" >> "#{log}"
+      case "$1" in
+        list) exit 1 ;;
+      esac
+      exit 0
+    SH
+    FileUtils.chmod(0o755, fake_brew)
+    original_path = ENV["PATH"]
+    ENV["PATH"] = "#{tmpdir}:/usr/bin:/bin"
+
+    When "a test that forgot its stub reaches the install"
+    error = assert_raises(Dev::ProvisioningGuard::ForbiddenError) { Dev::ShadowenvLua.ensure_homebrew_lua!("5.1") }
+
+    Then "brew install never ran"
+    File.read(log).include?("install") == false
+    error.message.include?("brew install lua@5.1")
+
+    Cleanup
+    ENV["PATH"] = original_path
     FileUtils.rm_rf(tmpdir)
   end
 
   test "ensure_homebrew_lua! raises BrewInstallError when the luarocks install fails" do
-    Given "a fake brew with lua installed but luarocks missing and uninstallable"
+    Given "a fake brew with lua installed but luarocks missing and uninstallable; this test drives the seam, so the guard is lifted"
+    guard = allow_provisioning
     tmpdir = Dir.mktmpdir("fake-brew-lua-")
     fake_brew = File.join(tmpdir, "brew")
     File.write(fake_brew, <<~SH)
@@ -149,6 +181,7 @@ class ShadowenvLuaTest < Minitest::Test
     error.message.include?("luarocks")
 
     Cleanup
+    restore_provisioning_guard(guard)
     ENV["PATH"] = original_path
     FileUtils.rm_rf(tmpdir)
   end

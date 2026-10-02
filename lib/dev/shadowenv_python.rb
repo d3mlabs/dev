@@ -3,6 +3,7 @@
 
 require "fileutils"
 require "pathname"
+require "dev/provisioning_guard"
 
 module Dev
   # Shadowenv Python provisioning: installs the interpreter via Homebrew
@@ -134,6 +135,7 @@ module Dev
     def ensure_homebrew_python!(python_version)
       formula = "python@#{python_version}"
       unless Kernel.system("brew", "list", formula, out: File::NULL, err: File::NULL)
+        ProvisioningGuard.check!("brew install #{formula}", stub_hint: "Dev::ShadowenvPython.stubs(:setup!)")
         $stderr.puts "dev: Installing #{formula} via Homebrew..."
         raise BrewInstallError, "brew install #{formula} failed" unless Kernel.system("brew", "install", formula)
       end

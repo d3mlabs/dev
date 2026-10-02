@@ -3,6 +3,7 @@
 
 require "fileutils"
 require "pathname"
+require "dev/provisioning_guard"
 require "dev/shell_rc_hook"
 
 module Dev
@@ -35,6 +36,10 @@ module Dev
       }.freeze,
       T::Hash[String, String],
     )
+
+    # The boundary a test stubs to stay clear of this module's install seams
+    # (ProvisioningGuard's message, dev#208).
+    STUB_HINT = "Dev::ShadowenvRuby.stubs(:converge!) / .stubs(:ensure!)"
 
     module_function
 
@@ -242,6 +247,7 @@ module Dev
       env = { "PATH" => path_with_brew_bin }
       return false unless system(env, "which", "rbenv", out: File::NULL, err: File::NULL)
 
+      ProvisioningGuard.check!("rbenv install #{version}", stub_hint: STUB_HINT)
       ensure_ruby_build_deps!(env)
       system(env, "rbenv", "uninstall", "--force", version, out: File::NULL, err: File::NULL) if force
       $stderr.puts "dev: Installing Ruby #{version} with rbenv (one-time)..."
@@ -333,6 +339,8 @@ module Dev
 
       RUBY_BUILD_BREW_DEPS.each_key do |formula|
         next if system(env, "brew", "list", "--versions", formula, out: File::NULL, err: File::NULL)
+
+        ProvisioningGuard.check!("brew install #{formula}", stub_hint: STUB_HINT)
         system(env, "brew", "install", formula)
       end
     end

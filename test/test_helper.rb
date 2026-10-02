@@ -22,7 +22,16 @@ require "minitest/spec"
 require "minitest/mock"
 require "mocha/minitest"
 require "support/sorbet_helper"
+require "support/provisioning_guard_helper"
 require "minitest/hell" if ENV["MT_HELL"]
+
+# Arm the provisioning kill-switch for every test process (dev#208): a test
+# that reaches a real install seam (rbenv install, brew install) without
+# stubbing the boundary fails fast with ProvisioningGuard::ForbiddenError
+# instead of building a Ruby on the developer's machine. Tests that drive a
+# seam themselves lift it via ProvisioningGuardHelper.
+ENV[Dev::ProvisioningGuard::ENV_VAR] = "1"
+Minitest::Test.include(ProvisioningGuardHelper)
 
 # Minitest Reporters (optional; rspock uses RakeRerunReporter)
 begin

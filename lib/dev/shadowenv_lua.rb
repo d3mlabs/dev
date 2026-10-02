@@ -3,6 +3,7 @@
 
 require "fileutils"
 require "pathname"
+require "dev/provisioning_guard"
 
 module Dev
   # Shadowenv Lua provisioning: generates .shadowenv.d/510_lua.lisp so that
@@ -16,6 +17,10 @@ module Dev
     class BrewInstallError < StandardError; end
 
     LISP_FILENAME = "510_lua.lisp"
+
+    # The boundary a test stubs to stay clear of this module's install seams
+    # (ProvisioningGuard's message, dev#208).
+    STUB_HINT = "Dev::ShadowenvLua.stubs(:setup!)"
 
     module_function
 
@@ -93,12 +98,14 @@ module Dev
     def ensure_homebrew_lua!(lua_version)
       formula = "lua@#{lua_version}"
       unless Kernel.system("brew", "list", formula, out: File::NULL, err: File::NULL)
+        ProvisioningGuard.check!("brew install #{formula}", stub_hint: STUB_HINT)
         $stderr.puts "dev: Installing #{formula} via Homebrew..."
         unless Kernel.system("brew", "install", formula)
           raise BrewInstallError, "brew install #{formula} failed"
         end
       end
       unless Kernel.system("brew", "list", "luarocks", out: File::NULL, err: File::NULL)
+        ProvisioningGuard.check!("brew install luarocks", stub_hint: STUB_HINT)
         $stderr.puts "dev: Installing luarocks via Homebrew..."
         unless Kernel.system("brew", "install", "luarocks")
           raise BrewInstallError, "brew install luarocks failed"
