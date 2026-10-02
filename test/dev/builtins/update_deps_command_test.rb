@@ -26,7 +26,7 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
   test "call resolves an empty manifest and reports the update" do
     Given "a project root with no dependencies.rb"
     root = Pathname.new(Dir.mktmpdir("update-deps-empty-"))
-    Dev::ShadowenvRuby.stubs(:ensure!)
+    Dev::ShadowenvRuby.stubs(:converge!)
     command = Dev::Builtins::UpdateDepsCommand.new
     old_stdout = $stdout
     $stdout = StringIO.new
@@ -53,7 +53,7 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     locker.expects(:lock).with { |*args| args.fetch(0).map(&:name) == ["rake"] }
     Dev::Deps::Registry.expects(:lockers).returns({ bundler: locker })
     Dev::Deps::Resolver.expects(:new).returns(stub(resolve: []))
-    Dev::ShadowenvRuby.stubs(:ensure!)
+    Dev::ShadowenvRuby.stubs(:converge!)
     command = Dev::Builtins::UpdateDepsCommand.new
     old_stdout = $stdout
     $stdout = StringIO.new
@@ -77,7 +77,7 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
       Dev::Deps.define { gem "rake" }
     RUBY
     order = sequence("provision then lock")
-    Dev::ShadowenvRuby.expects(:ensure!).with(ruby_version: "4.0.1", project_root: root).once.in_sequence(order)
+    Dev::ShadowenvRuby.expects(:converge!).with(ruby_version: "4.0.1", project_root: root).once.in_sequence(order)
     locker = mock
     locker.expects(:lock).in_sequence(order)
     Dev::Deps::Registry.expects(:lockers).returns({ bundler: locker })
@@ -102,7 +102,7 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     Dev::Deps.define { ruby "9.9.9" }
     root = Pathname.new(Dir.mktmpdir("update-deps-stale-"))
     File.write(root / "dependencies.rb", "UPDATE_DEPS_TEST_CONSTANT = 1 unless defined?(UPDATE_DEPS_TEST_CONSTANT)\n")
-    Dev::ShadowenvRuby.stubs(:ensure!)
+    Dev::ShadowenvRuby.stubs(:converge!)
     command = Dev::Builtins::UpdateDepsCommand.new
     old_stdout = $stdout
     $stdout = StringIO.new

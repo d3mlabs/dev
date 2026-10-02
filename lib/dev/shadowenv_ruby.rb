@@ -82,13 +82,51 @@ module Dev
     end
 
     # Guarded provisioning: the O(1) provisioned? check first, so callers on
-    # every-command paths (CommandRunner, the `dev up`/`dev deps install` builtins) pay
-    # nothing after the first run.
+    # the every-command path (CommandRunner) pay nothing after the first run.
+    # The converge verbs use converge! instead.
+    #
+    # @param ruby_version [String]
+    # @param project_root [String, Pathname]
+    # @return [void]
     sig { params(ruby_version: String, project_root: T.any(String, Pathname)).void }
     def ensure!(ruby_version:, project_root:)
       return if provisioned?(ruby_version, project_root: project_root)
 
       setup!(ruby_version: ruby_version, project_root: project_root)
+    end
+
+    # The converge verbs' entry (`dev up`, `dev deps install`, `dev deps
+    # update`): ensure!, except a current lisp does not vouch for the ruby
+    # it names. The install can go bad *after* the lisp was written — a brew
+    # upgrade shadows its libruby so it runs as another version (#204; the
+    # hijack #75 guards against at build time), or a dev lib it was built
+    # against disappears — and bundler would then fail the Gemfile pin with
+    # a baffling mismatch. Re-running the runtime health check here hands
+    # such a ruby to setup!'s existing rebuild branch, which names the
+    # culprit and reinstalls. A healthy ruby costs the probes and nothing
+    # more; the every-command path keeps its O(1) guard.
+    #
+    # @param ruby_version [String]
+    # @param project_root [String, Pathname]
+    # @return [void]
+    sig { params(ruby_version: String, project_root: T.any(String, Pathname)).void }
+    def converge!(ruby_version:, project_root:)
+      return if provisioned?(ruby_version, project_root: project_root) && installed_ruby_healthy?(ruby_version)
+
+      setup!(ruby_version: ruby_version, project_root: project_root)
+    end
+
+    # Whether the rbenv install for the version exists, loads every required
+    # extension, and runs as the version it is named for.
+    #
+    # @param version [String]
+    # @return [Boolean]
+    sig { params(version: String).returns(T::Boolean) }
+    def installed_ruby_healthy?(version)
+      ruby_root = find_ruby_root(version)
+      return false unless ruby_root
+
+      extensions_ok?(ruby_root) && reported_version_ok?(ruby_root, version)
     end
 
     # Returns true when .shadowenv.d/510_ruby.lisp exists and already

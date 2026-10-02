@@ -36,7 +36,9 @@ module Dev
         # Provision before locking: the lockers run their ecosystem tool under
         # the project's shadowenv, and a fresh checkout has no .shadowenv.d
         # yet — wrapping alone would still solve under the ambient Ruby (dev#76).
-        ShadowenvRuby.ensure!(ruby_version: project.ruby_version, project_root: project_root)
+        # converge!, not ensure!: re-checks the installed ruby's health behind
+        # a current lisp (#204).
+        ShadowenvRuby.converge!(ruby_version: project.ruby_version, project_root: project_root)
 
         deps_rb = project_root / "dependencies.rb"
         Dev::Deps.reset!
