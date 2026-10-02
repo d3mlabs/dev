@@ -512,8 +512,35 @@ class ShadowenvRubyTest < Minitest::Test
 
   # --- ensure_ruby_build_deps! ---
 
+  test "ensure_ruby_build_deps! refuses to brew install under the harness kill-switch (#208)" do
+    Given "a fake brew where no formula is installed, and the guard armed as every test runs"
+    tmpdir = Dir.mktmpdir("fake-brew-")
+    log = File.join(tmpdir, "invocations.log")
+    File.write(File.join(tmpdir, "brew"), <<~SCRIPT)
+      #!/bin/sh
+      echo "$@" >> "#{log}"
+      case "$1" in
+        list) exit 1 ;;
+      esac
+      exit 0
+    SCRIPT
+    FileUtils.chmod(0o755, File.join(tmpdir, "brew"))
+    env = { "PATH" => "#{tmpdir}:/usr/bin:/bin" }
+
+    When "we ensure the build deps"
+    error = assert_raises(Dev::ProvisioningGuard::ForbiddenError) { Dev::ShadowenvRuby.ensure_ruby_build_deps!(env) }
+
+    Then "nothing was installed and the error names the first refused formula"
+    File.read(log).include?("install") == false
+    error.message.include?("brew install #{Dev::ShadowenvRuby::RUBY_BUILD_BREW_DEPS.keys.first}")
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
   test "ensure_ruby_build_deps! installs every missing build library" do
-    Given "a fake brew where no formula is installed yet"
+    Given "a fake brew where no formula is installed yet; this test drives the seam, so the guard is lifted"
+    guard = allow_provisioning
     tmpdir = Dir.mktmpdir("fake-brew-")
     log = File.join(tmpdir, "invocations.log")
     File.write(File.join(tmpdir, "brew"), <<~SCRIPT)
@@ -535,6 +562,7 @@ class ShadowenvRubyTest < Minitest::Test
     Dev::ShadowenvRuby::RUBY_BUILD_BREW_DEPS.keys.all? { |f| invocations.include?("install #{f}") } == true
 
     Cleanup
+    restore_provisioning_guard(guard)
     FileUtils.rm_rf(tmpdir)
   end
 
@@ -905,8 +933,37 @@ class ShadowenvRubyTest < Minitest::Test
     FileUtils.rm_rf(tmp_rbenv_root)
   end
 
+  test "install_ruby_with_version_manager refuses to rbenv install under the harness kill-switch (#208)" do
+    Given "a PATH carrying a fake rbenv, and the guard armed as every test runs"
+    tmpdir = Dir.mktmpdir("fake-rbenv-")
+    invocations_log = File.join(tmpdir, "invocations.log")
+    fake_rbenv = File.join(tmpdir, "rbenv")
+    File.write(fake_rbenv, "#!/bin/sh\necho \"$@\" >> \"#{invocations_log}\"\nexit 0\n")
+    FileUtils.chmod(0o755, fake_rbenv)
+    original_path = ENV["PATH"]
+    original_brew_prefix = ENV["HOMEBREW_PREFIX"]
+    ENV["PATH"] = "#{tmpdir}:/usr/bin:/bin"
+    ENV["HOMEBREW_PREFIX"] = File.join(tmpdir, "no-brew-here")
+
+    When "a test that forgot its stub reaches the install"
+    error = assert_raises(Dev::ProvisioningGuard::ForbiddenError) do
+      Dev::ShadowenvRuby.install_ruby_with_version_manager("4.0.1")
+    end
+
+    Then "rbenv never ran, and the error points at the stub the test should have used"
+    File.exist?(invocations_log) == false
+    error.message.include?("rbenv install 4.0.1")
+    error.message.include?("Dev::ShadowenvRuby.stubs(:converge!)")
+
+    Cleanup
+    ENV["PATH"] = original_path
+    ENV["HOMEBREW_PREFIX"] = original_brew_prefix
+    FileUtils.rm_rf(tmpdir)
+  end
+
   test "install_ruby_with_version_manager invokes rbenv install for the version" do
-    Given "a PATH carrying a fake rbenv that records its invocations"
+    Given "a PATH carrying a fake rbenv that records its invocations; this test drives the seam, so the guard is lifted"
+    guard = allow_provisioning
     tmpdir = Dir.mktmpdir("fake-rbenv-")
     invocations_log = File.join(tmpdir, "invocations.log")
     fake_rbenv = File.join(tmpdir, "rbenv")
@@ -927,6 +984,7 @@ class ShadowenvRubyTest < Minitest::Test
     File.read(invocations_log).include?("install --skip-existing 4.0.5") == true
 
     Cleanup
+    restore_provisioning_guard(guard)
     ENV["PATH"] = original_path
     ENV["HOMEBREW_PREFIX"] = original_brew_prefix
     FileUtils.rm_rf(tmpdir)

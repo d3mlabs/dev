@@ -209,8 +209,28 @@ class ShadowenvPythonTest < Minitest::Test
     FileUtils.rm_rf(tmpdir)
   end
 
+  test "ensure_homebrew_python! refuses to brew install under the harness kill-switch (#208)" do
+    Given "a brew without python@3.12, and the guard armed as every test runs"
+    tmpdir = Dir.mktmpdir("shadowenv-python-test-")
+    log = write_fake_brew(tmpdir, prefix: tmpdir, list_exit: 1)
+    original_path = ENV["PATH"]
+    ENV["PATH"] = "#{tmpdir}:/usr/bin:/bin"
+
+    When "a test that forgot its stub reaches the install"
+    error = assert_raises(Dev::ProvisioningGuard::ForbiddenError) { Dev::ShadowenvPython.ensure_homebrew_python!("3.12") }
+
+    Then "brew install never ran"
+    File.read(log).include?("install") == false
+    error.message.include?("brew install python@3.12")
+
+    Cleanup
+    ENV["PATH"] = original_path
+    FileUtils.rm_rf(tmpdir)
+  end
+
   test "ensure_homebrew_python! installs the formula when it is missing" do
-    Given "a brew without python@3.12 whose install succeeds"
+    Given "a brew without python@3.12 whose install succeeds; this test drives the seam, so the guard is lifted"
+    guard = allow_provisioning
     tmpdir = Dir.mktmpdir("shadowenv-python-test-")
     prefix = File.join(tmpdir, "opt", "python@3.12")
     FileUtils.mkdir_p(File.join(prefix, "bin"))
@@ -227,12 +247,14 @@ class ShadowenvPythonTest < Minitest::Test
     result == File.join(prefix, "bin", "python3.12")
 
     Cleanup
+    restore_provisioning_guard(guard)
     ENV["PATH"] = original_path
     FileUtils.rm_rf(tmpdir)
   end
 
   test "ensure_homebrew_python! raises when brew install fails" do
-    Given "a brew without python@3.12 whose install fails"
+    Given "a brew without python@3.12 whose install fails; this test drives the seam, so the guard is lifted"
+    guard = allow_provisioning
     tmpdir = Dir.mktmpdir("shadowenv-python-test-")
     write_fake_brew(tmpdir, prefix: tmpdir, list_exit: 1, install_exit: 1)
     original_path = ENV["PATH"]
@@ -245,6 +267,7 @@ class ShadowenvPythonTest < Minitest::Test
     assert_includes error.message, "brew install python@3.12 failed"
 
     Cleanup
+    restore_provisioning_guard(guard)
     ENV["PATH"] = original_path
     FileUtils.rm_rf(tmpdir)
   end
