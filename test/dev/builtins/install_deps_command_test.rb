@@ -42,7 +42,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     )
     # Headless boxes reach dev deps install before any CommandRunner provisioning,
     # so the builtin provisions the toolchain itself — the true boundary.
-    Dev::ShadowenvRuby.expects(:ensure!).with(ruby_version: "4.0.1", project_root: root).once
+    Dev::ShadowenvRuby.expects(:converge!).with(ruby_version: "4.0.1", project_root: root).once
 
     When "running dev deps install"
     command.call(args: [], context: build_context(root))
@@ -72,7 +72,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
       },
       host_service: quiet_host_service,
     )
-    Dev::ShadowenvRuby.stubs(:ensure!)
+    Dev::ShadowenvRuby.stubs(:converge!)
 
     When "running dev deps install"
     command.call(args: [], context: build_context(root))
@@ -95,7 +95,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     # boundaries — the Ruby provisioner and the host service — are faked.
     root = Pathname.new(Dir.mktmpdir("install-deps-default-"))
     command = Dev::Builtins::InstallDepsCommand.new(host_service: quiet_host_service)
-    Dev::ShadowenvRuby.stubs(:ensure!)
+    Dev::ShadowenvRuby.stubs(:converge!)
 
     When "running dev deps install"
     command.call(args: [], context: build_context(root))

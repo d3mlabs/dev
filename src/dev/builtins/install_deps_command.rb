@@ -82,7 +82,9 @@ module Dev
         # Headless boxes (CI, runner services) reach dev deps install before any
         # dev.yml command has run CommandRunner's provisioning, so the builtin
         # must provision the pinned Ruby itself — bundler installs against it.
-        ShadowenvRuby.ensure!(ruby_version: project.ruby_version, project_root: project.root)
+        # converge!, not ensure!: a converge verb re-checks the installed
+        # ruby's health behind a current lisp (#204).
+        ShadowenvRuby.converge!(ruby_version: project.ruby_version, project_root: project.root)
 
         lockfile = Dev::Deps::Lockfile.new(dir: project.root)
         installer = @installer_factory.call(

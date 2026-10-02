@@ -166,6 +166,108 @@ class ShadowenvRubyTest < Minitest::Test
     FileUtils.rm_rf(tmpdir)
   end
 
+  # --- converge! ---
+
+  test "converge! rebuilds a provisioned ruby that has come to run as another version (#204)" do
+    Given "a current lisp over an installed ruby whose libruby is now hijacked"
+    tmpdir = Dir.mktmpdir("shadowenv-converge-test-")
+    tmp_rbenv_root = Dir.mktmpdir("rbenv-root-")
+    original_rbenv_root = ENV["RBENV_ROOT"]
+    ENV["RBENV_ROOT"] = tmp_rbenv_root
+    ruby_root = File.join(tmp_rbenv_root, "versions", "4.0.5")
+    write_fake_ruby(ruby_root, reports: "4.0.7")
+    write_current_lisp(tmpdir, ruby_root, "4.0.5")
+
+    When "a converge verb runs"
+    Dev::ShadowenvRuby.converge!(ruby_version: "4.0.5", project_root: tmpdir)
+
+    Then "the current lisp does not shield it: full provisioning (and its rebuild branch) runs"
+    1 * Dev::ShadowenvRuby.setup!(ruby_version: "4.0.5", project_root: tmpdir)
+
+    Cleanup
+    ENV["RBENV_ROOT"] = original_rbenv_root
+    FileUtils.rm_rf(tmpdir)
+    FileUtils.rm_rf(tmp_rbenv_root)
+  end
+
+  test "converge! rebuilds a provisioned ruby that has lost a required extension" do
+    Given "a current lisp over an installed ruby that reports the right version but cannot load extensions"
+    tmpdir = Dir.mktmpdir("shadowenv-converge-test-")
+    tmp_rbenv_root = Dir.mktmpdir("rbenv-root-")
+    original_rbenv_root = ENV["RBENV_ROOT"]
+    ENV["RBENV_ROOT"] = tmp_rbenv_root
+    ruby_root = File.join(tmp_rbenv_root, "versions", "4.0.5")
+    write_fake_ruby(ruby_root, reports: "4.0.5", extensions_ok: false)
+    write_current_lisp(tmpdir, ruby_root, "4.0.5")
+
+    When "a converge verb runs"
+    Dev::ShadowenvRuby.converge!(ruby_version: "4.0.5", project_root: tmpdir)
+
+    Then "full provisioning runs"
+    1 * Dev::ShadowenvRuby.setup!(ruby_version: "4.0.5", project_root: tmpdir)
+
+    Cleanup
+    ENV["RBENV_ROOT"] = original_rbenv_root
+    FileUtils.rm_rf(tmpdir)
+    FileUtils.rm_rf(tmp_rbenv_root)
+  end
+
+  test "converge! leaves a provisioned, healthy ruby alone" do
+    Given "a current lisp over an installed ruby that runs as itself with its extensions"
+    tmpdir = Dir.mktmpdir("shadowenv-converge-test-")
+    tmp_rbenv_root = Dir.mktmpdir("rbenv-root-")
+    original_rbenv_root = ENV["RBENV_ROOT"]
+    ENV["RBENV_ROOT"] = tmp_rbenv_root
+    ruby_root = File.join(tmp_rbenv_root, "versions", "4.0.5")
+    write_fake_ruby(ruby_root, reports: "4.0.5")
+    write_current_lisp(tmpdir, ruby_root, "4.0.5")
+
+    When "a converge verb runs"
+    Dev::ShadowenvRuby.converge!(ruby_version: "4.0.5", project_root: tmpdir)
+
+    Then "nothing is re-provisioned: the health check was the whole cost"
+    0 * Dev::ShadowenvRuby.setup!
+
+    Cleanup
+    ENV["RBENV_ROOT"] = original_rbenv_root
+    FileUtils.rm_rf(tmpdir)
+    FileUtils.rm_rf(tmp_rbenv_root)
+  end
+
+  test "converge! provisions an unprovisioned project like ensure! does" do
+    Given "a project root with no .shadowenv.d"
+    tmpdir = Dir.mktmpdir("shadowenv-converge-test-")
+
+    When "a converge verb runs"
+    Dev::ShadowenvRuby.converge!(ruby_version: "4.0.5", project_root: tmpdir)
+
+    Then "full provisioning runs"
+    1 * Dev::ShadowenvRuby.setup!(ruby_version: "4.0.5", project_root: tmpdir)
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "converge! rebuilds when the lisp is current but the ruby it names is gone" do
+    Given "a current lisp whose rbenv prefix no longer exists"
+    tmpdir = Dir.mktmpdir("shadowenv-converge-test-")
+    tmp_rbenv_root = Dir.mktmpdir("rbenv-root-")
+    original_rbenv_root = ENV["RBENV_ROOT"]
+    ENV["RBENV_ROOT"] = tmp_rbenv_root
+    write_current_lisp(tmpdir, File.join(tmp_rbenv_root, "versions", "4.0.5"), "4.0.5")
+
+    When "a converge verb runs"
+    Dev::ShadowenvRuby.converge!(ruby_version: "4.0.5", project_root: tmpdir)
+
+    Then "full provisioning runs"
+    1 * Dev::ShadowenvRuby.setup!(ruby_version: "4.0.5", project_root: tmpdir)
+
+    Cleanup
+    ENV["RBENV_ROOT"] = original_rbenv_root
+    FileUtils.rm_rf(tmpdir)
+    FileUtils.rm_rf(tmp_rbenv_root)
+  end
+
   # --- setup! ---
 
   test "setup! writes the lisp and .ruby-version and reports success" do
@@ -869,6 +971,14 @@ class ShadowenvRubyTest < Minitest::Test
   end
 
   private
+
+  # A .shadowenv.d/510_ruby.lisp already providing the version — what
+  # provisioned? reads as current.
+  def write_current_lisp(project_root, ruby_root, version)
+    shadowenv_d = File.join(project_root, ".shadowenv.d")
+    FileUtils.mkdir_p(shadowenv_d)
+    File.write(File.join(shadowenv_d, "510_ruby.lisp"), Dev::ShadowenvRuby.generate_ruby_lisp(ruby_root, version))
+  end
 
   # A stand-in brew that prints the given path for any prefix query.
   def write_fake_brew(dir, prints:)
