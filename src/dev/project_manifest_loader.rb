@@ -107,8 +107,8 @@ module Dev
     end
 
     # `runner:` is a retired dev.yml key — enrollment identity is a machine
-    # fact, not a repo declaration: the repo label derives from `name:` and
-    # everything else is flags (`dev runner register`). A warning, not an
+    # fact, not a repo declaration: the repo label derives from the repo name
+    # and everything else is flags (`dev runner register`). A warning, not an
     # error: the block simply means nothing now, and existing enrollments
     # keep working untouched.
     #
@@ -119,7 +119,7 @@ module Dev
       return unless yaml.key?("runner")
 
       $stderr.puts "dev: dev.yml `runner:` is retired and ignored — the repo runner label now derives " \
-                   "from `name:` (`dev runner register`); delete the block."
+                   "from the repo name (`dev runner register`); delete the block."
     end
 
     # Coerce a scalar to a non-empty String, or nil.
