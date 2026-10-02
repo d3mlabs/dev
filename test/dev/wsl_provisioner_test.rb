@@ -43,13 +43,11 @@ class Dev::WslProvisionerTest < Minitest::Test
     cpus, memory_gib = observed
     hw_cpus, hw_gib = hardware
     executor = RecordedWslExecutor.new(
-      profile_dir: @profile, nproc: cpus.to_s, hardware: "#{hw_cpus} #{hw_gib * GIB}", containers: containers,
+      profile_dir: @profile, nproc: cpus.to_s, memory_mb: memory_gib * 1024, hardware: "#{hw_cpus} #{hw_gib * GIB}",
+      containers: containers,
     )
-    meminfo = File.join(@dir, "meminfo")
-    File.write(meminfo, "MemTotal:       #{memory_gib * GIB / 1024} kB\n")
     host = Dev::WslHost.new(
-      executor: executor, host_os: "linux", proc_version_path: File.join(@dir, "version"),
-      binfmt_dir: @binfmt, meminfo_path: meminfo,
+      executor: executor, host_os: "linux", proc_version_path: File.join(@dir, "version"), binfmt_dir: @binfmt,
     )
     [Dev::WslProvisioner.new(host: host, executor: executor, out: @out), executor]
   end
@@ -107,9 +105,9 @@ class Dev::WslProvisionerTest < Minitest::Test
   end
 
   test "configured at or above the hint and applied: no-op, nothing written" do
-    Given "a 28/64 box, converged, whose VM reports a GiB less than configured (the guest kernel's share)"
+    Given "a 28/64 box, converged and running at its configured size"
     text = "[wsl2]\nmemory=64GB\nprocessors=28\nswap=16GB\nnetworkingMode=mirrored\n\n[experimental]\nautoMemoryReclaim=gradual\n"
-    prov, executor = provisioner(config: text, observed: [28, observed_gib])
+    prov, executor = provisioner(config: text, observed: [28, 64])
 
     When "a smaller project provisions"
     prov.provision!(cpus: 12, memory_gib: 24)
@@ -120,17 +118,12 @@ class Dev::WslProvisionerTest < Minitest::Test
 
     Cleanup
     nil
-
-    Where
-    observed_gib | _
-    64           | nil
-    63           | nil
   end
 
-  test "the gamebox's actual first run: reclaim under [wsl2] (ignored by WSL), VM at 63 of 64 GiB — fixed, no restart" do
+  test "the gamebox's actual first run: reclaim under [wsl2] (ignored by WSL) on a converged VM — fixed, no restart" do
     Given "the file the gamebox had, and the VM it had"
     text = "[wsl2]\nmemory=64GB\nprocessors=28\nswap=16GB\nautoMemoryReclaim=gradual\nnetworkingMode=mirrored\n"
-    prov, _executor = provisioner(config: text, observed: [28, 63])
+    prov, _executor = provisioner(config: text, observed: [28, 64])
 
     When "cellbound-3d provisions"
     prov.provision!(cpus: 12, memory_gib: 24)
@@ -142,10 +135,10 @@ class Dev::WslProvisionerTest < Minitest::Test
     nil
   end
 
-  test "a hint equal to the configured size is met by a VM a GiB short of it — never a perpetual restart" do
-    Given "a 64 GB config, a 63 GiB VM, and a project asking for all 64"
+  test "a project asking for the whole box on a VM running the whole box: nothing to do" do
+    Given "a 64 GB config, a 64 GB VM (its kernel keeps a GiB; dev reads the hypervisor's figure), a 64 GiB hint"
     text = "[wsl2]\nprocessors=28\nmemory=64GB\n\n[experimental]\nautoMemoryReclaim=gradual\n"
-    prov, _executor = provisioner(config: text, observed: [28, 63])
+    prov, _executor = provisioner(config: text, observed: [28, 64])
 
     When "provisioning"
     prov.provision!(cpus: 28, memory_gib: 64)

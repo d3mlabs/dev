@@ -6,6 +6,7 @@ require "dev/colima_provisioner"
 require "dev/container_engine"
 require "dev/deps"
 require "dev/docker_cli_plugins"
+require "dev/engine_resources"
 require "dev/engine_resources_check"
 require "dev/linux_engine_provisioner"
 require "dev/settings"
@@ -97,13 +98,18 @@ module Dev
 
       @cli_plugins.ensure! if @host_os == "darwin"
       @colima.provision!(cpus: resources&.cpus, memory_gib: resources&.memory_gib) if engine.kind == :colima
+      actual = T.let(nil, T.nilable(EngineResources))
       if engine.kind == :docker && @host_os == "linux"
         # dockerd first: the WSL ratchet asks the local daemon who is busy.
         @linux_engine.provision!
-        @wsl.provision!(cpus: resources&.cpus, memory_gib: resources&.memory_gib) if @wsl_host.wsl?
+        if @wsl_host.wsl?
+          @wsl.provision!(cpus: resources&.cpus, memory_gib: resources&.memory_gib)
+          # The daemon's MemTotal is what the guest kernel kept; the VM's size is the host's to report.
+          actual = @wsl_host.observed
+        end
       end
 
-      @resources_check.check!(engine: engine, hint: resources)
+      @resources_check.check!(engine: engine, hint: resources, actual: actual)
     end
   end
 end

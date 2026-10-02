@@ -47,14 +47,23 @@ module Dev
     #
     # @param engine [Dev::ContainerEngine] the engine the command will use
     # @param hint [BuildContainerConfig::Resources, nil] the repo's minimum; nil requires nothing
+    # @param actual [EngineResources, nil] the engine's size when the caller knows it better than
+    #   `docker info` does (a WSL2 VM's daemon reports what its kernel kept, not what WSL gave the VM);
+    #   nil asks the daemon
     # @return [void]
     # @raise [UndersizedEngineError] in enforce mode, when the engine falls short
     # @raise [Settings::InvalidSettingError] on an unknown engine_resources value
-    sig { params(engine: Dev::ContainerEngine, hint: T.nilable(BuildContainerConfig::Resources)).void }
-    def check!(engine:, hint:)
+    sig do
+      params(
+        engine: Dev::ContainerEngine,
+        hint: T.nilable(BuildContainerConfig::Resources),
+        actual: T.nilable(EngineResources),
+      ).void
+    end
+    def check!(engine:, hint:, actual: nil)
       return if hint.nil? || (hint.cpus.nil? && hint.memory_gib.nil?)
 
-      actual = engine.resources
+      actual ||= engine.resources
       return if actual.nil? || actual.satisfies?(hint)
 
       message = shortfall_message(engine, actual, hint)

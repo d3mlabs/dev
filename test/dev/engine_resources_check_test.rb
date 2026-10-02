@@ -83,6 +83,37 @@ class Dev::EngineResourcesCheckTest < Minitest::Test
     "empty"  | Dev::BuildContainerConfig::Resources.new(cpus: nil, memory_gib: nil)
   end
 
+  test "a caller who knows the engine's size better than `docker info` hands it in, and the daemon is not asked" do
+    Given "a daemon whose kernel reports 63 of the VM's 64 GiB, and the host's exact figure"
+    engine = engine_with(cpus: 28, memory_gib: 63, kind: :docker)
+    check = Dev::EngineResourcesCheck.new(settings: build_settings(@dir, mode: "enforce"), out: @out)
+
+    When "checking a 64 GiB hint with the VM's size supplied"
+    check.check!(engine: engine, hint: hint(cpus: 28, memory_gib: 64), actual: Dev::EngineResources.new(cpus: 28, memory_gib: 64))
+
+    Then "it passes on the supplied size; docker info was never run"
+    @out.string.empty?
+    engine.captures.empty?
+  end
+
+  test "a supplied size that falls short is reported as the engine's size" do
+    Given "a host figure below the hint"
+    engine = engine_with(cpus: 28, memory_gib: 64, kind: :docker)
+    check = Dev::EngineResourcesCheck.new(settings: build_settings(@dir, mode: "enforce"), out: @out)
+
+    When "checking"
+    error = assert_raises(Dev::EngineResourcesCheck::UndersizedEngineError) do
+      check.check!(engine: engine, hint: hint(cpus: 28, memory_gib: 64), actual: Dev::EngineResources.new(cpus: 28, memory_gib: 32))
+    end
+
+    Then "the message carries the supplied size, and docker info was never run"
+    error.message.include?("has 28 cpus / 32 GiB")
+    engine.captures.empty?
+
+    Cleanup
+    nil
+  end
+
   test "an unreachable daemon is not a shortfall — the docker call that follows reports it" do
     Given "an engine whose docker info yields nothing"
     engine = FakeContainerEngine.new(kind: :colima, capture_result: "")

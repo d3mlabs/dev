@@ -105,11 +105,9 @@ module Dev
       target_resources = EngineResources.new(
         cpus: target_cpus || observed.cpus, memory_gib: target_memory || observed.memory_gib,
       )
-      # The restart question is the project's: does the VM run what *it*
-      # needs? A ratchet above the hint (someone else's larger size) does not
-      # make this project wait, and the guest kernel's memory share is allowed
-      # for — a 64 GB VM reports 63 and must not read as perpetually behind.
-      restart_needed = !WslHost.runs_at_least?(observed, cpus: cpus, memory_gib: memory_gib)
+      restart_needed = !observed.satisfies?(
+        BuildContainerConfig::Resources.new(cpus: target_cpus, memory_gib: target_memory),
+      )
 
       write_needed = target_cpus != config.processors || target_memory != config.memory_gib ||
         config.auto_memory_reclaim.nil?
