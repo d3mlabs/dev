@@ -507,13 +507,13 @@ Resolution is per invoking user: an explicit `DOCKER_HOST` in the environment wi
   | `.wslconfig` at `dev up` | What happens |
   |---|---|
   | hint above the Windows machine's hardware | **refused** (`UnsatisfiableHintError`) — lower the hint or set `engine_resources: warn` |
-  | no sizes | fields WSL's default already meets are left alone (a big-enough default is not pinned); the rest are written at the hint; `autoMemoryReclaim=gradual` is added when absent |
+  | no sizes | fields WSL's default already meets are left alone (a big-enough default is not pinned); the rest are written at the hint; `[experimental] autoMemoryReclaim=gradual` is added when absent |
   | at or above the hint, and the VM runs it | nothing |
   | at or above the hint, but the VM still runs the old size | nothing rewritten — **restart pending**: `wsl --shutdown`, then `dev up` again |
   | undersized, no containers running | written at max(current, hint) per field, capped at the hardware, then **restart required** |
   | undersized, containers running | **refused** (`EngineBusyError`) naming the containers, same as colima |
 
-  Every other line in the file, its spelling and line endings included, is preserved. With WSL interop disabled dev prints one warning and leaves the VM to you. Bare Linux has no VM: the daemon already has the machine, and the check below is the whole story.
+  "The VM runs it" is read from the hypervisor, not the guest kernel: Hyper-V announces the VM's memory to the guest (`hv_balloon: Max. dynamic memory size: 65536 MB` in `dmesg`), and that is `memory=` to the MB, where `MemTotal` — what `docker info` reports — is only what the kernel has left after its own reservations (62.8 GiB of a 64 GB VM). dev compares exactly against the announced figure, both in the ratchet and in the final check below, so a project may ask for the whole box. `autoMemoryReclaim` is read and written under `[experimental]`, the only section WSL honors it in — under `[wsl2]` WSL warns `Unknown key` and ignores it; dev leaves such a stray line alone. Every other line in the file, its spelling and line endings included, is preserved. With WSL interop disabled dev prints one warning and leaves the VM to you. Bare Linux has no VM: the daemon already has the machine, and the check below is the whole story.
 
   Why WSL's "down" will stop dockerd and never the VM (the #187 lifecycle commands build on this): colima needs `colima stop` to give memory back because its VM has no ballooning; WSL hands idle memory back to Windows on its own (`autoMemoryReclaim`), and `processors` is a cap, not a reservation — so a generously sized WSL VM costs nothing at rest.
 

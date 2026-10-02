@@ -43,13 +43,11 @@ class Dev::WslProvisionerTest < Minitest::Test
     cpus, memory_gib = observed
     hw_cpus, hw_gib = hardware
     executor = RecordedWslExecutor.new(
-      profile_dir: @profile, nproc: cpus.to_s, hardware: "#{hw_cpus} #{hw_gib * GIB}", containers: containers,
+      profile_dir: @profile, nproc: cpus.to_s, memory_mb: memory_gib * 1024, hardware: "#{hw_cpus} #{hw_gib * GIB}",
+      containers: containers,
     )
-    meminfo = File.join(@dir, "meminfo")
-    File.write(meminfo, "MemTotal:       #{memory_gib * GIB / 1024} kB\n")
     host = Dev::WslHost.new(
-      executor: executor, host_os: "linux", proc_version_path: File.join(@dir, "version"),
-      binfmt_dir: @binfmt, meminfo_path: meminfo,
+      executor: executor, host_os: "linux", proc_version_path: File.join(@dir, "version"), binfmt_dir: @binfmt,
     )
     [Dev::WslProvisioner.new(host: host, executor: executor, out: @out), executor]
   end
@@ -62,7 +60,7 @@ class Dev::WslProvisionerTest < Minitest::Test
     prov.provision!(cpus: cpus, memory_gib: memory_gib)
 
     Then "a default that satisfies the project is not pinned; the reclaim mode is"
-    wslconfig == "[wsl2]\nautoMemoryReclaim=gradual\n"
+    wslconfig == "[experimental]\nautoMemoryReclaim=gradual\n"
 
     Cleanup
     nil
@@ -82,7 +80,7 @@ class Dev::WslProvisionerTest < Minitest::Test
     error = assert_raises(Dev::WslProvisioner::RestartRequiredError) { prov.provision!(cpus: 12, memory_gib: 24) }
 
     Then "processors are written, memory stays at WSL's default, and the restart is requested"
-    wslconfig == "[wsl2]\nprocessors=12\nautoMemoryReclaim=gradual\n"
+    wslconfig == "[wsl2]\nprocessors=12\n\n[experimental]\nautoMemoryReclaim=gradual\n"
     error.message.include?("12 cpus / 32 GiB")
 
     Cleanup
@@ -97,7 +95,7 @@ class Dev::WslProvisionerTest < Minitest::Test
     error = assert_raises(Dev::WslProvisioner::RestartRequiredError) { prov.provision!(cpus: 12, memory_gib: 24) }
 
     Then "the file is written and the message names wsl --shutdown and the sizes"
-    wslconfig == "[wsl2]\nprocessors=12\nmemory=24GB\nautoMemoryReclaim=gradual\n"
+    wslconfig == "[wsl2]\nprocessors=12\nmemory=24GB\n\n[experimental]\nautoMemoryReclaim=gradual\n"
     error.message.include?("wsl --shutdown")
     error.message.include?("12 cpus / 24 GiB")
     error.message.include?("4 cpus / 8 GiB")
@@ -107,8 +105,8 @@ class Dev::WslProvisionerTest < Minitest::Test
   end
 
   test "configured at or above the hint and applied: no-op, nothing written" do
-    Given "the gamebox: 28/64 configured and running"
-    text = "[wsl2]\nmemory=64GB\nprocessors=28\nswap=16GB\nautoMemoryReclaim=gradual\nnetworkingMode=mirrored\n"
+    Given "a 28/64 box, converged and running at its configured size"
+    text = "[wsl2]\nmemory=64GB\nprocessors=28\nswap=16GB\nnetworkingMode=mirrored\n\n[experimental]\nautoMemoryReclaim=gradual\n"
     prov, executor = provisioner(config: text, observed: [28, 64])
 
     When "a smaller project provisions"
@@ -122,9 +120,39 @@ class Dev::WslProvisionerTest < Minitest::Test
     nil
   end
 
+  test "the gamebox's actual first run: reclaim under [wsl2] (ignored by WSL) on a converged VM — fixed, no restart" do
+    Given "the file the gamebox had, and the VM it had"
+    text = "[wsl2]\nmemory=64GB\nprocessors=28\nswap=16GB\nautoMemoryReclaim=gradual\nnetworkingMode=mirrored\n"
+    prov, _executor = provisioner(config: text, observed: [28, 64])
+
+    When "cellbound-3d provisions"
+    prov.provision!(cpus: 12, memory_gib: 24)
+
+    Then "the reclaim mode is written where WSL reads it, the stray line is left alone, and nothing asks for a restart"
+    wslconfig == "#{text}\n[experimental]\nautoMemoryReclaim=gradual\n"
+
+    Cleanup
+    nil
+  end
+
+  test "a project asking for the whole box on a VM running the whole box: nothing to do" do
+    Given "a 64 GB config, a 64 GB VM (its kernel keeps a GiB; dev reads the hypervisor's figure), a 64 GiB hint"
+    text = "[wsl2]\nprocessors=28\nmemory=64GB\n\n[experimental]\nautoMemoryReclaim=gradual\n"
+    prov, _executor = provisioner(config: text, observed: [28, 64])
+
+    When "provisioning"
+    prov.provision!(cpus: 28, memory_gib: 64)
+
+    Then "nothing to do"
+    wslconfig == text
+
+    Cleanup
+    nil
+  end
+
   test "configured above the hint but the VM still runs the old size: restart pending, nothing rewritten" do
     Given "a resize that was written but never applied"
-    text = "[wsl2]\nprocessors=12\nmemory=24GB\nautoMemoryReclaim=gradual\n"
+    text = "[wsl2]\nprocessors=12\nmemory=24GB\n\n[experimental]\nautoMemoryReclaim=gradual\n"
     prov, _executor = provisioner(config: text, observed: [4, 8])
 
     When "provisioning again"
@@ -147,7 +175,7 @@ class Dev::WslProvisionerTest < Minitest::Test
     error = assert_raises(Dev::WslProvisioner::RestartRequiredError) { prov.provision!(cpus: 12, memory_gib: 24) }
 
     Then "memory grows, processors keep their larger value, other keys stay, reclaim is added, restart requested"
-    wslconfig == "[wsl2]\nmemory=24GB\nprocessors=16\nnetworkingMode=mirrored\nautoMemoryReclaim=gradual\n"
+    wslconfig == "[wsl2]\nmemory=24GB\nprocessors=16\nnetworkingMode=mirrored\n\n[experimental]\nautoMemoryReclaim=gradual\n"
     error.message.include?("16 cpus / 24 GiB")
 
     Cleanup
@@ -183,7 +211,7 @@ class Dev::WslProvisionerTest < Minitest::Test
     end
 
     Then "the file is ratcheted, docker ps was not even consulted, and the message names the restart"
-    wslconfig == "[wsl2]\nmemory=24GB\nprocessors=12\nautoMemoryReclaim=gradual\n"
+    wslconfig == "[wsl2]\nmemory=24GB\nprocessors=12\n\n[experimental]\nautoMemoryReclaim=gradual\n"
     executor.runs.none? { |bin, *_rest| bin == "docker" }
     error.message.include?("wsl --shutdown")
 
@@ -223,7 +251,7 @@ class Dev::WslProvisionerTest < Minitest::Test
     assert_raises(Dev::WslProvisioner::RestartRequiredError) { prov.provision!(cpus: 12, memory_gib: 24) }
 
     Then "processors come down to the hardware, memory ratchets"
-    wslconfig == "[wsl2]\nprocessors=28\nmemory=24GB\nautoMemoryReclaim=gradual\n"
+    wslconfig == "[wsl2]\nprocessors=28\nmemory=24GB\n\n[experimental]\nautoMemoryReclaim=gradual\n"
 
     Cleanup
     nil
@@ -248,7 +276,7 @@ class Dev::WslProvisionerTest < Minitest::Test
 
   test "a nil hint is nothing to converge beyond the reclaim default" do
     Given "a project without a resources hint, on a configured box"
-    text = "[wsl2]\nmemory=64GB\nprocessors=28\nautoMemoryReclaim=gradual\n"
+    text = "[wsl2]\nmemory=64GB\nprocessors=28\n\n[experimental]\nautoMemoryReclaim=gradual\n"
     prov, _executor = provisioner(config: text, observed: [28, 64])
 
     When "provisioning"

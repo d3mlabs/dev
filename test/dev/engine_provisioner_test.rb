@@ -96,7 +96,7 @@ class Dev::EngineProvisionerTest < Minitest::Test
     resources = Dev::BuildContainerConfig::Resources.new(cpus: 12, memory_gib: 24)
     check = typed_mock(Dev::EngineResourcesCheck)
     check.expects(:check!).once.in_sequence(order)
-      .with { |engine:, hint:| engine.kind == :colima && hint == resources }
+      .with { |engine:, hint:, actual:| engine.kind == :colima && hint == resources && actual.nil? }
       .raises(Dev::EngineResourcesCheck::UndersizedEngineError, "still 4 cpus")
 
     When "provisioning"
@@ -111,14 +111,14 @@ class Dev::EngineProvisionerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "bare dockerd has nothing to start but is still measured against the hint" do
+  test "bare dockerd has nothing to start but is still measured against the hint, as the daemon reports itself" do
     Given "a linux host and a hint"
     dir = Dir.mktmpdir("dev-engine-provisioner-")
     cli_plugins = typed_mock(Dev::DockerCliPlugins)
     colima = typed_mock(Dev::ColimaProvisioner)
     resources = Dev::BuildContainerConfig::Resources.new(cpus: 12, memory_gib: 24)
     check = typed_mock(Dev::EngineResourcesCheck)
-    check.expects(:check!).once.with { |engine:, hint:| engine.kind == :docker && hint == resources }
+    check.expects(:check!).once.with { |engine:, hint:, actual:| engine.kind == :docker && hint == resources && actual.nil? }
 
     When "provisioning"
     build(dir, host_os: "linux", colima: colima, cli_plugins: cli_plugins, resources_check: check)
@@ -172,7 +172,7 @@ class Dev::EngineProvisionerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "on WSL2 up converges dockerd, then ratchets .wslconfig from the hint, then measures (#197)" do
+  test "on WSL2 up converges dockerd, then ratchets .wslconfig from the hint, then measures the VM as WSL sized it (#197)" do
     Given "a WSL host and a hint"
     dir = Dir.mktmpdir("dev-engine-provisioner-")
     order = sequence("dockerd, then .wslconfig, then check")
@@ -185,14 +185,21 @@ class Dev::EngineProvisionerTest < Minitest::Test
     wsl = typed_mock(Dev::WslProvisioner)
     wsl.expects(:provision!).with(cpus: 12, memory_gib: 24).once.in_sequence(order)
     resources = Dev::BuildContainerConfig::Resources.new(cpus: 12, memory_gib: 24)
+    vm = Dev::EngineResources.new(cpus: 28, memory_gib: 64)
+    host = wsl_host(true)
+    host.stubs(:observed).returns(vm)
     check = typed_mock(Dev::EngineResourcesCheck)
-    check.expects(:check!).once.in_sequence(order).with { |engine:, hint:| engine.kind == :docker && hint == resources }
+    check.expects(:check!).once.in_sequence(order)
+      .with { |engine:, hint:, actual:| engine.kind == :docker && hint == resources && actual == vm }
 
     When "provisioning"
-    build(dir, host_os: "linux", colima: colima, cli_plugins: cli_plugins, resources_check: check,
-      linux_engine: linux_engine, wsl: wsl, on_wsl: true).provision!(resources: resources)
+    Dev::EngineProvisioner.new(
+      settings: build_settings(dir), colima: colima, cli_plugins: cli_plugins, resources_check: check,
+      linux_engine: linux_engine, wsl: wsl, wsl_host: host, host_os: "linux", env: {},
+    ).provision!(resources: resources)
 
-    Then "asserted on the mocks: dockerd must run before `docker ps` can answer the busy question"
+    Then "asserted on the mocks: dockerd must run before `docker ps` can answer the busy question, and the check " \
+         "is handed the hypervisor's size for the VM, not the daemon's MemTotal (a 64 GB VM's kernel reports 63)"
     true
 
     Cleanup

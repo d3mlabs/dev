@@ -11,7 +11,7 @@ require "dev/wsl_config"
 module Dev
   # Facts about the WSL2 machine dev is running inside, gathered through
   # interop (the Windows binaries WSL exposes on PATH) and the VM's own
-  # /proc. On WSL the engine VM is not something dev starts — dev *is inside
+  # kernel. On WSL the engine VM is not something dev starts — dev *is inside
   # it* — so this is the read side (am I on WSL, what did the user configure,
   # what did the VM actually get, how big is the box) plus the one write dev
   # makes: `%USERPROFILE%\.wslconfig`. Everything is injectable so tests run
@@ -22,6 +22,10 @@ module Dev
     # A Windows-side probe (cmd.exe, powershell.exe, wslpath) answered nothing
     # usable — interop is off or broken.
     class InteropError < RuntimeError; end
+
+    # The kernel log carries no hv_balloon announcement of the VM's memory —
+    # the ring buffer wrapped, or this is not a Hyper-V guest after all.
+    class MemoryUnknownError < RuntimeError; end
 
     # The WSL side of `dev engine status`: what the user configured, what the
     # VM got, what the box could give. Configured and hardware are unknown
@@ -50,8 +54,13 @@ module Dev
 
     PROC_VERSION = "/proc/version"
     BINFMT_DIR = "/proc/sys/fs/binfmt_misc"
-    MEMINFO = "/proc/meminfo"
     WSLCONFIG = ".wslconfig"
+
+    # Hyper-V's Dynamic Memory channel tells the guest its memory ceiling and
+    # the hv_balloon driver logs it. For a WSL2 VM that is `memory=` itself,
+    # to the MB — unlike MemTotal, which is what the kernel has left after
+    # its own reservations (a 64 GB VM reports 62.8 GiB there).
+    HV_BALLOON_MEMORY = /hv_balloon: Max\. dynamic memory size: (\d+) MB/
 
     USERPROFILE_PROBE = T.let(["cmd.exe", "/c", "echo %USERPROFILE%"].freeze, T::Array[String])
     HARDWARE_PROBE = T.let(
@@ -62,27 +71,17 @@ module Dev
       T::Array[String],
     )
 
-    # @param executor [#run, #quiet?, #capture] process seam for the interop binaries and `nproc`
+    # @param executor [#run, #quiet?, #capture] process seam for the interop binaries, `nproc`, and `dmesg`
     # @param host_os [String] "darwin" / "linux" / "windows"
     # @param proc_version_path [String] kernel banner; "microsoft" in it means WSL
     # @param binfmt_dir [String] where WSL registers its interop handler
-    # @param meminfo_path [String] the VM's /proc/meminfo
-    sig do
-      params(
-        executor: T.untyped,
-        host_os: String,
-        proc_version_path: String,
-        binfmt_dir: String,
-        meminfo_path: String,
-      ).void
-    end
+    sig { params(executor: T.untyped, host_os: String, proc_version_path: String, binfmt_dir: String).void }
     def initialize(executor: ProcessExecutor.new, host_os: Dev::Deps.detect_host, proc_version_path: PROC_VERSION,
-      binfmt_dir: BINFMT_DIR, meminfo_path: MEMINFO)
+      binfmt_dir: BINFMT_DIR)
       @executor = executor
       @host_os = host_os
       @proc_version_path = proc_version_path
       @binfmt_dir = binfmt_dir
-      @meminfo_path = meminfo_path
     end
 
     # Whether this Linux is a WSL2 distro.
@@ -164,14 +163,22 @@ module Dev
     end
 
     # What the VM actually has right now — the size the last `.wslconfig`
-    # that was applied gave it, or WSL's defaults.
+    # that was applied gave it, or WSL's defaults — as WSL sized it: the
+    # online processors, and the memory the hypervisor announced to the guest
+    # (HV_BALLOON_MEMORY), not the smaller share its kernel has left over.
     #
     # @return [EngineResources]
+    # @raise [MemoryUnknownError] when the kernel log has no announcement
     sig { returns(EngineResources) }
     def observed
       cpus = Integer(T.unsafe(@executor).capture("nproc").strip)
-      kib = File.read(@meminfo_path)[/^MemTotal:\s+(\d+)\s+kB/, 1]
-      EngineResources.from_bytes(cpus: cpus, memory_bytes: Integer(T.must(kib)) * 1024)
+      megabytes = HV_BALLOON_MEMORY.match(T.unsafe(@executor).capture("dmesg"))&.[](1)
+      if megabytes.nil?
+        raise MemoryUnknownError,
+          "dmesg has no `hv_balloon: Max. dynamic memory size` line, so the VM's memory is unknown"
+      end
+
+      EngineResources.from_bytes(cpus: cpus, memory_bytes: Integer(megabytes) * 1024 * 1024)
     end
 
     # Everything `dev engine status` shows for the WSL side. With interop off

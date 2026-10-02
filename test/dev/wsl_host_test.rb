@@ -24,17 +24,11 @@ class Dev::WslHostTest < Minitest::Test
 
   # Build a host over the temp fixtures. Fixture files are only written when
   # given, so "absent" is a real missing file.
-  def host(executor: RecordedWslExecutor.new, host_os: "linux", proc_version: WSL_KERNEL, interop: "enabled",
-    meminfo: "MemTotal:       65890048 kB\nMemFree:        60000000 kB\n")
+  def host(executor: RecordedWslExecutor.new, host_os: "linux", proc_version: WSL_KERNEL, interop: "enabled")
     proc_version_path = File.join(@dir, "version")
     File.write(proc_version_path, proc_version) if proc_version
     File.write(File.join(@binfmt, "WSLInterop"), "#{interop}\ninterpreter /init\nflags: PF\n") if interop
-    meminfo_path = File.join(@dir, "meminfo")
-    File.write(meminfo_path, meminfo) if meminfo
-    Dev::WslHost.new(
-      executor: executor, host_os: host_os, proc_version_path: proc_version_path,
-      binfmt_dir: @binfmt, meminfo_path: meminfo_path,
-    )
+    Dev::WslHost.new(executor: executor, host_os: host_os, proc_version_path: proc_version_path, binfmt_dir: @binfmt)
   end
 
   test "wsl? is the Microsoft kernel on a linux host" do
@@ -118,7 +112,8 @@ class Dev::WslHostTest < Minitest::Test
     Then "the read saw nothing and the write created the file"
     config.memory_gib.nil?
     config.processors.nil?
-    File.read(File.join(profile, ".wslconfig")) == "[wsl2]\nprocessors=8\nmemory=16GB\nautoMemoryReclaim=gradual\n"
+    File.read(File.join(profile, ".wslconfig")) ==
+      "[wsl2]\nprocessors=8\nmemory=16GB\n\n[experimental]\nautoMemoryReclaim=gradual\n"
 
     Cleanup
     nil
@@ -157,13 +152,14 @@ class Dev::WslHostTest < Minitest::Test
     FileUtils.mkdir_p(profile)
     File.write(File.join(profile, ".wslconfig"), config)
     cpus, memory_gib = observed
-    executor = RecordedWslExecutor.new(profile_dir: profile, nproc: cpus.to_s, hardware: "28 68719476736")
-    wsl = host(executor: executor, meminfo: "MemTotal:       #{memory_gib * 1024 * 1024} kB\n")
+    executor = RecordedWslExecutor.new(profile_dir: profile, nproc: cpus.to_s, memory_mb: memory_gib * 1024,
+      hardware: "28 68719476736")
+    wsl = host(executor: executor)
 
     When "asking for status"
     status = wsl.status
 
-    Then "every fact is there and restart_pending? reads the gap between configured and observed"
+    Then "every fact is there and restart_pending? is the exact gap between configured and what Hyper-V gave the VM"
     status.interop == true
     status.configured_cpus.eql?(configured_cpus)
     status.configured_memory_gib.eql?(configured_memory_gib)
@@ -177,6 +173,8 @@ class Dev::WslHostTest < Minitest::Test
     Where
     config                                 | observed | configured_cpus | configured_memory_gib | pending
     "[wsl2]\nprocessors=28\nmemory=64GB\n" | [28, 64] | 28              | 64                    | false
+    "[wsl2]\nprocessors=28\nmemory=64GB\n" | [28, 63] | 28              | 64                    | true
+    "[wsl2]\nprocessors=28\nmemory=64GB\n" | [27, 64] | 28              | 64                    | true
     "[wsl2]\nprocessors=12\nmemory=24GB\n" | [4, 8]   | 12              | 24                    | true
     "[wsl2]\nmemory=24GB\n"                | [28, 8]  | nil             | 24                    | true
     "[wsl2]\nprocessors=8\nmemory=16GB\n"  | [28, 64] | 8               | 16                    | false
@@ -185,8 +183,8 @@ class Dev::WslHostTest < Minitest::Test
 
   test "status with interop off reports only what the VM itself can tell" do
     Given "a distro with interop disabled"
-    executor = RecordedWslExecutor.new(nproc: "4")
-    wsl = host(executor: executor, interop: "disabled", meminfo: "MemTotal:       8388608 kB\n")
+    executor = RecordedWslExecutor.new(nproc: "4", memory_mb: 8192)
+    wsl = host(executor: executor, interop: "disabled")
 
     When "asking for status"
     status = wsl.status
@@ -204,11 +202,34 @@ class Dev::WslHostTest < Minitest::Test
     nil
   end
 
-  test "observed is the VM's own nproc and MemTotal, rounded up like any engine" do
-    Given "a VM that reports 28 cpus and 65890048 kB (62.8 GiB)"
-    wsl = host(executor: RecordedWslExecutor.new(nproc: "28"), meminfo: "MemTotal:       65890048 kB\n")
+  test "observed is the VM's nproc and the memory Hyper-V announced to hv_balloon — exact, not the kernel's MemTotal" do
+    Given "a VM whose kernel log carries the hypervisor's announcement"
+    wsl = host(executor: RecordedWslExecutor.new(nproc: "28", memory_mb: memory_mb))
 
-    Expect
-    wsl.observed == Dev::EngineResources.new(cpus: 28, memory_gib: 63)
+    Expect "the configured size itself (a 64 GB VM is 64, not the 63 its kernel has left); " \
+           "a sub-GiB figure rounds up like any engine's"
+    wsl.observed == Dev::EngineResources.new(cpus: 28, memory_gib: memory_gib)
+
+    Where
+    memory_mb | memory_gib
+    65_536    | 64
+    32_768    | 32
+    1_500     | 2
+  end
+
+  test "observed raises MemoryUnknownError when the kernel log has no hv_balloon announcement" do
+    Given "a kernel log without the line (wrapped ring buffer, or not a Hyper-V guest)"
+    log = "[    0.000000] Linux version 6.18.33.1-1\n[    0.397090] hv_vmbus: registering driver hv_balloon\n"
+    wsl = host(executor: RecordedWslExecutor.new(dmesg: log))
+
+    When "asking for the VM's size"
+    error = assert_raises(Dev::WslHost::MemoryUnknownError) { wsl.observed }
+
+    Then "the message names what dev looked for and where"
+    error.message.include?("hv_balloon")
+    error.message.include?("dmesg")
+
+    Cleanup
+    nil
   end
 end
