@@ -5,7 +5,7 @@ module Dev
   module Cli
     # Parses `--flag value` / `--flag=value` pairs out of a command's argv.
     # Stateless — the small shared helper behind the builtins that take
-    # value flags (cache's --keep, runner-setup's --repo/--labels/--dir/--name).
+    # value flags (cache's --keep, runner register's --repo/--labels/--dir/--name).
     class FlagParser
       extend T::Sig
 

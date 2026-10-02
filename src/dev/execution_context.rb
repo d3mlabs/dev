@@ -13,7 +13,7 @@ module Dev
   # logic (hybrids like `up`).
   class ProjectContext < T::Struct
     # The manifest-declared project name — the package identity (see
-    # ProjectManifest#slug for its normalized form).
+    # ProjectManifest#name).
     const :name, String
     const :root, Pathname
     const :ruby_version, String

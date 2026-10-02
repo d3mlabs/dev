@@ -13,6 +13,9 @@ module Dev
   class ProjectManifest < T::Struct
     extend T::Sig
 
+    # The project's package identity (the ecosystem norm — gemspec /
+    # package.json / Cargo `name`); not its repo name, which `dev runner
+    # register` reads from GitHub.
     const :name, String
     # The project's command tree as declared: runnable commands (with any
     # nested `commands:` as children) and groups.
@@ -24,32 +27,5 @@ module Dev
     # then falls back, e.g. to Homebrew Ruby).
     const :declared_ruby_version, T.nilable(String), default: nil
     const :declared_python_version, T.nilable(String), default: nil
-
-    # The canonical machine-readable project id: the manifest name,
-    # normalized. `name` is the project's package identity (the ecosystem
-    # norm — gemspec/package.json/Cargo `name`; the org is the registry
-    # giving it uniqueness), and the slug is its label/dir-safe form —
-    # "Cellbound3D" → "cellbound3d". `dev runner register` derives the
-    # repo runner label from it.
-    #
-    # @return [String]
-    sig { returns(String) }
-    def slug
-      self.class.slug(name)
-    end
-
-    class << self
-      extend T::Sig
-
-      # #slug's derivation, callable on a bare name (e.g. from a
-      # ProjectContext, which carries the name but not the manifest).
-      #
-      # @param name [String]
-      # @return [String]
-      sig { params(name: String).returns(String) }
-      def slug(name)
-        name.downcase.gsub(/[^a-z0-9]/, "")
-      end
-    end
   end
 end

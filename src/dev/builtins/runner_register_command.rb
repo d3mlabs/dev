@@ -18,7 +18,7 @@ module Dev
     # orthogonally, with derived defaults so the common enrollments need no
     # declaration anywhere (the dev.yml `runner:` block is retired):
     #
-    #   dev runner register                    # repo scope; label = the project slug
+    #   dev runner register                    # repo scope; label = the repo name
     #   dev runner register --labels ue-engine # repo scope, custom roles
     #   dev runner register --org --ai-flow    # org agent host, the full ai-flow set
     #   dev runner register --org --labels ai-build  # org custom pool
@@ -34,17 +34,19 @@ module Dev
     # enrollment at the target scope (RunnerDiscovery — every local runner
     # dir, so dir names never matter) and amends its labels in place on
     # GitHub (RunnerRegistry) instead of re-enrolling; only a scope nothing
-    # serves gets the full enrollment ceremony (RunnerSetup, unchanged from
-    # the old `runner-setup`, which survives as a top-level alias of this
-    # leaf).
+    # serves gets the full enrollment ceremony (RunnerSetup).
     #
     # Enrollment state is inspected, never recorded: the labels live on
     # GitHub, the scope in the runner dir's own .runner record — nothing in
     # dev.yml, Settings, or any inventory file.
     #
-    # `--org` needs no project; bare register derives its label from the
-    # enclosing checkout's manifest name. `--dir`/`--name`/`--repo` override
-    # the enrollment identity; `--agent-user` the ai-agent default run-as
+    # `--org` needs no project; bare register runs inside the checkout it
+    # enrolls (its `build.container` hint sizes the engine) and derives its
+    # label from that repo's name — the GitHub spelling, lowercased, since a
+    # repo-scoped runner is that repo's object and the workflows targeting it
+    # live there; dev.yml `name:` is the package identity and may differ.
+    # `--dir`/`--name`/`--repo` override the enrollment identity (`--repo`
+    # moves the label with it); `--agent-user` the ai-agent default run-as
     # user. A leaf of the `runner` group (RunnerStatusCommand is the other).
     class RunnerRegisterCommand < BuiltinCommand
       extend T::Sig
@@ -67,10 +69,15 @@ module Dev
         ).returns(T::Array[Dev::LabelContracts::AgentHostContract])
       end
 
+      # Answers "owner/repo" for the enclosing checkout, or echoes the
+      # `--repo` override; the gh boundary behind the derived label.
+      RepoResolver = T.type_alias { T.proc.params(override: T.nilable(String)).returns(String) }
+
       sig do
         params(
           runner_setup_factory: RunnerSetupFactory,
           contracts_factory: ContractsFactory,
+          repo_resolver: RepoResolver,
           discovery: Dev::RunnerDiscovery,
           registry: T.untyped,
           engine_provisioner: Dev::EngineProvisioner,
@@ -81,6 +88,7 @@ module Dev
       def initialize(
         runner_setup_factory: ->(config, repo, org) { Dev::RunnerSetup.new(config:, repo:, org:) },
         contracts_factory: ->(labels, agent_user) { Dev::LabelContracts.for(labels, agent_user: agent_user) },
+        repo_resolver: ->(override) { override || Dev::RunnerSetup.current_repo },
         discovery: Dev::RunnerDiscovery.new,
         # The GitHub boundary (#find/#amend!); T.untyped so tests fake it.
         registry: Dev::RunnerRegistry.new,
@@ -92,6 +100,7 @@ module Dev
         super()
         @runner_setup_factory = runner_setup_factory
         @contracts_factory = contracts_factory
+        @repo_resolver = repo_resolver
         @discovery = discovery
         @registry = registry
         @engine_provisioner = engine_provisioner
@@ -181,13 +190,17 @@ module Dev
 
       # The advertised labels, by precedence: --labels (explicit set),
       # --ai-flow (the full vocabulary), else the derived repo label — the
-      # enclosing project's slug. Org scope has nothing to derive from, so
-      # bare --org is a usage error, as is bare register outside a project.
+      # name of the repo being enrolled (`--repo`, else the checkout's),
+      # lowercased. Org scope has nothing to derive from, so bare --org is a
+      # usage error; so is bare register outside a project, since the
+      # checkout is also what sizes the engine.
       #
       # @param args [Array<String>]
       # @param context [Dev::ExecutionContext]
       # @param org [Boolean]
       # @return [String] comma-separated labels (config.sh shape)
+      # @raise [ArgumentError] on an underivable or contradictory request
+      # @raise [Dev::RunnerSetup::Error] when gh cannot resolve the checkout
       sig { params(args: T::Array[String], context: ExecutionContext, org: T::Boolean).returns(String) }
       def resolve_labels(args, context, org)
         explicit = @flag_parser.value(args, "--labels")
@@ -205,12 +218,23 @@ module Dev
             "an org runner's role is not derivable — pass --ai-flow (the agent host) or --labels"
         end
 
-        project = context.project
-        if project.nil?
+        if context.project.nil?
           raise ArgumentError,
-            "the repo label derives from the enclosing project — run inside a checkout or pass --labels"
+            "the repo label derives from the enclosing checkout (which also sizes the engine) — " \
+              "run inside one or pass --labels"
         end
-        ProjectManifest.slug(project.name)
+        repo_label(@repo_resolver.call(@flag_parser.value(args, "--repo")))
+      end
+
+      # GitHub matches runner labels case-insensitively but stores them as
+      # created; lowercasing keeps the amend compare exact. Dashes stay —
+      # labels allow them, and the repo name is the identity.
+      #
+      # @param repo [String] "owner/repo"
+      # @return [String] the repo name, lowercased
+      sig { params(repo: String).returns(String) }
+      def repo_label(repo)
+        T.must(repo.split("/").last).downcase
       end
     end
   end

@@ -55,19 +55,47 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
   # --- label + scope resolution ---------------------------------------
 
-  test "bare register derives the repo label from the project name" do
-    Given "a checkout of a project named Cellbound3D"
-    harness = build_harness
+  test "bare register derives the repo label from the repo name — lowercased, dashes kept, never from dev.yml name:" do
+    Given "a checkout gh resolves to #{repo}, whose dev.yml name: differs"
+    harness = build_harness(repo: repo)
     context = build_context(name: "Cellbound3D")
 
     When "running register with no flags"
     harness.command.call(args: [], context: context)
 
-    Then "the label is the project slug, repo-scoped, dir/name defaulted"
-    config, repo, org = harness.wirings.fetch(0)
-    config == Dev::RunnerSetupConfig.new(labels: "cellbound3d")
-    repo.nil?
+    Then "the label is the repo's name as GitHub spells it, repo-scoped, dir/name defaulted"
+    config, repo_override, org = harness.wirings.fetch(0)
+    config == Dev::RunnerSetupConfig.new(labels: label)
+    repo_override.nil?
     org == false
+
+    Cleanup
+    nil
+
+    Where
+    repo                      | label
+    "d3mlabs/cellbound-3d"    | "cellbound-3d"
+    "d3mlabs/unreal-engine"   | "unreal-engine"
+    "JPDuchesne/snappy"       | "snappy"
+    "D3MLabs/Cellbound-3D"    | "cellbound-3d"
+  end
+
+  test "--repo overrides the scope and therefore the derived label; gh is not asked" do
+    Given "a checkout of one repo, registering for another"
+    asked = []
+    harness = build_harness(repo: "d3mlabs/cellbound-3d", repo_resolver: ->(override) {
+      asked << override
+      override || "d3mlabs/cellbound-3d"
+    })
+
+    When "running register with --repo and no --labels"
+    harness.command.call(args: ["--repo", "d3mlabs/unreal-engine"], context: build_context(name: "Cellbound3D"))
+
+    Then "the label follows the override, which is also what the setup is wired with"
+    config, repo_override, _org = harness.wirings.fetch(0)
+    config.labels == "unreal-engine"
+    repo_override == "d3mlabs/unreal-engine"
+    asked == ["d3mlabs/unreal-engine"]
   end
 
   test "--org --ai-flow enrolls the full ai-flow label vocabulary" do
@@ -189,7 +217,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs/cellbound-3d", name: "box")
     registry = FakeRegistry.new(
-      runners: { ["d3mlabs/cellbound-3d", "box"] => Dev::RunnerRegistry::Runner.new(id: 7, custom_labels: ["cellbound3d"]) },
+      runners: { ["d3mlabs/cellbound-3d", "box"] => Dev::RunnerRegistry::Runner.new(id: 7, custom_labels: ["cellbound-3d"]) },
     )
     harness = build_harness(home: home, registry: registry, scope: "d3mlabs/cellbound-3d")
 
@@ -341,6 +369,26 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     true
   end
 
+  test "the default repo resolver asks RunnerSetup.current_repo — the one gh seam" do
+    Given "a bare register with default wiring, gh answered at RunnerSetup's seam"
+    empty_discovery = Dev::RunnerDiscovery.new(home: Dir.mktmpdir)
+    Dev::RunnerDiscovery.expects(:new).returns(empty_discovery)
+    Dev::RunnerSetup.expects(:current_repo).once.returns("d3mlabs/Cellbound-3D")
+    setup = typed_mock(Dev::RunnerSetup)
+    setup.expects(:run).once
+    setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
+    setup.stubs(:resolve_scope).returns("d3mlabs/Cellbound-3D")
+    Dev::RunnerSetup.expects(:new)
+      .with(config: Dev::RunnerSetupConfig.new(labels: "cellbound-3d"), repo: nil, org: false).returns(setup)
+    command = Dev::Builtins::RunnerRegisterCommand.new
+
+    When "running bare register inside a checkout whose dev.yml name differs"
+    command.call(args: [], context: build_context(name: "Cellbound3D"))
+
+    Then "the label came from gh's repo name, lowercased"
+    true
+  end
+
   private
 
   Harness = Struct.new(:command, :wirings, :events, :out, :engine, keyword_init: true)
@@ -350,7 +398,8 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
   # record their lifecycle; discovery reads a real (tmp) home; the registry
   # is the injected fake.
   def build_harness(contracts: 0, home: Dir.mktmpdir, registry: FakeRegistry.new,
-                    scope: "d3mlabs/cellbound-3d", contracts_factory: nil)
+                    scope: "d3mlabs/cellbound-3d", repo: "d3mlabs/cellbound-3d", contracts_factory: nil,
+                    repo_resolver: nil)
     wirings = []
     events = []
     out = StringIO.new
@@ -363,10 +412,12 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     engine = typed_mock(Dev::EngineProvisioner)
     engine.stubs(:provision!)
     command = Dev::Builtins::RunnerRegisterCommand.new(
-      runner_setup_factory: ->(config, repo, org) {
-        wirings << [config, repo, org]
+      runner_setup_factory: ->(config, repo_override, org) {
+        wirings << [config, repo_override, org]
         setup
       },
+      # What `gh repo view` would answer for the enclosing checkout, unless overridden.
+      repo_resolver: repo_resolver || ->(override) { override || repo },
       contracts_factory: contracts_factory || ->(_labels, _agent_user) {
         Array.new(contracts) { RecordedContract.new(events) }
       },
