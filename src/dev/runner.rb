@@ -335,17 +335,16 @@ module Dev
     # @return [Hash{String => Command}]
     sig { returns(T::Hash[String, Command]) }
     def runner_builtins
-      register = Builtins::RunnerRegisterCommand.new
       {
         "runner" => CommandGroup.new(
           path: ["runner"],
           desc: "Enroll or inspect this host as a self-hosted runner",
           category: Command::Category::Lifecycle,
-          children: { "register" => register, "status" => Builtins::RunnerStatusCommand.new },
+          children: {
+            "register" => Builtins::RunnerRegisterCommand.new,
+            "status" => Builtins::RunnerStatusCommand.new,
+          },
         ),
-        # The pre-register name survives as a top-level alias of the
-        # register leaf (retirement tracked in #184).
-        "runner-setup" => register,
       }
     end
   end

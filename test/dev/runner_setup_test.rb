@@ -56,6 +56,29 @@ class Dev::RunnerSetupTest < Minitest::Test
     RecordingExecutor.new(&recorder)
   end
 
+  test "current_repo is the checkout's owner/repo as gh resolves it" do
+    Given "a gh that answers for this checkout"
+    exec = RecordingExecutor.new(&authed_responder)
+
+    Expect
+    Dev::RunnerSetup.current_repo(executor: exec) == "owner/repo"
+  end
+
+  test "current_repo raises Error when gh cannot resolve the checkout" do
+    Given "a gh outside any repo"
+    outside = ->(argv) { argv[0, 3] == ["gh", "repo", "view"] ? ["", "not a git repository", false] : ["", "", true] }
+    exec = RecordingExecutor.new(&outside)
+
+    When "asking"
+    error = assert_raises(Dev::RunnerSetup::Error) { Dev::RunnerSetup.current_repo(executor: exec) }
+
+    Then "the message carries gh's words"
+    error.message.include?("not a git repository")
+
+    Cleanup
+    nil
+  end
+
   test "config_argv builds the config.sh registration contract" do
     Given "a runner config with labels"
     config = Dev::RunnerSetupConfig.new(labels: "ue-engine,x64")

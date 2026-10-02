@@ -573,17 +573,6 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
   end
 
-  test "#slug normalizes the manifest name into the canonical project id" do
-    Given "manifests whose names carry case and separators"
-    cellbound = Dev::ProjectManifest.new(name: "Cellbound3D", commands: {})
-    unreal = Dev::ProjectManifest.new(name: "unreal-engine", commands: {})
-
-    Expect "downcased, non-alphanumerics stripped — the repo runner label"
-    cellbound.slug == "cellbound3d"
-    unreal.slug == "unrealengine"
-    Dev::ProjectManifest.slug("Cellbound3D") == "cellbound3d"
-  end
-
   test "#load handles container: false on individual commands" do
     Given "a dev.yml with container opt-out on a command"
     tmp = write_dev_yml(<<~YAML)

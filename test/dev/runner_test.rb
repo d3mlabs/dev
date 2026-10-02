@@ -313,9 +313,9 @@ class RunnerTest < Minitest::Test
     runner.run([])
     runner.run(["runner"])
 
-    Then "the runner group (and its runner-setup alias) is listed, with register and status beneath"
+    Then "the runner group is listed once (the runner-setup alias is retired, #184), with register and status beneath"
     out.string.include?("  runner …     Enroll or inspect this host as a self-hosted runner")
-    out.string.include?("runner-setup")
+    !out.string.include?("runner-setup")
     out.string.include?("Usage: dev runner <command> [args...]")
     out.string.include?("  register     Enroll this host")
     out.string.include?("  status       Inspect this host's runner enrollments")
@@ -333,7 +333,7 @@ class RunnerTest < Minitest::Test
 
     Then "the run proceeds with a retirement warning"
     $stderr.string.include?("`runner:` is retired")
-    out.string.include?("runner-setup")
+    out.string.include?("  runner …     Enroll or inspect this host as a self-hosted runner")
 
     Cleanup
     $stderr = old_stderr

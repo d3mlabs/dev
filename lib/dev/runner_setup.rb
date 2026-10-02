@@ -12,7 +12,7 @@ module Dev
   # to a repo by default, or to the whole org (`org: true`) so one runner
   # serves every repo without per-repo registration.
   #
-  # This is the one shared implementation behind `dev runner-setup`; repos opt in
+  # This is the one shared implementation behind `dev runner register`; repos opt in
   # by declaring a `runner:` block in dev.yml (see Dev::RunnerSetupConfig) instead
   # of vendoring a per-repo setup script. With `gh` already authenticated, there's
   # no manual "copy a registration token from the web UI" step — we mint one via
@@ -99,6 +99,22 @@ module Dev
         os = RUBY_PLATFORM.include?("darwin") ? "osx" : "linux"
         arch = RUBY_PLATFORM.match?(/arm64|aarch64/) ? "arm64" : "x64"
         "#{os}-#{arch}"
+      end
+
+      # The enclosing checkout's repo as GitHub spells it — the one `gh repo
+      # view` seam, shared by the setup's own scope resolution and by `dev
+      # runner register`'s label derivation (the label *is* this name).
+      #
+      # @param executor [#capture] CLI boundary
+      # @return [String] "owner/repo"
+      # @raise [Error] when gh cannot resolve the checkout
+      sig { params(executor: T.untyped).returns(String) }
+      def current_repo(executor: Executor.new)
+        out, err, ok = executor.capture("gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner")
+        repo = out.strip
+        raise Error, "could not resolve the repo via gh: #{err.strip}" if !ok || repo.empty?
+
+        repo
       end
     end
 
@@ -207,13 +223,7 @@ module Dev
     # @raise [Error] when the repo can't be resolved
     sig { returns(String) }
     def resolve_repo
-      return @repo_override if @repo_override
-
-      out, err, ok = @exec.capture("gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner")
-      repo = out.strip
-      raise Error, "could not resolve the repo via gh: #{err.strip}" if !ok || repo.empty?
-
-      repo
+      @repo_override || self.class.current_repo(executor: @exec)
     end
 
     # Download + extract the actions-runner, skipping when already present.
