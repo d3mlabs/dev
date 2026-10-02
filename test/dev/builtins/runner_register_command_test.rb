@@ -254,6 +254,48 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.events.fetch(0) == [:converge, true, 8, 24]
   end
 
+  test "register brings the engine up for the checked-out repo's hint before converging contracts (#197)" do
+    Given "a container repo with a resources block and an engine provisioner that records its call"
+    harness = build_harness(contracts: 1)
+    resources = Dev::BuildContainerConfig::Resources.new(cpus: 8, memory_gib: 24)
+    container = Dev::BuildContainerConfig.new(image: "img", registry: "reg", resources: resources)
+    harness.engine.expects(:provision!).once.with do |resources:|
+      harness.events << [:engine, resources.cpus, resources.memory_gib]
+      true
+    end
+    context = build_context(name: "Cellbound3D", build_container: container)
+
+    When "registering"
+    harness.command.call(args: [], context: context)
+
+    Then "the engine step is register's first act — same entry as `dev up`'s — then the contracts"
+    harness.events.first(2) == [[:engine, 8, 24], [:converge, true, 8, 24]]
+  end
+
+  test "register without a project (--org) has no hint and leaves the engine alone" do
+    Given "an org registration from outside any checkout"
+    harness = build_harness
+    harness.engine.expects(:provision!).never
+
+    When "registering"
+    harness.command.call(args: ["--org", "--labels", "ai-build"], context: projectless_context)
+
+    Then
+    true
+  end
+
+  test "a project without build.container registers without touching the engine" do
+    Given "a plain repo"
+    harness = build_harness
+    harness.engine.expects(:provision!).never
+
+    When "registering"
+    harness.command.call(args: [], context: build_context(name: "Plain"))
+
+    Then
+    true
+  end
+
   test "the --agent-user flag reaches the contracts factory" do
     Given "a factory recording its agent_user argument"
     seen = []
@@ -301,7 +343,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
   private
 
-  Harness = Struct.new(:command, :wirings, :events, :out, keyword_init: true)
+  Harness = Struct.new(:command, :wirings, :events, :out, :engine, keyword_init: true)
 
   # A command over recording seams: the setup factory records each
   # (config, repo, org) wiring and answers with a no-op setup; contracts
@@ -316,6 +358,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     setup.stubs(:run).with { events << [:run] || true }
     setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
     setup.stubs(:resolve_scope).returns(scope)
+    # The engine step is a mocha mock so each test states whether it expects
+    # a provision; tests that say nothing tolerate any call.
+    engine = typed_mock(Dev::EngineProvisioner)
+    engine.stubs(:provision!)
     command = Dev::Builtins::RunnerRegisterCommand.new(
       runner_setup_factory: ->(config, repo, org) {
         wirings << [config, repo, org]
@@ -326,9 +372,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
       },
       discovery: Dev::RunnerDiscovery.new(home: home),
       registry: registry,
+      engine_provisioner: engine,
       out: out,
     )
-    Harness.new(command: command, wirings: wirings, events: events, out: out)
+    Harness.new(command: command, wirings: wirings, events: events, out: out, engine: engine)
   end
 
   # A .runner record the way config.sh writes it (UTF-8 BOM + JSON).

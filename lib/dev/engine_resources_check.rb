@@ -101,8 +101,8 @@ module Dev
       when :explicit
         "That engine is yours to resize."
       else
-        "On WSL2, raise `processors` / `memory` in %USERPROFILE%\\.wslconfig and run `wsl --shutdown`; " \
-          "on Linux the daemon already has the whole machine."
+        "Run `dev up`: on WSL2 it raises `processors` / `memory` in %USERPROFILE%\\.wslconfig and tells you " \
+          "when to `wsl --shutdown`; on Linux the daemon already has the whole machine."
       end
     end
 
