@@ -130,6 +130,28 @@ class Dev::LinuxEngineProvisionerTest < Minitest::Test
     nil
   end
 
+  test "Desktop's shim is detected through the /usr/bin/docker symlink its integration installs" do
+    Given "docker on PATH as a symlink into Desktop's cli-tools mount — the gamebox's actual layout"
+    shim_dir = File.join(@dir, "mnt", "wsl", "docker-desktop", "cli-tools", "usr", "bin")
+    shim = install("docker", dir: shim_dir)
+    File.symlink(shim, File.join(@bin, "docker"))
+    install("apt-get")
+    executor = RecordedLinuxExecutor.new(dockerd_active: false)
+    prov = provisioner(executor: executor, wsl: true)
+
+    When "provisioning"
+    error = assert_raises(Dev::LinuxEngineProvisioner::DesktopIntegrationError) { prov.provision! }
+
+    Then "the refusal names both the link and its target, and status says shim"
+    error.message.include?(File.join(@bin, "docker"))
+    error.message.include?(shim)
+    prov.status.desktop_shim == true
+    executor.sudo_runs.empty?
+
+    Cleanup
+    nil
+  end
+
   test "nothing installed on Ubuntu: one sudo credential prompt, then the exact install steps" do
     Given "a fresh WSL Ubuntu with systemd already on, docker absent, user not yet in the group"
     install("apt-get")
