@@ -117,7 +117,7 @@ module Dev
       docker = which("docker")
       Status.new(
         docker_path: docker,
-        desktop_shim: !docker.nil? && docker.include?(DESKTOP_SHIM_MARKER),
+        desktop_shim: !docker.nil? && desktop_shim?(docker),
         dockerd_active: T.unsafe(@executor).quiet?("systemctl", "is-active", "--quiet", "docker"),
         buildx: !docker.nil? && T.unsafe(@executor).quiet?("docker", "buildx", "version"),
         in_docker_group: groups.include?(GROUP),
@@ -136,10 +136,11 @@ module Dev
     def provision!
       current = status
       if current.desktop_shim
+        docker = T.must(current.docker_path)
         raise DesktopIntegrationError,
-          "`docker` here is Docker Desktop's WSL-integration shim (#{current.docker_path}), which owns the engine " \
-          "in this distro. dev cannot converge dockerd alongside it: in Docker Desktop > Settings > Resources > " \
-          "WSL integration, untick this distro, open a new shell, and re-run `dev up`."
+          "`docker` here is Docker Desktop's WSL-integration shim (#{docker} -> #{File.realpath(docker)}), which " \
+          "owns the engine in this distro. dev cannot converge dockerd alongside it: in Docker Desktop > Settings > " \
+          "Resources > WSL integration, untick this distro, open a new shell, and re-run `dev up`."
       end
       return if current.converged?
 
@@ -246,6 +247,18 @@ module Dev
         return candidate if File.file?(candidate) && File.executable?(candidate)
       end
       nil
+    end
+
+    # Whether +docker+ is Docker Desktop's WSL-integration shim. Desktop
+    # installs it as a symlink (`/usr/bin/docker` → `/mnt/wsl/docker-desktop/
+    # cli-tools/…`), so the resolved path is what carries the marker. `which`
+    # only returns existing files, so the resolution cannot dangle.
+    #
+    # @param docker [String] the PATH entry `which` found
+    # @return [Boolean]
+    sig { params(docker: String).returns(T::Boolean) }
+    def desktop_shim?(docker)
+      File.realpath(docker).include?(DESKTOP_SHIM_MARKER)
     end
 
     # @return [Array<String>] the invoking user's groups
