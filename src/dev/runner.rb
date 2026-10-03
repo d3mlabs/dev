@@ -293,11 +293,31 @@ module Dev
     end
     def build_builtins(manifest, dependency_service, help:, complete:)
       install_deps = Builtins::InstallDepsCommand.new
+
+      # The project's service dependencies — what `dev up` brings up after
+      # the install and `dev down` takes down in reverse — as their ports,
+      # in bring-up order. This is the one expression that decides
+      # membership: the build container (an environment service) when
+      # `build.container` is declared. The port objects are the very
+      # instances the `container` verbs expose, so `dev up` and
+      # `dev container up` are one operation with two entry points.
+      services_up = T.let([], T::Array[Builtins::ServiceUp])
+      services_down = T.let([], T::Array[Builtins::ServiceDown])
+      container_group = T.let(nil, T.nilable(Command))
+      if manifest.build_container
+        container_up = Builtins::ContainerUpCommand.new(out: @out)
+        container_down = Builtins::ContainerDownCommand.new(out: @out)
+        services_up << container_up
+        services_down << container_down
+        container_group = container_builtins(up: container_up, down: container_down)
+      end
+
       builtins = T.let({
         "help" => help,
         "complete" => complete,
-        # `up` composes the same install `dev deps install` runs.
-        "up" => Builtins::UpCommand.new(install_deps_command: install_deps),
+        # `up` composes the same install `dev deps install` runs (the user's
+        # intent, extended — it receives the args), then the services.
+        "up" => Builtins::UpCommand.new(install_deps_command: install_deps, service_dependencies: services_up),
         # Bundler's verbs: update ≈ bundle update, install ≈ bundle install,
         # check ≈ bundle check (inspect and exit non-zero when unsatisfied).
         "deps" => CommandGroup.new(
@@ -318,7 +338,12 @@ module Dev
           children: { "gc" => Builtins::CacheGcCommand.new },
         ),
       }, T::Hash[String, Command])
-      builtins["container"] = container_builtins if manifest.build_container
+      builtins["container"] = container_group if container_group
+      # `down` reverses what `up` adds; a project with no service dependency
+      # has nothing for it to bring down, so it exists iff the list does.
+      unless services_down.empty?
+        builtins["down"] = Builtins::DownCommand.new(service_dependencies: services_down, out: @out)
+      end
       builtins.merge!(runner_builtins)
       # The global builtins are dispatched before the Runner (bin/dev); they
       # join the project tree so help lists one complete tree.
@@ -330,16 +355,18 @@ module Dev
     # they are this checkout's image and container, so a project without one
     # has nothing for them to act on (the engine's own verbs are global).
     #
+    # @param up [Builtins::ContainerUpCommand] the instance `dev up` also holds as a port
+    # @param down [Builtins::ContainerDownCommand] likewise for `dev down`
     # @return [Command]
-    sig { returns(Command) }
-    def container_builtins
+    sig { params(up: Builtins::ContainerUpCommand, down: Builtins::ContainerDownCommand).returns(Command) }
+    def container_builtins(up:, down:)
       CommandGroup.new(
         path: ["container"],
         desc: "Manage this checkout's build container (up | down | reset | tag | status)",
         category: Command::Category::Lifecycle,
         children: {
-          "up" => Builtins::ContainerUpCommand.new(out: @out),
-          "down" => Builtins::ContainerDownCommand.new(out: @out),
+          "up" => up,
+          "down" => down,
           "reset" => Builtins::ContainerResetCommand.new(out: @out),
           "tag" => Builtins::ContainerTagCommand.new(out: @out),
           "status" => Builtins::ContainerStatusCommand.new(out: @out),

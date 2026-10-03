@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/builtins/container_up_command"
 require "dev/builtins/install_deps_command"
 require "dev/builtins/up_command"
 require "dev/build_container_config"
@@ -111,34 +112,34 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     0 * Dev::Credentials.resolve_build_args(anything)
   end
 
-  test "call brings the container engine up for a containerized project, sized from its resources, before installing deps" do
-    Given "a build container with a resources hint; engine and deps install both observed in order"
-    order = sequence("engine before deps")
-    engine = typed_mock(Dev::EngineProvisioner)
-    resources = Dev::BuildContainerConfig::Resources.new(cpus: 8, memory_gib: 24)
-    engine.expects(:provision!).with(resources: resources).once.in_sequence(order)
+  test "call brings the service dependencies up, in order, after the deps install they may depend on — through the port, not the CLI" do
+    Given "two service dependencies; deps install and both bring-ups observed in order"
+    order = sequence("deps, then services in order")
     install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
     install_deps.expects(:call).once.in_sequence(order)
+    context = build_context(build_container: container_config(build_args: {}))
+    first = typed_mock(Dev::Builtins::ContainerUpCommand)
+    second = typed_mock(Dev::Builtins::ContainerUpCommand)
+    first.expects(:up).with(project: context.project).once.in_sequence(order)
+    second.expects(:up).with(project: context.project).once.in_sequence(order)
+    first.expects(:call).never
     command = Dev::Builtins::UpCommand.new(
-      install_deps_command: install_deps, host_service: quiet_host_service, engine_provisioner: engine,
+      install_deps_command: install_deps, host_service: quiet_host_service, service_dependencies: [first, second],
     )
-    config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry", resources: resources)
 
     When "running up"
-    command.call(args: [], context: build_context(build_container: config))
+    command.call(args: [], context: context)
 
-    Then "asserted on the mocks: the engine is up before anything needs it"
+    Then "asserted on the mocks: the services are ready before the first command that needs them"
     true
   end
 
-  test "call leaves the engine alone for a project without a build container" do
+  test "call with no service dependencies is the deps install alone" do
     Given "a plain project"
-    engine = typed_mock(Dev::EngineProvisioner)
-    engine.expects(:provision!).never
     install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
-    install_deps.stubs(:call)
+    install_deps.expects(:call).once
     command = Dev::Builtins::UpCommand.new(
-      install_deps_command: install_deps, host_service: quiet_host_service, engine_provisioner: engine,
+      install_deps_command: install_deps, host_service: quiet_host_service, service_dependencies: [],
     )
 
     When "running up"
@@ -153,10 +154,8 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
   def build_command
     install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
     install_deps.stubs(:call)
-    engine = typed_mock(Dev::EngineProvisioner)
-    engine.stubs(:provision!)
     Dev::Builtins::UpCommand.new(
-      install_deps_command: install_deps, host_service: quiet_host_service, engine_provisioner: engine,
+      install_deps_command: install_deps, host_service: quiet_host_service, service_dependencies: [],
     )
   end
 

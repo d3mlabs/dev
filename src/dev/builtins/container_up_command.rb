@@ -3,6 +3,7 @@
 
 require "stringio"
 require "dev/builtins/container_command"
+require "dev/builtins/service_up"
 require "dev/credentials"
 require "dev/engine_provisioner"
 
@@ -14,8 +15,13 @@ module Dev
     # persists its container, the service container created or restarted
     # warm. `dev up` composes this after the dependency install; a CI job
     # runs it alone to publish the image (`DEV_PUBLISH_IMAGE=1`).
+    #
+    # The build container is this project's one service dependency (an
+    # environment service: commands execute in it), so this is the
+    # ServiceUp port `dev up` composes; `call` is the CLI adapter over it.
     class ContainerUpCommand < ContainerCommand
       extend T::Sig
+      include ServiceUp
 
       # @param container_client [Dev::BuildContainer, nil]
       # @param engine_provisioner [Dev::EngineProvisioner] the sizing step
@@ -35,13 +41,21 @@ module Dev
       sig { override.returns(String) }
       def desc = "Bring the engine up, resolve the build image, start the persistent container"
 
+      # The CLI verb: an adapter over the ServiceUp port.
+      #
       # @param args [Array<String>] unused
       # @param context [ExecutionContext] the project (the group is gated on build.container)
       # @return [void]
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
-        project = context.project!
-        cfg = config(context)
+        up(project: context.project!)
+      end
+
+      # @param project [ProjectContext] the checkout (its build.container is the service's config)
+      # @return [void]
+      sig { override.params(project: ProjectContext).void }
+      def up(project:)
+        cfg = T.must(project.build_container)
         @engine_provisioner.provision!(resources: cfg.resources)
 
         image_tag = client.ensure_image!(

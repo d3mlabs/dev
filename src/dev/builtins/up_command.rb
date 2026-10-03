@@ -3,7 +3,7 @@
 
 require "dev/command"
 require "dev/credentials"
-require "dev/engine_provisioner"
+require "dev/builtins/service_up"
 require "dev/host_service"
 
 module Dev
@@ -22,23 +22,34 @@ module Dev
     class UpCommand < BuiltinCommand
       extend T::Sig
 
+      # @param install_deps_command [InstallDepsCommand] the `dev deps install`
+      #   body — a CLI intent `dev up` extends, so it receives the user's args
+      # @param host_service [Dev::HostService] the host layer
+      # @param service_dependencies [Array<ServiceUp>] the services this
+      #   project depends on — things that must be *running* for it to build
+      #   and run — through the one port `dev up` needs from each: bring-up,
+      #   given the project. They are operations, not CLI intents: `dev up`
+      #   orchestrates them and never hands them the user's args (contrast
+      #   install_deps_command). Composed in bring-up order at the root from
+      #   dev.yml: the build container (an environment service,
+      #   `build.container`) today; application services later. What this
+      #   project provides to others is never in this list.
       sig do
         params(
           install_deps_command: InstallDepsCommand,
           host_service: Dev::HostService,
-          engine_provisioner: Dev::EngineProvisioner,
+          service_dependencies: T::Array[ServiceUp],
         ).void
       end
-      def initialize(install_deps_command:, host_service: Dev::HostService.new,
-        engine_provisioner: Dev::EngineProvisioner.new)
+      def initialize(install_deps_command:, host_service: Dev::HostService.new, service_dependencies: [])
         super()
         @install_deps_command = install_deps_command
         @host_service = host_service
-        @engine_provisioner = engine_provisioner
+        @service_dependencies = service_dependencies
       end
 
       sig { override.returns(String) }
-      def desc = "Install locked dependencies, then run the project's up command (if defined)"
+      def desc = "Install locked deps and bring the build container up, then run the project's up command (if defined)"
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
@@ -74,23 +85,15 @@ module Dev
         end
 
         provision_build_credentials(project)
-        provision_engine(project)
         @install_deps_command.call(args:, context:)
+        # After the install: a service's bring-up may need locked deps on
+        # disk (the build container's image build mounts version-resolved
+        # volumes). After `dev up` the first command that needs a service
+        # finds it running instead of paying for it lazily.
+        @service_dependencies.each { |service| service.up(project:) }
       end
 
       private
-
-      # A containerized project needs a running engine before its first
-      # `docker build`; `dev up` is where that VM starts (on macOS), sized
-      # from the repo's resources hint. Non-containerized projects have no
-      # engine to bring up.
-      sig { params(project: ProjectContext).void }
-      def provision_engine(project)
-        config = project.build_container
-        return if config.nil?
-
-        @engine_provisioner.provision!(resources: config.resources)
-      end
 
       # `dev up` is the provisioning command: after it succeeds, every other
       # command should work unattended. Resolving docker build args here
