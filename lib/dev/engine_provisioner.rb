@@ -144,6 +144,25 @@ module Dev
       )
     end
 
+    # Refuse, with the remediation for this engine kind, unless dev may stop
+    # it. `dev engine down` asks this first, before stopping any container.
+    #
+    # @return [void]
+    # @raise [UnmanagedEngineError] on an engine dev did not provision
+    sig { void }
+    def assert_stoppable!
+      return if stoppable?
+
+      raise UnmanagedEngineError, (
+        if engine.kind == :explicit
+          "DOCKER_HOST is set: that engine is yours, dev does not stop it (unset it to use dev's own)."
+        else
+          "the `docker` engine record on macOS rides Docker Desktop, which dev does not provision — " \
+          "quit it from its menu, or `dev config set container_engine colima` to let dev own the engine."
+        end
+      )
+    end
+
     # Power the engine off: the colima VM (the only way it reclaims RAM) or
     # dockerd on Linux/WSL (never the WSL VM). Whatever runs inside goes down
     # too — the caller (`dev engine down`) has already stopped dev's own
@@ -155,17 +174,7 @@ module Dev
     # @raise [LinuxEngineProvisioner::StepFailedError] when stopping dockerd fails
     sig { void }
     def stop!
-      unless stoppable?
-        raise UnmanagedEngineError, (
-          if engine.kind == :explicit
-            "DOCKER_HOST is set: that engine is yours, dev does not stop it (unset it to use dev's own)."
-          else
-            "the `docker` engine record on macOS rides Docker Desktop, which dev does not provision — " \
-            "quit it from its menu, or `dev config set container_engine colima` to let dev own the engine."
-          end
-        )
-      end
-
+      assert_stoppable!
       engine.kind == :colima ? @colima.stop! : @linux_engine.stop!
     end
 

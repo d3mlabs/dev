@@ -247,10 +247,10 @@ class Dev::ColimaProvisionerTest < Minitest::Test
     status&.memory_gib == memory_gib
 
     Where
-    description | vm                                           | running | cpus | memory_gib
+    description | vm | running | cpus | memory_gib
     "running"   | { status: "Running", cpus: 8, memory_gib: 16 } | true    | 8    | 16
     "stopped"   | { status: "Stopped", cpus: 4, memory_gib: 8 }  | false   | 4    | 8
-    "absent"    | nil                                          | nil     | nil  | nil
+    "absent"    | nil | nil | nil | nil
   end
 
   test "stop! stops the VM, whatever is running in it — busy-ness is the caller's decision" do

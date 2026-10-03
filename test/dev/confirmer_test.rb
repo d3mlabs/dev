@@ -33,7 +33,7 @@ class Dev::ConfirmerTest < Minitest::Test
     "Yes, spelled out"   | "Yes\n"  | true
     "no"                 | "n\n"    | false
     "empty is the default, no" | "\n" | false
-    "end of input is no" | ""       | false
+    "end of input is no" | "" | false
   end
 
   test "off a terminal, confirm? is no without asking — a script cannot answer" do
