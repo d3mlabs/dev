@@ -93,8 +93,7 @@ module Dev
           "the colima VM has #{vm.cpus} cpus / #{vm.memory_gib} GiB; this project needs " \
           "#{cpus || vm.cpus} cpus / #{memory_gib || vm.memory_gib} GiB, and resizing means stopping " \
           "the VM — but containers are running in it:\n  #{busy.join("\n  ")}\n" \
-          "Bring those projects down first (`dev reset-container` there, or `docker stop`), " \
-          "or stop the VM yourself with `colima stop` and re-run `dev up`."
+          "Bring those projects down first (`dev container down` there, or `dev engine down`), then re-run `dev up`."
       end
 
       raise StopFailedError, "colima stop failed — the VM was left running at its current size." unless

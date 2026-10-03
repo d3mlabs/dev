@@ -194,7 +194,7 @@ class Dev::WslProvisionerTest < Minitest::Test
     wslconfig == text
     error.message.include?("snappy-build")
     error.message.include?("unreal-engine-css")
-    error.message.include?("dev reset-container")
+    error.message.include?("dev container down")
 
     Cleanup
     nil

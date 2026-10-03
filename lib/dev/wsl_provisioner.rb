@@ -122,7 +122,7 @@ module Dev
           raise EngineBusyError,
             "the WSL VM has #{observed}; this project needs #{describe(cpus, memory_gib)}, and applying a resize " \
             "means `wsl --shutdown` — but containers are running in it:\n  #{busy.join("\n  ")}\n" \
-            "Bring those projects down first (`dev reset-container` there, or `docker stop`) and re-run `dev up`."
+            "Bring those projects down first (`dev container down` there, or `dev engine down`), then re-run `dev up`."
         end
       end
 
