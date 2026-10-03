@@ -108,13 +108,13 @@ class Dev::CommandRepositoryTest < Minitest::Test
     Given "a repository with a hidden builtin"
     hidden = build_builtin(desc: "plumbing", hidden: true)
     repository = build_repository(
-      builtins: { "provide-image" => hidden, "up" => build_builtin },
+      builtins: { "plumbing" => hidden, "up" => build_builtin },
       project_commands: {},
     )
 
     Expect "hidden is a listing trait the printers read; resolution ignores it"
-    repository.root.children["provide-image"].hidden?
-    fetch(repository, "provide-image") == hidden
+    repository.root.children["plumbing"].hidden?
+    fetch(repository, "plumbing") == hidden
   end
 
   # --- the tree: assembly --------------------------------------------------

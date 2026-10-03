@@ -18,6 +18,10 @@ class BuildContainerTest < Minitest::Test
     Dev::BuildContainer.new(engine: engine)
   end
 
+  def service(name, running:)
+    Dev::BuildContainer::ServiceContainer.new(name: name, running: running)
+  end
+
   test "content_tag produces deterministic hash from Dockerfile and lockfile" do
     Given "a project with Dockerfile and build-deps.lock"
     dir = Dir.mktmpdir("build-container-test-")
@@ -1285,18 +1289,6 @@ class BuildContainerTest < Minitest::Test
     runner != manual
   end
 
-  test "service_name_prefix is the tag-independent, workspace-scoped prefix" do
-    Given "a full image:tag and the checkout it runs in"
-    root = Pathname("/work/snappy")
-    wid = Dev::BuildContainer.workspace_id(root)
-
-    When "computing the reap prefix for a tag"
-    prefix = Dev::BuildContainer.service_name_prefix("jpduchesne89/snappy-linux:content-abc123", root)
-
-    Then "it omits the tag (so any tag matches) but pins the workspace"
-    prefix == "dev-snappy-linux-#{wid}-"
-  end
-
   test "docker_exec_command targets the container with /project workdir" do
     When "building a docker exec command"
     cmd = build_container.docker_exec_command(
@@ -1384,47 +1376,110 @@ class BuildContainerTest < Minitest::Test
     Given "a current tag and a stale sibling container in the same checkout"
     tag = "jpduchesne89/snappy-linux:content-new"
     root = Pathname("/proj")
-    prefix = Dev::BuildContainer.service_name_prefix(tag, root)
-    keep = "#{prefix}content-new"
-    stale = "#{prefix}content-old"
+    keep = service(Dev::BuildContainer.service_container_name(tag, root), running: true)
+    stale = service(Dev::BuildContainer.service_container_name("jpduchesne89/snappy-linux:content-old", root),
+      running: false)
     bc = build_container
 
     When "reaping"
     bc.reap_stale_services!(tag, root)
 
     Then "only the non-current container is removed"
-    1 * bc.service_containers(prefix) >> [stale, keep]
-    1 * bc.remove_container(stale) >> true
-    0 * bc.remove_container(keep)
+    1 * bc.service_containers(root) >> [stale, keep]
+    1 * bc.remove_container(stale.name) >> true
+    0 * bc.remove_container(keep.name)
   end
 
-  test "reset_service! removes every container for the checkout prefix" do
+  test "reset_service! removes every container for the checkout" do
     Given "two containers for the checkout (current and stale)"
-    tag = "jpduchesne89/snappy-linux:content-abc"
     root = Pathname("/proj")
-    prefix = Dev::BuildContainer.service_name_prefix(tag, root)
-    current = "#{prefix}content-abc"
-    stale = "#{prefix}content-old"
+    current = service("dev-snappy-linux-abc-content-abc", running: true)
+    stale = service("dev-snappy-linux-abc-content-old", running: false)
     bc = build_container
 
     When "resetting"
-    result = bc.reset_service!(tag, root)
+    result = bc.reset_service!(root)
 
-    Then "all matching containers are removed and their names returned"
-    result == [stale, current]
-    1 * bc.service_containers(prefix) >> [stale, current]
-    1 * bc.remove_container(stale) >> true
-    1 * bc.remove_container(current) >> true
+    Then "all of the checkout's containers are removed and their names returned"
+    result == [stale.name, current.name]
+    1 * bc.service_containers(root) >> [stale, current]
+    1 * bc.remove_container(stale.name) >> true
+    1 * bc.remove_container(current.name) >> true
   end
 
-  test "create_service_container runs detached, mounts project + volumes, and idles" do
-    Given "a recording engine"
+  test "stop_service! stops the checkout's running containers with no grace period, keeping them" do
+    Given "a running and a stopped container for the checkout"
+    root = Pathname("/proj")
+    running = service("dev-snappy-linux-abc-content-abc", running: true)
+    stopped = service("dev-snappy-linux-abc-content-old", running: false)
     engine = FakeContainerEngine.new
+    bc = build_container(engine: engine)
+    bc.stubs(:service_containers).with(root).returns([stopped, running])
+
+    When "stopping"
+    result = bc.stop_service!(root)
+
+    Then "only the running one is stopped (-t 0: PID 1 is sleep, which ignores SIGTERM); nothing is removed"
+    result == [running.name]
+    engine.runs == [["stop", "-t", "0", running.name]]
+  end
+
+  test "stop_service! raises when a container will not stop" do
+    Given "a running container whose stop fails"
+    root = Pathname("/proj")
+    bc = build_container(engine: FakeContainerEngine.new { |_args| false })
+    bc.stubs(:service_containers).returns([service("dev-x", running: true)])
+
+    When "stopping"
+    bc.stop_service!(root)
+
+    Then
+    error = raises Dev::BuildContainer::StopFailedError
+    error.message == "could not stop container dev-x."
+  end
+
+  test "stop_service! on a checkout with nothing running returns no names" do
+    Given "no containers for the checkout"
+    engine = FakeContainerEngine.new(capture_result: "")
+    bc = build_container(engine: engine)
+
+    Expect "nothing stopped, nothing run"
+    bc.stop_service!(Pathname("/proj")) == []
+    engine.runs == []
+  end
+
+  test "service_status gathers image presence and the checkout's containers" do
+    Given "a local image, a registry copy, and a current + stale container"
+    tag = "jpduchesne89/snappy-linux:content-abc"
+    root = Pathname("/proj")
+    current = service(Dev::BuildContainer.service_container_name(tag, root), running: true)
+    stale = service("dev-snappy-linux-abc-content-old", running: false)
+    bc = build_container
+    bc.stubs(:local_image?).with(tag).returns(true)
+    bc.stubs(:registry_has?).with(tag).returns(false)
+    bc.stubs(:service_containers).with(root).returns([stale, current])
+
+    When "reporting"
+    status = bc.service_status(tag, root)
+
+    Then "one record, the current container named so the renderer can tell it from stale ones"
+    status.image_tag == tag
+    status.local_image == true
+    status.in_registry == false
+    status.current_container_name == current.name
+    status.containers == [stale, current]
+  end
+
+  test "create_service_container runs detached, mounts project + volumes, idles, and carries the label contract" do
+    Given "a recording engine and the checkout's labels"
+    engine = FakeContainerEngine.new
+    root = Pathname("/project")
+    labels = Dev::BuildContainer.service_labels("img:tag", root)
 
     When "creating the service container"
     build_container(engine: engine).create_service_container(
       "dev-x", "img:tag",
-      project_root: Pathname("/project"), volumes: ["/engines/ue:/ue"],
+      project_root: root, volumes: ["/engines/ue:/ue"],
     )
 
     Then "it is a detached, named run that bind-mounts the project + engine and sleeps"
@@ -1433,6 +1488,45 @@ class BuildContainerTest < Minitest::Test
     engine.runs.last.include?("/engines/ue:/ue")
     engine.runs.last.include?("img:tag")
     engine.runs.last.last(2) == ["sleep", "infinity"]
+    labels.all? { |key, value| engine.runs.last.each_cons(2).include?(["--label", "#{key}=#{value}"]) }
+  end
+
+  test "docker_run_command carries the label contract so dev engine down recognizes an in-flight --rm run" do
+    Given "the checkout's labels"
+    root = Pathname("/project")
+    labels = Dev::BuildContainer.service_labels("img:tag", root)
+
+    When "building a one-shot run"
+    cmd = build_container.docker_run_command("img:tag", project_root: root, shell_cmd: "make")
+
+    Then "every label precedes the image"
+    labels.all? { |key, value| cmd.each_cons(2).include?(["--label", "#{key}=#{value}"]) }
+    cmd.index("--label") < cmd.index("img:tag")
+  end
+
+  test "service_labels is the contract dev reads back: managed, the checkout's real path and name, workspace id, image" do
+    Given "a checkout reached through a symlink"
+    dir = Dir.mktmpdir("build-container-labels-")
+    real = File.realpath(dir)
+    link = File.join(Dir.mktmpdir("build-container-link-"), "snappy")
+    File.symlink(real, link)
+    root = Pathname(link)
+
+    When "computing the labels"
+    labels = Dev::BuildContainer.service_labels("reg/snappy-linux:content-abc", root)
+
+    Then "they resolve the symlink, so one checkout has one identity however it is reached"
+    labels == {
+      Dev::ContainerEngine::MANAGED_LABEL => "true",
+      Dev::ContainerEngine::PROJECT_ROOT_LABEL => real,
+      Dev::BuildContainer::PROJECT_LABEL => File.basename(real),
+      Dev::BuildContainer::WORKSPACE_LABEL => Dev::BuildContainer.workspace_id(root),
+      Dev::BuildContainer::IMAGE_LABEL => "reg/snappy-linux:content-abc",
+    }
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+    FileUtils.rm_rf(File.dirname(link))
   end
 
   test "create_service_container raises when docker run fails" do
@@ -1491,15 +1585,24 @@ class BuildContainerTest < Minitest::Test
     ]
   end
 
-  test "service_containers parses the newline-separated docker ps names" do
-    Given "docker ps reporting two containers with surrounding noise"
-    engine = FakeContainerEngine.new(capture_result: "dev-snappy-abc-content-1\ndev-snappy-abc-content-2\n\n")
+  test "service_containers lists the checkout's containers by workspace label, running or not" do
+    Given "docker ps reporting a running and an exited container, with surrounding noise"
+    root = Pathname("/proj")
+    engine = FakeContainerEngine.new(
+      capture_result: "dev-snappy-abc-content-1\trunning\ndev-snappy-abc-content-2\texited\n\n",
+    )
     bc = build_container(engine: engine)
 
-    Expect "the trimmed names are returned, from an anchored name filter"
-    bc.service_containers("dev-snappy-abc-") ==
-      ["dev-snappy-abc-content-1", "dev-snappy-abc-content-2"]
-    engine.captures.last == ["ps", "-a", "--filter", "name=^dev-snappy-abc-", "--format", "{{.Names}}"]
+    Expect "records in docker's order, from the label filter (a name regex would also match other checkouts' prefixes)"
+    bc.service_containers(root).map { |c| [c.name, c.running] } == [
+      ["dev-snappy-abc-content-1", true],
+      ["dev-snappy-abc-content-2", false],
+    ]
+    engine.captures.last == [
+      "ps", "-a",
+      "--filter", "label=#{Dev::BuildContainer::WORKSPACE_LABEL}=#{Dev::BuildContainer.workspace_id(root)}",
+      "--format", "{{.Names}}\t{{.State}}",
+    ]
   end
 
   test "container_running? reflects the inspected running state" do

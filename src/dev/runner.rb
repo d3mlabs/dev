@@ -171,8 +171,8 @@ module Dev
     # The composition root: the one place the repository (consumed only by
     # CommandService, the onion rule) and the builtin tree under its root
     # node are constructed. Which builtins exist is config-gated here —
-    # project builtins only with a manifest, provide-image/reset-container
-    # only with a build container.
+    # project builtins only with a manifest, the `container` verbs only
+    # with a build container.
     #
     # @param manifest [ProjectManifest, nil]
     # @param context [ExecutionContext]
@@ -318,13 +318,33 @@ module Dev
           children: { "gc" => Builtins::CacheGcCommand.new },
         ),
       }, T::Hash[String, Command])
-      builtins["provide-image"] = Builtins::ProvideImageCommand.new if manifest.build_container
-      builtins["reset-container"] = Builtins::ResetContainerCommand.new if manifest.build_container&.persist
+      builtins["container"] = container_builtins if manifest.build_container
       builtins.merge!(runner_builtins)
       # The global builtins are dispatched before the Runner (bin/dev); they
       # join the project tree so help lists one complete tree.
       builtins.merge!(GlobalCatalog.new(out: @out).commands)
       builtins
+    end
+
+    # The container verbs exist only where `build.container` is declared:
+    # they are this checkout's image and container, so a project without one
+    # has nothing for them to act on (the engine's own verbs are global).
+    #
+    # @return [Command]
+    sig { returns(Command) }
+    def container_builtins
+      CommandGroup.new(
+        path: ["container"],
+        desc: "Manage this checkout's build container (up | down | reset | tag | status)",
+        category: Command::Category::Lifecycle,
+        children: {
+          "up" => Builtins::ContainerUpCommand.new(out: @out),
+          "down" => Builtins::ContainerDownCommand.new(out: @out),
+          "reset" => Builtins::ContainerResetCommand.new(out: @out),
+          "tag" => Builtins::ContainerTagCommand.new(out: @out),
+          "status" => Builtins::ContainerStatusCommand.new(out: @out),
+        },
+      )
     end
 
     # `runner` is ungated: enrollment is a machine concern (register derives

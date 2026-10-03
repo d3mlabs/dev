@@ -45,6 +45,35 @@ module Dev
     # write and container bind mount, so this is a hard stop, never a fallback.
     class SecretDirCompromisedError < RuntimeError; end
 
+    # `docker stop` on one of this checkout's containers failed.
+    class StopFailedError < RuntimeError; end
+
+    # The label contract, read back by `dev container …` here and by
+    # `dev engine down/status` through ContainerEngine#running_containers.
+    # ContainerEngine owns the two labels it decodes (managed, project_root);
+    # these three are the container layer's own: which checkout (workspace
+    # id — the set-operation key), its short name, and the image it runs.
+    PROJECT_LABEL = "dev.project"
+    WORKSPACE_LABEL = "dev.workspace"
+    IMAGE_LABEL = "dev.image"
+
+    # One of this checkout's containers, as `docker ps -a` reports it.
+    class ServiceContainer < T::Struct
+      const :name, String
+      const :running, T::Boolean
+    end
+
+    # What `dev container status` renders: image presence on both sides and
+    # this checkout's containers, the current tag's one named so stale
+    # siblings (reaped on the next `up`) can be told apart.
+    class ServiceStatus < T::Struct
+      const :image_tag, String
+      const :local_image, T::Boolean
+      const :in_registry, T::Boolean
+      const :current_container_name, String
+      const :containers, T::Array[ServiceContainer]
+    end
+
     # Always-hashed inputs. deps.lock (app/test deps, e.g. SML) and build-deps.lock
     # (build deps, e.g. the engine) join the Dockerfile so a dependency bump
     # invalidates a prewarmed image. Missing files are skipped (see content_tag).
@@ -240,14 +269,6 @@ module Dev
         "dev-#{sanitize_container_name(image)}-#{workspace_id(project_root)}-#{sanitize_container_name(tag)}"
       end
 
-      # Image + workspace prefix shared by every tag's container for one checkout,
-      # used to find and reap stale ones without touching OTHER checkouts' containers.
-      # E.g. "reg/snappy-linux:content-abc" in /work/snappy -> "dev-snappy-linux-9f86d08-".
-      sig { params(image_tag: String, project_root: Pathname).returns(String) }
-      def service_name_prefix(image_tag, project_root)
-        "dev-#{sanitize_container_name(image_basename(image_tag))}-#{workspace_id(project_root)}-"
-      end
-
       # Bare image name (no registry, no tag). E.g.
       # "reg/snappy-linux:content-abc" -> "snappy-linux".
       sig { params(image_tag: String).returns(String) }
@@ -261,12 +282,47 @@ module Dev
       # directory is stable across runs, and symlinked paths normalize to one id.
       sig { params(project_root: Pathname).returns(String) }
       def workspace_id(project_root)
-        path = begin
-          File.realpath(project_root.to_s)
-        rescue Errno::ENOENT
-          File.expand_path(project_root.to_s)
-        end
-        T.must(Digest::SHA256.hexdigest(path)[0, 10])
+        T.must(Digest::SHA256.hexdigest(workspace_path(project_root))[0, 10])
+      end
+
+      # The checkout's one canonical path: resolved real path, so a symlinked
+      # route and the direct one name the same workspace. A root that does
+      # not exist (tests, a removed checkout) falls back to the expanded path.
+      #
+      # @param project_root [Pathname]
+      # @return [String]
+      sig { params(project_root: Pathname).returns(String) }
+      def workspace_path(project_root)
+        File.realpath(project_root.to_s)
+      rescue Errno::ENOENT
+        File.expand_path(project_root.to_s)
+      end
+
+      # The labels every container dev starts for a checkout carries (see
+      # the constants above). `docker ps --filter label=…` on any of them is
+      # the set operation; a name match never is.
+      #
+      # @param image_tag    [String]   full image:tag the container runs
+      # @param project_root [Pathname] the checkout it is bind-mounted to
+      # @return [Hash{String => String}] label => value
+      sig { params(image_tag: String, project_root: Pathname).returns(T::Hash[String, String]) }
+      def service_labels(image_tag, project_root)
+        path = workspace_path(project_root)
+        {
+          Dev::ContainerEngine::MANAGED_LABEL => "true",
+          Dev::ContainerEngine::PROJECT_ROOT_LABEL => path,
+          PROJECT_LABEL => File.basename(path),
+          WORKSPACE_LABEL => workspace_id(project_root),
+          IMAGE_LABEL => image_tag,
+        }
+      end
+
+      # @param image_tag    [String]
+      # @param project_root [Pathname]
+      # @return [Array<String>] `--label key=value` pairs for a docker run
+      sig { params(image_tag: String, project_root: Pathname).returns(T::Array[String]) }
+      def label_flags(image_tag, project_root)
+        service_labels(image_tag, project_root).flat_map { |key, value| ["--label", "#{key}=#{value}"] }
       end
 
       sig { params(str: String).returns(String) }
@@ -425,6 +481,7 @@ module Dev
       [
         *@engine.argv_prefix, "run", "--rm",
         *SIGPENDING_ULIMIT,
+        *self.class.label_flags(image_tag, project_root),
         "-v", "#{project_root}:/project",
         *volume_flags(volumes),
         *env_flags,
@@ -497,19 +554,54 @@ module Dev
       [*@engine.argv_prefix, "exec", *env_flags, "-w", "/project", container, "sh", "-c", shell_cmd]
     end
 
-    # Remove every service container for this checkout — the current tag's and any
-    # stale one — backing `dev reset-container`. Keyed by the image + workspace
-    # prefix (not the exact tag) so a container from a now-superseded Dockerfile/dep
-    # is still matched, while OTHER checkouts' containers are left untouched.
+    # Remove every container for this checkout — the current tag's and any
+    # stale one — backing `dev container reset`. Keyed by the workspace label
+    # (not the tag) so a container from a now-superseded Dockerfile/dep is
+    # still matched, while OTHER checkouts' containers are left untouched.
     #
-    # @param image_tag    [String]
     # @param project_root [Pathname] the checkout whose containers to remove
     # @return [Array<String>] names of the removed containers
-    sig { params(image_tag: String, project_root: Pathname).returns(T::Array[String]) }
-    def reset_service!(image_tag, project_root)
-      names = service_containers(self.class.service_name_prefix(image_tag, project_root))
+    sig { params(project_root: Pathname).returns(T::Array[String]) }
+    def reset_service!(project_root)
+      names = service_containers(project_root).map(&:name)
       names.each { |name| remove_container(name) }
       names
+    end
+
+    # Stop this checkout's running containers, keeping them — their writable
+    # layer (the build tool's incremental state) is the whole point of
+    # `persist`, and `ensure_service!` restarts a stopped one warm. Backs
+    # `dev container down`. `-t 0`: PID 1 is `sleep infinity`, which ignores
+    # SIGTERM, so docker's grace period would only add the wait.
+    #
+    # @param project_root [Pathname] the checkout whose containers to stop
+    # @return [Array<String>] names of the containers stopped
+    # @raise [StopFailedError] when docker cannot stop one
+    sig { params(project_root: Pathname).returns(T::Array[String]) }
+    def stop_service!(project_root)
+      names = service_containers(project_root).select(&:running).map(&:name)
+      names.each do |name|
+        next if @engine.run(["stop", "-t", "0", name], out: File::NULL, err: File::NULL)
+
+        raise StopFailedError, "could not stop container #{name}."
+      end
+      names
+    end
+
+    # The facts `dev container status` renders; probes only, nothing changes.
+    #
+    # @param image_tag    [String]   the tag the checkout resolves to today
+    # @param project_root [Pathname]
+    # @return [ServiceStatus]
+    sig { params(image_tag: String, project_root: Pathname).returns(ServiceStatus) }
+    def service_status(image_tag, project_root)
+      ServiceStatus.new(
+        image_tag: image_tag,
+        local_image: local_image?(image_tag),
+        in_registry: registry_has?(image_tag),
+        current_container_name: self.class.service_container_name(image_tag, project_root),
+        containers: service_containers(project_root),
+      )
     end
 
     # Run the prewarm command in a container off the base image and commit the
@@ -658,22 +750,32 @@ module Dev
 
     # Remove service containers for this checkout that don't match the current
     # tag's name, so a Dockerfile/dep bump (new tag) doesn't leave the old one
-    # running alongside the new. Scoped to the workspace prefix, so a tag bump in
+    # running alongside the new. Scoped to the workspace label, so a tag bump in
     # one checkout never reaps another checkout's container.
     sig { params(image_tag: String, project_root: Pathname).void }
     def reap_stale_services!(image_tag, project_root)
       keep = self.class.service_container_name(image_tag, project_root)
-      service_containers(self.class.service_name_prefix(image_tag, project_root)).each do |name|
-        remove_container(name) unless name == keep
+      service_containers(project_root).each do |container|
+        remove_container(container.name) unless container.name == keep
       end
     end
 
-    # Names of existing containers (running or stopped) whose name matches the
-    # project prefix. `^` anchors the regex name filter to the start.
-    sig { params(prefix: String).returns(T::Array[String]) }
-    def service_containers(prefix)
-      out = @engine.capture(["ps", "-a", "--filter", "name=^#{prefix}", "--format", "{{.Names}}"])
-      out.split("\n").map(&:strip).reject(&:empty?)
+    # This checkout's containers, running or stopped, by the workspace label —
+    # the key the label contract exists for. One `docker ps` per call.
+    #
+    # @param project_root [Pathname]
+    # @return [Array<ServiceContainer>] in docker's order
+    sig { params(project_root: Pathname).returns(T::Array[ServiceContainer]) }
+    def service_containers(project_root)
+      out = @engine.capture([
+        "ps", "-a",
+        "--filter", "label=#{WORKSPACE_LABEL}=#{self.class.workspace_id(project_root)}",
+        "--format", "{{.Names}}\t{{.State}}",
+      ])
+      out.split("\n").map(&:strip).reject(&:empty?).map do |line|
+        name, state = line.split("\t", 2)
+        ServiceContainer.new(name: T.must(name), running: state == "running")
+      end
     end
 
     sig { params(name: String).returns(T::Boolean) }
@@ -692,12 +794,13 @@ module Dev
     end
 
     # Create the detached, idle service container: the project at /project, any
-    # extra volumes (e.g. the engine), and `sleep infinity` so it stays up for
-    # `docker exec`.
+    # extra volumes (e.g. the engine), the label contract, and `sleep infinity`
+    # so it stays up for `docker exec`.
     sig { params(name: String, image_tag: String, project_root: Pathname, volumes: T::Array[String]).void }
     def create_service_container(name, image_tag, project_root:, volumes: [])
       args = [
         "run", "-d", "--name", name,
+        *self.class.label_flags(image_tag, project_root),
         "-v", "#{project_root}:/project",
         *volume_flags(volumes),
         "-w", "/project",

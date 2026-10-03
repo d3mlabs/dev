@@ -60,7 +60,7 @@ module Dev
 
       # One "Commands:" list when the children share a category; headed
       # sections in HEADINGS order otherwise (categories with no children
-      # are omitted — some builtins are config-gated, e.g. reset-container).
+      # are omitted — some builtins are config-gated, e.g. `container`).
       #
       # @param children [Array<[String, Dev::Command]>] the visible children
       # @param out [IO, StringIO]
