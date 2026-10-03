@@ -318,7 +318,12 @@ module Dev
           children: { "gc" => Builtins::CacheGcCommand.new },
         ),
       }, T::Hash[String, Command])
-      builtins["container"] = container_builtins if manifest.build_container
+      if manifest.build_container
+        builtins["container"] = container_builtins
+        # `down` reverses what `up` adds for a containerized project; a
+        # project without one has nothing for it to bring down.
+        builtins["down"] = Builtins::DownCommand.new(out: @out)
+      end
       builtins.merge!(runner_builtins)
       # The global builtins are dispatched before the Runner (bin/dev); they
       # join the project tree so help lists one complete tree.

@@ -185,7 +185,7 @@ class RunnerTest < Minitest::Test
 
     Then "up is listed as the builtin dependency install"
     out.string.include?("up")
-    out.string.include?("Install locked dependencies, then run the project's up command")
+    out.string.include?("Install locked deps and bring the build container up")
   end
 
   test "a project up command keeps the builtin slot's section with its own desc" do
@@ -198,7 +198,7 @@ class RunnerTest < Minitest::Test
 
     Then "the override's description wins"
     out.string.include?("Project setup")
-    !out.string.include?("Install locked dependencies, then run the project's up command")
+    !out.string.include?("Install locked deps and bring the build container up")
   end
 
   test "usage includes the cd builtin" do
@@ -265,21 +265,42 @@ class RunnerTest < Minitest::Test
     out.string.match?(%r{\Amyregistry/myapp-linux:content-[0-9a-f]{12}\n\z})
   end
 
-  test "container is not registered without a build container" do
+  test "#{name} is not registered without a build container" do
     Given "a Runner without a build container"
     runner = build_runner(commands: {})
     old_stderr = $stderr
     $stderr = StringIO.new
     Kernel.expects(:exit).with(1).once
 
-    When "we invoke the absent noun"
-    runner.run(["container", "status"])
+    When "we invoke the absent command"
+    runner.run(argv)
 
     Then "it is not found"
-    $stderr.string.include?("container")
+    $stderr.string.include?(name)
 
     Cleanup
     $stderr = old_stderr
+
+    Where
+    name        | argv
+    "container" | ["container", "status"]
+    "down"      | ["down"]
+  end
+
+  test "down is registered beside up when a build container is configured" do
+    Given "a Runner with a build container"
+    out = StringIO.new
+    runner = build_runner(
+      commands: {},
+      build: { "container" => { "image" => "myapp-linux", "registry" => "myregistry" } },
+      out: out,
+    )
+
+    When "we print usage"
+    runner.run([])
+
+    Then "down is listed"
+    out.string.lines.any? { |l| l.strip.start_with?("down ") }
   end
 
   test "runner is ungated: every project catalog lists it" do

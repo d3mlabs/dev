@@ -38,7 +38,8 @@ Grouped as `dev help` lists them. **Scope** says where the command works: *anywh
 
 | Command | Scope | Purpose | Details |
 |---|---|---|---|
-| `dev up` | project, or anywhere (host layer only) | Converge host tooling, install locked deps, run the project's `up:` | [Dependency commands](#dependency-commands) |
+| `dev up` | project, or anywhere (host layer only) | Converge host tooling, install locked deps, bring the build container up, run the project's `up:` | [Dependency commands](#dependency-commands) |
+| `dev down` | gated: `build.container` | Stop this checkout's build container, and the engine if nothing else uses it | [Engine & container lifecycle](#engine--container-lifecycle) |
 | `dev deps update` | project | Resolve `dependencies.rb` and write the lockfiles (≈ `bundle update`) | [Dependency commands](#dependency-commands) |
 | `dev deps install` | project | Install host-handled locked deps (gh releases, steam apps, …) (≈ `bundle install`) | [Dependency commands](#dependency-commands) |
 | `dev deps check` | project | Report dependency staleness (manifest vs lockfiles vs installed); exits non-zero when stale (≈ `bundle check`) | [Dependency commands](#dependency-commands) |
@@ -435,7 +436,7 @@ The Lifecycle builtins (see [Built-in commands](#built-in-commands)) that drive 
 
 - **`dev deps update`** — resolve constraints from `dependencies.rb`, write lockfiles (recording the manifest digest for the staleness check). Always available (no need to define in `dev.yml`).
 - **`dev deps install`** — install locked deps handled on the host (gh releases, steam apps) into their version-keyed install dirs, filtered to the detected env and host OS. Finishes by refreshing agent skill links (see [Agent skills & org learnings](#agent-skills--org-learnings)).
-- **`dev up`** — first converges the host layer (self-update + org Brewfile, see [Host tooling: the Brewfile contract](#host-tooling-the-brewfile-contract)), then auto-installs all deps from lockfiles (build group first), then runs the project's `up:` command from `dev.yml` if defined. On success, stamps the installed lockfile digest (see `dev deps check`). Finishes by refreshing agent skill links, like `dev deps install`. Also valid outside any project: converges the host layer only — the fresh-box bootstrap (`brew install <org>/<tap>/dev` → `dev up` → ready).
+- **`dev up`** — first converges the host layer (self-update + org Brewfile, see [Host tooling: the Brewfile contract](#host-tooling-the-brewfile-contract)), then auto-installs all deps from lockfiles (build group first), then — in a project with a `build.container` — runs [`dev container up`](#engine--container-lifecycle) (engine sized from the hint, image resolved, persistent container started; after the install, since the image build may mount locked build deps), then runs the project's `up:` command from `dev.yml` if defined. On success, stamps the installed lockfile digest (see `dev deps check`). Finishes by refreshing agent skill links, like `dev deps install`. Also valid outside any project: converges the host layer only — the fresh-box bootstrap (`brew install <org>/<tap>/dev` → `dev up` → ready).
 - **`dev deps check`** — report dependency-state staleness explicitly and exit non-zero when anything drifted: `dependencies.rb` vs lockfiles (digest recorded by `dev deps update`), and lockfiles vs the per-machine installed stamp (`~/.dev/state/<project>/installed-digest`, written after a fully-successful `dev up`/`dev deps install`). The same two O(1) checks run at every command start — warning on workstations, erroring in CI.
 - **`dev deps path <integration> <name> <platform>`** — print the absolute path of a locked artifact (e.g. `dev deps path ficsit SML LinuxServer`, `dev deps path xcode` for the pinned DEVELOPER_DIR, or `dev deps path gh UnrealEngineMac` for a gh release's version-keyed install dir under the data root) so scripts don't reconstruct cache keys or layout conventions.
 
@@ -573,6 +574,8 @@ A workflow/cron only *schedules* `dev cache gc`; it never reaches into the layou
 
 Two nouns, two scopes. **`dev engine`** is the per-user daemon every project shares — global, described under [The container engine](#the-container-engine-per-user). **`dev container`** is *this checkout's* image and container; it exists only where the `dev.yml` declares a `build.container`, and never reaches another checkout.
 
+Two intents sit on top. **`dev up`** composes `container up` after the dependency install (the image build may mount locked build deps), so the first containerized command after it finds engine, image and container ready. **`dev down`** reverses that for this checkout: `container down`, then the engine stops too — but only when it is dev's to stop and nothing else runs in it. Another checkout's container, or one dev does not manage, leaves the engine running and is named so you know why; exit 0 either way. `dev engine down` is the verb that reaches further. Outside a project `dev up` is the host bootstrap and starts no engine; `dev down` exists only where there is a container to bring down.
+
 | Verb | What it does |
 |---|---|
 | `dev container up` | Engine up and sized from this repo's hint → image resolved (local → registry → build; publishes when `DEV_PUBLISH_IMAGE=1`) → with `persist`, the service container created, or restarted warm if it exists. Everything a containerized command would do lazily on first use, done ahead of time. |
@@ -587,6 +590,7 @@ What survives what — the warmth table:
 
 | After… | Image | Container (writable layer) | Engine |
 |---|---|---|---|
+| `dev down` | kept | kept, stopped | stopped if idle and dev's, else running |
 | `dev container down` | kept | kept, stopped | running |
 | `dev container reset` | kept | removed | running |
 | `dev engine down` | kept | kept, stopped (every checkout's) | stopped |

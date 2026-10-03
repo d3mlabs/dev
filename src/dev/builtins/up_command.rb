@@ -3,7 +3,7 @@
 
 require "dev/command"
 require "dev/credentials"
-require "dev/engine_provisioner"
+require "dev/builtins/container_up_command"
 require "dev/host_service"
 
 module Dev
@@ -22,23 +22,27 @@ module Dev
     class UpCommand < BuiltinCommand
       extend T::Sig
 
+      # @param install_deps_command [InstallDepsCommand] the `dev deps install` body
+      # @param host_service [Dev::HostService] the host layer
+      # @param container_up_command [ContainerUpCommand] the `dev container up`
+      #   body, run only when the project declares a build container
       sig do
         params(
           install_deps_command: InstallDepsCommand,
           host_service: Dev::HostService,
-          engine_provisioner: Dev::EngineProvisioner,
+          container_up_command: ContainerUpCommand,
         ).void
       end
       def initialize(install_deps_command:, host_service: Dev::HostService.new,
-        engine_provisioner: Dev::EngineProvisioner.new)
+        container_up_command: ContainerUpCommand.new)
         super()
         @install_deps_command = install_deps_command
         @host_service = host_service
-        @engine_provisioner = engine_provisioner
+        @container_up_command = container_up_command
       end
 
       sig { override.returns(String) }
-      def desc = "Install locked dependencies, then run the project's up command (if defined)"
+      def desc = "Install locked deps and bring the build container up, then run the project's up command (if defined)"
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
@@ -74,23 +78,15 @@ module Dev
         end
 
         provision_build_credentials(project)
-        provision_engine(project)
         @install_deps_command.call(args:, context:)
+        # After the install: the image build may mount locked build deps
+        # (version-resolved volumes), so they must be on disk first. After
+        # `dev up` the first containerized command finds engine, image and
+        # container ready instead of paying for them lazily.
+        @container_up_command.call(args: [], context:) if project.build_container
       end
 
       private
-
-      # A containerized project needs a running engine before its first
-      # `docker build`; `dev up` is where that VM starts (on macOS), sized
-      # from the repo's resources hint. Non-containerized projects have no
-      # engine to bring up.
-      sig { params(project: ProjectContext).void }
-      def provision_engine(project)
-        config = project.build_container
-        return if config.nil?
-
-        @engine_provisioner.provision!(resources: config.resources)
-      end
 
       # `dev up` is the provisioning command: after it succeeds, every other
       # command should work unattended. Resolving docker build args here
