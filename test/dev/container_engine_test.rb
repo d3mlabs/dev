@@ -215,6 +215,20 @@ class Dev::ContainerEngineTest < Minitest::Test
     records.fetch(1).project_root.nil?
   end
 
+  test "a running container describes itself as #{expectation}" do
+    Given "the record"
+    record = Dev::ContainerEngine::RunningContainer.new(name: name, managed: managed, project_root: project_root)
+
+    Expect
+    record.describe(home: "/Users/jp") == rendered
+
+    Where
+    expectation                          | name          | managed | project_root                 | rendered
+    "its checkout, home abbreviated"     | "dev-snappy-1" | true    | "/Users/jp/src/snappy"       | "snappy (~/src/snappy)"
+    "its checkout, elsewhere"            | "dev-cb3d-2"   | true    | "/work/cellbound-3d"         | "cellbound-3d (/work/cellbound-3d)"
+    "its bare name when not dev's"       | "my-postgres"  | false   | nil                          | "my-postgres (not managed by dev)"
+  end
+
   test "running_containers is empty when nothing runs or the daemon does not answer" do
     Given "an engine whose docker #{shape}"
     engine = Dev::ContainerEngine.new(kind: :test, argv_prefix: argv_prefix)

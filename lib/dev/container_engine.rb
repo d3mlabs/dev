@@ -47,9 +47,26 @@ module Dev
     # contract decoded: a managed container names the checkout it serves;
     # anything else is the user's own and carries only its name.
     class RunningContainer < T::Struct
+      extend T::Sig
+
       const :name, String
       const :managed, T::Boolean
       const :project_root, T.nilable(String)
+
+      # One line for a human: a managed container is named by the checkout
+      # it serves (that is where `dev container down` acts), the user's own
+      # by its name, flagged as not dev's to manage.
+      #
+      # @param home [String] the home directory to abbreviate as `~`
+      # @return [String]
+      sig { params(home: String).returns(String) }
+      def describe(home: Dir.home)
+        root = project_root
+        return "#{name} (not managed by dev)" if !managed || root.nil?
+
+        shown = root.start_with?("#{home}/") ? root.sub("#{home}/", "~/") : root
+        "#{File.basename(root)} (#{shown})"
+      end
     end
 
     # @return [Symbol] :colima (the user's own VM), :docker (bare dockerd —
