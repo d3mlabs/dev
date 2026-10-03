@@ -299,33 +299,21 @@ class Dev::LinuxEngineProvisionerTest < Minitest::Test
     nil
   end
 
-  test "stop! stops dockerd when idle, refuses when busy, and with force stops the containers first" do
-    Given "a daemon with the given containers"
+  test "stop! stops dockerd whatever is running in it — busy-ness is the caller's decision" do
+    Given "a daemon with a container running"
     install("docker")
-    executor = RecordedLinuxExecutor.new(containers: containers)
+    executor = RecordedLinuxExecutor.new(containers: %w[snappy-build])
     prov = provisioner(executor: executor)
 
     When "stopping"
-    error = begin
-      prov.stop!(force: force)
-      nil
-    rescue Dev::LinuxEngineProvisioner::EngineBusyError => e
-      e
-    end
+    prov.stop!
 
-    Then "the right commands ran, in order"
-    executor.runs.select { |bin, sub, *_rest| %w[sudo docker].include?(bin) && sub != "ps" } == expected
-    (error.nil?) == expected_ok
-    error.nil? || error.message.include?("snappy-build")
+    Then "the sudo credential is primed, then dockerd is stopped; no container is touched"
+    executor.runs.select { |bin, sub, *_rest| %w[sudo docker].include?(bin) && sub != "ps" } ==
+      [%w[sudo -v], %w[sudo systemctl stop docker]]
 
     Cleanup
     nil
-
-    Where
-    containers                | force | expected_ok | expected
-    []                        | false | true        | [%w[sudo -v], %w[sudo systemctl stop docker]]
-    %w[snappy-build]          | false | false       | []
-    %w[snappy-build ue-css]   | true  | true        | [%w[docker stop snappy-build ue-css], %w[sudo -v], %w[sudo systemctl stop docker]]
   end
 
   test "status reports the daemon facts" do

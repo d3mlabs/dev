@@ -50,9 +50,6 @@ module Dev
     # An admin step exited nonzero.
     class StepFailedError < RuntimeError; end
 
-    # `stop!` asked while containers are running.
-    class EngineBusyError < RuntimeError; end
-
     # The daemon facts `dev engine status` renders for Linux/WSL.
     class Status < T::Struct
       extend T::Sig
@@ -165,22 +162,14 @@ module Dev
 
     # Stop dockerd — the Linux/WSL "engine down". Never the WSL VM: dev lives
     # in it, and WSL hands idle memory back on its own (autoMemoryReclaim).
+    # Whatever is running inside goes down with the daemon: whether that is
+    # acceptable is the caller's decision (`dev engine down` stops dev's own
+    # containers and asks about the user's first), not this primitive's.
     #
-    # @param force [Boolean] stop running containers first instead of refusing
     # @return [void]
-    # @raise [EngineBusyError] when containers are running and not forced
     # @raise [StepFailedError]
-    sig { params(force: T::Boolean).void }
-    def stop!(force: false)
-      busy = running_containers
-      unless busy.empty?
-        unless force
-          raise EngineBusyError,
-            "containers are running in the engine:\n  #{busy.join("\n  ")}\n" \
-            "Bring those projects down first (`dev reset-container` there, or `docker stop`), or pass --force."
-        end
-        step!(*T.unsafe(["docker", "stop", *busy]))
-      end
+    sig { void }
+    def stop!
       step!("sudo", "-v")
       step!("sudo", "systemctl", "stop", "docker")
     end
@@ -265,12 +254,6 @@ module Dev
     sig { returns(T::Array[String]) }
     def groups
       T.unsafe(@executor).capture("id", "-nG", @user).split
-    end
-
-    # @return [Array<String>] names of containers the local daemon is running
-    sig { returns(T::Array[String]) }
-    def running_containers
-      T.unsafe(@executor).capture("docker", "ps", "--format", "{{.Names}}").lines.map(&:strip).reject(&:empty?)
     end
 
     # @return [Boolean] whether /etc/wsl.conf has `[boot] systemd=true`
