@@ -21,8 +21,7 @@ class Dev::Builtins::DownCommandTest < Minitest::Test
 
   test "traits: a visible Lifecycle verb, staleness-exempt, no stamp" do
     Given "the builtin"
-    command = down_command(container_down: typed_mock(Dev::Builtins::ContainerDownCommand),
-      provisioner: typed_mock(Dev::EngineProvisioner))
+    command = down_command(services: [], provisioner: typed_mock(Dev::EngineProvisioner))
 
     Expect
     command.category == Dev::Command::Category::Lifecycle
@@ -31,12 +30,15 @@ class Dev::Builtins::DownCommandTest < Minitest::Test
     !command.hidden?
   end
 
-  test "down brings this checkout's container down, then stops the engine when nothing else runs in it" do
-    Given "a stoppable engine that is idle once our container is down"
-    order = sequence("container before engine")
-    container_down = typed_mock(Dev::Builtins::ContainerDownCommand)
+  test "down brings the service dependencies down in reverse order — through the port — then stops the idle engine" do
+    Given "two service dependencies and a stoppable engine that is idle once they are down"
+    order = sequence("services in reverse, then engine")
     context = project
-    container_down.expects(:call).with(args: [], context: context).once.in_sequence(order)
+    first = typed_mock(Dev::Builtins::ContainerDownCommand)
+    second = typed_mock(Dev::Builtins::ContainerDownCommand)
+    second.expects(:down).with(project: context.project).once.in_sequence(order)
+    first.expects(:down).with(project: context.project).once.in_sequence(order)
+    first.expects(:call).never
     provisioner = typed_mock(Dev::EngineProvisioner)
     provisioner.stubs(:stoppable?).returns(true)
     provisioner.stubs(:engine).returns(engine_with([]))
@@ -44,7 +46,7 @@ class Dev::Builtins::DownCommandTest < Minitest::Test
     out = StringIO.new
 
     When "bringing the project down"
-    down_command(container_down:, provisioner:, out:).call(args: [], context: context)
+    down_command(services: [first, second], provisioner:, out:).call(args: [], context: context)
 
     Then
     out.string == "dev: engine stopped.\n"
@@ -52,8 +54,8 @@ class Dev::Builtins::DownCommandTest < Minitest::Test
 
   test "down leaves the engine running when #{description}, and says who is using it" do
     Given "an engine still serving #{description}"
-    container_down = typed_mock(Dev::Builtins::ContainerDownCommand)
-    container_down.stubs(:call)
+    service = typed_mock(Dev::Builtins::ContainerDownCommand)
+    service.stubs(:down)
     provisioner = typed_mock(Dev::EngineProvisioner)
     provisioner.stubs(:stoppable?).returns(true)
     provisioner.stubs(:engine).returns(engine_with(running))
@@ -61,7 +63,7 @@ class Dev::Builtins::DownCommandTest < Minitest::Test
     out = StringIO.new
 
     When "bringing the project down"
-    down_command(container_down:, provisioner:, out:).call(args: [], context: project)
+    down_command(services: [service], provisioner:, out:).call(args: [], context: project)
 
     Then "informational, exit 0 — dev engine down is the verb that reaches further"
     out.string == "dev: engine left running — still in use by:\n#{listed}"
@@ -75,8 +77,8 @@ class Dev::Builtins::DownCommandTest < Minitest::Test
 
   test "down never tries to stop an engine dev did not provision" do
     Given "an explicit DOCKER_HOST (or Docker Desktop) engine"
-    container_down = typed_mock(Dev::Builtins::ContainerDownCommand)
-    container_down.expects(:call).once
+    service = typed_mock(Dev::Builtins::ContainerDownCommand)
+    service.expects(:down).once
     provisioner = typed_mock(Dev::EngineProvisioner)
     provisioner.stubs(:stoppable?).returns(false)
     provisioner.expects(:engine).never
@@ -84,7 +86,7 @@ class Dev::Builtins::DownCommandTest < Minitest::Test
     out = StringIO.new
 
     When "bringing the project down"
-    down_command(container_down:, provisioner:, out:).call(args: [], context: project)
+    down_command(services: [service], provisioner:, out:).call(args: [], context: project)
 
     Then
     out.string == "dev: engine left running (not managed by dev).\n"
@@ -98,9 +100,9 @@ class Dev::Builtins::DownCommandTest < Minitest::Test
     engine
   end
 
-  def down_command(container_down:, provisioner:, out: StringIO.new)
+  def down_command(services:, provisioner:, out: StringIO.new)
     Dev::Builtins::DownCommand.new(
-      container_down_command: container_down, provisioner: provisioner, out: out, home: "/Users/jp",
+      service_dependencies: services, provisioner: provisioner, out: out, home: "/Users/jp",
     )
   end
 

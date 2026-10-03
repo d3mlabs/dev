@@ -3,44 +3,45 @@
 
 require "stringio"
 require "dev/command"
-require "dev/builtins/container_down_command"
+require "dev/builtins/service_down"
 require "dev/engine_provisioner"
 
 module Dev
   module Builtins
     # `dev down` — the intent behind `dev up`, reversed, for this checkout:
-    # its build container stops (warm), and the engine stops too when
-    # nothing else is using it. It never reaches further than that — another
-    # checkout's container, or one dev does not manage, leaves the engine
-    # running and is named so you know why; `dev engine down` is the verb
-    # that stops those. Exists only where `dev up` has a container to bring
-    # up (the project declares `build.container`).
+    # its service dependencies come down (the build container stops, warm),
+    # and the engine stops too when nothing else is using it. It never
+    # reaches further than that — another checkout's container, or one dev
+    # does not manage, leaves the engine running and is named so you know
+    # why; `dev engine down` is the verb that stops those. Exists only where
+    # the project has a service dependency to bring down.
     class DownCommand < BuiltinCommand
       extend T::Sig
 
-      # @param container_down_command [ContainerDownCommand] the `dev container down` body
+      # @param service_dependencies [Array<ServiceDown>] the same list `dev up`
+      #   brings up (see UpCommand), through its bring-down port; walked in
+      #   reverse bring-up order, before the engine is considered
       # @param provisioner [Dev::EngineProvisioner] owns the engine and its stop
       # @param out [IO, StringIO]
       # @param home [String] abbreviated as `~` when naming checkouts
       sig do
         params(
-          container_down_command: ContainerDownCommand,
+          service_dependencies: T::Array[ServiceDown],
           provisioner: Dev::EngineProvisioner,
           out: T.any(IO, StringIO),
           home: String,
         ).void
       end
-      def initialize(container_down_command: ContainerDownCommand.new, provisioner: Dev::EngineProvisioner.new,
-        out: $stdout, home: Dir.home)
+      def initialize(service_dependencies: [], provisioner: Dev::EngineProvisioner.new, out: $stdout, home: Dir.home)
         super()
-        @container_down_command = container_down_command
+        @service_dependencies = service_dependencies
         @provisioner = provisioner
         @out = out
         @home = home
       end
 
       sig { override.returns(String) }
-      def desc = "Stop this checkout's build container, and the engine if nothing else uses it"
+      def desc = "Stop this checkout's service dependencies, and the engine if nothing else uses it"
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
@@ -53,7 +54,8 @@ module Dev
       # @return [void]
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
-        @container_down_command.call(args: [], context:)
+        project = context.project!
+        @service_dependencies.reverse_each { |service| service.down(project:) }
 
         unless @provisioner.stoppable?
           @out.puts "dev: engine left running (not managed by dev)."

@@ -112,33 +112,34 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     0 * Dev::Credentials.resolve_build_args(anything)
   end
 
-  test "call composes container up for a containerized project, after the deps install it may depend on" do
-    Given "a build container; deps install and container up both observed in order"
-    order = sequence("deps before container")
+  test "call brings the service dependencies up, in order, after the deps install they may depend on — through the port, not the CLI" do
+    Given "two service dependencies; deps install and both bring-ups observed in order"
+    order = sequence("deps, then services in order")
     install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
     install_deps.expects(:call).once.in_sequence(order)
-    container_up = typed_mock(Dev::Builtins::ContainerUpCommand)
     context = build_context(build_container: container_config(build_args: {}))
-    container_up.expects(:call).with(args: [], context: context).once.in_sequence(order)
+    first = typed_mock(Dev::Builtins::ContainerUpCommand)
+    second = typed_mock(Dev::Builtins::ContainerUpCommand)
+    first.expects(:up).with(project: context.project).once.in_sequence(order)
+    second.expects(:up).with(project: context.project).once.in_sequence(order)
+    first.expects(:call).never
     command = Dev::Builtins::UpCommand.new(
-      install_deps_command: install_deps, host_service: quiet_host_service, container_up_command: container_up,
+      install_deps_command: install_deps, host_service: quiet_host_service, service_dependencies: [first, second],
     )
 
     When "running up"
     command.call(args: [], context: context)
 
-    Then "asserted on the mocks: the image and container are ready before the first containerized command"
+    Then "asserted on the mocks: the services are ready before the first command that needs them"
     true
   end
 
-  test "call leaves the container layer alone for a project without a build container" do
+  test "call with no service dependencies is the deps install alone" do
     Given "a plain project"
-    container_up = typed_mock(Dev::Builtins::ContainerUpCommand)
-    container_up.expects(:call).never
     install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
-    install_deps.stubs(:call)
+    install_deps.expects(:call).once
     command = Dev::Builtins::UpCommand.new(
-      install_deps_command: install_deps, host_service: quiet_host_service, container_up_command: container_up,
+      install_deps_command: install_deps, host_service: quiet_host_service, service_dependencies: [],
     )
 
     When "running up"
@@ -153,10 +154,8 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
   def build_command
     install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
     install_deps.stubs(:call)
-    container_up = typed_mock(Dev::Builtins::ContainerUpCommand)
-    container_up.stubs(:call)
     Dev::Builtins::UpCommand.new(
-      install_deps_command: install_deps, host_service: quiet_host_service, container_up_command: container_up,
+      install_deps_command: install_deps, host_service: quiet_host_service, service_dependencies: [],
     )
   end
 

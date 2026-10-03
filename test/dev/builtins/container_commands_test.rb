@@ -42,6 +42,24 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     Dev::Builtins::ContainerStatusCommand   | true
   end
 
+  test "#{klass} is the #{port} port dev up / dev down compose; its CLI verb is the adapter over it" do
+    Given "the builtin"
+    command = klass.new(container_client: client, out: StringIO.new)
+    context = project(config(persist: true))
+    command.expects(verb).with(project: context.project).once
+
+    When "invoked as a CLI verb"
+    command.call(args: [], context: context)
+
+    Then "it is the port, and the verb delegated to it with the project alone"
+    command.is_a?(port)
+
+    Where
+    klass                                 | port                       | verb
+    Dev::Builtins::ContainerUpCommand     | Dev::Builtins::ServiceUp   | :up
+    Dev::Builtins::ContainerDownCommand   | Dev::Builtins::ServiceDown | :down
+  end
+
   # --- up ---------------------------------------------------------------------
 
   test "container up brings the engine up from the hint, resolves the image, and starts the service when persisted" do

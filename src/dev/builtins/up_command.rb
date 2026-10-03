@@ -3,7 +3,7 @@
 
 require "dev/command"
 require "dev/credentials"
-require "dev/builtins/container_up_command"
+require "dev/builtins/service_up"
 require "dev/host_service"
 
 module Dev
@@ -22,23 +22,30 @@ module Dev
     class UpCommand < BuiltinCommand
       extend T::Sig
 
-      # @param install_deps_command [InstallDepsCommand] the `dev deps install` body
+      # @param install_deps_command [InstallDepsCommand] the `dev deps install`
+      #   body — a CLI intent `dev up` extends, so it receives the user's args
       # @param host_service [Dev::HostService] the host layer
-      # @param container_up_command [ContainerUpCommand] the `dev container up`
-      #   body, run only when the project declares a build container
+      # @param service_dependencies [Array<ServiceUp>] the services this
+      #   project depends on — things that must be *running* for it to build
+      #   and run — through the one port `dev up` needs from each: bring-up,
+      #   given the project. They are operations, not CLI intents: `dev up`
+      #   orchestrates them and never hands them the user's args (contrast
+      #   install_deps_command). Composed in bring-up order at the root from
+      #   dev.yml: the build container (an environment service,
+      #   `build.container`) today; application services later. What this
+      #   project provides to others is never in this list.
       sig do
         params(
           install_deps_command: InstallDepsCommand,
           host_service: Dev::HostService,
-          container_up_command: ContainerUpCommand,
+          service_dependencies: T::Array[ServiceUp],
         ).void
       end
-      def initialize(install_deps_command:, host_service: Dev::HostService.new,
-        container_up_command: ContainerUpCommand.new)
+      def initialize(install_deps_command:, host_service: Dev::HostService.new, service_dependencies: [])
         super()
         @install_deps_command = install_deps_command
         @host_service = host_service
-        @container_up_command = container_up_command
+        @service_dependencies = service_dependencies
       end
 
       sig { override.returns(String) }
@@ -79,11 +86,11 @@ module Dev
 
         provision_build_credentials(project)
         @install_deps_command.call(args:, context:)
-        # After the install: the image build may mount locked build deps
-        # (version-resolved volumes), so they must be on disk first. After
-        # `dev up` the first containerized command finds engine, image and
-        # container ready instead of paying for them lazily.
-        @container_up_command.call(args: [], context:) if project.build_container
+        # After the install: a service's bring-up may need locked deps on
+        # disk (the build container's image build mounts version-resolved
+        # volumes). After `dev up` the first command that needs a service
+        # finds it running instead of paying for it lazily.
+        @service_dependencies.each { |service| service.up(project:) }
       end
 
       private
