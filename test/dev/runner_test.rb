@@ -417,7 +417,7 @@ class RunnerTest < Minitest::Test
 
     Then "help, up, runner and the global nouns are offered; project-only builtins are not"
     names = out.string.lines.map(&:chomp)
-    (%w[help up runner cd clone config cred learnings plan] - names).empty?
+    (%w[help up runner cd clone config cred engine learnings plan] - names).empty?
     !names.include?("deps")
   end
 

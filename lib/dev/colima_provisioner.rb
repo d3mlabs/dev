@@ -93,14 +93,39 @@ module Dev
           "the colima VM has #{vm.cpus} cpus / #{vm.memory_gib} GiB; this project needs " \
           "#{cpus || vm.cpus} cpus / #{memory_gib || vm.memory_gib} GiB, and resizing means stopping " \
           "the VM — but containers are running in it:\n  #{busy.join("\n  ")}\n" \
-          "Bring those projects down first (`dev reset-container` there, or `docker stop`), " \
-          "or stop the VM yourself with `colima stop` and re-run `dev up`."
+          "Bring those projects down first (`dev container down` there, or `dev engine down`), then re-run `dev up`."
       end
 
       raise StopFailedError, "colima stop failed — the VM was left running at its current size." unless
         T.unsafe(@executor).run("colima", "stop")
 
       start!(target_cpus, target_memory)
+    end
+
+    # The VM as `colima list` reports it — `dev engine status`'s colima
+    # facts.
+    #
+    # @return [Vm, nil] nil when the profile does not exist (or colima is absent)
+    sig { returns(T.nilable(Vm)) }
+    def status
+      inspect_vm
+    end
+
+    # Stop the VM — the only way colima reclaims its RAM (no ballooning).
+    # Whatever is running inside goes down with it: whether that is
+    # acceptable is the caller's decision (`dev engine down` stops dev's own
+    # containers and asks about the user's first), not this primitive's. A
+    # stopped or absent VM is already where `stop!` leaves things.
+    #
+    # @return [void]
+    # @raise [StopFailedError] when `colima stop` exits nonzero
+    sig { void }
+    def stop!
+      vm = inspect_vm
+      return if vm.nil? || !vm.running
+      return if T.unsafe(@executor).run("colima", "stop")
+
+      raise StopFailedError, "colima stop failed — the VM was left running."
     end
 
     private

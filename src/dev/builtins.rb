@@ -9,7 +9,7 @@ module Dev
   # leaves: `deps`, `cache`, `runner` in the Runner (which also decides
   # which builtins exist for a given project — config-gated: provide-image
   # / reset-container only with a build container), the global nouns
-  # (`config`, `cred`, `learnings`, `plan`) in GlobalCatalog. A builtin
+  # (`config`, `cred`, `engine`, `learnings`, `plan`) in GlobalCatalog. A builtin
   # heads a subtree of its own via `children:` / `with_children`.
   module Builtins; end
 end
@@ -24,6 +24,9 @@ require_relative "builtins/config_list_command"
 require_relative "builtins/config_set_command"
 require_relative "builtins/cred_get_command"
 require_relative "builtins/deps_path_command"
+require_relative "builtins/engine_down_command"
+require_relative "builtins/engine_status_command"
+require_relative "builtins/engine_up_command"
 require_relative "builtins/help_command"
 require_relative "builtins/install_deps_command"
 require_relative "builtins/learnings_init_command"

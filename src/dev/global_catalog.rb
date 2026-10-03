@@ -8,6 +8,9 @@ require "dev/builtins/config_get_command"
 require "dev/builtins/config_list_command"
 require "dev/builtins/config_set_command"
 require "dev/builtins/cred_get_command"
+require "dev/builtins/engine_down_command"
+require "dev/builtins/engine_status_command"
+require "dev/builtins/engine_up_command"
 require "dev/builtins/learnings_init_command"
 require "dev/builtins/learnings_invariants_command"
 require "dev/builtins/learnings_status_command"
@@ -96,6 +99,19 @@ module Dev
           desc: "Resolve stored credentials",
           category: Command::Category::Workflow,
           children: { "get" => Builtins::CredGetCommand.new(accessor: @cred_accessor, out: @out) },
+        ),
+        # The engine is machine state (one per user, shared by every
+        # project), so its lifecycle is global; inside a project `up` sizes
+        # it from the repo's hint.
+        "engine" => CommandGroup.new(
+          path: ["engine"],
+          desc: "Manage the container engine (up | down | status)",
+          category: Command::Category::Lifecycle,
+          children: {
+            "up" => Builtins::EngineUpCommand.new(out: @out),
+            "down" => Builtins::EngineDownCommand.new(out: @out),
+            "status" => Builtins::EngineStatusCommand.new(out: @out),
+          },
         ),
         "learnings" => CommandGroup.new(
           path: ["learnings"],

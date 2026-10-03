@@ -232,6 +232,65 @@ class Dev::ColimaProvisionerTest < Minitest::Test
     starts(executor).empty?
   end
 
+  # --- status / stop! (the `dev engine` primitives) -------------------------
+
+  test "status reports the VM as colima list sees it, or nil when there is no profile" do
+    Given "a VM that is #{description}"
+    executor = RecordedColimaExecutor.new(vm: vm)
+
+    When "inspecting"
+    status = Dev::ColimaProvisioner.new(executor: executor).status
+
+    Then
+    status&.running == running
+    status&.cpus == cpus
+    status&.memory_gib == memory_gib
+
+    Where
+    description | vm | running | cpus | memory_gib
+    "running"   | { status: "Running", cpus: 8, memory_gib: 16 } | true    | 8    | 16
+    "stopped"   | { status: "Stopped", cpus: 4, memory_gib: 8 }  | false   | 4    | 8
+    "absent"    | nil | nil | nil | nil
+  end
+
+  test "stop! stops the VM, whatever is running in it — busy-ness is the caller's decision" do
+    Given "a running VM with a container in it"
+    executor = RecordedColimaExecutor.new(vm: { status: "Running", cpus: 8, memory_gib: 16 }, containers: ["x"])
+
+    When "stopping"
+    Dev::ColimaProvisioner.new(executor: executor).stop!
+
+    Then "colima stop ran, nothing else"
+    executor.runs == [%w[colima stop]]
+  end
+
+  test "stop! is a no-op on a VM that is #{description} — nothing to stop" do
+    Given "such a VM"
+    executor = RecordedColimaExecutor.new(vm: vm)
+
+    When "stopping"
+    Dev::ColimaProvisioner.new(executor: executor).stop!
+
+    Then
+    executor.runs.empty?
+
+    Where
+    description | vm
+    "stopped"   | { status: "Stopped", cpus: 4, memory_gib: 8 }
+    "absent"    | nil
+  end
+
+  test "stop! raises when colima stop fails" do
+    Given "a running VM whose stop fails"
+    executor = RecordedColimaExecutor.new(vm: { status: "Running", cpus: 8, memory_gib: 16 }, stop_ok: false)
+
+    When "stopping"
+    Dev::ColimaProvisioner.new(executor: executor).stop!
+
+    Then
+    raises Dev::ColimaProvisioner::StopFailedError
+  end
+
   # --- the real executor ---------------------------------------------------
   # A thin wrapper over the process boundary; prove it with cheap real
   # processes, mirroring the ContainerEngine run/capture tests.

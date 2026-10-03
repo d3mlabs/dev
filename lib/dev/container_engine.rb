@@ -36,6 +36,39 @@ module Dev
     # The colima profile dev provisions and points at (colima's own default).
     COLIMA_PROFILE = "default"
 
+    # The label contract dev stamps on every container it creates (see
+    # BuildContainer#create_service_container). Labels, not names, are how
+    # dev tells its own containers from the user's: a name is an identity
+    # Docker constrains to one token, a label is declared metadata.
+    MANAGED_LABEL = "dev.managed"
+    PROJECT_ROOT_LABEL = "dev.project_root"
+
+    # One running container as `docker ps` reports it, with dev's label
+    # contract decoded: a managed container names the checkout it serves;
+    # anything else is the user's own and carries only its name.
+    class RunningContainer < T::Struct
+      extend T::Sig
+
+      const :name, String
+      const :managed, T::Boolean
+      const :project_root, T.nilable(String)
+
+      # One line for a human: a managed container is named by the checkout
+      # it serves (that is where `dev container down` acts), the user's own
+      # by its name, flagged as not dev's to manage.
+      #
+      # @param home [String] the home directory to abbreviate as `~`
+      # @return [String]
+      sig { params(home: String).returns(String) }
+      def describe(home: Dir.home)
+        root = project_root
+        return "#{name} (not managed by dev)" if !managed || root.nil?
+
+        shown = root.start_with?("#{home}/") ? root.sub("#{home}/", "~/") : root
+        "#{File.basename(root)} (#{shown})"
+      end
+    end
+
     # @return [Symbol] :colima (the user's own VM), :docker (bare dockerd —
     #   whatever daemon the CLI's own context reaches), or :explicit (DOCKER_HOST)
     sig { returns(Symbol) }
@@ -155,6 +188,41 @@ module Dev
       EngineResources.from_bytes(cpus: Integer(cpus), memory_bytes: Integer(memory))
     rescue ArgumentError
       nil
+    end
+
+    # The containers running in this engine right now — the fact every
+    # "is the engine idle?" decision rests on (`dev down`'s last-one-out stop,
+    # `dev engine down`'s busy check, the provisioners' resize refusals). One
+    # `docker ps` call; the label columns decode the dev contract so callers
+    # can tell dev's own containers (stop them, name their checkout) from the
+    # user's (ask first). Best-effort like every probe: a daemon that does not
+    # answer reads as nothing running.
+    #
+    # @return [Array<RunningContainer>]
+    sig { returns(T::Array[RunningContainer]) }
+    def running_containers
+      format = "{{.Names}}\t{{.Label \"#{MANAGED_LABEL}\"}}\t{{.Label \"#{PROJECT_ROOT_LABEL}\"}}"
+      capture(["ps", "--format", format]).each_line.filter_map do |line|
+        name, managed, project_root = line.chomp.split("\t", 3)
+        next if name.nil? || name.empty?
+
+        RunningContainer.new(
+          name: name,
+          managed: managed == "true",
+          project_root: (project_root.nil? || project_root.empty?) ? nil : project_root,
+        )
+      end
+    end
+
+    # Whether dev may power this engine off when nothing is using it. True
+    # for the engines dev provisions (its colima VM, the dockerd it converged);
+    # false for an explicit DOCKER_HOST — that engine is the user's own,
+    # possibly remote or shared, and dev never started it.
+    #
+    # @return [Boolean]
+    sig { returns(T::Boolean) }
+    def idle_stoppable?
+      @kind != :explicit
     end
 
     # Whether local paths bind-mounted into containers reach this engine's
