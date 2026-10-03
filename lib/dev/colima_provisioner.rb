@@ -103,6 +103,32 @@ module Dev
       start!(target_cpus, target_memory)
     end
 
+    # The VM as `colima list` reports it — `dev engine status`'s colima
+    # facts.
+    #
+    # @return [Vm, nil] nil when the profile does not exist (or colima is absent)
+    sig { returns(T.nilable(Vm)) }
+    def status
+      inspect_vm
+    end
+
+    # Stop the VM — the only way colima reclaims its RAM (no ballooning).
+    # Whatever is running inside goes down with it: whether that is
+    # acceptable is the caller's decision (`dev engine down` stops dev's own
+    # containers and asks about the user's first), not this primitive's. A
+    # stopped or absent VM is already where `stop!` leaves things.
+    #
+    # @return [void]
+    # @raise [StopFailedError] when `colima stop` exits nonzero
+    sig { void }
+    def stop!
+      vm = inspect_vm
+      return if vm.nil? || !vm.running
+      return if T.unsafe(@executor).run("colima", "stop")
+
+      raise StopFailedError, "colima stop failed — the VM was left running."
+    end
+
     private
 
     # @param cpus [Integer]
