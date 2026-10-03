@@ -23,12 +23,14 @@ module Dev
   #   deployment_formula: d3mlabs/d3mlabs/dev
   #   container_engine: colima
   #   engine_resources: enforce
+  #   default_org: d3mlabs
   #
   # `plans_repo` is the org-wide plans repo that `dev plan new --org` /
   # `dev plan link --org` target. `knowledge_repo` is the org knowledge repo
   # dev keeps a machine-local cache of. `deployment_formula` is the brew
   # formula `dev up`'s self-update upgrades — the deployment names itself
-  # (see Dev::HostService). Leaving a nilable key unset turns its
+  # (see Dev::HostService). `default_org` is the GitHub org a bare
+  # `dev clone <repo>` expands under. Leaving a nilable key unset turns its
   # feature off.
   class Settings
     extend T::Sig
@@ -54,6 +56,7 @@ module Dev
         "deployment_formula" => "DEV_DEPLOYMENT_FORMULA",
         "container_engine" => "DEV_CONTAINER_ENGINE",
         "engine_resources" => "DEV_ENGINE_RESOURCES",
+        "default_org" => "DEV_DEFAULT_ORG",
       }.freeze,
       T::Hash[String, String],
     )
@@ -121,6 +124,16 @@ module Dev
     sig { returns(T.nilable(String)) }
     def container_engine
       lookup("container_engine").first
+    end
+
+    # The GitHub org a bare `dev clone <repo>` expands under. Unset is a
+    # supported state: bare targets then require an explicit <org>/<repo> —
+    # dev is public and hardcodes no org.
+    #
+    # @return [String, nil] the org name, or nil
+    sig { returns(T.nilable(String)) }
+    def default_org
+      lookup("default_org").first
     end
 
     # How an engine below a repo's build.container.resources hint is treated

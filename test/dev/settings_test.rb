@@ -292,4 +292,49 @@ class Dev::SettingsTest < Minitest::Test
     Cleanup
     FileUtils.rm_rf(dir)
   end
+
+  test "default_org reads from the user config file" do
+    Given "a user config declaring the default GitHub org"
+    dir = Dir.mktmpdir("dev-settings-test-")
+    write_user(dir, "default_org: d3mlabs\n")
+    saved_env = ENV.delete("DEV_DEFAULT_ORG")
+    settings = build_settings(dir)
+
+    Expect
+    settings.default_org == "d3mlabs"
+
+    Cleanup
+    ENV["DEV_DEFAULT_ORG"] = saved_env if saved_env
+    FileUtils.rm_rf(dir)
+  end
+
+  test "DEV_DEFAULT_ORG overrides the config files" do
+    Given "a user config and an ENV override"
+    dir = Dir.mktmpdir("dev-settings-test-")
+    write_user(dir, "default_org: d3mlabs\n")
+    saved_env = ENV["DEV_DEFAULT_ORG"]
+    ENV["DEV_DEFAULT_ORG"] = "acme"
+    settings = build_settings(dir)
+
+    Expect
+    settings.default_org == "acme"
+
+    Cleanup
+    saved_env ? ENV["DEV_DEFAULT_ORG"] = saved_env : ENV.delete("DEV_DEFAULT_ORG")
+    FileUtils.rm_rf(dir)
+  end
+
+  test "an unset default_org is nil — explicit <org>/<repo> targets are a supported state" do
+    Given "no config file"
+    dir = Dir.mktmpdir("dev-settings-test-")
+    saved_env = ENV.delete("DEV_DEFAULT_ORG")
+    settings = build_settings(dir)
+
+    Expect
+    settings.default_org.nil?
+
+    Cleanup
+    ENV["DEV_DEFAULT_ORG"] = saved_env if saved_env
+    FileUtils.rm_rf(dir)
+  end
 end
