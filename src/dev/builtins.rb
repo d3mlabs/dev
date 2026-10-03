@@ -6,10 +6,10 @@ module Dev
   # Command hierarchy's declared open edge — with its collaborators
   # constructor-injected; per-call values stay method-side. Nouns with
   # verbs are CommandGroups declared in a composition root over these
-  # leaves: `deps`, `cache`, `runner` in the Runner (which also decides
-  # which builtins exist for a given project — config-gated: provide-image
-  # / reset-container only with a build container), the global nouns
-  # (`config`, `cred`, `engine`, `learnings`, `plan`) in GlobalCatalog. A builtin
+  # leaves: `deps`, `cache`, `container`, `runner` in the Runner (which
+  # also decides which builtins exist for a given project — config-gated:
+  # `container` only with a build container), the global nouns (`config`,
+  # `cred`, `engine`, `learnings`, `plan`) in GlobalCatalog. A builtin
   # heads a subtree of its own via `children:` / `with_children`.
   module Builtins; end
 end
@@ -22,6 +22,11 @@ require_relative "builtins/complete_command"
 require_relative "builtins/config_get_command"
 require_relative "builtins/config_list_command"
 require_relative "builtins/config_set_command"
+require_relative "builtins/container_down_command"
+require_relative "builtins/container_reset_command"
+require_relative "builtins/container_status_command"
+require_relative "builtins/container_tag_command"
+require_relative "builtins/container_up_command"
 require_relative "builtins/cred_get_command"
 require_relative "builtins/deps_path_command"
 require_relative "builtins/engine_down_command"
@@ -40,8 +45,6 @@ require_relative "builtins/plan_new_command"
 require_relative "builtins/plan_pull_command"
 require_relative "builtins/plan_push_command"
 require_relative "builtins/plan_status_command"
-require_relative "builtins/provide_image_command"
-require_relative "builtins/reset_container_command"
 require_relative "builtins/runner_register_command"
 require_relative "builtins/runner_status_command"
 require_relative "builtins/up_command"

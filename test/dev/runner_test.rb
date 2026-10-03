@@ -227,78 +227,56 @@ class RunnerTest < Minitest::Test
     out.string.include?("Clone a GitHub repo")
   end
 
-  test "usage includes reset-container when the build container persists" do
-    Given "a Runner whose build container opts into persist"
-    out = StringIO.new
-    runner = build_runner(
-      commands: {},
-      build: { "container" => {
-        "image" => "myapp-linux", "registry" => "myregistry", "persist" => true,
-      } },
-      out: out,
-    )
-
-    When "we print usage"
-    runner.run([])
-
-    Then "the teardown command is listed"
-    out.string.include?("reset-container")
-  end
-
-  test "reset-container is not registered without persist" do
-    Given "a Runner with a non-persistent build container"
-    out = StringIO.new
-    runner = build_runner(
-      commands: {},
-      build: { "container" => { "image" => "myapp-linux", "registry" => "myregistry" } },
-      out: out,
-    )
-
-    When "we print usage"
-    runner.run([])
-
-    Then "no teardown command is listed"
-    !out.string.include?("reset-container")
-  end
-
-  test "provide-image is registered (but hidden) when a build container is configured" do
+  test "the container group is registered with every verb when a build container is configured" do
     Given "a Runner with a build container"
-    usage = StringIO.new
+    out = StringIO.new
     runner = build_runner(
       commands: {},
       build: { "container" => { "image" => "myapp-linux", "registry" => "myregistry" } },
-      out: usage,
+      out: out,
     )
-    # The composition root builds its own engine-injected client here, so the
-    # docker boundary is stubbed across instances.
-    Dev::BuildContainer.any_instance.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
-    old_stdout = $stdout
-    $stdout = StringIO.new
 
-    When "we print usage and then invoke the command anyway"
+    When "we print usage, then the group's usage"
     runner.run([])
-    runner.run(["provide-image"])
+    top = out.string.dup
+    out.truncate(0)
+    out.rewind
+    runner.run(["container"])
 
-    Then "the command is callable but omitted from usage"
-    !usage.string.include?("provide-image")
-    $stdout.string.include?("myregistry/myapp-linux:content-abc123")
-
-    Cleanup
-    $stdout = old_stdout
+    Then "the noun is listed at the top and its five verbs inside"
+    top.include?("container")
+    %w[up down reset tag status].all? { |verb| out.string.lines.any? { |l| l.strip.start_with?(verb) } }
   end
 
-  test "provide-image is not registered without a build container" do
+  test "container tag answers through the composition root without touching an engine" do
+    Given "a Runner with a build container"
+    out = StringIO.new
+    runner = build_runner(
+      commands: {},
+      build: { "container" => { "image" => "myapp-linux", "registry" => "myregistry" } },
+      out: out,
+    )
+    Dev::ContainerEngine.expects(:resolve).never
+
+    When "we ask for the tag"
+    runner.run(["container", "tag"])
+
+    Then "the content-addressed tag is the whole output"
+    out.string.match?(%r{\Amyregistry/myapp-linux:content-[0-9a-f]{12}\n\z})
+  end
+
+  test "container is not registered without a build container" do
     Given "a Runner without a build container"
     runner = build_runner(commands: {})
     old_stderr = $stderr
     $stderr = StringIO.new
     Kernel.expects(:exit).with(1).once
 
-    When "we invoke the absent command"
-    runner.run(["provide-image"])
+    When "we invoke the absent noun"
+    runner.run(["container", "status"])
 
     Then "it is not found"
-    $stderr.string.include?("provide-image")
+    $stderr.string.include?("container")
 
     Cleanup
     $stderr = old_stderr

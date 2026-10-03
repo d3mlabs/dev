@@ -1,0 +1,287 @@
+# typed: false
+# frozen_string_literal: true
+
+require "test_helper"
+require "dev/builtins/container_up_command"
+require "dev/builtins/container_down_command"
+require "dev/builtins/container_reset_command"
+require "dev/builtins/container_tag_command"
+require "dev/builtins/container_status_command"
+require "dev/build_container_config"
+require "dev/engine_provisioner"
+require "support/fake_container_engine"
+require "pathname"
+require "stringio"
+
+transform!(RSpock::AST::Transformation)
+class Dev::Builtins::ContainerCommandsTest < Minitest::Test
+  include SorbetHelper
+
+  ROOT = Pathname.new("/tmp/container-commands-test")
+  TAG = "myregistry/myapp-linux:content-abc123"
+  CURRENT = "dev-myapp-linux-abc-content-abc123"
+
+  # --- traits -----------------------------------------------------------------
+
+  test "#{klass} is a visible Lifecycle verb; #{klass} is staleness-exempt: #{exempt}" do
+    Given "the builtin over a stand-in client"
+    command = klass.new(container_client: client, out: StringIO.new)
+
+    Expect "the declarative traits"
+    command.category == Dev::Command::Category::Lifecycle
+    command.hidden? == false
+    command.staleness_exempt? == exempt
+    command.stamps? == false
+
+    Where
+    klass                                   | exempt
+    Dev::Builtins::ContainerUpCommand       | true
+    Dev::Builtins::ContainerDownCommand     | true
+    Dev::Builtins::ContainerResetCommand    | true
+    Dev::Builtins::ContainerTagCommand      | true
+    Dev::Builtins::ContainerStatusCommand   | true
+  end
+
+  # --- up ---------------------------------------------------------------------
+
+  test "container up brings the engine up from the hint, resolves the image, and starts the service when persisted" do
+    Given "a persisted config, with every boundary stubbed"
+    config = config(persist: true, volumes: ["~/.dev/engines/ue:/ue"])
+    order = sequence("engine, image, service")
+    provisioner = typed_mock(Dev::EngineProvisioner)
+    provisioner.expects(:provision!).with(resources: config.resources).once.in_sequence(order)
+    client = client()
+    client.expects(:ensure_image!).with do |cfg, **kwargs|
+      cfg == config && kwargs[:project_root] == ROOT && kwargs[:push] == false && kwargs[:publish] == false
+    end.once.in_sequence(order).returns(TAG)
+    Dev::BuildContainer.stubs(:resolve_versioned_volumes).with(["~/.dev/engines/ue:/ue"], project_root: ROOT)
+      .returns(["~/.dev/engines/ue/5.4:/ue"])
+    client.expects(:ensure_service!).with(TAG, project_root: ROOT, volumes: ["~/.dev/engines/ue/5.4:/ue"])
+      .once.in_sequence(order).returns("dev-myapp-linux-abc-content-abc123")
+    out = StringIO.new
+
+    When "bringing the container up"
+    Dev::Builtins::ContainerUpCommand.new(container_client: client, engine_provisioner: provisioner, out: out)
+      .call(args: [], context: project(config))
+
+    Then "both results are reported"
+    out.string == "dev: image ready: #{TAG}\ndev: build container up: dev-myapp-linux-abc-content-abc123\n"
+  end
+
+  test "container up on a non-persisted project stops at the image" do
+    Given "a config without persist"
+    config = config(persist: false)
+    provisioner = typed_mock(Dev::EngineProvisioner)
+    provisioner.stubs(:provision!)
+    client = client()
+    client.stubs(:ensure_image!).returns(TAG)
+    client.expects(:ensure_service!).never
+    out = StringIO.new
+
+    When "bringing the container up"
+    Dev::Builtins::ContainerUpCommand.new(container_client: client, engine_provisioner: provisioner, out: out)
+      .call(args: [], context: project(config))
+
+    Then
+    out.string == "dev: image ready: #{TAG}\n"
+  end
+
+  test "container up publishes to the registry only when DEV_PUBLISH_IMAGE=1" do
+    Given "the env flag #{flag.inspect}"
+    config = config(persist: false)
+    provisioner = typed_mock(Dev::EngineProvisioner)
+    provisioner.stubs(:provision!)
+    client = client()
+    captured = {}
+    client.stubs(:ensure_image!).with do |_cfg, **kwargs|
+      captured = kwargs
+      true
+    end.returns(TAG)
+    old = ENV.fetch("DEV_PUBLISH_IMAGE", nil)
+    flag.nil? ? ENV.delete("DEV_PUBLISH_IMAGE") : ENV["DEV_PUBLISH_IMAGE"] = flag
+
+    When "bringing the container up"
+    Dev::Builtins::ContainerUpCommand.new(container_client: client, engine_provisioner: provisioner, out: StringIO.new)
+      .call(args: [], context: project(config))
+
+    Then
+    captured.fetch(:publish) == publish
+
+    Cleanup
+    old.nil? ? ENV.delete("DEV_PUBLISH_IMAGE") : ENV["DEV_PUBLISH_IMAGE"] = old
+
+    Where
+    flag  | publish
+    nil   | false
+    "0"   | false
+    "1"   | true
+  end
+
+  test "container up's providers resolve the declared build args and secrets through the credentials store, lazily" do
+    Given "a config declaring build args and secrets, with both boundaries stubbed"
+    config = config(persist: false, build_args: { "GH_USER" => "github/user" },
+      build_secrets: { "GH_TOKEN" => "github/token" })
+    Dev::Credentials.stubs(:resolve_build_args).with({ "GH_USER" => "github/user" }).returns({ "GH_USER" => "jp" })
+    Dev::Credentials.stubs(:resolve_build_args).with({ "GH_TOKEN" => "github/token" }).returns({ "GH_TOKEN" => "s3" })
+    provisioner = typed_mock(Dev::EngineProvisioner)
+    provisioner.stubs(:provision!)
+    client = client()
+    captured = {}
+    client.stubs(:ensure_image!).with do |_cfg, **kwargs|
+      captured = kwargs
+      true
+    end.returns(TAG)
+
+    When "bringing the container up, then invoking the providers ensure_image! received"
+    Dev::Builtins::ContainerUpCommand.new(container_client: client, engine_provisioner: provisioner, out: StringIO.new)
+      .call(args: [], context: project(config))
+
+    Then "each provider resolves its declared credentials"
+    captured.fetch(:build_args_provider).call == { "GH_USER" => "jp" }
+    captured.fetch(:secrets_provider).call == { "GH_TOKEN" => "s3" }
+  end
+
+  # --- down / reset -----------------------------------------------------------
+
+  test "container down stops this checkout's running containers and names them: #{description}" do
+    Given "a client whose stop_service! reports #{stopped.inspect}"
+    client = client()
+    client.expects(:stop_service!).with(ROOT).once.returns(stopped)
+    out = StringIO.new
+
+    When "bringing the container down"
+    Dev::Builtins::ContainerDownCommand.new(container_client: client, out: out)
+      .call(args: [], context: project(config(persist: true)))
+
+    Then
+    out.string == expected
+
+    Where
+    description       | stopped                   | expected
+    "nothing running" | []                        | "dev: no build container running.\n"
+    "one stopped"     | ["dev-myapp-abc-content"] | "dev: stopped dev-myapp-abc-content — incremental state kept, dev container up restarts it warm.\n"
+    "two stopped"     | ["dev-a", "dev-b"]        | "dev: stopped dev-a, dev-b — incremental state kept, dev container up restarts it warm.\n"
+  end
+
+  test "container reset removes this checkout's containers and names them: #{description}" do
+    Given "a client whose reset_service! reports #{removed.inspect}"
+    client = client()
+    client.expects(:reset_service!).with(ROOT).once.returns(removed)
+    out = StringIO.new
+
+    When "resetting"
+    Dev::Builtins::ContainerResetCommand.new(container_client: client, out: out)
+      .call(args: [], context: project(config(persist: true)))
+
+    Then
+    out.string == expected
+
+    Where
+    description | removed                   | expected
+    "none"      | []                        | "dev: no build container to remove.\n"
+    "one"       | ["dev-myapp-abc-content"] | "dev: removed dev-myapp-abc-content.\n"
+    "two"       | ["dev-a", "dev-b"]        | "dev: removed dev-a, dev-b.\n"
+  end
+
+  # --- tag --------------------------------------------------------------------
+
+  test "container tag prints the content-addressed tag and nothing else, touching no engine" do
+    Given "a config and a client that must not be used"
+    config = config(persist: false)
+    client = client()
+    client.expects(:ensure_image!).never
+    Dev::BuildContainer.stubs(:image_with_tag).with(config, project_root: ROOT).returns(TAG)
+    out = StringIO.new
+
+    When "printing the tag"
+    Dev::Builtins::ContainerTagCommand.new(container_client: client, out: out).call(args: [], context: project(config))
+
+    Then "a workflow can capture it"
+    out.string == "#{TAG}\n"
+  end
+
+  # --- status -----------------------------------------------------------------
+
+  test "container status renders the image line: #{description}" do
+    Given "an image #{description}"
+    status = status(local: local, registry: registry, containers: [])
+
+    Expect
+    status_output(status, persist: true).lines.first == "image: #{TAG} — #{rendered}\n"
+
+    Where
+    description                      | local | registry | rendered
+    "local and published"            | true  | true     | "local, in registry"
+    "local only"                     | true  | false    | "local, not in registry"
+    "published, not pulled"          | false | true     | "in registry, not local (dev container up pulls it)"
+    "nowhere"                        | false | false    | "not built (dev container up builds it)"
+  end
+
+  test "container status renders the persisted container: #{description}" do
+    Given "a persisted project whose containers are #{description}"
+    status = status(local: true, registry: true, containers: containers)
+
+    Expect
+    status_output(status, persist: true).lines.drop(1) == expected
+
+    Where
+    description             | containers                                                   | expected
+    "absent"                | []                                                           | ["container: none (dev container up creates it)\n"]
+    "running"               | [[CURRENT, true]]                                            | ["container: #{CURRENT} — running\n"]
+    "stopped"               | [[CURRENT, false]]                                           | ["container: #{CURRENT} — stopped (dev container up restarts it warm)\n"]
+    "current plus a stale"  | [["dev-myapp-linux-abc-content-old", false], [CURRENT, true]] | ["container: #{CURRENT} — running\n", "stale: dev-myapp-linux-abc-content-old — stopped (dev container up removes it)\n"]
+    "only a stale one"      | [["dev-myapp-linux-abc-content-old", true]] | ["container: none (dev container up creates it)\n", "stale: dev-myapp-linux-abc-content-old — running (dev container up removes it)\n"]
+  end
+
+  test "container status on a non-persisted project reports the --rm runs in flight: #{description}" do
+    Given "a non-persisted project with #{description}"
+    status = status(local: true, registry: true, containers: containers)
+
+    Expect
+    status_output(status, persist: false).lines.drop(1) == expected
+
+    Where
+    description      | containers                | expected
+    "nothing"        | []                        | ["container: not persisted (build.container.persist is off); none in flight\n"]
+    "a run going"    | [["dev-myapp-x", true]]   | ["container: not persisted (build.container.persist is off); in flight: dev-myapp-x\n"]
+  end
+
+  private
+
+  def client
+    Dev::BuildContainer.new(engine: FakeContainerEngine.new)
+  end
+
+  def config(persist:, volumes: [], build_args: {}, build_secrets: {})
+    Dev::BuildContainerConfig.new(
+      image: "myapp-linux", registry: "myregistry", persist: persist, volumes: volumes,
+      build_args: build_args, build_secrets: build_secrets,
+    )
+  end
+
+  def project(build_container)
+    Dev::ExecutionContext.new(
+      ui: typed_mock(Dev::Cli::Ui),
+      project: Dev::ProjectContext.new(
+        name: "TestProject", root: ROOT, ruby_version: "4.0.1", build_container: build_container,
+      ),
+    )
+  end
+
+  def status(local:, registry:, containers:)
+    Dev::BuildContainer::ServiceStatus.new(
+      image_tag: TAG, local_image: local, in_registry: registry, current_container_name: CURRENT,
+      containers: containers.map { |name, running| Dev::BuildContainer::ServiceContainer.new(name:, running:) },
+    )
+  end
+
+  def status_output(status, persist:)
+    config = config(persist: persist)
+    client = client()
+    Dev::BuildContainer.stubs(:image_with_tag).with(config, project_root: ROOT).returns(TAG)
+    client.stubs(:service_status).with(TAG, ROOT).returns(status)
+    out = StringIO.new
+    Dev::Builtins::ContainerStatusCommand.new(container_client: client, out: out).call(args: [], context: project(config))
+    out.string
+  end
+end

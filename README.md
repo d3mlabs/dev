@@ -45,8 +45,7 @@ Grouped as `dev help` lists them. **Scope** says where the command works: *anywh
 | `dev deps path <integration> <name> [<platform>]` | project | Print a locked artifact's absolute path | [Dependency commands](#dependency-commands) |
 | `dev runner register\|status` | anywhere | Enroll or inspect this host as a self-hosted runner | [dev runner](#dev-runner--enroll-a-host-as-a-self-hosted-runner) |
 | `dev engine up\|down [--force]\|status` | anywhere | Start, stop, or inspect the per-user container engine (colima VM / dockerd) | [The container engine](#the-container-engine-per-user) |
-| `dev provide-image` | gated: `build.container` (hidden) | Resolve the build image (local → pull → build) and print its tag | [Container commands](#container-commands) |
-| `dev reset-container` | gated: `build.container.persist` | Remove the persistent build container | [Container commands](#container-commands) |
+| `dev container up\|down\|reset\|tag\|status` | gated: `build.container` | This checkout's build image and container: resolve and start, stop warm, remove, print the tag, report | [Engine & container lifecycle](#engine--container-lifecycle) |
 
 **Development flow** — navigation, settings, agent workflow, housekeeping:
 
@@ -523,7 +522,7 @@ Resolution is per invoking user: an explicit `DOCKER_HOST` in the environment wi
 
 - **The engine's own lifecycle (`dev engine up | down | status`, anywhere).** `up` is the sizing step above on its own — inside a containerized project the repo's hint sizes it, elsewhere the engine's defaults apply. `status` is a pure report: the engine's kind and whether dev may stop it, running or stopped and at what size, the converge facts (colima's VM; dockerd's group / buildx / systemd state, and on WSL2 the `.wslconfig` configured-vs-observed gap that means a `wsl --shutdown` is pending), and every running container — dev's own named by the checkout they serve, the rest flagged as not dev's to manage. `down` powers the engine off (the VM on macOS; dockerd on Linux/WSL2, never the WSL VM dev lives in). The engine is the target, so what runs in it goes first: dev's build containers from any checkout are stopped without asking (`stop -t 0` keeps their writable layer, exactly what `dev container down` there does); containers dev does not manage are listed and you are asked, `--force` answering yes up front — a no leaves the engine running. An explicit `DOCKER_HOST`, and Docker Desktop behind a macOS `docker` record, are engines dev did not provision: `down` refuses and says so; `status` reports what their daemon says.
 
-- **The check (every engine, every containerized command).** After the sizing step, and again before every image resolution (`dev <containerized command>`, `dev provide-image`), dev compares what the daemon reports (`docker info` cpus / memory) with the hint. A shortfall is a hard failure whose message says how to fix it for that engine kind. The escape hatch is the `engine_resources` setting — `enforce` (default) or `warn`; `DEV_ENGINE_RESOURCES` overrides — which turns the failure into a printed warning naming the layer that relaxed it, for a machine that simply cannot meet the hint. The check never resizes anything.
+- **The check (every engine, every containerized command).** After the sizing step, and again before every image resolution (`dev <containerized command>`, `dev container up`), dev compares what the daemon reports (`docker info` cpus / memory) with the hint. A shortfall is a hard failure whose message says how to fix it for that engine kind. The escape hatch is the `engine_resources` setting — `enforce` (default) or `warn`; `DEV_ENGINE_RESOURCES` overrides — which turns the failure into a printed warning naming the layer that relaxed it, for a machine that simply cannot meet the hint. The check never resizes anything.
 
 **Migrating a Mac off Docker Desktop.** Quit Docker Desktop (and stop it launching at login); `brew upgrade d3mlabs/d3mlabs/dev` brings `colima`, `docker` and `docker-buildx` in as formula dependencies; `dev up` in a containerized repo wires the CLI and starts the VM. Images are re-pulled/rebuilt once into the new engine's store, and a `persist: true` warm container is recreated on first use. Uninstall Desktop whenever you like — dev never touches it — but first drop `"credsStore": "desktop"` from `~/.docker/config.json` (or switch it to `osxkeychain` via `brew install docker-credential-helper`): that helper binary ships inside Docker.app and registry logins fail without it. Two colima facts worth knowing: bind mounts must live under a colima-mounted path (`~` is; `/tmp` is not), and colima's virtiofs remaps bind-mount writes to the host user just as Desktop did, so images that drop to a non-root user keep working. An agent host ends up with two colima VMs (the human's and the agent's), each sized per the rules above and each stopped by its own user's `dev engine down`.
 
@@ -570,12 +569,29 @@ dev owns the cache layout, so it owns reclamation. `dev cache gc [--keep N]` app
 
 A workflow/cron only *schedules* `dev cache gc`; it never reaches into the layout itself.
 
-### Container commands
+### Engine & container lifecycle
 
-Two builtins exist only when the `dev.yml` declares a `build.container`:
+Two nouns, two scopes. **`dev engine`** is the per-user daemon every project shares — global, described under [The container engine](#the-container-engine-per-user). **`dev container`** is *this checkout's* image and container; it exists only where the `dev.yml` declares a `build.container`, and never reaches another checkout.
 
-- **`dev provide-image`** — run the `ensure_image!` resolution above (local → pull → build) and print the resulting tag to stdout (progress goes to stderr, so the tag is capturable). Hidden from `dev help`: it is CI plumbing for the image-provisioning step, not a developer intent command. Publishing stays gated on `DEV_PUBLISH_IMAGE`, same as containerized commands.
-- **`dev reset-container`** — remove the persistent build container (clears its incremental cache). Registered only when `build.container.persist` is set.
+| Verb | What it does |
+|---|---|
+| `dev container up` | Engine up and sized from this repo's hint → image resolved (local → registry → build; publishes when `DEV_PUBLISH_IMAGE=1`) → with `persist`, the service container created, or restarted warm if it exists. Everything a containerized command would do lazily on first use, done ahead of time. |
+| `dev container down` | Stop this checkout's running containers (`stop -t 0` — PID 1 is `sleep infinity`, which ignores SIGTERM) and keep them: the writable layer is the incremental build state `persist` exists for. The engine stays up. |
+| `dev container reset` | Remove this checkout's containers, the current tag's and any stale one, discarding that state. The next command creates a fresh one from the image. |
+| `dev container tag` | Print the content-addressed tag the checkout resolves to. Pure — no engine, no network — so a workflow can capture it anywhere. |
+| `dev container status` | The image, local and in the registry; the current tag's container and its state; stale siblings waiting for `up` to reap them. With `persist` off, the `--rm` runs in flight. Probes only. |
+
+Every container dev starts — the persistent service and the one-shot `--rm` run alike — carries the **label contract**: `dev.managed=true`, `dev.project_root` (the checkout's real path), `dev.project`, `dev.workspace` (the checkout id the name also embeds), `dev.image`. Set operations go by label, never by name: `container down|reset` and the stale reap filter on `dev.workspace`, `dev engine down|status` read `dev.managed` / `dev.project_root` to tell dev's containers (stopped unasked, named by checkout) from yours (listed, asked about). A container without the labels is yours as far as dev is concerned.
+
+What survives what — the warmth table:
+
+| After… | Image | Container (writable layer) | Engine |
+|---|---|---|---|
+| `dev container down` | kept | kept, stopped | running |
+| `dev container reset` | kept | removed | running |
+| `dev engine down` | kept | kept, stopped (every checkout's) | stopped |
+| a Dockerfile / lockfile change | new tag built on next use | old one reaped on next use | running |
+| `docker image rm` / `dev cache gc` | re-pulled or rebuilt on next use | kept while the tag is live | running |
 
 ## Releasing a new version
 

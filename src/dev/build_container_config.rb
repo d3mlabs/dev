@@ -65,8 +65,9 @@ module Dev
   # caches) written on top of the image is reused — a `--rm` container always
   # reverts to the image and recompiles everything that changed since it was
   # built. dev owns the container's lifecycle: it is created on demand, reused
-  # while the image tag is unchanged, reaped when the tag changes, and removed
-  # by `dev reset-container`. Default false (every other repo keeps `--rm`).
+  # while the image tag is unchanged, reaped when the tag changes, stopped
+  # (kept warm) by `dev container down` and removed by `dev container reset`.
+  # Default false (every other repo keeps `--rm`).
   # resources, when set, is the *floor* this project's build was tuned for:
   # `dev up` brings a colima VM up to at least it (ColimaProvisioner's
   # ratchet), and every containerized command measures the engine against
