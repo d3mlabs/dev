@@ -197,6 +197,51 @@ class Dev::ContainerEngineTest < Minitest::Test
     "answers something unparsable" | ["sh", "-c", "echo 'Cannot connect to the Docker daemon' #"]
   end
 
+  test "running_containers reads one record per running container, with the dev label contract decoded" do
+    Given "an engine whose docker ps lists a dev-managed container and a foreign one"
+    listing = "dev-snappy-linux-9f86d08ab1-content-4c2e\ttrue\t/Users/jp/src/snappy\nmy-postgres\t\t\n"
+    engine = Dev::ContainerEngine.new(kind: :test, argv_prefix: ["sh", "-c", "printf '#{listing}' #"])
+
+    When "listing"
+    records = engine.running_containers
+
+    Then "managed containers carry their checkout; foreign ones are bare names"
+    records.size == 2
+    records.fetch(0).name == "dev-snappy-linux-9f86d08ab1-content-4c2e"
+    records.fetch(0).managed == true
+    records.fetch(0).project_root == "/Users/jp/src/snappy"
+    records.fetch(1).name == "my-postgres"
+    records.fetch(1).managed == false
+    records.fetch(1).project_root.nil?
+  end
+
+  test "running_containers is empty when nothing runs or the daemon does not answer" do
+    Given "an engine whose docker #{shape}"
+    engine = Dev::ContainerEngine.new(kind: :test, argv_prefix: argv_prefix)
+
+    Expect
+    engine.running_containers.empty?
+
+    Where
+    shape                  | argv_prefix
+    "lists no containers"  | ["sh", "-c", "true #"]
+    "is down"              | ["false"]
+  end
+
+  test "idle_stoppable? is true for the engines dev provisions and false for the user's own DOCKER_HOST" do
+    Given "an engine of kind #{kind}"
+    engine = Dev::ContainerEngine.new(kind: kind)
+
+    Expect
+    engine.idle_stoppable? == stoppable
+
+    Where
+    kind      | stoppable
+    :colima   | true
+    :docker   | true
+    :explicit | false
+  end
+
   test "run reports a missing binary as failure, not an exception" do
     Given "an engine whose prefix does not exist"
     engine = Dev::ContainerEngine.new(kind: :test, argv_prefix: ["dev-test-missing-binary-xyz"])
