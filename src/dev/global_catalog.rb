@@ -22,6 +22,7 @@ require "dev/builtins/plan_new_command"
 require "dev/builtins/plan_pull_command"
 require "dev/builtins/plan_push_command"
 require "dev/builtins/plan_status_command"
+require "dev/builtins/version_command"
 require "dev/cd"
 require "dev/clone"
 require "dev/command"
@@ -42,6 +43,7 @@ module Dev
   #                 no project config is read)
   # - `learnings` — host-global (the machine cache of the knowledge repo
   #                 lives under XDG / ~/.local/share/dev)
+  # - `version`   — binary-global (what this dev is, wherever it runs)
   #
   # Built in one place so the two composition roots that need it —
   # GlobalDispatch, which runs these from any directory, and the Runner,
@@ -138,6 +140,9 @@ module Dev
             "hook-after-edit" => Builtins::PlanHookAfterEditCommand.new(out: @out),
           },
         ),
+        # The binary's version is the binary's, wherever it runs; the host
+        # reads it inside a container to decide whether to provision there.
+        "version" => Builtins::VersionCommand.new(out: @out),
       }.freeze
     end
   end

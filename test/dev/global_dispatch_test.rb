@@ -70,9 +70,28 @@ class Dev::GlobalDispatchTest < Minitest::Test
     "cred"        | true
     "learnings"   | true
     "engine"      | true
+    "version"     | true
+    "--version"   | true
     "up"          | false
     "test"        | false
     "update-deps" | false
+  end
+
+  test "dev #{spelling} prints the installed version and nothing else" do
+    Given "a dispatcher capturing stdout"
+    out = StringIO.new
+    dispatch = build_dispatch(out: out)
+
+    When "asking for the version"
+    dispatch.run([spelling])
+
+    Then "the VERSION file's content, one line"
+    out.string == "#{Dev::Version.current}\n"
+
+    Where
+    spelling    | _
+    "version"   | nil
+    "--version" | nil
   end
 
   test "dev clone dispatches globally without a dev.yml lookup" do

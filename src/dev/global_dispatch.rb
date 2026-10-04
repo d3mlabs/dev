@@ -34,6 +34,11 @@ module Dev
     # Candidates shown in an ambiguous `dev cd` error before truncating.
     AMBIGUOUS_CANDIDATE_CAP = 10
 
+    # Flag spellings that mean a global command: the conventional `--version`
+    # is `dev version`. Normalized before classification and dispatch so the
+    # catalog holds one entry per command.
+    FLAG_SPELLINGS = T.let({ "--version" => "version" }.freeze, T::Hash[String, String])
+
     # @param catalog [Dev::GlobalCatalog] the global command tree
     # @param ui [Dev::Cli::Ui] the host half of the execution context (the
     #   global leaves print plainly, so the silent UI is the default)
@@ -52,7 +57,7 @@ module Dev
     # @return [Boolean]
     sig { params(argv: T::Array[String]).returns(T::Boolean) }
     def global_command?(argv)
-      cmd_name = argv.first
+      cmd_name = normalize(argv).first
       !cmd_name.nil? && @catalog.commands.key?(cmd_name)
     end
 
@@ -64,7 +69,7 @@ module Dev
     # @return [void]
     sig { params(argv: T::Array[String]).void }
     def run(argv)
-      build_command_service.execute(argv, context: ExecutionContext.new(ui: @ui))
+      build_command_service.execute(normalize(argv), context: ExecutionContext.new(ui: @ui))
     rescue Dev::Cd::Matcher::AmbiguousRepoError => e
       print_ambiguous(e)
       Kernel.exit(1)
@@ -82,6 +87,18 @@ module Dev
     end
 
     private
+
+    # The argv with a leading flag spelling replaced by its command name.
+    #
+    # @param argv [Array<String>]
+    # @return [Array<String>]
+    sig { params(argv: T::Array[String]).returns(T::Array[String]) }
+    def normalize(argv)
+      first = argv.first
+      return argv if first.nil?
+
+      [FLAG_SPELLINGS.fetch(first, first), *argv.drop(1)]
+    end
 
     # The projectless service over the global catalog: builtins and groups
     # only (no project half, so no project or overridden executor arms).
