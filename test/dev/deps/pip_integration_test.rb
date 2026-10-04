@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/deps/local_store"
 require "dev/deps/pip_integration"
 require "dev/shadowenv_python"
 require "tmpdir"
@@ -47,18 +48,23 @@ class Dev::Deps::PipIntegrationTest < Minitest::Test
     FileUtils.rm_rf(tmpdir)
   end
 
-  test "install_all ensures the venv and pip-installs each pinned dep" do
+  test "install_all ensures the venv and pip-installs each pinned dep, caching wheels in the store's pip tool cache" do
     Given "an integration with one pinned dep and a stubbed venv + pip"
     tmpdir = Dir.mktmpdir("pip-integration-")
-    integration = Dev::Deps::PipIntegration.new(repository: nil, store: nil, project_root: tmpdir, python_version: "3.12")
+    integration = Dev::Deps::PipIntegration.new(
+      repository: nil, store: Dev::Deps::LocalStore.new(data_root: tmpdir), project_root: tmpdir, python_version: "3.12",
+    )
     Dev::ShadowenvPython.stubs(:ensure_venv!).returns(File.join(tmpdir, ".venv"))
     ok = stub(success?: true)
 
     When "installing"
     integration.install_all([dep("totalsegmentator", "2.0.5")])
 
-    Then "pip install is invoked via the venv python with the exact version pin"
-    1 * Open3.capture3(includes(".venv/bin/python"), "-m", "pip", "install", "totalsegmentator==2.0.5") >> ["", "", ok]
+    Then "pip install is invoked via the venv python with the exact version pin, PIP_CACHE_DIR in the store"
+    1 * Open3.capture3(
+      { "PIP_CACHE_DIR" => "#{tmpdir}/tool-caches/pip" },
+      includes(".venv/bin/python"), "-m", "pip", "install", "totalsegmentator==2.0.5",
+    ) >> ["", "", ok]
 
     Cleanup
     FileUtils.rm_rf(tmpdir)

@@ -15,15 +15,19 @@ module Dev
     # ShadowenvPython provisions — the Python analogue of LuaRocks installing
     # into lua_modules/. The venv is ensured here (created if absent) so
     # `dev deps install` works on a fresh clone, before any command has run
-    # ShadowenvPython.setup!. pip resolves the transitive tree at install.
+    # ShadowenvPython.setup!. pip resolves the transitive tree at install,
+    # and downloads into the store's pip tool cache (PIP_CACHE_DIR) — pip
+    # owns the fetch and the install; dev names where the cache lives.
     class PipIntegration < Integration
       extend T::Sig
 
       class InstallError < StandardError; end
       class MissingVersionError < StandardError; end
 
+      TOOL = "pip"
+
       # @param repository    [Repository, nil]  source adapter for pip deps
-      # @param store         [ArtifactStore, nil] artifact store (unused; pip caches)
+      # @param store         [ArtifactStore, nil] the store whose pip tool cache pip downloads into
       # @param project_root  [String, Pathname] project root (holds the .venv)
       # @param python_version [String, nil] the `python` toolchain version to build
       #   the venv with; required whenever there are pip deps to install
@@ -70,7 +74,8 @@ module Dev
       sig { params(python: Pathname, dep: Dependency).void }
       def run_pip_install(python, dep)
         spec = dep.version ? "#{dep.name}==#{dep.version}" : dep.name
-        _out, err, status = Open3.capture3(python.to_s, "-m", "pip", "install", spec)
+        env = { "PIP_CACHE_DIR" => store!.tool_cache(TOOL).to_s }
+        _out, err, status = Open3.capture3(env, python.to_s, "-m", "pip", "install", spec)
         raise InstallError, "pip install #{spec} failed: #{err}" unless status.success?
       end
     end
