@@ -345,6 +345,59 @@ class Dev::Deps::LocalStoreTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "tool caches: a directory dev hands to a tool — created on first use, kept after, named by tool" do
+    Given "a store"
+    root = Dir.mktmpdir("local-store-")
+    store = Dev::Deps::LocalStore.new(data_root: root)
+
+    When "asking for a tool's cache twice, the tool writing in between"
+    first = store.tool_cache("bundler")
+    (first / "gems" / "rake-13.0.0.gem").dirname.mkpath
+    (first / "gems" / "rake-13.0.0.gem").write("gem bytes")
+    second = store.tool_cache("bundler")
+
+    Then "one directory under the data root's tool-caches, contents intact, listed by name"
+    first == Pathname(root) / "tool-caches" / "bundler"
+    first.directory?
+    second == first
+    (second / "gems" / "rake-13.0.0.gem").read == "gem bytes"
+    store.tool_caches == ["bundler"]
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "tool caches: remove_tool_cache drops the whole directory; an absent one is a no-op" do
+    Given "a store with two tool caches"
+    root = Dir.mktmpdir("local-store-")
+    store = Dev::Deps::LocalStore.new(data_root: root)
+    (store.tool_cache("brew") / "bottle.tar.gz").write("bottle")
+    store.tool_cache("pip")
+
+    When "removing one, and one that was never created"
+    store.remove_tool_cache("brew")
+    store.remove_tool_cache("luarocks")
+
+    Then "only the other remains"
+    store.tool_caches == ["pip"]
+    !(Pathname(root) / "tool-caches" / "brew").exist?
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "tool caches: none yet lists empty rather than failing on the missing directory" do
+    Given "a fresh store"
+    root = Dir.mktmpdir("local-store-")
+    store = Dev::Deps::LocalStore.new(data_root: root)
+
+    Expect
+    store.tool_caches == []
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
   test "the default store resolves its root the way every dev-managed path does" do
     Given "no explicit root"
     store = Dev::Deps::LocalStore.new
