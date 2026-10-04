@@ -97,6 +97,37 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "call warns for each build-group formula the image build would compile from source" do
+    Given "a resolution with a bottled build formula, a source-only build formula, and a source-only app formula"
+    root = Pathname.new(Dir.mktmpdir("update-deps-preflight-"))
+    resolved = [
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: "4.4.3", hash: nil,
+        metadata: { "format" => "bottle" }),
+      Dev::Deps::Dependency.new(name: "wwise-cli", integration: :brew, group: :build, version: "1.0.0", hash: nil,
+        metadata: { "tap" => "d3mlabs/d3mlabs", "format" => "source" }),
+      Dev::Deps::Dependency.new(name: "jq", integration: :brew, group: :app, version: "1.7", hash: nil,
+        metadata: { "format" => "source" }),
+    ]
+    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: resolved))
+    Dev::ShadowenvRuby.stubs(:converge!)
+    command = Dev::Builtins::UpdateDepsCommand.new
+    old_stdout = $stdout
+    $stdout = StringIO.new
+
+    When "running dev deps update"
+    command.call(args: [], context: build_context(root))
+
+    Then "only the build-group source formula is named — the image build is where format matters"
+    $stdout.string.include?("wwise-cli has no x86_64_linux bottle")
+    !$stdout.string.include?("cmake has no")
+    !$stdout.string.include?("jq has no")
+    $stdout.string.include?("lockfiles updated")
+
+    Cleanup
+    $stdout = old_stdout
+    FileUtils.rm_rf(root)
+  end
+
   test "call does not mistake a previously loaded project's config for this one" do
     Given "a stale config from an earlier load, and a dependencies.rb that never calls Dev::Deps.define"
     Dev::Deps.define { ruby "9.9.9" }

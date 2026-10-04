@@ -7,12 +7,21 @@ require "json"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::BrewRepositoryTest < Minitest::Test
-  def formula_json(name, stable:, sha: nil, versioned: [])
+  def formula_json(name, stable:, sha: nil, versioned: [], tap: nil, tap_git_head: nil, bottles: nil)
     json = { "name" => name, "versions" => { "stable" => stable }, "versioned_formulae" => versioned }
-    if sha
-      json["bottle"] = { "stable" => { "files" => { "arm64_sonoma" => { "sha256" => sha } } } }
-    end
+    json["tap"] = tap if tap
+    json["tap_git_head"] = tap_git_head if tap_git_head
+    files = bottles ? bottles.to_h { |tag| [tag, { "sha256" => "sha-#{tag}" }] } : {}
+    files["arm64_sonoma"] = { "sha256" => sha } if sha
+    json["bottle"] = { "stable" => { "files" => files } } unless files.empty?
     json
+  end
+
+  def api_response(bottles)
+    files = bottles.to_h { |tag| [tag, { "sha256" => "sha-#{tag}" }] }
+    response = stub(body: JSON.generate({ "bottle" => { "stable" => { "files" => files } } }))
+    response.stubs(:is_a?).with(Net::HTTPSuccess).returns(true)
+    response
   end
 
   def stub_brew_info(specs, infos)
@@ -32,7 +41,7 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
     Then "one version, carrying the bottle digest"
     package.versions.map(&:version) == ["3.31.4"]
     package.version("3.31.4").digest == "SHA256=abc123def456"
-    package.version("3.31.4").metadata == {}
+    package.version("3.31.4").metadata == { "format" => "source" }
   end
 
   test "find enumerates the spec family — siblings' suffixes ride as facts, bare spec last" do
@@ -50,9 +59,9 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
 
     Then "one version per spec; the bare spec sits last as the unconstrained pick"
     package.versions.map(&:version) == ["19.1.7", "18.1.8", "21.1.0"]
-    package.version("18.1.8").metadata == { "version_suffix" => "18" }
+    package.version("18.1.8").metadata == { "version_suffix" => "18", "format" => "source" }
     package.version("18.1.8").digest == "SHA256=llvm18"
-    package.version("21.1.0").metadata == {}
+    package.version("21.1.0").metadata == { "format" => "source" }
   end
 
   test "find skips head-only siblings without a stable version" do
@@ -81,7 +90,7 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
 
     Then
     package.versions.map(&:version) == ["1.2.0"]
-    package.version("1.2.0").metadata == { "tap" => "someorg/sometap" }
+    package.version("1.2.0").metadata == { "tap" => "someorg/sometap", "format" => "source" }
   end
 
   test "find registers the declared tap and retries when brew info fails untapped" do
@@ -105,6 +114,76 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
     Then "the tap was registered and resolution succeeded on retry"
     package.versions.map(&:version) == ["1.6.2"]
     package.version("1.6.2").metadata["tap"] == "xcodesorg/made"
+  end
+
+  # --- A: the facts an image build pins ---------------------------------------
+
+  test "find records the tap commit brew reports as the tap_commit fact" do
+    Given "a tapped formula whose tap is checked out at a commit"
+    repository = Dev::Deps::BrewRepository.new
+    stub_brew_info(["d3mlabs/d3mlabs/wwise-cli"],
+      [formula_json("wwise-cli", stable: "1.0.0", tap: "d3mlabs/d3mlabs", tap_git_head: "e5810c4f")])
+
+    When "finding"
+    package = repository.find(
+      Dev::Deps::PackageId.new(integration: :brew, name: "wwise-cli", source: "d3mlabs/d3mlabs"),
+    )
+
+    Then "the commit rides the version as a fact the image build pins the tap to"
+    package.version("1.0.0").metadata["tap_commit"] == "e5810c4f"
+  end
+
+  test "find records how the image build gets a tap formula from its bottle block: #{description}" do
+    Given "a tap formula (brew info reads it from source, so every bottle it has is listed)"
+    repository = Dev::Deps::BrewRepository.new
+    stub_brew_info(["someorg/sometap/mytool"],
+      [formula_json("mytool", stable: "1.2.0", tap: "someorg/sometap", bottles: bottles)])
+
+    When "finding"
+    package = repository.find(
+      Dev::Deps::PackageId.new(integration: :brew, name: "mytool", source: "someorg/sometap"),
+    )
+
+    Then "format is bottle only when the image platform has one"
+    package.version("1.2.0").metadata["format"] == format
+
+    Where
+    description              | bottles                            | format
+    "image bottle present"   | ["arm64_tahoe", "x86_64_linux"]    | "bottle"
+    "mac-only bottles"       | ["arm64_tahoe", "arm64_sequoia"]   | "source"
+    "no bottle block"        | []                                 | "source"
+  end
+
+  test "find asks the formula API for a core formula's bottles, since brew info lists only this machine's" do
+    Given "a core formula whose local info carries one bottle, and the API listing the image platform too"
+    repository = Dev::Deps::BrewRepository.new
+    stub_brew_info(["cmake"],
+      [formula_json("cmake", stable: "4.4.3", sha: "mac", tap: "homebrew/core", tap_git_head: "3c67e3be")])
+    repository.stubs(:get_formula_api).with("cmake").returns(api_response(["arm64_tahoe", "x86_64_linux"]))
+
+    When "finding"
+    package = repository.find(Dev::Deps::PackageId.new(integration: :brew, name: "cmake"))
+
+    Then "the API's bottle list decides the format; the digest stays this machine's"
+    package.version("4.4.3").metadata == { "tap_commit" => "3c67e3be", "format" => "bottle" }
+    package.version("4.4.3").digest == "SHA256=mac"
+  end
+
+  test "find raises FormulaApiError when the formula API cannot be read for a core formula" do
+    Given "a core formula and an API that answers with an error"
+    repository = Dev::Deps::BrewRepository.new
+    stub_brew_info(["cmake"], [formula_json("cmake", stable: "4.4.3", tap: "homebrew/core")])
+    response = stub(code: "503")
+    response.stubs(:is_a?).with(Net::HTTPSuccess).returns(false)
+    repository.stubs(:get_formula_api).with("cmake").returns(response)
+
+    When "finding"
+    repository.find(Dev::Deps::PackageId.new(integration: :brew, name: "cmake"))
+
+    Then
+    error = raises Dev::Deps::BrewRepository::FormulaApiError
+    error.message.include?("cmake")
+    error.message.include?("503")
   end
 
   test "find raises BrewInfoError when brew info fails" do
