@@ -59,6 +59,7 @@ Grouped as `dev help` lists them. **Scope** says where the command works: *anywh
 | `dev plan new\|link\|pull\|push\|status\|init` | anywhere | Sync Cursor plans with GitHub issues | [dev plan](#dev-plan--sync-plans-with-github-issues) |
 | `dev learnings sync\|status\|invariants\|init` | anywhere | The org learnings read path | [dev learnings](#dev-learnings) |
 | `dev cache gc [--keep N]` | project | Reclaim host caches dev owns | [`dev cache gc`](#dev-cache-gc) |
+| `dev version` (`--version`) | anywhere | Print this dev's version, one line | [Inside the container](#inside-the-container) |
 | `dev help` | anywhere | Show usage: project commands plus the builtins available here | — |
 
 ### Errors
@@ -581,7 +582,7 @@ Two intents sit on top, and they work on the project's **service dependencies** 
 
 | Verb | What it does |
 |---|---|
-| `dev container up` | Engine up and sized from this repo's hint → image resolved (local → registry → build; publishes when `DEV_PUBLISH_IMAGE=1`) → with `persist`, the service container created, or restarted warm if it exists. Everything a containerized command would do lazily on first use, done ahead of time. |
+| `dev container up` | Engine up and sized from this repo's hint → image resolved (local → registry → build; publishes when `DEV_PUBLISH_IMAGE=1`) → with `persist`, the service container created, or restarted warm if it exists → the container's dev converged to this host's version (one `dev version` probe when already current). Everything a containerized command would do lazily on first use, done ahead of time. |
 | `dev container down` | Stop this checkout's running containers (`stop -t 0` — PID 1 is `sleep infinity`, which ignores SIGTERM) and keep them: the writable layer is the incremental build state `persist` exists for. The engine stays up. |
 | `dev container reset` | Remove this checkout's containers, the current tag's and any stale one, discarding that state. The next command creates a fresh one from the image. |
 | `dev container tag` | Print the content-addressed tag the checkout resolves to. Pure — no engine, no network — so a workflow can capture it anywhere. |
@@ -591,10 +592,17 @@ Every container dev starts — the persistent service and the one-shot `--rm` ru
 
 ### Inside the container
 
-Every container dev creates also carries **`DEV_INSIDE_CONTAINER=1`** in its environment (set at creation, so every `docker exec` inherits it). It is the one marker a dev process reads to know it is inside a dev-managed container — declared by the creator, never inferred from cgroups or `/.dockerenv`, so a container somebody else started is not dev-managed unless they said so. Inside, three things change:
+Every container dev creates also carries **`DEV_INSIDE_CONTAINER=1`** in its environment (set at creation, so every `docker exec` inherits it). It is the one marker a dev process reads to know it is inside a dev-managed container — declared by the creator, never inferred from cgroups or `/.dockerenv`, so a container somebody else started is not dev-managed unless they said so.
+
+Two more things every dev-created container gets at creation:
+
+- **The data root, mounted at `/var/lib/dev`** (`DEV_DATA_ROOT` inside points there), so host and container share one [artifact store](#the-artifact-store-version-keyed-trees-content-addressed-blobs). The path is fixed because what the store holds embeds absolute paths. dev creates the host directory first when it is missing, so docker never leaves a root-owned one behind. The whole root is mounted, stranded per-uid secret files under it included — the container is the same trust domain as the user who started it.
+- **The host's dev, at the host's exact version** — for the persistent container, on every `dev up` / `dev container up`. The host runs `dev version` inside; when the answer differs (or nothing answers — a fresh container, an image whose bootstrap removed dev-core), it runs [`bin/container-provision-dev.sh`](bin/container-provision-dev.sh) inside: Linuxbrew's `d3mlabs/d3mlabs` tap is checked out at the commit whose `dev-core` formula shipped that version, the old keg (if any) is removed and the formula installed from there, into the writable layer. Steady state is the one probe. The install needs Linuxbrew in the image, which the [image bootstrap](#dev-is-live-infrastructure) leaves behind on purpose.
+
+Inside, three things change:
 
 - a containerized command **runs directly** — `sh -c` at `/project`, the same shape the host's `docker exec` gave it — with no further container to reach for, no host toolchain provisioning and no shadowenv wrapper (the container's toolchain is the image's);
-- **`dev up` is the deps install alone**: no host layer to converge (the inside dev is provisioned by the host's and cannot self-update), no credentials to prompt for (the host resolves and injects them), no service to bring up (you are in it);
+- **`dev up` is the deps install alone**: no host layer to converge (the inside dev is provisioned by the host's and cannot self-update), no credentials to prompt for (the host resolves `run_env` entries and injects them as `-e` on `docker exec` / `docker run`), no service to bring up (you are in it);
 - **`dev deps install` defaults to `--except build`**: the image bootstrap already installed that group, and a second install would fight the image's read-only layers. An explicit `--except` replaces the default rather than adding to it.
 
 The host dev owns the container's lifecycle; the dev inside owns what runs there. The marker is what keeps the two from stepping on each other.
