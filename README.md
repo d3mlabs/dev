@@ -631,7 +631,7 @@ A warm machine hides a broken cold path: the engine already in the store, the ge
 3. each service does its **cold bring-up** — for the build container: the image resolved as usual (pulled or built; the image is not what a cold run is about), then a **one-shot container** (`--rm`, a sibling of the persistent one's name, same mounts and labels) over the throwaway root, the host's dev installed inside, the container-side install run, the container removed;
 4. the throwaway root is removed.
 
-Nothing is kept: the run is a pass/fail on "can this project provision on a fresh machine today". The host layer is not converged (`dev up` does that), and the flag has no meaning inside a container (reported, then the plain install runs). snappy runs it weekly on its self-hosted runner (`.github/workflows/cold-closure.yml` there) — at the cost of a full engine and depot download each time, which is the point.
+Nothing is kept: the run is a pass/fail on "can this project provision on a fresh machine today". The host layer is not converged (`dev up` does that), and the flag has no meaning inside a container (reported, then the plain install runs). It is made for a schedule — a weekly job on a self-hosted runner — at the cost of downloading everything each time, which is the point.
 
 ## Releasing a new version
 
