@@ -10,18 +10,20 @@ require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::TapPinnerTest < Minitest::Test
-  # A git repository standing in for a tap's remote, with two commits.
-  #
-  # @param dir [Pathname]
-  # @return [Array<String>] the two commit SHAs, oldest first
-  def self.seed_remote(dir)
-    dir.mkpath
-    git = ->(*args) { Open3.capture3("git", "-C", dir.to_s, *args).fetch(0).strip }
-    git.call("init", "-q")
-    git.call("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "one")
-    first = git.call("rev-parse", "HEAD")
-    git.call("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "two")
-    [first, git.call("rev-parse", "HEAD")]
+  class << self
+    # A git repository standing in for a tap's remote, with two commits.
+    #
+    # @param dir [Pathname]
+    # @return [Array<String>] the two commit SHAs, oldest first
+    def seed_remote(dir)
+      dir.mkpath
+      git = ->(*args) { Open3.capture3("git", "-C", dir.to_s, *args).fetch(0).strip }
+      git.call("init", "-q")
+      git.call("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "one")
+      first = git.call("rev-parse", "HEAD")
+      git.call("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "two")
+      [first, git.call("rev-parse", "HEAD")]
+    end
   end
 
   def head_of(dir)
