@@ -89,8 +89,7 @@ module Dev
       end
 
       sig { override.returns(String) }
-      def desc = "Install locked dependencies on this machine (--group/--except/--integration narrow the set; " \
-        "--pinned-taps installs brew from the lock's tap commits)"
+      def desc = "Install locked dependencies on this machine (--group/--except/--integration narrow; --pinned-taps pins brew's taps)"
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
