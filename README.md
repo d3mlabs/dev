@@ -336,7 +336,7 @@ On every `dev up`, before project provisioning, `Dev::HostService` converges the
 
 ### dev is live infrastructure
 
-Projects declare no dev version: every machine runs the latest release from the tap, converging on `dev up` (above), and a release keeps reading every project artifact its predecessors wrote (`dev.yml`, `dependencies.rb`, the lockfiles — including the legacy flat lock format). The build container follows the same rule: an image build installs its toolchain with `dev deps install --group build --integration brew` from `build-deps.lock` and then uninstalls dev-core ([`bin/docker-install-build-deps.sh`](bin/docker-install-build-deps.sh)), so the image contains the toolchain and no dev; what the container then needs installs inside it, where it is consumed ([Inside the container](#inside-the-container)). Why it is this way, and what was rejected, is [ADR-0001](docs/DECISIONS.md#adr-0001--dev-is-live-infrastructure) and [ADR-0002](docs/DECISIONS.md#adr-0002--dependencies-install-where-they-are-consumed).
+Projects declare no dev version: every machine runs the latest release from the tap, converging on `dev up` (above), and a release keeps reading every project artifact its predecessors wrote (`dev.yml`, `dependencies.rb`, the lockfiles — including the legacy flat lock format). The build container follows the same rule: an image build installs its toolchain with `dev deps install --group build --integration brew` from `build-deps.lock` and then uninstalls dev-core ([`bin/docker-install-build-deps.sh`](bin/docker-install-build-deps.sh)), so the image contains the toolchain and no dev; what the container then needs installs inside it, where it is consumed ([Inside the container](#inside-the-container)), and a hosted job with no orchestrating host provisions dev at latest, like a fresh workstation ([Hosted jobs](#hosted-jobs-container-image)). Why it is this way, and what was rejected, is [ADR-0001](docs/DECISIONS.md#adr-0001--dev-is-live-infrastructure) and [ADR-0002](docs/DECISIONS.md#adr-0002--dependencies-install-where-they-are-consumed).
 
 ### dependencies.rb
 
@@ -621,6 +621,26 @@ What survives what — the warmth table:
 | a Dockerfile / lockfile change | new tag built on next use | old one reaped on next use | running |
 | `docker image rm` / `dev cache gc` | re-pulled or rebuilt on next use | kept while the tag is live | running |
 | `dev up --no-cache` | kept (pulled or built as usual) | kept, untouched — a one-shot sibling ran and is gone | running |
+
+### Hosted jobs: `container: image:`
+
+A GitHub-hosted job that runs *inside* a dev-built image (`container: image: <tag>`) has no orchestrating host: nothing created the container, so nothing set the marker, matched dev's version, or mounted a data root. The workflow is the creator, and declares the same three things a host would — through the composite action this repo ships, `d3mlabs/dev/.github/actions/hosted-up@main`:
+
+```yaml
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.provide-image.outputs.image }}   # a prior job's `dev container up` + `dev container tag`
+    steps:
+      - uses: actions/checkout@v4
+      - uses: d3mlabs/dev/.github/actions/hosted-up@main
+      - run: dev build
+```
+
+The action puts Linuxbrew back on the job's PATH (Actions overrides a container's), installs **dev at the latest release** from the tap (there is no host version to match, so a hosted job takes a fresh workstation's shape), declares **`DEV_INSIDE_CONTAINER=1`** and the data root, restores the **artifact store from the Actions cache** (`actions/cache` on the data root, keyed `dev-store-<os>-<arch>-<hash of deps.lock + build-deps.lock>` with a prefix fallback — the store is version-keyed and content-addressed, so a stale restore is still correct and `dev up` installs the difference), runs **`dev up`** (inside: the container-side install, `--except build`), and saves the store back at the job's end. `data-root` and `up-args` are inputs. The image carries no dev ([dev is live infrastructure](#dev-is-live-infrastructure)): the Linuxbrew and tap the bootstrap leaves behind are what the install uses.
+
+A self-hosted job has a host and needs none of this: its runner's dev runs `dev up`, which provisions the persistent container as [above](#inside-the-container).
 
 ### The cold run: `dev up --no-cache`
 
