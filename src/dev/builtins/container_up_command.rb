@@ -4,6 +4,7 @@
 require "stringio"
 require "dev/builtins/container_command"
 require "dev/builtins/service_up"
+require "dev/container_dev_provisioner"
 require "dev/credentials"
 require "dev/engine_provisioner"
 
@@ -25,17 +26,23 @@ module Dev
 
       # @param container_client [Dev::BuildContainer, nil]
       # @param engine_provisioner [Dev::EngineProvisioner] the sizing step
+      # @param dev_provisioner [Dev::ContainerDevProvisioner, nil] converges
+      #   the persistent container's dev to this host's version; resolved
+      #   lazily over the client's engine when not injected, like the client
       # @param out [IO, StringIO]
       sig do
         params(
           container_client: T.nilable(Dev::BuildContainer),
           engine_provisioner: Dev::EngineProvisioner,
+          dev_provisioner: T.nilable(Dev::ContainerDevProvisioner),
           out: T.any(IO, StringIO),
         ).void
       end
-      def initialize(container_client: nil, engine_provisioner: Dev::EngineProvisioner.new, out: $stdout)
+      def initialize(container_client: nil, engine_provisioner: Dev::EngineProvisioner.new,
+                     dev_provisioner: nil, out: $stdout)
         super(container_client:, out:)
         @engine_provisioner = engine_provisioner
+        @dev_provisioner = dev_provisioner
       end
 
       sig { override.returns(String) }
@@ -72,6 +79,19 @@ module Dev
         volumes = BuildContainer.resolve_versioned_volumes(cfg.volumes, project_root: project.root)
         name = client.ensure_service!(image_tag, project_root: project.root, volumes: volumes)
         @out.puts "dev: build container up: #{name}"
+        # The container follows the host: its dev is converged to this exact
+        # version here, on every up, so a host upgrade re-syncs it with no
+        # manual step and the steady state is one probe.
+        result = dev_provisioner.provision!(name)
+        @out.puts "dev: container dev #{result} at #{dev_provisioner.host_version}"
+      end
+
+      private
+
+      # @return [Dev::ContainerDevProvisioner]
+      sig { returns(Dev::ContainerDevProvisioner) }
+      def dev_provisioner
+        @dev_provisioner ||= Dev::ContainerDevProvisioner.new(engine: client.engine)
       end
     end
   end

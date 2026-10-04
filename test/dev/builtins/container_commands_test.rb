@@ -8,6 +8,7 @@ require "dev/builtins/container_reset_command"
 require "dev/builtins/container_tag_command"
 require "dev/builtins/container_status_command"
 require "dev/build_container_config"
+require "dev/container_dev_provisioner"
 require "dev/engine_provisioner"
 require "support/fake_container_engine"
 require "pathname"
@@ -76,14 +77,43 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
       .returns(["~/.dev/engines/ue/5.4:/ue"])
     client.expects(:ensure_service!).with(TAG, project_root: ROOT, volumes: ["~/.dev/engines/ue/5.4:/ue"])
       .once.in_sequence(order).returns("dev-myapp-linux-abc-content-abc123")
+    dev_provisioner = typed_mock(Dev::ContainerDevProvisioner)
+    dev_provisioner.stubs(:host_version).returns("0.2.98")
+    dev_provisioner.expects(:provision!).with("dev-myapp-linux-abc-content-abc123").once.in_sequence(order)
+      .returns(:installed)
     out = StringIO.new
 
     When "bringing the container up"
-    Dev::Builtins::ContainerUpCommand.new(container_client: client, engine_provisioner: provisioner, out: out)
-      .call(args: [], context: project(config))
+    Dev::Builtins::ContainerUpCommand.new(
+      container_client: client, engine_provisioner: provisioner, dev_provisioner: dev_provisioner, out: out,
+    ).call(args: [], context: project(config))
 
-    Then "both results are reported"
-    out.string == "dev: image ready: #{TAG}\ndev: build container up: dev-myapp-linux-abc-content-abc123\n"
+    Then "every step is reported, the container's dev last"
+    out.string == "dev: image ready: #{TAG}\n" \
+      "dev: build container up: dev-myapp-linux-abc-content-abc123\n" \
+      "dev: container dev installed at 0.2.98\n"
+  end
+
+  test "container up reports the container's dev as current when the provisioner found nothing to do" do
+    Given "a persisted config whose container already carries the host's dev"
+    config = config(persist: true)
+    provisioner = typed_mock(Dev::EngineProvisioner)
+    provisioner.stubs(:provision!)
+    client = client()
+    client.stubs(:ensure_image!).returns(TAG)
+    client.stubs(:ensure_service!).returns(CURRENT)
+    dev_provisioner = typed_mock(Dev::ContainerDevProvisioner)
+    dev_provisioner.stubs(:host_version).returns("0.2.98")
+    dev_provisioner.stubs(:provision!).returns(:current)
+    out = StringIO.new
+
+    When "bringing the container up"
+    Dev::Builtins::ContainerUpCommand.new(
+      container_client: client, engine_provisioner: provisioner, dev_provisioner: dev_provisioner, out: out,
+    ).call(args: [], context: project(config))
+
+    Then
+    out.string.end_with?("dev: container dev current at 0.2.98\n")
   end
 
   test "container up on a non-persisted project stops at the image" do
