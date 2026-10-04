@@ -73,6 +73,34 @@ class Dev::CredentialsTest < Minitest::Test
     ENV.delete(password_var)
   end
 
+  test "resolve_run_env injects what is available (ENV, then storage) and silently skips the rest" do
+    Given "three run_env entries: one in ENV, one in storage, one nowhere"
+    env_var = "TEST_RUN_ENV_A_#{Process.pid}"
+    ENV[env_var] = "from-env"
+    Dev::Credentials.stubs(:load).returns(nil)
+    Dev::Credentials.stubs(:load).with("wwise", "token").returns("from-store")
+    run_env = { env_var => "a/b", "WWISE_TOKEN" => "wwise/token", "MISSING" => "x/y" }
+
+    When "resolving"
+    result = Dev::Credentials.resolve_run_env(run_env)
+
+    Then "only the two resolvable entries appear, and nothing prompts"
+    result == { env_var => "from-env", "WWISE_TOKEN" => "from-store" }
+    0 * Dev::Credentials.prompt_and_store
+
+    Cleanup
+    ENV.delete(env_var)
+  end
+
+  test "resolve_run_env of an empty declaration is empty without touching storage" do
+    When "resolving nothing"
+    result = Dev::Credentials.resolve_run_env({})
+
+    Then "empty, no lookups"
+    result == {}
+    0 * Dev::Credentials.load
+  end
+
   test "store_to_file creates credentials file with 0600 permissions" do
     Given "a temporary config directory"
     tmpdir = Dir.mktmpdir("credentials-test-")

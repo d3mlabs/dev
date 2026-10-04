@@ -67,6 +67,28 @@ module Dev
       end
     end
 
+    # Resolve runtime env vars declared in dev.yml (build.container.run_env)
+    # for injection into the container.
+    #
+    # Best-effort and non-interactive by design: an entry is injected only
+    # when its value is already available (ENV override, then stored
+    # credential), and silently skipped otherwise. run_env applies to every
+    # containerized command, so a missing runtime secret must not block or
+    # prompt commands that don't need it. The provisioning command that
+    # *does* need it is responsible for making the value available (e.g.
+    # exporting it before invoking the command).
+    #
+    # @param run_env [Hash{String => String}] var name => credential reference
+    # @return [Hash{String => String}] var name => resolved value, resolvable entries only
+    sig { params(run_env: T::Hash[String, String]).returns(T::Hash[String, String]) }
+    def resolve_run_env(run_env)
+      run_env.each_with_object({}) do |(name, credential_ref), resolved|
+        namespace, key = credential_ref.split("/", 2)
+        value = ENV[name] || load(T.must(namespace), T.must(key))
+        resolved[name] = value if value
+      end
+    end
+
     # Load a credential from the platform-appropriate backend.
     #
     # Tries macOS Keychain first (when available), then the plain text file.
