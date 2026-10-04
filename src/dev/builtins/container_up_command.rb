@@ -4,6 +4,7 @@
 require "stringio"
 require "dev/builtins/container_command"
 require "dev/builtins/service_up"
+require "dev/container_deps_installer"
 require "dev/container_dev_provisioner"
 require "dev/credentials"
 require "dev/engine_provisioner"
@@ -14,8 +15,10 @@ module Dev
     # runs, done ahead of time: the engine up and sized from this repo's hint,
     # the image resolved (local → registry → build), and, when the project
     # persists its container, the service container created or restarted
-    # warm. `dev up` composes this after the dependency install; a CI job
-    # runs it alone to publish the image (`DEV_PUBLISH_IMAGE=1`).
+    # warm, its dev converged to the host's, and its side of the dependency
+    # install run. `dev up` composes this after the host-side dependency
+    # install; a CI job runs it alone to publish the image
+    # (`DEV_PUBLISH_IMAGE=1`).
     #
     # The build container is this project's one service dependency (an
     # environment service: commands execute in it), so this is the
@@ -29,20 +32,24 @@ module Dev
       # @param dev_provisioner [Dev::ContainerDevProvisioner, nil] converges
       #   the persistent container's dev to this host's version; resolved
       #   lazily over the client's engine when not injected, like the client
+      # @param deps_installer [Dev::ContainerDepsInstaller, nil] runs the
+      #   container-side dependency install; resolved lazily the same way
       # @param out [IO, StringIO]
       sig do
         params(
           container_client: T.nilable(Dev::BuildContainer),
           engine_provisioner: Dev::EngineProvisioner,
           dev_provisioner: T.nilable(Dev::ContainerDevProvisioner),
+          deps_installer: T.nilable(Dev::ContainerDepsInstaller),
           out: T.any(IO, StringIO),
         ).void
       end
       def initialize(container_client: nil, engine_provisioner: Dev::EngineProvisioner.new,
-                     dev_provisioner: nil, out: $stdout)
+                     dev_provisioner: nil, deps_installer: nil, out: $stdout)
         super(container_client:, out:)
         @engine_provisioner = engine_provisioner
         @dev_provisioner = dev_provisioner
+        @deps_installer = deps_installer
       end
 
       sig { override.returns(String) }
@@ -84,6 +91,12 @@ module Dev
         # manual step and the steady state is one probe.
         result = dev_provisioner.provision!(name)
         @out.puts "dev: container dev #{result} at #{dev_provisioner.host_version}"
+        # Dependencies install where they are consumed: with the container's
+        # dev current, its side of the install runs there (gems against the
+        # store Ruby, container-scoped brew deps), carrying the run_env the
+        # install-time integrations may need.
+        deps_installer.install!(name, env: Dev::Credentials.resolve_run_env(cfg.run_env))
+        @out.puts "dev: container deps installed"
       end
 
       private
@@ -92,6 +105,12 @@ module Dev
       sig { returns(Dev::ContainerDevProvisioner) }
       def dev_provisioner
         @dev_provisioner ||= Dev::ContainerDevProvisioner.new(engine: client.engine)
+      end
+
+      # @return [Dev::ContainerDepsInstaller]
+      sig { returns(Dev::ContainerDepsInstaller) }
+      def deps_installer
+        @deps_installer ||= Dev::ContainerDepsInstaller.new(engine: client.engine)
       end
     end
   end
