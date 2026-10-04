@@ -5,6 +5,7 @@ require "test_helper"
 require "dev/deps/cache_gc"
 require "dev/deps/lockfile"
 require "dev/deps/dependency"
+require "dev/deps/local_store"
 require "support/fake_container_engine"
 require "set"
 require "tmpdir"
@@ -80,6 +81,33 @@ class Dev::Deps::CacheGcTest < Minitest::Test
 
     Then "the in-use version (a) and the locked version (c) survive; b is reclaimed"
     Dir.children(base).sort == ["a", "c"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "gc leaves tool caches alone by default and drops them whole when asked" do
+    Given "a store with two tool caches the tools have filled, and a locked engine"
+    dir = Dir.mktmpdir("dev-cache-gc-test-")
+    store = Dev::Deps::LocalStore.new(data_root: dir)
+    (store.tool_cache("bundler") / "gems").mkpath
+    (store.tool_cache("brew") / "bottle.tar.gz").write("bottle")
+    base = File.join(dir, "engines", "unreal-engine-css")
+    seed_versions(base, "c")
+    lockfile = lock_engine(dir, base, version: "c")
+    out = StringIO.new
+    gc = FixtureCacheGc.new(lockfile: lockfile, store: store, out: out)
+
+    When "collecting without, then with, tool caches"
+    gc.gc(keep: 2)
+    untouched = store.tool_caches
+    gc.gc(keep: 2, tool_caches: true)
+
+    Then "the default pass never reaches into a tool's cache; the explicit pass removes each as a unit and says so"
+    untouched == %w[brew bundler]
+    store.tool_caches == []
+    out.string.include?("removing tool cache #{dir}/tool-caches/brew")
+    out.string.include?("removing tool cache #{dir}/tool-caches/bundler")
 
     Cleanup
     FileUtils.rm_rf(dir)

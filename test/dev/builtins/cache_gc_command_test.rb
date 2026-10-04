@@ -13,7 +13,7 @@ class Dev::Builtins::CacheGcCommandTest < Minitest::Test
   test "gc runs with the default retention when --keep is absent" do
     Given "a cache command over an expecting GC"
     gc = typed_mock(Dev::Deps::CacheGc)
-    gc.expects(:gc).with(keep: Dev::Deps::CacheGc::DEFAULT_KEEP, image_ref: nil, live_tag: nil).once
+    gc.expects(:gc).with(keep: Dev::Deps::CacheGc::DEFAULT_KEEP, image_ref: nil, live_tag: nil, tool_caches: false).once
     command = build_command(gc)
 
     When "running cache gc"
@@ -23,10 +23,23 @@ class Dev::Builtins::CacheGcCommandTest < Minitest::Test
     true
   end
 
+  test "gc drops the tool caches only when --tool-caches is given" do
+    Given "a cache command over an expecting GC"
+    gc = typed_mock(Dev::Deps::CacheGc)
+    gc.expects(:gc).with(keep: Dev::Deps::CacheGc::DEFAULT_KEEP, image_ref: nil, live_tag: nil, tool_caches: true).once
+    command = build_command(gc)
+
+    When "running cache gc --tool-caches"
+    command.call(args: ["--tool-caches"], context: build_context)
+
+    Then "the expectation on the GC holds"
+    true
+  end
+
   test "gc honors the space-separated --keep flag" do
     Given "a cache command over an expecting GC"
     gc = typed_mock(Dev::Deps::CacheGc)
-    gc.expects(:gc).with(keep: 5, image_ref: nil, live_tag: nil).once
+    gc.expects(:gc).with(keep: 5, image_ref: nil, live_tag: nil, tool_caches: false).once
     command = build_command(gc)
 
     When "running cache gc --keep 5"
@@ -39,7 +52,7 @@ class Dev::Builtins::CacheGcCommandTest < Minitest::Test
   test "gc honors the inline --keep=N flag" do
     Given "a cache command over an expecting GC"
     gc = typed_mock(Dev::Deps::CacheGc)
-    gc.expects(:gc).with(keep: 3, image_ref: nil, live_tag: nil).once
+    gc.expects(:gc).with(keep: 3, image_ref: nil, live_tag: nil, tool_caches: false).once
     command = build_command(gc)
 
     When "running cache gc --keep=3"
@@ -57,6 +70,7 @@ class Dev::Builtins::CacheGcCommandTest < Minitest::Test
       keep: Dev::Deps::CacheGc::DEFAULT_KEEP,
       image_ref: "myregistry/myapp-linux",
       live_tag: "myregistry/myapp-linux:content-abc123",
+      tool_caches: false,
     ).once
     command = build_command(gc)
     context = build_context(build_container: config)
@@ -76,7 +90,7 @@ class Dev::Builtins::CacheGcCommandTest < Minitest::Test
     # The real CacheGc#gc shells out to docker, so the test intercepts the
     # construction boundary and asserts the default factory's composition.
     gc = typed_mock(Dev::Deps::CacheGc)
-    gc.expects(:gc).with(keep: Dev::Deps::CacheGc::DEFAULT_KEEP, image_ref: nil, live_tag: nil).once
+    gc.expects(:gc).with(keep: Dev::Deps::CacheGc::DEFAULT_KEEP, image_ref: nil, live_tag: nil, tool_caches: false).once
     Dev::Deps::CacheGc.expects(:new)
       .with { |**kwargs| kwargs.fetch(:lockfile).is_a?(Dev::Deps::Lockfile) }
       .returns(gc)
