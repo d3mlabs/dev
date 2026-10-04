@@ -87,7 +87,18 @@ echo ">>> Installing build dependencies from ${DEPS_DIR}/build-deps.lock"
 # install path by construction, so env: :ci entries install and env: :dev
 # ones do not. The host OS is detected (linux), so host: :darwin entries
 # skip themselves.
-(cd "$DEPS_DIR" && CI=true dev deps install --group build --integration brew)
+#
+# DEV_PIN_TAPS=1 (the image build's reproducible mode) adds --pinned-taps:
+# dev checks each formula's tap out at the commit build-deps.lock names
+# (one commit, fetched alone — not homebrew-core's history) and brew
+# installs from those checkouts instead of its moving API, so two builds
+# of one lock install one toolchain. Off by default: the lock then verifies
+# the versions brew's API produced, as every host install does.
+PINNED_TAPS=()
+if [ "${DEV_PIN_TAPS:-}" = "1" ]; then
+  PINNED_TAPS=(--pinned-taps)
+fi
+(cd "$DEPS_DIR" && CI=true dev deps install --group build --integration brew ${PINNED_TAPS[@]+"${PINNED_TAPS[@]}"})
 
 echo ">>> Removing dev-core from the image"
 # The toolchain stays; dev leaves. Its brew dependencies (rbenv, shadowenv)

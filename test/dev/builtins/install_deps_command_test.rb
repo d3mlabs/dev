@@ -219,6 +219,37 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "--pinned-taps puts the brew integration in pinned mode and is not mistaken for a group or integration" do
+    Given "a factory that records its integrations and an installer that records its narrowing"
+    root = Pathname.new(Dir.mktmpdir("install-deps-pinned-"))
+    installer = typed_mock(Dev::Deps::Installer)
+    factory_inputs = []
+    command = Dev::Builtins::InstallDepsCommand.new(
+      installer_factory: ->(lockfile, integrations) {
+        factory_inputs << [lockfile, integrations]
+        installer
+      },
+      gem_skill_linker_factory: ->(_project_root) {
+        linker = typed_mock(Dev::Deps::GemSkillLinker)
+        linker.stubs(:link_all)
+        linker
+      },
+      host_service: quiet_host_service,
+    )
+    Dev::ShadowenvRuby.stubs(:converge!)
+
+    When "running dev deps install --group build --integration brew --pinned-taps"
+    command.call(args: %w[--group build --integration brew --pinned-taps], context: build_context(root))
+
+    Then "brew pins taps; the group and integration narrowing are what was named"
+    _, integrations = factory_inputs.fetch(0)
+    integrations.fetch(:brew).pin_taps?
+    1 * installer.install(env: anything, host: anything, groups: [:build], except: [], integration_types: [:brew])
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
   test "call builds the installer over the project's lockfile and host integrations" do
     Given "a factory that records its inputs"
     root = Pathname.new(Dir.mktmpdir("install-deps-wiring-"))

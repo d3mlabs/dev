@@ -99,6 +99,29 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "pin_taps reaches the brew integration on either side and is off unless asked: #{side}, #{pin_taps}" do
+    Given "a scratch project root"
+    dir = Dir.mktmpdir("registry-pin-test-")
+
+    When "building the side's integrations"
+    integrations = Dev::Deps::Registry.public_send(
+      side, project_root: Pathname(dir), store: Dev::Deps::LocalStore.new(data_root: dir), pin_taps: pin_taps,
+    )
+
+    Then
+    integrations.fetch(:brew).pin_taps? == pin_taps
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+
+    Where
+    side                      | pin_taps
+    :host_integrations        | false
+    :host_integrations        | true
+    :container_integrations   | false
+    :container_integrations   | true
+  end
+
   test "container_integrations carries only the container-scoped types, and skips an alias whose target is host-only" do
     Given "a scratch project root"
     dir = Dir.mktmpdir("registry-container-test-")

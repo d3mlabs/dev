@@ -128,6 +128,10 @@ module Dev
         @tap_pinner = tap_pinner
       end
 
+      # @return [Boolean] whether installs pin taps at the lock's commits
+      sig { returns(T::Boolean) }
+      def pin_taps? = @pin_taps
+
       # Install all brew dependencies. Registers taps on first call, and in
       # pinned-taps mode checks every formula's tap out at its locked commit.
       #

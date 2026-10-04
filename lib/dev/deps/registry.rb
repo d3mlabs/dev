@@ -185,7 +185,7 @@ module Dev
             repository: BrewRepository,
             scheme: BrewScheme,
             integration: BrewIntegration,
-            integration_needs: %i[taps project_dir],
+            integration_needs: %i[taps project_dir pin_taps],
             scope: BOTH,
           ),
           # Casks are declared with the brew DSL verb (cask: true) but are a
@@ -339,6 +339,8 @@ module Dev
         # @param ruby_version_requirement [String, nil] accepted for caller
         #   convenience; install-time integrations don't need it today
         # @param python_version [String, nil] for the pip integration's venv
+        # @param pin_taps [Boolean] brew installs from taps checked out at the
+        #   lock's commits (BrewIntegration), not brew's API
         # @return [Hash{Symbol => Integration}]
         sig do
           params(
@@ -347,12 +349,14 @@ module Dev
             taps: T::Array[Tap],
             ruby_version_requirement: T.nilable(String),
             python_version: T.nilable(String),
+            pin_taps: T::Boolean,
           ).returns(T::Hash[Symbol, Integration])
         end
-        def host_integrations(project_root:, store:, taps: [], ruby_version_requirement: nil, python_version: nil)
+        def host_integrations(project_root:, store:, taps: [], ruby_version_requirement: nil, python_version: nil,
+          pin_taps: false)
           integrations_for(
             INTEGRATIONS.select(&:host?),
-            project_root:, store:, taps:, ruby_version_requirement:, python_version:,
+            project_root:, store:, taps:, ruby_version_requirement:, python_version:, pin_taps:,
           )
         end
 
@@ -365,6 +369,8 @@ module Dev
         # @param ruby_version_requirement [String, nil] accepted for caller
         #   convenience; install-time integrations don't need it today
         # @param python_version [String, nil] for the pip integration's venv
+        # @param pin_taps [Boolean] brew installs from taps checked out at the
+        #   lock's commits (BrewIntegration), not brew's API
         # @return [Hash{Symbol => Integration}]
         sig do
           params(
@@ -373,12 +379,14 @@ module Dev
             taps: T::Array[Tap],
             ruby_version_requirement: T.nilable(String),
             python_version: T.nilable(String),
+            pin_taps: T::Boolean,
           ).returns(T::Hash[Symbol, Integration])
         end
-        def container_integrations(project_root:, store:, taps: [], ruby_version_requirement: nil, python_version: nil)
+        def container_integrations(project_root:, store:, taps: [], ruby_version_requirement: nil, python_version: nil,
+          pin_taps: false)
           integrations_for(
             INTEGRATIONS.select(&:container?),
-            project_root:, store:, taps:, ruby_version_requirement:, python_version:,
+            project_root:, store:, taps:, ruby_version_requirement:, python_version:, pin_taps:,
           )
         end
 
@@ -393,6 +401,7 @@ module Dev
         # @param taps [Array<Tap>]
         # @param ruby_version_requirement [String, nil]
         # @param python_version [String, nil]
+        # @param pin_taps [Boolean]
         # @return [Hash{Symbol => Integration}]
         sig do
           params(
@@ -402,15 +411,17 @@ module Dev
             taps: T::Array[Tap],
             ruby_version_requirement: T.nilable(String),
             python_version: T.nilable(String),
+            pin_taps: T::Boolean,
           ).returns(T::Hash[Symbol, Integration])
         end
-        def integrations_for(entries, project_root:, store:, taps:, ruby_version_requirement:, python_version:)
+        def integrations_for(entries, project_root:, store:, taps:, ruby_version_requirement:, python_version:, pin_taps:)
           context = {
             project_root:,
             project_dir: project_root,
             ruby_version_requirement:,
             python_version:,
             taps:,
+            pin_taps:,
           }
           integrations = entries.to_h do |entry|
             # T.unsafe: each entry's constructor takes a runtime-selected
