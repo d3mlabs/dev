@@ -51,15 +51,17 @@ module Dev
     # any) installs it, where it installs (scope), and which extra constructor
     # arguments each side needs (drawn from a context the runner assembles).
     module Registry
-      # Install location for a type:
-      #   :host      installed on the host by `dev deps install`
-      #   :container installed inside the build container (not by dev deps install)
-      #   :both      installed on the host and, separately, in the container
+      # Install location for a type — where `dev deps install` installs it,
+      # the host run and the in-container run each taking their side:
+      #   :host      on the host only
+      #   :container inside the build container only
+      #   :both      on the host and, separately, in the container
       HOST = :host
       CONTAINER = :container
       BOTH = :both
 
       HOST_SCOPES = T.let([HOST, BOTH].freeze, T::Array[Symbol])
+      CONTAINER_SCOPES = T.let([CONTAINER, BOTH].freeze, T::Array[Symbol])
 
       # @param symbol [Symbol] the DSL/declaration integration symbol (e.g. :brew)
       # @param repository [Class] Repository subclass that reports this type's universes
@@ -154,6 +156,12 @@ module Dev
         def host?
           HOST_SCOPES.include?(scope) && !integration.nil?
         end
+
+        # @return [Boolean] whether this type installs inside the build container
+        sig { returns(T::Boolean) }
+        def container?
+          CONTAINER_SCOPES.include?(scope) && !integration.nil?
+        end
       end
 
       INTEGRATIONS = T.let(
@@ -167,7 +175,10 @@ module Dev
             locker_needs: %i[project_root ruby_version_requirement],
             integration: BundlerIntegration,
             integration_needs: %i[project_root],
-            scope: HOST,
+            # Gems are consumed by whichever Ruby runs the tooling: the host's
+            # rbenv Ruby and the container's store Ruby each get their own
+            # bundle (ShadowenvExec activates the right one on each side).
+            scope: BOTH,
           ),
           Entry.new(
             symbol: :brew,
@@ -339,6 +350,61 @@ module Dev
           ).returns(T::Hash[Symbol, Integration])
         end
         def host_integrations(project_root:, store:, taps: [], ruby_version_requirement: nil, python_version: nil)
+          integrations_for(
+            INTEGRATIONS.select(&:host?),
+            project_root:, store:, taps:, ruby_version_requirement:, python_version:,
+          )
+        end
+
+        # Build the integration-type -> Integration hash for installs inside
+        # the build container: the types whose scope puts them there.
+        #
+        # @param project_root [Pathname] project root (threaded to integrations that need it)
+        # @param store [ArtifactStore] where installed trees and downloaded blobs live (passed to every integration)
+        # @param taps [Array<Tap>] Homebrew taps for the brew integration
+        # @param ruby_version_requirement [String, nil] accepted for caller
+        #   convenience; install-time integrations don't need it today
+        # @param python_version [String, nil] for the pip integration's venv
+        # @return [Hash{Symbol => Integration}]
+        sig do
+          params(
+            project_root: Pathname,
+            store: ArtifactStore,
+            taps: T::Array[Tap],
+            ruby_version_requirement: T.nilable(String),
+            python_version: T.nilable(String),
+          ).returns(T::Hash[Symbol, Integration])
+        end
+        def container_integrations(project_root:, store:, taps: [], ruby_version_requirement: nil, python_version: nil)
+          integrations_for(
+            INTEGRATIONS.select(&:container?),
+            project_root:, store:, taps:, ruby_version_requirement:, python_version:,
+          )
+        end
+
+        private
+
+        # Instantiate the given entries' integrations, then alias the types
+        # that install through another entry's instance.
+        #
+        # @param entries [Array<Entry>] the entries installing on this side
+        # @param project_root [Pathname]
+        # @param store [ArtifactStore]
+        # @param taps [Array<Tap>]
+        # @param ruby_version_requirement [String, nil]
+        # @param python_version [String, nil]
+        # @return [Hash{Symbol => Integration}]
+        sig do
+          params(
+            entries: T::Array[Entry],
+            project_root: Pathname,
+            store: ArtifactStore,
+            taps: T::Array[Tap],
+            ruby_version_requirement: T.nilable(String),
+            python_version: T.nilable(String),
+          ).returns(T::Hash[Symbol, Integration])
+        end
+        def integrations_for(entries, project_root:, store:, taps:, ruby_version_requirement:, python_version:)
           context = {
             project_root:,
             project_dir: project_root,
@@ -346,25 +412,27 @@ module Dev
             python_version:,
             taps:,
           }
-          integrations = INTEGRATIONS.each_with_object({}) do |entry, hash|
-            next unless entry.host?
-
+          integrations = entries.to_h do |entry|
             # T.unsafe: each entry's constructor takes a runtime-selected
             # keyword set (integration_needs), which Sorbet cannot check
             # statically; the constructors' own sigs validate at runtime.
-            hash[entry.symbol] = T.unsafe(T.must(entry.integration)).new(
+            integration = T.unsafe(T.must(entry.integration)).new(
               repository: build_repository(entry, context),
               store:,
               **T.unsafe(context).slice(*entry.integration_needs),
             )
+            [entry.symbol, integration]
           end
 
           # Aliased types share their target's INSTANCE (not just its class):
           # the Installer groups dispatch by instance, so both types' deps
           # arrive in one install_all call and batch artifacts stay whole.
+          # An alias whose target does not install on this side is absent too.
           INTEGRATIONS.each do |entry|
             alias_target = entry.install_alias
-            integrations[entry.symbol] = integrations.fetch(alias_target) if alias_target
+            next unless alias_target && integrations.key?(alias_target)
+
+            integrations[entry.symbol] = integrations.fetch(alias_target)
           end
           integrations
         end
