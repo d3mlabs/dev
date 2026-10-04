@@ -306,6 +306,20 @@ Two standing decisions:
   affirmatively requires nothing" and "the tool owns a closure dev can't
   see" used to collapse into the same empty array; the sum type keeps a
   future solver from walking a universe that was never observable.
+- **A `ToolOwned` tool keeps its fetch, its integrity check and its
+  install; dev owns only where the tool caches.** Bundler, brew and pip
+  each download into a tool cache the artifact store hands them
+  (`ArtifactStore#tool_cache` — `BUNDLE_USER_CACHE`, `HOMEBREW_CACHE`,
+  `PIP_CACHE_DIR`), under the data root, so the host, the container that
+  mounts the root and a cold run see one cache and `dev cache gc` can
+  reclaim it. dev never reads or writes inside a tool cache and reclaims
+  one only whole (`--tool-caches`): the contents are the tool's, verified
+  by the tool's own lock (`Gemfile.lock` CHECKSUMS, bottle digests, wheel
+  hashes), and pulling those bytes into dev's blob store would make dev a
+  second owner of their integrity. A tool handed a cache here must be
+  safe under concurrent writers — two checkouts installing at once — which
+  is dev's requirement of it and one every such tool already meets for
+  its own users. luarocks has no download cache to point, so it gets none.
 
 ## Adding a new ecosystem
 

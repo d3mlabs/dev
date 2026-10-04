@@ -58,7 +58,7 @@ Grouped as `dev help` lists them. **Scope** says where the command works: *anywh
 | `dev cred get <namespace> <key>` | anywhere | Resolve a stored credential and print it | [dev cred](#dev-cred--resolve-a-credential) |
 | `dev plan new\|link\|pull\|push\|status\|init` | anywhere | Sync Cursor plans with GitHub issues | [dev plan](#dev-plan--sync-plans-with-github-issues) |
 | `dev learnings sync\|status\|invariants\|init` | anywhere | The org learnings read path | [dev learnings](#dev-learnings) |
-| `dev cache gc [--keep N]` | project | Reclaim host caches dev owns | [`dev cache gc`](#dev-cache-gc) |
+| `dev cache gc [--keep N] [--tool-caches]` | project | Reclaim host caches dev owns | [`dev cache gc`](#dev-cache-gc) |
 | `dev version` (`--version`) | anywhere | Print this dev's version, one line | [Inside the container](#inside-the-container) |
 | `dev help` | anywhere | Show usage: project commands plus the builtins available here | — |
 
@@ -570,6 +570,8 @@ Tree publication is **atomic and concurrency-safe**: the integration builds into
 
 Beside the trees sit **workdirs** — platform-keyed directories mutated in place (the container Ruby's gem home): the store's layout, with no publication and no marker.
 
+And **tool caches** — one directory per tool-mediated ecosystem's tool at `<data root>/tool-caches/<tool>`, handed to the tool as its download cache: bundler's (`BUNDLE_USER_CACHE`, with `BUNDLE_GLOBAL_GEM_CACHE`), brew's (`HOMEBREW_CACHE`), pip's (`PIP_CACHE_DIR`). dev owns the location and the tool owns the contents: the tool fetches, verifies against its own lock and installs exactly as before, but its cache now lives where the host, the container (through the data-root mount) and a cold run all see it — a pure-Ruby gem the host's `bundle install` fetched is already there when the container's runs — and where `dev cache gc --tool-caches` can reclaim it. dev never reads or writes inside a tool cache; it only names it and, when asked, drops it whole. Tools handed a cache here must tolerate concurrent writers (two checkouts installing at once) — they do, for their own users.
+
 Integrations, `dev deps path`, the build container and `dev cache gc` all resolve paths through the store rather than reconstructing the layout, so a `dev.yml` volume like `~/.dev/engines/unreal-engine-css:/ue` is mounted from the store's tree for the locked version automatically.
 
 ### Hung-build watcher
@@ -578,10 +580,11 @@ The prewarm runs under a watcher that detects the intermittent emulated-compiler
 
 ### `dev cache gc`
 
-dev owns the artifact store's layout, so it owns reclamation. `dev cache gc [--keep N]` applies **size-tiered, safe** retention:
+dev owns the artifact store's layout, so it owns reclamation. `dev cache gc [--keep N] [--tool-caches]` applies **size-tiered, safe** retention:
 
 - **Store trees** (multi-GB install_dir versions) get a tight default keep. Locked versions (current lockfiles) and in-use versions (mounted by a running container) are **never** evicted; orphan staging dirs from a killed install are always reclaimed.
 - **docker content tags** for the project image are pruned down to the live tag (never one backing a running container).
+- **Tool caches** (bundler's, brew's, pip's download caches in the store) are left alone by default and dropped **whole** with `--tool-caches`: their contents are the tool's, so dev never prunes inside one, and losing one costs a re-fetch, never correctness.
 
 A workflow/cron only *schedules* `dev cache gc`; it never reaches into the layout itself.
 
@@ -655,7 +658,7 @@ A self-hosted job has a host and needs none of this: its runner's dev runs `dev 
 
 A warm machine hides a broken cold path: the engine already in the store, the gems already bundled, the container already provisioned. `dev up --no-cache` is the project half of `dev up` run **from nothing**, as a topology rather than a cache flush — the warm store and the persistent container are never touched, so it is safe to run on a busy box:
 
-1. a **throwaway data root** is created beside the warm one (`<data root>-cold-<id>`) and made the process's data root for the run (`DEV_DATA_ROOT`), so every install and the container's data-root mount land in it;
+1. a **throwaway data root** is created beside the warm one (`<data root>-cold-<id>`) and made the process's data root for the run (`DEV_DATA_ROOT`), so every install, the tools' download caches ([tool caches](#the-artifact-store-version-keyed-trees-content-addressed-blobs) — bundler, brew and pip fetch from nothing too) and the container's data-root mount land in it;
 2. the host-side `dev deps install` runs into it;
 3. each service does its **cold bring-up** — for the build container: the image resolved as usual (pulled or built; the image is not what a cold run is about), then a **one-shot container** (`--rm`, a sibling of the persistent one's name, same mounts and labels) over the throwaway root, the host's dev installed inside, the container-side install run, the container removed;
 4. the throwaway root is removed.
