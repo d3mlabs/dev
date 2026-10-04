@@ -126,6 +126,64 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     1 * deps_installer.install!(CURRENT, env: { "WWISE_TOKEN" => "t0k" })
   end
 
+  # --- cold_up ----------------------------------------------------------------
+
+  test "cold_up resolves the image, then provisions dev and installs deps in a one-shot container — never the persistent one" do
+    Given "a persisted config whose boundaries record what they see"
+    config = config(persist: true, volumes: ["~/.dev/engines/ue:/ue"])
+    order = sequence("engine, image, one-shot: dev then deps")
+    provisioner = typed_mock(Dev::EngineProvisioner)
+    provisioner.expects(:provision!).with(resources: config.resources).once.in_sequence(order)
+    client = client()
+    client.expects(:ensure_image!).once.in_sequence(order).returns(TAG)
+    client.expects(:ensure_service!).never
+    Dev::BuildContainer.stubs(:resolve_versioned_volumes).with(["~/.dev/engines/ue:/ue"], project_root: ROOT)
+      .returns(["~/.dev/engines/ue/5.4:/ue"])
+    client.expects(:with_one_shot_container).with(TAG, project_root: ROOT, volumes: ["~/.dev/engines/ue/5.4:/ue"])
+      .once.in_sequence(order).yields("dev-myapp-cold-1234")
+    dev_provisioner = typed_mock(Dev::ContainerDevProvisioner)
+    dev_provisioner.stubs(:host_version).returns("0.2.98")
+    dev_provisioner.expects(:provision!).with("dev-myapp-cold-1234").once.in_sequence(order).returns(:installed)
+    deps_installer = typed_mock(Dev::ContainerDepsInstaller)
+    deps_installer.expects(:install!).with("dev-myapp-cold-1234", env: {}).once.in_sequence(order)
+    out = StringIO.new
+
+    When "cold-upping"
+    Dev::Builtins::ContainerUpCommand.new(
+      container_client: client, engine_provisioner: provisioner, dev_provisioner: dev_provisioner,
+      deps_installer: deps_installer, out: out,
+    ).cold_up(project: project(config).project)
+
+    Then "the steps are reported against the one-shot container"
+    out.string == "dev: image ready: #{TAG}\n" \
+      "dev: cold container up: dev-myapp-cold-1234\n" \
+      "dev: container dev installed at 0.2.98\n" \
+      "dev: container deps installed\n"
+  end
+
+  test "cold_up runs the one-shot install for a non-persisted project too: the topology is the same" do
+    Given "a non-persisted config"
+    config = config(persist: false)
+    provisioner = typed_mock(Dev::EngineProvisioner)
+    provisioner.stubs(:provision!)
+    client = client()
+    client.stubs(:ensure_image!).returns(TAG)
+    client.expects(:with_one_shot_container).with(TAG, project_root: ROOT, volumes: []).once.yields("dev-myapp-cold-1")
+    dev_provisioner = typed_mock(Dev::ContainerDevProvisioner)
+    dev_provisioner.stubs(:host_version).returns("0.2.98")
+    dev_provisioner.stubs(:provision!).returns(:installed)
+    deps_installer = typed_mock(Dev::ContainerDepsInstaller)
+
+    When "cold-upping"
+    Dev::Builtins::ContainerUpCommand.new(
+      container_client: client, engine_provisioner: provisioner, dev_provisioner: dev_provisioner,
+      deps_installer: deps_installer, out: StringIO.new,
+    ).cold_up(project: project(config).project)
+
+    Then "the install ran inside the one-shot container"
+    1 * deps_installer.install!("dev-myapp-cold-1", env: {})
+  end
+
   test "container up reports the container's dev as current when the provisioner found nothing to do" do
     Given "a persisted config whose container already carries the host's dev"
     config = config(persist: true)
