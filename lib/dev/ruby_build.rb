@@ -25,7 +25,7 @@ module Dev
     sig { params(version: String, prefix: Pathname).returns(T::Boolean) }
     def call(version, prefix)
       ProvisioningGuard.check!("ruby-build #{version}", stub_hint: STUB_HINT)
-      env = {"PATH" => ShadowenvRuby.path_with_brew_bin}
+      env = { "PATH" => ShadowenvRuby.path_with_brew_bin }
       ShadowenvRuby.ensure_ruby_build_deps!(env)
       $stderr.puts "dev: building Ruby #{version} into #{prefix} (one-time)..."
       system(ShadowenvRuby.ruby_build_env(env, version, prefix: prefix.to_s), "ruby-build", version, prefix.to_s) == true
