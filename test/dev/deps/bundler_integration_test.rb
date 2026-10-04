@@ -7,6 +7,7 @@ require "dev/deps/bundler_repository"
 require "dev/deps/local_store"
 require "dev/deps/dependency"
 require "dev/deps/shadowenv_exec"
+require "pathname"
 require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
@@ -46,11 +47,17 @@ class Dev::Deps::BundlerIntegrationTest < Minitest::Test
     When "installing all dependencies"
     integration.install_all([gem_dep("ffi")])
 
-    Then "bundle install is dispatched frozen against the generated Gemfile"
+    Then "bundle install is dispatched frozen against the generated Gemfile, caching gems in the store's bundler cache"
     1 * shadowenv_exec.capture3(
       "bundle", "install",
-      env: { "BUNDLE_GEMFILE" => "#{dir}/Gemfile", "BUNDLE_FROZEN" => "true" },
+      env: {
+        "BUNDLE_GEMFILE" => "#{dir}/Gemfile",
+        "BUNDLE_FROZEN" => "true",
+        "BUNDLE_GLOBAL_GEM_CACHE" => "true",
+        "BUNDLE_USER_CACHE" => "#{dir}/tool-caches/bundler",
+      },
     ) >> succeeded
+    (Pathname(dir) / "tool-caches" / "bundler").directory?
 
     Cleanup
     FileUtils.rm_rf(dir)

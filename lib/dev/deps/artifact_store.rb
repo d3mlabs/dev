@@ -41,6 +41,14 @@ module Dev
     # Beside them, **workdirs**: platform-keyed directories mutated in place
     # (a gem home) — the store's layout, but no publication and no marker.
     #
+    # And **tool caches**: one directory per tool-mediated ecosystem's tool
+    # (bundler, brew, pip) that dev hands to the tool as its download cache.
+    # dev owns the location — under the data root, so host, container and
+    # cold run see one cache — and the tool owns the contents: dev never
+    # reads or writes inside, and reclaims a tool cache only whole. A tool
+    # given a cache here must be safe under concurrent writers (two
+    # checkouts installing at once); the tools dev hands caches to are.
+    #
     # Implementations: LocalStore (a directory tree under the data root).
     # Remote backends (a CI cache, an OCI registry) are dev#27's subject;
     # they implement this same interface.
@@ -154,6 +162,28 @@ module Dev
       # @return [void]
       sig { abstract.params(key: String, file: File).void }
       def put_blob(key, file); end
+
+      # The cache directory for a tool, existing: the tool fetches into it
+      # and reads back from it; dev only names it.
+      #
+      # @param name [String] the tool ("bundler", "brew", "pip")
+      # @return [Pathname]
+      sig { abstract.params(name: String).returns(Pathname) }
+      def tool_cache(name); end
+
+      # The tools that have a cache here.
+      #
+      # @return [Array<String>] tool names, sorted
+      sig { abstract.returns(T::Array[String]) }
+      def tool_caches; end
+
+      # Drop a tool's cache whole. Deleting it costs the tool one re-fetch,
+      # never correctness.
+      #
+      # @param name [String] the tool
+      # @return [void]
+      sig { abstract.params(name: String).void }
+      def remove_tool_cache(name); end
     end
   end
 end

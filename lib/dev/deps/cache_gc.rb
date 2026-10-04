@@ -24,6 +24,10 @@ module Dev
     #   TIGHT default keep, since a few stale versions dwarf everything else.
     # - orphan staging dirs (from a killed install) are always reclaimable.
     # - docker content tags are pruned down to the live one.
+    # - tool caches (bundler's, brew's, pip's download caches in the store)
+    #   are left alone unless asked, and then dropped whole: their contents
+    #   are the tool's, so dev never prunes inside one, and losing one costs
+    #   a re-fetch, never correctness.
     #
     # Two invariants make this safe under concurrency (multiple jobs/branches):
     #
@@ -62,15 +66,30 @@ module Dev
       #   in-use versions are always retained, even beyond this count)
       # @param image_ref [String, nil] "registry/image" to prune content tags for
       # @param live_tag  [String, nil] the current content tag to never prune
+      # @param tool_caches [Boolean] also drop every tool cache whole
       # @return [void]
-      sig { params(keep: Integer, image_ref: T.nilable(String), live_tag: T.nilable(String)).void }
-      def gc(keep: DEFAULT_KEEP, image_ref: nil, live_tag: nil)
+      sig do
+        params(keep: Integer, image_ref: T.nilable(String), live_tag: T.nilable(String), tool_caches: T::Boolean).void
+      end
+      def gc(keep: DEFAULT_KEEP, image_ref: nil, live_tag: nil, tool_caches: false)
         in_use = running_mount_sources
         gc_install_dirs(keep: keep, in_use: in_use)
         gc_docker(image_ref: image_ref, live_tag: live_tag) if image_ref
+        gc_tool_caches if tool_caches
       end
 
       private
+
+      # Drop every tool cache, each as a unit.
+      #
+      # @return [void]
+      sig { void }
+      def gc_tool_caches
+        @store.tool_caches.each do |tool|
+          @out.puts ">>> gc: removing tool cache #{@store.tool_cache(tool)}"
+          @store.remove_tool_cache(tool)
+        end
+      end
 
       # Per locked base, keep the locked version + in-use versions + the
       # newest others up to `keep`; remove the rest and any orphan staging dirs.

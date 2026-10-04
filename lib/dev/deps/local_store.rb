@@ -27,6 +27,7 @@ module Dev
 
       STAGING_PREFIX = ".staging-"
       BLOB_DIR = "cache"
+      TOOL_CACHES_DIR = "tool-caches"
 
       # @param data_root [String] where "~/.dev" bases re-root (tests use a tmpdir)
       sig { params(data_root: String).void }
@@ -129,7 +130,32 @@ module Dev
         FileUtils.mv(file.path, destination)
       end
 
+      sig { override.params(name: String).returns(Pathname) }
+      def tool_cache(name)
+        dir = tool_caches_root / name
+        dir.mkpath
+        dir
+      end
+
+      sig { override.returns(T::Array[String]) }
+      def tool_caches
+        return [] unless tool_caches_root.directory?
+
+        tool_caches_root.children.select(&:directory?).map { |child| child.basename.to_s }.sort
+      end
+
+      sig { override.params(name: String).void }
+      def remove_tool_cache(name)
+        FileUtils.rm_rf(tool_caches_root / name)
+      end
+
       private
+
+      # @return [Pathname] the directory holding every tool's cache
+      sig { returns(Pathname) }
+      def tool_caches_root
+        Pathname(@data_root) / TOOL_CACHES_DIR
+      end
 
       # The on-disk directory holding a base's versions.
       #

@@ -91,12 +91,13 @@ module Dev
         end
       end
 
-      # argv inserted before `brew` in pinned-taps mode: formulae come from
-      # the checked-out taps, never the API, and brew does not move them.
-      PINNED_ENV = T.let(["env", "HOMEBREW_NO_INSTALL_FROM_API=1", "HOMEBREW_NO_AUTO_UPDATE=1"].freeze, T::Array[String])
+      # Environment added in pinned-taps mode: formulae come from the
+      # checked-out taps, never the API, and brew does not move them.
+      PINNED_ENV = T.let(["HOMEBREW_NO_INSTALL_FROM_API=1", "HOMEBREW_NO_AUTO_UPDATE=1"].freeze, T::Array[String])
+      TOOL = "brew"
 
       # @param repository [Repository, nil] source adapter
-      # @param store [ArtifactStore, nil] artifact store (unused; brew caches)
+      # @param store [ArtifactStore, nil] the store whose brew tool cache brew downloads into
       # @param taps [Array<Tap>] Homebrew taps to register before installing
       # @param project_dir [String, Pathname, nil] project root for resolving file:// tap URLs
       # @param brew_prefix [String, Pathname, nil] the Homebrew prefix
@@ -303,8 +304,7 @@ module Dev
       # @raise [InstallError] if brew exits non-zero
       sig { params(name: String, spec: String).void }
       def run_brew_install(name, spec)
-        env = @pin_taps ? PINNED_ENV : []
-        _out, err, status = T.unsafe(Open3).capture3(*escalation, *env, "brew", "install", *spec.split)
+        _out, err, status = T.unsafe(Open3).capture3(*escalation, *brew_env, "brew", "install", *spec.split)
         return if status.success?
 
         if sudo_refused?(err)
@@ -314,6 +314,18 @@ module Dev
         end
 
         raise InstallError, "brew install #{spec} failed: #{err}"
+      end
+
+      # argv inserted between the escalation and `brew` on every install:
+      # `env` with brew's download cache in the store (so the host, the
+      # container and a cold run share one, and `dev cache gc` can reclaim
+      # it) plus the pinned-taps variables when pinning. The `env` form, not
+      # a Ruby env hash, so the variables survive `sudo -n -u <owner>`.
+      #
+      # @return [Array<String>]
+      sig { returns(T::Array[String]) }
+      def brew_env
+        ["env", "HOMEBREW_CACHE=#{store!.tool_cache(TOOL)}", *(@pin_taps ? PINNED_ENV : [])]
       end
 
       # Check each formula's tap out at the one commit the lock names for it.
