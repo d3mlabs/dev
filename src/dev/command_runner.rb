@@ -9,6 +9,7 @@ require "dev/credentials"
 require "dev/build_container"
 require "dev/container_context"
 require "dev/container_engine"
+require "dev/container_ruby"
 require "dev/shadowenv_llvm"
 require "dev/shadowenv_python"
 require "dev/shadowenv_ruby"
@@ -36,18 +37,24 @@ module Dev
   # prompts) all work natively without any interception.
   #
   # Before every command, ensures the project's shadowenv Ruby environment is
-  # provisioned (fast-path: skips if .shadowenv.d/510_ruby.lisp is current).
+  # provisioned (fast-path: skips if the project's ruby lisp is current).
   #
   # When a build container is configured and the command opts in (default),
   # the command runs inside the container via `docker run`. Otherwise it runs
   # locally via `shadowenv exec`.
   #
   # Inside a dev-managed container (ContainerContext.inside?) there is no
-  # further container to reach for: a containerized command runs directly,
-  # as `sh -c` at the project root — the same shape the host's `docker exec`
-  # gives it — with no host toolchain provisioning and no shadowenv wrapper.
+  # further container to reach for: a containerized command runs directly
+  # at the project root, under `shadowenv exec` like any other — the
+  # container-only lisp activates the store Ruby (ContainerRuby) there, and
+  # the host-only toolchains (LLVM, Python) are left to the image.
   class CommandRunner
     extend T::Sig
+
+    # The argv that precedes `sh -c` for a direct run: the project's
+    # shadowenv, on both sides — the host lisp activates the rbenv Ruby, the
+    # container lisp (inert on the host) the store Ruby.
+    SHELL_PREFIX = T.let(%w[shadowenv exec --].freeze, T::Array[String])
 
     # Raised by run_waiting when the child command exits nonzero, carrying
     # its exit status so the caller can skip success-contingent post-steps
@@ -101,10 +108,12 @@ module Dev
         build_container: T.nilable(Dev::BuildContainerConfig),
         container_client: T.nilable(Dev::BuildContainer),
         inside_container: T::Boolean,
+        container_ruby: Dev::ContainerRuby,
       ).void
     end
     def initialize(ui:, ruby_version:, project_root:, python_version: nil, build_container: nil,
-                   container_client: nil, inside_container: ContainerContext.inside?)
+                   container_client: nil, inside_container: ContainerContext.inside?,
+                   container_ruby: Dev::ContainerRuby.new)
       @ui = ui
       @ruby_version = ruby_version
       @python_version = python_version
@@ -112,6 +121,7 @@ module Dev
       @project_root = project_root
       @container_client = container_client
       @inside_container = inside_container
+      @container_ruby = container_ruby
     end
 
     # Hand the process over to the command: exec-replace, the right shape
@@ -155,7 +165,7 @@ module Dev
       if use_container?(cmd)
         run_in_container(shell_command, wait:)
       else
-        ensure_shadowenv_provisioned! unless @inside_container
+        ensure_shadowenv_provisioned!
         if cmd.repl
           run_bare(shell_command, wait:)
         else
@@ -314,11 +324,19 @@ module Dev
     # the project declares them. Each ensure_* is a fast provisioned?-guarded
     # no-op after the first run. (A registry pattern per #21 would fold these into
     # a list; three explicit, guarded steps stay readable for now.)
+    #
+    # Inside the container only the Ruby is provisioned, from the artifact
+    # store (ContainerRuby): LLVM and Python are host toolchains, and the
+    # container's come from its image.
     sig { void }
     def ensure_shadowenv_provisioned!
       project_root = @project_root
-      ShadowenvRuby.ensure!(ruby_version: @ruby_version, project_root: project_root)
+      if @inside_container
+        @container_ruby.ensure!(ruby_version: @ruby_version, project_root: project_root)
+        return
+      end
 
+      ShadowenvRuby.ensure!(ruby_version: @ruby_version, project_root: project_root)
       ensure_llvm_provisioned!(project_root)
       ensure_python_provisioned!(project_root)
     end
@@ -356,17 +374,7 @@ module Dev
     sig { params(shell_command: String, wait: T::Boolean).void }
     def run_bare(shell_command, wait:)
       Dir.chdir(@project_root)
-      run_child([child_env, *shell_prefix, "sh", "-c", shell_command], wait:)
-    end
-
-    # The argv that precedes `sh -c` for a direct run: the project's shadowenv
-    # on a host; nothing inside a container, where no shadowenv is provisioned
-    # (the container's toolchain is the image's).
-    #
-    # @return [Array<String>]
-    sig { returns(T::Array[String]) }
-    def shell_prefix
-      @inside_container ? [] : ["shadowenv", "exec", "--"]
+      run_child([child_env, *SHELL_PREFIX, "sh", "-c", shell_command], wait:)
     end
 
     # Runs the command inside a shell wrapper that prints a colored
@@ -378,7 +386,7 @@ module Dev
     sig { params(shell_command: String, wait: T::Boolean).void }
     def run_with_status_footer(shell_command, wait:)
       Dir.chdir(@project_root)
-      run_child([child_env, *shell_prefix, "sh", "-c", <<~SH], wait:)
+      run_child([child_env, *SHELL_PREFIX, "sh", "-c", <<~SH], wait:)
         #{shell_command}
         __dev_status=$?
         if [ $__dev_status -eq 0 ]; then

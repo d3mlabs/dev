@@ -292,13 +292,14 @@ class CommandRunnerTest < Minitest::Test
     Dir.chdir(@original_cwd)
   end
 
-  test "inside the container, a containerized command runs directly: no docker, no shadowenv, no host provisioning" do
+  test "inside the container, a containerized command runs directly: no docker, the container Ruby ensured, shadowenv on" do
     Given "a runner that knows it is inside, over a persist container config"
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry", persist: true)
     client = Dev::BuildContainer.new(engine: FakeContainerEngine.new)
+    container_ruby = typed_mock(Dev::ContainerRuby)
     runner = Dev::CommandRunner.new(
       ui: @ui, ruby_version: "4.0.1", build_container: config,
-      project_root: @project_root, container_client: client, inside_container: true,
+      project_root: @project_root, container_client: client, inside_container: true, container_ruby: container_ruby,
     )
     cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
     client.expects(:ensure_image!).never
@@ -309,26 +310,32 @@ class CommandRunnerTest < Minitest::Test
     When "we run the command"
     runner.exec_into(cmd)
 
-    Then "the shell command execs in place, with dev's lib on RUBYLIB and no shadowenv wrapper"
+    Then "the store Ruby is ensured (not the host's), and the command execs under the project's shadowenv"
+    1 * container_ruby.ensure!(ruby_version: "4.0.1", project_root: @project_root)
     0 * Dev::ShadowenvRuby.ensure!(ruby_version: anything, project_root: anything)
-    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "sh", "-c", includes("./bin/build.sh"))
+    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/build.sh"))
 
     Cleanup
     Dir.chdir(@original_cwd)
   end
 
-  test "inside the container, a repl command execs bare without the shadowenv wrapper" do
-    Given "an inside runner and a repl command"
+  test "inside the container, a repl command execs bare under shadowenv, and the host-only toolchains are not provisioned" do
+    Given "an inside runner over a project declaring python, and a repl command"
+    container_ruby = typed_mock(Dev::ContainerRuby)
+    container_ruby.stubs(:ensure!)
     runner = Dev::CommandRunner.new(
-      ui: @ui, ruby_version: "4.0.1", project_root: @project_root, inside_container: true,
+      ui: @ui, ruby_version: "4.0.1", project_root: @project_root, python_version: "3.12",
+      inside_container: true, container_ruby: container_ruby,
     )
     cmd = Dev::ProjectCommand.new(run: "./bin/console", repl: true)
 
     When "we run the command"
     runner.exec_into(cmd)
 
-    Then "the argv is sh -c and the command alone"
-    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "sh", "-c", "./bin/console")
+    Then "the argv is shadowenv exec, sh -c and the command alone; python and llvm are the host's concern"
+    0 * Dev::ShadowenvPython.setup!(python_version: anything, project_root: anything)
+    0 * Dev::ShadowenvLlvm.setup!(project_root: anything, llvm_prefix: anything)
+    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", "./bin/console")
 
     Cleanup
     Dir.chdir(@original_cwd)
