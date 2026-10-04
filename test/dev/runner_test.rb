@@ -374,7 +374,7 @@ class RunnerTest < Minitest::Test
     rows = out.string.lines.map(&:chomp).select { |l| l.start_with?("  ") }
     rows.map { |l| l.split.first } == %w[check install path update]
     out.string.include?("  update       Resolve dependency constraints and write lockfiles")
-    out.string.include?("  install      Install locked dependencies handled on the host")
+    out.string.include?("  install      Install locked dependencies on this machine")
     out.string.include?("  check        Check dependency state freshness")
     out.string.include?("  path         Print a locked artifact's path")
   end

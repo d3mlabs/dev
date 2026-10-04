@@ -324,6 +324,110 @@ class Dev::Deps::InstallerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "install with groups: dispatches only deps in the named groups" do
+    Given "a lockfile with a build-group brew dep and an app-group cmake dep"
+    dir = Dir.mktmpdir("installer-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
+    lockfile.lock([
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
+        version: "4.4.3", hash: nil, metadata: {}),
+      Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
+        version: "1.90.0", hash: "SHA256=aaa", metadata: {}),
+    ])
+    brew = RecordingIntegration.new
+    cmake = RecordingIntegration.new
+    installer = Dev::Deps::Installer.new(lockfile:, integrations: { brew:, cmake: })
+
+    When "installing only the build group"
+    installer.install(groups: [:build])
+
+    Then "the build dep installed and the app dep did not"
+    brew.installed_deps.map(&:name) == ["cmake"]
+    cmake.installed_deps.empty?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install with except: dispatches every dep outside the named groups" do
+    Given "a lockfile with a build-group brew dep and an app-group cmake dep"
+    dir = Dir.mktmpdir("installer-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
+    lockfile.lock([
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
+        version: "4.4.3", hash: nil, metadata: {}),
+      Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
+        version: "1.90.0", hash: "SHA256=aaa", metadata: {}),
+    ])
+    brew = RecordingIntegration.new
+    cmake = RecordingIntegration.new
+    installer = Dev::Deps::Installer.new(lockfile:, integrations: { brew:, cmake: })
+
+    When "installing everything except the build group"
+    installer.install(except: [:build])
+
+    Then "the app dep installed and the build dep did not"
+    cmake.installed_deps.map(&:name) == ["boost"]
+    brew.installed_deps.empty?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install with integration_types: dispatches only deps of the named integrations" do
+    Given "a build group mixing an image toolchain (brew) with a host-installed artifact (gh)"
+    dir = Dir.mktmpdir("installer-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
+    lockfile.lock([
+      Dev::Deps::Dependency.new(name: "wwise-cli", integration: :brew, group: :build,
+        version: "0.2.3", hash: nil, metadata: {}),
+      Dev::Deps::Dependency.new(name: "UnrealEngine", integration: :gh, group: :build,
+        version: "5.6.1", hash: nil, metadata: {}),
+    ])
+    brew = RecordingIntegration.new
+    gh = RecordingIntegration.new
+    installer = Dev::Deps::Installer.new(lockfile:, integrations: { brew:, gh: })
+
+    When "installing the build group through brew only"
+    installer.install(groups: [:build], integration_types: [:brew])
+
+    Then "the toolchain installed and the engine stayed out"
+    brew.installed_deps.map(&:name) == ["wwise-cli"]
+    gh.installed_deps.empty?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "select applies env, host, groups, except and integration types as one pure filter" do
+    Given "deps spanning groups, hosts and envs"
+    deps = [
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
+        version: "4.4.3", hash: nil, metadata: {}),
+      Dev::Deps::Dependency.new(name: "xcodes", integration: :brew, group: :build,
+        version: "2.1.0", hash: nil, metadata: { "host" => "darwin" }),
+      Dev::Deps::Dependency.new(name: "powershell", integration: :brew, group: :build,
+        version: "7.4.0", hash: nil, metadata: { "env" => "ci" }),
+      Dev::Deps::Dependency.new(name: "rake", integration: :bundler, group: :app,
+        version: "13.0", hash: nil, metadata: {}),
+      Dev::Deps::Dependency.new(name: "rspock", integration: :bundler, group: :test,
+        version: "2.5", hash: nil, metadata: {}),
+    ]
+
+    Expect "each selection names exactly the deps it should"
+    Dev::Deps::Installer.select(deps, env:, host:, groups:, except:, integration_types:).map(&:name) == names
+
+    Where
+    env   | host    | groups        | except   | integration_types | names
+    nil   | nil     | nil           | []       | nil               | ["cmake", "xcodes", "powershell", "rake", "rspock"]
+    "dev" | "linux" | nil           | []       | nil               | ["cmake", "rake", "rspock"]
+    "ci"  | "linux" | [:build]      | []       | nil               | ["cmake", "powershell"]
+    nil   | nil     | nil           | [:build] | nil               | ["rake", "rspock"]
+    nil   | nil     | [:app, :test] | [:test]  | nil               | ["rake"]
+    nil   | nil     | nil           | []       | [:bundler]        | ["rake", "rspock"]
+    "ci"  | "linux" | [:build]      | []       | [:brew]           | ["cmake", "powershell"]
+  end
+
   test "install skips integration types with no registered integration" do
     Given "a lockfile with an unregistered integration type"
     dir = Dir.mktmpdir("installer-test-")

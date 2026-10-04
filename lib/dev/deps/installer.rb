@@ -56,26 +56,94 @@ module Dev
       # or integrate a repository that doesn't resolve its own dep graph,
       # this partition would generalize into a proper topological sort.
       #
-      # When env/host is set, deps with non-matching env/host metadata are
-      # filtered out. Deps without the metadata are always included. Filtering
-      # happens here — at install, never at resolve — so the lockfile stays the
-      # single source of truth for every environment and host.
+      # Selection (env, host, groups, except) is {select}'s one pure filter.
+      # Filtering happens here — at install, never at resolve — so the lockfile
+      # stays the single source of truth for every environment, host and
+      # install site.
       #
       # @param env [String, nil] environment name for filtering (nil = no filtering)
       # @param host [String, nil] host OS name for filtering (nil = no filtering)
+      # @param groups [Array<Symbol>, nil] install only these groups (nil = all)
+      # @param except [Array<Symbol>] never install these groups
+      # @param integration_types [Array<Symbol>, nil] install only deps of
+      #   these integrations, by lock key (e.g. [:brew]); nil = all
       # @return [void]
       # @raise [InstallFailedError] if any integration reported failures; every
       #   integration was still attempted (failure isolation)
-      sig { params(env: T.nilable(String), host: T.nilable(String)).void }
-      def install(env: nil, host: nil)
-        all_deps = @lockfile.read
-        all_deps = filter_by_env(all_deps, env) if env
-        all_deps = filter_by_host(all_deps, host) if host
+      sig do
+        params(
+          env: T.nilable(String),
+          host: T.nilable(String),
+          groups: T.nilable(T::Array[Symbol]),
+          except: T::Array[Symbol],
+          integration_types: T.nilable(T::Array[Symbol]),
+        ).void
+      end
+      def install(env: nil, host: nil, groups: nil, except: [], integration_types: nil)
+        all_deps = self.class.select(@lockfile.read, env:, host:, groups:, except:, integration_types:)
 
         build_deps, other_deps = all_deps.partition { |d| d.group == :build }
 
         failures = dispatch(build_deps) + dispatch(other_deps)
         raise InstallFailedError, failures if failures.any?
+      end
+
+      class << self
+        extend T::Sig
+
+        # The deps an install with these parameters would attempt — the one
+        # implementation of selection, shared by {#install} and by callers
+        # that must know the selection before installing (the builtin decides
+        # whether the project Ruby is needed from it).
+        #
+        # env/host: deps without the metadata always pass; deps with it pass
+        # only on a match (the Mac editor never downloads on Linux CI, the
+        # Linux engine never downloads on Macs). groups: nil means every
+        # group. except: wins over groups. integration_types: keeps only deps
+        # of the named integrations (a group can mix an image toolchain with
+        # a host-installed artifact; an image bootstrap wants the former).
+        #
+        # @param deps [Array<Dependency>] every locked dep
+        # @param env [String, nil] environment name ("dev" / "ci")
+        # @param host [String, nil] detected host OS ("darwin" / "linux")
+        # @param groups [Array<Symbol>, nil] groups to keep (nil = all)
+        # @param except [Array<Symbol>] groups to drop
+        # @param integration_types [Array<Symbol>, nil] integrations to keep,
+        #   by lock key (nil = all)
+        # @return [Array<Dependency>] in lockfile order
+        sig do
+          params(
+            deps: T::Array[Dependency],
+            env: T.nilable(String),
+            host: T.nilable(String),
+            groups: T.nilable(T::Array[Symbol]),
+            except: T::Array[Symbol],
+            integration_types: T.nilable(T::Array[Symbol]),
+          ).returns(T::Array[Dependency])
+        end
+        def select(deps, env: nil, host: nil, groups: nil, except: [], integration_types: nil)
+          deps.select do |dep|
+            matches_scope?(dep.metadata["env"], env) &&
+              matches_scope?(dep.metadata["host"], host) &&
+              (groups.nil? || groups.include?(dep.group)) &&
+              !except.include?(dep.group) &&
+              (integration_types.nil? || integration_types.include?(dep.integration))
+          end
+        end
+
+        private
+
+        # A dep with no scope metadata installs everywhere; a scoped dep only
+        # where the detected value matches. No detected value (nil) disables
+        # the axis entirely.
+        #
+        # @param declared [String, nil] the dep's metadata value for the axis
+        # @param detected [String, nil] the axis value for this install
+        # @return [Boolean]
+        sig { params(declared: T.untyped, detected: T.nilable(String)).returns(T::Boolean) }
+        def matches_scope?(declared, detected)
+          detected.nil? || declared.nil? || declared == detected
+        end
       end
 
       private
@@ -110,35 +178,6 @@ module Dev
           rescue StandardError => e
             ["#{label}: #{e.message}"]
           end
-        end
-      end
-
-      # Filter deps by environment. Deps with no env metadata pass through.
-      # Deps with env metadata only pass if it matches the given env.
-      #
-      # @param deps [Array<Dependency>] all deps
-      # @param env [String] target environment
-      # @return [Array<Dependency>]
-      sig { params(deps: T::Array[Dependency], env: String).returns(T::Array[Dependency]) }
-      def filter_by_env(deps, env)
-        deps.select do |dep|
-          dep_env = dep.metadata["env"]
-          dep_env.nil? || dep_env == env
-        end
-      end
-
-      # Filter deps by host OS. Deps with no host metadata pass through; deps
-      # declared for a host only install on that host (e.g. the Mac editor
-      # never downloads on Linux CI, the Linux engine never downloads on Macs).
-      #
-      # @param deps [Array<Dependency>] all deps
-      # @param host [String] detected host OS ("darwin" / "linux")
-      # @return [Array<Dependency>]
-      sig { params(deps: T::Array[Dependency], host: String).returns(T::Array[Dependency]) }
-      def filter_by_host(deps, host)
-        deps.select do |dep|
-          dep_host = dep.metadata["host"]
-          dep_host.nil? || dep_host == host
         end
       end
     end

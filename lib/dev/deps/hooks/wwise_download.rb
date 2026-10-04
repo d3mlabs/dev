@@ -2,8 +2,8 @@
 # frozen_string_literal: true
 
 # Required here (not just in src/dev.rb) because consumer dependencies.rb
-# files load this hook standalone via bin/install-build-deps.rb, where the
-# Dev module root never loads.
+# files reach this hook through `require "dev/deps"` alone — the lib half
+# loads without the Dev module root in src/dev.rb.
 require "sorbet-runtime"
 
 module Dev

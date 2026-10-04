@@ -32,4 +32,23 @@ class Dev::Cli::FlagParserTest < Minitest::Test
     parser.value(["gc", "--keep"], "--keep").nil?
     parser.value([], "--keep").nil?
   end
+
+  test "values collects every occurrence of a repeatable flag, in order" do
+    Given "the parser"
+    parser = Dev::Cli::FlagParser.new
+
+    Expect "both forms, mixed, in argv order"
+    parser.values(["--group", "build", "--group=test", "install"], "--group") == ["build", "test"]
+    parser.values(["install", "--group=app"], "--group") == ["app"]
+  end
+
+  test "values is empty when the flag is absent or valueless" do
+    Given "the parser"
+    parser = Dev::Cli::FlagParser.new
+
+    Expect "nothing collected"
+    parser.values(["install"], "--group") == []
+    parser.values(["install", "--group"], "--group") == []
+    parser.values([], "--group") == []
+  end
 end

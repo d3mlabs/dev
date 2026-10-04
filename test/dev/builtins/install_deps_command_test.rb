@@ -23,10 +23,13 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
   end
 
   test "call provisions the pinned Ruby, installs for the detected env/host, then runs both hygiene hooks" do
-    Given "a command with every collaborator faked"
+    Given "a command with every collaborator faked, over a project that locks gems"
     root = Pathname.new(Dir.mktmpdir("install-deps-"))
+    lock(root, gem_dep, brew_build_dep)
     installer = typed_mock(Dev::Deps::Installer)
-    installer.expects(:install).with(env: Dev::Deps.detect_env, host: Dev::Deps.detect_host).once
+    installer.expects(:install)
+      .with(env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: nil, except: [], integration_types: nil)
+      .once
     linker = typed_mock(Dev::Deps::GemSkillLinker)
     linker.expects(:link_all).once
     host_service = typed_mock(Dev::HostService)
@@ -49,6 +52,89 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
 
     Then "the linker was scoped to the project in hand"
     linker_roots == [root]
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "--group narrows the install to the named groups and skips the project Ruby when no gems are selected" do
+    Given "a project locking a build-group brew dep and an app-group gem"
+    root = Pathname.new(Dir.mktmpdir("install-deps-group-"))
+    lock(root, gem_dep, brew_build_dep)
+    installer = typed_mock(Dev::Deps::Installer)
+    command = build_command(installer:)
+    # The image bootstrap runs this on Homebrew's Ruby: provisioning the
+    # project's pinned Ruby there would be waste nobody consumes.
+    Dev::ShadowenvRuby.expects(:converge!).never
+
+    When "running dev deps install --group build"
+    command.call(args: ["--group", "build"], context: build_context(root))
+
+    Then "the installer received the narrowed selection"
+    1 * installer.install(
+      env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: [:build], except: [], integration_types: nil
+    )
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "--group still provisions the project Ruby when the selection locks gems" do
+    Given "a project locking an app-group gem"
+    root = Pathname.new(Dir.mktmpdir("install-deps-group-gems-"))
+    lock(root, gem_dep, brew_build_dep)
+    installer = typed_mock(Dev::Deps::Installer)
+    command = build_command(installer:)
+    Dev::ShadowenvRuby.expects(:converge!).with(ruby_version: "4.0.1", project_root: root).once
+
+    When "running dev deps install --group=app"
+    command.call(args: ["--group=app"], context: build_context(root))
+
+    Then "the pinned Ruby converged (bundler installs against it) and the app group installed"
+    1 * installer.install(
+      env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: [:app], except: [], integration_types: nil
+    )
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "--integration keeps only the named integrations — the image bootstrap's brew-only build install" do
+    Given "a build group mixing a brew toolchain with a host-installed gh artifact"
+    root = Pathname.new(Dir.mktmpdir("install-deps-integration-"))
+    lock(root, gem_dep, brew_build_dep, gh_build_dep)
+    installer = typed_mock(Dev::Deps::Installer)
+    command = build_command(installer:)
+    Dev::ShadowenvRuby.expects(:converge!).never
+
+    When "running dev deps install --group build --integration brew"
+    command.call(args: ["--group", "build", "--integration", "brew"], context: build_context(root))
+
+    Then "the installer received both narrowings"
+    1 * installer.install(
+      env: Dev::Deps.detect_env, host: Dev::Deps.detect_host,
+      groups: [:build], except: [], integration_types: [:brew]
+    )
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "--except drops the named groups from the install" do
+    Given "a project locking a build-group brew dep and an app-group gem"
+    root = Pathname.new(Dir.mktmpdir("install-deps-except-"))
+    lock(root, gem_dep, brew_build_dep)
+    installer = typed_mock(Dev::Deps::Installer)
+    command = build_command(installer:)
+    Dev::ShadowenvRuby.expects(:converge!).never
+
+    When "running dev deps install --except app"
+    command.call(args: ["--except", "app"], context: build_context(root))
+
+    Then "the installer received the exclusion; the gem-less selection provisioned no Ruby"
+    1 * installer.install(
+      env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: nil, except: [:app], integration_types: nil
+    )
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -109,12 +195,37 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
 
   private
 
-  def build_command
+  def build_command(installer: typed_mock(Dev::Deps::Installer))
     Dev::Builtins::InstallDepsCommand.new(
-      installer_factory: ->(_lockfile, _integrations) { typed_mock(Dev::Deps::Installer) },
-      gem_skill_linker_factory: ->(_project_root) { typed_mock(Dev::Deps::GemSkillLinker) },
+      installer_factory: ->(_lockfile, _integrations) { installer },
+      gem_skill_linker_factory: ->(_project_root) {
+        linker = typed_mock(Dev::Deps::GemSkillLinker)
+        linker.stubs(:link_all)
+        linker
+      },
       host_service: quiet_host_service,
     )
+  end
+
+  # Writes a real deps.lock/build-deps.lock pair under the project root —
+  # the lockfile is a file contract, not a boundary to fake.
+  def lock(root, *deps)
+    Dev::Deps::Lockfile.new(dir: root).lock(deps)
+  end
+
+  def gem_dep
+    Dev::Deps::Dependency.new(name: "rake", integration: :bundler, group: :app,
+      version: "13.0.0", hash: nil, metadata: {})
+  end
+
+  def brew_build_dep
+    Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
+      version: "4.4.3", hash: nil, metadata: {})
+  end
+
+  def gh_build_dep
+    Dev::Deps::Dependency.new(name: "UnrealEngine", integration: :gh, group: :build,
+      version: "5.6.1-css-83", hash: nil, metadata: { "repo" => "satisfactorymodding/UnrealEngine" })
   end
 
   def quiet_host_service
