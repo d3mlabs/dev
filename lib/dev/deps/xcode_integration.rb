@@ -70,19 +70,19 @@ module Dev
       end
 
       # @param repository [Repository, nil]
-      # @param cache [Cache, nil]
+      # @param store [ArtifactStore, nil]
       # @param project_root [String, Pathname, nil] repo root (shadowenv lives there)
       # @param install_root [String] where Xcode bundles live (tests use a tmpdir)
       sig do
         params(
           repository: T.nilable(Repository),
-          cache: T.nilable(Cache),
+          store: T.nilable(ArtifactStore),
           project_root: T.nilable(T.any(String, Pathname)),
           install_root: String,
         ).void
       end
-      def initialize(repository:, cache:, project_root: nil, install_root: INSTALL_ROOT)
-        super(repository:, cache:)
+      def initialize(repository:, store:, project_root: nil, install_root: INSTALL_ROOT)
+        super(repository:, store:)
         @project_root = T.let(project_root && Pathname(project_root), T.nilable(Pathname))
         @install_root = install_root
       end

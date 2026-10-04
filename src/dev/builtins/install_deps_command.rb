@@ -5,7 +5,7 @@ require "pathname"
 require "dev/cli/flag_parser"
 require "dev/command"
 require "dev/deps"
-require "dev/deps/cache"
+require "dev/deps/local_store"
 require "dev/deps/gem_skill_linker"
 require "dev/deps/integration"
 require "dev/deps/lockfile"
@@ -109,7 +109,7 @@ module Dev
           lockfile,
           Dev::Deps::Registry.host_integrations(
             project_root: project.root,
-            cache: Dev::Deps::Cache.new,
+            store: Dev::Deps::LocalStore.new,
             python_version: project.python_version,
           ),
         )

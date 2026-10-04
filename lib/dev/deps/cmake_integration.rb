@@ -41,17 +41,17 @@ module Dev
       TEXT
 
       # @param repository    [Repository, nil]   source adapter for cmake deps
-      # @param cache         [Cache, nil]        shared download cache
+      # @param store         [ArtifactStore, nil] artifact store (blobs: downloaded tarballs)
       # @param project_root  [String, Pathname]  project root directory
       sig do
         params(
           repository: T.nilable(Repository),
-          cache: T.nilable(Cache),
+          store: T.nilable(ArtifactStore),
           project_root: T.any(String, Pathname),
         ).void
       end
-      def initialize(repository:, cache:, project_root:)
-        super(repository:, cache:)
+      def initialize(repository:, store:, project_root:)
+        super(repository:, store:)
         @project_root = T.let(Pathname(project_root), Pathname)
       end
 
@@ -126,14 +126,15 @@ module Dev
           raise(GitCheckoutError, "git checkout #{dep.version} failed")
       end
 
-      # Download a URL dep's tarball (from cache if available) and extract it.
+      # Download a URL dep's tarball (from the store's blob if present) and
+      # extract it.
       #
       # @param dep  [Dependency]
       # @param dest [Pathname] destination directory
       # @raise [DownloadError] if curl download fails
       sig { params(dep: Dependency, dest: Pathname).void }
       def fetch_tarball(dep, dest)
-        cached = T.must(cache).fetch(dep.hash) if dep.hash
+        cached = store!.blob(dep.hash) if dep.hash
         if cached
           extract_tarball(cached, dest)
         else
@@ -148,10 +149,10 @@ module Dev
 
       # Extract a tarball into the destination, expecting a single top-level directory.
       #
-      # @param tarball_path [String, Pathname, File] path to (or cached handle on) the .tar.gz
-      # @param dest         [Pathname]               extraction destination
+      # @param tarball_path [String, Pathname] path to the .tar.gz
+      # @param dest         [Pathname]         extraction destination
       # @raise [ExtractError] if tar extraction fails or tarball has no top-level directory
-      sig { params(tarball_path: T.any(String, Pathname, File), dest: Pathname).void }
+      sig { params(tarball_path: T.any(String, Pathname), dest: Pathname).void }
       def extract_tarball(tarball_path, dest)
         FileUtils.rm_rf(dest)
         Dir.mktmpdir("dev-cmake-extract-") do |tmpdir|

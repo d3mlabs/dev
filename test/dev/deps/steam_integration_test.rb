@@ -3,7 +3,7 @@
 
 require "test_helper"
 require "dev/deps/steam_integration"
-require "dev/deps/cache"
+require "dev/deps/local_store"
 require "dev/deps/dependency"
 require "tmpdir"
 
@@ -50,7 +50,7 @@ class Dev::Deps::SteamIntegrationTest < Minitest::Test
     FixtureSteamIntegration.new(
       manifest_build: manifest_build,
       repository: nil,
-      cache: Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache")),
+      store: Dev::Deps::LocalStore.new(data_root: dir),
     )
   end
 
@@ -143,7 +143,7 @@ class Dev::Deps::SteamIntegrationTest < Minitest::Test
       def provision(_dep, _server_dir) = nil
     end.new(
       repository: nil,
-      cache: Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache")),
+      store: Dev::Deps::LocalStore.new(data_root: dir),
     )
 
     When "installing"

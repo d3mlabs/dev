@@ -8,8 +8,8 @@ module Dev
   # Narrow front over Dev::Deps::Staleness for the command use case: the
   # guard policy before a command runs, the current staleness messages, and
   # the installed-stamp write (lock!) after a stamping command succeeds.
-  # Deliberately narrow — Lockfile and Deps::Cache consumers stay direct for
-  # now; this fronts only Staleness.
+  # Deliberately narrow — Lockfile and ArtifactStore consumers stay direct
+  # for now; this fronts only Staleness.
   class DependencyService
     extend T::Sig
 

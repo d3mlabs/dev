@@ -3,7 +3,6 @@
 
 require "fileutils"
 require "pathname"
-require_relative "../data_root"
 require_relative "integration"
 require_relative "steam_cmd"
 
@@ -13,9 +12,9 @@ module Dev
     #
     # Provisions a Steam app (the Satisfactory Dedicated Server) into its declared
     # install_dir on the host via SteamCMD, then mounts it into the build
-    # container. Mirrors GhIntegration: a version-keyed install dir + marker
-    # file, and deliberately bypasses the shared download Cache because the depot
-    # is large (~15 GB) — the versioned install dir plus marker is the cache.
+    # container. Mirrors GhIntegration: a tree in the store, never a blob,
+    # because the depot is large (~15 GB) — the published tree plus its marker
+    # is the cache.
     #
     # The depot lands in install_dir/<buildid>/install (matching the /server
     # volume layout the integration harness expects, once dev's mount resolution
@@ -44,31 +43,23 @@ module Dev
       # @param dep [Dependency]
       sig { params(dep: Dependency).void }
       def install(dep)
-        base_dir = Pathname(Dev::DataRoot.expand(dep.metadata["install_dir"]))
-        target_dir = versioned_dir(base_dir, dep.version)
-        if version_published?(target_dir, MARKER_FILE, dep.version)
-          puts ">>> #{dep.name}@#{dep.version} already installed at #{target_dir}"
+        key = tree_key(dep, marker: MARKER_FILE)
+        if (installed = store!.tree(key))
+          puts ">>> #{dep.name}@#{dep.version} already installed at #{installed}"
           return
         end
 
-        # Provision into staging on the same filesystem, then atomically publish
-        # so a concurrent job never sees (or fights over) a half-downloaded depot.
-        staging_dir = new_staging_dir(base_dir)
-        server_dir = staging_dir / SERVER_SUBDIR
-        FileUtils.mkdir_p(server_dir)
+        target_dir = store!.tree_path(key)
+        published = store!.publish_tree(key) do |staging|
+          server_dir = staging / SERVER_SUBDIR
+          FileUtils.mkdir_p(server_dir)
 
-        puts ">>> Provisioning #{dep.name} (app #{dep.metadata["app"]}, build #{dep.version}) into #{target_dir}"
-        provision(dep, server_dir)
-        verify_build_id(dep, server_dir)
-
-        (staging_dir / MARKER_FILE).write(dep.version)
-        if publish_version(staging_dir, target_dir)
-          puts ">>> Installed #{dep.name}@#{dep.version} to #{target_dir / SERVER_SUBDIR}"
-        else
-          puts ">>> #{dep.name}@#{dep.version} published concurrently at #{target_dir}"
+          puts ">>> Provisioning #{dep.name} (app #{dep.metadata["app"]}, build #{dep.version}) into #{target_dir}"
+          provision(dep, server_dir)
+          verify_build_id(dep, server_dir)
+          staging
         end
-      ensure
-        FileUtils.rm_rf(staging_dir) if staging_dir
+        puts ">>> Installed #{dep.name}@#{dep.version} to #{published / SERVER_SUBDIR}"
       end
 
       # SteamCMD boundary. Isolated so tests can stub it. +force_install_dir must

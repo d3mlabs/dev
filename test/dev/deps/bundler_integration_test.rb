@@ -4,7 +4,7 @@
 require "test_helper"
 require "dev/deps/bundler_integration"
 require "dev/deps/bundler_repository"
-require "dev/deps/cache"
+require "dev/deps/local_store"
 require "dev/deps/dependency"
 require "dev/deps/shadowenv_exec"
 require "tmpdir"
@@ -17,7 +17,7 @@ class Dev::Deps::BundlerIntegrationTest < Minitest::Test
   def build_integration(dir, shadowenv_exec)
     Dev::Deps::BundlerIntegration.new(
       repository: Dev::Deps::BundlerRepository.new(project_root: dir),
-      cache: Dev::Deps::Cache.new(cache_dir: dir),
+      store: Dev::Deps::LocalStore.new(data_root: dir),
       project_root: dir,
       shadowenv_exec: shadowenv_exec,
     )
@@ -135,7 +135,7 @@ class Dev::Deps::BundlerIntegrationTest < Minitest::Test
     dir = Dir.mktmpdir("dev-bundler-int-test-")
     integration = Dev::Deps::BundlerIntegration.new(
       repository: Dev::Deps::BundlerRepository.new(project_root: dir),
-      cache: Dev::Deps::Cache.new(cache_dir: dir),
+      store: Dev::Deps::LocalStore.new(data_root: dir),
       project_root: dir,
     )
     Dev::Deps::ShadowenvExec.any_instance.stubs(:capture3).with("bundle", "--version").returns(succeeded)

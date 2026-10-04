@@ -4,7 +4,7 @@
 require "test_helper"
 require "dev/deps/gh_integration"
 require "dev/deps/gh_repository"
-require "dev/deps/cache"
+require "dev/deps/local_store"
 require "dev/deps/dependency"
 require "digest"
 require "tmpdir"
@@ -117,11 +117,11 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     )
   end
 
-  def build_integration(fixture_files, cache_dir)
+  def build_integration(fixture_files, data_root)
     FixtureGhIntegration.new(
       fixture_files: fixture_files,
       repository: Dev::Deps::GhRepository.new,
-      cache: Dev::Deps::Cache.new(cache_dir: cache_dir),
+      store: Dev::Deps::LocalStore.new(data_root: data_root),
     )
   end
 
@@ -131,7 +131,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
     install_dir = File.join(dir, "engines", "unreal-engine-css")
     dep = build_dependency(parts, install_dir)
-    integration = build_integration(parts, File.join(dir, "cache"))
+    integration = build_integration(parts, dir)
 
     When "installing"
     integration.install_all([dep])
@@ -158,7 +158,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     FileUtils.mkdir_p(version_dir)
     File.write(File.join(version_dir, ".dev-gh-release"), "5.6.1-css-83")
     dep = build_dependency(parts, install_dir)
-    integration = build_integration(parts, File.join(dir, "cache"))
+    integration = build_integration(parts, dir)
 
     When "installing again"
     integration.install_all([dep])
@@ -181,7 +181,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     File.write(File.join(version_dir, ".dev-gh-release"), "5.6.1-css-83")
     FileUtils.chmod(0o555, install_dir)
     dep = build_dependency(parts, install_dir)
-    integration = build_integration(parts, File.join(dir, "cache"))
+    integration = build_integration(parts, dir)
 
     When "installing again"
     integration.install_all([dep])
@@ -206,7 +206,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     File.write(File.join(old_dir, ".dev-gh-release"), "5.3.2-css-68")
     File.write(File.join(old_dir, "old.txt"), "old engine")
     dep = build_dependency(parts, install_dir, tag: "5.6.1-css-83")
-    integration = build_integration(parts, File.join(dir, "cache"))
+    integration = build_integration(parts, dir)
 
     When "installing the new tag"
     integration.install_all([dep])
@@ -227,7 +227,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     install_dir = File.join(dir, "engines", "unreal-engine-css")
     corrupted = { parts.first.basename.to_s => "0" * 64 }
     dep = build_dependency(parts, install_dir, sha256_overrides: corrupted)
-    integration = build_integration(parts, File.join(dir, "cache"))
+    integration = build_integration(parts, dir)
 
     When "installing tampered assets"
     error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
@@ -251,7 +251,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     zip_path.binwrite("not actually a zip")
     install_dir = File.join(dir, "engines", "unreal-engine-css")
     dep = build_dependency([zip_path], install_dir, asset_pattern: "*.zip")
-    integration = build_integration([zip_path], File.join(dir, "cache"))
+    integration = build_integration([zip_path], dir)
 
     When "installing the unsupported archive"
     error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
@@ -271,7 +271,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
     install_dir = File.join(dir, "engines", "unreal-engine-css")
     dep = build_dependency(parts, install_dir, asset_pattern: "*.7z.*")
-    integration = build_integration(parts, File.join(dir, "cache"))
+    integration = build_integration(parts, dir)
 
     When "installing with a glob that matches nothing"
     error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
@@ -317,11 +317,11 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     )
   end
 
-  def build_source_integration(tarball, project_root, cache_dir)
+  def build_source_integration(tarball, project_root, data_root)
     FixtureSourceGhIntegration.new(
       source_tarball: tarball,
       repository: Dev::Deps::GhRepository.new,
-      cache: Dev::Deps::Cache.new(cache_dir: cache_dir),
+      store: Dev::Deps::LocalStore.new(data_root: data_root),
       project_root: project_root,
     )
   end
@@ -340,7 +340,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     SH
     install_dir = File.join(dir, "engines", "ue5")
     dep = source_dep(install_dir, build: "bin/build.sh")
-    integration = build_source_integration(tarball, project_root, File.join(dir, "cache"))
+    integration = build_source_integration(tarball, project_root, dir)
 
     When "installing"
     integration.install_all([dep])
@@ -364,7 +364,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     tarball = build_source_tarball(dir, files: { "include/lib.h" => "#pragma once" })
     install_dir = File.join(dir, "libs", "headeronly")
     dep = source_dep(install_dir, build: "none", tag: "v1.0")
-    integration = build_source_integration(tarball, File.join(dir, "project"), File.join(dir, "cache"))
+    integration = build_source_integration(tarball, File.join(dir, "project"), dir)
 
     When "installing"
     integration.install_all([dep])
@@ -388,7 +388,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     FileUtils.mkdir_p(version_dir)
     File.write(File.join(version_dir, ".dev-gh-release"), "5.6.1-release")
     dep = source_dep(install_dir, build: "bin/build.sh")
-    integration = build_source_integration(tarball, File.join(dir, "project"), File.join(dir, "cache"))
+    integration = build_source_integration(tarball, File.join(dir, "project"), dir)
 
     When "installing again"
     integration.install_all([dep])
@@ -406,7 +406,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     tarball = build_source_tarball(dir, files: { "hello.txt" => "x" })
     install_dir = File.join(dir, "engines", "ue5")
     dep = source_dep(install_dir, build: "exit 7")
-    integration = build_source_integration(tarball, File.join(dir, "project"), File.join(dir, "cache"))
+    integration = build_source_integration(tarball, File.join(dir, "project"), dir)
 
     When "installing"
     error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
@@ -429,7 +429,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     integration = ExplodingGhIntegration.new(
       fail_names: ["UnrealEngine"],
       repository: Dev::Deps::GhRepository.new,
-      cache: Dev::Deps::Cache.new(cache_dir: dir),
+      store: Dev::Deps::LocalStore.new(data_root: dir),
     )
     deps = [
       Dev::Deps::Dependency.new(name: "UnrealEngine", integration: :gh, group: :build,

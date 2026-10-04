@@ -18,7 +18,7 @@ class Dev::Deps::PipIntegrationTest < Minitest::Test
   test "install_all is a no-op when there are no pip deps" do
     Given "an integration with an empty dep list"
     tmpdir = Dir.mktmpdir("pip-integration-")
-    integration = Dev::Deps::PipIntegration.new(repository: nil, cache: nil, project_root: tmpdir, python_version: "3.12")
+    integration = Dev::Deps::PipIntegration.new(repository: nil, store: nil, project_root: tmpdir, python_version: "3.12")
 
     When "installing an empty dep list"
     integration.install_all([])
@@ -33,7 +33,7 @@ class Dev::Deps::PipIntegrationTest < Minitest::Test
   test "install_all raises when pip deps exist but no python version is set" do
     Given "an integration with deps but a nil python version"
     tmpdir = Dir.mktmpdir("pip-integration-")
-    integration = Dev::Deps::PipIntegration.new(repository: nil, cache: nil, project_root: tmpdir, python_version: nil)
+    integration = Dev::Deps::PipIntegration.new(repository: nil, store: nil, project_root: tmpdir, python_version: nil)
 
     When "installing"
     error = assert_raises(Dev::Deps::PipIntegration::MissingVersionError) do
@@ -50,7 +50,7 @@ class Dev::Deps::PipIntegrationTest < Minitest::Test
   test "install_all ensures the venv and pip-installs each pinned dep" do
     Given "an integration with one pinned dep and a stubbed venv + pip"
     tmpdir = Dir.mktmpdir("pip-integration-")
-    integration = Dev::Deps::PipIntegration.new(repository: nil, cache: nil, project_root: tmpdir, python_version: "3.12")
+    integration = Dev::Deps::PipIntegration.new(repository: nil, store: nil, project_root: tmpdir, python_version: "3.12")
     Dev::ShadowenvPython.stubs(:ensure_venv!).returns(File.join(tmpdir, ".venv"))
     ok = stub(success?: true)
 

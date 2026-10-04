@@ -4,7 +4,7 @@
 require "test_helper"
 require "dev/deps/accessor"
 require "dev/deps/lockfile"
-require "dev/deps/cache"
+require "dev/deps/local_store"
 require "dev/deps/dependency"
 require "dev/deps/ficsit_integration"
 require "dev/deps/xcode_integration"
@@ -24,17 +24,17 @@ class Dev::Deps::AccessorTest < Minitest::Test
     )
     lockfile.lock([dep])
 
-    cache = Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache"))
+    store = Dev::Deps::LocalStore.new(data_root: dir)
     cache_platforms.each do |platform|
       key = Dev::Deps::FicsitIntegration.cache_key(
         name: "SML", version: "3.12.0", platform: platform, hash: platforms[platform]["hash"],
       )
       artifact = File.join(dir, "#{platform}.zip")
       File.binwrite(artifact, "#{platform}-bytes")
-      File.open(artifact, "rb") { |f| cache.store(key, f) }
+      File.open(artifact, "rb") { |f| store.put_blob(key, f) }
     end
 
-    [Dev::Deps::Accessor.new(lockfile: lockfile, cache: cache), cache]
+    [Dev::Deps::Accessor.new(lockfile: lockfile, store: store), store]
   end
 
   def linux_platforms
@@ -59,7 +59,7 @@ class Dev::Deps::AccessorTest < Minitest::Test
 
     accessor = Dev::Deps::Accessor.new(
       lockfile: lockfile,
-      cache: Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache")),
+      store: Dev::Deps::LocalStore.new(data_root: dir),
       xcode_install_root: install_root,
     )
     [accessor, developer_dir]
@@ -86,8 +86,7 @@ class Dev::Deps::AccessorTest < Minitest::Test
 
     accessor = Dev::Deps::Accessor.new(
       lockfile: lockfile,
-      cache: Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache")),
-      data_root: dir,
+      store: Dev::Deps::LocalStore.new(data_root: dir),
     )
     [accessor, version_dir]
   end
@@ -239,13 +238,13 @@ class Dev::Deps::AccessorTest < Minitest::Test
   test "path returns the cached zip path for a locked dep platform" do
     Given "a locked SML with cached Windows and LinuxServer zips"
     dir = Dir.mktmpdir("dev-accessor-test-")
-    accessor, cache = setup_locked_sml(dir, platforms: linux_platforms)
+    accessor, store = setup_locked_sml(dir, platforms: linux_platforms)
 
     When "asking for the LinuxServer path"
     result = accessor.path("ficsit", "SML", "LinuxServer")
 
-    Then "it matches the cache key path and the file exists"
-    expected = cache.path(Dev::Deps::FicsitIntegration.cache_key(
+    Then "it matches the store's blob path and the file exists"
+    expected = store.blob_path(Dev::Deps::FicsitIntegration.cache_key(
       name: "SML", version: "3.12.0", platform: "LinuxServer", hash: linux_platforms["LinuxServer"]["hash"],
     ))
     result == expected
@@ -276,7 +275,7 @@ class Dev::Deps::AccessorTest < Minitest::Test
     dir = Dir.mktmpdir("dev-accessor-test-")
     accessor = Dev::Deps::Accessor.new(
       lockfile: Dev::Deps::Lockfile.new(dir: dir),
-      cache: Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache")),
+      store: Dev::Deps::LocalStore.new(data_root: dir),
     )
 
     When "asking for a path"
@@ -324,7 +323,7 @@ class Dev::Deps::AccessorTest < Minitest::Test
     dir = Dir.mktmpdir("dev-accessor-test-")
     accessor = Dev::Deps::Accessor.new(
       lockfile: Dev::Deps::Lockfile.new(dir: dir),
-      cache: Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache")),
+      store: Dev::Deps::LocalStore.new(data_root: dir),
     )
 
     When "printing the path"

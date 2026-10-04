@@ -4,7 +4,7 @@
 require "test_helper"
 require "dev/deps/xcode_integration"
 require "dev/deps/xcode_repository"
-require "dev/deps/cache"
+require "dev/deps/local_store"
 require "dev/deps/dependency"
 require "tmpdir"
 require "fileutils"
@@ -61,7 +61,7 @@ class Dev::Deps::XcodeIntegrationTest < Minitest::Test
   def build_integration(dir, **overrides)
     FakeXcodeIntegration.new(
       repository: Dev::Deps::XcodeRepository.new,
-      cache: Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache")),
+      store: Dev::Deps::LocalStore.new(data_root: dir),
       project_root: File.join(dir, "project"),
       install_root: File.join(dir, "Applications"),
       **overrides,

@@ -27,19 +27,19 @@ module Dev
       GEMFILE = "Gemfile"
 
       # @param repository     [Repository, nil]  source adapter for bundler deps
-      # @param cache          [Cache, nil]       shared download cache (unused; bundler caches)
+      # @param store          [ArtifactStore, nil] artifact store (unused; bundler caches)
       # @param project_root   [String, Pathname] root the generated Gemfile lives in
       # @param shadowenv_exec [ShadowenvExec]    spawn seam for the project's Ruby toolchain
       sig do
         params(
           repository: T.nilable(Repository),
-          cache: T.nilable(Cache),
+          store: T.nilable(ArtifactStore),
           project_root: T.any(String, Pathname),
           shadowenv_exec: ShadowenvExec,
         ).void
       end
-      def initialize(repository:, cache:, project_root:, shadowenv_exec: ShadowenvExec.new(project_root: project_root))
-        super(repository:, cache:)
+      def initialize(repository:, store:, project_root:, shadowenv_exec: ShadowenvExec.new(project_root: project_root))
+        super(repository:, store:)
         @project_root = T.let(Pathname(project_root), Pathname)
         @shadowenv_exec = shadowenv_exec
       end

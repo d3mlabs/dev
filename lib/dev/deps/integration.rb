@@ -1,10 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "fileutils"
 require "pathname"
-require "securerandom"
-require_relative "cache"
+require_relative "artifact_store"
 require_relative "dependency"
 require_relative "repository"
 
@@ -12,9 +10,9 @@ module Dev
   module Deps
     # Lifecycle handler for a dependency type.
     #
-    # Accepts a Repository and Cache via DI at construction. Receives all
-    # dependencies for its type at once via install_all — handles per-dep
-    # install plus any batch artifacts (e.g. deps.cmake).
+    # Accepts a Repository and an ArtifactStore via DI at construction.
+    # Receives all dependencies for its type at once via install_all —
+    # handles per-dep install plus any batch artifacts (e.g. deps.cmake).
     class Integration
       extend T::Sig
 
@@ -40,11 +38,11 @@ module Dev
       end
 
       # @param repository [Repository, nil] source adapter for this integration type
-      # @param cache      [Cache, nil]      shared download cache
-      sig { params(repository: T.nilable(Repository), cache: T.nilable(Cache)).void }
-      def initialize(repository:, cache:)
+      # @param store      [ArtifactStore, nil] where installed trees and downloaded blobs live
+      sig { params(repository: T.nilable(Repository), store: T.nilable(ArtifactStore)).void }
+      def initialize(repository:, store:)
         @repository = repository
-        @cache = cache
+        @store = store
       end
 
       # Install all dependencies of this integration type.
@@ -84,81 +82,33 @@ module Dev
       sig { returns(T.nilable(Repository)) }
       attr_reader :repository
 
-      sig { returns(T.nilable(Cache)) }
-      attr_reader :cache
+      sig { returns(T.nilable(ArtifactStore)) }
+      attr_reader :store
 
-      # --- version-keyed, content-addressed install layout (gh, steam) -------
+      # The store, for integrations that cannot work without one (the
+      # Registry always wires one; a nil store is a test double's choice).
       #
-      # Large host-installed deps (the ~30GB engine, the ~15GB server) live in
-      # a version-keyed subdir of their declared install_dir:
-      #
-      #   <install_dir>/<version>/…            # immutable, one per locked version
-      #
-      # This brings them under the same content-addressed principle as the
-      # download cache: distinct locked versions coexist instead of overwriting,
-      # so switching branches never reinstalls and concurrent jobs on different
-      # versions never collide. dev's mount resolution
+      # @return [ArtifactStore]
+      sig { returns(ArtifactStore) }
+      def store!
+        T.must(@store)
+      end
+
+      # The tree key for a large host-installed dep (the ~30GB engine, the
+      # ~15GB server): its declared install_dir is the base, its locked
+      # version (gh tag / steam buildid) the version, the integration's marker
+      # the marker. Distinct locked versions coexist in the store instead of
+      # overwriting, so switching branches never reinstalls and concurrent jobs
+      # on different versions never collide; dev's mount resolution
       # (BuildContainer.resolve_versioned_volumes) maps the configured volume
-      # onto the right versioned subdir, so a job mounts an immutable directory
-      # for its whole life.
-
-      # The immutable directory a given version is published to.
+      # onto the store's path for the locked version.
       #
-      # @param base_dir [Pathname] declared install_dir
-      # @param version  [String]   locked version (gh tag / steam buildid)
-      # @return [Pathname]
-      sig { params(base_dir: Pathname, version: String).returns(Pathname) }
-      def versioned_dir(base_dir, version)
-        Pathname(base_dir) / version
-      end
-
-      # A unique staging dir on the same filesystem as the published versions,
-      # so publishing is a cheap atomic rename and a crashed/killed run can
-      # never corrupt a published version (it only ever leaves orphan staging).
-      #
-      # @param base_dir [Pathname]
-      # @return [Pathname]
-      sig { params(base_dir: Pathname).returns(Pathname) }
-      def new_staging_dir(base_dir)
-        Pathname("#{base_dir}/.staging-#{Process.pid}-#{SecureRandom.hex(4)}")
-      end
-
-      # Whether a version is fully published: its dir exists with a marker file
-      # recording the expected version. The marker is written into staging and
-      # only becomes visible via the atomic publish, so a half-built version is
-      # never seen as installed.
-      #
-      # @param dir          [Pathname] versioned dir
-      # @param marker_file  [String]   marker basename
-      # @param version      [String]   expected version
-      # @return [Boolean]
-      sig { params(dir: Pathname, marker_file: String, version: String).returns(T::Boolean) }
-      def version_published?(dir, marker_file, version)
-        marker = dir / marker_file
-        marker.file? && marker.read.strip == version
-      end
-
-      # Atomically publish a fully-built staging dir as the version dir.
-      #
-      # First writer wins: File.rename onto an existing (non-empty) version dir
-      # raises, which we treat as "another job already published this version"
-      # and leave the existing dir untouched — we never rm_rf a live directory a
-      # concurrent reader may have mounted. The caller's ensure block removes
-      # the leftover staging in that case.
-      #
-      # Relies on staging and the version dir living on one filesystem (both
-      # under base_dir), so the rename is atomic rather than a cross-device copy.
-      #
-      # @param staging   [Pathname] fully-built, marker-stamped staging dir
-      # @param versioned [Pathname] destination version dir
-      # @return [Boolean] true if this call published, false if another won
-      sig { params(staging: Pathname, versioned: Pathname).returns(T::Boolean) }
-      def publish_version(staging, versioned)
-        FileUtils.mkdir_p(versioned.dirname)
-        File.rename(staging.to_s, versioned.to_s)
-        true
-      rescue Errno::ENOTEMPTY, Errno::EEXIST, Errno::ENOTDIR, Errno::EISDIR
-        false
+      # @param dep [Dependency] a dep whose metadata carries "install_dir"
+      # @param marker [String] the integration's marker file name
+      # @return [TreeKey]
+      sig { params(dep: Dependency, marker: String).returns(TreeKey) }
+      def tree_key(dep, marker:)
+        TreeKey.new(base: dep.metadata.fetch("install_dir"), version: dep.version, marker:)
       end
     end
   end

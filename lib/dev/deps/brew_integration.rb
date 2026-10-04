@@ -34,7 +34,7 @@ module Dev
       class TapRegistrationError < StandardError; end
 
       # @param repository [Repository, nil] source adapter
-      # @param cache [Cache, nil] shared download cache
+      # @param store [ArtifactStore, nil] artifact store (unused; brew caches)
       # @param taps [Array<Tap>] Homebrew taps to register before installing
       # @param project_dir [String, Pathname, nil] project root for resolving file:// tap URLs
       # @param brew_prefix [String, Pathname, nil] the Homebrew prefix
@@ -42,14 +42,14 @@ module Dev
       sig do
         params(
           repository: T.nilable(Repository),
-          cache: T.nilable(Cache),
+          store: T.nilable(ArtifactStore),
           taps: T::Array[Tap],
           project_dir: T.nilable(T.any(String, Pathname)),
           brew_prefix: T.nilable(T.any(String, Pathname)),
         ).void
       end
-      def initialize(repository:, cache:, taps: [], project_dir: nil, brew_prefix: nil)
-        super(repository:, cache:)
+      def initialize(repository:, store:, taps: [], project_dir: nil, brew_prefix: nil)
+        super(repository:, store:)
         @taps = taps
         @project_dir = T.let(project_dir ? Pathname(project_dir) : nil, T.nilable(Pathname))
         @taps_registered = T.let(false, T::Boolean)

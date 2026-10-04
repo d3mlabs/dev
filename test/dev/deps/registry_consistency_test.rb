@@ -4,7 +4,7 @@
 require "test_helper"
 require "dev/deps/registry"
 require "dev/deps/dsl"
-require "dev/deps/cache"
+require "dev/deps/local_store"
 require "tmpdir"
 
 # Anti-drift guard for the integration Registry (lib/dev/deps/registry.rb).
@@ -89,7 +89,7 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
     When "building host integrations from the registry"
     integrations = Dev::Deps::Registry.host_integrations(
       project_root: Pathname(dir),
-      cache: Dev::Deps::Cache.new(cache_dir: dir),
+      store: Dev::Deps::LocalStore.new(data_root: dir),
     )
 
     Then ":url deps install through :cmake's instance, so deps.cmake stays whole"

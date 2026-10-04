@@ -4,7 +4,7 @@
 require "test_helper"
 require "dev/deps/ficsit_integration"
 require "dev/deps/ficsit_repository"
-require "dev/deps/cache"
+require "dev/deps/local_store"
 require "dev/deps/dependency"
 require "digest"
 require "tmpdir"
@@ -57,10 +57,10 @@ class Dev::Deps::FicsitIntegrationTest < Minitest::Test
       "Windows" => { "hash" => win_hash, "link" => win_link },
       "LinuxServer" => { "hash" => lin_hash, "link" => lin_link },
     )
-    cache = Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache"))
+    store = Dev::Deps::LocalStore.new(data_root: dir)
     integration = FixtureFicsitIntegration.new(
       fixtures: { win_link => win_path, lin_link => lin_path },
-      repository: Dev::Deps::FicsitRepository.new, cache: cache,
+      repository: Dev::Deps::FicsitRepository.new, store: store,
     )
 
     When "installing"
@@ -73,8 +73,8 @@ class Dev::Deps::FicsitIntegrationTest < Minitest::Test
     lin_key = Dev::Deps::FicsitIntegration.cache_key(
       name: "SML", version: "3.12.0", platform: "LinuxServer", hash: lin_hash,
     )
-    cache.exists?(win_key)
-    cache.exists?(lin_key)
+    !store.blob(win_key).nil?
+    !store.blob(lin_key).nil?
     integration.download_count == 2
 
     Cleanup
@@ -87,13 +87,13 @@ class Dev::Deps::FicsitIntegrationTest < Minitest::Test
     win_path, win_hash = build_fixture(dir, "win.zip", "windows-mod-bytes")
     win_link = "https://api.ficsit.app/v1/version/ver1/Windows/download"
     dep = build_dependency("Windows" => { "hash" => win_hash, "link" => win_link })
-    cache = Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache"))
+    store = Dev::Deps::LocalStore.new(data_root: dir)
     key = Dev::Deps::FicsitIntegration.cache_key(
       name: "SML", version: "3.12.0", platform: "Windows", hash: win_hash,
     )
-    File.open(win_path, "rb") { |f| cache.store(key, f) }
+    File.open(win_path, "rb") { |f| store.put_blob(key, f) }
     integration = FixtureFicsitIntegration.new(
-      fixtures: {}, repository: Dev::Deps::FicsitRepository.new, cache: cache,
+      fixtures: {}, repository: Dev::Deps::FicsitRepository.new, store: store,
     )
 
     When "installing again"
@@ -113,10 +113,10 @@ class Dev::Deps::FicsitIntegrationTest < Minitest::Test
     win_link = "https://api.ficsit.app/v1/version/ver1/Windows/download"
     bad_hash = "SHA256=#{"0" * 64}"
     dep = build_dependency("Windows" => { "hash" => bad_hash, "link" => win_link })
-    cache = Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache"))
+    store = Dev::Deps::LocalStore.new(data_root: dir)
     integration = FixtureFicsitIntegration.new(
       fixtures: { win_link => win_path },
-      repository: Dev::Deps::FicsitRepository.new, cache: cache,
+      repository: Dev::Deps::FicsitRepository.new, store: store,
     )
 
     When "installing tampered bytes"
@@ -129,7 +129,7 @@ class Dev::Deps::FicsitIntegrationTest < Minitest::Test
     key = Dev::Deps::FicsitIntegration.cache_key(
       name: "SML", version: "3.12.0", platform: "Windows", hash: bad_hash,
     )
-    !cache.exists?(key)
+    store.blob(key).nil?
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -144,7 +144,7 @@ class Dev::Deps::FicsitIntegrationTest < Minitest::Test
     )
     integration = FixtureFicsitIntegration.new(
       fixtures: {}, repository: Dev::Deps::FicsitRepository.new,
-      cache: Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache")),
+      store: Dev::Deps::LocalStore.new(data_root: dir),
     )
 
     When "installing"

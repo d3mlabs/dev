@@ -9,7 +9,7 @@ require "dev/deps/resolver"
 require "dev/deps/declaration"
 require "dev/deps/scope"
 require "dev/deps/scoped_declaration"
-require "dev/deps/cache"
+require "dev/deps/local_store"
 require "dev/deps/dependency"
 require "dev/deps/package"
 require "dev/deps/package_version"
@@ -39,9 +39,9 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
   test "install_all generates deps.cmake with repo+sha entries" do
     Given "a git-backed cmake dependency"
     dir = Dir.mktmpdir("dev-cmake-int-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    store = Dev::Deps::LocalStore.new(data_root: dir)
     git_repo = Dev::Deps::GitRepository.new
-    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache, project_root: dir)
+    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, store: store, project_root: dir)
     prepopulate_dep(dir, "cereal")
     deps = [
       Dev::Deps::Dependency.new(
@@ -67,9 +67,9 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
   test "install_all generates deps.cmake with url+hash entries" do
     Given "a URL-backed cmake dependency"
     dir = Dir.mktmpdir("dev-cmake-int-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    store = Dev::Deps::LocalStore.new(data_root: dir)
     url_repo = Dev::Deps::UrlRepository.new
-    integration = Dev::Deps::CmakeIntegration.new(repository: url_repo, cache: cache, project_root: dir)
+    integration = Dev::Deps::CmakeIntegration.new(repository: url_repo, store: store, project_root: dir)
     prepopulate_dep(dir, "boost")
     deps = [
       Dev::Deps::Dependency.new(
@@ -94,9 +94,9 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
   test "install_all generates RUNTIME_DEPS_APP and RUNTIME_DEPS_TEST lists" do
     Given "app and test cmake dependencies"
     dir = Dir.mktmpdir("dev-cmake-int-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    store = Dev::Deps::LocalStore.new(data_root: dir)
     git_repo = Dev::Deps::GitRepository.new
-    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache, project_root: dir)
+    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, store: store, project_root: dir)
     prepopulate_dep(dir, "boost")
     prepopulate_dep(dir, "gtest")
     deps = [
@@ -123,9 +123,9 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
   test "install_all raises GitCloneError when git clone fails" do
     Given "a git dep with no prepopulated source and a failing git clone"
     dir = Dir.mktmpdir("dev-cmake-int-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache"))
+    store = Dev::Deps::LocalStore.new(data_root: dir)
     git_repo = Dev::Deps::GitRepository.new
-    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache, project_root: dir)
+    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, store: store, project_root: dir)
     deps = [
       Dev::Deps::Dependency.new(
         name: "bad_repo", integration: :cmake, group: :app,
@@ -150,9 +150,9 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
   test "install_all raises GitCheckoutError when checkout fails" do
     Given "a git dep where clone succeeds but checkout fails"
     dir = Dir.mktmpdir("dev-cmake-int-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache"))
+    store = Dev::Deps::LocalStore.new(data_root: dir)
     git_repo = Dev::Deps::GitRepository.new
-    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache, project_root: dir)
+    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, store: store, project_root: dir)
     deps = [
       Dev::Deps::Dependency.new(
         name: "bad_checkout", integration: :cmake, group: :app,
@@ -182,9 +182,9 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
   test "install_all raises DownloadError when curl fails" do
     Given "a URL dep with no cache and a failing download"
     dir = Dir.mktmpdir("dev-cmake-int-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache"))
+    store = Dev::Deps::LocalStore.new(data_root: dir)
     url_repo = Dev::Deps::UrlRepository.new
-    integration = Dev::Deps::CmakeIntegration.new(repository: url_repo, cache: cache, project_root: dir)
+    integration = Dev::Deps::CmakeIntegration.new(repository: url_repo, store: store, project_root: dir)
     deps = [
       Dev::Deps::Dependency.new(
         name: "bad_url", integration: :cmake, group: :app,
@@ -211,9 +211,9 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
   test "install_all raises ExtractError when tar fails" do
     Given "a URL dep with a tarball that fails to extract"
     dir = Dir.mktmpdir("dev-cmake-int-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache"))
+    store = Dev::Deps::LocalStore.new(data_root: dir)
     url_repo = Dev::Deps::UrlRepository.new
-    integration = Dev::Deps::CmakeIntegration.new(repository: url_repo, cache: cache, project_root: dir)
+    integration = Dev::Deps::CmakeIntegration.new(repository: url_repo, store: store, project_root: dir)
     deps = [
       Dev::Deps::Dependency.new(
         name: "bad_tar", integration: :cmake, group: :app,
@@ -240,9 +240,9 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
   test "install_all generates deps.targets.cmake with cmake_targets" do
     Given "a dependency with cmake targets and namespace"
     dir = Dir.mktmpdir("dev-cmake-int-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    store = Dev::Deps::LocalStore.new(data_root: dir)
     git_repo = Dev::Deps::GitRepository.new
-    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache, project_root: dir)
+    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, store: store, project_root: dir)
     prepopulate_dep(dir, "googletest")
     deps = [
       Dev::Deps::Dependency.new(
@@ -271,9 +271,9 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
   test "install_all calls post_install hook after fetching" do
     Given "a dependency with a post_install hook"
     dir = Dir.mktmpdir("dev-cmake-int-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    store = Dev::Deps::LocalStore.new(data_root: dir)
     git_repo = Dev::Deps::GitRepository.new
-    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache, project_root: dir)
+    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, store: store, project_root: dir)
     prepopulate_dep(dir, "mylib")
     hook_calls = []
     hook = ->(dep, root) { hook_calls << [dep.name, root.to_s] }
@@ -301,9 +301,9 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
   test "install_all calls multiple post_install hooks in order" do
     Given "a dependency with an array of post_install hooks"
     dir = Dir.mktmpdir("dev-cmake-int-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    store = Dev::Deps::LocalStore.new(data_root: dir)
     git_repo = Dev::Deps::GitRepository.new
-    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache, project_root: dir)
+    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, store: store, project_root: dir)
     prepopulate_dep(dir, "mylib")
     order = []
     hook_a = ->(_dep, _root) { order << :a }
@@ -330,9 +330,9 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
   test "post_install hook receives correct dep and root from full DSL-resolve-install pipeline" do
     Given "a DSL config with a post_install hook wired through the resolver"
     dir = Dir.mktmpdir("dev-cmake-int-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    store = Dev::Deps::LocalStore.new(data_root: dir)
     git_repo = Dev::Deps::GitRepository.new
-    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache, project_root: dir)
+    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, store: store, project_root: dir)
     prepopulate_dep(dir, "googletest")
 
     hook_calls = []
@@ -375,9 +375,9 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
   test "install_all skips post_install when nil" do
     Given "a dependency without a post_install hook"
     dir = Dir.mktmpdir("dev-cmake-int-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    store = Dev::Deps::LocalStore.new(data_root: dir)
     git_repo = Dev::Deps::GitRepository.new
-    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, cache: cache, project_root: dir)
+    integration = Dev::Deps::CmakeIntegration.new(repository: git_repo, store: store, project_root: dir)
     prepopulate_dep(dir, "boost")
     deps = [
       Dev::Deps::Dependency.new(
@@ -402,7 +402,7 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     Given "a source dir without .git or CMakeLists.txt"
     dir = Dir.mktmpdir("dev-cmake-int-test-")
     integration = Dev::Deps::CmakeIntegration.new(
-      repository: Dev::Deps::UrlRepository.new, cache: Dev::Deps::Cache.new(cache_dir: dir), project_root: dir,
+      repository: Dev::Deps::UrlRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), project_root: dir,
     )
     dest = Pathname(dir) / "boost-src"
     FileUtils.mkdir_p(dest)
@@ -428,9 +428,9 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
   test "install_all leaves batch artifacts untouched when any dep fails, still attempting the rest" do
     Given "two git deps (first fails to clone) and pre-existing batch artifacts"
     dir = Dir.mktmpdir("dev-cmake-int-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: File.join(dir, "cache"))
+    store = Dev::Deps::LocalStore.new(data_root: dir)
     integration = Dev::Deps::CmakeIntegration.new(
-      repository: Dev::Deps::GitRepository.new, cache: cache, project_root: dir,
+      repository: Dev::Deps::GitRepository.new, store: store, project_root: dir,
     )
     previous_deps_cmake = "# previous consistent deps.cmake\n"
     previous_targets_cmake = "# previous consistent deps.targets.cmake\n"
