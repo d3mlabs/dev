@@ -33,6 +33,25 @@ module Dev
       class InstallError < StandardError; end
       class TapRegistrationError < StandardError; end
 
+      # The keg brew has for a formula is not the version the lock pins:
+      # either brew's formula moved on since `dev deps update` (the lock is
+      # stale) or this machine's keg is behind the lock.
+      class VersionMismatchError < StandardError
+        extend T::Sig
+
+        # @param formula [String] the install spec (e.g. "llvm@18")
+        # @param installed [Array<String>] the keg versions brew reports
+        # @param locked [String] the version the lock pins
+        sig { params(formula: String, installed: T::Array[String], locked: String).void }
+        def initialize(formula:, installed:, locked:)
+          super(
+            "brew has #{formula} #{installed.join(", ")} but the lock pins #{locked} — " \
+            "if brew's formula moved on, run `dev deps update` to re-lock; " \
+            "if this machine is behind, `brew upgrade #{formula}`",
+          )
+        end
+      end
+
       # @param repository [Repository, nil] source adapter
       # @param store [ArtifactStore, nil] artifact store (unused; brew caches)
       # @param taps [Array<Tap>] Homebrew taps to register before installing
@@ -148,16 +167,52 @@ module Dev
       # version (dep.version), which is a record like "18.1.8" and is not a valid
       # formula name (there is no "llvm@18.1.8").
       #
+      # After the install step the keg is verified against the lock: brew
+      # installs whatever its registry currently has, so the lock only means
+      # something if the result is checked (the B half of reproducible brew).
+      #
       # @param dep [Dependency]
       # @raise [InstallError] if brew install fails
+      # @raise [VersionMismatchError] if the keg is not the locked version
       sig { params(dep: Dependency).void }
       def install_formula(dep)
         suffix = dep.metadata["version_suffix"]
         formula = suffix ? "#{dep.name}@#{suffix}" : dep.name
-        return if brew_installed?(formula)
+        unless brew_installed?(formula)
+          spec = dep.metadata["tap"] ? "#{dep.metadata["tap"]}/#{formula}" : formula
+          run_brew_install(dep.name, spec)
+        end
 
-        spec = dep.metadata["tap"] ? "#{dep.metadata["tap"]}/#{formula}" : formula
-        run_brew_install(dep.name, spec)
+        locked = dep.version
+        verify_installed!(formula, locked) if locked
+      end
+
+      # Fail unless one of the formula's kegs is the locked version. Brew's
+      # own revision suffix (`_1`) is not part of the upstream version and
+      # is ignored.
+      #
+      # @param formula [String] the install spec (e.g. "llvm@18")
+      # @param locked [String] the version the lock pins
+      # @return [void]
+      # @raise [VersionMismatchError]
+      sig { params(formula: String, locked: String).void }
+      def verify_installed!(formula, locked)
+        installed = installed_versions(formula)
+        return if installed.include?(locked)
+
+        raise VersionMismatchError.new(formula:, installed:, locked:)
+      end
+
+      # The keg versions brew has for a formula, revision suffixes stripped.
+      #
+      # @param formula [String]
+      # @return [Array<String>] empty when brew reports none
+      sig { params(formula: String).returns(T::Array[String]) }
+      def installed_versions(formula)
+        out, _err, status = T.unsafe(Open3).capture3("brew", "list", "--versions", formula)
+        return [] unless status.success?
+
+        out.split.drop(1).map { |version| version.sub(/_\d+\z/, "") }
       end
 
       # Install a Homebrew cask.

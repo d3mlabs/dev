@@ -26,6 +26,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     ]
 
     integration.stubs(:brew_installed?).returns(false)
+    integration.stubs(:verify_installed!)
     integration.stubs(:run_brew_install).returns(nil)
 
     When "installing all"
@@ -48,6 +49,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
         version: "4.3.4", hash: "SHA256=abc", metadata: {}),
     ]
     integration.stubs(:brew_installed?).returns(false)
+    integration.stubs(:verify_installed!)
     Open3.expects(:capture3).with("brew", "install", "cmake").returns(["", "", stub(success?: true)])
 
     When "installing all"
@@ -71,6 +73,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
         metadata: { "version_suffix" => "18" }),
     ]
     integration.stubs(:brew_installed?).returns(false)
+    integration.stubs(:verify_installed!)
     Open3.expects(:capture3).with("brew", "install", "llvm@18").returns(["", "", stub(success?: true)])
 
     When "installing all"
@@ -95,6 +98,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     ]
 
     integration.stubs(:brew_installed?).returns(false)
+    integration.stubs(:verify_installed!)
     failed_status = stub(success?: false)
     Open3.stubs(:capture3)
          .with("brew", "install", "bad_formula@1")
@@ -124,6 +128,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
         version: "2.0.0", hash: nil, metadata: {}),
     ]
     integration.stubs(:brew_installed?).returns(false)
+    integration.stubs(:verify_installed!)
     Open3.stubs(:capture3)
          .with("brew", "install", "bad_formula")
          .returns(["", "Error: No available formula", stub(success?: false)])
@@ -143,6 +148,88 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     error.is_a?(Dev::Deps::Integration::PartialInstallError)
     error.failures.map(&:first) == ["bad_formula"]
     error.failures[0][1].is_a?(Dev::Deps::BrewIntegration::InstallError)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  # --- B: verify the installed version against the lock -----------------------
+
+  test "install_formula verifies the installed version against the lock: #{description}" do
+    Given "a locked formula and what brew reports installed after the install step"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
+    )
+    dep = Dev::Deps::Dependency.new(name: "llvm", integration: :brew, group: :build,
+      version: "18.1.8", hash: nil, metadata: { "version_suffix" => "18" })
+    integration.stubs(:brew_installed?).returns(true)
+    Open3.stubs(:capture3).with("brew", "list", "--versions", "llvm@18").returns([brew_list, "", stub(success?: true)])
+
+    When "installing"
+    outcome = begin
+      integration.install_all([dep])
+      :ok
+    rescue Dev::Deps::Integration::PartialInstallError => e
+      e.failures.fetch(0).fetch(1)
+    end
+
+    Then "a keg at the locked version (revision suffix aside) passes; anything else is a typed mismatch naming both"
+    passes ? outcome == :ok : outcome.is_a?(Dev::Deps::BrewIntegration::VersionMismatchError)
+    passes || outcome.message.include?("llvm@18 18.1.9")
+    passes || outcome.message.include?("18.1.8")
+    passes || outcome.message.include?("dev deps update")
+    passes || outcome.message.include?("brew upgrade llvm@18")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+
+    Where
+    description                        | brew_list                      | passes
+    "exact match"                      | "llvm@18 18.1.8\n"             | true
+    "match behind a brew revision"     | "llvm@18 18.1.8_1\n"           | true
+    "one of several kegs matches"      | "llvm@18 18.1.7 18.1.8\n"      | true
+    "brew moved on past the lock"      | "llvm@18 18.1.9\n"             | false
+  end
+
+  test "install_formula verifies after a fresh install too, so a lock brew can no longer satisfy fails at once" do
+    Given "a formula not yet installed, whose install lands a newer version than the lock pins"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
+    )
+    dep = Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
+      version: "4.4.3", hash: nil, metadata: {})
+    integration.stubs(:brew_installed?).returns(false)
+    Open3.stubs(:capture3).with("brew", "install", "cmake").returns(["", "", stub(success?: true)])
+    Open3.stubs(:capture3).with("brew", "list", "--versions", "cmake").returns(["cmake 4.5.0\n", "", stub(success?: true)])
+
+    When "installing"
+    integration.install_all([dep])
+
+    Then "the mismatch is the per-dep failure"
+    error = raises Dev::Deps::Integration::PartialInstallError
+    error.failures.fetch(0).fetch(1).is_a?(Dev::Deps::BrewIntegration::VersionMismatchError)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_formula skips verification for a dep that locked no version (a tap formula brew reports none for)" do
+    Given "a versionless brew dep"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
+    )
+    dep = Dev::Deps::Dependency.new(name: "wwise-cli", integration: :brew, group: :build,
+      version: nil, hash: nil, metadata: { "tap" => "d3mlabs/d3mlabs" })
+    integration.stubs(:brew_installed?).returns(true)
+
+    When "installing"
+    integration.install_all([dep])
+
+    Then "brew list --versions is never consulted"
+    0 * Open3.capture3("brew", "list", "--versions", anything)
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -206,6 +293,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
         version: "4.3.4", hash: nil, metadata: {}),
     ]
     integration.stubs(:brew_installed?).returns(false)
+    integration.stubs(:verify_installed!)
     Open3.expects(:capture3).with("brew", "install", "cmake").returns(["", "", stub(success?: true)])
 
     When "installing all"
@@ -235,6 +323,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
         version: "4.3.4", hash: nil, metadata: {}),
     ]
     integration.stubs(:brew_installed?).returns(false)
+    integration.stubs(:verify_installed!)
     Open3.expects(:capture3)
          .with("sudo", "-n", "-u", owner, "brew", "install", "cmake")
          .returns(["", "", stub(success?: true)])
@@ -267,6 +356,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
         version: "4.3.4", hash: nil, metadata: {}),
     ]
     integration.stubs(:brew_installed?).returns(false)
+    integration.stubs(:verify_installed!)
     Open3.stubs(:capture3)
          .with("sudo", "-n", "-u", owner, "brew", "install", "cmake")
          .returns(["", "sudo: a password is required\n", stub(success?: false)])
