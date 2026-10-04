@@ -134,6 +134,47 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     true
   end
 
+  test "inside the container, call is the deps install alone: no host converge, credentials or service bring-up" do
+    Given "an inside up command whose host service and service dependency must stay untouched"
+    host_service = typed_mock(Dev::HostService)
+    install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
+    service = typed_mock(Dev::Builtins::ContainerUpCommand)
+    context = build_context(build_container: container_config(build_args: { "TOKEN" => "wwise/token" }))
+    command = Dev::Builtins::UpCommand.new(
+      install_deps_command: install_deps, host_service: host_service,
+      service_dependencies: [service], inside_container: true,
+    )
+
+    When "running up inside"
+    command.call(args: ["--group", "app"], context: context)
+
+    Then "only the install body ran, with the user's args"
+    1 * install_deps.call(args: ["--group", "app"], context: context)
+    0 * host_service.converge_tooling
+    0 * host_service.install_rc_hook
+    0 * host_service.install_skills
+    0 * Dev::Credentials.resolve_build_args(anything)
+    0 * service.up(project: anything)
+  end
+
+  test "inside the container without a project, call explains there is nothing to provision" do
+    Given "an inside up command and a projectless context"
+    host_service = typed_mock(Dev::HostService)
+    install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
+    command = Dev::Builtins::UpCommand.new(
+      install_deps_command: install_deps, host_service: host_service, inside_container: true,
+    )
+    context = Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui))
+
+    When "running up"
+    stdout = capture_stdout { command.call(args: [], context: context) }
+
+    Then "neither half runs and the message says why"
+    0 * install_deps.call(args: anything, context: anything)
+    0 * host_service.converge_tooling
+    stdout.include?("dev: inside a container with no dev.yml — nothing to provision.")
+  end
+
   test "call with no service dependencies is the deps install alone" do
     Given "a plain project"
     install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
