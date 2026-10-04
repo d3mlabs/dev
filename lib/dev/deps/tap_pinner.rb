@@ -32,6 +32,10 @@ module Dev
         end
       end
 
+      # @return [Pathname] brew's Library/Taps directory
+      sig { returns(Pathname) }
+      attr_reader :taps_root
+
       # @param taps_root [Pathname] brew's Library/Taps directory
       # @param remote_urls [Hash{String => String}] tap slug to clone URL,
       #   for taps whose remote is not github.com/<user>/homebrew-<repo>
