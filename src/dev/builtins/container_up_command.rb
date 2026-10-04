@@ -70,8 +70,43 @@ module Dev
       sig { override.params(project: ProjectContext).void }
       def up(project:)
         cfg = T.must(project.build_container)
-        @engine_provisioner.provision!(resources: cfg.resources)
+        image_tag = ensure_image!(cfg, project)
+        return unless cfg.persist
 
+        name = client.ensure_service!(image_tag, project_root: project.root, volumes: volumes(cfg, project))
+        @out.puts "dev: build container up: #{name}"
+        provision_inside!(name, cfg)
+      end
+
+      # The cold topology: the same image, a one-shot container over the
+      # throwaway data root the caller made current (ColdRoot), the same
+      # in-container provisioning — then the container is gone. The
+      # persistent container, warm root mounted at its creation, is never
+      # touched. Persisted or not, the shape is the same: a cold run proves
+      # the project provisions from nothing.
+      #
+      # @param project [ProjectContext]
+      # @return [void]
+      sig { override.params(project: ProjectContext).void }
+      def cold_up(project:)
+        cfg = T.must(project.build_container)
+        image_tag = ensure_image!(cfg, project)
+        client.with_one_shot_container(image_tag, project_root: project.root, volumes: volumes(cfg, project)) do |name|
+          @out.puts "dev: cold container up: #{name}"
+          provision_inside!(name, cfg)
+        end
+      end
+
+      private
+
+      # Engine up and sized, image resolved (local → registry → build).
+      #
+      # @param cfg [BuildContainerConfig]
+      # @param project [ProjectContext]
+      # @return [String] the image tag
+      sig { params(cfg: BuildContainerConfig, project: ProjectContext).returns(String) }
+      def ensure_image!(cfg, project)
+        @engine_provisioner.provision!(resources: cfg.resources)
         image_tag = client.ensure_image!(
           cfg,
           project_root: project.root,
@@ -81,11 +116,25 @@ module Dev
           secrets_provider: -> { Dev::Credentials.resolve_build_args(cfg.build_secrets) },
         )
         @out.puts "dev: image ready: #{image_tag}"
-        return unless cfg.persist
+        image_tag
+      end
 
-        volumes = BuildContainer.resolve_versioned_volumes(cfg.volumes, project_root: project.root)
-        name = client.ensure_service!(image_tag, project_root: project.root, volumes: volumes)
-        @out.puts "dev: build container up: #{name}"
+      # @param cfg [BuildContainerConfig]
+      # @param project [ProjectContext]
+      # @return [Array<String>] the declared volumes, versions resolved
+      sig { params(cfg: BuildContainerConfig, project: ProjectContext).returns(T::Array[String]) }
+      def volumes(cfg, project)
+        BuildContainer.resolve_versioned_volumes(cfg.volumes, project_root: project.root)
+      end
+
+      # What a running container needs before a command runs in it: the
+      # host's dev, then the container's side of the dependency install.
+      #
+      # @param name [String] the running container
+      # @param cfg [BuildContainerConfig]
+      # @return [void]
+      sig { params(name: String, cfg: BuildContainerConfig).void }
+      def provision_inside!(name, cfg)
         # The container follows the host: its dev is converged to this exact
         # version here, on every up, so a host upgrade re-syncs it with no
         # manual step and the steady state is one probe.
@@ -98,8 +147,6 @@ module Dev
         deps_installer.install!(name, env: Dev::Credentials.resolve_run_env(cfg.run_env))
         @out.puts "dev: container deps installed"
       end
-
-      private
 
       # @return [Dev::ContainerDevProvisioner]
       sig { returns(Dev::ContainerDevProvisioner) }

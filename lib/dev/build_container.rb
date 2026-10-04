@@ -595,6 +595,36 @@ module Dev
       name
     end
 
+    # Run +blk+ against a one-shot sibling of the service container: the
+    # same image, mounts, labels and marker, under a name of its own, created
+    # `--rm` and removed when the block ends however it ends. The run
+    # topology of `dev up --no-cache`: the persistent container — its warm
+    # data root mounted at creation — is never touched, and whatever the
+    # block installs into the container's writable layer goes with it.
+    #
+    # @param image_tag    [String]   full image:tag the container runs
+    # @param project_root [Pathname] bind-mounted at /project
+    # @param volumes      [Array<String>] extra "host:container" mounts (e.g. engine)
+    # @yieldparam name [String] the running container's name
+    # @return [void]
+    sig do
+      params(
+        image_tag: String,
+        project_root: Pathname,
+        volumes: T::Array[String],
+        blk: T.proc.params(name: String).void,
+      ).void
+    end
+    def with_one_shot_container(image_tag, project_root:, volumes: [], &blk)
+      name = "#{self.class.service_container_name(image_tag, project_root)}-cold-#{SecureRandom.hex(4)}"
+      create_service_container(name, image_tag, project_root:, volumes:, one_shot: true)
+      begin
+        blk.call(name)
+      ensure
+        remove_container(name)
+      end
+    end
+
     # Build a `docker exec` command running shell_cmd inside the service container,
     # mirroring docker_run_command's working dir (/project) and `-e` env handling.
     #
@@ -856,10 +886,14 @@ module Dev
     # Create the detached, idle service container: the project at /project, any
     # extra volumes (e.g. the engine), the label contract, the inside marker
     # (inherited by every `docker exec`), and `sleep infinity` so it stays up.
-    sig { params(name: String, image_tag: String, project_root: Pathname, volumes: T::Array[String]).void }
-    def create_service_container(name, image_tag, project_root:, volumes: [])
+    #
+    # @param one_shot [Boolean] `--rm`: the container goes when it stops
+    sig do
+      params(name: String, image_tag: String, project_root: Pathname, volumes: T::Array[String], one_shot: T::Boolean).void
+    end
+    def create_service_container(name, image_tag, project_root:, volumes: [], one_shot: false)
       args = [
-        "run", "-d", "--name", name,
+        "run", "-d", *(one_shot ? ["--rm"] : []), "--name", name,
         *self.class.label_flags(image_tag, project_root),
         "-v", "#{project_root}:/project",
         *data_root_flags,

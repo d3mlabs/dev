@@ -38,7 +38,7 @@ Grouped as `dev help` lists them. **Scope** says where the command works: *anywh
 
 | Command | Scope | Purpose | Details |
 |---|---|---|---|
-| `dev up` | project, or anywhere (host layer only) | Converge host tooling, install locked deps, bring the build container up, run the project's `up:` | [Dependency commands](#dependency-commands) |
+| `dev up` | project, or anywhere (host layer only) | Converge host tooling, install locked deps, bring the build container up, run the project's `up:`; `--no-cache` does the project half from nothing | [Dependency commands](#dependency-commands), [The cold run](#the-cold-run-dev-up---no-cache) |
 | `dev down` | gated: `build.container` | Stop this checkout's service dependencies (the build container), and the engine if nothing else uses it | [Engine & container lifecycle](#engine--container-lifecycle) |
 | `dev deps update` | project | Resolve `dependencies.rb` and write the lockfiles (≈ `bundle update`) | [Dependency commands](#dependency-commands) |
 | `dev deps install` | project | Install locked deps on this machine, optionally narrowed by `--group`/`--except`/`--integration` (≈ `bundle install`) | [Dependency commands](#dependency-commands) |
@@ -620,6 +620,18 @@ What survives what — the warmth table:
 | `dev engine down` | kept | kept, stopped (every checkout's) | stopped |
 | a Dockerfile / lockfile change | new tag built on next use | old one reaped on next use | running |
 | `docker image rm` / `dev cache gc` | re-pulled or rebuilt on next use | kept while the tag is live | running |
+| `dev up --no-cache` | kept (pulled or built as usual) | kept, untouched — a one-shot sibling ran and is gone | running |
+
+### The cold run: `dev up --no-cache`
+
+A warm machine hides a broken cold path: the engine already in the store, the gems already bundled, the container already provisioned. `dev up --no-cache` is the project half of `dev up` run **from nothing**, as a topology rather than a cache flush — the warm store and the persistent container are never touched, so it is safe to run on a busy box:
+
+1. a **throwaway data root** is created beside the warm one (`<data root>-cold-<id>`) and made the process's data root for the run (`DEV_DATA_ROOT`), so every install and the container's data-root mount land in it;
+2. the host-side `dev deps install` runs into it;
+3. each service does its **cold bring-up** — for the build container: the image resolved as usual (pulled or built; the image is not what a cold run is about), then a **one-shot container** (`--rm`, a sibling of the persistent one's name, same mounts and labels) over the throwaway root, the host's dev installed inside, the container-side install run, the container removed;
+4. the throwaway root is removed.
+
+Nothing is kept: the run is a pass/fail on "can this project provision on a fresh machine today". The host layer is not converged (`dev up` does that), and the flag has no meaning inside a container (reported, then the plain install runs). snappy runs it weekly on its self-hosted runner (`.github/workflows/cold-closure.yml` there) — at the cost of a full engine and depot download each time, which is the point.
 
 ## Releasing a new version
 

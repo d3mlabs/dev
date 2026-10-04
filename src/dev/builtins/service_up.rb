@@ -24,6 +24,17 @@ module Dev
       # @return [void]
       sig { abstract.params(project: ProjectContext).void }
       def up(project:); end
+
+      # The cold topology of the same bring-up (`dev up --no-cache`): the
+      # service does its full provisioning from nothing, against the
+      # throwaway data root the caller has made current, in a one-shot
+      # instance that leaves no state — the warm instance `up` would reuse
+      # is not touched.
+      #
+      # @param project [ProjectContext] the checkout the service serves
+      # @return [void]
+      sig { abstract.params(project: ProjectContext).void }
+      def cold_up(project:); end
     end
   end
 end

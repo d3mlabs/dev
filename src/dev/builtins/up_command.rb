@@ -4,6 +4,7 @@
 require "dev/command"
 require "dev/credentials"
 require "dev/builtins/service_up"
+require "dev/cold_root"
 require "dev/container_context"
 require "dev/host_service"
 
@@ -20,8 +21,14 @@ module Dev
     # runs, and its project half requires the project context. Outside any
     # project the host half IS the fresh-box bootstrap — install dev,
     # `dev up`, ready — so a nil project is a supported state, not an error.
+    #
+    # `dev up --no-cache` is the project half as a cold run: a throwaway
+    # data root, a one-shot container, nothing reused and nothing kept.
     class UpCommand < BuiltinCommand
       extend T::Sig
+
+      # `dev up --no-cache`: the cold run topology (see call_cold).
+      NO_CACHE_FLAG = "--no-cache"
 
       # @param install_deps_command [InstallDepsCommand] the `dev deps install`
       #   body — a CLI intent `dev up` extends, so it receives the user's args
@@ -57,7 +64,7 @@ module Dev
       end
 
       sig { override.returns(String) }
-      def desc = "Install locked deps and bring the build container up, then run the project's up command (if defined)"
+      def desc = "Install locked deps and bring the build container up, then run the project's up command (if defined); --no-cache does it from nothing"
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
@@ -73,7 +80,10 @@ module Dev
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
-        return call_inside(args:, context:) if @inside_container
+        no_cache = args.include?(NO_CACHE_FLAG)
+        args -= [NO_CACHE_FLAG]
+        return call_inside(args:, context:, no_cache:) if @inside_container
+        return call_cold(args:, context:) if no_cache
 
         # The host layer converges before project provisioning (self-update
         # + org Brewfile): project installs may lean on host tools (gh,
@@ -105,6 +115,33 @@ module Dev
 
       private
 
+      # The cold shape of `up` (`--no-cache`): the project half alone, run
+      # from nothing — a throwaway data root stands in for the warm one for
+      # the duration (ColdRoot), the install lands there, and each service
+      # does its cold bring-up (a one-shot container for the build
+      # container) over it. The warm store and the persistent container are
+      # not touched; the host layer is not converged — a cold run proves the
+      # project provisions, and `dev up` is what converges the host.
+      #
+      # @param args [Array<String>] the user's args, less the flag
+      # @param context [ExecutionContext]
+      # @return [void]
+      sig { params(args: T::Array[String], context: ExecutionContext).void }
+      def call_cold(args:, context:)
+        project = context.project
+        if project.nil?
+          puts "dev: dev up --no-cache needs a project — it provisions one from nothing."
+          return
+        end
+
+        provision_build_credentials(project)
+        Dev::ColdRoot.with do |root|
+          puts "dev: cold run — data root #{root} (removed afterwards)"
+          @install_deps_command.call(args:, context:)
+          @service_dependencies.each { |service| service.cold_up(project:) }
+        end
+      end
+
       # The inside shape of `up`: the deps install and nothing else. There is
       # no host layer to converge (the container's dev is provisioned by the
       # host's and cannot self-update), no credentials to prompt for (the host
@@ -112,14 +149,18 @@ module Dev
       #
       # @param args [Array<String>] the user's args, handed to the install body
       # @param context [ExecutionContext]
+      # @param no_cache [Boolean] whether `--no-cache` was asked for — a
+      #   host-side topology (throwaway root, one-shot container) that has no
+      #   meaning here; reported, then the plain install runs
       # @return [void]
-      sig { params(args: T::Array[String], context: ExecutionContext).void }
-      def call_inside(args:, context:)
+      sig { params(args: T::Array[String], context: ExecutionContext, no_cache: T::Boolean).void }
+      def call_inside(args:, context:, no_cache:)
         if context.project.nil?
           puts "dev: inside a container with no dev.yml — nothing to provision."
           return
         end
 
+        puts "dev: #{NO_CACHE_FLAG} runs from the host (a throwaway data root and a one-shot container) — ignored inside." if no_cache
         @install_deps_command.call(args:, context:)
       end
 

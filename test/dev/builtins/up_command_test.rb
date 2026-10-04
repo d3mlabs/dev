@@ -7,8 +7,10 @@ require "dev/builtins/install_deps_command"
 require "dev/builtins/up_command"
 require "dev/build_container_config"
 require "dev/credentials"
+require "fileutils"
 require "pathname"
 require "stringio"
+require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Builtins::UpCommandTest < Minitest::Test
@@ -173,6 +175,86 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     0 * install_deps.call(args: anything, context: anything)
     0 * host_service.converge_tooling
     stdout.include?("dev: inside a container with no dev.yml — nothing to provision.")
+  end
+
+  test "--no-cache runs the install and the services' cold bring-up inside a throwaway data root, host layer untouched" do
+    Given "a warm data root in a scratch dir, and collaborators recording the data root they ran under"
+    warm = Dir.mktmpdir("up-no-cache-warm-")
+    original = ENV.fetch("DEV_DATA_ROOT", nil)
+    ENV["DEV_DATA_ROOT"] = warm
+    seen = {}
+    install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
+    install_deps.expects(:call).with { |args:, context:|
+      seen[:install_args] = args
+      seen[:install_root] = ENV.fetch("DEV_DATA_ROOT")
+      context.project
+    }.once
+    service = typed_mock(Dev::Builtins::ContainerUpCommand)
+    service.expects(:cold_up).with { |project:|
+      seen[:cold_root] = ENV.fetch("DEV_DATA_ROOT")
+      project
+    }.once
+    service.expects(:up).never
+    host_service = typed_mock(Dev::HostService)
+    context = build_context(build_container: container_config(build_args: { "TOKEN" => "wwise/token" }))
+    Dev::Credentials.stubs(:resolve_build_args).returns({ "TOKEN" => "x" })
+    command = Dev::Builtins::UpCommand.new(
+      install_deps_command: install_deps, host_service: host_service, service_dependencies: [service],
+    )
+
+    When "running dev up --no-cache --group app"
+    command.call(args: ["--no-cache", "--group", "app"], context: context)
+
+    Then "both halves ran under one throwaway sibling of the warm root, which is gone and restored afterwards"
+    seen[:install_args] == ["--group", "app"]
+    seen[:install_root].start_with?("#{warm}-cold-")
+    seen[:cold_root] == seen[:install_root]
+    !File.exist?(seen[:cold_root])
+    ENV.fetch("DEV_DATA_ROOT") == warm
+    1 * Dev::Credentials.resolve_build_args({ "TOKEN" => "wwise/token" })
+    0 * host_service.converge_tooling
+    0 * host_service.install_rc_hook
+    0 * host_service.install_skills
+
+    Cleanup
+    if original.nil?
+      ENV.delete("DEV_DATA_ROOT")
+    else
+      ENV["DEV_DATA_ROOT"] = original
+    end
+    FileUtils.rm_rf(warm)
+  end
+
+  test "--no-cache outside a project explains it needs one and provisions nothing" do
+    Given "a projectless context"
+    install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
+    host_service = typed_mock(Dev::HostService)
+    command = Dev::Builtins::UpCommand.new(install_deps_command: install_deps, host_service: host_service)
+    context = Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui))
+
+    When "running dev up --no-cache"
+    stdout = capture_stdout { command.call(args: ["--no-cache"], context: context) }
+
+    Then "nothing ran and the message says why"
+    0 * install_deps.call(args: anything, context: anything)
+    0 * host_service.converge_tooling
+    stdout.include?("dev up --no-cache needs a project")
+  end
+
+  test "inside the container, --no-cache is a host-side topology: it is reported and the plain install runs" do
+    Given "an inside up command"
+    install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
+    command = Dev::Builtins::UpCommand.new(
+      install_deps_command: install_deps, host_service: typed_mock(Dev::HostService), inside_container: true,
+    )
+    context = build_context
+
+    When "running dev up --no-cache inside"
+    stdout = capture_stdout { command.call(args: ["--no-cache"], context: context) }
+
+    Then "the install ran without the flag and the output explains"
+    1 * install_deps.call(args: [], context: context)
+    stdout.include?("--no-cache runs from the host")
   end
 
   test "call with no service dependencies is the deps install alone" do

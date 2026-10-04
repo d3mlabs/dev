@@ -1635,6 +1635,67 @@ class BuildContainerTest < Minitest::Test
     raises RuntimeError
   end
 
+  test "with_one_shot_container creates a --rm sibling of the service container, yields its name, and removes it after" do
+    Given "a recording engine"
+    engine = FakeContainerEngine.new
+    root = Pathname("/project")
+    service_name = Dev::BuildContainer.service_container_name("img:tag", root)
+    seen = {}
+
+    When "running a block in a one-shot container"
+    build_container(engine: engine).with_one_shot_container("img:tag", project_root: root, volumes: ["/e:/ue"]) do |name|
+      seen[:name] = name
+      seen[:runs_so_far] = engine.runs.size
+    end
+
+    Then "the name is the service's plus a cold suffix, the run is detached and --rm with the same mounts and labels, and rm -f follows the block"
+    seen[:name].start_with?("#{service_name}-cold-")
+    seen[:name] != service_name
+    create = engine.runs.fetch(0)
+    create[0, 2] == ["run", "-d"]
+    create.include?("--rm")
+    create.each_cons(2).include?(["--name", seen[:name]])
+    create.include?("/project:/project")
+    create.include?("/e:/ue")
+    create.each_cons(2).include?(["-e", "DEV_INSIDE_CONTAINER=1"])
+    create.last(2) == ["sleep", "infinity"]
+    Dev::BuildContainer.service_labels("img:tag", root).all? { |k, v| create.each_cons(2).include?(["--label", "#{k}=#{v}"]) }
+    seen[:runs_so_far] == 1
+    engine.runs.last == ["rm", "-f", seen[:name]]
+  end
+
+  test "with_one_shot_container removes the container even when the block raises" do
+    Given "a recording engine"
+    engine = FakeContainerEngine.new
+    seen = {}
+
+    When "the block fails"
+    begin
+      build_container(engine: engine).with_one_shot_container("img:tag", project_root: Pathname("/project")) do |name|
+        seen[:name] = name
+        raise "install exploded"
+      end
+    rescue RuntimeError
+      nil
+    end
+
+    Then "rm -f still ran"
+    engine.runs.last == ["rm", "-f", seen[:name]]
+  end
+
+  test "with_one_shot_container raises when the container cannot be created, and runs no block" do
+    Given "an engine whose runs fail"
+    engine = FakeContainerEngine.new { |_args| false }
+    ran = false
+
+    When "creating"
+    build_container(engine: engine).with_one_shot_container("img:tag", project_root: Pathname("/project")) { |_name| ran = true }
+
+    Then
+    raises RuntimeError
+    ran == false
+  end
+
   test "prewarm_container_name embeds the pid and never repeats" do
     Given "the instance under test"
     bc = build_container
