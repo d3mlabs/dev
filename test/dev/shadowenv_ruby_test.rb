@@ -622,6 +622,41 @@ class ShadowenvRubyTest < Minitest::Test
     assert_includes result, '(env/set "RUBY_VERSION" "4.0.1")'
   end
 
+  test "generate_ruby_lisp derives GEM_HOME from HOME by default, and pins it when given one" do
+    When "we generate both shapes"
+    by_home = Dev::ShadowenvRuby.generate_ruby_lisp("/opt/ruby/4.0.1", "4.0.1")
+    pinned = Dev::ShadowenvRuby.generate_ruby_lisp("/opt/ruby/4.0.1", "4.0.1", gem_home: "/var/lib/dev/gems/linux-x86_64/4.0.1")
+
+    Then "the default composes HOME/.gem/<engine>/<version>; the pinned form names the directory"
+    by_home.include?('(path-concat (env/get "HOME") ".gem" (env/get "RUBY_ENGINE") (env/get "RUBY_VERSION"))')
+    !by_home.include?("/var/lib/dev/gems")
+    pinned.include?('(env/set "GEM_HOME" "/var/lib/dev/gems/linux-x86_64/4.0.1")')
+    pinned.include?('(env/prepend-to-pathlist "GEM_PATH" "/var/lib/dev/gems/linux-x86_64/4.0.1")')
+    pinned.include?('(env/prepend-to-pathlist "PATH" "/var/lib/dev/gems/linux-x86_64/4.0.1/bin")')
+    !pinned.include?('(env/get "HOME")')
+  end
+
+  test "ruby_build_env rpaths the build's own lib dir first: the rbenv prefix by default, a given prefix otherwise" do
+    Given "a brew prefix and a scratch rbenv root"
+    tmp_rbenv_root = Dir.mktmpdir("rbenv-root-")
+    original_rbenv_root = ENV["RBENV_ROOT"]
+    ENV["RBENV_ROOT"] = tmp_rbenv_root
+    Dev::ShadowenvRuby.stubs(:homebrew_prefix).returns("/home/linuxbrew/.linuxbrew")
+    Dev::ShadowenvRuby.stubs(:brew_prefix_for).returns(nil)
+
+    When "composing the env for both placements"
+    by_rbenv = Dev::ShadowenvRuby.ruby_build_env({}, "4.0.6")
+    by_prefix = Dev::ShadowenvRuby.ruby_build_env({}, "4.0.6", prefix: "/var/lib/dev/ruby/linux-x86_64/4.0.6")
+
+    Then "each LDFLAGS names its own lib ahead of brew's"
+    by_rbenv.fetch("LDFLAGS").include?("-Wl,-rpath,#{tmp_rbenv_root}/versions/4.0.6/lib -Wl,-rpath,/home/linuxbrew/.linuxbrew/lib")
+    by_prefix.fetch("LDFLAGS").include?("-Wl,-rpath,/var/lib/dev/ruby/linux-x86_64/4.0.6/lib -Wl,-rpath,/home/linuxbrew/.linuxbrew/lib")
+
+    Cleanup
+    ENV["RBENV_ROOT"] = original_rbenv_root
+    FileUtils.rm_rf(tmp_rbenv_root)
+  end
+
   # --- ensure_shadowenv_shell_hook! ---
 
   test "ensure_shadowenv_shell_hook! adds hook to zshrc when not present" do

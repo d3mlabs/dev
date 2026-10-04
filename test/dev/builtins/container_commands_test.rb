@@ -81,17 +81,49 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     dev_provisioner.stubs(:host_version).returns("0.2.98")
     dev_provisioner.expects(:provision!).with("dev-myapp-linux-abc-content-abc123").once.in_sequence(order)
       .returns(:installed)
+    deps_installer = typed_mock(Dev::ContainerDepsInstaller)
+    deps_installer.expects(:install!).with("dev-myapp-linux-abc-content-abc123", env: {}).once.in_sequence(order)
     out = StringIO.new
 
     When "bringing the container up"
     Dev::Builtins::ContainerUpCommand.new(
-      container_client: client, engine_provisioner: provisioner, dev_provisioner: dev_provisioner, out: out,
+      container_client: client, engine_provisioner: provisioner, dev_provisioner: dev_provisioner,
+      deps_installer: deps_installer, out: out,
     ).call(args: [], context: project(config))
 
-    Then "every step is reported, the container's dev last"
+    Then "every step is reported: the container's dev, then the deps it installs"
     out.string == "dev: image ready: #{TAG}\n" \
       "dev: build container up: dev-myapp-linux-abc-content-abc123\n" \
-      "dev: container dev installed at 0.2.98\n"
+      "dev: container dev installed at 0.2.98\n" \
+      "dev: container deps installed\n"
+  end
+
+  test "container up injects the resolvable run_env into the in-container install" do
+    Given "a persisted config declaring run_env, one entry resolvable"
+    config = Dev::BuildContainerConfig.new(
+      image: "myapp-linux", registry: "myregistry", persist: true,
+      run_env: { "WWISE_TOKEN" => "wwise/token", "MISSING" => "x/y" },
+    )
+    Dev::Credentials.stubs(:load).returns(nil)
+    Dev::Credentials.stubs(:load).with("wwise", "token").returns("t0k")
+    provisioner = typed_mock(Dev::EngineProvisioner)
+    provisioner.stubs(:provision!)
+    client = client()
+    client.stubs(:ensure_image!).returns(TAG)
+    client.stubs(:ensure_service!).returns(CURRENT)
+    dev_provisioner = typed_mock(Dev::ContainerDevProvisioner)
+    dev_provisioner.stubs(:host_version).returns("0.2.98")
+    dev_provisioner.stubs(:provision!).returns(:current)
+    deps_installer = typed_mock(Dev::ContainerDepsInstaller)
+
+    When "bringing the container up"
+    Dev::Builtins::ContainerUpCommand.new(
+      container_client: client, engine_provisioner: provisioner, dev_provisioner: dev_provisioner,
+      deps_installer: deps_installer, out: StringIO.new,
+    ).call(args: [], context: project(config))
+
+    Then "the install sees the resolved entry only"
+    1 * deps_installer.install!(CURRENT, env: { "WWISE_TOKEN" => "t0k" })
   end
 
   test "container up reports the container's dev as current when the provisioner found nothing to do" do
@@ -113,7 +145,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     ).call(args: [], context: project(config))
 
     Then
-    out.string.end_with?("dev: container dev current at 0.2.98\n")
+    out.string.include?("dev: container dev current at 0.2.98\n")
   end
 
   test "container up on a non-persisted project stops at the image" do

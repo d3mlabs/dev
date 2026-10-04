@@ -99,6 +99,41 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "container_integrations carries only the container-scoped types, and skips an alias whose target is host-only" do
+    Given "a scratch project root"
+    dir = Dir.mktmpdir("registry-container-test-")
+
+    When "building container integrations from the registry"
+    integrations = Dev::Deps::Registry.container_integrations(
+      project_root: Pathname(dir),
+      store: Dev::Deps::LocalStore.new(data_root: dir),
+    )
+
+    Then "bundler and brew install inside the container; cmake (and so url) do not"
+    integrations.key?(:bundler)
+    integrations.key?(:brew)
+    integrations.key?(:cask)
+    !integrations.key?(:cmake)
+    !integrations.key?(:url)
+    !integrations.key?(:pip)
+    !integrations.key?(:luarocks)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "container? is the mirror of host?: BOTH is on both sides, HOST and CONTAINER on one, and never without an integration" do
+    Given "entries of each scope"
+    both = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :brew }
+    host_only = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :cmake }
+    no_integration = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :url }
+
+    Expect "each answers for its side"
+    both.host? && both.container?
+    host_only.host? && !host_only.container?
+    !no_integration.host? && !no_integration.container?
+  end
+
   test "every locker class is wired into the registry" do
     Given "the locker files on disk and the registry's referenced lockers"
     referenced = Dev::Deps::Registry::INTEGRATIONS.filter_map(&:locker).uniq.map { |k| source_file(k) }

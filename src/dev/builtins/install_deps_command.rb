@@ -5,6 +5,7 @@ require "pathname"
 require "dev/cli/flag_parser"
 require "dev/command"
 require "dev/container_context"
+require "dev/container_ruby"
 require "dev/deps"
 require "dev/deps/local_store"
 require "dev/deps/gem_skill_linker"
@@ -19,8 +20,13 @@ module Dev
     # `dev deps install [--group <g>]... [--except <g>]... [--integration <i>]...`:
     # install what the lockfiles pin for this machine, optionally narrowed to
     # dependency groups and integrations — shared with the `up` builtin,
-    # which composes this command. Host integrations install on the host
-    # (not the build container) so their artifacts can be volume-mounted in.
+    # which composes this command. Dependencies install where they are
+    # consumed: on the host the host-scoped integrations run against the
+    # host Ruby; inside the build container the container-scoped ones run
+    # against the store Ruby (Registry's scope axis says which is which, and
+    # a BOTH type like bundler installs separately on each side). The two
+    # sides share the artifact store through the data-root mount, so a file
+    # artifact fetched on the host is already there inside.
     # `--group build --integration brew` is how a container image bootstrap
     # installs its toolchain from the lock (bin/docker-install-build-deps.sh)
     # without pulling the host-installed artifacts the same group pins; inside
@@ -47,6 +53,8 @@ module Dev
       # @param inside_container [Boolean] whether this dev runs inside a
       #   dev-managed container (ContainerContext). Inside, the build group is
       #   excluded by default: the image bootstrap already installed it.
+      # @param container_ruby [Dev::ContainerRuby] the in-container Ruby
+      #   provisioner (used only inside)
       sig do
         params(
           installer_factory: InstallerFactory,
@@ -54,6 +62,7 @@ module Dev
           host_service: Dev::HostService,
           flag_parser: Cli::FlagParser,
           inside_container: T::Boolean,
+          container_ruby: Dev::ContainerRuby,
         ).void
       end
       def initialize(
@@ -63,7 +72,8 @@ module Dev
         gem_skill_linker_factory: ->(project_root) { Dev::Deps::GemSkillLinker.new(project_root:) },
         host_service: Dev::HostService.new,
         flag_parser: Cli::FlagParser.new,
-        inside_container: Dev::ContainerContext.inside?
+        inside_container: Dev::ContainerContext.inside?,
+        container_ruby: Dev::ContainerRuby.new
       )
         super()
         @installer_factory = installer_factory
@@ -71,6 +81,7 @@ module Dev
         @host_service = host_service
         @flag_parser = flag_parser
         @inside_container = inside_container
+        @container_ruby = container_ruby
       end
 
       sig { override.returns(String) }
@@ -110,30 +121,52 @@ module Dev
         # ruby's health behind a current lisp (#204). A selection that locks no
         # gems (e.g. --group build in an image bootstrap) needs no project Ruby.
         selection = Dev::Deps::Installer.select(lockfile.read, env:, host:, groups:, except:, integration_types:)
-        if selection.any? { |dep| dep.integration == :bundler }
-          ShadowenvRuby.converge!(ruby_version: project.ruby_version, project_root: project.root)
-        end
+        converge_ruby!(project) if selection.any? { |dep| dep.integration == :bundler }
 
-        installer = @installer_factory.call(
-          lockfile,
-          Dev::Deps::Registry.host_integrations(
-            project_root: project.root,
-            store: Dev::Deps::LocalStore.new,
-            python_version: project.python_version,
-          ),
-        )
+        installer = @installer_factory.call(lockfile, integrations(project))
         installer.install(env:, host:, groups:, except:, integration_types:)
+        return if @inside_container
+
         # Installing a dependency includes its shipped skills: finish by linking
         # the locked gem set's skills project-scoped, and refresh the machine's
         # org learnings artifacts (both hooks are best-effort and never raise).
         # This is hygiene, not a bootstrap contract: workflows that must start
         # on fresh invariants (e.g. ai-flow's runner) run an explicit blocking
         # `dev learnings sync` step instead of relying on this side effect.
+        # Host-side only: the links land in the mounted project tree and must
+        # name the host's gem paths, and the learnings are the host's.
         @gem_skill_linker_factory.call(project.root).link_all
         @host_service.sync_learnings(project_root: project.root)
       end
 
       private
+
+      # Provision the Ruby the gems install against on this side.
+      #
+      # @param project [ProjectContext]
+      # @return [void]
+      sig { params(project: ProjectContext).void }
+      def converge_ruby!(project)
+        if @inside_container
+          @container_ruby.converge!(ruby_version: project.ruby_version, project_root: project.root)
+        else
+          ShadowenvRuby.converge!(ruby_version: project.ruby_version, project_root: project.root)
+        end
+      end
+
+      # The integrations that install on this side.
+      #
+      # @param project [ProjectContext]
+      # @return [Hash{Symbol => Dev::Deps::Integration}]
+      sig { params(project: ProjectContext).returns(T::Hash[Symbol, Dev::Deps::Integration]) }
+      def integrations(project)
+        store = Dev::Deps::LocalStore.new
+        if @inside_container
+          Dev::Deps::Registry.container_integrations(project_root: project.root, store:, python_version: project.python_version)
+        else
+          Dev::Deps::Registry.host_integrations(project_root: project.root, store:, python_version: project.python_version)
+        end
+      end
 
       # The exclusion when no --except is given: nothing on a host; the build
       # group inside a container, where the image bootstrap (`--group build`)

@@ -349,15 +349,22 @@ module Dev
     # `--with-<lib>-dir` for each available formula plus the brew prefix's include/lib/
     # pkgconfig, which is the documented fix for ruby-build on Linuxbrew. Returns the
     # env unchanged when brew isn't present.
+    #
+    # @param env [Hash] the base process env
+    # @param version [String] the Ruby being built
+    # @param prefix [String] where ruby-build installs it (its lib dir is rpathed
+    #   first); defaults to the rbenv versions prefix for host installs
+    # @return [Hash] the augmented env
     sig do
       params(
         env: T::Hash[String, T.nilable(String)],
         version: String,
+        prefix: String,
       ).returns(T::Hash[String, T.nilable(String)])
     end
-    def ruby_build_env(env, version)
-      prefix = homebrew_prefix
-      return env unless prefix
+    def ruby_build_env(env, version, prefix: rbenv_version_prefix(version))
+      brew_prefix = homebrew_prefix
+      return env unless brew_prefix
 
       configure_opts = RUBY_BUILD_BREW_DEPS.filter_map do |formula, flag|
         dir = brew_prefix_for(formula)
@@ -369,19 +376,19 @@ module Dev
       # the just-built miniruby dies with "libcrypt.so.2: cannot open shared object"
       # mid-build. Baking the brew lib dir into the rpath makes the built ruby find
       # its brew libs at runtime. Harmless on macOS (rpath to an already-found dir).
-      lib = File.join(prefix, "lib")
+      lib = File.join(brew_prefix, "lib")
 
       # rpath ORDER is load-bearing: brew's lib dir can carry its own Ruby, and
       # rubies differing only in teeny share a libruby soname (libruby.so.X.Y).
       # If brew's dir is searched first, the freshly built ruby silently loads —
       # and runs as — brew's version (e.g. a 4.0.5 build reporting 4.0.6). Rpath
       # the build's own lib dir ahead of brew's so its libruby always wins.
-      own_lib = File.join(rbenv_version_prefix(version), "lib")
+      own_lib = File.join(prefix, "lib")
 
       env.merge(
         "RUBY_CONFIGURE_OPTS" => [env["RUBY_CONFIGURE_OPTS"], *configure_opts].compact.reject(&:empty?).join(" "),
-        "PKG_CONFIG_PATH" => [File.join(prefix, "lib", "pkgconfig"), ENV["PKG_CONFIG_PATH"]].compact.reject(&:empty?).join(":"),
-        "CPPFLAGS" => [ENV["CPPFLAGS"], "-I#{File.join(prefix, "include")}"].compact.reject(&:empty?).join(" "),
+        "PKG_CONFIG_PATH" => [File.join(brew_prefix, "lib", "pkgconfig"), ENV["PKG_CONFIG_PATH"]].compact.reject(&:empty?).join(":"),
+        "CPPFLAGS" => [ENV["CPPFLAGS"], "-I#{File.join(brew_prefix, "include")}"].compact.reject(&:empty?).join(" "),
         "LDFLAGS" => [ENV["LDFLAGS"], "-L#{lib}", "-Wl,-rpath,#{own_lib}", "-Wl,-rpath,#{lib}"].compact.reject(&:empty?).join(" "),
       )
     end
@@ -407,8 +414,16 @@ module Dev
       "#{ruby_version}.0"
     end
 
-    sig { params(ruby_root: String, ruby_version: String).returns(String) }
-    def generate_ruby_lisp(ruby_root, ruby_version)
+    # The shadowenv lisp that activates one Ruby: clears any prior ruby/gem paths,
+    # then exports RUBY_ROOT/GEM_ROOT and a GEM_HOME.
+    #
+    # @param ruby_root [String] the installed Ruby's prefix
+    # @param ruby_version [String] the version it provides
+    # @param gem_home [String, nil] a fixed GEM_HOME; when nil the lisp derives one
+    #   from HOME at activation time (`~/.gem/<engine>/<version>`)
+    # @return [String] the lisp source
+    sig { params(ruby_root: String, ruby_version: String, gem_home: T.nilable(String)).returns(String) }
+    def generate_ruby_lisp(ruby_root, ruby_version, gem_home: nil)
       gem_root = File.join(ruby_root, "lib", "ruby", "gems", gem_api_version(ruby_version))
       gem_root = File.join(ruby_root, "lib", "ruby", ruby_version) unless File.directory?(gem_root)
       <<~LISP
@@ -436,13 +451,33 @@ module Dev
           (env/prepend-to-pathlist "GEM_PATH" gem-root)
           (env/prepend-to-pathlist "PATH" (path-concat gem-root "bin")))
 
-        (let ((gem-home
-              (path-concat (env/get "HOME") ".gem" (env/get "RUBY_ENGINE") (env/get "RUBY_VERSION"))))
-          (do
-            (env/set "GEM_HOME" gem-home)
-            (env/prepend-to-pathlist "GEM_PATH" gem-home)
-            (env/prepend-to-pathlist "PATH" (path-concat gem-home "bin"))))
+        #{gem_home_lisp(gem_home)}
       LISP
+    end
+
+    # The GEM_HOME forms of the ruby lisp: a fixed directory when one is given,
+    # otherwise HOME-derived at activation time.
+    #
+    # @param gem_home [String, nil] the fixed GEM_HOME, if any
+    # @return [String] the lisp forms
+    sig { params(gem_home: T.nilable(String)).returns(String) }
+    def gem_home_lisp(gem_home)
+      if gem_home
+        <<~LISP.chomp
+          (env/set "GEM_HOME" "#{gem_home}")
+          (env/prepend-to-pathlist "GEM_PATH" "#{gem_home}")
+          (env/prepend-to-pathlist "PATH" "#{File.join(gem_home, "bin")}")
+        LISP
+      else
+        <<~LISP.chomp
+          (let ((gem-home
+                (path-concat (env/get "HOME") ".gem" (env/get "RUBY_ENGINE") (env/get "RUBY_VERSION"))))
+            (do
+              (env/set "GEM_HOME" gem-home)
+              (env/prepend-to-pathlist "GEM_PATH" gem-home)
+              (env/prepend-to-pathlist "PATH" (path-concat gem-home "bin"))))
+        LISP
+      end
     end
 
     # Ensure the shadowenv activation hook is in the user's shell RC.

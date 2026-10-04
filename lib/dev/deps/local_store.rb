@@ -70,6 +70,26 @@ module Dev
         end
       end
 
+      sig { override.params(key: TreeKey, blk: T.proc.params(dir: Pathname).void).returns(Pathname) }
+      def build_tree(key, &blk)
+        published = tree(key)
+        return published if published
+
+        dir = tree_path(key)
+        FileUtils.rm_rf(dir)
+        dir.mkpath
+        blk.call(dir)
+        (dir / key.marker).write(key.version)
+        dir
+      end
+
+      sig { override.params(key: TreeKey).returns(Pathname) }
+      def workdir(key)
+        dir = tree_path(key)
+        dir.mkpath
+        dir
+      end
+
       sig { override.params(base: String, platform: T.nilable(String)).returns(T::Array[String]) }
       def tree_versions(base, platform: nil)
         dir = base_path(base, platform)

@@ -140,21 +140,23 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "inside the container, the install defaults to --except build: the image already carries that group" do
+  test "inside the container, the install defaults to --except build and provisions the container Ruby, not the host's" do
     Given "an inside command over a project locking a build-group brew dep and an app-group gem"
     root = Pathname.new(Dir.mktmpdir("install-deps-inside-"))
     lock(root, gem_dep, brew_build_dep)
     installer = typed_mock(Dev::Deps::Installer)
-    command = build_command(installer:, inside_container: true)
-    Dev::ShadowenvRuby.stubs(:converge!)
+    container_ruby = typed_mock(Dev::ContainerRuby)
+    command = build_command(installer:, inside_container: true, container_ruby:)
 
     When "running dev deps install with no flags"
     command.call(args: [], context: build_context(root))
 
-    Then "the build group is excluded by default"
+    Then "the build group is excluded by default and the store Ruby is converged"
     1 * installer.install(
       env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: nil, except: [:build], integration_types: nil
     )
+    1 * container_ruby.converge!(ruby_version: "4.0.1", project_root: root)
+    0 * Dev::ShadowenvRuby.converge!
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -165,16 +167,53 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     root = Pathname.new(Dir.mktmpdir("install-deps-inside-except-"))
     lock(root, gem_dep, brew_build_dep)
     installer = typed_mock(Dev::Deps::Installer)
-    command = build_command(installer:, inside_container: true)
-    Dev::ShadowenvRuby.expects(:converge!).never
+    container_ruby = typed_mock(Dev::ContainerRuby)
+    command = build_command(installer:, inside_container: true, container_ruby:)
 
     When "running dev deps install --except app"
     command.call(args: ["--except", "app"], context: build_context(root))
 
-    Then "the user's exclusion is the whole exclusion"
+    Then "the user's exclusion is the whole exclusion, and with no gems selected no Ruby is provisioned"
     1 * installer.install(
       env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: nil, except: [:app], integration_types: nil
     )
+    0 * container_ruby.converge!
+    0 * Dev::ShadowenvRuby.converge!
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "inside the container, the installer gets the container integration set and the host hygiene hooks stay off" do
+    Given "an inside command whose factory records its inputs"
+    root = Pathname.new(Dir.mktmpdir("install-deps-inside-wiring-"))
+    installer = typed_mock(Dev::Deps::Installer)
+    installer.stubs(:install)
+    container_ruby = typed_mock(Dev::ContainerRuby)
+    factory_inputs = []
+    linker = typed_mock(Dev::Deps::GemSkillLinker)
+    host_service = typed_mock(Dev::HostService)
+    command = Dev::Builtins::InstallDepsCommand.new(
+      installer_factory: ->(lockfile, integrations) {
+        factory_inputs << [lockfile, integrations]
+        installer
+      },
+      gem_skill_linker_factory: ->(_project_root) { linker },
+      host_service: host_service,
+      inside_container: true,
+      container_ruby: container_ruby,
+    )
+
+    When "running dev deps install"
+    command.call(args: [], context: build_context(root))
+
+    Then "bundler and brew install inside; cmake's host pipeline and the host-side hooks do not"
+    _, integrations = factory_inputs.fetch(0)
+    integrations.key?(:bundler)
+    integrations.key?(:brew)
+    !integrations.key?(:cmake)
+    0 * linker.link_all
+    0 * host_service.sync_learnings
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -235,7 +274,8 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
 
   private
 
-  def build_command(installer: typed_mock(Dev::Deps::Installer), inside_container: false)
+  def build_command(installer: typed_mock(Dev::Deps::Installer), inside_container: false,
+                    container_ruby: typed_mock(Dev::ContainerRuby))
     Dev::Builtins::InstallDepsCommand.new(
       installer_factory: ->(_lockfile, _integrations) { installer },
       gem_skill_linker_factory: ->(_project_root) {
@@ -245,6 +285,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
       },
       host_service: quiet_host_service,
       inside_container:,
+      container_ruby:,
     )
   end
 

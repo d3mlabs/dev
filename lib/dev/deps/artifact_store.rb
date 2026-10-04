@@ -32,10 +32,14 @@ module Dev
     # reclaimed by `dev cache gc`):
     #
     # - **trees** — version-keyed directories (the engine, a server depot,
-    #   a toolchain Ruby). Built in staging, published atomically, found by
-    #   their marker. First writer wins; a published tree is never replaced.
+    #   a toolchain Ruby). Built in staging and published atomically — or, for
+    #   a build that bakes its own path, built in place with the marker last
+    #   — and found by their marker. A published tree is never replaced.
     # - **blobs** — content-addressed files (downloaded archives), keyed by
     #   the path the Repository builds: "<integration>/<name>-<version>-<hash>.ext".
+    #
+    # Beside them, **workdirs**: platform-keyed directories mutated in place
+    # (a gem home) — the store's layout, but no publication and no marker.
     #
     # Implementations: LocalStore (a directory tree under the data root).
     # Remote backends (a CI cache, an OCI registry) are dev#27's subject;
@@ -82,6 +86,29 @@ module Dev
           .returns(Pathname)
       end
       def publish_tree(key, &blk); end
+
+      # Build a tree in place, for artifacts whose build bakes the destination
+      # path into the result (a compiled Ruby's rpath) and so cannot be built
+      # in staging and renamed. Yields the tree's final path, empty; the
+      # marker lands only after the block returns, so a failed build reads as
+      # unpublished and the next call starts clean. Single-writer by nature —
+      # a published tree is still never rebuilt.
+      #
+      # @param key [TreeKey]
+      # @yieldparam dir [Pathname] the tree's final path, created empty
+      # @return [Pathname] the published tree
+      sig { abstract.params(key: TreeKey, blk: T.proc.params(dir: Pathname).void).returns(Pathname) }
+      def build_tree(key, &blk); end
+
+      # A platform-keyed directory the caller mutates in place over time (a
+      # gem home, a venv): laid out like a tree, but created on first use and
+      # never published or found by marker. For state that must outlive a
+      # container's writable layer yet is not a versioned artifact.
+      #
+      # @param key [TreeKey]
+      # @return [Pathname] the directory, existing
+      sig { abstract.params(key: TreeKey).returns(Pathname) }
+      def workdir(key); end
 
       # Every version published under a base (for a platform), by name.
       #
