@@ -8,6 +8,7 @@ require "securerandom"
 require "yaml"
 
 require "dev/build_watcher"
+require "dev/container_context"
 require "dev/container_engine"
 require "dev/data_root"
 require "dev/deps/local_store"
@@ -503,19 +504,28 @@ module Dev
       ).returns(T::Array[String])
     end
     def docker_run_command(image_tag, project_root:, shell_cmd:, volumes: [], env: {})
-      env_flags = env.flat_map { |name, value| ["-e", "#{name}=#{value}"] }
-
       [
         *@engine.argv_prefix, "run", "--rm",
         *SIGPENDING_ULIMIT,
         *self.class.label_flags(image_tag, project_root),
         "-v", "#{project_root}:/project",
         *volume_flags(volumes),
-        *env_flags,
+        *env_flags(env),
         "-w", "/project",
         image_tag,
         "sh", "-c", shell_cmd,
       ]
+    end
+
+    # Env for a container dev creates: the configured entries plus the inside
+    # marker (see ContainerContext). Every container-creation site funnels
+    # through here, so no dev-created container can lack the marker.
+    #
+    # @param env [Hash{String => String}] run_env entries resolved on the host
+    # @return [Array<String>] docker `-e` flags
+    sig { params(env: T::Hash[String, String]).returns(T::Array[String]) }
+    def env_flags(env)
+      ContainerContext::MARKER_ENV.merge(env).flat_map { |name, value| ["-e", "#{name}=#{value}"] }
     end
 
     # "host:container" volume specs -> docker `-v` flags, expanding ~ in the host
@@ -821,8 +831,8 @@ module Dev
     end
 
     # Create the detached, idle service container: the project at /project, any
-    # extra volumes (e.g. the engine), the label contract, and `sleep infinity`
-    # so it stays up for `docker exec`.
+    # extra volumes (e.g. the engine), the label contract, the inside marker
+    # (inherited by every `docker exec`), and `sleep infinity` so it stays up.
     sig { params(name: String, image_tag: String, project_root: Pathname, volumes: T::Array[String]).void }
     def create_service_container(name, image_tag, project_root:, volumes: [])
       args = [
@@ -830,6 +840,7 @@ module Dev
         *self.class.label_flags(image_tag, project_root),
         "-v", "#{project_root}:/project",
         *volume_flags(volumes),
+        *env_flags({}),
         "-w", "/project",
         image_tag,
         "sleep", "infinity",

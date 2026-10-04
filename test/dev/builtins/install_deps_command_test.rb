@@ -140,6 +140,46 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "inside the container, the install defaults to --except build: the image already carries that group" do
+    Given "an inside command over a project locking a build-group brew dep and an app-group gem"
+    root = Pathname.new(Dir.mktmpdir("install-deps-inside-"))
+    lock(root, gem_dep, brew_build_dep)
+    installer = typed_mock(Dev::Deps::Installer)
+    command = build_command(installer:, inside_container: true)
+    Dev::ShadowenvRuby.stubs(:converge!)
+
+    When "running dev deps install with no flags"
+    command.call(args: [], context: build_context(root))
+
+    Then "the build group is excluded by default"
+    1 * installer.install(
+      env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: nil, except: [:build], integration_types: nil
+    )
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "inside the container, an explicit --except replaces the build default rather than adding to it" do
+    Given "an inside command"
+    root = Pathname.new(Dir.mktmpdir("install-deps-inside-except-"))
+    lock(root, gem_dep, brew_build_dep)
+    installer = typed_mock(Dev::Deps::Installer)
+    command = build_command(installer:, inside_container: true)
+    Dev::ShadowenvRuby.expects(:converge!).never
+
+    When "running dev deps install --except app"
+    command.call(args: ["--except", "app"], context: build_context(root))
+
+    Then "the user's exclusion is the whole exclusion"
+    1 * installer.install(
+      env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: nil, except: [:app], integration_types: nil
+    )
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
   test "call builds the installer over the project's lockfile and host integrations" do
     Given "a factory that records its inputs"
     root = Pathname.new(Dir.mktmpdir("install-deps-wiring-"))
@@ -195,7 +235,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
 
   private
 
-  def build_command(installer: typed_mock(Dev::Deps::Installer))
+  def build_command(installer: typed_mock(Dev::Deps::Installer), inside_container: false)
     Dev::Builtins::InstallDepsCommand.new(
       installer_factory: ->(_lockfile, _integrations) { installer },
       gem_skill_linker_factory: ->(_project_root) {
@@ -204,6 +244,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
         linker
       },
       host_service: quiet_host_service,
+      inside_container:,
     )
   end
 

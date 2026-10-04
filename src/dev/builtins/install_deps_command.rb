@@ -4,6 +4,7 @@
 require "pathname"
 require "dev/cli/flag_parser"
 require "dev/command"
+require "dev/container_context"
 require "dev/deps"
 require "dev/deps/local_store"
 require "dev/deps/gem_skill_linker"
@@ -22,7 +23,9 @@ module Dev
     # (not the build container) so their artifacts can be volume-mounted in.
     # `--group build --integration brew` is how a container image bootstrap
     # installs its toolchain from the lock (bin/docker-install-build-deps.sh)
-    # without pulling the host-installed artifacts the same group pins.
+    # without pulling the host-installed artifacts the same group pins; inside
+    # the resulting container the install defaults to `--except build` for the
+    # same reason.
     class InstallDepsCommand < BuiltinCommand
       extend T::Sig
 
@@ -41,12 +44,16 @@ module Dev
         T.proc.params(project_root: Pathname).returns(Dev::Deps::GemSkillLinker)
       end
 
+      # @param inside_container [Boolean] whether this dev runs inside a
+      #   dev-managed container (ContainerContext). Inside, the build group is
+      #   excluded by default: the image bootstrap already installed it.
       sig do
         params(
           installer_factory: InstallerFactory,
           gem_skill_linker_factory: GemSkillLinkerFactory,
           host_service: Dev::HostService,
           flag_parser: Cli::FlagParser,
+          inside_container: T::Boolean,
         ).void
       end
       def initialize(
@@ -55,13 +62,15 @@ module Dev
         },
         gem_skill_linker_factory: ->(project_root) { Dev::Deps::GemSkillLinker.new(project_root:) },
         host_service: Dev::HostService.new,
-        flag_parser: Cli::FlagParser.new
+        flag_parser: Cli::FlagParser.new,
+        inside_container: Dev::ContainerContext.inside?
       )
         super()
         @installer_factory = installer_factory
         @gem_skill_linker_factory = gem_skill_linker_factory
         @host_service = host_service
         @flag_parser = flag_parser
+        @inside_container = inside_container
       end
 
       sig { override.returns(String) }
@@ -90,7 +99,7 @@ module Dev
         env = Dev::Deps.detect_env
         host = Dev::Deps.detect_host
         groups = symbol_flags(args, "--group")
-        except = symbol_flags(args, "--except") || []
+        except = symbol_flags(args, "--except") || default_except
         integration_types = symbol_flags(args, "--integration")
         lockfile = Dev::Deps::Lockfile.new(dir: project.root)
 
@@ -125,6 +134,17 @@ module Dev
       end
 
       private
+
+      # The exclusion when no --except is given: nothing on a host; the build
+      # group inside a container, where the image bootstrap (`--group build`)
+      # already installed it and a second install would fight the image's
+      # read-only layers. An explicit --except replaces this, never adds to it.
+      #
+      # @return [Array<Symbol>]
+      sig { returns(T::Array[Symbol]) }
+      def default_except
+        @inside_container ? [:build] : []
+      end
 
       # The symbols named by a repeatable flag, or nil when the flag never
       # appears (nil is the Installer's "no narrowing on this axis").

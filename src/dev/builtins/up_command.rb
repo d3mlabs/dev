@@ -4,6 +4,7 @@
 require "dev/command"
 require "dev/credentials"
 require "dev/builtins/service_up"
+require "dev/container_context"
 require "dev/host_service"
 
 module Dev
@@ -34,18 +35,25 @@ module Dev
       #   dev.yml: the build container (an environment service,
       #   `build.container`) today; application services later. What this
       #   project provides to others is never in this list.
+      # @param inside_container [Boolean] whether this dev runs inside a
+      #   dev-managed container (ContainerContext). Inside, `up` is the deps
+      #   install alone: the host layer, credentials and service bring-up
+      #   belong to the host dev that started the container.
       sig do
         params(
           install_deps_command: InstallDepsCommand,
           host_service: Dev::HostService,
           service_dependencies: T::Array[ServiceUp],
+          inside_container: T::Boolean,
         ).void
       end
-      def initialize(install_deps_command:, host_service: Dev::HostService.new, service_dependencies: [])
+      def initialize(install_deps_command:, host_service: Dev::HostService.new, service_dependencies: [],
+                     inside_container: Dev::ContainerContext.inside?)
         super()
         @install_deps_command = install_deps_command
         @host_service = host_service
         @service_dependencies = service_dependencies
+        @inside_container = inside_container
       end
 
       sig { override.returns(String) }
@@ -65,6 +73,8 @@ module Dev
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
+        return call_inside(args:, context:) if @inside_container
+
         # The host layer converges before project provisioning (self-update
         # + org Brewfile): project installs may lean on host tools (gh,
         # rbenv). Warn-only — never blocks the project. Shipped skills link
@@ -94,6 +104,24 @@ module Dev
       end
 
       private
+
+      # The inside shape of `up`: the deps install and nothing else. There is
+      # no host layer to converge (the container's dev is provisioned by the
+      # host's and cannot self-update), no credentials to prompt for (the host
+      # resolves and injects them), and no service to bring up (we are in it).
+      #
+      # @param args [Array<String>] the user's args, handed to the install body
+      # @param context [ExecutionContext]
+      # @return [void]
+      sig { params(args: T::Array[String], context: ExecutionContext).void }
+      def call_inside(args:, context:)
+        if context.project.nil?
+          puts "dev: inside a container with no dev.yml — nothing to provision."
+          return
+        end
+
+        @install_deps_command.call(args:, context:)
+      end
 
       # `dev up` is the provisioning command: after it succeeds, every other
       # command should work unattended. Resolving docker build args here

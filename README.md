@@ -589,6 +589,16 @@ Two intents sit on top, and they work on the project's **service dependencies** 
 
 Every container dev starts — the persistent service and the one-shot `--rm` run alike — carries the **label contract**: `dev.managed=true`, `dev.project_root` (the checkout's real path), `dev.project`, `dev.workspace` (the checkout id the name also embeds), `dev.image`. Set operations go by label, never by name: `container down|reset` and the stale reap filter on `dev.workspace`, `dev engine down|status` read `dev.managed` / `dev.project_root` to tell dev's containers (stopped unasked, named by checkout) from yours (listed, asked about). A container without the labels is yours as far as dev is concerned.
 
+### Inside the container
+
+Every container dev creates also carries **`DEV_INSIDE_CONTAINER=1`** in its environment (set at creation, so every `docker exec` inherits it). It is the one marker a dev process reads to know it is inside a dev-managed container — declared by the creator, never inferred from cgroups or `/.dockerenv`, so a container somebody else started is not dev-managed unless they said so. Inside, three things change:
+
+- a containerized command **runs directly** — `sh -c` at `/project`, the same shape the host's `docker exec` gave it — with no further container to reach for, no host toolchain provisioning and no shadowenv wrapper (the container's toolchain is the image's);
+- **`dev up` is the deps install alone**: no host layer to converge (the inside dev is provisioned by the host's and cannot self-update), no credentials to prompt for (the host resolves and injects them), no service to bring up (you are in it);
+- **`dev deps install` defaults to `--except build`**: the image bootstrap already installed that group, and a second install would fight the image's read-only layers. An explicit `--except` replaces the default rather than adding to it.
+
+The host dev owns the container's lifecycle; the dev inside owns what runs there. The marker is what keeps the two from stepping on each other.
+
 What survives what — the warmth table:
 
 | After… | Image | Container (writable layer) | Engine |
