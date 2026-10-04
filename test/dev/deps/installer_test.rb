@@ -374,7 +374,32 @@ class Dev::Deps::InstallerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "select applies env, host, groups and except as one pure filter" do
+  test "install with integration_types: dispatches only deps of the named integrations" do
+    Given "a build group mixing an image toolchain (brew) with a host-installed artifact (gh)"
+    dir = Dir.mktmpdir("installer-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
+    lockfile.lock([
+      Dev::Deps::Dependency.new(name: "wwise-cli", integration: :brew, group: :build,
+        version: "0.2.3", hash: nil, metadata: {}),
+      Dev::Deps::Dependency.new(name: "UnrealEngine", integration: :gh, group: :build,
+        version: "5.6.1", hash: nil, metadata: {}),
+    ])
+    brew = RecordingIntegration.new
+    gh = RecordingIntegration.new
+    installer = Dev::Deps::Installer.new(lockfile:, integrations: { brew:, gh: })
+
+    When "installing the build group through brew only"
+    installer.install(groups: [:build], integration_types: [:brew])
+
+    Then "the toolchain installed and the engine stayed out"
+    brew.installed_deps.map(&:name) == ["wwise-cli"]
+    gh.installed_deps.empty?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "select applies env, host, groups, except and integration types as one pure filter" do
     Given "deps spanning groups, hosts and envs"
     deps = [
       Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
@@ -390,15 +415,17 @@ class Dev::Deps::InstallerTest < Minitest::Test
     ]
 
     Expect "each selection names exactly the deps it should"
-    Dev::Deps::Installer.select(deps, env:, host:, groups:, except:).map(&:name) == names
+    Dev::Deps::Installer.select(deps, env:, host:, groups:, except:, integration_types:).map(&:name) == names
 
     Where
-    env   | host    | groups           | except   | names
-    nil   | nil     | nil              | []       | ["cmake", "xcodes", "powershell", "rake", "rspock"]
-    "dev" | "linux" | nil              | []       | ["cmake", "rake", "rspock"]
-    "ci"  | "linux" | [:build]         | []       | ["cmake", "powershell"]
-    nil   | nil     | nil              | [:build] | ["rake", "rspock"]
-    nil   | nil     | [:app, :test]    | [:test]  | ["rake"]
+    env   | host    | groups        | except   | integration_types | names
+    nil   | nil     | nil           | []       | nil               | ["cmake", "xcodes", "powershell", "rake", "rspock"]
+    "dev" | "linux" | nil           | []       | nil               | ["cmake", "rake", "rspock"]
+    "ci"  | "linux" | [:build]      | []       | nil               | ["cmake", "powershell"]
+    nil   | nil     | nil           | [:build] | nil               | ["rake", "rspock"]
+    nil   | nil     | [:app, :test] | [:test]  | nil               | ["rake"]
+    nil   | nil     | nil           | []       | [:bundler]        | ["rake", "rspock"]
+    "ci"  | "linux" | [:build]      | []       | [:brew]           | ["cmake", "powershell"]
   end
 
   test "install skips integration types with no registered integration" do

@@ -15,13 +15,14 @@ require "dev/shadowenv_ruby"
 
 module Dev
   module Builtins
-    # `dev deps install [--group <g>]... [--except <g>]...`: install what the
-    # lockfiles pin for this machine, optionally narrowed to dependency
-    # groups — shared with the `up` builtin, which composes this command.
-    # Host integrations install on the host (not the build container) so
-    # their artifacts can be volume-mounted in. `--group build` is how a
-    # container image bootstrap installs its toolchain from the lock
-    # (bin/docker-install-build-deps.sh).
+    # `dev deps install [--group <g>]... [--except <g>]... [--integration <i>]...`:
+    # install what the lockfiles pin for this machine, optionally narrowed to
+    # dependency groups and integrations — shared with the `up` builtin,
+    # which composes this command. Host integrations install on the host
+    # (not the build container) so their artifacts can be volume-mounted in.
+    # `--group build --integration brew` is how a container image bootstrap
+    # installs its toolchain from the lock (bin/docker-install-build-deps.sh)
+    # without pulling the host-installed artifacts the same group pins.
     class InstallDepsCommand < BuiltinCommand
       extend T::Sig
 
@@ -64,7 +65,7 @@ module Dev
       end
 
       sig { override.returns(String) }
-      def desc = "Install locked dependencies on this machine (--group/--except narrow to dependency groups)"
+      def desc = "Install locked dependencies on this machine (--group/--except/--integration narrow the set)"
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
@@ -82,14 +83,15 @@ module Dev
       # Install-time has no loaded dependencies.rb, so config-level inputs
       # default: install everything the lockfiles pin, filtered to the
       # detected env and host OS so e.g. a Mac never downloads the Linux
-      # engine, then to the groups named on the command line.
+      # engine, then to the groups and integrations named on the command line.
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
         project = context.project!
         env = Dev::Deps.detect_env
         host = Dev::Deps.detect_host
-        groups = group_flags(args, "--group")
-        except = group_flags(args, "--except") || []
+        groups = symbol_flags(args, "--group")
+        except = symbol_flags(args, "--except") || []
+        integration_types = symbol_flags(args, "--integration")
         lockfile = Dev::Deps::Lockfile.new(dir: project.root)
 
         # Headless boxes (CI, runner services) reach dev deps install before any
@@ -98,7 +100,7 @@ module Dev
         # converge!, not ensure!: a converge verb re-checks the installed
         # ruby's health behind a current lisp (#204). A selection that locks no
         # gems (e.g. --group build in an image bootstrap) needs no project Ruby.
-        selection = Dev::Deps::Installer.select(lockfile.read, env:, host:, groups:, except:)
+        selection = Dev::Deps::Installer.select(lockfile.read, env:, host:, groups:, except:, integration_types:)
         if selection.any? { |dep| dep.integration == :bundler }
           ShadowenvRuby.converge!(ruby_version: project.ruby_version, project_root: project.root)
         end
@@ -111,7 +113,7 @@ module Dev
             python_version: project.python_version,
           ),
         )
-        installer.install(env:, host:, groups:, except:)
+        installer.install(env:, host:, groups:, except:, integration_types:)
         # Installing a dependency includes its shipped skills: finish by linking
         # the locked gem set's skills project-scoped, and refresh the machine's
         # org learnings artifacts (both hooks are best-effort and never raise).
@@ -124,14 +126,14 @@ module Dev
 
       private
 
-      # The group symbols named by a repeatable flag, or nil when the flag
-      # never appears (nil is the Installer's "every group").
+      # The symbols named by a repeatable flag, or nil when the flag never
+      # appears (nil is the Installer's "no narrowing on this axis").
       #
       # @param args [Array<String>] the command's argv
-      # @param flag [String] "--group" or "--except"
+      # @param flag [String] "--group", "--except" or "--integration"
       # @return [Array<Symbol>, nil]
       sig { params(args: T::Array[String], flag: String).returns(T.nilable(T::Array[Symbol])) }
-      def group_flags(args, flag)
+      def symbol_flags(args, flag)
         names = @flag_parser.values(args, flag)
         return nil if names.empty?
 

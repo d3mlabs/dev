@@ -28,7 +28,8 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     lock(root, gem_dep, brew_build_dep)
     installer = typed_mock(Dev::Deps::Installer)
     installer.expects(:install)
-      .with(env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: nil, except: []).once
+      .with(env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: nil, except: [], integration_types: nil)
+      .once
     linker = typed_mock(Dev::Deps::GemSkillLinker)
     linker.expects(:link_all).once
     host_service = typed_mock(Dev::HostService)
@@ -70,7 +71,9 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     command.call(args: ["--group", "build"], context: build_context(root))
 
     Then "the installer received the narrowed selection"
-    1 * installer.install(env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: [:build], except: [])
+    1 * installer.install(
+      env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: [:build], except: [], integration_types: nil
+    )
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -88,7 +91,30 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     command.call(args: ["--group=app"], context: build_context(root))
 
     Then "the pinned Ruby converged (bundler installs against it) and the app group installed"
-    1 * installer.install(env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: [:app], except: [])
+    1 * installer.install(
+      env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: [:app], except: [], integration_types: nil
+    )
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "--integration keeps only the named integrations — the image bootstrap's brew-only build install" do
+    Given "a build group mixing a brew toolchain with a host-installed gh artifact"
+    root = Pathname.new(Dir.mktmpdir("install-deps-integration-"))
+    lock(root, gem_dep, brew_build_dep, gh_build_dep)
+    installer = typed_mock(Dev::Deps::Installer)
+    command = build_command(installer:)
+    Dev::ShadowenvRuby.expects(:converge!).never
+
+    When "running dev deps install --group build --integration brew"
+    command.call(args: ["--group", "build", "--integration", "brew"], context: build_context(root))
+
+    Then "the installer received both narrowings"
+    1 * installer.install(
+      env: Dev::Deps.detect_env, host: Dev::Deps.detect_host,
+      groups: [:build], except: [], integration_types: [:brew]
+    )
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -106,7 +132,9 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     command.call(args: ["--except", "app"], context: build_context(root))
 
     Then "the installer received the exclusion; the gem-less selection provisioned no Ruby"
-    1 * installer.install(env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: nil, except: [:app])
+    1 * installer.install(
+      env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: nil, except: [:app], integration_types: nil
+    )
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -193,6 +221,11 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
   def brew_build_dep
     Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
       version: "4.4.3", hash: nil, metadata: {})
+  end
+
+  def gh_build_dep
+    Dev::Deps::Dependency.new(name: "UnrealEngine", integration: :gh, group: :build,
+      version: "5.6.1-css-83", hash: nil, metadata: { "repo" => "satisfactorymodding/UnrealEngine" })
   end
 
   def quiet_host_service

@@ -65,6 +65,8 @@ module Dev
       # @param host [String, nil] host OS name for filtering (nil = no filtering)
       # @param groups [Array<Symbol>, nil] install only these groups (nil = all)
       # @param except [Array<Symbol>] never install these groups
+      # @param integration_types [Array<Symbol>, nil] install only deps of
+      #   these integrations, by lock key (e.g. [:brew]); nil = all
       # @return [void]
       # @raise [InstallFailedError] if any integration reported failures; every
       #   integration was still attempted (failure isolation)
@@ -74,10 +76,11 @@ module Dev
           host: T.nilable(String),
           groups: T.nilable(T::Array[Symbol]),
           except: T::Array[Symbol],
+          integration_types: T.nilable(T::Array[Symbol]),
         ).void
       end
-      def install(env: nil, host: nil, groups: nil, except: [])
-        all_deps = self.class.select(@lockfile.read, env:, host:, groups:, except:)
+      def install(env: nil, host: nil, groups: nil, except: [], integration_types: nil)
+        all_deps = self.class.select(@lockfile.read, env:, host:, groups:, except:, integration_types:)
 
         build_deps, other_deps = all_deps.partition { |d| d.group == :build }
 
@@ -96,13 +99,17 @@ module Dev
         # env/host: deps without the metadata always pass; deps with it pass
         # only on a match (the Mac editor never downloads on Linux CI, the
         # Linux engine never downloads on Macs). groups: nil means every
-        # group. except: wins over groups.
+        # group. except: wins over groups. integration_types: keeps only deps
+        # of the named integrations (a group can mix an image toolchain with
+        # a host-installed artifact; an image bootstrap wants the former).
         #
         # @param deps [Array<Dependency>] every locked dep
         # @param env [String, nil] environment name ("dev" / "ci")
         # @param host [String, nil] detected host OS ("darwin" / "linux")
         # @param groups [Array<Symbol>, nil] groups to keep (nil = all)
         # @param except [Array<Symbol>] groups to drop
+        # @param integration_types [Array<Symbol>, nil] integrations to keep,
+        #   by lock key (nil = all)
         # @return [Array<Dependency>] in lockfile order
         sig do
           params(
@@ -111,14 +118,16 @@ module Dev
             host: T.nilable(String),
             groups: T.nilable(T::Array[Symbol]),
             except: T::Array[Symbol],
+            integration_types: T.nilable(T::Array[Symbol]),
           ).returns(T::Array[Dependency])
         end
-        def select(deps, env: nil, host: nil, groups: nil, except: [])
+        def select(deps, env: nil, host: nil, groups: nil, except: [], integration_types: nil)
           deps.select do |dep|
             matches_scope?(dep.metadata["env"], env) &&
               matches_scope?(dep.metadata["host"], host) &&
               (groups.nil? || groups.include?(dep.group)) &&
-              !except.include?(dep.group)
+              !except.include?(dep.group) &&
+              (integration_types.nil? || integration_types.include?(dep.integration))
           end
         end
 
