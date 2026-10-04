@@ -268,7 +268,10 @@ class Dev::Deps::LocalStoreTest < Minitest::Test
 
     When "the build fails"
     begin
-      store.build_tree(tree_key) { |dir| (dir / "partial").write("z"); raise "compiler exploded" }
+      store.build_tree(tree_key) do |dir|
+        (dir / "partial").write("z")
+        raise "compiler exploded"
+      end
     rescue RuntimeError
       nil
     end
