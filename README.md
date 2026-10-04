@@ -634,8 +634,8 @@ jobs:
       image: ${{ needs.provide-image.outputs.image }}   # a prior job's `dev container up` + `dev container tag`
     steps:
       - uses: actions/checkout@v4
-      - uses: d3mlabs/dev/.github/actions/hosted-up@main
-      - run: dev build
+      - uses: d3mlabs/dev/.github/actions/hosted-up@main   # the job's `dev up`: install dev, declare the container, restore the store, run it
+      - run: dev build                                     # then the project's commands, as on any host after `dev up`
 ```
 
 The action puts Linuxbrew back on the job's PATH (Actions overrides a container's), installs **dev at the latest release** from the tap (there is no host version to match, so a hosted job takes a fresh workstation's shape), declares **`DEV_INSIDE_CONTAINER=1`** and the data root, restores the **artifact store from the Actions cache** (`actions/cache` on the data root, keyed `dev-store-<os>-<arch>-<hash of deps.lock + build-deps.lock>` with a prefix fallback — the store is version-keyed and content-addressed, so a stale restore is still correct and `dev up` installs the difference), runs **`dev up`** (inside: the container-side install, `--except build`), and saves the store back at the job's end. `data-root` and `up-args` are inputs. The image carries no dev ([dev is live infrastructure](#dev-is-live-infrastructure)): the Linuxbrew and tap the bootstrap leaves behind are what the install uses.
