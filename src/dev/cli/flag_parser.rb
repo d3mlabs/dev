@@ -22,6 +22,24 @@ module Dev
         inline = args.find { |a| a.start_with?("#{flag}=") }
         inline&.split("=", 2)&.fetch(1)
       end
+
+      # Every value of a repeatable flag, in argv order, mixing both forms
+      # (`--group build --group=test` → ["build", "test"]). A trailing
+      # valueless occurrence contributes nothing.
+      #
+      # @param args [Array<String>]
+      # @param flag [String] the flag including its dashes, e.g. "--group"
+      # @return [Array<String>] empty when the flag never appears
+      sig { params(args: T::Array[String], flag: String).returns(T::Array[String]) }
+      def values(args, flag)
+        args.each_with_index.filter_map do |arg, idx|
+          if arg == flag
+            args[idx + 1]
+          elsif arg.start_with?("#{flag}=")
+            arg.split("=", 2).fetch(1)
+          end
+        end
+      end
     end
   end
 end
