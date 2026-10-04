@@ -16,6 +16,15 @@ transform!(RSpock::AST::Transformation)
 class Dev::Deps::BrewIntegrationTest < Minitest::Test
   include SorbetHelper
 
+  # The argv prefix every brew write carries: brew's download cache in the
+  # store rooted at `dir`.
+  #
+  # @param dir [String] the test's data root
+  # @return [Array<String>]
+  def cache_env(dir)
+    ["env", "HOMEBREW_CACHE=#{dir}/tool-caches/brew"]
+  end
+
   test "install_all calls brew install for each formula dep" do
     Given "a brew dependency"
     dir = Dir.mktmpdir("dev-brew-int-test-")
@@ -52,7 +61,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     ]
     integration.stubs(:brew_installed?).returns(false)
     integration.stubs(:verify_installed!)
-    Open3.expects(:capture3).with("brew", "install", "cmake").returns(["", "", stub(success?: true)])
+    Open3.expects(:capture3).with(*cache_env(dir), "brew", "install", "cmake").returns(["", "", stub(success?: true)])
 
     When "installing all"
     integration.install_all(deps)
@@ -76,7 +85,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     ]
     integration.stubs(:brew_installed?).returns(false)
     integration.stubs(:verify_installed!)
-    Open3.expects(:capture3).with("brew", "install", "llvm@18").returns(["", "", stub(success?: true)])
+    Open3.expects(:capture3).with(*cache_env(dir), "brew", "install", "llvm@18").returns(["", "", stub(success?: true)])
 
     When "installing all"
     integration.install_all(deps)
@@ -103,7 +112,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     integration.stubs(:verify_installed!)
     failed_status = stub(success?: false)
     Open3.stubs(:capture3)
-         .with("brew", "install", "bad_formula@1")
+         .with(*cache_env(dir), "brew", "install", "bad_formula@1")
          .returns(["", "Error: No available formula", failed_status])
 
     When "installing all"
@@ -132,10 +141,10 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     integration.stubs(:brew_installed?).returns(false)
     integration.stubs(:verify_installed!)
     Open3.stubs(:capture3)
-         .with("brew", "install", "bad_formula")
+         .with(*cache_env(dir), "brew", "install", "bad_formula")
          .returns(["", "Error: No available formula", stub(success?: false)])
     Open3.expects(:capture3)
-         .with("brew", "install", "good_formula")
+         .with(*cache_env(dir), "brew", "install", "good_formula")
          .returns(["", "", stub(success?: true)])
 
     When "installing all and capturing the aggregate error"
@@ -203,7 +212,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     dep = Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
       version: "4.4.3", hash: nil, metadata: {})
     integration.stubs(:brew_installed?).returns(false)
-    Open3.stubs(:capture3).with("brew", "install", "cmake").returns(["", "", stub(success?: true)])
+    Open3.stubs(:capture3).with(*cache_env(dir), "brew", "install", "cmake").returns(["", "", stub(success?: true)])
     Open3.stubs(:capture3).with("brew", "list", "--versions", "cmake").returns(["cmake 4.5.0\n", "", stub(success?: true)])
 
     When "installing"
@@ -239,7 +248,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
 
   # --- A: pinned taps for image builds ----------------------------------------
 
-  PINNED_ENV = ["env", "HOMEBREW_NO_INSTALL_FROM_API=1", "HOMEBREW_NO_AUTO_UPDATE=1"].freeze
+  PINNED_ENV = ["HOMEBREW_NO_INSTALL_FROM_API=1", "HOMEBREW_NO_AUTO_UPDATE=1"].freeze
 
   test "install_all with pinned taps checks each tap out at its locked commit, then installs from the taps, not the API" do
     Given "a core formula and a tap formula, each locked with its tap commit"
@@ -264,8 +273,9 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     Then "both taps are pinned and brew is told to read them, not the API"
     1 * pinner.pin!("homebrew/core", "3c67e3be")
     1 * pinner.pin!("d3mlabs/d3mlabs", "e5810c4f")
-    1 * Open3.capture3(*PINNED_ENV, "brew", "install", "cmake") >> ["", "", stub(success?: true)]
-    1 * Open3.capture3(*PINNED_ENV, "brew", "install", "d3mlabs/d3mlabs/wwise-cli") >> ["", "", stub(success?: true)]
+    1 * Open3.capture3(*cache_env(dir), *PINNED_ENV, "brew", "install", "cmake") >> ["", "", stub(success?: true)]
+    1 * Open3.capture3(*cache_env(dir), *PINNED_ENV, "brew", "install", "d3mlabs/d3mlabs/wwise-cli") >>
+      ["", "", stub(success?: true)]
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -452,7 +462,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     ]
     integration.stubs(:brew_installed?).returns(false)
     integration.stubs(:verify_installed!)
-    Open3.expects(:capture3).with("brew", "install", "cmake").returns(["", "", stub(success?: true)])
+    Open3.expects(:capture3).with(*cache_env(dir), "brew", "install", "cmake").returns(["", "", stub(success?: true)])
 
     When "installing all"
     integration.install_all(deps)
@@ -483,7 +493,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     integration.stubs(:brew_installed?).returns(false)
     integration.stubs(:verify_installed!)
     Open3.expects(:capture3)
-         .with("sudo", "-n", "-u", owner, "brew", "install", "cmake")
+         .with("sudo", "-n", "-u", owner, *cache_env(dir), "brew", "install", "cmake")
          .returns(["", "", stub(success?: true)])
 
     When "installing all"
@@ -516,7 +526,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     integration.stubs(:brew_installed?).returns(false)
     integration.stubs(:verify_installed!)
     Open3.stubs(:capture3)
-         .with("sudo", "-n", "-u", owner, "brew", "install", "cmake")
+         .with("sudo", "-n", "-u", owner, *cache_env(dir), "brew", "install", "cmake")
          .returns(["", "sudo: a password is required\n", stub(success?: false)])
 
     When "installing all and capturing the aggregate error"
