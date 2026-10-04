@@ -549,17 +549,16 @@ The image tag is `content-<hash>`, where the hash covers the `Dockerfile`, `.doc
 
 A large base dependency (e.g. a game engine) is too big to stream into a `docker build` (BuildKit's build-context transport stalls under emulation). Instead, dev builds a cheap engine-free **base** image from the `Dockerfile`, then runs the project's `prewarm:` command in a container with the dependency volume-mounted and `build_secrets` file-mounted at `/run/secrets/<id>`, and commits the result as the content tag. Secrets are bind-mounted (never `-e`), so `docker commit` can't bake them into a layer.
 
-### install_dir content-addressing (version-keyed)
+### The artifact store (version-keyed trees, content-addressed blobs)
 
-Multi-GB host deps (`gh` releases, `steam` apps) bypass the download cache and install under their declared `install_dir`, **keyed by version**:
+Everything dev materializes under the data root goes through one seam, the **artifact store** (`Dev::Deps::ArtifactStore`; `LocalStore` is the on-disk implementation). It holds two kinds of thing:
 
-```
-<install_dir>/<version>/…        # immutable; one dir per locked version
-```
+- **Trees** — multi-GB host deps (`gh` releases, `steam` apps) install under their declared `install_dir`, **keyed by version**: `<install_dir>/<version>/…`, immutable, one dir per locked version, each stamped with a marker file. A tree key may also carry a platform (`<install_dir>/<platform>/<version>/…`) for artifacts whose contents differ per OS/arch.
+- **Blobs** — content-addressed downloads (`cmake` tarballs, `ficsit` mod archives) at `<data root>/cache/<sha256>`.
 
-Installs are **atomic and concurrency-safe**: dev builds into a unique same-filesystem staging dir, stamps a marker, then publishes via a single `rename`. First writer wins — a second concurrent installer of the same version sees the published dir and discards its staging, and dev never `rm_rf`s a live directory a running job may have mounted. Switching branches (different locked versions) never reinstalls, and different-version builds can run in parallel.
+Tree publication is **atomic and concurrency-safe**: the integration builds into a unique same-filesystem staging dir the store hands it, and the store publishes via a single `rename`. First writer wins — a second concurrent installer of the same version sees the published dir and discards its staging, and dev never `rm_rf`s a live directory a running job may have mounted. Switching branches (different locked versions) never reinstalls, and different-version builds can run in parallel.
 
-dev resolves the configured volume/build-context onto the right versioned subdir from the lockfile, so a `dev.yml` volume like `~/.dev/engines/unreal-engine-css:/ue` is mounted from `…/unreal-engine-css/<locked-version>` automatically.
+Integrations, `dev deps path`, the build container and `dev cache gc` all resolve paths through the store rather than reconstructing the layout, so a `dev.yml` volume like `~/.dev/engines/unreal-engine-css:/ue` is mounted from the store's tree for the locked version automatically.
 
 ### Hung-build watcher
 
@@ -567,9 +566,9 @@ The prewarm runs under a watcher that detects the intermittent emulated-compiler
 
 ### `dev cache gc`
 
-dev owns the cache layout, so it owns reclamation. `dev cache gc [--keep N]` applies **size-tiered, safe** retention:
+dev owns the artifact store's layout, so it owns reclamation. `dev cache gc [--keep N]` applies **size-tiered, safe** retention:
 
-- **install_dir versions** (multi-GB) get a tight default keep. Locked versions (current lockfiles) and in-use versions (mounted by a running container) are **never** evicted; orphan staging dirs from a killed install are always reclaimed.
+- **Store trees** (multi-GB install_dir versions) get a tight default keep. Locked versions (current lockfiles) and in-use versions (mounted by a running container) are **never** evicted; orphan staging dirs from a killed install are always reclaimed.
 - **docker content tags** for the project image are pruned down to the live tag (never one backing a running container).
 
 A workflow/cron only *schedules* `dev cache gc`; it never reaches into the layout itself.

@@ -264,8 +264,8 @@ that candidate).
 Who guarantees the bytes you install are the bytes that were resolved:
 
 - **dev-enforced** — the repository reports a digest fact, the pin carries
-  it, and the integration (or `Cache`) verifies downloaded bytes against
-  it. ficsit (per-target SHA256 from the API), url (trust-on-first-use:
+  it, and the integration verifies downloaded bytes against it before
+  handing them to the artifact store. ficsit (per-target SHA256 from the API), url (trust-on-first-use:
   download at resolve time, hash, pin), pip (sdist SHA256 from PyPI's
   JSON API), bundler (`Gemfile.lock` CHECKSUMS, verified by
   `bundle install --frozen`).
