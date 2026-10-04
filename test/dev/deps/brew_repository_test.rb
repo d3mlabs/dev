@@ -21,6 +21,7 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
     files = bottles.to_h { |tag| [tag, { "sha256" => "sha-#{tag}" }] }
     response = stub(body: JSON.generate({ "bottle" => { "stable" => { "files" => files } } }))
     response.stubs(:is_a?).with(Net::HTTPSuccess).returns(true)
+    response.stubs(:is_a?).with(Net::HTTPResponse).returns(true)
     response
   end
 
@@ -167,6 +168,19 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
     Then "the API's bottle list decides the format; the digest stays this machine's"
     package.version("4.4.3").metadata == { "tap_commit" => "3c67e3be", "format" => "bottle" }
     package.version("4.4.3").digest == "SHA256=mac"
+  end
+
+  test "find reads a core formula's bottles from formulae.brew.sh's formula API" do
+    Given "a core formula and the formula API answering for it"
+    repository = Dev::Deps::BrewRepository.new
+    stub_brew_info(["cmake"], [formula_json("cmake", stable: "4.4.3", tap: "homebrew/core", tap_git_head: "3c67e3be")])
+
+    When "finding"
+    package = repository.find(Dev::Deps::PackageId.new(integration: :brew, name: "cmake"))
+
+    Then "the formula's JSON document is what gets fetched"
+    1 * Net::HTTP.get_response(URI("https://formulae.brew.sh/api/formula/cmake.json")) >> api_response(["x86_64_linux"])
+    package.version("4.4.3").metadata["format"] == "bottle"
   end
 
   test "find raises FormulaApiError when the formula API cannot be read for a core formula" do
