@@ -165,6 +165,21 @@ class BuildContainerTest < Minitest::Test
     cmd.index("-w") > cmd.index("WWISE_TOKEN=tok-123")
   end
 
+  test "docker_run_command marks the container as inside so the dev it runs knows where it is" do
+    When "building a one-shot run with its own env"
+    cmd = build_container.docker_run_command(
+      "jpduchesne89/snappy:content-abc123",
+      project_root: Pathname("/project"),
+      shell_cmd: "./bin/build.sh",
+      env: { "WWISE_TOKEN" => "tok-123" },
+    )
+
+    Then "DEV_INSIDE_CONTAINER=1 rides -e beside the configured env, before the image"
+    cmd.each_cons(2).include?(["-e", "DEV_INSIDE_CONTAINER=1"])
+    cmd.include?("WWISE_TOKEN=tok-123")
+    cmd.index("DEV_INSIDE_CONTAINER=1") < cmd.index("jpduchesne89/snappy:content-abc123")
+  end
+
   test "docker_run_command expands ~ in volume host paths, re-rooting ~/.dev onto the data root" do
     Given "a scratch data root"
     root = Dir.mktmpdir("bc-data-root-")
@@ -1489,6 +1504,21 @@ class BuildContainerTest < Minitest::Test
     engine.runs.last.include?("img:tag")
     engine.runs.last.last(2) == ["sleep", "infinity"]
     labels.all? { |key, value| engine.runs.last.each_cons(2).include?(["--label", "#{key}=#{value}"]) }
+  end
+
+  test "create_service_container marks the container as inside, so every later docker exec inherits it" do
+    Given "a recording engine"
+    engine = FakeContainerEngine.new
+
+    When "creating the service container"
+    build_container(engine: engine).create_service_container(
+      "dev-x", "img:tag", project_root: Pathname("/project"), volumes: [],
+    )
+
+    Then "the detached run carries DEV_INSIDE_CONTAINER=1 before the image"
+    run = engine.runs.last
+    run.each_cons(2).include?(["-e", "DEV_INSIDE_CONTAINER=1"])
+    run.index("DEV_INSIDE_CONTAINER=1") < run.index("img:tag")
   end
 
   test "docker_run_command carries the label contract so dev engine down recognizes an in-flight --rm run" do
