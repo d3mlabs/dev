@@ -10,6 +10,7 @@ require "yaml"
 require "dev/build_watcher"
 require "dev/container_engine"
 require "dev/data_root"
+require "dev/deps/local_store"
 require "dev/deps/lockfile"
 require "dev/engine_resources_check"
 
@@ -180,9 +181,12 @@ module Dev
       # absent or has no such deps.
       #
       # @param project_root [Pathname]
+      # @param store [Dev::Deps::ArtifactStore] where the locked trees are published
       # @return [Hash{String => String}] context name => absolute host path
-      sig { params(project_root: Pathname).returns(T::Hash[String, String]) }
-      def build_contexts_from_lockfile(project_root)
+      sig do
+        params(project_root: Pathname, store: Dev::Deps::ArtifactStore).returns(T::Hash[String, String])
+      end
+      def build_contexts_from_lockfile(project_root, store: Dev::Deps::LocalStore.new)
         contexts = {}
         locked_deps(project_root).each do |dep|
           # Env-scoped deps are not whole-image build inputs; group == :build
@@ -193,33 +197,45 @@ module Dev
           install_dir = dep.metadata&.fetch("install_dir", nil)
           next unless install_dir
 
-          base = Dev::DataRoot.expand(install_dir)
-          # Point at the version-keyed subdir the integration publishes to, so the
-          # build context tracks the locked version (see resolve_versioned_volumes).
-          contexts[dep.name.downcase] = dep.version ? File.join(base, dep.version.to_s) : base
+          # The store's path for the locked version, so the build context
+          # tracks exactly what the integration published (see
+          # resolve_versioned_volumes); a version-less entry is its bare base.
+          contexts[dep.name.downcase] =
+            if dep.version
+              store.tree_path(Dev::Deps::TreeKey.new(base: install_dir, version: dep.version.to_s)).to_s
+            else
+              Dev::DataRoot.expand(install_dir)
+            end
         end
         contexts
       end
 
       # Rewrite each "host:container[:opts]" volume whose host path is a locked
-      # dependency's install_dir to its version-keyed subdir (install_dir/<version>,
-      # the immutable directory the integration publishes). This is how a command
-      # mounts the exact locked version while the integration keeps every version
-      # side by side. Volumes that don't match a locked install_dir (e.g. the shared
+      # dependency's install_dir to the store's path for the locked version (the
+      # immutable tree the integration published). This is how a command mounts
+      # the exact locked version while the store keeps every version side by
+      # side. Volumes that don't match a locked install_dir (e.g. the shared
       # cache mount) pass through unchanged.
       #
       # @param volumes      [Array<String>] configured "host:container[:opts]" specs
       # @param project_root [Pathname]
+      # @param store        [Dev::Deps::ArtifactStore] where the locked trees are published
       # @return [Array<String>] specs with matching host paths version-resolved
-      sig { params(volumes: T::Array[String], project_root: Pathname).returns(T::Array[String]) }
-      def resolve_versioned_volumes(volumes, project_root:)
-        versions = install_dir_versions(project_root)
-        return volumes if versions.empty?
+      sig do
+        params(
+          volumes: T::Array[String],
+          project_root: Pathname,
+          store: Dev::Deps::ArtifactStore,
+        ).returns(T::Array[String])
+      end
+      def resolve_versioned_volumes(volumes, project_root:, store: Dev::Deps::LocalStore.new)
+        keys = locked_tree_keys(project_root)
+        return volumes if keys.empty?
 
         volumes.map do |spec|
           host, container = spec.split(":", 2)
-          version = versions[Dev::DataRoot.expand(T.must(host))]
-          version ? "#{host}/#{version}:#{container}" : spec
+          key = keys[Dev::DataRoot.expand(T.must(host))]
+          key ? "#{store.tree_path(key)}:#{container}" : spec
         end
       end
 
@@ -231,11 +247,22 @@ module Dev
       # @return [Hash{String => String}] expanded install_dir => version
       sig { params(project_root: Pathname).returns(T::Hash[String, String]) }
       def install_dir_versions(project_root)
+        locked_tree_keys(project_root).transform_values(&:version)
+      end
+
+      # The store key of every locked dependency that has both an install_dir
+      # and a version, by its expanded install_dir — the spelling a configured
+      # volume's host path normalizes to for matching.
+      #
+      # @param project_root [Pathname]
+      # @return [Hash{String => Dev::Deps::TreeKey}] expanded install_dir => key
+      sig { params(project_root: Pathname).returns(T::Hash[String, Dev::Deps::TreeKey]) }
+      def locked_tree_keys(project_root)
         locked_deps(project_root).each_with_object({}) do |dep, acc|
           install_dir = dep.metadata&.fetch("install_dir", nil)
           next unless install_dir && dep.version
 
-          acc[Dev::DataRoot.expand(install_dir)] = dep.version.to_s
+          acc[Dev::DataRoot.expand(install_dir)] = Dev::Deps::TreeKey.new(base: install_dir, version: dep.version.to_s)
         end
       end
 

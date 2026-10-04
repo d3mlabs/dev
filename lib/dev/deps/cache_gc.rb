@@ -2,26 +2,26 @@
 # frozen_string_literal: true
 
 require "set"
-require "fileutils"
 require "pathname"
 require "stringio"
+require_relative "local_store"
 require_relative "lockfile"
 require_relative "../container_engine"
-require_relative "../data_root"
 
 module Dev
   module Deps
     # Garbage-collects the host-side caches dev owns, surfaced as `dev cache gc`.
     #
-    # dev owns the cache *layout* (version-keyed install dirs, content-addressed
-    # download cache, content-tagged docker images), so it also owns the policy
+    # dev owns the artifact store (version-keyed trees, content-addressed
+    # blobs) and the content-tagged docker images, so it also owns the policy
     # for reclaiming them. A workflow only *schedules* this; it never reaches
-    # into the layout itself.
+    # into the layout itself — nor does this class: trees are enumerated and
+    # removed through the store.
     #
     # Size-tiered retention, because the tiers differ by orders of magnitude:
     #
-    # - install_dir versions (multi-GB each: the ~30GB engine, ~15GB server) get
-    #   a TIGHT default keep, since a few stale versions dwarf everything else.
+    # - tree versions (multi-GB each: the ~30GB engine, ~15GB server) get a
+    #   TIGHT default keep, since a few stale versions dwarf everything else.
     # - orphan staging dirs (from a killed install) are always reclaimable.
     # - docker content tags are pruned down to the live one.
     #
@@ -35,16 +35,24 @@ module Dev
       extend T::Sig
 
       DEFAULT_KEEP = 2
-      STAGING_GLOB = ".staging-*"
 
       # @param lockfile [Lockfile] source of locked deps (install_dir + version)
       # @param engine   [Dev::ContainerEngine] the invoking user's engine, so
       #   the in-use probes and image pruning see that user's daemon
+      # @param store    [ArtifactStore] the store whose trees are reclaimed
       # @param out      [IO, StringIO] progress stream
-      sig { params(lockfile: Lockfile, engine: Dev::ContainerEngine, out: T.any(IO, StringIO)).void }
-      def initialize(lockfile:, engine:, out: $stdout)
+      sig do
+        params(
+          lockfile: Lockfile,
+          engine: Dev::ContainerEngine,
+          store: ArtifactStore,
+          out: T.any(IO, StringIO),
+        ).void
+      end
+      def initialize(lockfile:, engine:, store: LocalStore.new, out: $stdout)
         @lockfile = lockfile
         @engine = engine
+        @store = store
         @out = out
       end
 
@@ -64,7 +72,7 @@ module Dev
 
       private
 
-      # Per install_dir base, keep the locked version + in-use versions + the
+      # Per locked base, keep the locked version + in-use versions + the
       # newest others up to `keep`; remove the rest and any orphan staging dirs.
       #
       # @param keep   [Integer]
@@ -73,63 +81,49 @@ module Dev
       sig { params(keep: Integer, in_use: T::Set[String]).void }
       def gc_install_dirs(keep:, in_use:)
         locked_versions_by_base.each do |base, locked|
-          next unless Dir.exist?(base)
-
-          remove_orphan_staging(base)
+          @store.remove_orphan_staging(base).each { |staging| @out.puts ">>> gc: removing orphan staging #{staging}" }
           prune_versions(base, locked: locked, keep: keep, in_use: in_use)
         end
       end
 
-      # @return [Hash{String => Set<String>}] expanded install_dir => locked versions
+      # @return [Hash{String => Set<String>}] configured install_dir => locked versions
       sig { returns(T::Hash[String, T::Set[String]]) }
       def locked_versions_by_base
         @lockfile.read.each_with_object({}) do |dep, acc|
           dir = dep.metadata && dep.metadata["install_dir"]
           next unless dir && dep.version
 
-          (acc[Dev::DataRoot.expand(dir)] ||= Set.new) << dep.version
+          (acc[dir] ||= Set.new) << dep.version
         end
       end
 
-      # @param base   [String]
+      # @param base   [String] configured install_dir
       # @param locked [Set<String>]
       # @param keep   [Integer]
       # @param in_use [Set<String>]
       sig { params(base: String, locked: T::Set[String], keep: Integer, in_use: T::Set[String]).void }
       def prune_versions(base, locked:, keep:, in_use:)
         # Newest first, so the retained "others" are the most recently used.
-        versions = version_dirs(base).sort_by { |v| -File.mtime(File.join(base, v)).to_f }
+        versions = @store.tree_versions(base).sort_by { |v| -File.mtime(tree_path(base, v)).to_f }
 
         keepers = Set.new(locked)
         versions.each { |v| keepers << v if keepers.size < keep }
 
         versions.each do |version|
-          path = File.join(base, version)
+          path = tree_path(base, version).to_s
           next if keepers.include?(version) || mounted?(path, in_use)
 
           @out.puts ">>> gc: removing #{path}"
-          FileUtils.rm_rf(path)
+          @store.remove_tree(TreeKey.new(base:, version:))
         end
       end
 
-      # Immediate version subdirs (excludes staging dirs and marker files).
-      #
-      # @param base [String]
-      # @return [Array<String>] version directory basenames
-      sig { params(base: String).returns(T::Array[String]) }
-      def version_dirs(base)
-        Dir.children(base).select do |child|
-          File.directory?(File.join(base, child)) && !child.start_with?(".staging-")
-        end
-      end
-
-      # @param base [String]
-      sig { params(base: String).void }
-      def remove_orphan_staging(base)
-        Dir.glob(File.join(base, STAGING_GLOB)).each do |staging|
-          @out.puts ">>> gc: removing orphan staging #{staging}"
-          FileUtils.rm_rf(staging)
-        end
+      # @param base [String] configured install_dir
+      # @param version [String]
+      # @return [Pathname]
+      sig { params(base: String, version: String).returns(Pathname) }
+      def tree_path(base, version)
+        @store.tree_path(TreeKey.new(base:, version:))
       end
 
       # Whether path is mounted by a live container (exact dir or an ancestor).
