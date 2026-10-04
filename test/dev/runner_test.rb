@@ -681,7 +681,9 @@ class RunnerTest < Minitest::Test
     yaml = { "name" => name, "commands" => commands }
     yaml["build"] = build if build
     yaml["runner"] = runner if runner
-    tmp = Tempfile.new(["dev", ".yml"])
+    # Held in @tmp_files until teardown: a Tempfile that falls out of scope is
+    # unlinked by its finalizer at the next GC, under a Runner still reading it.
+    tmp = (@tmp_files ||= []).push(Tempfile.new(["dev", ".yml"])).fetch(-1)
     tmp.write(YAML.dump(yaml))
     tmp.flush
 
@@ -690,6 +692,7 @@ class RunnerTest < Minitest::Test
 
   def teardown
     @tmp_roots&.each { |root| FileUtils.rm_rf(root) }
+    @tmp_files&.each(&:close!)
     super
   end
 
