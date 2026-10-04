@@ -18,6 +18,12 @@ module Dev
     # The individual locked deps are informational here — bundler installs the
     # full graph from the Gemfile.lock — so install_all only needs to know there
     # is at least one gem to install.
+    #
+    # Bundler owns the fetch, the integrity check (Gemfile.lock CHECKSUMS) and
+    # the install; dev only names where bundler caches what it fetches — the
+    # store's bundler tool cache, under the data root, so the host's bundle and
+    # the container's share one download cache (pure-Ruby gems fetch once;
+    # platform gems have distinct filenames and never collide).
     class BundlerIntegration < Integration
       extend T::Sig
 
@@ -25,9 +31,10 @@ module Dev
       class BundlerMissingError < StandardError; end
 
       GEMFILE = "Gemfile"
+      TOOL = "bundler"
 
       # @param repository     [Repository, nil]  source adapter for bundler deps
-      # @param store          [ArtifactStore, nil] artifact store (unused; bundler caches)
+      # @param store          [ArtifactStore, nil] the store whose bundler tool cache bundler downloads into
       # @param project_root   [String, Pathname] root the generated Gemfile lives in
       # @param shadowenv_exec [ShadowenvExec]    spawn seam for the project's Ruby toolchain
       sig do
@@ -78,7 +85,8 @@ module Dev
         raise BundlerMissingError, "failed to install bundler: #{err}" unless status.success?
       end
 
-      # Run a frozen `bundle install` so the committed Gemfile.lock is authoritative.
+      # Run a frozen `bundle install` so the committed Gemfile.lock is
+      # authoritative, with bundler's global gem cache in the store.
       #
       # @raise [InstallError] if bundle install fails
       # @return [void]
@@ -86,7 +94,12 @@ module Dev
       def run_bundle_install
         _out, err, status = @shadowenv_exec.capture3(
           "bundle", "install",
-          env: { "BUNDLE_GEMFILE" => gemfile_path.to_s, "BUNDLE_FROZEN" => "true" },
+          env: {
+            "BUNDLE_GEMFILE" => gemfile_path.to_s,
+            "BUNDLE_FROZEN" => "true",
+            "BUNDLE_GLOBAL_GEM_CACHE" => "true",
+            "BUNDLE_USER_CACHE" => store!.tool_cache(TOOL).to_s,
+          },
         )
         raise InstallError, "bundle install failed: #{err}" unless status.success?
       end
