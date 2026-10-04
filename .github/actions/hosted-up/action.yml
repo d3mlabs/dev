@@ -1,0 +1,67 @@
+name: dev up (hosted container job)
+description: >-
+  Provision a GitHub-hosted `container: image:` job the way a host-driven
+  container is provisioned, minus the host: install dev at the latest
+  release inside the container, declare it inside, restore the artifact
+  store from the Actions cache, run `dev up`, and save the store back.
+
+# A hosted job has no orchestrating host: nothing created this container,
+# so nothing set DEV_INSIDE_CONTAINER, installed dev at the host's version,
+# or mounted a data root. The workflow is the creator here and declares the
+# marker itself; dev comes from the tap at latest (a fresh workstation's
+# shape — there is no host version to match); and the store is restored
+# from the Actions cache instead of a bind mount. The image is one dev
+# built (bin/docker-install-build-deps.sh): Linuxbrew and the d3mlabs tap
+# are in it, dev is not.
+#
+# Cache shape: one key per lockfile pair, with a prefix fallback. The store
+# is version-keyed and content-addressed, so a stale restore is still
+# correct — `dev up` installs the difference and the save re-keys it.
+
+inputs:
+  data-root:
+    description: The data root inside the container (the path cached across jobs).
+    required: false
+    default: ~/.dev
+  up-args:
+    description: Extra arguments for `dev up` (e.g. `--group app`).
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    # GitHub Actions overrides a container job's PATH; put Linuxbrew back.
+    - name: Linuxbrew on PATH
+      shell: bash
+      run: |
+        echo "/home/linuxbrew/.linuxbrew/bin" >> "$GITHUB_PATH"
+        echo "/home/linuxbrew/.linuxbrew/sbin" >> "$GITHUB_PATH"
+
+    - name: Install dev (latest release)
+      shell: bash
+      run: |
+        if command -v dev >/dev/null 2>&1; then
+          brew upgrade --quiet d3mlabs/d3mlabs/dev-core || true
+        else
+          brew install --quiet d3mlabs/d3mlabs/dev-core
+        fi
+        echo "dev $(dev version)"
+
+    - name: Declare the container
+      shell: bash
+      run: |
+        echo "DEV_INSIDE_CONTAINER=1" >> "$GITHUB_ENV"
+        echo "DEV_DATA_ROOT=${{ inputs.data-root }}" >> "$GITHUB_ENV"
+
+    - name: Restore the artifact store
+      uses: actions/cache@v4
+      with:
+        path: ${{ inputs.data-root }}
+        key: dev-store-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps.lock', 'build-deps.lock') }}
+        restore-keys: |
+          dev-store-${{ runner.os }}-${{ runner.arch }}-
+
+    - name: dev up
+      shell: bash
+      run: dev up ${{ inputs.up-args }}
