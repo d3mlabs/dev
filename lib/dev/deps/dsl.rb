@@ -538,11 +538,13 @@ module Dev
 
       # Declare a Homebrew formula/cask.
       #
-      # Dual-writes: the existing @brew/groups entry feeds the container build
-      # path (bin/install-build-deps.rb), while the additional declaration
-      # rides the resolver -> lockfile -> install pipeline so `dev deps install`
-      # installs it on the host too. BrewIntegration skips already-installed
-      # formulae, so the host install is idempotent.
+      # Dual-writes: the @brew/groups entry is the legacy per-group table
+      # still exposed as Config#group, while the declaration rides the
+      # resolver -> lockfile -> install pipeline — the one install path, on
+      # the host (`dev deps install`) and in the container image
+      # (bin/docker-install-build-deps.sh runs the same command from the
+      # lock). BrewIntegration skips already-installed formulae, so the
+      # install is idempotent.
       #
       # The options are sorted into the declaration's fields: tap: is the
       # source coordinate, cask: routes to the :cask integration (a separate

@@ -46,9 +46,9 @@ module Dev
       #
       # Deliberately NOT platform-based: a Linux workstation is "dev" and a Mac
       # CI runner is "ci". The one caller that needed the old Linux-implies-CI
-      # clause (bin/install-build-deps.rb, which runs inside docker builds where
-      # no CI variable exists) now declares env: "ci" explicitly instead of
-      # detecting it — fix by declaration, not detection.
+      # clause (bin/docker-install-build-deps.sh, which runs inside docker
+      # builds where no CI variable exists) sets CI=true explicitly instead of
+      # relying on detection — fix by declaration, not detection.
       #
       # @return [String] "ci" or "dev"
       sig { returns(String) }
