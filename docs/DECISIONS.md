@@ -37,3 +37,21 @@ Format: Context → Decision → Consequences → Rejected. Status: `Accepted` u
 **Consequences.** `dev up` on the host is also the container's install (`dev container up` runs it inside after provisioning dev). The container's Ruby and gems live in the data root, so they survive a rebuild of the writable layer. A `bundle install` on Linux adds `x86_64-linux` to the shared `Gemfile.lock` PLATFORMS — expected, and committed once.
 
 **Rejected.** A host-filter rule ("everything but gems installs on the host") — the plan's original shape; a scope axis names the fact per type instead of encoding it in one integration's exception.
+
+---
+
+## ADR-0003 — A brew lock has bite on both sides
+
+**Status:** Accepted. Milestone 8 of [dev#218](https://github.com/d3mlabs/dev/issues/218).
+
+**Context.** Brew is a moving registry: `brew install cmake` installs whatever `homebrew/core` has today, so `build-deps.lock` recording `cmake 4.4.3` constrained nothing — a host and an image built a month apart from the same lock got different toolchains, silently. Pinning taps was the known fix and the known cost: a `brew tap` of homebrew-core clones its full history, which is what had kept image builds on brew's API.
+
+**Decision.** Two mechanisms, one per side of the container boundary.
+
+- **Hosts verify (B).** After every brew install — and when the formula was already present — `dev deps install` reads `brew list --versions` and fails unless a keg matches the locked version (brew's own `_N` revision suffix aside). The error carries both remediations, because the two causes need different hands: `dev deps update` when brew's formula moved on and the lock is stale; `brew upgrade <formula>` when the machine is behind. Hosts keep brew's API mode — the verification is the contract, not the install path.
+- **Images pin (A).** `dev deps update` records per formula the commit its tap was at (`tap_commit`) and `format` — `bottle` when an `x86_64_linux` bottle exists, `source` when the image build would compile it — and names every build-group formula that would build from source, right where the lock is written. `dev deps install --pinned-taps` checks each tap out at its locked commit with a **single-commit fetch** (`git fetch --depth 1 origin <commit>` into brew's taps layout) and installs under `HOMEBREW_NO_INSTALL_FROM_API=1 HOMEBREW_NO_AUTO_UPDATE=1`, so two image builds of one lock install one toolchain. A lock without tap commits, or one pinning a tap at two commits, fails before anything is pinned.
+- **Order of landing.** B ships everywhere first. A is opt-in in the image bootstrap (`DEV_PIN_TAPS=1`) until the single-commit fetch has been measured against a real image build; the default image build installs through the API and verifies like a host.
+
+**Consequences.** A stale lock fails loudly instead of drifting. B bites on existing machines whose kegs are behind the lock on the first `dev up` after it ships — the remediation is in the message. Existing locks carry no `tap_commit`/`format` until the next `dev deps update`; only `--pinned-taps` requires them. Casks are not verified (brew reports no stable version for most).
+
+**Rejected.** Pinning taps on hosts too — a host is a workstation with other brew consumers, and a checked-out core tap would fight `brew update`; verification gives the lock its bite there without owning brew. Cloning the taps for pinning — the history cost that kept A off the table; the single-commit fetch is what makes A affordable.

@@ -17,7 +17,7 @@ require "dev/shadowenv_ruby"
 
 module Dev
   module Builtins
-    # `dev deps install [--group <g>]... [--except <g>]... [--integration <i>]...`:
+    # `dev deps install [--group <g>]... [--except <g>]... [--integration <i>]... [--pinned-taps]`:
     # install what the lockfiles pin for this machine, optionally narrowed to
     # dependency groups and integrations — shared with the `up` builtin,
     # which composes this command. Dependencies install where they are
@@ -31,9 +31,13 @@ module Dev
     # installs its toolchain from the lock (bin/docker-install-build-deps.sh)
     # without pulling the host-installed artifacts the same group pins; inside
     # the resulting container the install defaults to `--except build` for the
-    # same reason.
+    # same reason. `--pinned-taps` is the image build's reproducible mode:
+    # brew installs from taps checked out at the commits the lock names
+    # instead of from brew's moving API (BrewIntegration).
     class InstallDepsCommand < BuiltinCommand
       extend T::Sig
+
+      PINNED_TAPS_FLAG = "--pinned-taps"
 
       # Builds the Installer for a lockfile + integrations pair;
       # injected so tests can substitute a fake without touching the host.
@@ -85,7 +89,7 @@ module Dev
       end
 
       sig { override.returns(String) }
-      def desc = "Install locked dependencies on this machine (--group/--except/--integration narrow the set)"
+      def desc = "Install locked dependencies on this machine (--group/--except/--integration narrow; --pinned-taps pins brew's taps)"
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
@@ -109,6 +113,8 @@ module Dev
         project = context.project!
         env = Dev::Deps.detect_env
         host = Dev::Deps.detect_host
+        pin_taps = args.include?(PINNED_TAPS_FLAG)
+        args -= [PINNED_TAPS_FLAG]
         groups = symbol_flags(args, "--group")
         except = symbol_flags(args, "--except") || default_except
         integration_types = symbol_flags(args, "--integration")
@@ -123,7 +129,7 @@ module Dev
         selection = Dev::Deps::Installer.select(lockfile.read, env:, host:, groups:, except:, integration_types:)
         converge_ruby!(project) if selection.any? { |dep| dep.integration == :bundler }
 
-        installer = @installer_factory.call(lockfile, integrations(project))
+        installer = @installer_factory.call(lockfile, integrations(project, pin_taps:))
         installer.install(env:, host:, groups:, except:, integration_types:)
         return if @inside_container
 
@@ -157,14 +163,19 @@ module Dev
       # The integrations that install on this side.
       #
       # @param project [ProjectContext]
+      # @param pin_taps [Boolean] brew installs from taps pinned at the lock's commits
       # @return [Hash{Symbol => Dev::Deps::Integration}]
-      sig { params(project: ProjectContext).returns(T::Hash[Symbol, Dev::Deps::Integration]) }
-      def integrations(project)
+      sig { params(project: ProjectContext, pin_taps: T::Boolean).returns(T::Hash[Symbol, Dev::Deps::Integration]) }
+      def integrations(project, pin_taps:)
         store = Dev::Deps::LocalStore.new
         if @inside_container
-          Dev::Deps::Registry.container_integrations(project_root: project.root, store:, python_version: project.python_version)
+          Dev::Deps::Registry.container_integrations(
+            project_root: project.root, store:, python_version: project.python_version, pin_taps:,
+          )
         else
-          Dev::Deps::Registry.host_integrations(project_root: project.root, store:, python_version: project.python_version)
+          Dev::Deps::Registry.host_integrations(
+            project_root: project.root, store:, python_version: project.python_version, pin_taps:,
+          )
         end
       end
 

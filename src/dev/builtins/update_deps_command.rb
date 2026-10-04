@@ -5,6 +5,7 @@ require "digest"
 require "pathname"
 require "dev/command"
 require "dev/deps"
+require "dev/deps/brew_repository"
 require "dev/deps/lockfile"
 require "dev/deps/registry"
 require "dev/deps/resolver"
@@ -68,7 +69,28 @@ module Dev
         # dependencies.rb changed after this resolution (Dev::Deps::Staleness).
         manifest_digest = deps_rb.exist? ? Digest::SHA256.file(deps_rb.to_s).hexdigest : nil
         lockfile.lock(resolved, manifest_digest:)
+        preflight_bottles(resolved)
         puts "dev: lockfiles updated — now run dev up to install."
+      end
+
+      private
+
+      # Name each build-group formula the image build would compile from
+      # source: a missing bottle for the image platform is the usual reason
+      # an image build is slow or breaks, and `dev deps update` is the moment
+      # the lock learns which formulae those are.
+      #
+      # @param resolved [Array<Dev::Deps::Dependency>] the resolution just locked
+      # @return [void]
+      sig { params(resolved: T::Array[Dev::Deps::Dependency]).void }
+      def preflight_bottles(resolved)
+        resolved.each do |dep|
+          next unless dep.integration == :brew && dep.group == :build
+          next unless dep.metadata["format"] == Dev::Deps::BrewRepository::FORMAT_SOURCE
+
+          puts "dev: #{dep.name} has no #{Dev::Deps::BrewRepository::IMAGE_BOTTLE_TAG} bottle — " \
+            "the image build compiles it from source."
+        end
       end
     end
   end

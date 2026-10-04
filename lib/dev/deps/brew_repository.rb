@@ -2,7 +2,9 @@
 # frozen_string_literal: true
 
 require "json"
+require "net/http"
 require "open3"
+require "uri"
 require_relative "declarations"
 require_relative "package"
 require_relative "package_id"
@@ -23,10 +25,37 @@ module Dev
     # matches. Third-party tap formulae report an empty family and degrade to
     # a singleton universe. Casks are a separate universe
     # (BrewCaskRepository) under the :cask integration.
+    #
+    # Two more facts ride each version for the image build (reproducible
+    # brew, A): `tap_commit`, the commit the formula's tap is at (brew's
+    # `tap_git_head`), and `format` — "bottle" when the formula bottles for
+    # the image platform, else "source" (the build compiles it). Brew's
+    # local info for a core formula lists only this machine's bottle, so
+    # core formats come from the public formula API.
     class BrewRepository < Repository
       extend T::Sig
 
+      # The Homebrew core tap, whose formulae brew reads from the API.
+      CORE_TAP = "homebrew/core"
+      # The bottle tag of the build-container image's platform.
+      IMAGE_BOTTLE_TAG = "x86_64_linux"
+      FORMULA_API = "https://formulae.brew.sh/api/formula"
+      FORMAT_BOTTLE = "bottle"
+      FORMAT_SOURCE = "source"
+
       class BrewInfoError < StandardError; end
+
+      # The public formula API did not answer for a core formula.
+      class FormulaApiError < StandardError
+        extend T::Sig
+
+        # @param name [String] formula name
+        # @param code [String] the HTTP status code
+        sig { params(name: String, code: String).void }
+        def initialize(name:, code:)
+          super("#{FORMULA_API}/#{name}.json answered #{code}")
+        end
+      end
 
       # Report a brew formula's universe: the spec family's current stable
       # versions, bare spec last (the unconstrained pick — BrewScheme
@@ -71,6 +100,9 @@ module Dev
         metadata = {}
         metadata["tap"] = tap if tap
         metadata["version_suffix"] = suffix if suffix
+        tap_commit = info["tap_git_head"]
+        metadata["tap_commit"] = tap_commit if tap_commit
+        metadata["format"] = image_format(info)
 
         PackageVersion.new(
           version: info["versions"]["stable"],
@@ -129,6 +161,46 @@ module Dev
         # success? is nil (not false) when the process didn't exit normally,
         # e.g. it was killed by a signal — coerce that to a failure.
         status.success? || false
+      end
+
+      # How the image build gets this formula: from a bottle when one exists
+      # for the image platform, otherwise by compiling from source.
+      #
+      # @param info [Hash] parsed brew info JSON for one formula
+      # @return [String] FORMAT_BOTTLE or FORMAT_SOURCE
+      sig { params(info: T::Hash[String, T.untyped]).returns(String) }
+      def image_format(info)
+        bottles = info["tap"] == CORE_TAP ? api_bottle_tags(info["name"].to_s) : bottle_tags(info)
+        bottles.include?(IMAGE_BOTTLE_TAG) ? FORMAT_BOTTLE : FORMAT_SOURCE
+      end
+
+      # The bottle tags a formula's info lists.
+      #
+      # @param info [Hash] parsed formula JSON (brew info or the formula API)
+      # @return [Array<String>]
+      sig { params(info: T::Hash[String, T.untyped]).returns(T::Array[String]) }
+      def bottle_tags(info)
+        (info.dig("bottle", "stable", "files") || {}).keys
+      end
+
+      # A core formula's complete bottle list, from the public formula API.
+      #
+      # @param name [String] formula name
+      # @return [Array<String>] bottle tags
+      # @raise [FormulaApiError] if the API does not answer 2xx
+      sig { params(name: String).returns(T::Array[String]) }
+      def api_bottle_tags(name)
+        response = get_formula_api(name)
+        raise FormulaApiError.new(name:, code: response.code.to_s) unless response.is_a?(Net::HTTPSuccess)
+
+        bottle_tags(JSON.parse(T.must(response.body)))
+      end
+
+      # @param name [String] formula name
+      # @return [Net::HTTPResponse]
+      sig { params(name: String).returns(Net::HTTPResponse) }
+      def get_formula_api(name)
+        Net::HTTP.get_response(URI("#{FORMULA_API}/#{name}.json"))
       end
 
       # Extract the bottle SHA256 for the current platform.

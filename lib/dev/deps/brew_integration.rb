@@ -5,9 +5,11 @@ require "etc"
 require "open3"
 require "pathname"
 require "uri"
+require_relative "brew_repository"
 require_relative "integration"
 require_relative "dependency"
 require_relative "tap"
+require_relative "tap_pinner"
 
 module Dev
   module Deps
@@ -33,12 +35,77 @@ module Dev
       class InstallError < StandardError; end
       class TapRegistrationError < StandardError; end
 
+      # The keg brew has for a formula is not the version the lock pins:
+      # either brew's formula moved on since `dev deps update` (the lock is
+      # stale) or this machine's keg is behind the lock.
+      class VersionMismatchError < StandardError
+        extend T::Sig
+
+        # @param formula [String] the install spec (e.g. "llvm@18")
+        # @param installed [Array<String>] the keg versions brew reports
+        # @param locked [String] the version the lock pins
+        sig { params(formula: String, installed: T::Array[String], locked: String).void }
+        def initialize(formula:, installed:, locked:)
+          super(
+            "brew has #{formula} #{installed.join(", ")} but the lock pins #{locked} — " \
+            "if brew's formula moved on, run `dev deps update` to re-lock; " \
+            "if this machine is behind, `brew upgrade #{formula}`",
+          )
+        end
+      end
+
+      # Pinned-taps mode asked for a formula the lock carries no tap commit
+      # for: the lock predates the fact and must be rewritten.
+      class UnpinnedFormulaError < StandardError
+        extend T::Sig
+
+        # @param name [String] formula name
+        sig { params(name: String).void }
+        def initialize(name:)
+          super("#{name} has no tap_commit in the lock — run `dev deps update` to re-lock before a pinned install")
+        end
+      end
+
+      # Two formulae of one tap lock it at different commits: a tap is one
+      # checkout, and the lock is rewritten whole, so this is a hand-edited
+      # or merged lock.
+      class TapPinConflictError < StandardError
+        extend T::Sig
+
+        # @param tap [String] tap slug
+        # @param commits [Array<String>] the commits the lock names for it
+        sig { params(tap: String, commits: T::Array[String]).void }
+        def initialize(tap:, commits:)
+          super("the lock pins #{tap} at #{commits.join(" and ")} — run `dev deps update` to re-lock at one commit")
+        end
+      end
+
+      # brew itself cannot be asked where its taps live.
+      class BrewUnavailableError < StandardError
+        extend T::Sig
+
+        # @param stderr [String] what `brew --repository` said
+        sig { params(stderr: String).void }
+        def initialize(stderr:)
+          super("brew --repository failed (#{stderr.strip}) — pinned taps need brew on PATH")
+        end
+      end
+
+      # argv inserted before `brew` in pinned-taps mode: formulae come from
+      # the checked-out taps, never the API, and brew does not move them.
+      PINNED_ENV = T.let(["env", "HOMEBREW_NO_INSTALL_FROM_API=1", "HOMEBREW_NO_AUTO_UPDATE=1"].freeze, T::Array[String])
+
       # @param repository [Repository, nil] source adapter
       # @param store [ArtifactStore, nil] artifact store (unused; brew caches)
       # @param taps [Array<Tap>] Homebrew taps to register before installing
       # @param project_dir [String, Pathname, nil] project root for resolving file:// tap URLs
       # @param brew_prefix [String, Pathname, nil] the Homebrew prefix
       #   (discovered via `brew --prefix` when nil; injectable for tests)
+      # @param pin_taps [Boolean] check each formula's tap out at the commit
+      #   the lock names and install from the taps instead of brew's API —
+      #   the image build's reproducible mode
+      # @param tap_pinner [TapPinner, nil] how taps are pinned (built from
+      #   `brew --repository` and the declared taps' URLs when nil)
       sig do
         params(
           repository: T.nilable(Repository),
@@ -46,29 +113,42 @@ module Dev
           taps: T::Array[Tap],
           project_dir: T.nilable(T.any(String, Pathname)),
           brew_prefix: T.nilable(T.any(String, Pathname)),
+          pin_taps: T::Boolean,
+          tap_pinner: T.nilable(TapPinner),
         ).void
       end
-      def initialize(repository:, store:, taps: [], project_dir: nil, brew_prefix: nil)
+      def initialize(repository:, store:, taps: [], project_dir: nil, brew_prefix: nil, pin_taps: false, tap_pinner: nil)
         super(repository:, store:)
         @taps = taps
         @project_dir = T.let(project_dir ? Pathname(project_dir) : nil, T.nilable(Pathname))
         @taps_registered = T.let(false, T::Boolean)
         @brew_prefix = T.let(brew_prefix&.to_s, T.nilable(String))
         @brew_prefix_resolved = T.let(!brew_prefix.nil?, T::Boolean)
+        @pin_taps = pin_taps
+        @tap_pinner = tap_pinner
       end
 
-      # Install all brew dependencies. Registers taps on first call.
+      # @return [Boolean] whether installs pin taps at the lock's commits
+      sig { returns(T::Boolean) }
+      def pin_taps? = @pin_taps
+
+      # Install all brew dependencies. Registers taps on first call, and in
+      # pinned-taps mode checks every formula's tap out at its locked commit.
       #
-      # Tap registration stays outside the per-dep isolation: every install
-      # is predetermined to fail for the same root cause, so it surfaces as
-      # one integration-level failure instead of N per-dep echoes.
+      # Tap registration and pinning stay outside the per-dep isolation:
+      # every install is predetermined to fail for the same root cause, so
+      # it surfaces as one integration-level failure instead of N per-dep
+      # echoes.
       #
       # @param dependencies [Array<Dependency>] brew deps to install
       # @raise [TapRegistrationError] if a tap cannot be registered
+      # @raise [UnpinnedFormulaError, TapPinConflictError, TapPinner::PinError]
+      #   in pinned-taps mode, when the lock cannot pin a tap or git fails to
       # @raise [PartialInstallError] if any dep fails; the rest were attempted
       sig { params(dependencies: T::Array[Dependency]).void }
       def install_all(dependencies)
         ensure_taps_registered
+        pin_taps!(dependencies.reject { |dep| dep.metadata["cask"] }) if @pin_taps
         failures = collect_failures(dependencies) do |dep|
           if dep.metadata["cask"]
             install_cask(dep)
@@ -148,16 +228,52 @@ module Dev
       # version (dep.version), which is a record like "18.1.8" and is not a valid
       # formula name (there is no "llvm@18.1.8").
       #
+      # After the install step the keg is verified against the lock: brew
+      # installs whatever its registry currently has, so the lock only means
+      # something if the result is checked (the B half of reproducible brew).
+      #
       # @param dep [Dependency]
       # @raise [InstallError] if brew install fails
+      # @raise [VersionMismatchError] if the keg is not the locked version
       sig { params(dep: Dependency).void }
       def install_formula(dep)
         suffix = dep.metadata["version_suffix"]
         formula = suffix ? "#{dep.name}@#{suffix}" : dep.name
-        return if brew_installed?(formula)
+        unless brew_installed?(formula)
+          spec = dep.metadata["tap"] ? "#{dep.metadata["tap"]}/#{formula}" : formula
+          run_brew_install(dep.name, spec)
+        end
 
-        spec = dep.metadata["tap"] ? "#{dep.metadata["tap"]}/#{formula}" : formula
-        run_brew_install(dep.name, spec)
+        locked = dep.version
+        verify_installed!(formula, locked) if locked
+      end
+
+      # Fail unless one of the formula's kegs is the locked version. Brew's
+      # own revision suffix (`_1`) is not part of the upstream version and
+      # is ignored.
+      #
+      # @param formula [String] the install spec (e.g. "llvm@18")
+      # @param locked [String] the version the lock pins
+      # @return [void]
+      # @raise [VersionMismatchError]
+      sig { params(formula: String, locked: String).void }
+      def verify_installed!(formula, locked)
+        installed = installed_versions(formula)
+        return if installed.include?(locked)
+
+        raise VersionMismatchError.new(formula:, installed:, locked:)
+      end
+
+      # The keg versions brew has for a formula, revision suffixes stripped.
+      #
+      # @param formula [String]
+      # @return [Array<String>] empty when brew reports none
+      sig { params(formula: String).returns(T::Array[String]) }
+      def installed_versions(formula)
+        out, _err, status = T.unsafe(Open3).capture3("brew", "list", "--versions", formula)
+        return [] unless status.success?
+
+        out.split.drop(1).map { |version| version.sub(/_\d+\z/, "") }
       end
 
       # Install a Homebrew cask.
@@ -187,7 +303,8 @@ module Dev
       # @raise [InstallError] if brew exits non-zero
       sig { params(name: String, spec: String).void }
       def run_brew_install(name, spec)
-        _out, err, status = T.unsafe(Open3).capture3(*escalation, "brew", "install", *spec.split)
+        env = @pin_taps ? PINNED_ENV : []
+        _out, err, status = T.unsafe(Open3).capture3(*escalation, *env, "brew", "install", *spec.split)
         return if status.success?
 
         if sudo_refused?(err)
@@ -197,6 +314,46 @@ module Dev
         end
 
         raise InstallError, "brew install #{spec} failed: #{err}"
+      end
+
+      # Check each formula's tap out at the one commit the lock names for it.
+      #
+      # @param formulae [Array<Dependency>] the formula deps (casks excluded)
+      # @return [void]
+      # @raise [UnpinnedFormulaError] if a formula locked no tap commit
+      # @raise [TapPinConflictError] if a tap is locked at two commits
+      # @raise [TapPinner::PinError] if git fails
+      sig { params(formulae: T::Array[Dependency]).void }
+      def pin_taps!(formulae)
+        pins = formulae.map do |dep|
+          commit = dep.metadata["tap_commit"]
+          raise UnpinnedFormulaError.new(name: dep.name) unless commit
+
+          [T.let(dep.metadata["tap"] || BrewRepository::CORE_TAP, String), T.let(commit, String)]
+        end
+        pins.group_by(&:first).each do |tap, pairs|
+          commits = pairs.map(&:last).uniq
+          raise TapPinConflictError.new(tap:, commits:) if commits.length > 1
+
+          tap_pinner.pin!(tap, T.must(commits.first))
+        end
+      end
+
+      # The pinner: injected, else brew's taps directory with the declared
+      # taps' URLs (a declared tap may live anywhere; undeclared ones are
+      # GitHub taps by brew's convention).
+      #
+      # @return [TapPinner]
+      # @raise [BrewUnavailableError] if `brew --repository` fails
+      sig { returns(TapPinner) }
+      def tap_pinner
+        @tap_pinner ||= begin
+          out, err, status = Open3.capture3("brew", "--repository")
+          raise BrewUnavailableError.new(stderr: err) unless status.success?
+
+          urls = @taps.filter_map { |tap| [tap.name, tap.url.to_s] if tap.url }.to_h
+          TapPinner.new(taps_root: Pathname(out.strip) / "Library" / "Taps", remote_urls: urls)
+        end
       end
 
       # argv prefix for brew write commands: empty when the prefix is
