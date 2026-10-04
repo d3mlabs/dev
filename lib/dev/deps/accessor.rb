@@ -4,20 +4,19 @@
 require "stringio"
 require_relative "dependency"
 require_relative "lockfile"
-require_relative "cache"
+require_relative "artifact_store"
 require_relative "ficsit_integration"
 require_relative "xcode_integration"
 require_relative "gh_integration"
-require_relative "../data_root"
 
 module Dev
   module Deps
-    # Read-only accessor over the lockfile + content cache, surfaced as
+    # Read-only accessor over the lockfile + artifact store, surfaced as
     # `dev deps path`. It answers "where is a locked dep's artifact?"
     # — the cached zip for a ficsit mod platform, the DEVELOPER_DIR for the
-    # pinned Xcode, the version-keyed install dir of a gh release — so
-    # consumers (deploy, build scripts, CI) resolve paths from the lockfile
-    # instead of reconstructing dev's layout conventions.
+    # pinned Xcode, the published tree of a gh release — so consumers
+    # (deploy, build scripts, CI) resolve paths from the lockfile instead of
+    # reconstructing the store's layout.
     class Accessor
       extend T::Sig
 
@@ -35,22 +34,13 @@ module Dev
       USAGE = "usage: dev deps path ficsit <mod> <platform> | dev deps path xcode | dev deps path gh <name>"
 
       # @param lockfile [Lockfile]
-      # @param cache [Cache]
+      # @param store [ArtifactStore] where published trees and cached blobs live
       # @param xcode_install_root [String] where Xcode bundles live (tests use a tmpdir)
-      # @param data_root [String] where `~/.dev` install_dirs re-root (tests use a tmpdir)
-      sig do
-        params(lockfile: Lockfile, cache: Cache, xcode_install_root: String, data_root: String).void
-      end
-      def initialize(
-        lockfile:,
-        cache:,
-        xcode_install_root: XcodeIntegration::INSTALL_ROOT,
-        data_root: Dev::DataRoot.path
-      )
+      sig { params(lockfile: Lockfile, store: ArtifactStore, xcode_install_root: String).void }
+      def initialize(lockfile:, store:, xcode_install_root: XcodeIntegration::INSTALL_ROOT)
         @lockfile = lockfile
-        @cache = cache
+        @store = store
         @xcode_install_root = xcode_install_root
-        @data_root = data_root
       end
 
       # Print the artifact path a `dev deps path …` invocation asks for.
@@ -96,11 +86,10 @@ module Dev
 
       private
 
-      # The version-keyed install dir of a locked gh release — the immutable
-      # directory GhIntegration publishes under the dep's install_dir, re-rooted
-      # onto the data root. Resolved from the lock rather than the `current`
-      # pointer so a checkout always gets the tag its lockfile names, not
-      # whatever this machine installed last.
+      # The published tree of a locked gh release — the immutable directory
+      # GhIntegration publishes to the store under the dep's install_dir.
+      # Resolved from the lock so a checkout always gets the tag its lockfile
+      # names, not whatever this machine installed last.
       #
       # @param name [String, nil]
       # @return [Pathname]
@@ -109,14 +98,9 @@ module Dev
         raise UsageError, USAGE unless name
 
         dep = find_dep(:gh, name)
-        base_dir = Dev::DataRoot.expand(dep.metadata.fetch("install_dir"), root: @data_root)
-        version_dir = Pathname(base_dir) / dep.version
-        marker = version_dir / GhIntegration::MARKER_FILE
-        unless marker.file? && marker.read.strip == dep.version
-          raise NotInstalledError, "#{name}@#{dep.version} is not installed at #{version_dir} — run dev up"
-        end
-
-        version_dir
+        key = TreeKey.new(base: dep.metadata.fetch("install_dir"), version: dep.version, marker: GhIntegration::MARKER_FILE)
+        @store.tree(key) ||
+          raise(NotInstalledError, "#{name}@#{dep.version} is not installed at #{@store.tree_path(key)} — run dev up")
       end
 
       # @param name [String, nil]
@@ -131,12 +115,8 @@ module Dev
         key = FicsitIntegration.cache_key(
           name: dep.name, version: dep.version, platform: platform, hash: target["hash"],
         )
-        unless @cache.exists?(key)
-          raise NotCachedError,
-            "#{name} (#{platform}) is not cached — run dev up to download it"
-        end
-
-        @cache.path(key)
+        @store.blob(key) ||
+          raise(NotCachedError, "#{name} (#{platform}) is not cached — run dev up to download it")
       end
 
       # The DEVELOPER_DIR of the locked Xcode pin — what build scripts export

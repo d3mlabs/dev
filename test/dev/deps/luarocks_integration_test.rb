@@ -4,7 +4,7 @@
 require "test_helper"
 require "dev/deps/luarocks_integration"
 require "dev/deps/luarocks_repository"
-require "dev/deps/cache"
+require "dev/deps/local_store"
 require "dev/deps/dependency"
 require "tmpdir"
 
@@ -13,9 +13,9 @@ class Dev::Deps::LuaRocksIntegrationTest < Minitest::Test
   test "install_all calls luarocks install for each dep" do
     Given "a luarocks dependency and a stubbed Open3"
     dir = Dir.mktmpdir("dev-luarocks-int-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    store = Dev::Deps::LocalStore.new(data_root: dir)
     repository = Dev::Deps::LuaRocksRepository.new
-    integration = Dev::Deps::LuaRocksIntegration.new(repository: repository, cache: cache,
+    integration = Dev::Deps::LuaRocksIntegration.new(repository: repository, store: store,
       project_root: Pathname(dir))
     deps = [
       Dev::Deps::Dependency.new(name: "luaunit", integration: :luarocks, group: :test,
@@ -39,9 +39,9 @@ class Dev::Deps::LuaRocksIntegrationTest < Minitest::Test
   test "install_all raises InstallError on failure" do
     Given "a luarocks dependency with a failing install"
     dir = Dir.mktmpdir("dev-luarocks-int-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    store = Dev::Deps::LocalStore.new(data_root: dir)
     repository = Dev::Deps::LuaRocksRepository.new
-    integration = Dev::Deps::LuaRocksIntegration.new(repository: repository, cache: cache,
+    integration = Dev::Deps::LuaRocksIntegration.new(repository: repository, store: store,
       project_root: Pathname(dir))
     deps = [
       Dev::Deps::Dependency.new(name: "badrock", integration: :luarocks, group: :runtime,

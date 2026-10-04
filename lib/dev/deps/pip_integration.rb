@@ -23,20 +23,20 @@ module Dev
       class MissingVersionError < StandardError; end
 
       # @param repository    [Repository, nil]  source adapter for pip deps
-      # @param cache         [Cache, nil]       shared download cache (unused; pip caches)
+      # @param store         [ArtifactStore, nil] artifact store (unused; pip caches)
       # @param project_root  [String, Pathname] project root (holds the .venv)
       # @param python_version [String, nil] the `python` toolchain version to build
       #   the venv with; required whenever there are pip deps to install
       sig do
         params(
           repository: T.nilable(Repository),
-          cache: T.nilable(Cache),
+          store: T.nilable(ArtifactStore),
           project_root: T.any(String, Pathname),
           python_version: T.nilable(String),
         ).void
       end
-      def initialize(repository:, cache:, project_root:, python_version: nil)
-        super(repository:, cache:)
+      def initialize(repository:, store:, project_root:, python_version: nil)
+        super(repository:, store:)
         @project_root = T.let(Pathname(project_root), Pathname)
         @python_version = python_version
       end

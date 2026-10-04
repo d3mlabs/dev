@@ -4,7 +4,7 @@
 require "test_helper"
 require "dev/deps/brew_integration"
 require "dev/deps/brew_repository"
-require "dev/deps/cache"
+require "dev/deps/local_store"
 require "dev/deps/dependency"
 require "dev/deps/tap"
 require "etc"
@@ -17,9 +17,9 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
   test "install_all calls brew install for each formula dep" do
     Given "a brew dependency"
     dir = Dir.mktmpdir("dev-brew-int-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    store = Dev::Deps::LocalStore.new(data_root: dir)
     repository = Dev::Deps::BrewRepository.new
-    integration = Dev::Deps::BrewIntegration.new(repository: repository, cache: cache, brew_prefix: dir)
+    integration = Dev::Deps::BrewIntegration.new(repository: repository, store: store, brew_prefix: dir)
     deps = [
       Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
         version: "3.31.4", hash: "SHA256=abc", metadata: {}),
@@ -41,8 +41,8 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
   test "install_all installs the bare formula for an unversioned dep" do
     Given "an unversioned brew dependency (resolved version recorded, no suffix)"
     dir = Dir.mktmpdir("dev-brew-int-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
-    integration = Dev::Deps::BrewIntegration.new(repository: Dev::Deps::BrewRepository.new, cache: cache, brew_prefix: dir)
+    store = Dev::Deps::LocalStore.new(data_root: dir)
+    integration = Dev::Deps::BrewIntegration.new(repository: Dev::Deps::BrewRepository.new, store: store, brew_prefix: dir)
     deps = [
       Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
         version: "4.3.4", hash: "SHA256=abc", metadata: {}),
@@ -63,8 +63,8 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
   test "install_all installs the versioned formula from the suffix metadata" do
     Given "a versioned brew dependency (resolved 18.1.8, suffix 18)"
     dir = Dir.mktmpdir("dev-brew-int-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
-    integration = Dev::Deps::BrewIntegration.new(repository: Dev::Deps::BrewRepository.new, cache: cache, brew_prefix: dir)
+    store = Dev::Deps::LocalStore.new(data_root: dir)
+    integration = Dev::Deps::BrewIntegration.new(repository: Dev::Deps::BrewRepository.new, store: store, brew_prefix: dir)
     deps = [
       Dev::Deps::Dependency.new(name: "llvm", integration: :brew, group: :build,
         version: "18.1.8", hash: "SHA256=abc",
@@ -86,9 +86,9 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
   test "install_all raises InstallError when brew install fails" do
     Given "a brew dependency with a failing install"
     dir = Dir.mktmpdir("dev-brew-int-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    store = Dev::Deps::LocalStore.new(data_root: dir)
     repository = Dev::Deps::BrewRepository.new
-    integration = Dev::Deps::BrewIntegration.new(repository: repository, cache: cache, brew_prefix: dir)
+    integration = Dev::Deps::BrewIntegration.new(repository: repository, store: store, brew_prefix: dir)
     deps = [
       Dev::Deps::Dependency.new(name: "bad_formula", integration: :brew, group: :build,
         version: "1.0.0", hash: nil, metadata: { "version_suffix" => "1" }),
@@ -115,8 +115,8 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
   test "install_all attempts the remaining formulae when one fails, then raises the aggregate" do
     Given "two brew dependencies, the first of which fails to install"
     dir = Dir.mktmpdir("dev-brew-int-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
-    integration = Dev::Deps::BrewIntegration.new(repository: Dev::Deps::BrewRepository.new, cache: cache, brew_prefix: dir)
+    store = Dev::Deps::LocalStore.new(data_root: dir)
+    integration = Dev::Deps::BrewIntegration.new(repository: Dev::Deps::BrewRepository.new, store: store, brew_prefix: dir)
     deps = [
       Dev::Deps::Dependency.new(name: "bad_formula", integration: :brew, group: :build,
         version: "1.0.0", hash: nil, metadata: {}),
@@ -151,10 +151,10 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
   test "install_all registers a local file:// tap at its resolved path and publishes the tap env" do
     Given "an integration with a project dir and a local tap"
     dir = Dir.mktmpdir("dev-brew-int-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    store = Dev::Deps::LocalStore.new(data_root: dir)
     tap = Dev::Deps::Tap.new(name: "local/tap", url: "file://#{dir}/brew-tap")
     integration = Dev::Deps::BrewIntegration.new(
-      repository: Dev::Deps::BrewRepository.new, cache: cache, taps: [tap], project_dir: dir, brew_prefix: dir,
+      repository: Dev::Deps::BrewRepository.new, store: store, taps: [tap], project_dir: dir, brew_prefix: dir,
     )
     integration.expects(:system).with("brew", "tap", "local/tap", "#{dir}/brew-tap").returns(true)
 
@@ -174,10 +174,10 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
   test "install_all registers a remote URL tap with its URL" do
     Given "an integration with a remote (non-file) tap"
     dir = Dir.mktmpdir("dev-brew-int-test-")
-    cache = Dev::Deps::Cache.new(cache_dir: dir)
+    store = Dev::Deps::LocalStore.new(data_root: dir)
     tap = Dev::Deps::Tap.new(name: "org/tap", url: "https://github.com/org/homebrew-tap")
     integration = Dev::Deps::BrewIntegration.new(
-      repository: Dev::Deps::BrewRepository.new, cache: cache, taps: [tap], project_dir: dir, brew_prefix: dir,
+      repository: Dev::Deps::BrewRepository.new, store: store, taps: [tap], project_dir: dir, brew_prefix: dir,
     )
     integration.expects(:system).with("brew", "tap", "org/tap", "https://github.com/org/homebrew-tap").returns(true)
 
@@ -198,7 +198,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     FileUtils.mkdir_p(prefix)
     integration = Dev::Deps::BrewIntegration.new(
       repository: Dev::Deps::BrewRepository.new,
-      cache: Dev::Deps::Cache.new(cache_dir: dir),
+      store: Dev::Deps::LocalStore.new(data_root: dir),
       brew_prefix: prefix,
     )
     deps = [
@@ -227,7 +227,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     owner = Etc.getpwuid(File.stat(prefix).uid).name
     integration = Dev::Deps::BrewIntegration.new(
       repository: Dev::Deps::BrewRepository.new,
-      cache: Dev::Deps::Cache.new(cache_dir: dir),
+      store: Dev::Deps::LocalStore.new(data_root: dir),
       brew_prefix: prefix,
     )
     deps = [
@@ -259,7 +259,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     owner = Etc.getpwuid(File.stat(prefix).uid).name
     integration = Dev::Deps::BrewIntegration.new(
       repository: Dev::Deps::BrewRepository.new,
-      cache: Dev::Deps::Cache.new(cache_dir: dir),
+      store: Dev::Deps::LocalStore.new(data_root: dir),
       brew_prefix: prefix,
     )
     deps = [
@@ -298,7 +298,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     tap = Dev::Deps::Tap.new(name: "org/tap", url: "https://github.com/org/homebrew-tap")
     integration = Dev::Deps::BrewIntegration.new(
       repository: Dev::Deps::BrewRepository.new,
-      cache: Dev::Deps::Cache.new(cache_dir: dir),
+      store: Dev::Deps::LocalStore.new(data_root: dir),
       taps: [tap], project_dir: dir, brew_prefix: prefix,
     )
     integration.expects(:system)
@@ -322,7 +322,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     tap = Dev::Deps::Tap.new(name: "org/tap")
     integration = Dev::Deps::BrewIntegration.new(
       repository: Dev::Deps::BrewRepository.new,
-      cache: Dev::Deps::Cache.new(cache_dir: dir),
+      store: Dev::Deps::LocalStore.new(data_root: dir),
       taps: [tap], project_dir: dir, brew_prefix: dir,
     )
     integration.stubs(:system).with("brew", "tap", "org/tap").returns(false)
@@ -350,7 +350,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     tap = Dev::Deps::Tap.new(name: "org/tap")
     integration = Dev::Deps::BrewIntegration.new(
       repository: Dev::Deps::BrewRepository.new,
-      cache: Dev::Deps::Cache.new(cache_dir: dir),
+      store: Dev::Deps::LocalStore.new(data_root: dir),
       taps: [tap], project_dir: dir, brew_prefix: prefix,
     )
     integration.stubs(:system).with("sudo", "-n", "-u", owner, "brew", "tap", "org/tap").returns(false)
@@ -372,7 +372,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     Given "an integration with no injected prefix and a brew that answers --prefix"
     dir = Dir.mktmpdir("dev-brew-int-test-")
     integration = Dev::Deps::BrewIntegration.new(
-      repository: Dev::Deps::BrewRepository.new, cache: Dev::Deps::Cache.new(cache_dir: dir),
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir),
     )
     Open3.expects(:capture3).with("brew", "--prefix").once.returns(["#{dir}\n", "", stub(success?: true)])
 
@@ -392,7 +392,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     Given "an integration with no injected prefix and no brew on PATH"
     dir = Dir.mktmpdir("dev-brew-int-test-")
     integration = Dev::Deps::BrewIntegration.new(
-      repository: Dev::Deps::BrewRepository.new, cache: Dev::Deps::Cache.new(cache_dir: dir),
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir),
     )
     Open3.stubs(:capture3).with("brew", "--prefix").raises(Errno::ENOENT)
 
@@ -411,7 +411,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     Given "an integration with a project dir and a project-relative file URI"
     dir = Dir.mktmpdir("dev-brew-int-test-")
     integration = Dev::Deps::BrewIntegration.new(
-      repository: Dev::Deps::BrewRepository.new, cache: Dev::Deps::Cache.new(cache_dir: dir), project_dir: dir,
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), project_dir: dir,
     )
     relative_uri = URI::Generic.new("file", nil, nil, nil, nil, "./brew-tap", nil, nil, nil)
 

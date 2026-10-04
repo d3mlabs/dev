@@ -4,13 +4,13 @@
 require "pathname"
 require "dev/command"
 require "dev/deps/accessor"
-require "dev/deps/cache"
+require "dev/deps/local_store"
 require "dev/deps/lockfile"
 
 module Dev
   module Builtins
     # `dev deps path <integration> …`: print a locked artifact's absolute
-    # path, read from the lockfile + content cache (e.g. `dev deps path
+    # path, read from the lockfile + artifact store (e.g. `dev deps path
     # ficsit <mod> <platform>`). A leaf of the `deps` group.
     class DepsPathCommand < BuiltinCommand
       extend T::Sig
@@ -26,7 +26,7 @@ module Dev
         accessor_factory: ->(project_root) {
           Dev::Deps::Accessor.new(
             lockfile: Dev::Deps::Lockfile.new(dir: project_root),
-            cache: Dev::Deps::Cache.new,
+            store: Dev::Deps::LocalStore.new,
           )
         }
       )

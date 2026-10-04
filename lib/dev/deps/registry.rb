@@ -1,7 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
-require_relative "cache"
+require_relative "artifact_store"
 require_relative "tap"
 require_relative "brew_repository"
 require_relative "brew_integration"
@@ -77,7 +77,7 @@ module Dev
       # @param integration [Class, nil] Integration subclass that installs this
       #   type, or nil for resolve-only / container-only types
       # @param integration_needs [Array<Symbol>] extra kwargs the integration takes
-      #   (beyond the always-passed repository: and cache:)
+      #   (beyond the always-passed repository: and store:)
       # @param install_alias [Symbol, nil] another entry's symbol whose
       #   integration INSTANCE installs this type's deps too (e.g. :url deps
       #   install through :cmake's pipeline). Sharing the instance matters:
@@ -323,7 +323,7 @@ module Dev
         # Build the integration-type -> Integration hash for host installs.
         #
         # @param project_root [Pathname] project root (threaded to integrations that need it)
-        # @param cache [Cache] shared download cache (passed to every integration)
+        # @param store [ArtifactStore] where installed trees and downloaded blobs live (passed to every integration)
         # @param taps [Array<Tap>] Homebrew taps for the brew integration
         # @param ruby_version_requirement [String, nil] accepted for caller
         #   convenience; install-time integrations don't need it today
@@ -332,13 +332,13 @@ module Dev
         sig do
           params(
             project_root: Pathname,
-            cache: Cache,
+            store: ArtifactStore,
             taps: T::Array[Tap],
             ruby_version_requirement: T.nilable(String),
             python_version: T.nilable(String),
           ).returns(T::Hash[Symbol, Integration])
         end
-        def host_integrations(project_root:, cache:, taps: [], ruby_version_requirement: nil, python_version: nil)
+        def host_integrations(project_root:, store:, taps: [], ruby_version_requirement: nil, python_version: nil)
           context = {
             project_root:,
             project_dir: project_root,
@@ -354,7 +354,7 @@ module Dev
             # statically; the constructors' own sigs validate at runtime.
             hash[entry.symbol] = T.unsafe(T.must(entry.integration)).new(
               repository: build_repository(entry, context),
-              cache:,
+              store:,
               **T.unsafe(context).slice(*entry.integration_needs),
             )
           end

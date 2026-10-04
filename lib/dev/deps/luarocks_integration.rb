@@ -20,17 +20,17 @@ module Dev
       INSTALL_DIR = "lua_modules"
 
       # @param repository    [Repository, nil]  source adapter for luarocks deps
-      # @param cache         [Cache, nil]       shared download cache
+      # @param store         [ArtifactStore, nil] artifact store
       # @param project_root  [String, Pathname] project root directory
       sig do
         params(
           repository: T.nilable(Repository),
-          cache: T.nilable(Cache),
+          store: T.nilable(ArtifactStore),
           project_root: T.any(String, Pathname),
         ).void
       end
-      def initialize(repository:, cache:, project_root:)
-        super(repository:, cache:)
+      def initialize(repository:, store:, project_root:)
+        super(repository:, store:)
         @project_root = T.let(Pathname(project_root), Pathname)
       end
 

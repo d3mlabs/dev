@@ -5,7 +5,6 @@ require "digest"
 require "fileutils"
 require "pathname"
 require "shellwords"
-require_relative "../data_root"
 require_relative "integration"
 
 module Dev
@@ -34,10 +33,10 @@ module Dev
     #      it empty); build: :none skips the build and publishes the source as-is.
     #   4. Publish $DEV_INSTALL_DIR (or the source tree for :none)
     #
-    # Deliberately bypasses the shared download Cache: artifacts here are
-    # multi-gigabyte (the UE engine is ~8GB compressed; a built tree far more), so
-    # parking a second copy in ~/.dev/cache would double disk usage for no benefit.
-    # The version-keyed install dir plus its marker file is the cache.
+    # Deliberately a tree, never a blob: artifacts here are multi-gigabyte
+    # (the UE engine is ~8GB compressed; a built tree far more), so parking a
+    # second copy as a cached archive would double disk usage for no benefit.
+    # The store's published tree plus its marker file is the cache.
     #
     # Nothing else is written under install_dir: consumers locate the version
     # dir through `dev deps path gh <name>` (Accessor), so an install is a pure
@@ -56,18 +55,18 @@ module Dev
       MARKER_FILE = ".dev-gh-release"
 
       # @param repository [Repository, nil]
-      # @param cache [Cache, nil]
+      # @param store [ArtifactStore, nil]
       # @param project_root [String, Pathname, nil] repo root, used to resolve a
       #   project-relative build: script path (e.g. "bin/build-ue.sh")
       sig do
         params(
           repository: T.nilable(Repository),
-          cache: T.nilable(Cache),
+          store: T.nilable(ArtifactStore),
           project_root: T.nilable(T.any(String, Pathname)),
         ).void
       end
-      def initialize(repository:, cache:, project_root: nil)
-        super(repository: repository, cache: cache)
+      def initialize(repository:, store:, project_root: nil)
+        super(repository: repository, store: store)
         @project_root = T.let(project_root && Pathname(project_root), T.nilable(Pathname))
       end
 
@@ -100,73 +99,52 @@ module Dev
       # @param dep [Dependency]
       sig { params(dep: Dependency).void }
       def install_prebuilt(dep)
-        base_dir = Pathname(Dev::DataRoot.expand(dep.metadata["install_dir"]))
-        target_dir = versioned_dir(base_dir, dep.version)
-        if version_published?(target_dir, MARKER_FILE, dep.version)
-          puts ">>> #{dep.name}@#{dep.version} already installed at #{target_dir}"
+        key = tree_key(dep, marker: MARKER_FILE)
+        if (installed = store!.tree(key))
+          puts ">>> #{dep.name}@#{dep.version} already installed at #{installed}"
           return
         end
 
-        # Staging lives next to the version dirs so the publish is a cheap
-        # same-filesystem rename; a crashed run leaves published versions intact.
-        staging_dir = new_staging_dir(base_dir)
-        archives_dir = staging_dir / "archives"
-        extracted_dir = staging_dir / "extracted"
-        FileUtils.mkdir_p(archives_dir)
-        FileUtils.mkdir_p(extracted_dir)
+        published = store!.publish_tree(key) do |staging|
+          archives_dir = staging / "archives"
+          extracted_dir = staging / "extracted"
+          FileUtils.mkdir_p(archives_dir)
+          FileUtils.mkdir_p(extracted_dir)
 
-        puts ">>> Downloading #{dep.name}@#{dep.version} from #{dep.metadata["repo"]}"
-        download_assets(dep, archives_dir)
-        verify_assets(dep, archives_dir)
+          puts ">>> Downloading #{dep.name}@#{dep.version} from #{dep.metadata["repo"]}"
+          download_assets(dep, archives_dir)
+          verify_assets(dep, archives_dir)
 
-        puts ">>> Extracting #{dep.name}@#{dep.version}"
-        extract_archives(archives_dir, extracted_dir)
-
-        # Stamp the marker inside staging so the published dir is atomically
-        # complete: a reader never sees content without a valid marker.
-        (extracted_dir / MARKER_FILE).write(dep.version)
-        if publish_version(extracted_dir, target_dir)
-          puts ">>> Installed #{dep.name}@#{dep.version} to #{target_dir}"
-        else
-          puts ">>> #{dep.name}@#{dep.version} published concurrently at #{target_dir}"
+          puts ">>> Extracting #{dep.name}@#{dep.version}"
+          extract_archives(archives_dir, extracted_dir)
+          extracted_dir
         end
-      ensure
-        FileUtils.rm_rf(staging_dir) if staging_dir
+        puts ">>> Installed #{dep.name}@#{dep.version} to #{published}"
       end
 
       # @param dep [Dependency]
       sig { params(dep: Dependency).void }
       def install_from_source(dep)
-        base_dir = Pathname(Dev::DataRoot.expand(dep.metadata["install_dir"]))
-        target_dir = versioned_dir(base_dir, dep.version)
-        if version_published?(target_dir, MARKER_FILE, dep.version)
-          puts ">>> #{dep.name}@#{dep.version} already installed at #{target_dir}"
+        key = tree_key(dep, marker: MARKER_FILE)
+        if (installed = store!.tree(key))
+          puts ">>> #{dep.name}@#{dep.version} already installed at #{installed}"
           return
         end
 
-        staging_dir = new_staging_dir(base_dir)
-        source_dir = staging_dir / "source"
-        install_dir = staging_dir / "install"
-        archive_path = staging_dir / "source.tar.gz"
-        FileUtils.mkdir_p(source_dir)
-        FileUtils.mkdir_p(install_dir)
+        published = store!.publish_tree(key) do |staging|
+          source_dir = staging / "source"
+          install_dir = staging / "install"
+          archive_path = staging / "source.tar.gz"
+          FileUtils.mkdir_p(source_dir)
+          FileUtils.mkdir_p(install_dir)
 
-        puts ">>> Fetching #{dep.name}@#{dep.version} source from #{dep.metadata["repo"]}"
-        download_source(dep, archive_path)
-        extract_source(archive_path, source_dir)
+          puts ">>> Fetching #{dep.name}@#{dep.version} source from #{dep.metadata["repo"]}"
+          download_source(dep, archive_path)
+          extract_source(archive_path, source_dir)
 
-        published_dir = build_source(dep, source_dir, install_dir)
-
-        # Stamp the marker inside staging so the published dir is atomically
-        # complete: a reader never sees content without a valid marker.
-        (published_dir / MARKER_FILE).write(dep.version)
-        if publish_version(published_dir, target_dir)
-          puts ">>> Installed #{dep.name}@#{dep.version} to #{target_dir}"
-        else
-          puts ">>> #{dep.name}@#{dep.version} published concurrently at #{target_dir}"
+          build_source(dep, source_dir, install_dir)
         end
-      ensure
-        FileUtils.rm_rf(staging_dir) if staging_dir
+        puts ">>> Installed #{dep.name}@#{dep.version} to #{published}"
       end
 
       # Fetch the tag's source tarball into archive_path. Uses `gh api .../tarball`
