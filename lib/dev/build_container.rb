@@ -96,6 +96,11 @@ module Dev
     # run; harmless on native hosts.
     SIGPENDING_ULIMIT = ["--ulimit", "sigpending=1000000"].freeze
 
+    # Where the host's data root is bind-mounted in every container dev
+    # creates. Fixed, because what the store holds embeds absolute paths
+    # (venvs, binstubs), and FHS-conventional for a program's variable state.
+    DATA_ROOT_MOUNT = "/var/lib/dev"
+
     # @return [Dev::ContainerEngine] the engine every docker invocation rides
     sig { returns(Dev::ContainerEngine) }
     attr_reader :engine
@@ -509,6 +514,7 @@ module Dev
         *SIGPENDING_ULIMIT,
         *self.class.label_flags(image_tag, project_root),
         "-v", "#{project_root}:/project",
+        *data_root_flags,
         *volume_flags(volumes),
         *env_flags(env),
         "-w", "/project",
@@ -517,15 +523,32 @@ module Dev
       ]
     end
 
-    # Env for a container dev creates: the configured entries plus the inside
-    # marker (see ContainerContext). Every container-creation site funnels
-    # through here, so no dev-created container can lack the marker.
+    # The host's data root bind-mounted at its fixed container path, so the
+    # dev inside (DEV_DATA_ROOT, set by env_flags) shares one artifact store
+    # with the host. Created first when missing: docker would otherwise create
+    # it root-owned and the host's dev could never write it.
+    #
+    # @return [Array<String>] docker `-v` flags
+    sig { returns(T::Array[String]) }
+    def data_root_flags
+      root = Dev::DataRoot.path
+      FileUtils.mkdir_p(root)
+      ["-v", "#{root}:#{DATA_ROOT_MOUNT}"]
+    end
+
+    # Env for a container dev creates: the inside marker (see
+    # ContainerContext), the data root's container path, then the configured
+    # entries. Every container-creation site funnels through here, so no
+    # dev-created container can lack either.
     #
     # @param env [Hash{String => String}] run_env entries resolved on the host
     # @return [Array<String>] docker `-e` flags
     sig { params(env: T::Hash[String, String]).returns(T::Array[String]) }
     def env_flags(env)
-      ContainerContext::MARKER_ENV.merge(env).flat_map { |name, value| ["-e", "#{name}=#{value}"] }
+      ContainerContext::MARKER_ENV
+        .merge("DEV_DATA_ROOT" => DATA_ROOT_MOUNT)
+        .merge(env)
+        .flat_map { |name, value| ["-e", "#{name}=#{value}"] }
     end
 
     # "host:container" volume specs -> docker `-v` flags, expanding ~ in the host
@@ -839,6 +862,7 @@ module Dev
         "run", "-d", "--name", name,
         *self.class.label_flags(image_tag, project_root),
         "-v", "#{project_root}:/project",
+        *data_root_flags,
         *volume_flags(volumes),
         *env_flags({}),
         "-w", "/project",
