@@ -7,6 +7,7 @@ require "dev/cli/ui"
 require "dev/command"
 require "dev/credentials"
 require "dev/build_container"
+require "dev/container_context"
 require "dev/container_engine"
 require "dev/shadowenv_llvm"
 require "dev/shadowenv_python"
@@ -40,6 +41,11 @@ module Dev
   # When a build container is configured and the command opts in (default),
   # the command runs inside the container via `docker run`. Otherwise it runs
   # locally via `shadowenv exec`.
+  #
+  # Inside a dev-managed container (ContainerContext.inside?) there is no
+  # further container to reach for: a containerized command runs directly,
+  # as `sh -c` at the project root — the same shape the host's `docker exec`
+  # gives it — with no host toolchain provisioning and no shadowenv wrapper.
   class CommandRunner
     extend T::Sig
 
@@ -94,16 +100,18 @@ module Dev
         python_version: T.nilable(String),
         build_container: T.nilable(Dev::BuildContainerConfig),
         container_client: T.nilable(Dev::BuildContainer),
+        inside_container: T::Boolean,
       ).void
     end
     def initialize(ui:, ruby_version:, project_root:, python_version: nil, build_container: nil,
-                   container_client: nil)
+                   container_client: nil, inside_container: ContainerContext.inside?)
       @ui = ui
       @ruby_version = ruby_version
       @python_version = python_version
       @build_container = build_container
       @project_root = project_root
       @container_client = container_client
+      @inside_container = inside_container
     end
 
     # Hand the process over to the command: exec-replace, the right shape
@@ -147,7 +155,7 @@ module Dev
       if use_container?(cmd)
         run_in_container(shell_command, wait:)
       else
-        ensure_shadowenv_provisioned!
+        ensure_shadowenv_provisioned! unless @inside_container
         if cmd.repl
           run_bare(shell_command, wait:)
         else
@@ -156,9 +164,11 @@ module Dev
       end
     end
 
+    # Whether the command reaches into the build container: configured, opted
+    # in, and not already there.
     sig { params(cmd: ProjectCommand).returns(T::Boolean) }
     def use_container?(cmd)
-      !@build_container.nil? && cmd.container
+      !@build_container.nil? && cmd.container && !@inside_container
     end
 
     # Whether the resolved image should be published to the shared registry.
@@ -346,7 +356,17 @@ module Dev
     sig { params(shell_command: String, wait: T::Boolean).void }
     def run_bare(shell_command, wait:)
       Dir.chdir(@project_root)
-      run_child([child_env, "shadowenv", "exec", "--", "sh", "-c", shell_command], wait:)
+      run_child([child_env, *shell_prefix, "sh", "-c", shell_command], wait:)
+    end
+
+    # The argv that precedes `sh -c` for a direct run: the project's shadowenv
+    # on a host; nothing inside a container, where no shadowenv is provisioned
+    # (the container's toolchain is the image's).
+    #
+    # @return [Array<String>]
+    sig { returns(T::Array[String]) }
+    def shell_prefix
+      @inside_container ? [] : ["shadowenv", "exec", "--"]
     end
 
     # Runs the command inside a shell wrapper that prints a colored
@@ -358,7 +378,7 @@ module Dev
     sig { params(shell_command: String, wait: T::Boolean).void }
     def run_with_status_footer(shell_command, wait:)
       Dir.chdir(@project_root)
-      run_child([child_env, "shadowenv", "exec", "--", "sh", "-c", <<~SH], wait:)
+      run_child([child_env, *shell_prefix, "sh", "-c", <<~SH], wait:)
         #{shell_command}
         __dev_status=$?
         if [ $__dev_status -eq 0 ]; then

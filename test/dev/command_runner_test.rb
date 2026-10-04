@@ -292,6 +292,48 @@ class CommandRunnerTest < Minitest::Test
     Dir.chdir(@original_cwd)
   end
 
+  test "inside the container, a containerized command runs directly: no docker, no shadowenv, no host provisioning" do
+    Given "a runner that knows it is inside, over a persist container config"
+    config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry", persist: true)
+    client = Dev::BuildContainer.new(engine: FakeContainerEngine.new)
+    runner = Dev::CommandRunner.new(
+      ui: @ui, ruby_version: "4.0.1", build_container: config,
+      project_root: @project_root, container_client: client, inside_container: true,
+    )
+    cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
+    client.expects(:ensure_image!).never
+    client.expects(:ensure_service!).never
+    client.expects(:docker_exec_command).never
+    client.expects(:docker_run_command).never
+
+    When "we run the command"
+    runner.exec_into(cmd)
+
+    Then "the shell command execs in place, with dev's lib on RUBYLIB and no shadowenv wrapper"
+    0 * Dev::ShadowenvRuby.ensure!(ruby_version: anything, project_root: anything)
+    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "sh", "-c", includes("./bin/build.sh"))
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+  end
+
+  test "inside the container, a repl command execs bare without the shadowenv wrapper" do
+    Given "an inside runner and a repl command"
+    runner = Dev::CommandRunner.new(
+      ui: @ui, ruby_version: "4.0.1", project_root: @project_root, inside_container: true,
+    )
+    cmd = Dev::ProjectCommand.new(run: "./bin/console", repl: true)
+
+    When "we run the command"
+    runner.exec_into(cmd)
+
+    Then "the argv is sh -c and the command alone"
+    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "sh", "-c", "./bin/console")
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+  end
+
   test "run falls back to local execution when no build_container is configured" do
     Given "a runner without build_container"
     runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", project_root: @project_root)
