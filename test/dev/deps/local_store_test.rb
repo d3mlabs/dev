@@ -214,6 +214,112 @@ class Dev::Deps::LocalStoreTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "build_tree yields the final path for a build that bakes its destination, and the marker lands last" do
+    Given "a store and a platform-keyed ruby key"
+    root = Dir.mktmpdir("local-store-")
+    store = Dev::Deps::LocalStore.new(data_root: root)
+    tree_key = key(base: "~/.dev/ruby", version: "4.0.6", platform: "linux-x86_64", marker: ".dev-ruby")
+    seen_during_build = nil
+
+    When "building in place"
+    published = store.build_tree(tree_key) do |dir|
+      seen_during_build = store.tree(tree_key)
+      (dir / "bin").mkpath
+      (dir / "bin" / "ruby").write("#!/bin/sh\n")
+    end
+
+    Then "the block built straight into the tree's final path, unpublished until it returned"
+    published == Pathname(root) / "ruby/linux-x86_64/4.0.6"
+    seen_during_build.nil?
+    store.tree(tree_key) == published
+    (published / ".dev-ruby").read == "4.0.6"
+    (published / "bin" / "ruby").file?
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "build_tree starts clean: a half-built, markerless tree from an earlier failure is removed first" do
+    Given "a markerless leftover at the tree's path"
+    root = Dir.mktmpdir("local-store-")
+    store = Dev::Deps::LocalStore.new(data_root: root)
+    tree_key = key(base: "~/.dev/ruby", version: "4.0.6", platform: "linux-x86_64")
+    leftover = store.tree_path(tree_key)
+    leftover.mkpath
+    (leftover / "stale").write("x")
+
+    When "building again"
+    store.build_tree(tree_key) { |dir| (dir / "fresh").write("y") }
+
+    Then "only the new build is there"
+    !(leftover / "stale").exist?
+    (leftover / "fresh").file?
+    store.tree(tree_key) == leftover
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "build_tree leaves no marker when the block raises, so the tree reads as unpublished" do
+    Given "a store"
+    root = Dir.mktmpdir("local-store-")
+    store = Dev::Deps::LocalStore.new(data_root: root)
+    tree_key = key(base: "~/.dev/ruby", version: "4.0.6", platform: "linux-x86_64")
+
+    When "the build fails"
+    begin
+      store.build_tree(tree_key) { |dir| (dir / "partial").write("z"); raise "compiler exploded" }
+    rescue RuntimeError
+      nil
+    end
+
+    Then
+    store.tree(tree_key).nil?
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "build_tree is a no-op when the version is already published" do
+    Given "a published tree"
+    root = Dir.mktmpdir("local-store-")
+    store = Dev::Deps::LocalStore.new(data_root: root)
+    tree_key = key(base: "~/.dev/ruby", version: "4.0.6", platform: "linux-x86_64")
+    store.build_tree(tree_key) { |dir| (dir / "first").write("1") }
+    built_again = false
+
+    When "building the same key"
+    store.build_tree(tree_key) { |_dir| built_again = true }
+
+    Then "the block never ran and the first build stands"
+    !built_again
+    (store.tree(tree_key) / "first").file?
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "workdir is a platform-keyed directory the caller mutates in place: created on first use, kept after" do
+    Given "a store"
+    root = Dir.mktmpdir("local-store-")
+    store = Dev::Deps::LocalStore.new(data_root: root)
+    tree_key = key(base: "~/.dev/gems", version: "4.0.6", platform: "linux-x86_64")
+
+    When "asking for the workdir twice, writing in between"
+    first = store.workdir(tree_key)
+    (first / "gems").mkpath
+    second = store.workdir(tree_key)
+
+    Then "one directory, under the platform segment, with its contents intact"
+    first == Pathname(root) / "gems/linux-x86_64/4.0.6"
+    second == first
+    (second / "gems").directory?
+    store.tree(tree_key).nil?
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
   test "blobs: put_blob takes ownership of the file, blob finds it under the data root's cache" do
     Given "a store and a downloaded file"
     root = Dir.mktmpdir("local-store-")
