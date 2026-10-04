@@ -95,6 +95,26 @@ class Dev::Deps::LocalStoreTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "publish_tree refuses a directory outside staging and leaves it alone" do
+    Given "a store and a directory that is not staging"
+    root = Dir.mktmpdir("local-store-")
+    store = Dev::Deps::LocalStore.new(data_root: root)
+    elsewhere = Pathname(root) / "elsewhere"
+    elsewhere.mkpath
+    (elsewhere / "payload").write("x")
+
+    When "the block hands back that directory"
+    store.publish_tree(key(base: "~/.dev/engines/ue", version: "5.6.1")) { |_staging| elsewhere }
+
+    Then "the publish is refused; the directory is untouched and nothing was published"
+    raises Dev::Deps::ArtifactStore::PublishOutsideStagingError
+    (elsewhere / "payload").read == "x"
+    store.tree_versions("~/.dev/engines/ue") == []
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
   test "publish_tree is first-writer-wins: an already-published version is never replaced" do
     Given "a published version"
     root = Dir.mktmpdir("local-store-")

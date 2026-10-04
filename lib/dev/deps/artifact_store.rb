@@ -49,9 +49,6 @@ module Dev
       # is not inside the staging dir it was given.
       class PublishOutsideStagingError < StandardError; end
 
-      # Raised when a blob key has no content.
-      class BlobMissingError < StandardError; end
-
       # The published tree for a key, or nil when none (or only a partial
       # one) exists.
       #

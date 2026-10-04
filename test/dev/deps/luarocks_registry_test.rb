@@ -3,7 +3,6 @@
 
 require "test_helper"
 require "dev/deps/luarocks_repository"
-require "dev/deps/cache"
 require "tmpdir"
 require "digest"
 

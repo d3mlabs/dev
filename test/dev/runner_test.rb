@@ -656,14 +656,14 @@ class RunnerTest < Minitest::Test
   test "an unmapped error is a dev bug and re-raises with its backtrace" do
     Given "a Runner whose service raises an unmapped error class"
     command_service = typed_mock(Dev::CommandService)
-    command_service.stubs(:execute).raises(Dev::Deps::Cache::CacheMissError.new("no entry"))
+    command_service.stubs(:execute).raises(Dev::Deps::ArtifactStore::PublishOutsideStagingError.new("elsewhere"))
     runner = build_runner(commands: {}, command_service: command_service)
 
     When "we run the command"
     runner.run(["deps"])
 
     Then
-    raises Dev::Deps::Cache::CacheMissError
+    raises Dev::Deps::ArtifactStore::PublishOutsideStagingError
   end
 
   private
