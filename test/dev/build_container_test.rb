@@ -180,6 +180,47 @@ class BuildContainerTest < Minitest::Test
     cmd.index("DEV_INSIDE_CONTAINER=1") < cmd.index("jpduchesne89/snappy:content-abc123")
   end
 
+  test "docker_run_command mounts the data root at its fixed container path and points the inside dev at it" do
+    Given "a scratch data root"
+    root = Dir.mktmpdir("dev-data-root")
+    original = ENV["DEV_DATA_ROOT"]
+    ENV["DEV_DATA_ROOT"] = root
+
+    When "building a one-shot run"
+    cmd = build_container.docker_run_command(
+      "jpduchesne89/snappy:content-abc123",
+      project_root: Pathname("/project"),
+      shell_cmd: "./bin/build.sh",
+    )
+
+    Then "the root is bind-mounted at /var/lib/dev and DEV_DATA_ROOT names that path inside"
+    cmd.each_cons(2).include?(["-v", "#{root}:/var/lib/dev"])
+    cmd.each_cons(2).include?(["-e", "DEV_DATA_ROOT=/var/lib/dev"])
+    cmd.index("#{root}:/var/lib/dev") < cmd.index("jpduchesne89/snappy:content-abc123")
+
+    Cleanup
+    ENV["DEV_DATA_ROOT"] = original
+    FileUtils.rm_rf(root)
+  end
+
+  test "docker_run_command creates a missing data root first, so docker never leaves a root-owned one behind" do
+    Given "a data root path that does not exist yet"
+    parent = Dir.mktmpdir("dev-data-parent")
+    root = File.join(parent, "dev")
+    original = ENV["DEV_DATA_ROOT"]
+    ENV["DEV_DATA_ROOT"] = root
+
+    When "building a one-shot run"
+    build_container.docker_run_command("img:tag", project_root: Pathname("/project"), shell_cmd: "make")
+
+    Then "the directory exists, owned by this process"
+    File.directory?(root)
+
+    Cleanup
+    ENV["DEV_DATA_ROOT"] = original
+    FileUtils.rm_rf(parent)
+  end
+
   test "docker_run_command expands ~ in volume host paths, re-rooting ~/.dev onto the data root" do
     Given "a scratch data root"
     root = Dir.mktmpdir("bc-data-root-")
@@ -1519,6 +1560,28 @@ class BuildContainerTest < Minitest::Test
     run = engine.runs.last
     run.each_cons(2).include?(["-e", "DEV_INSIDE_CONTAINER=1"])
     run.index("DEV_INSIDE_CONTAINER=1") < run.index("img:tag")
+  end
+
+  test "create_service_container mounts the data root at its fixed path, same as a one-shot run" do
+    Given "a recording engine and a scratch data root"
+    engine = FakeContainerEngine.new
+    root = Dir.mktmpdir("dev-data-root")
+    original = ENV["DEV_DATA_ROOT"]
+    ENV["DEV_DATA_ROOT"] = root
+
+    When "creating the service container"
+    build_container(engine: engine).create_service_container(
+      "dev-x", "img:tag", project_root: Pathname("/project"), volumes: [],
+    )
+
+    Then "the detached run binds the root at /var/lib/dev and sets DEV_DATA_ROOT"
+    run = engine.runs.last
+    run.each_cons(2).include?(["-v", "#{root}:/var/lib/dev"])
+    run.each_cons(2).include?(["-e", "DEV_DATA_ROOT=/var/lib/dev"])
+
+    Cleanup
+    ENV["DEV_DATA_ROOT"] = original
+    FileUtils.rm_rf(root)
   end
 
   test "docker_run_command carries the label contract so dev engine down recognizes an in-flight --rm run" do

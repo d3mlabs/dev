@@ -13,8 +13,8 @@ class Dev::GlobalCatalogTest < Minitest::Test
     Given "a catalog over stand-in accessors"
     catalog = build_catalog
 
-    Expect "the seven global nouns, each a Command"
-    catalog.commands.keys.sort == %w[cd clone config cred engine learnings plan]
+    Expect "the eight global nouns, each a Command"
+    catalog.commands.keys.sort == %w[cd clone config cred engine learnings plan version]
     catalog.commands.values.all? { |command| command.is_a?(Dev::Command) }
   end
 
