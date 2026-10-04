@@ -321,13 +321,13 @@ module Dev
       # @raise [TapPinner::PinError] if git fails
       sig { params(formulae: T::Array[Dependency]).void }
       def pin_taps!(formulae)
-        pins = formulae.to_h do |dep|
+        pins = formulae.map do |dep|
           commit = dep.metadata["tap_commit"]
           raise UnpinnedFormulaError.new(name: dep.name) unless commit
 
-          [dep.name, [dep.metadata["tap"] || BrewRepository::CORE_TAP, commit]]
+          [T.let(dep.metadata["tap"] || BrewRepository::CORE_TAP, String), T.let(commit, String)]
         end
-        pins.values.group_by(&:first).each do |tap, pairs|
+        pins.group_by(&:first).each do |tap, pairs|
           commits = pairs.map(&:last).uniq
           raise TapPinConflictError.new(tap:, commits:) if commits.length > 1
 
