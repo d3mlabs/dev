@@ -7,18 +7,31 @@ require "json"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::BrewRepositoryTest < Minitest::Test
+  # A bottle entry as both brew info and the formula API list it.
+  def bottle_file(name, sha)
+    { "cellar" => ":any", "url" => bottle_url(name, sha), "sha256" => sha }
+  end
+
+  def bottle_url(name, sha)
+    "https://ghcr.io/v2/homebrew/core/#{name}/blobs/sha256:#{sha}"
+  end
+
+  def bottle_files(name, tags)
+    tags.to_h { |tag| [tag, bottle_file(name, "sha-#{tag}")] }
+  end
+
   def formula_json(name, stable:, sha: nil, versioned: [], tap: nil, tap_git_head: nil, bottles: nil)
     json = { "name" => name, "versions" => { "stable" => stable }, "versioned_formulae" => versioned }
     json["tap"] = tap if tap
     json["tap_git_head"] = tap_git_head if tap_git_head
-    files = bottles ? bottles.to_h { |tag| [tag, { "sha256" => "sha-#{tag}" }] } : {}
-    files["arm64_sonoma"] = { "sha256" => sha } if sha
+    files = bottles ? bottle_files(name, bottles) : {}
+    files["arm64_sonoma"] = bottle_file(name, sha) if sha
     json["bottle"] = { "stable" => { "files" => files } } unless files.empty?
     json
   end
 
-  def api_response(bottles)
-    files = bottles.to_h { |tag| [tag, { "sha256" => "sha-#{tag}" }] }
+  def api_response(bottles, name: "cmake")
+    files = bottle_files(name, bottles)
     response = stub(body: JSON.generate({ "bottle" => { "stable" => { "files" => files } } }))
     response.stubs(:is_a?).with(Net::HTTPSuccess).returns(true)
     response.stubs(:is_a?).with(Net::HTTPResponse).returns(true)
@@ -39,10 +52,31 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
     When "finding the package"
     package = repository.find(Dev::Deps::PackageId.new(integration: :brew, name: "cmake"))
 
-    Then "one version, carrying the bottle digest"
+    Then "one version, publishing its one bottle as a platform with its artifact — no writer-side hash"
     package.versions.map(&:version) == ["3.31.4"]
-    package.version("3.31.4").digest == "SHA256=abc123def456"
+    package.version("3.31.4").platforms == ["arm64_sonoma"]
+    package.version("3.31.4").artifacts == {
+      "arm64_sonoma" => Dev::Deps::Artifact.new(
+        uri: bottle_url("cmake", "abc123def456"), digest: "SHA256=abc123def456",
+      ),
+    }
+    package.version("3.31.4").digest.nil?
     package.version("3.31.4").metadata == { "format" => "source" }
+  end
+
+  test "find reports a formula without bottles as a platform-less, artifact-less version" do
+    Given "a formula brew only ever builds from source"
+    repository = Dev::Deps::BrewRepository.new
+    stub_brew_info(["tool"], [formula_json("tool", stable: "2.0.0")])
+
+    When "finding"
+    package = repository.find(Dev::Deps::PackageId.new(integration: :brew, name: "tool"))
+
+    Then "nothing published means nothing recorded; the image build compiles it"
+    package.version("2.0.0").platforms == []
+    package.version("2.0.0").artifacts == {}
+    package.version("2.0.0").digest.nil?
+    package.version("2.0.0").metadata == { "format" => "source" }
   end
 
   test "find enumerates the spec family — siblings' suffixes ride as facts, bare spec last" do
@@ -61,7 +95,7 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
     Then "one version per spec; the bare spec sits last as the unconstrained pick"
     package.versions.map(&:version) == ["19.1.7", "18.1.8", "21.1.0"]
     package.version("18.1.8").metadata == { "version_suffix" => "18", "format" => "source" }
-    package.version("18.1.8").digest == "SHA256=llvm18"
+    package.version("18.1.8").artifacts["arm64_sonoma"].digest == "SHA256=llvm18"
     package.version("21.1.0").metadata == { "format" => "source" }
   end
 
@@ -145,14 +179,16 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
       Dev::Deps::PackageId.new(integration: :brew, name: "mytool", source: "someorg/sometap"),
     )
 
-    Then "format is bottle only when the image platform has one"
+    Then "every bottle is a platform, in a stable order; format is bottle only when the image platform has one"
+    package.version("1.2.0").platforms == platforms
+    package.version("1.2.0").artifacts.keys == platforms
     package.version("1.2.0").metadata["format"] == format
 
     Where
-    description              | bottles                            | format
-    "image bottle present"   | ["arm64_tahoe", "x86_64_linux"]    | "bottle"
-    "mac-only bottles"       | ["arm64_tahoe", "arm64_sequoia"]   | "source"
-    "no bottle block"        | []                                 | "source"
+    description              | bottles                            | platforms                        | format
+    "image bottle present"   | ["x86_64_linux", "arm64_tahoe"]    | ["arm64_tahoe", "x86_64_linux"]  | "bottle"
+    "mac-only bottles"       | ["arm64_tahoe", "arm64_sequoia"]   | ["arm64_sequoia", "arm64_tahoe"] | "source"
+    "no bottle block"        | []                                 | []                               | "source"
   end
 
   test "find asks the formula API for a core formula's bottles, since brew info lists only this machine's" do
@@ -165,9 +201,14 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
     When "finding"
     package = repository.find(Dev::Deps::PackageId.new(integration: :brew, name: "cmake"))
 
-    Then "the API's bottle list decides the format; the digest stays this machine's"
+    Then "the API's bottle list is the version's platforms and artifacts, and decides the format — this machine's bottle is not special"
     package.version("4.4.3").metadata == { "tap_commit" => "3c67e3be", "format" => "bottle" }
-    package.version("4.4.3").digest == "SHA256=mac"
+    package.version("4.4.3").platforms == ["arm64_tahoe", "x86_64_linux"]
+    package.version("4.4.3").artifacts == {
+      "arm64_tahoe" => Dev::Deps::Artifact.new(uri: bottle_url("cmake", "sha-arm64_tahoe"), digest: "SHA256=sha-arm64_tahoe"),
+      "x86_64_linux" => Dev::Deps::Artifact.new(uri: bottle_url("cmake", "sha-x86_64_linux"), digest: "SHA256=sha-x86_64_linux"),
+    }
+    package.version("4.4.3").digest.nil?
   end
 
   test "find reads a core formula's bottles from formulae.brew.sh's formula API" do
