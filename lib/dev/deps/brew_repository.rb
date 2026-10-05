@@ -5,6 +5,7 @@ require "json"
 require "net/http"
 require "open3"
 require "uri"
+require_relative "artifact"
 require_relative "declarations"
 require_relative "package"
 require_relative "package_id"
@@ -26,12 +27,16 @@ module Dev
     # a singleton universe. Casks are a separate universe
     # (BrewCaskRepository) under the :cask integration.
     #
-    # Two more facts ride each version for the image build (reproducible
-    # brew, A): `tap_commit`, the commit the formula's tap is at (brew's
-    # `tap_git_head`), and `format` — "bottle" when the formula bottles for
-    # the image platform, else "source" (the build compiles it). Brew's
-    # local info for a core formula lists only this machine's bottle, so
-    # core formats come from the public formula API.
+    # Each version publishes its bottles: every bottle tag is a platform and
+    # every bottle (URL + sha256) that platform's artifact, so the pin
+    # records what the formula publishes rather than what the writing
+    # machine would download. Two more facts ride each version for the
+    # image build (reproducible brew, A): `tap_commit`, the commit the
+    # formula's tap is at (brew's `tap_git_head`), and `format` — "bottle"
+    # when the formula bottles for the image platform, else "source" (the
+    # build compiles it). Brew's local info for a core formula lists only
+    # this machine's bottle, so core bottles come from the public formula
+    # API.
     class BrewRepository < Repository
       extend T::Sig
 
@@ -87,14 +92,21 @@ module Dev
       private
 
       # One family member's facts as a version: its stable version string,
-      # its bottle digest, and the @suffix from its own spec name.
+      # every bottle it publishes — each tag a platform, each bottle the
+      # platform's artifact — and the @suffix from its own spec name.
+      #
+      # Brew fetches bottles itself, so the artifacts are a record of what is
+      # published rather than something dev downloads: with every bottle in
+      # the version, the pin the Resolver mints is the same whichever machine
+      # writes it. The version carries no digest of its own — a single hash
+      # would again be one machine's bottle.
       #
       # @param info [Hash] parsed brew info JSON for one formula
       # @param tap [String, nil] tap slug from the id
       # @return [PackageVersion]
       sig { params(info: T::Hash[String, T.untyped], tap: T.nilable(String)).returns(PackageVersion) }
       def version_from(info, tap)
-        bottle_hash = extract_bottle_hash(info)
+        bottles = bottle_files(info)
         suffix = info["name"].to_s.split("@", 2)[1]
 
         metadata = {}
@@ -102,15 +114,23 @@ module Dev
         metadata["version_suffix"] = suffix if suffix
         tap_commit = info["tap_git_head"]
         metadata["tap_commit"] = tap_commit if tap_commit
-        metadata["format"] = image_format(info)
+        metadata["format"] = bottles.key?(IMAGE_BOTTLE_TAG) ? FORMAT_BOTTLE : FORMAT_SOURCE
 
         PackageVersion.new(
           version: info["versions"]["stable"],
-          digest: bottle_hash ? "SHA256=#{bottle_hash}" : nil,
+          platforms: bottles.keys,
+          artifacts: bottles.transform_values { |file| artifact_from(file) },
           metadata: metadata,
           # brew installs formula dependencies itself.
           declarations: Declarations::ToolOwned.new,
         )
+      end
+
+      # @param file [Hash] one bottle entry: its "url" and "sha256"
+      # @return [Artifact]
+      sig { params(file: T::Hash[String, T.untyped]).returns(Artifact) }
+      def artifact_from(file)
+        Artifact.new(uri: file["url"].to_s, digest: "SHA256=#{file["sha256"]}")
       end
 
       # Build a brew formula spec: [tap/]name.
@@ -163,37 +183,32 @@ module Dev
         status.success? || false
       end
 
-      # How the image build gets this formula: from a bottle when one exists
-      # for the image platform, otherwise by compiling from source.
+      # Every bottle a formula publishes, by tag, in a stable order. A tap
+      # formula's brew info reads the formula source and lists them all; a
+      # core formula's brew info lists only this machine's bottle, so core
+      # reads the public formula API instead — one call per formula.
       #
       # @param info [Hash] parsed brew info JSON for one formula
-      # @return [String] FORMAT_BOTTLE or FORMAT_SOURCE
-      sig { params(info: T::Hash[String, T.untyped]).returns(String) }
-      def image_format(info)
-        bottles = info["tap"] == CORE_TAP ? api_bottle_tags(info["name"].to_s) : bottle_tags(info)
-        bottles.include?(IMAGE_BOTTLE_TAG) ? FORMAT_BOTTLE : FORMAT_SOURCE
+      # @return [Hash{String => Hash}] bottle tag => its "url" and "sha256"
+      # @raise [FormulaApiError] if the API does not answer for a core formula
+      sig { params(info: T::Hash[String, T.untyped]).returns(T::Hash[String, T::Hash[String, T.untyped]]) }
+      def bottle_files(info)
+        listing = info["tap"] == CORE_TAP ? api_formula(info["name"].to_s) : info
+        files = T.let(listing.dig("bottle", "stable", "files") || {}, T::Hash[String, T::Hash[String, T.untyped]])
+        files.sort.to_h
       end
 
-      # The bottle tags a formula's info lists.
-      #
-      # @param info [Hash] parsed formula JSON (brew info or the formula API)
-      # @return [Array<String>]
-      sig { params(info: T::Hash[String, T.untyped]).returns(T::Array[String]) }
-      def bottle_tags(info)
-        (info.dig("bottle", "stable", "files") || {}).keys
-      end
-
-      # A core formula's complete bottle list, from the public formula API.
+      # A core formula's document from the public formula API.
       #
       # @param name [String] formula name
-      # @return [Array<String>] bottle tags
+      # @return [Hash] parsed formula JSON
       # @raise [FormulaApiError] if the API does not answer 2xx
-      sig { params(name: String).returns(T::Array[String]) }
-      def api_bottle_tags(name)
+      sig { params(name: String).returns(T::Hash[String, T.untyped]) }
+      def api_formula(name)
         response = get_formula_api(name)
         raise FormulaApiError.new(name:, code: response.code.to_s) unless response.is_a?(Net::HTTPSuccess)
 
-        bottle_tags(JSON.parse(T.must(response.body)))
+        JSON.parse(T.must(response.body))
       end
 
       # @param name [String] formula name
@@ -201,18 +216,6 @@ module Dev
       sig { params(name: String).returns(Net::HTTPResponse) }
       def get_formula_api(name)
         Net::HTTP.get_response(URI("#{FORMULA_API}/#{name}.json"))
-      end
-
-      # Extract the bottle SHA256 for the current platform.
-      #
-      # @param info [Hash] parsed brew info JSON
-      # @return [String, nil] hex SHA256, or nil if no bottle found
-      sig { params(info: T::Hash[String, T.untyped]).returns(T.nilable(String)) }
-      def extract_bottle_hash(info)
-        bottles = info.dig("bottle", "stable", "files") || {}
-        current_arch = RUBY_PLATFORM.include?("arm") ? "arm64_sonoma" : "sonoma"
-        bottle = bottles[current_arch] || bottles.values.first
-        bottle&.fetch("sha256", nil)
       end
     end
   end

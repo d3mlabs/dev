@@ -6,6 +6,7 @@ require "pathname"
 require "dev/command"
 require "dev/deps"
 require "dev/deps/brew_repository"
+require "dev/deps/installer"
 require "dev/deps/lockfile"
 require "dev/deps/registry"
 require "dev/deps/resolver"
@@ -18,6 +19,11 @@ module Dev
     # root, so no collaborators need injecting.
     class UpdateDepsCommand < BuiltinCommand
       extend T::Sig
+
+      # The host and env axes of an image build's `dev deps install`
+      # (bin/docker-install-build-deps.sh runs it on Linux under CI=true).
+      IMAGE_HOST = "linux"
+      IMAGE_ENV = "ci"
 
       sig { override.returns(String) }
       def desc = "Resolve dependency constraints and write lockfiles"
@@ -75,17 +81,24 @@ module Dev
 
       private
 
-      # Name each build-group formula the image build would compile from
-      # source: a missing bottle for the image platform is the usual reason
-      # an image build is slow or breaks, and `dev deps update` is the moment
-      # the lock learns which formulae those are.
+      # Name each formula the image build would compile from source: a
+      # missing bottle for the image platform is the usual reason an image
+      # build is slow or breaks, and `dev deps update` is the moment the lock
+      # learns which formulae those are.
+      #
+      # Which formulae the image build installs is the installer's selection
+      # for that build (bin/docker-install-build-deps.sh: the build group's
+      # brew formulae, on a Linux host, under CI=true) — asked of the same
+      # predicate, so a formula gated to another host is never named.
       #
       # @param resolved [Array<Dev::Deps::Dependency>] the resolution just locked
       # @return [void]
       sig { params(resolved: T::Array[Dev::Deps::Dependency]).void }
       def preflight_bottles(resolved)
-        resolved.each do |dep|
-          next unless dep.integration == :brew && dep.group == :build
+        image_deps = Dev::Deps::Installer.select(
+          resolved, env: IMAGE_ENV, host: IMAGE_HOST, groups: [:build], integration_types: [:brew],
+        )
+        image_deps.each do |dep|
           next unless dep.metadata["format"] == Dev::Deps::BrewRepository::FORMAT_SOURCE
 
           puts "dev: #{dep.name} has no #{Dev::Deps::BrewRepository::IMAGE_BOTTLE_TAG} bottle — " \

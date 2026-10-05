@@ -13,7 +13,7 @@ two roles.
 | Concept | Class | What it is |
 | --- | --- | --- |
 | Identity | `PackageId` | Which package: `integration` + `name`, plus `source` for source-addressed deps (a git URL, an `owner/repo` slug, a tap, a Steam app id). Value object, works as a Hash key. Version is deliberately not identity: two versions of one package are related candidates in one universe, never two packages — keeping selection (semver, ranges) possible over them. If a legitimate same-package-twice case ever appears, the fix is per-context resolution in the solver, not versioned identity. |
-| Universe | `Package` → `PackageVersion` | What exists: every version a repository reports, each carrying facts — `platforms`, `digest`, `artifacts` (dev-fetched bytes), `declarations` (its declared-deps claim), and `metadata` (ecosystem facts). Facts are unconditional: nothing in a universe depends on who asked. |
+| Universe | `Package` → `PackageVersion` | What exists: every version a repository reports, each carrying facts — `platforms`, `digest`, `artifacts` (the published bytes per platform — fetched by dev, or by the tool with dev recording them), `declarations` (its declared-deps claim), and `metadata` (ecosystem facts). Facts are unconditional: nothing in a universe depends on who asked. |
 | Declaration | `Declaration` | The shared atom: name + integration + constraint + optional `source` coordinate + optional `revision` address, always in dev's shape (`{}` = unconstrained). A constraint is a predicate over the published universe; a revision is a direct address into an ecosystem's continuous space (a git commit SHA, an exact Xcode version) that forgoes resolution entirely — declaring both is a loud error. Stated by whoever authored the thing — a project's `dependencies.rb` row or an upstream manifest — and context-free by type: where/when *you* install is not part of what is declared about a package. |
 | Requirement | `ScopedDeclaration` | A `Declaration` married to the context it resolves under: a `Scope` (`group`, `host`, `env` — inherited down the walk as one unit) plus the per-row axes that deliberately don't inherit (`platform`, `post_install`, `materialization` — install instructions like `install_dir`, asset globs, build recipes, artifact targets). What the DSL produces and the Resolver consumes. Composition, not a subclass: a scoped declaration must never pass where a context-free `Declaration` is expected. |
 | Pin | `Dependency` | What was chosen: exact version, integrity hash, metadata. What the lockfile serializes and integrations install. |
@@ -136,11 +136,14 @@ ecosystem's canonical form and validated at the DSL boundary (a cmake
      `Dependency` from that version's facts merged with the declaration's
      `materialization` (install instructions meet version facts exactly
      here — a url dep's `version_label` is promoted into the pin's
-     version slot when the universe reports none), projects the declared
-     platforms/target against the version's artifacts (the per-platform
-     `platforms` block or single-target digest), and projects the
-     declaration's `Scope` onto the pin's metadata (host/env keys,
-     present only when pinned);
+     version slot when the universe reports none), projects the version's
+     artifacts into the pin's install facts — a `platforms` block over the
+     declared platforms when the declaration names them (ficsit targets),
+     over *every* platform the version publishes when it names none and
+     the version has several (brew bottles: the lock describes the
+     universe, not the machine that wrote it), else the single-target
+     digest as the pin's hash — and projects the declaration's `Scope`
+     onto the pin's metadata (host/env keys, present only when pinned);
    - cases on the chosen version's `declarations` claim: a `Resolved`
      claim's declarations are queued as synthetic `ScopedDeclaration`s
      inheriting the parent's `Scope` as one unit (each already carries
@@ -271,7 +274,8 @@ Who guarantees the bytes you install are the bytes that were resolved:
   `bundle install --frozen`).
 - **tool-enforced** — the ecosystem tool verifies integrity itself at
   install; dev records what it can for audit but doesn't gate on it.
-  brew (bottle SHA256s are brew's own check), gh (release assets carry
+  brew (every bottle's SHA256 and URL ride the pin's `platforms` block
+  for audit; the check at install is brew's own), gh (release assets carry
   API digests; `gh` downloads), steam (Steam's own depot verification),
   luarocks (rockspec digests checked by luarocks).
 - **identity-as-integrity** — git SHAs: pinning the 40-char commit *is*
