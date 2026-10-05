@@ -385,12 +385,39 @@ module Dev
       # the build's own lib dir ahead of brew's so its libruby always wins.
       own_lib = File.join(prefix, "lib")
 
-      env.merge(
+      built = env.merge(
         "RUBY_CONFIGURE_OPTS" => [env["RUBY_CONFIGURE_OPTS"], *configure_opts].compact.reject(&:empty?).join(" "),
         "PKG_CONFIG_PATH" => [File.join(brew_prefix, "lib", "pkgconfig"), ENV["PKG_CONFIG_PATH"]].compact.reject(&:empty?).join(":"),
         "CPPFLAGS" => [ENV["CPPFLAGS"], "-I#{File.join(brew_prefix, "include")}"].compact.reject(&:empty?).join(" "),
         "LDFLAGS" => [ENV["LDFLAGS"], "-L#{lib}", "-Wl,-rpath,#{own_lib}", "-Wl,-rpath,#{lib}"].compact.reject(&:empty?).join(" "),
       )
+      cc = brew_gcc
+      cc ? built.merge("CC" => cc) : built
+    end
+
+    # Brew's gcc, when brew's libraries can only be linked by it: Linuxbrew on
+    # a distro whose glibc is older than the one brew's bottles target installs
+    # its own `glibc` (and a `gcc` built against it), and every bottle then
+    # wants symbols the system libc lacks — libcrypto.so asks for
+    # `__isoc23_strtol@GLIBC_2.38` on Ubuntu 22.04's 2.35 — so a build driven
+    # by the system compiler fails its link tests and ruby-build silently
+    # skips openssl and fiddle. On such a system the compiler consistent with
+    # brew's libraries is brew's gcc, which targets brew's glibc and dynamic
+    # linker. Where brew runs on the system glibc (a current distro, macOS)
+    # there is nothing to do.
+    #
+    # @return [String, nil] the newest `gcc-<major>` under brew's gcc keg, or
+    #   nil when brew carries no glibc or no gcc
+    sig { returns(T.nilable(String)) }
+    def brew_gcc
+      return nil unless brew_prefix_for("glibc")
+
+      gcc_prefix = brew_prefix_for("gcc")
+      return nil unless gcc_prefix
+
+      Dir.glob(File.join(gcc_prefix, "bin", "gcc-*"))
+         .select { |path| File.basename(path).match?(/\Agcc-\d+\z/) }
+         .max_by { |path| File.basename(path).delete_prefix("gcc-").to_i }
     end
 
     # The Homebrew prefix (HOMEBREW_PREFIX, else `brew --prefix`), or nil when brew is
