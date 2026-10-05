@@ -678,6 +678,8 @@ The release script handles everything — version bump, commit, tag, push, GitHu
 ./bin/release.rb 0.3.0 "Big update"  # explicit version + notes
 ```
 
+It expects the tap cloned beside this repo (`../homebrew-d3mlabs`) and checks it first — clean, on `main`, fast-forwarded to origin — before bumping anything, since the formula push is the last step and the one a stale clone breaks. A run that failed after the tag was pushed is finished by running the script again: with `HEAD` already tagged `v<VERSION>` and the formula not yet at it, it resumes at the push (idempotent), creates the GitHub release only if missing, and updates the formula — it does not bump a second version.
+
 Verify (on any machine with the tap):
 
 ```bash
