@@ -657,6 +657,38 @@ class ShadowenvRubyTest < Minitest::Test
     FileUtils.rm_rf(tmp_rbenv_root)
   end
 
+  test "ruby_build_env compiles with brew's newest gcc when brew carries its own glibc" do
+    Given "a Linuxbrew whose glibc formula is installed, with two gcc majors and their binutils-style wrappers"
+    gcc_prefix = Dir.mktmpdir("brew-gcc-")
+    FileUtils.mkdir_p(File.join(gcc_prefix, "bin"))
+    %w[gcc-15 gcc-16 gcc-ar-16 gcc-nm-16 g++-16].each { |name| FileUtils.touch(File.join(gcc_prefix, "bin", name)) }
+    Dev::ShadowenvRuby.stubs(:homebrew_prefix).returns("/home/linuxbrew/.linuxbrew")
+    Dev::ShadowenvRuby.stubs(:brew_prefix_for).returns(nil)
+    Dev::ShadowenvRuby.stubs(:brew_prefix_for).with("glibc").returns("/home/linuxbrew/.linuxbrew/opt/glibc")
+    Dev::ShadowenvRuby.stubs(:brew_prefix_for).with("gcc").returns(gcc_prefix)
+
+    When "composing the build env"
+    env = Dev::ShadowenvRuby.ruby_build_env({}, "4.0.5", prefix: "/var/lib/dev/ruby/linux-x86_64/4.0.5")
+
+    Then "CC is brew's gcc-16 — the compiler that targets brew's glibc, not the system's"
+    env.fetch("CC") == File.join(gcc_prefix, "bin", "gcc-16")
+
+    Cleanup
+    FileUtils.rm_rf(gcc_prefix)
+  end
+
+  test "ruby_build_env leaves the compiler alone when brew runs on the system glibc" do
+    Given "a brew prefix without a glibc formula"
+    Dev::ShadowenvRuby.stubs(:homebrew_prefix).returns("/home/linuxbrew/.linuxbrew")
+    Dev::ShadowenvRuby.stubs(:brew_prefix_for).returns(nil)
+
+    When "composing the build env"
+    env = Dev::ShadowenvRuby.ruby_build_env({}, "4.0.5", prefix: "/var/lib/dev/ruby/linux-x86_64/4.0.5")
+
+    Then "no CC is set: the system compiler links brew's libraries fine there"
+    !env.key?("CC")
+  end
+
   # --- ensure_shadowenv_shell_hook! ---
 
   test "ensure_shadowenv_shell_hook! adds hook to zshrc when not present" do
