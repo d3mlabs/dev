@@ -241,7 +241,7 @@ module Dev
         metadata = chosen.metadata.merge(decl.materialization)
         pin_version = chosen.version.empty? ? metadata.delete("version_label") : chosen.version
         hash = chosen.digest
-        if chosen.artifacts.any? && (platforms.any? { |p| !p.nil? } || metadata.key?("target"))
+        if chosen.artifacts.any? && (platforms.any? { |p| !p.nil? } || metadata.key?("target") || chosen.platforms.any?)
           hash = project_artifacts(metadata, chosen, platforms)
         end
 
@@ -258,13 +258,22 @@ module Dev
       end
 
       # Project the chosen version's per-platform artifacts (universe facts)
-      # into the pin's install facts (what the installer fetches). With
-      # explicitly declared platforms, a metadata["platforms"] block covering
-      # the targets the version actually publishes; otherwise the
-      # single-target shape — the materialization's "target" resolved to its
-      # artifact digest as the pin's hash. Lives here, not in a Repository:
-      # which targets a pin describes is a property of the declarations, and
-      # a repository never sees those.
+      # into the pin's install facts. Three shapes:
+      #
+      # - explicitly declared platforms: a metadata["platforms"] block
+      #   covering the declared targets the version publishes (nil entries
+      #   fall back to the materialization's "target");
+      # - nothing declared, but the version publishes named platforms: the
+      #   block covers every one of them — the lock describes the universe,
+      #   not the machine that wrote it, so a brew formula's pin is the same
+      #   whether a Mac or a Linux box ran `dev deps update`;
+      # - otherwise the single-target shape: the materialization's "target"
+      #   (else the version's one default artifact) resolved to its digest
+      #   as the pin's hash.
+      #
+      # Lives here, not in a Repository: which targets a pin describes is a
+      # property of the declarations meeting the version, and a repository
+      # never sees declarations.
       #
       # @param metadata [Hash] the pin metadata under construction (mutated)
       # @param chosen [PackageVersion] the chosen version
@@ -280,9 +289,10 @@ module Dev
       end
       def project_artifacts(metadata, chosen, platforms)
         default_target = metadata["target"]
+        explicit = platforms.any? { |p| !p.nil? }
 
-        if platforms.any? { |p| !p.nil? }
-          names = platforms.map { |p| p.nil? ? default_target : p }.compact.uniq
+        if explicit || (default_target.nil? && chosen.platforms.any?)
+          names = explicit ? platforms.map { |p| p.nil? ? default_target : p }.compact.uniq : chosen.platforms
           metadata["platforms"] = names.each_with_object({}) do |name, acc|
             artifact = chosen.artifacts[name]
             acc[name] = { "hash" => artifact.digest, "link" => artifact.uri } if artifact

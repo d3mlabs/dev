@@ -577,6 +577,45 @@ class Dev::Deps::ResolverTest < Minitest::Test
     result[0].version == "3.12.0"
   end
 
+  test "records every published platform when the declaration names none — the lock describes the universe, not its writer" do
+    Given "a brew-shaped version: one bottle per platform, declared with no platform and no target"
+    artifacts = {
+      "arm64_tahoe" => Dev::Deps::Artifact.new(uri: "https://ghcr.io/v2/homebrew/core/cmake/blobs/sha256:m", digest: "SHA256=m"),
+      "x86_64_linux" => Dev::Deps::Artifact.new(uri: "https://ghcr.io/v2/homebrew/core/cmake/blobs/sha256:l", digest: "SHA256=l"),
+    }
+    repo = StubRepository.new(universes: {
+      "cmake" => [version("4.4.4", platforms: ["arm64_tahoe", "x86_64_linux"], artifacts: artifacts)],
+    })
+    declarations = [declaration(name: "cmake", integration: :brew, group: :build)]
+
+    When "resolving"
+    result = resolver_for(:brew, repo).resolve(declarations)
+
+    Then "the pin's platforms block carries every bottle; no single hash, no target"
+    result[0].metadata["platforms"] == {
+      "arm64_tahoe" => { "hash" => "SHA256=m", "link" => "https://ghcr.io/v2/homebrew/core/cmake/blobs/sha256:m" },
+      "x86_64_linux" => { "hash" => "SHA256=l", "link" => "https://ghcr.io/v2/homebrew/core/cmake/blobs/sha256:l" },
+    }
+    result[0].hash.nil?
+    !result[0].metadata.key?("target")
+  end
+
+  test "keeps the single default artifact as the pin's hash — a version with no platforms has one target (url-style)" do
+    Given "a url-shaped version: no platforms, one default artifact, nothing declared"
+    artifact = Dev::Deps::Artifact.new(uri: "https://x/tool.tar.gz", digest: "SHA256=t")
+    repo = StubRepository.new(universes: {
+      "tool" => [version("", digest: "SHA256=t", artifacts: { "default" => artifact }, metadata: { "version_label" => "1.0" })],
+    })
+    declarations = [declaration(name: "tool", integration: :url, group: :build)]
+
+    When "resolving"
+    result = resolver_for(:url, repo).resolve(declarations)
+
+    Then "the digest is the hash and no platforms block appears"
+    result[0].hash == "SHA256=t"
+    !result[0].metadata.key?("platforms")
+  end
+
   test "leaves artifact-less pins unprojected — the version digest is the hash" do
     Given "a dep whose version carries a digest but no artifacts (brew-style)"
     repo = StubRepository.new(universes: { "cmake" => [version("3.31.4", digest: "SHA256=abc")] })
