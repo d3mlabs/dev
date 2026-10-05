@@ -3,19 +3,22 @@
 
 module Dev
   module Deps
-    # A single downloadable file that dev itself fetches.
+    # A single published file: where its bytes live and what they hash to.
     #
-    # Artifacts exist only for ecosystems where dev does the downloading
-    # (ficsit target zips, gh release assets, url tarballs). Tool-mediated
-    # ecosystems have none: bundler fetches its own gems, so a bundler
-    # PackageVersion carries an empty artifact set rather than nil-stuffed
-    # placeholder entries.
+    # Artifacts exist where a version publishes enumerable files — those dev
+    # downloads itself (ficsit target zips, gh release assets, url tarballs)
+    # and those the ecosystem's tool fetches but publishes per platform
+    # (brew bottles), which dev records so the pin names every platform
+    # rather than the writing machine's. Tool-mediated ecosystems that
+    # publish nothing enumerable have none: bundler fetches its own gems, so
+    # a bundler PackageVersion carries an empty artifact set rather than
+    # nil-stuffed placeholder entries.
     #
-    # The digest here is an *enforcement input*: dev verifies downloaded bytes
-    # against it and keys the download cache with it. A nil digest has exactly
-    # one meaning — upstream publishes none — and is computed trust-on-first-use
-    # at fetch time. See the integrity regimes section of
-    # docs/deps-architecture.md for who enforces what, and where.
+    # Where dev downloads, the digest is an *enforcement input*: dev verifies
+    # downloaded bytes against it and keys the download cache with it. A nil
+    # digest has exactly one meaning — upstream publishes none — and is
+    # computed trust-on-first-use at fetch time. See the integrity regimes
+    # section of docs/deps-architecture.md for who enforces what, and where.
     class Artifact
       extend T::Sig
 

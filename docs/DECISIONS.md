@@ -55,3 +55,17 @@ Format: Context → Decision → Consequences → Rejected. Status: `Accepted` u
 **Consequences.** A stale lock fails loudly instead of drifting. B bites on existing machines whose kegs are behind the lock on the first `dev up` after it ships — the remediation is in the message. Existing locks carry no `tap_commit`/`format` until the next `dev deps update`; only `--pinned-taps` requires them. Casks are not verified (brew reports no stable version for most).
 
 **Rejected.** Pinning taps on hosts too — a host is a workstation with other brew consumers, and a checked-out core tap would fight `brew update`; verification gives the lock its bite there without owning brew. Cloning the taps for pinning — the history cost that kept A off the table; the single-commit fetch is what makes A affordable.
+
+---
+
+## ADR-0004 — A lock describes what is published, not the machine that wrote it
+
+**Status:** Accepted. [dev#232](https://github.com/d3mlabs/dev/issues/232), a consequence of ADR-0003.
+
+**Context.** A brew pin carried one `hash`: the SHA256 of whichever bottle the writing machine would download (`arm64_sonoma` on a Mac, `x86_64_linux` on a Linux box). The same `dev deps update` on two hosts wrote two locks for one version. With the build image content-addressed on `build-deps.lock` (ADR-0001), a Linux re-lock that changed no version still changed every brew hash, so every image tag — a rebuild for nothing — and the hash gated nothing: brew verifies its own bottles. The pre-flight that names source-built formulae had the mirror bug, naming a Mac-only formula (`xcodes`) for an image it never enters.
+
+**Decision.** A repository reports every platform a version publishes — for brew, every bottle tag with its URL and SHA256, read once per formula (brew's own info for tap formulae, the public formula API for `homebrew/core`, whose local info lists only this machine's bottle). The Resolver's projection rule gains a third shape: when the declaration names no platform and no target but the version publishes several, the pin carries a `platforms:` block over all of them. Brew pins carry no top-level `hash`. The projection rule lives in the Resolver, where declarations meet versions — a repository never sees declarations, and which targets a pin describes is a property of both. The pre-flight asks `Installer.select` with the image build's own axes (build group, brew, Linux host, CI env) instead of re-deriving the gate.
+
+**Consequences.** A lock is the same bytes whoever writes it, so a re-lock that changes no version changes no image tag. `format` is derived from the same bottle list as the block, so the two cannot disagree. Existing brew pins keep their `hash` until the next `dev deps update`; readers accept both. The block is a record, not an enforcement input — brew still verifies at install (integrity regimes, `docs/deps-architecture.md`); verifying bottle bytes in dev would be a new regime and is out of scope here. `tap_commit` remains the one fact that varies with the writer's brew state, by design: it is what the pin pins.
+
+**Rejected.** Recording only the image platform's bottle — fixes the churn but keeps the lock partial, and a Mac developer's host install would verify against a Linux hash. Keeping the Mac bottle as `hash` beside the block — a hash that gates nothing is dead weight the content-addressed image still pays for. Putting the "record every platform" rule in `BrewRepository` — it would have to produce a pin shape, which is the Resolver's job; the repository reports facts.
