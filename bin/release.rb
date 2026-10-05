@@ -26,6 +26,11 @@ exit 1
 #   ./bin/release.rb 0.3.0           # explicit version
 #   ./bin/release.rb "Release notes" # auto-increment with custom notes
 #   ./bin/release.rb --yes           # skip the confirmation (non-interactive runs)
+#
+# The tap clone is checked and fast-forwarded before anything is bumped, and
+# a run whose dev half already landed (HEAD tagged v<VERSION>) resumes at the
+# push instead of bumping again — a retry finishes the release, it does not
+# cut a second one.
 
 require "pathname"
 require "json"
@@ -50,12 +55,15 @@ def main
   Dir.chdir(DEV_ROOT)
   ensure_clean_tree!
   ensure_on_main!
+  ensure_tap_ready!
 
   # --yes skips the interactive confirmation, which would otherwise hang a
   # piped or backgrounded run waiting for input it can never receive.
   assume_yes = !ARGV.delete("--yes").nil?
 
   current = VERSION_FILE.read.strip
+  return resume(current, assume_yes) if resumable?(current)
+
   new_version, notes = parse_args(current)
   commits = commits_since_last_tag
 
@@ -72,25 +80,63 @@ def main
       commit_and_tag(new_version, notes)
     end
 
-    step("Pushing main + tag v#{new_version}") do
-      push(new_version)
-    end
-
-    step("Creating GitHub release v#{new_version}") do
-      create_release(new_version, notes)
-    end
-
-    sha = nil
-    step("Computing tarball sha256") do
-      sha = compute_sha256(new_version)
-    end
-
-    step("Updating Homebrew formula") do
-      update_formula(new_version, sha)
-    end
+    publish(new_version, notes)
   end
 
-  CLI::UI.puts("{{v}} {{bold:v#{new_version} released!}}")
+  released(new_version)
+end
+
+# The steps after the local commit + tag, each idempotent so a resumed run
+# can replay them: push is a no-op for refs already on origin, the release
+# is created only when missing, and the formula is rewritten from the tag's
+# tarball either way.
+def publish(version, notes)
+  step("Pushing main + tag v#{version}") do
+    push(version)
+  end
+
+  step("Creating GitHub release v#{version}") do
+    create_release(version, notes)
+  end unless release_exists?(version)
+
+  sha = nil
+  step("Computing tarball sha256") do
+    sha = compute_sha256(version)
+  end
+
+  step("Updating Homebrew formula") do
+    update_formula(version, sha)
+  end
+end
+
+# A run whose dev half landed but whose tap half did not: HEAD already carries
+# the v<VERSION> tag and the formula does not reference that tarball yet.
+# Bumping again here is how 0.2.99 became a second, empty 0.2.100 — the tap
+# push had failed on a stale clone and the retry started over.
+def resumable?(version)
+  `git tag --points-at HEAD`.split.include?("v#{version}") && !formula_at?(version)
+end
+
+def formula_at?(version)
+  url = format(TARBALL_URL, version)
+  FORMULA_PATHS.all? { |path| path.read(encoding: "UTF-8").include?(url) }
+end
+
+def resume(version, assume_yes)
+  notes = `git log -1 --format=%b HEAD`.strip
+  CLI::UI.puts("v#{version} is already tagged on HEAD and the tap is behind it — resuming at the push, no bump.")
+  abort "Aborted." unless assume_yes || CLI::UI.confirm("Proceed?")
+  puts
+
+  CLI::UI::Frame.open("Finishing v#{version}") do
+    publish(version, notes)
+  end
+
+  released(version)
+end
+
+def released(version)
+  CLI::UI.puts("{{v}} {{bold:v#{version} released!}}")
   CLI::UI.puts("To update locally: brew update && brew upgrade d3mlabs/d3mlabs/dev")
 end
 
@@ -171,6 +217,38 @@ def ensure_on_main!
   abort "Must be on main branch (currently on #{branch})."
 end
 
+# The formula push is the last step and the one that failed on 0.2.99: a tap
+# clone behind origin cannot push. Everything the formula step needs — clone
+# present, clean, on main, fast-forwarded to origin, formulas in place — is
+# checked here, before the dev side has bumped anything.
+def ensure_tap_ready!
+  abort "Homebrew tap clone not found at #{FORMULA_REPO}" unless FORMULA_REPO.join(".git").exist?
+
+  Dir.chdir(FORMULA_REPO) do
+    status = `git status --porcelain`.strip
+    abort "Tap clone #{FORMULA_REPO} is not clean. Commit or stash changes first.\n#{status}" unless status.empty?
+
+    branch = `git branch --show-current`.strip
+    abort "Tap clone #{FORMULA_REPO} must be on main (currently on #{branch})." unless branch == "main"
+
+    begin
+      run!("git", "fetch", "-q", "origin", "main")
+      run!("git", "merge", "-q", "--ff-only", "origin/main")
+    rescue RuntimeError => e
+      abort "Tap clone #{FORMULA_REPO} cannot fast-forward to origin/main: #{e.message}"
+    end
+  end
+
+  FORMULA_PATHS.each do |formula_path|
+    abort "Homebrew formula not found at #{formula_path}" unless formula_path.exist?
+  end
+end
+
+def release_exists?(version)
+  _, _, status = Open3.capture3("gh", "release", "view", "v#{version}")
+  status.success?
+end
+
 # One release step under a spinner, aborting the whole release when it fails.
 # Spinner.spin swallows the block's exception and only reports it — without
 # the abort, a failed push once cascaded into the formula publishing a tag
@@ -220,8 +298,6 @@ end
 
 def update_formula(version, sha)
   FORMULA_PATHS.each do |formula_path|
-    abort "Homebrew formula not found at #{formula_path}" unless formula_path.exist?
-
     # Read as UTF-8 explicitly: the formulas have non-ASCII bytes (e.g. an em-dash in a comment), and when release.rb
     # runs under a non-UTF-8 locale (such as a piped, login-less subshell) Ruby's default external encoding is
     # US-ASCII, which makes the sub below raise "invalid byte sequence in US-ASCII".
