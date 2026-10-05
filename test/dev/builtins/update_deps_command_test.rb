@@ -98,7 +98,8 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
   end
 
   test "call warns for each build-group formula the image build would compile from source" do
-    Given "a resolution with a bottled build formula, a source-only build formula, and a source-only app formula"
+    Given "a resolution with a bottled build formula, a source-only build formula, a source-only app formula, " \
+      "and a source-only build formula gated to Macs"
     root = Pathname.new(Dir.mktmpdir("update-deps-preflight-"))
     resolved = [
       Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: "4.4.3", hash: nil,
@@ -107,6 +108,8 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
         metadata: { "tap" => "d3mlabs/d3mlabs", "format" => "source" }),
       Dev::Deps::Dependency.new(name: "jq", integration: :brew, group: :app, version: "1.7", hash: nil,
         metadata: { "format" => "source" }),
+      Dev::Deps::Dependency.new(name: "xcodes", integration: :brew, group: :build, version: "1.6.2", hash: nil,
+        metadata: { "tap" => "xcodesorg/made", "host" => "darwin", "format" => "source" }),
     ]
     Dev::Deps::Resolver.expects(:new).returns(stub(resolve: resolved))
     Dev::ShadowenvRuby.stubs(:converge!)
@@ -117,10 +120,11 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     When "running dev deps update"
     command.call(args: [], context: build_context(root))
 
-    Then "only the build-group source formula is named — the image build is where format matters"
+    Then "only the source formula the image build installs is named — format matters there, and the Mac-only one never reaches the image"
     $stdout.string.include?("wwise-cli has no x86_64_linux bottle")
     !$stdout.string.include?("cmake has no")
     !$stdout.string.include?("jq has no")
+    !$stdout.string.include?("xcodes has no")
     $stdout.string.include?("lockfiles updated")
 
     Cleanup
