@@ -39,10 +39,13 @@ module Dev
     class Executor
       extend T::Sig
 
+      # @param chdir [String, nil] the directory to run in (the runner
+      #   scripts are invoked relative to their install dir)
       # @return [Array(String, String, Boolean)] stdout, stderr, success?
-      sig { params(argv: String).returns([String, String, T::Boolean]) }
-      def capture(*argv)
-        out, err, status = Open3.capture3(*T.unsafe(argv))
+      sig { params(argv: String, chdir: T.nilable(String)).returns([String, String, T::Boolean]) }
+      def capture(*argv, chdir: nil)
+        opts = chdir ? { chdir: chdir } : {}
+        out, err, status = Open3.capture3(*T.unsafe(argv), **opts)
         [out, err, status.success?]
       rescue Errno::ENOENT => e
         ["", e.message, false]
@@ -115,6 +118,45 @@ module Dev
         raise Error, "could not resolve the repo via gh: #{err.strip}" if !ok || repo.empty?
 
         repo
+      end
+
+      # Mint a runner token via the API. `kind` is "registration-token" (to
+      # add) or "remove-token" (to deregister); the endpoint follows the
+      # scope's shape (repos/... for "owner/repo", orgs/... for a bare org).
+      # The one token seam, shared with RunnerTeardown's deregistration.
+      #
+      # @param scope [String] "owner/repo" or "owner"
+      # @param kind [String]
+      # @param executor [#capture] CLI boundary
+      # @return [String]
+      # @raise [Error] when the token can't be minted
+      sig { params(scope: String, kind: String, executor: T.untyped).returns(String) }
+      def mint_token(scope, kind, executor: Executor.new)
+        base = scope.include?("/") ? "repos/#{scope}" : "orgs/#{scope}"
+        out, err, ok = executor.capture(
+          "gh", "api", "-X", "POST",
+          "#{base}/actions/runners/#{kind}",
+          "--jq", ".token"
+        )
+        token = out.strip
+        raise Error, "failed to mint a #{kind}: #{err.strip}" if !ok || token.empty?
+
+        token
+      end
+
+      # The argv that drives svc.sh for one action, relative to the runner
+      # dir. On Linux that's a systemd unit and needs root (interactive
+      # sudo is fine); on macOS it's a per-user LaunchAgent and svc.sh must
+      # run as the user — under sudo it would install a root agent that
+      # never loads into the user's launchd session. Shared with
+      # RunnerTeardown so install and uninstall agree on the OS split.
+      #
+      # @param action [String] svc.sh subcommand
+      # @param host_platform [String] actions-runner platform slug
+      # @return [Array<String>]
+      sig { params(action: String, host_platform: String).returns(T::Array[String]) }
+      def service_argv(action, host_platform:)
+        host_platform.start_with?("osx") ? ["./svc.sh", action] : ["sudo", "./svc.sh", action]
       end
     end
 
@@ -315,26 +357,13 @@ module Dev
       mint_token(scope, "registration-token")
     end
 
-    # Mint a runner token via the API. `kind` is "registration-token" (to add)
-    # or "remove-token" (to deregister); the endpoint follows the scope's shape
-    # (repos/... for "owner/repo", orgs/... for a bare org).
-    #
     # @param scope [String] "owner/repo" or "owner"
-    # @param kind [String]
+    # @param kind [String] "registration-token" or "remove-token"
     # @return [String]
     # @raise [Error] when the token can't be minted
     sig { params(scope: String, kind: String).returns(String) }
     def mint_token(scope, kind)
-      base = scope.include?("/") ? "repos/#{scope}" : "orgs/#{scope}"
-      out, err, ok = @exec.capture(
-        "gh", "api", "-X", "POST",
-        "#{base}/actions/runners/#{kind}",
-        "--jq", ".token"
-      )
-      token = out.strip
-      raise Error, "failed to mint a #{kind}: #{err.strip}" if !ok || token.empty?
-
-      token
+      self.class.mint_token(scope, kind, executor: @exec)
     end
 
     # @raise [Error] when config.sh fails
@@ -346,12 +375,10 @@ module Dev
       raise Error, "config.sh failed to register the runner"
     end
 
-    # svc.sh manages the service unit. On Linux that's a systemd unit and needs
-    # root (interactive sudo is fine); on macOS it's a per-user LaunchAgent and
-    # svc.sh must run as the user — under sudo it would install a root agent
-    # that never loads into the user's launchd session. `svc.sh start` already
-    # echoes the unit status, so there's no separate status call (a redundant
-    # one prints the same service twice).
+    # svc.sh installs and starts the service unit (see .service_argv for the
+    # OS split). `svc.sh start` already echoes the unit status, so there's
+    # no separate status call (a redundant one prints the same service
+    # twice).
     #
     # @param dir [String] install dir
     # @raise [Error] when the service can't be installed or started
@@ -366,13 +393,7 @@ module Dev
     # @return [Array<String>]
     sig { params(action: String).returns(T::Array[String]) }
     def service_argv(action)
-      darwin? ? ["./svc.sh", action] : ["sudo", "./svc.sh", action]
-    end
-
-    # @return [Boolean]
-    sig { returns(T::Boolean) }
-    def darwin?
-      @host_platform.start_with?("osx")
+      self.class.service_argv(action, host_platform: @host_platform)
     end
 
     # First label, sanitized for use in a directory name.
