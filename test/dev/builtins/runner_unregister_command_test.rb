@@ -142,12 +142,19 @@ class Dev::Builtins::RunnerUnregisterCommandTest < Minitest::Test
     harness.command.completions([]) == []
   end
 
-  test "the default wiring builds the real teardown and asks at the terminal" do
-    Given "a command with default collaborators"
+  test "the default repo resolver asks RunnerSetup.current_repo — the one gh seam — and discovery is the real one" do
+    Given "a bare unregister with default wiring, gh answered at RunnerSetup's seam, discovery over an empty home"
+    empty_discovery = Dev::RunnerDiscovery.new(home: Dir.mktmpdir)
+    Dev::RunnerDiscovery.stubs(:new).returns(empty_discovery)
+    Dev::RunnerSetup.expects(:current_repo).once.returns("JPDuchesne/snappy")
     command = Dev::Builtins::RunnerUnregisterCommand.new
 
-    Expect "construction alone touches nothing"
-    command.is_a?(Dev::BuiltinCommand)
+    When "running with no reference"
+    command.call(args: [], context: projectless_context)
+
+    Then "the checkout's scope was resolved through gh and nothing on the empty host serves it"
+    error = raises Dev::RunnerTeardown::NoSuchEnrollmentError
+    error.message.include?("JPDuchesne/snappy")
   end
 
   private
