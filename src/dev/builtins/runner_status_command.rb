@@ -10,7 +10,8 @@ module Dev
     # enrollments and their contract facts (see Dev::RunnerStatus). Needs no
     # project (the machine view), but reports the container contract when
     # run inside a project that declares a build container. A leaf of the
-    # `runner` group (RunnerRegisterCommand is the other).
+    # `runner` group (RunnerRegisterCommand and RunnerUnregisterCommand are
+    # the others).
     class RunnerStatusCommand < BuiltinCommand
       extend T::Sig
 
