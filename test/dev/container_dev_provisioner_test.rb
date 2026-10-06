@@ -67,8 +67,16 @@ class Dev::ContainerDevProvisionerTest < Minitest::Test
     script.include?("version=\"$1\"")
     script.include?("Formula/dev-core.rb")
     script.include?("brew install")
-    script.include?("brew uninstall")
     SCRIPT.executable?
+  end
+
+  test "the install script re-syncs with brew reinstall, never uninstall: dev-core's dependencies stay put" do
+    Given "the script shipped beside dev's bin"
+    script = SCRIPT.read
+
+    Expect "a swap of dev-core, not a removal that autoremoves rbenv, shadowenv, git, gh … with it"
+    script.include?("brew reinstall --quiet d3mlabs/d3mlabs/dev-core")
+    !script.include?("brew uninstall")
   end
 
   test "the install script parses under sh -n" do

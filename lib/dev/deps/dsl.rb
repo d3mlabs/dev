@@ -20,10 +20,6 @@ module Dev
       sig { returns(T::Hash[String, T::Hash[String, T.untyped]]) }
       attr_reader :taps
 
-      # @return [Hash{String => Hash}] group name → group config
-      sig { returns(T::Hash[String, T.untyped]) }
-      attr_reader :groups
-
       # @return [Array<ScopedDeclaration>] all declared dependencies
       sig { returns(T::Array[ScopedDeclaration]) }
       attr_reader :declarations
@@ -51,7 +47,6 @@ module Dev
       sig { void }
       def initialize
         @taps = T.let({}, T::Hash[String, T::Hash[String, T.untyped]])
-        @groups = T.let({}, T::Hash[String, T.untyped])
         @declarations = T.let([], T::Array[ScopedDeclaration])
         @ruby_version_requirement = T.let(nil, T.nilable(String))
         @lua_version_value = T.let(nil, T.nilable(String))
@@ -166,7 +161,6 @@ module Dev
         group_name = name.to_s
         group_dsl = GroupDSL.new(group: group_name.to_sym, platform:, host:, registered_methods: @registered_methods)
         group_dsl.instance_eval(&block) if block
-        @groups[group_name] = group_dsl.to_h
         @declarations.concat(group_dsl.declarations)
       end
     end
@@ -194,7 +188,6 @@ module Dev
         ).void
       end
       def initialize(group: :app, platform: nil, host: nil, env: nil)
-        @brew = T.let([], T::Array[T.untyped])
         @declarations = T.let([], T::Array[ScopedDeclaration])
         @group = group
         @platform = platform
@@ -216,12 +209,6 @@ module Dev
         name_str = name.to_s
         raise EmptyNameError, "brew dependency name cannot be empty" if name_str.empty?
 
-        if opts.empty?
-          @brew << name_str
-        else
-          @brew << { name_str => stringify_keys(opts) }
-        end
-
         constraint = opts.dup
         cask = constraint.delete(:cask)
         tap = constraint.delete(:tap)
@@ -235,12 +222,6 @@ module Dev
           scope: Scope.new(group: @group, host: @host, env: @env),
           platform: @platform,
         )
-      end
-
-      # @return [Hash] container-build projection of this env block
-      sig { returns(T::Hash[String, T.untyped]) }
-      def to_h
-        { "brew" => @brew }
       end
 
       private
@@ -298,8 +279,6 @@ module Dev
         @platform = platform
         @host = host
         @declarations = T.let([], T::Array[ScopedDeclaration])
-        @brew = T.let([], T::Array[T.untyped])
-        @envs = T.let({}, T::Hash[String, T.untyped])
         @registered_methods = registered_methods
       end
 
@@ -538,13 +517,11 @@ module Dev
 
       # Declare a Homebrew formula/cask.
       #
-      # Dual-writes: the @brew/groups entry is the legacy per-group table
-      # still exposed as Config#group, while the declaration rides the
-      # resolver -> lockfile -> install pipeline — the one install path, on
-      # the host (`dev deps install`) and in the container image
-      # (bin/docker-install-build-deps.sh runs the same command from the
-      # lock). BrewIntegration skips already-installed formulae, so the
-      # install is idempotent.
+      # The declaration rides the resolver -> lockfile -> install pipeline —
+      # the one install path, on the host (`dev deps install`) and in the
+      # container image (bin/docker-install-build-deps.sh runs the same
+      # command from the lock). BrewIntegration skips already-installed
+      # formulae, so the install is idempotent.
       #
       # The options are sorted into the declaration's fields: tap: is the
       # source coordinate, cask: routes to the :cask integration (a separate
@@ -558,12 +535,6 @@ module Dev
       def brew(name, **opts)
         name_str = name.to_s
         raise EmptyNameError, "brew dependency name cannot be empty" if name_str.empty?
-
-        if opts.empty?
-          @brew << name_str
-        else
-          @brew << { name_str => stringify_keys(opts) }
-        end
 
         constraint = opts.dup
         cask = constraint.delete(:cask)
@@ -583,14 +554,7 @@ module Dev
         env_name = name.to_s
         env_dsl = EnvDSL.new(group: @group, platform: @platform, host: @host, env: env_name)
         env_dsl.instance_eval(&block) if block
-        @envs[env_name] = env_dsl.to_h
         @declarations.concat(env_dsl.declarations)
-      end
-
-      # @return [Hash] container-build projection of this group
-      sig { returns(T::Hash[String, T.untyped]) }
-      def to_h
-        { "brew" => @brew, "env" => @envs, "platform" => @platform }
       end
 
       # Dispatch dynamically registered integration methods (e.g. wow_curseforge).
