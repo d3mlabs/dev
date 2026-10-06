@@ -15,10 +15,6 @@ module Dev
       sig { returns(T::Array[Tap]) }
       attr_reader :taps
 
-      # @return [Hash] group name → { "brew" => [...], "env" => {...} }
-      sig { returns(T::Hash[String, T.untyped]) }
-      attr_reader :groups
-
       # @return [Array<ScopedDeclaration>] all declared dependencies
       sig { returns(T::Array[ScopedDeclaration]) }
       attr_reader :declarations
@@ -40,7 +36,6 @@ module Dev
       attr_reader :registered_integrations
 
       # @param taps [Array<Tap>] declared Homebrew taps
-      # @param groups [Hash] group name → { "brew" => [...], "env" => {...} }
       # @param declarations [Array<ScopedDeclaration>] all declared dependencies
       #   (gems are :bundler declarations, brew formulae are :brew declarations, etc.)
       # @param ruby_version_requirement [String, nil] required Ruby version
@@ -50,7 +45,6 @@ module Dev
       sig do
         params(
           taps: T::Array[Tap],
-          groups: T::Hash[String, T.untyped],
           declarations: T::Array[ScopedDeclaration],
           ruby_version_requirement: T.nilable(String),
           lua_version: T.nilable(String),
@@ -58,24 +52,14 @@ module Dev
           registered_integrations: T::Hash[Symbol, T.untyped],
         ).void
       end
-      def initialize(taps:, groups:, declarations:, ruby_version_requirement:,
+      def initialize(taps:, declarations:, ruby_version_requirement:,
                      lua_version:, python_version:, registered_integrations:)
         @taps = taps
-        @groups = groups
         @declarations = declarations
         @ruby_version_requirement = ruby_version_requirement
         @lua_version = lua_version
         @python_version = python_version
         @registered_integrations = registered_integrations
-      end
-
-      # Return the config for a named group, with safe defaults for missing groups.
-      #
-      # @param name [String, Symbol] group name
-      # @return [Hash]
-      sig { params(name: T.any(String, Symbol)).returns(T::Hash[String, T.untyped]) }
-      def group(name)
-        @groups[name.to_s] || { "brew" => [], "env" => {} }
       end
 
       class << self
@@ -96,7 +80,6 @@ module Dev
 
           new(
             taps:,
-            groups: dsl.groups,
             declarations: dsl.declarations,
             ruby_version_requirement: dsl.ruby_version_requirement,
             lua_version: dsl.lua_version_value,

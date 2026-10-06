@@ -86,12 +86,15 @@ class Dev::Deps::ConfigTest < Minitest::Test
       end
     end
 
-    Then
-    build = config.group("build")
-    build["brew"].size == 3
-    build["brew"][0] == "ccache"
-    build["brew"][1] == "cmake"
-    build["brew"][2] == { "powershell" => { "version" => "7.4.0", "tap" => "d3mlabs/d3mlabs" } }
+    Then "each formula is a :brew declaration in the build group; tap is the source, version the constraint"
+    decls = config.declarations
+    decls.size == 3
+    decls.map(&:name) == %w[ccache cmake powershell]
+    decls.all? { |d| d.integration == :brew && d.scope.group == :build }
+    decls[0].constraint == {}
+    decls[0].source.nil?
+    decls[2].constraint == { "version" => "7.4.0" }
+    decls[2].source == "d3mlabs/d3mlabs"
   end
 
   test "define build group with env-specific brew" do
@@ -108,10 +111,15 @@ class Dev::Deps::ConfigTest < Minitest::Test
       end
     end
 
-    Then
-    build = config.group("build")
-    build["env"]["ci"]["brew"] == ["ruby"]
-    build["env"]["dev"]["brew"] == [{ "powershell" => { "cask" => true } }]
+    Then "env is a scope field; cask: routes to the :cask integration"
+    by_name = config.declarations.to_h { |d| [d.name, d] }
+    by_name.keys.sort == %w[cmake powershell ruby]
+    by_name["cmake"].scope.env.nil?
+    by_name["ruby"].scope.env == "ci"
+    by_name["ruby"].integration == :brew
+    by_name["powershell"].scope.env == "dev"
+    by_name["powershell"].integration == :cask
+    by_name["powershell"].constraint == {}
   end
 
   test "define app group with cmake deps produces declarations" do
@@ -164,14 +172,27 @@ class Dev::Deps::ConfigTest < Minitest::Test
     decl.constraint == { "tag" => "v1.17.0" }
   end
 
-  test "missing group returns empty defaults" do
+  test "an empty definition declares nothing" do
     When
     config = Dev::Deps.define {}
 
     Then
-    nonexistent = config.group("nonexistent")
-    nonexistent["brew"] == []
-    nonexistent["env"] == {}
+    config.declarations == []
+    config.taps == []
+  end
+
+  test "declarations are the only dependency surface: no per-group table" do
+    When
+    config = Dev::Deps.define do
+      group :build do
+        brew "cmake"
+      end
+    end
+
+    Then "the legacy groups projection is gone from Config and the DSL"
+    !config.respond_to?(:group)
+    !config.respond_to?(:groups)
+    !Dev::Deps::DSL.new.respond_to?(:groups)
   end
 
   test "cmake dep with commit pin lands as the declaration's revision" do
@@ -190,7 +211,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
     decl.constraint == {}
   end
 
-  test "brew dual-writes to both groups and declarations" do
+  test "brew rides the lockfile pipeline as declarations, in and out of env blocks" do
     When
     config = Dev::Deps.define do
       group :build do
@@ -202,9 +223,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
       end
     end
 
-    Then "the container groups path is unchanged and brew also rides the lockfile pipeline"
-    config.group("build")["brew"].size == 2
-    config.group("build")["env"]["ci"]["brew"] == ["ruby"]
+    Then "the host's dev deps install and the image build read the same declarations"
     brew_decls = config.declarations.select { |d| d.integration == :brew }
     brew_decls.map(&:name).sort == %w[cmake powershell ruby]
     brew_decls.all? { |d| d.scope.group == :build }

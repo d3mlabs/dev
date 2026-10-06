@@ -416,7 +416,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     config.declarations[0].constraint["buildid"] == "15321746"
   end
 
-  test "brew with post_install stores callable in opts" do
+  test "brew with post_install carries the hook on the declaration, outside the constraint" do
     Given "a post_install callable"
     hook = ->(name, opts) {}
 
@@ -428,10 +428,12 @@ class Dev::Deps::DSLTest < Minitest::Test
     end
 
     Then
-    entry = config.group("build")["brew"][0]
-    entry.is_a?(Hash)
-    entry["wwise-cli"]["post_install"] == hook
-    entry["wwise-cli"]["tap"] == "d3mlabs/d3mlabs"
+    decl = config.declarations[0]
+    decl.name == "wwise-cli"
+    decl.integration == :brew
+    decl.source == "d3mlabs/d3mlabs"
+    decl.post_install == hook
+    decl.constraint == {}
   end
 
   test "cmake commit: is an address — full SHA to the revision slot, constraint stays empty" do
