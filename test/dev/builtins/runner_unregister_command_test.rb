@@ -102,6 +102,46 @@ class Dev::Builtins::RunnerUnregisterCommandTest < Minitest::Test
     harness.torn_down == []
   end
 
+  # --- completion ---------------------------------------------------------
+
+  test "completions offer every local enrollment's scope, then every ~-dir — discovery's order, deduplicated, never sorted" do
+    Given "three enrollments: two for one scope (so the scope appears once), dirs in glob order"
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner", scope: "JPDuchesne/snappy", name: "JPSFF")
+    write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs/cellbound-3d", name: "JPSFF")
+    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    harness = build_harness(home: home)
+
+    When "completing the first argument"
+    candidates = harness.command.completions([])
+
+    Then "scopes first (as discovered — not alphabetical), then the dirs"
+    candidates == [
+      "JPDuchesne/snappy", "d3mlabs/cellbound-3d",
+      "~/actions-runner", "~/actions-runner-cellbound3d", "~/actions-runner-snappy"
+    ]
+  end
+
+  test "completions offer nothing once an enrollment is named, and ignore flags typed before it" do
+    Given "one enrollment"
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    harness = build_harness(home: home)
+
+    Expect "flags do not count as the positional; a positional ends the offer"
+    harness.command.completions(["--yes"]) == ["JPDuchesne/snappy", "~/actions-runner-snappy"]
+    harness.command.completions(["JPDuchesne/snappy"]) == []
+    harness.command.completions(["--yes", "~/actions-runner-snappy"]) == []
+  end
+
+  test "completions on a host with no enrollments are empty, and never touch gh" do
+    Given "an empty home and a repo resolver that must not be called"
+    harness = build_harness(home: Dir.mktmpdir, repo_resolver: -> { raise "gh was called" })
+
+    Expect
+    harness.command.completions([]) == []
+  end
+
   test "the default wiring builds the real teardown and asks at the terminal" do
     Given "a command with default collaborators"
     command = Dev::Builtins::RunnerUnregisterCommand.new
@@ -116,7 +156,7 @@ class Dev::Builtins::RunnerUnregisterCommandTest < Minitest::Test
 
   # A teardown whose resolution is real (tempdir discovery) and whose
   # teardown! only records — the CLI steps have their own tests.
-  def build_harness(home:, repo: "JPDuchesne/snappy")
+  def build_harness(home:, repo: "JPDuchesne/snappy", repo_resolver: nil)
     torn_down = []
     discovery = Dev::RunnerDiscovery.new(home: home)
     teardown = Dev::RunnerTeardown.new(discovery: discovery, executor: nil, out: StringIO.new, home: home)
@@ -126,7 +166,7 @@ class Dev::Builtins::RunnerUnregisterCommandTest < Minitest::Test
     command = Dev::Builtins::RunnerUnregisterCommand.new(
       teardown: teardown,
       discovery: discovery,
-      repo_resolver: -> { repo },
+      repo_resolver: repo_resolver || -> { repo },
       confirmer: confirmer,
       out: out,
     )

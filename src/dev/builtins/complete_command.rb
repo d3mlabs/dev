@@ -9,11 +9,13 @@ module Dev
     # `dev complete <words…>`: shell-completion plumbing. Given the words
     # typed after `dev` so far (not the one under the cursor), print the
     # names that can come next — the visible children of the node those
-    # words reach — one per line; the shell does the prefix filtering. An
-    # unknown word or a hidden node ends the walk with nothing to offer (so
-    # does a leaf: it has no children to list). Hidden itself: the
-    # completers installed by Cd::HookInstaller
-    # call it, users never do.
+    # words reach, sorted — one per line; the shell does the prefix
+    # filtering. An unknown word under a node with children, or a hidden
+    # node, ends the walk with nothing to offer. When the walk ends on a
+    # leaf, the leaf's own `completions` (over the words after its name)
+    # are printed instead, in the leaf's order — this command never sorts
+    # them (#211: order is the leaf's to decide). Hidden itself: the
+    # completers installed by Cd::HookInstaller call it, users never do.
     class CompleteCommand < BuiltinCommand
       extend T::Sig
 
@@ -50,16 +52,25 @@ module Dev
 
       # @param words [Array<String>] the words typed after `dev` so far
       # @return [Array<String>] the visible child names at the node reached
+      #   (sorted), or — at a leaf — its own argument completions (as given)
       sig { params(words: T::Array[String]).returns(T::Array[String]) }
       def candidates(words)
         node = T.let(@root_provider.call, Command)
-        words.each do |word|
+        remaining = words.dup
+        while (word = remaining.first)
           child = node.children[word]
-          return [] if child.nil? || child.hidden?
+          break if child.nil?
+          return [] if child.hidden?
 
           node = child
+          remaining.shift
         end
-        node.children.reject { |_name, command| command.hidden? }.keys.sort
+
+        visible = node.children.reject { |_name, command| command.hidden? }
+        return node.completions(remaining) if visible.empty?
+        return [] unless remaining.empty?
+
+        visible.keys.sort
       end
     end
   end

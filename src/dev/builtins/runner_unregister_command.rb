@@ -71,6 +71,19 @@ module Dev
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
 
+      # What the enrollment argument can be, from discovery alone (offline;
+      # never gh): every local scope once, in discovery order, then every
+      # `~`-dir — so typing an owner narrows to scopes and `~` to dirs.
+      # Nothing once an enrollment is named; flags never count as one. The
+      # order is deliberate and the plumbing keeps it (#211).
+      sig { override.params(words: T::Array[String]).returns(T::Array[String]) }
+      def completions(words)
+        return [] if words.any? { |word| !word.start_with?("--") }
+
+        enrollments = @discovery.enrollments
+        enrollments.map(&:scope).uniq + enrollments.map(&:display_dir)
+      end
+
       # Resolve, ask, tear down.
       #
       # @raise [Dev::RunnerTeardown::AmbiguousEnrollmentError] a scope several dirs serve

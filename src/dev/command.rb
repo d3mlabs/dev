@@ -89,6 +89,21 @@ module Dev
     # unreachable (#85); CommandExecutor derives wait-vs-exec from this.
     sig { overridable.returns(T::Boolean) }
     def stamps? = false
+
+    # The argument candidates a command offers to shell completion when the
+    # walk down the tree ends on it: `words` are the ones typed after its
+    # own name (flags included), the result is printed as-is — in *this*
+    # order, which is the command's to decide (#211: order can carry
+    # meaning). Must work offline and never raise into the shell. Nothing
+    # by default; a leaf that knows its arguments overrides.
+    #
+    # @param words [Array<String>] the words typed after this command so far
+    # @return [Array<String>]
+    sig { overridable.params(words: T::Array[String]).returns(T::Array[String]) }
+    def completions(words)
+      _ = words
+      []
+    end
   end
 
   # Built-in command that executes Ruby code: the hierarchy's declared open
@@ -267,6 +282,11 @@ module Dev
 
     sig(:final) { override.returns(T::Boolean) }
     def stamps? = @builtin.stamps?
+
+    # So do the argument completions: the builtin knows its arguments, the
+    # project body wrapping it runs after and takes the same ones.
+    sig(:final) { override.params(words: T::Array[String]).returns(T::Array[String]) }
+    def completions(words) = @builtin.completions(words)
 
     # The usage section belongs to the slot too: an overriding `up:` still
     # lists under Lifecycle, with the project's description.
