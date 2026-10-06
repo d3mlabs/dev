@@ -40,6 +40,24 @@ class Dev::RunnerRegistryTest < Minitest::Test
     runner.custom_labels == %w[ai-ask ai-build]
   end
 
+  test "find carries GitHub's health verdict: status #{status.inspect} reads as online? == #{online}" do
+    Given "a gh answering with a runner GitHub lists as #{status}"
+    exec = RecordingExecutor.new { [runner_json(id: 42, name: "JPSFF", custom: ["snappy"], status: status), "", true] }
+    registry = Dev::RunnerRegistry.new(executor: exec)
+
+    When "finding"
+    runner = registry.find(scope: "JPDuchesne/snappy", name: "JPSFF")
+
+    Then "the status is GitHub's word, and online? is the one contract (busy is irrelevant)"
+    runner.status == status
+    runner.online? == online
+
+    Where
+    status    | online
+    "online"  | true
+    "offline" | false
+  end
+
   test "find hits the repos endpoint for a repo scope" do
     Given "a gh answering with one runner"
     exec = RecordingExecutor.new { [runner_json(id: 1, name: "box", custom: ["cellbound3d"]), "", true] }
@@ -109,10 +127,11 @@ class Dev::RunnerRegistryTest < Minitest::Test
   private
 
   # One `--jq .runners[]` output line: GitHub's runner object with read-only
-  # labels (self-hosted, OS, arch) alongside the custom ones.
-  def runner_json(id:, name:, custom:)
+  # labels (self-hosted, OS, arch) alongside the custom ones, and its
+  # status ("online" / "offline").
+  def runner_json(id:, name:, custom:, status: "online")
     labels = [{ "name" => "self-hosted", "type" => "read-only" }] +
              custom.map { |l| { "name" => l, "type" => "custom" } }
-    JSON.generate({ "id" => id, "name" => name, "labels" => labels })
+    JSON.generate({ "id" => id, "name" => name, "status" => status, "busy" => false, "labels" => labels })
   end
 end

@@ -197,7 +197,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     home = Dir.mktmpdir
     dir = write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs", name: "mac-box")
     registry = FakeRegistry.new(
-      runners: { ["d3mlabs", "mac-box"] => Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: ["cellbound3d"]) },
+      runners: { ["d3mlabs", "mac-box"] => Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: ["cellbound3d"], status: "online") },
     )
     harness = build_harness(contracts: 1, home: home, registry: registry, scope: "d3mlabs")
 
@@ -217,7 +217,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs/cellbound-3d", name: "box")
     registry = FakeRegistry.new(
-      runners: { ["d3mlabs/cellbound-3d", "box"] => Dev::RunnerRegistry::Runner.new(id: 7, custom_labels: ["cellbound-3d"]) },
+      runners: { ["d3mlabs/cellbound-3d", "box"] => Dev::RunnerRegistry::Runner.new(id: 7, custom_labels: ["cellbound-3d"], status: "online") },
     )
     harness = build_harness(home: home, registry: registry, scope: "d3mlabs/cellbound-3d")
 
@@ -249,7 +249,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs", name: "mac-box")
     registry = FakeRegistry.new(
-      runners: { ["d3mlabs", "mac-box"] => Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: ["x"]) },
+      runners: { ["d3mlabs", "mac-box"] => Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: ["x"], status: "online") },
     )
     harness = build_harness(home: home, registry: registry, scope: "d3mlabs")
 
