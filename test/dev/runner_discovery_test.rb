@@ -26,6 +26,75 @@ class Dev::RunnerDiscoveryTest < Minitest::Test
     ]
   end
 
+  test "enrollments sees the suffixless legacy dir too — a hand-made ~/actions-runner is an enrollment (#238)" do
+    Given "a home with a suffixless runner dir beside a dev-made one, both configured for one scope"
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner", scope: "JPDuchesne/snappy", name: "JPSFF")
+    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    write_runner(home, "actions-runners-not-one", scope: "d3mlabs", name: "nope") # a sibling name, not a runner dir
+
+    When "discovering"
+    enrollments = Dev::RunnerDiscovery.new(home: home).enrollments
+
+    Then "both enrollments surface, the legacy dir first; the look-alike dir does not"
+    enrollments.map(&:dir) == [File.join(home, "actions-runner"), File.join(home, "actions-runner-snappy")]
+  end
+
+  test "an enrollment knows whether its service is installed (the .service marker svc.sh writes)" do
+    Given "two enrollments, one with a .service marker"
+    home = Dir.mktmpdir
+    with_service = write_runner(home, "actions-runner", scope: "JPDuchesne/snappy", name: "JPSFF")
+    File.write(File.join(with_service, ".service"), "actions.runner.JPDuchesne-snappy.JPSFF.service\n")
+    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+
+    When "discovering"
+    installed = Dev::RunnerDiscovery.new(home: home).enrollments.map(&:service_installed)
+
+    Then
+    installed == [true, false]
+  end
+
+  test "display_dir is the dir relative to home with a ~, or absolute when outside home" do
+    Given "an enrollment under home and one elsewhere"
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    elsewhere = Dir.mktmpdir
+    write_runner(elsewhere, "actions-runner-ue", scope: "d3mlabs/unreal-engine", name: "box")
+
+    When "reading each"
+    under_home = Dev::RunnerDiscovery.new(home: home).enrollments.fetch(0)
+    outside = Dev::RunnerDiscovery.read(File.join(elsewhere, "actions-runner-ue"), home: home)
+
+    Then
+    under_home.display_dir == "~/actions-runner-snappy"
+    outside.display_dir == File.join(elsewhere, "actions-runner-ue")
+  end
+
+  test "enrollments_for lists every local enrollment serving a scope, dir-ordered, and nothing else" do
+    Given "two enrollments for one scope and one for another"
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner", scope: "JPDuchesne/snappy", name: "JPSFF")
+    write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs/cellbound-3d", name: "JPSFF")
+    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    discovery = Dev::RunnerDiscovery.new(home: home)
+
+    Expect "the plural lookup is exact on the .runner scope"
+    discovery.enrollments_for("JPDuchesne/snappy").map(&:dir) ==
+      [File.join(home, "actions-runner"), File.join(home, "actions-runner-snappy")]
+    discovery.enrollments_for("d3mlabs/cellbound-3d").map(&:dir) == [File.join(home, "actions-runner-cellbound3d")]
+    discovery.enrollments_for("d3mlabs") == []
+  end
+
+  test "for_scope is the only enrollment serving a scope — nil when several do, so plurality never picks a winner" do
+    Given "two enrollments for one scope"
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner", scope: "JPDuchesne/snappy", name: "JPSFF")
+    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+
+    Expect
+    Dev::RunnerDiscovery.new(home: home).for_scope("JPDuchesne/snappy").nil?
+  end
+
   test "for_scope finds the enrollment serving a scope regardless of its dir name" do
     Given "an org enrollment living in a repo-named dir (its pre-org history)"
     home = Dir.mktmpdir
@@ -69,5 +138,6 @@ class Dev::RunnerDiscoveryTest < Minitest::Test
     FileUtils.mkdir_p(dir)
     record = { "agentName" => name, "gitHubUrl" => "https://github.com/#{scope}", "workFolder" => "_work" }
     File.write(File.join(dir, ".runner"), "\uFEFF#{JSON.pretty_generate(record)}")
+    dir
   end
 end

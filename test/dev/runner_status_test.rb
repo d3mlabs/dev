@@ -66,7 +66,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     out = StringIO.new
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs", name: "mac-box")
-    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: %w[ai-ask ai-edit]) }
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: %w[ai-ask ai-edit], status: "online") }
     status = build_status(out: out, home: home, registry: CannedRegistry.new(&responder))
 
     When "reporting"
@@ -90,6 +90,23 @@ class Dev::RunnerStatusTest < Minitest::Test
 
     Then
     out.string.include?("[!!] gone on GitHub")
+  end
+
+  test "flags a runner GitHub lists offline while a local enrollment exists, and shows the ~-dir (#238)" do
+    Given "a legacy suffixless enrollment whose registration nothing is running"
+    out = StringIO.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner", scope: "JPDuchesne/snappy", name: "JPSFF")
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 9, custom_labels: ["snappy"], status: "offline") }
+    status = build_status(out: out, home: home, registry: CannedRegistry.new(&responder))
+
+    When "reporting"
+    status.report
+
+    Then "the enrollment is listed by its ~-dir, its labels shown, and the offline verdict named with the remedy"
+    out.string.include?("Runner 'JPSFF' (~/actions-runner):")
+    out.string.include?("[ok] labels: snappy")
+    out.string.include?("[!!] offline on GitHub — the registration is not being run (re-run `dev runner register`)")
   end
 
   test "degrades to labels-unknown when GitHub is unreachable" do
@@ -121,7 +138,7 @@ class Dev::RunnerStatusTest < Minitest::Test
       probe_results: ALL_GREEN_PROBES,
       capture_results: { ["stat", "-f", "%Sg %Sp", work] => "ai drwxrwsr-x\n" },
     )
-    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: ["ai-build"]) }
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: ["ai-build"], status: "online") }
     status = build_status(
       out: out, home: home, registry: CannedRegistry.new(&responder),
       executor: executor, shared_root: shared_root,
@@ -146,7 +163,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     out = StringIO.new
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-x", scope: "d3mlabs", name: "box")
-    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-learn"]) }
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-learn"], status: "online") }
     status = build_status(
       out: out, home: home, registry: CannedRegistry.new(&responder),
       sudoers_path: File.join(Dir.mktmpdir, "absent"),
@@ -166,7 +183,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     out = StringIO.new
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-x", scope: "d3mlabs", name: "box")
-    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-build"]) }
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-build"], status: "online") }
     status = build_status(out: out, home: home, registry: CannedRegistry.new(&responder), container_required: false)
 
     When "reporting"

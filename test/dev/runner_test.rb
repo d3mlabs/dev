@@ -313,7 +313,7 @@ class RunnerTest < Minitest::Test
     runner.run(["runner"])
 
     Then "the runner group is listed once (the runner-setup alias is retired, #184), with register and status beneath"
-    out.string.include?("  runner …     Enroll or inspect this host as a self-hosted runner")
+    out.string.include?("  runner …     Enroll, inspect or unenroll this host as a self-hosted runner")
     !out.string.include?("runner-setup")
     out.string.include?("Usage: dev runner <command> [args...]")
     out.string.include?("  register     Enroll this host")
@@ -332,7 +332,7 @@ class RunnerTest < Minitest::Test
 
     Then "the run proceeds with a retirement warning"
     $stderr.string.include?("`runner:` is retired")
-    out.string.include?("  runner …     Enroll or inspect this host as a self-hosted runner")
+    out.string.include?("  runner …     Enroll, inspect or unenroll this host as a self-hosted runner")
 
     Cleanup
     $stderr = old_stderr
@@ -437,7 +437,7 @@ class RunnerTest < Minitest::Test
     out.string.include?("  cred …       Resolve stored credentials")
     out.string.include?("  learnings …  The learnings read path: org knowledge cache, skill links, invariants")
     out.string.include?("  plan …       Sync Cursor plans with GitHub issues")
-    out.string.include?("  runner …     Enroll or inspect this host as a self-hosted runner")
+    out.string.include?("  runner …     Enroll, inspect or unenroll this host as a self-hosted runner")
     out.string.include?("Lifecycle:")
     out.string.lines.last == "#{Dev::Runner::PROJECTLESS_EPILOGUE}\n"
   end

@@ -12,22 +12,26 @@ require "socket"
 
 transform!(RSpock::AST::Transformation)
 class Dev::RunnerSetupTest < Minitest::Test
-  # Records system invocations and answers capture calls from a responder, so the
-  # orchestration runs end to end without touching gh/curl/svc.sh.
+  # Records system invocations (and every call, system or capture, in
+  # order) and answers capture calls from a responder, so the orchestration
+  # runs end to end without touching gh/curl/svc.sh/config.sh.
   class RecordingExecutor
-    attr_reader :systems
+    attr_reader :systems, :calls
 
     def initialize(&capture_responder)
       @capture_responder = capture_responder
       @systems = []
+      @calls = []
     end
 
-    def capture(*argv)
+    def capture(*argv, chdir: nil)
+      @calls << { argv: argv, chdir: chdir }
       @capture_responder ? @capture_responder.call(argv) : ["", "", true]
     end
 
     def system(*argv, chdir: nil)
       @systems << { argv: argv, chdir: chdir }
+      @calls << { argv: argv, chdir: chdir }
       true
     end
   end
@@ -239,9 +243,9 @@ class Dev::RunnerSetupTest < Minitest::Test
 
     Then "the installed service is uninstalled, the remove token comes from the old repo scope, " \
          "and the new registration from the org scope"
-    uninstall_idx = exec.systems.index { |call| call[:argv] == ["./svc.sh", "uninstall"] }
-    remove_idx = exec.systems.index { |call| call[:argv][0, 2] == ["./config.sh", "remove"] }
-    register_idx = exec.systems.index { |call| call[:argv][0, 2] == ["./config.sh", "--url"] }
+    uninstall_idx = exec.calls.index { |call| call[:argv] == ["./svc.sh", "uninstall"] }
+    remove_idx = exec.calls.index { |call| call[:argv][0, 2] == ["./config.sh", "remove"] }
+    register_idx = exec.calls.index { |call| call[:argv][0, 2] == ["./config.sh", "--url"] }
     uninstall_idx < remove_idx
     remove_idx < register_idx
     captured.any? { |line| line.include?("repos/owner/repo/actions/runners/remove-token") }
@@ -266,12 +270,70 @@ class Dev::RunnerSetupTest < Minitest::Test
     setup.run
 
     Then "config.sh remove runs with the remove token before config.sh registers"
-    remove = exec.systems.find { |call| call[:argv][0, 2] == ["./config.sh", "remove"] }
+    remove = exec.calls.find { |call| call[:argv][0, 2] == ["./config.sh", "remove"] }
     remove[:argv] == ["./config.sh", "remove", "--token", "RMTOKEN"]
     remove[:chdir] == dir
-    remove_idx = exec.systems.index { |call| call[:argv][0, 2] == ["./config.sh", "remove"] }
-    register_idx = exec.systems.index { |call| call[:argv][0, 2] == ["./config.sh", "--url"] }
+    remove_idx = exec.calls.index { |call| call[:argv][0, 2] == ["./config.sh", "remove"] }
+    register_idx = exec.calls.index { |call| call[:argv][0, 2] == ["./config.sh", "--url"] }
     remove_idx < register_idx
+
+    Cleanup
+    FileUtils.remove_entry(dir)
+  end
+
+  test "run tolerates config.sh remove failing for a registration the server no longer has (#238)" do
+    Given "a configured dir whose registration GitHub has lost, so config.sh remove 404s"
+    dir = Dir.mktmpdir
+    config_sh = File.join(dir, "config.sh")
+    File.write(config_sh, "#!/bin/bash\n")
+    File.chmod(0o755, config_sh)
+    File.write(File.join(dir, ".runner"), "\uFEFF#{JSON.generate("gitHubUrl" => "https://github.com/owner/repo")}")
+    File.write(File.join(dir, ".credentials"), "stale")
+    config = Dev::RunnerSetupConfig.new(labels: "ue-engine", dir: dir, name: "box")
+    authed = authed_responder
+    responder = lambda do |argv|
+      next ["", "Failed: Removing runner from the server\n404 (Not Found)", false] if argv[0, 2] == ["./config.sh", "remove"]
+
+      authed.call(argv)
+    end
+    exec = RecordingExecutor.new(&responder)
+    out = StringIO.new
+    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, out: out)
+
+    When "running setup"
+    setup.run
+
+    Then "the gone registration is reported, the stale enrollment files are cleared, and registration proceeds"
+    out.string.include?("registration already gone from the server")
+    exec.systems.any? { |call| call[:argv][0, 2] == ["./config.sh", "--url"] }
+
+    Cleanup
+    FileUtils.remove_entry(dir)
+  end
+
+  test "run still aborts when config.sh remove fails for any other reason" do
+    Given "a configured dir whose config.sh remove fails on the network"
+    dir = Dir.mktmpdir
+    config_sh = File.join(dir, "config.sh")
+    File.write(config_sh, "#!/bin/bash\n")
+    File.chmod(0o755, config_sh)
+    File.write(File.join(dir, ".runner"), "\uFEFF#{JSON.generate("gitHubUrl" => "https://github.com/owner/repo")}")
+    config = Dev::RunnerSetupConfig.new(labels: "ue-engine", dir: dir, name: "box")
+    authed = authed_responder
+    responder = lambda do |argv|
+      next ["", "connect: network is unreachable", false] if argv[0, 2] == ["./config.sh", "remove"]
+
+      authed.call(argv)
+    end
+    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: RecordingExecutor.new(&responder),
+      out: silent)
+
+    When "running setup"
+    setup.run
+
+    Then
+    error = raises Dev::RunnerSetup::Error
+    error.message.include?("network is unreachable")
 
     Cleanup
     FileUtils.remove_entry(dir)

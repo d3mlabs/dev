@@ -13,7 +13,7 @@ require "dev/settings"
 
 module Dev
   # `dev runner status` — register's inspect-only counterpart: this
-  # machine's discovered enrollments (every ~/actions-runner-*/.runner),
+  # machine's discovered enrollments (every ~/actions-runner*/.runner),
   # each one's labels read from GitHub (their single home — unknown when
   # offline), and the inspected reality of every agent-labeled enrollment's
   # contract. Nothing here mutates and nothing is recorded — every fact is
@@ -114,16 +114,19 @@ module Dev
       end
 
       enrollments.filter_map do |enrollment|
-        @out.puts "Runner '#{enrollment.name}' (#{enrollment.dir}):"
+        @out.puts "Runner '#{enrollment.name}' (#{enrollment.display_dir}):"
         line(true, "registered: #{enrollment.scope}")
         labels = report_labels(enrollment)
         enrollment.dir if labels && LabelContracts.agent_host?(labels.join(","))
       end
     end
 
-    # The enrollment's custom labels, read from their single home — GitHub.
-    # nil when they can't be known (offline) or the runner is gone
-    # server-side (a stale local dir).
+    # The enrollment's custom labels and health, read from their single
+    # home — GitHub. Labels nil when they can't be known (offline) or the
+    # runner is gone server-side (a stale local dir). A runner GitHub
+    # lists offline while this dir holds its enrollment means nothing is
+    # running the registration (a stopped service, or a dir `--replace`
+    # superseded) — flagged, with register as the remedy (#238).
     #
     # @param enrollment [Dev::RunnerDiscovery::Enrollment]
     # @return [Array<String>, nil]
@@ -136,6 +139,9 @@ module Dev
       end
 
       line(true, "labels: #{runner.custom_labels.join(", ")}")
+      unless runner.online?
+        line(false, "offline on GitHub — the registration is not being run (re-run `dev runner register`)")
+      end
       runner.custom_labels
     rescue RunnerRegistry::QueryError => e
       line(false, "labels unknown (#{e.message})")

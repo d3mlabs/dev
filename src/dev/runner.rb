@@ -385,11 +385,12 @@ module Dev
       {
         "runner" => CommandGroup.new(
           path: ["runner"],
-          desc: "Enroll or inspect this host as a self-hosted runner",
+          desc: "Enroll, inspect or unenroll this host as a self-hosted runner",
           category: Command::Category::Lifecycle,
           children: {
             "register" => Builtins::RunnerRegisterCommand.new,
             "status" => Builtins::RunnerStatusCommand.new,
+            "unregister" => Builtins::RunnerUnregisterCommand.new,
           },
         ),
       }

@@ -24,12 +24,27 @@ module Dev
     # The label amend was refused (permissions, deleted runner).
     class AmendError < StandardError; end
 
-    # One enrolled runner, as the amendable subset of GitHub's record:
-    # custom labels only — the read-only ones (self-hosted, OS, arch) are
-    # GitHub's, not ours to converge.
+    # One enrolled runner, as the subset of GitHub's record dev reads:
+    # the amendable custom labels — the read-only ones (self-hosted, OS,
+    # arch) are GitHub's, not ours to converge — and GitHub's health
+    # verdict, which tells a registration something is running from one
+    # nothing is.
     class Runner < T::Struct
+      extend T::Sig
+
       const :id, Integer
       const :custom_labels, T::Array[String]
+
+      # GitHub's word: "online" when a listener holds the registration's
+      # session, "offline" otherwise.
+      const :status, String
+
+      # The one health contract: a listener is connected. `busy` is a
+      # different question (is it running a job) and never enters here.
+      #
+      # @return [Boolean]
+      sig { returns(T::Boolean) }
+      def online? = status == "online"
     end
 
     # @param executor [#capture] CLI boundary (injectable for tests)
@@ -54,7 +69,7 @@ module Dev
       return nil if record.nil?
 
       custom = Array(record["labels"]).select { |label| label["type"] == "custom" }.map { |label| label["name"].to_s }
-      Runner.new(id: Integer(record.fetch("id")), custom_labels: custom)
+      Runner.new(id: Integer(record.fetch("id")), custom_labels: custom, status: record.fetch("status").to_s)
     end
 
     # Replace the runner's custom labels with `labels` (GitHub's PUT

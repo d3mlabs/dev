@@ -3,10 +3,12 @@
 
 require "test_helper"
 require "dev/builtins/runner_register_command"
+require "dev/confirmer"
 require "dev/label_contracts"
 require "dev/runner_discovery"
 require "dev/runner_registry"
 require "dev/runner_setup_config"
+require "dev/runner_teardown"
 require "fileutils"
 require "json"
 require "pathname"
@@ -197,7 +199,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     home = Dir.mktmpdir
     dir = write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs", name: "mac-box")
     registry = FakeRegistry.new(
-      runners: { ["d3mlabs", "mac-box"] => Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: ["cellbound3d"]) },
+      runners: { ["d3mlabs", "mac-box"] => Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: ["cellbound3d"], status: "online") },
     )
     harness = build_harness(contracts: 1, home: home, registry: registry, scope: "d3mlabs")
 
@@ -217,7 +219,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs/cellbound-3d", name: "box")
     registry = FakeRegistry.new(
-      runners: { ["d3mlabs/cellbound-3d", "box"] => Dev::RunnerRegistry::Runner.new(id: 7, custom_labels: ["cellbound-3d"]) },
+      runners: { ["d3mlabs/cellbound-3d", "box"] => Dev::RunnerRegistry::Runner.new(id: 7, custom_labels: ["cellbound-3d"], status: "online") },
     )
     harness = build_harness(home: home, registry: registry, scope: "d3mlabs/cellbound-3d")
 
@@ -244,12 +246,113 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.wirings.fetch(1).fetch(0).dir == dir
   end
 
+  # --- superseded enrollments (#238) -------------------------------------
+
+  test "two local enrollments for the scope: register lists them, asks, and on yes unregisters both then enrolls fresh" do
+    Given "the --replace aftermath: a legacy dir owning the service, a newer dir owning the (online) registration"
+    home = Dir.mktmpdir
+    legacy = write_runner(home, "actions-runner", scope: "JPDuchesne/snappy", name: "JPSFF")
+    File.write(File.join(legacy, ".service"), "unit\n")
+    newer = write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    registry = FakeRegistry.new(
+      runners: { ["JPDuchesne/snappy", "JPSFF"] => Dev::RunnerRegistry::Runner.new(id: 9, custom_labels: ["snappy"], status: "online") },
+    )
+    harness = build_harness(contracts: 1, home: home, registry: registry, scope: "JPDuchesne/snappy", repo: "JPDuchesne/snappy")
+    harness.confirmer.expects(:confirm?).once.with("Unregister these and enroll fresh?").returns(true)
+
+    When "registering in the snappy checkout"
+    harness.command.call(args: [], context: build_context(name: "snappy"))
+
+    Then "both are torn down, then the fresh ceremony runs into the default (label-derived) dir"
+    harness.torn_down.map(&:dir) == [legacy, newer]
+    harness.events == [[:converge, false, nil, nil], [:run], [:after_enroll, "/tmp/runner-dir"]]
+    harness.wirings.last.fetch(0) == Dev::RunnerSetupConfig.new(labels: "snappy")
+    registry.amends == []
+    harness.out.string.include?("2 local enrollments")
+    harness.out.string.include?("~/actions-runner (service installed)")
+    harness.out.string.include?("~/actions-runner-snappy (no service)")
+  end
+
+  test "one local enrollment whose runner GitHub lists offline: register asks; --yes answers for it" do
+    Given "a registration nothing is running"
+    home = Dir.mktmpdir
+    dir = write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    registry = FakeRegistry.new(
+      runners: { ["JPDuchesne/snappy", "JPSFF"] => Dev::RunnerRegistry::Runner.new(id: 9, custom_labels: ["snappy"], status: "offline") },
+    )
+    harness = build_harness(home: home, registry: registry, scope: "JPDuchesne/snappy", repo: "JPDuchesne/snappy")
+    harness.confirmer.expects(:confirm?).never
+
+    When "registering with --yes"
+    harness.command.call(args: ["--yes"], context: build_context(name: "snappy"))
+
+    Then "no prompt; torn down and enrolled fresh; nothing amended"
+    harness.torn_down.map(&:dir) == [dir]
+    harness.events == [[:run]]
+    registry.amends == []
+    harness.out.string.include?("offline")
+  end
+
+  test "declining leaves everything as it was and prints one unregister command per enrollment, exiting non-zero" do
+    Given "two enrollments and an operator who says no"
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner", scope: "JPDuchesne/snappy", name: "JPSFF")
+    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    harness = build_harness(home: home, scope: "JPDuchesne/snappy", repo: "JPDuchesne/snappy")
+    harness.confirmer.expects(:confirm?).once.returns(false)
+
+    When "registering"
+    harness.command.call(args: [], context: build_context(name: "snappy"))
+
+    Then "the refusal is the error the CLI maps to exit 1, carrying the remedy; nothing ran"
+    error = raises Dev::Builtins::RunnerRegisterCommand::SupersededEnrollmentsError
+    error.message.include?("dev runner unregister ~/actions-runner\n")
+    error.message.include?("dev runner unregister ~/actions-runner-snappy")
+    harness.torn_down == []
+    harness.events == []
+  end
+
+  test "one local enrollment, online: the amend path, no question asked" do
+    Given "the steady state"
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    registry = FakeRegistry.new(
+      runners: { ["JPDuchesne/snappy", "JPSFF"] => Dev::RunnerRegistry::Runner.new(id: 9, custom_labels: ["snappy"], status: "online") },
+    )
+    harness = build_harness(home: home, registry: registry, scope: "JPDuchesne/snappy", repo: "JPDuchesne/snappy")
+    harness.confirmer.expects(:confirm?).never
+
+    When "registering"
+    harness.command.call(args: [], context: build_context(name: "snappy"))
+
+    Then
+    harness.torn_down == []
+    harness.events == []
+    harness.out.string.include?("nothing to amend")
+  end
+
+  test "--dir skips the detection along with discovery" do
+    Given "two enrollments discovery would flag"
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner", scope: "JPDuchesne/snappy", name: "JPSFF")
+    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    harness = build_harness(home: home, scope: "JPDuchesne/snappy", repo: "JPDuchesne/snappy")
+    harness.confirmer.expects(:confirm?).never
+
+    When "registering with an explicit dir"
+    harness.command.call(args: ["--dir", "~/actions-runner-other"], context: build_context(name: "snappy"))
+
+    Then
+    harness.torn_down == []
+    harness.events == [[:run]]
+  end
+
   test "--dir skips discovery: the dir is the operator's to pick" do
     Given "an enrollment discovery would have found"
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs", name: "mac-box")
     registry = FakeRegistry.new(
-      runners: { ["d3mlabs", "mac-box"] => Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: ["x"]) },
+      runners: { ["d3mlabs", "mac-box"] => Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: ["x"], status: "online") },
     )
     harness = build_harness(home: home, registry: registry, scope: "d3mlabs")
 
@@ -391,17 +494,20 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
   private
 
-  Harness = Struct.new(:command, :wirings, :events, :out, :engine, keyword_init: true)
+  Harness = Struct.new(:command, :wirings, :events, :out, :engine, :torn_down, :confirmer, keyword_init: true)
 
   # A command over recording seams: the setup factory records each
   # (config, repo, org) wiring and answers with a no-op setup; contracts
   # record their lifecycle; discovery reads a real (tmp) home; the registry
-  # is the injected fake.
+  # is the injected fake; the teardown resolves for real over that home
+  # but only records what it would remove; the confirmer is a mock each
+  # test scripts (tests that say nothing tolerate no question).
   def build_harness(contracts: 0, home: Dir.mktmpdir, registry: FakeRegistry.new,
                     scope: "d3mlabs/cellbound-3d", repo: "d3mlabs/cellbound-3d", contracts_factory: nil,
                     repo_resolver: nil)
     wirings = []
     events = []
+    torn_down = []
     out = StringIO.new
     setup = typed_mock(Dev::RunnerSetup)
     setup.stubs(:run).with { events << [:run] || true }
@@ -411,6 +517,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     # a provision; tests that say nothing tolerate any call.
     engine = typed_mock(Dev::EngineProvisioner)
     engine.stubs(:provision!)
+    discovery = Dev::RunnerDiscovery.new(home: home)
+    teardown = Dev::RunnerTeardown.new(discovery: discovery, executor: nil, out: StringIO.new, home: home)
+    teardown.define_singleton_method(:teardown!) { |enrollment| torn_down << enrollment }
+    confirmer = typed_mock(Dev::Confirmer)
     command = Dev::Builtins::RunnerRegisterCommand.new(
       runner_setup_factory: ->(config, repo_override, org) {
         wirings << [config, repo_override, org]
@@ -421,12 +531,15 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
       contracts_factory: contracts_factory || ->(_labels, _agent_user) {
         Array.new(contracts) { RecordedContract.new(events) }
       },
-      discovery: Dev::RunnerDiscovery.new(home: home),
+      discovery: discovery,
       registry: registry,
+      teardown: teardown,
+      confirmer: confirmer,
       engine_provisioner: engine,
       out: out,
     )
-    Harness.new(command: command, wirings: wirings, events: events, out: out, engine: engine)
+    Harness.new(command: command, wirings: wirings, events: events, out: out, engine: engine,
+      torn_down: torn_down, confirmer: confirmer)
   end
 
   # A .runner record the way config.sh writes it (UTF-8 BOM + JSON).

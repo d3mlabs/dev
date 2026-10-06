@@ -3,6 +3,7 @@
 
 require "dev/cli/flag_parser"
 require "dev/command"
+require "dev/confirmer"
 require "dev/engine_provisioner"
 require "dev/label_contracts"
 require "dev/project_manifest"
@@ -10,6 +11,7 @@ require "dev/runner_discovery"
 require "dev/runner_registry"
 require "dev/runner_setup"
 require "dev/runner_setup_config"
+require "dev/runner_teardown"
 
 module Dev
   module Builtins
@@ -36,6 +38,17 @@ module Dev
     # GitHub (RunnerRegistry) instead of re-enrolling; only a scope nothing
     # serves gets the full enrollment ceremony (RunnerSetup).
     #
+    # Before amending, register checks that the enrollment on disk is the
+    # one serving GitHub (#238). Two signs it is not: more than one local
+    # enrollment for the scope (the aftermath of `config.sh --replace` —
+    # the newest dir holds the registration, an older one the service
+    # unit, neither runs), or GitHub listing the runner offline (the
+    # registration is held but nothing runs it). Either way register lists
+    # the enrollments and asks to unregister them all and enroll fresh;
+    # `--yes` answers for it; "no" changes nothing and prints the
+    # `dev runner unregister` commands to do it by hand. One enrollment,
+    # online, is the steady state and stays silent.
+    #
     # Enrollment state is inspected, never recorded: the labels live on
     # GitHub, the scope in the runner dir's own .runner record — nothing in
     # dev.yml, Settings, or any inventory file.
@@ -47,9 +60,17 @@ module Dev
     # live there; dev.yml `name:` is the package identity and may differ.
     # `--dir`/`--name`/`--repo` override the enrollment identity (`--repo`
     # moves the label with it); `--agent-user` the ai-agent default run-as
-    # user. A leaf of the `runner` group (RunnerStatusCommand is the other).
+    # user. A leaf of the `runner` group (RunnerStatusCommand and
+    # RunnerUnregisterCommand are the others).
     class RunnerRegisterCommand < BuiltinCommand
       extend T::Sig
+
+      # The operator declined to unregister the superseded enrollments, so
+      # register did not enroll: the message carries the by-hand remedy.
+      # A RuntimeError so the CLI boundary prints it and exits 1.
+      class SupersededEnrollmentsError < RuntimeError; end
+
+      YES_FLAG = "--yes"
 
       # Builds the RunnerSetup for the resolved config and flags; injected
       # so tests can observe the wiring without touching gh or the host.
@@ -80,6 +101,8 @@ module Dev
           repo_resolver: RepoResolver,
           discovery: Dev::RunnerDiscovery,
           registry: T.untyped,
+          teardown: Dev::RunnerTeardown,
+          confirmer: Dev::Confirmer,
           engine_provisioner: Dev::EngineProvisioner,
           flag_parser: Cli::FlagParser,
           out: T.any(IO, StringIO),
@@ -92,6 +115,10 @@ module Dev
         discovery: Dev::RunnerDiscovery.new,
         # The GitHub boundary (#find/#amend!); T.untyped so tests fake it.
         registry: Dev::RunnerRegistry.new,
+        # `dev runner unregister`'s implementation, for superseded enrollments.
+        teardown: Dev::RunnerTeardown.new(discovery: discovery),
+        # Asks before unregistering anything.
+        confirmer: Dev::Confirmer.new,
         # `dev up`'s engine step, run here for the checked-out repo's hint.
         engine_provisioner: Dev::EngineProvisioner.new,
         flag_parser: Cli::FlagParser.new,
@@ -103,6 +130,8 @@ module Dev
         @repo_resolver = repo_resolver
         @discovery = discovery
         @registry = registry
+        @teardown = teardown
+        @confirmer = confirmer
         @engine_provisioner = engine_provisioner
         @flag_parser = flag_parser
         @out = out
@@ -141,8 +170,20 @@ module Dev
         end
 
         setup = @runner_setup_factory.call(config, @flag_parser.value(args, "--repo"), org)
-        enrollment = config.dir ? nil : @discovery.for_scope(setup.resolve_scope)
-        if enrollment && amend_enrollment(setup.resolve_scope, enrollment, config)
+        scope = setup.resolve_scope
+        # --dir is the operator picking the dir: no discovery, no detection.
+        enrollments = config.dir ? [] : @discovery.enrollments_for(scope)
+        runner = enrollments.empty? ? nil : @registry.find(scope: scope, name: config.name || T.must(enrollments.first).name)
+
+        if superseded?(enrollments, runner)
+          retire!(scope, enrollments, runner, yes: args.include?(YES_FLAG))
+          enrollments = []
+          runner = nil
+        end
+
+        enrollment = enrollments.first
+        if enrollment && runner
+          amend_enrollment(scope, enrollment, runner, config)
           contracts.each { |contract| contract.after_enroll!(runner_dir: enrollment.dir) }
           return
         end
@@ -159,24 +200,75 @@ module Dev
 
       private
 
-      # The amend path: when the discovered enrollment still exists on
-      # GitHub, converge its custom labels in place — the service, name,
-      # and dir all stay put. False when GitHub no longer knows the runner
-      # (the caller re-enrolls).
+      # Whether the enrollment on disk is not what is serving GitHub: more
+      # than one local enrollment for the scope (one name, one registration
+      # — the rest are `--replace` leftovers), or the runner GitHub holds
+      # is offline (nothing runs it). One enrollment that GitHub has lost
+      # is not this case: the re-enrollment path reuses its dir.
+      #
+      # @param enrollments [Array<Dev::RunnerDiscovery::Enrollment>]
+      # @param runner [Dev::RunnerRegistry::Runner, nil]
+      # @return [Boolean]
+      sig do
+        params(enrollments: T::Array[Dev::RunnerDiscovery::Enrollment], runner: T.nilable(Dev::RunnerRegistry::Runner))
+          .returns(T::Boolean)
+      end
+      def superseded?(enrollments, runner)
+        enrollments.length > 1 || (!runner.nil? && !runner.online?)
+      end
+
+      # List the superseded enrollments, ask, and unregister them all —
+      # or, declined, raise with the by-hand remedy having changed nothing.
+      #
+      # @param scope [String]
+      # @param enrollments [Array<Dev::RunnerDiscovery::Enrollment>]
+      # @param runner [Dev::RunnerRegistry::Runner, nil]
+      # @param yes [Boolean] `--yes`: answer the question without asking
+      # @raise [SupersededEnrollmentsError] when the operator declines
+      sig do
+        params(
+          scope: String,
+          enrollments: T::Array[Dev::RunnerDiscovery::Enrollment],
+          runner: T.nilable(Dev::RunnerRegistry::Runner),
+          yes: T::Boolean,
+        ).void
+      end
+      def retire!(scope, enrollments, runner, yes:)
+        signs = []
+        signs << "#{enrollments.length} local enrollments" if enrollments.length > 1
+        signs << "GitHub lists '#{T.must(enrollments.first).name}' offline" if runner && !runner.online?
+        @out.puts ">>> #{scope} has #{signs.join(" and ")} — the enrollment on disk is not what is serving GitHub:"
+        enrollments.each do |enrollment|
+          @out.puts "    #{enrollment.display_dir} (#{enrollment.service_installed ? "service installed" : "no service"})"
+        end
+
+        unless yes || @confirmer.confirm?("Unregister these and enroll fresh?")
+          remedy = enrollments.map { |enrollment| "  dev runner unregister #{enrollment.display_dir}" }.join("\n")
+          raise SupersededEnrollmentsError,
+            "nothing changed. Unregister them yourself, then re-run register:\n#{remedy}"
+        end
+
+        enrollments.each { |enrollment| @teardown.teardown!(enrollment) }
+      end
+
+      # The amend path: the discovered enrollment still exists on GitHub
+      # and is online, so converge its custom labels in place — the
+      # service, name, and dir all stay put.
       #
       # @param scope [String]
       # @param enrollment [Dev::RunnerDiscovery::Enrollment]
+      # @param runner [Dev::RunnerRegistry::Runner] GitHub's record of it
       # @param config [Dev::RunnerSetupConfig]
-      # @return [Boolean] whether the enrollment was converged in place
       sig do
-        params(scope: String, enrollment: Dev::RunnerDiscovery::Enrollment, config: RunnerSetupConfig)
-          .returns(T::Boolean)
+        params(
+          scope: String,
+          enrollment: Dev::RunnerDiscovery::Enrollment,
+          runner: Dev::RunnerRegistry::Runner,
+          config: RunnerSetupConfig,
+        ).void
       end
-      def amend_enrollment(scope, enrollment, config)
+      def amend_enrollment(scope, enrollment, runner, config)
         name = config.name || enrollment.name
-        runner = @registry.find(scope: scope, name: name)
-        return false if runner.nil?
-
         desired = config.labels.split(",")
         if runner.custom_labels.sort == desired.sort
           @out.puts ">>> Runner '#{name}' already serves #{scope} with labels #{config.labels} — nothing to amend."
@@ -185,7 +277,6 @@ module Dev
                     "#{runner.custom_labels.join(",")} -> #{config.labels} ..."
           @registry.amend!(scope: scope, runner_id: runner.id, labels: desired)
         end
-        true
       end
 
       # The advertised labels, by precedence: --labels (explicit set),
