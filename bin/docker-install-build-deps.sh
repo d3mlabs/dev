@@ -88,21 +88,28 @@ echo ">>> Installing build dependencies from ${DEPS_DIR}/build-deps.lock"
 # ones do not. The host OS is detected (linux), so host: :darwin entries
 # skip themselves.
 #
-# DEV_PIN_TAPS=1 (the image build's reproducible mode) adds --pinned-taps:
-# dev checks each formula's tap out at the commit build-deps.lock names
-# (one commit, fetched alone — not homebrew-core's history) and brew
-# installs from those checkouts instead of its moving API, so two builds
-# of one lock install one toolchain. Off by default: the lock then verifies
-# the versions brew's API produced, as every host install does.
-PINNED_TAPS=()
-if [ "${DEV_PIN_TAPS:-}" = "1" ]; then
-  PINNED_TAPS=(--pinned-taps)
+# --pinned-taps is the image build's reproducible mode (ADR-0003, "images
+# pin"): dev checks each formula's tap out at the commit build-deps.lock
+# names (one commit, fetched alone — not homebrew-core's history) and brew
+# installs from those checkouts instead of its moving API, so two builds of
+# one lock install one toolchain. Measured at no cost against the unpinned
+# build (109 s vs 114 s for the Linuxbrew + toolchain layer), so it is the
+# default. DEV_PIN_TAPS=0 opts out: brew's API picks the versions and the
+# lock verifies them afterwards, as every host install does — for a lock
+# written before tap commits were recorded (`dev deps update` adds them).
+PINNED_TAPS=(--pinned-taps)
+if [ "${DEV_PIN_TAPS:-1}" = "0" ]; then
+  PINNED_TAPS=()
 fi
 (cd "$DEPS_DIR" && CI=true dev deps install --group build --integration brew ${PINNED_TAPS[@]+"${PINNED_TAPS[@]}"})
 
 echo ">>> Removing dev-core from the image"
-# The toolchain stays; dev leaves. Its brew dependencies (rbenv, shadowenv)
-# remain as ordinary installed formulae.
+# The toolchain stays; dev leaves. brew autoremoves dev-core's own
+# dependencies with it (gh, git, rbenv, ruby-build, shadowenv, …): they are
+# not image toolchain, they are dev's, and they come back with dev-core when
+# the host provisions the container's dev at its own version
+# (bin/container-provision-dev.sh). The build group's formulae were
+# installed on request and stay.
 brew uninstall --quiet dev-core
 
 echo ">>> Done"
