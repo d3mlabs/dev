@@ -56,10 +56,17 @@ fi
 
 git_tap checkout --quiet "$sha"
 
+# reinstall, not uninstall + install: brew autoremoves a formula's
+# dependencies when the formula goes (gh, git, go, perl, rbenv, ruby-build,
+# shadowenv, … — ~30 bottles for dev-core), then install pours them all
+# back. reinstall swaps dev-core for the checked-out formula's version and
+# leaves the dependency kegs in place. It handles a downgrade too, which
+# upgrade would refuse.
 if brew list --versions dev-core >/dev/null 2>&1; then
-  brew uninstall --quiet dev-core
+  brew reinstall --quiet d3mlabs/d3mlabs/dev-core
+else
+  brew install --quiet d3mlabs/d3mlabs/dev-core
 fi
-brew install --quiet d3mlabs/d3mlabs/dev-core
 
 installed="$(dev version)"
 if [ "$installed" != "$version" ]; then
