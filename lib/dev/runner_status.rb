@@ -13,7 +13,7 @@ require "dev/settings"
 
 module Dev
   # `dev runner status` — register's inspect-only counterpart: this
-  # machine's discovered enrollments (every ~/actions-runner-*/.runner),
+  # machine's discovered enrollments (every ~/actions-runner*/.runner),
   # each one's labels read from GitHub (their single home — unknown when
   # offline), and the inspected reality of every agent-labeled enrollment's
   # contract. Nothing here mutates and nothing is recorded — every fact is
