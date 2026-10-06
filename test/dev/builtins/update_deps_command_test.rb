@@ -132,6 +132,33 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "call keeps an unchanged tap's commit from the lock on disk — a re-lock that moves no formula writes the same bytes" do
+    Given "a lock written at one core commit, and a resolution of the very same pins at a newer one"
+    root = Pathname.new(Dir.mktmpdir("update-deps-carryover-"))
+    platforms = { "x86_64_linux" => { "hash" => "SHA256=l", "link" => "https://x/l" } }
+    pin = ->(commit) do
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: "4.4.4", hash: nil,
+        metadata: { "tap_commit" => commit, "format" => "bottle", "platforms" => platforms })
+    end
+    Dev::Deps::Lockfile.new(dir: root).lock([pin.call("0f1ba9ea")])
+    before = (root / "build-deps.lock").read
+    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: [pin.call("7d2877eb")]))
+    Dev::ShadowenvRuby.stubs(:converge!)
+    command = Dev::Builtins::UpdateDepsCommand.new
+    old_stdout = $stdout
+    $stdout = StringIO.new
+
+    When "running dev deps update"
+    command.call(args: [], context: build_context(root))
+
+    Then "build-deps.lock is byte-identical to what was there"
+    (root / "build-deps.lock").read == before
+
+    Cleanup
+    $stdout = old_stdout
+    FileUtils.rm_rf(root)
+  end
+
   test "call does not mistake a previously loaded project's config for this one" do
     Given "a stale config from an earlier load, and a dependencies.rb that never calls Dev::Deps.define"
     Dev::Deps.define { ruby "9.9.9" }
