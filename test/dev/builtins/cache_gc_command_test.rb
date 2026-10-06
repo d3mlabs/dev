@@ -10,6 +10,17 @@ transform!(RSpock::AST::Transformation)
 class Dev::Builtins::CacheGcCommandTest < Minitest::Test
   include SorbetHelper
 
+  test "cache gc is a maintenance verb: exempt from the staleness guard, never stamps" do
+    Given "a cache command"
+    command = build_command(typed_mock(Dev::Deps::CacheGc))
+
+    Expect "the declarative traits"
+    command.staleness_exempt? == true
+    command.stamps? == false
+    command.category == Dev::Command::Category::Workflow
+    !command.hidden?
+  end
+
   test "gc runs with the default retention when --keep is absent" do
     Given "a cache command over an expecting GC"
     gc = typed_mock(Dev::Deps::CacheGc)

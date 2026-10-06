@@ -42,6 +42,14 @@ module Dev
       sig { override.returns(Command::Category) }
       def category = Command::Category::Workflow
 
+      # GC is maintenance over the cache, not a build: it reads the lockfile to
+      # know what to keep and never needs the deps installed. It also runs as
+      # cleanup after a failed `dev up` (CI's `if: always()` step), which is
+      # exactly when the staleness guard would fire — and bury the real error
+      # under "dependencies have never been installed".
+      sig { override.returns(T::Boolean) }
+      def staleness_exempt? = true
+
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
         project = context.project!
