@@ -1,7 +1,6 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "fileutils"
 require "stringio"
 
 require "dev/runner_discovery"
@@ -10,9 +9,9 @@ require "dev/runner_setup"
 module Dev
   # The exact inverse of RunnerSetup: removes one of this host's runner
   # enrollments — its service, its GitHub registration, and the files that
-  # make the dir an enrollment — leaving the runner binaries in place so
-  # the dir is an unconfigured download a later `register --dir` can
-  # reuse, and its _diag logs stay readable.
+  # make the dir an enrollment (RunnerSetup::ENROLLMENT_FILES) — leaving
+  # the runner binaries in place so the dir is an unconfigured download a
+  # later `register --dir` can reuse, and its _diag logs stay readable.
   #
   # Order matters and follows the runner's own rules: config.sh refuses to
   # deregister while the service unit is installed ("Uninstall service
@@ -20,7 +19,7 @@ module Dev
   # enrollment's *own* scope (read from its .runner record), never at a
   # target scope; and a registration the server no longer has — the state
   # `config.sh --replace` leaves an older dir in — counts as removed, not
-  # as a failure.
+  # as a failure (RunnerSetup.remove_registration, the shared seam).
   #
   # Enrollments are named the way an operator would: by scope when one
   # local enrollment serves it, or by dir (absolute or `~`-relative), which
@@ -32,7 +31,9 @@ module Dev
   class RunnerTeardown
     extend T::Sig
 
-    class Error < StandardError; end
+    # A RuntimeError so the CLI boundary prints the message and exits 1
+    # (every failure here is the operator's to act on, not a dev bug).
+    class Error < RuntimeError; end
 
     # A scope several local enrollments serve: naming it does not name an
     # enrollment. The message lists the dirs, which do.
@@ -46,16 +47,6 @@ module Dev
     # minting) for a reason other than the registration being gone. The
     # enrollment is left as it was at that step.
     class TeardownFailedError < Error; end
-
-    # What config.sh says when the registration it would remove is not on
-    # the server — superseded by `--replace`, or already removed. The
-    # admin-flow delete answers 404; the legacy flow prints "Does not
-    # exist" and exits 0 on its own.
-    GONE_PATTERN = T.let(/404|not found|does not exist/i, Regexp)
-
-    # The files that make a runner dir an enrollment: config.sh writes the
-    # first three, svc.sh the fourth. Without them the dir is a download.
-    ENROLLMENT_FILES = T.let(%w[.runner .credentials .credentials_rsaparams .service].freeze, T::Array[String])
 
     # @param discovery [Dev::RunnerDiscovery] this host's enrollments
     # @param executor [#capture, #system] CLI boundary (default: the real
@@ -116,7 +107,6 @@ module Dev
     def teardown!(enrollment)
       service = enrollment.service_installed ? uninstall_service(enrollment.dir) : "no service installed"
       registration = deregister(enrollment)
-      ENROLLMENT_FILES.each { |file| FileUtils.rm_f(File.join(enrollment.dir, file)) }
       @out.puts ">>> Unregistered #{enrollment.name} from #{enrollment.scope} (#{enrollment.display_dir}): " \
                 "#{service}, #{registration}, enrollment files cleared; binaries left in place."
     end
@@ -153,26 +143,18 @@ module Dev
       "service stopped and uninstalled"
     end
 
-    # `config.sh remove` with a remove token minted at the enrollment's own
-    # scope. Its output is echoed; a failure that says the registration is
-    # not on the server is success.
+    # Deregister at the enrollment's own scope and clear the enrollment
+    # files — RunnerSetup's deregistration seam, so register's re-enrollment
+    # and unregister agree on what "gone from the server" means.
     #
     # @param enrollment [Dev::RunnerDiscovery::Enrollment]
     # @return [String] what happened, for the summary line
     # @raise [TeardownFailedError] when the token can't be minted or
-    #   config.sh fails for another reason
+    #   config.sh fails for a reason other than a gone registration
     sig { params(enrollment: Dev::RunnerDiscovery::Enrollment).returns(String) }
     def deregister(enrollment)
       @out.puts ">>> Removing the registration at #{enrollment.scope} ..."
-      token = RunnerSetup.mint_token(enrollment.scope, "remove-token", executor: @exec)
-      out, err, ok = @exec.capture("./config.sh", "remove", "--token", token, chdir: enrollment.dir)
-      @out.print(out) unless out.empty?
-      return "registration removed" if ok
-
-      output = "#{out}\n#{err}".strip
-      return "registration already gone from the server" if output.match?(GONE_PATTERN)
-
-      raise TeardownFailedError, "config.sh remove failed in #{enrollment.dir}: #{output}"
+      RunnerSetup.remove_registration(enrollment.dir, enrollment.scope, executor: @exec, out: @out)
     rescue RunnerSetup::Error => e
       raise TeardownFailedError, e.message
     end

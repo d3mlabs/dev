@@ -35,6 +35,16 @@ module Dev
     # Pinned runner version; override per-repo via dev.yml `runner.version`.
     DEFAULT_VERSION = "2.335.1"
 
+    # What config.sh says when the registration it would remove is not on
+    # the server — superseded by `--replace`, or already removed. The
+    # admin-flow delete answers 404; the legacy flow prints "Does not
+    # exist" and exits 0 on its own.
+    GONE_PATTERN = T.let(/404|not found|does not exist/i, Regexp)
+
+    # The files that make a runner dir an enrollment: config.sh writes the
+    # first three, svc.sh the fourth. Without them the dir is a download.
+    ENROLLMENT_FILES = T.let(%w[.runner .credentials .credentials_rsaparams .service].freeze, T::Array[String])
+
     # Thin wrapper over the external CLIs RunnerSetup drives. Tests inject a fake.
     class Executor
       extend T::Sig
@@ -142,6 +152,37 @@ module Dev
         raise Error, "failed to mint a #{kind}: #{err.strip}" if !ok || token.empty?
 
         token
+      end
+
+      # Deregister the runner configured in `dir` — `config.sh remove` with
+      # a remove token minted at `scope`, the enrollment's *own* scope —
+      # then clear the enrollment files (config.sh removes its own on
+      # success; after a gone registration they are stale and would make
+      # the next `config.sh` refuse). A registration the server no longer
+      # has counts as removed: that is the state `--replace` leaves an
+      # older dir in, and the files are what still need clearing. The one
+      # deregistration seam, shared by re-registration and RunnerTeardown.
+      #
+      # @param dir [String] the runner install dir
+      # @param scope [String] the scope the registration is under
+      # @param executor [#capture] CLI boundary
+      # @param out [IO, StringIO] config.sh's output is echoed here
+      # @return [String] what happened, in words ("registration removed" /
+      #   "registration already gone from the server")
+      # @raise [Error] when the token can't be minted or config.sh fails
+      #   for another reason; the files are left as they were
+      sig { params(dir: String, scope: String, executor: T.untyped, out: T.any(IO, StringIO)).returns(String) }
+      def remove_registration(dir, scope, executor: Executor.new, out: $stdout)
+        token = mint_token(scope, "remove-token", executor: executor)
+        stdout, stderr, ok = executor.capture("./config.sh", "remove", "--token", token, chdir: dir)
+        out.print(stdout) unless stdout.empty?
+        output = "#{stdout}\n#{stderr}".strip
+        unless ok || output.match?(GONE_PATTERN)
+          raise Error, "config.sh remove failed in #{dir} (try ./config.sh remove manually there): #{output}"
+        end
+
+        ENROLLMENT_FILES.each { |file| FileUtils.rm_f(File.join(dir, file)) }
+        ok ? "registration removed" : "registration already gone from the server"
       end
 
       # The argv that drives svc.sh for one action, relative to the runner
@@ -295,8 +336,9 @@ module Dev
     # same-name collision — not the local guard — so an existing config must be
     # removed first. The remove token is minted at the scope the runner is
     # *currently* registered under (read from its .runner file), not the target
-    # scope — that's what makes a repo→org migration a plain re-run. No-op on a
-    # fresh dir.
+    # scope — that's what makes a repo→org migration a plain re-run. A
+    # registration the server has already lost is removed all the same
+    # (see .remove_registration). No-op on a fresh dir.
     #
     # @param dir [String] install dir
     # @param scope [String] the target scope ("owner/repo" or "owner"), used as
@@ -309,10 +351,8 @@ module Dev
       existing_scope = existing_registration_scope(dir) || scope
       @out.puts ">>> Existing runner config found (#{existing_scope}); removing it before reconfiguring ..."
       uninstall_existing_service(dir)
-      token = mint_token(existing_scope, "remove-token")
-      return if @exec.system("./config.sh", "remove", "--token", token, chdir: dir)
-
-      raise Error, "failed to remove the existing runner config (try ./config.sh remove manually in #{dir})"
+      outcome = self.class.remove_registration(dir, existing_scope, executor: @exec, out: @out)
+      @out.puts ">>> Existing config: #{outcome}."
     end
 
     # config.sh remove refuses while the service unit is installed ("Uninstall
