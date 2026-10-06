@@ -10,6 +10,7 @@ require "dev/deps/installer"
 require "dev/deps/lockfile"
 require "dev/deps/registry"
 require "dev/deps/resolver"
+require "dev/deps/tap_commit_carryover"
 require "dev/shadowenv_ruby"
 
 module Dev
@@ -70,7 +71,11 @@ module Dev
           schemes: Dev::Deps::Registry.schemes,
         )
         lockfile = Dev::Deps::Lockfile.new(dir: project_root)
-        resolved = resolver.resolve(declarations)
+        # Resolve, then carry provenance: the Resolver is a pure function of
+        # the declarations and the universe; which of two equally valid tap
+        # commits to write is a question about the lock being written, so it
+        # is answered here, against the lock on disk (TapCommitCarryover).
+        resolved = Dev::Deps::TapCommitCarryover.new.apply(resolver.resolve(declarations), lockfile.read)
         # Record the manifest digest so the staleness check can tell whether
         # dependencies.rb changed after this resolution (Dev::Deps::Staleness).
         manifest_digest = deps_rb.exist? ? Digest::SHA256.file(deps_rb.to_s).hexdigest : nil
