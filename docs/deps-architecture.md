@@ -149,7 +149,15 @@ ecosystem's canonical form and validated at the DSL boundary (a cmake
      inheriting the parent's `Scope` as one unit (each already carries
      the integration its repository stamped — the resolved set is keyed
      by `PackageId`); a `ToolOwned` claim has nothing to walk.
-3. **Write** — pins go to `deps.lock` (app/test groups) and
+3. **Carry provenance** — `TapCommitCarryover` reads the lock on disk and,
+   for every brew tap none of whose pins changed (same formula set; same
+   version, hash, group, scope and metadata but `tap_commit`), writes the
+   previous lock's `tap_commit` onto the resolved pins; a tap where
+   anything moved takes today's HEAD on every pin (one commit per tap,
+   the invariant a pinned install relies on). This is a policy of the
+   lock being written, so it lives in `dev deps update`, not in the
+   Resolver, which never sees the previous lock.
+4. **Write** — pins go to `deps.lock` (app/test groups) and
    `build-deps.lock` (build group), nested by integration
    (`brew:` → `zlib:` → attrs) so the on-disk key carries the same
    (integration, name) identity the resolver keys on. The reader also
@@ -170,6 +178,7 @@ sequenceDiagram
     participant rep as Repository (per integration)
     participant backing as Backing service
     participant sch as VersionScheme (per integration)
+    participant carry as TapCommitCarryover
     participant lock as Lockfile
 
     Note over cmd: load dependencies.rb into ScopedDeclaration[]
@@ -200,6 +209,11 @@ sequenceDiagram
         end
     end
     res-->>cmd: Dependency[] pins
+    cmd->>lock: read
+    lock-->>cmd: previous pins
+    cmd->>carry: apply(pins, previous pins)
+    Note over carry: per brew tap - pins unchanged? keep the previous tap_commit; else today's HEAD on every pin
+    carry-->>cmd: pins
     cmd->>lock: lock(pins, manifest_digest)
     Note over lock: writes deps.lock and build-deps.lock, nested by integration
 ```

@@ -6,6 +6,7 @@ require "dev/builtins/container_command"
 require "dev/builtins/service_up"
 require "dev/container_deps_installer"
 require "dev/container_dev_provisioner"
+require "dev/container_user_aligner"
 require "dev/credentials"
 require "dev/engine_provisioner"
 
@@ -27,11 +28,24 @@ module Dev
       extend T::Sig
       include ServiceUp
 
+      # What to report for each alignment outcome that changed something;
+      # an already-aligned user (the steady state) says nothing.
+      USER_ALIGNMENT = T.let(
+        {
+          realigned: "dev: container user took the data root owner's uid and gid",
+          adopted: "dev: container user took over the root-owned data root",
+        }.freeze,
+        T::Hash[Symbol, String],
+      )
+
       # @param container_client [Dev::BuildContainer, nil]
       # @param engine_provisioner [Dev::EngineProvisioner] the sizing step
+      # @param user_aligner [Dev::ContainerUserAligner, nil] makes the
+      #   container's user the mounted data root's owner; resolved lazily
+      #   over the client's engine when not injected, like the client
       # @param dev_provisioner [Dev::ContainerDevProvisioner, nil] converges
       #   the persistent container's dev to this host's version; resolved
-      #   lazily over the client's engine when not injected, like the client
+      #   lazily the same way
       # @param deps_installer [Dev::ContainerDepsInstaller, nil] runs the
       #   container-side dependency install; resolved lazily the same way
       # @param out [IO, StringIO]
@@ -39,15 +53,17 @@ module Dev
         params(
           container_client: T.nilable(Dev::BuildContainer),
           engine_provisioner: Dev::EngineProvisioner,
+          user_aligner: T.nilable(Dev::ContainerUserAligner),
           dev_provisioner: T.nilable(Dev::ContainerDevProvisioner),
           deps_installer: T.nilable(Dev::ContainerDepsInstaller),
           out: T.any(IO, StringIO),
         ).void
       end
       def initialize(container_client: nil, engine_provisioner: Dev::EngineProvisioner.new,
-                     dev_provisioner: nil, deps_installer: nil, out: $stdout)
+                     user_aligner: nil, dev_provisioner: nil, deps_installer: nil, out: $stdout)
         super(container_client:, out:)
         @engine_provisioner = engine_provisioner
+        @user_aligner = user_aligner
         @dev_provisioner = dev_provisioner
         @deps_installer = deps_installer
       end
@@ -127,14 +143,20 @@ module Dev
         BuildContainer.resolve_versioned_volumes(cfg.volumes, project_root: project.root)
       end
 
-      # What a running container needs before a command runs in it: the
-      # host's dev, then the container's side of the dependency install.
+      # What a running container needs before a command runs in it: a user
+      # that can write the host's data root, the host's dev, then the
+      # container's side of the dependency install.
       #
       # @param name [String] the running container
       # @param cfg [BuildContainerConfig]
       # @return [void]
       sig { params(name: String, cfg: BuildContainerConfig).void }
       def provision_inside!(name, cfg)
+        # Everything below writes the mounted data root as the container's
+        # user, so that user becomes the mount's owner first — a no-op where
+        # the ids already agree, reported only when it did something.
+        aligned = user_aligner.align!(name)
+        @out.puts USER_ALIGNMENT.fetch(aligned) if USER_ALIGNMENT.key?(aligned)
         # The container follows the host: its dev is converged to this exact
         # version here, on every up, so a host upgrade re-syncs it with no
         # manual step and the steady state is one probe.
@@ -146,6 +168,12 @@ module Dev
         # install-time integrations may need.
         deps_installer.install!(name, env: Dev::Credentials.resolve_run_env(cfg.run_env))
         @out.puts "dev: container deps installed"
+      end
+
+      # @return [Dev::ContainerUserAligner]
+      sig { returns(Dev::ContainerUserAligner) }
+      def user_aligner
+        @user_aligner ||= Dev::ContainerUserAligner.new(engine: client.engine)
       end
 
       # @return [Dev::ContainerDevProvisioner]

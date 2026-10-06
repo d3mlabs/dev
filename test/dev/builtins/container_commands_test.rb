@@ -9,6 +9,7 @@ require "dev/builtins/container_tag_command"
 require "dev/builtins/container_status_command"
 require "dev/build_container_config"
 require "dev/container_dev_provisioner"
+require "dev/container_user_aligner"
 require "dev/engine_provisioner"
 require "support/fake_container_engine"
 require "pathname"
@@ -77,6 +78,8 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
       .returns(["~/.dev/engines/ue/5.4:/ue"])
     client.expects(:ensure_service!).with(TAG, project_root: ROOT, volumes: ["~/.dev/engines/ue/5.4:/ue"])
       .once.in_sequence(order).returns("dev-myapp-linux-abc-content-abc123")
+    user_aligner = typed_mock(Dev::ContainerUserAligner)
+    user_aligner.expects(:align!).with("dev-myapp-linux-abc-content-abc123").once.in_sequence(order).returns(:aligned)
     dev_provisioner = typed_mock(Dev::ContainerDevProvisioner)
     dev_provisioner.stubs(:host_version).returns("0.2.98")
     dev_provisioner.expects(:provision!).with("dev-myapp-linux-abc-content-abc123").once.in_sequence(order)
@@ -87,15 +90,47 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     When "bringing the container up"
     Dev::Builtins::ContainerUpCommand.new(
-      container_client: client, engine_provisioner: provisioner, dev_provisioner: dev_provisioner,
-      deps_installer: deps_installer, out: out,
+      container_client: client, engine_provisioner: provisioner, user_aligner: user_aligner,
+      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out,
     ).call(args: [], context: project(config))
 
-    Then "every step is reported: the container's dev, then the deps it installs"
+    Then "every step is reported: the container's dev, then the deps it installs — an already-aligned user says nothing"
     out.string == "dev: image ready: #{TAG}\n" \
       "dev: build container up: dev-myapp-linux-abc-content-abc123\n" \
       "dev: container dev installed at 0.2.98\n" \
       "dev: container deps installed\n"
+  end
+
+  test "container up reports a user alignment that did something: #{result}" do
+    Given "a persisted config whose container's user could not write the data root"
+    config = config(persist: true)
+    provisioner = typed_mock(Dev::EngineProvisioner)
+    provisioner.stubs(:provision!)
+    client = client()
+    client.stubs(:ensure_image!).returns(TAG)
+    client.stubs(:ensure_service!).returns(CURRENT)
+    user_aligner = typed_mock(Dev::ContainerUserAligner)
+    user_aligner.stubs(:align!).returns(result)
+    dev_provisioner = typed_mock(Dev::ContainerDevProvisioner)
+    dev_provisioner.stubs(:host_version).returns("0.2.98")
+    dev_provisioner.stubs(:provision!).returns(:current)
+    deps_installer = typed_mock(Dev::ContainerDepsInstaller)
+    deps_installer.stubs(:install!)
+    out = StringIO.new
+
+    When "bringing the container up"
+    Dev::Builtins::ContainerUpCommand.new(
+      container_client: client, engine_provisioner: provisioner, user_aligner: user_aligner,
+      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out,
+    ).call(args: [], context: project(config))
+
+    Then "the alignment is reported before the container's dev"
+    out.string.include?("dev: build container up: #{CURRENT}\n#{line}\ndev: container dev current at 0.2.98\n")
+
+    Where
+    result     | line
+    :realigned | "dev: container user took the data root owner's uid and gid"
+    :adopted   | "dev: container user took over the root-owned data root"
   end
 
   test "container up injects the resolvable run_env into the in-container install" do
@@ -118,8 +153,8 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     When "bringing the container up"
     Dev::Builtins::ContainerUpCommand.new(
-      container_client: client, engine_provisioner: provisioner, dev_provisioner: dev_provisioner,
-      deps_installer: deps_installer, out: StringIO.new,
+      container_client: client, engine_provisioner: provisioner, user_aligner: aligned_user,
+      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: StringIO.new,
     ).call(args: [], context: project(config))
 
     Then "the install sees the resolved entry only"
@@ -141,6 +176,8 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
       .returns(["~/.dev/engines/ue/5.4:/ue"])
     client.expects(:with_one_shot_container).with(TAG, project_root: ROOT, volumes: ["~/.dev/engines/ue/5.4:/ue"])
       .once.in_sequence(order).yields("dev-myapp-cold-1234")
+    user_aligner = typed_mock(Dev::ContainerUserAligner)
+    user_aligner.expects(:align!).with("dev-myapp-cold-1234").once.in_sequence(order).returns(:aligned)
     dev_provisioner = typed_mock(Dev::ContainerDevProvisioner)
     dev_provisioner.stubs(:host_version).returns("0.2.98")
     dev_provisioner.expects(:provision!).with("dev-myapp-cold-1234").once.in_sequence(order).returns(:installed)
@@ -150,8 +187,8 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     When "cold-upping"
     Dev::Builtins::ContainerUpCommand.new(
-      container_client: client, engine_provisioner: provisioner, dev_provisioner: dev_provisioner,
-      deps_installer: deps_installer, out: out,
+      container_client: client, engine_provisioner: provisioner, user_aligner: user_aligner,
+      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out,
     ).cold_up(project: project(config).project)
 
     Then "the steps are reported against the one-shot container"
@@ -176,8 +213,8 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     When "cold-upping"
     Dev::Builtins::ContainerUpCommand.new(
-      container_client: client, engine_provisioner: provisioner, dev_provisioner: dev_provisioner,
-      deps_installer: deps_installer, out: StringIO.new,
+      container_client: client, engine_provisioner: provisioner, user_aligner: aligned_user,
+      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: StringIO.new,
     ).cold_up(project: project(config).project)
 
     Then "the install ran inside the one-shot container"
@@ -199,7 +236,8 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     When "bringing the container up"
     Dev::Builtins::ContainerUpCommand.new(
-      container_client: client, engine_provisioner: provisioner, dev_provisioner: dev_provisioner, out: out,
+      container_client: client, engine_provisioner: provisioner, user_aligner: aligned_user,
+      dev_provisioner: dev_provisioner, out: out,
     ).call(args: [], context: project(config))
 
     Then
@@ -388,6 +426,13 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
   def client
     Dev::BuildContainer.new(engine: FakeContainerEngine.new)
+  end
+
+  # An aligner that finds the container's user already able to write the data root.
+  def aligned_user
+    aligner = typed_mock(Dev::ContainerUserAligner)
+    aligner.stubs(:align!).returns(:aligned)
+    aligner
   end
 
   def config(persist:, volumes: [], build_args: {}, build_secrets: {})
