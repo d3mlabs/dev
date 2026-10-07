@@ -182,6 +182,24 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
     !out.string.include?("plumbing")
   end
 
+  test "a multi-line desc lists by its first line and prints in full on the node's own usage" do
+    Given "a group whose desc carries a summary line and a detail line"
+    printer = Dev::Cli::UsagePrinter.new
+    group = build_group(["learnings"], desc: "The read path\nCapture is agent-driven.", category: Dev::Command::Category::Workflow)
+    root_out = StringIO.new
+    group_out = StringIO.new
+
+    When "printing the root listing and the group's own usage"
+    printer.print_node(path: [], command: Dev::CommandGroup.root(desc: "d", children: { "learnings" => group }), out: root_out)
+    printer.print_node(path: ["learnings"], command: group, out: group_out)
+
+    Then "the listing shows only the summary; the group's usage shows both lines"
+    root_out.string.include?("  learnings …  The read path\n")
+    !root_out.string.include?("Capture is agent-driven.")
+    group_out.string.lines.map(&:chomp).fetch(2) == "The read path"
+    group_out.string.lines.map(&:chomp).fetch(3) == "Capture is agent-driven."
+  end
+
   test "print_node renders both invocations of a runnable command with children" do
     Given "a project command heading a child"
     printer = Dev::Cli::UsagePrinter.new

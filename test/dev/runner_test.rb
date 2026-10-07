@@ -455,6 +455,21 @@ class RunnerTest < Minitest::Test
     out.string.include?("  pull")
   end
 
+  test "dev help learnings says where capture lives, which the root listing leaves out" do
+    Given "a Runner with no dev.yml, over its real service graph"
+    help_out = StringIO.new
+    root_out = StringIO.new
+
+    When "asking for the learnings group's usage and the root listing"
+    Dev::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: help_out).run(["help", "learnings"])
+    Dev::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: root_out).run([])
+
+    Then "the group's usage carries the capture pointer; the root keeps the one-line summary"
+    help_out.string.include?("Capture is agent-driven, not a dev verb: the capture-learning skill")
+    help_out.string.include?("ai-flow's /learn on GitHub")
+    !root_out.string.include?("Capture is agent-driven")
+  end
+
   test "an unknown child of a pure project group is reported with its full path" do
     Given "a dev.yml with a nested test group"
     runner = build_runner(
