@@ -117,7 +117,11 @@ module Dev
         ),
         "learnings" => CommandGroup.new(
           path: ["learnings"],
-          desc: "The learnings read path: org knowledge cache, skill links, invariants",
+          # Read path only, by design (dev = materialization). The detail line
+          # tells a reader looking for an "add" verb where capture lives.
+          desc: "The learnings read path: org knowledge cache, skill links, invariants\n" \
+            "Capture is agent-driven, not a dev verb: the capture-learning skill in a Cursor session, " \
+            "or ai-flow's /learn on GitHub — both open a proposal PR; human merge is the gate.",
           category: Command::Category::Workflow,
           children: {
             "sync" => Builtins::LearningsSyncCommand.new(out: @out),

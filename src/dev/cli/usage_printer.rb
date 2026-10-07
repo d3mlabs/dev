@@ -88,8 +88,19 @@ module Dev
         # there is more beneath without the listing expanding the whole tree.
         commands.sort_by { |name, _command| name }.each do |name, command|
           label = command.children.empty? ? name : "#{name} …"
-          out.puts "  #{label.ljust(12)} #{command.desc}"
+          out.puts "  #{label.ljust(12)} #{summary(command)}"
         end
+      end
+
+      # A desc's first line. A multi-line desc is a summary line plus detail
+      # that only the node's own usage prints (print_node puts the whole
+      # desc); the parent's listing stays one line per child.
+      #
+      # @param command [Dev::Command]
+      # @return [String]
+      sig { params(command: Command).returns(String) }
+      def summary(command)
+        command.desc.lines.fetch(0, "").chomp
       end
     end
   end
