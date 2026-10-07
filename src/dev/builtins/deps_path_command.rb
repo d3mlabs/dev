@@ -35,7 +35,7 @@ module Dev
       end
 
       sig { override.returns(String) }
-      def desc = "Print a locked artifact's path (path ficsit <mod> <platform> | path xcode | path gh <name>)"
+      def desc = "Print a locked artifact's path (path ficsit <mod> <platform> | path xcode | path gh <name> | path wwise <name>)"
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle

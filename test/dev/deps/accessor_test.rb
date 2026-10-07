@@ -9,6 +9,7 @@ require "dev/deps/dependency"
 require "dev/deps/ficsit_integration"
 require "dev/deps/xcode_integration"
 require "dev/deps/gh_integration"
+require "dev/deps/wwise_integration"
 require "pathname"
 require "tmpdir"
 require "stringio"
@@ -89,6 +90,79 @@ class Dev::Deps::AccessorTest < Minitest::Test
       store: Dev::Deps::LocalStore.new(data_root: dir),
     )
     [accessor, version_dir]
+  end
+
+  WWISE_SDK = "2023.1.14.8770"
+
+  # Lock a wwise dep whose `~/.dev` install_dir re-roots onto dir, optionally
+  # publishing the version dir + marker.
+  def setup_locked_wwise(dir, installed: true)
+    lockfile = Dev::Deps::Lockfile.new(dir: dir)
+    lockfile.lock([
+      Dev::Deps::Dependency.new(
+        name: "Wwise", integration: :wwise, group: :build,
+        version: WWISE_SDK, hash: nil,
+        metadata: { "install_dir" => "~/.dev/wwise", "integration_version" => "2023.1.14.3555", "ue" => "5.6" },
+      ),
+    ])
+    version_dir = File.join(dir, "wwise", WWISE_SDK)
+    if installed
+      FileUtils.mkdir_p(version_dir)
+      File.write(File.join(version_dir, Dev::Deps::WwiseIntegration::MARKER_FILE), WWISE_SDK)
+    end
+
+    accessor = Dev::Deps::Accessor.new(
+      lockfile: lockfile,
+      store: Dev::Deps::LocalStore.new(data_root: dir),
+    )
+    [accessor, version_dir]
+  end
+
+  test "path wwise returns the locked SDK version's cache dir under the data root" do
+    Given "a locked and installed wwise dep"
+    dir = Dir.mktmpdir("dev-accessor-test-")
+    accessor, version_dir = setup_locked_wwise(dir)
+
+    When "asking for the wwise path"
+    result = accessor.path("wwise", "Wwise")
+
+    Then "it is the version-keyed tree a container mounts as wwise-cli's cache"
+    result == Pathname(version_dir)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "path wwise raises NotInstalledError when the version dir is absent" do
+    Given "a locked but uninstalled wwise dep"
+    dir = Dir.mktmpdir("dev-accessor-test-")
+    accessor, = setup_locked_wwise(dir, installed: false)
+
+    When "asking for the wwise path"
+    error = assert_raises(Dev::Deps::Accessor::NotInstalledError) do
+      accessor.path("wwise", "Wwise")
+    end
+
+    Then "the fix is dev up"
+    error.message.include?("run dev up")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "path wwise raises UsageError without a dep name" do
+    Given "an accessor"
+    dir = Dir.mktmpdir("dev-accessor-test-")
+    accessor, = setup_locked_wwise(dir)
+
+    When "asking for a wwise path with no name"
+    accessor.path("wwise")
+
+    Then
+    raises Dev::Deps::Accessor::UsageError
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
   test "path gh returns the locked version dir under the data root" do

@@ -8,15 +8,16 @@ require_relative "artifact_store"
 require_relative "ficsit_integration"
 require_relative "xcode_integration"
 require_relative "gh_integration"
+require_relative "wwise_integration"
 
 module Dev
   module Deps
     # Read-only accessor over the lockfile + artifact store, surfaced as
     # `dev deps path`. It answers "where is a locked dep's artifact?"
     # — the cached zip for a ficsit mod platform, the DEVELOPER_DIR for the
-    # pinned Xcode, the published tree of a gh release — so consumers
-    # (deploy, build scripts, CI) resolve paths from the lockfile instead of
-    # reconstructing the store's layout.
+    # pinned Xcode, the published tree of a gh release or a wwise cache — so
+    # consumers (deploy, build scripts, CI) resolve paths from the lockfile
+    # instead of reconstructing the store's layout.
     class Accessor
       extend T::Sig
 
@@ -31,7 +32,8 @@ module Dev
       class NotCachedError < RuntimeError; end
       class NotInstalledError < RuntimeError; end
 
-      USAGE = "usage: dev deps path ficsit <mod> <platform> | dev deps path xcode | dev deps path gh <name>"
+      USAGE = "usage: dev deps path ficsit <mod> <platform> | dev deps path xcode | " \
+        "dev deps path gh <name> | dev deps path wwise <name>"
 
       # @param lockfile [Lockfile]
       # @param store [ArtifactStore] where published trees and cached blobs live
@@ -59,15 +61,15 @@ module Dev
 
       # Resolve the artifact path for a locked dependency.
       #
-      # @param integration [String] integration name ("ficsit", "xcode" or "gh")
-      # @param name [String, nil] dependency name (e.g. "SML", "UnrealEngineMac"; unused for xcode)
+      # @param integration [String] integration name ("ficsit", "xcode", "gh" or "wwise")
+      # @param name [String, nil] dependency name (e.g. "SML", "UnrealEngineMac", "Wwise"; unused for xcode)
       # @param platform [String, nil] ficsit target name (e.g. "LinuxServer")
       # @return [Pathname] absolute path to the artifact
       # @raise [UsageError] for a missing/unsupported integration
       # @raise [NotLockedError] if the dep isn't in the lockfile
       # @raise [PlatformNotLockedError] if the platform isn't locked for the dep
       # @raise [NotCachedError] if the zip isn't in the cache (run dev up)
-      # @raise [NotInstalledError] if the pinned Xcode or gh release isn't installed (run dev up)
+      # @raise [NotInstalledError] if the pinned Xcode, gh release or wwise cache isn't installed (run dev up)
       sig do
         params(
           integration: T.nilable(String),
@@ -79,26 +81,30 @@ module Dev
         case integration
         when "ficsit" then ficsit_path(name, platform)
         when "xcode" then xcode_developer_dir
-        when "gh" then gh_install_dir(name)
+        when "gh" then published_tree(:gh, name, marker: GhIntegration::MARKER_FILE)
+        when "wwise" then published_tree(:wwise, name, marker: WwiseIntegration::MARKER_FILE)
         else raise UsageError, USAGE
         end
       end
 
       private
 
-      # The published tree of a locked gh release — the immutable directory
-      # GhIntegration publishes to the store under the dep's install_dir.
-      # Resolved from the lock so a checkout always gets the tag its lockfile
-      # names, not whatever this machine installed last.
+      # The published tree of a locked install_dir dep — the immutable
+      # directory its integration publishes to the store under the dep's
+      # install_dir (a gh release's tree, a wwise cache). Resolved from the
+      # lock so a checkout always gets the version its lockfile names, not
+      # whatever this machine installed last.
       #
+      # @param integration [Symbol]
       # @param name [String, nil]
+      # @param marker [String] the integration's marker file name
       # @return [Pathname]
-      sig { params(name: T.nilable(String)).returns(Pathname) }
-      def gh_install_dir(name)
+      sig { params(integration: Symbol, name: T.nilable(String), marker: String).returns(Pathname) }
+      def published_tree(integration, name, marker:)
         raise UsageError, USAGE unless name
 
-        dep = find_dep(:gh, name)
-        key = TreeKey.new(base: dep.metadata.fetch("install_dir"), version: dep.version, marker: GhIntegration::MARKER_FILE)
+        dep = find_dep(integration, name)
+        key = TreeKey.new(base: dep.metadata.fetch("install_dir"), version: dep.version, marker:)
         @store.tree(key) ||
           raise(NotInstalledError, "#{name}@#{dep.version} is not installed at #{@store.tree_path(key)} — run dev up")
       end
