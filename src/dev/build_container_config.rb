@@ -14,15 +14,20 @@ module Dev
   #       registry: jpduchesne89
   #       volumes:
   #         - "~/.dev/engines/unreal-engine-css:/ue"
+  #         - "~/.dev/wwise:/var/cache/dev/wwise-cli:ro"
   #       build_args:
-  #         WWISE_EMAIL: wwise/email
-  #         WWISE_PASSWORD: wwise/password
+  #         PRIVATE_REGISTRY_USER: registry/user
   #       build_secrets:
-  #         WWISE_TOKEN: wwise/token
+  #         PRIVATE_REGISTRY_TOKEN: registry/token
   #       run_env:
-  #         WWISE_TOKEN: wwise/token
+  #         STAGING_DEPLOY_KEY: staging/deploy_key
   #       content_globs:
   #         - "Mods/*/Source/*/*.Build.cs"
+  #
+  # volumes whose host path is a locked dependency's install_dir are resolved
+  # to the store's tree for the locked version (BuildContainer
+  # .resolve_versioned_volumes) — that is how a container mounts the exact
+  # engine or Wwise cache the lockfile names.
   #
   # build_args maps docker --build-arg names to Dev::Credentials
   # "namespace/key" references, resolved only when the image is built.
@@ -30,8 +35,11 @@ module Dev
   # build_secrets maps BuildKit `--secret id=` names to the same "namespace/key"
   # references. Unlike build_args (which bake into image history), secrets are
   # mounted only for the RUN that requests them and never persist in a layer —
-  # use them for tokens the image *build* needs (e.g. fetching a gated SDK).
-  # Only the image builder needs them; pullers never do.
+  # use them for a credential the image *build* itself must present. Only the
+  # image builder needs them; pullers never do. When the credential exists to
+  # fetch an artifact, prefer declaring the artifact as a dependency (e.g. the
+  # wwise source) so it is fetched on the host and mounted in: the build then
+  # needs no credential at all.
   #
   # run_env maps docker `run -e` env var names to the same "namespace/key"
   # references, resolved when a containerized command runs. Use it for
