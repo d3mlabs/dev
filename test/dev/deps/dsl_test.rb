@@ -282,6 +282,64 @@ class Dev::Deps::DSLTest < Minitest::Test
     raises ArgumentError
   end
 
+  test "wwise() declares the SDK version as a revision and the companion package as materialization" do
+    When "declaring the Wwise SDK with its UE integration"
+    config = Dev::Deps.define do
+      group :build do
+        wwise "Wwise", sdk: "2023.1.14.8770", integration: "2023.1.14.3555", ue: "5.6", install_dir: "~/.dev/wwise"
+      end
+    end
+
+    Then "the SDK version is the address; everything else is an install instruction"
+    decl = config.declarations[0]
+    decl.name == "Wwise"
+    decl.integration == :wwise
+    decl.revision == "2023.1.14.8770"
+    decl.constraint == {}
+    decl.materialization == {
+      "install_dir" => "~/.dev/wwise",
+      "integration_version" => "2023.1.14.3555",
+      "ue" => "5.6",
+      "packages" => ["SDK"],
+      "deployment_platforms" => ["Windows_vc160", "Windows_vc170", "Linux", ""],
+    }
+    decl.scope.group == :build
+  end
+
+  test "wwise() carries explicit packages and deployment platforms untouched" do
+    When "declaring a wider SDK selection"
+    config = Dev::Deps.define do
+      group :build do
+        wwise "Wwise", sdk: "2023.1.14.8770", integration: "2023.1.14.3555", ue: "5.6", install_dir: "~/.dev/wwise",
+          packages: ["SDK", "Authoring"], deployment_platforms: ["Linux", ""]
+      end
+    end
+
+    Then
+    decl = config.declarations[0]
+    decl.materialization["packages"] == ["SDK", "Authoring"]
+    decl.materialization["deployment_platforms"] == ["Linux", ""]
+  end
+
+  test "wwise() rejects a blank #{field} — both versions and the engine are the whole ask" do
+    When "declaring with a blank #{field}"
+    Dev::Deps.define do
+      group :build do
+        wwise "Wwise", **{ sdk: "2023.1.14.8770", integration: "2023.1.14.3555", ue: "5.6" }.merge(field => " "),
+          install_dir: "~/.dev/wwise"
+      end
+    end
+
+    Then
+    raises ArgumentError
+
+    Where
+    field          | _
+    :sdk           | nil
+    :integration   | nil
+    :ue            | nil
+  end
+
   test "env block stamps env as a first-class field, not a constraint key" do
     When "declaring a ci-scoped brew dep"
     config = Dev::Deps.define do

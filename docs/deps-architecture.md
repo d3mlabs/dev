@@ -57,7 +57,7 @@ flowchart LR
 
 The registry (`Registry::INTEGRATIONS`) is the single wiring table: one
 `Entry` per integration symbol declaring its repository, optional scheme
-(nil for integrations with no constraint grammar — url, xcode), optional
+(nil for integrations with no constraint grammar — url, xcode, wwise), optional
 locker, optional integration, optional `install_alias` (url installs
 through cmake's integration *instance*, so their shared batch artifact
 `deps.cmake` is written once, whole), and scope. Consistency tests fail
@@ -88,7 +88,7 @@ operation:
   reconciliation — a revision is exact by definition).
 
 Overriding `at` *is* the declaration that an integration has a continuous
-space (cmake/git commits, xcode versions); the base class refuses with
+space (cmake/git commits, xcode and wwise versions); the base class refuses with
 `NoAddressableSpaceError` and the Resolver lets that refusal propagate.
 There is no registry flag to drift out of sync.
 
@@ -130,7 +130,7 @@ ecosystem's canonical form and validated at the DSL boundary (a cmake
      steam branch or a git ref), treating scheme-unparseable universe
      versions as non-candidates, and drops versions that don't publish
      every explicitly requested platform; scheme-less integrations (url,
-     xcode) accept only the empty constraint — anything else is a loud
+     xcode, wwise) accept only the empty constraint — anything else is a loud
      `UnknownIntegrationError`, never a silent pass;
    - picks the highest satisfying version (`sort`), mints the
      `Dependency` from that version's facts merged with the declaration's
@@ -257,7 +257,7 @@ command.
 | cmake | `GitScheme` | `tag:`/`branch:` match the version's `ref` fact over the enumerated `ls-remote` refs. `commit:` is not a constraint at all — it is a revision (continuous space, `at`). |
 | steam | `SteamScheme` | `branch:` selects by the version's branch fact (default `public`); optional `buildid:` is an exact assertion that fails loudly when it is no longer the branch tip. |
 | brew, cask | `BrewScheme` | `version:` is a formula *suffix* (`"18"` selects the `llvm@18` sibling out of the enumerated spec family), matched against the `version_suffix` fact; the reported stable version is brew's record, not the coordinate. Casks have no suffix fact — versioned casks are distinct cask names (`temurin@21`), so `version:` on a cask is unsatisfiable by construction. |
-| url, xcode | — (no scheme) | no constraint grammar exists: url's universe is an observable-now singleton, xcode is revision-addressed. Only the empty constraint is legal; anything else raises. A url `tag:` is a display label riding materialization, naming, never selection. |
+| url, xcode, wwise | — (no scheme) | no constraint grammar exists: url's universe is an observable-now singleton, xcode and wwise are revision-addressed (Apple publishes no registry; Audiokinetic's sits behind a login resolution never holds). Only the empty constraint is legal; anything else raises. A url `tag:` is a display label riding materialization, naming, never selection; a wwise `integration:` is the companion package's version, an install instruction riding materialization alongside `ue:`. |
 
 **The constraint standard is a shape plus an interpreter, never a
 grammar.** Every constraint in the system is a dev-shaped hash whose keys
@@ -310,7 +310,7 @@ attribute, repository enum, or resolver guard to drift out of sync.
 | dev-resolved | ficsit | `Resolved(declarations)` | The resolver walks the declarations, inheriting the parent's `Scope`; every transitive becomes its own pin. |
 | tool-locked | bundler | `ToolOwned` | `BundlerLocker` makes the tool solve the whole set up front (`bundle lock`); the repository reads pinned versions back. |
 | tool-at-install | pip, luarocks, brew | `ToolOwned` | The tool resolves the closure when it installs; dev pins top-level packages only. |
-| self-contained | steam, git, xcode, url — and gh | `Resolved([])` | Nothing to resolve: the artifact carries everything it needs. steam/git/xcode/url guarantee it by construction; gh's is a usage contract (prebuilt assets are baked; a source build's needs are declared by the consuming project) until subproject resolution lands. |
+| self-contained | steam, git, xcode, wwise, url — and gh | `Resolved([])` | Nothing to resolve: the artifact carries everything it needs. steam/git/xcode/wwise/url guarantee it by construction; gh's is a usage contract (prebuilt assets are baked; a source build's needs are declared by the consuming project) until subproject resolution lands. |
 
 Two standing decisions:
 

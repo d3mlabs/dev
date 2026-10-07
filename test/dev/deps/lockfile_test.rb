@@ -46,6 +46,34 @@ class Dev::Deps::LockfileTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "a wwise pin's install instructions survive the round-trip — none is named like a reserved lock attribute" do
+    Given "a wwise dependency as the DSL and resolver mint it"
+    dir = Dir.mktmpdir("dev-lockfile-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: dir)
+    metadata = {
+      "install_dir" => "~/.dev/wwise",
+      "integration_version" => "2023.1.14.3555",
+      "ue" => "5.6",
+      "packages" => ["SDK"],
+      "deployment_platforms" => ["Linux", ""],
+    }
+    dep = Dev::Deps::Dependency.new(
+      name: "Wwise", integration: :wwise, group: :build, version: "2023.1.14.8770", hash: nil, metadata: metadata,
+    )
+
+    When "locking and reading back"
+    lockfile.lock([dep])
+    read_dep = lockfile.read.first
+
+    Then "the install reads exactly what was declared"
+    read_dep.integration == :wwise
+    read_dep.version == "2023.1.14.8770"
+    read_dep.metadata == metadata
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "lock records the manifest digest in the header and reads it back" do
     Given "a dependency and the digest of the manifest it came from"
     dir = Dir.mktmpdir("dev-lockfile-test-")

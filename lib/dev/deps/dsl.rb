@@ -258,6 +258,13 @@ module Dev
       # says otherwise: the Windows game build, which every mod publishes.
       FICSIT_DEFAULT_TARGET = "Windows"
 
+      # What a wwise declaration downloads unless told otherwise: the SDK
+      # package alone (Authoring is the Wwise application bundle, which the
+      # downloader cannot extract and a build never needs), for the Windows
+      # toolchains, Linux, and the platform-independent files (see #wwise).
+      WWISE_DEFAULT_PACKAGES = T.let(["SDK"].freeze, T::Array[String])
+      WWISE_DEFAULT_DEPLOYMENT_PLATFORMS = T.let(["Windows_vc160", "Windows_vc170", "Linux", ""].freeze, T::Array[String])
+
       # @return [Array<ScopedDeclaration>] declarations made inside this group
       sig { returns(T::Array[ScopedDeclaration]) }
       attr_reader :declarations
@@ -513,6 +520,67 @@ module Dev
         # universe to select over, so it rides the declaration's revision and
         # XcodeRepository#at lifts it as the identity.
         add_declaration("xcode", :xcode, spec, revision: revision)
+      end
+
+      # Declare the Wwise SDK together with its Unreal Engine integration
+      # package, downloaded by wwise-cli into a host install_dir laid out as
+      # wwise-cli's own cache (declare `brew "wwise-cli", tap:
+      # "d3mlabs/d3mlabs"` in :build so it exists first). The Audiokinetic
+      # login comes from Dev::Credentials (WWISE_EMAIL / WWISE_PASSWORD).
+      #
+      # Audiokinetic publishes no version list without a login, so like xcode
+      # the SDK version is an address: it rides the declaration's revision.
+      # The integration package is versioned separately by Audiokinetic but
+      # consumed only alongside the SDK, so it is an install instruction —
+      # "also cache integration V for UE 5.6" — riding materialization with
+      # the package and deployment-platform selection.
+      #
+      # The empty ("") deployment platform in the default is required, not
+      # cosmetic: wwise-cli keeps a file only when its value for each filter
+      # group is allowed, and the platform-independent SDK files (the base
+      # headers) carry an empty DeploymentPlatforms value.
+      #
+      # @param name [String, Symbol] dependency name (e.g. "Wwise")
+      # @param sdk [String] exact SDK version (e.g. "2023.1.14.8770")
+      # @param integration [String] exact Unreal integration version (e.g. "2023.1.14.3555")
+      # @param ue [String] Unreal Engine version the integration package targets, "<major>.<minor>"
+      # @param install_dir [String] host directory the cache is published under
+      # @param packages [Array<String>] Wwise packages to download (default: the SDK alone)
+      # @param deployment_platforms [Array<String>] SDK platform variants to download
+      # @param spec [Hash] additional options
+      # @return [void]
+      # @raise [ArgumentError] if sdk, integration or ue is blank — there is
+      #   no registry to select from, so each exact value is the whole ask
+      sig do
+        params(
+          name: T.any(String, Symbol),
+          sdk: String,
+          integration: String,
+          ue: String,
+          install_dir: String,
+          packages: T::Array[String],
+          deployment_platforms: T::Array[String],
+          spec: T.untyped,
+        ).void
+      end
+      def wwise(name, sdk:, integration:, ue:, install_dir:, packages: WWISE_DEFAULT_PACKAGES,
+        deployment_platforms: WWISE_DEFAULT_DEPLOYMENT_PLATFORMS, **spec)
+        { sdk:, integration:, ue: }.each do |field, value|
+          next unless value.strip.empty?
+
+          raise ArgumentError, "wwise #{name.inspect}: #{field}: requires an exact value (e.g. #{field}: \"2023.1.14.8770\")"
+        end
+
+        # "integration_version", not "integration": the lockfile owns the
+        # latter as the section key and strips it from a pin's metadata.
+        materialization = {
+          "install_dir" => install_dir,
+          "integration_version" => integration,
+          "ue" => ue,
+          "packages" => packages,
+          "deployment_platforms" => deployment_platforms,
+        }
+        add_declaration(name, :wwise, spec, revision: sdk.strip, materialization: materialization)
       end
 
       # Declare a Homebrew formula/cask.
