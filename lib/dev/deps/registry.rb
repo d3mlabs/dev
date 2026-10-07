@@ -20,6 +20,8 @@ require_relative "bundler_repository"
 require_relative "bundler_integration"
 require_relative "xcode_repository"
 require_relative "xcode_integration"
+require_relative "wwise_repository"
+require_relative "wwise_integration"
 require_relative "pip_repository"
 require_relative "pip_integration"
 require_relative "url_repository"
@@ -259,6 +261,17 @@ module Dev
             scheme: nil,
             integration: XcodeIntegration,
             integration_needs: %i[project_root],
+            scope: HOST,
+          ),
+          Entry.new(
+            symbol: :wwise,
+            repository: WwiseRepository,
+            # Purely addressable, like xcode: Audiokinetic's version list is
+            # behind a login, so the DSL mints the SDK version as the revision.
+            scheme: nil,
+            integration: WwiseIntegration,
+            # Host-only: the container reads the published cache through a
+            # read-only mount and integrates offline.
             scope: HOST,
           ),
           Entry.new(
