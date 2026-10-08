@@ -228,4 +228,87 @@ class Dev::Skills::InstallerTest < Minitest::Test
     Cleanup
     FileUtils.rm_rf(dir)
   end
+
+  test "install creates the parent dirs of a nested link name" do
+    Given "a nested link name under an empty skills dir"
+    dir = Dir.mktmpdir("dev-skill-test-")
+    source = build_skill(dir, "gems", "rspock-3.0.0", "skills", "rspock")
+    skills_dir = File.join(dir, "skills")
+    installer = build_installer(dir, skills_dir: skills_dir)
+
+    When "installing"
+    installer.install("gem/rspock/rspock", source)
+
+    Then "the link sits under its package dir"
+    File.readlink(File.join(skills_dir, "gem", "rspock", "rspock")) == source
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "remove of a nested link also removes the dirs it empties, up to but not including the skills dir" do
+    Given "two skills of one package and one of another"
+    dir = Dir.mktmpdir("dev-skill-test-")
+    skills_dir = File.join(dir, "skills")
+    installer = build_installer(dir, skills_dir: skills_dir)
+    installer.install("gem/a/one", build_skill(dir, "gems", "a", "one"))
+    installer.install("gem/a/two", build_skill(dir, "gems", "a", "two"))
+    installer.install("gem/b/only", build_skill(dir, "gems", "b", "only"))
+
+    When "removing one of a's and b's only, observing a's dir in between, then a's last"
+    installer.remove("gem/a/one")
+    installer.remove("gem/b/only")
+    a_dir_stood = File.directory?(File.join(skills_dir, "gem", "a")) && File.symlink?(File.join(skills_dir, "gem", "a", "two"))
+    b_dir_gone = !File.exist?(File.join(skills_dir, "gem", "b"))
+    gem_dir_stood = File.directory?(File.join(skills_dir, "gem"))
+    installer.remove("gem/a/two")
+
+    Then "a's dir stayed while it had two, b's went with its only, gem/ stayed until a's last; the skills dir remains"
+    a_dir_stood
+    b_dir_gone
+    gem_dir_stood
+    !File.exist?(File.join(skills_dir, "gem"))
+    File.directory?(skills_dir)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "remove stops climbing at a parent dir that is not empty" do
+    Given "a nested link beside a user file in its package dir"
+    dir = Dir.mktmpdir("dev-skill-test-")
+    skills_dir = File.join(dir, "skills")
+    installer = build_installer(dir, skills_dir: skills_dir)
+    installer.install("gem/a/one", build_skill(dir, "gems", "a", "one"))
+    File.write(File.join(skills_dir, "gem", "a", "NOTES"), "mine\n")
+
+    When "removing the link"
+    installer.remove("gem/a/one")
+
+    Then "the package dir and the user file stand"
+    File.file?(File.join(skills_dir, "gem", "a", "NOTES"))
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "remove tolerates a parent dir it is not allowed to delete — the link still goes" do
+    Given "a nested link whose integration dir is read-only, so its emptied package dir cannot be rmdir'd"
+    dir = Dir.mktmpdir("dev-skill-test-")
+    skills_dir = File.join(dir, "skills")
+    installer = build_installer(dir, skills_dir: skills_dir)
+    installer.install("gem/a/one", build_skill(dir, "gems", "a", "one"))
+    File.chmod(0o555, File.join(skills_dir, "gem"))
+
+    When "removing the link"
+    installer.remove("gem/a/one")
+
+    Then "the link is gone, the undeletable package dir stands, and nothing raised"
+    !File.symlink?(File.join(skills_dir, "gem", "a", "one"))
+    File.directory?(File.join(skills_dir, "gem", "a"))
+
+    Cleanup
+    File.chmod(0o755, File.join(skills_dir, "gem"))
+    FileUtils.rm_rf(dir)
+  end
 end

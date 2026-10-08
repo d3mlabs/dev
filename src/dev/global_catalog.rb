@@ -138,7 +138,7 @@ module Dev
           path: ["skills"],
           desc: "Skill materialization: every channel dev links into an agent's discovery roots\n" \
             "Channels: dev's own shipped set and the org knowledge corpus (user-global), " \
-            "the project's locked gem set (project-scoped under .agents/skills, gitignored).",
+            "the project's locked gem set (project-scoped under .agents/skills/dev/, self-ignoring).",
           category: Command::Category::Workflow,
           children: {
             "status" => Builtins::SkillsStatusCommand.new(out: @out),

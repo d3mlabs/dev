@@ -10,7 +10,8 @@ pointer. The line buys awareness; the pointed skill carries the rule, a
 wrong/right pair, and the origin — read it before working in that entry's
 territory. Detail skills live in `.cursor/skills/learnings/<slug>/`
 (architecture digests in `.cursor/skills/architecture/<topic>/`); gem and
-org skills are pointed at wherever their channel installs them.
+org skills are referenced by skill name (`→ skill: <name>`) — the agent
+resolves them wherever their channel installs them.
 
 Capture and curation go through the capture-learning skill (IDE sessions)
 or ai-flow's `/learn` (GitHub comments) — both land as proposal PRs; human
@@ -22,8 +23,8 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
 - [testing/rspock-bare-assertions] In rspock `transform!`-ed test classes,
   bare `Then`/`Expect` statements are assertions; outside a transformed
   class they silently assert nothing.
-  → .agents/skills/gem-rspock--rspock/ (ships in the rspock gem; linked by
-  `dev up` / `dev deps install`)
+  → skill: rspock (ships in the rspock gem; linked by `dev up` /
+  `dev deps install`)
 
 ## process
 

@@ -361,6 +361,31 @@ class Dev::HostServiceTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "sync_skills inside a project sweeps the legacy flat gem links before materializing" do
+    Given "a project carrying a pre-#250 gem link and a user link in its skills dir"
+    dir = Dir.mktmpdir("dev-host-service-test-")
+    project = Pathname(dir) / "repo"
+    skills = project / ".agents" / "skills"
+    FileUtils.mkdir_p(skills)
+    File.symlink("/nowhere/rspock", skills / "gem-rspock--rspock")
+    File.symlink("/nowhere/mine", skills / "mine")
+    materializer = typed_mock(Dev::Skills::Materializer)
+    materializer.stubs(:sync)
+    own = Dev::Skills::OwnSkills.new(root: File.join(dir, "global"))
+    gem = Dev::Skills::CorpusChannel.new(name: "gem", root: skills / "dev", corpus_root: File.join(dir, "gems"))
+    service = build_service(dir, materializer: materializer, own_skills: own, gem_skills_factory: ->(_root) { gem })
+
+    When "syncing skills inside the project"
+    service.sync_skills(project_root: project)
+
+    Then "the legacy link is gone, the user's stands"
+    !File.symlink?(skills / "gem-rspock--rspock")
+    File.symlink?(skills / "mine")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "skill_channels lists own, org (when configured), and gem (when in a project), in that order" do
     Given "a service with a configured synchronizer and a gem channel factory"
     dir = Dir.mktmpdir("dev-host-service-test-")

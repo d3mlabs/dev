@@ -8,10 +8,9 @@ require_relative "layout"
 module Dev
   module Skills
     # A channel whose skills are the subdirectories of one corpus directory,
-    # linked under their own names: dev's shipped set, the org knowledge
-    # cache. It owns a link when the link targets inside its corpus — so two
-    # corpus channels sharing a root (both land user-globally) never prune
-    # each other's links.
+    # linked user-globally under their own names: dev's shipped set, the org
+    # knowledge cache. Two corpus channels share the user-global root; the
+    # root's manifest keeps their records apart.
     class CorpusChannel
       extend T::Sig
       include Channel
@@ -36,16 +35,15 @@ module Dev
         @corpus_root = T.let(Pathname(corpus_root).expand_path, Pathname)
       end
 
+      # The same corpus for every project on the machine — never inside one.
+      sig { override.returns(T::Boolean) }
+      def project_scoped?
+        false
+      end
+
       sig { override.returns(T::Array[Entry]) }
       def entries
         Layout.skill_dirs(@corpus_root).map { |dir| Entry.new(link_name: dir.basename.to_s, source: dir) }
-      end
-
-      sig { override.params(link: Pathname).returns(T::Boolean) }
-      def owns?(link)
-        link.readlink.expand_path.to_s.start_with?("#{@corpus_root}#{File::SEPARATOR}")
-      rescue SystemCallError
-        false
       end
     end
 

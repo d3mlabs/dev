@@ -70,6 +70,10 @@ Index line, grouped into a `## <domain>` section of the index:
 - [domain/slug] One-sentence trigger. → .cursor/skills/learnings/<slug>/
 ```
 
+A learning whose detail lives in a channel-installed skill (a gem's, the
+org corpus's) points at it by name, not path — `→ skill: <name>` — since
+the agent resolves skills by name and dev may move where a channel lands.
+
 Detail skill, hard cap ~40 lines: frontmatter `name` matching its folder
 and an imperative `description` ("MUST be used when …"); the rule in two
 sentences; one wrong/right pair; a `learned-from:` origin link; a

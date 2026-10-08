@@ -69,20 +69,41 @@ module Dev
         $stderr.puts "dev: warning: could not install the #{name} skill symlink (#{e.message})."
       end
 
-      # Remove a skill symlink by name. Only symlinks are removed — anything
-      # user-owned in the skills dir survives. Never raises: symlink? reports
-      # false instead of raising, and rm_f's force semantics swallow
-      # filesystem errors.
+      # Remove a skill symlink by name, then the empty directories a nested
+      # name leaves behind (`gem/rspock/` once its last skill is gone), up to
+      # but never including the skills dir. Only symlinks and empty dirs are
+      # removed — anything user-owned in the skills dir survives. Never
+      # raises: symlink? reports false instead of raising, rm_f's force
+      # semantics swallow filesystem errors, and a non-empty parent simply
+      # stops the climb.
       #
-      # @param name [String] link name inside the skills dir
+      # @param name [String] link name inside the skills dir (may be nested)
       # @return [void]
       sig { params(name: String).void }
       def remove(name)
         link = @skills_dir / name
-        FileUtils.rm_f(link) if link.symlink?
+        return unless link.symlink?
+
+        FileUtils.rm_f(link)
+        remove_empty_parents(link.dirname)
       end
 
       private
+
+      # @param dir [Pathname] the removed link's parent
+      # @return [void]
+      sig { params(dir: Pathname).void }
+      def remove_empty_parents(dir)
+        skills_dir = @skills_dir.expand_path
+        while dir.expand_path != skills_dir && dir.expand_path.to_s.start_with?("#{skills_dir}#{File::SEPARATOR}")
+          break unless dir.directory? && dir.empty?
+
+          dir.rmdir
+          dir = dir.dirname
+        end
+      rescue SystemCallError
+        nil
+      end
 
       # The temp root in both its raw and fully-resolved forms — on macOS
       # Dir.tmpdir is under /var/... while realpath resolution reports the

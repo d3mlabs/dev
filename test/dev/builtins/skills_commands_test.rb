@@ -35,11 +35,11 @@ class Dev::Builtins::SkillsCommandsTest < Minitest::Test
     LEAVES[1] | 0
   end
 
-  test "#{klass} builds the accessor per call and forwards to #{verb}" do
+  test "#{klass} builds the accessor per call and forwards to #{verb} with #{expected_kwargs}" do
     Given "an expecting accessor behind a counting factory"
     out = StringIO.new
     accessor = typed_mock(Dev::Skills::Accessor)
-    accessor.expects(verb).with(out: out).once
+    accessor.expects(verb).with(**{ out: out }.merge(expected_kwargs)).once
     calls = 0
     command = klass.new(accessor_factory: lambda {
       calls += 1
@@ -47,31 +47,34 @@ class Dev::Builtins::SkillsCommandsTest < Minitest::Test
     }, out: out)
 
     When "calling the leaf in a projectless context"
-    command.call(args: [], context: build_context)
+    command.call(args: args, context: build_context)
 
     Then "the factory was consulted once"
     calls == 1
 
     Where
-    klass     | verb
-    LEAVES[0] | :sync
-    LEAVES[1] | :status
+    klass     | verb    | args       | expected_kwargs
+    LEAVES[0] | :sync   | []         | {}
+    LEAVES[1] | :status | []         | { json: false }
+    LEAVES[1] | :status | ["--json"] | { json: true }
   end
 
-  test "#{klass} rejects a stray argument with the accessor's usage error" do
+  test "#{klass} rejects #{args.inspect} with the accessor's usage error" do
     Given "a leaf whose factory must never be consulted"
     command = klass.new(accessor_factory: -> { flunk("accessor built for a malformed argv") }, out: StringIO.new)
 
     When "calling it with a malformed argv"
-    command.call(args: ["extra"], context: build_context)
+    command.call(args: args, context: build_context)
 
     Then
     raises Dev::Skills::Accessor::UsageError
 
     Where
-    klass     | _
-    LEAVES[0] | 0
-    LEAVES[1] | 0
+    klass     | args
+    LEAVES[0] | ["extra"]
+    LEAVES[1] | ["extra"]
+    LEAVES[1] | ["--json", "extra"]
+    LEAVES[1] | ["--bogus"]
   end
 
   test "the default factory builds a real accessor over the host's channels for the enclosing project" do

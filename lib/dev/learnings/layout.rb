@@ -45,7 +45,8 @@ module Dev
         wrong/right pair, and the origin — read it before working in that entry's
         territory. Detail skills live in `.cursor/skills/learnings/<slug>/`
         (architecture digests in `.cursor/skills/architecture/<topic>/`); gem and
-        org skills are pointed at wherever their channel installs them.
+        org skills are referenced by skill name (`→ skill: <name>`) — the agent
+        resolves them wherever their channel installs them.
 
         Capture and curation go through the capture-learning skill (IDE sessions)
         or ai-flow's `/learn` (GitHub comments) — both land as proposal PRs; human
