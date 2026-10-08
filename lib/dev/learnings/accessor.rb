@@ -3,6 +3,7 @@
 
 require "pathname"
 require "stringio"
+require_relative "../footprint"
 require_relative "../settings"
 require_relative "cache"
 require_relative "invariants_renderer"
@@ -32,7 +33,9 @@ module Dev
     #                  the org knowledge-repo layout with --org); write-once —
     #                  an existing index is reported and left untouched, so
     #                  consumers (e.g. ai-flow's /learn) can call it
-    #                  unconditionally before capturing
+    #                  unconditionally before capturing. The repo tier also
+    #                  ensures the repo's .gitignore carries dev's managed
+    #                  footprint (idempotent; --gitignore does only that)
     #
     # One public method per verb; the `learnings` group in the command tree
     # routes `sync` / `status` / `invariants` / `init` to them, and the
@@ -62,6 +65,8 @@ module Dev
       # @param synchronizer [Dev::Learnings::Synchronizer, Dev::Learnings::UnconfiguredSynchronizer, nil]
       # @param renderer [Dev::Learnings::InvariantsRenderer]
       # @param scaffolder [Dev::Learnings::Scaffolder]
+      # @param gitignore [Dev::Footprint::Gitignore] writes dev's managed
+      #   footprint into the repo's .gitignore
       sig do
         params(
           project_root: T.nilable(T.any(Pathname, String)),
@@ -70,10 +75,12 @@ module Dev
           synchronizer: T.untyped,
           renderer: InvariantsRenderer,
           scaffolder: Scaffolder,
+          gitignore: Dev::Footprint::Gitignore,
         ).void
       end
       def initialize(project_root:, settings: Dev::Settings.new, cache: nil, synchronizer: nil,
-                     renderer: InvariantsRenderer.new, scaffolder: Scaffolder.new)
+                     renderer: InvariantsRenderer.new, scaffolder: Scaffolder.new,
+                     gitignore: Dev::Footprint::Gitignore.new)
         @project_root = T.let(project_root && Pathname(project_root), T.nilable(Pathname))
         @settings = settings
         repo = settings.knowledge_repo
@@ -87,6 +94,7 @@ module Dev
         )
         @renderer = renderer
         @scaffolder = scaffolder
+        @gitignore = gitignore
       end
 
       # `dev learnings sync`: the org tier, blocking, errors bubbling — cache
@@ -153,15 +161,20 @@ module Dev
       # root: the empty repo-tier index, or the org knowledge-repo layout
       # with org: true. The scaffold is write-once-committed — an existing
       # index makes this a reported no-op (exit 0), never an overwrite — so
-      # consumers can call init unconditionally before capturing.
+      # consumers can call init unconditionally before capturing. The repo
+      # tier then ensures the repo's .gitignore carries dev's managed
+      # footprint — per path, so re-running is a no-op and a user's own
+      # patterns are respected; `gitignore_only` skips the index for a repo
+      # that is already scaffolded.
       #
       # @param out [IO, StringIO]
       # @param org [Boolean] scaffold the org knowledge-repo layout instead
       #   of the repo tier
+      # @param gitignore_only [Boolean] only ensure the .gitignore footprint
       # @return [void]
       # @raise [NoEnclosingProjectError] when run outside any project
-      sig { params(out: T.any(IO, StringIO), org: T::Boolean).void }
-      def init(out:, org: false)
+      sig { params(out: T.any(IO, StringIO), org: T::Boolean, gitignore_only: T::Boolean).void }
+      def init(out:, org: false, gitignore_only: false)
         project_root = @project_root
         if project_root.nil?
           raise NoEnclosingProjectError,
@@ -172,16 +185,39 @@ module Dev
           @scaffolder.scaffold_org(project_root)
           out.puts "dev: scaffolded #{Layout.org_index_file(project_root)} and " \
             "#{Layout.org_skills_dir(project_root)}/ (the org knowledge-repo layout) — commit them."
-        else
-          @scaffolder.scaffold_repo(project_root)
-          out.puts "dev: scaffolded #{Layout.repo_index_file(project_root)} " \
-            "(this repo's empty always-on learnings index) — commit it."
+          return
         end
+
+        scaffold_repo_index(out, project_root) unless gitignore_only
+        ensure_gitignore(out, project_root)
+      end
+
+      private
+
+      # @param out [IO, StringIO]
+      # @param project_root [Pathname]
+      # @return [void]
+      sig { params(out: T.any(IO, StringIO), project_root: Pathname).void }
+      def scaffold_repo_index(out, project_root)
+        @scaffolder.scaffold_repo(project_root)
+        out.puts "dev: scaffolded #{Layout.repo_index_file(project_root)} " \
+          "(this repo's empty always-on learnings index) — commit it."
       rescue Scaffolder::IndexAlreadyExistsError => e
         out.puts "dev: #{e.message}"
       end
 
-      private
+      # @param out [IO, StringIO]
+      # @param project_root [Pathname]
+      # @return [void]
+      sig { params(out: T.any(IO, StringIO), project_root: Pathname).void }
+      def ensure_gitignore(out, project_root)
+        added = @gitignore.apply(project_root)
+        out.puts(if added.empty?
+          "dev: .gitignore already covers dev's managed footprint."
+        else
+          "dev: added #{added.join(", ")} to .gitignore (dev's managed footprint) — commit it."
+        end)
+      end
 
       # The org tier's rendered state: the machine-side invariants render.
       #
@@ -212,6 +248,7 @@ module Dev
 
         rules_file = @synchronizer.project_rules_file(project_root)
         out.puts "dev: project invariants link: #{rules_file} (#{invariants_link_state(rules_file)})."
+        Dev::Footprint.warn_missing(out, project_root, [Layout::GITIGNORE_FOOTPRINT])
       end
 
       # @param rules_file [Pathname]

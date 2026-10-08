@@ -560,11 +560,29 @@ class Dev::Plan::AccessorTest < Minitest::Test
     When "listing status"
     accessor.status(out: out)
 
-    Then "each plan reports its state"
+    Then "each plan reports its state, after the footprint warning for the un-ignored plans dir"
+    out.string.lines.first == "dev: warning: .cursor/plans/ is not gitignored — run `dev learnings init --gitignore`.\n"
     out.string.match?(/^clean\s+#{REPO}#1/)
     out.string.match?(/^ahead\s+#{REPO}#2/)
     out.string.match?(/^behind\s+#{REPO}#3/)
     out.string.match?(/^diverged\s+#{REPO}#4/)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "status is silent about the footprint when the plans dir is gitignored" do
+    Given "a repo ignoring .cursor/plans/ and no linked plans"
+    dir = Dir.mktmpdir("ai-flow-acc-test-")
+    accessor, root, = build_env(dir)
+    (root / ".gitignore").write(".cursor/plans/\n")
+    out = StringIO.new
+
+    When "listing status"
+    accessor.status(out: out)
+
+    Then "only the no-plans line"
+    out.string == "dev: no linked plans in #{root / ".cursor" / "plans"}.\n"
 
     Cleanup
     FileUtils.rm_rf(dir)

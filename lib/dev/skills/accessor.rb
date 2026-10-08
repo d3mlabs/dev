@@ -4,7 +4,9 @@
 require "json"
 require "pathname"
 require "stringio"
+require_relative "../footprint"
 require_relative "channel"
+require_relative "layout"
 require_relative "legacy"
 require_relative "materializer"
 
@@ -67,6 +69,7 @@ module Dev
           links.each { |link| out.puts "  #{describe(link)}" }
         end
         print_same_named(out, report)
+        warn_footprint(out)
       end
 
       # `dev skills sync`: materialize every channel now (sweeping the
@@ -121,6 +124,18 @@ module Dev
         groups.each do |name, records|
           out.puts "  #{name} ← #{records.map { |record| origin(record) }.join(", ")}"
         end
+      end
+
+      # The project-scoped root must be gitignored; say so when it is not.
+      #
+      # @param out [IO, StringIO]
+      # @return [void]
+      sig { params(out: T.any(IO, StringIO)).void }
+      def warn_footprint(out)
+        project_root = @project_root
+        return unless project_root && @channels.any?(&:project_scoped?)
+
+        Dev::Footprint.warn_missing(out, project_root, [Layout::GITIGNORE_FOOTPRINT])
       end
 
       # @param record [Dev::Skills::Manifest::Record]

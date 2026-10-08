@@ -146,6 +146,30 @@ class Dev::Skills::AccessorTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "status warns when a project-scoped root is not gitignored, and is silent once it is" do
+    Given "a git repo whose project-scoped channel root is not ignored, and the same repo once it is"
+    dir = Dir.mktmpdir("dev-skills-accessor-test-")
+    repo = Pathname(dir) / "repo"
+    FileUtils.mkdir_p(repo)
+    system("git", "-C", repo.to_s, "init", "-q", exception: true)
+    gem = ListChannel.new(name: "gem", root: repo / ".agents" / "skills" / "dev", project_scoped: true, entries: [])
+    accessor = Dev::Skills::Accessor.new(channels: [gem], project_root: repo, materializer: build_materializer(dir))
+    before = StringIO.new
+    after = StringIO.new
+
+    When "asking for status before and after adding the ignore line"
+    accessor.status(out: before)
+    (repo / ".gitignore").write(".agents/skills/dev/\n")
+    accessor.status(out: after)
+
+    Then "the warning names the root and the repair, then disappears"
+    before.string.end_with?("dev: warning: .agents/skills/dev/ is not gitignored — run `dev learnings init --gitignore`.\n")
+    !after.string.include?("warning")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "status --json emits the manifests per channel with presence" do
     Given "synced channels"
     dir = Dir.mktmpdir("dev-skills-accessor-test-")

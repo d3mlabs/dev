@@ -20,12 +20,18 @@ module Dev
       sig { returns(Pathname) }
       attr_reader :plans_dir
 
+      # The local plan working copies, as the repo-relative .gitignore line
+      # covering them — beside the path it covers, collected by
+      # Dev::Footprint. The GitHub issue is canonical; the copies never commit.
+      PLANS_SUBDIRS = T.let([".cursor", "plans"].freeze, T::Array[String])
+      GITIGNORE_FOOTPRINT = T.let("#{PLANS_SUBDIRS.join("/")}/".freeze, String)
+
       # @param project_root [Pathname]
       # @param executor [Dev::Plan::Executor] CLI boundary (injectable for tests)
       sig { params(project_root: Pathname, executor: Executor).void }
       def initialize(project_root:, executor: Executor.new)
         @project_root = project_root
-        @plans_dir = T.let(project_root / ".cursor" / "plans", Pathname)
+        @plans_dir = T.let(PLANS_SUBDIRS.reduce(project_root) { |path, segment| path / segment }, Pathname)
         @executor = executor
       end
 

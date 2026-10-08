@@ -45,6 +45,9 @@ module Dev
       # … and the dev-managed subtree inside it, the project-scoped root.
       DEV_SUBDIR = "dev"
       PROJECT_ROOT_SUBDIRS = T.let([*PROJECT_SKILLS_SUBDIRS, DEV_SUBDIR].freeze, T::Array[String])
+      # The repo-relative .gitignore line covering the project-scoped root —
+      # beside the path it covers, collected by Dev::Footprint.
+      GITIGNORE_FOOTPRINT = T.let("#{PROJECT_ROOT_SUBDIRS.join("/")}/".freeze, String)
 
       # Per-root record of what dev materialized there.
       MANIFEST_FILENAME = "manifest.json"
