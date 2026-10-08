@@ -36,6 +36,26 @@ class Dev::Skills::LegacyTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "sweep warns and removes nothing when the skills dir cannot be read" do
+    Given "a project whose skills dir denies listing"
+    dir = Dir.mktmpdir("dev-skills-legacy-test-")
+    skills = Pathname(dir) / ".agents" / "skills"
+    FileUtils.mkdir_p(skills)
+    File.chmod(0o000, skills)
+
+    When "sweeping"
+    removed = nil
+    _out, err = capture_io { removed = Dev::Skills::Legacy.sweep(dir) }
+
+    Then "it reports nothing removed and says why on stderr"
+    removed == []
+    err.include?("dev: warning: could not remove legacy gem skill links")
+
+    Cleanup
+    File.chmod(0o755, skills)
+    FileUtils.rm_rf(dir)
+  end
+
   test "sweep is a no-op on a project without a skills dir" do
     Given "an empty project"
     dir = Dir.mktmpdir("dev-skills-legacy-test-")

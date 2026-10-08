@@ -291,4 +291,24 @@ class Dev::Skills::InstallerTest < Minitest::Test
     Cleanup
     FileUtils.rm_rf(dir)
   end
+
+  test "remove tolerates a parent dir it is not allowed to delete — the link still goes" do
+    Given "a nested link whose integration dir is read-only, so its emptied package dir cannot be rmdir'd"
+    dir = Dir.mktmpdir("dev-skill-test-")
+    skills_dir = File.join(dir, "skills")
+    installer = build_installer(dir, skills_dir: skills_dir)
+    installer.install("gem/a/one", build_skill(dir, "gems", "a", "one"))
+    File.chmod(0o555, File.join(skills_dir, "gem"))
+
+    When "removing the link"
+    installer.remove("gem/a/one")
+
+    Then "the link is gone, the undeletable package dir stands, and nothing raised"
+    !File.symlink?(File.join(skills_dir, "gem", "a", "one"))
+    File.directory?(File.join(skills_dir, "gem", "a"))
+
+    Cleanup
+    File.chmod(0o755, File.join(skills_dir, "gem"))
+    FileUtils.rm_rf(dir)
+  end
 end
