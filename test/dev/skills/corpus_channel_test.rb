@@ -57,12 +57,15 @@ class Dev::Skills::CorpusChannelTest < Minitest::Test
     File.symlink(inside, root / "skill")
     File.symlink(File.join(dir, "corpus-other", "skill"), root / "lookalike")
     File.symlink(File.join(dir, "elsewhere", "skill"), root / "foreign")
+    FileUtils.mkdir_p(root / "plain-dir")
     channel = Dev::Skills::CorpusChannel.new(name: "c", root: root, corpus_root: File.join(dir, "corpus"))
 
-    Expect "only the in-corpus link is owned"
+    Expect "only the in-corpus link is owned; a non-symlink is simply not owned"
     channel.owns?(root / "skill")
     !channel.owns?(root / "lookalike")
     !channel.owns?(root / "foreign")
+    !channel.owns?(root / "plain-dir")
+    !channel.owns?(root / "absent")
 
     Cleanup
     FileUtils.rm_rf(dir)
