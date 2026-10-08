@@ -69,6 +69,7 @@ class Dev::GlobalDispatchTest < Minitest::Test
     "plan"        | true
     "cred"        | true
     "learnings"   | true
+    "skills"      | true
     "engine"      | true
     "version"     | true
     "--version"   | true

@@ -75,7 +75,7 @@ end unless defined?(FakePlanSettings)
 # under test here). No super in initialize: a noop needs no collaborators.
 class NoopHostService < Dev::HostService
   def initialize; end
-  def install_skills; end
+  def sync_skills(project_root: nil); end
   def sync_learnings(project_root: nil); end
 end unless defined?(NoopHostService)
 
@@ -88,7 +88,7 @@ class RecordingHostService < NoopHostService
     @calls = []
   end
 
-  def install_skills = @calls << :install_skills
+  def sync_skills(project_root: nil) = @calls << [:sync_skills, project_root]
   def sync_learnings(project_root: nil) = @calls << [:sync_learnings, project_root]
 end unless defined?(RecordingHostService)
 
@@ -847,7 +847,7 @@ class Dev::Plan::AccessorTest < Minitest::Test
     accessor.refresh_host
 
     Then "skills first, then learnings scoped to the workspace root"
-    host.calls == [:install_skills, [:sync_learnings, root]]
+    host.calls == [[:sync_skills, root], [:sync_learnings, root]]
 
     Cleanup
     FileUtils.rm_rf(dir)

@@ -2,12 +2,12 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/skill_installer"
+require "dev/skills/installer"
 require "tmpdir"
 require "fileutils"
 
 transform!(RSpock::AST::Transformation)
-class Dev::SkillInstallerTest < Minitest::Test
+class Dev::Skills::InstallerTest < Minitest::Test
   def build_skill(dir, *path_parts)
     source = File.join(dir, *path_parts)
     FileUtils.mkdir_p(source)
@@ -20,7 +20,7 @@ class Dev::SkillInstallerTest < Minitest::Test
   # the fixture dir — sources built by build_skill read as durable, and a
   # test opts into ephemerality by building under `<dir>/tmp`.
   def build_installer(dir, skills_dir:)
-    Dev::SkillInstaller.new(skills_dir: skills_dir, tmpdir: File.join(dir, "tmp"))
+    Dev::Skills::Installer.new(skills_dir: skills_dir, tmpdir: File.join(dir, "tmp"))
   end
 
   test "install creates the symlink on first run" do
@@ -169,7 +169,7 @@ class Dev::SkillInstallerTest < Minitest::Test
     tmp_alias = File.join(dir, "tmp-alias")
     File.symlink(File.join(dir, "tmp"), tmp_alias)
     skills_dir = File.join(dir, "skills")
-    installer = Dev::SkillInstaller.new(skills_dir: skills_dir, tmpdir: tmp_alias)
+    installer = Dev::Skills::Installer.new(skills_dir: skills_dir, tmpdir: tmp_alias)
     old_stderr = $stderr
     $stderr = StringIO.new
 
@@ -207,94 +207,6 @@ class Dev::SkillInstallerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "install_all links every skill dir carrying a SKILL.md and skips the rest" do
-    Given "a source root with two skills and one non-skill dir"
-    dir = Dir.mktmpdir("dev-skill-test-")
-    build_skill(dir, "source", "capture-learning")
-    build_skill(dir, "source", "typed-errors")
-    FileUtils.mkdir_p(File.join(dir, "source", "not-a-skill"))
-    skills_dir = File.join(dir, "skills")
-    installer = build_installer(dir, skills_dir: skills_dir)
-
-    When "installing all skills"
-    installer.install_all(File.join(dir, "source"))
-
-    Then "each skill dir is linked under its own name, the non-skill is not"
-    File.readlink(File.join(skills_dir, "capture-learning")) == File.join(dir, "source", "capture-learning")
-    File.readlink(File.join(skills_dir, "typed-errors")) == File.join(dir, "source", "typed-errors")
-    !File.exist?(File.join(skills_dir, "not-a-skill"))
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  test "install_all prefixes link names (the gem link convention)" do
-    Given "a gem-style skills dir"
-    dir = Dir.mktmpdir("dev-skill-test-")
-    build_skill(dir, "gems", "rspock-1.2.0", "skills", "rspock")
-    skills_dir = File.join(dir, "skills")
-    installer = build_installer(dir, skills_dir: skills_dir)
-
-    When "installing all skills with a prefix"
-    installer.install_all(File.join(dir, "gems", "rspock-1.2.0", "skills"), prefix: "gem-rspock--")
-
-    Then "the link carries the prefix"
-    File.symlink?(File.join(skills_dir, "gem-rspock--rspock"))
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  test "install_all prunes links whose skill disappeared from the source, leaving foreign links" do
-    Given "an installed skill later removed from the source, plus a foreign link"
-    dir = Dir.mktmpdir("dev-skill-test-")
-    source_root = File.join(dir, "source")
-    build_skill(dir, "source", "kept")
-    removed = build_skill(dir, "source", "removed")
-    skills_dir = File.join(dir, "skills")
-    installer = build_installer(dir, skills_dir: skills_dir)
-    installer.install_all(source_root)
-    FileUtils.rm_rf(removed)
-    foreign_target = build_skill(dir, "elsewhere", "mine")
-    FileUtils.rm_rf(foreign_target) # a broken link, but not under source_root
-    File.symlink(foreign_target, File.join(skills_dir, "mine"))
-
-    When "installing all skills again"
-    installer.install_all(source_root)
-
-    Then "the vanished skill's link is pruned; the foreign link survives"
-    File.symlink?(File.join(skills_dir, "kept"))
-    !File.symlink?(File.join(skills_dir, "removed"))
-    File.symlink?(File.join(skills_dir, "mine"))
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  test "install_all warns instead of raising when pruning cannot read the skills dir" do
-    Given "an unreadable skills dir"
-    dir = Dir.mktmpdir("dev-skill-test-")
-    source_root = File.join(dir, "source")
-    FileUtils.mkdir_p(source_root)
-    skills_dir = File.join(dir, "skills")
-    FileUtils.mkdir_p(skills_dir)
-    FileUtils.chmod(0o000, skills_dir)
-    installer = build_installer(dir, skills_dir: skills_dir)
-    old_stderr = $stderr
-    $stderr = StringIO.new
-
-    When "installing all skills"
-    installer.install_all(source_root)
-
-    Then "the prune failure is a warning, not an exception"
-    $stderr.string.include?("could not prune stale skill symlinks")
-
-    Cleanup
-    $stderr = old_stderr
-    FileUtils.chmod(0o755, skills_dir)
-    FileUtils.rm_rf(dir)
-  end
-
   test "remove deletes a symlink but never a user-owned entry" do
     Given "one skill link and one real directory"
     dir = Dir.mktmpdir("dev-skill-test-")
@@ -312,28 +224,6 @@ class Dev::SkillInstallerTest < Minitest::Test
     Then "only the symlink is gone"
     !File.symlink?(File.join(skills_dir, "linked"))
     File.directory?(user_dir)
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  test "SHIPPED_SKILLS_DIR points at dev's packaged skills" do
-    Expect "the shipped ai-flow skill resolves under it"
-    (Dev::SkillInstaller::SHIPPED_SKILLS_DIR / "ai-flow" / "SKILL.md").file?
-  end
-
-  test "install_shipped links dev's own packaged skill set" do
-    Given "an installer over an empty skills dir"
-    dir = Dir.mktmpdir("dev-skill-test-")
-    skills_dir = File.join(dir, "skills")
-    installer = build_installer(dir, skills_dir: skills_dir)
-
-    When "installing the shipped set"
-    installer.install_shipped
-
-    Then "the shipped ai-flow skill is linked into the target"
-    File.readlink(File.join(skills_dir, "ai-flow")) ==
-      (Dev::SkillInstaller::SHIPPED_SKILLS_DIR / "ai-flow").to_s
 
     Cleanup
     FileUtils.rm_rf(dir)

@@ -2,88 +2,102 @@
 # frozen_string_literal: true
 
 require "pathname"
-require_relative "../skill_installer"
+require_relative "../skills/channel"
+require_relative "../skills/layout"
 require_relative "bundler_locker"
 require_relative "shadowenv_exec"
 
 module Dev
   module Deps
-    # Links skills shipped inside the locked gem set into the project.
+    # The skills shipped inside the locked gem set, as a skills channel.
     #
     # A gem's skill is part of what installing that dependency means —
     # installing rspock without its skill would be an incomplete install,
     # exactly like installing it without its executables. So `dev up` /
-    # `dev deps install` finish by scanning the resolved (lockfile-matched)
-    # gem set for skills/*/SKILL.md and linking each one project-scoped as
+    # `dev deps install` finish by asking `Dev::Skills` to materialize this
+    # channel: the resolved (lockfile-matched) gem set is scanned for
+    # skills/*/SKILL.md and each one lands project-scoped as
     # .agents/skills/gem-<gem>--<skill> (gitignored; an agent-neutral dir so
     # the mechanism isn't Cursor-locked). A skill-set change rides the same
     # staleness story as any dependency change: the lock digest changes, the
     # `dev up` nag fires, and the install refreshes the links.
-    class GemSkillLinker
+    #
+    # This class owns *what* the gem skills are — which gem, which version,
+    # where its tree is. Placing and pruning the links is the materializer's.
+    class GemSkills
       extend T::Sig
+      include Skills::Channel
 
+      NAME = "gem"
       LINK_PREFIX = "gem-"
       SKILLS_SUBDIR = "skills"
-      AGENT_SKILLS_SUBDIRS = [".agents", "skills"].freeze
+
+      sig { override.returns(Pathname) }
+      attr_reader :root
 
       # @param project_root [Pathname, String] repo root (Gemfile + link target)
-      # @param skills_dir [Pathname, String, nil] override for tests; defaults
-      #   to <project_root>/.agents/skills
-      # @param tmpdir [Pathname, String] ephemeral temp root that links must
-      #   never target; defaults to Dir.tmpdir (override for tests, whose
-      #   fixture gem trees themselves live under the real temp dir)
+      # @param root [Pathname, String, nil] where the links land; defaults to
+      #   the project-scoped discovery root (override for tests)
       # @param shadowenv_exec [ShadowenvExec] spawn seam for the project's Ruby toolchain
       sig do
         params(
           project_root: T.any(Pathname, String),
-          skills_dir: T.nilable(T.any(Pathname, String)),
-          tmpdir: T.any(Pathname, String),
+          root: T.nilable(T.any(Pathname, String)),
           shadowenv_exec: ShadowenvExec,
         ).void
       end
-      def initialize(project_root:, skills_dir: nil, tmpdir: Dir.tmpdir,
-        shadowenv_exec: ShadowenvExec.new(project_root: project_root))
+      def initialize(project_root:, root: nil, shadowenv_exec: ShadowenvExec.new(project_root: project_root))
         @project_root = T.let(Pathname(project_root), Pathname)
-        @skills_dir = T.let(Pathname(skills_dir || @project_root.join(*AGENT_SKILLS_SUBDIRS)), Pathname)
-        @skill_installer = T.let(SkillInstaller.new(skills_dir: @skills_dir, tmpdir: tmpdir), SkillInstaller)
+        @root = T.let(Pathname(root || Skills::Layout.project_root(@project_root)), Pathname)
         @shadowenv_exec = shadowenv_exec
       end
 
-      # Scan the locked gem set for shipped skills and refresh the project's
-      # links: install one per skill found, prune gem links whose gem left the
-      # lock. A skill that resolves under the temp dir is never linked —
-      # SkillInstaller refuses ephemeral sources at the shared seam — but its
-      # gem still counts as present for pruning, so an ephemeral resolution
-      # cannot delete a durable link minted earlier. Never raises — skill
-      # links are hygiene riding a dependency install, and hygiene must not
-      # block correctness (failures are reported on stderr).
-      #
-      # @return [void]
-      sig { void }
-      def link_all
-        return unless gemfile_path.exist?
+      sig { override.returns(String) }
+      def name
+        NAME
+      end
 
-        expected = expected_links
-        expected.each { |name, skill_dir| @skill_installer.install(name, skill_dir) }
-        prune_stale_links(expected.keys)
-      rescue StandardError => e
-        $stderr.puts "dev: warning: could not refresh gem skill links (#{e.message})."
+      # One entry per skills/*/SKILL.md found in a locked gem's installed
+      # tree. A project without a Gemfile declares nothing (and spawns no
+      # bundler). A gem that resolves under the temp dir is still declared —
+      # the installer declines to link it, and declaring it keeps a durable
+      # link minted earlier from being pruned.
+      sig { override.returns(T::Array[Skills::Entry]) }
+      def entries
+        return [] unless gemfile_path.exist?
+
+        gem_roots.flat_map do |gem_name, gem_root|
+          Skills::Layout.skill_dirs(gem_root / SKILLS_SUBDIR).map do |skill_dir|
+            Skills::Entry.new(
+              link_name: "#{LINK_PREFIX}#{gem_name}--#{skill_dir.basename}",
+              source: skill_dir,
+              package: gem_name,
+              version: version_of(gem_name, gem_root),
+            )
+          end
+        end
+      end
+
+      # Only `gem-`-prefixed links are ours — anything else in the dir is not.
+      sig { override.params(link: Pathname).returns(T::Boolean) }
+      def owns?(link)
+        link.basename.to_s.start_with?(LINK_PREFIX)
       end
 
       private
 
-      # The full link set the current lock implies: one entry per
-      # skills/*/SKILL.md found in a locked gem's installed tree.
+      # The installed version, read off the gem root's basename
+      # (`<name>-<version>`); nil for a path gem whose root is bare.
       #
-      # @return [Hash{String => Pathname}] link name → skill directory
-      sig { returns(T::Hash[String, Pathname]) }
-      def expected_links
-        gem_roots.each_with_object({}) do |(gem_name, gem_root), links|
-          (gem_root / SKILLS_SUBDIR).glob("*/#{SkillInstaller::SKILL_FILE}").sort.each do |skill_file|
-            skill_dir = skill_file.dirname
-            links["#{LINK_PREFIX}#{gem_name}--#{skill_dir.basename}"] = skill_dir
-          end
-        end
+      # @param gem_name [String]
+      # @param gem_root [Pathname]
+      # @return [String, nil]
+      sig { params(gem_name: String, gem_root: Pathname).returns(T.nilable(String)) }
+      def version_of(gem_name, gem_root)
+        basename = gem_root.basename.to_s
+        return nil unless basename.start_with?("#{gem_name}-")
+
+        basename.delete_prefix("#{gem_name}-")
       end
 
       # Installed roots of the locked gems, paired with their gem names.
@@ -151,25 +165,6 @@ module Dev
           end
         end
         names.uniq
-      end
-
-      # Remove gem links that no current gem accounts for (the gem left the
-      # lock; its tree may still exist on disk, so broken-link pruning alone
-      # would miss it). Only `gem-`-prefixed symlinks are candidates —
-      # anything else in the dir is not ours.
-      #
-      # @param expected_names [Array<String>]
-      # @return [void]
-      sig { params(expected_names: T::Array[String]).void }
-      def prune_stale_links(expected_names)
-        return unless @skills_dir.directory?
-
-        @skills_dir.children.each do |link|
-          name = link.basename.to_s
-          next unless link.symlink? && name.start_with?(LINK_PREFIX)
-
-          @skill_installer.remove(name) unless expected_names.include?(name)
-        end
       end
 
       # @return [Pathname]

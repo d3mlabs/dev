@@ -3,17 +3,20 @@
 
 require "pathname"
 require_relative "../settings"
-require_relative "../skill_installer"
+require_relative "../skills/layout"
+require_relative "../skills/materializer"
 require_relative "cache"
 require_relative "invariants_renderer"
+require_relative "org_corpus"
 
 module Dev
   module Learnings
     # Orchestrates the org tier of the learnings read path: refresh the
     # machine cache of the knowledge repo (bounded-inline on hooks, blocking
-    # for `dev learnings sync`), link the cache's skills user-globally into
-    # ~/.cursor/skills, render the invariants index once beside the cache, and
-    # link the render into the project at hand. The refresh always precedes
+    # for `dev learnings sync`), hand the cache's skills corpus to
+    # `Dev::Skills` as the org channel (materialized user-globally), render
+    # the invariants index once beside the cache, and link the render into
+    # the project at hand. The refresh always precedes
     # distribution, so a hook never renders content it just found stale.
     #
     # Construct through Synchronizer.for: unconfigured machines (no
@@ -43,46 +46,57 @@ module Dev
         # object when no repo is set.
         #
         # @param settings [Dev::Settings]
-        # @param skill_installer [Dev::SkillInstaller]
+        # @param materializer [Dev::Skills::Materializer]
         # @param renderer [Dev::Learnings::InvariantsRenderer]
         # @return [Synchronizer, UnconfiguredSynchronizer]
         sig do
           params(
             settings: Dev::Settings,
-            skill_installer: Dev::SkillInstaller,
+            materializer: Dev::Skills::Materializer,
             renderer: InvariantsRenderer,
           ).returns(T.any(Synchronizer, UnconfiguredSynchronizer))
         end
-        def for(settings: Dev::Settings.new, skill_installer: Dev::SkillInstaller.new,
+        def for(settings: Dev::Settings.new, materializer: Dev::Skills::Materializer.new,
                 renderer: InvariantsRenderer.new)
           repo = settings.knowledge_repo
           return UnconfiguredSynchronizer.new(settings: settings) if repo.nil?
 
-          new(settings: settings, cache: Cache.new(repo: repo), skill_installer: skill_installer, renderer: renderer)
+          new(settings: settings, cache: Cache.new(repo: repo), materializer: materializer, renderer: renderer)
         end
       end
 
       # @param settings [Dev::Settings]
       # @param cache [Dev::Learnings::Cache] the knowledge repo's machine
       #   cache — required; unconfigured machines go through .for instead
-      # @param skill_installer [Dev::SkillInstaller] target for the org skill
-      #   links; defaults to the user-global ~/.cursor/skills
+      # @param materializer [Dev::Skills::Materializer] places the org channel
+      # @param skills_root [Pathname, String] where the org skill links land;
+      #   defaults to the user-global root (override for tests)
       # @param renderer [Dev::Learnings::InvariantsRenderer]
       sig do
         params(
           cache: Cache,
           settings: Dev::Settings,
-          skill_installer: Dev::SkillInstaller,
+          materializer: Dev::Skills::Materializer,
+          skills_root: T.any(Pathname, String),
           renderer: InvariantsRenderer,
         ).void
       end
-      def initialize(cache:, settings: Dev::Settings.new, skill_installer: Dev::SkillInstaller.new,
-                     renderer: InvariantsRenderer.new)
+      def initialize(cache:, settings: Dev::Settings.new, materializer: Dev::Skills::Materializer.new,
+                     skills_root: Dev::Skills::Layout.user_global_root, renderer: InvariantsRenderer.new)
         @settings = settings
         @cache = cache
-        @skill_installer = skill_installer
+        @materializer = materializer
+        @org_channel = T.let(OrgCorpus.new(cache: cache, root: skills_root), OrgCorpus)
         @renderer = renderer
       end
+
+      # The org tier as a skills channel — what this synchronizer
+      # materializes, exposed so `dev skills` can report it alongside the
+      # other channels.
+      #
+      # @return [Dev::Learnings::OrgCorpus]
+      sig { returns(OrgCorpus) }
+      attr_reader :org_channel
 
       # @return [Pathname] the machine-side invariants render (beside the cache)
       sig { returns(Pathname) }
@@ -130,7 +144,7 @@ module Dev
 
       private
 
-      # Link the cached skills corpus user-globally, refresh the machine-side
+      # Materialize the org skills channel, refresh the machine-side
       # invariants render, and point the project's rules file at it. A no-op
       # before the first clone lands.
       #
@@ -140,7 +154,7 @@ module Dev
       def distribute(project_root)
         return unless @cache.present?
 
-        @skill_installer.install_all(@cache.skills_dir)
+        @materializer.sync([@org_channel])
         @renderer.render(
           index_file: @cache.index_file,
           rendered_file: rendered_invariants_file,
@@ -164,6 +178,14 @@ module Dev
       sig { params(settings: Dev::Settings).void }
       def initialize(settings: Dev::Settings.new)
         @settings = settings
+      end
+
+      # No org tier, no channel.
+      #
+      # @return [nil]
+      sig { returns(NilClass) }
+      def org_channel
+        nil
       end
 
       # The passive hook entry: nothing to sync, nothing to say.

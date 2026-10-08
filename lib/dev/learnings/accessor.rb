@@ -3,9 +3,7 @@
 
 require "pathname"
 require "stringio"
-require_relative "../deps/gem_skill_linker"
 require_relative "../settings"
-require_relative "../skill_installer"
 require_relative "cache"
 require_relative "invariants_renderer"
 require_relative "layout"
@@ -19,13 +17,14 @@ module Dev
     # `dev deps install` / `dev plan`); these verbs are the manual override and
     # the inspection:
     #
-    # - `sync`       — refresh the whole read path now (blocking): pull the
-    #                  knowledge repo cache, relink skills (shipped, org, and
-    #                  the project's gem skills), render + link the invariants
-    #                  rule. Outside a project the machine-global parts run
-    #                  and the project-scoped ones are skipped.
+    # - `sync`       — refresh the org tier now (blocking): pull the knowledge
+    #                  repo cache, materialize the org skills channel, render
+    #                  + link the invariants rule. Outside a project the
+    #                  machine-global parts run and the project link is
+    #                  skipped. (Skill links across every channel are `dev
+    #                  skills`' surface.)
     # - `status`     — configured knowledge repo, cache location/age, and
-    #                  what's rendered/linked per tier
+    #                  what's rendered/linked
     # - `invariants` — print the Tier-0 prompt block (the invariants section
     #                  extracted from the org index); the seam prompt-building
     #                  consumers like ai-flow shell out to
@@ -55,16 +54,12 @@ module Dev
       class NoEnclosingProjectError < RuntimeError; end
 
       # @param project_root [Pathname, String, nil] the enclosing project for
-      #   the project-scoped artifacts (invariants link, gem skill links);
-      #   nil when invoked outside any project — those parts are skipped
+      #   the project-scoped invariants link; nil when invoked outside any
+      #   project — the link is skipped
       # @param settings [Dev::Settings]
       # @param cache [Dev::Learnings::Cache, nil] override for tests; defaults
       #   to a cache over the configured knowledge repo (nil when unconfigured)
       # @param synchronizer [Dev::Learnings::Synchronizer, Dev::Learnings::UnconfiguredSynchronizer, nil]
-      # @param skill_installer [Dev::SkillInstaller] target of the shipped and
-      #   org skill links; defaults to the user-global ~/.cursor/skills
-      # @param gem_skill_linker [Dev::Deps::GemSkillLinker, nil] override for
-      #   tests; defaults to the project's linker (nil outside a project)
       # @param renderer [Dev::Learnings::InvariantsRenderer]
       # @param scaffolder [Dev::Learnings::Scaffolder]
       sig do
@@ -73,14 +68,11 @@ module Dev
           settings: Dev::Settings,
           cache: T.nilable(Cache),
           synchronizer: T.untyped,
-          skill_installer: Dev::SkillInstaller,
-          gem_skill_linker: T.untyped,
           renderer: InvariantsRenderer,
           scaffolder: Scaffolder,
         ).void
       end
       def initialize(project_root:, settings: Dev::Settings.new, cache: nil, synchronizer: nil,
-                     skill_installer: Dev::SkillInstaller.new, gem_skill_linker: nil,
                      renderer: InvariantsRenderer.new, scaffolder: Scaffolder.new)
         @project_root = T.let(project_root && Pathname(project_root), T.nilable(Pathname))
         @settings = settings
@@ -93,30 +85,20 @@ module Dev
             (@cache ? Synchronizer.new(settings: settings, cache: @cache) : UnconfiguredSynchronizer.new(settings: settings)),
           T.untyped,
         )
-        @skill_installer = skill_installer
-        @gem_skill_linker = T.let(
-          gem_skill_linker ||
-            (@project_root && Dev::Deps::GemSkillLinker.new(project_root: @project_root)),
-          T.untyped,
-        )
         @renderer = renderer
         @scaffolder = scaffolder
       end
 
-      # `dev learnings sync`: the whole read path, blocking, errors bubbling:
-      # shipped skill links, the org tier (cache pull, org skill links,
-      # invariants render + project link), and the project's gem skill
-      # relinks.
+      # `dev learnings sync`: the org tier, blocking, errors bubbling — cache
+      # pull, org skills channel, invariants render + project link.
       #
       # @param out [IO, StringIO]
       # @return [void]
       sig { params(out: T.any(IO, StringIO)).void }
       def sync(out:)
-        @skill_installer.install_shipped
         @synchronizer.sync!(project_root: @project_root)
-        @gem_skill_linker&.link_all
         out.puts "dev: learnings synced from #{@settings.knowledge_repo} (#{T.must(@cache).dir})."
-        out.puts "dev: no enclosing project — skipped the invariants link and gem skill links." if @project_root.nil?
+        out.puts "dev: no enclosing project — skipped the invariants link." if @project_root.nil?
       end
 
       # `dev learnings status`: the configured repo, cache location/age, and
@@ -201,8 +183,7 @@ module Dev
 
       private
 
-      # The org tier's rendered/linked state: the machine-side invariants
-      # render and the org skill links.
+      # The org tier's rendered state: the machine-side invariants render.
       #
       # @param out [IO, StringIO]
       # @return [void]
@@ -214,11 +195,10 @@ module Dev
         else
           "dev: invariants: not rendered (no invariants section in the index, or never synced)."
         end)
-        out.puts "dev: org skills: #{org_skill_link_count} linked into #{@skill_installer.skills_dir}."
       end
 
-      # The project tier's linked state: the invariants link and the gem skill
-      # links, or a pointer when there is no enclosing project.
+      # The project tier's linked state: the invariants link, or a pointer
+      # when there is no enclosing project.
       #
       # @param out [IO, StringIO]
       # @return [void]
@@ -226,13 +206,12 @@ module Dev
       def status_project_tier(out)
         project_root = @project_root
         if project_root.nil?
-          out.puts "dev: project: none — run inside a repo to see its invariants link and gem skills."
+          out.puts "dev: project: none — run inside a repo to see its invariants link."
           return
         end
 
         rules_file = @synchronizer.project_rules_file(project_root)
         out.puts "dev: project invariants link: #{rules_file} (#{invariants_link_state(rules_file)})."
-        out.puts "dev: gem skills: #{gem_skill_link_count} linked under #{gem_skills_dir}."
       end
 
       # @param rules_file [Pathname]
@@ -245,36 +224,6 @@ module Dev
           "present but not dev's link — run `dev learnings sync`"
         else
           "missing — run `dev learnings sync`"
-        end
-      end
-
-      # Org skill links are the entries in the skills dir pointing into the
-      # cache's skills corpus.
-      #
-      # @return [Integer]
-      sig { returns(Integer) }
-      def org_skill_link_count
-        dir = @skill_installer.skills_dir
-        return 0 unless dir.directory?
-
-        corpus_prefix = "#{T.must(@cache).skills_dir}#{File::SEPARATOR}"
-        dir.children.count { |link| link.symlink? && link.readlink.to_s.start_with?(corpus_prefix) }
-      end
-
-      # @return [Pathname]
-      sig { returns(Pathname) }
-      def gem_skills_dir
-        T.must(@project_root).join(*Dev::Deps::GemSkillLinker::AGENT_SKILLS_SUBDIRS)
-      end
-
-      # @return [Integer]
-      sig { returns(Integer) }
-      def gem_skill_link_count
-        dir = gem_skills_dir
-        return 0 unless dir.directory?
-
-        dir.children.count do |link|
-          link.symlink? && link.basename.to_s.start_with?(Dev::Deps::GemSkillLinker::LINK_PREFIX)
         end
       end
 

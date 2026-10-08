@@ -22,6 +22,8 @@ require "dev/builtins/plan_new_command"
 require "dev/builtins/plan_pull_command"
 require "dev/builtins/plan_push_command"
 require "dev/builtins/plan_status_command"
+require "dev/builtins/skills_status_command"
+require "dev/builtins/skills_sync_command"
 require "dev/builtins/version_command"
 require "dev/cd"
 require "dev/clone"
@@ -43,6 +45,8 @@ module Dev
   #                 no project config is read)
   # - `learnings` — host-global (the machine cache of the knowledge repo
   #                 lives under XDG / ~/.local/share/dev)
+  # - `skills`    — host-global (the user-global channels exist everywhere;
+  #                 the project's gem channel joins inside a checkout)
   # - `version`   — binary-global (what this dev is, wherever it runs)
   #
   # Built in one place so the two composition roots that need it —
@@ -128,6 +132,17 @@ module Dev
             "status" => Builtins::LearningsStatusCommand.new(out: @out),
             "invariants" => Builtins::LearningsInvariantsCommand.new(out: @out),
             "init" => Builtins::LearningsInitCommand.new(out: @out),
+          },
+        ),
+        "skills" => CommandGroup.new(
+          path: ["skills"],
+          desc: "Skill materialization: every channel dev links into an agent's discovery roots\n" \
+            "Channels: dev's own shipped set and the org knowledge corpus (user-global), " \
+            "the project's locked gem set (project-scoped under .agents/skills, gitignored).",
+          category: Command::Category::Workflow,
+          children: {
+            "status" => Builtins::SkillsStatusCommand.new(out: @out),
+            "sync" => Builtins::SkillsSyncCommand.new(out: @out),
           },
         ),
         "plan" => CommandGroup.new(

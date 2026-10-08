@@ -22,7 +22,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     !command.hidden?
   end
 
-  test "call provisions the pinned Ruby, installs for the detected env/host, then runs both hygiene hooks" do
+  test "call provisions the pinned Ruby, installs for the detected env/host, then runs both hygiene hooks scoped to the project" do
     Given "a command with every collaborator faked, over a project that locks gems"
     root = Pathname.new(Dir.mktmpdir("install-deps-"))
     lock(root, gem_dep, brew_build_dep)
@@ -30,17 +30,11 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     installer.expects(:install)
       .with(env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: nil, except: [], integration_types: nil)
       .once
-    linker = typed_mock(Dev::Deps::GemSkillLinker)
-    linker.expects(:link_all).once
     host_service = typed_mock(Dev::HostService)
+    host_service.expects(:sync_skills).with(project_root: root).once
     host_service.expects(:sync_learnings).with(project_root: root).once
-    linker_roots = []
     command = Dev::Builtins::InstallDepsCommand.new(
       installer_factory: ->(_lockfile, _integrations) { installer },
-      gem_skill_linker_factory: ->(project_root) {
-        linker_roots << project_root
-        linker
-      },
       host_service: host_service,
     )
     # Headless boxes reach dev deps install before any CommandRunner provisioning,
@@ -50,8 +44,8 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     When "running dev deps install"
     command.call(args: [], context: build_context(root))
 
-    Then "the linker was scoped to the project in hand"
-    linker_roots == [root]
+    Then "the hooks received the project in hand"
+    true
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -191,14 +185,12 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     installer.stubs(:install)
     container_ruby = typed_mock(Dev::ContainerRuby)
     factory_inputs = []
-    linker = typed_mock(Dev::Deps::GemSkillLinker)
     host_service = typed_mock(Dev::HostService)
     command = Dev::Builtins::InstallDepsCommand.new(
       installer_factory: ->(lockfile, integrations) {
         factory_inputs << [lockfile, integrations]
         installer
       },
-      gem_skill_linker_factory: ->(_project_root) { linker },
       host_service: host_service,
       inside_container: true,
       container_ruby: container_ruby,
@@ -212,7 +204,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     integrations.key?(:bundler)
     integrations.key?(:brew)
     !integrations.key?(:cmake)
-    0 * linker.link_all
+    0 * host_service.sync_skills
     0 * host_service.sync_learnings
 
     Cleanup
@@ -228,11 +220,6 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
       installer_factory: ->(lockfile, integrations) {
         factory_inputs << [lockfile, integrations]
         installer
-      },
-      gem_skill_linker_factory: ->(_project_root) {
-        linker = typed_mock(Dev::Deps::GemSkillLinker)
-        linker.stubs(:link_all)
-        linker
       },
       host_service: quiet_host_service,
     )
@@ -261,11 +248,6 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
         factory_inputs << [lockfile, integrations]
         installer
       },
-      gem_skill_linker_factory: ->(_project_root) {
-        linker = typed_mock(Dev::Deps::GemSkillLinker)
-        linker.stubs(:link_all)
-        linker
-      },
       host_service: quiet_host_service,
     )
     Dev::ShadowenvRuby.stubs(:converge!)
@@ -283,11 +265,10 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "the default factories build the real installer and skill linker" do
-    Given "a command with default factories over an empty project"
+  test "the default factory builds the real installer" do
+    Given "a command with the default factory over an empty project"
     # The empty project keeps the real collaborators inert: the lockfile
-    # pins nothing (install dispatches nothing) and no Gemfile exists (the
-    # linker returns before shelling out). Only the machine-global
+    # pins nothing (install dispatches nothing). Only the machine-global
     # boundaries — the Ruby provisioner and the host service — are faked.
     root = Pathname.new(Dir.mktmpdir("install-deps-default-"))
     command = Dev::Builtins::InstallDepsCommand.new(host_service: quiet_host_service)
@@ -309,11 +290,6 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
                     container_ruby: typed_mock(Dev::ContainerRuby))
     Dev::Builtins::InstallDepsCommand.new(
       installer_factory: ->(_lockfile, _integrations) { installer },
-      gem_skill_linker_factory: ->(_project_root) {
-        linker = typed_mock(Dev::Deps::GemSkillLinker)
-        linker.stubs(:link_all)
-        linker
-      },
       host_service: quiet_host_service,
       inside_container:,
       container_ruby:,
@@ -343,6 +319,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
 
   def quiet_host_service
     host_service = typed_mock(Dev::HostService)
+    host_service.stubs(:sync_skills)
     host_service.stubs(:sync_learnings)
     host_service
   end

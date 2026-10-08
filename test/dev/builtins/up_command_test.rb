@@ -45,7 +45,7 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     Given "an up command whose host service expects the converge and the skill links"
     host_service = quiet_host_service
     host_service.expects(:converge_tooling).once
-    host_service.expects(:install_skills).once
+    host_service.expects(:sync_skills).with(project_root: nil).once
     install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
     install_deps.stubs(:call)
     command = Dev::Builtins::UpCommand.new(install_deps_command: install_deps, host_service: host_service)
@@ -62,7 +62,7 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     host_service = typed_mock(Dev::HostService)
     host_service.expects(:converge_tooling).once
     host_service.expects(:install_rc_hook).once.returns(:added)
-    host_service.expects(:install_skills).once
+    host_service.expects(:sync_skills).with(project_root: nil).once
     host_service.expects(:sync_learnings).with(project_root: nil).once
     install_deps = typed_mock(Dev::Builtins::InstallDepsCommand)
     command = Dev::Builtins::UpCommand.new(install_deps_command: install_deps, host_service: host_service)
@@ -154,7 +154,7 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     1 * install_deps.call(args: ["--group", "app"], context: context)
     0 * host_service.converge_tooling
     0 * host_service.install_rc_hook
-    0 * host_service.install_skills
+    0 * host_service.sync_skills
     0 * Dev::Credentials.resolve_build_args(anything)
     0 * service.up(project: anything)
   end
@@ -214,7 +214,7 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     1 * Dev::Credentials.resolve_build_args({ "TOKEN" => "wwise/token" })
     0 * host_service.converge_tooling
     0 * host_service.install_rc_hook
-    0 * host_service.install_skills
+    0 * host_service.sync_skills
 
     Cleanup
     if original.nil?
@@ -286,7 +286,7 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     host_service = typed_mock(Dev::HostService)
     host_service.stubs(:converge_tooling)
     host_service.stubs(:install_rc_hook).returns(:already_present)
-    host_service.stubs(:install_skills)
+    host_service.stubs(:sync_skills)
     host_service
   end
 

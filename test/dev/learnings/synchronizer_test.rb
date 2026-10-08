@@ -4,7 +4,7 @@
 require "test_helper"
 require "dev/learnings"
 require "dev/settings"
-require "dev/skill_installer"
+require "dev/skills"
 require "pathname"
 require "tmpdir"
 require "fileutils"
@@ -20,13 +20,20 @@ class Dev::Learnings::SynchronizerTest < Minitest::Test
     File.write(config, "knowledge_repo: #{source}\n")
     settings = hermetic_settings(dir)
     cache = Dev::Learnings::Cache.new(repo: source, dir: File.join(dir, "cache"), refresh_floor: refresh_floor)
-    # The fixture cache lives under the real temp dir; the tmpdir override
-    # keeps the installer's ephemeral-source guard out of these tests' way.
-    installer = Dev::SkillInstaller.new(skills_dir: File.join(dir, "user-skills"), tmpdir: File.join(dir, "tmp"))
     project = Pathname(dir) / "repo"
     FileUtils.mkdir_p(project)
-    synchronizer = Dev::Learnings::Synchronizer.new(settings: settings, cache: cache, skill_installer: installer)
+    synchronizer = Dev::Learnings::Synchronizer.new(
+      settings: settings, cache: cache, materializer: build_materializer(dir), skills_root: File.join(dir, "user-skills"),
+    )
     [synchronizer, cache, project, source]
+  end
+
+  # The fixture cache lives under the real temp dir; the tmpdir override
+  # keeps the installer's ephemeral-source guard out of these tests' way.
+  def build_materializer(dir)
+    Dev::Skills::Materializer.new(
+      installer_factory: ->(root) { Dev::Skills::Installer.new(skills_dir: root, tmpdir: File.join(dir, "tmp")) },
+    )
   end
 
   def build_source_repo(dir)
@@ -63,9 +70,12 @@ class Dev::Learnings::SynchronizerTest < Minitest::Test
     When "forcing a sync into the project"
     synchronizer.sync!(project_root: project)
 
-    Then "cache cloned, skill linked user-globally, invariants rendered once beside the cache, project symlinked"
+    Then "cache cloned, skill linked user-globally via the org channel, invariants rendered once beside the cache, project symlinked"
     cache.present?
     File.symlink?(File.join(dir, "user-skills", "typed-errors"))
+    synchronizer.org_channel.name == "org"
+    synchronizer.org_channel.root == Pathname(dir) / "user-skills"
+    synchronizer.org_channel.entries.map(&:link_name) == ["typed-errors"]
     synchronizer.rendered_invariants_file.file?
     rules = project / ".cursor" / "rules" / "org-invariants.mdc"
     rules.symlink?
@@ -154,16 +164,16 @@ class Dev::Learnings::SynchronizerTest < Minitest::Test
     dir = Dir.mktmpdir("dev-learnings-sync-test-")
     saved_env = ENV.delete("DEV_KNOWLEDGE_REPO")
     settings = hermetic_settings(dir)
-    installer = Dev::SkillInstaller.new(skills_dir: File.join(dir, "user-skills"), tmpdir: File.join(dir, "tmp"))
-    synchronizer = Dev::Learnings::Synchronizer.for(settings: settings, skill_installer: installer)
+    synchronizer = Dev::Learnings::Synchronizer.for(settings: settings, materializer: build_materializer(dir))
     project = Pathname(dir) / "repo"
     FileUtils.mkdir_p(project)
 
     When "the passive hook runs"
     synchronizer.sync(project_root: project)
 
-    Then "no org sync happened, silently"
+    Then "no org sync happened, silently, and there is no org channel"
     synchronizer.is_a?(Dev::Learnings::UnconfiguredSynchronizer)
+    synchronizer.org_channel.nil?
     !File.exist?(File.join(dir, "user-skills"))
     !(project / ".cursor").exist?
 
