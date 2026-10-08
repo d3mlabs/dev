@@ -30,7 +30,12 @@ class Dev::Learnings::AccessorTest < Minitest::Test
       settings: settings, cache: cache, materializer: materializer, skills_root: File.join(dir, "user-skills"),
     )
     project = project_root == :default ? Pathname(dir) / "repo" : project_root
-    FileUtils.mkdir_p(project) if project
+    if project
+      # A real git repo, so the footprint check (`git check-ignore`) has
+      # something to answer against.
+      FileUtils.mkdir_p(project)
+      system("git", "-C", project.to_s, "init", "-q", exception: true)
+    end
     accessor = Dev::Learnings::Accessor.new(
       project_root: project, settings: settings, cache: cache, synchronizer: synchronizer,
     )
@@ -150,12 +155,13 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     When "running dev learnings status"
     accessor.status(out: out)
 
-    Then "cache age, the machine-side render, and the project link are all reported"
+    Then "cache age, the machine-side render, and the project link are all reported; the footprint warning fires for the unscaffolded project"
     out.string.include?("refreshed")
     out.string.include?("ago")
     out.string.include?("invariants: rendered at")
     out.string.include?("project invariants link:")
     out.string.include?("(linked)")
+    out.string.include?("warning: .cursor/rules/org-invariants.mdc is not gitignored — run `dev learnings init --gitignore`")
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -316,12 +322,33 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     When "running dev learnings init"
     accessor.init(out: out)
 
-    Then "the canonical always-on index exists and the report points at committing it"
+    Then "the canonical always-on index exists, the .gitignore carries dev's footprint, and both are reported"
     index = Dev::Learnings::Layout.repo_index_file(project)
     index.file?
     index.read.include?("alwaysApply: true")
     out.string.include?("scaffolded #{index}")
     out.string.include?("commit")
+    (project / ".gitignore").read.include?(Dev::Footprint::HEADER)
+    Dev::Footprint::MANAGED_PATHS.all? { |path| (project / ".gitignore").read.include?("#{path}\n") }
+    out.string.include?("added .cursor/rules/org-invariants.mdc, .agents/skills/dev/, .cursor/plans/ to .gitignore")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "init --gitignore only ensures the footprint, leaving an absent index absent" do
+    Given "a project without a learnings index"
+    dir = Dir.mktmpdir("dev-learnings-acc-test-")
+    accessor, _cache, project, = build_env(dir)
+    out = StringIO.new
+
+    When "running dev learnings init --gitignore"
+    accessor.init(out: out, gitignore_only: true)
+
+    Then "the .gitignore is written, no index is scaffolded"
+    (project / ".gitignore").read.include?(Dev::Footprint::HEADER)
+    !Dev::Learnings::Layout.repo_index_file(project).exist?
+    !out.string.include?("scaffolded")
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -360,10 +387,11 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     When "running dev learnings init again"
     accessor.init(out: out)
 
-    Then "the run reports the write-once no-op and the index is untouched"
+    Then "the run reports the write-once no-op and the index is untouched; the .gitignore step reports it is covered"
     out.string.include?("already exists")
     out.string.include?("write-once")
     index.read == "# hand-curated entries\n"
+    out.string.include?(".gitignore already covers dev's managed footprint")
 
     Cleanup
     FileUtils.rm_rf(dir)

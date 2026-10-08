@@ -63,8 +63,9 @@ class Dev::Builtins::LearningsCommandsTest < Minitest::Test
     LEAVES[0] | :sync       | []        | {}
     LEAVES[1] | :status     | []        | {}
     LEAVES[2] | :invariants | []        | {}
-    LEAVES[3] | :init       | []        | { org: false }
-    LEAVES[3] | :init       | ["--org"] | { org: true }
+    LEAVES[3] | :init       | []        | { org: false, gitignore_only: false }
+    LEAVES[3] | :init       | ["--org"] | { org: true, gitignore_only: false }
+    LEAVES[3] | :init       | ["--gitignore"] | { org: false, gitignore_only: true }
   end
 
   test "#{klass} rejects #{args.inspect} with the accessor's usage error" do
@@ -84,6 +85,7 @@ class Dev::Builtins::LearningsCommandsTest < Minitest::Test
     LEAVES[2] | ["extra"]
     LEAVES[3] | ["--bogus"]
     LEAVES[3] | ["--org", "extra"]
+    LEAVES[3] | ["--org", "--gitignore"]
   end
 
   test "the default factory builds a real accessor anchored at the enclosing project" do

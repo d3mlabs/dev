@@ -5,6 +5,7 @@ require "fileutils"
 require "json"
 require "pathname"
 require "stringio"
+require_relative "../footprint"
 
 module Dev
   module Plan
@@ -349,6 +350,7 @@ module Dev
       # clean / ahead (local edits) / behind (remote edits) / diverged (both).
       sig { params(out: T.any(IO, StringIO)).void }
       def status(out:)
+        Dev::Footprint.warn_missing(out, @project_root, [Workspace::GITIGNORE_FOOTPRINT])
         files = @workspace.linked_plan_files
         if files.empty?
           out.puts "dev: no linked plans in #{@workspace.plans_dir}."

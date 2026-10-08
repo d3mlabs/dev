@@ -84,6 +84,11 @@ module Dev
         ## Knowledge (on-demand)
       SCAFFOLD
 
+      # Where the per-project link to the machine-side invariants render
+      # lands, as the repo-relative .gitignore line covering it — beside the
+      # path it covers, collected by Dev::Footprint.
+      GITIGNORE_FOOTPRINT = ".cursor/rules/org-invariants.mdc"
+
       module_function
 
       # @param repo_root [Pathname, String] a participating repo's root

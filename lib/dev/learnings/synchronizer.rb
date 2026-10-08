@@ -7,6 +7,7 @@ require_relative "../skills/layout"
 require_relative "../skills/materializer"
 require_relative "cache"
 require_relative "invariants_renderer"
+require_relative "layout"
 require_relative "org_corpus"
 
 module Dev
@@ -31,8 +32,9 @@ module Dev
       class KnowledgeRepoNotConfiguredError < RuntimeError; end
 
       # Where the per-project link to the machine-side render lands. Committed
-      # footprint per repo is one .gitignore line for this path.
-      ORG_INVARIANTS_RULE_SUBDIRS = [".cursor", "rules", "org-invariants.mdc"].freeze
+      # footprint per repo is one .gitignore line for this path (owned by
+      # Layout::GITIGNORE_FOOTPRINT, which Dev::Footprint writes).
+      ORG_INVARIANTS_RULE_SUBDIRS = T.let(Layout::GITIGNORE_FOOTPRINT.split("/").freeze, T::Array[String])
 
       # The machine-side render, beside the cache clone (one refresh updates
       # every project on the machine through its symlink).
@@ -108,7 +110,7 @@ module Dev
       # @return [Pathname] the project's link to the invariants render
       sig { params(project_root: T.any(Pathname, String)).returns(Pathname) }
       def project_rules_file(project_root)
-        Pathname(project_root).join(*ORG_INVARIANTS_RULE_SUBDIRS)
+        Pathname(project_root) / Layout::GITIGNORE_FOOTPRINT
       end
 
       # The passive hook entry (`dev up` / `dev deps install` / `dev plan`): pull
