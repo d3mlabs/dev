@@ -116,6 +116,25 @@ class Dev::FootprintTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "ensure with no git on PATH behaves as outside a repo: literal match, nothing raised" do
+    Given "a git repo whose .gitignore names one path, and a PATH with no git on it"
+    dir = Dir.mktmpdir("dev-footprint-test-")
+    root = git_repo(dir)
+    (root / ".gitignore").write(".cursor/plans/\n")
+    path_was = ENV.fetch("PATH")
+    ENV["PATH"] = File.join(dir, "empty-bin")
+
+    When "ensuring"
+    added = ensure_footprint(root)
+
+    Then "git could not be asked, so the literal line counts and the others are added"
+    added == [".cursor/rules/org-invariants.mdc", ".agents/skills/dev/"]
+
+    Cleanup
+    ENV["PATH"] = path_was
+    FileUtils.rm_rf(dir)
+  end
+
   test "missing reports the paths git does not ignore, and nothing outside a git repo" do
     Given "a repo ignoring one path, and a plain dir"
     dir = Dir.mktmpdir("dev-footprint-test-")
