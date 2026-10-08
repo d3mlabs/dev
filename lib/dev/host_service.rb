@@ -4,14 +4,17 @@
 require "open3"
 require "pathname"
 require_relative "cd/hook_installer"
+require_relative "deps/gem_skills"
 require_relative "learnings/synchronizer"
 require_relative "settings"
-require_relative "skill_installer"
+require_relative "skills/corpus_channel"
+require_relative "skills/materializer"
 
 module Dev
   # What keeping a host converged consists of — one method per piece of
   # machine state dev owns: the brew tooling layer, the shell RC hook, the
-  # user-global skill links, and the org learnings artifacts. Every
+  # skill links (dev's own and the project's gem set), and the org
+  # learnings artifacts. Every
   # operation shares the same contract: no user arguments, idempotent, and
   # warn-only (host hygiene rides other commands and must never block
   # them). Commands compose these verbs — `dev up`'s host half is
@@ -23,6 +26,8 @@ module Dev
   # it belongs to its own command accessor.
   class HostService
     extend T::Sig
+
+    GemSkillsFactory = T.type_alias { T.proc.params(project_root: Pathname).returns(Dev::Skills::Channel) }
 
     # A canonical brew formula token: bare name or fully tap-qualified
     # user/repo/name (exactly one or three segments — a two-segment form is
@@ -69,8 +74,11 @@ module Dev
     # @param brew_executor [#run, #quiet?] brew invocation seam, injectable
     #   so tests never call brew
     # @param hook_installer [Dev::Cd::HookInstaller] the shell RC hook seam
-    # @param skill_installer [Dev::SkillInstaller] target for dev's shipped
-    #   skill links (defaults to the user-global ~/.cursor/skills)
+    # @param materializer [Dev::Skills::Materializer] places skill channels
+    # @param own_skills [Dev::Skills::OwnSkills] dev's shipped skills channel
+    #   (defaults to the user-global root; override for tests)
+    # @param gem_skills_factory [Proc] builds a project's gem skills channel
+    #   (injectable so tests never spawn bundler)
     # @param synchronizer [Dev::Learnings::Synchronizer, Dev::Learnings::UnconfiguredSynchronizer]
     #   the org learnings read path (the unconfigured null object when no
     #   knowledge repo is set)
@@ -79,18 +87,24 @@ module Dev
         settings: Dev::Settings,
         brew_executor: T.untyped,
         hook_installer: Dev::Cd::HookInstaller,
-        skill_installer: Dev::SkillInstaller,
+        materializer: Dev::Skills::Materializer,
+        own_skills: Dev::Skills::OwnSkills,
+        gem_skills_factory: GemSkillsFactory,
         synchronizer: T.untyped,
       ).void
     end
     def initialize(settings: Dev::Settings.new, brew_executor: BrewExecutor.new,
                    hook_installer: Dev::Cd::HookInstaller.new,
-                   skill_installer: Dev::SkillInstaller.new,
-                   synchronizer: Dev::Learnings::Synchronizer.for(settings: settings))
+                   materializer: Dev::Skills::Materializer.new,
+                   own_skills: Dev::Skills::OwnSkills.new,
+                   gem_skills_factory: ->(project_root) { Dev::Deps::GemSkills.new(project_root: project_root) },
+                   synchronizer: Dev::Learnings::Synchronizer.for(settings: settings, materializer: materializer))
       @settings = settings
       @brew_executor = brew_executor
       @hook_installer = hook_installer
-      @skill_installer = skill_installer
+      @materializer = materializer
+      @own_skills = own_skills
+      @gem_skills_factory = gem_skills_factory
       @synchronizer = synchronizer
     end
 
@@ -133,15 +147,33 @@ module Dev
       @hook_installer.ensure_installed
     end
 
-    # Install or refresh the user-global links to dev's own shipped skills.
-    # Cheap and idempotent, so every hook point can afford it — and `brew
-    # upgrade` refreshes shipped skills automatically (the symlinks resolve
-    # through the installed tree, wherever brew put it).
+    # Materialize the skill channels the host hooks own: dev's own shipped
+    # set (user-global) and, given a project, its locked gem set
+    # (project-scoped). Cheap and idempotent, so every hook point can afford
+    # it — and `brew upgrade` refreshes shipped skills automatically (the
+    # symlinks resolve through the installed tree, wherever brew put it).
+    # The org channel is the learnings sync's to materialize, right after it
+    # refreshes the cache (see sync_learnings).
     #
+    # @param project_root [Pathname, String, nil] project whose gem skills
+    #   to materialize; nil skips them (no project context)
     # @return [void]
-    sig { void }
-    def install_skills
-      @skill_installer.install_shipped
+    sig { params(project_root: T.nilable(T.any(Pathname, String))).void }
+    def sync_skills(project_root: nil)
+      @materializer.sync(hook_channels(project_root))
+    end
+
+    # Every skills channel dev materializes on this machine, for a project:
+    # dev's own, the org tier (when a knowledge repo is configured), the
+    # project's gem set (when in a project). What `dev skills` reports and
+    # re-materializes.
+    #
+    # @param project_root [Pathname, String, nil]
+    # @return [Array<Dev::Skills::Channel>]
+    sig { params(project_root: T.nilable(T.any(Pathname, String))).returns(T::Array[Dev::Skills::Channel]) }
+    def skill_channels(project_root: nil)
+      own, *gem = hook_channels(project_root)
+      [T.must(own), @synchronizer.org_channel, *gem].compact
     end
 
     # Refresh the machine's org learnings artifacts, best-effort (the
@@ -157,6 +189,15 @@ module Dev
     end
 
     private
+
+    # @param project_root [Pathname, String, nil]
+    # @return [Array<Dev::Skills::Channel>] own + (gem when in a project)
+    sig { params(project_root: T.nilable(T.any(Pathname, String))).returns(T::Array[Dev::Skills::Channel]) }
+    def hook_channels(project_root)
+      channels = T.let([@own_skills], T::Array[Dev::Skills::Channel])
+      channels << @gem_skills_factory.call(Pathname(project_root)) if project_root
+      channels
+    end
 
     # An etc config.yml is evidence of a deployment, and a deployment must
     # name itself or org updates silently stop flowing (self-update has no

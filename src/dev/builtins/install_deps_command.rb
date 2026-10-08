@@ -8,7 +8,6 @@ require "dev/container_context"
 require "dev/container_ruby"
 require "dev/deps"
 require "dev/deps/local_store"
-require "dev/deps/gem_skill_linker"
 require "dev/deps/integration"
 require "dev/deps/lockfile"
 require "dev/deps/registry"
@@ -48,12 +47,6 @@ module Dev
         ).returns(Dev::Deps::Installer)
       end
 
-      # Builds the project-scoped gem skill linker (the project root is a
-      # per-call value, so the collaborator arrives as a factory).
-      GemSkillLinkerFactory = T.type_alias do
-        T.proc.params(project_root: Pathname).returns(Dev::Deps::GemSkillLinker)
-      end
-
       # @param inside_container [Boolean] whether this dev runs inside a
       #   dev-managed container (ContainerContext). Inside, the build group is
       #   excluded by default: the image bootstrap already installed it.
@@ -62,7 +55,6 @@ module Dev
       sig do
         params(
           installer_factory: InstallerFactory,
-          gem_skill_linker_factory: GemSkillLinkerFactory,
           host_service: Dev::HostService,
           flag_parser: Cli::FlagParser,
           inside_container: T::Boolean,
@@ -73,7 +65,6 @@ module Dev
         installer_factory: ->(lockfile, integrations) {
           Dev::Deps::Installer.new(lockfile:, integrations:)
         },
-        gem_skill_linker_factory: ->(project_root) { Dev::Deps::GemSkillLinker.new(project_root:) },
         host_service: Dev::HostService.new,
         flag_parser: Cli::FlagParser.new,
         inside_container: Dev::ContainerContext.inside?,
@@ -81,7 +72,6 @@ module Dev
       )
         super()
         @installer_factory = installer_factory
-        @gem_skill_linker_factory = gem_skill_linker_factory
         @host_service = host_service
         @flag_parser = flag_parser
         @inside_container = inside_container
@@ -133,15 +123,16 @@ module Dev
         installer.install(env:, host:, groups:, except:, integration_types:)
         return if @inside_container
 
-        # Installing a dependency includes its shipped skills: finish by linking
-        # the locked gem set's skills project-scoped, and refresh the machine's
-        # org learnings artifacts (both hooks are best-effort and never raise).
+        # Installing a dependency includes its shipped skills: finish by
+        # materializing the skill channels (the locked gem set's land
+        # project-scoped), and refresh the machine's org learnings artifacts
+        # (both hooks are best-effort and never raise).
         # This is hygiene, not a bootstrap contract: workflows that must start
         # on fresh invariants (e.g. ai-flow's runner) run an explicit blocking
         # `dev learnings sync` step instead of relying on this side effect.
         # Host-side only: the links land in the mounted project tree and must
         # name the host's gem paths, and the learnings are the host's.
-        @gem_skill_linker_factory.call(project.root).link_all
+        @host_service.sync_skills(project_root: project.root)
         @host_service.sync_learnings(project_root: project.root)
       end
 

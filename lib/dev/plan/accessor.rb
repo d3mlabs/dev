@@ -53,15 +53,16 @@ module Dev
         @host_service = T.let(host_service || Dev::HostService.new(settings: @settings), Dev::HostService)
       end
 
-      # The hook point every `dev plan` verb runs first: refresh dev's shipped
-      # skill links and the org learnings artifacts. Cheap and idempotent
+      # The hook point every `dev plan` verb runs first: refresh the skill
+      # links (dev's own, the project's gem set) and the org learnings
+      # artifacts. Cheap and idempotent
       # (content-compared, the network pull bounded by a short timeout), so
       # every invocation can afford it.
       #
       # @return [void]
       sig { void }
       def refresh_host
-        @host_service.install_skills
+        @host_service.sync_skills(project_root: @project_root)
         @host_service.sync_learnings(project_root: @project_root)
       end
 

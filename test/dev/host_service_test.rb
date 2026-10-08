@@ -320,19 +320,77 @@ class Dev::HostServiceTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "install_skills links dev's shipped skills user-globally" do
-    Given "a service over a mocked skill installer"
+  test "sync_skills outside any project materializes only dev's own channel" do
+    Given "a service over a mocked materializer"
     dir = Dir.mktmpdir("dev-host-service-test-")
-    skill_installer = typed_mock(Dev::SkillInstaller)
-    service = build_service(dir, skill_installer: skill_installer)
+    materializer = typed_mock(Dev::Skills::Materializer)
+    own = Dev::Skills::OwnSkills.new(root: File.join(dir, "global"))
+    service = build_service(dir, materializer: materializer, own_skills: own)
 
-    When "installing the shipped skills"
-    service.install_skills
+    When "syncing skills with no project context"
+    service.sync_skills
 
-    Then "the installer received the shipped skills dir"
-    1 * skill_installer.install_shipped
+    Then "the materializer received the own channel alone"
+    1 * materializer.sync([own])
 
     Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "sync_skills inside a project adds the project's gem channel" do
+    Given "a service over a mocked materializer and a recording gem channel factory"
+    dir = Dir.mktmpdir("dev-host-service-test-")
+    materializer = typed_mock(Dev::Skills::Materializer)
+    own = Dev::Skills::OwnSkills.new(root: File.join(dir, "global"))
+    gem = Dev::Skills::CorpusChannel.new(name: "gem", root: File.join(dir, "project"), corpus_root: File.join(dir, "gems"))
+    roots = []
+    factory = lambda do |project_root|
+      roots << project_root
+      gem
+    end
+    service = build_service(dir, materializer: materializer, own_skills: own, gem_skills_factory: factory)
+
+    When "syncing skills inside a project"
+    service.sync_skills(project_root: "/tmp/some-project")
+
+    Then "the gem channel was built for that project and materialized after the own channel"
+    1 * materializer.sync([own, gem])
+    roots == [Pathname("/tmp/some-project")]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "skill_channels lists own, org (when configured), and gem (when in a project), in that order" do
+    Given "a service with a configured synchronizer and a gem channel factory"
+    dir = Dir.mktmpdir("dev-host-service-test-")
+    own = Dev::Skills::OwnSkills.new(root: File.join(dir, "global"))
+    gem = Dev::Skills::CorpusChannel.new(name: "gem", root: File.join(dir, "project"), corpus_root: File.join(dir, "gems"))
+    org = Dev::Skills::CorpusChannel.new(name: "org", root: File.join(dir, "global"), corpus_root: File.join(dir, "cache"))
+    synchronizer = typed_mock(Dev::Learnings::Synchronizer)
+    synchronizer.stubs(:org_channel).returns(org)
+    service = build_service(dir, own_skills: own, gem_skills_factory: ->(_root) { gem }, synchronizer: synchronizer)
+
+    Expect "all three in a project, own + org outside one"
+    service.skill_channels(project_root: "/tmp/some-project") == [own, org, gem]
+    service.skill_channels == [own, org]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "skill_channels skips the org channel on an unconfigured machine" do
+    Given "a service whose synchronizer is the unconfigured null object"
+    dir = Dir.mktmpdir("dev-host-service-test-")
+    saved_env = ENV.delete("DEV_KNOWLEDGE_REPO")
+    own = Dev::Skills::OwnSkills.new(root: File.join(dir, "global"))
+    service = build_service(dir, own_skills: own)
+
+    Expect "only the own channel"
+    service.skill_channels == [own]
+
+    Cleanup
+    ENV["DEV_KNOWLEDGE_REPO"] = saved_env if saved_env
     FileUtils.rm_rf(dir)
   end
 
@@ -374,7 +432,10 @@ class Dev::HostServiceTest < Minitest::Test
   # temp dir; the brew executor is faked, and the delegation collaborators
   # are injectable per test.
   def build_service(dir, brew_executor: RecordingExecutor.new, hook_installer: Dev::Cd::HookInstaller.new,
-                    skill_installer: Dev::SkillInstaller.new, synchronizer: nil)
+                    materializer: Dev::Skills::Materializer.new,
+                    own_skills: Dev::Skills::OwnSkills.new(root: File.join(dir, "global")),
+                    gem_skills_factory: ->(root) { Dev::Deps::GemSkills.new(project_root: root) },
+                    synchronizer: nil)
     settings = Dev::Settings.new(
       config_path: File.join(dir, "user", "config.yml"),
       system_config_path: File.join(dir, "etc", "config.yml"),
@@ -383,8 +444,10 @@ class Dev::HostServiceTest < Minitest::Test
       settings: settings,
       brew_executor: brew_executor,
       hook_installer: hook_installer,
-      skill_installer: skill_installer,
-      synchronizer: synchronizer || Dev::Learnings::Synchronizer.for(settings: settings),
+      materializer: materializer,
+      own_skills: own_skills,
+      gem_skills_factory: gem_skills_factory,
+      synchronizer: synchronizer || Dev::Learnings::Synchronizer.for(settings: settings, materializer: materializer),
     )
   end
 

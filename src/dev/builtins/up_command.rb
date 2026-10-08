@@ -92,7 +92,7 @@ module Dev
         # links must exist after it, not after the first `dev plan`.
         @host_service.converge_tooling
         @host_service.install_rc_hook
-        @host_service.install_skills
+        @host_service.sync_skills(project_root: nil)
         project = context.project
         if project.nil?
           # In-project runs sync learnings via the composed dev deps install

@@ -17,7 +17,7 @@ module Dev
 
       # The bundled template body, relative to this file (lib/dev/plan/ →
       # repo or libexec root) — the installed location under brew, same
-      # resolution as SkillInstaller::SHIPPED_SKILLS_DIR.
+      # resolution as Dev::Skills::Layout::SHIPPED_SKILLS_DIR.
       BUNDLE_FILE = T.let(
         Pathname.new(File.expand_path(File.join(__dir__, "..", "..", "..", "share", "plan-templates", "tech-design.md"))),
         Pathname,

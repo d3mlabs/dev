@@ -416,7 +416,7 @@ class RunnerTest < Minitest::Test
 
     Then "help, up, runner and the global nouns are offered; project-only builtins are not"
     names = out.string.lines.map(&:chomp)
-    (%w[help up runner cd clone config cred engine learnings plan] - names).empty?
+    (%w[help up runner cd clone config cred engine learnings plan skills] - names).empty?
     !names.include?("deps")
   end
 
@@ -437,6 +437,7 @@ class RunnerTest < Minitest::Test
     out.string.include?("  cred …       Resolve stored credentials")
     out.string.include?("  learnings …  The learnings read path: org knowledge cache, skill links, invariants")
     out.string.include?("  plan …       Sync Cursor plans with GitHub issues")
+    out.string.include?("  skills …     Skill materialization: every channel dev links into an agent's discovery roots")
     out.string.include?("  runner …     Enroll, inspect or unenroll this host as a self-hosted runner")
     out.string.include?("Lifecycle:")
     out.string.lines.last == "#{Dev::Runner::PROJECTLESS_EPILOGUE}\n"

@@ -2,28 +2,13 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/deps/gem_skill_linker"
 require "dev/learnings"
 require "dev/settings"
-require "dev/skill_installer"
+require "dev/skills"
 require "pathname"
 require "tmpdir"
 require "fileutils"
 require "stringio"
-
-# A gem skill linker stand-in: the learnings surface is under test here, and
-# the real linker would shell out to bundler.
-class RecordingGemSkillLinker
-  attr_reader :link_all_calls
-
-  def initialize
-    @link_all_calls = 0
-  end
-
-  def link_all
-    @link_all_calls += 1
-  end
-end unless defined?(RecordingGemSkillLinker)
 
 transform!(RSpock::AST::Transformation)
 class Dev::Learnings::AccessorTest < Minitest::Test
@@ -38,16 +23,18 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     cache = Dev::Learnings::Cache.new(repo: source, dir: File.join(dir, "cache"))
     # The fixture cache lives under the real temp dir; the tmpdir override
     # keeps the installer's ephemeral-source guard out of these tests' way.
-    installer = Dev::SkillInstaller.new(skills_dir: File.join(dir, "user-skills"), tmpdir: File.join(dir, "tmp"))
-    synchronizer = Dev::Learnings::Synchronizer.new(settings: settings, cache: cache, skill_installer: installer)
+    materializer = Dev::Skills::Materializer.new(
+      installer_factory: ->(root) { Dev::Skills::Installer.new(skills_dir: root, tmpdir: File.join(dir, "tmp")) },
+    )
+    synchronizer = Dev::Learnings::Synchronizer.new(
+      settings: settings, cache: cache, materializer: materializer, skills_root: File.join(dir, "user-skills"),
+    )
     project = project_root == :default ? Pathname(dir) / "repo" : project_root
     FileUtils.mkdir_p(project) if project
-    gem_skill_linker = project && RecordingGemSkillLinker.new
     accessor = Dev::Learnings::Accessor.new(
       project_root: project, settings: settings, cache: cache, synchronizer: synchronizer,
-      skill_installer: installer, gem_skill_linker: gem_skill_linker,
     )
-    [accessor, cache, project, synchronizer, gem_skill_linker]
+    [accessor, cache, project, synchronizer]
   end
 
   # Settings with both file layers pinned inside the temp dir — the
@@ -79,21 +66,20 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     FileUtils.touch(markers, mtime: Time.now - seconds)
   end
 
-  test "learnings sync refreshes the whole read path and reports" do
+  test "learnings sync refreshes the org tier and reports" do
     Given "a configured accessor with no cache yet"
     dir = Dir.mktmpdir("dev-learnings-acc-test-")
-    accessor, cache, project, synchronizer, gem_skill_linker = build_env(dir)
+    accessor, cache, project, synchronizer = build_env(dir)
     out = StringIO.new
 
     When "running dev learnings sync"
     accessor.sync(out: out)
 
-    Then "cache cloned, org skill linked, invariants rendered + linked, gem skills relinked, and reported"
+    Then "cache cloned, org skill linked, invariants rendered + linked, and reported"
     cache.present?
     File.symlink?(File.join(dir, "user-skills", "srp"))
     synchronizer.rendered_invariants_file.file?
     (project / ".cursor" / "rules" / "org-invariants.mdc").symlink?
-    gem_skill_linker.link_all_calls == 1
     out.string.include?("learnings synced")
 
     Cleanup
@@ -164,14 +150,12 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     When "running dev learnings status"
     accessor.status(out: out)
 
-    Then "cache age, the machine-side render, the org skill links, and the project link are all reported"
+    Then "cache age, the machine-side render, and the project link are all reported"
     out.string.include?("refreshed")
     out.string.include?("ago")
     out.string.include?("invariants: rendered at")
-    out.string.include?("org skills: 1 linked")
     out.string.include?("project invariants link:")
     out.string.include?("(linked)")
-    out.string.include?("gem skills: 0 linked")
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -210,27 +194,6 @@ class Dev::Learnings::AccessorTest < Minitest::Test
 
     Then
     out.string.include?("present but not dev's link")
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  test "status counts the project's gem skill links and ignores other entries" do
-    Given "a synced project with one gem skill link and one unrelated file"
-    dir = Dir.mktmpdir("dev-learnings-acc-test-")
-    accessor, _cache, project, = build_env(dir)
-    accessor.sync(out: StringIO.new)
-    gem_skills_dir = project.join(*Dev::Deps::GemSkillLinker::AGENT_SKILLS_SUBDIRS)
-    FileUtils.mkdir_p(gem_skills_dir)
-    File.symlink(File.join(dir, "knowledge", "skills", "srp"), gem_skills_dir / "gem-rspock--rspock")
-    File.write(gem_skills_dir / "README.md", "not a link\n")
-    out = StringIO.new
-
-    When "running dev learnings status"
-    accessor.status(out: out)
-
-    Then
-    out.string.include?("gem skills: 1 linked")
 
     Cleanup
     FileUtils.rm_rf(dir)

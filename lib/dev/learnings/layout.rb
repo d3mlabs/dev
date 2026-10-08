@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require "pathname"
-require_relative "../skill_installer"
+require_relative "../skills/layout"
 
 module Dev
   module Learnings
@@ -97,7 +97,7 @@ module Dev
       # @return [Pathname] the repo-tier detail skill for the slug
       sig { params(repo_root: T.any(Pathname, String), slug: String).returns(Pathname) }
       def repo_skill_file(repo_root, slug)
-        Pathname.new(repo_root).join(*REPO_SKILLS_SUBDIRS, slug, SkillInstaller::SKILL_FILE)
+        Pathname.new(repo_root).join(*REPO_SKILLS_SUBDIRS, slug, Dev::Skills::Layout::SKILL_FILE)
       end
 
       # @param org_root [Pathname, String] a knowledge repo checkout (or cache)
@@ -119,7 +119,7 @@ module Dev
       # @return [Pathname] the org-tier skill for the slug
       sig { params(org_root: T.any(Pathname, String), slug: String).returns(Pathname) }
       def org_skill_file(org_root, slug)
-        org_skills_dir(org_root) / slug / SkillInstaller::SKILL_FILE
+        org_skills_dir(org_root) / slug / Dev::Skills::Layout::SKILL_FILE
       end
     end
   end
