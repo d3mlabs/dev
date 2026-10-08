@@ -74,7 +74,7 @@ class Dev::Deps::GemSkillsTest < Minitest::Test
     )
   end
 
-  test "declares a locked gem's shipped skills as gem-<gem>--<skill>, with the gem and version as provenance" do
+  test "declares a locked gem's shipped skills as gem/<gem>/<skill>, with the gem and version as provenance" do
     Given "a locked gem whose tree ships a skill, and one that ships none"
     dir = Dir.mktmpdir("dev-gem-skills-test-")
     project, gems = build_project(dir)
@@ -87,7 +87,8 @@ class Dev::Deps::GemSkillsTest < Minitest::Test
 
     Then "one entry, named by convention, sourced from the gem's skill dir, carrying its provenance"
     entries.size == 1
-    entries[0].link_name == "gem-rspock--rspock"
+    entries[0].link_name == "gem/rspock/rspock"
+    entries[0].name == "rspock"
     entries[0].source == rspock / "skills" / "rspock"
     entries[0].package == "rspock"
     entries[0].version == "1.2.0"
@@ -96,7 +97,7 @@ class Dev::Deps::GemSkillsTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "the channel is named gem and lands project-scoped under .agents/skills" do
+  test "the channel is named gem and lands project-scoped under .agents/skills/dev" do
     Given "a project"
     dir = Dir.mktmpdir("dev-gem-skills-test-")
     project, = build_project(dir)
@@ -104,7 +105,8 @@ class Dev::Deps::GemSkillsTest < Minitest::Test
 
     Expect "the conventional name and root"
     channel.name == "gem"
-    channel.root == project / ".agents" / "skills"
+    channel.project_scoped?
+    channel.root == project / ".agents" / "skills" / "dev"
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -121,7 +123,7 @@ class Dev::Deps::GemSkillsTest < Minitest::Test
     entries = channel.entries
 
     Then "the entry is named for minitest-reporters, not minitest, and versioned from the right suffix"
-    entries.map(&:link_name) == ["gem-minitest-reporters--reporting"]
+    entries.map(&:link_name) == ["gem/minitest-reporters/reporting"]
     entries[0].package == "minitest-reporters"
     entries[0].version == "1.7.1"
 
@@ -152,20 +154,6 @@ class Dev::Deps::GemSkillsTest < Minitest::Test
 
     Expect "no entries"
     channel.entries == []
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  test "owns? only gem- prefixed links" do
-    Given "a project"
-    dir = Dir.mktmpdir("dev-gem-skills-test-")
-    project, = build_project(dir)
-    channel = build_channel(project, Dev::Deps::ShadowenvExec.new(project_root: project))
-
-    Expect "the prefix decides"
-    channel.owns?(Pathname("/x/gem-rspock--rspock"))
-    !channel.owns?(Pathname("/x/my-own-link"))
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -235,27 +223,29 @@ class Dev::Deps::GemSkillsTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "materialized, a locked gem's skill lands under .agents/skills and a departed gem's link is pruned" do
-    Given "a stale gem link, a user symlink, and a user file in the project's skills dir"
+  test "materialized, a locked gem's skill lands under .agents/skills/dev/gem/<gem>/<skill> and a departed gem's is pruned" do
+    Given "a previously materialized gem that left the lock, plus the repo's own content beside the dev/ subtree"
     dir = Dir.mktmpdir("dev-gem-skills-test-")
     project, gems = build_project(dir)
     rspock = build_gem(gems, "rspock-1.2.0", skills: ["rspock"])
-    skills_dir = project / ".agents" / "skills"
-    FileUtils.mkdir_p(skills_dir)
     departed = build_gem(gems, "departed-1.0.0", skills: ["departed"])
-    File.symlink(departed / "skills" / "departed", skills_dir / "gem-departed--departed")
+    materializer = build_materializer(dir)
+    materializer.sync([build_channel(project, stub_bundle_list(project, [rspock, departed]))])
+    skills_dir = project / ".agents" / "skills"
     File.symlink(gems, skills_dir / "my-own-link")
     (skills_dir / "notes.md").write("mine\n")
     channel = build_channel(project, stub_bundle_list(project, [rspock]))
 
     When "materializing the channel"
-    build_materializer(dir).sync([channel])
+    materializer.sync([channel])
 
-    Then "the locked skill is linked, only the departed gem link is pruned"
-    File.readlink(skills_dir / "gem-rspock--rspock") == (rspock / "skills" / "rspock").to_s
-    !File.symlink?(skills_dir / "gem-departed--departed")
+    Then "the locked skill is linked in the new layout, the departed gem's link and dir are gone, the repo's own content stands"
+    File.readlink(skills_dir / "dev" / "gem" / "rspock" / "rspock") == (rspock / "skills" / "rspock").to_s
+    !File.exist?(skills_dir / "dev" / "gem" / "departed")
     File.symlink?(skills_dir / "my-own-link")
     (skills_dir / "notes.md").file?
+    (skills_dir / "dev" / ".gitignore").read == "*\n"
+    (skills_dir / "dev" / "manifest.json").file?
 
     Cleanup
     FileUtils.rm_rf(dir)

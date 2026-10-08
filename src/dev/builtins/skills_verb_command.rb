@@ -26,8 +26,9 @@ module Dev
       # from any verb.
       DEFAULT_ACCESSOR_FACTORY = T.let(
         lambda do
-          channels = Dev::HostService.new.skill_channels(project_root: WorkspaceRoot.enclosing_project)
-          Dev::Skills::Accessor.new(channels: channels)
+          project_root = WorkspaceRoot.enclosing_project
+          channels = Dev::HostService.new.skill_channels(project_root: project_root)
+          Dev::Skills::Accessor.new(channels: channels, project_root: project_root)
         end,
         AccessorFactory,
       )

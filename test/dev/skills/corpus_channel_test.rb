@@ -48,35 +48,13 @@ class Dev::Skills::CorpusChannelTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "owns? a link only when it targets inside the corpus" do
-    Given "links into the corpus, into a sibling dir with the same prefix, and elsewhere"
-    dir = Dir.mktmpdir("dev-corpus-channel-test-")
-    root = Pathname(dir) / "root"
-    FileUtils.mkdir_p(root)
-    inside = build_skill(dir, "corpus", "skill")
-    File.symlink(inside, root / "skill")
-    File.symlink(File.join(dir, "corpus-other", "skill"), root / "lookalike")
-    File.symlink(File.join(dir, "elsewhere", "skill"), root / "foreign")
-    FileUtils.mkdir_p(root / "plain-dir")
-    channel = Dev::Skills::CorpusChannel.new(name: "c", root: root, corpus_root: File.join(dir, "corpus"))
-
-    Expect "only the in-corpus link is owned; a non-symlink is simply not owned"
-    channel.owns?(root / "skill")
-    !channel.owns?(root / "lookalike")
-    !channel.owns?(root / "foreign")
-    !channel.owns?(root / "plain-dir")
-    !channel.owns?(root / "absent")
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
   test "OwnSkills is the shipped set, landing user-globally" do
     Given "the default own-skills channel"
     channel = Dev::Skills::OwnSkills.new
 
-    Expect "it is named dev, reads from the shipped dir, and declares the shipped ai-flow skill"
+    Expect "it is named dev, user-global, reads from the shipped dir, and declares the shipped ai-flow skill"
     channel.name == "dev"
+    !channel.project_scoped?
     channel.root == Dev::Skills::Layout.user_global_root
     channel.corpus_root == Dev::Skills::Layout::SHIPPED_SKILLS_DIR
     channel.entries.map(&:link_name).include?("ai-flow")

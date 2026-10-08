@@ -17,8 +17,9 @@ module Dev
     # `dev deps install` finish by asking `Dev::Skills` to materialize this
     # channel: the resolved (lockfile-matched) gem set is scanned for
     # skills/*/SKILL.md and each one lands project-scoped as
-    # .agents/skills/gem-<gem>--<skill> (gitignored; an agent-neutral dir so
-    # the mechanism isn't Cursor-locked). A skill-set change rides the same
+    # .agents/skills/dev/gem/<gem>/<skill> (the dev-managed, self-ignoring
+    # subtree of an agent-neutral dir, so the mechanism isn't Cursor-locked;
+    # see Skills::Layout). A skill-set change rides the same
     # staleness story as any dependency change: the lock digest changes, the
     # `dev up` nag fires, and the install refreshes the links.
     #
@@ -29,7 +30,6 @@ module Dev
       include Skills::Channel
 
       NAME = "gem"
-      LINK_PREFIX = "gem-"
       SKILLS_SUBDIR = "skills"
 
       sig { override.returns(Pathname) }
@@ -57,6 +57,12 @@ module Dev
         NAME
       end
 
+      # A lockfile's set differs per project.
+      sig { override.returns(T::Boolean) }
+      def project_scoped?
+        true
+      end
+
       # One entry per skills/*/SKILL.md found in a locked gem's installed
       # tree. A project without a Gemfile declares nothing (and spawns no
       # bundler). A gem that resolves under the temp dir is still declared —
@@ -69,19 +75,13 @@ module Dev
         gem_roots.flat_map do |gem_name, gem_root|
           Skills::Layout.skill_dirs(gem_root / SKILLS_SUBDIR).map do |skill_dir|
             Skills::Entry.new(
-              link_name: "#{LINK_PREFIX}#{gem_name}--#{skill_dir.basename}",
+              link_name: Skills::Layout.channel_link(NAME, gem_name, skill_dir.basename.to_s),
               source: skill_dir,
               package: gem_name,
               version: version_of(gem_name, gem_root),
             )
           end
         end
-      end
-
-      # Only `gem-`-prefixed links are ours — anything else in the dir is not.
-      sig { override.params(link: Pathname).returns(T::Boolean) }
-      def owns?(link)
-        link.basename.to_s.start_with?(LINK_PREFIX)
       end
 
       private

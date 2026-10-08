@@ -8,6 +8,7 @@ require_relative "deps/gem_skills"
 require_relative "learnings/synchronizer"
 require_relative "settings"
 require_relative "skills/corpus_channel"
+require_relative "skills/legacy"
 require_relative "skills/materializer"
 
 module Dev
@@ -153,13 +154,15 @@ module Dev
     # it — and `brew upgrade` refreshes shipped skills automatically (the
     # symlinks resolve through the installed tree, wherever brew put it).
     # The org channel is the learnings sync's to materialize, right after it
-    # refreshes the cache (see sync_learnings).
+    # refreshes the cache (see sync_learnings). In a project, the flat gem
+    # links of the pre-#250 layout are swept first (a one-time migration).
     #
     # @param project_root [Pathname, String, nil] project whose gem skills
     #   to materialize; nil skips them (no project context)
     # @return [void]
     sig { params(project_root: T.nilable(T.any(Pathname, String))).void }
     def sync_skills(project_root: nil)
+      Dev::Skills::Legacy.sweep(project_root) if project_root
       @materializer.sync(hook_channels(project_root))
     end
 
