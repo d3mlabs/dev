@@ -24,17 +24,17 @@ Commands form a **tree** (dev#188) and `dev` is its root node. Sealed
 `BuiltinCommand`, `ProjectCommand`, `OverriddenCommand` run something,
 `CommandGroup` is "children and nothing to run" (`CommandGroup.root` for
 the root). `CommandRepository#resolve` walks argv from the root; a group
-with a leftover token is not-found (top level included). A resolved group
-hits `CommandExecutor`'s group arm (`GroupExecutor` → `UsagePrinter#print_node`,
-the one usage view; `help <path>` prints the same). `--help`/`-h` route to
-bare `dev`. The hidden `complete` builtin walks the same tree.
+with a leftover word is not-found (top level included), a leftover flag is
+its arg. A resolved group hits `CommandExecutor`'s group arm (`GroupExecutor`
+→ `UsagePrinter#print_node`, the one usage view; `help <path>` prints the
+same). `-h`/`--help` among a dev-defined node's args is rewritten to
+`help <path>` by the Runner (`GlobalDispatch` declines it; dev#217); other
+flags pass `Cli::FlagVocabulary` against `Command#flags` in `CommandService`
+(see flag-vocabulary-gate). Hidden `complete` walks the same tree.
 
-The seams:
-
-- A noun with verbs is a `CommandGroup` over one leaf class per verb
-  (`deps` → `DepsPathCommand`; `plan` → `PlanNewCommand`…); accessors expose
-  one public method per verb — never hand-roll `case args.first` dispatch.
-  Global nouns register in `GlobalCatalog`, project builtins in the Runner.
-- Project commands live in dev.yml, never in dev's core; `commands:` parse
-  to the node's `children` (`CommandGroup` when no `run:`) and merge child
-  by child with a same-named builtin in the repository.
+The seams: a noun with verbs is a `CommandGroup` over one leaf class per
+verb (`deps` → `DepsPathCommand`); accessors expose one public method per
+verb — never hand-roll `case args.first` dispatch. Global nouns register in
+`GlobalCatalog`, project builtins in the Runner. Project commands live in
+dev.yml, never in dev's core; `commands:` parse to the node's `children`
+(`CommandGroup` when no `run:`), merging child by child with a same-named builtin.
