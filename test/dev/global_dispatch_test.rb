@@ -342,6 +342,75 @@ class Dev::GlobalDispatchTest < Minitest::Test
     ["-h"]
     ["help"]
     ["help", "plan"]
+    ["plan", "--help"]
+    ["plan", "new", "-h"]
+    ["plan", "new", "Carve system", "--help"]
+    ["config", "get", "plans_repo", "--help"]
+  end
+
+  test "a help flag after a literal -- is data, so #{argv.inspect} still dispatches globally" do
+    Given "a dispatcher"
+    dispatch = build_dispatch
+
+    Expect "the terminator ends option parsing"
+    dispatch.global_command?(argv) == true
+
+    Where
+    argv
+    ["plan", "new", "--", "--help"]
+    ["config", "get", "--", "-h"]
+  end
+
+  test "an unknown flag at a global node is a usage error: the node's usage on stderr, exit 2, nothing runs" do
+    Given "a dispatcher over a recording config accessor and a cwd with no dev.yml"
+    config = RecordingConfigAccessor.new
+    dispatch = build_dispatch(config_accessor: config)
+    cwd = Dir.mktmpdir("dispatch-cwd-")
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(2).once
+
+    When "we dispatch a leaf with a flag it does not declare"
+    Dir.chdir(cwd) { dispatch.run(["config", "get", "plans_repo", "--hlep"]) }
+
+    Then "the flag and the node are named, the usage follows, and the verb never ran"
+    $stderr.string.lines.first == "dev: unknown flag '--hlep' for 'dev config get'\n"
+    $stderr.string.include?("Usage: dev config get [args...]")
+    config.last_call.nil?
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.rm_rf(cwd)
+  end
+
+  test "a declared flag is admitted at a global node" do
+    Given "a recording clone accessor (its plumbing flag is --path)"
+    clone = RecordingCloneAccessor.new
+    dispatch = build_dispatch(clone_accessor: clone)
+
+    When "we dispatch with the declared flag"
+    dispatch.run(["clone", "--path", "d3mlabs/dev"])
+
+    Then "the accessor received it"
+    clone.last_args == ["--path", "d3mlabs/dev"]
+  end
+
+  test "an unknown flag on a global group is refused as a flag, not as an unknown subcommand" do
+    Given "a dispatcher"
+    dispatch = build_dispatch(config_accessor: RecordingConfigAccessor.new)
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(2).once
+
+    When "we dispatch the group with a typo'd flag"
+    dispatch.run(["config", "--hlep"])
+
+    Then "the group's usage follows the flag message"
+    $stderr.string.lines.first == "dev: unknown flag '--hlep' for 'dev config'\n"
+    $stderr.string.include?("Usage: dev config <command> [args...]")
+
+    Cleanup
+    $stderr = old_stderr
   end
 
   test "project commands still require a nearby dev.yml" do

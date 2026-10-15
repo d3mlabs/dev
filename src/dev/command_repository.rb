@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "cli/flag_vocabulary"
 require_relative "command"
 
 module Dev
@@ -42,13 +43,17 @@ module Dev
     #   root node (see CommandGroup.root), children in listing order
     # @param project_commands [Hash{String => ProjectNode}] the parsed
     #   dev.yml tree, in declaration order
+    # @param flag_vocabulary [Cli::FlagVocabulary] tells a flag-shaped token
+    #   from a would-be subcommand name during resolution
     sig do
       params(
         root: CommandGroup,
         project_commands: T::Hash[String, ProjectNode],
+        flag_vocabulary: Cli::FlagVocabulary,
       ).void
     end
-    def initialize(root:, project_commands:)
+    def initialize(root:, project_commands:, flag_vocabulary: Cli::FlagVocabulary.new)
+      @flag_vocabulary = flag_vocabulary
       @root = T.let(
         CommandGroup.new(
           path: [],
@@ -62,9 +67,11 @@ module Dev
 
     # Walk the tree along argv from the root: descend while the next token
     # names a child of the current node; the first token that doesn't is
-    # where the args begin. A group cannot take args — it only prints
-    # usage — so a leftover token there is an unknown subcommand (at the
-    # root: an unknown command). Empty argv resolves to the root.
+    # where the args begin. A group takes no positional args — it only
+    # prints usage — so a leftover word there is an unknown subcommand (at
+    # the root: an unknown command); a leftover *flag* is an arg like any
+    # other, for the service's vocabulary gate to interpret (`dev plan
+    # --help` asks for the group's usage). Empty argv resolves to the root.
     #
     # @param argv [Array<String>] the full argv, command path first
     # @return [Resolution]
@@ -79,7 +86,7 @@ module Dev
         token = rest.first
         child = token && node.children[token]
         if child.nil?
-          if node.is_a?(CommandGroup) && token
+          if node.is_a?(CommandGroup) && token && !@flag_vocabulary.flag?(token)
             raise CommandNotFoundError, "Command '#{(path + [token]).join(" ")}' not found"
           end
           break

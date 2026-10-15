@@ -143,6 +143,11 @@ module Dev
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
 
+      # The scope switch and the label inputs, the enrollment identity
+      # overrides, the run-as user, and the superseded-enrollments consent.
+      sig { override.returns(T::Array[String]) }
+      def flags = ["--org", "--labels", "--ai-flow", "--dir", "--name", "--repo", "--agent-user", YES_FLAG]
+
       # Converge, then enroll (or amend), then the steps the enrollment
       # enables.
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }

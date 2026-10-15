@@ -71,6 +71,9 @@ module Dev
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
 
+      sig { override.returns(T::Array[String]) }
+      def flags = [YES_FLAG, ORG_FLAG]
+
       # What the enrollment argument can be, from discovery alone (offline;
       # never gh): every local scope once, in discovery order, then every
       # `~`-dir — so typing an owner narrows to scopes and `~` to dirs.

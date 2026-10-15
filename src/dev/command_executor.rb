@@ -67,8 +67,9 @@ module Dev
       when OverriddenCommand
         overridden_executor.execute(command, args:, context:)
       when CommandGroup
-        # A group takes no args (the repository already rejected any as an
-        # unknown subcommand), so only the node itself is dispatched.
+        # A group takes no args — the repository rejected a positional as an
+        # unknown subcommand, the service's vocabulary gate a flag (or
+        # rewrote it into help) — so only the node itself is dispatched.
         @group_executor.execute(command)
       else
         # simplecov:disable — the sealed hierarchy leaves no fifth variant

@@ -17,6 +17,7 @@ module Dev
     class CacheGcCommand < BuiltinCommand
       extend T::Sig
 
+      KEEP_FLAG = "--keep"
       TOOL_CACHES_FLAG = "--tool-caches"
 
       # Builds the GC over a project's lockfile (per-call project root).
@@ -41,6 +42,9 @@ module Dev
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Workflow
+
+      sig { override.returns(T::Array[String]) }
+      def flags = [KEEP_FLAG, TOOL_CACHES_FLAG]
 
       # GC is maintenance over the cache, not a build: it reads the lockfile to
       # know what to keep and never needs the deps installed. It also runs as
@@ -77,7 +81,7 @@ module Dev
       # @return [Integer]
       sig { params(args: T::Array[String]).returns(Integer) }
       def parse_keep(args)
-        keep = @flag_parser.value(args, "--keep")
+        keep = @flag_parser.value(args, KEEP_FLAG)
         keep ? Integer(keep) : Dev::Deps::CacheGc::DEFAULT_KEEP
       end
     end

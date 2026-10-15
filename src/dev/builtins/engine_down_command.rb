@@ -58,6 +58,9 @@ module Dev
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
 
+      sig { override.returns(T::Array[String]) }
+      def flags = [FORCE_FLAG]
+
       sig { override.returns(T::Boolean) }
       def staleness_exempt? = true
 

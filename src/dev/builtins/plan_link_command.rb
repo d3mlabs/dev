@@ -13,6 +13,9 @@ module Dev
       sig { override.returns(String) }
       def desc = "Attach a plan file to issue #n, or create an issue from a plan file (link <n> [<file>] | link <file>)"
 
+      sig { override.returns(T::Array[String]) }
+      def flags = ["--org"]
+
       private
 
       sig { override.params(accessor: Dev::Plan::Accessor, args: T::Array[String]).void }

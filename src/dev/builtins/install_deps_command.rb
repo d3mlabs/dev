@@ -36,6 +36,10 @@ module Dev
     class InstallDepsCommand < BuiltinCommand
       extend T::Sig
 
+      # The repeatable narrowing flags (`--group build --group=test`).
+      GROUP_FLAG = "--group"
+      EXCEPT_FLAG = "--except"
+      INTEGRATION_FLAG = "--integration"
       PINNED_TAPS_FLAG = "--pinned-taps"
 
       # Builds the Installer for a lockfile + integrations pair;
@@ -84,6 +88,9 @@ module Dev
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
 
+      sig { override.returns(T::Array[String]) }
+      def flags = [GROUP_FLAG, EXCEPT_FLAG, INTEGRATION_FLAG, PINNED_TAPS_FLAG]
+
       # dev deps install IS the remediation for a stale install — never nag
       # before it.
       sig { override.returns(T::Boolean) }
@@ -105,9 +112,9 @@ module Dev
         host = Dev::Deps.detect_host
         pin_taps = args.include?(PINNED_TAPS_FLAG)
         args -= [PINNED_TAPS_FLAG]
-        groups = symbol_flags(args, "--group")
-        except = symbol_flags(args, "--except") || default_except
-        integration_types = symbol_flags(args, "--integration")
+        groups = symbol_flags(args, GROUP_FLAG)
+        except = symbol_flags(args, EXCEPT_FLAG) || default_except
+        integration_types = symbol_flags(args, INTEGRATION_FLAG)
         lockfile = Dev::Deps::Lockfile.new(dir: project.root)
 
         # Headless boxes (CI, runner services) reach dev deps install before any
@@ -185,7 +192,7 @@ module Dev
       # appears (nil is the Installer's "no narrowing on this axis").
       #
       # @param args [Array<String>] the command's argv
-      # @param flag [String] "--group", "--except" or "--integration"
+      # @param flag [String] GROUP_FLAG, EXCEPT_FLAG or INTEGRATION_FLAG
       # @return [Array<Symbol>, nil]
       sig { params(args: T::Array[String], flag: String).returns(T.nilable(T::Array[Symbol])) }
       def symbol_flags(args, flag)

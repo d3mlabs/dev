@@ -10,6 +10,16 @@ require "stringio"
 require "tempfile"
 require "tmpdir"
 
+# The leaf a mocked service resolves argv to: a plain builtin — not opaque,
+# no flags — so the router's help rewrite stays out of the way.
+class RunnerLeafStub < Dev::BuiltinCommand
+  def desc = "a leaf"
+
+  def category = Dev::Command::Category::Workflow
+
+  def call(args:, context:); end
+end unless defined?(RunnerLeafStub)
+
 transform!(RSpock::AST::Transformation)
 class RunnerTest < Minitest::Test
   extend T::Sig
@@ -102,6 +112,108 @@ class RunnerTest < Minitest::Test
     ["--help"]
     ["-h"]
     ["help"]
+  end
+
+  # --- -h/--help at every node, unknown flags refused (#217) ----------------
+
+  test "#{argv.inspect} prints the same usage as `dev help #{path.join(" ")}`: the help flag works at #{shape}" do
+    Given "two Runners over the same dev.yml"
+    commands = { "test" => { "run" => "rspec", "desc" => "Run tests" } }
+    help_out = StringIO.new
+    out = StringIO.new
+
+    When "asking by the help command and by the flag"
+    build_runner(commands: commands, out: help_out).run(["help", *path])
+    build_runner(commands: commands, out: out).run(argv)
+
+    Then "one rendering, of that node"
+    out.string == help_out.string
+    out.string.include?(usage_line)
+
+    Where
+    shape                         | path             | argv                                      | usage_line
+    "the root"                    | []               | ["--help"]                                | "Usage: dev <command> [args...]"
+    "a builtin group"             | ["deps"]         | ["deps", "--help"]                        | "Usage: dev deps <command> [args...]"
+    "a builtin group, short"      | ["deps"]         | ["deps", "-h"]                            | "Usage: dev deps <command> [args...]"
+    "a builtin leaf"              | ["deps", "path"] | ["deps", "path", "--help"]                | "Usage: dev deps path [args...]"
+    "a leaf, after a positional"  | ["deps", "path"] | ["deps", "path", "xcode", "-h"]           | "Usage: dev deps path [args...]"
+    "a flagged leaf, among flags" | ["cache", "gc"]  | ["cache", "gc", "--keep", "3", "-h"]      | "Usage: dev cache gc [args...]"
+    "a global leaf in the tree"   | ["plan", "new"]  | ["plan", "new", "Carve system", "--help"] | "Usage: dev plan new [args...]"
+    "the help command itself"     | ["help"]         | ["help", "--help"]                        | "Usage: dev help [args...]"
+  end
+
+  test "#{argv.inspect} is a usage error at #{shape}: the flag, the node's usage on stderr, exit 2" do
+    Given "a Runner"
+    out = StringIO.new
+    runner = build_runner(commands: {}, out: out)
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(2).once
+
+    When "running with a flag the node does not declare"
+    runner.run(argv)
+
+    Then "stderr names the flag and the node, then prints its usage; stdout stays empty"
+    $stderr.string.lines.first == "dev: unknown flag '#{flag}' for '#{invocation}'\n"
+    $stderr.string.include?(usage_line)
+    out.string.empty?
+
+    Cleanup
+    $stderr = old_stderr
+
+    Where
+    shape                     | argv                                 | flag      | invocation      | usage_line
+    "the root"                | ["--bogus"]                          | "--bogus" | "dev"           | "Usage: dev <command> [args...]"
+    "a builtin group"         | ["deps", "--hlep"]                   | "--hlep"  | "dev deps"      | "Usage: dev deps <command> [args...]"
+    "a builtin without flags" | ["deps", "path", "xcode", "-x"]      | "-x"      | "dev deps path" | "Usage: dev deps path [args...]"
+    "a builtin with flags"    | ["cache", "gc", "--keep=3", "--kep"] | "--kep"   | "dev cache gc"  | "Usage: dev cache gc [args...]"
+    "a global leaf"           | ["plan", "new", "x", "--hlep"]       | "--hlep"  | "dev plan new"  | "Usage: dev plan new [args...]"
+  end
+
+  test "a project command's argv is opaque: #{argv.inspect} reaches the service untouched" do
+    Given "a Runner over an expecting service whose tree holds a project command"
+    project = Dev::ProjectCommand.new(run: "./bin/test.sh", desc: "Run tests")
+    command_service = typed_mock(Dev::CommandService)
+    command_service.stubs(:resolve).with(argv).returns(
+      Dev::CommandRepository::Resolution.new(command: project, path: ["test"], args: argv.drop(1)),
+    )
+    executed = []
+    command_service.stubs(:execute).with { |executed_argv, context:|
+      executed << executed_argv
+      true }
+    runner = build_runner(commands: {}, command_service: command_service)
+
+    When "running it with a help flag among its args"
+    runner.run(argv)
+
+    Then "no help rewrite: the script owns its flags"
+    executed == [argv]
+
+    Where
+    argv
+    ["test", "--help"]
+    ["test", "-h", "spec/a"]
+    ["test", "--", "--help"]
+  end
+
+  test "a help flag after a literal -- is positional, not a help request" do
+    Given "a Runner over an expecting service whose tree holds a builtin leaf"
+    leaf = Dev::Builtins::DepsPathCommand.new
+    command_service = typed_mock(Dev::CommandService)
+    command_service.stubs(:resolve).returns(
+      Dev::CommandRepository::Resolution.new(command: leaf, path: ["deps", "path"], args: ["--", "--help"]),
+    )
+    executed = []
+    command_service.stubs(:execute).with { |executed_argv, context:|
+      executed << executed_argv
+      true }
+    runner = build_runner(commands: {}, command_service: command_service)
+
+    When "running with the terminator before the help flag"
+    runner.run(["deps", "path", "--", "--help"])
+
+    Then "the argv went through unrewritten"
+    executed == [["deps", "path", "--", "--help"]]
   end
 
   test "run with unknown command prints error to stderr and exits 1" do
@@ -501,7 +613,7 @@ class RunnerTest < Minitest::Test
       end
     RUBY
     contexts = []
-    command_service = typed_mock(Dev::CommandService)
+    command_service = mock_command_service
     command_service.stubs(:execute).with { |argv, context:|
       contexts << [argv, context]
       true }
@@ -527,7 +639,7 @@ class RunnerTest < Minitest::Test
   test "run without a dev.yml assembles a projectless context" do
     Given "a Runner constructed with no dev.yml anywhere"
     contexts = []
-    command_service = typed_mock(Dev::CommandService)
+    command_service = mock_command_service
     command_service.stubs(:execute).with { |argv, context:|
       contexts << [argv, context]
       true }
@@ -600,7 +712,7 @@ class RunnerTest < Minitest::Test
 
   test "a failed waited child exits with the child's status" do
     Given "a Runner whose service raises the child's failure"
-    command_service = typed_mock(Dev::CommandService)
+    command_service = mock_command_service
     command_service.stubs(:execute).raises(Dev::CommandRunner::CommandFailedError.new(exit_status: 7))
     runner = build_runner(commands: {}, command_service: command_service)
     Kernel.expects(:exit).with(7).once
@@ -614,7 +726,7 @@ class RunnerTest < Minitest::Test
 
   test "a signal-killed child exits 128 plus the signal number" do
     Given "a Runner whose service raises the child's signal death"
-    command_service = typed_mock(Dev::CommandService)
+    command_service = mock_command_service
     command_service.stubs(:execute).raises(Dev::CommandRunner::CommandKilledError.new(signal: 15))
     runner = build_runner(commands: {}, command_service: command_service)
     old_stderr = $stderr
@@ -633,7 +745,7 @@ class RunnerTest < Minitest::Test
 
   test "a child that never spawned exits 127" do
     Given "a Runner whose service raises the spawn failure"
-    command_service = typed_mock(Dev::CommandService)
+    command_service = mock_command_service
     command_service.stubs(:execute).raises(Dev::CommandRunner::CommandSpawnError.new)
     runner = build_runner(commands: {}, command_service: command_service)
     old_stderr = $stderr
@@ -652,7 +764,7 @@ class RunnerTest < Minitest::Test
 
   test "an ArgumentError is reported as a clean dev error with exit 1" do
     Given "a Runner whose service raises a usage error"
-    command_service = typed_mock(Dev::CommandService)
+    command_service = mock_command_service
     command_service.stubs(:execute).raises(ArgumentError.new("usage: dev cache gc [--keep N]"))
     runner = build_runner(commands: {}, command_service: command_service)
     old_stderr = $stderr
@@ -671,7 +783,7 @@ class RunnerTest < Minitest::Test
 
   test "an unmapped error is a dev bug and re-raises with its backtrace" do
     Given "a Runner whose service raises an unmapped error class"
-    command_service = typed_mock(Dev::CommandService)
+    command_service = mock_command_service
     command_service.stubs(:execute).raises(Dev::Deps::ArtifactStore::PublishOutsideStagingError.new("elsewhere"))
     runner = build_runner(commands: {}, command_service: command_service)
 
@@ -716,5 +828,16 @@ class RunnerTest < Minitest::Test
     ui = typed_mock(Dev::Cli::Ui)
     ui.stubs(:print_header)
     ui
+  end
+
+  # A service mock for tests about the exit mapping: run routes argv
+  # through resolve first, so it answers with a plain leaf and the argv
+  # reaches execute as given.
+  def mock_command_service
+    service = typed_mock(Dev::CommandService)
+    service.stubs(:resolve).returns(
+      Dev::CommandRepository::Resolution.new(command: RunnerLeafStub.new, path: [], args: []),
+    )
+    service
   end
 end

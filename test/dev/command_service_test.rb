@@ -11,15 +11,17 @@ transform!(RSpock::AST::Transformation)
 class Dev::CommandServiceTest < Minitest::Test
   include SorbetHelper
 
-  # Builtin fake whose traits drive the service's guard/stamp decisions and
-  # whose call records the dispatch.
+  # Builtin fake whose traits drive the service's guard/stamp/admission
+  # decisions and whose call records the dispatch.
   class FakeBuiltin < Dev::BuiltinCommand
-    attr_reader :calls
+    attr_reader :calls, :flags
 
-    def initialize(staleness_exempt: false, stamps: false)
+    def initialize(staleness_exempt: false, stamps: false, flags: [], opaque_args: false)
       super()
       @staleness_exempt = staleness_exempt
       @stamps = stamps
+      @flags = flags
+      @opaque_args = opaque_args
       @calls = []
     end
 
@@ -30,6 +32,8 @@ class Dev::CommandServiceTest < Minitest::Test
     def staleness_exempt? = @staleness_exempt
 
     def stamps? = @stamps
+
+    def opaque_args? = @opaque_args
 
     def call(args:, context:)
       @calls << [args, context]
@@ -202,7 +206,8 @@ class Dev::CommandServiceTest < Minitest::Test
 
   test "a command with children invoked bare runs itself, guarding and stamping by its own traits" do
     Given "a guarded, stamping builtin heading a child"
-    parent = FakeBuiltin.new(staleness_exempt: false, stamps: true).with_children({ "unit" => FakeBuiltin.new })
+    parent = FakeBuiltin.new(staleness_exempt: false, stamps: true, flags: ["--fast"])
+      .with_children({ "unit" => FakeBuiltin.new })
     dependency_service = typed_mock(Dev::DependencyService)
     dependency_service.expects(:guard!).once
     dependency_service.expects(:lock!).once
@@ -232,6 +237,119 @@ class Dev::CommandServiceTest < Minitest::Test
 
     Then "the expectations hold"
     true
+  end
+
+  # --- the flag vocabulary gate (#217) --------------------------------------
+
+  test "#{shape}: #{args.inspect} #{outcome}" do
+    Given "a tree with every shape: a group, a builtin with flags, one without, a project command"
+    with_flags = FakeBuiltin.new(staleness_exempt: true, flags: ["--keep", "--tool-caches"])
+    without_flags = FakeBuiltin.new(staleness_exempt: true)
+    project = Dev::ProjectCommand.new(run: "./bin/test.sh")
+    project_executor = typed_mock(Dev::ProjectExecutor)
+    forwarded = []
+    project_executor.stubs(:exec_into).with { |_command, args:|
+      forwarded << args
+      true }
+    executor = Dev::CommandExecutor.new(
+      builtin_executor: Dev::BuiltinExecutor.new,
+      group_executor: Dev::GroupExecutor.new(usage_printer: Dev::Cli::UsagePrinter.new, out: StringIO.new),
+      project_executor: project_executor,
+    )
+    service = Dev::CommandService.new(
+      repository: Dev::CommandRepository.new(
+        root: Dev::CommandGroup.root(desc: "commands", children: {
+          "cache" => build_group(children: { "gc" => with_flags }),
+          "plain" => without_flags,
+        }),
+        project_commands: { "test" => project },
+      ),
+      executor: executor,
+      dependency_service: fake_dependency_service,
+    )
+    # The builtin whose calls the row observes; a group and a project
+    # command record nothing in-process.
+    node = { "flagged builtin" => with_flags, "plain builtin" => without_flags }[shape]
+
+    When "executing the shape with those args"
+    error = begin
+      service.execute([*path, *args], context: fake_context)
+      nil
+    rescue Dev::Cli::FlagVocabulary::UnknownFlagError => e
+      e
+    end
+
+    Then "a known flag is admitted and reaches the builtin; an unknown one is refused before anything runs; " \
+      "a project command gets its argv verbatim"
+    error.nil? == (expected != :unknown_flag)
+    node.nil? || node.calls.map(&:first) == (expected == :unknown_flag ? [] : [expected])
+    shape != "project command" || forwarded == [expected]
+    error.nil? || error.path == path
+
+    Where
+    shape             | path            | args                    | outcome                                  | expected
+    "group"           | ["cache"]       | ["--bogus"]             | "is refused: groups declare no flags"    | :unknown_flag
+    "flagged builtin" | ["cache", "gc"] | ["--keep", "3"]         | "is admitted"                            | ["--keep", "3"]
+    "flagged builtin" | ["cache", "gc"] | ["--keep=3"]            | "is admitted: the name is what's checked" | ["--keep=3"]
+    "flagged builtin" | ["cache", "gc"] | ["--hlep"]              | "is refused"                             | :unknown_flag
+    "flagged builtin" | ["cache", "gc"] | ["--", "--hlep"]        | "is positional after the terminator"     | ["--hlep"]
+    "plain builtin"   | ["plain"]       | ["positional"]          | "is admitted: words are never flags"     | ["positional"]
+    "plain builtin"   | ["plain"]       | ["--any"]               | "is refused: nothing is declared"        | :unknown_flag
+    "project command" | ["test"]        | ["--help"]              | "is forwarded: the script owns its argv" | ["--help"]
+    "project command" | ["test"]        | ["--", "--x"]           | "is forwarded with the terminator kept"  | ["--", "--x"]
+  end
+
+  test "a help flag is admitted everywhere: the routers rewrite it before execute, admit never refuses it" do
+    Given "a builtin declaring nothing"
+    builtin = FakeBuiltin.new(staleness_exempt: true)
+    service = build_service(builtins: { "plain" => builtin }, dependency_service: fake_dependency_service)
+
+    When "executing with each help spelling"
+    service.execute(["plain", "--help"], context: fake_context)
+    service.execute(["plain", "-h"], context: fake_context)
+
+    Then "the builtin received them as args"
+    builtin.calls.map(&:first) == [["--help"], ["-h"]]
+  end
+
+  test "an opaque builtin's args bypass the gate, terminator included" do
+    Given "a builtin whose words are another command's argv (as complete's are)"
+    builtin = FakeBuiltin.new(staleness_exempt: true, opaque_args: true)
+    service = build_service(builtins: { "complete" => builtin }, dependency_service: fake_dependency_service)
+
+    When "executing with foreign flags and a terminator"
+    service.execute(["complete", "plan", "pull", "--merge", "--", "-h"], context: fake_context)
+
+    Then "every word arrived as typed"
+    builtin.calls.map(&:first) == [["plan", "pull", "--merge", "--", "-h"]]
+  end
+
+  test "an unknown flag is refused before the staleness guard gets to nag" do
+    Given "a non-exempt builtin and a strict dependency service"
+    dependency_service = typed_mock(Dev::DependencyService)
+    dependency_service.expects(:guard!).never
+    service = build_service(builtins: { "build" => FakeBuiltin.new }, dependency_service: dependency_service)
+
+    When "executing with a flag it does not declare"
+    service.execute(["build", "--bogus"], context: fake_context)
+
+    Then
+    raises Dev::Cli::FlagVocabulary::UnknownFlagError
+  end
+
+  test "resolve exposes where argv lands without running anything" do
+    Given "a service over a group with a child"
+    child = FakeBuiltin.new(staleness_exempt: true)
+    service = build_service(builtins: { "cache" => build_group(children: { "gc" => child }) }, dependency_service: fake_dependency_service)
+
+    When "resolving a path with trailing args"
+    resolution = service.resolve(["cache", "gc", "--help"])
+
+    Then "the node, its path and its args — and the child never ran"
+    resolution.command == child
+    resolution.path == ["cache", "gc"]
+    resolution.args == ["--help"]
+    child.calls.empty?
   end
 
   def build_group(children:)

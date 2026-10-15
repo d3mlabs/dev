@@ -69,6 +69,11 @@ module Dev
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
 
+      # Its own cold-run switch, plus everything the composed install takes
+      # (the args are handed on to it).
+      sig { override.returns(T::Array[String]) }
+      def flags = [NO_CACHE_FLAG, *@install_deps_command.flags]
+
       # up IS the staleness remediation — never nag before it.
       sig { override.returns(T::Boolean) }
       def staleness_exempt? = true

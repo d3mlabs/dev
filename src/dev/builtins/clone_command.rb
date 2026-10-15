@@ -29,6 +29,10 @@ module Dev
       sig { override.returns(Command::Category) }
       def category = Command::Category::Workflow
 
+      # The shell wrapper's plumbing contract (Dev::Clone::Accessor#run).
+      sig { override.returns(T::Array[String]) }
+      def flags = ["--path"]
+
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
         @accessor.run(args)

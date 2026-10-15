@@ -13,6 +13,9 @@ module Dev
       sig { override.returns(String) }
       def desc = "Update the issue body from the local plan, guarded (push [<file>|<n>] [--org])"
 
+      sig { override.returns(T::Array[String]) }
+      def flags = ["--org"]
+
       private
 
       sig { override.params(accessor: Dev::Plan::Accessor, args: T::Array[String]).void }

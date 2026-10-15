@@ -76,6 +76,45 @@ class Dev::BinDevTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  # The bug behind #217: `dev plan new --help` created an issue titled
+  # "help". The flag is global dispatch's to decline and the Runner's to
+  # answer, and only the shim wires the two together.
+  test "dev plan new --help outside a project prints plan new's usage and exits 0, creating nothing" do
+    Given "a directory with no dev.yml anywhere above it, and no gh on PATH"
+    dir = Dir.mktmpdir("dev-bin-test-")
+    env = { "PATH" => path_without_gh }
+
+    When "asking a global leaf for help, with a title in the way"
+    out, err, status = Open3.capture3(env, "sh", BIN_DEV, "plan", "new", "Carve system", "--help", chdir: dir)
+
+    Then "the leaf's usage, nothing else"
+    status.success?
+    out.include?("Usage: dev plan new [args...]")
+    out.include?("Create a templated issue")
+    !err.include?("gh")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "dev plan new --hlep outside a project is a usage error: exit 2 with the usage on stderr" do
+    Given "a directory with no dev.yml anywhere above it, and no gh on PATH"
+    dir = Dir.mktmpdir("dev-bin-test-")
+    env = { "PATH" => path_without_gh }
+
+    When "typo'ing the help flag"
+    out, err, status = Open3.capture3(env, "sh", BIN_DEV, "plan", "new", "--hlep", chdir: dir)
+
+    Then
+    status.exitstatus == 2
+    err.include?("dev: unknown flag '--hlep' for 'dev plan new'")
+    err.include?("Usage: dev plan new [args...]")
+    out.empty?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "the shim removes every scrub key from the env it hands to ruby" do
     Given "every scrub key planted hostile, and a stub ruby that prints the env it receives"
     dir = Dir.mktmpdir("dev-bin-test-")
@@ -140,6 +179,14 @@ class Dev::BinDevTest < Minitest::Test
     SH
     FileUtils.chmod(0o755, File.join(stub_bin, "ruby"))
     stub_bin
+  end
+
+  # PATH minus every directory holding a `gh`: were the help flag ever to
+  # fall through to the verb, the issue creation would fail loudly here
+  # instead of reaching GitHub.
+  def path_without_gh
+    ENV.fetch("PATH").split(File::PATH_SEPARATOR).reject { |dir| File.executable?(File.join(dir, "gh")) }
+      .join(File::PATH_SEPARATOR)
   end
 
   # Variable names from `env` output — whole names, because the suite's

@@ -12,6 +12,9 @@ module Dev
       sig { override.returns(String) }
       def desc = "Fetch the issue into the local plan (pull <n> [--merge] [--org])"
 
+      sig { override.returns(T::Array[String]) }
+      def flags = ["--merge", "--org"]
+
       private
 
       sig { override.params(accessor: Dev::Plan::Accessor, args: T::Array[String]).void }
