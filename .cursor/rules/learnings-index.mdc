@@ -55,6 +55,11 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  normalization gate: it must recognize every layout Cursor writes, since
  render re-serializes its output and any mis-split compounds on the next
  pull. → .cursor/skills/learnings/plan-parse-normalizes/
+- [architecture/flag-vocabulary-gate] A builtin never sees a `-`-prefixed
+ arg it did not declare in `Command#flags`: `Cli::FlagVocabulary` rejects
+ it (exit 2) and rewrites `-h`/`--help` to `help <path>` before `call` —
+ a hand-parsed flag that is not declared is dead on arrival.
+ → .cursor/skills/learnings/flag-vocabulary-gate/
 
 ## toolchain
 
