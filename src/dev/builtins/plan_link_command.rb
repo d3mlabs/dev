@@ -14,7 +14,7 @@ module Dev
       def desc = "Attach a plan file to issue #n, or create an issue from a plan file (link <n> [<file>] | link <file>)"
 
       sig { override.returns(T::Array[String]) }
-      def flags = ["--org"]
+      def flags = Dev::Plan::Accessor::LINK_FLAGS
 
       private
 

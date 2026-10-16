@@ -70,6 +70,13 @@ module Dev
       # A RuntimeError so the CLI boundary prints it and exits 1.
       class SupersededEnrollmentsError < RuntimeError; end
 
+      ORG_FLAG = "--org"
+      LABELS_FLAG = "--labels"
+      AI_FLOW_FLAG = "--ai-flow"
+      DIR_FLAG = "--dir"
+      NAME_FLAG = "--name"
+      REPO_FLAG = "--repo"
+      AGENT_USER_FLAG = "--agent-user"
       YES_FLAG = "--yes"
 
       # Builds the RunnerSetup for the resolved config and flags; injected
@@ -143,21 +150,19 @@ module Dev
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
 
-      # The scope switch and the label inputs, the enrollment identity
-      # overrides, the run-as user, and the superseded-enrollments consent.
       sig { override.returns(T::Array[String]) }
-      def flags = ["--org", "--labels", "--ai-flow", "--dir", "--name", "--repo", "--agent-user", YES_FLAG]
+      def flags = [ORG_FLAG, LABELS_FLAG, AI_FLOW_FLAG, DIR_FLAG, NAME_FLAG, REPO_FLAG, AGENT_USER_FLAG, YES_FLAG]
 
       # Converge, then enroll (or amend), then the steps the enrollment
       # enables.
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
-        org = args.include?("--org")
+        org = args.include?(ORG_FLAG)
         labels = resolve_labels(args, context, org)
         config = RunnerSetupConfig.new(
           labels: labels,
-          dir: @flag_parser.value(args, "--dir"),
-          name: @flag_parser.value(args, "--name"),
+          dir: @flag_parser.value(args, DIR_FLAG),
+          name: @flag_parser.value(args, NAME_FLAG),
         )
 
         container = context.project&.build_container
@@ -165,7 +170,7 @@ module Dev
         # label contract (whose agent-host steps assume an engine exists).
         @engine_provisioner.provision!(resources: container.resources) if container
 
-        contracts = @contracts_factory.call(labels, @flag_parser.value(args, "--agent-user"))
+        contracts = @contracts_factory.call(labels, @flag_parser.value(args, AGENT_USER_FLAG))
         contracts.each do |contract|
           contract.converge!(
             container: !container.nil?,
@@ -174,7 +179,7 @@ module Dev
           )
         end
 
-        setup = @runner_setup_factory.call(config, @flag_parser.value(args, "--repo"), org)
+        setup = @runner_setup_factory.call(config, @flag_parser.value(args, REPO_FLAG), org)
         scope = setup.resolve_scope
         # --dir is the operator picking the dir: no discovery, no detection.
         enrollments = config.dir ? [] : @discovery.enrollments_for(scope)
@@ -197,7 +202,7 @@ module Dev
           # GitHub has lost this enrollment (or --name renames it): the
           # re-enrollment reuses the discovered dir, never a second one.
           config = RunnerSetupConfig.new(labels: labels, dir: enrollment.dir, name: config.name)
-          setup = @runner_setup_factory.call(config, @flag_parser.value(args, "--repo"), org)
+          setup = @runner_setup_factory.call(config, @flag_parser.value(args, REPO_FLAG), org)
         end
         setup.run
         contracts.each { |contract| contract.after_enroll!(runner_dir: setup.resolve_dir) }
@@ -299,8 +304,8 @@ module Dev
       # @raise [Dev::RunnerSetup::Error] when gh cannot resolve the checkout
       sig { params(args: T::Array[String], context: ExecutionContext, org: T::Boolean).returns(String) }
       def resolve_labels(args, context, org)
-        explicit = @flag_parser.value(args, "--labels")
-        ai_flow = args.include?("--ai-flow")
+        explicit = @flag_parser.value(args, LABELS_FLAG)
+        ai_flow = args.include?(AI_FLOW_FLAG)
         if explicit && ai_flow
           raise ArgumentError,
             "--ai-flow enrolls the full ai-flow set (#{LabelContracts::AI_FLOW_LABELS.join(",")}); " \
@@ -319,7 +324,7 @@ module Dev
             "the repo label derives from the enclosing checkout (which also sizes the engine) — " \
               "run inside one or pass --labels"
         end
-        repo_label(@repo_resolver.call(@flag_parser.value(args, "--repo")))
+        repo_label(@repo_resolver.call(@flag_parser.value(args, REPO_FLAG)))
       end
 
       # GitHub matches runner labels case-insensitively but stores them as

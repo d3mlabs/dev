@@ -14,7 +14,7 @@ module Dev
       def desc = "Create a templated issue + linked local plan (new \"<title>\" [--blank] [--org])"
 
       sig { override.returns(T::Array[String]) }
-      def flags = ["--blank", "--org"]
+      def flags = Dev::Plan::Accessor::NEW_FLAGS
 
       private
 

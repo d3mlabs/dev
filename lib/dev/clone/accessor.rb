@@ -38,6 +38,10 @@ module Dev
       # The canonical destination already exists on disk.
       class DestinationExistsError < RuntimeError; end
 
+      # The plumbing mode, and the vocabulary the `clone` leaf declares.
+      PATH_FLAG = "--path"
+      FLAGS = T.let([PATH_FLAG].freeze, T::Array[String])
+
       # @param root [String, Pathname] checkout root (default: $DEV_CD_ROOT, else ~/src)
       # @param cloner [Dev::Clone::GhCloner]
       # @param hook_installer [Dev::Cd::HookInstaller]
@@ -78,7 +82,7 @@ module Dev
         ).void
       end
       def run(args, out: $stdout, err: $stderr)
-        plumbing = args.first == "--path"
+        plumbing = args.first == PATH_FLAG
         query = plumbing ? args.drop(1) : args
         raise UsageError, "usage: dev clone [<org>/]<repo>" unless query.size == 1
 

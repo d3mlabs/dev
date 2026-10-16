@@ -24,6 +24,16 @@ module Dev
       # One public method per verb; the `plan` group in the command tree
       # routes each to its leaf, which calls #refresh_host and then the verb.
 
+      # The flags the verbs read, and each verb's vocabulary (the leaf
+      # declares the latter as its Command#flags).
+      ORG_FLAG = "--org"
+      BLANK_FLAG = "--blank"
+      MERGE_FLAG = "--merge"
+      NEW_FLAGS = T.let([BLANK_FLAG, ORG_FLAG].freeze, T::Array[String])
+      LINK_FLAGS = T.let([ORG_FLAG].freeze, T::Array[String])
+      PULL_FLAGS = T.let([MERGE_FLAG, ORG_FLAG].freeze, T::Array[String])
+      PUSH_FLAGS = T.let([ORG_FLAG].freeze, T::Array[String])
+
       # @param project_root [Pathname] the workspace root (from dev's context)
       # @param workspace [Dev::Plan::Workspace, nil]
       # @param issues [Dev::Plan::GithubIssues, nil]
@@ -78,8 +88,8 @@ module Dev
       # Left blank it is inert — the menu falls back to every org repo.
       sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
       def new_plan(args, out:)
-        org = args.delete("--org") ? true : false
-        blank = args.delete("--blank") ? true : false
+        org = args.delete(ORG_FLAG) ? true : false
+        blank = args.delete(BLANK_FLAG) ? true : false
         title = args.shift
         raise UsageError, "usage: dev plan new \"<title>\" [--blank] [--org]" if title.nil? || title.empty? || !args.empty?
 
@@ -152,7 +162,7 @@ module Dev
       # `dev plan link <file> [--org]` creates the issue from the file.
       sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
       def link(args, out:)
-        org = args.delete("--org") ? true : false
+        org = args.delete(ORG_FLAG) ? true : false
         first, second = args
         raise UsageError, "usage: dev plan link <n> [<file>] | link <file> [--org]" if first.nil?
 
@@ -213,8 +223,8 @@ module Dev
       # (3-way against the recorded base) so local work is never discarded.
       sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
       def pull(args, out:)
-        org = args.delete("--org") ? true : false
-        merge = args.delete("--merge") ? true : false
+        org = args.delete(ORG_FLAG) ? true : false
+        merge = args.delete(MERGE_FLAG) ? true : false
         number_arg = args.shift
         raise UsageError, "usage: dev plan pull <n> [--merge] [--org]" if number_arg.nil? || !args.empty?
 
@@ -286,7 +296,7 @@ module Dev
       # file's header, so org-wide plans push transparently.
       sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
       def push(args, out:)
-        org = args.delete("--org") ? true : false
+        org = args.delete(ORG_FLAG) ? true : false
         target = args.shift
         raise UsageError, "usage: dev plan push [<file>|<n>] [--org]" unless args.empty?
 

@@ -28,9 +28,8 @@ module Dev
       sig { override.returns(Command::Category) }
       def category = Command::Category::Workflow
 
-      # The shell wrapper's plumbing contracts (Dev::Cd::Accessor#run).
       sig { override.returns(T::Array[String]) }
-      def flags = ["--resolve", "--candidates"]
+      def flags = Dev::Cd::Accessor::FLAGS
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)

@@ -13,7 +13,7 @@ module Dev
       def desc = "Fetch the issue into the local plan (pull <n> [--merge] [--org])"
 
       sig { override.returns(T::Array[String]) }
-      def flags = ["--merge", "--org"]
+      def flags = Dev::Plan::Accessor::PULL_FLAGS
 
       private
 
