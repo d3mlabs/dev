@@ -28,9 +28,9 @@ module Dev
   # CommandRepository with no project half, so `dev plan status` resolves
   # down the tree exactly as it would inside a project, and a bare group
   # (`dev plan`) prints its usage. Help is the Runner's everywhere — bare
-  # `dev`, `help`, and a `-h`/`--help` at any node of a global command
-  # (`dev plan new --help`): its tree lists these commands too, and holds
-  # the `help` builtin the flag rewrites to.
+  # `dev`, `help`, and a `-h`/`--help` among a global command's args: its
+  # tree lists these commands too, and holds the `help` node this tree
+  # lacks.
   class GlobalDispatch
     extend T::Sig
 
@@ -65,10 +65,8 @@ module Dev
     end
 
     # Whether the argv is dispatched here, before any dev.yml lookup: its
-    # first token names a global builtin and no help flag follows it. Every
-    # node of the global tree is dev-defined, so a `-h`/`--help` anywhere
-    # after the name (before a `--`) is a help request, and help is the
-    # Runner's.
+    # first token names a global builtin and no help flag follows it (help
+    # is the Runner's).
     #
     # @param argv [Array<String>]
     # @return [Boolean]

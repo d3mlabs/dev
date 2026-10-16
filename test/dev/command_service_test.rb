@@ -299,17 +299,66 @@ class Dev::CommandServiceTest < Minitest::Test
     "project command" | ["test"]        | ["--", "--x"]           | "is forwarded with the terminator kept"  | ["--", "--x"]
   end
 
-  test "a help flag is admitted everywhere: the routers rewrite it before execute, admit never refuses it" do
-    Given "a builtin declaring nothing"
-    builtin = FakeBuiltin.new(staleness_exempt: true)
-    service = build_service(builtins: { "plain" => builtin }, dependency_service: fake_dependency_service)
+  test "#{argv.inspect} runs the help node with #{help_path.inspect}: a help flag at #{shape} asks for that node's usage" do
+    Given "a tree holding help, a group with a flagged leaf, and a plain leaf"
+    help = FakeBuiltin.new(staleness_exempt: true)
+    leaf = FakeBuiltin.new(staleness_exempt: true, flags: ["--keep"])
+    plain = FakeBuiltin.new(staleness_exempt: true)
+    service = build_service(
+      builtins: { "help" => help, "cache" => build_group(children: { "gc" => leaf }), "plain" => plain },
+      dependency_service: fake_dependency_service,
+    )
 
-    When "executing with each help spelling"
-    service.execute(["plain", "--help"], context: fake_context)
-    service.execute(["plain", "-h"], context: fake_context)
+    When "executing with a help flag among the node's args"
+    service.execute(argv, context: fake_context)
 
-    Then "the builtin received them as args"
-    builtin.calls.map(&:first) == [["--help"], ["-h"]]
+    Then "help ran once, with the node's path; the node itself never did"
+    help.calls.map(&:first) == [help_path]
+    leaf.calls.empty?
+    plain.calls.empty?
+
+    Where
+    shape                       | argv                                 | help_path
+    "the root"                  | ["--help"]                           | []
+    "the root, short"           | ["-h"]                               | []
+    "a group"                   | ["cache", "--help"]                  | ["cache"]
+    "a leaf"                    | ["plain", "-h"]                      | ["plain"]
+    "a leaf, after a word"      | ["plain", "positional", "--help"]    | ["plain"]
+    "a flagged leaf, mid-flags" | ["cache", "gc", "--keep", "3", "-h"] | ["cache", "gc"]
+    "the help node itself"      | ["help", "--help"]                   | ["help"]
+  end
+
+  test "a help flag after the terminator is positional: #{argv.inspect} reaches the node as #{expected.inspect}" do
+    Given "a tree holding help and a plain leaf"
+    help = FakeBuiltin.new(staleness_exempt: true)
+    plain = FakeBuiltin.new(staleness_exempt: true)
+    service = build_service(builtins: { "help" => help, "plain" => plain }, dependency_service: fake_dependency_service)
+
+    When "executing with the terminator before the help flag"
+    service.execute(argv, context: fake_context)
+
+    Then "the node ran with the flag as data; help never did"
+    plain.calls.map(&:first) == [expected]
+    help.calls.empty?
+
+    Where
+    argv                            | expected
+    ["plain", "--", "--help"]       | ["--help"]
+    ["plain", "x", "--", "-h", "y"] | ["x", "-h", "y"]
+  end
+
+  test "an opaque node's help flag is its own: no rewrite, forwarded as typed" do
+    Given "a tree holding help and an opaque builtin"
+    help = FakeBuiltin.new(staleness_exempt: true)
+    opaque = FakeBuiltin.new(staleness_exempt: true, opaque_args: true)
+    service = build_service(builtins: { "help" => help, "complete" => opaque }, dependency_service: fake_dependency_service)
+
+    When "executing with a help flag among its words"
+    service.execute(["complete", "plan", "--help"], context: fake_context)
+
+    Then
+    opaque.calls.map(&:first) == [["plan", "--help"]]
+    help.calls.empty?
   end
 
   test "an opaque builtin's args bypass the gate, terminator included" do
@@ -335,21 +384,6 @@ class Dev::CommandServiceTest < Minitest::Test
 
     Then
     raises Dev::Cli::FlagVocabulary::UnknownFlagError
-  end
-
-  test "resolve exposes where argv lands without running anything" do
-    Given "a service over a group with a child"
-    child = FakeBuiltin.new(staleness_exempt: true)
-    service = build_service(builtins: { "cache" => build_group(children: { "gc" => child }) }, dependency_service: fake_dependency_service)
-
-    When "resolving a path with trailing args"
-    resolution = service.resolve(["cache", "gc", "--help"])
-
-    Then "the node, its path and its args — and the child never ran"
-    resolution.command == child
-    resolution.path == ["cache", "gc"]
-    resolution.args == ["--help"]
-    child.calls.empty?
   end
 
   def build_group(children:)

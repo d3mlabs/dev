@@ -10,16 +10,6 @@ require "stringio"
 require "tempfile"
 require "tmpdir"
 
-# The leaf a mocked service resolves argv to: a plain builtin — not opaque,
-# no flags — so the router's help rewrite stays out of the way.
-class RunnerLeafStub < Dev::BuiltinCommand
-  def desc = "a leaf"
-
-  def category = Dev::Command::Category::Workflow
-
-  def call(args:, context:); end
-end unless defined?(RunnerLeafStub)
-
 transform!(RSpock::AST::Transformation)
 class RunnerTest < Minitest::Test
   extend T::Sig
@@ -168,52 +158,6 @@ class RunnerTest < Minitest::Test
     "a builtin without flags" | ["deps", "path", "xcode", "-x"]      | "-x"      | "dev deps path" | "Usage: dev deps path [args...]"
     "a builtin with flags"    | ["cache", "gc", "--keep=3", "--kep"] | "--kep"   | "dev cache gc"  | "Usage: dev cache gc [args...]"
     "a global leaf"           | ["plan", "new", "x", "--hlep"]       | "--hlep"  | "dev plan new"  | "Usage: dev plan new [args...]"
-  end
-
-  test "a project command's argv is opaque: #{argv.inspect} reaches the service untouched" do
-    Given "a Runner over an expecting service whose tree holds a project command"
-    project = Dev::ProjectCommand.new(run: "./bin/test.sh", desc: "Run tests")
-    command_service = typed_mock(Dev::CommandService)
-    command_service.stubs(:resolve).with(argv).returns(
-      Dev::CommandRepository::Resolution.new(command: project, path: ["test"], args: argv.drop(1)),
-    )
-    executed = []
-    command_service.stubs(:execute).with { |executed_argv, context:|
-      executed << executed_argv
-      true }
-    runner = build_runner(commands: {}, command_service: command_service)
-
-    When "running it with a help flag among its args"
-    runner.run(argv)
-
-    Then "no help rewrite: the script owns its flags"
-    executed == [argv]
-
-    Where
-    argv
-    ["test", "--help"]
-    ["test", "-h", "spec/a"]
-    ["test", "--", "--help"]
-  end
-
-  test "a help flag after a literal -- is positional, not a help request" do
-    Given "a Runner over an expecting service whose tree holds a builtin leaf"
-    leaf = Dev::Builtins::DepsPathCommand.new
-    command_service = typed_mock(Dev::CommandService)
-    command_service.stubs(:resolve).returns(
-      Dev::CommandRepository::Resolution.new(command: leaf, path: ["deps", "path"], args: ["--", "--help"]),
-    )
-    executed = []
-    command_service.stubs(:execute).with { |executed_argv, context:|
-      executed << executed_argv
-      true }
-    runner = build_runner(commands: {}, command_service: command_service)
-
-    When "running with the terminator before the help flag"
-    runner.run(["deps", "path", "--", "--help"])
-
-    Then "the argv went through unrewritten"
-    executed == [["deps", "path", "--", "--help"]]
   end
 
   test "run with unknown command prints error to stderr and exits 1" do
@@ -613,7 +557,7 @@ class RunnerTest < Minitest::Test
       end
     RUBY
     contexts = []
-    command_service = mock_command_service
+    command_service = typed_mock(Dev::CommandService)
     command_service.stubs(:execute).with { |argv, context:|
       contexts << [argv, context]
       true }
@@ -639,7 +583,7 @@ class RunnerTest < Minitest::Test
   test "run without a dev.yml assembles a projectless context" do
     Given "a Runner constructed with no dev.yml anywhere"
     contexts = []
-    command_service = mock_command_service
+    command_service = typed_mock(Dev::CommandService)
     command_service.stubs(:execute).with { |argv, context:|
       contexts << [argv, context]
       true }
@@ -712,7 +656,7 @@ class RunnerTest < Minitest::Test
 
   test "a failed waited child exits with the child's status" do
     Given "a Runner whose service raises the child's failure"
-    command_service = mock_command_service
+    command_service = typed_mock(Dev::CommandService)
     command_service.stubs(:execute).raises(Dev::CommandRunner::CommandFailedError.new(exit_status: 7))
     runner = build_runner(commands: {}, command_service: command_service)
     Kernel.expects(:exit).with(7).once
@@ -726,7 +670,7 @@ class RunnerTest < Minitest::Test
 
   test "a signal-killed child exits 128 plus the signal number" do
     Given "a Runner whose service raises the child's signal death"
-    command_service = mock_command_service
+    command_service = typed_mock(Dev::CommandService)
     command_service.stubs(:execute).raises(Dev::CommandRunner::CommandKilledError.new(signal: 15))
     runner = build_runner(commands: {}, command_service: command_service)
     old_stderr = $stderr
@@ -745,7 +689,7 @@ class RunnerTest < Minitest::Test
 
   test "a child that never spawned exits 127" do
     Given "a Runner whose service raises the spawn failure"
-    command_service = mock_command_service
+    command_service = typed_mock(Dev::CommandService)
     command_service.stubs(:execute).raises(Dev::CommandRunner::CommandSpawnError.new)
     runner = build_runner(commands: {}, command_service: command_service)
     old_stderr = $stderr
@@ -764,7 +708,7 @@ class RunnerTest < Minitest::Test
 
   test "an ArgumentError is reported as a clean dev error with exit 1" do
     Given "a Runner whose service raises a usage error"
-    command_service = mock_command_service
+    command_service = typed_mock(Dev::CommandService)
     command_service.stubs(:execute).raises(ArgumentError.new("usage: dev cache gc [--keep N]"))
     runner = build_runner(commands: {}, command_service: command_service)
     old_stderr = $stderr
@@ -783,7 +727,7 @@ class RunnerTest < Minitest::Test
 
   test "an unmapped error is a dev bug and re-raises with its backtrace" do
     Given "a Runner whose service raises an unmapped error class"
-    command_service = mock_command_service
+    command_service = typed_mock(Dev::CommandService)
     command_service.stubs(:execute).raises(Dev::Deps::ArtifactStore::PublishOutsideStagingError.new("elsewhere"))
     runner = build_runner(commands: {}, command_service: command_service)
 
@@ -828,16 +772,5 @@ class RunnerTest < Minitest::Test
     ui = typed_mock(Dev::Cli::Ui)
     ui.stubs(:print_header)
     ui
-  end
-
-  # A service mock for tests about the exit mapping: run routes argv
-  # through resolve first, so it answers with a plain leaf and the argv
-  # reaches execute as given.
-  def mock_command_service
-    service = typed_mock(Dev::CommandService)
-    service.stubs(:resolve).returns(
-      Dev::CommandRepository::Resolution.new(command: RunnerLeafStub.new, path: [], args: []),
-    )
-    service
   end
 end
