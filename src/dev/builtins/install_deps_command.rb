@@ -88,8 +88,15 @@ module Dev
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
 
-      sig { override.returns(T::Array[String]) }
-      def flags = [GROUP_FLAG, EXCEPT_FLAG, INTEGRATION_FLAG, PINNED_TAPS_FLAG]
+      sig { override.returns(T::Array[Cli::Flag]) }
+      def flags
+        [
+          Cli::Flag.new(GROUP_FLAG, takes_value: true),
+          Cli::Flag.new(EXCEPT_FLAG, takes_value: true),
+          Cli::Flag.new(INTEGRATION_FLAG, takes_value: true),
+          Cli::Flag.new(PINNED_TAPS_FLAG),
+        ]
+      end
 
       # dev deps install IS the remediation for a stale install — never nag
       # before it.

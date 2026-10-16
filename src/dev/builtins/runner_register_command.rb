@@ -150,8 +150,19 @@ module Dev
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
 
-      sig { override.returns(T::Array[String]) }
-      def flags = [ORG_FLAG, LABELS_FLAG, AI_FLOW_FLAG, DIR_FLAG, NAME_FLAG, REPO_FLAG, AGENT_USER_FLAG, YES_FLAG]
+      sig { override.returns(T::Array[Cli::Flag]) }
+      def flags
+        [
+          Cli::Flag.new(ORG_FLAG),
+          Cli::Flag.new(LABELS_FLAG, takes_value: true),
+          Cli::Flag.new(AI_FLOW_FLAG),
+          Cli::Flag.new(DIR_FLAG, takes_value: true),
+          Cli::Flag.new(NAME_FLAG, takes_value: true),
+          Cli::Flag.new(REPO_FLAG, takes_value: true),
+          Cli::Flag.new(AGENT_USER_FLAG, takes_value: true),
+          Cli::Flag.new(YES_FLAG),
+        ]
+      end
 
       # Converge, then enroll (or amend), then the steps the enrollment
       # enables.

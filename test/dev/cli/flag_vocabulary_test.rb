@@ -67,7 +67,7 @@ class Dev::Cli::FlagVocabularyTest < Minitest::Test
   test "admit passes a declared flag in either form, and strips the terminator" do
     Given "a builtin declaring --keep and --tool-caches"
     vocabulary = Dev::Cli::FlagVocabulary.new
-    command = VocabularyFakeBuiltin.new(flags: ["--keep", "--tool-caches"])
+    command = VocabularyFakeBuiltin.new(flags: [Dev::Cli::Flag.new("--keep", takes_value: true), Dev::Cli::Flag.new("--tool-caches")])
 
     Expect "the args as given, minus the first terminator"
     vocabulary.admit(command, path: ["cache", "gc"], args: ["--keep", "3", "--tool-caches"]) == ["--keep", "3", "--tool-caches"]
@@ -93,7 +93,7 @@ class Dev::Cli::FlagVocabularyTest < Minitest::Test
   test "admit refuses a flag outside the vocabulary, naming it and the node" do
     Given "a builtin declaring --blank and --org, at plan new"
     vocabulary = Dev::Cli::FlagVocabulary.new
-    command = VocabularyFakeBuiltin.new(flags: ["--blank", "--org"])
+    command = VocabularyFakeBuiltin.new(flags: [Dev::Cli::Flag.new("--blank"), Dev::Cli::Flag.new("--org")])
 
     When "admitting a typo'd flag after a positional"
     error = assert_raises(Dev::Cli::FlagVocabulary::UnknownFlagError) do
@@ -110,7 +110,7 @@ class Dev::Cli::FlagVocabularyTest < Minitest::Test
   test "admit refuses an undeclared value-flag by its name" do
     Given "a builtin declaring --keep"
     vocabulary = Dev::Cli::FlagVocabulary.new
-    command = VocabularyFakeBuiltin.new(flags: ["--keep"])
+    command = VocabularyFakeBuiltin.new(flags: [Dev::Cli::Flag.new("--keep", takes_value: true)])
 
     When "admitting an undeclared flag in the inline form"
     vocabulary.admit(command, path: ["cache", "gc"], args: ["--kep=3"])

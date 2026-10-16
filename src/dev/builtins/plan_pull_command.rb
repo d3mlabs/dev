@@ -12,8 +12,8 @@ module Dev
       sig { override.returns(String) }
       def desc = "Fetch the issue into the local plan (pull <n> [--merge] [--org])"
 
-      sig { override.returns(T::Array[String]) }
-      def flags = Dev::Plan::Accessor::PULL_FLAGS
+      sig { override.returns(T::Array[Cli::Flag]) }
+      def flags = [Cli::Flag.new(Dev::Plan::Accessor::MERGE_FLAG), Cli::Flag.new(Dev::Plan::Accessor::ORG_FLAG)]
 
       private
 

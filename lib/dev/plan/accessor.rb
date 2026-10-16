@@ -24,15 +24,10 @@ module Dev
       # One public method per verb; the `plan` group in the command tree
       # routes each to its leaf, which calls #refresh_host and then the verb.
 
-      # The flags the verbs read, and each verb's vocabulary (the leaf
-      # declares the latter as its Command#flags).
+      # The flags the verbs read.
       ORG_FLAG = "--org"
       BLANK_FLAG = "--blank"
       MERGE_FLAG = "--merge"
-      NEW_FLAGS = T.let([BLANK_FLAG, ORG_FLAG].freeze, T::Array[String])
-      LINK_FLAGS = T.let([ORG_FLAG].freeze, T::Array[String])
-      PULL_FLAGS = T.let([MERGE_FLAG, ORG_FLAG].freeze, T::Array[String])
-      PUSH_FLAGS = T.let([ORG_FLAG].freeze, T::Array[String])
 
       # @param project_root [Pathname] the workspace root (from dev's context)
       # @param workspace [Dev::Plan::Workspace, nil]

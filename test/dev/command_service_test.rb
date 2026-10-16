@@ -206,7 +206,7 @@ class Dev::CommandServiceTest < Minitest::Test
 
   test "a command with children invoked bare runs itself, guarding and stamping by its own traits" do
     Given "a guarded, stamping builtin heading a child"
-    parent = FakeBuiltin.new(staleness_exempt: false, stamps: true, flags: ["--fast"])
+    parent = FakeBuiltin.new(staleness_exempt: false, stamps: true, flags: [Dev::Cli::Flag.new("--fast")])
       .with_children({ "unit" => FakeBuiltin.new })
     dependency_service = typed_mock(Dev::DependencyService)
     dependency_service.expects(:guard!).once
@@ -243,7 +243,7 @@ class Dev::CommandServiceTest < Minitest::Test
 
   test "#{shape}: #{args.inspect} #{outcome}" do
     Given "a tree with every shape: a group, a builtin with flags, one without, a project command"
-    with_flags = FakeBuiltin.new(staleness_exempt: true, flags: ["--keep", "--tool-caches"])
+    with_flags = FakeBuiltin.new(staleness_exempt: true, flags: [Dev::Cli::Flag.new("--keep", takes_value: true), Dev::Cli::Flag.new("--tool-caches")])
     without_flags = FakeBuiltin.new(staleness_exempt: true)
     project = Dev::ProjectCommand.new(run: "./bin/test.sh")
     project_executor = typed_mock(Dev::ProjectExecutor)
@@ -302,7 +302,7 @@ class Dev::CommandServiceTest < Minitest::Test
   test "#{argv.inspect} runs the help node with #{help_path.inspect}: a help flag at #{shape} asks for that node's usage" do
     Given "a tree holding help, a group with a flagged leaf, and a plain leaf"
     help = FakeBuiltin.new(staleness_exempt: true)
-    leaf = FakeBuiltin.new(staleness_exempt: true, flags: ["--keep"])
+    leaf = FakeBuiltin.new(staleness_exempt: true, flags: [Dev::Cli::Flag.new("--keep", takes_value: true)])
     plain = FakeBuiltin.new(staleness_exempt: true)
     service = build_service(
       builtins: { "help" => help, "cache" => build_group(children: { "gc" => leaf }), "plain" => plain },

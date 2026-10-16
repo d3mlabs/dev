@@ -28,8 +28,8 @@ module Dev
       sig { override.returns(Command::Category) }
       def category = Command::Category::Workflow
 
-      sig { override.returns(T::Array[String]) }
-      def flags = Dev::Cd::Accessor::FLAGS
+      sig { override.returns(T::Array[Cli::Flag]) }
+      def flags = [Cli::Flag.new(Dev::Cd::Accessor::RESOLVE_FLAG), Cli::Flag.new(Dev::Cd::Accessor::CANDIDATES_FLAG)]
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)

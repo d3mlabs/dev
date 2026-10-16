@@ -16,8 +16,8 @@ module Dev
       sig { override.returns(String) }
       def desc = "Show every skill channel: where its links land, what is linked, and from which package/version"
 
-      sig { override.returns(T::Array[String]) }
-      def flags = [JSON_FLAG]
+      sig { override.returns(T::Array[Cli::Flag]) }
+      def flags = [Cli::Flag.new(JSON_FLAG)]
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)

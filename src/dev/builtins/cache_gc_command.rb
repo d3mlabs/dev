@@ -43,8 +43,8 @@ module Dev
       sig { override.returns(Command::Category) }
       def category = Command::Category::Workflow
 
-      sig { override.returns(T::Array[String]) }
-      def flags = [KEEP_FLAG, TOOL_CACHES_FLAG]
+      sig { override.returns(T::Array[Cli::Flag]) }
+      def flags = [Cli::Flag.new(KEEP_FLAG, takes_value: true), Cli::Flag.new(TOOL_CACHES_FLAG)]
 
       # GC is maintenance over the cache, not a build: it reads the lockfile to
       # know what to keep and never needs the deps installed. It also runs as

@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "cli/flag"
 require_relative "execution_context"
 
 module Dev
@@ -90,13 +91,12 @@ module Dev
     sig { overridable.returns(T::Boolean) }
     def stamps? = false
 
-    # The `-`-prefixed arguments this command accepts, dashes included
-    # (`["--keep", "--tool-caches"]`), value-taking or not — the names only.
-    # Cli::FlagVocabulary admits an argv against this list (plus the help
-    # flags every node answers to) before the command runs; a flag a
-    # command reads but does not declare here is rejected as unknown.
-    # Nothing by default: groups and most leaves take none.
-    sig { overridable.returns(T::Array[String]) }
+    # The `-`-prefixed arguments this command accepts, each with its arity
+    # (Cli::Flag). Cli::FlagVocabulary parses an argv against this list
+    # (plus the help flags every node answers to) before the command runs;
+    # a flag a command reads but does not declare here is rejected as
+    # unknown. Nothing by default: groups and most leaves take none.
+    sig { overridable.returns(T::Array[Cli::Flag]) }
     def flags = []
 
     # Whether this command's argv is forwarded verbatim — no help-flag

@@ -85,7 +85,7 @@ module Dev
       def admit(command, path:, args:)
         return args if command.opaque_args?
 
-        vocabulary = command.flags + HELP_FLAGS
+        vocabulary = command.flags.map(&:name) + HELP_FLAGS
         unknown = options(args).find { |token| flag?(token) && !vocabulary.include?(name_of(token)) }
         raise UnknownFlagError.new(flag: unknown, path:, command:) if unknown
 

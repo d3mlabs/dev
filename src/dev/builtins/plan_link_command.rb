@@ -13,8 +13,8 @@ module Dev
       sig { override.returns(String) }
       def desc = "Attach a plan file to issue #n, or create an issue from a plan file (link <n> [<file>] | link <file>)"
 
-      sig { override.returns(T::Array[String]) }
-      def flags = Dev::Plan::Accessor::LINK_FLAGS
+      sig { override.returns(T::Array[Cli::Flag]) }
+      def flags = [Cli::Flag.new(Dev::Plan::Accessor::ORG_FLAG)]
 
       private
 

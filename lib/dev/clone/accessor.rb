@@ -38,9 +38,8 @@ module Dev
       # The canonical destination already exists on disk.
       class DestinationExistsError < RuntimeError; end
 
-      # The plumbing mode, and the vocabulary the `clone` leaf declares.
+      # The plumbing mode.
       PATH_FLAG = "--path"
-      FLAGS = T.let([PATH_FLAG].freeze, T::Array[String])
 
       # @param root [String, Pathname] checkout root (default: $DEV_CD_ROOT, else ~/src)
       # @param cloner [Dev::Clone::GhCloner]

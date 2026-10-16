@@ -31,10 +31,9 @@ module Dev
       # A plumbing flag was invoked with the wrong arguments.
       class UsageError < RuntimeError; end
 
-      # The plumbing modes, and the vocabulary the `cd` leaf declares.
+      # The plumbing modes.
       RESOLVE_FLAG = "--resolve"
       CANDIDATES_FLAG = "--candidates"
-      FLAGS = T.let([RESOLVE_FLAG, CANDIDATES_FLAG].freeze, T::Array[String])
 
       # @param root [String, Pathname] search root (default: $DEV_CD_ROOT, else ~/src)
       # @param hook_installer [Dev::Cd::HookInstaller]

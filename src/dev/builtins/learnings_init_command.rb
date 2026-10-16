@@ -20,8 +20,8 @@ module Dev
       sig { override.returns(String) }
       def desc = "Scaffold this repo's learnings index + .gitignore footprint, or the org layout (--org); write-once"
 
-      sig { override.returns(T::Array[String]) }
-      def flags = [ORG_FLAG, GITIGNORE_FLAG]
+      sig { override.returns(T::Array[Cli::Flag]) }
+      def flags = [Cli::Flag.new(ORG_FLAG), Cli::Flag.new(GITIGNORE_FLAG)]
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)

@@ -29,8 +29,8 @@ module Dev
       sig { override.returns(Command::Category) }
       def category = Command::Category::Workflow
 
-      sig { override.returns(T::Array[String]) }
-      def flags = Dev::Clone::Accessor::FLAGS
+      sig { override.returns(T::Array[Cli::Flag]) }
+      def flags = [Cli::Flag.new(Dev::Clone::Accessor::PATH_FLAG)]
 
       sig { override.params(args: T::Array[String], context: ExecutionContext).void }
       def call(args:, context:)
