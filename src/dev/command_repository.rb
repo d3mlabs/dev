@@ -70,8 +70,7 @@ module Dev
     # where the args begin. A group takes no positional args — it only
     # prints usage — so a leftover word there is an unknown subcommand (at
     # the root: an unknown command); a leftover *flag* is an arg like any
-    # other, for the service's vocabulary gate to interpret (`dev plan
-    # --help` asks for the group's usage). Empty argv resolves to the root.
+    # other. Empty argv resolves to the root.
     #
     # @param argv [Array<String>] the full argv, command path first
     # @return [Resolution]

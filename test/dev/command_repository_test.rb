@@ -374,7 +374,7 @@ class Dev::CommandRepositoryTest < Minitest::Test
     group = build_group(["deps"], children: { "path" => build_builtin })
     repository = build_repository(builtins: { "deps" => group }, project_commands: {})
 
-    When "resolving the group followed by a flag (the service's vocabulary gate interprets it)"
+    When "resolving the group followed by a flag"
     resolution = repository.resolve(argv)
 
     Then

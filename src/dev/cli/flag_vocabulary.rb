@@ -14,10 +14,9 @@ module Dev
     # project `run:`, `complete`) are exempt: their argv is someone else's
     # and is forwarded untouched.
     #
-    # Stateless. The gate runs before any command sees its args: in
-    # CommandService (admission) and in the routers (the help rewrite), so
-    # builtins keep hand-parsing the flags they declared and nothing else
-    # reaches them.
+    # Stateless. Admission happens before a command sees its args, so a
+    # builtin hand-parses only the flags it declared: nothing else reaches
+    # it.
     class FlagVocabulary
       extend T::Sig
 

@@ -43,8 +43,7 @@ require "dev/global_dispatch"
 
 # Global builtins (see Dev::GlobalCatalog) dispatch before any dev.yml
 # lookup — they are host- or workspace-global, not project commands. Help
-# is the Runner's, a `--help` among a global command's args included: the
-# Runner's tree holds `help` and lists the global commands too.
+# flags are the Runner's.
 global_dispatch = Dev::GlobalDispatch.new
 if global_dispatch.global_command?(ARGV)
   global_dispatch.run(ARGV)
