@@ -80,36 +80,37 @@ class Dev::BinDevTest < Minitest::Test
   # "help". The flag is global dispatch's to decline and the Runner's to
   # answer, and only the shim wires the two together.
   test "dev plan new --help outside a project prints plan new's usage and exits 0, creating nothing" do
-    Given "a directory with no dev.yml anywhere above it, and no gh on PATH"
+    Given "a directory with no dev.yml anywhere above it, and a gh stub that records being run"
     dir = Dir.mktmpdir("dev-bin-test-")
-    env = { "PATH" => path_without_gh }
+    env = { "PATH" => "#{write_stub_gh(dir)}:#{ENV.fetch("PATH")}" }
 
     When "asking a global leaf for help, with a title in the way"
-    out, err, status = Open3.capture3(env, "sh", BIN_DEV, "plan", "new", "Carve system", "--help", chdir: dir)
+    out, _err, status = Open3.capture3(env, "sh", BIN_DEV, "plan", "new", "Carve system", "--help", chdir: dir)
 
-    Then "the leaf's usage, nothing else"
+    Then "the leaf's usage, and gh was never reached"
     status.success?
     out.include?("Usage: dev plan new [args...]")
     out.include?("Create a templated issue")
-    !err.include?("gh")
+    !File.exist?(gh_marker(dir))
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
   test "dev plan new --hlep outside a project is a usage error: exit 2 with the usage on stderr" do
-    Given "a directory with no dev.yml anywhere above it, and no gh on PATH"
+    Given "a directory with no dev.yml anywhere above it, and a gh stub that records being run"
     dir = Dir.mktmpdir("dev-bin-test-")
-    env = { "PATH" => path_without_gh }
+    env = { "PATH" => "#{write_stub_gh(dir)}:#{ENV.fetch("PATH")}" }
 
     When "typo'ing the help flag"
     out, err, status = Open3.capture3(env, "sh", BIN_DEV, "plan", "new", "--hlep", chdir: dir)
 
-    Then
+    Then "the flag is refused before the verb runs"
     status.exitstatus == 2
     err.include?("dev: unknown flag '--hlep' for 'dev plan new'")
     err.include?("Usage: dev plan new [args...]")
     out.empty?
+    !File.exist?(gh_marker(dir))
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -181,12 +182,27 @@ class Dev::BinDevTest < Minitest::Test
     stub_bin
   end
 
-  # PATH minus every directory holding a `gh`: were the help flag ever to
-  # fall through to the verb, the issue creation would fail loudly here
-  # instead of reaching GitHub.
-  def path_without_gh
-    ENV.fetch("PATH").split(File::PATH_SEPARATOR).reject { |dir| File.executable?(File.join(dir, "gh")) }
-      .join(File::PATH_SEPARATOR)
+  # A PATH-front stub standing in for gh: were the help flag ever to fall
+  # through to the verb, the issue creation would hit this stub — which
+  # leaves a marker and fails — instead of reaching GitHub. Prepending
+  # (rather than removing gh's directory from PATH) keeps `sh` and friends
+  # reachable where gh shares their directory, as on Linux CI runners.
+  # Returns the bin dir to prepend to PATH.
+  def write_stub_gh(dir)
+    stub_bin = File.join(dir, "bin")
+    FileUtils.mkdir_p(stub_bin)
+    File.write(File.join(stub_bin, "gh"), <<~SH)
+      #!/bin/sh
+      : > "#{gh_marker(dir)}"
+      exit 1
+    SH
+    FileUtils.chmod(0o755, File.join(stub_bin, "gh"))
+    stub_bin
+  end
+
+  # Where the gh stub records that it ran.
+  def gh_marker(dir)
+    File.join(dir, "gh-was-run")
   end
 
   # Variable names from `env` output — whole names, because the suite's
