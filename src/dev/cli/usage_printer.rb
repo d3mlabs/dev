@@ -3,6 +3,7 @@
 
 require "stringio"
 require_relative "../command"
+require_relative "flag_vocabulary"
 
 module Dev
   module Cli
@@ -54,6 +55,19 @@ module Dev
 
         out.puts ""
         out.puts @epilogue
+      end
+
+      # The usage-error rendering for a flag outside a node's vocabulary:
+      # the message, then that node's usage, as getopt/cobra tools do. The
+      # caller owns the exit status.
+      #
+      # @param error [FlagVocabulary::UnknownFlagError]
+      # @param out [IO, StringIO] the diagnostics stream
+      # @return [void]
+      sig { params(error: FlagVocabulary::UnknownFlagError, out: T.any(IO, StringIO)).void }
+      def print_unknown_flag(error, out:)
+        out.puts "dev: #{error.message}"
+        print_node(path: error.path, command: error.command, out:)
       end
 
       private

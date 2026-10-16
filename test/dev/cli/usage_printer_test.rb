@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/cli/flag_vocabulary"
 require "dev/cli/usage_printer"
 require "dev/command"
 require "stringio"
@@ -37,6 +38,22 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
       path: [], command: Dev::CommandGroup.root(desc: desc, children: children), out: out,
     )
     out.string
+  end
+
+  test "an unknown flag prints the dev-prefixed message, then the node's usage, on the given stream" do
+    Given "an unknown-flag error at a leaf, and a printer with an epilogue"
+    leaf = workflow_builtin(desc: "Reclaim stale versions")
+    error = Dev::Cli::FlagVocabulary::UnknownFlagError.new(flag: "--kep", path: ["cache", "gc"], command: leaf)
+    err = StringIO.new
+
+    When "printing it"
+    Dev::Cli::UsagePrinter.new(epilogue: "Examples: dev up").print_unknown_flag(error, out: err)
+
+    Then "the message heads the output and the node's usage follows (no epilogue: it is not the root)"
+    err.string.lines.first == "dev: unknown flag '--kep' for 'dev cache gc'\n"
+    err.string.include?("Usage: dev cache gc [args...]")
+    err.string.include?("Reclaim stale versions")
+    !err.string.include?("Examples")
   end
 
   test "the root renders the three sections in fixed order when its children span categories" do

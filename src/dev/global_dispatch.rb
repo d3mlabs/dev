@@ -98,10 +98,8 @@ module Dev
       $stderr.puts "Run 'dev #{T.must(argv.first)}' to see its commands."
       Kernel.exit(1)
     rescue Cli::FlagVocabulary::UnknownFlagError => e
-      # A usage error: the node's usage beside the message, exit 2 (the
-      # getopt/cobra convention), as in the Runner.
-      $stderr.puts "dev: #{e}"
-      Cli::UsagePrinter.new.print_node(path: e.path, command: e.command, out: $stderr)
+      # Exit 2: the getopt/cobra convention for a malformed command line.
+      Cli::UsagePrinter.new.print_unknown_flag(e, out: $stderr)
       Kernel.exit(2)
     rescue Dev::Cd::Matcher::RepoNotFoundError, Dev::CredentialAccessor::UsageError,
            ArgumentError, RuntimeError => e

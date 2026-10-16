@@ -148,10 +148,8 @@ module Dev
         end
         Kernel.exit(1)
       when Cli::FlagVocabulary::UnknownFlagError
-        # A usage error: the node's usage beside the message, exit 2 (the
-        # getopt/cobra convention for a malformed command line).
-        $stderr.puts "dev: #{error}"
-        Cli::UsagePrinter.new.print_node(path: error.path, command: error.command, out: $stderr)
+        # Exit 2: the getopt/cobra convention for a malformed command line.
+        Cli::UsagePrinter.new.print_unknown_flag(error, out: $stderr)
         Kernel.exit(2)
       when ArgumentError, RuntimeError
         $stderr.puts "dev: #{error}"
