@@ -6,9 +6,10 @@
 # hand, never at image build. The tap only ever carries the latest formula,
 # so the exact version comes from the tap's history: the commit whose
 # Formula/dev-core.rb points at v<version>.tar.gz is checked out and
-# installed from. Linuxbrew is already in the image (the bootstrap installed
-# the build group with it and removed only dev-core); brew allows root
-# inside a container (/.dockerenv).
+# installed from. Linuxbrew is already in the image, and so are dev-core's
+# dependencies (the bootstrap removed only dev-core, keeping the formulae it
+# pulled in), so a fresh container installs one formula here; brew allows
+# root inside a container (/.dockerenv).
 #
 # Usage: sh container-provision-dev.sh <version>
 set -eu
