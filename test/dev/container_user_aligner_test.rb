@@ -105,11 +105,20 @@ class Dev::ContainerUserAlignerTest < Minitest::Test
     script.start_with?("#!/bin/sh")
     script.include?("/etc/passwd")
     script.include?("/etc/group")
-    script.include?("find / -xdev -user")
-    script.include?("find / -xdev -group")
-    script.include?("chown -h")
-    script.include?("chgrp -h")
+    script.include?("find / -xdev")
+    script.include?("-user \"$old_uid\" -exec chown -h \"$uid\"")
+    script.include?("-group \"$old_gid\" -exec chgrp -h \"$gid\"")
     SCRIPT.executable?
+  end
+
+  test "the realign script walks the filesystem once and leaves regular files inside the Cellar at the old ids" do
+    Given "the script shipped beside dev's bin"
+    script = SCRIPT.read
+
+    Expect "one find, with the Cellar's regular files pruned before either ownership test (overlay copy-up is paid per byte, and poured kegs are never written into)"
+    script.scan(/^find /).size == 1
+    script.include?("cellar=\"/home/linuxbrew/.linuxbrew/Cellar\"")
+    script.include?("\\( -type f -path \"$cellar/*\" -prune \\) -o")
   end
 
   test "the realign script parses under sh -n" do

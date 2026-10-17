@@ -17,8 +17,9 @@ module Dev
   # its user can write the data root. It can (gamebox, where the uids match;
   # Macs, where the virtiofs mount is writable regardless) — nothing
   # happens. It cannot — bin/container-align-user.sh, as root, gives the
-  # image user the mount owner's ids and re-owns every file the old ids held
-  # on the container's root filesystem, so the next `docker exec` runs as the
+  # image user the mount owner's ids and re-owns what the old ids held on
+  # the container's root filesystem (all but the Cellar's keg contents, which
+  # Homebrew never writes into), so the next `docker exec` runs as the
   # host's user and every bind mount is writable from both sides. A
   # root-owned mount (the engine created the host directory) is handed to
   # the container's user instead: nothing runs as root for lack of a better
