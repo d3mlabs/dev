@@ -37,6 +37,7 @@ Every node dev defines — a builtin or a group — has a declared flag vocabula
 - `-h` / `--help` **anywhere** among a node's arguments prints that node's usage and does nothing else: `dev container up --help` ≡ `dev help container up`, `dev plan new "Carve system" --help` prints `plan new`'s usage and creates no issue, bare `dev --help` ≡ `dev help`.
 - Any other `-`-prefixed argument the node does not declare is a usage error: `dev: unknown flag '--hlep' for 'dev plan new'`, the node's usage on stderr, **exit 2**. Groups declare no flags, so `dev deps --hlep` is refused the same way (an unknown *word* there is still an unknown subcommand).
 - A literal `--` ends option parsing: everything after it is positional data, neither help nor a violation (`dev plan new -- --help` titles the plan `--help`).
+- A flag that takes a value consumes the next word whatever its shape (`--labels -x` labels the runner `-x`), or takes it inline (`--keep=3`). The same arity holds both ways: a value flag with nothing after it (`dev cache gc --keep`) and a switch given a value (`dev plan new x --org=1`) are usage errors, exit 2, like an unknown flag.
 
 **Project `run:` commands have no vocabulary.** Their argv is opaque and forwarded verbatim — `dev test --help` reaches `test.sh`, as does `--` — because the script owns its flags. A project `run:` on a builtin's name (`up:`) owns the slot's argv the same way. The only dev-defined exception is `complete`, whose words are another command's argv.
 
@@ -77,7 +78,7 @@ Grouped as `dev help` lists them. **Scope** says where the command works: *anywh
 - No git repo above the current directory: `dev: no git repo (with dev.yml) found above <path>`
 - A git repo without a `dev.yml` (and the command is not an *anywhere* builtin): `dev: found git repo at <path> but no dev.yml there`
 - Unknown command: `dev: Command '<name>' not found` (the full path for an unknown subcommand, e.g. `'deps bogus'`), with a pointer to `dev --help`
-- Unknown flag at a builtin or group: `dev: unknown flag '<flag>' for 'dev <path>'`, followed by that node's usage, exit 2 (see [Flags](#flags---help-everywhere-unknown-flags-refused); project commands take any flag)
+- Malformed flags at a builtin or group — unknown (`dev: unknown flag '<flag>' for 'dev <path>'`), a value flag without its value (`flag '<flag>' needs a value`), a switch given one (`flag '<flag>' takes no value`): the message, then that node's usage, exit 2 (see [Flags](#flags---help-everywhere-unknown-flags-refused); project commands take any flag)
 
 ## dev.yml convention
 
