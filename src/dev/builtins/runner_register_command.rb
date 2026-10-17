@@ -1,7 +1,6 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "dev/cli/flag_parser"
 require "dev/command"
 require "dev/confirmer"
 require "dev/engine_provisioner"
@@ -111,7 +110,6 @@ module Dev
           teardown: Dev::RunnerTeardown,
           confirmer: Dev::Confirmer,
           engine_provisioner: Dev::EngineProvisioner,
-          flag_parser: Cli::FlagParser,
           out: T.any(IO, StringIO),
         ).void
       end
@@ -128,7 +126,6 @@ module Dev
         confirmer: Dev::Confirmer.new,
         # `dev up`'s engine step, run here for the checked-out repo's hint.
         engine_provisioner: Dev::EngineProvisioner.new,
-        flag_parser: Cli::FlagParser.new,
         out: $stdout
       )
         super()
@@ -140,7 +137,6 @@ module Dev
         @teardown = teardown
         @confirmer = confirmer
         @engine_provisioner = engine_provisioner
-        @flag_parser = flag_parser
         @out = out
       end
 

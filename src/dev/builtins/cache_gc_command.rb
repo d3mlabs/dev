@@ -1,7 +1,6 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "dev/cli/flag_parser"
 require "dev/command"
 require "dev/container_engine"
 require "dev/deps/cache_gc"
@@ -25,16 +24,14 @@ module Dev
         T.proc.params(lockfile: Dev::Deps::Lockfile).returns(Dev::Deps::CacheGc)
       end
 
-      sig { params(cache_gc_factory: CacheGcFactory, flag_parser: Cli::FlagParser).void }
+      sig { params(cache_gc_factory: CacheGcFactory).void }
       def initialize(
         cache_gc_factory: ->(lockfile) {
           Dev::Deps::CacheGc.new(lockfile:, engine: Dev::ContainerEngine.resolve)
-        },
-        flag_parser: Cli::FlagParser.new
+        }
       )
         super()
         @cache_gc_factory = cache_gc_factory
-        @flag_parser = flag_parser
       end
 
       sig { override.returns(String) }

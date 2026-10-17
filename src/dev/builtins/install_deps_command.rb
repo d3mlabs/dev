@@ -2,7 +2,6 @@
 # frozen_string_literal: true
 
 require "pathname"
-require "dev/cli/flag_parser"
 require "dev/command"
 require "dev/container_context"
 require "dev/container_ruby"
@@ -60,7 +59,6 @@ module Dev
         params(
           installer_factory: InstallerFactory,
           host_service: Dev::HostService,
-          flag_parser: Cli::FlagParser,
           inside_container: T::Boolean,
           container_ruby: Dev::ContainerRuby,
         ).void
@@ -70,14 +68,12 @@ module Dev
           Dev::Deps::Installer.new(lockfile:, integrations:)
         },
         host_service: Dev::HostService.new,
-        flag_parser: Cli::FlagParser.new,
         inside_container: Dev::ContainerContext.inside?,
         container_ruby: Dev::ContainerRuby.new
       )
         super()
         @installer_factory = installer_factory
         @host_service = host_service
-        @flag_parser = flag_parser
         @inside_container = inside_container
         @container_ruby = container_ruby
       end
