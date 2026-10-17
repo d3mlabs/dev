@@ -104,12 +104,14 @@ fi
 (cd "$DEPS_DIR" && CI=true dev deps install --group build --integration brew ${PINNED_TAPS[@]+"${PINNED_TAPS[@]}"})
 
 echo ">>> Removing dev-core from the image"
-# The toolchain stays; dev leaves. brew autoremoves dev-core's own
-# dependencies with it (gh, git, rbenv, ruby-build, shadowenv, …): they are
-# not image toolchain, they are dev's, and they come back with dev-core when
-# the host provisions the container's dev at its own version
-# (bin/container-provision-dev.sh). The build group's formulae were
-# installed on request and stay.
-brew uninstall --quiet dev-core
+# The toolchain stays; dev leaves (README: "dev is live infrastructure" —
+# the image contains no dev). dev-core's own dependencies (gh, git, rbenv,
+# ruby-build, shadowenv, …) stay too: Homebrew 7 autoremoves a formula's
+# now-unneeded dependencies on uninstall by default, and every container
+# bin/container-provision-dev.sh later brings to the host's version would
+# pour those ~30 bottles back before installing the one formula it is
+# there for. Keeping them is a minute off every cold container start
+# (plans#48) and changes nothing about which dev the image carries: none.
+HOMEBREW_NO_AUTOREMOVE=1 brew uninstall --quiet dev-core
 
 echo ">>> Done"
