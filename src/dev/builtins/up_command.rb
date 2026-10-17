@@ -83,10 +83,9 @@ module Dev
       sig { override.returns(T::Boolean) }
       def stamps? = true
 
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
-        no_cache = args.include?(NO_CACHE_FLAG)
-        args -= [NO_CACHE_FLAG]
+        no_cache = args.flag?(NO_CACHE_FLAG)
         return call_inside(args:, context:, no_cache:) if @inside_container
         return call_cold(args:, context:) if no_cache
 
@@ -128,10 +127,10 @@ module Dev
       # not touched; the host layer is not converged — a cold run proves the
       # project provisions, and `dev up` is what converges the host.
       #
-      # @param args [Array<String>] the user's args, less the flag
+      # @param args [Cli::ParsedArgs] the user's args
       # @param context [ExecutionContext]
       # @return [void]
-      sig { params(args: T::Array[String], context: ExecutionContext).void }
+      sig { params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call_cold(args:, context:)
         project = context.project
         if project.nil?
@@ -152,13 +151,13 @@ module Dev
       # host's and cannot self-update), no credentials to prompt for (the host
       # resolves and injects them), and no service to bring up (we are in it).
       #
-      # @param args [Array<String>] the user's args, handed to the install body
+      # @param args [Cli::ParsedArgs] the user's args, handed to the install body
       # @param context [ExecutionContext]
       # @param no_cache [Boolean] whether `--no-cache` was asked for — a
       #   host-side topology (throwaway root, one-shot container) that has no
       #   meaning here; reported, then the plain install runs
       # @return [void]
-      sig { params(args: T::Array[String], context: ExecutionContext, no_cache: T::Boolean).void }
+      sig { params(args: Cli::ParsedArgs, context: ExecutionContext, no_cache: T::Boolean).void }
       def call_inside(args:, context:, no_cache:)
         if context.project.nil?
           puts "dev: inside a container with no dev.yml — nothing to provision."

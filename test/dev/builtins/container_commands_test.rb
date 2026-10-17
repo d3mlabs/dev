@@ -51,7 +51,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     command.expects(verb).with(project: context.project).once
 
     When "invoked as a CLI verb"
-    command.call(args: [], context: context)
+    command.call(args: no_args, context: context)
 
     Then "it is the port, and the verb delegated to it with the project alone"
     command.is_a?(port)
@@ -92,7 +92,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: user_aligner,
       dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out,
-    ).call(args: [], context: project(config))
+    ).call(args: no_args, context: project(config))
 
     Then "every step is reported: the container's dev, then the deps it installs — an already-aligned user says nothing"
     out.string == "dev: image ready: #{TAG}\n" \
@@ -122,7 +122,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: user_aligner,
       dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out,
-    ).call(args: [], context: project(config))
+    ).call(args: no_args, context: project(config))
 
     Then "the alignment is reported before the container's dev"
     out.string.include?("dev: build container up: #{CURRENT}\n#{line}\ndev: container dev current at 0.2.98\n")
@@ -155,7 +155,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: aligned_user,
       dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: StringIO.new,
-    ).call(args: [], context: project(config))
+    ).call(args: no_args, context: project(config))
 
     Then "the install sees the resolved entry only"
     1 * deps_installer.install!(CURRENT, env: { "WWISE_TOKEN" => "t0k" })
@@ -238,7 +238,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: aligned_user,
       dev_provisioner: dev_provisioner, out: out,
-    ).call(args: [], context: project(config))
+    ).call(args: no_args, context: project(config))
 
     Then
     out.string.include?("dev: container dev current at 0.2.98\n")
@@ -256,7 +256,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     When "bringing the container up"
     Dev::Builtins::ContainerUpCommand.new(container_client: client, engine_provisioner: provisioner, out: out)
-      .call(args: [], context: project(config))
+      .call(args: no_args, context: project(config))
 
     Then
     out.string == "dev: image ready: #{TAG}\n"
@@ -278,7 +278,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     When "bringing the container up"
     Dev::Builtins::ContainerUpCommand.new(container_client: client, engine_provisioner: provisioner, out: StringIO.new)
-      .call(args: [], context: project(config))
+      .call(args: no_args, context: project(config))
 
     Then
     captured.fetch(:publish) == publish
@@ -310,7 +310,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     When "bringing the container up, then invoking the providers ensure_image! received"
     Dev::Builtins::ContainerUpCommand.new(container_client: client, engine_provisioner: provisioner, out: StringIO.new)
-      .call(args: [], context: project(config))
+      .call(args: no_args, context: project(config))
 
     Then "each provider resolves its declared credentials"
     captured.fetch(:build_args_provider).call == { "GH_USER" => "jp" }
@@ -327,7 +327,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     When "bringing the container down"
     Dev::Builtins::ContainerDownCommand.new(container_client: client, out: out)
-      .call(args: [], context: project(config(persist: true)))
+      .call(args: no_args, context: project(config(persist: true)))
 
     Then
     out.string == expected
@@ -347,7 +347,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     When "resetting"
     Dev::Builtins::ContainerResetCommand.new(container_client: client, out: out)
-      .call(args: [], context: project(config(persist: true)))
+      .call(args: no_args, context: project(config(persist: true)))
 
     Then
     out.string == expected
@@ -370,7 +370,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     out = StringIO.new
 
     When "printing the tag"
-    Dev::Builtins::ContainerTagCommand.new(container_client: client, out: out).call(args: [], context: project(config))
+    Dev::Builtins::ContainerTagCommand.new(container_client: client, out: out).call(args: no_args, context: project(config))
 
     Then "a workflow can capture it"
     out.string == "#{TAG}\n"
@@ -464,7 +464,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     Dev::BuildContainer.stubs(:image_with_tag).with(config, project_root: ROOT).returns(TAG)
     client.stubs(:service_status).with(TAG, ROOT).returns(status)
     out = StringIO.new
-    Dev::Builtins::ContainerStatusCommand.new(container_client: client, out: out).call(args: [], context: project(config))
+    Dev::Builtins::ContainerStatusCommand.new(container_client: client, out: out).call(args: no_args, context: project(config))
     out.string
   end
 end

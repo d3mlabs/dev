@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require_relative "builtin_executor"
+require_relative "cli/parsed_args"
 require_relative "command"
 require_relative "execution_context"
 require_relative "group_executor"
@@ -51,19 +52,20 @@ module Dev
     # Dispatch one command to its strategy.
     #
     # @param command [Command]
-    # @param args [Array<String>] argv after the command name
+    # @param args [Cli::ParsedArgs] the command's parsed args (a project
+    #   command receives its words, as typed)
     # @param context [ExecutionContext]
     # @return [void]
     # @raise [CommandRunner::CommandFailedError] when a waited child fails
     # @raise [ProjectExecutionUnavailableError] when a project-scoped variant
     #   reaches a builtin-only composite (a wiring bug)
-    sig { params(command: Command, args: T::Array[String], context: ExecutionContext).void }
+    sig { params(command: Command, args: Cli::ParsedArgs, context: ExecutionContext).void }
     def execute(command, args:, context:)
       case command
       when BuiltinCommand
         @builtin_executor.execute(command, args:, context:)
       when ProjectCommand
-        project_executor.exec_into(command, args:)
+        project_executor.exec_into(command, args: args.words)
       when OverriddenCommand
         overridden_executor.execute(command, args:, context:)
       when CommandGroup

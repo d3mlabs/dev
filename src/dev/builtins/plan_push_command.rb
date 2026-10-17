@@ -18,9 +18,9 @@ module Dev
 
       private
 
-      sig { override.params(accessor: Dev::Plan::Accessor, args: T::Array[String]).void }
+      sig { override.params(accessor: Dev::Plan::Accessor, args: Cli::ParsedArgs).void }
       def perform(accessor, args)
-        accessor.push(args, out: @out)
+        accessor.push(args.words, out: @out)
       end
     end
   end

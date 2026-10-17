@@ -26,7 +26,7 @@ module Dev
       # @param args [Array<String>] unused
       # @param context [ExecutionContext] the project
       # @return [void]
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
         down(project: context.project!)
       end

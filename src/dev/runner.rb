@@ -147,9 +147,9 @@ module Dev
           $stderr.puts "Run 'dev' or 'dev --help' to see available commands."
         end
         Kernel.exit(1)
-      when Cli::FlagVocabulary::UnknownFlagError
+      when Cli::FlagVocabulary::UsageError
         # Exit 2: the getopt/cobra convention for a malformed command line.
-        Cli::UsagePrinter.new.print_unknown_flag(error, out: $stderr)
+        Cli::UsagePrinter.new.print_usage_error(error, out: $stderr)
         Kernel.exit(2)
       when ArgumentError, RuntimeError
         $stderr.puts "dev: #{error}"

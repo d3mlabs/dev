@@ -31,9 +31,9 @@ module Dev
       sig { override.returns(T::Array[Cli::Flag]) }
       def flags = [Cli::Flag.new(Dev::Cd::Accessor::RESOLVE_FLAG), Cli::Flag.new(Dev::Cd::Accessor::CANDIDATES_FLAG)]
 
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
-        @accessor.run(args)
+        @accessor.run(args.words)
       end
     end
   end

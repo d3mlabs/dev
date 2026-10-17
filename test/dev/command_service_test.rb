@@ -40,6 +40,20 @@ class Dev::CommandServiceTest < Minitest::Test
     end
   end
 
+  class << self
+    # The parse a builtin receives for those words. A class method: Where
+    # cells are evaluated while the class body loads, before any instance.
+    #
+    # @return [Dev::Cli::ParsedArgs]
+    def parsed(words, positionals: [], switches: [], values: {})
+      Dev::Cli::ParsedArgs.new(words:, positionals:, switches:, values:)
+    end
+  end
+
+  def parsed(words, positionals: [], switches: [], values: {})
+    self.class.parsed(words, positionals:, switches:, values:)
+  end
+
   def build_service(builtins:, dependency_service:, executor: build_executor)
     Dev::CommandService.new(
       repository: Dev::CommandRepository.new(
@@ -89,7 +103,7 @@ class Dev::CommandServiceTest < Minitest::Test
     service.execute(["deps", "path", "xcode"], context: context)
 
     Then "the builtin ran once with the args and context"
-    builtin.calls == [[["path", "xcode"], context]]
+    builtin.calls == [[parsed(["path", "xcode"], positionals: ["path", "xcode"]), context]]
   end
 
   test "execute raises CommandNotFoundError (the repository's own) for an unknown name" do
@@ -201,7 +215,7 @@ class Dev::CommandServiceTest < Minitest::Test
     service.execute(["deps", "path", "xcode"], context: context)
 
     Then "the child ran with the args after it"
-    path.calls == [[["xcode"], context]]
+    path.calls == [[parsed(["xcode"], positionals: ["xcode"]), context]]
   end
 
   test "a command with children invoked bare runs itself, guarding and stamping by its own traits" do
@@ -218,7 +232,7 @@ class Dev::CommandServiceTest < Minitest::Test
     service.execute(["test", "--fast"], context: context)
 
     Then "it ran with the flag; the guard and stamp expectations hold"
-    parent.calls == [[["--fast"], context]]
+    parent.calls == [[parsed(["--fast"], switches: ["--fast"]), context]]
   end
 
   test "a group invoked bare is handed to the executor as itself, unguarded and unstamped" do
@@ -229,7 +243,7 @@ class Dev::CommandServiceTest < Minitest::Test
     dependency_service.expects(:lock!).never
     executor = typed_mock(Dev::CommandExecutor)
     context = fake_context
-    executor.expects(:execute).with(group, args: [], context: context).once
+    executor.expects(:execute).with(group, args: no_args, context: context).once
     service = build_service(builtins: { "deps" => group }, dependency_service: dependency_service, executor: executor)
 
     When "executing the group bare"
@@ -275,28 +289,28 @@ class Dev::CommandServiceTest < Minitest::Test
     error = begin
       service.execute([*path, *args], context: fake_context)
       nil
-    rescue Dev::Cli::FlagVocabulary::UnknownFlagError => e
+    rescue Dev::Cli::FlagVocabulary::UsageError => e
       e
     end
 
-    Then "a known flag is admitted and reaches the builtin; an unknown one is refused before anything runs; " \
+    Then "a known flag is parsed and reaches the builtin; an unknown one is refused before anything runs; " \
       "a project command gets its argv verbatim"
     error.nil? == (expected != :unknown_flag)
     node.nil? || node.calls.map(&:first) == (expected == :unknown_flag ? [] : [expected])
-    shape != "project command" || forwarded == [expected]
+    shape != "project command" || forwarded == [expected.words]
     error.nil? || error.path == path
 
     Where
-    shape             | path            | args                    | outcome                                  | expected
-    "group"           | ["cache"]       | ["--bogus"]             | "is refused: groups declare no flags"    | :unknown_flag
-    "flagged builtin" | ["cache", "gc"] | ["--keep", "3"]         | "is admitted"                            | ["--keep", "3"]
-    "flagged builtin" | ["cache", "gc"] | ["--keep=3"]            | "is admitted: the name is what's checked" | ["--keep=3"]
-    "flagged builtin" | ["cache", "gc"] | ["--hlep"]              | "is refused"                             | :unknown_flag
-    "flagged builtin" | ["cache", "gc"] | ["--", "--hlep"]        | "is positional after the terminator"     | ["--hlep"]
-    "plain builtin"   | ["plain"]       | ["positional"]          | "is admitted: words are never flags"     | ["positional"]
-    "plain builtin"   | ["plain"]       | ["--any"]               | "is refused: nothing is declared"        | :unknown_flag
-    "project command" | ["test"]        | ["--help"]              | "is forwarded: the script owns its argv" | ["--help"]
-    "project command" | ["test"]        | ["--", "--x"]           | "is forwarded with the terminator kept"  | ["--", "--x"]
+    shape             | path            | args             | outcome                                   | expected
+    "group"           | ["cache"]       | ["--bogus"]      | "is refused: groups declare no flags"     | :unknown_flag
+    "flagged builtin" | ["cache", "gc"] | ["--keep", "3"]  | "is parsed: the value is the next word"   | parsed(["--keep", "3"], values: { "--keep" => ["3"] })
+    "flagged builtin" | ["cache", "gc"] | ["--keep=3"]     | "is parsed: the value is inline"          | parsed(["--keep=3"], values: { "--keep" => ["3"] })
+    "flagged builtin" | ["cache", "gc"] | ["--hlep"]       | "is refused"                              | :unknown_flag
+    "flagged builtin" | ["cache", "gc"] | ["--", "--hlep"] | "is positional after the terminator"      | parsed(["--", "--hlep"], positionals: ["--hlep"])
+    "plain builtin"   | ["plain"]       | ["positional"]   | "is admitted: words are never flags"      | parsed(["positional"], positionals: ["positional"])
+    "plain builtin"   | ["plain"]       | ["--any"]        | "is refused: nothing is declared"         | :unknown_flag
+    "project command" | ["test"]        | ["--help"]       | "is forwarded: the script owns its argv"  | parsed(["--help"], positionals: ["--help"])
+    "project command" | ["test"]        | ["--", "--x"]    | "is forwarded with the terminator kept"   | parsed(["--", "--x"], positionals: ["--", "--x"])
   end
 
   test "#{argv.inspect} runs the help node with #{help_path.inspect}: a help flag at #{shape} asks for that node's usage" do
@@ -313,7 +327,7 @@ class Dev::CommandServiceTest < Minitest::Test
     service.execute(argv, context: fake_context)
 
     Then "help ran once, with the node's path; the node itself never did"
-    help.calls.map(&:first) == [help_path]
+    help.calls.map { |args, _context| args.positionals } == [help_path]
     leaf.calls.empty?
     plain.calls.empty?
 
@@ -338,7 +352,7 @@ class Dev::CommandServiceTest < Minitest::Test
     service.execute(argv, context: fake_context)
 
     Then "the node ran with the flag as data; help never did"
-    plain.calls.map(&:first) == [expected]
+    plain.calls.map { |args, _context| args.positionals } == [expected]
     help.calls.empty?
 
     Where
@@ -357,7 +371,7 @@ class Dev::CommandServiceTest < Minitest::Test
     service.execute(["complete", "plan", "--help"], context: fake_context)
 
     Then
-    opaque.calls.map(&:first) == [["plan", "--help"]]
+    opaque.calls.map { |args, _context| args.words } == [["plan", "--help"]]
     help.calls.empty?
   end
 
@@ -370,7 +384,7 @@ class Dev::CommandServiceTest < Minitest::Test
     service.execute(["complete", "plan", "pull", "--merge", "--", "-h"], context: fake_context)
 
     Then "every word arrived as typed"
-    builtin.calls.map(&:first) == [["plan", "pull", "--merge", "--", "-h"]]
+    builtin.calls.map { |args, _context| args.words } == [["plan", "pull", "--merge", "--", "-h"]]
   end
 
   test "an unknown flag is refused before the staleness guard gets to nag" do
@@ -408,7 +422,7 @@ class Dev::CommandServiceTest < Minitest::Test
     executor = typed_mock(Dev::CommandExecutor)
     context = fake_context
     service = build_service(builtins: { "up" => FakeBuiltin.new }, dependency_service: dependency_service, executor: executor)
-    executor.expects(:execute).with(service.root, args: [], context: context).once
+    executor.expects(:execute).with(service.root, args: no_args, context: context).once
 
     When "executing bare"
     service.execute([], context: context)

@@ -23,12 +23,11 @@ module Dev
       sig { override.returns(T::Array[Cli::Flag]) }
       def flags = [Cli::Flag.new(ORG_FLAG), Cli::Flag.new(GITIGNORE_FLAG)]
 
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
-        rest = args.dup
-        org = rest.delete(ORG_FLAG) ? true : false
-        gitignore_only = rest.delete(GITIGNORE_FLAG) ? true : false
-        raise Dev::Learnings::Accessor::UsageError, USAGE unless rest.empty? && !(org && gitignore_only)
+        org = args.flag?(ORG_FLAG)
+        gitignore_only = args.flag?(GITIGNORE_FLAG)
+        raise Dev::Learnings::Accessor::UsageError, USAGE unless args.positionals.empty? && !(org && gitignore_only)
 
         @accessor_factory.call.init(out: @out, org: org, gitignore_only: gitignore_only)
       end

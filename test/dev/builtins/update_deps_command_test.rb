@@ -32,7 +32,7 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     $stdout = StringIO.new
 
     When "running dev deps update"
-    command.call(args: [], context: build_context(root))
+    command.call(args: no_args, context: build_context(root))
 
     Then "the run completes and points at dev up"
     $stdout.string.include?("lockfiles updated")
@@ -59,7 +59,7 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     $stdout = StringIO.new
 
     When "running dev deps update"
-    command.call(args: [], context: build_context(root))
+    command.call(args: no_args, context: build_context(root))
 
     Then "the locker received the bundler declarations (asserted on the mock)"
     $stdout.string.include?("lockfiles updated")
@@ -87,7 +87,7 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     $stdout = StringIO.new
 
     When "running dev deps update"
-    command.call(args: [], context: build_context(root))
+    command.call(args: no_args, context: build_context(root))
 
     Then "a fresh checkout has a .shadowenv.d before bundle lock is wrapped in it (asserted on the mocks)"
     $stdout.string.include?("lockfiles updated")
@@ -118,7 +118,7 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     $stdout = StringIO.new
 
     When "running dev deps update"
-    command.call(args: [], context: build_context(root))
+    command.call(args: no_args, context: build_context(root))
 
     Then "only the source formula the image build installs is named — format matters there, and the Mac-only one never reaches the image"
     $stdout.string.include?("wwise-cli has no x86_64_linux bottle")
@@ -149,7 +149,7 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     $stdout = StringIO.new
 
     When "running dev deps update"
-    command.call(args: [], context: build_context(root))
+    command.call(args: no_args, context: build_context(root))
 
     Then "build-deps.lock is byte-identical to what was there"
     (root / "build-deps.lock").read == before
@@ -170,7 +170,7 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     $stdout = StringIO.new
 
     When "running dev deps update"
-    command.call(args: [], context: build_context(root))
+    command.call(args: no_args, context: build_context(root))
 
     Then "the run resolved an empty config (a leaked ruby pin would try to resolve it)"
     Dev::Deps.last_config.ruby_version_requirement.nil?

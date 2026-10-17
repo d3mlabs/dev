@@ -57,15 +57,15 @@ module Dev
         out.puts @epilogue
       end
 
-      # The usage-error rendering for a flag outside a node's vocabulary:
-      # the message, then that node's usage, as getopt/cobra tools do. The
-      # caller owns the exit status.
+      # The rendering of a malformed command line at a node: the message,
+      # then that node's usage, as getopt/cobra tools do. The caller owns
+      # the exit status.
       #
-      # @param error [FlagVocabulary::UnknownFlagError]
+      # @param error [FlagVocabulary::UsageError]
       # @param out [IO, StringIO] the diagnostics stream
       # @return [void]
-      sig { params(error: FlagVocabulary::UnknownFlagError, out: T.any(IO, StringIO)).void }
-      def print_unknown_flag(error, out:)
+      sig { params(error: FlagVocabulary::UsageError, out: T.any(IO, StringIO)).void }
+      def print_usage_error(error, out:)
         out.puts "dev: #{error.message}"
         print_node(path: error.path, command: error.command, out:)
       end

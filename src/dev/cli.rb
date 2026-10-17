@@ -8,5 +8,6 @@ end
 require_relative "cli/flag"
 require_relative "cli/flag_parser"
 require_relative "cli/flag_vocabulary"
+require_relative "cli/parsed_args"
 require_relative "cli/ui"
 require_relative "cli/usage_printer"

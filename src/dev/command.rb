@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require_relative "cli/flag"
+require_relative "cli/parsed_args"
 require_relative "execution_context"
 
 module Dev
@@ -164,7 +165,10 @@ module Dev
       copy
     end
 
-    sig { abstract.params(args: T::Array[String], context: ExecutionContext).void }
+    # The body. `args` arrive parsed against this command's `flags`: read
+    # them by name (ParsedArgs#flag?/#value/#values) and the rest as
+    # positionals; an opaque command reads its words.
+    sig { abstract.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
     def call(args:, context:); end
   end
 

@@ -92,11 +92,11 @@ module Dev
       # @raise [Dev::RunnerTeardown::AmbiguousEnrollmentError] a scope several dirs serve
       # @raise [Dev::RunnerTeardown::NoSuchEnrollmentError] nothing matches
       # @raise [Dev::RunnerTeardown::TeardownFailedError] a step was refused
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
         _ = context
         enrollment = @teardown.resolve(reference(args))
-        unless args.include?(YES_FLAG) || @confirmer.confirm?(question(enrollment))
+        unless args.flag?(YES_FLAG) || @confirmer.confirm?(question(enrollment))
           @out.puts "dev: nothing changed."
           return
         end
@@ -111,13 +111,13 @@ module Dev
       #
       # @param args [Array<String>]
       # @return [String] a scope or a dir
-      sig { params(args: T::Array[String]).returns(String) }
+      sig { params(args: Cli::ParsedArgs).returns(String) }
       def reference(args)
-        positional = args.find { |arg| !arg.start_with?("--") }
+        positional = args.positionals.first
         return positional if positional
 
         repo = @repo_resolver.call
-        args.include?(ORG_FLAG) ? repo.split("/").fetch(0) : repo
+        args.flag?(ORG_FLAG) ? repo.split("/").fetch(0) : repo
       end
 
       # @param enrollment [Dev::RunnerDiscovery::Enrollment]

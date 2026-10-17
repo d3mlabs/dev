@@ -31,7 +31,7 @@ class Dev::Builtins::HelpCommandTest < Minitest::Test
     command = build_help(usage_printer: usage_printer, out: out, root_provider: -> { root })
 
     When "running help"
-    command.call(args: [], context: build_context)
+    command.call(args: no_args, context: build_context)
 
     Then "the printer expectation holds"
     true
@@ -47,7 +47,7 @@ class Dev::Builtins::HelpCommandTest < Minitest::Test
     root = build_root({ "up" => Dev::ProjectCommand.new(run: "./bin/up.rb", desc: "Setup") })
 
     When "running help"
-    command.call(args: [], context: build_context)
+    command.call(args: no_args, context: build_context)
 
     Then "the late-assigned root is what renders"
     printed.fetch(0) == root
@@ -63,7 +63,7 @@ class Dev::Builtins::HelpCommandTest < Minitest::Test
     command = build_help(usage_printer: usage_printer, out: out, root_provider: -> { build_root({ "test" => outer }) })
 
     When "asking for help on the nested path"
-    command.call(args: ["test", "unit"], context: build_context)
+    command.call(args: parsed_args(command, ["test", "unit"]), context: build_context)
 
     Then "the printer expectation holds"
     true
@@ -79,7 +79,7 @@ class Dev::Builtins::HelpCommandTest < Minitest::Test
     command = build_help(usage_printer: usage_printer, out: out, root_provider: -> { build_root({ "test" => test }) })
 
     When "asking for help on the leaf"
-    command.call(args: ["test", "unit"], context: build_context)
+    command.call(args: parsed_args(command, ["test", "unit"]), context: build_context)
 
     Then "the printer expectation holds"
     true
@@ -91,7 +91,7 @@ class Dev::Builtins::HelpCommandTest < Minitest::Test
 
     When "asking for help on a missing path"
     error = assert_raises(Dev::Builtins::HelpCommand::UnknownCommandError) do
-      command.call(args: ["up", "nope"], context: build_context)
+      command.call(args: parsed_args(command, ["up", "nope"]), context: build_context)
     end
 
     Then

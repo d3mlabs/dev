@@ -47,9 +47,9 @@ module Dev
       sig { override.returns(T::Boolean) }
       def staleness_exempt? = true
 
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
-        @usage_printer.print_node(path: args, command: walk(@root_provider.call, args), out: @out)
+        @usage_printer.print_node(path: args.positionals, command: walk(@root_provider.call, args.positionals), out: @out)
       end
 
       private

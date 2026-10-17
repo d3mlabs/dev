@@ -14,9 +14,9 @@ module Dev
 
       private
 
-      sig { override.params(accessor: Dev::Plan::Accessor, args: T::Array[String]).void }
+      sig { override.params(accessor: Dev::Plan::Accessor, args: Cli::ParsedArgs).void }
       def perform(accessor, args)
-        raise Dev::Plan::Accessor::UsageError, "usage: dev plan status" unless args.empty?
+        raise Dev::Plan::Accessor::UsageError, "usage: dev plan status" unless args.positionals.empty?
 
         accessor.status(out: @out)
       end

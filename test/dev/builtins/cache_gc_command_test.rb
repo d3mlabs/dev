@@ -28,7 +28,7 @@ class Dev::Builtins::CacheGcCommandTest < Minitest::Test
     command = build_command(gc)
 
     When "running cache gc"
-    command.call(args: [], context: build_context)
+    command.call(args: no_args, context: build_context)
 
     Then "the expectation on the GC holds"
     true
@@ -41,7 +41,7 @@ class Dev::Builtins::CacheGcCommandTest < Minitest::Test
     command = build_command(gc)
 
     When "running cache gc --tool-caches"
-    command.call(args: ["--tool-caches"], context: build_context)
+    command.call(args: parsed_args(command, ["--tool-caches"]), context: build_context)
 
     Then "the expectation on the GC holds"
     true
@@ -54,7 +54,7 @@ class Dev::Builtins::CacheGcCommandTest < Minitest::Test
     command = build_command(gc)
 
     When "running cache gc --keep 5"
-    command.call(args: ["--keep", "5"], context: build_context)
+    command.call(args: parsed_args(command, ["--keep", "5"]), context: build_context)
 
     Then "the expectation on the GC holds"
     true
@@ -67,7 +67,7 @@ class Dev::Builtins::CacheGcCommandTest < Minitest::Test
     command = build_command(gc)
 
     When "running cache gc --keep=3"
-    command.call(args: ["--keep=3"], context: build_context)
+    command.call(args: parsed_args(command, ["--keep=3"]), context: build_context)
 
     Then "the expectation on the GC holds"
     true
@@ -90,7 +90,7 @@ class Dev::Builtins::CacheGcCommandTest < Minitest::Test
       .returns("myregistry/myapp-linux:content-abc123")
 
     When "running cache gc"
-    command.call(args: [], context: context)
+    command.call(args: no_args, context: context)
 
     Then "the expectation on the GC holds"
     true
@@ -108,7 +108,7 @@ class Dev::Builtins::CacheGcCommandTest < Minitest::Test
     command = Dev::Builtins::CacheGcCommand.new
 
     When "running cache gc"
-    command.call(args: [], context: build_context)
+    command.call(args: no_args, context: build_context)
 
     Then "the expectations on the construction boundary hold"
     true

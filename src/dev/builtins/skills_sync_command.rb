@@ -15,9 +15,9 @@ module Dev
       sig { override.returns(String) }
       def desc = "Re-materialize every skill channel (dev's own, org, the project's gems) now"
 
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
-        raise Dev::Skills::Accessor::UsageError, USAGE unless args.empty?
+        raise Dev::Skills::Accessor::UsageError, USAGE unless args.positionals.empty?
 
         @accessor_factory.call.sync(out: @out)
       end

@@ -40,14 +40,14 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
     out.string
   end
 
-  test "an unknown flag prints the dev-prefixed message, then the node's usage, on the given stream" do
+  test "a usage error prints the dev-prefixed message, then the node's usage, on the given stream" do
     Given "an unknown-flag error at a leaf, and a printer with an epilogue"
     leaf = workflow_builtin(desc: "Reclaim stale versions")
     error = Dev::Cli::FlagVocabulary::UnknownFlagError.new(flag: "--kep", path: ["cache", "gc"], command: leaf)
     err = StringIO.new
 
     When "printing it"
-    Dev::Cli::UsagePrinter.new(epilogue: "Examples: dev up").print_unknown_flag(error, out: err)
+    Dev::Cli::UsagePrinter.new(epilogue: "Examples: dev up").print_usage_error(error, out: err)
 
     Then "the message heads the output and the node's usage follows (no epilogue: it is not the root)"
     err.string.lines.first == "dev: unknown flag '--kep' for 'dev cache gc'\n"

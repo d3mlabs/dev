@@ -11,7 +11,7 @@ require_relative "execution_context"
 module Dev
   # The command use case, and the only production consumer of the
   # CommandRepository (onion rule): resolve argv down the command tree,
-  # answer a help request with the node's usage, admit the args against the
+  # answer a help request with the node's usage, parse the args against the
   # node's flag vocabulary, guard dependency staleness, hand execution to
   # the process boundary, and record the installed stamp when the command
   # stamps.
@@ -42,7 +42,7 @@ module Dev
     #
     # A help request is answered before anything else: `-h`/`--help` among
     # a dev-defined node's args (before any `--`) runs the help node with
-    # that node's path instead. Admission comes next, so a usage error is
+    # that node's path instead. Parsing comes next, so a usage error is
     # answered before the staleness guard gets to nag. The stamp is reached
     # only when execute didn't raise, so it records a fully-successful run
     # — and only for wait-mode executions (the executor runs stamping slots
@@ -53,8 +53,8 @@ module Dev
     # @param context [ExecutionContext]
     # @return [void]
     # @raise [CommandRepository::CommandNotFoundError] for an unknown path
-    # @raise [Cli::FlagVocabulary::UnknownFlagError] for a flag the node
-    #   does not declare
+    # @raise [Cli::FlagVocabulary::UsageError] for a flag the node does not
+    #   declare, or one used against its arity
     # @raise [DependencyService::StaleDependencyStateError] in CI, when the
     #   dependency state is stale
     # @raise [CommandRunner::CommandFailedError] when a waited child fails
@@ -63,7 +63,7 @@ module Dev
       resolution = @repository.resolve(argv)
       resolution = @repository.resolve([HELP_COMMAND, *resolution.path]) if help_requested?(resolution)
       command = resolution.command
-      args = @flag_vocabulary.admit(command, path: resolution.path, args: resolution.args)
+      args = @flag_vocabulary.parse(command, path: resolution.path, args: resolution.args)
       @dependency_service.guard! unless command.staleness_exempt?
       @executor.execute(command, args:, context:)
       @dependency_service.lock! if command.stamps?

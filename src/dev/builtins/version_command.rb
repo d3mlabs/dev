@@ -35,7 +35,7 @@ module Dev
       # @param context [ExecutionContext] unused: the version is the binary's
       # @return [void]
       # @raise [Dev::Version::UnknownVersionError] when this install ships no VERSION file
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
         @out.puts Dev::Version.current
       end

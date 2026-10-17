@@ -112,13 +112,12 @@ module Dev
       # default: install everything the lockfiles pin, filtered to the
       # detected env and host OS so e.g. a Mac never downloads the Linux
       # engine, then to the groups and integrations named on the command line.
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
         project = context.project!
         env = Dev::Deps.detect_env
         host = Dev::Deps.detect_host
-        pin_taps = args.include?(PINNED_TAPS_FLAG)
-        args -= [PINNED_TAPS_FLAG]
+        pin_taps = args.flag?(PINNED_TAPS_FLAG)
         groups = symbol_flags(args, GROUP_FLAG)
         except = symbol_flags(args, EXCEPT_FLAG) || default_except
         integration_types = symbol_flags(args, INTEGRATION_FLAG)
@@ -201,9 +200,9 @@ module Dev
       # @param args [Array<String>] the command's argv
       # @param flag [String] GROUP_FLAG, EXCEPT_FLAG or INTEGRATION_FLAG
       # @return [Array<Symbol>, nil]
-      sig { params(args: T::Array[String], flag: String).returns(T.nilable(T::Array[Symbol])) }
+      sig { params(args: Cli::ParsedArgs, flag: String).returns(T.nilable(T::Array[Symbol])) }
       def symbol_flags(args, flag)
-        names = @flag_parser.values(args, flag)
+        names = args.values(flag)
         return nil if names.empty?
 
         names.map(&:to_sym)

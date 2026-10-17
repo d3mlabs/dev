@@ -54,7 +54,7 @@ module Dev
       sig { override.returns(T::Boolean) }
       def staleness_exempt? = true
 
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
         project = context.project!
         gc = @cache_gc_factory.call(Dev::Deps::Lockfile.new(dir: project.root))
@@ -68,7 +68,7 @@ module Dev
         end
         gc.gc(
           keep: parse_keep(args), image_ref: image_ref, live_tag: live_tag,
-          tool_caches: args.include?(TOOL_CACHES_FLAG),
+          tool_caches: args.flag?(TOOL_CACHES_FLAG),
         )
       end
 
@@ -79,9 +79,9 @@ module Dev
       #
       # @param args [Array<String>]
       # @return [Integer]
-      sig { params(args: T::Array[String]).returns(Integer) }
+      sig { params(args: Cli::ParsedArgs).returns(Integer) }
       def parse_keep(args)
-        keep = @flag_parser.value(args, KEEP_FLAG)
+        keep = args.value(KEEP_FLAG)
         keep ? Integer(keep) : Dev::Deps::CacheGc::DEFAULT_KEEP
       end
     end

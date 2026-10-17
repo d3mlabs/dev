@@ -36,7 +36,7 @@ class Dev::Builtins::RunnerUnregisterCommandTest < Minitest::Test
       .with("Unregister JPSFF from JPDuchesne/snappy (~/actions-runner, service installed)?").returns(true)
 
     When "unregistering by scope"
-    harness.command.call(args: ["JPDuchesne/snappy"], context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["JPDuchesne/snappy"]), context: projectless_context)
 
     Then "the one enrollment was torn down"
     harness.torn_down.map(&:dir) == [dir]
@@ -51,7 +51,7 @@ class Dev::Builtins::RunnerUnregisterCommandTest < Minitest::Test
       .with("Unregister JPSFF from JPDuchesne/snappy (~/actions-runner-snappy, no service)?").returns(false)
 
     When "unregistering"
-    harness.command.call(args: ["JPDuchesne/snappy"], context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["JPDuchesne/snappy"]), context: projectless_context)
 
     Then
     harness.torn_down == []
@@ -66,7 +66,7 @@ class Dev::Builtins::RunnerUnregisterCommandTest < Minitest::Test
     harness.confirmer.expects(:confirm?).never
 
     When "unregistering by ~-dir with --yes"
-    harness.command.call(args: ["--yes", "~/actions-runner-snappy"], context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--yes", "~/actions-runner-snappy"]), context: projectless_context)
 
     Then
     harness.torn_down.map(&:dir) == [dir]
@@ -80,8 +80,8 @@ class Dev::Builtins::RunnerUnregisterCommandTest < Minitest::Test
     harness = build_harness(home: home, repo: "JPDuchesne/snappy")
 
     When "unregistering with no reference, then with --org"
-    harness.command.call(args: ["--yes"], context: projectless_context)
-    harness.command.call(args: ["--yes", "--org"], context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--yes"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--yes", "--org"]), context: projectless_context)
 
     Then
     harness.torn_down.map(&:dir) == [repo_dir, org_dir]
@@ -95,7 +95,7 @@ class Dev::Builtins::RunnerUnregisterCommandTest < Minitest::Test
     harness = build_harness(home: home)
 
     When "unregistering by scope"
-    harness.command.call(args: ["--yes", "JPDuchesne/snappy"], context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--yes", "JPDuchesne/snappy"]), context: projectless_context)
 
     Then
     raises Dev::RunnerTeardown::AmbiguousEnrollmentError
@@ -150,7 +150,7 @@ class Dev::Builtins::RunnerUnregisterCommandTest < Minitest::Test
     command = Dev::Builtins::RunnerUnregisterCommand.new
 
     When "running with no reference"
-    command.call(args: [], context: projectless_context)
+    command.call(args: no_args, context: projectless_context)
 
     Then "the checkout's scope was resolved through gh and nothing on the empty host serves it"
     error = raises Dev::RunnerTeardown::NoSuchEnrollmentError

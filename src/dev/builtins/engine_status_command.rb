@@ -39,7 +39,7 @@ module Dev
       # @param args [Array<String>] unused
       # @param context [ExecutionContext] unused: the engine is machine state
       # @return [void]
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
         status = @provisioner.status
         @out.puts "engine: #{engine_line(status)}"

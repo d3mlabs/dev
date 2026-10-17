@@ -16,7 +16,7 @@ class Dev::Builtins::CdCommandTest < Minitest::Test
     command = Dev::Builtins::CdCommand.new(accessor: accessor)
 
     When "running cd"
-    command.call(args: ["widget"], context: build_context)
+    command.call(args: parsed_args(command, ["widget"]), context: build_context)
 
     Then "the expectation on the accessor holds"
     true

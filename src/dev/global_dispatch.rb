@@ -97,9 +97,9 @@ module Dev
       $stderr.puts "dev: #{e}"
       $stderr.puts "Run 'dev #{T.must(argv.first)}' to see its commands."
       Kernel.exit(1)
-    rescue Cli::FlagVocabulary::UnknownFlagError => e
+    rescue Cli::FlagVocabulary::UsageError => e
       # Exit 2: the getopt/cobra convention for a malformed command line.
-      Cli::UsagePrinter.new.print_unknown_flag(e, out: $stderr)
+      Cli::UsagePrinter.new.print_usage_error(e, out: $stderr)
       Kernel.exit(2)
     rescue Dev::Cd::Matcher::RepoNotFoundError, Dev::CredentialAccessor::UsageError,
            ArgumentError, RuntimeError => e

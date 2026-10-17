@@ -66,7 +66,7 @@ class Dev::Builtins::PlanCommandsTest < Minitest::Test
     }, out: out)
 
     When "calling the leaf in a projectless context"
-    command.call(args: args, context: build_context)
+    command.call(args: parsed_args(command, args), context: build_context)
 
     Then "the factory was consulted once"
     calls == 1
@@ -92,7 +92,7 @@ class Dev::Builtins::PlanCommandsTest < Minitest::Test
     command = LEAVES[:hook].new(accessor_factory: -> { accessor }, out: out, input: input)
 
     When "the hook fires"
-    command.call(args: [], context: build_context)
+    command.call(args: no_args, context: build_context)
 
     Then "the expectations hold"
     true
@@ -105,7 +105,7 @@ class Dev::Builtins::PlanCommandsTest < Minitest::Test
     command = klass.new(accessor_factory: -> { accessor }, out: StringIO.new)
 
     When "calling it with an argument it takes none of"
-    command.call(args: ["extra"], context: build_context)
+    command.call(args: parsed_args(command, ["extra"]), context: build_context)
 
     Then
     raises Dev::Plan::Accessor::UsageError

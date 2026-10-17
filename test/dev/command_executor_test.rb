@@ -51,7 +51,7 @@ class Dev::CommandExecutorTest < Minitest::Test
     executor = Dev::CommandExecutor.new(**strategies)
 
     When "executing"
-    executor.execute(command, args: [], context: build_context)
+    executor.execute(command, args: no_args, context: build_context)
 
     Then "the expectation held and no other strategy was consulted"
     true
@@ -62,12 +62,13 @@ class Dev::CommandExecutorTest < Minitest::Test
     command = FakeBuiltin.new
     context = build_context
     strategies = build_strategies
+    args = Dev::Cli::ParsedArgs.new(words: ["--verbose"], switches: ["--verbose"])
     strategies.fetch(:builtin_executor)
-      .expects(:execute).with(command, args: ["--verbose"], context: context).once
+      .expects(:execute).with(command, args: args, context: context).once
     executor = Dev::CommandExecutor.new(**strategies)
 
     When "executing"
-    executor.execute(command, args: ["--verbose"], context: context)
+    executor.execute(command, args: args, context: context)
 
     Then "the expectation held and no other strategy was consulted"
     true
@@ -82,10 +83,10 @@ class Dev::CommandExecutorTest < Minitest::Test
       .expects(:exec_into).with(command, args: ["--fast", "spec/a"]).once
     executor = Dev::CommandExecutor.new(**strategies)
 
-    When "executing"
-    executor.execute(command, args: ["--fast", "spec/a"], context: context)
+    When "executing with the script's words"
+    executor.execute(command, args: Dev::Cli::ParsedArgs.new(words: ["--fast", "spec/a"], positionals: ["--fast", "spec/a"]), context: context)
 
-    Then "the expectation held and no other strategy was consulted"
+    Then "the expectation held with the words, and no other strategy was consulted"
     true
   end
 
@@ -95,7 +96,7 @@ class Dev::CommandExecutorTest < Minitest::Test
     executor = build_builtin_only_executor
 
     When "executing"
-    executor.execute(command, args: [], context: build_context)
+    executor.execute(command, args: no_args, context: build_context)
 
     Then
     raises Dev::CommandExecutor::ProjectExecutionUnavailableError
@@ -110,7 +111,7 @@ class Dev::CommandExecutorTest < Minitest::Test
     executor = build_builtin_only_executor
 
     When "executing"
-    executor.execute(command, args: [], context: build_context)
+    executor.execute(command, args: no_args, context: build_context)
 
     Then
     raises Dev::CommandExecutor::ProjectExecutionUnavailableError
@@ -133,11 +134,11 @@ class Dev::CommandExecutorTest < Minitest::Test
     context = build_context
     strategies = build_strategies
     strategies.fetch(:overridden_executor)
-      .expects(:execute).with(command, args: [], context: context).once
+      .expects(:execute).with(command, args: no_args, context: context).once
     executor = Dev::CommandExecutor.new(**strategies)
 
     When "executing"
-    executor.execute(command, args: [], context: context)
+    executor.execute(command, args: no_args, context: context)
 
     Then "the expectation held and no other strategy was consulted"
     true

@@ -16,7 +16,7 @@ class Dev::Builtins::CloneCommandTest < Minitest::Test
     command = Dev::Builtins::CloneCommand.new(accessor: accessor)
 
     When "running clone"
-    command.call(args: ["acme/widget"], context: build_context)
+    command.call(args: parsed_args(command, ["acme/widget"]), context: build_context)
 
     Then "the expectation on the accessor holds"
     true

@@ -31,9 +31,9 @@ module Dev
       sig { override.returns(T::Boolean) }
       def staleness_exempt? = true
 
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
-        @accessor.get(args, out: @out)
+        @accessor.get(args.positionals, out: @out)
       end
     end
   end
