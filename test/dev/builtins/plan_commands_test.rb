@@ -52,13 +52,13 @@ class Dev::Builtins::PlanCommandsTest < Minitest::Test
     LEAVES[:hook]  | true
   end
 
-  test "#{klass} refreshes the host, then forwards #{args.inspect} to #{verb}" do
+  test "#{klass} refreshes the host, then forwards #{args.inspect} to #{verb} as #{positional.inspect} #{options.inspect}" do
     Given "an accessor expecting the refresh then the verb, behind a counting factory"
     out = StringIO.new
     accessor = typed_mock(Dev::Plan::Accessor)
     sequence = sequence("plan verb")
     accessor.expects(:refresh_host).once.in_sequence(sequence)
-    accessor.expects(verb).with(*expected_args, out: out).once.in_sequence(sequence)
+    accessor.expects(verb).with(*positional, **options, out: out).once.in_sequence(sequence)
     calls = 0
     command = klass.new(accessor_factory: lambda {
       calls += 1
@@ -72,13 +72,42 @@ class Dev::Builtins::PlanCommandsTest < Minitest::Test
     calls == 1
 
     Where
-    klass           | verb      | args                    | expected_args
-    LEAVES[:new]    | :new_plan | ["A title", "--blank"]  | [["A title", "--blank"]]
-    LEAVES[:link]   | :link     | ["12", "x.plan.md"]     | [["12", "x.plan.md"]]
-    LEAVES[:pull]   | :pull     | ["12", "--merge"]       | [["12", "--merge"]]
-    LEAVES[:push]   | :push     | ["--org"]               | [["--org"]]
-    LEAVES[:status] | :status   | []                      | []
-    LEAVES[:init]   | :init     | []                      | [[]]
+    klass           | verb      | args                   | positional    | options
+    LEAVES[:new]    | :new_plan | ["A title", "--blank"] | ["A title"]   | { blank: true, org: false }
+    LEAVES[:new]    | :new_plan | ["A title", "--org"]   | ["A title"]   | { blank: false, org: true }
+    LEAVES[:link]   | :link     | ["12", "x.plan.md"]    | ["12"]        | { file: "x.plan.md", org: false }
+    LEAVES[:link]   | :link     | ["x.plan.md", "--org"] | ["x.plan.md"] | { file: nil, org: true }
+    LEAVES[:pull]   | :pull     | ["12", "--merge"]      | [12]          | { merge: true, org: false }
+    LEAVES[:push]   | :push     | ["--org"]              | [nil]         | { org: true }
+    LEAVES[:push]   | :push     | ["7"]                  | ["7"]         | { org: false }
+    LEAVES[:status] | :status   | []                     | []            | {}
+    LEAVES[:init]   | :init     | []                     | []            | {}
+  end
+
+  test "#{klass} rejects #{args.inspect} with the accessor's usage error: #{reason}" do
+    Given "a leaf over an accessor that only expects the host refresh"
+    accessor = typed_mock(Dev::Plan::Accessor)
+    accessor.expects(:refresh_host).once
+    command = klass.new(accessor_factory: -> { accessor }, out: StringIO.new)
+
+    When "calling it with a malformed argv"
+    command.call(args: parsed_args(command, args), context: build_context)
+
+    Then
+    raises Dev::Plan::Accessor::UsageError
+
+    Where
+    klass         | args                 | reason
+    LEAVES[:new]  | []                   | "a title is required"
+    LEAVES[:new]  | [""]                 | "the title must not be empty"
+    LEAVES[:new]  | ["A", "B"]           | "one title only"
+    LEAVES[:link] | []                   | "a target is required"
+    LEAVES[:link] | ["1", "a.md", "b"]   | "at most a number and a file"
+    LEAVES[:pull] | []                   | "a number is required"
+    LEAVES[:pull] | ["x"]                | "the number must be digits"
+    LEAVES[:pull] | ["1", "2"]           | "one number only"
+    LEAVES[:push] | ["a", "b"]           | "at most one target"
+    LEAVES[:init] | ["extra"]            | "init takes no arguments"
   end
 
   test "hook-after-edit refreshes the host, then hands the injected stdin payload to the accessor" do

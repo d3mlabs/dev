@@ -22,6 +22,10 @@ module Dev
 
       AccessorFactory = T.type_alias { T.proc.returns(Dev::Plan::Accessor) }
 
+      # Target the org plans repo instead of the enclosing project's. Shared
+      # by every verb that resolves a repo.
+      ORG_FLAG = "--org"
+
       # The production factory; a constant so its wiring is testable apart
       # from any verb.
       DEFAULT_ACCESSOR_FACTORY = T.let(

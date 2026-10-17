@@ -16,6 +16,11 @@ module Dev
       # descriptions without instantiating the builtin.
       DESC = "Jump to a checkout under $DEV_CD_ROOT (default ~/src) by fuzzy name"
 
+      # The shell wrapper's plumbing modes (hidden from users): print the one
+      # resolved path, or the ranked candidates for completion.
+      RESOLVE_FLAG = "--resolve"
+      CANDIDATES_FLAG = "--candidates"
+
       sig { params(accessor: Dev::Cd::Accessor).void }
       def initialize(accessor: Dev::Cd::Accessor.new)
         super()
@@ -29,11 +34,24 @@ module Dev
       def category = Command::Category::Workflow
 
       sig { override.returns(T::Array[Cli::Flag]) }
-      def flags = [Cli::Flag.new(Dev::Cd::Accessor::RESOLVE_FLAG), Cli::Flag.new(Dev::Cd::Accessor::CANDIDATES_FLAG)]
+      def flags = [Cli::Flag.new(RESOLVE_FLAG), Cli::Flag.new(CANDIDATES_FLAG)]
 
+      # A bare `dev cd` reaching this process means the shell wrapper is not
+      # active: a child process cannot change its parent's cwd.
       sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
-        @accessor.run(args.words)
+        query = args.positionals
+        if args.flag?(RESOLVE_FLAG)
+          raise Dev::Cd::Accessor::UsageError, "usage: dev cd <query>" unless query.size == 1
+
+          @accessor.resolve(query.fetch(0), out: $stdout, err: $stderr)
+        elsif args.flag?(CANDIDATES_FLAG)
+          raise Dev::Cd::Accessor::UsageError, "usage: dev cd #{CANDIDATES_FLAG} [<query>]" if query.size > 1
+
+          @accessor.candidates(query.fetch(0, ""), out: $stdout)
+        else
+          @accessor.explain_missing_hook(err: $stderr)
+        end
       end
     end
   end

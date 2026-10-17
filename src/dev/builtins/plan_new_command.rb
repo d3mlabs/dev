@@ -10,17 +10,24 @@ module Dev
     class PlanNewCommand < PlanVerbCommand
       extend T::Sig
 
+      # Scaffold only the H1, no template body.
+      BLANK_FLAG = "--blank"
+      USAGE = T.let("usage: dev plan new \"<title>\" [#{BLANK_FLAG}] [#{ORG_FLAG}]".freeze, String)
+
       sig { override.returns(String) }
       def desc = "Create a templated issue + linked local plan (new \"<title>\" [--blank] [--org])"
 
       sig { override.returns(T::Array[Cli::Flag]) }
-      def flags = [Cli::Flag.new(Dev::Plan::Accessor::BLANK_FLAG), Cli::Flag.new(Dev::Plan::Accessor::ORG_FLAG)]
+      def flags = [Cli::Flag.new(BLANK_FLAG), Cli::Flag.new(ORG_FLAG)]
 
       private
 
       sig { override.params(accessor: Dev::Plan::Accessor, args: Cli::ParsedArgs).void }
       def perform(accessor, args)
-        accessor.new_plan(args.words, out: @out)
+        title = args.positionals.first
+        raise Dev::Plan::Accessor::UsageError, USAGE if title.nil? || title.empty? || args.positionals.size > 1
+
+        accessor.new_plan(title, blank: args.flag?(BLANK_FLAG), org: args.flag?(ORG_FLAG), out: @out)
       end
     end
   end

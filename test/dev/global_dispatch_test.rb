@@ -30,18 +30,18 @@ class RecordingConfigAccessor < Dev::ConfigAccessor
   end
 end unless defined?(RecordingConfigAccessor)
 
-# A clone accessor stand-in recording its argv, so dispatch is tested without
-# gh or shell RC writes. Subclasses the real accessor to satisfy the
-# dispatcher's typed constructor.
+# A clone accessor stand-in recording the target and mode it received, so
+# dispatch is tested without gh or shell RC writes. Subclasses the real
+# accessor to satisfy the dispatcher's typed constructor.
 class RecordingCloneAccessor < Dev::Clone::Accessor
-  attr_reader :last_args
+  attr_reader :last_call
 
   def initialize
     super(root: Dir.tmpdir)
   end
 
-  def run(args, out: $stdout, err: $stderr)
-    @last_args = args
+  def run(target, plumbing:, out: $stdout, err: $stderr)
+    @last_call = [target, plumbing]
   end
 end unless defined?(RecordingCloneAccessor)
 
@@ -104,8 +104,8 @@ class Dev::GlobalDispatchTest < Minitest::Test
     When "we dispatch dev clone"
     Dir.chdir(cwd) { dispatch.run(["clone", "--path", "d3mlabs/dev"]) }
 
-    Then "the accessor received the subcommand argv"
-    clone.last_args == ["--path", "d3mlabs/dev"]
+    Then "the accessor received the target in plumbing mode"
+    clone.last_call == ["d3mlabs/dev", true]
 
     Cleanup
     FileUtils.rm_rf(cwd)
@@ -391,8 +391,8 @@ class Dev::GlobalDispatchTest < Minitest::Test
     When "we dispatch with the declared flag"
     dispatch.run(["clone", "--path", "d3mlabs/dev"])
 
-    Then "the accessor received it"
-    clone.last_args == ["--path", "d3mlabs/dev"]
+    Then "the accessor received it as the plumbing mode"
+    clone.last_call == ["d3mlabs/dev", true]
   end
 
   test "an unknown flag on a global group is refused as a flag, not as an unknown subcommand" do

@@ -17,6 +17,10 @@ module Dev
       DESC = "Clone a GitHub repo (via gh auth) into $DEV_CD_ROOT (default ~/src); " \
         "bare names expand under the default_org setting"
 
+      # The shell wrapper's plumbing mode (hidden from users): print the
+      # destination path so the wrapper can land in it.
+      PATH_FLAG = "--path"
+
       sig { params(accessor: Dev::Clone::Accessor).void }
       def initialize(accessor: Dev::Clone::Accessor.new)
         super()
@@ -30,11 +34,13 @@ module Dev
       def category = Command::Category::Workflow
 
       sig { override.returns(T::Array[Cli::Flag]) }
-      def flags = [Cli::Flag.new(Dev::Clone::Accessor::PATH_FLAG)]
+      def flags = [Cli::Flag.new(PATH_FLAG)]
 
       sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
-        @accessor.run(args.words)
+        raise Dev::Clone::Accessor::UsageError, "usage: dev clone [<org>/]<repo>" unless args.positionals.size == 1
+
+        @accessor.run(args.positionals.fetch(0), plumbing: args.flag?(PATH_FLAG), out: $stdout, err: $stderr)
       end
     end
   end

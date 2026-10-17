@@ -13,27 +13,23 @@ module Dev
     #
     # The human command is `dev cd <query>`, handled by the installed shell
     # wrapper; this class serves the wrapper's machine contracts (hidden
-    # plumbing, not user surfaces):
-    #
-    # - `--resolve <query>`:    print exactly one absolute repo path on stdout
-    # - `--candidates [<q>]`:   print ranked candidates, one per line
+    # plumbing, not user surfaces): #resolve prints exactly one absolute
+    # repo path on stdout, #candidates prints ranked candidates one per
+    # line. One public method per mode; the `cd` builtin picks the mode
+    # from argv.
     #
     # A bare `dev cd …` reaching this process means the wrapper isn't active
     # in the calling shell (a child process cannot change the parent's cwd),
-    # so instead of printing a path that does nothing it self-heals the hook
-    # and explains how to activate it.
+    # so instead of printing a path that does nothing #explain_missing_hook
+    # self-heals the hook and explains how to activate it.
     class Accessor
       extend T::Sig
 
       # `dev cd` ran without the shell wrapper being active.
       class ShellHookInactiveError < RuntimeError; end
 
-      # A plumbing flag was invoked with the wrong arguments.
+      # A plumbing mode was invoked with the wrong arguments.
       class UsageError < RuntimeError; end
-
-      # The plumbing modes.
-      RESOLVE_FLAG = "--resolve"
-      CANDIDATES_FLAG = "--candidates"
 
       # @param root [String, Pathname] search root (default: $DEV_CD_ROOT, else ~/src)
       # @param hook_installer [Dev::Cd::HookInstaller]
@@ -44,71 +40,34 @@ module Dev
         @hook_installer = hook_installer
       end
 
-      # Dispatch a `dev cd …` invocation.
-      #
-      # @param args [Array<String>] argv after the "cd" command
-      # @param out [IO, StringIO] stdout (the machine-readable payload only)
-      # @param err [IO, StringIO] stderr (diagnostics and hints)
-      # @raise [UsageError] on malformed plumbing invocations
-      # @raise [ShellHookInactiveError] for bare invocations without the hook
-      # @raise [Matcher::RepoNotFoundError] when --resolve matches nothing
-      # @raise [Matcher::AmbiguousRepoError] when --resolve matches several repos
-      sig do
-        params(
-          args: T::Array[String],
-          out: T.any(IO, StringIO),
-          err: T.any(IO, StringIO),
-        ).void
-      end
-      def run(args, out: $stdout, err: $stderr)
-        flag, *rest = args
-        case flag
-        when RESOLVE_FLAG then resolve(rest, out:, err:)
-        when CANDIDATES_FLAG then candidates(rest, out:)
-        else explain_missing_hook(err:)
-        end
-      end
-
-      private
-
       # Resolve the query to one absolute path (the wrapper `builtin cd`s
       # into it). Also self-heals the hook: a user who never ran `dev up`
       # still ends up with a working wrapper for their next shell.
       #
-      # @param args [Array<String>]
-      # @param out [IO, StringIO]
-      # @param err [IO, StringIO]
+      # @param query [String] the fuzzy repo name
+      # @param out [IO, StringIO] stdout (the path only)
+      # @param err [IO, StringIO] stderr (diagnostics and hints)
       # @return [void]
-      # @raise [UsageError] unless exactly one query argument is given
-      sig do
-        params(
-          args: T::Array[String],
-          out: T.any(IO, StringIO),
-          err: T.any(IO, StringIO),
-        ).void
-      end
-      def resolve(args, out:, err:)
-        raise UsageError, "usage: dev cd <query>" unless args.size == 1
-
+      # @raise [Matcher::RepoNotFoundError] when nothing matches
+      # @raise [Matcher::AmbiguousRepoError] when several repos match
+      sig { params(query: String, out: T.any(IO, StringIO), err: T.any(IO, StringIO)).void }
+      def resolve(query, out:, err:)
         if @hook_installer.ensure_installed == :added
           err.puts "dev: shell hook updated — open a new shell to refresh it."
         end
-        out.puts matcher.resolve(args.fetch(0)).path
+        out.puts matcher.resolve(query).path
       end
 
       # Print ranked candidates for a partial query, one per line, each at
       # its shortest-unique depth. An empty query lists everything —
       # ambiguity is the point here, not an error.
       #
-      # @param args [Array<String>]
+      # @param query [String] the partial repo name; "" for all
       # @param out [IO, StringIO]
       # @return [void]
-      # @raise [UsageError] when more than one query argument is given
-      sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
-      def candidates(args, out:)
-        raise UsageError, "usage: dev cd --candidates [<query>]" if args.size > 1
-
-        matcher.candidates(args.fetch(0, "")).each { |candidate| out.puts(candidate) }
+      sig { params(query: String, out: T.any(IO, StringIO)).void }
+      def candidates(query, out:)
+        matcher.candidates(query).each { |candidate| out.puts(candidate) }
       end
 
       # Bare `dev cd` reached the Ruby process: install the hook and tell the
@@ -129,6 +88,8 @@ module Dev
         end
         raise ShellHookInactiveError, "the dev cd shell hook is not active"
       end
+
+      private
 
       # A matcher over a fresh discovery walk. Rebuilt per command: discovery
       # is fast by construction (pruned, depth-bounded) and each invocation
