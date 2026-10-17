@@ -46,7 +46,7 @@ class Dev::Builtins::DownCommandTest < Minitest::Test
     out = StringIO.new
 
     When "bringing the project down"
-    down_command(services: [first, second], provisioner:, out:).call(args: [], context: context)
+    down_command(services: [first, second], provisioner:, out:).call(args: no_args, context: context)
 
     Then
     out.string == "dev: engine stopped.\n"
@@ -63,7 +63,7 @@ class Dev::Builtins::DownCommandTest < Minitest::Test
     out = StringIO.new
 
     When "bringing the project down"
-    down_command(services: [service], provisioner:, out:).call(args: [], context: project)
+    down_command(services: [service], provisioner:, out:).call(args: no_args, context: project)
 
     Then "informational, exit 0 — dev engine down is the verb that reaches further"
     out.string == "dev: engine left running — still in use by:\n#{listed}"
@@ -86,7 +86,7 @@ class Dev::Builtins::DownCommandTest < Minitest::Test
     out = StringIO.new
 
     When "bringing the project down"
-    down_command(services: [service], provisioner:, out:).call(args: [], context: project)
+    down_command(services: [service], provisioner:, out:).call(args: no_args, context: project)
 
     Then
     out.string == "dev: engine left running (not managed by dev).\n"

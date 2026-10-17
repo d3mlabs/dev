@@ -2,7 +2,6 @@
 # frozen_string_literal: true
 
 require "pathname"
-require "dev/cli/flag_parser"
 require "dev/command"
 require "dev/container_context"
 require "dev/container_ruby"
@@ -36,6 +35,10 @@ module Dev
     class InstallDepsCommand < BuiltinCommand
       extend T::Sig
 
+      # The repeatable narrowing flags (`--group build --group=test`).
+      GROUP_FLAG = "--group"
+      EXCEPT_FLAG = "--except"
+      INTEGRATION_FLAG = "--integration"
       PINNED_TAPS_FLAG = "--pinned-taps"
 
       # Builds the Installer for a lockfile + integrations pair;
@@ -56,7 +59,6 @@ module Dev
         params(
           installer_factory: InstallerFactory,
           host_service: Dev::HostService,
-          flag_parser: Cli::FlagParser,
           inside_container: T::Boolean,
           container_ruby: Dev::ContainerRuby,
         ).void
@@ -66,14 +68,12 @@ module Dev
           Dev::Deps::Installer.new(lockfile:, integrations:)
         },
         host_service: Dev::HostService.new,
-        flag_parser: Cli::FlagParser.new,
         inside_container: Dev::ContainerContext.inside?,
         container_ruby: Dev::ContainerRuby.new
       )
         super()
         @installer_factory = installer_factory
         @host_service = host_service
-        @flag_parser = flag_parser
         @inside_container = inside_container
         @container_ruby = container_ruby
       end
@@ -83,6 +83,16 @@ module Dev
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
+
+      sig { override.returns(T::Array[Cli::Flag]) }
+      def flags
+        [
+          Cli::Flag.new(GROUP_FLAG, takes_value: true),
+          Cli::Flag.new(EXCEPT_FLAG, takes_value: true),
+          Cli::Flag.new(INTEGRATION_FLAG, takes_value: true),
+          Cli::Flag.new(PINNED_TAPS_FLAG),
+        ]
+      end
 
       # dev deps install IS the remediation for a stale install — never nag
       # before it.
@@ -98,16 +108,15 @@ module Dev
       # default: install everything the lockfiles pin, filtered to the
       # detected env and host OS so e.g. a Mac never downloads the Linux
       # engine, then to the groups and integrations named on the command line.
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
         project = context.project!
         env = Dev::Deps.detect_env
         host = Dev::Deps.detect_host
-        pin_taps = args.include?(PINNED_TAPS_FLAG)
-        args -= [PINNED_TAPS_FLAG]
-        groups = symbol_flags(args, "--group")
-        except = symbol_flags(args, "--except") || default_except
-        integration_types = symbol_flags(args, "--integration")
+        pin_taps = args.flag?(PINNED_TAPS_FLAG)
+        groups = symbol_flags(args, GROUP_FLAG)
+        except = symbol_flags(args, EXCEPT_FLAG) || default_except
+        integration_types = symbol_flags(args, INTEGRATION_FLAG)
         lockfile = Dev::Deps::Lockfile.new(dir: project.root)
 
         # Headless boxes (CI, runner services) reach dev deps install before any
@@ -185,11 +194,11 @@ module Dev
       # appears (nil is the Installer's "no narrowing on this axis").
       #
       # @param args [Array<String>] the command's argv
-      # @param flag [String] "--group", "--except" or "--integration"
+      # @param flag [String] GROUP_FLAG, EXCEPT_FLAG or INTEGRATION_FLAG
       # @return [Array<Symbol>, nil]
-      sig { params(args: T::Array[String], flag: String).returns(T.nilable(T::Array[Symbol])) }
+      sig { params(args: Cli::ParsedArgs, flag: String).returns(T.nilable(T::Array[Symbol])) }
       def symbol_flags(args, flag)
-        names = @flag_parser.values(args, flag)
+        names = args.values(flag)
         return nil if names.empty?
 
         names.map(&:to_sym)

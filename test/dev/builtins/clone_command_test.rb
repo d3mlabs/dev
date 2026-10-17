@@ -9,17 +9,40 @@ transform!(RSpock::AST::Transformation)
 class Dev::Builtins::CloneCommandTest < Minitest::Test
   include SorbetHelper
 
-  test "call dispatches argv to the clone accessor" do
+  test "#{words.inspect} dispatches the target to the accessor, plumbing: #{plumbing}" do
     Given "a clone command over an expecting accessor"
     accessor = typed_mock(Dev::Clone::Accessor)
-    accessor.expects(:run).with(["acme/widget"]).once
+    accessor.expects(:run).with("acme/widget", plumbing: plumbing, out: $stdout, err: $stderr).once
     command = Dev::Builtins::CloneCommand.new(accessor: accessor)
 
     When "running clone"
-    command.call(args: ["acme/widget"], context: build_context)
+    command.call(args: parsed_args(command, words), context: build_context)
 
     Then "the expectation on the accessor holds"
     true
+
+    Where
+    words                     | plumbing
+    ["acme/widget"]           | false
+    ["--path", "acme/widget"] | true
+  end
+
+  test "#{words.inspect} is a usage error: #{reason}" do
+    Given "a clone command over a strict accessor"
+    command = Dev::Builtins::CloneCommand.new(accessor: typed_mock(Dev::Clone::Accessor))
+
+    When "running clone"
+    command.call(args: parsed_args(command, words), context: build_context)
+
+    Then
+    raises Dev::Clone::Accessor::UsageError
+
+    Where
+    words                | reason
+    []                   | "no target"
+    ["a", "b"]           | "two targets"
+    ["--path"]           | "plumbing with no target"
+    ["--path", "a", "b"] | "plumbing with two targets"
   end
 
   private

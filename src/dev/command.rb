@@ -1,6 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "cli/flag"
+require_relative "cli/parsed_args"
 require_relative "execution_context"
 
 module Dev
@@ -90,6 +92,23 @@ module Dev
     sig { overridable.returns(T::Boolean) }
     def stamps? = false
 
+    # The `-`-prefixed arguments this command accepts, each with its arity
+    # (Cli::Flag). Cli::FlagVocabulary parses an argv against this list
+    # (plus the help flags every node answers to) before the command runs;
+    # a flag a command reads but does not declare here is rejected as
+    # unknown. Nothing by default: groups and most leaves take none.
+    sig { overridable.returns(T::Array[Cli::Flag]) }
+    def flags = []
+
+    # Whether this command's argv is forwarded verbatim — no help-flag
+    # interpretation, no vocabulary check, `--` kept. True for the shapes
+    # whose argv belongs to someone else: a project `run:` (the script owns
+    # its flags, `dev test --help` reaches it), and a builtin whose words are
+    # another command's argv (`complete`). Dev-defined nodes keep the
+    # default and declare `flags` instead.
+    sig { overridable.returns(T::Boolean) }
+    def opaque_args? = false
+
     # The argument candidates a command offers to shell completion when the
     # walk down the tree ends on it: `words` are the ones typed after its
     # own name (flags included), the result is printed as-is — in *this*
@@ -146,7 +165,10 @@ module Dev
       copy
     end
 
-    sig { abstract.params(args: T::Array[String], context: ExecutionContext).void }
+    # The body. `args` arrive parsed against this command's `flags`: read
+    # them by name (ParsedArgs#flag?/#value/#values) and the rest as
+    # positionals; an opaque command reads its words.
+    sig { abstract.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
     def call(args:, context:); end
   end
 
@@ -202,6 +224,11 @@ module Dev
 
     sig(:final) { override.returns(Category) }
     def category = Category::Project
+
+    # The run string owns its argv: dev has no vocabulary to check it
+    # against, so every arg — `--help` included — reaches the script.
+    sig(:final) { override.returns(T::Boolean) }
+    def opaque_args? = true
 
     # The same command heading a different subtree (the repository's merge
     # of a project `run:` over a builtin group's children).
@@ -282,6 +309,12 @@ module Dev
 
     sig(:final) { override.returns(T::Boolean) }
     def stamps? = @builtin.stamps?
+
+    # The argv belongs to the override: the project's run string receives
+    # the same args as the builtin stage, and the script owns its flags —
+    # so the slot is opaque, like any project command.
+    sig(:final) { override.returns(T::Boolean) }
+    def opaque_args? = true
 
     # So do the argument completions: the builtin knows its arguments, the
     # project body wrapping it runs after and takes the same ones.

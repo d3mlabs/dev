@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require_relative "builtin_executor"
+require_relative "cli/parsed_args"
 require_relative "command"
 require_relative "execution_context"
 require_relative "project_executor"
@@ -29,18 +30,19 @@ module Dev
     # unreachable. Non-stamping slots keep the exec tail-call.
     #
     # @param command [OverriddenCommand]
-    # @param args [Array<String>] argv after the command name
+    # @param args [Cli::ParsedArgs] the slot's args (opaque: the words as
+    #   typed, for both stages)
     # @param context [ExecutionContext]
     # @return [void]
     # @raise [CommandRunner::CommandFailedError] when a waited project tail
     #   fails
-    sig { params(command: OverriddenCommand, args: T::Array[String], context: ExecutionContext).void }
+    sig { params(command: OverriddenCommand, args: Cli::ParsedArgs, context: ExecutionContext).void }
     def execute(command, args:, context:)
       @builtin_executor.execute(command.builtin, args:, context:)
       if command.stamps?
-        @project_executor.run_waiting(command.project, args:)
+        @project_executor.run_waiting(command.project, args: args.words)
       else
-        @project_executor.exec_into(command.project, args:)
+        @project_executor.exec_into(command.project, args: args.words)
       end
     end
   end

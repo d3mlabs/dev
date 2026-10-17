@@ -34,7 +34,7 @@ class Dev::Builtins::RunnerStatusCommandTest < Minitest::Test
     container = Dev::BuildContainerConfig.new(image: "img", registry: "reg")
 
     When "running status inside a container repo"
-    command.call(args: [], context: build_context(build_container: container))
+    command.call(args: no_args, context: build_context(build_container: container))
 
     Then "the container fact reaches the inspector"
     seen == [true]
@@ -47,7 +47,7 @@ class Dev::Builtins::RunnerStatusCommandTest < Minitest::Test
     command = Dev::Builtins::RunnerStatusCommand.new(runner_status_factory: ->(_container) { status })
 
     When "running status with no project"
-    command.call(args: [], context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui)))
+    command.call(args: no_args, context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui)))
 
     Then
     true
@@ -61,7 +61,7 @@ class Dev::Builtins::RunnerStatusCommandTest < Minitest::Test
     command = Dev::Builtins::RunnerStatusCommand.new
 
     When "running status"
-    command.call(args: [], context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui)))
+    command.call(args: no_args, context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui)))
 
     Then "the expectation on the construction boundary holds"
     true

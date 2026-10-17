@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "cli/parsed_args"
 require_relative "command"
 require_relative "execution_context"
 
@@ -16,10 +17,10 @@ module Dev
     # Run the builtin's body in the current process.
     #
     # @param command [BuiltinCommand]
-    # @param args [Array<String>] argv after the command name
+    # @param args [Cli::ParsedArgs] the command's parsed args
     # @param context [ExecutionContext]
     # @return [void]
-    sig { params(command: BuiltinCommand, args: T::Array[String], context: ExecutionContext).void }
+    sig { params(command: BuiltinCommand, args: Cli::ParsedArgs, context: ExecutionContext).void }
     def execute(command, args:, context:)
       command.call(args:, context:)
     end

@@ -27,7 +27,7 @@ class Dev::Builtins::CredGetCommandTest < Minitest::Test
     command = Dev::Builtins::CredGetCommand.new(accessor: accessor, out: out)
 
     When "running cred get"
-    command.call(args: ["wwise", "email"], context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui)))
+    command.call(args: parsed_args(command, ["wwise", "email"]), context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui)))
 
     Then "the expectation on the accessor holds"
     true

@@ -41,7 +41,7 @@ class Dev::Builtins::ConfigCommandsTest < Minitest::Test
     command = klass.new(accessor: accessor, out: out)
 
     When "calling the leaf"
-    command.call(args: args, context: build_context)
+    command.call(args: parsed_args(command, args), context: build_context)
 
     Then "the verb was called"
     true
@@ -58,7 +58,7 @@ class Dev::Builtins::ConfigCommandsTest < Minitest::Test
     command = Dev::Builtins::ConfigListCommand.new(accessor: typed_mock(Dev::ConfigAccessor), out: StringIO.new)
 
     When "calling it with an argument"
-    command.call(args: ["extra"], context: build_context)
+    command.call(args: parsed_args(command, ["extra"]), context: build_context)
 
     Then
     raises Dev::ConfigAccessor::UsageError

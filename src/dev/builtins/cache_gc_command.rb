@@ -1,7 +1,6 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "dev/cli/flag_parser"
 require "dev/command"
 require "dev/container_engine"
 require "dev/deps/cache_gc"
@@ -17,6 +16,7 @@ module Dev
     class CacheGcCommand < BuiltinCommand
       extend T::Sig
 
+      KEEP_FLAG = "--keep"
       TOOL_CACHES_FLAG = "--tool-caches"
 
       # Builds the GC over a project's lockfile (per-call project root).
@@ -24,16 +24,14 @@ module Dev
         T.proc.params(lockfile: Dev::Deps::Lockfile).returns(Dev::Deps::CacheGc)
       end
 
-      sig { params(cache_gc_factory: CacheGcFactory, flag_parser: Cli::FlagParser).void }
+      sig { params(cache_gc_factory: CacheGcFactory).void }
       def initialize(
         cache_gc_factory: ->(lockfile) {
           Dev::Deps::CacheGc.new(lockfile:, engine: Dev::ContainerEngine.resolve)
-        },
-        flag_parser: Cli::FlagParser.new
+        }
       )
         super()
         @cache_gc_factory = cache_gc_factory
-        @flag_parser = flag_parser
       end
 
       sig { override.returns(String) }
@@ -41,6 +39,9 @@ module Dev
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Workflow
+
+      sig { override.returns(T::Array[Cli::Flag]) }
+      def flags = [Cli::Flag.new(KEEP_FLAG, takes_value: true), Cli::Flag.new(TOOL_CACHES_FLAG)]
 
       # GC is maintenance over the cache, not a build: it reads the lockfile to
       # know what to keep and never needs the deps installed. It also runs as
@@ -50,7 +51,7 @@ module Dev
       sig { override.returns(T::Boolean) }
       def staleness_exempt? = true
 
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
         project = context.project!
         gc = @cache_gc_factory.call(Dev::Deps::Lockfile.new(dir: project.root))
@@ -64,7 +65,7 @@ module Dev
         end
         gc.gc(
           keep: parse_keep(args), image_ref: image_ref, live_tag: live_tag,
-          tool_caches: args.include?(TOOL_CACHES_FLAG),
+          tool_caches: args.flag?(TOOL_CACHES_FLAG),
         )
       end
 
@@ -75,9 +76,9 @@ module Dev
       #
       # @param args [Array<String>]
       # @return [Integer]
-      sig { params(args: T::Array[String]).returns(Integer) }
+      sig { params(args: Cli::ParsedArgs).returns(Integer) }
       def parse_keep(args)
-        keep = @flag_parser.value(args, "--keep")
+        keep = args.value(KEEP_FLAG)
         keep ? Integer(keep) : Dev::Deps::CacheGc::DEFAULT_KEEP
       end
     end

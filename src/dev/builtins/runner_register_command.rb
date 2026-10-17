@@ -1,7 +1,6 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "dev/cli/flag_parser"
 require "dev/command"
 require "dev/confirmer"
 require "dev/engine_provisioner"
@@ -70,6 +69,13 @@ module Dev
       # A RuntimeError so the CLI boundary prints it and exits 1.
       class SupersededEnrollmentsError < RuntimeError; end
 
+      ORG_FLAG = "--org"
+      LABELS_FLAG = "--labels"
+      AI_FLOW_FLAG = "--ai-flow"
+      DIR_FLAG = "--dir"
+      NAME_FLAG = "--name"
+      REPO_FLAG = "--repo"
+      AGENT_USER_FLAG = "--agent-user"
       YES_FLAG = "--yes"
 
       # Builds the RunnerSetup for the resolved config and flags; injected
@@ -104,7 +110,6 @@ module Dev
           teardown: Dev::RunnerTeardown,
           confirmer: Dev::Confirmer,
           engine_provisioner: Dev::EngineProvisioner,
-          flag_parser: Cli::FlagParser,
           out: T.any(IO, StringIO),
         ).void
       end
@@ -121,7 +126,6 @@ module Dev
         confirmer: Dev::Confirmer.new,
         # `dev up`'s engine step, run here for the checked-out repo's hint.
         engine_provisioner: Dev::EngineProvisioner.new,
-        flag_parser: Cli::FlagParser.new,
         out: $stdout
       )
         super()
@@ -133,7 +137,6 @@ module Dev
         @teardown = teardown
         @confirmer = confirmer
         @engine_provisioner = engine_provisioner
-        @flag_parser = flag_parser
         @out = out
       end
 
@@ -143,16 +146,30 @@ module Dev
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
 
+      sig { override.returns(T::Array[Cli::Flag]) }
+      def flags
+        [
+          Cli::Flag.new(ORG_FLAG),
+          Cli::Flag.new(LABELS_FLAG, takes_value: true),
+          Cli::Flag.new(AI_FLOW_FLAG),
+          Cli::Flag.new(DIR_FLAG, takes_value: true),
+          Cli::Flag.new(NAME_FLAG, takes_value: true),
+          Cli::Flag.new(REPO_FLAG, takes_value: true),
+          Cli::Flag.new(AGENT_USER_FLAG, takes_value: true),
+          Cli::Flag.new(YES_FLAG),
+        ]
+      end
+
       # Converge, then enroll (or amend), then the steps the enrollment
       # enables.
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
-        org = args.include?("--org")
+        org = args.flag?(ORG_FLAG)
         labels = resolve_labels(args, context, org)
         config = RunnerSetupConfig.new(
           labels: labels,
-          dir: @flag_parser.value(args, "--dir"),
-          name: @flag_parser.value(args, "--name"),
+          dir: args.value(DIR_FLAG),
+          name: args.value(NAME_FLAG),
         )
 
         container = context.project&.build_container
@@ -160,7 +177,7 @@ module Dev
         # label contract (whose agent-host steps assume an engine exists).
         @engine_provisioner.provision!(resources: container.resources) if container
 
-        contracts = @contracts_factory.call(labels, @flag_parser.value(args, "--agent-user"))
+        contracts = @contracts_factory.call(labels, args.value(AGENT_USER_FLAG))
         contracts.each do |contract|
           contract.converge!(
             container: !container.nil?,
@@ -169,14 +186,14 @@ module Dev
           )
         end
 
-        setup = @runner_setup_factory.call(config, @flag_parser.value(args, "--repo"), org)
+        setup = @runner_setup_factory.call(config, args.value(REPO_FLAG), org)
         scope = setup.resolve_scope
         # --dir is the operator picking the dir: no discovery, no detection.
         enrollments = config.dir ? [] : @discovery.enrollments_for(scope)
         runner = enrollments.empty? ? nil : @registry.find(scope: scope, name: config.name || T.must(enrollments.first).name)
 
         if superseded?(enrollments, runner)
-          retire!(scope, enrollments, runner, yes: args.include?(YES_FLAG))
+          retire!(scope, enrollments, runner, yes: args.flag?(YES_FLAG))
           enrollments = []
           runner = nil
         end
@@ -192,7 +209,7 @@ module Dev
           # GitHub has lost this enrollment (or --name renames it): the
           # re-enrollment reuses the discovered dir, never a second one.
           config = RunnerSetupConfig.new(labels: labels, dir: enrollment.dir, name: config.name)
-          setup = @runner_setup_factory.call(config, @flag_parser.value(args, "--repo"), org)
+          setup = @runner_setup_factory.call(config, args.value(REPO_FLAG), org)
         end
         setup.run
         contracts.each { |contract| contract.after_enroll!(runner_dir: setup.resolve_dir) }
@@ -292,10 +309,10 @@ module Dev
       # @return [String] comma-separated labels (config.sh shape)
       # @raise [ArgumentError] on an underivable or contradictory request
       # @raise [Dev::RunnerSetup::Error] when gh cannot resolve the checkout
-      sig { params(args: T::Array[String], context: ExecutionContext, org: T::Boolean).returns(String) }
+      sig { params(args: Cli::ParsedArgs, context: ExecutionContext, org: T::Boolean).returns(String) }
       def resolve_labels(args, context, org)
-        explicit = @flag_parser.value(args, "--labels")
-        ai_flow = args.include?("--ai-flow")
+        explicit = args.value(LABELS_FLAG)
+        ai_flow = args.flag?(AI_FLOW_FLAG)
         if explicit && ai_flow
           raise ArgumentError,
             "--ai-flow enrolls the full ai-flow set (#{LabelContracts::AI_FLOW_LABELS.join(",")}); " \
@@ -314,7 +331,7 @@ module Dev
             "the repo label derives from the enclosing checkout (which also sizes the engine) — " \
               "run inside one or pass --labels"
         end
-        repo_label(@repo_resolver.call(@flag_parser.value(args, "--repo")))
+        repo_label(@repo_resolver.call(args.value(REPO_FLAG)))
       end
 
       # GitHub matches runner labels case-insensitively but stores them as

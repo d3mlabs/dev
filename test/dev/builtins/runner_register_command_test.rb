@@ -63,7 +63,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     context = build_context(name: "Cellbound3D")
 
     When "running register with no flags"
-    harness.command.call(args: [], context: context)
+    harness.command.call(args: no_args, context: context)
 
     Then "the label is the repo's name as GitHub spells it, repo-scoped, dir/name defaulted"
     config, repo_override, org = harness.wirings.fetch(0)
@@ -91,7 +91,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     })
 
     When "running register with --repo and no --labels"
-    harness.command.call(args: ["--repo", "d3mlabs/unreal-engine"], context: build_context(name: "Cellbound3D"))
+    harness.command.call(args: parsed_args(harness.command, ["--repo", "d3mlabs/unreal-engine"]), context: build_context(name: "Cellbound3D"))
 
     Then "the label follows the override, which is also what the setup is wired with"
     config, repo_override, _org = harness.wirings.fetch(0)
@@ -105,7 +105,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness
 
     When "registering the org agent host"
-    harness.command.call(args: ["--org", "--ai-flow"], context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: projectless_context)
 
     Then "the labels are dev's documented mirror of ai-flow's vocabulary"
     config, _repo, org = harness.wirings.fetch(0)
@@ -119,7 +119,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     context = build_context(name: "UnrealEngine")
 
     When "registering with an explicit custom set"
-    harness.command.call(args: ["--labels", "macos,ue-editor"], context: context)
+    harness.command.call(args: parsed_args(harness.command, ["--labels", "macos,ue-editor"]), context: context)
 
     Then
     harness.wirings.fetch(0).fetch(0).labels == "macos,ue-editor"
@@ -130,7 +130,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness
 
     When "passing both"
-    harness.command.call(args: ["--org", "--ai-flow", "--labels", "ai-ask"], context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--labels", "ai-ask"]), context: projectless_context)
 
     Then
     raises ArgumentError
@@ -141,7 +141,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness
 
     When "registering org-scoped with no label source"
-    harness.command.call(args: ["--org"], context: build_context(name: "Cellbound3D"))
+    harness.command.call(args: parsed_args(harness.command, ["--org"]), context: build_context(name: "Cellbound3D"))
 
     Then
     raises ArgumentError
@@ -152,7 +152,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness
 
     When "registering with no checkout and no labels"
-    harness.command.call(args: [], context: projectless_context)
+    harness.command.call(args: no_args, context: projectless_context)
 
     Then
     raises ArgumentError
@@ -163,11 +163,9 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness
 
     When "running with identity overrides"
-    harness.command.call(
-      args: ["--labels", "ue-engine", "--dir", "~/actions-runner-ue",
-             "--name", "gaming-box", "--repo", "d3mlabs/unreal-engine", "--org"],
-      context: projectless_context,
-    )
+    words = ["--labels", "ue-engine", "--dir", "~/actions-runner-ue",
+             "--name", "gaming-box", "--repo", "d3mlabs/unreal-engine", "--org"]
+    harness.command.call(args: parsed_args(harness.command, words), context: projectless_context)
 
     Then
     config, repo, org = harness.wirings.fetch(0)
@@ -184,7 +182,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     context = build_context(name: "Cellbound3D")
 
     When "registering"
-    harness.command.call(args: [], context: context)
+    harness.command.call(args: no_args, context: context)
 
     Then "the ceremony runs end to end with the enrolled dir"
     harness.events == [
@@ -204,7 +202,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(contracts: 1, home: home, registry: registry, scope: "d3mlabs")
 
     When "registering the agent host"
-    harness.command.call(args: ["--org", "--ai-flow"], context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: projectless_context)
 
     Then "one label amend; the service and dir stay put; contracts still converge"
     registry.amends == [["d3mlabs", 42, Dev::LabelContracts::AI_FLOW_LABELS]]
@@ -224,7 +222,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(home: home, registry: registry, scope: "d3mlabs/cellbound-3d")
 
     When "re-running register"
-    harness.command.call(args: [], context: build_context(name: "Cellbound3D"))
+    harness.command.call(args: no_args, context: build_context(name: "Cellbound3D"))
 
     Then "nothing is amended and nothing re-enrolls"
     registry.amends == []
@@ -239,7 +237,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(home: home, registry: FakeRegistry.new, scope: "d3mlabs")
 
     When "registering"
-    harness.command.call(args: ["--org", "--labels", "ai-build"], context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-build"]), context: projectless_context)
 
     Then "the re-enrollment reuses the discovered dir, not a label-derived one"
     harness.events == [[:run]]
@@ -261,7 +259,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.confirmer.expects(:confirm?).once.with("Unregister these and enroll fresh?").returns(true)
 
     When "registering in the snappy checkout"
-    harness.command.call(args: [], context: build_context(name: "snappy"))
+    harness.command.call(args: no_args, context: build_context(name: "snappy"))
 
     Then "both are torn down, then the fresh ceremony runs into the default (label-derived) dir"
     harness.torn_down.map(&:dir) == [legacy, newer]
@@ -284,7 +282,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.confirmer.expects(:confirm?).never
 
     When "registering with --yes"
-    harness.command.call(args: ["--yes"], context: build_context(name: "snappy"))
+    harness.command.call(args: parsed_args(harness.command, ["--yes"]), context: build_context(name: "snappy"))
 
     Then "no prompt; torn down and enrolled fresh; nothing amended"
     harness.torn_down.map(&:dir) == [dir]
@@ -302,7 +300,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.confirmer.expects(:confirm?).once.returns(false)
 
     When "registering"
-    harness.command.call(args: [], context: build_context(name: "snappy"))
+    harness.command.call(args: no_args, context: build_context(name: "snappy"))
 
     Then "the refusal is the error the CLI maps to exit 1, carrying the remedy; nothing ran"
     error = raises Dev::Builtins::RunnerRegisterCommand::SupersededEnrollmentsError
@@ -323,7 +321,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.confirmer.expects(:confirm?).never
 
     When "registering"
-    harness.command.call(args: [], context: build_context(name: "snappy"))
+    harness.command.call(args: no_args, context: build_context(name: "snappy"))
 
     Then
     harness.torn_down == []
@@ -340,7 +338,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.confirmer.expects(:confirm?).never
 
     When "registering with an explicit dir"
-    harness.command.call(args: ["--dir", "~/actions-runner-other"], context: build_context(name: "snappy"))
+    harness.command.call(args: parsed_args(harness.command, ["--dir", "~/actions-runner-other"]), context: build_context(name: "snappy"))
 
     Then
     harness.torn_down == []
@@ -357,10 +355,8 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(home: home, registry: registry, scope: "d3mlabs")
 
     When "registering with an explicit dir"
-    harness.command.call(
-      args: ["--org", "--labels", "ai-build", "--dir", "~/actions-runner-heavy"],
-      context: projectless_context,
-    )
+    words = ["--org", "--labels", "ai-build", "--dir", "~/actions-runner-heavy"]
+    harness.command.call(args: parsed_args(harness.command, words), context: projectless_context)
 
     Then "the full enrollment runs there; no amend"
     harness.events == [[:run]]
@@ -379,7 +375,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     context = build_context(name: "Cellbound3D", build_container: container)
 
     When "registering"
-    harness.command.call(args: [], context: context)
+    harness.command.call(args: no_args, context: context)
 
     Then
     harness.events.fetch(0) == [:converge, true, 8, 24]
@@ -397,7 +393,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     context = build_context(name: "Cellbound3D", build_container: container)
 
     When "registering"
-    harness.command.call(args: [], context: context)
+    harness.command.call(args: no_args, context: context)
 
     Then "the engine step is register's first act — same entry as `dev up`'s — then the contracts"
     harness.events.first(2) == [[:engine, 8, 24], [:converge, true, 8, 24]]
@@ -409,7 +405,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.engine.expects(:provision!).never
 
     When "registering"
-    harness.command.call(args: ["--org", "--labels", "ai-build"], context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-build"]), context: projectless_context)
 
     Then
     true
@@ -421,7 +417,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.engine.expects(:provision!).never
 
     When "registering"
-    harness.command.call(args: [], context: build_context(name: "Plain"))
+    harness.command.call(args: no_args, context: build_context(name: "Plain"))
 
     Then
     true
@@ -437,10 +433,8 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(contracts_factory: recorder)
 
     When "registering with the override"
-    harness.command.call(
-      args: ["--org", "--ai-flow", "--agent-user", "ci"],
-      context: projectless_context,
-    )
+    words = ["--org", "--ai-flow", "--agent-user", "ci"]
+    harness.command.call(args: parsed_args(harness.command, words), context: projectless_context)
 
     Then
     seen == [[Dev::LabelContracts::AI_FLOW_LABELS.join(","), "ci"]]
@@ -466,7 +460,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     command = Dev::Builtins::RunnerRegisterCommand.new
 
     When "running register"
-    command.call(args: ["--labels", "ue-engine"], context: projectless_context)
+    command.call(args: parsed_args(command, ["--labels", "ue-engine"]), context: projectless_context)
 
     Then "the expectations on the construction boundary hold"
     true
@@ -486,7 +480,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     command = Dev::Builtins::RunnerRegisterCommand.new
 
     When "running bare register inside a checkout whose dev.yml name differs"
-    command.call(args: [], context: build_context(name: "Cellbound3D"))
+    command.call(args: no_args, context: build_context(name: "Cellbound3D"))
 
     Then "the label came from gh's repo name, lowercased"
     true

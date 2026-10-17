@@ -68,12 +68,14 @@ class Dev::OverriddenExecutorTest < Minitest::Test
       true }
     executor = Dev::OverriddenExecutor.new(**strategies)
 
-    When "executing the overridden command"
-    executor.execute(command, args: ["--fast"], context: context)
+    args = Dev::Cli::ParsedArgs.new(words: ["--fast"], switches: ["--fast"])
 
-    Then "builtin super() ran first, and the tail was run_waiting with the exact project half"
+    When "executing the overridden command"
+    executor.execute(command, args: args, context: context)
+
+    Then "builtin super() ran first, and the tail was run_waiting with the words"
     stages == [
-      [:builtin_stage, command.builtin, ["--fast"], context],
+      [:builtin_stage, command.builtin, args, context],
       [:project_tail, command.project, ["--fast"]],
     ]
   end
@@ -90,11 +92,11 @@ class Dev::OverriddenExecutorTest < Minitest::Test
     executor = Dev::OverriddenExecutor.new(**strategies)
 
     When "executing the overridden command"
-    executor.execute(command, args: [], context: context)
+    executor.execute(command, args: no_args, context: context)
 
-    Then "builtin super() ran first, and the tail was exec_into with the exact project half"
+    Then "builtin super() ran first, and the tail was exec_into with the words"
     stages == [
-      [:builtin_stage, command.builtin, [], context],
+      [:builtin_stage, command.builtin, no_args, context],
       [:project_tail, command.project, []],
     ]
   end

@@ -42,7 +42,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     Dev::ShadowenvRuby.expects(:converge!).with(ruby_version: "4.0.1", project_root: root).once
 
     When "running dev deps install"
-    command.call(args: [], context: build_context(root))
+    command.call(args: no_args, context: build_context(root))
 
     Then "the hooks received the project in hand"
     true
@@ -62,7 +62,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     Dev::ShadowenvRuby.expects(:converge!).never
 
     When "running dev deps install --group build"
-    command.call(args: ["--group", "build"], context: build_context(root))
+    command.call(args: parsed_args(command, ["--group", "build"]), context: build_context(root))
 
     Then "the installer received the narrowed selection"
     1 * installer.install(
@@ -82,7 +82,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     Dev::ShadowenvRuby.expects(:converge!).with(ruby_version: "4.0.1", project_root: root).once
 
     When "running dev deps install --group=app"
-    command.call(args: ["--group=app"], context: build_context(root))
+    command.call(args: parsed_args(command, ["--group=app"]), context: build_context(root))
 
     Then "the pinned Ruby converged (bundler installs against it) and the app group installed"
     1 * installer.install(
@@ -102,7 +102,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     Dev::ShadowenvRuby.expects(:converge!).never
 
     When "running dev deps install --group build --integration brew"
-    command.call(args: ["--group", "build", "--integration", "brew"], context: build_context(root))
+    command.call(args: parsed_args(command, ["--group", "build", "--integration", "brew"]), context: build_context(root))
 
     Then "the installer received both narrowings"
     1 * installer.install(
@@ -123,7 +123,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     Dev::ShadowenvRuby.expects(:converge!).never
 
     When "running dev deps install --except app"
-    command.call(args: ["--except", "app"], context: build_context(root))
+    command.call(args: parsed_args(command, ["--except", "app"]), context: build_context(root))
 
     Then "the installer received the exclusion; the gem-less selection provisioned no Ruby"
     1 * installer.install(
@@ -143,7 +143,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     command = build_command(installer:, inside_container: true, container_ruby:)
 
     When "running dev deps install with no flags"
-    command.call(args: [], context: build_context(root))
+    command.call(args: no_args, context: build_context(root))
 
     Then "the build group is excluded by default and the store Ruby is converged"
     1 * installer.install(
@@ -165,7 +165,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     command = build_command(installer:, inside_container: true, container_ruby:)
 
     When "running dev deps install --except app"
-    command.call(args: ["--except", "app"], context: build_context(root))
+    command.call(args: parsed_args(command, ["--except", "app"]), context: build_context(root))
 
     Then "the user's exclusion is the whole exclusion, and with no gems selected no Ruby is provisioned"
     1 * installer.install(
@@ -197,7 +197,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     )
 
     When "running dev deps install"
-    command.call(args: [], context: build_context(root))
+    command.call(args: no_args, context: build_context(root))
 
     Then "bundler and brew install inside; cmake's host pipeline and the host-side hooks do not"
     _, integrations = factory_inputs.fetch(0)
@@ -226,7 +226,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     Dev::ShadowenvRuby.stubs(:converge!)
 
     When "running dev deps install --group build --integration brew --pinned-taps"
-    command.call(args: %w[--group build --integration brew --pinned-taps], context: build_context(root))
+    command.call(args: parsed_args(command, %w[--group build --integration brew --pinned-taps]), context: build_context(root))
 
     Then "brew pins taps; the group and integration narrowing are what was named"
     _, integrations = factory_inputs.fetch(0)
@@ -253,7 +253,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     Dev::ShadowenvRuby.stubs(:converge!)
 
     When "running dev deps install"
-    command.call(args: [], context: build_context(root))
+    command.call(args: no_args, context: build_context(root))
 
     Then "the installer got the project-rooted lockfile and the host integration set"
     lockfile, integrations = factory_inputs.fetch(0)
@@ -275,7 +275,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     Dev::ShadowenvRuby.stubs(:converge!)
 
     When "running dev deps install"
-    command.call(args: [], context: build_context(root))
+    command.call(args: no_args, context: build_context(root))
 
     Then "the real install pass leaves the empty project untouched"
     Dir.children(root).empty?

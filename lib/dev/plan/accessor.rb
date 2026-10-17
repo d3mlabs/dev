@@ -22,7 +22,8 @@ module Dev
       class UsageError < RuntimeError; end
 
       # One public method per verb; the `plan` group in the command tree
-      # routes each to its leaf, which calls #refresh_host and then the verb.
+      # routes each to its leaf, which calls #refresh_host and then the verb
+      # with the values it parsed from argv.
 
       # @param project_root [Pathname] the workspace root (from dev's context)
       # @param workspace [Dev::Plan::Workspace, nil]
@@ -71,18 +72,19 @@ module Dev
       # (it is canonical from birth), then materialize the linked local
       # working copy. The body is templated by default (the target repo's
       # committed plan template, else dev's bundle) so every project plan is
-      # born at brief stage with the Tech design skeleton; `--blank` scaffolds
+      # born at brief stage with the Tech design skeleton; `blank` scaffolds
       # just the H1 for lightweight/freeform plans. Org plans are scaffolded
       # with a `Target repos:` line: they usually span repos, and the line
       # narrows /split's routing menu (see ai-flow's docs/plan-lifecycle.md).
       # Left blank it is inert — the menu falls back to every org repo.
-      sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
-      def new_plan(args, out:)
-        org = args.delete("--org") ? true : false
-        blank = args.delete("--blank") ? true : false
-        title = args.shift
-        raise UsageError, "usage: dev plan new \"<title>\" [--blank] [--org]" if title.nil? || title.empty? || !args.empty?
-
+      #
+      # @param title [String] the issue title (and the plan's H1)
+      # @param blank [Boolean] scaffold only the H1
+      # @param org [Boolean] target the org plans repo
+      # @param out [IO, StringIO]
+      # @return [void]
+      sig { params(title: String, blank: T::Boolean, org: T::Boolean, out: T.any(IO, StringIO)).void }
+      def new_plan(title, blank:, org:, out:)
         owner_repo = target_repo(org:)
         body = "# #{title}\n"
         body += "\nTarget repos:\n<!-- comma-separated owner/repo list — declares scope; /split routes sub-issues within it -->\n" if org
@@ -127,10 +129,11 @@ module Dev
       # with `git diff` and commit — human merge stays the gate). Only
       # marker-carrying mirrors are ever overwritten: a repo that edited the
       # file and dropped the marker owns its template.
-      sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
-      def init(args, out:)
-        raise UsageError, "usage: dev plan init" unless args.empty?
-
+      #
+      # @param out [IO, StringIO]
+      # @return [void]
+      sig { params(out: T.any(IO, StringIO)).void }
+      def init(out:)
         path = Templates.mirror_path(@project_root)
         rendered = Templates.render_mirror
         if !path.exist?
@@ -150,16 +153,18 @@ module Dev
       # `dev plan link <n> [<file>] [--org]` attaches a plan file to an
       # existing issue (local content stays; `push` publishes it), while
       # `dev plan link <file> [--org]` creates the issue from the file.
-      sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
-      def link(args, out:)
-        org = args.delete("--org") ? true : false
-        first, second = args
-        raise UsageError, "usage: dev plan link <n> [<file>] | link <file> [--org]" if first.nil?
-
-        if first.match?(/\A\d+\z/)
-          link_to_existing(Integer(first), second, org:, out:)
+      #
+      # @param target [String] an issue number, or the plan file to create from
+      # @param file [String, nil] the plan file to attach to issue `target`
+      # @param org [Boolean] target the org plans repo
+      # @param out [IO, StringIO]
+      # @return [void]
+      sig { params(target: String, file: T.nilable(String), org: T::Boolean, out: T.any(IO, StringIO)).void }
+      def link(target, file:, org:, out:)
+        if target.match?(/\A\d+\z/)
+          link_to_existing(Integer(target), file, org:, out:)
         else
-          create_from_file(first, org:, out:)
+          create_from_file(target, org:, out:)
         end
       end
 
@@ -209,17 +214,17 @@ module Dev
       end
 
       # `dev plan pull <n> [--merge] [--org]` — fetch the issue into the local
-      # plan. A clean local copy is overwritten; a diverged one needs --merge
+      # plan. A clean local copy is overwritten; a diverged one needs `merge`
       # (3-way against the recorded base) so local work is never discarded.
-      sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
-      def pull(args, out:)
-        org = args.delete("--org") ? true : false
-        merge = args.delete("--merge") ? true : false
-        number_arg = args.shift
-        raise UsageError, "usage: dev plan pull <n> [--merge] [--org]" if number_arg.nil? || !args.empty?
-
+      #
+      # @param number [Integer] the issue number
+      # @param merge [Boolean] 3-way merge a diverged local copy
+      # @param org [Boolean] target the org plans repo
+      # @param out [IO, StringIO]
+      # @return [void]
+      sig { params(number: Integer, merge: T::Boolean, org: T::Boolean, out: T.any(IO, StringIO)).void }
+      def pull(number, merge:, org:, out:)
         owner_repo = target_repo(org:)
-        number = Integer(number_arg)
         issue = @issues.get(owner_repo, number)
         remote_body = Plan.from_issue_body(issue.body)
         path = find_linked_plan(owner_repo, number) || @workspace.plan_path(owner_repo, number, issue.title)
@@ -284,12 +289,14 @@ module Dev
       # `pull` uses (`--org` picks the org plans repo, symmetric with pull);
       # a file path never needs `--org` — the target repo comes from the
       # file's header, so org-wide plans push transparently.
-      sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
-      def push(args, out:)
-        org = args.delete("--org") ? true : false
-        target = args.shift
-        raise UsageError, "usage: dev plan push [<file>|<n>] [--org]" unless args.empty?
-
+      #
+      # @param target [String, nil] a plan file or issue number; nil for the
+      #   workspace's sole linked plan
+      # @param org [Boolean] resolve a number against the org plans repo
+      # @param out [IO, StringIO]
+      # @return [void]
+      sig { params(target: T.nilable(String), org: T::Boolean, out: T.any(IO, StringIO)).void }
+      def push(target, org:, out:)
         path = push_path(target, org:)
         plan = Content.parse(path.read)
         raise UsageError, "#{path} has no ai-flow header — link it first with `dev plan link`." unless plan.header
@@ -343,7 +350,7 @@ module Dev
         plan = Content.parse(path.read)
         return unless plan.header
 
-        push([path.to_s], out:)
+        push(path.to_s, org: false, out:)
       end
 
       # `dev plan status` — sync state of every linked plan in the workspace:

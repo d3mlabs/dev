@@ -15,9 +15,9 @@ module Dev
       sig { override.returns(String) }
       def desc = "Show the configured knowledge repo, cache location/age, what's rendered and linked"
 
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
-        raise Dev::Learnings::Accessor::UsageError, USAGE unless args.empty?
+        raise Dev::Learnings::Accessor::UsageError, USAGE unless args.positionals.empty?
 
         @accessor_factory.call.status(out: @out)
       end

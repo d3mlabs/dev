@@ -53,7 +53,7 @@ class Dev::Builtins::LearningsCommandsTest < Minitest::Test
     }, out: out)
 
     When "calling the leaf in a projectless context"
-    command.call(args: args, context: build_context)
+    command.call(args: parsed_args(command, args), context: build_context)
 
     Then "the factory was consulted once"
     calls == 1
@@ -73,7 +73,7 @@ class Dev::Builtins::LearningsCommandsTest < Minitest::Test
     command = klass.new(accessor_factory: -> { flunk("accessor built for a malformed argv") }, out: StringIO.new)
 
     When "calling it with a malformed argv"
-    command.call(args: args, context: build_context)
+    command.call(args: parsed_args(command, args), context: build_context)
 
     Then
     raises Dev::Learnings::Accessor::UsageError
@@ -83,7 +83,6 @@ class Dev::Builtins::LearningsCommandsTest < Minitest::Test
     LEAVES[0] | ["extra"]
     LEAVES[1] | ["extra"]
     LEAVES[2] | ["extra"]
-    LEAVES[3] | ["--bogus"]
     LEAVES[3] | ["--org", "extra"]
     LEAVES[3] | ["--org", "--gitignore"]
   end

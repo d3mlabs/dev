@@ -58,6 +58,9 @@ module Dev
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
 
+      sig { override.returns(T::Array[Cli::Flag]) }
+      def flags = [Cli::Flag.new(FORCE_FLAG)]
+
       sig { override.returns(T::Boolean) }
       def staleness_exempt? = true
 
@@ -67,7 +70,7 @@ module Dev
       # @raise [Dev::EngineProvisioner::UnmanagedEngineError] on an engine dev did not provision
       # @raise [EngineBusyError] when the user declines to stop their own containers
       # @raise [StopFailedError] when a container will not stop
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
         @provisioner.assert_stoppable!
         engine = @provisioner.engine
@@ -81,7 +84,7 @@ module Dev
         unless foreign.empty?
           @out.puts "dev: containers running that dev does not manage:"
           foreign.each { |container| @out.puts "  #{container.describe(home: @home)}" }
-          unless args.include?(FORCE_FLAG) || @confirmer.confirm?("dev: stop them too?")
+          unless args.flag?(FORCE_FLAG) || @confirmer.confirm?("dev: stop them too?")
             raise EngineBusyError,
               "engine left running — not stopping #{foreign.map(&:name).join(", ")} (pass #{FORCE_FLAG} to)."
           end

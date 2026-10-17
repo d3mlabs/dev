@@ -34,7 +34,7 @@ class Dev::Cd::AccessorTest < Minitest::Test
     out = StringIO.new
 
     When "we resolve the leaf name"
-    accessor.run(["--resolve", "dev"], out: out, err: StringIO.new)
+    accessor.resolve("dev", out: out, err: StringIO.new)
 
     Then "stdout is the absolute path and nothing else"
     out.string == "#{File.expand_path(repo_dir)}\n"
@@ -49,7 +49,7 @@ class Dev::Cd::AccessorTest < Minitest::Test
     accessor = build_accessor(root)
 
     When "we resolve an unknown name"
-    accessor.run(["--resolve", "nope"], out: StringIO.new, err: StringIO.new)
+    accessor.resolve("nope", out: StringIO.new, err: StringIO.new)
 
     Then
     raises Dev::Cd::Matcher::RepoNotFoundError
@@ -66,7 +66,7 @@ class Dev::Cd::AccessorTest < Minitest::Test
     accessor = build_accessor(root)
 
     When "we resolve the shared leaf"
-    accessor.run(["--resolve", "dev"], out: StringIO.new, err: StringIO.new)
+    accessor.resolve("dev", out: StringIO.new, err: StringIO.new)
 
     Then
     raises Dev::Cd::Matcher::AmbiguousRepoError
@@ -84,7 +84,7 @@ class Dev::Cd::AccessorTest < Minitest::Test
     err = StringIO.new
 
     When "we resolve"
-    accessor.run(["--resolve", "dev"], out: StringIO.new, err: err)
+    accessor.resolve("dev", out: StringIO.new, err: err)
 
     Then "the hook was ensured and the hint printed to stderr"
     installer.ensure_count == 1
@@ -102,24 +102,13 @@ class Dev::Cd::AccessorTest < Minitest::Test
     err = StringIO.new
 
     When "we resolve"
-    accessor.run(["--resolve", "dev"], out: StringIO.new, err: err)
+    accessor.resolve("dev", out: StringIO.new, err: err)
 
     Then "no hint is printed"
     err.string == ""
 
     Cleanup
     FileUtils.rm_rf(root)
-  end
-
-  test "--resolve without exactly one query raises UsageError" do
-    Given "an accessor"
-    accessor = build_accessor(Dir.tmpdir)
-
-    When "we resolve with no query"
-    accessor.run(["--resolve"], out: StringIO.new, err: StringIO.new)
-
-    Then
-    raises Dev::Cd::Accessor::UsageError
   end
 
   test "--candidates prints ranked candidates one per line" do
@@ -132,7 +121,7 @@ class Dev::Cd::AccessorTest < Minitest::Test
     out = StringIO.new
 
     When "we ask for candidates"
-    accessor.run(["--candidates", "dev"], out: out, err: StringIO.new)
+    accessor.candidates("dev", out: out)
 
     Then "matches come back ranked, one per line"
     out.string == "dev\ndevkit\n"
@@ -150,7 +139,7 @@ class Dev::Cd::AccessorTest < Minitest::Test
     out = StringIO.new
 
     When "we ask for candidates with no argument"
-    accessor.run(["--candidates"], out: out, err: StringIO.new)
+    accessor.candidates("", out: out)
 
     Then "every repo is listed"
     out.string.split("\n").sort == ["ai-flow", "dev"]
@@ -168,7 +157,7 @@ class Dev::Cd::AccessorTest < Minitest::Test
     out = StringIO.new
 
     When "we ask for candidates"
-    accessor.run(["--candidates", "dev"], out: out, err: StringIO.new)
+    accessor.candidates("dev", out: out)
 
     Then "each candidate carries its org"
     out.string.split("\n").sort == ["d3mlabs/dev", "someone/dev"]
@@ -183,8 +172,8 @@ class Dev::Cd::AccessorTest < Minitest::Test
     accessor = Dev::Cd::Accessor.new(root: Dir.tmpdir, hook_installer: installer)
     err = StringIO.new
 
-    When "we run without plumbing flags"
-    accessor.run(["dev"], out: StringIO.new, err: err)
+    When "we explain the missing hook"
+    accessor.explain_missing_hook(err: err)
 
     Then "the hook was ensured and the activation hint printed"
     raises Dev::Cd::Accessor::ShellHookInactiveError
@@ -198,8 +187,8 @@ class Dev::Cd::AccessorTest < Minitest::Test
     accessor = Dev::Cd::Accessor.new(root: Dir.tmpdir, hook_installer: installer)
     err = StringIO.new
 
-    When "we run without plumbing flags"
-    accessor.run([], out: StringIO.new, err: err)
+    When "we explain the missing hook"
+    accessor.explain_missing_hook(err: err)
 
     Then "the supported shells are named"
     raises Dev::Cd::Accessor::ShellHookInactiveError

@@ -4,6 +4,7 @@
 require "stringio"
 require "dev/builtin_executor"
 require "dev/cd"
+require "dev/cli/flag_vocabulary"
 require "dev/cli/ui"
 require "dev/cli/usage_printer"
 require "dev/command"
@@ -26,8 +27,10 @@ module Dev
   # Runner uses: the global catalog is served by a CommandService over a
   # CommandRepository with no project half, so `dev plan status` resolves
   # down the tree exactly as it would inside a project, and a bare group
-  # (`dev plan`) prints its usage. Help (bare `dev`, `--help`, `-h`,
-  # `help`) is the Runner's everywhere: its tree lists these commands too.
+  # (`dev plan`) prints its usage. Help is the Runner's everywhere — bare
+  # `dev`, `help`, and a `-h`/`--help` among a global command's args: its
+  # tree lists these commands too, and holds the `help` node this tree
+  # lacks.
   class GlobalDispatch
     extend T::Sig
 
@@ -43,22 +46,36 @@ module Dev
     # @param ui [Dev::Cli::Ui] the host half of the execution context (the
     #   global leaves print plainly, so the silent UI is the default)
     # @param out [IO, StringIO] where group usage prints
-    sig { params(catalog: Dev::GlobalCatalog, ui: Dev::Cli::Ui, out: T.any(IO, StringIO)).void }
-    def initialize(catalog: Dev::GlobalCatalog.new, ui: Dev::Cli::NoUi.new, out: $stdout)
+    # @param flag_vocabulary [Dev::Cli::FlagVocabulary] recognizes a help
+    #   request among the args (the Runner's to answer)
+    sig do
+      params(
+        catalog: Dev::GlobalCatalog,
+        ui: Dev::Cli::Ui,
+        out: T.any(IO, StringIO),
+        flag_vocabulary: Dev::Cli::FlagVocabulary,
+      ).void
+    end
+    def initialize(catalog: Dev::GlobalCatalog.new, ui: Dev::Cli::NoUi.new, out: $stdout,
+                   flag_vocabulary: Dev::Cli::FlagVocabulary.new)
       @catalog = catalog
       @ui = ui
       @out = out
+      @flag_vocabulary = flag_vocabulary
     end
 
     # Whether the argv is dispatched here, before any dev.yml lookup: its
-    # first token names a global builtin.
+    # first token names a global builtin and no help flag follows it (help
+    # is the Runner's).
     #
     # @param argv [Array<String>]
     # @return [Boolean]
     sig { params(argv: T::Array[String]).returns(T::Boolean) }
     def global_command?(argv)
-      cmd_name = normalize(argv).first
-      !cmd_name.nil? && @catalog.commands.key?(cmd_name)
+      cmd_name, *args = normalize(argv)
+      return false if cmd_name.nil? || !@catalog.commands.key?(cmd_name)
+
+      !@flag_vocabulary.help_requested?(args)
     end
 
     # Run a global builtin. Clean failures (usage errors, unresolved repos,
@@ -80,6 +97,10 @@ module Dev
       $stderr.puts "dev: #{e}"
       $stderr.puts "Run 'dev #{T.must(argv.first)}' to see its commands."
       Kernel.exit(1)
+    rescue Cli::FlagVocabulary::UsageError => e
+      # Exit 2: the getopt/cobra convention for a malformed command line.
+      Cli::UsagePrinter.new.print_usage_error(e, out: $stderr)
+      Kernel.exit(2)
     rescue Dev::Cd::Matcher::RepoNotFoundError, Dev::CredentialAccessor::UsageError,
            ArgumentError, RuntimeError => e
       $stderr.puts "dev: #{e}"

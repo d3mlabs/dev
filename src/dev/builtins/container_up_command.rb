@@ -76,7 +76,7 @@ module Dev
       # @param args [Array<String>] unused
       # @param context [ExecutionContext] the project (the group is gated on build.container)
       # @return [void]
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
         up(project: context.project!)
       end

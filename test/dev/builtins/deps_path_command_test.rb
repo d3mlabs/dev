@@ -35,7 +35,7 @@ class Dev::Builtins::DepsPathCommandTest < Minitest::Test
     )
 
     When "running deps path"
-    command.call(args: ["ficsit", "some-mod", "linux"], context: build_context(root))
+    command.call(args: parsed_args(command, ["ficsit", "some-mod", "linux"]), context: build_context(root))
 
     Then "the accessor was scoped to the project root"
     factory_roots == [root]
@@ -47,7 +47,7 @@ class Dev::Builtins::DepsPathCommandTest < Minitest::Test
     command = Dev::Builtins::DepsPathCommand.new
 
     When "running deps path with no integration"
-    command.call(args: [], context: build_context(root))
+    command.call(args: no_args, context: build_context(root))
 
     Then "the real accessor answers with its own usage contract"
     raises Dev::Deps::Accessor::UsageError

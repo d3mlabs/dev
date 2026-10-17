@@ -52,7 +52,7 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
 
     When "bringing the engine up"
     Dev::Builtins::EngineUpCommand.new(provisioner: provisioner, out: out)
-      .call(args: [], context: project_context(build_container: config))
+      .call(args: no_args, context: project_context(build_container: config))
 
     Then
     out.string == "dev: engine up.\n"
@@ -65,7 +65,7 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
     context = in_project ? project_context(build_container: nil) : no_project
 
     When "bringing the engine up"
-    Dev::Builtins::EngineUpCommand.new(provisioner: provisioner, out: StringIO.new).call(args: [], context: context)
+    Dev::Builtins::EngineUpCommand.new(provisioner: provisioner, out: StringIO.new).call(args: no_args, context: context)
 
     Then
     true
@@ -99,7 +99,7 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
     out = StringIO.new
 
     When "bringing the engine down"
-    down_command(engine: engine, provisioner: provisioner, out: out).call(args: [], context: no_project)
+    down_command(engine: engine, provisioner: provisioner, out: out).call(args: no_args, context: no_project)
 
     Then
     out.string == "dev: engine stopped.\n"
@@ -119,7 +119,7 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
     out = StringIO.new
 
     When "bringing the engine down"
-    down_command(engine: engine, provisioner: provisioner, confirmer: confirmer, out: out).call(args: [], context: no_project)
+    down_command(engine: engine, provisioner: provisioner, confirmer: confirmer, out: out).call(args: no_args, context: no_project)
 
     Then "the checkout is named, not the container"
     out.string == "dev: stopped build container: snappy (~/src/snappy)\ndev: engine stopped.\n"
@@ -135,7 +135,7 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
 
     When "bringing the engine down"
     error = assert_raises(Dev::Builtins::EngineDownCommand::StopFailedError) do
-      down_command(engine: engine, provisioner: provisioner).call(args: [], context: no_project)
+      down_command(engine: engine, provisioner: provisioner).call(args: no_args, context: no_project)
     end
 
     Then "the container is named"
@@ -161,7 +161,7 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
 
     When "bringing the engine down"
     error = begin
-      down_command(engine: engine, provisioner: provisioner, confirmer: confirmer, out: out).call(args: [], context: no_project)
+      down_command(engine: engine, provisioner: provisioner, confirmer: confirmer, out: out).call(args: no_args, context: no_project)
       nil
     rescue Dev::Builtins::EngineDownCommand::EngineBusyError => e
       e
@@ -190,7 +190,8 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
     confirmer.expects(:confirm?).never
 
     When "forcing the engine down"
-    down_command(engine: engine, provisioner: provisioner, confirmer: confirmer).call(args: ["--force"], context: no_project)
+    command = down_command(engine: engine, provisioner: provisioner, confirmer: confirmer)
+    command.call(args: parsed_args(command, ["--force"]), context: no_project)
 
     Then
     true
@@ -205,7 +206,7 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
     provisioner.expects(:stop!).never
 
     When "bringing the engine down"
-    down_command(engine: engine, provisioner: provisioner).call(args: [], context: no_project)
+    down_command(engine: engine, provisioner: provisioner).call(args: no_args, context: no_project)
 
     Then
     raises Dev::EngineProvisioner::UnmanagedEngineError
@@ -225,7 +226,7 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
     provisioner.stubs(:status).returns(engine_status)
     out = StringIO.new
     Dev::Builtins::EngineStatusCommand.new(provisioner: provisioner, out: out, home: "/Users/jp")
-      .call(args: [], context: no_project)
+      .call(args: no_args, context: no_project)
     out.string
   end
 

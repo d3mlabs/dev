@@ -15,9 +15,9 @@ module Dev
       sig { override.returns(String) }
       def desc = "Refresh the whole read path now: knowledge repo cache, skill links, invariants render"
 
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
-        raise Dev::Learnings::Accessor::UsageError, USAGE unless args.empty?
+        raise Dev::Learnings::Accessor::UsageError, USAGE unless args.positionals.empty?
 
         @accessor_factory.call.sync(out: @out)
       end

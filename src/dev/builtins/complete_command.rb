@@ -43,9 +43,16 @@ module Dev
       sig { override.returns(T::Boolean) }
       def staleness_exempt? = true
 
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      # The words are another command's argv, flags included (`dev plan
+      # pull --merge <Tab>` hands this command `--merge`): none of them is
+      # a flag of `complete`, and a `-h` among them asks for candidates,
+      # not for this command's usage.
+      sig { override.returns(T::Boolean) }
+      def opaque_args? = true
+
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
-        candidates(args).each { |name| @out.puts name }
+        candidates(args.words).each { |name| @out.puts name }
       end
 
       private

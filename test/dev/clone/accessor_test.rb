@@ -51,7 +51,7 @@ class Dev::Clone::AccessorTest < Minitest::Test
     err = StringIO.new
 
     When "we clone via the wrapper's plumbing mode"
-    accessor.run(["--path", "acme/widget"], out: out, err: err)
+    accessor.run("acme/widget", plumbing: true, out: out, err: err)
 
     Then "the clone landed at the canonical path, printed as the only stdout line"
     expected = File.join(File.expand_path(root), "github.com", "acme", "widget")
@@ -71,7 +71,7 @@ class Dev::Clone::AccessorTest < Minitest::Test
     accessor = build_accessor(root, cloner: cloner)
 
     When "we clone by leaf name"
-    accessor.run(["--path", "dev"], out: StringIO.new, err: StringIO.new)
+    accessor.run("dev", plumbing: true, out: StringIO.new, err: StringIO.new)
 
     Then "the clone targets d3mlabs/dev at the canonical path"
     cloner.calls == [["d3mlabs/dev", File.join(File.expand_path(root), "github.com", "d3mlabs", "dev")]]
@@ -89,7 +89,7 @@ class Dev::Clone::AccessorTest < Minitest::Test
 
     When "we clone by leaf name"
     error = assert_raises(Dev::Clone::RepoSpec::MissingDefaultOrgError) do
-      accessor.run(["--path", "dev"], out: StringIO.new, err: StringIO.new)
+      accessor.run("dev", plumbing: true, out: StringIO.new, err: StringIO.new)
     end
 
     Then "the remediation names the settings key and no clone ran"
@@ -111,7 +111,7 @@ class Dev::Clone::AccessorTest < Minitest::Test
     err = StringIO.new
 
     When "we clone without the wrapper"
-    accessor.run(["d3mlabs/dev"], out: out, err: err)
+    accessor.run("d3mlabs/dev", plumbing: false, out: out, err: err)
 
     Then "the clone happened, the hook was ensured, and stderr carries the story"
     cloner.calls.size == 1
@@ -131,7 +131,7 @@ class Dev::Clone::AccessorTest < Minitest::Test
     err = StringIO.new
 
     When "we clone without the wrapper"
-    accessor.run(["dev"], out: StringIO.new, err: err)
+    accessor.run("dev", plumbing: false, out: StringIO.new, err: err)
 
     Then "the fresh-install hint is printed"
     assert_includes err.string, "shell hook installed"
@@ -148,7 +148,7 @@ class Dev::Clone::AccessorTest < Minitest::Test
     err = StringIO.new
 
     When "we clone without the wrapper"
-    accessor.run(["dev"], out: StringIO.new, err: err)
+    accessor.run("dev", plumbing: false, out: StringIO.new, err: err)
 
     Then "the supported shells are named"
     assert_includes err.string, "zsh, bash, fish"
@@ -166,7 +166,7 @@ class Dev::Clone::AccessorTest < Minitest::Test
 
     When "we clone the same repo"
     error = assert_raises(Dev::Clone::Accessor::DestinationExistsError) do
-      accessor.run(["--path", "dev"], out: StringIO.new, err: StringIO.new)
+      accessor.run("dev", plumbing: true, out: StringIO.new, err: StringIO.new)
     end
 
     Then "the error points at dev cd and no clone ran"
@@ -177,30 +177,12 @@ class Dev::Clone::AccessorTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "#{description} raises UsageError" do
-    Given "an accessor"
-    accessor = build_accessor(Dir.tmpdir)
-
-    When "we run it"
-    accessor.run(args, out: StringIO.new, err: StringIO.new)
-
-    Then
-    raises Dev::Clone::Accessor::UsageError
-
-    Where
-    args                 | description
-    []                   | "no target"
-    ["a", "b"]           | "two targets"
-    ["--path"]           | "plumbing with no target"
-    ["--path", "a", "b"] | "plumbing with two targets"
-  end
-
   test "a malformed target surfaces RepoSpec's typed error" do
     Given "an accessor"
     accessor = build_accessor(Dir.tmpdir)
 
     When "we clone a nonsense target"
-    accessor.run(["a/b/c"], out: StringIO.new, err: StringIO.new)
+    accessor.run("a/b/c", plumbing: false, out: StringIO.new, err: StringIO.new)
 
     Then
     raises Dev::Clone::RepoSpec::MalformedRepoError

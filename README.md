@@ -30,6 +30,17 @@ dev walks up from your current directory to the git repo root and reads the `dev
 
 Commands form a **tree**, and `dev` itself is its root: any command may have subcommands (`dev deps path`, `dev runner status`, a project's `dev test unit`). Resolution follows argv one token at a time from the root — a token naming a child descends; the first token that doesn't is where the args begin. A command with nothing of its own to run prints its usage when invoked bare (so bare `dev` lists everything, `dev deps` lists its verbs (`update`, `install`, `check`, `path`), `dev plan` lists the plan verbs); `dev help <path…>` prints the same view for any node. Commands with subcommands show a trailing `…` in the listing, and Tab completion follows the same tree (`dev plan <Tab>` offers `new link pull push status init`) once the [shell hook](#shell-hook-install) is installed.
 
+### Flags: `--help` everywhere, unknown flags refused
+
+Every node dev defines — a builtin or a group — has a declared flag vocabulary, and follows the `gh`/cobra convention:
+
+- `-h` / `--help` **anywhere** among a node's arguments prints that node's usage and does nothing else: `dev container up --help` ≡ `dev help container up`, `dev plan new "Carve system" --help` prints `plan new`'s usage and creates no issue, bare `dev --help` ≡ `dev help`.
+- Any other `-`-prefixed argument the node does not declare is a usage error: `dev: unknown flag '--hlep' for 'dev plan new'`, the node's usage on stderr, **exit 2**. Groups declare no flags, so `dev deps --hlep` is refused the same way (an unknown *word* there is still an unknown subcommand).
+- A literal `--` ends option parsing: everything after it is positional data, neither help nor a violation (`dev plan new -- --help` titles the plan `--help`).
+- A flag that takes a value consumes the next word whatever its shape (`--labels -x` labels the runner `-x`), or takes it inline (`--keep=3`). The same arity holds both ways: a value flag with nothing after it (`dev cache gc --keep`) and a switch given a value (`dev plan new x --org=1`) are usage errors, exit 2, like an unknown flag.
+
+**Project `run:` commands have no vocabulary.** Their argv is opaque and forwarded verbatim — `dev test --help` reaches `test.sh`, as does `--` — because the script owns its flags. A project `run:` on a builtin's name (`up:`) owns the slot's argv the same way. The only dev-defined exception is `complete`, whose words are another command's argv.
+
 ### Built-in commands
 
 Grouped as `dev help` lists them. **Scope** says where the command works: *anywhere* needs no `dev.yml`; *project* needs one; *gated* exists only when the `dev.yml` declares the named config.
@@ -67,6 +78,7 @@ Grouped as `dev help` lists them. **Scope** says where the command works: *anywh
 - No git repo above the current directory: `dev: no git repo (with dev.yml) found above <path>`
 - A git repo without a `dev.yml` (and the command is not an *anywhere* builtin): `dev: found git repo at <path> but no dev.yml there`
 - Unknown command: `dev: Command '<name>' not found` (the full path for an unknown subcommand, e.g. `'deps bogus'`), with a pointer to `dev --help`
+- Malformed flags at a builtin or group — unknown (`dev: unknown flag '<flag>' for 'dev <path>'`), a value flag without its value (`flag '<flag>' needs a value`), a switch given one (`flag '<flag>' takes no value`): the message, then that node's usage, exit 2 (see [Flags](#flags---help-everywhere-unknown-flags-refused); project commands take any flag)
 
 ## dev.yml convention
 
@@ -100,7 +112,7 @@ commands:
 - `name`: Display name for the repo (used in help output).
 - `commands`: Map of command names to specs. A spec declares `run`, `commands`, or both — never neither.
   - `desc`: Short description (shown in `dev` / `dev --help`).
-  - `run`: Shell command to execute (from the repo root). Any extra args passed to `dev <cmd> [args...]` are forwarded to this command.
+  - `run`: Shell command to execute (from the repo root). Any extra args passed to `dev <cmd> [args...]` are forwarded to this command verbatim — flags included, `--help` and `--` among them: dev interprets nothing on a project command's behalf (see [Flags](#flags---help-everywhere-unknown-flags-refused)).
   - `commands`: *(optional)* Nested map of subcommand specs, same shape, any depth. `dev <cmd> <sub> [args...]` runs the child. With `run` beside it, bare `dev <cmd>` runs `run` and a first arg that isn't a child's name is forwarded to it (`dev test --fast`; `dev help <cmd>` shows both forms). Without `run`, bare `dev <cmd>` prints the usage and an unknown first arg is an error. A child cannot be named `help`, and a command with subcommands cannot be a `repl`.
   - `repl`: *(optional, default `false`)* When `true`, the command execs directly without a status footer. Use this for long-running interactive sessions like consoles and REPLs where a trailing `✓ Done` doesn't make sense.
   - `container`: *(optional, default `true` when `build.container` is configured)* When `false`, the command runs on the host (via `shadowenv exec`) instead of inside the build container. Use for host-side commands like provisioning (`up`) or deploying.

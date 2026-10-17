@@ -44,9 +44,10 @@ class Dev::BuiltinExecutorTest < Minitest::Test
     context = build_context
 
     When "executing"
-    executor.execute(builtin, args: ["--verbose"], context: context)
+    args = Dev::Cli::ParsedArgs.new(words: ["--verbose"], switches: ["--verbose"])
+    executor.execute(builtin, args: args, context: context)
 
     Then "the body received args and context; no child process was involved"
-    builtin.calls == [[["--verbose"], context]]
+    builtin.calls == [[args, context]]
   end
 end

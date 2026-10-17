@@ -18,7 +18,7 @@ module Dev
       # @param args [Array<String>] unused
       # @param context [ExecutionContext] the project
       # @return [void]
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
         removed = client.reset_service!(context.project!.root)
         @out.puts(removed.empty? ? "dev: no build container to remove." : "dev: removed #{removed.join(", ")}.")

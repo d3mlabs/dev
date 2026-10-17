@@ -19,10 +19,9 @@ module Dev
     # The human command is `dev clone [<org>/]<repo>` (bare names expand
     # under the `default_org` setting), handled by the installed shell
     # wrapper (the same one that powers `dev cd`); the wrapper calls the
-    # hidden plumbing mode:
-    #
-    # - `--path [<org>/]<repo>`: clone, then print exactly the destination's
-    #   absolute path on stdout (the wrapper `builtin cd`s into it)
+    # hidden plumbing mode, which clones and then prints exactly the
+    # destination's absolute path on stdout (the wrapper `builtin cd`s
+    # into it).
     #
     # A bare `dev clone …` reaching this process means the wrapper isn't
     # active in the calling shell. Unlike `dev cd`, the clone still happens —
@@ -59,30 +58,28 @@ module Dev
         @settings = settings
       end
 
-      # Dispatch a `dev clone …` invocation.
+      # Clone a repo into its canonical checkout path.
       #
-      # @param args [Array<String>] argv after the "clone" command
+      # @param target [String] "<repo>" or "<org>/<repo>"
+      # @param plumbing [Boolean] the shell wrapper is calling: print the
+      #   destination on stdout instead of announcing it on stderr
       # @param out [IO, StringIO] stdout (the machine-readable payload only)
       # @param err [IO, StringIO] stderr (progress, diagnostics and hints)
       # @return [void]
-      # @raise [UsageError] unless exactly one clone target is given
       # @raise [RepoSpec::MalformedRepoError] when the target isn't "<repo>" or "<org>/<repo>"
       # @raise [RepoSpec::MissingDefaultOrgError] on a bare "<repo>" with no default_org setting
       # @raise [DestinationExistsError] when the canonical path already exists
       # @raise [GhCloner::CloneFailedError] when the clone itself fails
       sig do
         params(
-          args: T::Array[String],
+          target: String,
+          plumbing: T::Boolean,
           out: T.any(IO, StringIO),
           err: T.any(IO, StringIO),
         ).void
       end
-      def run(args, out: $stdout, err: $stderr)
-        plumbing = args.first == "--path"
-        query = plumbing ? args.drop(1) : args
-        raise UsageError, "usage: dev clone [<org>/]<repo>" unless query.size == 1
-
-        spec = RepoSpec.parse(query.fetch(0), default_org: @settings.default_org)
+      def run(target, plumbing:, out: $stdout, err: $stderr)
+        spec = RepoSpec.parse(target, default_org: @settings.default_org)
         destination = @root / spec.relative_path
         if destination.exist?
           raise DestinationExistsError, "#{destination} already exists — jump there with `dev cd #{spec.name}`"

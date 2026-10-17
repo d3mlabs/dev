@@ -81,25 +81,12 @@ module Dev
       manifest = @dev_yaml_path && @manifest_loader.load(@dev_yaml_path)
       context = build_context(manifest)
       service = @command_service || build_command_service(manifest, context)
-      service.execute(route(argv), context:)
+      service.execute(argv, context:)
     rescue StandardError => e
       exit_for(e)
     end
 
     private
-
-    # The conventional help flags are spellings of bare `dev`, which
-    # resolves to the tree's root and prints its usage; every other argv is
-    # the command path the service resolves down the tree.
-    #
-    # @param argv [Array<String>]
-    # @return [Array<String>]
-    sig { params(argv: T::Array[String]).returns(T::Array[String]) }
-    def route(argv)
-      return [] if argv == ["--help"] || argv == ["-h"]
-
-      argv
-    end
 
     # Assemble the per-run ExecutionContext: always the host half; the
     # project half only when a manifest exists (the toolchain pass over
@@ -160,6 +147,10 @@ module Dev
           $stderr.puts "Run 'dev' or 'dev --help' to see available commands."
         end
         Kernel.exit(1)
+      when Cli::FlagVocabulary::UsageError
+        # Exit 2: the getopt/cobra convention for a malformed command line.
+        Cli::UsagePrinter.new.print_usage_error(error, out: $stderr)
+        Kernel.exit(2)
       when ArgumentError, RuntimeError
         $stderr.puts "dev: #{error}"
         Kernel.exit(1)

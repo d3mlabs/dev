@@ -28,7 +28,7 @@ class Dev::Builtins::CheckCommandTest < Minitest::Test
     $stdout = StringIO.new
 
     When "running check"
-    command.call(args: [], context: build_context)
+    command.call(args: no_args, context: build_context)
 
     Then "the sync confirmation is printed and the process keeps its exit code"
     $stdout.string.include?("in sync")
@@ -47,7 +47,7 @@ class Dev::Builtins::CheckCommandTest < Minitest::Test
     Kernel.expects(:exit).with(1).once
 
     When "running check"
-    command.call(args: [], context: build_context)
+    command.call(args: no_args, context: build_context)
 
     Then "every message reaches stderr"
     $stderr.string.include?("lockfiles are stale")

@@ -104,6 +104,62 @@ class RunnerTest < Minitest::Test
     ["help"]
   end
 
+  # --- -h/--help at every node, unknown flags refused (#217) ----------------
+
+  test "#{argv.inspect} prints the same usage as `dev help #{path.join(" ")}`: the help flag works at #{shape}" do
+    Given "two Runners over the same dev.yml"
+    commands = { "test" => { "run" => "rspec", "desc" => "Run tests" } }
+    help_out = StringIO.new
+    out = StringIO.new
+
+    When "asking by the help command and by the flag"
+    build_runner(commands: commands, out: help_out).run(["help", *path])
+    build_runner(commands: commands, out: out).run(argv)
+
+    Then "one rendering, of that node"
+    out.string == help_out.string
+    out.string.include?(usage_line)
+
+    Where
+    shape                         | path             | argv                                      | usage_line
+    "the root"                    | []               | ["--help"]                                | "Usage: dev <command> [args...]"
+    "a builtin group"             | ["deps"]         | ["deps", "--help"]                        | "Usage: dev deps <command> [args...]"
+    "a builtin group, short"      | ["deps"]         | ["deps", "-h"]                            | "Usage: dev deps <command> [args...]"
+    "a builtin leaf"              | ["deps", "path"] | ["deps", "path", "--help"]                | "Usage: dev deps path [args...]"
+    "a leaf, after a positional"  | ["deps", "path"] | ["deps", "path", "xcode", "-h"]           | "Usage: dev deps path [args...]"
+    "a flagged leaf, among flags" | ["cache", "gc"]  | ["cache", "gc", "--keep", "3", "-h"]      | "Usage: dev cache gc [args...]"
+    "a global leaf in the tree"   | ["plan", "new"]  | ["plan", "new", "Carve system", "--help"] | "Usage: dev plan new [args...]"
+    "the help command itself"     | ["help"]         | ["help", "--help"]                        | "Usage: dev help [args...]"
+  end
+
+  test "#{argv.inspect} is a usage error at #{shape}: the flag, the node's usage on stderr, exit 2" do
+    Given "a Runner"
+    out = StringIO.new
+    runner = build_runner(commands: {}, out: out)
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(2).once
+
+    When "running with a flag the node does not declare"
+    runner.run(argv)
+
+    Then "stderr names the flag and the node, then prints its usage; stdout stays empty"
+    $stderr.string.lines.first == "dev: unknown flag '#{flag}' for '#{invocation}'\n"
+    $stderr.string.include?(usage_line)
+    out.string.empty?
+
+    Cleanup
+    $stderr = old_stderr
+
+    Where
+    shape                     | argv                                 | flag      | invocation      | usage_line
+    "the root"                | ["--bogus"]                          | "--bogus" | "dev"           | "Usage: dev <command> [args...]"
+    "a builtin group"         | ["deps", "--hlep"]                   | "--hlep"  | "dev deps"      | "Usage: dev deps <command> [args...]"
+    "a builtin without flags" | ["deps", "path", "xcode", "-x"]      | "-x"      | "dev deps path" | "Usage: dev deps path [args...]"
+    "a builtin with flags"    | ["cache", "gc", "--keep=3", "--kep"] | "--kep"   | "dev cache gc"  | "Usage: dev cache gc [args...]"
+    "a global leaf"           | ["plan", "new", "x", "--hlep"]       | "--hlep"  | "dev plan new"  | "Usage: dev plan new [args...]"
+  end
+
   test "run with unknown command prints error to stderr and exits 1" do
     Given "a Runner"
     runner = build_runner

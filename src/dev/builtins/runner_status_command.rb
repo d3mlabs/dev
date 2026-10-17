@@ -32,7 +32,7 @@ module Dev
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
 
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
         _ = args
         @runner_status_factory.call(!context.project&.build_container.nil?).report

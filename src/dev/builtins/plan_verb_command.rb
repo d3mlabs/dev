@@ -22,6 +22,10 @@ module Dev
 
       AccessorFactory = T.type_alias { T.proc.returns(Dev::Plan::Accessor) }
 
+      # Target the org plans repo instead of the enclosing project's. Shared
+      # by every verb that resolves a repo.
+      ORG_FLAG = "--org"
+
       # The production factory; a constant so its wiring is testable apart
       # from any verb.
       DEFAULT_ACCESSOR_FACTORY = T.let(
@@ -44,7 +48,7 @@ module Dev
       sig { override.returns(T::Boolean) }
       def staleness_exempt? = true
 
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
         accessor = @accessor_factory.call
         accessor.refresh_host
@@ -56,9 +60,9 @@ module Dev
       # The verb itself, after the host refresh.
       #
       # @param accessor [Dev::Plan::Accessor] anchored at the workspace
-      # @param args [Array<String>] argv after the verb
+      # @param args [Cli::ParsedArgs] the parsed args after the verb
       # @return [void]
-      sig { abstract.params(accessor: Dev::Plan::Accessor, args: T::Array[String]).void }
+      sig { abstract.params(accessor: Dev::Plan::Accessor, args: Cli::ParsedArgs).void }
       def perform(accessor, args); end
     end
   end

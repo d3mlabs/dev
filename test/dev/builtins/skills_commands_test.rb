@@ -47,7 +47,7 @@ class Dev::Builtins::SkillsCommandsTest < Minitest::Test
     }, out: out)
 
     When "calling the leaf in a projectless context"
-    command.call(args: args, context: build_context)
+    command.call(args: parsed_args(command, args), context: build_context)
 
     Then "the factory was consulted once"
     calls == 1
@@ -64,7 +64,7 @@ class Dev::Builtins::SkillsCommandsTest < Minitest::Test
     command = klass.new(accessor_factory: -> { flunk("accessor built for a malformed argv") }, out: StringIO.new)
 
     When "calling it with a malformed argv"
-    command.call(args: args, context: build_context)
+    command.call(args: parsed_args(command, args), context: build_context)
 
     Then
     raises Dev::Skills::Accessor::UsageError
@@ -74,7 +74,6 @@ class Dev::Builtins::SkillsCommandsTest < Minitest::Test
     LEAVES[0] | ["extra"]
     LEAVES[1] | ["extra"]
     LEAVES[1] | ["--json", "extra"]
-    LEAVES[1] | ["--bogus"]
   end
 
   test "the default factory builds a real accessor over the host's channels for the enclosing project" do

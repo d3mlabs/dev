@@ -369,6 +369,58 @@ class Dev::CommandRepositoryTest < Minitest::Test
     error.message.include?("'deps bogus'")
   end
 
+  test "resolve stops at a group on a flag-shaped leftover: #{argv.inspect} is the group's arg, not an unknown child" do
+    Given "a group"
+    group = build_group(["deps"], children: { "path" => build_builtin })
+    repository = build_repository(builtins: { "deps" => group }, project_commands: {})
+
+    When "resolving the group followed by a flag"
+    resolution = repository.resolve(argv)
+
+    Then
+    resolution.command == group
+    resolution.path == ["deps"]
+    resolution.args == argv.drop(1)
+
+    Where
+    argv
+    ["deps", "--help"]
+    ["deps", "-h"]
+    ["deps", "--bogus", "path"]
+  end
+
+  test "resolve hands the root a flag-shaped leftover too: bare `dev --help` resolves to the root" do
+    Given "a repository"
+    repository = build_repository(builtins: { "up" => build_builtin }, project_commands: {})
+
+    When "resolving a flag alone"
+    resolution = repository.resolve(["--help"])
+
+    Then
+    resolution.command == repository.root
+    resolution.path == []
+    resolution.args == ["--help"]
+  end
+
+  test "a lone #{token.inspect} on a group is a word, not a flag: still an unknown subcommand" do
+    Given "a group"
+    repository = build_repository(
+      builtins: { "deps" => build_group(["deps"], children: { "path" => build_builtin }) },
+      project_commands: {},
+    )
+
+    When "resolving it"
+    repository.resolve(["deps", token])
+
+    Then
+    raises Dev::CommandRepository::CommandNotFoundError
+
+    Where
+    token
+    "-"
+    "--"
+  end
+
   test "resolve raises CommandNotFoundError naming the token for an unknown top-level name: the root is a group too" do
     Given "a repository with one builtin"
     repository = build_repository(builtins: { "up" => build_builtin }, project_commands: {})

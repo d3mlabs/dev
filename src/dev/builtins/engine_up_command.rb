@@ -38,7 +38,7 @@ module Dev
       # @param context [ExecutionContext] the project, if any, supplies the hint
       # @return [void]
       # @raise [Dev::EngineProvisioner] see its provision! for the per-kind failures
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
         @provisioner.provision!(resources: context.project&.build_container&.resources)
         @out.puts "dev: engine up."

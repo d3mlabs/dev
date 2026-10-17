@@ -16,11 +16,14 @@ module Dev
       sig { override.returns(String) }
       def desc = "Show every skill channel: where its links land, what is linked, and from which package/version"
 
-      sig { override.params(args: T::Array[String], context: ExecutionContext).void }
-      def call(args:, context:)
-        raise Dev::Skills::Accessor::UsageError, USAGE unless args.empty? || args == [JSON_FLAG]
+      sig { override.returns(T::Array[Cli::Flag]) }
+      def flags = [Cli::Flag.new(JSON_FLAG)]
 
-        @accessor_factory.call.status(out: @out, json: args.include?(JSON_FLAG))
+      sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
+      def call(args:, context:)
+        raise Dev::Skills::Accessor::UsageError, USAGE if args.positionals.any?
+
+        @accessor_factory.call.status(out: @out, json: args.flag?(JSON_FLAG))
       end
     end
   end
