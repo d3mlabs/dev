@@ -363,7 +363,7 @@ On every `dev up`, before project provisioning, `Dev::HostService` converges the
 
 ### dev is live infrastructure
 
-Projects declare no dev version: every machine runs the latest release from the tap, converging on `dev up` (above), and a release keeps reading every project artifact its predecessors wrote (`dev.yml`, `dependencies.rb`, the lockfiles — including the legacy flat lock format). The build container follows the same rule: an image build installs its toolchain with `dev deps install --group build --integration brew` from `build-deps.lock` and then uninstalls dev-core alone ([`bin/docker-install-build-deps.sh`](bin/docker-install-build-deps.sh) — its dependencies stay, so the container's dev later installs as one formula), so the image contains the toolchain and no dev; what the container then needs installs inside it, where it is consumed ([Inside the container](#inside-the-container)), and a hosted job with no orchestrating host provisions dev at latest, like a fresh workstation ([Hosted jobs](#hosted-jobs-container-image)). Why it is this way, and what was rejected, is [ADR-0001](docs/DECISIONS.md#adr-0001--dev-is-live-infrastructure), [ADR-0002](docs/DECISIONS.md#adr-0002--dependencies-install-where-they-are-consumed) and [ADR-0003](docs/DECISIONS.md#adr-0003--a-brew-lock-has-bite-on-both-sides).
+Projects declare no dev version: every machine runs the latest release from the tap, converging on `dev up` (above), and a release keeps reading every project artifact its predecessors wrote (`dev.yml`, `dependencies.rb`, the lockfiles — including the legacy flat lock format). The build container follows the same rule: an image build installs its toolchain with `dev deps install --group build --integration brew` from `build-deps.lock` and then uninstalls dev-core alone ([`bin/docker-install-build-deps.sh`](bin/docker-install-build-deps.sh) — its dependencies stay, so the container's dev later installs as one formula), so the image contains the toolchain and no dev; what the container then needs installs inside it, where it is consumed ([Inside the container](#inside-the-container)), and a machine with no orchestrating host — a hosted runner — is a host, provisions dev at latest like a fresh workstation, and reaches for the container only across a platform boundary ([The platform rule](#the-platform-rule-the-container-exists-for-a-platform-the-host-is-not)). Why it is this way, and what was rejected, is [ADR-0001](docs/DECISIONS.md#adr-0001--dev-is-live-infrastructure), [ADR-0002](docs/DECISIONS.md#adr-0002--dependencies-install-where-they-are-consumed) and [ADR-0003](docs/DECISIONS.md#adr-0003--a-brew-lock-has-bite-on-both-sides).
 
 ### dependencies.rb
 
@@ -645,7 +645,7 @@ Two intents sit on top, and they work on the project's **service dependencies** 
 
 | Verb | What it does |
 |---|---|
-| `dev container up` | Engine up and sized from this repo's hint → image resolved (local → registry → build; publishes when `DEV_PUBLISH_IMAGE=1`) → with `persist`, the service container created, or restarted warm if it exists → the container's user made the data root's owner (one `test -w` probe when it already is) → the container's dev converged to this host's version (one `dev version` probe when already current) → the container's side of the dependency install run inside (`dev deps install`, with the resolvable `run_env` entries injected). Everything a containerized command would do lazily on first use, done ahead of time. |
+| `dev container up` | On a host whose platform is the environment's ([the platform rule](#the-platform-rule-the-container-exists-for-a-platform-the-host-is-not)): nothing, unless `DEV_PUBLISH_IMAGE=1`, in which case the image is resolved and published and nothing else happens. Otherwise: engine up and sized from this repo's hint → image resolved (local → registry → build; publishes when `DEV_PUBLISH_IMAGE=1`) → with `persist`, the service container created, or restarted warm if it exists → the container's user made the data root's owner (one `test -w` probe when it already is) → the container's dev converged to this host's version (one `dev version` probe when already current) → the container's side of the dependency install run inside (`dev deps install`, with the resolvable `run_env` entries injected). Everything a containerized command would do lazily on first use, done ahead of time. |
 | `dev container down` | Stop this checkout's running containers (`stop -t 0` — PID 1 is `sleep infinity`, which ignores SIGTERM) and keep them: the writable layer is the incremental build state `persist` exists for. The engine stays up. |
 | `dev container reset` | Remove this checkout's containers, the current tag's and any stale one, discarding that state. The next command creates a fresh one from the image. |
 | `dev container tag` | Print the content-addressed tag the checkout resolves to. Pure — no engine, no network — so a workflow can capture it anywhere. |
@@ -684,25 +684,14 @@ What survives what — the warmth table:
 | `docker image rm` / `dev cache gc` | re-pulled or rebuilt on next use | kept while the tag is live | running |
 | `dev up --no-cache` | kept (pulled or built as usual) | kept, untouched — a one-shot sibling ran and is gone | running |
 
-### Hosted jobs: `container: image:`
+### The platform rule: the container exists for a platform the host is not
 
-A GitHub-hosted job that runs *inside* a dev-built image (`container: image: <tag>`) has no orchestrating host: nothing created the container, so nothing set the marker, matched dev's version, or mounted a data root. The workflow is the creator, and declares the same three things a host would — through the composite action this repo ships, `d3mlabs/dev/.github/actions/hosted-up@main`:
+dev has two states: **on a host**, or **inside something the host made** (`DEV_INSIDE_CONTAINER=1`, above). A machine with no orchestrating host — a hosted runner, a fresh workstation — is a host; there is no third state. What decides whether a host reaches for the build container is one fact: the Dockerfile's first `FROM --platform=<os>/<arch>` names the platform the project's environment is, and the host either is that platform or is not.
 
-```yaml
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    container:
-      image: ${{ needs.provide-image.outputs.image }}   # a prior job's `dev container up` + `dev container tag`
-    steps:
-      - uses: actions/checkout@v4
-      - uses: d3mlabs/dev/.github/actions/hosted-up@main   # the job's `dev up`: install dev, declare the container, restore the store, run it
-      - run: dev build                                     # then the project's commands, as on any host after `dev up`
-```
+- **Host platform ≠ environment platform** (a Mac building a `linux/amd64` project): `dev up` brings the container up as [above](#engine--container-lifecycle), and every `container:` command runs inside it.
+- **Host platform = environment platform** (a `linux-x86_64` runner building the same project): `dev up` installs the whole lock on the host — the `build` group included — and touches no container; `container:` commands run directly on the host, in the project's shadowenv. The Dockerfile is still the environment's definition (its platform is what the rule reads) and the build image is still the one image the project publishes for the hosts that need it.
 
-The action puts Linuxbrew back on the job's PATH (Actions overrides a container's), installs **dev at the latest release** from the tap (there is no host version to match, so a hosted job takes a fresh workstation's shape), declares **`DEV_INSIDE_CONTAINER=1`** and the data root, restores the **artifact store from the Actions cache** (`actions/cache` on the data root, keyed `dev-store-<os>-<arch>-<hash of deps.lock + build-deps.lock>` with a prefix fallback — the store is version-keyed and content-addressed, so a stale restore is still correct and `dev up` installs the difference), runs **`dev up`** (inside: the container-side install, `--except build`), and saves the store back at the job's end. `data-root` and `up-args` are inputs. The image carries no dev ([dev is live infrastructure](#dev-is-live-infrastructure)): the Linuxbrew and tap the bootstrap leaves behind are what the install uses.
-
-A self-hosted job has a host and needs none of this: its runner's dev runs `dev up`, which provisions the persistent container as [above](#inside-the-container).
+The one host that does image work without needing the image is the **publisher**, designated by `DEV_PUBLISH_IMAGE=1` on its `dev up`: it resolves the content-addressed tag and makes sure the registry holds it — a manifest lookup first, a build and push only on a miss — and still runs nothing in a container. A hosted job is therefore written like any other machine's `dev up`: install dev, `dev up`, the project's commands; nothing declares a container, because nothing made one.
 
 ### The cold run: `dev up --no-cache`
 
