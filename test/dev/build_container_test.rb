@@ -549,6 +549,77 @@ class BuildContainerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "ensure_image! when publishing asks the registry before pulling: a hit pulls nothing, builds nothing" do
+    Given "a publisher with no local image and a registry that already advertises the tag"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
+    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
+    tag = Dev::BuildContainer.image_with_tag(config, project_root: Pathname(dir))
+    bc = build_container
+    bc.stubs(:local_image?).returns(false)
+
+    When "ensuring the image with publish on"
+    result = bc.ensure_image!(config, project_root: Pathname(dir), publish: true)
+
+    Then "the manifest lookup is the whole cost"
+    result == tag
+    1 * bc.registry_has?(tag) >> true
+    0 * bc.pull(tag)
+    0 * bc.push!(tag)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "ensure_image! when publishing falls through to pull and build on a registry miss" do
+    Given "a publisher with no local image, a registry miss and a pull miss"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
+    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
+    tag = Dev::BuildContainer.image_with_tag(config, project_root: Pathname(dir))
+    bc = build_container
+    bc.stubs(:local_image?).returns(false)
+    bc.stubs(:registry_has?).returns(false)
+    built = []
+    bc.stubs(:build!).with { |built_tag, **_|
+      built << built_tag
+      true }
+
+    When "ensuring the image with publish on"
+    result = bc.ensure_image!(config, project_root: Pathname(dir), publish: true)
+
+    Then "it builds and pushes, without asking the registry a second time"
+    result == tag
+    built == [tag]
+    1 * bc.pull(tag) >> false
+    1 * bc.push!(tag) >> true
+    0 * bc.publish!(tag)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "ensure_image! without publish never consults the registry" do
+    Given "a plain host with no local image"
+    dir = Dir.mktmpdir("build-container-test-")
+    File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
+    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
+    tag = Dev::BuildContainer.image_with_tag(config, project_root: Pathname(dir))
+    bc = build_container
+    bc.stubs(:local_image?).returns(false)
+
+    When "ensuring the image"
+    result = bc.ensure_image!(config, project_root: Pathname(dir))
+
+    Then "it goes straight to pull"
+    result == tag
+    0 * bc.registry_has?(tag)
+    1 * bc.pull(tag) >> true
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "ensure_image! does not publish a local hit by default" do
     Given "an image present locally and publish left at its default"
     dir = Dir.mktmpdir("build-container-test-")
@@ -581,12 +652,12 @@ class BuildContainerTest < Minitest::Test
     When "ensuring the image with push: false (the only real caller) and publish: true"
     result = bc.ensure_image!(config, project_root: Pathname(dir), push: false, publish: true)
 
-    Then "it builds, then publishes via the registry-guarded path"
+    Then "it asks the registry once, builds, and pushes without asking again"
     result == tag
     1 * bc.local_image?(tag) >> false
+    1 * bc.registry_has?(tag) >> false
     1 * bc.pull(tag) >> false
     1 * bc.build!(tag, project_root: Pathname(dir), build_args: {}, build_contexts: {}, secrets: {}) >> true
-    1 * bc.registry_has?(tag) >> false
     1 * bc.push!(tag) >> true
 
     Cleanup
