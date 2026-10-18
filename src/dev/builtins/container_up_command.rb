@@ -9,6 +9,8 @@ require "dev/container_dev_provisioner"
 require "dev/container_user_aligner"
 require "dev/credentials"
 require "dev/engine_provisioner"
+require "dev/environment_platform"
+require "dev/platform"
 
 module Dev
   module Builtins
@@ -24,6 +26,15 @@ module Dev
     # The build container is this project's one service dependency (an
     # environment service: commands execute in it), so this is the
     # ServiceUp port `dev up` composes; `call` is the CLI adapter over it.
+    #
+    # The platform rule: the container is needed exactly when this host's
+    # platform differs from the environment's (EnvironmentPlatform). A host
+    # that *is* the environment — a linux-x86_64 machine for a linux/amd64
+    # Dockerfile — installs everything itself and runs commands directly, so
+    # there is nothing to bring up here: no engine, no image, no container.
+    # The one exception is the publisher designation (DEV_PUBLISH_IMAGE=1):
+    # that host still resolves the image so the registry has it for the
+    # hosts that do need it, and still starts no container.
     class ContainerUpCommand < ContainerCommand
       extend T::Sig
       include ServiceUp
@@ -49,6 +60,8 @@ module Dev
       # @param deps_installer [Dev::ContainerDepsInstaller, nil] runs the
       #   container-side dependency install; resolved lazily the same way
       # @param out [IO, StringIO]
+      # @param host_platform [String] this host's platform key, measured
+      #   against the environment's (Platform.current)
       sig do
         params(
           container_client: T.nilable(Dev::BuildContainer),
@@ -57,15 +70,18 @@ module Dev
           dev_provisioner: T.nilable(Dev::ContainerDevProvisioner),
           deps_installer: T.nilable(Dev::ContainerDepsInstaller),
           out: T.any(IO, StringIO),
+          host_platform: String,
         ).void
       end
       def initialize(container_client: nil, engine_provisioner: Dev::EngineProvisioner.new,
-                     user_aligner: nil, dev_provisioner: nil, deps_installer: nil, out: $stdout)
+                     user_aligner: nil, dev_provisioner: nil, deps_installer: nil, out: $stdout,
+                     host_platform: Dev::Platform.current)
         super(container_client:, out:)
         @engine_provisioner = engine_provisioner
         @user_aligner = user_aligner
         @dev_provisioner = dev_provisioner
         @deps_installer = deps_installer
+        @host_platform = host_platform
       end
 
       sig { override.returns(String) }
@@ -86,6 +102,12 @@ module Dev
       sig { override.params(project: ProjectContext).void }
       def up(project:)
         cfg = T.must(project.build_container)
+        if host_is_environment?(project)
+          ensure_image!(cfg, project) if publish_image?
+          report_host_is_environment
+          return
+        end
+
         image_tag = ensure_image!(cfg, project)
         return unless cfg.persist
 
@@ -106,6 +128,11 @@ module Dev
       sig { override.params(project: ProjectContext).void }
       def cold_up(project:)
         cfg = T.must(project.build_container)
+        if host_is_environment?(project)
+          report_host_is_environment
+          return
+        end
+
         image_tag = ensure_image!(cfg, project)
         client.with_one_shot_container(image_tag, project_root: project.root, volumes: volumes(cfg, project)) do |name|
           @out.puts "dev: cold container up: #{name}"
@@ -114,6 +141,32 @@ module Dev
       end
 
       private
+
+      # Whether this host is the project's build environment (the platform
+      # rule's fact).
+      #
+      # @param project [ProjectContext]
+      # @return [Boolean]
+      sig { params(project: ProjectContext).returns(T::Boolean) }
+      def host_is_environment?(project)
+        Dev::EnvironmentPlatform.host_is_environment?(project_root: project.root, host: @host_platform)
+      end
+
+      # The publisher designation: the provisioning step that volunteers to
+      # make sure the registry has the content-addressed image (see
+      # CommandRunner#publish_image? for why an env var, not a command name).
+      #
+      # @return [Boolean]
+      sig { returns(T::Boolean) }
+      def publish_image?
+        ENV["DEV_PUBLISH_IMAGE"] == "1"
+      end
+
+      # @return [void]
+      sig { void }
+      def report_host_is_environment
+        @out.puts "dev: this host is the build environment (#{@host_platform}) — commands run here, no container"
+      end
 
       # Engine up and sized, image resolved (local → registry → build).
       #
@@ -127,7 +180,7 @@ module Dev
           cfg,
           project_root: project.root,
           push: false,
-          publish: ENV["DEV_PUBLISH_IMAGE"] == "1",
+          publish: publish_image?,
           build_args_provider: -> { Dev::Credentials.resolve_build_args(cfg.build_args) },
           secrets_provider: -> { Dev::Credentials.resolve_build_args(cfg.build_secrets) },
         )
