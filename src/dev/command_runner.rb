@@ -10,6 +10,8 @@ require "dev/build_container"
 require "dev/container_context"
 require "dev/container_engine"
 require "dev/container_ruby"
+require "dev/environment_platform"
+require "dev/platform"
 require "dev/shadowenv_llvm"
 require "dev/shadowenv_python"
 require "dev/shadowenv_ruby"
@@ -48,6 +50,12 @@ module Dev
   # at the project root, under `shadowenv exec` like any other — the
   # container-only lisp activates the store Ruby (ContainerRuby) there, and
   # the host-only toolchains (LLVM, Python) are left to the image.
+  #
+  # On a host that *is* the environment (EnvironmentPlatform: the
+  # Dockerfile declares this host's own platform) there is no container to
+  # reach for either — the platform rule. The command runs directly as a
+  # host command does, under the host's shadowenv with the host's Ruby,
+  # LLVM and Python: this is the host, which installed everything itself.
   class CommandRunner
     extend T::Sig
 
@@ -109,11 +117,12 @@ module Dev
         container_client: T.nilable(Dev::BuildContainer),
         inside_container: T::Boolean,
         container_ruby: Dev::ContainerRuby,
+        host_platform: String,
       ).void
     end
     def initialize(ui:, ruby_version:, project_root:, python_version: nil, build_container: nil,
                    container_client: nil, inside_container: ContainerContext.inside?,
-                   container_ruby: Dev::ContainerRuby.new)
+                   container_ruby: Dev::ContainerRuby.new, host_platform: Platform.current)
       @ui = ui
       @ruby_version = ruby_version
       @python_version = python_version
@@ -122,6 +131,7 @@ module Dev
       @container_client = container_client
       @inside_container = inside_container
       @container_ruby = container_ruby
+      @host_platform = host_platform
     end
 
     # Hand the process over to the command: exec-replace, the right shape
@@ -175,10 +185,18 @@ module Dev
     end
 
     # Whether the command reaches into the build container: configured, opted
-    # in, and not already there.
+    # in, not already there, and this host is not the environment itself.
     sig { params(cmd: ProjectCommand).returns(T::Boolean) }
     def use_container?(cmd)
-      !@build_container.nil? && cmd.container && !@inside_container
+      !@build_container.nil? && cmd.container && !@inside_container && !host_is_environment?
+    end
+
+    # The platform rule's fact for this checkout (see EnvironmentPlatform).
+    #
+    # @return [Boolean]
+    sig { returns(T::Boolean) }
+    def host_is_environment?
+      EnvironmentPlatform.host_is_environment?(project_root: @project_root, host: @host_platform)
     end
 
     # Whether the resolved image should be published to the shared registry.
