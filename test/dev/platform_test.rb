@@ -22,6 +22,18 @@ class Dev::PlatformTest < Minitest::Test
     "x64-mingw-ucrt"       | "x64"     | "windows-x86_64"
   end
 
+  test "from_docker maps a docker platform onto the same key: #{docker} -> #{expected}" do
+    Expect "docker's arch spellings land on dev's"
+    Dev::Platform.from_docker(docker) == expected
+
+    Where
+    docker          | expected
+    "linux/amd64"   | "linux-x86_64"
+    "linux/arm64"   | "linux-arm64"
+    "linux/x86_64"  | "linux-x86_64"
+    "darwin/arm64"  | "darwin-arm64"
+  end
+
   test "current describes this process's platform" do
     Expect "an os-arch pair"
     Dev::Platform.current.match?(/\A(darwin|linux|windows)-(x86_64|arm64)\z/)
