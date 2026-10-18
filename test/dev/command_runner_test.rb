@@ -319,6 +319,63 @@ class CommandRunnerTest < Minitest::Test
     Dir.chdir(@original_cwd)
   end
 
+  test "on a host that is the environment, a containerized command runs directly under the host's shadowenv: #{host}" do
+    Given "a persisted container config in a project whose Dockerfile declares the host's own platform"
+    (@project_root / "Dockerfile").write("FROM --platform=#{docker_platform} ubuntu:22.04\n")
+    config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry", persist: true)
+    client = Dev::BuildContainer.new(engine: FakeContainerEngine.new)
+    runner = Dev::CommandRunner.new(
+      ui: @ui, ruby_version: "4.0.1", build_container: config,
+      project_root: @project_root, container_client: client, host_platform: host,
+    )
+    runner.stubs(:ensure_llvm_provisioned!)
+    runner.stubs(:ensure_python_provisioned!)
+    cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
+    client.expects(:ensure_image!).never
+    client.expects(:ensure_service!).never
+    client.expects(:docker_exec_command).never
+    client.expects(:docker_run_command).never
+
+    When "we run the command"
+    runner.exec_into(cmd)
+
+    Then "the host's own Ruby is ensured (this is the host, not a container), and the command execs under shadowenv"
+    1 * Dev::ShadowenvRuby.ensure!(ruby_version: "4.0.1", project_root: @project_root)
+    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/build.sh"))
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+
+    Where
+    docker_platform | host
+    "linux/amd64"   | "linux-x86_64"
+    "linux/arm64"   | "linux-arm64"
+  end
+
+  test "on a host of another platform, the declaration changes nothing: the command still runs in the container" do
+    Given "a linux/amd64 environment on a darwin-arm64 host"
+    (@project_root / "Dockerfile").write("FROM --platform=linux/amd64 ubuntu:22.04\n")
+    config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry")
+    client = Dev::BuildContainer.new(engine: FakeContainerEngine.new)
+    runner = Dev::CommandRunner.new(
+      ui: @ui, ruby_version: "4.0.1", build_container: config,
+      project_root: @project_root, container_client: client, host_platform: "darwin-arm64",
+    )
+    cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
+    Kernel.stubs(:exec)
+
+    When "we run the command"
+    client.expects(:ensure_image!).once.returns("myregistry/myapp-linux:content-abc123")
+    client.expects(:docker_run_command).once.returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
+    runner.exec_into(cmd)
+
+    Then "docker ran it"
+    1 * Kernel.exec({}, "docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh")
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+  end
+
   test "inside the container, a repl command execs bare under shadowenv, and the host-only toolchains are not provisioned" do
     Given "an inside runner over a project declaring python, and a repl command"
     container_ruby = typed_mock(Dev::ContainerRuby)

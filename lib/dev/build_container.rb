@@ -389,6 +389,10 @@ module Dev
     # no other machine can ever pull. `push:` (legacy) only pushes a freshly built
     # image; `publish:` subsumes it and additionally covers the local hit, so the
     # provisioning step sets `publish: true` while build/run steps leave both off.
+    # Publishing also short-circuits the other way: with no local copy, the
+    # registry is asked for the manifest before anything is pulled — a hit means
+    # the publisher's job is already done, and a host that is itself the build
+    # environment (see ContainerUpCommand) never needs the image locally at all.
     #
     # Before any image work, the engine is measured against the config's
     # resources hint (EngineResourcesCheck) — read-only; `dev up` is the one
@@ -425,6 +429,13 @@ module Dev
         return tag
       end
 
+      # A publisher's job is to make the registry hold the image, not to hold
+      # it itself: a manifest lookup settles that before paying for a pull.
+      if publish && registry_has?(tag)
+        $stderr.puts "dev: Container image already published — #{tag}"
+        return tag
+      end
+
       if pull(tag)
         $stderr.puts "dev: Container image cache hit — #{tag}"
         return tag
@@ -442,8 +453,9 @@ module Dev
         build!(tag, project_root:, build_args:, build_contexts:, secrets:)
       end
 
-      push!(tag) if push
-      publish!(tag) if publish
+      # A publisher only gets here after a registry miss, so the fresh build is
+      # unpublished by construction — push it without asking again.
+      push!(tag) if push || publish
       tag
     end
 

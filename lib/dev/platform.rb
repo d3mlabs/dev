@@ -48,6 +48,17 @@ module Dev
         end
         "#{os}-#{ARCHES.fetch(host_cpu, host_cpu)}"
       end
+
+      # The key for a docker platform string (`<os>/<arch>`, as `FROM
+      # --platform=` and `docker build --platform` spell it).
+      #
+      # @param docker_platform [String] e.g. "linux/amd64"
+      # @return [String] e.g. "linux-x86_64"
+      sig { params(docker_platform: String).returns(String) }
+      def from_docker(docker_platform)
+        os, arch = docker_platform.split("/", 2)
+        "#{os}-#{ARCHES.fetch(arch.to_s, arch.to_s)}"
+      end
     end
   end
 end

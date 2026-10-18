@@ -293,6 +293,102 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     "1"   | true
   end
 
+  test "on a host that is the environment, container up touches nothing: no engine, no image, no container" do
+    Given "a persisted config in a project whose Dockerfile declares the host's own platform"
+    config = config(persist: true)
+    root = project_root_declaring("linux/amd64")
+    provisioner = typed_mock(Dev::EngineProvisioner)
+    provisioner.expects(:provision!).never
+    client = client()
+    client.expects(:ensure_image!).never
+    client.expects(:ensure_service!).never
+    out = StringIO.new
+
+    When "bringing the container up on a linux-x86_64 host"
+    Dev::Builtins::ContainerUpCommand.new(
+      container_client: client, engine_provisioner: provisioner, out: out, host_platform: "linux-x86_64",
+    ).call(args: no_args, context: project(config, root: root))
+
+    Then "it says why once and stops"
+    out.string == "dev: this host is the build environment (linux-x86_64) — commands run here, no container\n"
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "on a host that is the environment, DEV_PUBLISH_IMAGE=1 still publishes the image — and still starts no container" do
+    Given "the publisher designation, on a linux-x86_64 host of a linux/amd64 environment"
+    config = config(persist: true)
+    root = project_root_declaring("linux/amd64")
+    provisioner = typed_mock(Dev::EngineProvisioner)
+    provisioner.expects(:provision!).with(resources: config.resources).once
+    client = client()
+    client.expects(:ensure_image!).with do |cfg, **kwargs|
+      cfg == config && kwargs[:project_root] == root && kwargs[:publish] == true
+    end.once.returns(TAG)
+    client.expects(:ensure_service!).never
+    out = StringIO.new
+    old = ENV.fetch("DEV_PUBLISH_IMAGE", nil)
+    ENV["DEV_PUBLISH_IMAGE"] = "1"
+
+    When "bringing the container up"
+    Dev::Builtins::ContainerUpCommand.new(
+      container_client: client, engine_provisioner: provisioner, out: out, host_platform: "linux-x86_64",
+    ).call(args: no_args, context: project(config, root: root))
+
+    Then "the image is resolved for the registry's sake, then the rule applies"
+    out.string == "dev: image ready: #{TAG}\n" \
+      "dev: this host is the build environment (linux-x86_64) — commands run here, no container\n"
+
+    Cleanup
+    old.nil? ? ENV.delete("DEV_PUBLISH_IMAGE") : ENV["DEV_PUBLISH_IMAGE"] = old
+    FileUtils.rm_rf(root)
+  end
+
+  test "on a host of another platform, container up is unchanged by the declaration" do
+    Given "a linux/amd64 environment on a darwin-arm64 host"
+    config = config(persist: false)
+    root = project_root_declaring("linux/amd64")
+    provisioner = typed_mock(Dev::EngineProvisioner)
+    provisioner.stubs(:provision!)
+    client = client()
+    client.expects(:ensure_image!).once.returns(TAG)
+    out = StringIO.new
+
+    When "bringing the container up"
+    Dev::Builtins::ContainerUpCommand.new(
+      container_client: client, engine_provisioner: provisioner, out: out, host_platform: "darwin-arm64",
+    ).call(args: no_args, context: project(config, root: root))
+
+    Then
+    out.string == "dev: image ready: #{TAG}\n"
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "cold_up on a host that is the environment proves nothing a container could: it says so and stops" do
+    Given "a linux/amd64 environment on a linux-x86_64 host"
+    config = config(persist: true)
+    root = project_root_declaring("linux/amd64")
+    client = client()
+    client.expects(:ensure_image!).never
+    client.expects(:with_one_shot_container).never
+    out = StringIO.new
+
+    When "running the cold bring-up"
+    Dev::Builtins::ContainerUpCommand.new(
+      container_client: client, engine_provisioner: typed_mock(Dev::EngineProvisioner), out: out,
+      host_platform: "linux-x86_64",
+    ).cold_up(project: project(config, root: root).project!)
+
+    Then
+    out.string == "dev: this host is the build environment (linux-x86_64) — commands run here, no container\n"
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
   test "container up's providers resolve the declared build args and secrets through the credentials store, lazily" do
     Given "a config declaring build args and secrets, with both boundaries stubbed"
     config = config(persist: false, build_args: { "GH_USER" => "github/user" },
@@ -442,13 +538,20 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     )
   end
 
-  def project(build_container)
+  def project(build_container, root: ROOT)
     Dev::ExecutionContext.new(
       ui: typed_mock(Dev::Cli::Ui),
       project: Dev::ProjectContext.new(
-        name: "TestProject", root: ROOT, ruby_version: "4.0.1", build_container: build_container,
+        name: "TestProject", root: root, ruby_version: "4.0.1", build_container: build_container,
       ),
     )
+  end
+
+  # A real checkout root whose Dockerfile declares the environment's platform.
+  def project_root_declaring(docker_platform)
+    root = Pathname(Dir.mktmpdir("container-commands"))
+    (root / "Dockerfile").write("FROM --platform=#{docker_platform} ubuntu:22.04\n")
+    root
   end
 
   def status(local:, registry:, containers:)
