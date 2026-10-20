@@ -537,6 +537,33 @@ Global (works without a `dev.yml`); the surface over skill materialization acros
 - **`status [--json]`** — the manifests, grouped by channel: each link, the package and version it was minted from (when the channel knows them), its source, and a flag when the link no longer stands; then any same-named groups across channels (`tdd ← gem/a 1.2.0, pip/b 0.9.1`), listed like `which -a` rather than warned about. `--json` for tooling — the manifest files themselves are internal.
 - **`sync`** — re-materialize every channel from what its producer declares right now. No cache refresh — that is `dev learnings sync`'s.
 
+## Setting up a host: warmth is the data root
+
+One sentence covers every machine dev runs on: **`dev up` satisfies the lock against the host's data root and installs only the difference; the host's only job is to bring whatever data root it can to the start line.** The [data root](#the-data-root-shared-on-agent-hosts) is the [artifact store](#the-artifact-store-version-keyed-trees-content-addressed-blobs) — version-keyed trees, workdirs, blobs, tool caches — and a host is warm exactly when its data root already holds what the lockfiles name. Nothing in dev knows which kind of host it is on, and nothing records it: the first `dev up` on a machine and the hundredth run the same code and differ only in how much of the lock the store already satisfies. The install recipe is `dependencies.rb`, everywhere; there is no second one for any host.
+
+Four setups, each as cold → warm:
+
+| Setup | What persists the data root | Cold | Warm |
+|---|---|---|---|
+| **Workstation on the environment's platform** (a Linux box building a `linux/amd64` project) | its disk | `dev up` installs the whole lock on the host, the `build` group included; no container is involved ([the platform rule](#the-platform-rule-the-container-exists-for-a-platform-the-host-is-not)) | `dev up` is a probe |
+| **Workstation on another platform** (a Mac building the same project) | its disk; the build container bind-mounts it at `/var/lib/dev` | `dev up` installs the host-side lock, pulls the content-addressed build image and brings the container up; the container's side installs through the mount | probe; the container restarts warm, its writable layer intact |
+| **Self-hosted runner** (a box) | its disk | install Homebrew + dev, `gh auth login` (dev pulls private releases through `gh`), `dev up` once — or `dev runner register`, which converges the engine and enrolls | probe. The store is version-keyed, so several branches are warm at once (last month's engine and this month's coexist); a `dev cache gc --keep N` step at the end of each job trims what no current lock names |
+| **Hosted runner** (GitHub larger runner, ephemeral) | **a checkpoint**: a GitHub custom image of the boot disk after `dev up`, written by a dedicated `main`-only job | the stock image: install Homebrew + dev, `dev up` installs the full lock — minutes to tens of minutes, the big trees dominating | boots the checkpoint; `dev up` is a probe. A PR that moves a lock installs the difference per run until it merges and the checkpoint job captures the new set |
+
+Two things are **not** warmth carriers, and the vocabulary keeps them apart. The **build image** (the Dockerfile's content-addressed tag) is the OS substrate for hosts whose platform is not the environment's; it holds what the OS needs and nothing from the lock. The **checkpoint** is a persistence mechanism for one host kind; it is not an artifact PRs mint, carries no recipe, and holds nothing the data root does not. Pre-materialized toolchains that are too slow to build per host are neither: they are store trees published once by a publisher repo and consumed through the lock like any other `gh` release.
+
+### The hosted recipe
+
+The hosted runner is the one setup with a recipe beyond "install dev, `dev up`", because its disk does not persist on its own. The recipe is two jobs and one by-hand step; cellbound-3d's `ci.yml` is the reference.
+
+- **Tests** (or whatever the project's job is): `runs-on` the hosted runner; `actions/checkout`; install Homebrew + dev if missing (a no-op on the checkpoint); `dev up`; the project's commands. Identical on every host — the job neither knows nor declares that it runs on a checkpoint.
+- **`checkpoint`**: `needs: tests`, a job-level `if:` for `main` and for the merge having moved a lock file (a `paths-filter` output over the lockfiles and `.ruby-version`), string-form `snapshot: <image-name>`, body = the same bootstrap → `dev cache gc` → `docker logout` → empty the checkout (`find "$GITHUB_WORKSPACE" -mindepth 1 -delete`; removing the directory fails the runner's post-steps and skips the snapshot). Documented workflow keys only — `snapshot.if` is not one. The captured disk holds the data root, Linuxbrew and dev, and nothing else: no test output, no registry credential, no workspace. The `dev cache gc` is what keeps a retired engine version from riding along in every image version.
+- **By hand, once**: enable image generation on the runner; let `main` mint the first version from the stock image; bind the runner to the image at `latest` (`PATCH /orgs/<org>/actions/hosted-runners/<id>` with the flat body `image_source=custom image_id=<id> image_version=latest`). From then on the runner follows every version the job writes.
+
+Two facts about GitHub's custom images shape the gate and the retention. A version is a block image of the runner's whole disk — 1 TB on a 32-core, whatever is on it — takes hours to provision, and is billed by that size for as long as it is kept; so the job runs only when the data root would differ (the lock gate), and an hourly workflow keeps the newest Ready version and deletes the rest (retention policies for custom images are an Enterprise-plan setting; on Team the workflow is the equivalent, through a GitHub App with the *Hosted runner custom images* organization permission). Both are in cellbound-3d's `.github/workflows/`.
+
+What is on a checkpoint is exactly the host side of the lock as the platform rule installs it: a `linux-x86_64` runner building a `linux/amd64` project installs everything on the machine and never brings the build image up, so nothing the Dockerfile layers add outside Linuxbrew is there until dev declares it as a store tree.
+
 ## Build container & caching model
 
 For repos that declare a `build.container`, dev builds and runs commands inside a content-addressed Docker image, backed by host-side caches it owns end to end. The guiding principle throughout is **content-addressing**: an artifact's identity is a hash of its inputs, so distinct versions coexist instead of overwriting, and identical inputs are never rebuilt.
