@@ -85,8 +85,8 @@ module Dev
   class BuildContainerConfig
     extend T::Sig
 
-    # The optional VM sizing hint under build.container.resources. Both
-    # fields are optional: a repo can pin just the one that matters.
+    # The optional VM sizing hint under build.container.resources. Every
+    # field is optional: a repo can pin just the ones that matter.
     class Resources
       extend T::Sig
 
@@ -98,17 +98,25 @@ module Dev
       sig { returns(T.nilable(Integer)) }
       attr_reader :memory_gib
 
+      # @return [Integer, nil] disk in GiB for the engine VM — what the
+      #   container's data root and images need to fit on (ADR-0008);
+      #   grow-only, applied by the colima provisioner, not checked
+      sig { returns(T.nilable(Integer)) }
+      attr_reader :disk_gib
+
       # @param cpus [Integer, nil] see #cpus
       # @param memory_gib [Integer, nil] see #memory_gib
-      sig { params(cpus: T.nilable(Integer), memory_gib: T.nilable(Integer)).void }
-      def initialize(cpus: nil, memory_gib: nil)
+      # @param disk_gib [Integer, nil] see #disk_gib
+      sig { params(cpus: T.nilable(Integer), memory_gib: T.nilable(Integer), disk_gib: T.nilable(Integer)).void }
+      def initialize(cpus: nil, memory_gib: nil, disk_gib: nil)
         @cpus = cpus
         @memory_gib = memory_gib
+        @disk_gib = disk_gib
       end
 
       sig { params(other: Object).returns(T::Boolean) }
       def ==(other)
-        other.is_a?(Resources) && @cpus == other.cpus && @memory_gib == other.memory_gib
+        other.is_a?(Resources) && @cpus == other.cpus && @memory_gib == other.memory_gib && @disk_gib == other.disk_gib
       end
 
       sig { params(other: Object).returns(T::Boolean) }
@@ -118,7 +126,7 @@ module Dev
 
       sig { returns(Integer) }
       def hash
-        [@cpus, @memory_gib].hash
+        [@cpus, @memory_gib, @disk_gib].hash
       end
     end
 

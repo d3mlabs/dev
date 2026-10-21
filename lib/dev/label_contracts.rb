@@ -46,11 +46,12 @@ module Dev
       # @param container [Boolean] whether the served repo declares build.container
       # @param cpus [Integer, nil] engine VM sizing hint
       # @param memory_gib [Integer, nil] engine VM sizing hint
+      # @param disk_gib [Integer, nil] engine VM disk hint (grow-only)
       # @return [void]
-      sig { params(container: T::Boolean, cpus: T.nilable(Integer), memory_gib: T.nilable(Integer)).void }
-      def converge!(container: false, cpus: nil, memory_gib: nil)
+      sig { params(container: T::Boolean, cpus: T.nilable(Integer), memory_gib: T.nilable(Integer), disk_gib: T.nilable(Integer)).void }
+      def converge!(container: false, cpus: nil, memory_gib: nil, disk_gib: nil)
         @bootstrap.converge!
-        @bootstrap.ensure_agent_engine!(cpus: cpus, memory_gib: memory_gib) if container
+        @bootstrap.ensure_agent_engine!(cpus: cpus, memory_gib: memory_gib, disk_gib: disk_gib) if container
       end
 
       # Converge the post-enrollment requirements (needs the enrolled runner dir).

@@ -23,8 +23,8 @@ class RecordedContract
     @events = events
   end
 
-  def converge!(container:, cpus: nil, memory_gib: nil)
-    @events << [:converge, container, cpus, memory_gib]
+  def converge!(container:, cpus: nil, memory_gib: nil, disk_gib: nil)
+    @events << [:converge, container, cpus, memory_gib, disk_gib]
   end
 
   def after_enroll!(runner_dir:)
@@ -186,7 +186,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     Then "the ceremony runs end to end with the enrolled dir"
     harness.events == [
-      [:converge, false, nil, nil],
+      [:converge, false, nil, nil, nil],
       [:run],
       [:after_enroll, "/tmp/runner-dir"],
     ]
@@ -207,7 +207,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     Then "one label amend; the service and dir stay put; contracts still converge"
     registry.amends == [["d3mlabs", 42, Dev::LabelContracts::AI_FLOW_LABELS]]
     harness.events == [
-      [:converge, false, nil, nil],
+      [:converge, false, nil, nil, nil],
       [:after_enroll, dir],
     ]
   end
@@ -263,7 +263,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     Then "both are torn down, then the fresh ceremony runs into the default (label-derived) dir"
     harness.torn_down.map(&:dir) == [legacy, newer]
-    harness.events == [[:converge, false, nil, nil], [:run], [:after_enroll, "/tmp/runner-dir"]]
+    harness.events == [[:converge, false, nil, nil, nil], [:run], [:after_enroll, "/tmp/runner-dir"]]
     harness.wirings.last.fetch(0) == Dev::RunnerSetupConfig.new(labels: "snappy")
     registry.amends == []
     harness.out.string.include?("2 local enrollments")
@@ -378,7 +378,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.command.call(args: no_args, context: context)
 
     Then
-    harness.events.fetch(0) == [:converge, true, 8, 24]
+    harness.events.fetch(0) == [:converge, true, 8, 24, nil]
   end
 
   test "register brings the engine up for the checked-out repo's hint before converging contracts (#197)" do
@@ -396,7 +396,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.command.call(args: no_args, context: context)
 
     Then "the engine step is register's first act — same entry as `dev up`'s — then the contracts"
-    harness.events.first(2) == [[:engine, 8, 24], [:converge, true, 8, 24]]
+    harness.events.first(2) == [[:engine, 8, 24], [:converge, true, 8, 24, nil]]
   end
 
   test "register without a project (--org) has no hint and leaves the engine alone" do

@@ -50,21 +50,12 @@ module Dev
     # class or DSL verb is left unwired.
     #
     # Each Entry says which Repository resolves the type, which Integration (if
-    # any) installs it, where it installs (scope), and which extra constructor
-    # arguments each side needs (drawn from a context the runner assembles).
+    # any) installs it, and which extra constructor arguments each side needs
+    # (drawn from a context the runner assembles). There is one integration
+    # set, for whichever build host runs `dev deps install`: a build container
+    # is a host with its own data root (ADR-0008), so nothing here says where
+    # a type installs — the lock's `host:` filter does that per platform.
     module Registry
-      # Install location for a type — where `dev deps install` installs it,
-      # the host run and the in-container run each taking their side:
-      #   :host      on the host only
-      #   :container inside the build container only
-      #   :both      on the host and, separately, in the container
-      HOST = :host
-      CONTAINER = :container
-      BOTH = :both
-
-      HOST_SCOPES = T.let([HOST, BOTH].freeze, T::Array[Symbol])
-      CONTAINER_SCOPES = T.let([CONTAINER, BOTH].freeze, T::Array[Symbol])
-
       # @param symbol [Symbol] the DSL/declaration integration symbol (e.g. :brew)
       # @param repository [Class] Repository subclass that reports this type's universes
       # @param repository_needs [Array<Symbol>] extra kwargs the repository takes
@@ -88,10 +79,9 @@ module Dev
       #   integrations that generate batch artifacts (deps.cmake) must see
       #   both types' deps in one install_all call, and the Installer groups
       #   dispatch by instance. Mutually exclusive with integration.
-      # @param scope [Symbol] one of HOST / CONTAINER / BOTH
       Entry = Data.define(
         :symbol, :repository, :repository_needs, :scheme, :scheme_args, :locker, :locker_needs,
-        :integration, :integration_needs, :install_alias, :scope,
+        :integration, :integration_needs, :install_alias,
       ) do
         extend T::Sig
 
@@ -129,16 +119,12 @@ module Dev
         sig { returns(T.nilable(Symbol)) }
         def install_alias = to_h.fetch(:install_alias)
 
-        sig { returns(Symbol) }
-        def scope = to_h.fetch(:scope)
-
         sig do
           params(
             symbol: Symbol,
             repository: T.class_of(Repository),
             scheme: T.nilable(T.class_of(VersionScheme)),
             integration: T.nilable(T.class_of(Integration)),
-            scope: Symbol,
             repository_needs: T::Array[Symbol],
             scheme_args: T::Hash[Symbol, T.untyped],
             locker: T.nilable(T.class_of(Locker)),
@@ -147,22 +133,17 @@ module Dev
             install_alias: T.nilable(Symbol),
           ).void
         end
-        def initialize(symbol:, repository:, scheme:, integration:, scope:,
+        def initialize(symbol:, repository:, scheme:, integration:,
                        repository_needs: [], scheme_args: {}, locker: nil, locker_needs: [],
                        integration_needs: [], install_alias: nil)
           super
         end
 
-        # @return [Boolean] whether this type installs on the host
+        # @return [Boolean] whether this type installs on a build host (an
+        #   aliased type installs through its target's instance instead)
         sig { returns(T::Boolean) }
         def host?
-          HOST_SCOPES.include?(scope) && !integration.nil?
-        end
-
-        # @return [Boolean] whether this type installs inside the build container
-        sig { returns(T::Boolean) }
-        def container?
-          CONTAINER_SCOPES.include?(scope) && !integration.nil?
+          !integration.nil?
         end
       end
 
@@ -177,10 +158,6 @@ module Dev
             locker_needs: %i[project_root ruby_version_requirement],
             integration: BundlerIntegration,
             integration_needs: %i[project_root],
-            # Gems are consumed by whichever Ruby runs the tooling: the host's
-            # rbenv Ruby and the container's store Ruby each get their own
-            # bundle (ShadowenvExec activates the right one on each side).
-            scope: BOTH,
           ),
           Entry.new(
             symbol: :brew,
@@ -188,7 +165,6 @@ module Dev
             scheme: BrewScheme,
             integration: BrewIntegration,
             integration_needs: %i[taps project_dir pin_taps],
-            scope: BOTH,
           ),
           # Casks are declared with the brew DSL verb (cask: true) but are a
           # separate universe: Homebrew publishes no versions or bottle
@@ -198,7 +174,6 @@ module Dev
             repository: BrewCaskRepository,
             scheme: BrewScheme,
             integration: BrewIntegration,
-            scope: BOTH,
           ),
           Entry.new(
             symbol: :cmake,
@@ -206,7 +181,6 @@ module Dev
             scheme: GitScheme,
             integration: CmakeIntegration,
             integration_needs: %i[project_root],
-            scope: HOST,
           ),
           # url deps are declared with the cmake DSL verb (url:) but are a
           # separate universe: the URL is the entire address and the artifact
@@ -220,7 +194,6 @@ module Dev
             scheme: nil,
             integration: nil,
             install_alias: :cmake,
-            scope: HOST,
           ),
           Entry.new(
             symbol: :luarocks,
@@ -228,14 +201,12 @@ module Dev
             scheme: RockScheme,
             integration: LuaRocksIntegration,
             integration_needs: %i[project_root],
-            scope: HOST,
           ),
           Entry.new(
             symbol: :ficsit,
             repository: FicsitRepository,
             scheme: SemverScheme,
             integration: FicsitIntegration,
-            scope: HOST,
           ),
           Entry.new(
             symbol: :gh,
@@ -244,14 +215,12 @@ module Dev
             scheme_args: { key: "tag" },
             integration: GhIntegration,
             integration_needs: %i[project_root],
-            scope: HOST,
           ),
           Entry.new(
             symbol: :steam,
             repository: SteamRepository,
             scheme: SteamScheme,
             integration: SteamIntegration,
-            scope: HOST,
           ),
           Entry.new(
             symbol: :xcode,
@@ -261,7 +230,6 @@ module Dev
             scheme: nil,
             integration: XcodeIntegration,
             integration_needs: %i[project_root],
-            scope: HOST,
           ),
           Entry.new(
             symbol: :wwise,
@@ -270,9 +238,6 @@ module Dev
             # behind a login, so the DSL mints the SDK version as the revision.
             scheme: nil,
             integration: WwiseIntegration,
-            # Host-only: the container reads the published cache through a
-            # read-only mount and integrates offline.
-            scope: HOST,
           ),
           Entry.new(
             symbol: :pip,
@@ -280,7 +245,6 @@ module Dev
             scheme: Pep440Scheme,
             integration: PipIntegration,
             integration_needs: %i[project_root python_version],
-            scope: HOST,
           ),
         ].freeze,
         T::Array[Entry],
@@ -344,7 +308,9 @@ module Dev
           end
         end
 
-        # Build the integration-type -> Integration hash for host installs.
+        # Build the integration-type -> Integration hash for `dev deps install`
+        # on this build host — the same set on a workstation, a box and inside
+        # a build container, each against its own data root.
         #
         # @param project_root [Pathname] project root (threaded to integrations that need it)
         # @param store [ArtifactStore] where installed trees and downloaded blobs live (passed to every integration)
@@ -373,42 +339,12 @@ module Dev
           )
         end
 
-        # Build the integration-type -> Integration hash for installs inside
-        # the build container: the types whose scope puts them there.
-        #
-        # @param project_root [Pathname] project root (threaded to integrations that need it)
-        # @param store [ArtifactStore] where installed trees and downloaded blobs live (passed to every integration)
-        # @param taps [Array<Tap>] Homebrew taps for the brew integration
-        # @param ruby_version_requirement [String, nil] accepted for caller
-        #   convenience; install-time integrations don't need it today
-        # @param python_version [String, nil] for the pip integration's venv
-        # @param pin_taps [Boolean] brew installs from taps checked out at the
-        #   lock's commits (BrewIntegration), not brew's API
-        # @return [Hash{Symbol => Integration}]
-        sig do
-          params(
-            project_root: Pathname,
-            store: ArtifactStore,
-            taps: T::Array[Tap],
-            ruby_version_requirement: T.nilable(String),
-            python_version: T.nilable(String),
-            pin_taps: T::Boolean,
-          ).returns(T::Hash[Symbol, Integration])
-        end
-        def container_integrations(project_root:, store:, taps: [], ruby_version_requirement: nil, python_version: nil,
-          pin_taps: false)
-          integrations_for(
-            INTEGRATIONS.select(&:container?),
-            project_root:, store:, taps:, ruby_version_requirement:, python_version:, pin_taps:,
-          )
-        end
-
         private
 
         # Instantiate the given entries' integrations, then alias the types
         # that install through another entry's instance.
         #
-        # @param entries [Array<Entry>] the entries installing on this side
+        # @param entries [Array<Entry>] the entries that install
         # @param project_root [Pathname]
         # @param store [ArtifactStore]
         # @param taps [Array<Tap>]
@@ -451,7 +387,7 @@ module Dev
           # Aliased types share their target's INSTANCE (not just its class):
           # the Installer groups dispatch by instance, so both types' deps
           # arrive in one install_all call and batch artifacts stay whole.
-          # An alias whose target does not install on this side is absent too.
+          # An alias whose target has no integration is absent too.
           INTEGRATIONS.each do |entry|
             alias_target = entry.install_alias
             next unless alias_target && integrations.key?(alias_target)

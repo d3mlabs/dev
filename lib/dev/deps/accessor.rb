@@ -38,11 +38,14 @@ module Dev
       # @param lockfile [Lockfile]
       # @param store [ArtifactStore] where published trees and cached blobs live
       # @param xcode_install_root [String] where Xcode bundles live (tests use a tmpdir)
-      sig { params(lockfile: Lockfile, store: ArtifactStore, xcode_install_root: String).void }
-      def initialize(lockfile:, store:, xcode_install_root: XcodeIntegration::INSTALL_ROOT)
+      # @param host [String] this build host's OS ("darwin" / "linux"): a tree
+      #   locked to another host is in that host's data root, never this one
+      sig { params(lockfile: Lockfile, store: ArtifactStore, xcode_install_root: String, host: String).void }
+      def initialize(lockfile:, store:, xcode_install_root: XcodeIntegration::INSTALL_ROOT, host: Deps.detect_host)
         @lockfile = lockfile
         @store = store
         @xcode_install_root = xcode_install_root
+        @host = host
       end
 
       # Print the artifact path a `dev deps path …` invocation asks for.
@@ -105,8 +108,21 @@ module Dev
 
         dep = find_dep(integration, name)
         key = TreeKey.new(base: dep.metadata.fetch("install_dir"), version: dep.version, marker:)
-        @store.tree(key) ||
-          raise(NotInstalledError, "#{name}@#{dep.version} is not installed at #{@store.tree_path(key)} — run dev up")
+        tree = @store.tree(key)
+        return tree if tree
+
+        # Each build host owns the data root for its platform (ADR-0008): a
+        # Mac never holds the linux engine, its container does, and no `dev
+        # up` here would change that — the build scripts that need the path
+        # ask from inside.
+        locked_host = dep.metadata["host"]
+        if locked_host && locked_host != @host
+          raise NotInstalledError, "#{name}@#{dep.version} is locked to #{locked_host} hosts: it lives in the " \
+            "#{locked_host} build host's data root (the build container, on a #{@host} machine), not this one — " \
+            "ask for it from inside, in a container: command"
+        end
+
+        raise NotInstalledError, "#{name}@#{dep.version} is not installed at #{@store.tree_path(key)} — run dev up"
       end
 
       # @param name [String, nil]

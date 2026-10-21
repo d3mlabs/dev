@@ -206,12 +206,13 @@ module Dev
     #
     # @param cpus [Integer, nil] VM sizing hint (repo resources block)
     # @param memory_gib [Integer, nil] VM sizing hint
+    # @param disk_gib [Integer, nil] VM disk hint (grow-only)
     # @return [void]
     # @raise [UnsupportedPlatformError] off macOS
     # @raise [StepFailedError] when a converge step fails
     # @raise [Dev::ColimaProvisioner::StartFailedError] when the VM won't start
-    sig { params(cpus: T.nilable(Integer), memory_gib: T.nilable(Integer)).void }
-    def ensure_agent_engine!(cpus: nil, memory_gib: nil)
+    sig { params(cpus: T.nilable(Integer), memory_gib: T.nilable(Integer), disk_gib: T.nilable(Integer)).void }
+    def ensure_agent_engine!(cpus: nil, memory_gib: nil, disk_gib: nil)
       assert_darwin!
       # Prime the sudo credential once, visibly, so the -n probes below
       # never hang on a captured password prompt.
@@ -220,7 +221,7 @@ module Dev
       ensure_agent_engine_record!
       ColimaProvisioner
         .new(executor: SudoAgentExecutor.new(executor: @executor, agent_user: @agent_user))
-        .provision!(cpus: cpus, memory_gib: memory_gib)
+        .provision!(cpus: cpus, memory_gib: memory_gib, disk_gib: disk_gib)
     end
 
     # Steps 4 and 7, run after the enrollment ceremony (they touch artifacts

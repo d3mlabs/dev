@@ -49,7 +49,7 @@ class RecordedColimaExecutor
 
       JSON.generate(
         "name" => "default", "status" => @vm[:status], "arch" => "aarch64",
-        "cpus" => @vm[:cpus], "memory" => @vm[:memory_gib] * GIB, "disk" => 100 * GIB, "runtime" => "docker",
+        "cpus" => @vm[:cpus], "memory" => @vm[:memory_gib] * GIB, "disk" => @vm.fetch(:disk_gib, 100) * GIB, "runtime" => "docker",
       ) + "\n"
     when ["colima", "ssh", "--", "docker", "ps", "--format", "{{.Names}}"]
       @containers.map { |name| "#{name}\n" }.join
@@ -61,8 +61,9 @@ end unless defined?(RecordedColimaExecutor)
 
 transform!(RSpock::AST::Transformation)
 class Dev::ColimaProvisionerTest < Minitest::Test
-  def start_cmd(cpus, memory_gib)
-    ["colima", "start", "--cpu", cpus.to_s, "--memory", memory_gib.to_s, "--vm-type", "vz", "--vz-rosetta"]
+  def start_cmd(cpus, memory_gib, disk_gib = nil)
+    disk = disk_gib.nil? ? [] : ["--disk", disk_gib.to_s]
+    ["colima", "start", "--cpu", cpus.to_s, "--memory", memory_gib.to_s, *disk, "--vm-type", "vz", "--vz-rosetta"]
   end
 
   # The recorded argvs, filtered by their `colima <verb>` prefix.
@@ -205,6 +206,74 @@ class Dev::ColimaProvisionerTest < Minitest::Test
     nil  | nil        | 16            | 24
     8    | nil        | 8             | 24
     nil  | 32         | 16            | 32
+  end
+
+  # --- disk: the container's data root lives on it (ADR-0008) ---------------
+
+  test "no VM: a disk hint sizes the new VM's disk; without one colima's default stands" do
+    Given "no colima profile"
+    executor = RecordedColimaExecutor.new(vm: nil)
+
+    When "provisioning"
+    Dev::ColimaProvisioner.new(executor: executor).provision!(cpus: 8, memory_gib: 16, disk_gib: disk_gib)
+
+    Then
+    starts(executor) == [start_cmd(8, 16, expected_disk)]
+
+    Where
+    disk_gib | expected_disk
+    250      | 250
+    nil      | nil
+  end
+
+  test "running, disk under the hint, idle: provision! restarts with the larger disk — colima grows a disk on start" do
+    Given "a running 12/24 VM on a 100 GiB disk with no containers"
+    executor = RecordedColimaExecutor.new(vm: { status: "Running", cpus: 12, memory_gib: 24, disk_gib: 100 })
+
+    When "a project whose data root needs 250 GiB provisions"
+    Dev::ColimaProvisioner.new(executor: executor).provision!(cpus: 12, memory_gib: 24, disk_gib: 250)
+
+    Then "stop, then start at the same cpus/memory and the grown disk"
+    stops(executor) == [%w[colima stop]]
+    starts(executor) == [start_cmd(12, 24, 250)]
+  end
+
+  test "running, disk under the hint, busy: provision! refuses like any resize" do
+    Given "a running VM on a 100 GiB disk with another project's container up"
+    executor = RecordedColimaExecutor.new(vm: { status: "Running", cpus: 12, memory_gib: 24, disk_gib: 100 }, containers: ["dev-other-abc"])
+
+    When "a project needing 250 GiB provisions"
+    Dev::ColimaProvisioner.new(executor: executor).provision!(disk_gib: 250)
+
+    Then
+    error = raises Dev::ColimaProvisioner::EngineBusyError
+    error.message.include?("dev-other-abc")
+    starts(executor).empty?
+  end
+
+  test "disk is grow-only: a VM already at or above the hint is never shrunk, running or stopped" do
+    Given "a #{status} VM on a 300 GiB disk"
+    executor = RecordedColimaExecutor.new(vm: { status: status, cpus: 12, memory_gib: 24, disk_gib: 300 })
+
+    When "a project hinting 250 GiB provisions"
+    Dev::ColimaProvisioner.new(executor: executor).provision!(cpus: 12, memory_gib: 24, disk_gib: 250)
+
+    Then "no --disk at all: colima keeps the disk it has"
+    starts(executor).all? { |cmd| !cmd.include?("--disk") }
+    starts(executor).size == expected_starts
+
+    Where
+    status    | expected_starts
+    "Running" | 0
+    "Stopped" | 1
+  end
+
+  test "status reports the VM's disk beside its cpus and memory" do
+    Given "a running VM on a 250 GiB disk"
+    executor = RecordedColimaExecutor.new(vm: { status: "Running", cpus: 12, memory_gib: 24, disk_gib: 250 })
+
+    Expect
+    Dev::ColimaProvisioner.new(executor: executor).status.disk_gib == 250
   end
 
   # --- failures ------------------------------------------------------------

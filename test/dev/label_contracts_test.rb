@@ -27,8 +27,8 @@ class Dev::LabelContractsTest < Minitest::Test
 
     When "converging for a container repo with a sizing hint"
     bootstrap.expects(:converge!).once
-    bootstrap.expects(:ensure_agent_engine!).with(cpus: 8, memory_gib: 24).once
-    contract.converge!(container: true, cpus: 8, memory_gib: 24)
+    bootstrap.expects(:ensure_agent_engine!).with(cpus: 8, memory_gib: 24, disk_gib: 250).once
+    contract.converge!(container: true, cpus: 8, memory_gib: 24, disk_gib: 250)
 
     Then
     true

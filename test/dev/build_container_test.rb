@@ -180,45 +180,32 @@ class BuildContainerTest < Minitest::Test
     cmd.index("DEV_INSIDE_CONTAINER=1") < cmd.index("jpduchesne89/snappy:content-abc123")
   end
 
-  test "docker_run_command mounts the data root at its fixed container path and points the inside dev at it" do
-    Given "a scratch data root"
+  test "docker_run_command mounts the container's own data root volumes, never the host's directory (ADR-0008)" do
+    Given "a host data root that must not leak into the container"
     root = Dir.mktmpdir("dev-data-root")
     original = ENV["DEV_DATA_ROOT"]
     ENV["DEV_DATA_ROOT"] = root
+    engine = FakeContainerEngine.new
 
     When "building a one-shot run"
-    cmd = build_container.docker_run_command(
+    cmd = build_container(engine: engine).docker_run_command(
       "jpduchesne89/snappy:content-abc123",
       project_root: Pathname("/project"),
       shell_cmd: "./bin/build.sh",
     )
 
-    Then "the root is bind-mounted at /var/lib/dev and DEV_DATA_ROOT names that path inside"
-    cmd.each_cons(2).include?(["-v", "#{root}:/var/lib/dev"])
+    Then "both volumes are created first (docker volume create is idempotent), mounted at the data root and the Linuxbrew prefix before the image, DEV_DATA_ROOT names the mount, and the host's directory appears nowhere"
+    engine.runs.include?(["volume", "create", "dev-data-root"])
+    engine.runs.include?(["volume", "create", "dev-linuxbrew"])
+    cmd.each_cons(2).include?(["-v", "dev-data-root:/var/lib/dev"])
+    cmd.each_cons(2).include?(["-v", "dev-linuxbrew:/home/linuxbrew/.linuxbrew"])
+    cmd.index("dev-data-root:/var/lib/dev") < cmd.index("jpduchesne89/snappy:content-abc123")
     cmd.each_cons(2).include?(["-e", "DEV_DATA_ROOT=/var/lib/dev"])
-    cmd.index("#{root}:/var/lib/dev") < cmd.index("jpduchesne89/snappy:content-abc123")
+    cmd.none? { |part| part.include?(root) }
 
     Cleanup
     ENV["DEV_DATA_ROOT"] = original
     FileUtils.rm_rf(root)
-  end
-
-  test "docker_run_command creates a missing data root first, so docker never leaves a root-owned one behind" do
-    Given "a data root path that does not exist yet"
-    parent = Dir.mktmpdir("dev-data-parent")
-    root = File.join(parent, "dev")
-    original = ENV["DEV_DATA_ROOT"]
-    ENV["DEV_DATA_ROOT"] = root
-
-    When "building a one-shot run"
-    build_container.docker_run_command("img:tag", project_root: Pathname("/project"), shell_cmd: "make")
-
-    Then "the directory exists, owned by this process"
-    File.directory?(root)
-
-    Cleanup
-    ENV["DEV_DATA_ROOT"] = original
-    FileUtils.rm_rf(parent)
   end
 
   test "docker_run_command expands ~ in volume host paths, re-rooting ~/.dev onto the data root" do
@@ -1633,8 +1620,8 @@ class BuildContainerTest < Minitest::Test
     run.index("DEV_INSIDE_CONTAINER=1") < run.index("img:tag")
   end
 
-  test "create_service_container mounts the data root at its fixed path, same as a one-shot run" do
-    Given "a recording engine and a scratch data root"
+  test "create_service_container mounts the same two volumes as a one-shot run, so a recreated container finds its data root warm" do
+    Given "a recording engine and a host data root that must not leak in"
     engine = FakeContainerEngine.new
     root = Dir.mktmpdir("dev-data-root")
     original = ENV["DEV_DATA_ROOT"]
@@ -1645,10 +1632,12 @@ class BuildContainerTest < Minitest::Test
       "dev-x", "img:tag", project_root: Pathname("/project"), volumes: [],
     )
 
-    Then "the detached run binds the root at /var/lib/dev and sets DEV_DATA_ROOT"
+    Then "the detached run mounts both volumes, sets DEV_DATA_ROOT, and names no host path"
     run = engine.runs.last
-    run.each_cons(2).include?(["-v", "#{root}:/var/lib/dev"])
+    run.each_cons(2).include?(["-v", "dev-data-root:/var/lib/dev"])
+    run.each_cons(2).include?(["-v", "dev-linuxbrew:/home/linuxbrew/.linuxbrew"])
     run.each_cons(2).include?(["-e", "DEV_DATA_ROOT=/var/lib/dev"])
+    run.none? { |part| part.include?(root) }
 
     Cleanup
     ENV["DEV_DATA_ROOT"] = original
@@ -1722,7 +1711,8 @@ class BuildContainerTest < Minitest::Test
     Then "the name is the service's plus a cold suffix, the run is detached and --rm with the same mounts and labels, and rm -f follows the block"
     seen[:name].start_with?("#{service_name}-cold-")
     seen[:name] != service_name
-    create = engine.runs.fetch(0)
+    engine.runs[0, 2] == [["volume", "create", "dev-data-root"], ["volume", "create", "dev-linuxbrew"]]
+    create = engine.runs.fetch(2)
     create[0, 2] == ["run", "-d"]
     create.include?("--rm")
     create.each_cons(2).include?(["--name", seen[:name]])
@@ -1731,7 +1721,7 @@ class BuildContainerTest < Minitest::Test
     create.each_cons(2).include?(["-e", "DEV_INSIDE_CONTAINER=1"])
     create.last(2) == ["sleep", "infinity"]
     Dev::BuildContainer.service_labels("img:tag", root).all? { |k, v| create.each_cons(2).include?(["--label", "#{k}=#{v}"]) }
-    seen[:runs_so_far] == 1
+    seen[:runs_so_far] == 3
     engine.runs.last == ["rm", "-f", seen[:name]]
   end
 

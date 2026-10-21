@@ -30,6 +30,13 @@ module Dev
   #   project whose containers are merely stopped-but-warm.
   # - running, undersized, busy: refuse (EngineBusyError) naming the
   #   containers in the way. Stopping the VM would kill someone's build.
+  #
+  # The disk is the third field, with one difference: it only grows. colima
+  # enlarges a VM's disk on start (`--disk` above the current size) and
+  # cannot shrink one, so `--disk` is passed only when the hint exceeds what
+  # the VM has, and a stopped VM keeps its disk under a smaller hint. The
+  # container's data root — its engine, toolchain, gems — lives on this disk
+  # (ADR-0008), which is what the hint is for.
   class ColimaProvisioner
     extend T::Sig
 
@@ -59,6 +66,7 @@ module Dev
       const :running, T::Boolean
       const :cpus, Integer
       const :memory_gib, Integer
+      const :disk_gib, Integer
     end
 
     # @param executor [#run, #quiet?, #capture] colima invocation seam,
@@ -73,33 +81,36 @@ module Dev
     #
     # @param cpus [Integer, nil] VM CPU minimum (repo resources hint)
     # @param memory_gib [Integer, nil] VM memory minimum in GiB
+    # @param disk_gib [Integer, nil] VM disk minimum in GiB (grow-only)
     # @return [void]
     # @raise [StartFailedError] when the VM cannot be brought up
     # @raise [StopFailedError] when a resize cannot stop the VM
     # @raise [EngineBusyError] when a resize is needed but containers are running
-    sig { params(cpus: T.nilable(Integer), memory_gib: T.nilable(Integer)).void }
-    def provision!(cpus: nil, memory_gib: nil)
+    sig { params(cpus: T.nilable(Integer), memory_gib: T.nilable(Integer), disk_gib: T.nilable(Integer)).void }
+    def provision!(cpus: nil, memory_gib: nil, disk_gib: nil)
       vm = inspect_vm
-      return start!(cpus || DEFAULT_CPUS, memory_gib || DEFAULT_MEMORY_GIB) if vm.nil?
-      return start!(cpus || vm.cpus, memory_gib || vm.memory_gib) unless vm.running
+      return start!(cpus || DEFAULT_CPUS, memory_gib || DEFAULT_MEMORY_GIB, disk_gib) if vm.nil?
+
+      grown_disk = disk_gib && disk_gib > vm.disk_gib ? disk_gib : nil
+      return start!(cpus || vm.cpus, memory_gib || vm.memory_gib, grown_disk) unless vm.running
 
       target_cpus = [vm.cpus, cpus || 0].max
       target_memory = [vm.memory_gib, memory_gib || 0].max
-      return if target_cpus == vm.cpus && target_memory == vm.memory_gib
+      return if target_cpus == vm.cpus && target_memory == vm.memory_gib && grown_disk.nil?
 
       busy = running_containers
       unless busy.empty?
         raise EngineBusyError,
-          "the colima VM has #{vm.cpus} cpus / #{vm.memory_gib} GiB; this project needs " \
-          "#{cpus || vm.cpus} cpus / #{memory_gib || vm.memory_gib} GiB, and resizing means stopping " \
-          "the VM — but containers are running in it:\n  #{busy.join("\n  ")}\n" \
+          "the colima VM has #{vm.cpus} cpus / #{vm.memory_gib} GiB / #{vm.disk_gib} GiB disk; this project needs " \
+          "#{cpus || vm.cpus} cpus / #{memory_gib || vm.memory_gib} GiB / #{disk_gib || vm.disk_gib} GiB disk, " \
+          "and resizing means stopping the VM — but containers are running in it:\n  #{busy.join("\n  ")}\n" \
           "Bring those projects down first (`dev container down` there, or `dev engine down`), then re-run `dev up`."
       end
 
       raise StopFailedError, "colima stop failed — the VM was left running at its current size." unless
         T.unsafe(@executor).run("colima", "stop")
 
-      start!(target_cpus, target_memory)
+      start!(target_cpus, target_memory, grown_disk)
     end
 
     # The VM as `colima list` reports it — `dev engine status`'s colima
@@ -132,14 +143,18 @@ module Dev
 
     # @param cpus [Integer]
     # @param memory_gib [Integer]
+    # @param disk_gib [Integer, nil] a disk to create or grow to; nil leaves
+    #   colima's default (new VM) or the VM's current disk alone
     # @return [void]
     # @raise [StartFailedError]
-    sig { params(cpus: Integer, memory_gib: Integer).void }
-    def start!(cpus, memory_gib)
+    sig { params(cpus: Integer, memory_gib: Integer, disk_gib: T.nilable(Integer)).void }
+    def start!(cpus, memory_gib, disk_gib)
+      disk = disk_gib.nil? ? [] : ["--disk", disk_gib.to_s]
       args = [
         "colima", "start",
         "--cpu", cpus.to_s,
         "--memory", memory_gib.to_s,
+        *disk,
         "--vm-type", "vz", "--vz-rosetta"
       ]
       return if T.unsafe(@executor).run(*args)
@@ -164,6 +179,7 @@ module Dev
           running: record["status"] == "Running",
           cpus: Integer(record["cpus"]),
           memory_gib: (Integer(record["memory"]).to_f / GIB).round,
+          disk_gib: (Integer(record["disk"]).to_f / GIB).round,
         )
       end
       nil
