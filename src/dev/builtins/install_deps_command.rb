@@ -18,20 +18,15 @@ module Dev
     # `dev deps install [--group <g>]... [--except <g>]... [--integration <i>]... [--pinned-taps]`:
     # install what the lockfiles pin for this machine, optionally narrowed to
     # dependency groups and integrations — shared with the `up` builtin,
-    # which composes this command. Dependencies install where they are
-    # consumed: on the host the host-scoped integrations run against the
-    # host Ruby; inside the build container the container-scoped ones run
-    # against the store Ruby (Registry's scope axis says which is which, and
-    # a BOTH type like bundler installs separately on each side). The two
-    # sides share the artifact store through the data-root mount, so a file
-    # artifact fetched on the host is already there inside.
-    # `--group build --integration brew` is how a container image bootstrap
-    # installs its toolchain from the lock (bin/docker-install-build-deps.sh)
-    # without pulling the host-installed artifacts the same group pins; inside
-    # the resulting container the install defaults to `--except build` for the
-    # same reason. `--pinned-taps` is the image build's reproducible mode:
-    # brew installs from taps checked out at the commits the lock names
-    # instead of from brew's moving API (BrewIntegration).
+    # which composes this command. Every build host runs the same install
+    # against its own data root (ADR-0008): a workstation against the host
+    # Ruby, the build container against the store Ruby in its volume. The
+    # only inside/outside difference is who provisions that Ruby and that the
+    # host-side hygiene hooks (skill links, learnings) stay off inside.
+    # `--group build --integration brew` narrows an install to the toolchain
+    # the lock pins; `--pinned-taps` is the reproducible mode: brew installs
+    # from taps checked out at the commits the lock names instead of from
+    # brew's moving API (BrewIntegration).
     class InstallDepsCommand < BuiltinCommand
       extend T::Sig
 
@@ -115,7 +110,7 @@ module Dev
         host = Dev::Deps.detect_host
         pin_taps = args.flag?(PINNED_TAPS_FLAG)
         groups = symbol_flags(args, GROUP_FLAG)
-        except = symbol_flags(args, EXCEPT_FLAG) || default_except
+        except = symbol_flags(args, EXCEPT_FLAG) || []
         integration_types = symbol_flags(args, INTEGRATION_FLAG)
         lockfile = Dev::Deps::Lockfile.new(dir: project.root)
 
@@ -160,34 +155,18 @@ module Dev
         end
       end
 
-      # The integrations that install on this side.
+      # The integrations that install on this build host — the same set on a
+      # workstation, a box and inside a build container, each against its own
+      # data root (ADR-0008).
       #
       # @param project [ProjectContext]
       # @param pin_taps [Boolean] brew installs from taps pinned at the lock's commits
       # @return [Hash{Symbol => Dev::Deps::Integration}]
       sig { params(project: ProjectContext, pin_taps: T::Boolean).returns(T::Hash[Symbol, Dev::Deps::Integration]) }
       def integrations(project, pin_taps:)
-        store = Dev::Deps::LocalStore.new
-        if @inside_container
-          Dev::Deps::Registry.container_integrations(
-            project_root: project.root, store:, python_version: project.python_version, pin_taps:,
-          )
-        else
-          Dev::Deps::Registry.host_integrations(
-            project_root: project.root, store:, python_version: project.python_version, pin_taps:,
-          )
-        end
-      end
-
-      # The exclusion when no --except is given: nothing on a host; the build
-      # group inside a container, where the image bootstrap (`--group build`)
-      # already installed it and a second install would fight the image's
-      # read-only layers. An explicit --except replaces this, never adds to it.
-      #
-      # @return [Array<Symbol>]
-      sig { returns(T::Array[Symbol]) }
-      def default_except
-        @inside_container ? [:build] : []
+        Dev::Deps::Registry.host_integrations(
+          project_root: project.root, store: Dev::Deps::LocalStore.new, python_version: project.python_version, pin_taps:,
+        )
       end
 
       # The symbols named by a repeatable flag, or nil when the flag never

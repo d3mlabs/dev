@@ -99,13 +99,13 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "pin_taps reaches the brew integration on either side and is off unless asked: #{side}, #{pin_taps}" do
+  test "pin_taps reaches the brew integration and is off unless asked: #{pin_taps}" do
     Given "a scratch project root"
     dir = Dir.mktmpdir("registry-pin-test-")
 
-    When "building the side's integrations"
-    integrations = Dev::Deps::Registry.public_send(
-      side, project_root: Pathname(dir), store: Dev::Deps::LocalStore.new(data_root: dir), pin_taps: pin_taps,
+    When "building the host's integrations"
+    integrations = Dev::Deps::Registry.host_integrations(
+      project_root: Pathname(dir), store: Dev::Deps::LocalStore.new(data_root: dir), pin_taps: pin_taps,
     )
 
     Then
@@ -115,46 +115,27 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
     FileUtils.rm_rf(dir)
 
     Where
-    side                      | pin_taps
-    :host_integrations        | false
-    :host_integrations        | true
-    :container_integrations   | false
-    :container_integrations   | true
+    pin_taps
+    false
+    true
   end
 
-  test "container_integrations carries only the container-scoped types, and skips an alias whose target is host-only" do
-    Given "a scratch project root"
-    dir = Dir.mktmpdir("registry-container-test-")
-
-    When "building container integrations from the registry"
-    integrations = Dev::Deps::Registry.container_integrations(
-      project_root: Pathname(dir),
-      store: Dev::Deps::LocalStore.new(data_root: dir),
-    )
-
-    Then "bundler and brew install inside the container; cmake (and so url) do not"
-    integrations.key?(:bundler)
-    integrations.key?(:brew)
-    integrations.key?(:cask)
-    !integrations.key?(:cmake)
-    !integrations.key?(:url)
-    !integrations.key?(:pip)
-    !integrations.key?(:luarocks)
-
-    Cleanup
-    FileUtils.rm_rf(dir)
+  test "there is one integration set per build host: the registry has no container side (ADR-0008)" do
+    Expect "no scope axis and no container-side builder"
+    !Dev::Deps::Registry.respond_to?(:container_integrations)
+    !Dev::Deps::Registry::Entry.members.include?(:scope)
+    !Dev::Deps::Registry.const_defined?(:CONTAINER_SCOPES)
   end
 
-  test "container? is the mirror of host?: BOTH is on both sides, HOST and CONTAINER on one, and never without an integration" do
-    Given "entries of each scope"
-    both = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :brew }
-    host_only = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :cmake }
-    no_integration = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :url }
+  test "host? is exactly 'has an integration': an aliased, integration-less type installs through its target" do
+    Given "an installing entry and an aliased one"
+    installing = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :cmake }
+    aliased = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :url }
 
-    Expect "each answers for its side"
-    both.host? && both.container?
-    host_only.host? && !host_only.container?
-    !no_integration.host? && !no_integration.container?
+    Expect "the one with an integration installs; the alias rides its target's instance"
+    installing.host?
+    !aliased.host?
+    aliased.install_alias == :cmake
   end
 
   test "every locker class is wired into the registry" do

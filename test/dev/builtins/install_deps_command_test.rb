@@ -134,7 +134,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "inside the container, the install defaults to --except build and provisions the container Ruby, not the host's" do
+  test "inside the container, the install excludes nothing by default (the container owns its data root, ADR-0008) and provisions the container Ruby, not the host's" do
     Given "an inside command over a project locking a build-group brew dep and an app-group gem"
     root = Pathname.new(Dir.mktmpdir("install-deps-inside-"))
     lock(root, gem_dep, brew_build_dep)
@@ -145,9 +145,9 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     When "running dev deps install with no flags"
     command.call(args: no_args, context: build_context(root))
 
-    Then "the build group is excluded by default and the store Ruby is converged"
+    Then "the whole lock is installed, same as on a host, and the store Ruby is converged"
     1 * installer.install(
-      env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: nil, except: [:build], integration_types: nil
+      env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: nil, except: [], integration_types: nil
     )
     1 * container_ruby.converge!(ruby_version: "4.0.1", project_root: root)
     0 * Dev::ShadowenvRuby.converge!
@@ -156,7 +156,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "inside the container, an explicit --except replaces the build default rather than adding to it" do
+  test "inside the container, an explicit --except is honoured as given" do
     Given "an inside command"
     root = Pathname.new(Dir.mktmpdir("install-deps-inside-except-"))
     lock(root, gem_dep, brew_build_dep)
@@ -178,7 +178,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "inside the container, the installer gets the container integration set and the host hygiene hooks stay off" do
+  test "inside the container, the installer gets the same integration set as a host and only the host hygiene hooks stay off" do
     Given "an inside command whose factory records its inputs"
     root = Pathname.new(Dir.mktmpdir("install-deps-inside-wiring-"))
     installer = typed_mock(Dev::Deps::Installer)
@@ -199,11 +199,13 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     When "running dev deps install"
     command.call(args: no_args, context: build_context(root))
 
-    Then "bundler and brew install inside; cmake's host pipeline and the host-side hooks do not"
+    Then "every installing type is wired inside — the container is a host with its own data root — and the host-side hooks do not run"
     _, integrations = factory_inputs.fetch(0)
+    integrations.keys.sort == Dev::Deps::Registry.host_integrations(project_root: root, store: Dev::Deps::LocalStore.new(data_root: root.to_s)).keys.sort
     integrations.key?(:bundler)
     integrations.key?(:brew)
-    !integrations.key?(:cmake)
+    integrations.key?(:cmake)
+    integrations.key?(:gh)
     0 * host_service.sync_skills
     0 * host_service.sync_learnings
 
