@@ -79,6 +79,20 @@ class Dev::ContainerDevProvisionerTest < Minitest::Test
     !script.include?("brew uninstall")
   end
 
+  test "the install script bootstraps Linuxbrew into the container's own prefix when the image carries none (ADR-0008)" do
+    Given "the script shipped beside dev's bin, and the image bootstrap it takes the installer pin from"
+    script = SCRIPT.read
+    image_bootstrap = File.read(File.expand_path("../../bin/docker-install-build-deps.sh", __dir__))
+    pin = image_bootstrap[%r{Homebrew/install/([0-9a-f]{40})/install\.sh}, 1]
+
+    Expect "a missing brew is installed, not a hard stop; non-interactively, from the same pinned installer commit, trusted and tapped before dev-core"
+    !script.include?("the image must carry Linuxbrew")
+    script.include?("if ! command -v brew")
+    script.include?("NONINTERACTIVE=1")
+    script.include?("https://raw.githubusercontent.com/Homebrew/install/#{pin}/install.sh")
+    script.index("brew trust d3mlabs/d3mlabs") < script.index("brew tap --quiet d3mlabs/d3mlabs")
+  end
+
   test "the install script parses under sh -n" do
     Expect "a clean syntax check"
     system("sh", "-n", SCRIPT.to_s)

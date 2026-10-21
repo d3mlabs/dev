@@ -2,6 +2,12 @@
 # Internal script for Dockerfiles: installs Linuxbrew and the :build group's
 # brew dependencies from build-deps.lock into the image.
 #
+# Superseded for build containers that own their data root (ADR-0008): there
+# the image is OS + Wine + user, Linuxbrew lives in the container's own
+# prefix volume — bin/container-provision-dev.sh bootstraps it — and the
+# container's `dev up` installs the :build group from the lock. Kept for the
+# images that still bake their toolchain in; nothing new should.
+#
 # Usage in Dockerfile:
 #   COPY dev.yml dependencies.rb build-deps.lock /app/
 #   RUN curl -fsSL https://raw.githubusercontent.com/d3mlabs/dev/main/bin/docker-install-build-deps.sh \

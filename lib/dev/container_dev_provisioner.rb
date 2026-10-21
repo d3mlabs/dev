@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "pathname"
+require "dev/build_container"
 require "dev/container_engine"
 require "dev/version"
 
@@ -13,9 +14,10 @@ module Dev
   # container is probed through `docker exec`; when it differs from the
   # host's (or there is no dev at all — a fresh container, an image whose
   # bootstrap removed dev-core), bin/container-provision-dev.sh installs the
-  # host's version from the tap's history into the container's writable
-  # layer. The host is the only writer of the container's dev; the inside dev
-  # (DEV_INSIDE_CONTAINER) never self-updates.
+  # host's version from the tap's history into the container's Linuxbrew
+  # prefix — a named volume the script bootstraps Homebrew into when the
+  # image carries none (ADR-0008). The host is the only writer of the
+  # container's dev; the inside dev (DEV_INSIDE_CONTAINER) never self-updates.
   class ContainerDevProvisioner
     extend T::Sig
 
@@ -32,7 +34,8 @@ module Dev
       sig { params(container: String, version: String).void }
       def initialize(container:, version:)
         super("installing dev-core #{version} into #{container} failed — see the output above; " \
-          "the container's image must carry Linuxbrew with the d3mlabs/d3mlabs tap")
+          "the container needs network for Linuxbrew's installer and the d3mlabs/d3mlabs tap, " \
+          "and a writable #{BuildContainer::LINUXBREW_MOUNT} owned by its user")
       end
     end
 
