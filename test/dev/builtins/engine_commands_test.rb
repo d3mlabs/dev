@@ -234,7 +234,7 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
     Given "a running VM with one managed and one foreign container"
     report = status(
       kind: :colima, running: true, stoppable: true, resources: Dev::EngineResources.new(cpus: 8, memory_gib: 16),
-      colima: Dev::ColimaProvisioner::Vm.new(running: true, cpus: 8, memory_gib: 16), containers: [MANAGED, FOREIGN],
+      colima: Dev::ColimaProvisioner::Vm.new(running: true, cpus: 8, memory_gib: 16, disk_gib: 100), containers: [MANAGED, FOREIGN],
     )
 
     Expect
@@ -255,7 +255,7 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
 
     Where
     description | vm | resources | expected
-    "stopped"   | Dev::ColimaProvisioner::Vm.new(running: false, cpus: 4, memory_gib: 8) | Dev::EngineResources.new(cpus: 4, memory_gib: 8) | "engine: colima VM — stopped, 4 cpus / 8 GiB\ncontainers running: none\n"
+    "stopped"   | Dev::ColimaProvisioner::Vm.new(running: false, cpus: 4, memory_gib: 8, disk_gib: 100) | Dev::EngineResources.new(cpus: 4, memory_gib: 8) | "engine: colima VM — stopped, 4 cpus / 8 GiB\ncontainers running: none\n"
     "absent"    | nil | nil | "engine: colima VM — not created (dev engine up creates it)\ncontainers running: none\n"
   end
 

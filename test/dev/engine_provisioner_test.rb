@@ -72,8 +72,8 @@ class Dev::EngineProvisionerTest < Minitest::Test
     cli_plugins = typed_mock(Dev::DockerCliPlugins)
     cli_plugins.expects(:ensure!).once.in_sequence(order).returns(:added)
     colima = typed_mock(Dev::ColimaProvisioner)
-    colima.expects(:provision!).with(cpus: 8, memory_gib: 24).once.in_sequence(order)
-    resources = Dev::BuildContainerConfig::Resources.new(cpus: 8, memory_gib: 24)
+    colima.expects(:provision!).with(cpus: 8, memory_gib: 24, disk_gib: 250).once.in_sequence(order)
+    resources = Dev::BuildContainerConfig::Resources.new(cpus: 8, memory_gib: 24, disk_gib: 250)
 
     When "provisioning"
     build(dir, host_os: "darwin", colima: colima, cli_plugins: cli_plugins).provision!(resources: resources)
@@ -137,7 +137,7 @@ class Dev::EngineProvisionerTest < Minitest::Test
     cli_plugins = typed_mock(Dev::DockerCliPlugins)
     cli_plugins.stubs(:ensure!).returns(:already_present)
     colima = typed_mock(Dev::ColimaProvisioner)
-    colima.expects(:provision!).with(cpus: nil, memory_gib: nil).once
+    colima.expects(:provision!).with(cpus: nil, memory_gib: nil, disk_gib: nil).once
 
     When "provisioning"
     build(dir, host_os: "darwin", colima: colima, cli_plugins: cli_plugins).provision!(resources: nil)
@@ -275,7 +275,7 @@ class Dev::EngineProvisionerTest < Minitest::Test
     Given "a running 8/16 VM with one managed and one foreign container"
     dir = Dir.mktmpdir("dev-engine-provisioner-")
     colima = typed_mock(Dev::ColimaProvisioner)
-    colima.stubs(:status).returns(Dev::ColimaProvisioner::Vm.new(running: true, cpus: 8, memory_gib: 16))
+    colima.stubs(:status).returns(Dev::ColimaProvisioner::Vm.new(running: true, cpus: 8, memory_gib: 16, disk_gib: 100))
     engine = fake_engine(:colima, containers: "dev-snappy\ttrue\t/src/snappy\npg\t\t\n")
 
     When "inspecting"

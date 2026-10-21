@@ -313,12 +313,12 @@ class Dev::AgentBootstrapTest < Minitest::Test
     executor = RecordedBootstrapExecutor.new
 
     When "converging the engine with sizing"
-    bootstrap(executor).ensure_agent_engine!(cpus: 12, memory_gib: 24)
+    bootstrap(executor).ensure_agent_engine!(cpus: 12, memory_gib: 24, disk_gib: 250)
 
     Then
     executor.runs.last == [
       "sudo", "-H", "-u", "ai-agent", "--",
-      "colima", "start", "--cpu", "12", "--memory", "24", "--vm-type", "vz", "--vz-rosetta",
+      "colima", "start", "--cpu", "12", "--memory", "24", "--disk", "250", "--vm-type", "vz", "--vz-rosetta",
     ]
   end
 

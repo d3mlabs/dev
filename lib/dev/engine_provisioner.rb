@@ -198,7 +198,7 @@ module Dev
       return if engine.kind == :explicit
 
       @cli_plugins.ensure! if @host_os == "darwin"
-      @colima.provision!(cpus: resources&.cpus, memory_gib: resources&.memory_gib) if engine.kind == :colima
+      @colima.provision!(cpus: resources&.cpus, memory_gib: resources&.memory_gib, disk_gib: resources&.disk_gib) if engine.kind == :colima
       actual = T.let(nil, T.nilable(EngineResources))
       if engine.kind == :docker && @host_os == "linux"
         # dockerd first: the WSL ratchet asks the local daemon who is busy.

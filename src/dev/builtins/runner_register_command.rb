@@ -183,6 +183,7 @@ module Dev
             container: !container.nil?,
             cpus: container&.resources&.cpus,
             memory_gib: container&.resources&.memory_gib,
+            disk_gib: container&.resources&.disk_gib,
           )
         end
 

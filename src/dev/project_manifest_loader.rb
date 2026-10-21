@@ -167,9 +167,11 @@ module Dev
 
       cpus = raw["cpus"]
       memory_gib = raw["memory_gib"]
+      disk_gib = raw["disk_gib"]
       BuildContainerConfig::Resources.new(
         cpus: cpus.nil? ? nil : Integer(cpus),
         memory_gib: memory_gib.nil? ? nil : Integer(memory_gib),
+        disk_gib: disk_gib.nil? ? nil : Integer(disk_gib),
       )
     end
   end

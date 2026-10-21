@@ -207,6 +207,7 @@ class ProjectManifestLoaderTest < Minitest::Test
           resources:
             cpus: 8
             memory_gib: 24
+            disk_gib: 250
       commands:
         build:
           run: ./bin/build.sh
@@ -216,7 +217,7 @@ class ProjectManifestLoaderTest < Minitest::Test
     manifest = build_loader.load(Pathname.new(tmp.path))
 
     Then "the sizing rides the config as integers"
-    manifest.build_container.resources == Dev::BuildContainerConfig::Resources.new(cpus: 8, memory_gib: 24)
+    manifest.build_container.resources == Dev::BuildContainerConfig::Resources.new(cpus: 8, memory_gib: 24, disk_gib: 250)
 
     Cleanup
     tmp.close!
@@ -255,6 +256,7 @@ class ProjectManifestLoaderTest < Minitest::Test
     no_resources.nil?
     partial_resources.cpus == 6
     partial_resources.memory_gib.nil?
+    partial_resources.disk_gib.nil?
 
     Cleanup
     without.close!
