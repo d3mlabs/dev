@@ -197,8 +197,8 @@ module Dev
       end
 
       # What a running container needs before a command runs in it: a user
-      # that can write the host's data root, the host's dev, then the
-      # container's side of the dependency install.
+      # that can write its data root, the host's dev, then its own install
+      # of the lock (the container is a build host, ADR-0008).
       #
       # @param name [String] the running container
       # @param cfg [BuildContainerConfig]

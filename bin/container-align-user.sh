@@ -1,7 +1,8 @@
 #!/bin/sh
-# Give a dev-managed build container's user the uid and gid that own the
-# mounted data root — the host user's — so every bind mount is writable from
-# inside and what the container writes belongs to the host user outside.
+# Give a dev-managed build container's user the uid and gid that own its
+# data root mount, so the container can write it. Under ADR-0008 the data
+# root is a volume docker initialised as the image's own user, and this
+# script is not reached; it remains for a mount owned by another uid.
 #
 # Run as root by the host's dev (Dev::ContainerUserAligner) through
 # `docker exec`, once, when the container's user cannot write /var/lib/dev —
@@ -12,9 +13,9 @@
 # as the new uid). Then what the old uid or gid held on the container's root
 # filesystem is re-owned — by old id, not a path list, so Linuxbrew's
 # prefix-ownership check and anything else the image created for that user
-# stay consistent. -xdev keeps the sweep off the bind mounts (the host's
-# project, data root and engine trees are not ours to re-own) and off /proc
-# and /sys.
+# stay consistent. -xdev keeps the sweep off the mounts (the project bind
+# mount and the data root and Linuxbrew volumes are not ours to re-own) and
+# off /proc and /sys.
 #
 # Regular files inside Linuxbrew's Cellar are the one exception. On an
 # overlay filesystem the first chown of a lower-layer file copies its whole

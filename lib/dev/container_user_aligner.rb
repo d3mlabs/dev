@@ -6,25 +6,23 @@ require "dev/build_container"
 require "dev/container_engine"
 
 module Dev
-  # Makes a build container's user the host's user: the uid and gid that own
-  # the mounted data root. Dependencies install where they are consumed
-  # (ADR-0002), so the container writes the host's data root — its Ruby, its
-  # gems, the shared download caches — as whatever user the image runs as.
-  # Where that user cannot write the mount (a hosted runner at uid 1001
-  # against an image user at 1000), nothing inside can install.
+  # Makes a build container's user the owner of its data root. The
+  # container writes its data root — its Ruby, its gems, its toolchain — as
+  # whatever user the image runs as; where that user cannot write the mount,
+  # nothing inside can install.
   #
   # Behavioural gate, not a platform guess: the container is asked whether
-  # its user can write the data root. It can (gamebox, where the uids match;
-  # Macs, where the virtiofs mount is writable regardless) — nothing
-  # happens. It cannot — bin/container-align-user.sh, as root, gives the
-  # image user the mount owner's ids and re-owns what the old ids held on
-  # the container's root filesystem (all but the Cellar's keg contents, which
-  # Homebrew never writes into), so the next `docker exec` runs as the
-  # host's user and every bind mount is writable from both sides. A
-  # root-owned mount (the engine created the host directory) is handed to
-  # the container's user instead: nothing runs as root for lack of a better
-  # idea. Persistent containers keep the change in their writable layer, so
-  # the steady state is one probe.
+  # its user can write the data root. Under ADR-0008 the data root is a
+  # named volume docker initialised from the image, owned by the image's
+  # user, so the answer is yes and nothing happens. It is no for a volume an
+  # older image first mounted without declaring the directory (root-owned,
+  # empty): that mount is handed to the container's user. The remaining
+  # branch — a mount owned by some other non-root uid — gives the image user
+  # that owner's ids through bin/container-align-user.sh and re-owns what
+  # the old ids held on the container's root filesystem (all but the
+  # Cellar's keg contents, which Homebrew never writes into), so the next
+  # `docker exec` runs as that uid. Persistent containers keep the change in
+  # their writable layer, so the steady state is one probe.
   class ContainerUserAligner
     extend T::Sig
 
