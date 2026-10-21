@@ -197,6 +197,36 @@ class Dev::Deps::AccessorTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "path gh for a tree locked to another host says whose data root holds it, not 'run dev up' (ADR-0008)" do
+    Given "a Mac host asking for the linux engine, which only the container's data root holds"
+    dir = Dir.mktmpdir("dev-accessor-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: dir)
+    lockfile.lock([
+      Dev::Deps::Dependency.new(
+        name: "UnrealEngine", integration: :gh, group: :build,
+        version: GH_ENGINE_TAG, hash: nil,
+        metadata: { "repo" => "d3mlabs/unreal-engine", "install_dir" => "~/.dev/engines/ue5", "host" => "linux" },
+      ),
+    ])
+    accessor = Dev::Deps::Accessor.new(
+      lockfile: lockfile, store: Dev::Deps::LocalStore.new(data_root: dir), host: "darwin",
+    )
+
+    When "asking for the engine path"
+    error = assert_raises(Dev::Deps::Accessor::NotInstalledError) do
+      accessor.path("gh", "UnrealEngine")
+    end
+
+    Then "the message names the owning host and says to ask from inside, and never suggests dev up here"
+    error.message.include?("linux")
+    error.message.include?("build host")
+    error.message.include?("inside")
+    !error.message.include?("run dev up")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "path gh raises NotInstalledError when the marker records another version" do
     Given "a version dir whose marker was stamped by a different tag (half-published)"
     dir = Dir.mktmpdir("dev-accessor-test-")
