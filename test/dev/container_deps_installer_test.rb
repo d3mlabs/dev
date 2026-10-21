@@ -3,7 +3,9 @@
 
 require "test_helper"
 require "dev/container_deps_installer"
+require "fileutils"
 require "support/fake_container_engine"
+require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
 class ContainerDepsInstallerTest < Minitest::Test
@@ -53,6 +55,33 @@ class ContainerDepsInstallerTest < Minitest::Test
 
     Then "no -e at all"
     engine.runs == [["exec", "-w", "/project", "dev-myapp-abc", "dev", "deps", "install"]]
+  end
+
+  test "HOST_GH_TOKEN asks gh on the PATH and answers #{expected.inspect} when gh #{behaviour}" do
+    Given "a PATH holding only a gh that #{behaviour}"
+    dir = Dir.mktmpdir("gh-on-path-")
+    if script
+      File.write(File.join(dir, "gh"), "#!/bin/sh\n#{script}\n")
+      File.chmod(0o755, File.join(dir, "gh"))
+    end
+    original_path = ENV["PATH"]
+    ENV["PATH"] = dir
+
+    When "asking for the host's token"
+    token = Dev::ContainerDepsInstaller::HOST_GH_TOKEN.call
+
+    Then
+    token == expected
+
+    Cleanup
+    ENV["PATH"] = original_path
+    FileUtils.rm_rf(dir)
+
+    Where
+    behaviour              | script                                  | expected
+    "prints a token"       | 'echo "gho_fromhost"'                   | "gho_fromhost"
+    "is not logged in"     | "echo 'not logged in' >&2; exit 1"      | nil
+    "is not installed"     | nil                                     | nil
   end
 
   test "install! raises InstallFailedError naming the container when the install exits nonzero" do
