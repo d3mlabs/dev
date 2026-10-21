@@ -96,10 +96,25 @@ module Dev
     # run; harmless on native hosts.
     SIGPENDING_ULIMIT = ["--ulimit", "sigpending=1000000"].freeze
 
-    # Where the host's data root is bind-mounted in every container dev
+    # Where the container's data root is mounted in every container dev
     # creates. Fixed, because what the store holds embeds absolute paths
     # (venvs, binstubs), and FHS-conventional for a program's variable state.
     DATA_ROOT_MOUNT = "/var/lib/dev"
+
+    # The container's data root is its own, not the host's (ADR-0008): a
+    # named volume on the engine's disk, one per VM and shared by every
+    # project — one data root per build host, as one ~/.dev per machine.
+    # Docker initialises an empty named volume from the image's content and
+    # ownership at the mount point, so a base image that declares the
+    # directory builder-owned yields a writable volume with no chown.
+    DATA_ROOT_VOLUME = "dev-data-root"
+
+    # Linuxbrew's prefix is a second mount point, not a subtree of the data
+    # root: brew's fixed path must be a real directory (bottles refuse a
+    # symlinked prefix), and a volume-subpath mount is neither created nor
+    # initialised by docker. Same volume semantics as the data root.
+    LINUXBREW_MOUNT = "/home/linuxbrew/.linuxbrew"
+    LINUXBREW_VOLUME = "dev-linuxbrew"
 
     # @return [Dev::ContainerEngine] the engine every docker invocation rides
     sig { returns(Dev::ContainerEngine) }
@@ -535,17 +550,19 @@ module Dev
       ]
     end
 
-    # The host's data root bind-mounted at its fixed container path, so the
-    # dev inside (DEV_DATA_ROOT, set by env_flags) shares one artifact store
-    # with the host. Created first when missing: docker would otherwise create
-    # it root-owned and the host's dev could never write it.
+    # The container's own data root and Linuxbrew prefix, each a named
+    # volume at its fixed path (ADR-0008). The dev inside (DEV_DATA_ROOT,
+    # set by env_flags) fills them from the lock; nothing of the host's
+    # directory is mounted. Both volumes are created first — `docker volume
+    # create` is idempotent — so the first container to mount them finds them
+    # initialised from the image.
     #
     # @return [Array<String>] docker `-v` flags
     sig { returns(T::Array[String]) }
     def data_root_flags
-      root = Dev::DataRoot.path
-      FileUtils.mkdir_p(root)
-      ["-v", "#{root}:#{DATA_ROOT_MOUNT}"]
+      @engine.run(["volume", "create", DATA_ROOT_VOLUME], out: File::NULL)
+      @engine.run(["volume", "create", LINUXBREW_VOLUME], out: File::NULL)
+      ["-v", "#{DATA_ROOT_VOLUME}:#{DATA_ROOT_MOUNT}", "-v", "#{LINUXBREW_VOLUME}:#{LINUXBREW_MOUNT}"]
     end
 
     # Env for a container dev creates: the inside marker (see
