@@ -204,6 +204,38 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
     raises Dev::Deps::GhRepository::InconsistentReleasesError
   end
 
+  test "find raises ApiError when the /releases/latest cross-check itself fails" do
+    Given "an empty releases list and a server error from /releases/latest"
+    repo = Dev::Deps::GhRepository.new
+    repo.stubs(:run_gh_api)
+        .with("repos/#{SLUG}/releases?per_page=100&page=1")
+        .returns([JSON.generate([]), "", stub(success?: true)])
+    repo.stubs(:run_gh_api)
+        .with("repos/#{SLUG}/tags?per_page=100&page=1")
+        .returns([JSON.generate([tag_json("v1", "sha")]), "", stub(success?: true)])
+    repo.stubs(:run_gh_api)
+        .with("repos/#{SLUG}/releases/latest")
+        .returns(["", "gh: Internal Server Error (HTTP 500)", stub(success?: false)])
+
+    When "finding"
+    repo.find(prebuilt_id)
+
+    Then "an unconfirmed empty list is not believed"
+    raises Dev::Deps::GhRepository::ApiError
+  end
+
+  test "pause sleeps for the backoff — the clock seam the retry tests stub" do
+    Given "a repository and a stubbed clock"
+    repo = Dev::Deps::GhRepository.new
+    Kernel.expects(:sleep).with(2)
+
+    When "pausing"
+    repo.send(:pause, 2)
+
+    Then
+    true
+  end
+
   test "find claims an empty Resolved declaration set — self-contained by contract" do
     Given "a repo with one tag"
     repo = Dev::Deps::GhRepository.new
