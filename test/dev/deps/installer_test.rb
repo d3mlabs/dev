@@ -118,6 +118,42 @@ class Dev::Deps::InstallerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "install dispatches apt before every other build-group type, whatever the lock order" do
+    Given "a build group where a brew formula and a gh tree are locked ahead of the OS package they need"
+    dir = Dir.mktmpdir("installer-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
+    deps = [
+      Dev::Deps::Dependency.new(name: "ccache", integration: :brew, group: :build,
+        version: "4.10", hash: "SHA256=bbb", metadata: {}),
+      Dev::Deps::Dependency.new(name: "MsvcWineToolchain", integration: :gh, group: :build,
+        version: "toolchain-2", hash: nil, metadata: {}),
+      Dev::Deps::Dependency.new(name: "winehq-stable", integration: :apt, group: :build,
+        version: "suite", hash: nil, metadata: {}),
+    ]
+    lockfile.lock(deps)
+
+    install_order = []
+    integrations = %i[brew gh apt].to_h do |type|
+      integration = RecordingIntegration.new
+      integration.define_singleton_method(:install_all) do |dependencies|
+        install_order << type
+        @installed_deps.concat(dependencies)
+      end
+      [type, integration]
+    end
+
+    installer = Dev::Deps::Installer.new(lockfile:, integrations:)
+
+    When "running install"
+    installer.install
+
+    Then "the OS package converged first; the rest kept lock order"
+    install_order == %i[apt brew gh]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "install filters deps by env when env is set" do
     Given "deps with env metadata"
     dir = Dir.mktmpdir("installer-test-")

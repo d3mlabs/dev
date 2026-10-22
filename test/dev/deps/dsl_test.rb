@@ -340,6 +340,90 @@ class Dev::Deps::DSLTest < Minitest::Test
     :ue            | nil
   end
 
+  test "apt() declares an OS package at the suite address, with the source and flags as install instructions" do
+    When "declaring WineHQ for Linux build hosts"
+    config = Dev::Deps.define do
+      group :build, host: :linux do
+        apt "winehq-stable",
+          source: {
+            key: "https://dl.winehq.org/wine-builds/winehq.key",
+            keyring: "/etc/apt/keyrings/winehq-archive.key",
+            sources: "https://dl.winehq.org/wine-builds/ubuntu/dists/%{codename}/winehq-%{codename}.sources",
+          },
+          architectures: [:i386],
+          recommends: true
+      end
+    end
+
+    Then "the package rides :apt; the suite is the address; source, architectures and recommends materialize"
+    decl = config.declarations[0]
+    decl.name == "winehq-stable"
+    decl.integration == :apt
+    decl.revision == "suite"
+    decl.constraint == {}
+    decl.materialization == {
+      "source" => {
+        "key" => "https://dl.winehq.org/wine-builds/winehq.key",
+        "keyring" => "/etc/apt/keyrings/winehq-archive.key",
+        "sources" => "https://dl.winehq.org/wine-builds/ubuntu/dists/%{codename}/winehq-%{codename}.sources",
+      },
+      "architectures" => ["i386"],
+      "recommends" => true,
+    }
+    decl.scope.group == :build
+    decl.scope.host == :linux
+  end
+
+  test "apt() of a distro package carries nothing but the name" do
+    When "declaring xvfb"
+    config = Dev::Deps.define do
+      group :build, host: :linux do
+        apt "xvfb"
+      end
+    end
+
+    Then "no source, no extra architectures, apt's default recommends behaviour"
+    decl = config.declarations[0]
+    decl.integration == :apt
+    decl.revision == "suite"
+    decl.materialization == {}
+  end
+
+  test "apt() accepts a one-line deb: source instead of a deb822 sources: URL" do
+    When "declaring with a deb line"
+    config = Dev::Deps.define do
+      group :build, host: :linux do
+        apt "docker-ce", source: { key: "https://download.docker.com/linux/ubuntu/gpg",
+                                   deb: "deb [arch=%{arch}] https://download.docker.com/linux/ubuntu %{codename} stable" }
+      end
+    end
+
+    Then
+    config.declarations[0].materialization["source"] == {
+      "key" => "https://download.docker.com/linux/ubuntu/gpg",
+      "deb" => "deb [arch=%{arch}] https://download.docker.com/linux/ubuntu %{codename} stable",
+    }
+  end
+
+  test "apt() rejects a malformed source: #{reason}" do
+    When "declaring with #{reason}"
+    Dev::Deps.define do
+      group :build, host: :linux do
+        apt "winehq-stable", source: source
+      end
+    end
+
+    Then
+    raises ArgumentError
+
+    Where
+    reason                     | source
+    "no signing key"           | { sources: "https://example.com/x.sources" }
+    "neither sources nor deb"  | { key: "https://example.com/key" }
+    "both sources and deb"     | { key: "https://example.com/key", sources: "https://e.com/x", deb: "deb https://e.com s m" }
+    "an unknown field"         | { key: "https://example.com/key", sources: "https://e.com/x", suite: "stable" }
+  end
+
   test "env block stamps env as a first-class field, not a constraint key" do
     When "declaring a ci-scoped brew dep"
     config = Dev::Deps.define do
