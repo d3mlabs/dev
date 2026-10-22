@@ -68,18 +68,18 @@ class Dev::Deps::AccessorTest < Minitest::Test
 
   GH_ENGINE_TAG = "5.8.0-mac-editor-1"
 
-  # Lock a gh engine dep whose `~/.dev` install_dir re-roots onto dir (the
-  # injected data root), optionally publishing the version dir + marker.
+  # Lock a gh engine dep; the store places it under the injected data root
+  # by identity (gh/<owner>/<repo>/<tag>), optionally published with its marker.
   def setup_locked_gh(dir, installed: true, marker_version: GH_ENGINE_TAG)
     lockfile = Dev::Deps::Lockfile.new(dir: dir)
     lockfile.lock([
       Dev::Deps::Dependency.new(
         name: "UnrealEngineMac", integration: :gh, group: :editor,
         version: GH_ENGINE_TAG, hash: nil,
-        metadata: { "repo" => "d3mlabs/unreal-engine", "install_dir" => "~/.dev/engines/ue5-mac" },
+        metadata: { "repo" => "d3mlabs/unreal-engine" },
       ),
     ])
-    version_dir = File.join(dir, "engines", "ue5-mac", GH_ENGINE_TAG)
+    version_dir = File.join(dir, "gh", "d3mlabs", "unreal-engine", GH_ENGINE_TAG)
     if installed
       FileUtils.mkdir_p(version_dir)
       File.write(File.join(version_dir, Dev::Deps::GhIntegration::MARKER_FILE), marker_version)
@@ -94,15 +94,15 @@ class Dev::Deps::AccessorTest < Minitest::Test
 
   WWISE_SDK = "2023.1.14.8770"
 
-  # Lock a wwise dep whose `~/.dev` install_dir re-roots onto dir, optionally
-  # publishing the version dir + marker.
+  # Lock a wwise dep; the store places it under the injected data root by
+  # identity (wwise/<sdk>), optionally published with its marker.
   def setup_locked_wwise(dir, installed: true)
     lockfile = Dev::Deps::Lockfile.new(dir: dir)
     lockfile.lock([
       Dev::Deps::Dependency.new(
         name: "Wwise", integration: :wwise, group: :build,
         version: WWISE_SDK, hash: nil,
-        metadata: { "install_dir" => "~/.dev/wwise", "integration_version" => "2023.1.14.3555", "ue" => "5.6" },
+        metadata: { "integration_version" => "2023.1.14.3555", "ue" => "5.6" },
       ),
     ])
     version_dir = File.join(dir, "wwise", WWISE_SDK)
@@ -205,7 +205,7 @@ class Dev::Deps::AccessorTest < Minitest::Test
       Dev::Deps::Dependency.new(
         name: "UnrealEngine", integration: :gh, group: :build,
         version: GH_ENGINE_TAG, hash: nil,
-        metadata: { "repo" => "d3mlabs/unreal-engine", "install_dir" => "~/.dev/engines/ue5", "host" => "linux" },
+        metadata: { "repo" => "d3mlabs/unreal-engine", "host" => "linux" },
       ),
     ])
     accessor = Dev::Deps::Accessor.new(

@@ -30,6 +30,20 @@ module Dev
       MARKER_FILE = ".dev-steam-build"
       SERVER_SUBDIR = "install"
 
+      class << self
+        extend T::Sig
+
+        # A steam depot lives at `~/.dev/steam/<app>/<buildid>`: the app id
+        # the lock records is the identity, the buildid the version.
+        #
+        # @param dep [Dependency] a locked steam dependency
+        # @return [TreeKey]
+        sig { override.params(dep: Dependency).returns(TreeKey) }
+        def tree_key(dep)
+          TreeKey.new(base: "#{Integration::TREES_ROOT}/steam/#{dep.metadata.fetch("app")}", version: dep.version, marker: MARKER_FILE)
+        end
+      end
+
       # Provision all steam dependencies.
       #
       # @param dependencies [Array<Dependency>] steam deps to install
@@ -43,7 +57,7 @@ module Dev
       # @param dep [Dependency]
       sig { params(dep: Dependency).void }
       def install(dep)
-        key = tree_key(dep, marker: MARKER_FILE)
+        key = tree_key(dep)
         if (installed = store!.tree(key))
           puts ">>> #{dep.name}@#{dep.version} already installed at #{installed}"
           return

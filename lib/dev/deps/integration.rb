@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "pathname"
+require_relative "../data_root"
 require_relative "artifact_store"
 require_relative "dependency"
 require_relative "repository"
@@ -15,6 +16,9 @@ module Dev
     # handles per-dep install plus any batch artifacts (e.g. deps.cmake).
     class Integration
       extend T::Sig
+
+      # The data-root prefix every tree base starts with; the store re-roots it.
+      TREES_ROOT = Dev::DataRoot::HOME_ROOT
 
       # Aggregate of per-dep failures within one install_all call: the loop
       # attempts every dep (one bad formula must not block an unrelated
@@ -43,6 +47,33 @@ module Dev
       def initialize(repository:, store:)
         @repository = repository
         @store = store
+      end
+
+      class << self
+        extend T::Sig
+
+        # Where a tree integration's dependency lives in the store, composed
+        # from the integration's placement rule: `<data root>/<integration>/
+        # <identity>` as the base, the locked version (gh tag, steam buildid,
+        # sdk version) as the version, the integration's marker as the marker.
+        # The base is a `~/.dev`-rooted string that the store re-roots onto
+        # its own data root; the identity comes from the lock, never from the
+        # manifest, so two projects naming the same release differently share
+        # one tree and two projects naming different releases alike do not
+        # collide. Distinct locked versions coexist beside each other, so
+        # switching branches never reinstalls and concurrent jobs on different
+        # versions never collide.
+        #
+        # Tree integrations (gh, steam, wwise) override this; the rest have
+        # no tree and say so.
+        #
+        # @param dep [Dependency] a locked dependency of this integration
+        # @return [TreeKey]
+        # @raise [NotImplementedError] for an integration that installs no tree
+        sig { overridable.params(dep: Dependency).returns(TreeKey) }
+        def tree_key(dep)
+          raise NotImplementedError, "#{self} installs no tree"
+        end
       end
 
       # Install all dependencies of this integration type.
@@ -94,21 +125,13 @@ module Dev
         T.must(@store)
       end
 
-      # The tree key for a large host-installed dep (the ~30GB engine, the
-      # ~15GB server): its declared install_dir is the base, its locked
-      # version (gh tag / steam buildid) the version, the integration's marker
-      # the marker. Distinct locked versions coexist in the store instead of
-      # overwriting, so switching branches never reinstalls and concurrent jobs
-      # on different versions never collide; dev's mount resolution
-      # (BuildContainer.resolve_versioned_volumes) maps the configured volume
-      # onto the store's path for the locked version.
+      # Instance-side convenience over {.tree_key}.
       #
-      # @param dep [Dependency] a dep whose metadata carries "install_dir"
-      # @param marker [String] the integration's marker file name
+      # @param dep [Dependency]
       # @return [TreeKey]
-      sig { params(dep: Dependency, marker: String).returns(TreeKey) }
-      def tree_key(dep, marker:)
-        TreeKey.new(base: dep.metadata.fetch("install_dir"), version: dep.version, marker:)
+      sig { params(dep: Dependency).returns(TreeKey) }
+      def tree_key(dep)
+        self.class.tree_key(dep)
       end
     end
   end

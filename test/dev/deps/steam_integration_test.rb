@@ -37,12 +37,12 @@ end unless defined?(FixtureSteamIntegration)
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::SteamIntegrationTest < Minitest::Test
-  def build_dependency(install_dir, build_id: "15321746")
+  def build_dependency(build_id: "15321746")
     Dev::Deps::Dependency.new(
       name: "SatisfactoryServer", integration: :steam, group: :integration,
       version: build_id, hash: nil,
       metadata: { "app" => "1690800", "branch" => "public",
-                  "install_dir" => install_dir, "platform" => "linux" },
+                  "platform" => "linux" },
     )
   end
 
@@ -54,17 +54,29 @@ class Dev::Deps::SteamIntegrationTest < Minitest::Test
     )
   end
 
+  test "tree_key places a steam depot by identity: ~/.dev/steam/<app>/<buildid>" do
+    Given "a locked steam dep"
+    dep = build_dependency(build_id: "15321746")
+
+    When "asking where its tree lives"
+    key = Dev::Deps::SteamIntegration.tree_key(dep)
+
+    Then "the base is the app id under the steam root, the version the buildid, the marker steam's"
+    [key.base, key.version, key.marker, key.platform] ==
+      ["~/.dev/steam/1690800", "15321746", Dev::Deps::SteamIntegration::MARKER_FILE, nil]
+  end
+
   test "install_all provisions the depot into the version-keyed dir, verifies, and writes the marker" do
     Given "a steam dependency and a stubbed provisioner"
     dir = Dir.mktmpdir("dev-steam-int-test-")
-    install_dir = File.join(dir, "satisfactory-server")
-    dep = build_dependency(install_dir, build_id: "15321746")
+    install_dir = File.join(dir, "steam", "1690800")
+    dep = build_dependency(build_id: "15321746")
     integration = build_integration(dir, manifest_build: "15321746")
 
     When "installing"
     integration.install_all([dep])
 
-    Then "the depot + marker land under install_dir/<buildid>/ and no staging remains"
+    Then "the depot + marker land under the identity base/<buildid>/ and no staging remains"
     version_dir = File.join(install_dir, "15321746")
     integration.provision_count == 1
     File.read(File.join(version_dir, ".dev-steam-build")) == "15321746"
@@ -78,11 +90,11 @@ class Dev::Deps::SteamIntegrationTest < Minitest::Test
   test "install_all skips when the version dir already records the locked build" do
     Given "a version dir with a matching marker"
     dir = Dir.mktmpdir("dev-steam-int-test-")
-    install_dir = File.join(dir, "satisfactory-server")
+    install_dir = File.join(dir, "steam", "1690800")
     version_dir = File.join(install_dir, "15321746")
     FileUtils.mkdir_p(version_dir)
     File.write(File.join(version_dir, ".dev-steam-build"), "15321746")
-    dep = build_dependency(install_dir, build_id: "15321746")
+    dep = build_dependency(build_id: "15321746")
     integration = build_integration(dir, manifest_build: "15321746")
 
     When "installing again"
@@ -98,11 +110,11 @@ class Dev::Deps::SteamIntegrationTest < Minitest::Test
   test "install_all provisions a new build alongside the existing one when the locked build changes" do
     Given "an existing version dir for an older build"
     dir = Dir.mktmpdir("dev-steam-int-test-")
-    install_dir = File.join(dir, "satisfactory-server")
+    install_dir = File.join(dir, "steam", "1690800")
     old_dir = File.join(install_dir, "15000000")
     FileUtils.mkdir_p(old_dir)
     File.write(File.join(old_dir, ".dev-steam-build"), "15000000")
-    dep = build_dependency(install_dir, build_id: "15321746")
+    dep = build_dependency(build_id: "15321746")
     integration = build_integration(dir, manifest_build: "15321746")
 
     When "installing the new build"
@@ -120,8 +132,8 @@ class Dev::Deps::SteamIntegrationTest < Minitest::Test
   test "install_all raises BuildMismatchError when the installed build differs from the lock" do
     Given "a provisioner that installs a different build than locked"
     dir = Dir.mktmpdir("dev-steam-int-test-")
-    install_dir = File.join(dir, "satisfactory-server")
-    dep = build_dependency(install_dir, build_id: "15321746")
+    install_dir = File.join(dir, "steam", "1690800")
+    dep = build_dependency(build_id: "15321746")
     integration = build_integration(dir, manifest_build: "15999999")
 
     When "installing"
@@ -137,8 +149,8 @@ class Dev::Deps::SteamIntegrationTest < Minitest::Test
   test "install_all raises ProvisionError when no appmanifest is produced" do
     Given "a provisioner that writes nothing"
     dir = Dir.mktmpdir("dev-steam-int-test-")
-    install_dir = File.join(dir, "satisfactory-server")
-    dep = build_dependency(install_dir)
+    install_dir = File.join(dir, "steam", "1690800")
+    dep = build_dependency
     integration = Class.new(Dev::Deps::SteamIntegration) do
       def provision(_dep, _server_dir) = nil
     end.new(

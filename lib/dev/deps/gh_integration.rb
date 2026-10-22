@@ -54,6 +54,20 @@ module Dev
 
       MARKER_FILE = ".dev-gh-release"
 
+      class << self
+        extend T::Sig
+
+        # A gh tree lives at `~/.dev/gh/<owner>/<repo>/<tag>`: the repo slug
+        # the lock records is the identity, the tag the version.
+        #
+        # @param dep [Dependency] a locked gh dependency
+        # @return [TreeKey]
+        sig { override.params(dep: Dependency).returns(TreeKey) }
+        def tree_key(dep)
+          TreeKey.new(base: "#{Integration::TREES_ROOT}/gh/#{dep.metadata.fetch("repo")}", version: dep.version, marker: MARKER_FILE)
+        end
+      end
+
       # @param repository [Repository, nil]
       # @param store [ArtifactStore, nil]
       # @param project_root [String, Pathname, nil] repo root, used to resolve a
@@ -99,7 +113,7 @@ module Dev
       # @param dep [Dependency]
       sig { params(dep: Dependency).void }
       def install_prebuilt(dep)
-        key = tree_key(dep, marker: MARKER_FILE)
+        key = tree_key(dep)
         if (installed = store!.tree(key))
           puts ">>> #{dep.name}@#{dep.version} already installed at #{installed}"
           return
@@ -125,7 +139,7 @@ module Dev
       # @param dep [Dependency]
       sig { params(dep: Dependency).void }
       def install_from_source(dep)
-        key = tree_key(dep, marker: MARKER_FILE)
+        key = tree_key(dep)
         if (installed = store!.tree(key))
           puts ">>> #{dep.name}@#{dep.version} already installed at #{installed}"
           return

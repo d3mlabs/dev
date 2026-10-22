@@ -60,12 +60,11 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
   SDK = "2023.1.14.8770"
   INTEGRATION = "2023.1.14.3555"
 
-  def build_dependency(install_dir)
+  def build_dependency
     Dev::Deps::Dependency.new(
       name: "Wwise", integration: :wwise, group: :build,
       version: SDK, hash: nil,
       metadata: {
-        "install_dir" => install_dir,
         "integration_version" => INTEGRATION,
         "ue" => "5.6",
         "packages" => ["SDK"],
@@ -78,14 +77,25 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
     FixtureWwiseIntegration.new(repository: nil, store: Dev::Deps::LocalStore.new(data_root: dir), **opts)
   end
 
-  test "install_all fills a wwise-cli cache in staging and publishes it under install_dir/<sdk version>/" do
+  test "tree_key places the Wwise cache by identity: ~/.dev/wwise/<sdk version>" do
+    Given "a locked wwise dep"
+    dep = build_dependency
+
+    When "asking where its tree lives"
+    key = Dev::Deps::WwiseIntegration.tree_key(dep)
+
+    Then "one base for the product, the sdk version as the version, the marker wwise's"
+    [key.base, key.version, key.marker, key.platform] == ["~/.dev/wwise", SDK, Dev::Deps::WwiseIntegration::MARKER_FILE, nil]
+  end
+
+  test "install_all fills a wwise-cli cache in staging and publishes it under the identity base/<sdk version>/" do
     Given "a wwise dependency and a stubbed wwise-cli"
     dir = Dir.mktmpdir("dev-wwise-int-test-")
     install_dir = File.join(dir, "wwise")
     integration = build_integration(dir)
 
     When "installing"
-    integration.install_all([build_dependency(install_dir)])
+    integration.install_all([build_dependency])
 
     Then "the published tree is a cache dir holding both products, stamped, with no staging left"
     version_dir = File.join(install_dir, SDK)
@@ -105,7 +115,7 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
     integration = build_integration(dir)
 
     When "installing"
-    integration.install_all([build_dependency(install_dir)])
+    integration.install_all([build_dependency])
     download, fetch = integration.invocations.map { |call| call[:argv] }
     cache_dirs = integration.invocations.map { |call| call[:argv][call[:argv].index("--cache-dir") + 1] }.uniq
 
@@ -138,7 +148,7 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
     integration = build_integration(dir)
 
     When "installing again"
-    integration.install_all([build_dependency(install_dir)])
+    integration.install_all([build_dependency])
 
     Then
     integration.invocations.empty?
@@ -155,7 +165,7 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
 
     When "installing"
     error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
-      integration.install_all([build_dependency(File.join(dir, "wwise"))])
+      integration.install_all([build_dependency])
     end
 
     Then "the failure names the brew declaration that provides the CLI, and nothing was prompted for"
@@ -175,7 +185,7 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
 
     When "installing"
     error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
-      integration.install_all([build_dependency(install_dir)])
+      integration.install_all([build_dependency])
     end
 
     Then "the error is a DownloadError; no marker, no staging"
@@ -195,7 +205,7 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
 
     When "installing"
     error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
-      integration.install_all([build_dependency(install_dir)])
+      integration.install_all([build_dependency])
     end
 
     Then "the error names the integration version; nothing is published"
@@ -229,7 +239,7 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
     integration = Dev::Deps::WwiseIntegration.new(repository: nil, store: Dev::Deps::LocalStore.new(data_root: dir))
 
     When "installing"
-    integration.install_all([build_dependency(install_dir)])
+    integration.install_all([build_dependency])
     calls = File.read(record)
 
     Then "the tree is published, both calls saw the ENV credentials, and stdin read EOF"
@@ -252,7 +262,7 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
 
     When "installing"
     error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
-      integration.install_all([build_dependency(install_dir)])
+      integration.install_all([build_dependency])
     end
 
     Then "the missing entry is named"
