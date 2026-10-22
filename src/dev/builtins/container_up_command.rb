@@ -111,7 +111,7 @@ module Dev
         image_tag = ensure_image!(cfg, project)
         return unless cfg.persist
 
-        name = client.ensure_service!(image_tag, project_root: project.root, volumes: volumes(cfg, project))
+        name = client.ensure_service!(image_tag, project_root: project.root, volumes: cfg.volumes)
         @out.puts "dev: build container up: #{name}"
         provision_inside!(name, cfg)
       end
@@ -134,7 +134,7 @@ module Dev
         end
 
         image_tag = ensure_image!(cfg, project)
-        client.with_one_shot_container(image_tag, project_root: project.root, volumes: volumes(cfg, project)) do |name|
+        client.with_one_shot_container(image_tag, project_root: project.root, volumes: cfg.volumes) do |name|
           @out.puts "dev: cold container up: #{name}"
           provision_inside!(name, cfg)
         end
@@ -186,14 +186,6 @@ module Dev
         )
         @out.puts "dev: image ready: #{image_tag}"
         image_tag
-      end
-
-      # @param cfg [BuildContainerConfig]
-      # @param project [ProjectContext]
-      # @return [Array<String>] the declared volumes, versions resolved
-      sig { params(cfg: BuildContainerConfig, project: ProjectContext).returns(T::Array[String]) }
-      def volumes(cfg, project)
-        BuildContainer.resolve_versioned_volumes(cfg.volumes, project_root: project.root)
       end
 
       # What a running container needs before a command runs in it: a user

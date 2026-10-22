@@ -24,10 +24,9 @@ module Dev
   #       content_globs:
   #         - "Mods/*/Source/*/*.Build.cs"
   #
-  # volumes whose host path is a locked dependency's install_dir are resolved
-  # to the store's tree for the locked version (BuildContainer
-  # .resolve_versioned_volumes) — that is how a container mounts the exact
-  # engine or Wwise cache the lockfile names.
+  # volumes mount exactly as written. The container owns its own data root
+  # (ADR-0008), so no volume is resolved against the host's locked trees;
+  # what a container needs from the store, its own `dev up` installs.
   #
   # build_args maps docker --build-arg names to Dev::Credentials
   # "namespace/key" references, resolved only when the image is built.

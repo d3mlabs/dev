@@ -11,8 +11,6 @@ require "dev/build_watcher"
 require "dev/container_context"
 require "dev/container_engine"
 require "dev/data_root"
-require "dev/deps/local_store"
-require "dev/deps/lockfile"
 require "dev/engine_resources_check"
 
 module Dev
@@ -194,109 +192,6 @@ module Dev
         "#{config.image_ref}:#{content_tag(project_root:, extra_globs: globs, structure_globs:)}"
       end
 
-      # Named build-contexts derived from build-deps.lock: every build-group
-      # dependency with an install_dir becomes "<dep-name>=<expanded host path>".
-      # The context name is lowercased because Docker rejects uppercase build-context
-      # names ("invalid reference format"); the Dockerfile references the lowercased
-      # name (e.g. `--mount=from=unrealengine`). Returns {} when the lockfile is
-      # absent or has no such deps.
-      #
-      # @param project_root [Pathname]
-      # @param store [Dev::Deps::ArtifactStore] where the locked trees are published
-      # @return [Hash{String => String}] context name => absolute host path
-      sig do
-        params(project_root: Pathname, store: Dev::Deps::ArtifactStore).returns(T::Hash[String, String])
-      end
-      def build_contexts_from_lockfile(project_root, store: Dev::Deps::LocalStore.new)
-        contexts = {}
-        locked_deps(project_root).each do |dep|
-          # Env-scoped deps are not whole-image build inputs; group == :build
-          # limits us to build-deps.lock entries.
-          next unless dep.group == :build
-          next if dep.metadata&.key?("env")
-
-          install_dir = dep.metadata&.fetch("install_dir", nil)
-          next unless install_dir
-
-          # The store's path for the locked version, so the build context
-          # tracks exactly what the integration published (see
-          # resolve_versioned_volumes); a version-less entry is its bare base.
-          contexts[dep.name.downcase] =
-            if dep.version
-              store.tree_path(Dev::Deps::TreeKey.new(base: install_dir, version: dep.version.to_s)).to_s
-            else
-              Dev::DataRoot.expand(install_dir)
-            end
-        end
-        contexts
-      end
-
-      # Rewrite each "host:container[:opts]" volume whose host path is a locked
-      # dependency's install_dir to the store's path for the locked version (the
-      # immutable tree the integration published). This is how a command mounts
-      # the exact locked version while the store keeps every version side by
-      # side. Volumes that don't match a locked install_dir (e.g. the shared
-      # cache mount) pass through unchanged.
-      #
-      # @param volumes      [Array<String>] configured "host:container[:opts]" specs
-      # @param project_root [Pathname]
-      # @param store        [Dev::Deps::ArtifactStore] where the locked trees are published
-      # @return [Array<String>] specs with matching host paths version-resolved
-      sig do
-        params(
-          volumes: T::Array[String],
-          project_root: Pathname,
-          store: Dev::Deps::ArtifactStore,
-        ).returns(T::Array[String])
-      end
-      def resolve_versioned_volumes(volumes, project_root:, store: Dev::Deps::LocalStore.new)
-        keys = locked_tree_keys(project_root)
-        return volumes if keys.empty?
-
-        volumes.map do |spec|
-          host, container = spec.split(":", 2)
-          key = keys[Dev::DataRoot.expand(T.must(host))]
-          key ? "#{store.tree_path(key)}:#{container}" : spec
-        end
-      end
-
-      # Map every locked dependency install_dir (expanded) to its locked version,
-      # scanning both lockfiles (including env-nested build deps). Only entries with
-      # BOTH an install_dir and a version contribute.
-      #
-      # @param project_root [Pathname]
-      # @return [Hash{String => String}] expanded install_dir => version
-      sig { params(project_root: Pathname).returns(T::Hash[String, String]) }
-      def install_dir_versions(project_root)
-        locked_tree_keys(project_root).transform_values(&:version)
-      end
-
-      # The store key of every locked dependency that has both an install_dir
-      # and a version, by its expanded install_dir — the spelling a configured
-      # volume's host path normalizes to for matching.
-      #
-      # @param project_root [Pathname]
-      # @return [Hash{String => Dev::Deps::TreeKey}] expanded install_dir => key
-      sig { params(project_root: Pathname).returns(T::Hash[String, Dev::Deps::TreeKey]) }
-      def locked_tree_keys(project_root)
-        locked_deps(project_root).each_with_object({}) do |dep, acc|
-          install_dir = dep.metadata&.fetch("install_dir", nil)
-          next unless install_dir && dep.version
-
-          acc[Dev::DataRoot.expand(install_dir)] = Dev::Deps::TreeKey.new(base: install_dir, version: dep.version.to_s)
-        end
-      end
-
-      # All locked dependencies from both lockfiles, parsed by Lockfile so
-      # format knowledge (including the legacy flat format) lives in one place.
-      #
-      # @param project_root [Pathname]
-      # @return [Array<Dev::Deps::Dependency>]
-      sig { params(project_root: Pathname).returns(T::Array[Dev::Deps::Dependency]) }
-      def locked_deps(project_root)
-        Dev::Deps::Lockfile.new(dir: project_root).read
-      end
-
       # Container name for image_tag + workspace: "dev-<image>-<workspace>-<tag>",
       # registry dropped and any char Docker forbids in a name (notably ':') replaced
       # with '-'. E.g. "reg/snappy-linux:content-abc" in /work/snappy ->
@@ -390,11 +285,6 @@ module Dev
     # called on a cache miss so cache hits never trigger credential resolution or
     # prompts.
     #
-    # On a cache miss, every `group: build` dependency in build-deps.lock that
-    # declares an install_dir is passed as a BuildKit named build-context (keyed
-    # by dependency name), so the Dockerfile can bind-mount large host artifacts
-    # (e.g. the engine) without baking them into the image.
-    #
     # Publishing (`publish: true`) is the *provisioning* guarantee: after the
     # image is resolved by any path — built OR found locally — it is published to
     # the shared registry so other machines can pull it. The local-hit case is
@@ -464,8 +354,7 @@ module Dev
       if prewarm
         build_and_prewarm!(tag, config:, project_root:, build_args:, secrets:, prewarm:)
       else
-        build_contexts = self.class.build_contexts_from_lockfile(project_root)
-        build!(tag, project_root:, build_args:, build_contexts:, secrets:)
+        build!(tag, project_root:, build_args:, secrets:)
       end
 
       # A publisher only gets here after a registry miss, so the fresh build is
@@ -504,11 +393,11 @@ module Dev
     end
     def build_and_prewarm!(tag, config:, project_root:, build_args:, secrets:, prewarm:)
       base_tag = "#{tag}-base"
-      # The base is engine-free and secret-free: no build-contexts, no BuildKit
-      # secrets. Those are supplied to the prewarm run, not the Dockerfile.
-      build!(base_tag, project_root:, build_args:, build_contexts: {}, secrets: {})
-      volumes = self.class.resolve_versioned_volumes(config.volumes, project_root:)
-      prewarm_commit!(base_tag, tag, volumes:, prewarm:, secrets:)
+      # The base is engine-free and secret-free: no BuildKit secrets. Those are
+      # supplied to the prewarm run, not the Dockerfile. Volumes mount as
+      # configured: nothing of the host's data root is resolved into them.
+      build!(base_tag, project_root:, build_args:, secrets: {})
+      prewarm_commit!(base_tag, tag, volumes: config.volumes, prewarm:, secrets:)
     ensure
       # The committed image references the base's layers, so dropping the base tag
       # frees the name without removing shared data. T.must: Sorbet sees base_tag
@@ -733,8 +622,7 @@ module Dev
     #
     # @param base_tag  [String]
     # @param final_tag [String]
-    # @param volumes   [Array<String>] resolved "host:container" build-dep mounts
-    #   (already version-resolved by the caller via resolve_versioned_volumes)
+    # @param volumes   [Array<String>] "host:container" build-dep mounts, as configured
     # @param prewarm   [String] shell command run via `sh -c`
     # @param secrets   [Hash{String => String}] secret id => value
     sig do
@@ -955,32 +843,29 @@ module Dev
       @engine.run(["pull", image_tag], err: File::NULL)
     end
 
-    # Build the image with BuildKit. build_contexts are passed as
-    # `--build-context name=path` (host artifacts bind-mounted at build time,
-    # never stored in the image). secrets are passed as `--secret id=NAME,env=NAME`
-    # with the value exported into docker's environment for that invocation, so the
-    # value is mounted only for the requesting RUN and never persists in a layer.
+    # Build the image with BuildKit. secrets are passed as `--secret
+    # id=NAME,env=NAME` with the value exported into docker's environment for
+    # that invocation, so the value is mounted only for the requesting RUN and
+    # never persists in a layer. Nothing from the data root enters the build:
+    # a lock is not an image input (ADR-0008).
     #
     # @param image_tag      [String]
     # @param project_root   [Pathname]
     # @param build_args     [Hash{String => String}]
-    # @param build_contexts [Hash{String => String}] context name => host path
     # @param secrets        [Hash{String => String}] secret id => value
     sig do
       params(
         image_tag: String,
         project_root: Pathname,
         build_args: T::Hash[String, String],
-        build_contexts: T::Hash[String, String],
         secrets: T::Hash[String, String],
       ).void
     end
-    def build!(image_tag, project_root:, build_args: {}, build_contexts: {}, secrets: {})
+    def build!(image_tag, project_root:, build_args: {}, secrets: {})
       arg_flags = build_args.flat_map { |name, value| ["--build-arg", "#{name}=#{value}"] }
-      context_flags = build_contexts.flat_map { |name, path| ["--build-context", "#{name}=#{path}"] }
       secret_flags = secrets.keys.flat_map { |id| ["--secret", "id=#{id},env=#{id}"] }
 
-      # BuildKit is required for --build-context and --secret; enable it explicitly
+      # BuildKit is required for --secret; enable it explicitly
       # so the build behaves the same regardless of the host Docker default. Secret
       # values travel via the environment (referenced by env=), never on argv.
       env = { "DOCKER_BUILDKIT" => "1" }.merge(secrets)
@@ -991,7 +876,7 @@ module Dev
       # step with timestamps and streams RUN output, giving CI logs a heartbeat.
       args = [
         "build", "--progress=plain", "-t", image_tag,
-        *arg_flags, *context_flags, *secret_flags,
+        *arg_flags, *secret_flags,
         project_root.to_s,
       ]
       success = @engine.run(args, env: env)
