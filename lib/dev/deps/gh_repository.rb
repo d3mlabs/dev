@@ -17,7 +17,9 @@ module Dev
     # Two paginated list calls cover everything: the releases list carries
     # each release's assets (names, sizes, API-reported SHA256 digests) and
     # the tags list carries each tag's commit SHA — so enumeration is
-    # facts-complete with no per-version calls. Resolution is metadata only,
+    # facts-complete with no per-version calls (an empty releases list costs
+    # one more: a /releases/latest cross-check, see #confirmed_releases).
+    # Resolution is metadata only,
     # no artifact download; digests are recorded so GhIntegration can verify
     # downloads against the lockfile. Asset selection against the declared
     # glob happens at install, where the glob arrives via the pin's
@@ -36,9 +38,21 @@ module Dev
       class AuthenticationError < StandardError; end
       class RepoAccessError < StandardError; end
       class ApiError < StandardError; end
+      class InconsistentReleasesError < StandardError; end
 
       # GitHub's maximum page size; fewer results than this ends pagination.
       PER_PAGE = 100
+
+      # How many times an empty releases list that /releases/latest contradicts
+      # is re-fetched before find refuses. The releases list endpoint has been
+      # observed answering `200 []` for repos with releases (same ETag as the
+      # full body) on a sizeable fraction of calls; /releases/latest and the
+      # tags list have not. Trusting the empty list would mint pins without
+      # their release facts — no assets, nothing to verify a download against.
+      RELEASES_RETRIES = 4
+
+      # Seconds between re-fetches, per attempt.
+      RELEASES_RETRY_BACKOFF = [1, 2, 4, 8].freeze
 
       # Report a GitHub dependency's universe: every tag and release.
       #
@@ -53,6 +67,8 @@ module Dev
       # @raise [AuthenticationError] if gh is not authenticated
       # @raise [RepoAccessError] if the repo is not visible to the account
       # @raise [PackageNotFoundError] if the repo has no tags or releases
+      # @raise [InconsistentReleasesError] if the releases list keeps answering
+      #   empty while /releases/latest reports a release
       sig { override.params(id: PackageId).returns(Package) }
       def find(id)
         repo_slug = T.must(id.source)
@@ -61,6 +77,8 @@ module Dev
         if releases.empty? && tags.empty?
           raise PackageNotFoundError, "#{repo_slug} publishes no tags or releases"
         end
+
+        releases = confirmed_releases(repo_slug) if releases.empty?
 
         commit_by_tag = tags.to_h { |tag| [tag["name"], tag.dig("commit", "sha")] }
         # Drafts have no tag yet; they are not part of the published universe.
@@ -134,6 +152,64 @@ module Dev
           page += 1
         end
         results
+      end
+
+      # Settle an empty releases list: tag-only repo, or a lying replica?
+      #
+      # /releases/latest answers 404 for a repo with no (non-prerelease)
+      # releases and 200 otherwise, and has not been seen to flake. A 404
+      # confirms the empty list. A 200 contradicts it: the list is re-fetched
+      # with backoff until it agrees, and if it never does, find refuses —
+      # a universe missing its release facts must not become a pin.
+      #
+      # Known gap: a repo whose only releases are prereleases also gets a
+      # 404 from /releases/latest, so a flake there goes undetected.
+      #
+      # @param repo_slug [String] "owner/repo"
+      # @return [Array<Hash>] the confirmed (possibly empty) releases list
+      # @raise [InconsistentReleasesError] if the list stays empty against
+      #   /releases/latest after RELEASES_RETRIES re-fetches
+      sig { params(repo_slug: String).returns(T::Array[T::Hash[String, T.untyped]]) }
+      def confirmed_releases(repo_slug)
+        latest = latest_release(repo_slug)
+        return [] unless latest
+
+        RELEASES_RETRIES.times do |attempt|
+          pause(T.must(RELEASES_RETRY_BACKOFF[attempt]))
+          releases = list(repo_slug, "releases")
+          return releases unless releases.empty?
+        end
+
+        raise InconsistentReleasesError, <<~MSG.strip
+          GitHub listed no releases for #{repo_slug} on #{1 + RELEASES_RETRIES} attempts, \
+          yet reports #{latest["tag_name"].inspect} as its latest release. \
+          Refusing to resolve from a universe missing its release facts; retry later.
+        MSG
+      end
+
+      # The repo's latest non-prerelease release, or nil when it has none.
+      #
+      # @param repo_slug [String] "owner/repo"
+      # @return [Hash, nil] the release object
+      # @raise [AuthenticationError] if gh is not authenticated
+      # @raise [ApiError] on any failure other than 404
+      sig { params(repo_slug: String).returns(T.nilable(T::Hash[String, T.untyped])) }
+      def latest_release(repo_slug)
+        out, err, status = run_gh_api("repos/#{repo_slug}/releases/latest")
+        return JSON.parse(out) if status.success?
+
+        raise_auth_error!(err)
+        return nil if not_found?(err)
+
+        raise ApiError, "gh api failed fetching the latest release for #{repo_slug}: #{err.strip}"
+      end
+
+      # Wait between re-fetches. Isolated so tests can stub the clock.
+      #
+      # @param seconds [Integer]
+      sig { params(seconds: Integer).void }
+      def pause(seconds)
+        Kernel.sleep(seconds)
       end
 
       # A 404 on a list endpoint means the repo itself is invisible to the
