@@ -40,6 +40,8 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
   end
 
   # Stub the two list endpoints the repository enumerates (single page each).
+  # An empty releases list is cross-checked against /releases/latest, so a
+  # tag-only universe also answers that with the 404 a release-less repo gives.
   def stub_universe(repo, slug: SLUG, releases: [], tags: [])
     repo.stubs(:run_gh_api)
         .with("repos/#{slug}/releases?per_page=100&page=1")
@@ -47,6 +49,19 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
     repo.stubs(:run_gh_api)
         .with("repos/#{slug}/tags?per_page=100&page=1")
         .returns([JSON.generate(tags), "", stub(success?: true)])
+    stub_no_latest_release(repo, slug: slug) if releases.empty?
+  end
+
+  def stub_no_latest_release(repo, slug: SLUG)
+    repo.stubs(:run_gh_api)
+        .with("repos/#{slug}/releases/latest")
+        .returns(["", "gh: Not Found (HTTP 404)", stub(success?: false)])
+  end
+
+  def stub_latest_release(repo, tag, slug: SLUG)
+    repo.stubs(:run_gh_api)
+        .with("repos/#{slug}/releases/latest")
+        .returns([JSON.generate({ "tag_name" => tag }), "", stub(success?: true)])
   end
 
   test "find enumerates tags and releases into one facts-complete universe" do
@@ -119,12 +134,106 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
     repo.stubs(:run_gh_api)
         .with("repos/#{SLUG}/tags?per_page=100&page=2")
         .returns([JSON.generate(page_two), "", stub(success?: true)])
+    stub_no_latest_release(repo)
 
     When "finding"
     package = repo.find(prebuilt_id)
 
     Then
     package.versions.size == 101
+  end
+
+  test "find retries an empty releases list that /releases/latest contradicts" do
+    Given "a releases list that answers [] once (a GitHub replica flake) while /releases/latest names a release"
+    repo = Dev::Deps::GhRepository.new
+    repo.stubs(:pause)
+    repo.stubs(:run_gh_api)
+        .with("repos/#{SLUG}/releases?per_page=100&page=1")
+        .returns([JSON.generate([]), "", stub(success?: true)])
+        .then.returns([JSON.generate([RELEASE_JSON]), "", stub(success?: true)])
+    repo.stubs(:run_gh_api)
+        .with("repos/#{SLUG}/tags?per_page=100&page=1")
+        .returns([JSON.generate([tag_json("5.6.1-css-83", "css83sha")]), "", stub(success?: true)])
+    stub_latest_release(repo, "5.6.1-css-83")
+
+    When "finding"
+    package = repo.find(prebuilt_id)
+
+    Then "the universe carries the release's facts, not the flake's tag-only view"
+    package.version("5.6.1-css-83").metadata["assets"].map { |a| a["sha256"] } == ["aaaa1111", "bbbb2222", "cccc3333"]
+  end
+
+  test "find accepts an empty releases list that /releases/latest confirms — a tag-only repo" do
+    Given "no releases and /releases/latest answering 404"
+    repo = Dev::Deps::GhRepository.new
+    repo.expects(:pause).never
+    repo.expects(:run_gh_api)
+        .with("repos/#{SLUG}/releases?per_page=100&page=1")
+        .once
+        .returns([JSON.generate([]), "", stub(success?: true)])
+    repo.stubs(:run_gh_api)
+        .with("repos/#{SLUG}/tags?per_page=100&page=1")
+        .returns([JSON.generate([tag_json("v1", "sha")]), "", stub(success?: true)])
+    stub_no_latest_release(repo)
+
+    When "finding"
+    package = repo.find(prebuilt_id)
+
+    Then "one list call, no retry: the tag is the whole universe"
+    package.versions.map(&:version) == ["v1"]
+    !package.version("v1").metadata.key?("assets")
+  end
+
+  test "find raises InconsistentReleasesError when the releases list stays empty against /releases/latest" do
+    Given "a releases list that answers [] on every attempt while /releases/latest names a release"
+    repo = Dev::Deps::GhRepository.new
+    repo.expects(:pause).times(Dev::Deps::GhRepository::RELEASES_RETRIES)
+    repo.expects(:run_gh_api)
+        .with("repos/#{SLUG}/releases?per_page=100&page=1")
+        .times(1 + Dev::Deps::GhRepository::RELEASES_RETRIES)
+        .returns([JSON.generate([]), "", stub(success?: true)])
+    repo.stubs(:run_gh_api)
+        .with("repos/#{SLUG}/tags?per_page=100&page=1")
+        .returns([JSON.generate([tag_json("v1", "sha")]), "", stub(success?: true)])
+    stub_latest_release(repo, "v1")
+
+    When "finding"
+    repo.find(prebuilt_id)
+
+    Then "it refuses rather than lock a universe missing its release facts"
+    raises Dev::Deps::GhRepository::InconsistentReleasesError
+  end
+
+  test "find raises ApiError when the /releases/latest cross-check itself fails" do
+    Given "an empty releases list and a server error from /releases/latest"
+    repo = Dev::Deps::GhRepository.new
+    repo.stubs(:run_gh_api)
+        .with("repos/#{SLUG}/releases?per_page=100&page=1")
+        .returns([JSON.generate([]), "", stub(success?: true)])
+    repo.stubs(:run_gh_api)
+        .with("repos/#{SLUG}/tags?per_page=100&page=1")
+        .returns([JSON.generate([tag_json("v1", "sha")]), "", stub(success?: true)])
+    repo.stubs(:run_gh_api)
+        .with("repos/#{SLUG}/releases/latest")
+        .returns(["", "gh: Internal Server Error (HTTP 500)", stub(success?: false)])
+
+    When "finding"
+    repo.find(prebuilt_id)
+
+    Then "an unconfirmed empty list is not believed"
+    raises Dev::Deps::GhRepository::ApiError
+  end
+
+  test "pause sleeps for the backoff — the clock seam the retry tests stub" do
+    Given "a repository and a stubbed clock"
+    repo = Dev::Deps::GhRepository.new
+    Kernel.expects(:sleep).with(2)
+
+    When "pausing"
+    repo.send(:pause, 2)
+
+    Then
+    true
   end
 
   test "find claims an empty Resolved declaration set — self-contained by contract" do
