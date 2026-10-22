@@ -6,6 +6,7 @@ require "pathname"
 require "stringio"
 require_relative "local_store"
 require_relative "lockfile"
+require_relative "tree_integrations"
 require_relative "../container_engine"
 
 module Dev
@@ -40,7 +41,7 @@ module Dev
 
       DEFAULT_KEEP = 2
 
-      # @param lockfile [Lockfile] source of locked deps (install_dir + version)
+      # @param lockfile [Lockfile] source of locked deps (tree identity + version)
       # @param engine   [Dev::ContainerEngine] the invoking user's engine, so
       #   the in-use probes and image pruning see that user's daemon
       # @param store    [ArtifactStore] the store whose trees are reclaimed
@@ -60,9 +61,9 @@ module Dev
         @out = out
       end
 
-      # Reclaim stale install-dir versions and docker content tags.
+      # Reclaim stale tree versions and docker content tags.
       #
-      # @param keep      [Integer] versions to retain per install_dir (locked and
+      # @param keep      [Integer] versions to retain per tree base (locked and
       #   in-use versions are always retained, even beyond this count)
       # @param image_ref [String, nil] "registry/image" to prune content tags for
       # @param live_tag  [String, nil] the current content tag to never prune
@@ -73,7 +74,7 @@ module Dev
       end
       def gc(keep: DEFAULT_KEEP, image_ref: nil, live_tag: nil, tool_caches: false)
         in_use = running_mount_sources
-        gc_install_dirs(keep: keep, in_use: in_use)
+        gc_trees(keep: keep, in_use: in_use)
         gc_docker(image_ref: image_ref, live_tag: live_tag) if image_ref
         gc_tool_caches if tool_caches
       end
@@ -98,25 +99,28 @@ module Dev
       # @param in_use [Set<String>] absolute host paths mounted by live containers
       # @return [void]
       sig { params(keep: Integer, in_use: T::Set[String]).void }
-      def gc_install_dirs(keep:, in_use:)
+      def gc_trees(keep:, in_use:)
         locked_versions_by_base.each do |base, locked|
           @store.remove_orphan_staging(base).each { |staging| @out.puts ">>> gc: removing orphan staging #{staging}" }
           prune_versions(base, locked: locked, keep: keep, in_use: in_use)
         end
       end
 
-      # @return [Hash{String => Set<String>}] configured install_dir => locked versions
+      # The lock's tree deps grouped by where their integration places them:
+      # one base per identity, however many names the lock gives it.
+      #
+      # @return [Hash{String => Set<String>}] tree base => locked versions
       sig { returns(T::Hash[String, T::Set[String]]) }
       def locked_versions_by_base
         @lockfile.read.each_with_object({}) do |dep, acc|
-          dir = dep.metadata && dep.metadata["install_dir"]
-          next unless dir && dep.version
+          integration = TREE_INTEGRATIONS[dep.integration]
+          next unless integration && dep.version
 
-          (acc[dir] ||= Set.new) << dep.version
+          (acc[integration.tree_key(dep).base] ||= Set.new) << dep.version
         end
       end
 
-      # @param base   [String] configured install_dir
+      # @param base   [String] tree base
       # @param locked [Set<String>]
       # @param keep   [Integer]
       # @param in_use [Set<String>]
@@ -137,7 +141,7 @@ module Dev
         end
       end
 
-      # @param base [String] configured install_dir
+      # @param base [String] tree base
       # @param version [String]
       # @return [Pathname]
       sig { params(base: String, version: String).returns(Pathname) }
