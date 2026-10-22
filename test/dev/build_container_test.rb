@@ -644,7 +644,7 @@ class BuildContainerTest < Minitest::Test
     1 * bc.local_image?(tag) >> false
     1 * bc.registry_has?(tag) >> false
     1 * bc.pull(tag) >> false
-    1 * bc.build!(tag, project_root: Pathname(dir), build_args: {}, build_contexts: {}, secrets: {}) >> true
+    1 * bc.build!(tag, project_root: Pathname(dir), build_args: {}, secrets: {}) >> true
     1 * bc.push!(tag) >> true
 
     Cleanup
@@ -893,213 +893,22 @@ class BuildContainerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "build_contexts_from_lockfile returns build-group install_dirs" do
-    Given "a build-deps.lock with an engine install_dir and a context-less dep, under a scratch data root"
-    dir = Dir.mktmpdir("build-container-test-")
-    root = Dir.mktmpdir("bc-data-root-")
-    original = ENV["DEV_DATA_ROOT"]
-    ENV["DEV_DATA_ROOT"] = root
-    File.write(File.join(dir, "build-deps.lock"), <<~LOCK)
-      UnrealEngine:
-        integration: gh
-        group: build
-        install_dir: "~/.dev/engines/unreal-engine-css"
-      wwise-cli:
-        integration: brew
-        group: build
-    LOCK
-
-    When "computing build contexts"
-    contexts = Dev::BuildContainer.build_contexts_from_lockfile(Pathname(dir))
-
-    Then "the context name is lowercased (Docker rejects uppercase)"
-    contexts == { "unrealengine" => File.join(root, "engines/unreal-engine-css") }
-
-    Cleanup
-    ENV["DEV_DATA_ROOT"] = original
-    FileUtils.rm_rf(dir)
-    FileUtils.rm_rf(root)
-  end
-
-  test "build_contexts_from_lockfile reads integration-nested lockfiles" do
-    Given "a build-deps.lock in the nested format (integration -> name -> attrs), under a scratch data root"
-    dir = Dir.mktmpdir("build-container-test-")
-    root = Dir.mktmpdir("bc-data-root-")
-    original = ENV["DEV_DATA_ROOT"]
-    ENV["DEV_DATA_ROOT"] = root
-    File.write(File.join(dir, "build-deps.lock"), <<~LOCK)
-      gh:
-        UnrealEngine:
-          group: build
-          version: "5.6.1-css-83"
-          install_dir: "~/.dev/engines/unreal-engine-css"
-    LOCK
-
-    When "computing build contexts"
-    contexts = Dev::BuildContainer.build_contexts_from_lockfile(Pathname(dir))
-
-    Then
-    contexts == { "unrealengine" => File.join(root, "engines/unreal-engine-css", "5.6.1-css-83") }
-
-    Cleanup
-    ENV["DEV_DATA_ROOT"] = original
-    FileUtils.rm_rf(dir)
-    FileUtils.rm_rf(root)
-  end
-
-  test "build_contexts_from_lockfile points at the version-keyed subdir when a version is locked" do
-    Given "a build-deps.lock whose engine dep declares a version, under a scratch data root"
-    dir = Dir.mktmpdir("build-container-test-")
-    root = Dir.mktmpdir("bc-data-root-")
-    original = ENV["DEV_DATA_ROOT"]
-    ENV["DEV_DATA_ROOT"] = root
-    File.write(File.join(dir, "build-deps.lock"), <<~LOCK)
-      UnrealEngine:
-        integration: gh
-        group: build
-        version: "5.6.1-css-83"
-        install_dir: "~/.dev/engines/unreal-engine-css"
-    LOCK
-
-    When "computing build contexts"
-    contexts = Dev::BuildContainer.build_contexts_from_lockfile(Pathname(dir))
-
-    Then "the host path includes the locked version"
-    contexts == { "unrealengine" => File.join(root, "engines/unreal-engine-css", "5.6.1-css-83") }
-
-    Cleanup
-    ENV["DEV_DATA_ROOT"] = original
-    FileUtils.rm_rf(dir)
-    FileUtils.rm_rf(root)
-  end
-
-  test "resolve_versioned_volumes rewrites a locked install_dir volume to its versioned subdir" do
-    Given "lockfiles pinning an engine (build) and a server (integration) install_dir"
-    dir = Dir.mktmpdir("build-container-test-")
-    File.write(File.join(dir, "build-deps.lock"), <<~LOCK)
-      UnrealEngine:
-        integration: gh
-        group: build
-        version: "5.6.1-css-83"
-        install_dir: "/opt/engines/ue"
-    LOCK
-    File.write(File.join(dir, "deps.lock"), <<~LOCK)
-      SatisfactoryServer:
-        integration: steam
-        group: integration
-        version: "15321746"
-        install_dir: "/opt/satisfactory-server"
-    LOCK
-
-    When "resolving a mix of locked and unlocked volumes"
-    resolved = Dev::BuildContainer.resolve_versioned_volumes(
-      ["/opt/engines/ue:/ue", "/opt/satisfactory-server:/server", "~/.dev/cache:/cache:ro"],
-      project_root: Pathname(dir),
-    )
-
-    Then "locked volumes gain their version subdir; the cache volume (and its :ro) is untouched"
-    resolved == [
-      "/opt/engines/ue/5.6.1-css-83:/ue",
-      "/opt/satisfactory-server/15321746:/server",
-      "~/.dev/cache:/cache:ro",
-    ]
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  test "resolve_versioned_volumes is identity when no lockfiles are present" do
-    Given "a project with no lockfiles"
-    dir = Dir.mktmpdir("build-container-test-")
-
-    When "resolving volumes"
-    resolved = Dev::BuildContainer.resolve_versioned_volumes(["/opt/engines/ue:/ue"], project_root: Pathname(dir))
-
-    Then
-    resolved == ["/opt/engines/ue:/ue"]
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  test "install_dir_versions collects env-nested deps from nested-format lockfiles" do
-    Given "a nested-format build-deps.lock with an env-scoped install_dir"
-    dir = Dir.mktmpdir("build-container-test-")
-    File.write(File.join(dir, "build-deps.lock"), <<~LOCK)
-      env:
-        ci:
-          gh:
-            UnrealEngine:
-              group: build
-              version: "5.6.1-css-83"
-              install_dir: "/opt/engines/ue"
-    LOCK
-
-    When "collecting install_dir versions"
-    versions = Dev::BuildContainer.install_dir_versions(Pathname(dir))
-
-    Then
-    versions == { "/opt/engines/ue" => "5.6.1-css-83" }
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  test "install_dir_versions collects env-nested build deps that declare a version" do
-    Given "a build-deps.lock with an env-scoped install_dir"
-    dir = Dir.mktmpdir("build-container-test-")
-    File.write(File.join(dir, "build-deps.lock"), <<~LOCK)
-      env:
-        ci:
-          UnrealEngine:
-            integration: gh
-            group: build
-            version: "5.6.1-css-83"
-            install_dir: "/opt/engines/ue"
-    LOCK
-
-    When "collecting install_dir versions"
-    versions = Dev::BuildContainer.install_dir_versions(Pathname(dir))
-
-    Then
-    versions == { "/opt/engines/ue" => "5.6.1-css-83" }
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  test "build_contexts_from_lockfile is empty without a lockfile" do
-    Given "a project with no build-deps.lock"
-    dir = Dir.mktmpdir("build-container-test-")
-
-    When "computing build contexts"
-    contexts = Dev::BuildContainer.build_contexts_from_lockfile(Pathname(dir))
-
-    Then
-    contexts == {}
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  test "build! passes build contexts and secrets with BuildKit enabled" do
+  test "build! passes secrets with BuildKit enabled and nothing from the data root" do
     Given "a project root and a recording engine"
     dir = Dir.mktmpdir("build-container-test-")
     engine = FakeContainerEngine.new
 
-    When "building with contexts and secrets"
+    When "building with secrets"
     build_container(engine: engine).build!(
       "img:tag",
       project_root: Pathname(dir),
-      build_contexts: { "UnrealEngine" => "/engines/ue" },
       secrets: { "WWISE_TOKEN" => "tok-123" },
     )
 
-    Then "BuildKit env, build-context flag, and secret flag are present"
+    Then "BuildKit env and the secret flag are present; no build context names a host tree"
     engine.run_envs.last["DOCKER_BUILDKIT"] == "1"
     engine.run_envs.last["WWISE_TOKEN"] == "tok-123"
-    engine.runs.last.include?("--build-context")
-    engine.runs.last.include?("UnrealEngine=/engines/ue")
+    !engine.runs.last.include?("--build-context")
     engine.runs.last.include?("--secret")
     engine.runs.last.include?("id=WWISE_TOKEN,env=WWISE_TOKEN")
     engine.runs.last.last == dir
@@ -1124,28 +933,20 @@ class BuildContainerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "ensure_image! resolves secrets lazily and passes contexts on cache miss" do
-    Given "a project whose image must be built, with an engine build dep"
+  test "ensure_image! resolves secrets lazily on cache miss" do
+    Given "a project whose image must be built"
     dir = Dir.mktmpdir("build-container-test-")
     File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
-    File.write(File.join(dir, "build-deps.lock"), <<~LOCK)
-      UnrealEngine:
-        integration: gh
-        group: build
-        install_dir: "/engines/ue"
-    LOCK
     config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
     secret_calls = 0
     received_secrets = nil
-    received_contexts = nil
     bc = build_container
 
     When "ensuring the image with a secrets provider"
     bc.stubs(:local_image?).returns(false)
     bc.stubs(:pull).returns(false)
-    bc.stubs(:build!).with do |_tag, secrets:, build_contexts:, **_|
+    bc.stubs(:build!).with do |_tag, secrets:, **_|
       received_secrets = secrets
-      received_contexts = build_contexts
       true
     end
     bc.stubs(:push!).returns(true)
@@ -1161,7 +962,6 @@ class BuildContainerTest < Minitest::Test
     Then
     secret_calls == 1
     received_secrets == { "WWISE_TOKEN" => "tok" }
-    received_contexts == { "unrealengine" => "/engines/ue" }
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -1211,8 +1011,7 @@ class BuildContainerTest < Minitest::Test
     result == tag
     1 * bc.local_image?(tag) >> false
     1 * bc.pull(tag) >> false
-    1 * bc.build!("#{tag}-base", project_root: Pathname(dir), build_args: {},
-      build_contexts: {}, secrets: {}) >> true
+    1 * bc.build!("#{tag}-base", project_root: Pathname(dir), build_args: {}, secrets: {}) >> true
     1 * bc.prewarm_commit!("#{tag}-base", tag, volumes: ["/engines/ue:/ue"],
       prewarm: "bash /work/bin/prewarm.sh", secrets: {}) >> true
     1 * bc.remove_image("#{tag}-base") >> true

@@ -12,7 +12,7 @@ module Dev
   # explicit `DEV_DATA_ROOT` env → the shared root when it exists → `~/.dev`.
   #
   # `expand` is the seam every dev-managed path takes: a configured path under
-  # the literal `~/.dev` prefix (dev.yml install_dirs, volume specs) re-roots
+  # the literal `~/.dev` prefix (the store's tree bases, volume specs) re-roots
   # onto the resolved data root; anything else expands normally. Mutable
   # per-user state (`~/.dev/state`) deliberately does not route through this —
   # it stays per-home.

@@ -11,7 +11,7 @@ module Dev
     #
     # Fills a wwise-cli cache directory on the host — the SDK package plus the
     # Unreal integration package the declaration names — and publishes it as
-    # one version-keyed tree under the declared install_dir, so a build
+    # one version-keyed tree under ~/.dev/wwise/, so a build
     # container can mount the locked version read-only at wwise-cli's cache
     # path and run `wwise-cli integrate-ue --offline` with no credential in
     # the image build. Mirrors SteamIntegration: a tree in the store, never a
@@ -20,8 +20,8 @@ module Dev
     #
     # The tree is laid out exactly as wwise-cli lays out its cache
     # (<cache-dir>/<product>/<version>/info.json), because wwise-cli is what
-    # reads it later: install_dir/<sdk version>/wwise/<sdk version>/ and
-    # install_dir/<sdk version>/unrealintegration/<integration version>/.
+    # reads it later: <base>/<sdk version>/wwise/<sdk version>/ and
+    # <base>/<sdk version>/unrealintegration/<integration version>/.
     #
     # Audiokinetic's downloads need an account login. The email and password
     # come from Dev::Credentials (WWISE_EMAIL / WWISE_PASSWORD, then the
@@ -40,6 +40,21 @@ module Dev
       class DownloadError < StandardError; end
 
       MARKER_FILE = ".dev-wwise"
+
+      class << self
+        extend T::Sig
+
+        # The Wwise cache lives at `~/.dev/wwise/<sdk version>`: one product,
+        # so the integration is the identity and the sdk version the version.
+        #
+        # @param dep [Dependency] a locked wwise dependency
+        # @return [TreeKey]
+        sig { override.params(dep: Dependency).returns(TreeKey) }
+        def tree_key(dep)
+          TreeKey.new(base: "#{Integration::TREES_ROOT}/wwise", version: dep.version, marker: MARKER_FILE)
+        end
+      end
+
       CREDENTIAL_NAMESPACE = "wwise"
       SDK_PRODUCT = "wwise"
       INTEGRATION_PRODUCT = "unrealintegration"
@@ -62,7 +77,7 @@ module Dev
       # @raise [DownloadError] when a download fails or leaves no cache entry
       sig { params(dep: Dependency).void }
       def install(dep)
-        key = tree_key(dep, marker: MARKER_FILE)
+        key = tree_key(dep)
         if (installed = store!.tree(key))
           puts ">>> #{dep.name}@#{dep.version} already installed at #{installed}"
           return

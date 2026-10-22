@@ -256,9 +256,9 @@ module Dev
         .returns(T::Array[String])
     end
     def container_command(config, image_tag, shell_command)
-      # Resolve configured volumes onto the version-keyed install dirs the
-      # integrations publish, so the command mounts the exact locked version.
-      volumes = BuildContainer.resolve_versioned_volumes(config.volumes, project_root: @project_root)
+      # Volumes mount as configured. Nothing of the host's data root is
+      # resolved into them: the container owns its own (ADR-0008).
+      volumes = config.volumes
 
       if config.persist
         container = container_client.ensure_service!(

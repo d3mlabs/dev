@@ -9,6 +9,7 @@ require_relative "ficsit_integration"
 require_relative "xcode_integration"
 require_relative "gh_integration"
 require_relative "wwise_integration"
+require_relative "steam_integration"
 
 module Dev
   module Deps
@@ -33,7 +34,7 @@ module Dev
       class NotInstalledError < RuntimeError; end
 
       USAGE = "usage: dev deps path ficsit <mod> <platform> | dev deps path xcode | " \
-        "dev deps path gh <name> | dev deps path wwise <name>"
+        "dev deps path gh <name> | dev deps path steam <name> | dev deps path wwise <name>"
 
       # @param lockfile [Lockfile]
       # @param store [ArtifactStore] where published trees and cached blobs live
@@ -84,30 +85,31 @@ module Dev
         case integration
         when "ficsit" then ficsit_path(name, platform)
         when "xcode" then xcode_developer_dir
-        when "gh" then published_tree(:gh, name, marker: GhIntegration::MARKER_FILE)
-        when "wwise" then published_tree(:wwise, name, marker: WwiseIntegration::MARKER_FILE)
+        when "gh" then published_tree(:gh, name, placed_by: GhIntegration)
+        when "steam" then published_tree(:steam, name, placed_by: SteamIntegration)
+        when "wwise" then published_tree(:wwise, name, placed_by: WwiseIntegration)
         else raise UsageError, USAGE
         end
       end
 
       private
 
-      # The published tree of a locked install_dir dep — the immutable
-      # directory its integration publishes to the store under the dep's
-      # install_dir (a gh release's tree, a wwise cache). Resolved from the
+      # The published tree of a locked tree dep — the immutable directory its
+      # integration publishes to the store at the place its identity names
+      # (a gh release's tree, a steam depot, a wwise cache). Resolved from the
       # lock so a checkout always gets the version its lockfile names, not
       # whatever this machine installed last.
       #
       # @param integration [Symbol]
       # @param name [String, nil]
-      # @param marker [String] the integration's marker file name
+      # @param placed_by [Class<Integration>] the integration whose placement rule names the tree
       # @return [Pathname]
-      sig { params(integration: Symbol, name: T.nilable(String), marker: String).returns(Pathname) }
-      def published_tree(integration, name, marker:)
+      sig { params(integration: Symbol, name: T.nilable(String), placed_by: T.class_of(Integration)).returns(Pathname) }
+      def published_tree(integration, name, placed_by:)
         raise UsageError, USAGE unless name
 
         dep = find_dep(integration, name)
-        key = TreeKey.new(base: dep.metadata.fetch("install_dir"), version: dep.version, marker:)
+        key = placed_by.tree_key(dep)
         tree = @store.tree(key)
         return tree if tree
 

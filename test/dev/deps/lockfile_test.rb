@@ -51,7 +51,6 @@ class Dev::Deps::LockfileTest < Minitest::Test
     dir = Dir.mktmpdir("dev-lockfile-test-")
     lockfile = Dev::Deps::Lockfile.new(dir: dir)
     metadata = {
-      "install_dir" => "~/.dev/wwise",
       "integration_version" => "2023.1.14.3555",
       "ue" => "5.6",
       "packages" => ["SDK"],

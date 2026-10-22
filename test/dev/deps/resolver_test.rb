@@ -427,7 +427,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
     declarations = [
       declaration(name: "engine", integration: :gh, group: :editor,
         constraint: { "tag" => "5.8.0" },
-        materialization: { "install_dir" => "~/.dev/engines/ue", "asset_pattern" => "*.tar.zst.*" }),
+        materialization: { "asset_pattern" => "*.tar.zst.*", "build" => "make install" }),
     ]
 
     When "resolving"
@@ -435,8 +435,8 @@ class Dev::Deps::ResolverTest < Minitest::Test
 
     Then "version facts and install instructions meet in the pin, nothing lost"
     result[0].metadata["commit"] == "abc"
-    result[0].metadata["install_dir"] == "~/.dev/engines/ue"
     result[0].metadata["asset_pattern"] == "*.tar.zst.*"
+    result[0].metadata["build"] == "make install"
   end
 
   test "a scheme-less integration resolves an empty ask over the universe as reported" do
@@ -543,17 +543,17 @@ class Dev::Deps::ResolverTest < Minitest::Test
   end
 
   test "raises ConflictingDeclarationError when one name carries two materializations" do
-    Given "the same dep declared into two install dirs"
+    Given "the same dep declared with two asset globs"
     repo = StubRepository.new(universes: { "engine" => [version("5.8.0")] })
     declarations = [
-      declaration(name: "engine", integration: :gh, group: :app, materialization: { "install_dir" => "~/a" }),
-      declaration(name: "engine", integration: :gh, group: :test, materialization: { "install_dir" => "~/b" }),
+      declaration(name: "engine", integration: :gh, group: :app, materialization: { "asset_pattern" => "*-a.tar" }),
+      declaration(name: "engine", integration: :gh, group: :test, materialization: { "asset_pattern" => "*-b.tar" }),
     ]
 
     When "resolving"
     resolver_for(:gh, repo).resolve(declarations)
 
-    Then "one row's install dir must not win silently"
+    Then "one row's materialization must not win silently"
     raises Dev::Deps::Resolver::ConflictingDeclarationError
   end
 

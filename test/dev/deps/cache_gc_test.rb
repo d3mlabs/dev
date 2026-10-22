@@ -39,24 +39,34 @@ class Dev::Deps::CacheGcTest < Minitest::Test
     end
   end
 
-  def lock_engine(lock_dir, base, version:)
+  ENGINE_REPO = "d3mlabs/unreal-engine"
+
+  # Lock a gh engine; the store places it at <data root>/gh/<repo>/<version>.
+  def lock_engine(lock_dir, version:, name: "UnrealEngine")
     lockfile = Dev::Deps::Lockfile.new(dir: lock_dir)
     lockfile.lock([
       Dev::Deps::Dependency.new(
-        name: "UnrealEngine", integration: :gh, group: :build,
-        version: version, hash: nil, metadata: { "install_dir" => base },
+        name: name, integration: :gh, group: :build,
+        version: version, hash: nil, metadata: { "repo" => ENGINE_REPO },
       ),
     ])
     lockfile
   end
 
+  # The base the store derives for ENGINE_REPO under data root dir.
+  def engine_base(dir) = File.join(dir, "gh", "d3mlabs", "unreal-engine")
+
+  def build_gc(dir, lockfile, **opts)
+    FixtureCacheGc.new(lockfile: lockfile, store: Dev::Deps::LocalStore.new(data_root: dir), **opts)
+  end
+
   test "gc keeps the locked version plus the newest others up to keep, removing the rest" do
     Given "four versions where the locked one is not the newest"
     dir = Dir.mktmpdir("dev-cache-gc-test-")
-    base = File.join(dir, "engines", "unreal-engine-css")
+    base = engine_base(dir)
     seed_versions(base, "a", "b", "c", "d") # d newest
-    lockfile = lock_engine(dir, base, version: "c")
-    gc = FixtureCacheGc.new(lockfile: lockfile, out: StringIO.new)
+    lockfile = lock_engine(dir, version: "c")
+    gc = build_gc(dir, lockfile, out: StringIO.new)
 
     When "collecting with keep: 2"
     gc.gc(keep: 2)
@@ -68,13 +78,37 @@ class Dev::Deps::CacheGcTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "gc sees one base for one tree however the lock names it" do
+    Given "two locked names for the same repo at two versions, a third version on disk"
+    dir = Dir.mktmpdir("dev-cache-gc-test-")
+    base = engine_base(dir)
+    seed_versions(base, "a", "b", "c") # c newest
+    lockfile = Dev::Deps::Lockfile.new(dir: dir)
+    lockfile.lock([
+      Dev::Deps::Dependency.new(name: "UnrealEngine", integration: :gh, group: :build,
+        version: "a", hash: nil, metadata: { "repo" => ENGINE_REPO }),
+      Dev::Deps::Dependency.new(name: "UnrealEngineToo", integration: :gh, group: :build,
+        version: "b", hash: nil, metadata: { "repo" => ENGINE_REPO }),
+    ])
+    gc = build_gc(dir, lockfile, out: StringIO.new)
+
+    When "collecting with keep: 1"
+    gc.gc(keep: 1)
+
+    Then "both locked versions survive under the one base; only the unlocked newest goes"
+    Dir.children(base).sort == ["a", "b"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "gc never removes a version mounted by a running container, even if unlocked and old" do
     Given "an old unlocked version that a live container has mounted"
     dir = Dir.mktmpdir("dev-cache-gc-test-")
-    base = File.join(dir, "engines", "unreal-engine-css")
+    base = engine_base(dir)
     seed_versions(base, "a", "b", "c") # c newest
-    lockfile = lock_engine(dir, base, version: "c")
-    gc = FixtureCacheGc.new(lockfile: lockfile, out: StringIO.new, in_use: [File.join(base, "a")])
+    lockfile = lock_engine(dir, version: "c")
+    gc = build_gc(dir, lockfile, out: StringIO.new, in_use: [File.join(base, "a")])
 
     When "collecting with a tight keep: 1"
     gc.gc(keep: 1)
@@ -92,9 +126,9 @@ class Dev::Deps::CacheGcTest < Minitest::Test
     store = Dev::Deps::LocalStore.new(data_root: dir)
     (store.tool_cache("bundler") / "gems").mkpath
     (store.tool_cache("brew") / "bottle.tar.gz").write("bottle")
-    base = File.join(dir, "engines", "unreal-engine-css")
+    base = engine_base(dir)
     seed_versions(base, "c")
-    lockfile = lock_engine(dir, base, version: "c")
+    lockfile = lock_engine(dir, version: "c")
     out = StringIO.new
     gc = FixtureCacheGc.new(lockfile: lockfile, store: store, out: out)
 
@@ -116,11 +150,11 @@ class Dev::Deps::CacheGcTest < Minitest::Test
   test "gc removes orphan staging dirs left by a killed install" do
     Given "a published version and an orphan staging dir"
     dir = Dir.mktmpdir("dev-cache-gc-test-")
-    base = File.join(dir, "engines", "unreal-engine-css")
+    base = engine_base(dir)
     seed_versions(base, "c")
     FileUtils.mkdir_p(File.join(base, ".staging-999-deadbeef"))
-    lockfile = lock_engine(dir, base, version: "c")
-    gc = FixtureCacheGc.new(lockfile: lockfile, out: StringIO.new)
+    lockfile = lock_engine(dir, version: "c")
+    gc = build_gc(dir, lockfile, out: StringIO.new)
 
     When "collecting"
     gc.gc(keep: 2)
@@ -135,10 +169,10 @@ class Dev::Deps::CacheGcTest < Minitest::Test
   test "gc keeps the locked version even when it is the oldest and keep is exceeded" do
     Given "the locked version is the oldest of several"
     dir = Dir.mktmpdir("dev-cache-gc-test-")
-    base = File.join(dir, "engines", "unreal-engine-css")
+    base = engine_base(dir)
     seed_versions(base, "old", "mid", "new") # locked = old (oldest)
-    lockfile = lock_engine(dir, base, version: "old")
-    gc = FixtureCacheGc.new(lockfile: lockfile, out: StringIO.new)
+    lockfile = lock_engine(dir, version: "old")
+    gc = build_gc(dir, lockfile, out: StringIO.new)
 
     When "collecting with keep: 2"
     gc.gc(keep: 2)

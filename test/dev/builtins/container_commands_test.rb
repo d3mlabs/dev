@@ -74,9 +74,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     client.expects(:ensure_image!).with do |cfg, **kwargs|
       cfg == config && kwargs[:project_root] == ROOT && kwargs[:push] == false && kwargs[:publish] == false
     end.once.in_sequence(order).returns(TAG)
-    Dev::BuildContainer.stubs(:resolve_versioned_volumes).with(["~/.dev/engines/ue:/ue"], project_root: ROOT)
-      .returns(["~/.dev/engines/ue/5.4:/ue"])
-    client.expects(:ensure_service!).with(TAG, project_root: ROOT, volumes: ["~/.dev/engines/ue/5.4:/ue"])
+    client.expects(:ensure_service!).with(TAG, project_root: ROOT, volumes: ["~/.dev/engines/ue:/ue"])
       .once.in_sequence(order).returns("dev-myapp-linux-abc-content-abc123")
     user_aligner = typed_mock(Dev::ContainerUserAligner)
     user_aligner.expects(:align!).with("dev-myapp-linux-abc-content-abc123").once.in_sequence(order).returns(:aligned)
@@ -172,9 +170,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     client = client()
     client.expects(:ensure_image!).once.in_sequence(order).returns(TAG)
     client.expects(:ensure_service!).never
-    Dev::BuildContainer.stubs(:resolve_versioned_volumes).with(["~/.dev/engines/ue:/ue"], project_root: ROOT)
-      .returns(["~/.dev/engines/ue/5.4:/ue"])
-    client.expects(:with_one_shot_container).with(TAG, project_root: ROOT, volumes: ["~/.dev/engines/ue/5.4:/ue"])
+    client.expects(:with_one_shot_container).with(TAG, project_root: ROOT, volumes: ["~/.dev/engines/ue:/ue"])
       .once.in_sequence(order).yields("dev-myapp-cold-1234")
     user_aligner = typed_mock(Dev::ContainerUserAligner)
     user_aligner.expects(:align!).with("dev-myapp-cold-1234").once.in_sequence(order).returns(:aligned)

@@ -324,7 +324,7 @@ module Dev
       # Reject sets where one package is declared with disagreeing asks —
       # constraint, source, revision, or materialization. A dep declared in several
       # groups resolves once, so agreement is the precondition for that single
-      # resolution being right for everyone; disagreeing install dirs would
+      # resolution being right for everyone; disagreeing asset globs would
       # otherwise let one row's materialization win silently. Grouping is per
       # (integration, name): the same name under two integrations is two
       # packages, free to carry different asks. (Platform, group, host, and

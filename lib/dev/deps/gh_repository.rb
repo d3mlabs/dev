@@ -29,8 +29,7 @@ module Dev
     #   gh "UnrealEngine",
     #      github: "d3mlabs/unreal-engine",
     #      tag: "5.8.0-wine-7",
-    #      assets: "UnrealEngine-Wine-Editor-Linux.tar.zst.*",
-    #      install_dir: "~/.dev/engines/ue5"
+    #      assets: "UnrealEngine-Wine-Editor-Linux.tar.zst.*"
     class GhRepository < Repository
       extend T::Sig
 

@@ -94,7 +94,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     parts
   end
 
-  def build_dependency(parts, install_dir, tag: "5.6.1-css-83", sha256_overrides: {},
+  def build_dependency(parts, tag: "5.6.1-css-83", sha256_overrides: {},
                        asset_pattern: "*.tar.zst.*")
     assets = parts.map do |part|
       name = part.basename.to_s
@@ -111,7 +111,6 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
       metadata: {
         "repo" => "satisfactorymodding/UnrealEngine",
         "asset_pattern" => asset_pattern,
-        "install_dir" => install_dir,
         "assets" => assets,
       },
     )
@@ -125,24 +124,48 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     )
   end
 
+  test "tree_key places a gh tree by identity: ~/.dev/gh/<owner>/<repo>/<tag>" do
+    Given "a locked gh dep"
+    dep = build_dependency([], tag: "5.8.0-wine-8")
+
+    When "asking where its tree lives"
+    key = Dev::Deps::GhIntegration.tree_key(dep)
+
+    Then "the base is the source slug under the gh root, the version the tag, the marker gh's"
+    [key.base, key.version, key.marker, key.platform] ==
+      ["~/.dev/gh/satisfactorymodding/UnrealEngine", "5.8.0-wine-8", Dev::Deps::GhIntegration::MARKER_FILE, nil]
+  end
+
+  test "tree_key is the same tree for two projects naming one release differently" do
+    Given "two declarations of the same repo and tag under different names"
+    a = build_dependency([], tag: "toolchain-2").with(name: "MsvcWineToolchain")
+    b = build_dependency([], tag: "toolchain-2").with(name: "Toolchain")
+
+    When "placing both"
+    keys = [a, b].map { |dep| Dev::Deps::GhIntegration.tree_key(dep) }
+
+    Then "one place: the name is the project's alias, the identity is the repo"
+    keys.map { |key| [key.base, key.version, key.marker] }.uniq.size == 1
+  end
+
   test "install_all downloads, extracts into the version-keyed dir, and writes the marker" do
     Given "a split zstd tarball fixture and a gh dependency"
     dir = Dir.mktmpdir("dev-gh-int-test-")
     parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
-    install_dir = File.join(dir, "engines", "unreal-engine-css")
-    dep = build_dependency(parts, install_dir)
+    tree_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine")
+    dep = build_dependency(parts)
     integration = build_integration(parts, dir)
 
     When "installing"
     integration.install_all([dep])
 
-    Then "content + marker land under install_dir/<tag>/ and no staging remains"
-    version_dir = File.join(install_dir, "5.6.1-css-83")
+    Then "content + marker land under the identity base/<tag>/ and no staging remains"
+    version_dir = File.join(tree_dir, "5.6.1-css-83")
     File.read(File.join(version_dir, "Engine", "engine.txt")) == "engine payload"
     File.read(File.join(version_dir, "README.md")) == "readme payload"
     File.read(File.join(version_dir, ".dev-gh-release")) == "5.6.1-css-83"
-    !File.exist?(File.join(install_dir, "current"))
-    Dir.glob(File.join(install_dir, ".staging-*")).empty?
+    !File.exist?(File.join(tree_dir, "current"))
+    Dir.glob(File.join(tree_dir, ".staging-*")).empty?
     integration.download_count == 1
 
     Cleanup
@@ -153,11 +176,11 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     Given "a version dir with a matching marker"
     dir = Dir.mktmpdir("dev-gh-int-test-")
     parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
-    install_dir = File.join(dir, "engines", "unreal-engine-css")
-    version_dir = File.join(install_dir, "5.6.1-css-83")
+    tree_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine")
+    version_dir = File.join(tree_dir, "5.6.1-css-83")
     FileUtils.mkdir_p(version_dir)
     File.write(File.join(version_dir, ".dev-gh-release"), "5.6.1-css-83")
-    dep = build_dependency(parts, install_dir)
+    dep = build_dependency(parts)
     integration = build_integration(parts, dir)
 
     When "installing again"
@@ -175,12 +198,12 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
           "the human-owned shared engine tree, plans#26)"
     dir = Dir.mktmpdir("dev-gh-int-test-")
     parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
-    install_dir = File.join(dir, "engines", "unreal-engine-css")
-    version_dir = File.join(install_dir, "5.6.1-css-83")
+    tree_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine")
+    version_dir = File.join(tree_dir, "5.6.1-css-83")
     FileUtils.mkdir_p(version_dir)
     File.write(File.join(version_dir, ".dev-gh-release"), "5.6.1-css-83")
-    FileUtils.chmod(0o555, install_dir)
-    dep = build_dependency(parts, install_dir)
+    FileUtils.chmod(0o555, tree_dir)
+    dep = build_dependency(parts)
     integration = build_integration(parts, dir)
 
     When "installing again"
@@ -188,11 +211,11 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
 
     Then "the marker was recognized and no write was attempted (the retired current-pointer " \
          "rewrite crashed dev deps install here with EACCES at the plans#36 ceremony)"
-    !File.exist?(File.join(install_dir, "current"))
+    !File.exist?(File.join(tree_dir, "current"))
     integration.download_count == 0
 
     Cleanup
-    FileUtils.chmod(0o755, install_dir)
+    FileUtils.chmod(0o755, tree_dir)
     FileUtils.rm_rf(dir)
   end
 
@@ -200,12 +223,12 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     Given "an existing version dir for an older tag"
     dir = Dir.mktmpdir("dev-gh-int-test-")
     parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
-    install_dir = File.join(dir, "engines", "unreal-engine-css")
-    old_dir = File.join(install_dir, "5.3.2-css-68")
+    tree_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine")
+    old_dir = File.join(tree_dir, "5.3.2-css-68")
     FileUtils.mkdir_p(old_dir)
     File.write(File.join(old_dir, ".dev-gh-release"), "5.3.2-css-68")
     File.write(File.join(old_dir, "old.txt"), "old engine")
-    dep = build_dependency(parts, install_dir, tag: "5.6.1-css-83")
+    dep = build_dependency(parts, tag: "5.6.1-css-83")
     integration = build_integration(parts, dir)
 
     When "installing the new tag"
@@ -213,7 +236,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
 
     Then "the new version is published while the old version coexists untouched"
     integration.download_count == 1
-    File.read(File.join(install_dir, "5.6.1-css-83", ".dev-gh-release")) == "5.6.1-css-83"
+    File.read(File.join(tree_dir, "5.6.1-css-83", ".dev-gh-release")) == "5.6.1-css-83"
     File.read(File.join(old_dir, "old.txt")) == "old engine"
 
     Cleanup
@@ -224,9 +247,9 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     Given "a locked digest that does not match the downloaded bytes"
     dir = Dir.mktmpdir("dev-gh-int-test-")
     parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
-    install_dir = File.join(dir, "engines", "unreal-engine-css")
+    tree_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine")
     corrupted = { parts.first.basename.to_s => "0" * 64 }
-    dep = build_dependency(parts, install_dir, sha256_overrides: corrupted)
+    dep = build_dependency(parts, sha256_overrides: corrupted)
     integration = build_integration(parts, dir)
 
     When "installing tampered assets"
@@ -237,8 +260,8 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     Then "no version dir is published and the staging dir is cleaned up"
     error.failures[0][1].is_a?(Dev::Deps::GhIntegration::IntegrityError)
     error.message.include?(parts.first.basename.to_s)
-    !File.exist?(File.join(install_dir, "5.6.1-css-83"))
-    Dir.glob(File.join(install_dir, ".staging-*")).empty?
+    !File.exist?(File.join(tree_dir, "5.6.1-css-83"))
+    Dir.glob(File.join(tree_dir, ".staging-*")).empty?
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -249,8 +272,8 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     dir = Dir.mktmpdir("dev-gh-int-test-")
     zip_path = Pathname(File.join(dir, "engine.zip"))
     zip_path.binwrite("not actually a zip")
-    install_dir = File.join(dir, "engines", "unreal-engine-css")
-    dep = build_dependency([zip_path], install_dir, asset_pattern: "*.zip")
+    tree_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine")
+    dep = build_dependency([zip_path], asset_pattern: "*.zip")
     integration = build_integration([zip_path], dir)
 
     When "installing the unsupported archive"
@@ -269,8 +292,8 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     Given "a locked asset list the declared glob does not cover"
     dir = Dir.mktmpdir("dev-gh-int-test-")
     parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
-    install_dir = File.join(dir, "engines", "unreal-engine-css")
-    dep = build_dependency(parts, install_dir, asset_pattern: "*.7z.*")
+    tree_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine")
+    dep = build_dependency(parts, asset_pattern: "*.7z.*")
     integration = build_integration(parts, dir)
 
     When "installing with a glob that matches nothing"
@@ -304,13 +327,12 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     tarball
   end
 
-  def source_dep(install_dir, build:, tag: "5.6.1-release")
+  def source_dep(build:, tag: "5.6.1-release")
     Dev::Deps::Dependency.new(
       name: "UnrealEngine", integration: :gh, group: :game,
       version: tag, hash: nil,
       metadata: {
         "repo" => "EpicGames/UnrealEngine",
-        "install_dir" => install_dir,
         "build" => build,
         "commit" => "abc123",
       },
@@ -338,20 +360,20 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
       cp "$DEV_SOURCE_DIR/hello.txt" "$DEV_INSTALL_DIR/built.txt"
       echo "$DEV_VERSION" > "$DEV_INSTALL_DIR/version.txt"
     SH
-    install_dir = File.join(dir, "engines", "ue5")
-    dep = source_dep(install_dir, build: "bin/build.sh")
+    tree_dir = File.join(dir, "gh", "EpicGames", "UnrealEngine")
+    dep = source_dep(build: "bin/build.sh")
     integration = build_source_integration(tarball, project_root, dir)
 
     When "installing"
     integration.install_all([dep])
 
-    Then "the build output lands under install_dir/<tag>/ with the marker, no staging remains"
-    version_dir = File.join(install_dir, "5.6.1-release")
+    Then "the build output lands under the identity base/<tag>/ with the marker, no staging remains"
+    version_dir = File.join(tree_dir, "5.6.1-release")
     File.read(File.join(version_dir, "built.txt")) == "engine source"
     File.read(File.join(version_dir, "version.txt")).strip == "5.6.1-release"
     File.read(File.join(version_dir, ".dev-gh-release")) == "5.6.1-release"
-    !File.exist?(File.join(install_dir, "current"))
-    Dir.glob(File.join(install_dir, ".staging-*")).empty?
+    !File.exist?(File.join(tree_dir, "current"))
+    Dir.glob(File.join(tree_dir, ".staging-*")).empty?
     integration.download_count == 1
 
     Cleanup
@@ -362,18 +384,18 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     Given "a source tarball and a header-only (build: none) dependency"
     dir = Dir.mktmpdir("dev-gh-src-test-")
     tarball = build_source_tarball(dir, files: { "include/lib.h" => "#pragma once" })
-    install_dir = File.join(dir, "libs", "headeronly")
-    dep = source_dep(install_dir, build: "none", tag: "v1.0")
+    tree_dir = File.join(dir, "gh", "EpicGames", "UnrealEngine")
+    dep = source_dep(build: "none", tag: "v1.0")
     integration = build_source_integration(tarball, File.join(dir, "project"), dir)
 
     When "installing"
     integration.install_all([dep])
 
     Then "the source tree itself becomes the version dir, marker included"
-    version_dir = File.join(install_dir, "v1.0")
+    version_dir = File.join(tree_dir, "v1.0")
     File.read(File.join(version_dir, "include", "lib.h")) == "#pragma once"
     File.read(File.join(version_dir, ".dev-gh-release")) == "v1.0"
-    Dir.glob(File.join(install_dir, ".staging-*")).empty?
+    Dir.glob(File.join(tree_dir, ".staging-*")).empty?
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -383,11 +405,11 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     Given "a version dir with a matching marker"
     dir = Dir.mktmpdir("dev-gh-src-test-")
     tarball = build_source_tarball(dir, files: { "hello.txt" => "x" })
-    install_dir = File.join(dir, "engines", "ue5")
-    version_dir = File.join(install_dir, "5.6.1-release")
+    tree_dir = File.join(dir, "gh", "EpicGames", "UnrealEngine")
+    version_dir = File.join(tree_dir, "5.6.1-release")
     FileUtils.mkdir_p(version_dir)
     File.write(File.join(version_dir, ".dev-gh-release"), "5.6.1-release")
-    dep = source_dep(install_dir, build: "bin/build.sh")
+    dep = source_dep(build: "bin/build.sh")
     integration = build_source_integration(tarball, File.join(dir, "project"), dir)
 
     When "installing again"
@@ -404,8 +426,8 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     Given "a build recipe that exits non-zero"
     dir = Dir.mktmpdir("dev-gh-src-test-")
     tarball = build_source_tarball(dir, files: { "hello.txt" => "x" })
-    install_dir = File.join(dir, "engines", "ue5")
-    dep = source_dep(install_dir, build: "exit 7")
+    tree_dir = File.join(dir, "gh", "EpicGames", "UnrealEngine")
+    dep = source_dep(build: "exit 7")
     integration = build_source_integration(tarball, File.join(dir, "project"), dir)
 
     When "installing"
@@ -416,8 +438,8 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     Then "no version dir is published and staging is cleaned up"
     error.failures[0][1].is_a?(Dev::Deps::GhIntegration::BuildError)
     error.message.include?("UnrealEngine")
-    !File.exist?(File.join(install_dir, "5.6.1-release"))
-    Dir.glob(File.join(install_dir, ".staging-*")).empty?
+    !File.exist?(File.join(tree_dir, "5.6.1-release"))
+    Dir.glob(File.join(tree_dir, ".staging-*")).empty?
 
     Cleanup
     FileUtils.rm_rf(dir)

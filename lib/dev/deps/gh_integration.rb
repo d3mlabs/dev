@@ -11,8 +11,9 @@ module Dev
   module Deps
     # Lifecycle handler for GitHub dependencies (gh integration).
     #
-    # Materializes each dep into an immutable version-keyed subdir of its declared
-    # install_dir (install_dir/<tag>/, see Integration's version-keyed layout), so
+    # Materializes each dep into an immutable version-keyed subdir of the store's
+    # tree for its repo (~/.dev/gh/<owner>/<repo>/<tag>/, see Integration's
+    # version-keyed layout), so
     # distinct locked tags coexist, branch switches never reinstall, and concurrent
     # jobs never overwrite a directory another is mounting. Two shapes:
     #
@@ -38,7 +39,7 @@ module Dev
     # second copy as a cached archive would double disk usage for no benefit.
     # The store's published tree plus its marker file is the cache.
     #
-    # Nothing else is written under install_dir: consumers locate the version
+    # Nothing else is written under the tree base: consumers locate the version
     # dir through `dev deps path gh <name>` (Accessor), so an install is a pure
     # read once the marker matches — a read-only shared tree (the agent identity
     # on the human-owned engine tree, plans#26) needs no write to stay usable.
@@ -53,6 +54,20 @@ module Dev
       class NoMatchingAssetsError < StandardError; end
 
       MARKER_FILE = ".dev-gh-release"
+
+      class << self
+        extend T::Sig
+
+        # A gh tree lives at `~/.dev/gh/<owner>/<repo>/<tag>`: the repo slug
+        # the lock records is the identity, the tag the version.
+        #
+        # @param dep [Dependency] a locked gh dependency
+        # @return [TreeKey]
+        sig { override.params(dep: Dependency).returns(TreeKey) }
+        def tree_key(dep)
+          TreeKey.new(base: "#{Integration::TREES_ROOT}/gh/#{dep.metadata.fetch("repo")}", version: dep.version, marker: MARKER_FILE)
+        end
+      end
 
       # @param repository [Repository, nil]
       # @param store [ArtifactStore, nil]
@@ -99,7 +114,7 @@ module Dev
       # @param dep [Dependency]
       sig { params(dep: Dependency).void }
       def install_prebuilt(dep)
-        key = tree_key(dep, marker: MARKER_FILE)
+        key = tree_key(dep)
         if (installed = store!.tree(key))
           puts ">>> #{dep.name}@#{dep.version} already installed at #{installed}"
           return
@@ -125,7 +140,7 @@ module Dev
       # @param dep [Dependency]
       sig { params(dep: Dependency).void }
       def install_from_source(dep)
-        key = tree_key(dep, marker: MARKER_FILE)
+        key = tree_key(dep)
         if (installed = store!.tree(key))
           puts ">>> #{dep.name}@#{dep.version} already installed at #{installed}"
           return

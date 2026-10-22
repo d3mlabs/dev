@@ -222,8 +222,7 @@ class Dev::Deps::DSLTest < Minitest::Test
         gh "UnrealEngineMac",
           github: "d3mlabs/unreal-engine",
           tag: "5.8.0-mac-editor-1",
-          assets: "UnrealEngine-Editor-Mac.tar.zst.*",
-          install_dir: "~/.dev/engines/ue5-mac"
+          assets: "UnrealEngine-Editor-Mac.tar.zst.*"
         xcode "26.1.1"
       end
     end
@@ -242,7 +241,6 @@ class Dev::Deps::DSLTest < Minitest::Test
           github: "d3mlabs/unreal-engine",
           tag: "5.8.0-wine-7",
           assets: "UnrealEngine-Wine-Editor-Linux.tar.zst.*",
-          install_dir: "~/.dev/engines/ue5",
           host: :linux
       end
     end
@@ -286,7 +284,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     When "declaring the Wwise SDK with its UE integration"
     config = Dev::Deps.define do
       group :build do
-        wwise "Wwise", sdk: "2023.1.14.8770", integration: "2023.1.14.3555", ue: "5.6", install_dir: "~/.dev/wwise"
+        wwise "Wwise", sdk: "2023.1.14.8770", integration: "2023.1.14.3555", ue: "5.6"
       end
     end
 
@@ -297,7 +295,6 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl.revision == "2023.1.14.8770"
     decl.constraint == {}
     decl.materialization == {
-      "install_dir" => "~/.dev/wwise",
       "integration_version" => "2023.1.14.3555",
       "ue" => "5.6",
       "packages" => ["SDK"],
@@ -310,7 +307,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     When "declaring a wider SDK selection"
     config = Dev::Deps.define do
       group :build do
-        wwise "Wwise", sdk: "2023.1.14.8770", integration: "2023.1.14.3555", ue: "5.6", install_dir: "~/.dev/wwise",
+        wwise "Wwise", sdk: "2023.1.14.8770", integration: "2023.1.14.3555", ue: "5.6",
           packages: ["SDK", "Authoring"], deployment_platforms: ["Linux", ""]
       end
     end
@@ -325,8 +322,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     When "declaring with a blank #{field}"
     Dev::Deps.define do
       group :build do
-        wwise "Wwise", **{ sdk: "2023.1.14.8770", integration: "2023.1.14.3555", ue: "5.6" }.merge(field => " "),
-          install_dir: "~/.dev/wwise"
+        wwise "Wwise", **{ sdk: "2023.1.14.8770", integration: "2023.1.14.3555", ue: "5.6" }.merge(field => " ")
       end
     end
 
@@ -363,8 +359,7 @@ class Dev::Deps::DSLTest < Minitest::Test
       group :build do
         gh "satisfactorymodding/UnrealEngine",
           tag: "5.6.1-css-83",
-          assets: "UnrealEngine-CSS-Editor-Linux.tar.zst.*",
-          install_dir: "~/.dev/engines/unreal-engine-css"
+          assets: "UnrealEngine-CSS-Editor-Linux.tar.zst.*"
       end
     end
 
@@ -376,7 +371,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl.source == "satisfactorymodding/UnrealEngine"
     decl.constraint == { "tag" => "5.6.1-css-83" }
     decl.materialization["asset_pattern"] == "UnrealEngine-CSS-Editor-Linux.tar.zst.*"
-    decl.materialization["install_dir"] == "~/.dev/engines/unreal-engine-css"
+    !decl.materialization.key?("install_dir")
   end
 
   test "gh() build-from-source with github: shorthand names the dep and keeps the slug" do
@@ -386,8 +381,7 @@ class Dev::Deps::DSLTest < Minitest::Test
         gh "UnrealEngine",
           github: "EpicGames/UnrealEngine",
           tag: "5.6.1-release",
-          build: "bin/build-ue.sh",
-          install_dir: "~/.dev/engines/ue5"
+          build: "bin/build-ue.sh"
       end
     end
 
@@ -399,7 +393,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl.source == "EpicGames/UnrealEngine"
     decl.constraint == { "tag" => "5.6.1-release" }
     decl.materialization["build"] == "bin/build-ue.sh"
-    decl.materialization["install_dir"] == "~/.dev/engines/ue5"
+    !decl.materialization.key?("install_dir")
     !decl.materialization.key?("asset_pattern")
   end
 
@@ -407,8 +401,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     When "defining a header-only gh dep"
     config = Dev::Deps.define do
       group :app do
-        gh "json", github: "nlohmann/json", tag: "v3.11.3", build: :none,
-          install_dir: "~/.dev/headers/json"
+        gh "json", github: "nlohmann/json", tag: "v3.11.3", build: :none
       end
     end
 
@@ -420,8 +413,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     When "defining a gh dep with no materialization"
     Dev::Deps.define do
       group :game do
-        gh "UnrealEngine", github: "EpicGames/UnrealEngine", tag: "5.6.1-release",
-          install_dir: "~/.dev/engines/ue5"
+        gh "UnrealEngine", github: "EpicGames/UnrealEngine", tag: "5.6.1-release"
       end
     end
 
@@ -434,7 +426,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     Dev::Deps.define do
       group :game do
         gh "UnrealEngine", github: "EpicGames/UnrealEngine", tag: "5.6.1-release",
-          assets: "*.tar.zst.*", build: "bin/build-ue.sh", install_dir: "~/.dev/engines/ue5"
+          assets: "*.tar.zst.*", build: "bin/build-ue.sh"
       end
     end
 
@@ -446,7 +438,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     When "defining a steam dep in a LinuxServer group"
     config = Dev::Deps.define do
       group :integration, platform: "LinuxServer" do
-        steam "SatisfactoryServer", app: 1690800, install_dir: "~/.dev/satisfactory-server"
+        steam "SatisfactoryServer", app: 1690800
       end
     end
 
@@ -458,7 +450,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl.platform == "LinuxServer"
     decl.source == "1690800"
     decl.constraint == { "branch" => "public" }
-    decl.materialization["install_dir"] == "~/.dev/satisfactory-server"
+    !decl.materialization.key?("install_dir")
     decl.materialization["platform"] == "LinuxServer"
   end
 
@@ -466,12 +458,52 @@ class Dev::Deps::DSLTest < Minitest::Test
     When "defining a steam dep with a pinned buildid"
     config = Dev::Deps.define do
       group :integration, platform: "LinuxServer" do
-        steam "SatisfactoryServer", app: 1690800, install_dir: "/srv", buildid: "15321746"
+        steam "SatisfactoryServer", app: 1690800, buildid: "15321746"
       end
     end
 
     Then
     config.declarations[0].constraint["buildid"] == "15321746"
+  end
+
+  test "install_dir: is refused with the migration spelled out — the store owns placement" do
+    When "declaring a tree dep with the retired option"
+    error = assert_raises(Dev::Deps::GroupDSL::InstallDirRemovedError) do
+      Dev::Deps.define do
+        group :game do
+          gh "UnrealEngine", github: "d3mlabs/unreal-engine", tag: "5.8.0-wine-8",
+            assets: "*.tar.zst.*", install_dir: "~/.dev/engines/ue5"
+        end
+      end
+    end
+
+    Then "the message names the dep, where the store puts it now, and how to move an existing tree"
+    error.message.include?("gh \"UnrealEngine\"")
+    error.message.include?("~/.dev/gh/d3mlabs/unreal-engine/")
+    error.message.include?("mv ~/.dev/engines/ue5/<version> ~/.dev/gh/d3mlabs/unreal-engine/")
+    error.message.include?("dev#271")
+  end
+
+  test "install_dir: is refused on steam and wwise too, each naming its own place" do
+    When "declaring each with the retired option"
+    steam_error = assert_raises(Dev::Deps::GroupDSL::InstallDirRemovedError) do
+      Dev::Deps.define do
+        group :integration do
+          steam "SatisfactoryServer", app: 1690800, install_dir: "~/.dev/satisfactory-server"
+        end
+      end
+    end
+    wwise_error = assert_raises(Dev::Deps::GroupDSL::InstallDirRemovedError) do
+      Dev::Deps.define do
+        group :build do
+          wwise "Wwise", sdk: "2023.1.14.8770", integration: "2023.1.14.3555", ue: "5.6", install_dir: "~/.dev/wwise"
+        end
+      end
+    end
+
+    Then
+    steam_error.message.include?("~/.dev/steam/1690800/")
+    wwise_error.message.include?("~/.dev/wwise/")
   end
 
   test "brew with post_install carries the hook on the declaration, outside the constraint" do

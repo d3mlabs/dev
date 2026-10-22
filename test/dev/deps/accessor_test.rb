@@ -10,6 +10,7 @@ require "dev/deps/ficsit_integration"
 require "dev/deps/xcode_integration"
 require "dev/deps/gh_integration"
 require "dev/deps/wwise_integration"
+require "dev/deps/steam_integration"
 require "pathname"
 require "tmpdir"
 require "stringio"
@@ -68,18 +69,18 @@ class Dev::Deps::AccessorTest < Minitest::Test
 
   GH_ENGINE_TAG = "5.8.0-mac-editor-1"
 
-  # Lock a gh engine dep whose `~/.dev` install_dir re-roots onto dir (the
-  # injected data root), optionally publishing the version dir + marker.
+  # Lock a gh engine dep; the store places it under the injected data root
+  # by identity (gh/<owner>/<repo>/<tag>), optionally published with its marker.
   def setup_locked_gh(dir, installed: true, marker_version: GH_ENGINE_TAG)
     lockfile = Dev::Deps::Lockfile.new(dir: dir)
     lockfile.lock([
       Dev::Deps::Dependency.new(
         name: "UnrealEngineMac", integration: :gh, group: :editor,
         version: GH_ENGINE_TAG, hash: nil,
-        metadata: { "repo" => "d3mlabs/unreal-engine", "install_dir" => "~/.dev/engines/ue5-mac" },
+        metadata: { "repo" => "d3mlabs/unreal-engine" },
       ),
     ])
-    version_dir = File.join(dir, "engines", "ue5-mac", GH_ENGINE_TAG)
+    version_dir = File.join(dir, "gh", "d3mlabs", "unreal-engine", GH_ENGINE_TAG)
     if installed
       FileUtils.mkdir_p(version_dir)
       File.write(File.join(version_dir, Dev::Deps::GhIntegration::MARKER_FILE), marker_version)
@@ -94,15 +95,15 @@ class Dev::Deps::AccessorTest < Minitest::Test
 
   WWISE_SDK = "2023.1.14.8770"
 
-  # Lock a wwise dep whose `~/.dev` install_dir re-roots onto dir, optionally
-  # publishing the version dir + marker.
+  # Lock a wwise dep; the store places it under the injected data root by
+  # identity (wwise/<sdk>), optionally published with its marker.
   def setup_locked_wwise(dir, installed: true)
     lockfile = Dev::Deps::Lockfile.new(dir: dir)
     lockfile.lock([
       Dev::Deps::Dependency.new(
         name: "Wwise", integration: :wwise, group: :build,
         version: WWISE_SDK, hash: nil,
-        metadata: { "install_dir" => "~/.dev/wwise", "integration_version" => "2023.1.14.3555", "ue" => "5.6" },
+        metadata: { "integration_version" => "2023.1.14.3555", "ue" => "5.6" },
       ),
     ])
     version_dir = File.join(dir, "wwise", WWISE_SDK)
@@ -165,6 +166,66 @@ class Dev::Deps::AccessorTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  STEAM_APP = 1690800
+  STEAM_BUILD = "15321746"
+
+  # Lock a steam dep; the store places it under the injected data root by
+  # identity (steam/<app>), optionally published with its marker.
+  def setup_locked_steam(dir, installed: true)
+    lockfile = Dev::Deps::Lockfile.new(dir: dir)
+    lockfile.lock([
+      Dev::Deps::Dependency.new(
+        name: "SatisfactoryServer", integration: :steam, group: :integration,
+        version: STEAM_BUILD, hash: nil,
+        metadata: { "app" => STEAM_APP, "branch" => "public" },
+      ),
+    ])
+    version_dir = File.join(dir, "steam", STEAM_APP.to_s, STEAM_BUILD)
+    if installed
+      FileUtils.mkdir_p(version_dir)
+      File.write(File.join(version_dir, Dev::Deps::SteamIntegration::MARKER_FILE), STEAM_BUILD)
+    end
+
+    accessor = Dev::Deps::Accessor.new(
+      lockfile: lockfile,
+      store: Dev::Deps::LocalStore.new(data_root: dir),
+    )
+    [accessor, version_dir]
+  end
+
+  test "path steam returns the locked build's tree under the data root" do
+    Given "a locked and installed steam depot"
+    dir = Dir.mktmpdir("dev-accessor-test-")
+    accessor, version_dir = setup_locked_steam(dir)
+
+    When "asking for the server path"
+    result = accessor.path("steam", "SatisfactoryServer")
+
+    Then "it is the buildid-keyed tree the integration published, found without the project naming a directory"
+    result == Pathname(version_dir)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "path steam raises NotInstalledError when the build dir is absent" do
+    Given "a locked but uninstalled steam depot"
+    dir = Dir.mktmpdir("dev-accessor-test-")
+    accessor, = setup_locked_steam(dir, installed: false)
+
+    When "asking for the server path"
+    err = assert_raises(Dev::Deps::Accessor::NotInstalledError) do
+      accessor.path("steam", "SatisfactoryServer")
+    end
+
+    Then "the error names the dep and the remedy"
+    err.message.include?("SatisfactoryServer")
+    err.message.include?("dev up")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "path gh returns the locked version dir under the data root" do
     Given "a locked and installed gh engine"
     dir = Dir.mktmpdir("dev-accessor-test-")
@@ -205,7 +266,7 @@ class Dev::Deps::AccessorTest < Minitest::Test
       Dev::Deps::Dependency.new(
         name: "UnrealEngine", integration: :gh, group: :build,
         version: GH_ENGINE_TAG, hash: nil,
-        metadata: { "repo" => "d3mlabs/unreal-engine", "install_dir" => "~/.dev/engines/ue5", "host" => "linux" },
+        metadata: { "repo" => "d3mlabs/unreal-engine", "host" => "linux" },
       ),
     ])
     accessor = Dev::Deps::Accessor.new(
