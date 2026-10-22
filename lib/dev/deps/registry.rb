@@ -20,8 +20,6 @@ require_relative "bundler_repository"
 require_relative "bundler_integration"
 require_relative "xcode_repository"
 require_relative "xcode_integration"
-require_relative "apt_repository"
-require_relative "apt_integration"
 require_relative "wwise_repository"
 require_relative "wwise_integration"
 require_relative "pip_repository"
@@ -232,16 +230,6 @@ module Dev
             scheme: nil,
             integration: XcodeIntegration,
             integration_needs: %i[project_root],
-          ),
-          Entry.new(
-            symbol: :apt,
-            repository: AptRepository,
-            # Purely addressable: apt versions are per distro release, so the
-            # DSL mints the suite as the revision and the host's release
-            # decides the build. Installs through the sudo contract
-            # LinuxEngineProvisioner has for dockerd (PrivilegedSteps).
-            scheme: nil,
-            integration: AptIntegration,
           ),
           Entry.new(
             symbol: :wwise,
