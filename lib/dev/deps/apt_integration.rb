@@ -6,6 +6,7 @@ require "stringio"
 require "dev/debian_host"
 require "dev/privileged_steps"
 require "dev/process_executor"
+require_relative "apt_keyring"
 require_relative "integration"
 
 module Dev
@@ -16,23 +17,27 @@ module Dev
     # The converge contract is LinuxEngineProvisioner's, through the same
     # PrivilegedSteps: probe without root first — `dpkg-query` for each
     # package, `dpkg --print-foreign-architectures` for each extra
-    # architecture, the keyring and sources files for each source — and only
-    # when something is missing open one sudo session, then run each
-    # privileged step as its own argv:
+    # architecture, the keyring (present, and in the form apt reads at that
+    # path — see AptKeyring) and sources files for each source — and only
+    # when something is missing fetch the keys that need writing (unprivileged:
+    # a dead key URL fails before any sudo), open one sudo session, then run
+    # each privileged step as its own argv:
     #
     #   1. `dpkg --add-architecture <arch>` per missing architecture
-    #   2. per unconverged source: keyring dir, `curl` the key, make it
-    #      readable, then either `curl` the deb822 `.sources` file or install
-    #      a staged `.list` holding the filled `deb` line
+    #   2. per unconverged source: keyring dir, install the staged key (the
+    #      vendor's armored key dearmored unless the path is `.asc`), then
+    #      either `curl` the deb822 `.sources` file or install a staged
+    #      `.list` holding the filled `deb` line
     #   3. `apt-get update` (only when converging — a converged host never
     #      pays for it)
     #   4. `apt-get install -y [--install-recommends] <packages>`, one call
     #      per recommends flavour, under DEBIAN_FRONTEND=noninteractive
     #
     # The probes read the same paths the steps write (SOURCES_DIR, the
-    # source's keyring), so install and probe cannot drift. The version that
-    # lands is the host's fact: the summary reports `dpkg-query`'s answer per
-    # package; the lock only ever said "suite".
+    # source's keyring) and apply apt's own acceptance test to the keyring,
+    # so install and probe cannot drift. The version that lands is the
+    # host's fact: the summary reports `dpkg-query`'s answer per package;
+    # the lock only ever said "suite".
     #
     # Headless (no terminal), PrivilegedSteps either rides passwordless sudo
     # or fails fast with SudoRequiredError — the way out is one interactive
@@ -43,6 +48,9 @@ module Dev
 
       # No apt-get: the distro is not one dev knows how to install packages on.
       class UnsupportedDistroError < StandardError; end
+
+      # A source's key URL answered nothing.
+      class KeyFetchError < StandardError; end
 
       KEYRINGS_DIR = "/etc/apt/keyrings"
       SOURCES_DIR = "/etc/apt/sources.list.d"
@@ -102,6 +110,8 @@ module Dev
       #
       # @param dependencies [Array<Dependency>] apt deps to install
       # @raise [UnsupportedDistroError] a Linux without apt-get
+      # @raise [KeyFetchError] a source's key URL answered nothing
+      # @raise [AptKeyring::UnsupportedFormatError] a fetched key apt could not read at its keyring path
       # @raise [PrivilegedSteps::SudoRequiredError] headless and sudo needs a password
       # @raise [PrivilegedSteps::StepFailedError] a step exited nonzero
       sig { override.params(dependencies: T::Array[Dependency]).void }
@@ -135,9 +145,10 @@ module Dev
       sig { params(missing: T::Array[Dependency], archs: T::Array[String], sources: T::Array[Source]).void }
       def converge(missing, archs, sources)
         @out.puts ">>> apt: converging #{missing.map(&:name).join(", ")}" if missing.any?
+        keys = sources.reject { |source| keyring_converged?(source) }.to_h { |source| [source, fetch_key(source)] }
         @steps.session!
         archs.each { |arch| @steps.step!("sudo", "dpkg", "--add-architecture", arch) }
-        sources.each { |source| write_source(source) }
+        sources.each { |source| write_source(source, keys[source]) }
         @steps.step!("sudo", "apt-get", "update")
         missing.partition { |dep| dep.metadata["recommends"] == true }.zip([true, false]).each do |deps, recommends|
           next if deps.empty?
@@ -148,16 +159,30 @@ module Dev
         end
       end
 
-      # The key (unless already on disk) and the sources file.
+      # The vendor's key, in the form apt reads at the keyring path.
       #
       # @param source [Source]
+      # @return [String] bytes to install at +source.keyring+
+      # @raise [KeyFetchError] the URL answered nothing
+      # @raise [AptKeyring::UnsupportedFormatError] no readable form at that path
+      sig { params(source: Source).returns(String) }
+      def fetch_key(source)
+        fetched = T.unsafe(@executor).capture("curl", "-fsSL", source.key).to_s
+        raise KeyFetchError, "apt source #{source.name}: nothing fetched from its key URL #{source.key}" if fetched.empty?
+
+        AptKeyring.content_for(source.keyring, fetched)
+      end
+
+      # The key (when it needs writing) and the sources file.
+      #
+      # @param source [Source]
+      # @param key [String, nil] the key bytes to install, nil when the keyring is already right
       # @return [void]
-      sig { params(source: Source).void }
-      def write_source(source)
-        unless File.exist?(under_root(source.keyring))
+      sig { params(source: Source, key: T.nilable(String)).void }
+      def write_source(source, key)
+        if key
           @steps.step!("sudo", "install", "-m", "0755", "-d", KEYRINGS_DIR)
-          @steps.step!("sudo", "curl", "-fsSL", source.key, "-o", source.keyring)
-          @steps.step!("sudo", "chmod", "a+r", source.keyring)
+          @steps.install_file!(key, source.keyring, mode: "0644")
         end
         if source.sources
           @steps.step!("sudo", "curl", "-fsSL", fill(T.must(source.sources), source), "-o", source.path)
@@ -166,7 +191,7 @@ module Dev
         end
       end
 
-      # Keyring present and the sources file present — holding the current
+      # Keyring right and the sources file present — holding the current
       # line, for a `deb:` source dev wrote itself.
       #
       # @param source [Source]
@@ -174,9 +199,19 @@ module Dev
       sig { params(source: Source).returns(T::Boolean) }
       def source_converged?(source)
         path = under_root(source.path)
-        return false unless File.exist?(under_root(source.keyring)) && File.exist?(path)
+        return false unless keyring_converged?(source) && File.exist?(path)
 
         source.deb.nil? || File.read(path) == deb_line(source)
+      end
+
+      # Keyring present, in the form apt reads at its path.
+      #
+      # @param source [Source]
+      # @return [Boolean]
+      sig { params(source: Source).returns(T::Boolean) }
+      def keyring_converged?(source)
+        path = under_root(source.keyring)
+        File.file?(path) && AptKeyring.accepted?(source.keyring, File.binread(path))
       end
 
       # @param source [Source] a `deb:` source

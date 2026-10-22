@@ -7,22 +7,28 @@ require "dev/deps/apt_repository"
 require "dev/deps/dependency"
 require "dev/debian_host"
 require "dev/privileged_steps"
+require "support/openpgp_key_fixture"
 require "stringio"
 require "tmpdir"
 require "fileutils"
 
 # Records every process the integration runs. dpkg answers from canned
-# facts; everything under sudo is recorded and succeeds unless +failing+
-# names it. Files (keyrings, sources) are real, under a tmp root.
+# facts, `curl` of a key URL answers from +keys+ (an unknown URL answers
+# the empty string, as a failed capture does); everything under sudo is
+# recorded and succeeds unless +failing+ names it. Files (keyrings,
+# sources) are real, under a tmp root.
 class RecordedAptExecutor
-  attr_reader :runs
+  attr_reader :runs, :captures
 
-  def initialize(installed: {}, foreign_archs: [], arch: "amd64", failing: nil)
+  def initialize(installed: {}, foreign_archs: [], arch: "amd64", failing: nil,
+    keys: { "https://dl.winehq.org/wine-builds/winehq.key" => OpenPGPKeyFixture.armored })
     @installed = installed # package => version
     @foreign_archs = foreign_archs
     @arch = arch
     @failing = failing
+    @keys = keys
     @runs = []
+    @captures = []
   end
 
   def run(*cmd)
@@ -31,7 +37,9 @@ class RecordedAptExecutor
   end
 
   def capture(*cmd)
+    @captures << cmd
     case cmd
+    when ->(c) { c[0, 2] == %w[curl -fsSL] } then @keys.fetch(cmd.last, "")
     when %w[dpkg --print-architecture] then "#{@arch}\n"
     when %w[dpkg --print-foreign-architectures] then @foreign_archs.map { |a| "#{a}\n" }.join
     when ->(c) { c[0, 2] == %w[dpkg-query -W] }
@@ -43,6 +51,10 @@ class RecordedAptExecutor
 
   def sudo_runs
     @runs.select { |bin, *_rest| bin == "sudo" }
+  end
+
+  def key_fetches
+    @captures.select { |bin, *_rest| bin == "curl" }
   end
 end unless defined?(RecordedAptExecutor)
 
@@ -94,14 +106,21 @@ class Dev::Deps::AptIntegrationTest < Minitest::Test
     )
   end
 
-  # Mark a source as converged on disk: its keyring and its sources file.
+  # Mark a source as converged on disk: its keyring (in the form apt accepts
+  # at that path) and its sources file.
   def converge_source_on_disk(keyring: "/etc/apt/keyrings/winehq-archive.key",
-    sources: "/etc/apt/sources.list.d/winehq-stable.sources")
-    [keyring, sources].each do |path|
+    sources: "/etc/apt/sources.list.d/winehq-stable.sources",
+    keyring_content: OpenPGPKeyFixture::BINARY)
+    { keyring => keyring_content, sources => "x" }.each do |path, content|
       full = File.join(@dir, path)
       FileUtils.mkdir_p(File.dirname(full))
-      File.write(full, "x")
+      File.binwrite(full, content)
     end
+  end
+
+  # The staged file a `sudo install -m <mode> <staged> <path>` step copies.
+  def staged_content(step)
+    File.binread(step[4])
   end
 
   test "a converged host: probes only, no sudo, and the installed versions are reported" do
@@ -132,19 +151,22 @@ class Dev::Deps::AptIntegrationTest < Minitest::Test
     When "installing WineHQ (recommends) and xvfb (default)"
     integration(executor: executor).install_all([winehq, xvfb])
 
-    Then "the steps, in order, with the codename interpolated and the key where the .sources expects it"
-    executor.sudo_runs == [
+    Then "the key is fetched unprivileged, then the steps in order: the codename interpolated, the key " \
+         "installed where the .sources expects it, dearmored because that path is not .asc"
+    executor.key_fetches == [%w[curl -fsSL https://dl.winehq.org/wine-builds/winehq.key]]
+    executor.sudo_runs.values_at(0, 1, 2, 4, 5, 6, 7) == [
       %w[sudo -v],
       %w[sudo dpkg --add-architecture i386],
       %w[sudo install -m 0755 -d /etc/apt/keyrings],
-      %w[sudo curl -fsSL https://dl.winehq.org/wine-builds/winehq.key -o /etc/apt/keyrings/winehq-archive.key],
-      %w[sudo chmod a+r /etc/apt/keyrings/winehq-archive.key],
       %w[sudo curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources
          -o /etc/apt/sources.list.d/winehq-stable.sources],
       %w[sudo apt-get update],
       %w[sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --install-recommends winehq-stable],
       %w[sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y xvfb],
     ]
+    executor.sudo_runs[3].values_at(0, 1, 2, 3, 5) == %w[sudo install -m 0644 /etc/apt/keyrings/winehq-archive.key]
+    staged_content(executor.sudo_runs[3]) == OpenPGPKeyFixture::BINARY
+    executor.sudo_runs.size == 8
 
     Cleanup
     nil
@@ -173,7 +195,10 @@ class Dev::Deps::AptIntegrationTest < Minitest::Test
   test "a one-line deb: source is written from a staged copy with %{arch}, %{codename} and %{keyring} filled" do
     Given "a package whose source is a deb line"
     install("apt-get")
-    executor = RecordedAptExecutor.new(installed: { "docker-ce" => "5:28.0.1-1~ubuntu.24.04~noble" })
+    executor = RecordedAptExecutor.new(
+      installed: { "docker-ce" => "5:28.0.1-1~ubuntu.24.04~noble" },
+      keys: { "https://download.docker.com/linux/ubuntu/gpg" => OpenPGPKeyFixture.armored },
+    )
     docker = dep("docker-ce", source: {
       "key" => "https://download.docker.com/linux/ubuntu/gpg",
       "deb" => "deb [arch=%{arch} signed-by=%{keyring}] https://download.docker.com/linux/ubuntu %{codename} stable",
@@ -182,18 +207,18 @@ class Dev::Deps::AptIntegrationTest < Minitest::Test
     When "installing"
     integration(executor: executor).install_all([docker])
 
-    Then "the key lands at the default keyring path; the .list holds the filled line"
-    executor.sudo_runs.values_at(0, 1, 2, 3, 5) == [
+    Then "the key lands (binary) at the default keyring path; the .list holds the filled line"
+    executor.sudo_runs.values_at(0, 1, 4) == [
       %w[sudo -v],
       %w[sudo install -m 0755 -d /etc/apt/keyrings],
-      %w[sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker-ce.key],
-      %w[sudo chmod a+r /etc/apt/keyrings/docker-ce.key],
       %w[sudo apt-get update],
     ]
-    executor.sudo_runs[4].values_at(0, 1, 2, 3, 5) == %w[sudo install -m 0644 /etc/apt/sources.list.d/docker-ce.list]
-    File.read(executor.sudo_runs[4][4]) ==
+    executor.sudo_runs[2].values_at(0, 1, 2, 3, 5) == %w[sudo install -m 0644 /etc/apt/keyrings/docker-ce.key]
+    staged_content(executor.sudo_runs[2]) == OpenPGPKeyFixture::BINARY
+    executor.sudo_runs[3].values_at(0, 1, 2, 3, 5) == %w[sudo install -m 0644 /etc/apt/sources.list.d/docker-ce.list]
+    File.read(executor.sudo_runs[3][4]) ==
       "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker-ce.key] https://download.docker.com/linux/ubuntu noble stable\n"
-    executor.sudo_runs.size == 6
+    executor.sudo_runs.size == 5
 
     Cleanup
     nil
@@ -230,8 +255,72 @@ class Dev::Deps::AptIntegrationTest < Minitest::Test
     curls = executor.sudo_runs.map { |_sudo, bin, *_rest| bin }.tally.fetch("curl", 0)
 
     Then "one key fetch, one sources fetch, one install"
-    curls == 2
+    executor.key_fetches.size == 1
+    curls == 1
     executor.sudo_runs.last == %w[sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y winehq-stable wine-stable]
+
+    Cleanup
+    nil
+  end
+
+  test "a keyring on disk in a form apt ignores is rewritten: armor at a non-.asc path" do
+    Given "a host whose WineHQ key was curl'd as-is to winehq-archive.key (apt 3 ignores it: unsupported filetype)"
+    install("apt-get")
+    converge_source_on_disk(keyring_content: OpenPGPKeyFixture.armored)
+    executor = RecordedAptExecutor.new(installed: { "winehq-stable" => "11.0.0.0~resolute-1" }, foreign_archs: ["i386"])
+
+    When "installing"
+    integration(executor: executor).install_all([winehq])
+
+    Then "the key is refetched and installed in binary; the .sources is refetched too; then update"
+    executor.key_fetches.size == 1
+    executor.sudo_runs.size == 5
+    executor.sudo_runs[2].values_at(0, 1, 2, 3, 5) == %w[sudo install -m 0644 /etc/apt/keyrings/winehq-archive.key]
+    staged_content(executor.sudo_runs[2]) == OpenPGPKeyFixture::BINARY
+    executor.sudo_runs.last == %w[sudo apt-get update]
+
+    Cleanup
+    nil
+  end
+
+  test "a .asc keyring path keeps the armor: apt parses it there" do
+    Given "a source whose keyring is declared .asc"
+    install("apt-get")
+    executor = RecordedAptExecutor.new(
+      installed: { "docker-ce" => "1" },
+      keys: { "https://download.docker.com/linux/ubuntu/gpg" => OpenPGPKeyFixture.armored },
+    )
+    docker = dep("docker-ce", source: {
+      "key" => "https://download.docker.com/linux/ubuntu/gpg",
+      "keyring" => "/etc/apt/keyrings/docker.asc",
+      "deb" => "deb [signed-by=%{keyring}] https://download.docker.com/linux/ubuntu %{codename} stable",
+    })
+
+    When "installing"
+    integration(executor: executor).install_all([docker])
+
+    Then
+    executor.sudo_runs[2].values_at(0, 1, 2, 3, 5) == %w[sudo install -m 0644 /etc/apt/keyrings/docker.asc]
+    staged_content(executor.sudo_runs[2]) == OpenPGPKeyFixture.armored
+
+    Cleanup
+    nil
+  end
+
+  test "a key URL that answers nothing fails naming it, before any sudo" do
+    Given "a source whose key URL is dead"
+    install("apt-get")
+    executor = RecordedAptExecutor.new(keys: {})
+    dead = dep("pkg", source: { "key" => "https://example.invalid/key", "deb" => "deb https://example.invalid stable main" })
+
+    When "installing"
+    error = assert_raises(Dev::Deps::AptIntegration::KeyFetchError) do
+      integration(executor: executor).install_all([dead])
+    end
+
+    Then "the URL is in the message and no sudo session was opened"
+    error.message.include?("https://example.invalid/key")
+    executor.sudo_runs.empty?
 
     Cleanup
     nil
