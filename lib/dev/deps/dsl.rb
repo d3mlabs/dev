@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "sorbet-runtime"
+require_relative "../data_root"
 require_relative "declaration"
 require_relative "scope"
 require_relative "scoped_declaration"
@@ -251,6 +252,12 @@ module Dev
       # arbitrary ref, so the ask must say what it wants.
       class MissingRefError < StandardError; end
 
+      # `install_dir:` on a tree dep (gh, steam, wwise). Retired by dev#271:
+      # the store places a tree from its identity, so the manifest no longer
+      # says where. Refused rather than ignored, because a project still
+      # saying it has a tree at the old path to move.
+      class InstallDirRemovedError < StandardError; end
+
       # The canonical git address: a full 40-char lowercase hex SHA.
       FULL_SHA = /\A[0-9a-f]{40}\z/
 
@@ -406,7 +413,7 @@ module Dev
       #              Epic ships as source only). Pass a project-relative script path or
       #              an inline shell string; :none extracts source with no build step
       #              (header-only). dev runs it with $DEV_SOURCE_DIR / $DEV_INSTALL_DIR /
-      #              $DEV_VERSION and publishes $DEV_INSTALL_DIR to install_dir/<tag>.
+      #              $DEV_VERSION and publishes $DEV_INSTALL_DIR as the tag's tree.
       # Exactly one of assets:/build: must be given (the verb names the FETCH backend;
       # assets/build names how it's MATERIALIZED).
       #
@@ -416,7 +423,6 @@ module Dev
       #
       # @param name_or_slug [String, Symbol] dependency name, or "owner/repo" slug
       # @param tag [String] exact tag (e.g. "5.6.1-release") — no floating "latest"
-      # @param install_dir [String] host directory the artifact is installed into
       # @param github [String, nil] "owner/repo" slug (shorthand; makes the first arg the name)
       # @param repo [String, nil] alias for github:
       # @param assets [String, nil] glob selecting prebuilt release assets
@@ -427,7 +433,6 @@ module Dev
         params(
           name_or_slug: T.any(String, Symbol),
           tag: String,
-          install_dir: String,
           github: T.nilable(String),
           repo: T.nilable(String),
           assets: T.nilable(String),
@@ -435,9 +440,10 @@ module Dev
           spec: T.untyped,
         ).void
       end
-      def gh(name_or_slug, tag:, install_dir:, github: nil, repo: nil, assets: nil, build: nil, **spec)
+      def gh(name_or_slug, tag:, github: nil, repo: nil, assets: nil, build: nil, **spec)
         slug = (github || repo || name_or_slug).to_s
         name = (github || repo) ? name_or_slug.to_s : T.must(slug.split("/").last)
+        reject_install_dir!("gh", name, spec, place: "gh/#{slug}")
 
         unless [assets, build].compact.size == 1
           raise ArgumentError,
@@ -446,17 +452,17 @@ module Dev
         end
 
         # Sorted into fields: the slug is the source coordinate, the tag is
-        # the constraint, and how to materialize (where to install, which
-        # assets to fetch or how to build) is install instruction — the
-        # repository never sees any of it.
-        materialization = { "install_dir" => install_dir }
+        # the constraint, and how to materialize (which assets to fetch or
+        # how to build) is install instruction — the repository never sees
+        # any of it. Where it lands is the store's: ~/.dev/gh/<slug>/<tag>.
+        materialization = {}
         materialization["asset_pattern"] = assets if assets
         materialization["build"] = build.to_s if build
         add_declaration(name, :gh, spec.merge(tag: tag), source: slug, materialization: materialization)
       end
 
       # Declare a Steam application dependency (e.g. the Satisfactory Dedicated
-      # Server), provisioned via SteamCMD into a host install_dir.
+      # Server), provisioned via SteamCMD into the store (~/.dev/steam/<app>/<buildid>).
       #
       # The depot platform comes from the consuming group's platform:, so this
       # method takes no platform of its own. Pass buildid: to pin an exact build;
@@ -464,7 +470,6 @@ module Dev
       #
       # @param name [String, Symbol] dependency name (e.g. "SatisfactoryServer")
       # @param app [Integer, String] Steam app id (e.g. 1690800)
-      # @param install_dir [String] host directory the depot is installed into
       # @param branch [String] Steam branch (default "public")
       # @param spec [Hash] additional options (buildid:, etc.)
       # @return [void]
@@ -472,17 +477,17 @@ module Dev
         params(
           name: T.any(String, Symbol),
           app: T.any(Integer, String),
-          install_dir: String,
           branch: String,
           spec: T.untyped,
         ).void
       end
-      def steam(name, app:, install_dir:, branch: "public", **spec)
+      def steam(name, app:, branch: "public", **spec)
+        reject_install_dir!("steam", name.to_s, spec, place: "steam/#{app}")
         # Sorted into fields: the app id is the source coordinate (which app's
-        # universe), branch/buildid are the constraint, and the install dir
-        # plus the group's platform (which depot build SteamCMD provisions —
-        # an install instruction, not a version fact) are materialization.
-        materialization = { "install_dir" => install_dir }
+        # universe), branch/buildid are the constraint, and the group's
+        # platform (which depot build SteamCMD provisions — an install
+        # instruction, not a version fact) is materialization.
+        materialization = {}
         materialization["platform"] = @platform if @platform
         add_declaration(name, :steam, spec.merge(branch:), source: app.to_s, materialization: materialization)
       end
@@ -523,8 +528,8 @@ module Dev
       end
 
       # Declare the Wwise SDK together with its Unreal Engine integration
-      # package, downloaded by wwise-cli into a host install_dir laid out as
-      # wwise-cli's own cache (declare `brew "wwise-cli", tap:
+      # package, downloaded by wwise-cli into the store (~/.dev/wwise/<sdk>)
+      # laid out as wwise-cli's own cache (declare `brew "wwise-cli", tap:
       # "d3mlabs/d3mlabs"` in :build so it exists first). The Audiokinetic
       # login comes from Dev::Credentials (WWISE_EMAIL / WWISE_PASSWORD).
       #
@@ -544,7 +549,6 @@ module Dev
       # @param sdk [String] exact SDK version (e.g. "2023.1.14.8770")
       # @param integration [String] exact Unreal integration version (e.g. "2023.1.14.3555")
       # @param ue [String] Unreal Engine version the integration package targets, "<major>.<minor>"
-      # @param install_dir [String] host directory the cache is published under
       # @param packages [Array<String>] Wwise packages to download (default: the SDK alone)
       # @param deployment_platforms [Array<String>] SDK platform variants to download
       # @param spec [Hash] additional options
@@ -557,14 +561,14 @@ module Dev
           sdk: String,
           integration: String,
           ue: String,
-          install_dir: String,
           packages: T::Array[String],
           deployment_platforms: T::Array[String],
           spec: T.untyped,
         ).void
       end
-      def wwise(name, sdk:, integration:, ue:, install_dir:, packages: WWISE_DEFAULT_PACKAGES,
+      def wwise(name, sdk:, integration:, ue:, packages: WWISE_DEFAULT_PACKAGES,
         deployment_platforms: WWISE_DEFAULT_DEPLOYMENT_PLATFORMS, **spec)
+        reject_install_dir!("wwise", name.to_s, spec, place: "wwise")
         { sdk:, integration:, ue: }.each do |field, value|
           next unless value.strip.empty?
 
@@ -574,7 +578,6 @@ module Dev
         # "integration_version", not "integration": the lockfile owns the
         # latter as the section key and strips it from a pin's metadata.
         materialization = {
-          "install_dir" => install_dir,
           "integration_version" => integration,
           "ue" => ue,
           "packages" => packages,
@@ -650,6 +653,31 @@ module Dev
       end
 
       private
+
+      # Refuse the retired `install_dir:` on a tree verb, telling the author
+      # where the store now places the tree and how to move one already on
+      # disk. Mutates spec: the key is removed so a caller that rescues sees
+      # a clean spec, though none should.
+      #
+      # @param verb [String] the DSL verb ("gh", "steam", "wwise")
+      # @param name [String] the declaration name
+      # @param spec [Hash] the verb's remaining options
+      # @param place [String] the identity path under ~/.dev the store uses
+      # @return [void]
+      # @raise [InstallDirRemovedError] if spec carries :install_dir
+      sig { params(verb: String, name: String, spec: T::Hash[Symbol, T.untyped], place: String).void }
+      def reject_install_dir!(verb, name, spec, place:)
+        return unless spec.key?(:install_dir)
+
+        old = spec.delete(:install_dir)
+        new_base = "#{Dev::DataRoot::HOME_ROOT}/#{place}/"
+        raise InstallDirRemovedError, <<~MSG.strip
+          #{verb} #{name.inspect}: install_dir: is gone — the store places trees by identity, \
+          under #{new_base}<version>. Remove the option and re-lock. \
+          A tree already installed moves with: mv #{old}/<version> #{new_base} \
+          (or let `dev up` fetch it again). See dev#271.
+        MSG
+      end
 
       # Create a ScopedDeclaration and store it.
       #
