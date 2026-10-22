@@ -9,6 +9,7 @@ require_relative "ficsit_integration"
 require_relative "xcode_integration"
 require_relative "gh_integration"
 require_relative "wwise_integration"
+require_relative "steam_integration"
 
 module Dev
   module Deps
@@ -33,7 +34,7 @@ module Dev
       class NotInstalledError < RuntimeError; end
 
       USAGE = "usage: dev deps path ficsit <mod> <platform> | dev deps path xcode | " \
-        "dev deps path gh <name> | dev deps path wwise <name>"
+        "dev deps path gh <name> | dev deps path steam <name> | dev deps path wwise <name>"
 
       # @param lockfile [Lockfile]
       # @param store [ArtifactStore] where published trees and cached blobs live
@@ -85,6 +86,7 @@ module Dev
         when "ficsit" then ficsit_path(name, platform)
         when "xcode" then xcode_developer_dir
         when "gh" then published_tree(:gh, name, placed_by: GhIntegration)
+        when "steam" then published_tree(:steam, name, placed_by: SteamIntegration)
         when "wwise" then published_tree(:wwise, name, placed_by: WwiseIntegration)
         else raise UsageError, USAGE
         end
@@ -94,7 +96,7 @@ module Dev
 
       # The published tree of a locked tree dep — the immutable directory its
       # integration publishes to the store at the place its identity names
-      # (a gh release's tree, a wwise cache). Resolved from the
+      # (a gh release's tree, a steam depot, a wwise cache). Resolved from the
       # lock so a checkout always gets the version its lockfile names, not
       # whatever this machine installed last.
       #
