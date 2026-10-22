@@ -91,18 +91,18 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
   test "install_all fills a wwise-cli cache in staging and publishes it under the identity base/<sdk version>/" do
     Given "a wwise dependency and a stubbed wwise-cli"
     dir = Dir.mktmpdir("dev-wwise-int-test-")
-    install_dir = File.join(dir, "wwise")
+    tree_dir = File.join(dir, "wwise")
     integration = build_integration(dir)
 
     When "installing"
     integration.install_all([build_dependency])
 
     Then "the published tree is a cache dir holding both products, stamped, with no staging left"
-    version_dir = File.join(install_dir, SDK)
+    version_dir = File.join(tree_dir, SDK)
     File.read(File.join(version_dir, ".dev-wwise")) == SDK
     File.exist?(File.join(version_dir, "wwise", SDK, "info.json"))
     File.exist?(File.join(version_dir, "unrealintegration", INTEGRATION, "info.json"))
-    Dir.glob(File.join(install_dir, ".staging-*")).empty?
+    Dir.glob(File.join(tree_dir, ".staging-*")).empty?
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -111,7 +111,7 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
   test "install_all runs download then fetch-ue-integration against one staging cache dir, credentials in the environment only" do
     Given "a wwise dependency and a stubbed wwise-cli"
     dir = Dir.mktmpdir("dev-wwise-int-test-")
-    install_dir = File.join(dir, "wwise")
+    tree_dir = File.join(dir, "wwise")
     integration = build_integration(dir)
 
     When "installing"
@@ -130,7 +130,7 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
     ]
     fetch[3..] == ["fetch-ue-integration", "--integration-version", INTEGRATION, "--ue", "5.6"]
     cache_dirs.size == 1
-    cache_dirs.first.start_with?(File.join(install_dir, ".staging-"))
+    cache_dirs.first.start_with?(File.join(tree_dir, ".staging-"))
     integration.invocations.all? { |call| call[:env] == { "WWISE_EMAIL" => "someone@example.com", "WWISE_PASSWORD" => "hunter2" } }
     integration.invocations.none? { |call| call[:argv].join(" ").include?("hunter2") }
     integration.credential_resolutions == 1
@@ -142,9 +142,9 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
   test "install_all skips a published version without running wwise-cli or touching the credential chain" do
     Given "a version dir already stamped for the locked SDK"
     dir = Dir.mktmpdir("dev-wwise-int-test-")
-    install_dir = File.join(dir, "wwise")
-    FileUtils.mkdir_p(File.join(install_dir, SDK))
-    File.write(File.join(install_dir, SDK, ".dev-wwise"), SDK)
+    tree_dir = File.join(dir, "wwise")
+    FileUtils.mkdir_p(File.join(tree_dir, SDK))
+    File.write(File.join(tree_dir, SDK, ".dev-wwise"), SDK)
     integration = build_integration(dir)
 
     When "installing again"
@@ -180,7 +180,7 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
   test "install_all raises DownloadError and publishes nothing when wwise-cli fails" do
     Given "a wwise-cli that exits non-zero"
     dir = Dir.mktmpdir("dev-wwise-int-test-")
-    install_dir = File.join(dir, "wwise")
+    tree_dir = File.join(dir, "wwise")
     integration = build_integration(dir, cli_succeeds: false)
 
     When "installing"
@@ -190,8 +190,8 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
 
     Then "the error is a DownloadError; no marker, no staging"
     error.failures.first.last.is_a?(Dev::Deps::WwiseIntegration::DownloadError)
-    !File.exist?(File.join(install_dir, SDK, ".dev-wwise"))
-    Dir.glob(File.join(install_dir, ".staging-*")).empty?
+    !File.exist?(File.join(tree_dir, SDK, ".dev-wwise"))
+    Dir.glob(File.join(tree_dir, ".staging-*")).empty?
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -200,7 +200,7 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
   test "install_all raises DownloadError naming the integration when fetch-ue-integration fails after a good download" do
     Given "a wwise-cli whose download succeeds and whose fetch exits non-zero"
     dir = Dir.mktmpdir("dev-wwise-int-test-")
-    install_dir = File.join(dir, "wwise")
+    tree_dir = File.join(dir, "wwise")
     integration = build_integration(dir, fetch_succeeds: false)
 
     When "installing"
@@ -211,7 +211,7 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
     Then "the error names the integration version; nothing is published"
     error.failures.first.last.is_a?(Dev::Deps::WwiseIntegration::DownloadError)
     error.failures.first.last.message.include?("fetch-ue-integration failed for Wwise Unreal integration #{INTEGRATION}")
-    !File.exist?(File.join(install_dir, SDK, ".dev-wwise"))
+    !File.exist?(File.join(tree_dir, SDK, ".dev-wwise"))
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -220,7 +220,7 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
   test "the real boundaries: wwise-cli is found on PATH, run with the ENV credentials in its environment and stdin closed" do
     Given "a wwise-cli script on PATH that records how it was called and writes the cache entries, and credentials in ENV"
     dir = Dir.mktmpdir("dev-wwise-int-test-")
-    install_dir = File.join(dir, "wwise")
+    tree_dir = File.join(dir, "wwise")
     bin_dir = File.join(dir, "bin")
     FileUtils.mkdir_p(bin_dir)
     record = File.join(dir, "calls.log")
@@ -243,7 +243,7 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
     calls = File.read(record)
 
     Then "the tree is published, both calls saw the ENV credentials, and stdin read EOF"
-    File.read(File.join(install_dir, SDK, ".dev-wwise")) == SDK
+    File.read(File.join(tree_dir, SDK, ".dev-wwise")) == SDK
     calls.scan("argv:").size == 2
     calls.scan("email:env@example.com").size == 2
     calls.scan("password:from-env").size == 2
@@ -257,7 +257,7 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
   test "install_all raises DownloadError when wwise-cli exits 0 but leaves no cache entry behind" do
     Given "a wwise-cli that succeeds without writing"
     dir = Dir.mktmpdir("dev-wwise-int-test-")
-    install_dir = File.join(dir, "wwise")
+    tree_dir = File.join(dir, "wwise")
     integration = build_integration(dir, writes_cache: false)
 
     When "installing"
@@ -268,7 +268,7 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
     Then "the missing entry is named"
     error.failures.first.last.is_a?(Dev::Deps::WwiseIntegration::DownloadError)
     error.failures.first.last.message.include?("wwise/#{SDK}/info.json")
-    !File.exist?(File.join(install_dir, SDK, ".dev-wwise"))
+    !File.exist?(File.join(tree_dir, SDK, ".dev-wwise"))
 
     Cleanup
     FileUtils.rm_rf(dir)

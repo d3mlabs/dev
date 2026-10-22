@@ -47,21 +47,21 @@ class Dev::Deps::ScopedDeclarationTest < Minitest::Test
   end
 
   test "carries install instructions as materialization, frozen" do
-    Given "a row with an install_dir and an asset glob"
+    Given "a row with an asset glob and a build recipe"
     scoped = Dev::Deps::ScopedDeclaration.new(
       declaration: atom(name: "UnrealEngine", integration: :gh, constraint: { "tag" => "5.6.1-css-83" }),
-      materialization: { "install_dir" => "~/.dev/engines/ue", "asset_pattern" => "*.tar.zst.*" },
+      materialization: { "asset_pattern" => "*.tar.zst.*", "build" => "make install" },
     )
 
     Expect "materialization is readable and immutable"
-    scoped.materialization == { "install_dir" => "~/.dev/engines/ue", "asset_pattern" => "*.tar.zst.*" }
+    scoped.materialization == { "asset_pattern" => "*.tar.zst.*", "build" => "make install" }
     scoped.materialization.frozen?
   end
 
-  test "materialization participates in equality — disagreeing install dirs are different asks" do
-    Given "one atom materialized into two directories"
-    a = Dev::Deps::ScopedDeclaration.new(declaration: atom, materialization: { "install_dir" => "~/a" })
-    b = Dev::Deps::ScopedDeclaration.new(declaration: atom, materialization: { "install_dir" => "~/b" })
+  test "materialization participates in equality — disagreeing asset globs are different asks" do
+    Given "one atom materialized from two asset globs"
+    a = Dev::Deps::ScopedDeclaration.new(declaration: atom, materialization: { "asset_pattern" => "*-a.tar" })
+    b = Dev::Deps::ScopedDeclaration.new(declaration: atom, materialization: { "asset_pattern" => "*-b.tar" })
 
     Expect
     a != b

@@ -10,15 +10,13 @@ module Dev
   module Deps
     # Lifecycle handler for Steam application dependencies (steam integration).
     #
-    # Provisions a Steam app (the Satisfactory Dedicated Server) into its declared
-    # install_dir on the host via SteamCMD, then mounts it into the build
-    # container. Mirrors GhIntegration: a tree in the store, never a blob,
+    # Provisions a Steam app (the Satisfactory Dedicated Server) into the store
+    # on the host via SteamCMD, under ~/.dev/steam/<app id>/. Mirrors GhIntegration: a tree in the store, never a blob,
     # because the depot is large (~15 GB) — the published tree plus its marker
     # is the cache.
     #
-    # The depot lands in install_dir/<buildid>/install (matching the /server
-    # volume layout the integration harness expects, once dev's mount resolution
-    # has appended the locked buildid). SteamCMD runs host-OS but forces the
+    # The depot lands in <base>/<buildid>/install; consumers find the locked
+    # buildid through `dev deps path steam <name>`. SteamCMD runs host-OS but forces the
     # depot platform (e.g. "linux") with +@sSteamCmdForcePlatformType, so a macOS
     # host can still provision the Linux server build.
     class SteamIntegration < Integration

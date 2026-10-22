@@ -20,9 +20,7 @@ module Dev
     # casks use).
     #
     # Declared in dependencies.rb as:
-    #   steam "SatisfactoryServer",
-    #         app: 1690800,
-    #         install_dir: "~/.dev/satisfactory-server"
+    #   steam "SatisfactoryServer", app: 1690800
     class SteamRepository < Repository
       extend T::Sig
 

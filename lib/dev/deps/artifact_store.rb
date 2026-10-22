@@ -8,9 +8,9 @@ module Dev
   module Deps
     # Names one version-keyed tree in an ArtifactStore.
     #
-    # `base` is the artifact's configured home as the project declares it
-    # (a dep's `install_dir`, e.g. "~/.dev/engines/unreal-engine-css"); the
-    # store decides where that lands on disk. `platform` separates builds
+    # `base` is the tree's home under the data root, derived by the
+    # integration from the dep's identity (e.g. "~/.dev/gh/EpicGames/UnrealEngine"
+    # from the repo slug); the store decides where that lands on disk. `platform` separates builds
     # that are only valid on one OS/arch (a compiled Ruby, native gems) when
     # one data root serves several — the host and the container it mounts
     # the root into. `marker` is the file a published tree carries, holding

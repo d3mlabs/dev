@@ -46,7 +46,7 @@ module Dev
       attr_reader :post_install
 
       # @return [Hash{String => Object}] install instructions for this row
-      #   (install_dir, an asset glob, a build recipe); merged into the minted
+      #   (an asset glob, a build recipe); merged into the minted
       #   pin's metadata by the Resolver, never seen by a Repository. {} means
       #   the integration's tool owns layout.
       sig { returns(T::Hash[String, T.untyped]) }

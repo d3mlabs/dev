@@ -11,7 +11,7 @@ module Dev
     #
     # Fills a wwise-cli cache directory on the host — the SDK package plus the
     # Unreal integration package the declaration names — and publishes it as
-    # one version-keyed tree under the declared install_dir, so a build
+    # one version-keyed tree under ~/.dev/wwise/, so a build
     # container can mount the locked version read-only at wwise-cli's cache
     # path and run `wwise-cli integrate-ue --offline` with no credential in
     # the image build. Mirrors SteamIntegration: a tree in the store, never a
@@ -20,8 +20,8 @@ module Dev
     #
     # The tree is laid out exactly as wwise-cli lays out its cache
     # (<cache-dir>/<product>/<version>/info.json), because wwise-cli is what
-    # reads it later: install_dir/<sdk version>/wwise/<sdk version>/ and
-    # install_dir/<sdk version>/unrealintegration/<integration version>/.
+    # reads it later: <base>/<sdk version>/wwise/<sdk version>/ and
+    # <base>/<sdk version>/unrealintegration/<integration version>/.
     #
     # Audiokinetic's downloads need an account login. The email and password
     # come from Dev::Credentials (WWISE_EMAIL / WWISE_PASSWORD, then the

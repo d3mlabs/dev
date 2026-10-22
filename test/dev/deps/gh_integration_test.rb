@@ -152,7 +152,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     Given "a split zstd tarball fixture and a gh dependency"
     dir = Dir.mktmpdir("dev-gh-int-test-")
     parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
-    install_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine")
+    tree_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine")
     dep = build_dependency(parts)
     integration = build_integration(parts, dir)
 
@@ -160,12 +160,12 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     integration.install_all([dep])
 
     Then "content + marker land under the identity base/<tag>/ and no staging remains"
-    version_dir = File.join(install_dir, "5.6.1-css-83")
+    version_dir = File.join(tree_dir, "5.6.1-css-83")
     File.read(File.join(version_dir, "Engine", "engine.txt")) == "engine payload"
     File.read(File.join(version_dir, "README.md")) == "readme payload"
     File.read(File.join(version_dir, ".dev-gh-release")) == "5.6.1-css-83"
-    !File.exist?(File.join(install_dir, "current"))
-    Dir.glob(File.join(install_dir, ".staging-*")).empty?
+    !File.exist?(File.join(tree_dir, "current"))
+    Dir.glob(File.join(tree_dir, ".staging-*")).empty?
     integration.download_count == 1
 
     Cleanup
@@ -176,8 +176,8 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     Given "a version dir with a matching marker"
     dir = Dir.mktmpdir("dev-gh-int-test-")
     parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
-    install_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine")
-    version_dir = File.join(install_dir, "5.6.1-css-83")
+    tree_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine")
+    version_dir = File.join(tree_dir, "5.6.1-css-83")
     FileUtils.mkdir_p(version_dir)
     File.write(File.join(version_dir, ".dev-gh-release"), "5.6.1-css-83")
     dep = build_dependency(parts)
@@ -198,11 +198,11 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
           "the human-owned shared engine tree, plans#26)"
     dir = Dir.mktmpdir("dev-gh-int-test-")
     parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
-    install_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine")
-    version_dir = File.join(install_dir, "5.6.1-css-83")
+    tree_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine")
+    version_dir = File.join(tree_dir, "5.6.1-css-83")
     FileUtils.mkdir_p(version_dir)
     File.write(File.join(version_dir, ".dev-gh-release"), "5.6.1-css-83")
-    FileUtils.chmod(0o555, install_dir)
+    FileUtils.chmod(0o555, tree_dir)
     dep = build_dependency(parts)
     integration = build_integration(parts, dir)
 
@@ -211,11 +211,11 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
 
     Then "the marker was recognized and no write was attempted (the retired current-pointer " \
          "rewrite crashed dev deps install here with EACCES at the plans#36 ceremony)"
-    !File.exist?(File.join(install_dir, "current"))
+    !File.exist?(File.join(tree_dir, "current"))
     integration.download_count == 0
 
     Cleanup
-    FileUtils.chmod(0o755, install_dir)
+    FileUtils.chmod(0o755, tree_dir)
     FileUtils.rm_rf(dir)
   end
 
@@ -223,8 +223,8 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     Given "an existing version dir for an older tag"
     dir = Dir.mktmpdir("dev-gh-int-test-")
     parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
-    install_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine")
-    old_dir = File.join(install_dir, "5.3.2-css-68")
+    tree_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine")
+    old_dir = File.join(tree_dir, "5.3.2-css-68")
     FileUtils.mkdir_p(old_dir)
     File.write(File.join(old_dir, ".dev-gh-release"), "5.3.2-css-68")
     File.write(File.join(old_dir, "old.txt"), "old engine")
@@ -236,7 +236,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
 
     Then "the new version is published while the old version coexists untouched"
     integration.download_count == 1
-    File.read(File.join(install_dir, "5.6.1-css-83", ".dev-gh-release")) == "5.6.1-css-83"
+    File.read(File.join(tree_dir, "5.6.1-css-83", ".dev-gh-release")) == "5.6.1-css-83"
     File.read(File.join(old_dir, "old.txt")) == "old engine"
 
     Cleanup
@@ -247,7 +247,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     Given "a locked digest that does not match the downloaded bytes"
     dir = Dir.mktmpdir("dev-gh-int-test-")
     parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
-    install_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine")
+    tree_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine")
     corrupted = { parts.first.basename.to_s => "0" * 64 }
     dep = build_dependency(parts, sha256_overrides: corrupted)
     integration = build_integration(parts, dir)
@@ -260,8 +260,8 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     Then "no version dir is published and the staging dir is cleaned up"
     error.failures[0][1].is_a?(Dev::Deps::GhIntegration::IntegrityError)
     error.message.include?(parts.first.basename.to_s)
-    !File.exist?(File.join(install_dir, "5.6.1-css-83"))
-    Dir.glob(File.join(install_dir, ".staging-*")).empty?
+    !File.exist?(File.join(tree_dir, "5.6.1-css-83"))
+    Dir.glob(File.join(tree_dir, ".staging-*")).empty?
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -272,7 +272,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     dir = Dir.mktmpdir("dev-gh-int-test-")
     zip_path = Pathname(File.join(dir, "engine.zip"))
     zip_path.binwrite("not actually a zip")
-    install_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine")
+    tree_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine")
     dep = build_dependency([zip_path], asset_pattern: "*.zip")
     integration = build_integration([zip_path], dir)
 
@@ -292,7 +292,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     Given "a locked asset list the declared glob does not cover"
     dir = Dir.mktmpdir("dev-gh-int-test-")
     parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
-    install_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine")
+    tree_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine")
     dep = build_dependency(parts, asset_pattern: "*.7z.*")
     integration = build_integration(parts, dir)
 
@@ -360,7 +360,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
       cp "$DEV_SOURCE_DIR/hello.txt" "$DEV_INSTALL_DIR/built.txt"
       echo "$DEV_VERSION" > "$DEV_INSTALL_DIR/version.txt"
     SH
-    install_dir = File.join(dir, "gh", "EpicGames", "UnrealEngine")
+    tree_dir = File.join(dir, "gh", "EpicGames", "UnrealEngine")
     dep = source_dep(build: "bin/build.sh")
     integration = build_source_integration(tarball, project_root, dir)
 
@@ -368,12 +368,12 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     integration.install_all([dep])
 
     Then "the build output lands under the identity base/<tag>/ with the marker, no staging remains"
-    version_dir = File.join(install_dir, "5.6.1-release")
+    version_dir = File.join(tree_dir, "5.6.1-release")
     File.read(File.join(version_dir, "built.txt")) == "engine source"
     File.read(File.join(version_dir, "version.txt")).strip == "5.6.1-release"
     File.read(File.join(version_dir, ".dev-gh-release")) == "5.6.1-release"
-    !File.exist?(File.join(install_dir, "current"))
-    Dir.glob(File.join(install_dir, ".staging-*")).empty?
+    !File.exist?(File.join(tree_dir, "current"))
+    Dir.glob(File.join(tree_dir, ".staging-*")).empty?
     integration.download_count == 1
 
     Cleanup
@@ -384,7 +384,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     Given "a source tarball and a header-only (build: none) dependency"
     dir = Dir.mktmpdir("dev-gh-src-test-")
     tarball = build_source_tarball(dir, files: { "include/lib.h" => "#pragma once" })
-    install_dir = File.join(dir, "gh", "EpicGames", "UnrealEngine")
+    tree_dir = File.join(dir, "gh", "EpicGames", "UnrealEngine")
     dep = source_dep(build: "none", tag: "v1.0")
     integration = build_source_integration(tarball, File.join(dir, "project"), dir)
 
@@ -392,10 +392,10 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     integration.install_all([dep])
 
     Then "the source tree itself becomes the version dir, marker included"
-    version_dir = File.join(install_dir, "v1.0")
+    version_dir = File.join(tree_dir, "v1.0")
     File.read(File.join(version_dir, "include", "lib.h")) == "#pragma once"
     File.read(File.join(version_dir, ".dev-gh-release")) == "v1.0"
-    Dir.glob(File.join(install_dir, ".staging-*")).empty?
+    Dir.glob(File.join(tree_dir, ".staging-*")).empty?
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -405,8 +405,8 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     Given "a version dir with a matching marker"
     dir = Dir.mktmpdir("dev-gh-src-test-")
     tarball = build_source_tarball(dir, files: { "hello.txt" => "x" })
-    install_dir = File.join(dir, "gh", "EpicGames", "UnrealEngine")
-    version_dir = File.join(install_dir, "5.6.1-release")
+    tree_dir = File.join(dir, "gh", "EpicGames", "UnrealEngine")
+    version_dir = File.join(tree_dir, "5.6.1-release")
     FileUtils.mkdir_p(version_dir)
     File.write(File.join(version_dir, ".dev-gh-release"), "5.6.1-release")
     dep = source_dep(build: "bin/build.sh")
@@ -426,7 +426,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     Given "a build recipe that exits non-zero"
     dir = Dir.mktmpdir("dev-gh-src-test-")
     tarball = build_source_tarball(dir, files: { "hello.txt" => "x" })
-    install_dir = File.join(dir, "gh", "EpicGames", "UnrealEngine")
+    tree_dir = File.join(dir, "gh", "EpicGames", "UnrealEngine")
     dep = source_dep(build: "exit 7")
     integration = build_source_integration(tarball, File.join(dir, "project"), dir)
 
@@ -438,8 +438,8 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     Then "no version dir is published and staging is cleaned up"
     error.failures[0][1].is_a?(Dev::Deps::GhIntegration::BuildError)
     error.message.include?("UnrealEngine")
-    !File.exist?(File.join(install_dir, "5.6.1-release"))
-    Dir.glob(File.join(install_dir, ".staging-*")).empty?
+    !File.exist?(File.join(tree_dir, "5.6.1-release"))
+    Dir.glob(File.join(tree_dir, ".staging-*")).empty?
 
     Cleanup
     FileUtils.rm_rf(dir)
