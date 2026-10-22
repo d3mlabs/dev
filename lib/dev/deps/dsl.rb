@@ -265,6 +265,13 @@ module Dev
       WWISE_DEFAULT_PACKAGES = T.let(["SDK"].freeze, T::Array[String])
       WWISE_DEFAULT_DEPLOYMENT_PLATFORMS = T.let(["Windows_vc160", "Windows_vc170", "Linux", ""].freeze, T::Array[String])
 
+      # The one address an apt declaration has: the suite's current build.
+      APT_SUITE_REVISION = "suite"
+      # A third-party apt source: the signing key URL, where it lands
+      # (optional), plus exactly one of a deb822 `.sources` URL or a one-line
+      # `deb` entry.
+      APT_SOURCE_FIELDS = T.let(%i[key keyring sources deb].freeze, T::Array[Symbol])
+
       # @return [Array<ScopedDeclaration>] declarations made inside this group
       sig { returns(T::Array[ScopedDeclaration]) }
       attr_reader :declarations
@@ -522,6 +529,48 @@ module Dev
         add_declaration("xcode", :xcode, spec, revision: revision)
       end
 
+      # Declare a Debian-family OS package, installed by `dev up` through apt
+      # on Linux build hosts (declare it in a `host: :linux` group). The
+      # package's identity is the name in its declared source; apt publishes
+      # no cross-host version to pin, so the declaration's address is the
+      # suite — the host's release decides which build lands — and
+      # AptRepository#at lifts it as the identity. Install asks for sudo once
+      # when a terminal is present; headless it either rides passwordless
+      # sudo or fails fast asking for one interactive `dev up` on that host.
+      #
+      # @param name [String, Symbol] package name (e.g. "winehq-stable")
+      # @param source [Hash, nil] third-party repository: `key:` (signing key
+      #   URL), optionally `keyring:` (where the key lands — a downloaded
+      #   `.sources` file names its own `Signed-By:` path, so it must match;
+      #   default /etc/apt/keyrings/<name>.key), plus one of `sources:` (a
+      #   deb822 `.sources` URL) or `deb:` (a one-line entry); both
+      #   interpolate `%{codename}`, `%{arch}` and `%{keyring}` from the
+      #   host. nil for a distro package.
+      # @param architectures [Array<String, Symbol>] foreign dpkg architectures
+      #   the package needs (e.g. [:i386] for Wine's 32-bit half)
+      # @param recommends [Boolean] install the package's Recommends
+      #   (`--install-recommends`); false leaves apt's default behaviour
+      # @param spec [Hash] additional options (host:)
+      # @return [void]
+      # @raise [ArgumentError] if source: lacks a key or does not name exactly
+      #   one of sources:/deb:
+      sig do
+        params(
+          name: T.any(String, Symbol),
+          source: T.nilable(T::Hash[Symbol, String]),
+          architectures: T::Array[T.any(String, Symbol)],
+          recommends: T::Boolean,
+          spec: T.untyped,
+        ).void
+      end
+      def apt(name, source: nil, architectures: [], recommends: false, **spec)
+        materialization = T.let({}, T::Hash[String, T.untyped])
+        materialization["source"] = apt_source(name.to_s, source) if source
+        materialization["architectures"] = architectures.map(&:to_s) if architectures.any?
+        materialization["recommends"] = true if recommends
+        add_declaration(name, :apt, spec, revision: APT_SUITE_REVISION, materialization: materialization)
+      end
+
       # Declare the Wwise SDK together with its Unreal Engine integration
       # package, downloaded by wwise-cli into a host install_dir laid out as
       # wwise-cli's own cache (declare `brew "wwise-cli", tap:
@@ -712,6 +761,28 @@ module Dev
           "https://github.com/#{github}/#{name}"
         end
         spec.merge(repo: repo_url)
+      end
+
+      # Validate and stringify an apt source.
+      #
+      # @param name [String] the package, for the message
+      # @param source [Hash{Symbol => String}]
+      # @return [Hash{String => String}]
+      # @raise [ArgumentError]
+      sig { params(name: String, source: T::Hash[Symbol, String]).returns(T::Hash[String, String]) }
+      def apt_source(name, source)
+        unknown = source.keys - APT_SOURCE_FIELDS
+        unless unknown.empty?
+          raise ArgumentError, "apt #{name.inspect}: unknown source field(s) #{unknown.join(", ")} " \
+            "(source: takes key:, optionally keyring:, and one of sources:/deb:)"
+        end
+        raise ArgumentError, "apt #{name.inspect}: source: requires key: (the signing key URL)" unless source.key?(:key)
+        unless [source.key?(:sources), source.key?(:deb)].count(true) == 1
+          raise ArgumentError, "apt #{name.inspect}: source: requires exactly one of sources: (a deb822 .sources URL) " \
+            "or deb: (a one-line entry)"
+        end
+
+        source.to_h { |key, value| [key.to_s, value] }
       end
 
       # @param hash [Hash] symbol-keyed options
