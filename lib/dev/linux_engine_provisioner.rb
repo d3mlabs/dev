@@ -3,9 +3,10 @@
 
 require "etc"
 require "stringio"
-require "tempfile"
 
+require "dev/debian_host"
 require "dev/ini_file"
+require "dev/privileged_steps"
 require "dev/process_executor"
 require "dev/wsl_host"
 
@@ -47,8 +48,8 @@ module Dev
     # re-login or VM restart.
     class RestartRequiredError < RuntimeError; end
 
-    # An admin step exited nonzero.
-    class StepFailedError < RuntimeError; end
+    # An admin step exited nonzero (PrivilegedSteps' error, under the name callers know).
+    StepFailedError = PrivilegedSteps::StepFailedError
 
     # The daemon facts `dev engine status` renders for Linux/WSL.
     class Status < T::Struct
@@ -74,7 +75,6 @@ module Dev
     KEYRING = "/etc/apt/keyrings/docker.asc"
     SOURCES_LIST = "/etc/apt/sources.list.d/docker.list"
     DESKTOP_SHIM_MARKER = "/docker-desktop/"
-    OS_RELEASE = "/etc/os-release"
     WSL_CONF = "/etc/wsl.conf"
     GROUP = "docker"
 
@@ -97,21 +97,20 @@ module Dev
       ).void
     end
     def initialize(executor: ProcessExecutor.new, wsl: WslHost.new.wsl?, user: T.must(Etc.getpwuid(Process.uid)).name,
-      out: $stderr, path: ENV.fetch("PATH", ""), os_release_path: OS_RELEASE, wsl_conf_path: WSL_CONF)
+      out: $stderr, path: ENV.fetch("PATH", ""), os_release_path: DebianHost::OS_RELEASE, wsl_conf_path: WSL_CONF)
       @executor = executor
       @wsl = wsl
       @user = user
       @out = out
-      @path = path
-      @os_release_path = os_release_path
       @wsl_conf_path = wsl_conf_path
-      @staged = T.let([], T::Array[Tempfile])
+      @host = T.let(DebianHost.new(executor: executor, path: path, os_release_path: os_release_path), DebianHost)
+      @steps = T.let(PrivilegedSteps.new(executor: executor, tty: true, purpose: "converge dockerd"), PrivilegedSteps)
     end
 
     # @return [Status]
     sig { returns(Status) }
     def status
-      docker = which("docker")
+      docker = @host.which("docker")
       Status.new(
         docker_path: docker,
         desktop_shim: !docker.nil? && desktop_shim?(docker),
@@ -142,20 +141,20 @@ module Dev
       return if current.converged?
 
       install = current.docker_path.nil? || !current.buildx
-      if install && which("apt-get").nil?
+      if install && !@host.apt_get?
         raise UnsupportedDistroError,
-          "no apt-get on this #{distro_id} box — dev only scripts the Docker install for the Debian family. " \
+          "no apt-get on this #{@host.distro_id} box — dev only scripts the Docker install for the Debian family. " \
           "Install #{PACKAGES.join(", ")} with your distro's tool, enable the docker service, add #{@user} to the " \
           "#{GROUP} group, and re-run `dev up`."
       end
 
       @out.puts ">>> Converging dockerd (one sudo prompt) ..."
-      step!("sudo", "-v")
+      @steps.session!
       install_packages! if install
-      step!("sudo", "systemctl", "enable", "--now", "docker") if install || !current.dockerd_active
-      step!("sudo", "usermod", "-aG", GROUP, @user) unless current.in_docker_group
+      @steps.step!("sudo", "systemctl", "enable", "--now", "docker") if install || !current.dockerd_active
+      @steps.step!("sudo", "usermod", "-aG", GROUP, @user) unless current.in_docker_group
       wsl_conf_needed = current.systemd_enabled == false
-      step!("sudo", "install", "-m", "0644", T.must(stage(systemd_wsl_conf).path), @wsl_conf_path) if wsl_conf_needed
+      @steps.install_file!(systemd_wsl_conf, @wsl_conf_path, mode: "0644") if wsl_conf_needed
 
       restart_hint(group_added: !current.in_docker_group, wsl_conf_written: wsl_conf_needed)
     end
@@ -170,8 +169,8 @@ module Dev
     # @raise [StepFailedError]
     sig { void }
     def stop!
-      step!("sudo", "-v")
-      step!("sudo", "systemctl", "stop", "docker")
+      @steps.session!
+      @steps.step!("sudo", "systemctl", "stop", "docker")
     end
 
     private
@@ -182,16 +181,16 @@ module Dev
     # @raise [StepFailedError]
     sig { void }
     def install_packages!
-      id = distro_id
-      arch = T.unsafe(@executor).capture("dpkg", "--print-architecture").strip
-      step!("sudo", "install", "-m", "0755", "-d", File.dirname(KEYRING))
-      step!("sudo", "curl", "-fsSL", "https://download.docker.com/linux/#{id}/gpg", "-o", KEYRING)
-      step!("sudo", "chmod", "a+r", KEYRING)
-      step!("sudo", "sh", "-c",
-        "echo 'deb [arch=#{arch} signed-by=#{KEYRING}] https://download.docker.com/linux/#{id} #{codename} stable' " \
-        "> #{SOURCES_LIST}")
-      step!("sudo", "apt-get", "update")
-      step!(*T.unsafe(["sudo", "apt-get", "install", "-y", *PACKAGES]))
+      id = @host.distro_id
+      @steps.step!("sudo", "install", "-m", "0755", "-d", File.dirname(KEYRING))
+      @steps.step!("sudo", "curl", "-fsSL", "https://download.docker.com/linux/#{id}/gpg", "-o", KEYRING)
+      @steps.step!("sudo", "chmod", "a+r", KEYRING)
+      @steps.install_file!(
+        "deb [arch=#{@host.arch} signed-by=#{KEYRING}] https://download.docker.com/linux/#{id} #{@host.codename} stable\n",
+        SOURCES_LIST, mode: "0644",
+      )
+      @steps.step!("sudo", "apt-get", "update")
+      @steps.step!(*T.unsafe(["sudo", "apt-get", "install", "-y", *PACKAGES]))
     end
 
     # @param group_added [Boolean]
@@ -215,32 +214,9 @@ module Dev
         "`sudo systemctl restart 'actions.runner.*'`), then `dev up` again."
     end
 
-    # @param cmd [Array<String>] argv
-    # @return [void]
-    # @raise [StepFailedError]
-    sig { params(cmd: String).void }
-    def step!(*cmd)
-      return if T.unsafe(@executor).run(*cmd)
-
-      raise StepFailedError, "engine step failed: #{cmd.join(" ")}"
-    end
-
-    # @param name [String]
-    # @return [String, nil] the first executable +name+ on PATH
-    sig { params(name: String).returns(T.nilable(String)) }
-    def which(name)
-      @path.split(File::PATH_SEPARATOR).each do |dir|
-        next if dir.empty?
-
-        candidate = File.join(dir, name)
-        return candidate if File.file?(candidate) && File.executable?(candidate)
-      end
-      nil
-    end
-
     # Whether +docker+ is Docker Desktop's WSL-integration shim. Desktop
     # installs it as a symlink (`/usr/bin/docker` → `/mnt/wsl/docker-desktop/
-    # cli-tools/…`), so the resolved path is what carries the marker. `which`
+    # cli-tools/…`), so the resolved path is what carries the marker. `DebianHost#which`
     # only returns existing files, so the resolution cannot dangle.
     #
     # @param docker [String] the PATH entry `which` found
@@ -272,44 +248,6 @@ module Dev
     sig { returns(String) }
     def systemd_wsl_conf
       wsl_conf.set("boot", "systemd", "true").render
-    end
-
-    # Write +content+ to a temp file that outlives the sudo install step.
-    #
-    # @param content [String]
-    # @return [Tempfile]
-    sig { params(content: String).returns(Tempfile) }
-    def stage(content)
-      file = Tempfile.new("dev-wsl-conf")
-      file.write(content)
-      file.flush
-      @staged << file
-      file
-    end
-
-    # @return [String] os-release ID ("ubuntu", "debian", …), "unknown" when unreadable
-    sig { returns(String) }
-    def distro_id
-      os_release["ID"] || "unknown"
-    end
-
-    # @return [String] os-release VERSION_CODENAME
-    sig { returns(String) }
-    def codename
-      os_release["VERSION_CODENAME"] || "stable"
-    end
-
-    # @return [Hash{String => String}] /etc/os-release key/values, unquoted
-    sig { returns(T::Hash[String, String]) }
-    def os_release
-      return {} unless File.exist?(@os_release_path)
-
-      File.readlines(@os_release_path, chomp: true).each_with_object({}) do |line, acc|
-        key, value = line.split("=", 2)
-        next if key.nil? || value.nil?
-
-        acc[key] = value.delete_prefix('"').delete_suffix('"')
-      end
     end
   end
 end

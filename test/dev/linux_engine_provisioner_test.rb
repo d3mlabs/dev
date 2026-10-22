@@ -161,22 +161,21 @@ class Dev::LinuxEngineProvisionerTest < Minitest::Test
     When "provisioning"
     error = assert_raises(Dev::LinuxEngineProvisioner::RestartRequiredError) { prov.provision! }
 
-    Then "the steps run in order under sudo, and the new group membership needs a fresh login"
-    executor.sudo_runs == [
+    Then "the steps run in order under sudo (the sources list from a staged copy, never a shell), and the new group membership needs a fresh login"
+    executor.sudo_runs.values_at(0, 1, 2, 3, 5, 6, 7, 8) == [
       %w[sudo -v],
       %w[sudo install -m 0755 -d /etc/apt/keyrings],
       %w[sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc],
       %w[sudo chmod a+r /etc/apt/keyrings/docker.asc],
-      [
-        "sudo", "sh", "-c",
-        "echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] " \
-        "https://download.docker.com/linux/ubuntu resolute stable' > /etc/apt/sources.list.d/docker.list",
-      ],
       %w[sudo apt-get update],
       %w[sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin],
       %w[sudo systemctl enable --now docker],
       %w[sudo usermod -aG docker jpduchesne],
     ]
+    executor.sudo_runs[4].values_at(0, 1, 2, 3, 5) == %w[sudo install -m 0644 /etc/apt/sources.list.d/docker.list]
+    File.read(executor.sudo_runs[4][4]) ==
+      "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu resolute stable\n"
+    executor.sudo_runs.size == 9
     error.message.include?("docker group")
     error.message.include?("dev up")
     !error.message.include?("wsl --shutdown")
