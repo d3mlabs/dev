@@ -13,9 +13,6 @@ module Dev
     class Installer
       extend T::Sig
 
-      # The build-wave type that installs ahead of the rest: OS packages.
-      OS_PACKAGE_TYPE = :apt
-
       # Aggregate of every failure across the whole install run, raised after
       # all integrations were attempted. Entries are ordered by wave (build
       # first), so root causes appear before derivative failures. Raising
@@ -51,10 +48,7 @@ module Dev
       # Install order is a simplified topological sort: build-group deps
       # (compilers, build systems) are installed before all others because
       # app/test deps may depend on them at install time (e.g. cmake must
-      # exist before a cmake-based library can be built). Within the build
-      # wave, OS packages (apt) go first: they are prerequisites of what the
-      # other types install on the same host (Wine under a toolchain tree,
-      # libraries under a brew formula).
+      # exist before a cmake-based library can be built).
       #
       # Today individual integrations (Homebrew, LuaRocks) handle their own
       # internal dependency graphs, so we don't need full topological ordering
@@ -89,9 +83,8 @@ module Dev
         all_deps = self.class.select(@lockfile.read, env:, host:, groups:, except:, integration_types:)
 
         build_deps, other_deps = all_deps.partition { |d| d.group == :build }
-        os_deps, build_deps = build_deps.partition { |d| d.integration == OS_PACKAGE_TYPE }
 
-        failures = dispatch(os_deps) + dispatch(build_deps) + dispatch(other_deps)
+        failures = dispatch(build_deps) + dispatch(other_deps)
         raise InstallFailedError, failures if failures.any?
       end
 
