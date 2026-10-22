@@ -57,7 +57,7 @@ flowchart LR
 
 The registry (`Registry::INTEGRATIONS`) is the single wiring table: one
 `Entry` per integration symbol declaring its repository, optional scheme
-(nil for integrations with no constraint grammar — url, xcode, apt, wwise), optional
+(nil for integrations with no constraint grammar — url, xcode, wwise), optional
 locker, optional integration, optional `install_alias` (url installs
 through cmake's integration *instance*, so their shared batch artifact
 `deps.cmake` is written once, whole), and scope. Consistency tests fail
