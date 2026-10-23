@@ -46,6 +46,27 @@ class Dev::Deps::LockfileTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "a pin's needed_by provenance survives the round-trip, so the installer can order by it" do
+    Given "the xcodes formula as the resolver mints it from xcode's own manifest"
+    dir = Dir.mktmpdir("dev-lockfile-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: dir)
+    dep = Dev::Deps::Dependency.new(
+      name: "xcodes", integration: :brew, group: :editor, version: "1.6.2", hash: nil,
+      metadata: { "host" => "darwin", Dev::Deps::Dependency::NEEDED_BY => ["xcode"] },
+    )
+
+    When "locking and reading back"
+    lockfile.lock([dep])
+    read_dep = lockfile.read.first
+
+    Then
+    read_dep.metadata[Dev::Deps::Dependency::NEEDED_BY] == ["xcode"]
+    read_dep.group == :editor
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "a wwise pin's install instructions survive the round-trip — none is named like a reserved lock attribute" do
     Given "a wwise dependency as the DSL and resolver mint it"
     dir = Dir.mktmpdir("dev-lockfile-test-")

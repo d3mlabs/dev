@@ -662,4 +662,105 @@ class Dev::Deps::DSLTest < Minitest::Test
     Dev::Deps.last_config.declarations.size == 1
     Dev::Deps.last_config.declarations[0].name == "mylib"
   end
+
+  # -- the export rule (ADR-0011): ungrouped declarations export, grouped ones are private --
+
+  test "every declaration verb works ungrouped, in the default group, and exports" do
+    When "declaring #{verb} at the top level"
+    config = Dev::Deps.define do
+      public_send(verb, *args, **kwargs)
+    end
+
+    Then "one declaration in the default group, and it is the manifest's one export"
+    config.declarations.size == 1
+    config.declarations[0].scope.group == Dev::Deps::DSL::DEFAULT_GROUP
+    config.exports == config.declarations
+
+    Where
+    verb      | args                      | kwargs
+    :brew     | ["xcodes"]                | {}
+    :brew     | ["wwise-cli"]             | { tap: "d3mlabs/d3mlabs" }
+    :cmake    | ["boost"]                 | { url: "https://example.com/boost.tar.gz" }
+    :custom   | ["thing"]                 | { integration: :thing }
+    :ficsit   | ["SML"]                   | {}
+    :gem      | ["rake"]                  | {}
+    :gh       | ["acme/tool"]             | { tag: "v1.0.0", assets: "*.tar.gz" }
+    :luarocks | ["luaunit"]               | {}
+    :pip      | ["black"]                 | {}
+    :steam    | ["SatisfactoryServer"]    | { app: 1690800 }
+    :wwise    | ["Wwise"]                 | { sdk: "2023.1.14.8770", integration: "2023.1.14.3555", ue: "5.6" }
+    :xcode    | ["26.1.1"]                | {}
+  end
+
+  test "grouped declarations are declared but never exported — a library's groups are its private business" do
+    When "mixing grouped and ungrouped lines"
+    config = Dev::Deps.define do
+      brew "xcodes"
+      group :build do
+        brew "ccache"
+        env :ci do
+          brew "jq"
+        end
+      end
+      gem "rake"
+    end
+
+    Then "all four declare, in written order; only the ungrouped two export"
+    config.declarations.map(&:name) == ["xcodes", "ccache", "jq", "rake"]
+    config.exports.map(&:name) == ["xcodes", "rake"]
+    config.exports.map { |decl| decl.scope.group }.uniq == [Dev::Deps::DSL::DEFAULT_GROUP]
+  end
+
+  test "a per-declaration host survives an ungrouped line — the only scoping an export carries" do
+    When "declaring a Mac-only formula at the top level"
+    config = Dev::Deps.define { brew "xcodes", host: :darwin }
+
+    Then
+    config.exports[0].scope.host == :darwin
+    config.exports[0].scope.env.nil?
+  end
+
+  test "env is not a top-level verb — an env never propagates, so an ungrouped env block would contradict itself" do
+    When "opening an env block at the top level"
+    Dev::Deps.define do
+      env :ci do
+        brew "jq"
+      end
+    end
+
+    Then
+    raises NoMethodError
+  end
+
+  test "a registered integration's verb works ungrouped too" do
+    When "registering and declaring at the top level"
+    config = Dev::Deps.define do
+      register :wow_curseforge, "WoWCurseforgeIntegration"
+      wow_curseforge "CombatMode", version: ">=1.0"
+    end
+
+    Then
+    config.exports.map(&:name) == ["CombatMode"]
+    config.exports[0].integration == :wow_curseforge
+  end
+
+  test "the toolchain directives never export — a library does not pick the project's ruby" do
+    When "a manifest sets ruby, python and declares a formula"
+    config = Dev::Deps.define do
+      ruby "4.0.1"
+      brew "jq"
+    end
+
+    Then "the ruby requirement is on the config, not in the exports"
+    config.ruby_version_requirement == "4.0.1"
+    config.exports.map(&:name) == ["jq"]
+  end
+
+  test "an unknown top-level verb is still a NoMethodError" do
+    When "calling nonsense at the top level"
+    Dev::Deps.define { frobnicate "x" }
+
+    Then
+    raises NoMethodError
+  end
 end

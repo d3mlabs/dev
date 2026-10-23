@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "pathname"
 require "sorbet-runtime"
 require_relative "deps/config"
 require_relative "deps/cli_ui"
@@ -10,6 +11,13 @@ require_relative "deps/installer"
 
 module Dev
   module Deps
+    # A manifest was promised at a path where no file exists.
+    class ManifestNotFoundError < StandardError; end
+
+    # A manifest file ran to completion without ever calling Dev::Deps.define,
+    # so it defined nothing to read.
+    class UndefinedManifestError < StandardError; end
+
     @last_config = T.let(nil, T.nilable(Config))
 
     class << self
@@ -40,6 +48,32 @@ module Dev
       sig { void }
       def reset!
         @last_config = nil
+      end
+
+      # Evaluate a dependencies.rb file into the Config it defines, leaving
+      # last_config exactly as it was: a manifest read as a library — an
+      # integration's own dependencies.rb — must never masquerade as the
+      # project's.
+      #
+      # @param path [Pathname] the manifest file
+      # @return [Config] what the file defined
+      # @raise [ManifestNotFoundError] if no file exists at path
+      # @raise [UndefinedManifestError] if the file never calls .define
+      sig { params(path: Pathname).returns(Config) }
+      def evaluate(path)
+        previous = @last_config
+        raise ManifestNotFoundError, "no manifest at #{path}" unless path.file?
+
+        @last_config = nil
+        Kernel.load(path.to_s)
+        # Through the reader, not the ivar: the file's define call is what
+        # set it, which flow typing of the assignment above cannot see.
+        defined = last_config
+        raise UndefinedManifestError, "#{path} never calls Dev::Deps.define" if defined.nil?
+
+        defined
+      ensure
+        @last_config = previous
       end
 
       # Detect the current environment (ci vs dev) from the CI variable alone.

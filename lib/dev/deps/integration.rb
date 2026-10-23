@@ -14,11 +14,20 @@ module Dev
     # Accepts a Repository and an ArtifactStore via DI at construction.
     # Receives all dependencies for its type at once via install_all —
     # handles per-dep install plus any batch artifacts (e.g. deps.cmake).
+    #
+    # An integration that shells to a tool carries that need in a
+    # dependencies.rb of its own ({.manifest_path}), in the same DSL a
+    # project uses; dev locks the manifest's exports into the using
+    # project's lock and installs them before this integration's batch
+    # (ADR-0011).
     class Integration
       extend T::Sig
 
       # The data-root prefix every tree base starts with; the store re-roots it.
       TREES_ROOT = Dev::DataRoot::HOME_ROOT
+
+      # The manifest file name, the same one a project uses.
+      MANIFEST_FILE = "dependencies.rb"
 
       # Aggregate of per-dep failures within one install_all call: the loop
       # attempts every dep (one bad formula must not block an unrelated
@@ -73,6 +82,42 @@ module Dev
         sig { overridable.params(dep: Dependency).returns(TreeKey) }
         def tree_key(dep)
           raise NotImplementedError, "#{self} installs no tree"
+        end
+
+        # The integration's own dependencies.rb — the tooling it shells to,
+        # declared in the project DSL — or nil when it needs none.
+        #
+        # By convention the manifest sits in a folder named after the class
+        # file, beside it: lib/dev/deps/xcode_integration.rb carries
+        # lib/dev/deps/xcode_integration/dependencies.rb. Ownership says
+        # where the code loads from and nothing else, so an integration a
+        # project `register`s from its own folder carries its manifest the
+        # same way, and extracting one is moving a file. Overridable for an
+        # integration whose manifest lives elsewhere.
+        #
+        # @return [Pathname, nil] the manifest, or nil for an integration
+        #   that needs no tooling of its own
+        sig { overridable.returns(T.nilable(Pathname)) }
+        def manifest_path
+          class_name = name
+          return nil if class_name.nil?
+
+          source_file = Object.const_source_location(class_name)&.first
+          return nil if source_file.nil?
+
+          manifest = Pathname(source_file).sub_ext("") / MANIFEST_FILE
+          manifest.file? ? manifest : nil
+        end
+
+        # Whether this integration's pins are the host's prerequisite layer,
+        # installed before every other integration's batch. False for all but
+        # the host's package manager: the tools other integrations shell to
+        # arrive through it.
+        #
+        # @return [Boolean]
+        sig { overridable.returns(T::Boolean) }
+        def host_prerequisite?
+          false
         end
       end
 

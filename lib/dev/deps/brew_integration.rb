@@ -110,6 +110,20 @@ module Dev
       # before llvm and xcode (520), which keep the last word on what they set.
       LISP_FILENAME = "515_brew.lisp"
 
+      class << self
+        extend T::Sig
+
+        # brew is the host prerequisite: the tools every other integration
+        # shells to (xcodes, wwise-cli, the project Ruby) are formulae, so
+        # the brew batch installs before every other integration's.
+        #
+        # @return [Boolean] always true
+        sig { override.returns(T::Boolean) }
+        def host_prerequisite?
+          true
+        end
+      end
+
       # @param repository [Repository, nil] source adapter
       # @param store [ArtifactStore, nil] the store whose brew tool cache brew downloads into
       # @param taps [Array<Tap>] Homebrew taps to register before installing

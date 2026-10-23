@@ -20,9 +20,10 @@ module Dev
     #      machine/runner bring-up (Apple ID 2FA + sudo happen there, never in
     #      an unattended run), and the version-named path is untouched by App
     #      Store auto-update and macOS updates.
-    #   2. Missing -> shell to `xcodes install <version>` (the xcodes CLI is a
-    #      :build brew dep of consuming repos, so build-first install ordering
-    #      guarantees it exists here). With a TTY, stdio is inherited so any
+    #   2. Missing -> shell to `xcodes install <version>` (the xcodes CLI is
+    #      this integration's own need — xcode_integration/dependencies.rb —
+    #      locked into the consuming project with provenance and installed
+    #      before this batch, so it exists here). With a TTY, stdio is inherited so any
     #      prompt (Apple ID, 2FA, sudo, license) flows to the human. Headless,
     #      stdin is /dev/null: unattended installs succeed when the standing
     #      state allows (valid keychain session or XCODES_USERNAME/
@@ -39,6 +40,9 @@ module Dev
     class XcodeIntegration < Integration
       extend T::Sig
 
+      # The xcodes CLI is not on PATH: the project's lock predates the
+      # integration manifest (re-lock), or its install failed earlier in this
+      # run (the aggregate names it first).
       class XcodesMissingError < StandardError; end
       class InstallError < StandardError; end
 
@@ -147,7 +151,8 @@ module Dev
         unless xcodes_available?
           raise XcodesMissingError,
             "xcode #{version}: the xcodes CLI is not installed. " \
-            "Declare it in dependencies.rb — group :build { brew \"xcodes\" } — and run dev up."
+            "dev locks it from the xcode integration's own manifest (needed_by: xcode) — " \
+            "run dev deps update to re-lock, then dev up."
         end
 
         puts ">>> Installing Xcode #{version} via xcodes (this downloads several GB)"

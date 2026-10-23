@@ -19,6 +19,13 @@ module Dev
       sig { returns(T::Array[ScopedDeclaration]) }
       attr_reader :declarations
 
+      # @return [Array<ScopedDeclaration>] the ungrouped declarations — what
+      #   this manifest exports when read as a library (ADR-0011's export
+      #   rule: grouped declarations are private, and the toolchain
+      #   directives — ruby, python — and env scoping never propagate)
+      sig { returns(T::Array[ScopedDeclaration]) }
+      attr_reader :exports
+
       # @return [String, nil] required Ruby version
       sig { returns(T.nilable(String)) }
       attr_reader :ruby_version_requirement
@@ -38,6 +45,8 @@ module Dev
       # @param taps [Array<Tap>] declared Homebrew taps
       # @param declarations [Array<ScopedDeclaration>] all declared dependencies
       #   (gems are :bundler declarations, brew formulae are :brew declarations, etc.)
+      # @param exports [Array<ScopedDeclaration>] the ungrouped subset of
+      #   declarations
       # @param ruby_version_requirement [String, nil] required Ruby version
       # @param lua_version [String, nil] Lua version for LuaRocks
       # @param python_version [String, nil] Python minor version for the pip venv
@@ -46,16 +55,18 @@ module Dev
         params(
           taps: T::Array[Tap],
           declarations: T::Array[ScopedDeclaration],
+          exports: T::Array[ScopedDeclaration],
           ruby_version_requirement: T.nilable(String),
           lua_version: T.nilable(String),
           python_version: T.nilable(String),
           registered_integrations: T::Hash[Symbol, T.untyped],
         ).void
       end
-      def initialize(taps:, declarations:, ruby_version_requirement:,
+      def initialize(taps:, declarations:, exports:, ruby_version_requirement:,
                      lua_version:, python_version:, registered_integrations:)
         @taps = taps
         @declarations = declarations
+        @exports = exports
         @ruby_version_requirement = ruby_version_requirement
         @lua_version = lua_version
         @python_version = python_version
@@ -81,6 +92,7 @@ module Dev
           new(
             taps:,
             declarations: dsl.declarations,
+            exports: dsl.exports,
             ruby_version_requirement: dsl.ruby_version_requirement,
             lua_version: dsl.lua_version_value,
             python_version: dsl.python_version_value,

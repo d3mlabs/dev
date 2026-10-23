@@ -7,6 +7,7 @@ require "dev/command"
 require "dev/deps"
 require "dev/deps/brew_repository"
 require "dev/deps/installer"
+require "dev/deps/integration_needs"
 require "dev/deps/lockfile"
 require "dev/deps/registry"
 require "dev/deps/resolver"
@@ -66,9 +67,16 @@ module Dev
           lockers[integration]&.lock(typed_declarations)
         end
 
+        # The needs table: each integration's own manifest, built in or
+        # project-registered, so a declaration pulls the tooling its
+        # integration shells to into this project's lock (ADR-0011).
+        needs = Dev::Deps::IntegrationNeeds.new.table(
+          Dev::Deps::Registry.integration_classes(registered: deps_config.registered_integrations),
+        )
         resolver = Dev::Deps::Resolver.new(
           repositories: Dev::Deps::Registry.repositories(project_root: project_root),
           schemes: Dev::Deps::Registry.schemes,
+          needs: needs,
         )
         lockfile = Dev::Deps::Lockfile.new(dir: project_root)
         # Resolve, then carry provenance: the Resolver is a pure function of

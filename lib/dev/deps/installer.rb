@@ -2,22 +2,29 @@
 # frozen_string_literal: true
 
 require "sorbet-runtime"
+require_relative "dependency"
 require_relative "integration"
 
 module Dev
   module Deps
     # Reads locked dependencies and dispatches to integrations.
     #
-    # Cross-cutting install concerns (env filtering, build-first ordering)
-    # live here — not in Integration or Lockfile.
+    # Cross-cutting install concerns (env filtering, install ordering) live
+    # here — not in Integration or Lockfile.
     class Installer
       extend T::Sig
 
+      # The install order has a cycle: some integration's needs are, directly
+      # or through other integrations, pins of its own batch, so no batch
+      # can go first. Refused rather than guessed — an integration's needs
+      # must be pins of other integrations.
+      class DependencyCycleError < StandardError; end
+
       # Aggregate of every failure across the whole install run, raised after
-      # all integrations were attempted. Entries are ordered by wave (build
-      # first), so root causes appear before derivative failures. Raising
-      # keeps the caller contract unchanged: a failed run exits non-zero and
-      # never writes the installed stamp.
+      # all integrations were attempted. Entries follow install order
+      # (prerequisites first), so root causes appear before derivative
+      # failures. Raising keeps the caller contract unchanged: a failed run
+      # exits non-zero and never writes the installed stamp.
       class InstallFailedError < StandardError
         extend T::Sig
 
@@ -43,18 +50,17 @@ module Dev
         @integrations = integrations
       end
 
-      # Read lockfiles and dispatch to integrations.
+      # Read lockfiles and dispatch to integrations, in the order the lock's
+      # graph dictates.
       #
-      # Install order is a simplified topological sort: build-group deps
-      # (compilers, build systems) are installed before all others because
-      # app/test deps may depend on them at install time (e.g. cmake must
-      # exist before a cmake-based library can be built).
-      #
-      # Today individual integrations (Homebrew, LuaRocks) handle their own
-      # internal dependency graphs, so we don't need full topological ordering
-      # here. If we later encounter cross-integration transitive dependencies,
-      # or integrate a repository that doesn't resolve its own dep graph,
-      # this partition would generalize into a proper topological sort.
+      # Install order is a topological sort over integration batches. The
+      # edges are the lock's own: a pin recorded as `needed_by` an
+      # integration (the tooling that integration's manifest exports — xcodes
+      # for xcode, wwise-cli for wwise) installs before that integration's
+      # batch; and the host prerequisite (brew, through which every such tool
+      # arrives) installs before everything. Groups play no part: they are
+      # purpose, selected by --group/--except, and nothing installs first
+      # because of its group name (ADR-0011). A cycle is refused.
       #
       # Selection (env, host, groups, except) is {select}'s one pure filter.
       # Filtering happens here — at install, never at resolve — so the lockfile
@@ -68,6 +74,7 @@ module Dev
       # @param integration_types [Array<Symbol>, nil] install only deps of
       #   these integrations, by lock key (e.g. [:brew]); nil = all
       # @return [void]
+      # @raise [DependencyCycleError] if the selected pins' needs form a cycle
       # @raise [InstallFailedError] if any integration reported failures; every
       #   integration was still attempted (failure isolation)
       sig do
@@ -80,11 +87,9 @@ module Dev
         ).void
       end
       def install(env: nil, host: nil, groups: nil, except: [], integration_types: nil)
-        all_deps = self.class.select(@lockfile.read, env:, host:, groups:, except:, integration_types:)
+        selected = self.class.select(@lockfile.read, env:, host:, groups:, except:, integration_types:)
 
-        build_deps, other_deps = all_deps.partition { |d| d.group == :build }
-
-        failures = dispatch(build_deps) + dispatch(other_deps)
+        failures = ordered_batches(selected).flat_map { |integration, deps| dispatch(integration, deps) }
         raise InstallFailedError, failures if failures.any?
       end
 
@@ -148,37 +153,105 @@ module Dev
 
       private
 
-      # Dispatch deps to their matching integrations, grouped by integration
-      # INSTANCE rather than by type symbol: types that install through a
-      # shared instance (Registry install_alias — e.g. :url deps through
-      # :cmake's pipeline) must arrive in one install_all call, or an
-      # integration generating batch artifacts (deps.cmake) would overwrite
-      # its own output with each partial group.
+      # The selected pins batched per integration INSTANCE, in install order.
       #
-      # A failing integration never blocks the others: the manifest declares
-      # no cross-integration edges, so the correct failure policy for the
-      # (degenerate) dependency DAG is attempt-all. Failures are collected —
-      # per-dep entries when the integration isolated them
+      # Batching is by instance rather than by type symbol: types that
+      # install through a shared instance (Registry install_alias — e.g. :url
+      # deps through :cmake's pipeline) must arrive in one install_all call,
+      # or an integration generating batch artifacts (deps.cmake) would
+      # overwrite its own output with each partial group. Pins of a type no
+      # integration is wired for are dropped. Order is {order}'s.
+      #
+      # @param deps [Array<Dependency>] the selected pins, in lock order
+      # @return [Array<[Integration, Array<Dependency>]>] batches in install order
+      # @raise [DependencyCycleError] if the batches' needs form a cycle
+      sig { params(deps: T::Array[Dependency]).returns(T::Array[[Integration, T::Array[Dependency]]]) }
+      def ordered_batches(deps)
+        batches = T.let({}, T::Hash[Integration, T::Array[Dependency]])
+        deps.each do |dep|
+          integration = @integrations[dep.integration]
+          next unless integration
+
+          (batches[integration] ||= []) << dep
+        end
+
+        order(batches).map { |integration| [integration, batches.fetch(integration)] }
+      end
+
+      # Topological order over the batches' instances. Edges run from the
+      # batch that must install first to the one that needs it: the host
+      # prerequisite's to every other batch, and a pin's batch to each
+      # integration the lock records under its `needed_by` — when that
+      # integration has a batch in this install (a need whose user is not
+      # selected is still installed, it just orders nothing). Ties keep lock
+      # order, so the result is stable run to run.
+      #
+      # @param batches [Hash{Integration => Array<Dependency>}] in lock order
+      # @return [Array<Integration>] the instances, first-to-install first
+      # @raise [DependencyCycleError] if the edges form a cycle
+      sig { params(batches: T::Hash[Integration, T::Array[Dependency]]).returns(T::Array[Integration]) }
+      def order(batches)
+        before = T.let({}, T::Hash[Integration, T::Array[Integration]])
+        prerequisites, others = batches.keys.partition { |integration| integration.class.host_prerequisite? }
+        prerequisites.each { |prerequisite| others.each { |other| (before[other] ||= []) << prerequisite } }
+        batches.each do |integration, deps|
+          deps.each do |dep|
+            Array(dep.metadata[Dependency::NEEDED_BY]).each do |parent|
+              needing = @integrations[parent.to_sym]
+              (before[needing] ||= []) << integration if needing && batches.key?(needing)
+            end
+          end
+        end
+
+        remaining = batches.keys
+        ordered = T.let([], T::Array[Integration])
+        until remaining.empty?
+          ready = remaining.find { |integration| (before.fetch(integration, []) - ordered).empty? }
+          raise DependencyCycleError, cycle_message(remaining.map { |stuck| batches.fetch(stuck) }) if ready.nil?
+
+          ordered << ready
+          remaining.delete(ready)
+        end
+        ordered
+      end
+
+      # @param stuck [Array<Array<Dependency>>] the batches no order could place
+      # @return [String]
+      sig { params(stuck: T::Array[T::Array[Dependency]]).returns(String) }
+      def cycle_message(stuck)
+        "install order has a cycle among #{stuck.map { |deps| label(deps) }.join(", ")} — " \
+          "an integration's needs must be pins of other integrations"
+      end
+
+      # Hand one batch to its integration.
+      #
+      # A failing integration never blocks the others: the graph only orders
+      # the attempts, so a batch whose prerequisite failed still runs and
+      # reports its own, derivative failure after the root cause. Failures
+      # are collected — per-dep entries when the integration isolated them
       # (PartialInstallError), one entry when it failed whole (e.g. a tap
       # registration preamble) — and reported by the caller's aggregate.
       #
-      # @param deps [Array<Dependency>] dependencies to install
-      # @return [Array<String>] one entry per failure, in dispatch order
-      sig { params(deps: T::Array[Dependency]).returns(T::Array[String]) }
-      def dispatch(deps)
-        deps.group_by { |dep| @integrations[dep.integration] }.flat_map do |integration, typed_deps|
-          next [] unless integration
+      # @param integration [Integration] the batch's instance
+      # @param deps [Array<Dependency>] its pins
+      # @return [Array<String>] one entry per failure
+      sig { params(integration: Integration, deps: T::Array[Dependency]).returns(T::Array[String]) }
+      def dispatch(integration, deps)
+        integration.install_all(deps)
+        []
+      rescue Integration::PartialInstallError => e
+        e.failures.map { |name, error| "#{label(deps)}: #{name} — #{error.message}" }
+      rescue StandardError => e
+        ["#{label(deps)}: #{e.message}"]
+      end
 
-          label = typed_deps.map(&:integration).uniq.join("+")
-          begin
-            integration.install_all(typed_deps)
-            []
-          rescue Integration::PartialInstallError => e
-            e.failures.map { |name, error| "#{label}: #{name} — #{error.message}" }
-          rescue StandardError => e
-            ["#{label}: #{e.message}"]
-          end
-        end
+      # The lock keys a batch spans, joined ("cmake+url").
+      #
+      # @param deps [Array<Dependency>] one batch
+      # @return [String]
+      sig { params(deps: T::Array[Dependency]).returns(String) }
+      def label(deps)
+        deps.map(&:integration).uniq.join("+")
       end
     end
   end
