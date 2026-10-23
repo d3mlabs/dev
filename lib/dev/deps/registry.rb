@@ -5,6 +5,7 @@ require_relative "artifact_store"
 require_relative "tap"
 require_relative "brew_repository"
 require_relative "brew_integration"
+require "dev/brew_env"
 require_relative "git_repository"
 require_relative "cmake_integration"
 require_relative "luarocks_repository"
@@ -164,7 +165,7 @@ module Dev
             repository: BrewRepository,
             scheme: BrewScheme,
             integration: BrewIntegration,
-            integration_needs: %i[taps project_dir pin_taps],
+            integration_needs: %i[taps project_dir pin_taps brew_env],
           ),
           # Casks are declared with the brew DSL verb (cask: true) but are a
           # separate universe: Homebrew publishes no versions or bottle
@@ -371,6 +372,7 @@ module Dev
             python_version:,
             taps:,
             pin_taps:,
+            brew_env: BrewEnv.new(path: BrewEnv.user_file),
           }
           integrations = entries.to_h do |entry|
             # T.unsafe: each entry's constructor takes a runtime-selected

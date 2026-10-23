@@ -5,6 +5,8 @@ require "etc"
 require "open3"
 require "pathname"
 require "uri"
+require "dev/brew_env"
+require "dev/shadowenv_path"
 require_relative "brew_repository"
 require_relative "integration"
 require_relative "dependency"
@@ -26,6 +28,15 @@ module Dev
     # hardcoded, and the NOPASSWD edge is converged by the agent host
     # bootstrap (Dev::AgentBootstrap). On a single-user machine the prefix
     # is writable and nothing changes.
+    #
+    # Brew links one keg per formula onto PATH and deletes the rest on
+    # `brew upgrade`/`brew cleanup`; a lock names one exact version. So after
+    # installing, the integration activates each locked keg's `bin` in the
+    # project shadowenv — the project runs the version it locked whichever
+    # keg brew linked, and two projects locking two versions coexist — and
+    # records the formulae in brew's no-cleanup list so the kegs outlive the
+    # user's own brew hygiene (ADR-0010, dev#289). Both are per-project side
+    # effects and only happen when the integration knows its project.
     #
     # Env filtering (install vs skip based on ci/dev) is the caller's
     # responsibility — only pass deps that should be installed.
@@ -95,6 +106,9 @@ module Dev
       # checked-out taps, never the API, and brew does not move them.
       PINNED_ENV = T.let(["HOMEBREW_NO_INSTALL_FROM_API=1", "HOMEBREW_NO_AUTO_UPDATE=1"].freeze, T::Array[String])
       TOOL = "brew"
+      # After the project Ruby (510) so brew tools never shadow its bin;
+      # before llvm and xcode (520), which keep the last word on what they set.
+      LISP_FILENAME = "515_brew.lisp"
 
       # @param repository [Repository, nil] source adapter
       # @param store [ArtifactStore, nil] the store whose brew tool cache brew downloads into
@@ -107,6 +121,9 @@ module Dev
       #   the image build's reproducible mode
       # @param tap_pinner [TapPinner, nil] how taps are pinned (built from
       #   `brew --repository` and the declared taps' URLs when nil)
+      # @param brew_env [BrewEnv, nil] the user's brew.env, where locked
+      #   formulae are recorded as never-clean-up; nil records nothing (a
+      #   caller with no user to speak for — tests, an image bootstrap)
       sig do
         params(
           repository: T.nilable(Repository),
@@ -116,9 +133,11 @@ module Dev
           brew_prefix: T.nilable(T.any(String, Pathname)),
           pin_taps: T::Boolean,
           tap_pinner: T.nilable(TapPinner),
+          brew_env: T.nilable(BrewEnv),
         ).void
       end
-      def initialize(repository:, store:, taps: [], project_dir: nil, brew_prefix: nil, pin_taps: false, tap_pinner: nil)
+      def initialize(repository:, store:, taps: [], project_dir: nil, brew_prefix: nil, pin_taps: false, tap_pinner: nil,
+        brew_env: nil)
         super(repository:, store:)
         @taps = taps
         @project_dir = T.let(project_dir ? Pathname(project_dir) : nil, T.nilable(Pathname))
@@ -127,6 +146,7 @@ module Dev
         @brew_prefix_resolved = T.let(!brew_prefix.nil?, T::Boolean)
         @pin_taps = pin_taps
         @tap_pinner = tap_pinner
+        @brew_env = brew_env
       end
 
       # @return [Boolean] whether installs pin taps at the lock's commits
@@ -141,10 +161,15 @@ module Dev
       # it surfaces as one integration-level failure instead of N per-dep
       # echoes.
       #
+      # What installed is activated and retained even when something else
+      # failed: a half-installed project still runs what it has, and the
+      # aggregate error says what it does not.
+      #
       # @param dependencies [Array<Dependency>] brew deps to install
       # @raise [TapRegistrationError] if a tap cannot be registered
       # @raise [UnpinnedFormulaError, TapPinConflictError, TapPinner::PinError]
       #   in pinned-taps mode, when the lock cannot pin a tap or git fails to
+      # @raise [BrewEnv::WriteError] if the no-cleanup list cannot be written
       # @raise [PartialInstallError] if any dep fails; the rest were attempted
       sig { params(dependencies: T::Array[Dependency]).void }
       def install_all(dependencies)
@@ -157,10 +182,85 @@ module Dev
             install_formula(dep)
           end
         end
+        failed = failures.map(&:first)
+        installed_formulae = dependencies.reject { |dep| dep.metadata["cask"] || failed.include?(dep.name) }
+        activate!(installed_formulae)
+        retain!(installed_formulae)
         raise PartialInstallError, failures if failures.any?
       end
 
       private
+
+      # Put each locked keg's `bin` on the project PATH through shadowenv.
+      # A formula that locked no version (a tap formula brew reports none
+      # for) or whose keg has no `bin` contributes nothing; the provide
+      # record still names every formula so the file reads as the lock does.
+      #
+      # @param formulae [Array<Dependency>] the formulae that installed
+      # @return [void]
+      sig { params(formulae: T::Array[Dependency]).void }
+      def activate!(formulae)
+        project_dir = @project_dir
+        return unless project_dir
+
+        activated = formulae.map { |dep| [formula_name(dep), dep.version].compact.join("@") }.sort.join(" ")
+        bins = formulae.filter_map { |dep| keg_bin(dep) }
+        written = ShadowenvPath.setup!(project_root: project_dir, filename: LISP_FILENAME, provide: ["brew", activated], paths: bins)
+        puts ">>> brew: activated #{bins.size} keg bin(s) on the project PATH (.shadowenv.d/#{LISP_FILENAME})" if written
+      end
+
+      # The `bin` of the keg whose version is the locked one, if both exist.
+      # Kegs are named by brew's full version, revision suffix included
+      # (`18.1.8_1`), which is why the Cellar is listed rather than the
+      # path built from the lock.
+      #
+      # @param dep [Dependency]
+      # @return [String, nil]
+      sig { params(dep: Dependency).returns(T.nilable(String)) }
+      def keg_bin(dep)
+        locked = dep.version
+        prefix = brew_prefix
+        return nil if locked.nil? || prefix.nil?
+
+        cellar = Pathname(prefix) / "Cellar" / formula_name(dep)
+        return nil unless cellar.directory?
+
+        keg = cellar.children.find { |child| child.directory? && child.basename.to_s.sub(/_\d+\z/, "") == locked }
+        bin = keg && keg / "bin"
+        bin&.directory? ? bin.to_s : nil
+      end
+
+      # Tell brew never to clean up the locked formulae. Skipped when brew
+      # writes are escalated to another prefix owner: brew.env is per user,
+      # and the user whose `brew cleanup` matters is the owner, not us.
+      #
+      # @param formulae [Array<Dependency>] the formulae that installed
+      # @return [void]
+      # @raise [BrewEnv::WriteError]
+      sig { params(formulae: T::Array[Dependency]).void }
+      def retain!(formulae)
+        brew_env = @brew_env
+        return unless brew_env && @project_dir
+        return if formulae.empty?
+
+        unless escalation.empty?
+          $stderr.puts "dev: brew writes are escalated to the prefix owner; not recording locked formulae in this user's brew.env"
+          return
+        end
+
+        brew_env.retain!(formulae.map { |dep| formula_name(dep) })
+      end
+
+      # The formula brew knows the dep as: `name@suffix` for a versioned
+      # declaration, the bare name otherwise.
+      #
+      # @param dep [Dependency]
+      # @return [String]
+      sig { params(dep: Dependency).returns(String) }
+      def formula_name(dep)
+        suffix = dep.metadata["version_suffix"]
+        suffix ? "#{dep.name}@#{suffix}" : dep.name
+      end
 
       # Register all configured taps (idempotent — runs once).
       sig { void }
@@ -238,8 +338,7 @@ module Dev
       # @raise [VersionMismatchError] if the keg is not the locked version
       sig { params(dep: Dependency).void }
       def install_formula(dep)
-        suffix = dep.metadata["version_suffix"]
-        formula = suffix ? "#{dep.name}@#{suffix}" : dep.name
+        formula = formula_name(dep)
         unless brew_installed?(formula)
           spec = dep.metadata["tap"] ? "#{dep.metadata["tap"]}/#{formula}" : formula
           run_brew_install(dep.name, spec)
