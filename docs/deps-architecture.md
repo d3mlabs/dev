@@ -245,6 +245,24 @@ lockfiles, and each Integration drives its backing tool. The Locker never
 appears inside the resolution loop: it runs once, before, sequenced by the
 command.
 
+### Activation
+
+Installing puts bytes on the host; *activation* puts the locked ones on
+the project's PATH and environment, through `.shadowenv.d/` files the
+integrations write at the end of `install_all` and `shadowenv` applies
+inside the project. It is a uniform integration capability, not a property
+of a channel (ADR-0010): `BrewIntegration` prepends the locked keg's
+`Cellar/<formula>/<keg>/bin` (`515_brew.lisp`) — whichever keg brew has
+linked, and alongside any other project's choice; `GhIntegration` prepends
+a published tree's `bin/` when it has one (`515_gh.lisp`);
+`XcodeIntegration` sets `DEVELOPER_DIR` (`520_xcode.lisp`); the Ruby and
+Python sugar verbs set their runtime (`510_*`, `540_*`). `ShadowenvPath`
+is the one writer for the PATH files: a `provide` record names the
+activated set, the file is rewritten only when the set changed, and an
+integration that knows no project (an image bootstrap, a test) activates
+nothing. `dev deps path` stays the answer for a script that needs the
+absolute path rather than PATH.
+
 ## Constraint semantics per integration
 
 | Integration | Scheme | Constraint language |

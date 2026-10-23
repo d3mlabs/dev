@@ -5,6 +5,7 @@ require "digest"
 require "fileutils"
 require "pathname"
 require "shellwords"
+require "dev/shadowenv_path"
 require_relative "integration"
 
 module Dev
@@ -43,6 +44,11 @@ module Dev
     # dir through `dev deps path gh <name>` (Accessor), so an install is a pure
     # read once the marker matches — a read-only shared tree (the agent identity
     # on the human-owned engine tree, plans#26) needs no write to stay usable.
+    #
+    # A tree that ships a `bin/` is a tool, and after installing, the project
+    # shadowenv gets it on PATH (ADR-0010, dev#289) — the same activation a
+    # brew keg gets, so no consumer sources a `bin/env.sh` by hand to reach a
+    # published toolchain. Only when the integration knows its project.
     class GhIntegration < Integration
       extend T::Sig
 
@@ -54,6 +60,8 @@ module Dev
       class NoMatchingAssetsError < StandardError; end
 
       MARKER_FILE = ".dev-gh-release"
+      # Same rank as brew's: tools, after the project Ruby, before llvm/xcode.
+      LISP_FILENAME = "515_gh.lisp"
 
       class << self
         extend T::Sig
@@ -85,13 +93,17 @@ module Dev
         @project_root = T.let(project_root && Pathname(project_root), T.nilable(Pathname))
       end
 
-      # Install all gh dependencies.
+      # Install all gh dependencies, then activate what installed — even
+      # when something else failed, so a half-installed project runs what
+      # it has and the aggregate error says what it does not.
       #
       # @param dependencies [Array<Dependency>] gh deps to install
       # @raise [PartialInstallError] if any dep fails; the rest were attempted
       sig { params(dependencies: T::Array[Dependency]).void }
       def install_all(dependencies)
         failures = collect_failures(dependencies) { |dep| install(dep) }
+        failed = failures.map(&:first)
+        activate!(dependencies.reject { |dep| failed.include?(dep.name) })
         raise PartialInstallError, failures if failures.any?
       end
 
@@ -99,6 +111,32 @@ module Dev
 
       sig { returns(T.nilable(Pathname)) }
       attr_reader :project_root
+
+      # Put each published tree's `bin` on the project PATH through
+      # shadowenv. A tree without one contributes nothing; the provide record
+      # still names every tree so the file reads as the lock does.
+      #
+      # @param installed [Array<Dependency>] the deps that installed
+      # @return [void]
+      sig { params(installed: T::Array[Dependency]).void }
+      def activate!(installed)
+        root = project_root
+        return unless root
+
+        activated = installed.map { |dep| "#{dep.name}@#{dep.version}" }.sort.join(" ")
+        bins = installed.filter_map { |dep| tree_bin(dep) }
+        written = ShadowenvPath.setup!(project_root: root, filename: LISP_FILENAME, provide: ["gh", activated], paths: bins)
+        puts ">>> gh: activated #{bins.size} tree bin(s) on the project PATH (.shadowenv.d/#{LISP_FILENAME})" if written
+      end
+
+      # @param dep [Dependency] an installed dep
+      # @return [String, nil] the published tree's `bin`, when it has one
+      sig { params(dep: Dependency).returns(T.nilable(String)) }
+      def tree_bin(dep)
+        tree = store!.tree(tree_key(dep))
+        bin = tree && tree / "bin"
+        bin&.directory? ? bin.to_s : nil
+      end
 
       # Dispatch on the declared materialization: an asset glob means the
       # prebuilt shape, a build recipe means build-from-source. The pin's

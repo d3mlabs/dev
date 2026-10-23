@@ -445,6 +445,130 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  # Publish a version dir by hand: marker plus optional `bin/`.
+  #
+  # @param data_root [String]
+  # @param repo [String] owner/repo
+  # @param tag [String]
+  # @param with_bin [Boolean]
+  # @return [String] the version dir
+  def publish_tree(data_root, repo:, tag:, with_bin:)
+    version_dir = File.join(data_root, "gh", repo, tag)
+    FileUtils.mkdir_p(version_dir)
+    FileUtils.mkdir_p(File.join(version_dir, "bin")) if with_bin
+    File.write(File.join(version_dir, ".dev-gh-release"), tag)
+    version_dir
+  end
+
+  # @param project_root [String]
+  # @return [String] what the gh activation file holds, "" when absent
+  def gh_lisp(project_root)
+    path = File.join(project_root, ".shadowenv.d", Dev::Deps::GhIntegration::LISP_FILENAME)
+    File.exist?(path) ? File.read(path) : ""
+  end
+
+  test "install_all puts a published tree's bin on the project PATH" do
+    Given "a toolchain tree already published with a bin, and a project"
+    dir = Dir.mktmpdir("dev-gh-int-test-")
+    project = File.join(dir, "project")
+    FileUtils.mkdir_p(project)
+    version_dir = publish_tree(dir, repo: "d3mlabs/unreal-engine-build-base", tag: "toolchain-2", with_bin: true)
+    integration = Dev::Deps::GhIntegration.new(
+      repository: Dev::Deps::GhRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), project_root: project,
+    )
+    dep = Dev::Deps::Dependency.new(name: "MsvcWineToolchain", integration: :gh, group: :build,
+      version: "toolchain-2", hash: nil,
+      metadata: { "repo" => "d3mlabs/unreal-engine-build-base", "asset_pattern" => "*.tar.zst.*", "assets" => [] })
+
+    When "installing"
+    integration.install_all([dep])
+
+    Then "the activation prepends the tree's bin and names the tree"
+    _ * Kernel.system >> true
+    gh_lisp(project).include?(%((env/prepend-to-pathlist "PATH" "#{version_dir}/bin")))
+    gh_lisp(project).include?('(provide "gh" "MsvcWineToolchain@toolchain-2")')
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all activates nothing for a tree without a bin, and names it still" do
+    Given "an engine tree with no bin"
+    dir = Dir.mktmpdir("dev-gh-int-test-")
+    project = File.join(dir, "project")
+    FileUtils.mkdir_p(project)
+    publish_tree(dir, repo: "satisfactorymodding/UnrealEngine", tag: "5.6.1-css-83", with_bin: false)
+    integration = Dev::Deps::GhIntegration.new(
+      repository: Dev::Deps::GhRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), project_root: project,
+    )
+    dep = Dev::Deps::Dependency.new(name: "UnrealEngine", integration: :gh, group: :build,
+      version: "5.6.1-css-83", hash: nil,
+      metadata: { "repo" => "satisfactorymodding/UnrealEngine", "asset_pattern" => "*.tar.zst.*", "assets" => [] })
+
+    When "installing"
+    integration.install_all([dep])
+
+    Then
+    _ * Kernel.system >> true
+    gh_lisp(project) == %((provide "gh" "UnrealEngine@5.6.1-css-83")\n)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all without a project root activates nothing" do
+    Given "a published tree with a bin, and an integration that knows no project"
+    dir = Dir.mktmpdir("dev-gh-int-test-")
+    publish_tree(dir, repo: "d3mlabs/unreal-engine-build-base", tag: "toolchain-2", with_bin: true)
+    integration = Dev::Deps::GhIntegration.new(
+      repository: Dev::Deps::GhRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir),
+    )
+    dep = Dev::Deps::Dependency.new(name: "MsvcWineToolchain", integration: :gh, group: :build,
+      version: "toolchain-2", hash: nil,
+      metadata: { "repo" => "d3mlabs/unreal-engine-build-base", "asset_pattern" => "*.tar.zst.*", "assets" => [] })
+
+    When "installing"
+    integration.install_all([dep])
+
+    Then
+    0 * Dev::ShadowenvPath.setup!
+    true
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all activates what installed before raising for what did not" do
+    Given "two trees, one published with a bin, the other failing to install"
+    dir = Dir.mktmpdir("dev-gh-int-test-")
+    project = File.join(dir, "project")
+    FileUtils.mkdir_p(project)
+    version_dir = publish_tree(dir, repo: "d3mlabs/unreal-engine-build-base", tag: "toolchain-2", with_bin: true)
+    integration = ExplodingGhIntegration.new(
+      fail_names: ["UnrealEngine"],
+      repository: Dev::Deps::GhRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), project_root: project,
+    )
+    deps = [
+      Dev::Deps::Dependency.new(name: "UnrealEngine", integration: :gh, group: :build,
+        version: "5.6.1-css-83", hash: nil, metadata: { "repo" => "satisfactorymodding/UnrealEngine" }),
+      Dev::Deps::Dependency.new(name: "MsvcWineToolchain", integration: :gh, group: :build,
+        version: "toolchain-2", hash: nil, metadata: { "repo" => "d3mlabs/unreal-engine-build-base" }),
+    ]
+
+    When "installing all"
+    error = assert_raises(Dev::Deps::Integration::PartialInstallError) { integration.install_all(deps) }
+
+    Then "the toolchain is on PATH, the engine is in neither the provide nor the error's absence"
+    _ * Kernel.system >> true
+    gh_lisp(project).include?("#{version_dir}/bin")
+    gh_lisp(project).include?('(provide "gh" "MsvcWineToolchain@toolchain-2")')
+    !gh_lisp(project).include?("UnrealEngine")
+    error.failures.map(&:first) == ["UnrealEngine"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "install_all attempts the remaining deps when one fails, then raises the aggregate" do
     Given "two gh dependencies, the first of which fails to install"
     dir = Dir.mktmpdir("dev-gh-int-test-")

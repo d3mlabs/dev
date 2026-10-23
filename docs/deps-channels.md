@@ -59,7 +59,7 @@ An own formula in the tap or an own release in a repo we control is legitimate o
 
 Which channel to repackage into follows what the package needs: a **brew formula and bottle** when it has transitive runtime dependencies to declare (`depends_on` installs the closure a bare tree cannot — Ruby's openssl, libyaml, zlib); a **`gh` release** when it is a self-contained tree, large, or licensed (private repo); **source** (`cmake github:` or `gh build:`) when the build wants it.
 
-A *thin lift* — a formula that re-hosts an artifact a supported channel already carries, without changing the bytes — is a stopgap and names its retirement condition. Three exist in the tap today (`clang-format@18.1.8`, `powershell@7.4.0`, `axslcc`); none is wrong where it sits, and [homebrew-d3mlabs#6](https://github.com/d3mlabs/homebrew-d3mlabs/issues/6) retires them once `gh` trees activate on PATH.
+A *thin lift* — a formula that re-hosts an artifact a supported channel already carries, without changing the bytes — is a stopgap and names its retirement condition. Three exist in the tap today (`clang-format@18.1.8`, `powershell@7.4.0`, `axslcc`); none is wrong where it sits, and [homebrew-d3mlabs#6](https://github.com/d3mlabs/homebrew-d3mlabs/issues/6) retires them now that `gh` trees activate on PATH.
 
 The economics behind the rule: a channel costs dev once and nothing per package; a repackage costs a formula or release per upstream version, per platform, for as long as we consume it.
 
@@ -67,8 +67,8 @@ The economics behind the rule: a channel costs dev once and nothing per package;
 
 Brew is the cross-platform binary channel for anything with transitive runtime dependencies: one formula syntax with prebuilt bottles on a Mac and on Linux, tap pinning (ADR-0003), bottle sets (ADR-0004), carry-over (ADR-0005), and the bottle cache in the store. Two things to know as a consumer:
 
-- Two projects or branches may lock two versions of one formula. Brew links one keg onto PATH; dev activates the *locked* keg in the project shadowenv, so each project runs its own regardless of which keg brew linked ([dev#289](https://github.com/d3mlabs/dev/issues/289)).
-- `brew upgrade` and `brew cleanup` delete kegs a lock still names. dev pins locked formulae and excludes them from cleanup; until then, ADR-0003 B's verification fails loudly and the message carries the remediation.
+- Two projects or branches may lock two versions of one formula. Brew links one keg onto PATH; dev activates the *locked* keg in the project shadowenv (`.shadowenv.d/515_brew.lisp`, `Cellar/<formula>/<keg>/bin` for every locked formula that has a `bin`), so each project runs its own regardless of which keg brew linked. A `gh` tree with a `bin/` is activated the same way (`515_gh.lisp`).
+- `brew upgrade` and `brew cleanup` delete kegs a lock still names. After every install dev adds the locked formulae to `HOMEBREW_NO_CLEANUP_FORMULAE` in your `~/.homebrew/brew.env` (or `$XDG_CONFIG_HOME/homebrew/brew.env`), so your own `brew cleanup` leaves their kegs; the list only grows, since releasing a name needs to know no other project on the machine locks it. `brew upgrade <formula>` keeps working as ADR-0003 B's remediation when a lock is ahead of the keg — dev does not `brew pin`, because a pin would refuse exactly that upgrade and brew warns dependents of a pinned formula may break.
 
 Kegs live in the brew prefix, outside the data root, so persistence on a host covers two directories: free on a disk or a checkpoint, a second named volume (`dev-linuxbrew`) on a Mac's container.
 

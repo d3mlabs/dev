@@ -665,6 +665,241 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  # A fake Cellar: `<prefix>/Cellar/<formula>/<keg>/bin` for each keg named,
+  # so activation can be tested against real directories.
+  #
+  # @param prefix [String] the fake brew prefix
+  # @param kegs [Hash{String => Array<String>}] formula → keg directory names
+  # @return [void]
+  def lay_cellar(prefix, kegs)
+    kegs.each do |formula, versions|
+      versions.each { |version| FileUtils.mkdir_p(File.join(prefix, "Cellar", formula, version, "bin")) }
+    end
+  end
+
+  # @param dir [String] project root
+  # @return [String] what the brew activation file holds, "" when absent
+  def brew_lisp(dir)
+    path = File.join(dir, ".shadowenv.d", Dev::Deps::BrewIntegration::LISP_FILENAME)
+    File.exist?(path) ? File.read(path) : ""
+  end
+
+  test "install_all activates the locked keg's bin, not the other kegs brew has" do
+    Given "two kegs of cmake on the machine, the lock pinning the older one (brew revision suffix and all)"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    lay_cellar(prefix, "cmake" => ["4.4.3_1", "4.5.0"])
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir),
+      project_dir: dir, brew_prefix: prefix,
+    )
+    deps = [
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
+        version: "4.4.3", hash: nil, metadata: {}),
+    ]
+    integration.stubs(:brew_installed?).returns(true)
+    integration.stubs(:verify_installed!)
+
+    When "installing all"
+    integration.install_all(deps)
+
+    Then "the project PATH gets the 4.4.3 keg and nothing of 4.5.0"
+    _ * Kernel.system >> true
+    brew_lisp(dir).include?(%((env/prepend-to-pathlist "PATH" "#{prefix}/Cellar/cmake/4.4.3_1/bin")))
+    !brew_lisp(dir).include?("4.5.0")
+    brew_lisp(dir).include?('(provide "brew" "cmake@4.4.3")')
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all activates versioned formulae under their formula name and skips kegs without a bin" do
+    Given "llvm@18 with a bin and a library-only keg, both locked"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    lay_cellar(prefix, "llvm@18" => ["18.1.8"])
+    FileUtils.mkdir_p(File.join(prefix, "Cellar", "libyaml", "0.2.5", "lib"))
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir),
+      project_dir: dir, brew_prefix: prefix,
+    )
+    deps = [
+      Dev::Deps::Dependency.new(name: "llvm", integration: :brew, group: :build,
+        version: "18.1.8", hash: nil, metadata: { "version_suffix" => "18" }),
+      Dev::Deps::Dependency.new(name: "libyaml", integration: :brew, group: :build,
+        version: "0.2.5", hash: nil, metadata: {}),
+    ]
+    integration.stubs(:brew_installed?).returns(true)
+    integration.stubs(:verify_installed!)
+
+    When "installing all"
+    integration.install_all(deps)
+
+    Then "only the keg with a bin is on PATH; the provide names both"
+    _ * Kernel.system >> true
+    brew_lisp(dir).include?(%("#{prefix}/Cellar/llvm@18/18.1.8/bin"))
+    !brew_lisp(dir).include?("libyaml/0.2.5")
+    brew_lisp(dir).include?('(provide "brew" "libyaml@0.2.5 llvm@18@18.1.8")')
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all activates nothing for casks or for a dep that locked no version" do
+    Given "a cask and an unversioned tap formula"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    lay_cellar(prefix, "wwise-cli" => ["0.3.0"])
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir),
+      project_dir: dir, brew_prefix: prefix,
+    )
+    deps = [
+      Dev::Deps::Dependency.new(name: "docker", integration: :cask, group: :default,
+        version: nil, hash: nil, metadata: { "cask" => true }),
+      Dev::Deps::Dependency.new(name: "wwise-cli", integration: :brew, group: :build,
+        version: nil, hash: nil, metadata: { "tap" => "d3mlabs/d3mlabs" }),
+    ]
+    integration.stubs(:brew_installed?).returns(true)
+
+    When "installing all"
+    integration.install_all(deps)
+
+    Then "the activation file names the unversioned formula and prepends nothing"
+    _ * Kernel.system >> true
+    brew_lisp(dir) == %((provide "brew" "wwise-cli")\n)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all without a project dir neither activates nor retains" do
+    Given "an integration built with no project (the image bootstrap's shape)"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    lay_cellar(prefix, "cmake" => ["4.4.3"])
+    brew_env = Dev::BrewEnv.new(path: Pathname(dir) / "brew.env")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir),
+      brew_prefix: prefix, brew_env: brew_env,
+    )
+    deps = [
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
+        version: "4.4.3", hash: nil, metadata: {}),
+    ]
+    integration.stubs(:brew_installed?).returns(true)
+    integration.stubs(:verify_installed!)
+
+    When "installing all"
+    integration.install_all(deps)
+
+    Then "no shadowenv file and no brew.env were written"
+    0 * Dev::ShadowenvPath.setup!
+    !File.exist?(File.join(dir, "brew.env"))
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all records every locked formula in brew's no-cleanup list, casks aside" do
+    Given "a project with two formulae and a cask, and an empty brew.env"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    lay_cellar(prefix, "cmake" => ["4.4.3"], "llvm@18" => ["18.1.8"])
+    brew_env = Dev::BrewEnv.new(path: Pathname(dir) / "brew.env")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir),
+      project_dir: dir, brew_prefix: prefix, brew_env: brew_env,
+    )
+    deps = [
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
+        version: "4.4.3", hash: nil, metadata: {}),
+      Dev::Deps::Dependency.new(name: "llvm", integration: :brew, group: :build,
+        version: "18.1.8", hash: nil, metadata: { "version_suffix" => "18" }),
+      Dev::Deps::Dependency.new(name: "docker", integration: :cask, group: :default,
+        version: nil, hash: nil, metadata: { "cask" => true }),
+    ]
+    integration.stubs(:brew_installed?).returns(true)
+    integration.stubs(:verify_installed!)
+
+    When "installing all"
+    integration.install_all(deps)
+
+    Then "brew is told to keep both formulae's kegs"
+    _ * Kernel.system >> true
+    brew_env.no_cleanup_formulae == ["cmake", "llvm@18"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all leaves brew.env alone when brew writes are escalated to another prefix owner" do
+    Given "a prefix this user cannot write: brew.env is the owner's, not ours"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    lay_cellar(prefix, "cmake" => ["4.4.3"])
+    FileUtils.chmod(0o555, prefix)
+    brew_env = Dev::BrewEnv.new(path: Pathname(dir) / "brew.env")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir),
+      project_dir: dir, brew_prefix: prefix, brew_env: brew_env,
+    )
+    deps = [
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
+        version: "4.4.3", hash: nil, metadata: {}),
+    ]
+    integration.stubs(:brew_installed?).returns(true)
+    integration.stubs(:verify_installed!)
+
+    When "installing all"
+    _out, err = capture_io { integration.install_all(deps) }
+
+    Then "the keg is still activated for this project, retention is skipped and said so"
+    _ * Kernel.system >> true
+    brew_lisp(dir).include?("cmake/4.4.3/bin")
+    !File.exist?(File.join(dir, "brew.env"))
+    err.include?("brew.env")
+
+    Cleanup
+    FileUtils.chmod(0o755, prefix)
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all activates and retains what installed, then raises for what did not" do
+    Given "two formulae, one of which brew fails to install"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    lay_cellar(prefix, "cmake" => ["4.4.3"])
+    brew_env = Dev::BrewEnv.new(path: Pathname(dir) / "brew.env")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir),
+      project_dir: dir, brew_prefix: prefix, brew_env: brew_env,
+    )
+    deps = [
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
+        version: "4.4.3", hash: nil, metadata: {}),
+      Dev::Deps::Dependency.new(name: "ninja", integration: :brew, group: :build,
+        version: "1.12.1", hash: nil, metadata: {}),
+    ]
+    integration.stubs(:brew_installed?).with("cmake").returns(true)
+    integration.stubs(:brew_installed?).with("ninja").returns(false)
+    integration.stubs(:verify_installed!)
+    integration.stubs(:run_brew_install).with("ninja", "ninja").raises(Dev::Deps::BrewIntegration::InstallError, "boom")
+
+    When "installing all"
+    error = assert_raises(Dev::Deps::Integration::PartialInstallError) { integration.install_all(deps) }
+
+    Then "cmake is on PATH and retained; ninja is in neither; the aggregate still raises"
+    _ * Kernel.system >> true
+    brew_lisp(dir).include?("cmake/4.4.3/bin")
+    !brew_lisp(dir).include?("ninja")
+    brew_env.no_cleanup_formulae == ["cmake"]
+    error.message.include?("ninja")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "resolve_file_url resolves a ./ path against the project dir" do
     Given "an integration with a project dir and a project-relative file URI"
     dir = Dir.mktmpdir("dev-brew-int-test-")
