@@ -420,6 +420,8 @@ Four orthogonal axes scope a declaration; each answers a different question:
 
 ### Built-in integrations
 
+Which verb a new dependency takes, when a package is repackaged into the d3mlabs tap or a release we own instead of consumed from its upstream channel, and what the tap admits: [docs/deps-channels.md](docs/deps-channels.md) ([ADR-0010](docs/DECISIONS.md#adr-0010--the-verb-follows-the-channel)). In one line: the verb follows the upstream channel; a new verb needs a channel that passes the admission test; an own formula or release needs a trigger (no channel, a channel that fails admission, or we change the bytes); OS state is provisioning, not a dependency.
+
 All built-in integrations are declared in one place — `lib/dev/deps/registry.rb`. There is one integration set, run by `dev deps install` on whichever build host it is on — a workstation, a box, the [build container](#inside-the-container) — against that host's own data root ([ADR-0008](docs/DECISIONS.md#adr-0008--a-data-root-belongs-to-a-build-host)); which dependencies a host installs is the lock's `host:` filter, not a property of the type. `registry_consistency_test.rb` fails the build if a repository/integration class or a declaration DSL verb is added without a registry entry.
 
 | DSL method | Integration | Repository | Lockfile |
@@ -539,7 +541,7 @@ Global (works without a `dev.yml`); the surface over skill materialization acros
 
 ## Setting up a host: warmth is the data root
 
-One sentence covers every machine dev runs on: **`dev up` satisfies the lock against the host's data root and installs only the difference; the host's only job is to bring whatever data root it can to the start line.** The [data root](#the-data-root-shared-on-agent-hosts) is the [artifact store](#the-artifact-store-version-keyed-trees-content-addressed-blobs) — version-keyed trees, workdirs, blobs, tool caches — and a host is warm exactly when its data root already holds what the lockfiles name. Nothing in dev knows which kind of host it is on, and nothing records it: the first `dev up` on a machine and the hundredth run the same code and differ only in how much of the lock the store already satisfies. The install recipe is `dependencies.rb`, everywhere; there is no second one for any host.
+One sentence covers every machine dev runs on: **`dev up` satisfies the lock against the host's data root and installs only the difference; the host's only job is to bring whatever data root it can to the start line.** The [data root](#the-data-root-shared-on-agent-hosts) is the [artifact store](#the-artifact-store-version-keyed-trees-content-addressed-blobs) — version-keyed trees, workdirs, blobs, tool caches — and a host is warm exactly when its data root already holds what the lockfiles name. Nothing in dev knows which kind of host it is on, and nothing records it: the first `dev up` on a machine and the hundredth run the same code and differ only in how much of the lock the store already satisfies. The install recipe is `dependencies.rb`, everywhere; there is no second one for any host. Warmth is a dependency's *shape* on disk times the host's persistence mechanism — continuous (a disk, named volumes) or discrete (a checkpoint) — and has nothing to do with which channel it came from or which group it is in; the three axes and how each channel's bytes reach a host are drawn in [docs/deps-channels.md](docs/deps-channels.md#how-warmth-survives).
 
 Four setups, each as cold → warm:
 
