@@ -56,6 +56,13 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  render re-serializes its output and any mis-split compounds on the next
  pull. → .cursor/skills/learnings/plan-parse-normalizes/
 
+## ruby
+
+- [ruby/dsl-verbs-are-defined-methods] A DSL verb that shares a name with
+ a Kernel private method (`gem`, `format`, `test`, `open`…) never reaches
+ method_missing; define every verb as a real method.
+ → .cursor/skills/learnings/dsl-verbs-are-defined-methods/
+
 ## toolchain
 
 
