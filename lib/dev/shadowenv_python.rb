@@ -3,6 +3,7 @@
 
 require "fileutils"
 require "pathname"
+require "dev/shadowenv_file"
 
 module Dev
   # The language-specific half of a locked Python's activation in the
@@ -31,8 +32,8 @@ module Dev
     # Activate one installed Python in the project shadowenv: the project
     # `.venv` is built on the keg's interpreter — rebuilt when an existing
     # venv was built on another one, so the venv always runs the locked
-    # Python — pip is made importable, and the lisp puts the venv first on
-    # PATH.
+    # Python — pip is made importable, and the lisp (placed for this side of
+    # the build container by ShadowenvFile) puts the venv first on PATH.
     #
     # @param keg [Pathname] the installed Python's prefix (brew's keg)
     # @param version [String] the version the lock pins
@@ -50,12 +51,7 @@ module Dev
       end
       ensure_pip!(venv_python.to_s)
 
-      shadowenv_d = project_root / ".shadowenv.d"
-      FileUtils.mkdir_p(shadowenv_d)
-      File.write(shadowenv_d / LISP_FILENAME, generate_python_lisp(version, venv.to_s))
-      Dir.chdir(project_root.to_s) do
-        Kernel.system("shadowenv", "trust", out: File::NULL, err: File::NULL)
-      end
+      ShadowenvFile.write!(project_root:, filename: LISP_FILENAME, body: generate_python_lisp(version, venv.to_s))
     end
 
     # Whether a venv was built on the given keg: a venv's pyvenv.cfg records

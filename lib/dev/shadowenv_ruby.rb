@@ -1,8 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "fileutils"
 require "pathname"
+require "dev/shadowenv_file"
 require "dev/shell_rc_hook"
 
 module Dev
@@ -23,7 +23,8 @@ module Dev
     module_function
 
     # Activate one installed Ruby in the project shadowenv: the lisp points
-    # RUBY_ROOT/GEM_HOME at the keg, `.ruby-version` carries the version, the
+    # RUBY_ROOT/GEM_HOME at the keg (placed for this side of the build
+    # container by ShadowenvFile), `.ruby-version` carries the version, the
     # directory is trusted and the shell hook ensured.
     #
     # @param keg [Pathname] the installed Ruby's prefix (brew's keg)
@@ -32,15 +33,8 @@ module Dev
     # @return [void]
     sig { params(keg: Pathname, version: String, project_root: Pathname).void }
     def activate!(keg:, version:, project_root:)
-      shadowenv_d = project_root / ".shadowenv.d"
-      FileUtils.mkdir_p(shadowenv_d)
-      File.write(shadowenv_d / LISP_FILENAME, generate_ruby_lisp(keg.to_s, version))
+      ShadowenvFile.write!(project_root:, filename: LISP_FILENAME, body: generate_ruby_lisp(keg.to_s, version))
       File.write(project_root / ".ruby-version", "#{version}\n")
-
-      Dir.chdir(project_root.to_s) do
-        system("shadowenv", "trust", out: File::NULL, err: File::NULL)
-      end
-
       ensure_shadowenv_shell_hook!
     end
 
