@@ -73,7 +73,7 @@ module Dev
         lines = [GENERATED_HEADER, %(source "#{RUBYGEMS_SOURCE}")]
         lines << %(ruby "#{@ruby_version_requirement}") if @ruby_version_requirement
 
-        ungrouped, grouped = declarations.partition { |decl| decl.scope.group == DSL::DEFAULT_GEM_GROUP }
+        ungrouped, grouped = declarations.partition { |decl| decl.scope.group == DSL::DEFAULT_GROUP }
 
         ungrouped.each { |decl| lines << gem_line(decl) }
         grouped.group_by { |decl| decl.scope.group }.each do |group, group_decls|

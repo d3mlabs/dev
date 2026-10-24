@@ -20,8 +20,34 @@ class RecordingIntegration < Dev::Deps::Integration
   end
 end
 
+# The host prerequisite (brew's role): its batch installs before every other.
+class PrerequisiteIntegration < RecordingIntegration
+  class << self
+    def host_prerequisite?
+      true
+    end
+  end
+end
+
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::InstallerTest < Minitest::Test
+  # Shorthand: a locked pin with the given provenance.
+  def pin(name, integration, group: :app, needed_by: nil)
+    metadata = needed_by ? { "needed_by" => needed_by } : {}
+    Dev::Deps::Dependency.new(name:, integration:, group:, version: "1.0", hash: nil, metadata:)
+  end
+
+  # Wire integrations that record the order install_all reached them.
+  def recording(order, *symbols, prerequisite: [])
+    symbols.to_h do |symbol|
+      integration = prerequisite.include?(symbol) ? PrerequisiteIntegration.new : RecordingIntegration.new
+      integration.define_singleton_method(:install_all) do |dependencies|
+        order << symbol
+        @installed_deps.concat(dependencies)
+      end
+      [symbol, integration]
+    end
+  end
   test "install reads lockfiles and dispatches to integrations" do
     Given "a lockfile with one cmake dep"
     dir = Dir.mktmpdir("installer-test-")
@@ -79,40 +105,135 @@ class Dev::Deps::InstallerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "install dispatches build group before others" do
-    Given "lockfiles with build and app deps"
+  test "install orders a pin's integration before each integration the lock records as needing it" do
+    Given "an xcode pin, and the xcodes formula it needs, locked after it with provenance"
     dir = Dir.mktmpdir("installer-test-")
     lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
-    deps = [
-      Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
-        version: "1.90.0", hash: "SHA256=aaa", metadata: {}),
-      Dev::Deps::Dependency.new(name: "ccache", integration: :brew, group: :build,
-        version: "4.10", hash: "SHA256=bbb", metadata: {}),
-    ]
-    lockfile.lock(deps)
-
-    install_order = []
-    cmake_int = RecordingIntegration.new
-    brew_int = RecordingIntegration.new
-
-    cmake_int.define_singleton_method(:install_all) do |dependencies|
-      install_order << :cmake
-      @installed_deps.concat(dependencies)
-    end
-    brew_int.define_singleton_method(:install_all) do |dependencies|
-      install_order << :brew
-      @installed_deps.concat(dependencies)
-    end
-
-    installer = Dev::Deps::Installer.new(
-      lockfile:, integrations: { cmake: cmake_int, brew: brew_int },
-    )
+    lockfile.lock([
+      pin("xcode", :xcode, group: :editor),
+      pin("xcodes", :brew, group: :editor, needed_by: ["xcode"]),
+    ])
+    order = []
+    installer = Dev::Deps::Installer.new(lockfile:, integrations: recording(order, :xcode, :brew))
 
     When "running install"
     installer.install
 
-    Then "build (brew) ran before app (cmake)"
-    install_order == [:brew, :cmake]
+    Then "the needed formula's batch ran first, whatever the lock order"
+    order == [:brew, :xcode]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install orders the host prerequisite before every other batch, needs or not" do
+    Given "an app cmake dep locked before an unrelated prerequisite formula"
+    dir = Dir.mktmpdir("installer-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
+    lockfile.lock([pin("boost", :cmake), pin("ccache", :brew, group: :build)])
+    order = []
+    installer = Dev::Deps::Installer.new(lockfile:, integrations: recording(order, :cmake, :brew, prerequisite: [:brew]))
+
+    When "running install"
+    installer.install
+
+    Then "the prerequisite ran first"
+    order == [:brew, :cmake]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install gives the group no ordering role: without edges, lock order stands" do
+    Given "a build-group dep locked after an app-group dep, neither needing the other"
+    dir = Dir.mktmpdir("installer-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
+    lockfile.lock([pin("boost", :cmake, group: :app), pin("UnrealEngine", :gh, group: :build)])
+    order = []
+    installer = Dev::Deps::Installer.new(lockfile:, integrations: recording(order, :cmake, :gh))
+
+    When "running install"
+    installer.install
+
+    Then "nothing installs first because of its group name"
+    order == [:cmake, :gh]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install follows a chain of needs across integrations" do
+    Given "a custom integration needing an xcode pin, which needs the xcodes formula"
+    dir = Dir.mktmpdir("installer-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
+    lockfile.lock([
+      pin("Thing", :custom),
+      pin("xcode", :xcode, needed_by: ["custom"]),
+      pin("xcodes", :brew, needed_by: ["xcode"]),
+    ])
+    order = []
+    installer = Dev::Deps::Installer.new(lockfile:, integrations: recording(order, :custom, :xcode, :brew))
+
+    When "running install"
+    installer.install
+
+    Then "deepest need first"
+    order == [:brew, :xcode, :custom]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install still installs a need whose user is not in the selection" do
+    Given "the xcodes formula needed by xcode, with only the brew integration's pins selected"
+    dir = Dir.mktmpdir("installer-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
+    lockfile.lock([pin("xcode", :xcode), pin("xcodes", :brew, needed_by: ["xcode"])])
+    order = []
+    installer = Dev::Deps::Installer.new(lockfile:, integrations: recording(order, :xcode, :brew))
+
+    When "installing brew pins only"
+    installer.install(integration_types: [:brew])
+
+    Then "the formula installed; the edge to an unselected batch ordered nothing"
+    order == [:brew]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install refuses a cycle in the needs graph" do
+    Given "two integrations each needing a pin of the other"
+    dir = Dir.mktmpdir("installer-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
+    lockfile.lock([pin("a-tool", :alpha, needed_by: ["beta"]), pin("b-tool", :beta, needed_by: ["alpha"])])
+    order = []
+    installer = Dev::Deps::Installer.new(lockfile:, integrations: recording(order, :alpha, :beta))
+
+    When "running install"
+    error = assert_raises(Dev::Deps::Installer::DependencyCycleError) { installer.install }
+
+    Then "nothing was attempted and the error names the stuck integrations"
+    order.empty?
+    error.message.include?("alpha")
+    error.message.include?("beta")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install refuses a self-need: a pin needed by its own integration" do
+    Given "a brew pin the lock says brew needs"
+    dir = Dir.mktmpdir("installer-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
+    lockfile.lock([pin("git", :brew, needed_by: ["brew"])])
+    installer = Dev::Deps::Installer.new(lockfile:, integrations: recording([], :brew))
+
+    When "running install"
+    installer.install
+
+    Then
+    raises Dev::Deps::Installer::DependencyCycleError
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -285,27 +406,21 @@ class Dev::Deps::InstallerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "install orders aggregate entries build wave first" do
-    Given "a failing build-wave integration and a failing app-wave integration"
+  test "install orders aggregate entries in install order: a need's failure before its user's" do
+    Given "a failing integration whose pin another failing integration needs"
     dir = Dir.mktmpdir("installer-test-")
     lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
-    deps = [
-      Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app,
-        version: "1.90.0", hash: "SHA256=aaa", metadata: {}),
-      Dev::Deps::Dependency.new(name: "ccache", integration: :brew, group: :build,
-        version: "4.10", hash: "SHA256=bbb", metadata: {}),
-    ]
-    lockfile.lock(deps)
+    lockfile.lock([pin("xcode", :xcode), pin("xcodes", :brew, needed_by: ["xcode"])])
     brew_int = RecordingIntegration.new
     brew_int.define_singleton_method(:install_all) do |_dependencies|
-      raise "build wave failure"
+      raise "formula failure"
     end
-    cmake_int = RecordingIntegration.new
-    cmake_int.define_singleton_method(:install_all) do |_dependencies|
-      raise "app wave failure"
+    xcode_int = RecordingIntegration.new
+    xcode_int.define_singleton_method(:install_all) do |_dependencies|
+      raise "xcodes missing"
     end
     installer = Dev::Deps::Installer.new(
-      lockfile:, integrations: { brew: brew_int, cmake: cmake_int },
+      lockfile:, integrations: { xcode: xcode_int, brew: brew_int },
     )
 
     When "running install and capturing the aggregate error"
@@ -316,9 +431,9 @@ class Dev::Deps::InstallerTest < Minitest::Test
       error = e
     end
 
-    Then "root causes (build wave) come before derivative failures (later waves)"
+    Then "the root cause comes before the derivative failure"
     error.is_a?(Dev::Deps::Installer::InstallFailedError)
-    error.entries == ["brew: build wave failure", "cmake: app wave failure"]
+    error.entries == ["brew: formula failure", "xcode: xcodes missing"]
 
     Cleanup
     FileUtils.rm_rf(dir)

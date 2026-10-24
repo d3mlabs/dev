@@ -10,20 +10,43 @@ require_relative "scoped_declaration"
 module Dev
   module Deps
     # Top-level DSL evaluated inside Dev::Deps.define { ... }.
+    #
+    # Every declaration verb GroupDSL offers works here too, ungrouped. An
+    # ungrouped declaration lands in the default group for the project's own
+    # lock and is what the manifest *exports* when read as a library (an
+    # integration's dependencies.rb, ADR-0011): the Gemfile/gemspec
+    # convention — top-level lines are the public interface, grouped ones
+    # are private. `env` is deliberately not offered ungrouped: env never
+    # propagates to a consumer, so an ungrouped env block would contradict
+    # itself.
     class DSL
       extend T::Sig
 
-      # Group a top-level `gem` declaration lands in when none is given. Bundler's
-      # default (unscoped) group, mirroring a hand-written Gemfile's top section.
-      DEFAULT_GEM_GROUP = :app
+      # Group an ungrouped declaration lands in. Bundler's default (unscoped)
+      # group, mirroring a hand-written Gemfile's top section.
+      DEFAULT_GROUP = :app
+
+      # The GroupDSL verbs available ungrouped (every declaration verb; env
+      # excluded — see the class comment). Registered integration verbs join
+      # them dynamically.
+      UNGROUPED_VERBS = T.let(
+        %i[brew cmake custom ficsit gem gh luarocks pip steam wwise xcode].freeze,
+        T::Array[Symbol],
+      )
 
       # @return [Hash{String => Hash}] declared taps by name
       sig { returns(T::Hash[String, T::Hash[String, T.untyped]]) }
       attr_reader :taps
 
-      # @return [Array<ScopedDeclaration>] all declared dependencies
+      # @return [Array<ScopedDeclaration>] all declared dependencies, grouped
+      #   and ungrouped, in declaration order
       sig { returns(T::Array[ScopedDeclaration]) }
       attr_reader :declarations
+
+      # @return [Array<ScopedDeclaration>] the ungrouped declarations — what
+      #   this manifest exports when read as a library
+      sig { returns(T::Array[ScopedDeclaration]) }
+      attr_reader :exports
 
       # @return [String, nil] declared Ruby version
       sig { returns(T.nilable(String)) }
@@ -49,6 +72,7 @@ module Dev
       def initialize
         @taps = T.let({}, T::Hash[String, T::Hash[String, T.untyped]])
         @declarations = T.let([], T::Array[ScopedDeclaration])
+        @exports = T.let([], T::Array[ScopedDeclaration])
         @ruby_version_requirement = T.let(nil, T.nilable(String))
         @lua_version_value = T.let(nil, T.nilable(String))
         @python_version_value = T.let(nil, T.nilable(String))
@@ -90,26 +114,6 @@ module Dev
       sig { params(version: T.any(String, Symbol)).void }
       def python(version)
         @python_version_value = version.to_s.strip
-      end
-
-      # Declare a Ruby gem. Gems are a first-class dev-managed dependency type
-      # backed by bundler: this records a :bundler declaration that rides the
-      # normal resolver -> lockfile -> install pipeline (dev generates the
-      # Gemfile/Gemfile.lock from these). A top-level gem lands in the default
-      # group; use a group block to scope it (e.g. group(:test) { gem ... }).
-      #
-      # @param name [String, Symbol] gem name
-      # @param version [String, nil] version requirement (e.g. "~> 1.17")
-      # @param opts [Hash] additional bundler options (e.g. require:, git:)
-      # @return [void]
-      sig { params(name: T.any(String, Symbol), version: T.nilable(String), opts: T.untyped).void }
-      def gem(name, version = nil, **opts)
-        constraint = opts.each_with_object({}) { |(k, v), h| h[k.to_s] = v }
-        constraint["version"] = version.to_s if version
-        @declarations << ScopedDeclaration.new(
-          declaration: Declaration.new(name: name.to_s, integration: :bundler, constraint:),
-          scope: Scope.new(group: DEFAULT_GEM_GROUP),
-        )
       end
 
       # Declare a Homebrew tap.
@@ -163,6 +167,35 @@ module Dev
         group_dsl = GroupDSL.new(group: group_name.to_sym, platform:, host:, registered_methods: @registered_methods)
         group_dsl.instance_eval(&block) if block
         @declarations.concat(group_dsl.declarations)
+      end
+
+      # The ungrouped declaration verbs, defined rather than caught by
+      # method_missing: `gem` is also Kernel#gem (RubyGems), which an implicit
+      # receiver would reach first.
+      UNGROUPED_VERBS.each do |verb|
+        # T.unsafe: inside define_method the receiver is the instance, which
+        # Sorbet types as the class here.
+        define_method(verb) { |*args, **kwargs, &block| T.unsafe(self).send(:ungrouped, verb, args, kwargs, block) }
+      end
+
+      private
+
+      # Run a GroupDSL verb in the default group and record the result as
+      # both a declaration and an export. A fresh GroupDSL per call keeps
+      # declaration order exactly as written across grouped and ungrouped
+      # lines — the resolver's first-wins scoping reads it.
+      #
+      # @param verb [Symbol] the GroupDSL verb
+      # @param args [Array] positional arguments, as the verb was called
+      # @param kwargs [Hash{Symbol => Object}] keyword arguments, as the verb was called
+      # @param block [Proc, nil] the verb's block, if any
+      # @return [void]
+      sig { params(verb: Symbol, args: T::Array[T.untyped], kwargs: T::Hash[Symbol, T.untyped], block: T.nilable(Proc)).void }
+      def ungrouped(verb, args, kwargs, block)
+        group_dsl = GroupDSL.new(group: DEFAULT_GROUP, registered_methods: @registered_methods)
+        T.unsafe(group_dsl).public_send(verb, *args, **kwargs, &block)
+        @declarations.concat(group_dsl.declarations)
+        @exports.concat(group_dsl.declarations)
       end
     end
 
@@ -508,8 +541,9 @@ module Dev
       # inherently darwin-scoped (Xcode only exists on macOS; a no-op on other
       # hosts), so the declaration is safe without explicit host gating. dev
       # installs the pin to /Applications/Xcode-<version>.app via the xcodes
-      # CLI (declare `brew "xcodes"` in :build so it
-      # exists first) and publishes DEVELOPER_DIR via shadowenv.
+      # CLI — the xcode integration's own need, locked into the project with
+      # provenance and installed first — and publishes DEVELOPER_DIR via
+      # shadowenv.
       #
       # @param version [String, Symbol] exact Xcode version (e.g. "26.1.1")
       # @param spec [Hash] additional options
@@ -529,9 +563,10 @@ module Dev
 
       # Declare the Wwise SDK together with its Unreal Engine integration
       # package, downloaded by wwise-cli into the store (~/.dev/wwise/<sdk>)
-      # laid out as wwise-cli's own cache (declare `brew "wwise-cli", tap:
-      # "d3mlabs/d3mlabs"` in :build so it exists first). The Audiokinetic
-      # login comes from Dev::Credentials (WWISE_EMAIL / WWISE_PASSWORD).
+      # laid out as wwise-cli's own cache. wwise-cli is the wwise
+      # integration's own need, locked into the project with provenance and
+      # installed first. The Audiokinetic login comes from Dev::Credentials
+      # (WWISE_EMAIL / WWISE_PASSWORD).
       #
       # Audiokinetic publishes no version list without a login, so like xcode
       # the SDK version is an address: it rides the declaration's revision.

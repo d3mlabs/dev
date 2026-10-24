@@ -159,6 +159,29 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "call hands the resolver the needs table: every built-in integration's own manifest, read as a library" do
+    Given "an empty manifest, and the resolver construction observed"
+    root = Pathname.new(Dir.mktmpdir("update-deps-needs-"))
+    received = nil
+    Dev::Deps::Resolver.expects(:new).with { |**kwargs| received = kwargs.fetch(:needs) }.returns(stub(resolve: []))
+    Dev::ShadowenvRuby.stubs(:converge!)
+    command = Dev::Builtins::UpdateDepsCommand.new
+    old_stdout = $stdout
+    $stdout = StringIO.new
+
+    When "running dev deps update"
+    command.call(args: no_args, context: build_context(root))
+
+    Then "xcode's and wwise's needs are in the table, as brew declarations"
+    received.fetch(:xcode).map(&:name) == ["xcodes"]
+    received.fetch(:wwise).map(&:name) == ["wwise-cli"]
+    received.values.flatten.map(&:integration).uniq == [:brew]
+
+    Cleanup
+    $stdout = old_stdout
+    FileUtils.rm_rf(root)
+  end
+
   test "call does not mistake a previously loaded project's config for this one" do
     Given "a stale config from an earlier load, and a dependencies.rb that never calls Dev::Deps.define"
     Dev::Deps.define { ruby "9.9.9" }

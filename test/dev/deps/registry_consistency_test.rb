@@ -151,6 +151,18 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
     assert_empty unwired, "locker classes missing from Registry::INTEGRATIONS: #{unwired.join(", ")}"
   end
 
+  test "every integration manifest on disk belongs to a wired integration class" do
+    Given "the manifests under lib/dev/deps/*_integration/dependencies.rb and the registry's manifest paths"
+    on_disk = Dir[File.join(DEPS_DIR, "*_integration", "dependencies.rb")].map { |path| File.realpath(path) }
+    wired = Dev::Deps::Registry.integration_classes.values.uniq.filter_map(&:manifest_path).map { |p| File.realpath(p) }
+
+    When "comparing"
+    orphaned = on_disk - wired
+
+    Then "no manifest sits beside a class the registry does not install — it would never be read"
+    assert_empty orphaned, "integration manifests nothing reads: #{orphaned.join(", ")}"
+  end
+
   test "every declaration DSL verb has a registry entry" do
     Given "the integration symbols the registry knows"
     known = Dev::Deps::Registry::INTEGRATIONS.map(&:symbol)

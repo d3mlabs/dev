@@ -148,7 +148,18 @@ ecosystem's canonical form and validated at the DSL boundary (a cmake
      claim's declarations are queued as synthetic `ScopedDeclaration`s
      inheriting the parent's `Scope` as one unit (each already carries
      the integration its repository stamped — the resolved set is keyed
-     by `PackageId`); a `ToolOwned` claim has nothing to walk.
+     by `PackageId`); a `ToolOwned` claim has nothing to walk;
+   - queues the declaration's *integration's* needs — what that
+     integration's own `dependencies.rb` exports (see [Integration
+     manifests](#integration-manifests)) — under the declaration's `Scope`
+     (`Scope#under`: the user's group, host and env narrowed by the
+     need's own), recording the integration as the need's `needed_by`.
+     Needs are ordinary declarations from here on: they resolve in their
+     own channel, are held to the same single-ask rule (a project that
+     declares the same tool merges when the asks agree and conflicts
+     through `ConflictingDeclarationError` when they don't), and their
+     integration's needs queue in turn. Provenance is stamped last, as
+     the pin's `needed_by` metadata (sorted integration names).
 3. **Carry provenance** — `TapCommitCarryover` reads the lock on disk and,
    for every brew tap none of whose pins changed (same formula set; same
    version, hash, group, scope and metadata but `tap_commit`), writes the
@@ -164,8 +175,14 @@ ecosystem's canonical form and validated at the DSL boundary (a cmake
    accepts the pre-nesting flat format; that shim is deleted once every
    consumer repo's lockfiles have been rewritten by `dev deps update`.
 
-`dev deps install` reads the lockfile and hands each integration its pins;
-no resolution happens at install time.
+`dev deps install` reads the lockfile and hands each integration its pins,
+one batch per integration instance, in the order the lock's graph
+dictates: the host prerequisite's batch (brew — `host_prerequisite?`)
+before every other, and a pin's batch before each integration its
+`needed_by` names, when that integration has a batch in the install.
+Ties keep lock order. A cycle is refused (`DependencyCycleError`) before
+anything is attempted; a group name orders nothing. No resolution happens
+at install time.
 
 ### Resolution flow (`dev deps update`)
 
@@ -186,9 +203,10 @@ sequenceDiagram
     lkr->>lkr: write Gemfile from declarations
     lkr->>bundler: shadowenv exec -- bundle lock
     bundler-->>lkr: Gemfile.lock written (or LockError)
+    Note over cmd: IntegrationNeeds reads each integration's own dependencies.rb as a library - its exports are the needs table
     cmd->>res: resolve(all declarations)
     Note over res: reject disagreeing constraints per (integration, name) - ConflictingDeclarationError
-    loop until queue empty (declared + transitive)
+    loop until queue empty (declared + transitive + needs)
         alt declaration carries a revision (continuous space)
             res->>rep: at(PackageId, revision)
             Note over rep: pure lift, no I/O — the address is trusted now, verified at install
@@ -207,7 +225,11 @@ sequenceDiagram
         opt claim is Resolved
             Note over res: queue its Declarations as ScopedDeclarations under the parent's Scope
         end
+        opt the declaration's integration has needs
+            Note over res: queue each need under the declaration's Scope (Scope#under), held to the earlier ask for its package; record needed_by
+        end
     end
+    Note over res: stamp needed_by provenance onto the needed pins
     res-->>cmd: Dependency[] pins
     cmd->>lock: read
     lock-->>cmd: previous pins
@@ -233,7 +255,7 @@ sequenceDiagram
     up->>inst: install(env:, host:)
     inst->>lock: read
     lock-->>inst: Dependency[] pins
-    Note over inst: filter by env/host, dispatch build group first
+    Note over inst: filter by env/host, batch per integration, order by the graph - host prerequisite (brew) first, then a pin's batch before each integration in its needed_by; cycle refused
     inst->>integ: install_all(pins)
     integ->>tool: shadowenv exec -- bundle install / brew / pip / steamcmd ...
     tool-->>integ: installed (typed InstallError on failure)
@@ -357,6 +379,78 @@ Two standing decisions:
   is dev's requirement of it and one every such tool already meets for
   its own users. luarocks has no download cache to point, so it gets none.
 
+## Integration manifests
+
+An integration may need tooling of its own — `XcodeIntegration` shells
+to the `xcodes` CLI, `WwiseIntegration` to `wwise-cli`. That tooling is
+declared the way a project declares anything: in a `dependencies.rb` the
+integration carries, in the project DSL (ADR-0011). Projects never see it;
+dev resolves it into *their* lock when they use the integration.
+
+**Where the manifest lives.** By file convention, beside the class:
+`lib/dev/deps/xcode_integration.rb` carries
+`lib/dev/deps/xcode_integration/dependencies.rb`
+(`Integration.manifest_path` — the class file sans `.rb`, plus
+`dependencies.rb`; nil when absent, meaning the integration needs
+nothing). That is the convention for built-in integrations. One from
+outside dev-core arrives as a dependency, and its needs are declared in
+that dependency's own `dependencies.rb` — the same file that marks it as
+an integration provider ([#300](https://github.com/d3mlabs/dev/issues/300)).
+
+**The export rule** — the Gemfile/gemspec convention, for every verb:
+
+- *Ungrouped declarations export.* `brew "xcodes"` at the top level is
+  what the manifest offers a consumer. Every declaration verb works
+  ungrouped (in the default group, `:app`) and lands in `Config#exports`
+  as well as `Config#declarations`.
+- *Grouped declarations are private.* Anything inside `group :x do … end`
+  (or an `env` block within it) is the library's own business and never
+  exports — the same reason a gemspec's development dependencies don't
+  reach the application.
+- *A library declares ranges; the project locks.* An integration's
+  manifest has no lock of its own that dev consults; its exports resolve
+  against today's universe into the consuming project's lock, under the
+  project's single-ask rule.
+- *`ruby`, `python` and `env` never propagate.* The toolchain directives
+  describe the project, not a library (library mode never reads them);
+  `env` is not a top-level verb at all — an env scope that cannot
+  propagate would contradict an ungrouped line.
+
+**Library mode.** `IntegrationNeeds#table` reads each wired integration's
+manifest through `Dev::Deps.evaluate`, which runs the file and hands back
+its `Config` without disturbing `Dev::Deps.last_config` (the project's).
+The one validation with teeth is `SelfNeedError`: a manifest may not
+export a pin of its own integration type, because the installer orders
+integration batches by the needs graph and a self-edge is a cycle it
+could only refuse. The table — integration symbol → exports — is the
+Resolver's second edge source (the first being a chosen version's
+`Resolved` claim).
+
+**The walk.** When the Resolver mints a pin for a declaration whose
+integration has needs, it queues each need as a `ScopedDeclaration` under
+the *using declaration's* `Scope`: the need takes the user's group and
+inherits its host and env, each narrowed by the need's own (`xcodes` is
+`host: :darwin` in its manifest; used from `group :editor` it locks as
+`brew`/`xcodes` in `:editor`, Mac-only; used from a `host: :linux` group
+it does not apply and is dropped). The need's integration is recorded as
+`needed_by`; after the walk every needed pin carries
+`needed_by: [xcode]` (sorted, deduplicated) in its metadata, which the
+lock serializes like any other attribute. A project that also declares
+`brew "xcodes"` merges: one pin, the project's (first-declared) scope,
+provenance kept; a disagreeing ask (another version, tap or revision) is
+the usual `ConflictingDeclarationError`, naming the integration whose
+need disagrees.
+
+**Why the installer orders by this graph.** `needed_by` is exactly the
+edge "install me before the integration that needs me". The Installer
+batches pins per integration instance and sorts the batches
+topologically: the host prerequisite (brew, `host_prerequisite?`) first,
+then each needed pin's batch before its users'. Groups no longer order
+anything — `:build` used to install first as a proxy for this graph;
+`xcodes` and `wwise-cli` in a project's build group were the symptom.
+The graph is read from the lock, so install needs no manifest and no
+resolution.
+
 ## Adding a new ecosystem
 
 1. **Repository** — subclass `Repository`, implement `find(id) ->
@@ -383,9 +477,13 @@ Two standing decisions:
    solve (transitive co-resolution you can't reproduce): subclass
    `Locker`, make the tool materialize its lock, and have the repository
    `find` read it.
-4. **Integration** — subclass `Integration` to install pins.
+4. **Integration** — subclass `Integration` to install pins. If it shells
+   to tooling of its own, declare that tooling ungrouped in a sibling
+   `<integration file sans .rb>/dependencies.rb` — consumers lock and
+   install it with `needed_by:` provenance, before your batch. Needs must
+   be pins of *other* integrations (`SelfNeedError`).
 5. **Registry** — add the `Entry`. The consistency tests will hold you to
-   it.
+   it — including that any manifest on disk belongs to a wired class.
 6. **DSL** — add the declaration verb in `dsl.rb`, and its symbol to the
    consistency test's `DECLARATION_INTEGRATIONS`.
 
