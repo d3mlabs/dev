@@ -75,7 +75,7 @@ fi
 git_tap checkout --quiet "$sha"
 
 # reinstall, not uninstall + install: brew autoremoves a formula's
-# dependencies when the formula goes (gh, git, go, perl, rbenv, ruby-build,
+# dependencies when the formula goes (gh, git, go, perl, ruby,
 # shadowenv, … — ~30 bottles for dev-core), then install pours them all
 # back. reinstall swaps dev-core for the checked-out formula's version and
 # leaves the dependency kegs in place. It handles a downgrade too, which

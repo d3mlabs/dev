@@ -115,8 +115,8 @@ fi
 
 echo ">>> Removing dev-core from the image"
 # The toolchain stays; dev leaves (README: "dev is live infrastructure" —
-# the image contains no dev). dev-core's own dependencies (gh, git, rbenv,
-# ruby-build, shadowenv, …) stay too: Homebrew 7 autoremoves a formula's
+# the image contains no dev). dev-core's own dependencies (gh, git, ruby,
+# shadowenv, …) stay too: Homebrew 7 autoremoves a formula's
 # now-unneeded dependencies on uninstall by default, and every container
 # bin/container-provision-dev.sh later brings to the host's version would
 # pour those ~30 bottles back before installing the one formula it is

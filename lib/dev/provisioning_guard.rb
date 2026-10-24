@@ -5,7 +5,7 @@ module Dev
   # Kill-switch against real provisioning, for processes that must never
   # install anything: the test suite (dev#208). test_helper sets
   # DEV_FORBID_PROVISIONING=1 for every test process; the install seams the
-  # provisioners cannot inject — `rbenv install`, `brew install` — call
+  # provisioners cannot inject — `brew install`, `xcodes install` — call
   # check! right before doing the work, so a test that reached one without
   # stubbing its boundary fails in milliseconds with a pointed message
   # instead of building a Ruby on the developer's machine. Outside the
@@ -32,7 +32,7 @@ module Dev
 
       # The seam's gate: refuses the action while armed, else returns.
       #
-      # @param action [String] what would have run, e.g. "rbenv install 4.0.1"
+      # @param action [String] what would have run, e.g. "brew install llvm@18"
       # @param stub_hint [String] the boundary a test should have stubbed
       # @return [void]
       # @raise [ForbiddenError] while the kill-switch is armed
