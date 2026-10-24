@@ -16,13 +16,12 @@ module Dev
     # lock says they are — and the previous lock's commit satisfies that
     # whenever the tap's pins have not changed. Without this rule every
     # `dev deps update` after a `brew update` rewrote the commit on every
-    # core formula, and because the build image is content-addressed on
-    # `build-deps.lock`, bumping a gem rebuilt the build toolchain's image.
+    # core formula, and because the build image was content-addressed on
+    # the lock, bumping a gem rebuilt the build toolchain's image.
     #
     # Per tap, not per formula: a pinned install checks a tap out once
     # (BrewIntegration#pin_taps! requires one commit per tap), so one changed
-    # formula moves the whole tap. Across both lockfiles, for the same
-    # reason — a host's pinned install reads both.
+    # formula moves the whole tap.
     #
     # Pure over two pin lists; the Resolver never sees the previous lock.
     class TapCommitCarryover

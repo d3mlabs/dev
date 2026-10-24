@@ -81,7 +81,7 @@ module Dev
         # the declarations and the universe; which of two equally valid tap
         # commits to write is a question about the lock being written, so it
         # is answered here, against the lock on disk (TapCommitCarryover).
-        resolved = Dev::Deps::TapCommitCarryover.new.apply(resolver.resolve(declarations), lockfile.read)
+        resolved = Dev::Deps::TapCommitCarryover.new.apply(resolver.resolve(declarations), lockfile.read_for_relock)
         # Record the manifest digest so the staleness check can tell whether
         # dependencies.rb changed after this resolution (Dev::Deps::Staleness).
         manifest_digest = deps_rb.exist? ? Digest::SHA256.file(deps_rb.to_s).hexdigest : nil

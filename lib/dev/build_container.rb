@@ -16,9 +16,9 @@ require "dev/engine_resources_check"
 module Dev
   # Content-addressed Docker image management for build containers.
   #
-  # Computes a tag from the hash of Dockerfile + .dockerignore + lockfiles
-  # (deps.lock, build-deps.lock) plus any project-declared content globs. Any
-  # change to those inputs produces a new tag, guaranteeing a rebuild.
+  # Computes a tag from the hash of Dockerfile + .dockerignore + deps.lock
+  # plus any project-declared content globs. Any change to those inputs
+  # produces a new tag, guaranteeing a rebuild.
   #
   # Every docker invocation rides an injected Dev::ContainerEngine (the
   # per-user container substrate — see that class), so which daemon serves a
@@ -74,10 +74,10 @@ module Dev
       const :containers, T::Array[ServiceContainer]
     end
 
-    # Always-hashed inputs. deps.lock (app/test deps, e.g. SML) and build-deps.lock
-    # (build deps, e.g. the engine) join the Dockerfile so a dependency bump
-    # invalidates a prewarmed image. Missing files are skipped (see content_tag).
-    CONTENT_FILES = ["Dockerfile", ".dockerignore", "deps.lock", "build-deps.lock"].freeze
+    # Always-hashed inputs. deps.lock joins the Dockerfile so a dependency
+    # bump invalidates a prewarmed image. Missing files are skipped (see
+    # content_tag).
+    CONTENT_FILES = ["Dockerfile", ".dockerignore", "deps.lock"].freeze
     TAG_PREFIX = "content-"
 
     # Rosetta-for-Linux forwards cross-thread signals through rt_tgsigqueueinfo

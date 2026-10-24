@@ -23,10 +23,10 @@ class BuildContainerTest < Minitest::Test
   end
 
   test "content_tag produces deterministic hash from Dockerfile and lockfile" do
-    Given "a project with Dockerfile and build-deps.lock"
+    Given "a project with Dockerfile and deps.lock"
     dir = Dir.mktmpdir("build-container-test-")
     File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
-    File.write(File.join(dir, "build-deps.lock"), "cmake: {version: 3.31}")
+    File.write(File.join(dir, "deps.lock"), "cmake: {version: 3.31}")
 
     When "computing the tag"
     tag = Dev::BuildContainer.content_tag(project_root: Pathname(dir))

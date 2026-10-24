@@ -298,7 +298,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     )
   end
 
-  # Writes a real deps.lock/build-deps.lock pair under the project root —
+  # Writes a real deps.lock under the project root —
   # the lockfile is a file contract, not a boundary to fake.
   def lock(root, *deps)
     Dev::Deps::Lockfile.new(dir: root).lock(deps)

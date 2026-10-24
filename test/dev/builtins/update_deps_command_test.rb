@@ -132,6 +132,35 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "call re-locks a checkout that still carries build-deps.lock, folding it into deps.lock and removing it" do
+    Given "a checkout last locked by a dev that wrote two files"
+    root = Pathname.new(Dir.mktmpdir("update-deps-retired-"))
+    (root / "deps.lock").write("cmake:\n  boost: { group: app, version: '1.90.0' }\n")
+    (root / "build-deps.lock").write("brew:\n  cmake: { group: build, version: '3.31' }\n")
+    resolved = [
+      Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app, version: "1.90.0", hash: nil,
+        metadata: {}),
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: "3.31", hash: nil,
+        metadata: {}),
+    ]
+    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: resolved))
+    Dev::ShadowenvRuby.stubs(:converge!)
+    command = Dev::Builtins::UpdateDepsCommand.new
+    old_stdout = $stdout
+    $stdout = StringIO.new
+
+    When "running dev deps update — the command the refusal points at"
+    command.call(args: no_args, context: build_context(root))
+
+    Then "one lockfile holds both pins and the retired file is gone"
+    !(root / "build-deps.lock").exist?
+    Dev::Deps::Lockfile.new(dir: root).read.map(&:name).sort == ["boost", "cmake"]
+
+    Cleanup
+    $stdout = old_stdout
+    FileUtils.rm_rf(root)
+  end
+
   test "call keeps an unchanged tap's commit from the lock on disk — a re-lock that moves no formula writes the same bytes" do
     Given "a lock written at one core commit, and a resolution of the very same pins at a newer one"
     root = Pathname.new(Dir.mktmpdir("update-deps-carryover-"))
@@ -141,7 +170,7 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
         metadata: { "tap_commit" => commit, "format" => "bottle", "platforms" => platforms })
     end
     Dev::Deps::Lockfile.new(dir: root).lock([pin.call("0f1ba9ea")])
-    before = (root / "build-deps.lock").read
+    before = (root / "deps.lock").read
     Dev::Deps::Resolver.expects(:new).returns(stub(resolve: [pin.call("7d2877eb")]))
     Dev::ShadowenvRuby.stubs(:converge!)
     command = Dev::Builtins::UpdateDepsCommand.new
@@ -151,8 +180,8 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     When "running dev deps update"
     command.call(args: no_args, context: build_context(root))
 
-    Then "build-deps.lock is byte-identical to what was there"
-    (root / "build-deps.lock").read == before
+    Then "deps.lock is byte-identical to what was there"
+    (root / "deps.lock").read == before
 
     Cleanup
     $stdout = old_stdout

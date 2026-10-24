@@ -113,9 +113,8 @@ class Dev::Deps::LockfileTest < Minitest::Test
     When "locking with the digest"
     lockfile.lock(deps, manifest_digest: digest)
 
-    Then "both lockfiles carry it as a header comment, name the verb that rewrites them, and it reads back"
+    Then "the lockfile carries it as a header comment, names the verb that rewrites it, and it reads back"
     File.read(File.join(dir, "deps.lock")).include?("# dependencies-digest: #{digest}")
-    File.read(File.join(dir, "build-deps.lock")).include?("# dependencies-digest: #{digest}")
     File.read(File.join(dir, "deps.lock")).include?("run dev deps update to change")
     lockfile.manifest_digest == digest
     # The YAML payload stays pure deps — the digest rides a comment.
@@ -182,7 +181,7 @@ class Dev::Deps::LockfileTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "lock routes app and test deps to deps.lock, build to build-deps.lock" do
+  test "lock writes every group to the one deps.lock" do
     Given "dependencies in app, test, and build groups"
     dir = Dir.mktmpdir("dev-lockfile-test-")
     lockfile = Dev::Deps::Lockfile.new(dir: dir)
@@ -199,44 +198,95 @@ class Dev::Deps::LockfileTest < Minitest::Test
     lockfile.lock(deps)
     all_deps = lockfile.read
 
-    Then
+    Then "one file holds all three, under their integration sections"
     all_deps.size == 3
     File.exist?(File.join(dir, "deps.lock"))
-    File.exist?(File.join(dir, "build-deps.lock"))
+    !File.exist?(File.join(dir, "build-deps.lock"))
     all_deps.map(&:name).sort == ["boost", "cmake", "luaunit"]
+    YAML.safe_load(File.read(File.join(dir, "deps.lock")))["brew"]["cmake"]["group"] == "build"
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
-  test "lock handles env-scoped build deps" do
-    Given "build dependencies with env scoping"
+  test "env scope is a per-pin attribute, whatever the group" do
+    Given "a build dependency scoped to an env"
     dir = Dir.mktmpdir("dev-lockfile-test-")
     lockfile = Dev::Deps::Lockfile.new(dir: dir)
     deps = [
       Dev::Deps::Dependency.new(name: "ccache", integration: :brew, group: :build,
         version: "4.10.2", hash: "SHA256=aaa", metadata: {}),
-      Dev::Deps::Dependency.new(name: "ruby", integration: :brew, group: :build,
-        version: "3.3.0", hash: "SHA256=bbb",
-        metadata: { "env" => "ci" }),
       Dev::Deps::Dependency.new(name: "powershell", integration: :brew, group: :build,
         version: "7.4.0", hash: "SHA256=ccc",
         metadata: { "env" => "ci", "tap" => "d3mlabs/d3mlabs" }),
-      Dev::Deps::Dependency.new(name: "powershell", integration: :brew, group: :build,
-        version: nil, hash: nil,
-        metadata: { "env" => "dev", "cask" => true }),
     ]
 
     When "locking"
     lockfile.lock(deps)
-    content = File.read(File.join(dir, "build-deps.lock"))
+    yaml = YAML.safe_load(File.read(File.join(dir, "deps.lock")), permitted_classes: [Symbol])
 
-    Then "env sections nest integration under env name"
-    content.include?("ccache:")
-    yaml = YAML.safe_load(content, permitted_classes: [Symbol])
-    yaml["env"]["ci"]["brew"]["ruby"]["version"] == "3.3.0"
-    yaml["env"]["ci"]["brew"]["powershell"]["tap"] == "d3mlabs/d3mlabs"
-    yaml["env"]["dev"]["brew"]["powershell"]["cask"] == true
+    Then "the pin sits in its integration section with env beside its other attrs; no env: top-level section"
+    yaml["brew"]["powershell"]["env"] == "ci"
+    yaml["brew"]["powershell"]["tap"] == "d3mlabs/d3mlabs"
+    !yaml["brew"]["ccache"].key?("env")
+    !yaml.key?("env")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "lock removes a retired build-deps.lock beside the deps.lock it writes" do
+    Given "a checkout last locked by a dev that wrote two files"
+    dir = Dir.mktmpdir("dev-lockfile-test-")
+    File.write(File.join(dir, "build-deps.lock"), "brew:\n  cmake: { group: build, version: '3.31' }\n")
+    lockfile = Dev::Deps::Lockfile.new(dir: dir)
+    deps = [
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
+        version: "3.31.4", hash: "SHA256=ccc", metadata: {}),
+    ]
+
+    When "re-locking"
+    lockfile.lock(deps)
+
+    Then "the retired file is gone and the pin is in deps.lock"
+    !File.exist?(File.join(dir, "build-deps.lock"))
+    lockfile.read.map(&:name) == ["cmake"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "read refuses a checkout that still carries build-deps.lock" do
+    Given "a deps.lock beside a retired build-deps.lock"
+    dir = Dir.mktmpdir("dev-lockfile-test-")
+    File.write(File.join(dir, "deps.lock"), "cmake:\n  boost: { group: app, version: '1.90.0' }\n")
+    File.write(File.join(dir, "build-deps.lock"), "brew:\n  cmake: { group: build, version: '3.31' }\n")
+    lockfile = Dev::Deps::Lockfile.new(dir: dir)
+
+    When "reading"
+    lockfile.read
+
+    Then "it is RetiredBuildLockError, naming the command that folds the file in"
+    error = raises Dev::Deps::Lockfile::RetiredBuildLockError
+    error.message.include?("build-deps.lock")
+    error.message.include?("dev deps update")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "read_for_relock reads deps.lock beside a retired build-deps.lock, so the re-lock can run" do
+    Given "a deps.lock beside a retired build-deps.lock"
+    dir = Dir.mktmpdir("dev-lockfile-test-")
+    File.write(File.join(dir, "deps.lock"), "cmake:\n  boost: { group: app, version: '1.90.0' }\n")
+    File.write(File.join(dir, "build-deps.lock"), "brew:\n  cmake: { group: build, version: '3.31' }\n")
+    lockfile = Dev::Deps::Lockfile.new(dir: dir)
+
+    When "reading as the input to a re-lock"
+    previous = lockfile.read_for_relock
+
+    Then "deps.lock's pins come back; the retired file's do not"
+    previous.map(&:name) == ["boost"]
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -276,7 +326,7 @@ class Dev::Deps::LockfileTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "read round-trips env-scoped build deps" do
+  test "read round-trips env-scoped pins" do
     Given "global and env-scoped build dependencies"
     dir = Dir.mktmpdir("dev-lockfile-test-")
     lockfile = Dev::Deps::Lockfile.new(dir: dir)
@@ -334,7 +384,7 @@ class Dev::Deps::LockfileTest < Minitest::Test
   test "reads legacy flat-format lockfiles" do
     # Migration shim: delete this test with the legacy read path once every
     # consumer repo's lockfiles have been rewritten by dev deps update (issue #146).
-    Given "lockfiles in the pre-nested format, name-keyed with integration in the value"
+    Given "a lockfile in the pre-nested format, name-keyed with integration in the value"
     dir = Dir.mktmpdir("dev-lockfile-test-")
     File.write(File.join(dir, "deps.lock"), <<~YAML)
       boost:
@@ -342,18 +392,11 @@ class Dev::Deps::LockfileTest < Minitest::Test
         group: app
         version: 1.90.0
         hash: SHA256=deadbeef
-    YAML
-    File.write(File.join(dir, "build-deps.lock"), <<~YAML)
       ccache:
         integration: brew
         group: build
         version: 4.10.2
-      env:
-        ci:
-          ruby:
-            integration: brew
-            group: build
-            version: 3.3.0
+        env: ci
     YAML
     lockfile = Dev::Deps::Lockfile.new(dir: dir)
 
@@ -361,14 +404,13 @@ class Dev::Deps::LockfileTest < Minitest::Test
     deps = lockfile.read
 
     Then "all entries parse with their recorded integrations"
-    deps.size == 3
+    deps.size == 2
     boost = deps.find { |d| d.name == "boost" }
     boost.integration == :cmake
     boost.version == "1.90.0"
-    deps.find { |d| d.name == "ccache" }.integration == :brew
-    ruby_dep = deps.find { |d| d.name == "ruby" }
-    ruby_dep.metadata["env"] == "ci"
-    ruby_dep.integration == :brew
+    ccache = deps.find { |d| d.name == "ccache" }
+    ccache.integration == :brew
+    ccache.metadata["env"] == "ci"
 
     Cleanup
     FileUtils.rm_rf(dir)

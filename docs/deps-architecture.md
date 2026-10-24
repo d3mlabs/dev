@@ -168,12 +168,15 @@ ecosystem's canonical form and validated at the DSL boundary (a cmake
    the invariant a pinned install relies on). This is a policy of the
    lock being written, so it lives in `dev deps update`, not in the
    Resolver, which never sees the previous lock.
-4. **Write** — pins go to `deps.lock` (app/test groups) and
-   `build-deps.lock` (build group), nested by integration
-   (`brew:` → `zlib:` → attrs) so the on-disk key carries the same
-   (integration, name) identity the resolver keys on. The reader also
-   accepts the pre-nesting flat format; that shim is deleted once every
-   consumer repo's lockfiles have been rewritten by `dev deps update`.
+4. **Write** — every pin goes to `deps.lock`, whatever its group
+   (ADR-0011), nested by integration (`brew:` → `zlib:` → attrs) so the
+   on-disk key carries the same (integration, name) identity the resolver
+   keys on; a pin's host/env scoping is an attribute beside its version.
+   A retired `build-deps.lock` beside it is removed by this write, and
+   `dev deps install` refuses to run while one is still present, so a
+   checkout cannot install without its build pins by mistake. The reader
+   also accepts the pre-nesting flat format; that shim is deleted once
+   every consumer repo's lockfile has been rewritten by `dev deps update`.
 
 `dev deps install` reads the lockfile and hands each integration its pins,
 one batch per integration instance, in the order the lock's graph
@@ -237,7 +240,7 @@ sequenceDiagram
     Note over carry: per brew tap - pins unchanged? keep the previous tap_commit; else today's HEAD on every pin
     carry-->>cmd: pins
     cmd->>lock: lock(pins, manifest_digest)
-    Note over lock: writes deps.lock and build-deps.lock, nested by integration
+    Note over lock: writes deps.lock, nested by integration
 ```
 
 ### Install flow (`dev deps install`)
