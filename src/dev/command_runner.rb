@@ -58,8 +58,9 @@ module Dev
     extend T::Sig
 
     # The argv that precedes `sh -c` for a direct run: the project's
-    # shadowenv, on both sides — the host lisp activates the rbenv Ruby, the
-    # container lisp (inert on the host) the store Ruby.
+    # shadowenv, whose lisps `dev deps install` wrote — the locked kegs on
+    # PATH, the locked Ruby and Python activated — on the host and inside
+    # the container alike.
     SHELL_PREFIX = T.let(%w[shadowenv exec --].freeze, T::Array[String])
 
     # Raised by run_waiting when the child command exits nonzero, carrying

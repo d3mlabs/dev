@@ -3,165 +3,28 @@
 
 require "fileutils"
 require "pathname"
-require "dev/provisioning_guard"
 require "dev/shell_rc_hook"
 
 module Dev
-  # Shadowenv Ruby provisioning: installs Ruby via rbenv, generates
-  # .shadowenv.d/510_ruby.lisp, trusts, and ensures the shell hook.
-  # Used by the dev CLI core as a pre-dispatch step for every command.
+  # The language-specific half of a locked Ruby's activation in the project
+  # shadowenv: .shadowenv.d/510_ruby.lisp (RUBY_ROOT, GEM_ROOT, GEM_HOME
+  # and their PATH entries), `.ruby-version`, the trust, the shell hook.
+  #
+  # Nothing here installs a Ruby. The interpreter is a `ruby` pin in
+  # dependencies.rb — an immutable `ruby@X.Y.Z` bottle from the d3mlabs tap
+  # that brew installs like any formula — and the brew integration calls
+  # activate! once the keg is installed and its bin is on the project PATH.
   module ShadowenvRuby
     extend T::Sig
     include Kernel
 
-    MIN_RUBY = Gem::Requirement.new(">= 2.7.0")
     LISP_FILENAME = "510_ruby.lisp"
-
-    # Stdlib C-extensions every dev workflow depends on. rbenv/ruby-build silently
-    # *skips* an extension when its dev library is missing at compile time, so a Ruby
-    # can install "successfully" yet blow up on the first `require` deep inside bundler
-    # ("cannot load such file -- zlib"). We make that failure mode impossible: provision
-    # the libraries below before building, and hard-verify these after.
-    REQUIRED_EXTENSIONS = %w[zlib openssl psych].freeze
-
-    # Homebrew formulae that supply the headers/libs ruby-build links the required
-    # extensions against, mapped to the `--with-<flag>-dir` configure flag that points
-    # Ruby's build at the brew copy. Works on macOS and Linuxbrew alike (the box).
-    RUBY_BUILD_BREW_DEPS = T.let(
-      {
-        "openssl@3" => "openssl",
-        "readline" => "readline",
-        "libyaml" => "libyaml",
-        "zlib" => "zlib",
-      }.freeze,
-      T::Hash[String, String],
-    )
-
-    # The boundary a test stubs to stay clear of this module's install seams
-    # (ProvisioningGuard's message, dev#208).
-    STUB_HINT = "Dev::ShadowenvRuby.stubs(:converge!) / .stubs(:ensure!)"
 
     module_function
 
-    # Resolve the Ruby version to provision. Explicit pin wins; falls back to
-    # the Homebrew Ruby version; aborts if neither is available or too old.
-    #
-    # The aborts go through T.unsafe (a runtime no-op) because tests stub
-    # Kernel.abort, making the `return` after each one live — Sorbet would
-    # otherwise flag them as dead code after abort's T.noreturn. The return is
-    # T.untyped for the same reason: String in production (abort exits the
-    # process), nil only when abort is stubbed.
-    sig { params(explicit_version: T.nilable(String)).returns(T.untyped) }
-    def resolve_ruby_version(explicit_version)
-      version = explicit_version || detect_homebrew_ruby_version
-      unless version
-        T.unsafe(Kernel).abort("dev: No Ruby declared in dependencies.rb and Homebrew Ruby not found. Run: brew install ruby")
-        return
-      end
-      unless MIN_RUBY.satisfied_by?(Gem::Version.new(version))
-        T.unsafe(Kernel).abort("dev: Resolved Ruby #{version} is below dev's minimum (#{MIN_RUBY}). Pin a newer version in dependencies.rb or run: brew upgrade ruby")
-        return
-      end
-      version
-    end
-
-    # Returns the version string of the Homebrew-installed Ruby, or nil.
-    sig { returns(T.nilable(String)) }
-    def detect_homebrew_ruby_version
-      prefix = brew_prefix_for("ruby")
-      return nil unless prefix
-      # /opt/homebrew/Cellar/ruby/4.0.1   -> "4.0.1"
-      # /opt/homebrew/Cellar/ruby/4.0.6_1 -> "4.0.6"
-      # The keg dirname carries brew's PKG version, whose "_N" formula-revision
-      # suffix (a rebuild of the same upstream Ruby) is not part of RUBY_VERSION
-      # and is rejected by Gem::Version - so only the numeric prefix may leak out.
-      realpath = File.realpath(prefix) rescue prefix
-      version = File.basename(realpath)[/\A\d+(?:\.\d+)+/]
-      return version if version
-      # Fallback: ask the Homebrew ruby binary directly
-      ruby_bin = File.join(prefix, "bin", "ruby")
-      return nil unless File.executable?(ruby_bin)
-      out = IO.popen([ruby_bin, "-e", "puts RUBY_VERSION"], err: File::NULL, &:read)
-      v = out&.strip
-      (v && !v.empty?) ? v : nil
-    end
-
-    # Guarded provisioning: the O(1) provisioned? check first, so callers on
-    # the every-command path (CommandRunner) pay nothing after the first run.
-    # The converge verbs use converge! instead.
-    #
-    # @param ruby_version [String]
-    # @param project_root [String, Pathname]
-    # @return [void]
-    sig { params(ruby_version: String, project_root: T.any(String, Pathname)).void }
-    def ensure!(ruby_version:, project_root:)
-      return if provisioned?(ruby_version, project_root: project_root)
-
-      setup!(ruby_version: ruby_version, project_root: project_root)
-    end
-
-    # The converge verbs' entry (`dev up`, `dev deps install`, `dev deps
-    # update`): ensure!, except a current lisp does not vouch for the ruby
-    # it names. The install can go bad *after* the lisp was written — a brew
-    # upgrade shadows its libruby so it runs as another version (#204; the
-    # hijack #75 guards against at build time), or a dev lib it was built
-    # against disappears — and bundler would then fail the Gemfile pin with
-    # a baffling mismatch. Re-running the runtime health check here hands
-    # such a ruby to setup!'s existing rebuild branch, which names the
-    # culprit and reinstalls. A healthy ruby costs the probes and nothing
-    # more; the every-command path keeps its O(1) guard.
-    #
-    # @param ruby_version [String]
-    # @param project_root [String, Pathname]
-    # @return [void]
-    sig { params(ruby_version: String, project_root: T.any(String, Pathname)).void }
-    def converge!(ruby_version:, project_root:)
-      return if provisioned?(ruby_version, project_root: project_root) && installed_ruby_healthy?(ruby_version)
-
-      setup!(ruby_version: ruby_version, project_root: project_root)
-    end
-
-    # Whether the rbenv install for the version exists, loads every required
-    # extension, and runs as the version it is named for.
-    #
-    # @param version [String]
-    # @return [Boolean]
-    sig { params(version: String).returns(T::Boolean) }
-    def installed_ruby_healthy?(version)
-      ruby_root = find_ruby_root(version)
-      return false unless ruby_root
-
-      extensions_ok?(ruby_root) && reported_version_ok?(ruby_root, version)
-    end
-
-    # Returns true when .shadowenv.d/510_ruby.lisp exists and already
-    # provisions the requested version. This is the fast-path check.
-    sig { params(ruby_version: String, project_root: T.any(String, Pathname)).returns(T::Boolean) }
-    def provisioned?(ruby_version, project_root:)
-      lisp_path = File.join(project_root.to_s, ".shadowenv.d", LISP_FILENAME)
-      return false unless File.exist?(lisp_path)
-      content = File.read(lisp_path)
-      content.include?(%(provide "ruby" "#{ruby_version}"))
-    end
-
-    # Full provisioning: install Ruby via rbenv if needed (with the build deps that
-    # guarantee the required extensions compile), verify it is not crippled, write the
-    # lisp, trust shadowenv, ensure shell hook. Idempotent.
-    sig { params(ruby_version: String, project_root: T.any(String, Pathname)).returns(T::Boolean) }
-    def setup!(ruby_version:, project_root:)
-      ruby_root = ensure_ruby_installed!(ruby_version)
-      return false unless ruby_root
-
-      activate!(keg: Pathname(ruby_root), version: ruby_version, project_root: Pathname(project_root))
-      true
-    end
-
     # Activate one installed Ruby in the project shadowenv: the lisp points
     # RUBY_ROOT/GEM_HOME at the keg, `.ruby-version` carries the version, the
-    # directory is trusted and the shell hook ensured. This is the
-    # language-specific half of a locked Ruby's activation — the brew
-    # integration has already put the keg's bin on the project PATH when it
-    # calls this (dev#289), and nothing here installs anything.
+    # directory is trusted and the shell hook ensured.
     #
     # @param keg [Pathname] the installed Ruby's prefix (brew's keg)
     # @param version [String] the version the lock pins
@@ -183,269 +46,6 @@ module Dev
 
     # --- internal helpers ------------------------------------------------
 
-    sig { params(version: String).returns(T.nilable(String)) }
-    def find_ruby_root(version)
-      rbenv_path = rbenv_version_prefix(version)
-      return rbenv_path if File.directory?(rbenv_path)
-      nil
-    end
-
-    # The prefix rbenv/ruby-build installs (or will install) the version under.
-    # Shared by find_ruby_root and ruby_build_env so the rpath baked at build
-    # time always names the same directory the install lands in.
-    sig { params(version: String).returns(String) }
-    def rbenv_version_prefix(version)
-      rbenv_root = ENV["RBENV_ROOT"] || File.join(ENV["HOME"] || Dir.home, ".rbenv")
-      File.expand_path(File.join(rbenv_root, "versions", version))
-    end
-
-    sig { params(formula: String).returns(T.nilable(String)) }
-    def brew_prefix_for(formula)
-      return nil unless system("command -v brew >/dev/null 2>&1")
-      out = IO.popen(["brew", "--prefix", formula], err: File::NULL, &:read)
-      prefix = out&.strip
-      (prefix && !prefix.empty? && File.directory?(prefix)) ? prefix : nil
-    end
-
-    sig { returns(T.nilable(String)) }
-    def path_with_brew_bin
-      prefix = ENV["HOMEBREW_PREFIX"]
-      prefix ||= begin
-        out = IO.popen(["brew", "prefix"], err: File::NULL, &:read)
-        out&.strip
-      end
-      return ENV["PATH"] unless prefix && File.directory?(prefix)
-      "#{File.join(prefix, "bin")}:#{ENV["PATH"]}"
-    end
-
-    # Resolve a usable Ruby for the version: install it if absent, repair it if a
-    # pre-existing install is crippled (missing a required extension), and abort with
-    # actionable steps if it still can't be made whole. The repair path matters on a
-    # long-lived box where a Ruby was first built before its dev libs were present.
-    sig { params(version: String).returns(T.nilable(String)) }
-    def ensure_ruby_installed!(version)
-      ruby_root = find_ruby_root(version)
-
-      if ruby_root && extensions_ok?(ruby_root) && reported_version_ok?(ruby_root, version)
-        return ruby_root
-      elsif ruby_root
-        missing = missing_extensions(ruby_root)
-        if missing.any?
-          $stderr.puts "dev: Ruby #{version} is missing required extension(s): #{missing.join(', ')}. Rebuilding with the right deps..."
-        else
-          $stderr.puts "dev: Ruby #{version} runs as #{reported_ruby_version(ruby_root)} (its libruby is shadowed by another install). Rebuilding..."
-        end
-        install_ruby_with_version_manager(version, force: true)
-      else
-        install_ruby_with_version_manager(version)
-      end
-
-      ruby_root = find_ruby_root(version)
-      unless ruby_root
-        $stderr.puts "dev: Ruby #{version} not found. Install: brew install rbenv ruby-build && rbenv install #{version}"
-        return nil
-      end
-
-      verify_extensions!(ruby_root, version)
-      verify_reported_version!(ruby_root, version)
-      ruby_root
-    end
-
-    # Install (or force-reinstall) the Ruby via rbenv, first ensuring the build-time
-    # libraries are present and pointing ruby-build at them, so the required extensions
-    # are compiled rather than silently skipped.
-    sig { params(version: String, force: T::Boolean).returns(T.nilable(T::Boolean)) }
-    def install_ruby_with_version_manager(version, force: false)
-      env = { "PATH" => path_with_brew_bin }
-      return false unless system(env, "which", "rbenv", out: File::NULL, err: File::NULL)
-
-      ProvisioningGuard.check!("rbenv install #{version}", stub_hint: STUB_HINT)
-      ensure_ruby_build_deps!(env)
-      system(env, "rbenv", "uninstall", "--force", version, out: File::NULL, err: File::NULL) if force
-      $stderr.puts "dev: Installing Ruby #{version} with rbenv (one-time)..."
-      system(ruby_build_env(env, version), "rbenv", "install", "--skip-existing", version)
-    end
-
-    # Abort (loudly, with a fix) if the provisioned Ruby is missing a required
-    # extension. A crippled Ruby must never pass silently to surface as a cryptic
-    # bundler error later.
-    sig { params(ruby_root: String, version: String).void }
-    def verify_extensions!(ruby_root, version)
-      missing = missing_extensions(ruby_root)
-      return if missing.empty?
-
-      Kernel.abort(<<~MSG)
-        dev: Ruby #{version} is built without required extension(s): #{missing.join(', ')}.
-        ruby-build skips an extension when its dev library is missing at build time.
-        Install the libraries and reinstall:
-          brew install #{RUBY_BUILD_BREW_DEPS.keys.join(' ')}     # or apt: zlib1g-dev libssl-dev libyaml-dev libreadline-dev
-          rbenv uninstall -f #{version} && rbenv install #{version}
-      MSG
-    end
-
-    # The subset of REQUIRED_EXTENSIONS the given Ruby cannot `require`. A Ruby whose
-    # binary is missing entirely counts as missing all of them.
-    sig { params(ruby_root: String).returns(T::Array[String]) }
-    def missing_extensions(ruby_root)
-      ruby_bin = File.join(ruby_root, "bin", "ruby")
-      return REQUIRED_EXTENSIONS.dup unless File.executable?(ruby_bin)
-
-      REQUIRED_EXTENSIONS.reject do |ext|
-        system(ruby_bin, "-e", "require #{ext.inspect}", out: File::NULL, err: File::NULL)
-      end
-    end
-
-    sig { params(ruby_root: String).returns(T::Boolean) }
-    def extensions_ok?(ruby_root)
-      missing_extensions(ruby_root).empty?
-    end
-
-    # Abort if the provisioned ruby runs as a different version than requested.
-    # With --enable-shared, rubies differing only in teeny share a libruby soname
-    # (libruby.so.X.Y), so a wrong runtime search path (e.g. Homebrew's lib dir
-    # rpathed ahead of the ruby's own — carrying a same-minor Ruby) makes the
-    # binary silently *run as* that other version. Bundler then fails the
-    # Gemfile's ruby pin with a baffling version mismatch; this guard names the
-    # real culprit instead.
-    sig { params(ruby_root: String, version: String).void }
-    def verify_reported_version!(ruby_root, version)
-      reported = reported_ruby_version(ruby_root)
-      return if reported == version
-
-      Kernel.abort(version_hijack_message(ruby_root, version, reported))
-    end
-
-    sig { params(ruby_root: String, version: String, reported: T.nilable(String)).returns(String) }
-    def version_hijack_message(ruby_root, version, reported)
-      <<~MSG
-        dev: Ruby #{version} at #{ruby_root} runs as RUBY_VERSION #{reported.inspect}.
-        Its binary is loading another Ruby's shared libruby (same-soname runtime search path collision).
-        Reinstall it: rbenv uninstall -f #{version} && dev up
-      MSG
-    end
-
-    sig { params(ruby_root: String, version: String).returns(T::Boolean) }
-    def reported_version_ok?(ruby_root, version)
-      reported_ruby_version(ruby_root) == version
-    end
-
-    # The RUBY_VERSION the ruby at ruby_root actually reports when executed, or
-    # nil when the binary is absent or fails to run. This is deliberately the
-    # *runtime* answer, not the directory name: the two disagree exactly when
-    # the libruby hijack described above is in effect.
-    sig { params(ruby_root: String).returns(T.nilable(String)) }
-    def reported_ruby_version(ruby_root)
-      ruby_bin = File.join(ruby_root, "bin", "ruby")
-      return nil unless File.executable?(ruby_bin)
-
-      out = IO.popen([ruby_bin, "-e", "print RUBY_VERSION"], err: File::NULL, &:read)
-      version = out&.strip
-      (version && !version.empty?) ? version : nil
-    end
-
-    # Best-effort install of the build-time libraries via Homebrew. A no-op when brew
-    # is absent (e.g. an apt-only host) — verify_extensions! still guards the result.
-    sig { params(env: T::Hash[String, T.nilable(String)]).void }
-    def ensure_ruby_build_deps!(env)
-      return unless system(env, "command -v brew >/dev/null 2>&1")
-
-      RUBY_BUILD_BREW_DEPS.each_key do |formula|
-        next if system(env, "brew", "list", "--versions", formula, out: File::NULL, err: File::NULL)
-
-        ProvisioningGuard.check!("brew install #{formula}", stub_hint: STUB_HINT)
-        system(env, "brew", "install", formula)
-      end
-    end
-
-    # Augment the install env so ruby-build links the brew-provided libraries. Adds a
-    # `--with-<lib>-dir` for each available formula plus the brew prefix's include/lib/
-    # pkgconfig, which is the documented fix for ruby-build on Linuxbrew. Returns the
-    # env unchanged when brew isn't present.
-    #
-    # @param env [Hash] the base process env
-    # @param version [String] the Ruby being built
-    # @param prefix [String] where ruby-build installs it (its lib dir is rpathed
-    #   first); defaults to the rbenv versions prefix for host installs
-    # @return [Hash] the augmented env
-    sig do
-      params(
-        env: T::Hash[String, T.nilable(String)],
-        version: String,
-        prefix: String,
-      ).returns(T::Hash[String, T.nilable(String)])
-    end
-    def ruby_build_env(env, version, prefix: rbenv_version_prefix(version))
-      brew_prefix = homebrew_prefix
-      return env unless brew_prefix
-
-      configure_opts = RUBY_BUILD_BREW_DEPS.filter_map do |formula, flag|
-        dir = brew_prefix_for(formula)
-        "--with-#{flag}-dir=#{dir}" if dir
-      end
-
-      # -rpath alongside -L: on Linuxbrew, ruby-build links miniruby against brew's
-      # libs (e.g. libcrypt.so.2 from libxcrypt) but bakes no runtime search path, so
-      # the just-built miniruby dies with "libcrypt.so.2: cannot open shared object"
-      # mid-build. Baking the brew lib dir into the rpath makes the built ruby find
-      # its brew libs at runtime. Harmless on macOS (rpath to an already-found dir).
-      lib = File.join(brew_prefix, "lib")
-
-      # rpath ORDER is load-bearing: brew's lib dir can carry its own Ruby, and
-      # rubies differing only in teeny share a libruby soname (libruby.so.X.Y).
-      # If brew's dir is searched first, the freshly built ruby silently loads —
-      # and runs as — brew's version (e.g. a 4.0.5 build reporting 4.0.6). Rpath
-      # the build's own lib dir ahead of brew's so its libruby always wins.
-      own_lib = File.join(prefix, "lib")
-
-      built = env.merge(
-        "RUBY_CONFIGURE_OPTS" => [env["RUBY_CONFIGURE_OPTS"], *configure_opts].compact.reject(&:empty?).join(" "),
-        "PKG_CONFIG_PATH" => [File.join(brew_prefix, "lib", "pkgconfig"), ENV["PKG_CONFIG_PATH"]].compact.reject(&:empty?).join(":"),
-        "CPPFLAGS" => [ENV["CPPFLAGS"], "-I#{File.join(brew_prefix, "include")}"].compact.reject(&:empty?).join(" "),
-        "LDFLAGS" => [ENV["LDFLAGS"], "-L#{lib}", "-Wl,-rpath,#{own_lib}", "-Wl,-rpath,#{lib}"].compact.reject(&:empty?).join(" "),
-      )
-      cc = brew_gcc
-      cc ? built.merge("CC" => cc) : built
-    end
-
-    # Brew's gcc, when brew's libraries can only be linked by it: Linuxbrew on
-    # a distro whose glibc is older than the one brew's bottles target installs
-    # its own `glibc` (and a `gcc` built against it), and every bottle then
-    # wants symbols the system libc lacks — libcrypto.so asks for
-    # `__isoc23_strtol@GLIBC_2.38` on Ubuntu 22.04's 2.35 — so a build driven
-    # by the system compiler fails its link tests and ruby-build silently
-    # skips openssl and fiddle. On such a system the compiler consistent with
-    # brew's libraries is brew's gcc, which targets brew's glibc and dynamic
-    # linker. Where brew runs on the system glibc (a current distro, macOS)
-    # there is nothing to do.
-    #
-    # @return [String, nil] the newest `gcc-<major>` under brew's gcc keg, or
-    #   nil when brew carries no glibc or no gcc
-    sig { returns(T.nilable(String)) }
-    def brew_gcc
-      return nil unless brew_prefix_for("glibc")
-
-      gcc_prefix = brew_prefix_for("gcc")
-      return nil unless gcc_prefix
-
-      Dir.glob(File.join(gcc_prefix, "bin", "gcc-*"))
-         .select { |path| File.basename(path).match?(/\Agcc-\d+\z/) }
-         .max_by { |path| File.basename(path).delete_prefix("gcc-").to_i }
-    end
-
-    # The Homebrew prefix (HOMEBREW_PREFIX, else `brew --prefix`), or nil when brew is
-    # unavailable.
-    sig { returns(T.nilable(String)) }
-    def homebrew_prefix
-      prefix = ENV["HOMEBREW_PREFIX"]
-      prefix ||= begin
-        out = IO.popen(["brew", "--prefix"], err: File::NULL, &:read)
-        out&.strip
-      rescue Errno::ENOENT
-        nil
-      end
-      (prefix && !prefix.empty? && File.directory?(prefix)) ? prefix : nil
-    end
-
     sig { params(ruby_version: String).returns(String) }
     def gem_api_version(ruby_version)
       parts = ruby_version.split(".").map(&:to_i)
@@ -454,15 +54,14 @@ module Dev
     end
 
     # The shadowenv lisp that activates one Ruby: clears any prior ruby/gem paths,
-    # then exports RUBY_ROOT/GEM_ROOT and a GEM_HOME.
+    # then exports RUBY_ROOT/GEM_ROOT and a HOME-derived GEM_HOME
+    # (`~/.gem/<engine>/<version>`).
     #
     # @param ruby_root [String] the installed Ruby's prefix
     # @param ruby_version [String] the version it provides
-    # @param gem_home [String, nil] a fixed GEM_HOME; when nil the lisp derives one
-    #   from HOME at activation time (`~/.gem/<engine>/<version>`)
     # @return [String] the lisp source
-    sig { params(ruby_root: String, ruby_version: String, gem_home: T.nilable(String)).returns(String) }
-    def generate_ruby_lisp(ruby_root, ruby_version, gem_home: nil)
+    sig { params(ruby_root: String, ruby_version: String).returns(String) }
+    def generate_ruby_lisp(ruby_root, ruby_version)
       gem_root = File.join(ruby_root, "lib", "ruby", "gems", gem_api_version(ruby_version))
       gem_root = File.join(ruby_root, "lib", "ruby", ruby_version) unless File.directory?(gem_root)
       <<~LISP
@@ -490,33 +89,13 @@ module Dev
           (env/prepend-to-pathlist "GEM_PATH" gem-root)
           (env/prepend-to-pathlist "PATH" (path-concat gem-root "bin")))
 
-        #{gem_home_lisp(gem_home)}
+        (let ((gem-home
+              (path-concat (env/get "HOME") ".gem" (env/get "RUBY_ENGINE") (env/get "RUBY_VERSION"))))
+          (do
+            (env/set "GEM_HOME" gem-home)
+            (env/prepend-to-pathlist "GEM_PATH" gem-home)
+            (env/prepend-to-pathlist "PATH" (path-concat gem-home "bin"))))
       LISP
-    end
-
-    # The GEM_HOME forms of the ruby lisp: a fixed directory when one is given,
-    # otherwise HOME-derived at activation time.
-    #
-    # @param gem_home [String, nil] the fixed GEM_HOME, if any
-    # @return [String] the lisp forms
-    sig { params(gem_home: T.nilable(String)).returns(String) }
-    def gem_home_lisp(gem_home)
-      if gem_home
-        <<~LISP.chomp
-          (env/set "GEM_HOME" "#{gem_home}")
-          (env/prepend-to-pathlist "GEM_PATH" "#{gem_home}")
-          (env/prepend-to-pathlist "PATH" "#{File.join(gem_home, "bin")}")
-        LISP
-      else
-        <<~LISP.chomp
-          (let ((gem-home
-                (path-concat (env/get "HOME") ".gem" (env/get "RUBY_ENGINE") (env/get "RUBY_VERSION"))))
-            (do
-              (env/set "GEM_HOME" gem-home)
-              (env/prepend-to-pathlist "GEM_PATH" gem-home)
-              (env/prepend-to-pathlist "PATH" (path-concat gem-home "bin"))))
-        LISP
-      end
     end
 
     # Ensure the shadowenv activation hook is in the user's shell RC.
