@@ -46,12 +46,24 @@ module Dev
       FileUtils.rm_rf(venv) if venv.exist? && !venv_built_on?(venv, keg)
       venv_python = venv / "bin" / "python"
       unless venv_python.executable?
-        python3 = keg / "bin" / "python3"
-        raise VenvError, "#{python3} -m venv #{venv} failed" unless Kernel.system(python3.to_s, "-m", "venv", venv.to_s)
+        python = keg_python(keg, version)
+        raise VenvError, "#{python} -m venv #{venv} failed" unless Kernel.system(python.to_s, "-m", "venv", venv.to_s)
       end
       ensure_pip!(venv_python.to_s)
 
       ShadowenvFile.write!(project_root:, filename: LISP_FILENAME, body: generate_python_lisp(version, venv.to_s))
+    end
+
+    # The keg's interpreter. brew's `python@X.Y` keg ships `bin/pythonX.Y`
+    # only: the bare `python3` lives in `libexec/bin` and in the opt link,
+    # neither of which is the keg the lock installed.
+    #
+    # @param keg [Pathname]
+    # @param version [String] the locked version, e.g. "3.12.15"
+    # @return [Pathname]
+    sig { params(keg: Pathname, version: String).returns(Pathname) }
+    def keg_python(keg, version)
+      keg / "bin" / "python#{version.split(".").first(2).join(".")}"
     end
 
     # Whether a venv was built on the given keg: a venv's pyvenv.cfg records
