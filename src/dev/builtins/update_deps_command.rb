@@ -67,12 +67,10 @@ module Dev
           lockers[integration]&.lock(typed_declarations)
         end
 
-        # The needs table: each integration's own manifest, built in or
-        # project-registered, so a declaration pulls the tooling its
-        # integration shells to into this project's lock (ADR-0011).
-        needs = Dev::Deps::IntegrationNeeds.new.table(
-          Dev::Deps::Registry.integration_classes(registered: deps_config.registered_integrations),
-        )
+        # The needs table: each integration's own manifest, so a declaration
+        # pulls the tooling its integration shells to into this project's
+        # lock (ADR-0011).
+        needs = Dev::Deps::IntegrationNeeds.new.table(Dev::Deps::Registry.integration_classes)
         resolver = Dev::Deps::Resolver.new(
           repositories: Dev::Deps::Registry.repositories(project_root: project_root),
           schemes: Dev::Deps::Registry.schemes,

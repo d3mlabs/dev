@@ -57,14 +57,6 @@ module Dev
     # is a host with its own data root (ADR-0008), so nothing here says where
     # a type installs — the lock's `host:` filter does that per platform.
     module Registry
-      # A project `register`ed an integration by class name and no such
-      # constant is loaded: the manifest must require the class before
-      # registering it.
-      class IntegrationClassNotLoadedError < StandardError; end
-
-      # A project `register`ed something that is not an Integration subclass.
-      class NotAnIntegrationError < StandardError; end
-
       # @param symbol [Symbol] the DSL/declaration integration symbol (e.g. :brew)
       # @param repository [Class] Repository subclass that reports this type's universes
       # @param repository_needs [Array<Symbol>] extra kwargs the repository takes
@@ -318,29 +310,18 @@ module Dev
         end
 
         # Every integration symbol → the Integration class that installs it,
-        # the input to the needs table (IntegrationNeeds): the built-in
-        # entries — an aliased type maps to its target's class, since its
-        # pins install through that instance and so its needs are that
-        # class's — plus the project's `register`ed integrations, whose class
-        # may be named as a String. Ownership says where code loads from and
-        # nothing else: built in or project-local, the class shape and the
-        # manifest convention are the same.
+        # the input to the needs table (IntegrationNeeds). An aliased type
+        # maps to its target's class, since its pins install through that
+        # instance and so its needs are that class's. Built-in entries only:
+        # an integration from outside dev-core arrives as a dependency and
+        # its needs come in through that dependency's own manifest (#300).
         #
-        # @param registered [Hash{Symbol => Class, String}] the project's
-        #   registrations (Config#registered_integrations)
         # @return [Hash{Symbol => Class}]
-        # @raise [IntegrationClassNotLoadedError] if a registered name is not
-        #   a loaded constant
-        # @raise [NotAnIntegrationError] if a registration is not an
-        #   Integration subclass
-        sig { params(registered: T::Hash[Symbol, T.untyped]).returns(T::Hash[Symbol, T.class_of(Integration)]) }
-        def integration_classes(registered: {})
-          built_in = INTEGRATIONS.each_with_object({}) do |entry, classes|
+        sig { returns(T::Hash[Symbol, T.class_of(Integration)]) }
+        def integration_classes
+          INTEGRATIONS.each_with_object({}) do |entry, classes|
             klass = entry.integration || alias_target(entry)&.integration
             classes[entry.symbol] = klass if klass
-          end
-          registered.each_with_object(built_in) do |(symbol, klass), classes|
-            classes[symbol] = integration_class(symbol, klass)
           end
         end
 
@@ -444,40 +425,6 @@ module Dev
           return nil unless target
 
           INTEGRATIONS.find { |candidate| candidate.symbol == target }
-        end
-
-        # Resolve one registration to its Integration class.
-        #
-        # @param symbol [Symbol] the registered integration symbol
-        # @param klass [Class, String] the registration: a class or its name
-        # @return [Class]
-        # @raise [IntegrationClassNotLoadedError] if the name is not a loaded constant
-        # @raise [NotAnIntegrationError] if the result is not an Integration subclass
-        sig { params(symbol: Symbol, klass: T.untyped).returns(T.class_of(Integration)) }
-        def integration_class(symbol, klass)
-          resolved = klass.is_a?(String) ? loaded_constant(symbol, klass) : klass
-          unless resolved.is_a?(Class) && resolved <= Integration
-            raise NotAnIntegrationError,
-              "register #{symbol.inspect}: #{klass.inspect} is not a Dev::Deps::Integration subclass"
-          end
-
-          resolved
-        end
-
-        # @param symbol [Symbol] the registered integration symbol
-        # @param name [String] a constant name
-        # @return [Object] the constant
-        # @raise [IntegrationClassNotLoadedError] if no such constant is loaded
-        sig { params(symbol: Symbol, name: String).returns(T.untyped) }
-        def loaded_constant(symbol, name)
-          # A manifest's `register :x, "ClassName"` is user input naming a
-          # constant the manifest already required; there is no static table
-          # of project-local classes to look it up in.
-          Object.const_get(name) # rubocop:disable Sorbet/ConstantsFromStrings
-        rescue NameError => e
-          raise IntegrationClassNotLoadedError,
-            "register #{symbol.inspect}: #{name.inspect} is not loaded (#{e.message}) — " \
-              "require the integration before registering it"
         end
 
         # @param entry [Entry]

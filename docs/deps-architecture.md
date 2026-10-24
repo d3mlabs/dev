@@ -392,9 +392,10 @@ dev resolves it into *their* lock when they use the integration.
 `lib/dev/deps/xcode_integration/dependencies.rb`
 (`Integration.manifest_path` — the class file sans `.rb`, plus
 `dependencies.rb`; nil when absent, meaning the integration needs
-nothing). A project-local integration (`register :foo,
-"FooIntegration"`) follows the same convention from wherever its class
-file is, so it resolves exactly like a built-in one.
+nothing). That is the convention for built-in integrations. One from
+outside dev-core arrives as a dependency, and its needs are declared in
+that dependency's own `dependencies.rb` — the same file that marks it as
+an integration provider ([#300](https://github.com/d3mlabs/dev/issues/300)).
 
 **The export rule** — the Gemfile/gemspec convention, for every verb:
 

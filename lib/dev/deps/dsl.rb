@@ -178,28 +178,6 @@ module Dev
         define_method(verb) { |*args, **kwargs, &block| T.unsafe(self).send(:ungrouped, verb, args, kwargs, block) }
       end
 
-      # Dispatch a registered integration's verb ungrouped (e.g. a top-level
-      # `wow_curseforge "CombatMode"`). Falls back to super for unknown methods.
-      #
-      # @param method_name [Symbol] called method name
-      # @param args [Array] positional arguments
-      # @param kwargs [Hash] keyword arguments
-      # @return [Object]
-      sig { params(method_name: Symbol, args: T.untyped, kwargs: T.untyped, block: T.untyped).returns(T.untyped) }
-      def method_missing(method_name, *args, **kwargs, &block)
-        return super unless @registered_methods.include?(method_name)
-
-        ungrouped(method_name, args, kwargs, block)
-      end
-
-      # @param method_name [Symbol] queried method name
-      # @param include_private [Boolean]
-      # @return [Boolean]
-      sig { params(method_name: T.any(Symbol, String), include_private: T::Boolean).returns(T::Boolean) }
-      def respond_to_missing?(method_name, include_private = false)
-        @registered_methods.include?(method_name.to_sym) || super
-      end
-
       private
 
       # Run a GroupDSL verb in the default group and record the result as

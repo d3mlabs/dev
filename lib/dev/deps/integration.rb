@@ -89,11 +89,11 @@ module Dev
         #
         # By convention the manifest sits in a folder named after the class
         # file, beside it: lib/dev/deps/xcode_integration.rb carries
-        # lib/dev/deps/xcode_integration/dependencies.rb. Ownership says
-        # where the code loads from and nothing else, so an integration a
-        # project `register`s from its own folder carries its manifest the
-        # same way, and extracting one is moving a file. Overridable for an
-        # integration whose manifest lives elsewhere.
+        # lib/dev/deps/xcode_integration/dependencies.rb. This is the
+        # built-in convention: an integration from outside dev-core arrives
+        # as a dependency, and its needs are that dependency's own manifest
+        # (#300), not a file beside its class. Overridable for a built-in
+        # whose manifest lives elsewhere.
         #
         # @return [Pathname, nil] the manifest, or nil for an integration
         #   that needs no tooling of its own

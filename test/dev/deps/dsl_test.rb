@@ -732,18 +732,6 @@ class Dev::Deps::DSLTest < Minitest::Test
     raises NoMethodError
   end
 
-  test "a registered integration's verb works ungrouped too" do
-    When "registering and declaring at the top level"
-    config = Dev::Deps.define do
-      register :wow_curseforge, "WoWCurseforgeIntegration"
-      wow_curseforge "CombatMode", version: ">=1.0"
-    end
-
-    Then
-    config.exports.map(&:name) == ["CombatMode"]
-    config.exports[0].integration == :wow_curseforge
-  end
-
   test "the toolchain directives never export — a library does not pick the project's ruby" do
     When "a manifest sets ruby, python and declares a formula"
     config = Dev::Deps.define do
