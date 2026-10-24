@@ -62,6 +62,53 @@ module Dev
       true
     end
 
+    # Activate one installed Python in the project shadowenv: the project
+    # `.venv` is built on the keg's interpreter — rebuilt when an existing
+    # venv was built on another one, so the venv always runs the locked
+    # Python — pip is made importable, and the lisp puts the venv first on
+    # PATH. The language-specific half of a locked Python's activation; the
+    # brew integration has already installed the keg and put its bin on the
+    # project PATH when it calls this, and nothing here installs anything.
+    #
+    # @param keg [Pathname] the installed Python's prefix (brew's keg)
+    # @param version [String] the version the lock pins
+    # @param project_root [Pathname]
+    # @return [void]
+    # @raise [BrewInstallError] if the venv cannot be created or pip bootstrapped
+    sig { params(keg: Pathname, version: String, project_root: Pathname).void }
+    def activate!(keg:, version:, project_root:)
+      venv = project_root / VENV_DIR
+      FileUtils.rm_rf(venv) if venv.exist? && !venv_built_on?(venv, keg)
+      venv_python = venv / "bin" / "python"
+      unless venv_python.executable?
+        python3 = keg / "bin" / "python3"
+        raise BrewInstallError, "#{python3} -m venv #{venv} failed" unless Kernel.system(python3.to_s, "-m", "venv", venv.to_s)
+      end
+      ensure_pip!(venv_python.to_s)
+
+      shadowenv_d = project_root / ".shadowenv.d"
+      FileUtils.mkdir_p(shadowenv_d)
+      File.write(shadowenv_d / LISP_FILENAME, generate_python_lisp(version, venv.to_s))
+      Dir.chdir(project_root.to_s) do
+        Kernel.system("shadowenv", "trust", out: File::NULL, err: File::NULL)
+      end
+    end
+
+    # Whether a venv was built on the given keg: a venv's pyvenv.cfg records
+    # the interpreter's bin directory as `home`.
+    #
+    # @param venv [Pathname]
+    # @param keg [Pathname]
+    # @return [Boolean]
+    sig { params(venv: Pathname, keg: Pathname).returns(T::Boolean) }
+    def venv_built_on?(venv, keg)
+      cfg = venv / "pyvenv.cfg"
+      return false unless cfg.file?
+
+      home = cfg.read[/^home\s*=\s*(.+)$/, 1]&.strip
+      !home.nil? && Pathname(home).cleanpath == (keg / "bin").cleanpath
+    end
+
     # Ensure Homebrew python@<version> is installed and a project-local .venv
     # exists, built with that exact interpreter. Idempotent and safe to call from
     # both setup! (per command) and PipIntegration (dev deps install), so the venv is

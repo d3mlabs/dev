@@ -290,6 +290,27 @@ class ShadowenvRubyTest < Minitest::Test
     FileUtils.rm_rf(tmpdir)
   end
 
+  test "activate! points the project shadowenv at a keg and writes .ruby-version from the locked version" do
+    Given "a project root and the locked Ruby's keg"
+    tmpdir = Dir.mktmpdir("shadowenv-activate-test-")
+    keg = Pathname(tmpdir) / "Cellar" / "ruby@4.0.9" / "4.0.9"
+    FileUtils.mkdir_p(keg / "bin")
+
+    When "activating"
+    Dev::ShadowenvRuby.activate!(keg: keg, version: "4.0.9", project_root: Pathname(tmpdir))
+
+    Then "the lisp names the keg as RUBY_ROOT, .ruby-version carries the locked version, the shell hook is ensured"
+    _ * Dev::ShadowenvRuby.ensure_shadowenv_shell_hook! >> :added
+    lisp = File.read(File.join(tmpdir, ".shadowenv.d", "510_ruby.lisp"))
+    lisp.include?('(provide "ruby" "4.0.9")')
+    lisp.include?(%((env/set "RUBY_ROOT" "#{keg}")))
+    lisp.include?(%((env/prepend-to-pathlist "PATH" "#{keg / "bin"}")))
+    File.read(File.join(tmpdir, ".ruby-version")) == "4.0.9\n"
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
   test "setup! reports failure and writes nothing when the ruby cannot be provisioned" do
     Given "a project root and no installable ruby"
     tmpdir = Dir.mktmpdir("shadowenv-setup-test-")

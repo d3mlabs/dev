@@ -76,6 +76,48 @@ class ShadowenvPythonTest < Minitest::Test
     FileUtils.rm_rf(tmpdir)
   end
 
+  test "activate! builds the project venv on the keg's python3 and writes the lisp" do
+    Given "a project root and the locked Python's keg"
+    tmpdir = Dir.mktmpdir("shadowenv-python-test-")
+    keg = Pathname(tmpdir) / "Cellar" / "python@3.12" / "3.12.8"
+    log = write_keg_python(keg)
+
+    When "activating"
+    Dev::ShadowenvPython.activate!(keg: keg, version: "3.12.8", project_root: Pathname(tmpdir))
+
+    Then "the venv was built by the keg's interpreter and the lisp activates it"
+    File.read(log).lines.first.start_with?("-m venv #{File.join(tmpdir, ".venv")}")
+    File.executable?(File.join(tmpdir, ".venv", "bin", "python")) == true
+    lisp = File.read(File.join(tmpdir, ".shadowenv.d", "540_python.lisp"))
+    lisp.include?('(provide "python" "3.12.8")')
+    lisp.include?(%((env/set "VIRTUAL_ENV" "#{File.join(tmpdir, ".venv")}")))
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "activate! rebuilds a venv that was built on another interpreter, and keeps one built on the locked keg" do
+    Given "a venv built on some other Python"
+    tmpdir = Dir.mktmpdir("shadowenv-python-test-")
+    keg = Pathname(tmpdir) / "Cellar" / "python@3.12" / "3.12.8"
+    log = write_keg_python(keg)
+    venv = File.join(tmpdir, ".venv")
+    FileUtils.mkdir_p(File.join(venv, "bin"))
+    write_fake_executable(File.join(venv, "bin", "python"), "#!/bin/sh\nexit 0\n")
+    File.write(File.join(venv, "pyvenv.cfg"), "home = /elsewhere/python@3.11/bin\nversion = 3.11.9\n")
+
+    When "activating twice"
+    Dev::ShadowenvPython.activate!(keg: keg, version: "3.12.8", project_root: Pathname(tmpdir))
+    Dev::ShadowenvPython.activate!(keg: keg, version: "3.12.8", project_root: Pathname(tmpdir))
+
+    Then "the first activation rebuilt the venv on the keg; the second left it alone"
+    File.read(log).lines.count { |line| line.start_with?("-m venv") } == 1
+    File.read(File.join(venv, "pyvenv.cfg")).include?("home = #{keg / "bin"}")
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
   test "ensure_venv! creates the venv with the resolved interpreter" do
     Given "a resolved interpreter that materializes a venv on demand"
     tmpdir = Dir.mktmpdir("shadowenv-python-test-")
@@ -395,6 +437,27 @@ class ShadowenvPythonTest < Minitest::Test
       fi
       exit 0
     SCRIPT
+  end
+
+  # A keg's bin/python3 stand-in: logs every invocation; `-m venv <dir>`
+  # materializes a minimal venv whose pyvenv.cfg names this keg's bin as its
+  # home, as a real venv's does. Returns the log path.
+  def write_keg_python(keg)
+    log = File.join(keg, "invocations.log")
+    FileUtils.mkdir_p(File.join(keg, "bin"))
+    script = [
+      "#!/bin/sh",
+      "echo \"$@\" >> \"#{log}\"",
+      "if [ \"$1\" = \"-m\" ] && [ \"$2\" = \"venv\" ]; then",
+      "  mkdir -p \"$3/bin\"",
+      "  printf '#!/bin/sh\\nexit 0\\n' > \"$3/bin/python\"",
+      "  chmod 755 \"$3/bin/python\"",
+      "  printf 'home = %s\\nversion = 3.12.8\\n' \"#{File.join(keg, "bin")}\" > \"$3/pyvenv.cfg\"",
+      "fi",
+      "exit 0",
+    ].join("\n")
+    write_fake_executable(File.join(keg, "bin", "python3"), script)
+    log
   end
 
   # A brew stand-in: `list` exits list_exit, `install` logs and exits

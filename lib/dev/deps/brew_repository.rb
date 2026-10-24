@@ -152,7 +152,7 @@ module Dev
         out, _err, status = Open3.capture3("brew", "tap-info", "--json", tap)
         raise BrewInfoError, "brew tap-info --json #{tap} failed" unless status.success?
 
-        T.must(JSON.parse(out).first)
+        JSON.parse(out).first
       end
 
       # One family member's facts as a version: its stable version string,

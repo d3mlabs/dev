@@ -149,24 +149,36 @@ module Dev
     # lisp, trust shadowenv, ensure shell hook. Idempotent.
     sig { params(ruby_version: String, project_root: T.any(String, Pathname)).returns(T::Boolean) }
     def setup!(ruby_version:, project_root:)
-      root = project_root.to_s
       ruby_root = ensure_ruby_installed!(ruby_version)
       return false unless ruby_root
 
-      shadowenv_d = File.join(root, ".shadowenv.d")
+      activate!(keg: Pathname(ruby_root), version: ruby_version, project_root: Pathname(project_root))
+      true
+    end
+
+    # Activate one installed Ruby in the project shadowenv: the lisp points
+    # RUBY_ROOT/GEM_HOME at the keg, `.ruby-version` carries the version, the
+    # directory is trusted and the shell hook ensured. This is the
+    # language-specific half of a locked Ruby's activation — the brew
+    # integration has already put the keg's bin on the project PATH when it
+    # calls this (dev#289), and nothing here installs anything.
+    #
+    # @param keg [Pathname] the installed Ruby's prefix (brew's keg)
+    # @param version [String] the version the lock pins
+    # @param project_root [Pathname]
+    # @return [void]
+    sig { params(keg: Pathname, version: String, project_root: Pathname).void }
+    def activate!(keg:, version:, project_root:)
+      shadowenv_d = project_root / ".shadowenv.d"
       FileUtils.mkdir_p(shadowenv_d)
-      lisp_path = File.join(shadowenv_d, LISP_FILENAME)
-      File.write(lisp_path, generate_ruby_lisp(ruby_root, ruby_version))
+      File.write(shadowenv_d / LISP_FILENAME, generate_ruby_lisp(keg.to_s, version))
+      File.write(project_root / ".ruby-version", "#{version}\n")
 
-      ruby_version_path = File.join(root, ".ruby-version")
-      File.write(ruby_version_path, "#{ruby_version}\n")
-
-      Dir.chdir(root) do
+      Dir.chdir(project_root.to_s) do
         system("shadowenv", "trust", out: File::NULL, err: File::NULL)
       end
 
       ensure_shadowenv_shell_hook!
-      true
     end
 
     # --- internal helpers ------------------------------------------------
