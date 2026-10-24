@@ -257,7 +257,7 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     command.call(args: no_args, context: build_context(root))
 
     Then "the run resolved an empty config (a leaked ruby pin would try to resolve it)"
-    Dev::Deps.last_config.ruby_version_requirement.nil?
+    Dev::Deps.last_config.declarations.empty?
 
     Cleanup
     $stdout = old_stdout
@@ -269,7 +269,7 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
   def build_context(project_root)
     Dev::ExecutionContext.new(
       ui: typed_mock(Dev::Cli::Ui),
-      project: Dev::ProjectContext.new(name: "TestProject", root: project_root, ruby_version: "4.0.1"),
+      project: Dev::ProjectContext.new(name: "TestProject", root: project_root),
     )
   end
 end

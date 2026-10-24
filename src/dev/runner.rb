@@ -21,7 +21,6 @@ require "dev/overridden_executor"
 require "dev/project_executor"
 require "dev/project_manifest"
 require "dev/project_manifest_loader"
-require "dev/shadowenv_ruby"
 
 module Dev
   # The application service behind bin/dev, and the composition root of the
@@ -70,9 +69,8 @@ module Dev
     # Runs the dev command specified by the given argv.
     #
     # Composition happens here rather than in the constructor so that
-    # everything — the dev.yml parse and the toolchain pass over
-    # dependencies.rb, both arbitrary project input — stays inside the
-    # exit_for error mapping.
+    # everything — the dev.yml parse included, arbitrary project input —
+    # stays inside the exit_for error mapping.
     #
     # @param argv [Array[String]] The argv to run the command with.
     # @return [void]
@@ -89,8 +87,7 @@ module Dev
     private
 
     # Assemble the per-run ExecutionContext: always the host half; the
-    # project half only when a manifest exists (the toolchain pass over
-    # dependencies.rb runs there, once per invocation).
+    # project half only when a manifest exists.
     #
     # @param manifest [ProjectManifest, nil]
     # @return [ExecutionContext]
@@ -98,14 +95,11 @@ module Dev
     def build_context(manifest)
       return ExecutionContext.new(ui: @ui) if manifest.nil?
 
-      manifest = @manifest_loader.with_toolchain(manifest, project_root: Dev.target_project_root)
       ExecutionContext.new(
         ui: @ui,
         project: ProjectContext.new(
           name: manifest.name,
           root: Dev.target_project_root,
-          ruby_version: ShadowenvRuby.resolve_ruby_version(manifest.declared_ruby_version),
-          python_version: manifest.declared_python_version,
           build_container: manifest.build_container,
         ),
       )
@@ -252,8 +246,6 @@ module Dev
       project = context.project!
       command_runner = CommandRunner.new(
         ui: context.ui,
-        ruby_version: project.ruby_version,
-        python_version: project.python_version,
         build_container: project.build_container,
         project_root: project.root,
       )

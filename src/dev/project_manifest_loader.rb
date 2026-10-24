@@ -3,20 +3,15 @@
 
 require "pathname"
 require "yaml"
-require "dev/deps"
 require_relative "build_container_config"
 require_relative "command_parser"
 require_relative "project_manifest"
 
 module Dev
-  # The boundary coercion for a project's declaration files. Two passes,
-  # each reading its file exactly once:
-  #
-  # - #load parses dev.yml (Runner construction) and rejects the removed
-  #   `ruby:` key at parse time.
-  # - #with_toolchain loads dependencies.rb, once per invocation as the
-  #   ExecutionContext is assembled — help included, so dependencies.rb
-  #   must stay cheap and side-effect-free (it is a declaration file).
+  # The boundary coercion for dev.yml: #load parses it once and rejects the
+  # removed `ruby:` key at parse time. dependencies.rb is not read here —
+  # the toolchain is a dependency, and only the deps commands evaluate that
+  # file.
   #
   # Stateless: reusable across manifests, inputs arrive as method arguments.
   class ProjectManifestLoader
@@ -33,8 +28,7 @@ module Dev
       @command_parser = command_parser
     end
 
-    # Parse dev.yml into a manifest (toolchain fields left nil — see
-    # #with_toolchain for the dependencies.rb pass).
+    # Parse dev.yml into a manifest.
     #
     # @param dev_yml_path [Pathname]
     # @return [ProjectManifest]
@@ -52,43 +46,6 @@ module Dev
         build_container: parse_build_container(yaml),
       )
     end
-
-    # The dependencies.rb pass: load the deps manifest once and return a
-    # manifest completed with the declared toolchain versions. A missing
-    # dependencies.rb declares nothing; a broken one is reported as a
-    # warning and treated the same — toolchain resolution then falls back
-    # (e.g. to Homebrew Ruby), matching a project that declares no
-    # toolchain. dev evaluates dependencies.rb under its own bootstrap Ruby,
-    # so reading it here — before the project's interpreter is provisioned —
-    # is safe.
-    #
-    # @param manifest [ProjectManifest] the dev.yml side from #load
-    # @param project_root [Pathname] where dependencies.rb lives
-    # @return [ProjectManifest]
-    sig { params(manifest: ProjectManifest, project_root: Pathname).returns(ProjectManifest) }
-    def with_toolchain(manifest, project_root:)
-      deps_rb = project_root / "dependencies.rb"
-      return manifest unless deps_rb.exist?
-
-      # Reset first: a dependencies.rb that never calls Dev::Deps.define
-      # (e.g. dev's own bootstrap-constants manifest) must not surface a
-      # previously loaded project's config as its own.
-      Dev::Deps.reset!
-      Kernel.load(deps_rb.to_s)
-      deps_config = Dev::Deps.last_config
-      ProjectManifest.new(
-        name: manifest.name,
-        commands: manifest.commands,
-        build_container: manifest.build_container,
-        declared_ruby_version: presence(deps_config&.ruby_version_requirement),
-        declared_python_version: presence(deps_config&.python_version),
-      )
-    rescue StandardError => e
-      $stderr.puts "dev: could not read the toolchain from dependencies.rb (#{e.message})"
-      manifest
-    end
-
-    private
 
     # `ruby:` is a removed dev.yml key — rejected at parse time with a
     # dependencies.rb migration message instead of silently ignoring it.
@@ -120,13 +77,6 @@ module Dev
 
       $stderr.puts "dev: dev.yml `runner:` is retired and ignored — the repo runner label now derives " \
                    "from the repo name (`dev runner register`); delete the block."
-    end
-
-    # Coerce a scalar to a non-empty String, or nil.
-    sig { params(value: T.untyped).returns(T.nilable(String)) }
-    def presence(value)
-      str = value&.to_s
-      str unless str.nil? || str.empty?
     end
 
     sig { params(yaml: T::Hash[String, T.untyped]).returns(T.nilable(BuildContainerConfig)) }

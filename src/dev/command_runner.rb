@@ -9,12 +9,9 @@ require "dev/credentials"
 require "dev/build_container"
 require "dev/container_context"
 require "dev/container_engine"
-require "dev/container_ruby"
 require "dev/environment_platform"
 require "dev/platform"
 require "dev/shadowenv_llvm"
-require "dev/shadowenv_python"
-require "dev/shadowenv_ruby"
 
 module Dev
   # Runs dev commands by handing the process over to the child. Dev prints a
@@ -47,15 +44,16 @@ module Dev
   #
   # Inside a dev-managed container (ContainerContext.inside?) there is no
   # further container to reach for: a containerized command runs directly
-  # at the project root, under `shadowenv exec` like any other — the
-  # container-only lisp activates the store Ruby (ContainerRuby) there, and
-  # the host-only toolchains (LLVM, Python) are left to the image.
+  # at the project root, under `shadowenv exec` like any other. The
+  # interpreters it finds there are `dev deps install`'s doing — Ruby and
+  # Python are brew pins activated in the project shadowenv by the install,
+  # on the host and inside the container alike — and the host-only LLVM is
+  # left to the image.
   #
   # On a host that *is* the environment (EnvironmentPlatform: the
   # Dockerfile declares this host's own platform) there is no container to
   # reach for either — the platform rule. The command runs directly as a
-  # host command does, under the host's shadowenv with the host's Ruby,
-  # LLVM and Python: this is the host, which installed everything itself.
+  # host command does, under the host's shadowenv.
   class CommandRunner
     extend T::Sig
 
@@ -110,27 +108,20 @@ module Dev
     sig do
       params(
         ui: Dev::Cli::Ui,
-        ruby_version: String,
         project_root: Pathname,
-        python_version: T.nilable(String),
         build_container: T.nilable(Dev::BuildContainerConfig),
         container_client: T.nilable(Dev::BuildContainer),
         inside_container: T::Boolean,
-        container_ruby: Dev::ContainerRuby,
         host_platform: String,
       ).void
     end
-    def initialize(ui:, ruby_version:, project_root:, python_version: nil, build_container: nil,
-                   container_client: nil, inside_container: ContainerContext.inside?,
-                   container_ruby: Dev::ContainerRuby.new, host_platform: Platform.current)
+    def initialize(ui:, project_root:, build_container: nil, container_client: nil,
+                   inside_container: ContainerContext.inside?, host_platform: Platform.current)
       @ui = ui
-      @ruby_version = ruby_version
-      @python_version = python_version
       @build_container = build_container
       @project_root = project_root
       @container_client = container_client
       @inside_container = inside_container
-      @container_ruby = container_ruby
       @host_platform = host_platform
     end
 
@@ -324,38 +315,19 @@ module Dev
       { "GEM_HOME" => nil, "RUBYLIB" => rubylib }
     end
 
-    # Toolchain provisioning: each toolchain the project uses gets its shadowenv
-    # set up before command execution — Ruby (always), then LLVM and Python when
-    # the project declares them. Each ensure_* is a fast provisioned?-guarded
-    # no-op after the first run. (A registry pattern per #21 would fold these into
-    # a list; three explicit, guarded steps stay readable for now.)
+    # Toolchain provisioning before command execution. The interpreters are
+    # project dependencies — `ruby` / `python` pins in dependencies.rb that
+    # `dev deps install` installs and activates in the project shadowenv —
+    # so nothing is provisioned for them here. LLVM is the one host
+    # toolchain still set up at run time, a fast provisioned?-guarded no-op
+    # after the first run (#297 moves it into the dependency graph too).
     #
-    # Inside the container only the Ruby is provisioned, from the artifact
-    # store (ContainerRuby): LLVM and Python are host toolchains, and the
-    # container's come from its image.
+    # Inside the container LLVM is the image's concern: nothing to do.
     sig { void }
     def ensure_shadowenv_provisioned!
-      project_root = @project_root
-      if @inside_container
-        @container_ruby.ensure!(ruby_version: @ruby_version, project_root: project_root)
-        return
-      end
+      return if @inside_container
 
-      ShadowenvRuby.ensure!(ruby_version: @ruby_version, project_root: project_root)
-      ensure_llvm_provisioned!(project_root)
-      ensure_python_provisioned!(project_root)
-    end
-
-    # Provision the project's Python venv (Homebrew interpreter + .venv +
-    # 540_python.lisp) when a `python` version is declared. No-op otherwise.
-    sig { params(project_root: Pathname).void }
-    def ensure_python_provisioned!(project_root)
-      version = @python_version
-      return if version.nil? || version.empty?
-
-      return if ShadowenvPython.provisioned?(version, project_root: project_root)
-
-      ShadowenvPython.setup!(python_version: version, project_root: project_root)
+      ensure_llvm_provisioned!(@project_root)
     end
 
     sig { params(project_root: Pathname).void }

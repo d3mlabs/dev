@@ -48,17 +48,9 @@ module Dev
       sig { returns(T::Array[ScopedDeclaration]) }
       attr_reader :exports
 
-      # @return [String, nil] declared Ruby version
-      sig { returns(T.nilable(String)) }
-      attr_reader :ruby_version_requirement
-
       # @return [String, nil] declared Lua version
       sig { returns(T.nilable(String)) }
       attr_reader :lua_version_value
-
-      # @return [String, nil] declared Python minor version
-      sig { returns(T.nilable(String)) }
-      attr_reader :python_version_value
 
       # @return [Hash{Symbol => Class, String}] custom integration registrations
       sig { returns(T::Hash[Symbol, T.untyped]) }
@@ -73,9 +65,7 @@ module Dev
         @taps = T.let({}, T::Hash[String, T::Hash[String, T.untyped]])
         @declarations = T.let([], T::Array[ScopedDeclaration])
         @exports = T.let([], T::Array[ScopedDeclaration])
-        @ruby_version_requirement = T.let(nil, T.nilable(String))
         @lua_version_value = T.let(nil, T.nilable(String))
-        @python_version_value = T.let(nil, T.nilable(String))
         @registered_integrations = T.let({}, T::Hash[Symbol, T.untyped])
         @registered_methods = T.let([], T::Array[Symbol])
       end
@@ -106,7 +96,6 @@ module Dev
             source: RUBY_TAP),
           scope: Scope.new(group: DEFAULT_GROUP),
         )
-        @ruby_version_requirement = requirement if Gem::Version.correct?(requirement)
       end
 
       # Declare the Lua version for LuaRocks integration.
@@ -134,7 +123,6 @@ module Dev
           declaration: Declaration.new(name: "python", integration: :python, constraint: { "version" => minor }),
           scope: Scope.new(group: DEFAULT_GROUP),
         )
-        @python_version_value = minor
       end
 
       # Declare a Homebrew tap.

@@ -5,11 +5,11 @@ require_relative "build_container_config"
 require_relative "command"
 
 module Dev
-  # The whole project declaration, coerced once at the boundary: the dev.yml
-  # side (name, commands, build container) and the dependencies.rb side
-  # (declared ruby/python toolchain versions). Immutable —
-  # ProjectManifestLoader is the only writer, and it loads each source file
-  # exactly once.
+  # The project declaration as dev.yml states it (name, commands, build
+  # container), coerced once at the boundary. Immutable —
+  # ProjectManifestLoader is the only writer, and it reads the file exactly
+  # once. The toolchain is not here: `ruby` / `python` are dependencies
+  # declared in dependencies.rb, which only the deps commands read.
   class ProjectManifest < T::Struct
     extend T::Sig
 
@@ -21,11 +21,5 @@ module Dev
     # nested `commands:` as children) and groups.
     const :commands, T::Hash[String, ProjectNode]
     const :build_container, T.nilable(Dev::BuildContainerConfig), default: nil
-
-    # The `ruby` / `python` directives from dependencies.rb, nil until the
-    # loader's toolchain pass runs (or when nothing is declared — resolution
-    # then falls back, e.g. to Homebrew Ruby).
-    const :declared_ruby_version, T.nilable(String), default: nil
-    const :declared_python_version, T.nilable(String), default: nil
   end
 end

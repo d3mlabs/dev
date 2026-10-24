@@ -16,8 +16,6 @@ module Dev
     # ProjectManifest#name).
     const :name, String
     const :root, Pathname
-    const :ruby_version, String
-    const :python_version, T.nilable(String), default: nil
     const :build_container, T.nilable(Dev::BuildContainerConfig), default: nil
   end
 

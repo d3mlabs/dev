@@ -267,7 +267,7 @@ module Dev
             repository: PipRepository,
             scheme: Pep440Scheme,
             integration: PipIntegration,
-            integration_needs: %i[project_root python_version],
+            integration_needs: %i[project_root],
           ),
         ].freeze,
         T::Array[Entry],
@@ -355,9 +355,6 @@ module Dev
         # @param project_root [Pathname] project root (threaded to integrations that need it)
         # @param store [ArtifactStore] where installed trees and downloaded blobs live (passed to every integration)
         # @param taps [Array<Tap>] Homebrew taps for the brew integration
-        # @param ruby_version_requirement [String, nil] accepted for caller
-        #   convenience; install-time integrations don't need it today
-        # @param python_version [String, nil] for the pip integration's venv
         # @param pin_taps [Boolean] brew installs from taps checked out at the
         #   lock's commits (BrewIntegration), not brew's API
         # @return [Hash{Symbol => Integration}]
@@ -366,17 +363,11 @@ module Dev
             project_root: Pathname,
             store: ArtifactStore,
             taps: T::Array[Tap],
-            ruby_version_requirement: T.nilable(String),
-            python_version: T.nilable(String),
             pin_taps: T::Boolean,
           ).returns(T::Hash[Symbol, Integration])
         end
-        def host_integrations(project_root:, store:, taps: [], ruby_version_requirement: nil, python_version: nil,
-          pin_taps: false)
-          integrations_for(
-            INTEGRATIONS.select(&:host?),
-            project_root:, store:, taps:, ruby_version_requirement:, python_version:, pin_taps:,
-          )
+        def host_integrations(project_root:, store:, taps: [], pin_taps: false)
+          integrations_for(INTEGRATIONS.select(&:host?), project_root:, store:, taps:, pin_taps:)
         end
 
         private
@@ -388,8 +379,6 @@ module Dev
         # @param project_root [Pathname]
         # @param store [ArtifactStore]
         # @param taps [Array<Tap>]
-        # @param ruby_version_requirement [String, nil]
-        # @param python_version [String, nil]
         # @param pin_taps [Boolean]
         # @return [Hash{Symbol => Integration}]
         sig do
@@ -398,17 +387,13 @@ module Dev
             project_root: Pathname,
             store: ArtifactStore,
             taps: T::Array[Tap],
-            ruby_version_requirement: T.nilable(String),
-            python_version: T.nilable(String),
             pin_taps: T::Boolean,
           ).returns(T::Hash[Symbol, Integration])
         end
-        def integrations_for(entries, project_root:, store:, taps:, ruby_version_requirement:, python_version:, pin_taps:)
+        def integrations_for(entries, project_root:, store:, taps:, pin_taps:)
           context = {
             project_root:,
             project_dir: project_root,
-            ruby_version_requirement:,
-            python_version:,
             taps:,
             pin_taps:,
             brew_env: BrewEnv.new(path: BrewEnv.user_file),

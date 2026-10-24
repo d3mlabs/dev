@@ -75,7 +75,6 @@ class Dev::Builtins::RunnerStatusCommandTest < Minitest::Test
       project: Dev::ProjectContext.new(
         name: "Cellbound3D",
         root: Pathname.new("/tmp/runner-status-test"),
-        ruby_version: "4.0.1",
         build_container: build_container,
       ),
     )

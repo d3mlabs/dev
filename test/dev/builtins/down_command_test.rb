@@ -110,7 +110,7 @@ class Dev::Builtins::DownCommandTest < Minitest::Test
     Dev::ExecutionContext.new(
       ui: typed_mock(Dev::Cli::Ui),
       project: Dev::ProjectContext.new(
-        name: "TestProject", root: Pathname.new("/tmp/down-test"), ruby_version: "4.0.1",
+        name: "TestProject", root: Pathname.new("/tmp/down-test"),
         build_container: Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry", persist: true),
       ),
     )

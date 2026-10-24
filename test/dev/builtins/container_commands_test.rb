@@ -538,7 +538,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     Dev::ExecutionContext.new(
       ui: typed_mock(Dev::Cli::Ui),
       project: Dev::ProjectContext.new(
-        name: "TestProject", root: root, ruby_version: "4.0.1", build_container: build_container,
+        name: "TestProject", root: root, build_container: build_container,
       ),
     )
   end

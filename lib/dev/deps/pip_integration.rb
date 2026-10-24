@@ -11,58 +11,59 @@ module Dev
   module Deps
     # Lifecycle handler for pip dependencies.
     #
-    # Installs each locked package into the project-local venv (.venv) that
-    # ShadowenvPython provisions — the Python analogue of LuaRocks installing
-    # into lua_modules/. The venv is ensured here (created if absent) so
-    # `dev deps install` works on a fresh clone, before any command has run
-    # ShadowenvPython.setup!. pip resolves the transitive tree at install,
+    # Installs each locked package into the project-local venv (.venv) —
+    # the Python analogue of LuaRocks installing into lua_modules/. The venv
+    # is the locked Python's: the :python pin's activation builds it on the
+    # installed keg (ShadowenvPython.activate!), in brew's batch ahead of
+    # this one, so by the time pip deps install the venv is there and runs
+    # the pinned interpreter. pip resolves the transitive tree at install,
     # and downloads into the store's pip tool cache (PIP_CACHE_DIR) — pip
     # owns the fetch and the install; dev names where the cache lives.
     class PipIntegration < Integration
       extend T::Sig
 
       class InstallError < StandardError; end
-      class MissingVersionError < StandardError; end
+
+      # pip deps are locked but the project has no venv: nothing declared a
+      # `python`, so no interpreter pin built one.
+      class MissingVenvError < StandardError; end
 
       TOOL = "pip"
 
       # @param repository    [Repository, nil]  source adapter for pip deps
       # @param store         [ArtifactStore, nil] the store whose pip tool cache pip downloads into
       # @param project_root  [String, Pathname] project root (holds the .venv)
-      # @param python_version [String, nil] the `python` toolchain version to build
-      #   the venv with; required whenever there are pip deps to install
       sig do
         params(
           repository: T.nilable(Repository),
           store: T.nilable(ArtifactStore),
           project_root: T.any(String, Pathname),
-          python_version: T.nilable(String),
         ).void
       end
-      def initialize(repository:, store:, project_root:, python_version: nil)
+      def initialize(repository:, store:, project_root:)
         super(repository:, store:)
         @project_root = T.let(Pathname(project_root), Pathname)
-        @python_version = python_version
       end
 
       # Install all pip deps into the project venv.
       #
       # @param dependencies [Array<Dependency>] pip deps to install
-      # @raise [MissingVersionError] if pip deps exist but no `python` version is set
+      # @raise [MissingVenvError] if pip deps exist but the project has no venv
       # @raise [InstallError] if a pip install fails
       sig { params(dependencies: T::Array[Dependency]).void }
       def install_all(dependencies)
         return if dependencies.empty?
 
-        version = @python_version.to_s.strip
-        raise MissingVersionError, "pip dependencies declared but no `python` version set in dependencies.rb" if version.empty?
-
-        ShadowenvPython.ensure_venv!(python_version: version, project_root: @project_root)
-
         # Invoke `python -m pip` (not the `pip` console script): ensurepip always
         # provides the module, but the bin/pip wrapper can be absent on a venv
         # built by a Homebrew interpreter, which would fail with ENOENT.
         python = @project_root / ShadowenvPython::VENV_DIR / "bin" / "python"
+        unless python.executable?
+          raise MissingVenvError,
+            "pip dependencies are locked but #{@project_root / ShadowenvPython::VENV_DIR} has no interpreter: " \
+              "declare `python \"<minor>\"` in dependencies.rb and run dev deps update, then dev up"
+        end
+
         dependencies.each { |dep| run_pip_install(python, dep) }
       end
 

@@ -551,7 +551,6 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
       project: Dev::ProjectContext.new(
         name: name,
         root: Pathname.new("/tmp/runner-test"),
-        ruby_version: "4.0.1",
         build_container: build_container,
       ),
     )

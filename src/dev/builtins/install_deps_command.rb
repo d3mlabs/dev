@@ -4,25 +4,25 @@
 require "pathname"
 require "dev/command"
 require "dev/container_context"
-require "dev/container_ruby"
 require "dev/deps"
 require "dev/deps/local_store"
 require "dev/deps/integration"
 require "dev/deps/lockfile"
 require "dev/deps/registry"
 require "dev/host_service"
-require "dev/shadowenv_ruby"
 
 module Dev
   module Builtins
     # `dev deps install [--group <g>]... [--except <g>]... [--integration <i>]... [--pinned-taps]`:
-    # install what the lockfiles pin for this machine, optionally narrowed to
+    # install what the lockfile pins for this machine, optionally narrowed to
     # dependency groups and integrations — shared with the `up` builtin,
     # which composes this command. Every build host runs the same install
-    # against its own data root (ADR-0008): a workstation against the host
-    # Ruby, the build container against the store Ruby in its volume. The
-    # only inside/outside difference is who provisions that Ruby and that the
-    # host-side hygiene hooks (skill links, learnings) stay off inside.
+    # against its own data root (ADR-0008), the project's interpreters
+    # included: the locked Ruby and Python are brew pins that install and
+    # activate in brew's batch ahead of bundler and pip, on a workstation and
+    # inside the build container alike (dev#269). The only inside/outside
+    # difference is that the host-side hygiene hooks (skill links, learnings)
+    # stay off inside.
     # `--group build --integration brew` narrows an install to the toolchain
     # the lock pins; `--pinned-taps` is the reproducible mode: brew installs
     # from taps checked out at the commits the lock names instead of from
@@ -46,16 +46,13 @@ module Dev
       end
 
       # @param inside_container [Boolean] whether this dev runs inside a
-      #   dev-managed container (ContainerContext). Inside, the build group is
-      #   excluded by default: the image bootstrap already installed it.
-      # @param container_ruby [Dev::ContainerRuby] the in-container Ruby
-      #   provisioner (used only inside)
+      #   dev-managed container (ContainerContext): the host-side hygiene
+      #   hooks stay off there
       sig do
         params(
           installer_factory: InstallerFactory,
           host_service: Dev::HostService,
           inside_container: T::Boolean,
-          container_ruby: Dev::ContainerRuby,
         ).void
       end
       def initialize(
@@ -63,14 +60,12 @@ module Dev
           Dev::Deps::Installer.new(lockfile:, integrations:)
         },
         host_service: Dev::HostService.new,
-        inside_container: Dev::ContainerContext.inside?,
-        container_ruby: Dev::ContainerRuby.new
+        inside_container: Dev::ContainerContext.inside?
       )
         super()
         @installer_factory = installer_factory
         @host_service = host_service
         @inside_container = inside_container
-        @container_ruby = container_ruby
       end
 
       sig { override.returns(String) }
@@ -114,15 +109,6 @@ module Dev
         integration_types = symbol_flags(args, INTEGRATION_FLAG)
         lockfile = Dev::Deps::Lockfile.new(dir: project.root)
 
-        # Headless boxes (CI, runner services) reach dev deps install before any
-        # dev.yml command has run CommandRunner's provisioning, so the builtin
-        # must provision the pinned Ruby itself — bundler installs against it.
-        # converge!, not ensure!: a converge verb re-checks the installed
-        # ruby's health behind a current lisp (#204). A selection that locks no
-        # gems (e.g. --group build in an image bootstrap) needs no project Ruby.
-        selection = Dev::Deps::Installer.select(lockfile.read, env:, host:, groups:, except:, integration_types:)
-        converge_ruby!(project) if selection.any? { |dep| dep.integration == :bundler }
-
         installer = @installer_factory.call(lockfile, integrations(project, pin_taps:))
         installer.install(env:, host:, groups:, except:, integration_types:)
         return if @inside_container
@@ -142,19 +128,6 @@ module Dev
 
       private
 
-      # Provision the Ruby the gems install against on this side.
-      #
-      # @param project [ProjectContext]
-      # @return [void]
-      sig { params(project: ProjectContext).void }
-      def converge_ruby!(project)
-        if @inside_container
-          @container_ruby.converge!(ruby_version: project.ruby_version, project_root: project.root)
-        else
-          ShadowenvRuby.converge!(ruby_version: project.ruby_version, project_root: project.root)
-        end
-      end
-
       # The integrations that install on this build host — the same set on a
       # workstation, a box and inside a build container, each against its own
       # data root (ADR-0008).
@@ -164,9 +137,7 @@ module Dev
       # @return [Hash{Symbol => Dev::Deps::Integration}]
       sig { params(project: ProjectContext, pin_taps: T::Boolean).returns(T::Hash[Symbol, Dev::Deps::Integration]) }
       def integrations(project, pin_taps:)
-        Dev::Deps::Registry.host_integrations(
-          project_root: project.root, store: Dev::Deps::LocalStore.new, python_version: project.python_version, pin_taps:,
-        )
+        Dev::Deps::Registry.host_integrations(project_root: project.root, store: Dev::Deps::LocalStore.new, pin_taps:)
       end
 
       # The symbols named by a repeatable flag, or nil when the flag never
