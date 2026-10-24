@@ -51,6 +51,7 @@ class Dev::Deps::ShadowenvExecTest < Minitest::Test
         "GEM_PATH" => nil,
         "RUBYOPT" => nil,
         "RUBYLIB" => nil,
+        "__shadowenv_data" => nil,
         "BUNDLE_GEMFILE" => "#{dir}/Gemfile",
       },
       "shadowenv", "exec", "--", "bundle", "install", chdir: dir
@@ -58,6 +59,53 @@ class Dev::Deps::ShadowenvExecTest < Minitest::Test
     result == ["out", "err", status]
 
     Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  # A stand-in `shadowenv` with the real one's activation rule: with
+  # __shadowenv_data in the env the project is "already active" and nothing
+  # is applied; without it the project's lisp runs — here, setting GEM_HOME
+  # to the project's keg. The scrub nils GEM_HOME, so a child that inherits
+  # an "already active" marker would run with no gem home at all and fall
+  # back to the Ruby's shared Homebrew default (dev#274: json linked to
+  # another Ruby's libruby) — the marker goes with the activation it describes.
+  def install_rule_shadowenv(dir)
+    bin = Pathname(dir) / "bin"
+    FileUtils.mkdir_p(bin)
+    shim = bin / "shadowenv"
+    shim.write(<<~SH)
+      #!/bin/sh
+      shift 2
+      if [ -z "${__shadowenv_data-}" ]; then
+        export GEM_HOME="#{dir}/keg/lib/ruby/gems/4.0.0"
+      fi
+      exec "$@"
+    SH
+    shim.chmod(0o755)
+    bin
+  end
+
+  test "a caller whose shell already activated the project still gets the activation re-applied" do
+    Given "dev running inside an active project shell (the marker and the lisp's GEM_HOME exported)"
+    dir = Dir.mktmpdir("dev-shadowenv-exec-test-")
+    shim_bin = install_rule_shadowenv(dir)
+    saved = ENV.slice("__shadowenv_data", "GEM_HOME")
+    ENV["__shadowenv_data"] = "abc123:{}"
+    ENV["GEM_HOME"] = "#{dir}/keg/lib/ruby/gems/4.0.0"
+    shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: dir)
+
+    When "capturing a command that reports the gem home it sees"
+    out, _err, status = shadowenv_exec.capture3(
+      "sh", "-c", 'printf "%s" "${GEM_HOME-unset}"',
+      env: { "PATH" => "#{shim_bin}:#{ENV.fetch("PATH")}" },
+    )
+
+    Then "shadowenv applied the project again: the child has the keg's gem home, not none"
+    status.success?
+    out == "#{dir}/keg/lib/ruby/gems/4.0.0"
+
+    Cleanup
+    %w[__shadowenv_data GEM_HOME].each { |k| saved.key?(k) ? ENV[k] = saved[k] : ENV.delete(k) }
     FileUtils.rm_rf(dir)
   end
 

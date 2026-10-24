@@ -23,13 +23,24 @@ module Dev
     # harness's BUNDLE_PATH redirecting resolution into its ephemeral cache
     # (dev#89). Baking the scrub into the seam means no bundler or gem
     # shell-out has to remember it.
+    #
+    # The scrub and the no-op together would leave a child with no gem env
+    # at all: shadowenv's "already active" test is the `__shadowenv_data`
+    # marker in the env, and under it the project's lisp — which is what
+    # sets GEM_HOME to the locked keg (ADR-0012) — does not run. A brew Ruby
+    # with no GEM_HOME falls back to the prefix-wide default gem dir shared
+    # with every other brew Ruby, where another Ruby's native extensions
+    # live. So the marker is scrubbed with the activation it describes:
+    # `shadowenv exec` then applies the project's lisps from the scrubbed
+    # base, every time, whatever shell dev was started from.
     class ShadowenvExec
       extend T::Sig
 
       # Env dev's own Ruby activation (or a harness's) may carry; each is
       # explicitly unset in the child so bundler resolves from the project's
       # canonical config. Dev never runs under bundler itself, so this is its
-      # equivalent of Bundler.original_env.
+      # equivalent of Bundler.original_env. `__shadowenv_data` is the active
+      # project marker (see the class comment).
       RUBY_ENV_SCRUB = T.let(
         [
           "BUNDLE_PATH",
@@ -39,6 +50,7 @@ module Dev
           "GEM_PATH",
           "RUBYOPT",
           "RUBYLIB",
+          "__shadowenv_data",
         ].to_h { |name| [name, nil] }.freeze,
         T::Hash[String, T.nilable(String)],
       )
