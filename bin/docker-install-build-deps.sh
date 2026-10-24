@@ -1,6 +1,6 @@
 #!/bin/bash
 # Internal script for Dockerfiles: installs Linuxbrew and the :build group's
-# brew dependencies from build-deps.lock into the image.
+# brew dependencies from deps.lock into the image.
 #
 # Superseded for build containers that own their data root (ADR-0008): there
 # the image is OS + Wine + user, Linuxbrew lives in the container's own
@@ -9,14 +9,14 @@
 # images that still bake their toolchain in; nothing new should.
 #
 # Usage in Dockerfile:
-#   COPY dev.yml dependencies.rb build-deps.lock /app/
+#   COPY dev.yml dependencies.rb deps.lock /app/
 #   RUN curl -fsSL https://raw.githubusercontent.com/d3mlabs/dev/main/bin/docker-install-build-deps.sh \
 #         -o /tmp/install-build-deps.sh && bash /tmp/install-build-deps.sh
 #
 # Optional: pass the directory holding those files as $1 (default: /app).
-# deps.lock is deliberately not copied: the build install never reads it,
-# and copying it would invalidate this (slow, Linuxbrew) layer on every
-# runtime-dependency change.
+# A Dockerfile that still copies the retired build-deps.lock (ADR-0011) keeps
+# working until its project re-locks: this script is fetched from main, so a
+# hard switch here would break that image build the day it merged.
 #
 # The install is `dev deps install --group build --integration brew`, run
 # by the latest dev *release* from the Homebrew tap — the same channel every
@@ -34,14 +34,18 @@ set -euo pipefail
 
 DEPS_DIR="${1:-/app}"
 
-for required in dev.yml build-deps.lock; do
-  if [ ! -f "${DEPS_DIR}/${required}" ]; then
-    echo "docker-install-build-deps.sh: ${DEPS_DIR}/${required} not found." >&2
-    echo "The Dockerfile must copy the project's dev manifests before this step:" >&2
-    echo "  COPY dev.yml dependencies.rb build-deps.lock ${DEPS_DIR}/" >&2
-    exit 1
-  fi
-done
+if [ ! -f "${DEPS_DIR}/dev.yml" ]; then
+  echo "docker-install-build-deps.sh: ${DEPS_DIR}/dev.yml not found." >&2
+  echo "The Dockerfile must copy the project's dev manifests before this step:" >&2
+  echo "  COPY dev.yml dependencies.rb deps.lock ${DEPS_DIR}/" >&2
+  exit 1
+fi
+if ! { [ -f "${DEPS_DIR}/deps.lock" ] || [ -f "${DEPS_DIR}/build-deps.lock" ]; }; then
+  echo "docker-install-build-deps.sh: ${DEPS_DIR}/deps.lock not found." >&2
+  echo "The Dockerfile must copy the project's dev manifests before this step:" >&2
+  echo "  COPY dev.yml dependencies.rb deps.lock ${DEPS_DIR}/" >&2
+  exit 1
+fi
 
 # Homebrew's Linux build sandbox (Bubblewrap) requires unprivileged user
 # namespaces, which aren't available inside docker build. The container
@@ -87,7 +91,7 @@ echo ">>> Installing dev-core (latest release from the d3mlabs tap)"
 # directly.
 brew install --quiet d3mlabs/d3mlabs/dev-core
 
-echo ">>> Installing build dependencies from ${DEPS_DIR}/build-deps.lock"
+echo ">>> Installing build dependencies from the lock in ${DEPS_DIR}"
 # CI=true declares the env rather than detecting it: this script only ever
 # runs inside a docker build, where no CI variable exists — it IS the ci
 # install path by construction, so env: :ci entries install and env: :dev
@@ -95,7 +99,7 @@ echo ">>> Installing build dependencies from ${DEPS_DIR}/build-deps.lock"
 # skip themselves.
 #
 # --pinned-taps is the image build's reproducible mode (ADR-0003, "images
-# pin"): dev checks each formula's tap out at the commit build-deps.lock
+# pin"): dev checks each formula's tap out at the commit the lock
 # names (one commit, fetched alone — not homebrew-core's history) and brew
 # installs from those checkouts instead of its moving API, so two builds of
 # one lock install one toolchain. Measured at no cost against the unpinned

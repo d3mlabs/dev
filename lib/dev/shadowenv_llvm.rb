@@ -84,12 +84,12 @@ module Dev
       LISP
     end
 
-    # Returns true if the project's build-deps.lock references LLVM.
+    # Returns true if the project's deps.lock references LLVM.
     # Supports both YAML format (top-level "llvm:" key) and the legacy
     # plain-text format ("brew llvm").
     sig { params(project_root: T.any(String, Pathname)).returns(T::Boolean) }
     def project_needs_llvm?(project_root)
-      lockfile = Pathname(project_root) / "build-deps.lock"
+      lockfile = Pathname(project_root) / "deps.lock"
       return false unless lockfile.exist?
 
       content = lockfile.read

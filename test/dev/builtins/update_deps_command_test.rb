@@ -141,7 +141,7 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
         metadata: { "tap_commit" => commit, "format" => "bottle", "platforms" => platforms })
     end
     Dev::Deps::Lockfile.new(dir: root).lock([pin.call("0f1ba9ea")])
-    before = (root / "build-deps.lock").read
+    before = (root / "deps.lock").read
     Dev::Deps::Resolver.expects(:new).returns(stub(resolve: [pin.call("7d2877eb")]))
     Dev::ShadowenvRuby.stubs(:converge!)
     command = Dev::Builtins::UpdateDepsCommand.new
@@ -151,8 +151,8 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     When "running dev deps update"
     command.call(args: no_args, context: build_context(root))
 
-    Then "build-deps.lock is byte-identical to what was there"
-    (root / "build-deps.lock").read == before
+    Then "deps.lock is byte-identical to what was there"
+    (root / "deps.lock").read == before
 
     Cleanup
     $stdout = old_stdout
