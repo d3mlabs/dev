@@ -156,7 +156,7 @@ module Dev
             repository_needs: %i[project_root],
             scheme: GemScheme,
             locker: BundlerLocker,
-            locker_needs: %i[project_root ruby_version_requirement],
+            locker_needs: %i[project_root ruby_version],
             integration: BundlerIntegration,
             integration_needs: %i[project_root],
           ),
@@ -311,16 +311,17 @@ module Dev
         # Resolver so each tool lockfile is materialized when find reads it.
         #
         # @param project_root [Pathname] project root (threaded to lockers that need it)
-        # @param ruby_version_requirement [String, nil] for the bundler-generated Gemfile
+        # @param ruby_version [String, nil] the exact Ruby the lock pins, for
+        #   the bundler-generated Gemfile's `ruby` directive
         # @return [Hash{Symbol => Locker}]
         sig do
           params(
             project_root: Pathname,
-            ruby_version_requirement: T.nilable(String),
+            ruby_version: T.nilable(String),
           ).returns(T::Hash[Symbol, Locker])
         end
-        def lockers(project_root:, ruby_version_requirement: nil)
-          context = { project_root:, ruby_version_requirement: }
+        def lockers(project_root:, ruby_version: nil)
+          context = { project_root:, ruby_version: }
           INTEGRATIONS.each_with_object({}) do |entry, lockers|
             locker = entry.locker
             next unless locker

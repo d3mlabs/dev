@@ -15,10 +15,10 @@ class Dev::Deps::BundlerLockerTest < Minitest::Test
 
   # A locker whose bundler boundary is the fake seam: the test owns what
   # `shadowenv exec -- bundle lock` answers, and can assert what it was sent.
-  def build_locker(dir, shadowenv_exec, ruby_version_requirement: nil)
+  def build_locker(dir, shadowenv_exec, ruby_version: nil)
     Dev::Deps::BundlerLocker.new(
       project_root: dir,
-      ruby_version_requirement: ruby_version_requirement,
+      ruby_version: ruby_version,
       shadowenv_exec: shadowenv_exec,
     )
   end
@@ -30,7 +30,7 @@ class Dev::Deps::BundlerLockerTest < Minitest::Test
     dir = Dir.mktmpdir("dev-bundler-locker-test-")
     shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: dir)
     shadowenv_exec.stubs(:capture3).returns(succeeded)
-    locker = build_locker(dir, shadowenv_exec, ruby_version_requirement: "~> 4.0")
+    locker = build_locker(dir, shadowenv_exec, ruby_version: "4.0.9")
     decls = bundler_declarations do
       gem "ffi", "~> 1.17"
       group :test do
@@ -42,10 +42,10 @@ class Dev::Deps::BundlerLockerTest < Minitest::Test
     locker.lock(decls)
     gemfile = (Pathname(dir) / "Gemfile").read
 
-    Then "the Gemfile names the verb that regenerates it, and pins the source, ruby, default gem, and grouped gem with options"
+    Then "the Gemfile names the verb that regenerates it, and pins the source, the locked ruby, default gem, and grouped gem with options"
     gemfile.include?("run `dev deps update`")
     gemfile.include?(%(source "https://rubygems.org"))
-    gemfile.include?(%(ruby "~> 4.0"))
+    gemfile.include?(%(ruby "4.0.9"))
     gemfile.include?(%(gem "ffi", "~> 1.17"))
     gemfile.include?("group :test do")
     gemfile.include?(%(  gem "minitest", "~> 5.0", require: false))

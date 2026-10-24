@@ -26,7 +26,6 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
   test "call resolves an empty manifest and reports the update" do
     Given "a project root with no dependencies.rb"
     root = Pathname.new(Dir.mktmpdir("update-deps-empty-"))
-    Dev::ShadowenvRuby.stubs(:converge!)
     command = Dev::Builtins::UpdateDepsCommand.new
     old_stdout = $stdout
     $stdout = StringIO.new
@@ -53,7 +52,6 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     locker.expects(:lock).with { |*args| args.fetch(0).map(&:name) == ["rake"] }
     Dev::Deps::Registry.expects(:lockers).returns({ bundler: locker })
     Dev::Deps::Resolver.expects(:new).returns(stub(resolve: []))
-    Dev::ShadowenvRuby.stubs(:converge!)
     command = Dev::Builtins::UpdateDepsCommand.new
     old_stdout = $stdout
     $stdout = StringIO.new
@@ -69,18 +67,57 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "call provisions the project's Ruby before any locker runs" do
-    Given "a manifest with a gem declaration; provisioning and locking both observed in order"
-    root = Pathname.new(Dir.mktmpdir("update-deps-provision-"))
+  test "call installs the locked interpreters through brew before any locker runs, and locks the Gemfile to that Ruby" do
+    Given "a manifest declaring a Ruby range and a gem; resolution, the brew install and the locker all observed in order"
+    root = Pathname.new(Dir.mktmpdir("update-deps-interpreters-"))
+    File.write(root / "dependencies.rb", <<~RUBY)
+      require "dev/deps"
+      Dev::Deps.define do
+        ruby "~> 4.0"
+        gem "rake"
+      end
+    RUBY
+    ruby_pin = Dev::Deps::Dependency.new(name: "ruby", integration: :ruby, group: :app, version: "4.0.9", hash: nil,
+      metadata: { "tap" => "d3mlabs/d3mlabs", "version_suffix" => "4.0.9" })
+    resolver = mock
+    resolver.expects(:resolve).with { |*args| args.fetch(0).map(&:integration) == [:ruby] }.returns([ruby_pin])
+    resolver.expects(:resolve).with { |*args| args.fetch(0).map(&:integration) == [:ruby, :bundler] }.returns([ruby_pin])
+    Dev::Deps::Resolver.expects(:new).returns(resolver)
+    order = sequence("install the interpreter, then lock")
+    brew = mock
+    brew.expects(:install_all).with([ruby_pin]).in_sequence(order)
+    Dev::Deps::Registry.expects(:host_integrations).with { |**kwargs| kwargs.fetch(:project_root) == root }
+      .returns({ brew: brew, ruby: brew })
+    locker = mock
+    locker.expects(:lock).in_sequence(order)
+    Dev::Deps::Registry.expects(:lockers).with(project_root: root, ruby_version: "4.0.9").returns({ bundler: locker })
+    command = Dev::Builtins::UpdateDepsCommand.new
+    old_stdout = $stdout
+    $stdout = StringIO.new
+
+    When "running dev deps update"
+    command.call(args: no_args, context: build_context(root))
+
+    Then "bundle lock ran under the locked Ruby, whose exact version is the Gemfile's ruby directive (asserted on the mocks)"
+    $stdout.string.include?("lockfiles updated")
+    Dev::Deps::Lockfile.new(dir: root).read.map { |dep| [dep.integration, dep.name, dep.version] } == [[:ruby, "ruby", "4.0.9"]]
+
+    Cleanup
+    $stdout = old_stdout
+    FileUtils.rm_rf(root)
+  end
+
+  test "call installs nothing before locking when the manifest declares no interpreter" do
+    Given "a manifest with a gem and no ruby or python line"
+    root = Pathname.new(Dir.mktmpdir("update-deps-no-interpreter-"))
     File.write(root / "dependencies.rb", <<~RUBY)
       require "dev/deps"
       Dev::Deps.define { gem "rake" }
     RUBY
-    order = sequence("provision then lock")
-    Dev::ShadowenvRuby.expects(:converge!).with(ruby_version: "4.0.1", project_root: root).once.in_sequence(order)
+    Dev::Deps::Registry.expects(:host_integrations).never
     locker = mock
-    locker.expects(:lock).in_sequence(order)
-    Dev::Deps::Registry.expects(:lockers).returns({ bundler: locker })
+    locker.expects(:lock)
+    Dev::Deps::Registry.expects(:lockers).with(project_root: root, ruby_version: nil).returns({ bundler: locker })
     Dev::Deps::Resolver.expects(:new).returns(stub(resolve: []))
     command = Dev::Builtins::UpdateDepsCommand.new
     old_stdout = $stdout
@@ -89,7 +126,7 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     When "running dev deps update"
     command.call(args: no_args, context: build_context(root))
 
-    Then "a fresh checkout has a .shadowenv.d before bundle lock is wrapped in it (asserted on the mocks)"
+    Then "no Ruby is provisioned for a project that declares none (asserted on the mocks)"
     $stdout.string.include?("lockfiles updated")
 
     Cleanup
@@ -112,7 +149,6 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
         metadata: { "tap" => "xcodesorg/made", "host" => "darwin", "format" => "source" }),
     ]
     Dev::Deps::Resolver.expects(:new).returns(stub(resolve: resolved))
-    Dev::ShadowenvRuby.stubs(:converge!)
     command = Dev::Builtins::UpdateDepsCommand.new
     old_stdout = $stdout
     $stdout = StringIO.new
@@ -144,7 +180,6 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
         metadata: {}),
     ]
     Dev::Deps::Resolver.expects(:new).returns(stub(resolve: resolved))
-    Dev::ShadowenvRuby.stubs(:converge!)
     command = Dev::Builtins::UpdateDepsCommand.new
     old_stdout = $stdout
     $stdout = StringIO.new
@@ -172,7 +207,6 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     Dev::Deps::Lockfile.new(dir: root).lock([pin.call("0f1ba9ea")])
     before = (root / "deps.lock").read
     Dev::Deps::Resolver.expects(:new).returns(stub(resolve: [pin.call("7d2877eb")]))
-    Dev::ShadowenvRuby.stubs(:converge!)
     command = Dev::Builtins::UpdateDepsCommand.new
     old_stdout = $stdout
     $stdout = StringIO.new
@@ -193,7 +227,6 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     root = Pathname.new(Dir.mktmpdir("update-deps-needs-"))
     received = nil
     Dev::Deps::Resolver.expects(:new).with { |**kwargs| received = kwargs.fetch(:needs) }.returns(stub(resolve: []))
-    Dev::ShadowenvRuby.stubs(:converge!)
     command = Dev::Builtins::UpdateDepsCommand.new
     old_stdout = $stdout
     $stdout = StringIO.new
@@ -216,7 +249,6 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     Dev::Deps.define { ruby "9.9.9" }
     root = Pathname.new(Dir.mktmpdir("update-deps-stale-"))
     File.write(root / "dependencies.rb", "UPDATE_DEPS_TEST_CONSTANT = 1 unless defined?(UPDATE_DEPS_TEST_CONSTANT)\n")
-    Dev::ShadowenvRuby.stubs(:converge!)
     command = Dev::Builtins::UpdateDepsCommand.new
     old_stdout = $stdout
     $stdout = StringIO.new

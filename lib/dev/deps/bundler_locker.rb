@@ -28,22 +28,24 @@ module Dev
       HEADER
 
       # @param project_root [Pathname, String] root the Gemfile/Gemfile.lock live in
-      # @param ruby_version_requirement [String, nil] requirement for the Gemfile's
-      #   `ruby` directive (from dependencies.rb's ruby_version), or nil to omit it
+      # @param ruby_version [String, nil] the exact Ruby the lock pins, for
+      #   the Gemfile's `ruby` directive — the locked version, not the
+      #   manifest's range, so bundler's solve and the pin agree — or nil
+      #   to omit it (a project declaring no Ruby)
       # @param shadowenv_exec [ShadowenvExec] spawn seam for the project's Ruby
       #   toolchain — `bundle lock` must solve under the pinned Ruby and its
       #   bundler, not whatever the invoking shell carries (dev#76)
       sig do
         params(
           project_root: T.any(Pathname, String),
-          ruby_version_requirement: T.nilable(String),
+          ruby_version: T.nilable(String),
           shadowenv_exec: ShadowenvExec,
         ).void
       end
-      def initialize(project_root:, ruby_version_requirement: nil, shadowenv_exec: ShadowenvExec.new(project_root: Pathname(project_root)))
+      def initialize(project_root:, ruby_version: nil, shadowenv_exec: ShadowenvExec.new(project_root: Pathname(project_root)))
         super()
         @project_root = T.let(Pathname(project_root), Pathname)
-        @ruby_version_requirement = ruby_version_requirement
+        @ruby_version = ruby_version
         @shadowenv_exec = shadowenv_exec
       end
 
@@ -71,7 +73,7 @@ module Dev
       sig { params(declarations: T::Array[ScopedDeclaration]).void }
       def write_gemfile(declarations)
         lines = [GENERATED_HEADER, %(source "#{RUBYGEMS_SOURCE}")]
-        lines << %(ruby "#{@ruby_version_requirement}") if @ruby_version_requirement
+        lines << %(ruby "#{@ruby_version}") if @ruby_version
 
         ungrouped, grouped = declarations.partition { |decl| decl.scope.group == DSL::DEFAULT_GROUP }
 
