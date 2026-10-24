@@ -11,7 +11,7 @@ require "fileutils"
 # the text, plus a syntax check. The property under test is the one the
 # ADR's "the image contains no dev" rule does not ask for and every cold
 # container start paid for anyway: dev-core leaves the image, but the
-# formulae it pulled in (gh, git, rbenv, ruby-build, shadowenv, …) stay, so
+# formulae it pulled in (gh, git, ruby, shadowenv, …) stay, so
 # bin/container-provision-dev.sh pours one formula rather than thirty.
 transform!(RSpock::AST::Transformation)
 class Dev::BinDockerInstallBuildDepsTest < Minitest::Test

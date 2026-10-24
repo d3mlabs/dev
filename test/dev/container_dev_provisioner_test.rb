@@ -74,7 +74,7 @@ class Dev::ContainerDevProvisionerTest < Minitest::Test
     Given "the script shipped beside dev's bin"
     script = SCRIPT.read
 
-    Expect "a swap of dev-core, not a removal that autoremoves rbenv, shadowenv, git, gh … with it"
+    Expect "a swap of dev-core, not a removal that autoremoves ruby, shadowenv, git, gh … with it"
     script.include?("brew reinstall --quiet d3mlabs/d3mlabs/dev-core")
     !script.include?("brew uninstall")
   end
