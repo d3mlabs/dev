@@ -27,7 +27,7 @@ class ShadowenvPythonTest < Minitest::Test
   end
 
 
-  test "activate! builds the project venv on the keg's python3 and writes the lisp" do
+  test "activate! builds the project venv on the keg's pythonX.Y and writes the lisp" do
     Given "a project root and the locked Python's keg"
     tmpdir = Dir.mktmpdir("shadowenv-python-test-")
     keg = Pathname(tmpdir) / "Cellar" / "python@3.12" / "3.12.8"
@@ -70,12 +70,12 @@ class ShadowenvPythonTest < Minitest::Test
   end
 
 
-  test "activate! raises when the keg's python3 cannot build the venv" do
+  test "activate! raises when the keg's pythonX.Y cannot build the venv" do
     Given "a keg whose interpreter fails -m venv"
     tmpdir = Dir.mktmpdir("shadowenv-python-test-")
     keg = Pathname(tmpdir) / "Cellar" / "python@3.12" / "3.12.8"
     FileUtils.mkdir_p(keg / "bin")
-    write_fake_executable((keg / "bin" / "python3").to_s, "#!/bin/sh\nexit 1\n")
+    write_fake_executable((keg / "bin" / "python3.12").to_s, "#!/bin/sh\nexit 1\n")
 
     When "activating"
     Dev::ShadowenvPython.activate!(keg: keg, version: "3.12.8", project_root: Pathname(tmpdir))
@@ -152,7 +152,9 @@ class ShadowenvPythonTest < Minitest::Test
       "fi",
       "exit 0",
     ].join("\n")
-    write_fake_executable(File.join(keg, "bin", "python3"), script)
+    # brew\x27s python@X.Y keg ships bin/pythonX.Y only; the bare python3 lives
+    # in libexec/bin and in the opt link, neither of which is the keg.
+    write_fake_executable(File.join(keg, "bin", "python3.12"), script)
     log
   end
 end
