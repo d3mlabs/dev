@@ -275,6 +275,23 @@ class Dev::Deps::LockfileTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "read_for_relock reads deps.lock beside a retired build-deps.lock, so the re-lock can run" do
+    Given "a deps.lock beside a retired build-deps.lock"
+    dir = Dir.mktmpdir("dev-lockfile-test-")
+    File.write(File.join(dir, "deps.lock"), "cmake:\n  boost: { group: app, version: '1.90.0' }\n")
+    File.write(File.join(dir, "build-deps.lock"), "brew:\n  cmake: { group: build, version: '3.31' }\n")
+    lockfile = Dev::Deps::Lockfile.new(dir: dir)
+
+    When "reading as the input to a re-lock"
+    previous = lockfile.read_for_relock
+
+    Then "deps.lock's pins come back; the retired file's do not"
+    previous.map(&:name) == ["boost"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "custom groups round-trip through deps.lock" do
     Given "dependencies with custom groups alongside standard ones"
     dir = Dir.mktmpdir("dev-lockfile-test-")

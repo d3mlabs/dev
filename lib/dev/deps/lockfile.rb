@@ -106,6 +106,18 @@ module Dev
         read_lockfile(@dir / DEPS_LOCK_FILE)
       end
 
+      # The pins a re-lock starts from (TapCommitCarryover's previous list):
+      # deps.lock as it is, with no refusal of a retired build-deps.lock —
+      # this read precedes the write that removes it, and the command the
+      # refusal points at has to be able to run. The retired file's own pins
+      # are not read; a tap that only they named takes today's HEAD once.
+      #
+      # @return [Array<Dependency>]
+      sig { returns(T::Array[Dependency]) }
+      def read_for_relock
+        read_lockfile(@dir / DEPS_LOCK_FILE)
+      end
+
       private
 
       # Write deps to a lockfile at path, with the comment header.
