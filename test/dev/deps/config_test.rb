@@ -6,12 +6,12 @@ require "dev/deps"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::ConfigTest < Minitest::Test
-  test "define sets ruby version via the first-class ruby directive" do
+  test "define records the ruby directive as a :ruby declaration" do
     When
     config = Dev::Deps.define { ruby "4.0.5" }
 
     Then
-    config.ruby_version_requirement == "4.0.5"
+    config.declarations.map { |d| [d.name, d.integration, d.constraint] } == [["ruby", :ruby, { "version" => "4.0.5" }]]
   end
 
   test "define registers gems as bundler declarations with optional version" do

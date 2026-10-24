@@ -176,6 +176,28 @@ module Dev
             scheme: BrewScheme,
             integration: BrewIntegration,
           ),
+          # The project's interpreters are brew formulae with their own
+          # constraint semantics, installed through brew's instance (the
+          # same install_all call, so one activation covers every keg):
+          # ruby ranges over the d3mlabs tap's immutable ruby@X.Y.Z family
+          # with rubygems requirements; python selects core's python@minor
+          # by suffix, as any versioned formula. Their own symbols keep the
+          # lock legible (`ruby:`/`python:` sections) and let the install
+          # step that activates an interpreter key on the pin, not its name.
+          Entry.new(
+            symbol: :ruby,
+            repository: BrewRepository,
+            scheme: GemScheme,
+            integration: nil,
+            install_alias: :brew,
+          ),
+          Entry.new(
+            symbol: :python,
+            repository: BrewRepository,
+            scheme: BrewScheme,
+            integration: nil,
+            install_alias: :brew,
+          ),
           Entry.new(
             symbol: :cmake,
             repository: GitRepository,
