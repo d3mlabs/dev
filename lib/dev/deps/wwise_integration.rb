@@ -33,7 +33,9 @@ module Dev
     class WwiseIntegration < Integration
       extend T::Sig
 
-      # The wwise-cli binary is not on PATH; it is a brew dep of the consumer.
+      # The wwise-cli binary is not on PATH: the project's lock predates the
+      # integration manifest (re-lock), or its install failed earlier in this
+      # run (the aggregate names it first).
       class WwiseCliMissingError < StandardError; end
       # wwise-cli failed, or reported success without leaving the cache entry
       # the published tree needs.
@@ -86,8 +88,8 @@ module Dev
         unless wwise_cli_available?
           raise WwiseCliMissingError,
             "#{dep.name} #{dep.version}: the wwise-cli CLI is not installed. " \
-            "Declare it in dependencies.rb — group :build { brew \"wwise-cli\", tap: \"d3mlabs/d3mlabs\" } — " \
-            "and run dev up."
+            "dev locks it from the wwise integration's own manifest (needed_by: wwise) — " \
+            "run dev deps update to re-lock, then dev up."
         end
 
         env = credentials_env

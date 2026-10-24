@@ -900,6 +900,11 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "brew is the host prerequisite: the installer runs its batch before every other" do
+    Expect
+    Dev::Deps::BrewIntegration.host_prerequisite? == true
+  end
+
   test "resolve_file_url resolves a ./ path against the project dir" do
     Given "an integration with a project dir and a project-relative file URI"
     dir = Dir.mktmpdir("dev-brew-int-test-")

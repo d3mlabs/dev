@@ -118,4 +118,25 @@ class Dev::Deps::ScopedDeclarationTest < Minitest::Test
     Expect "it never passes an is_a?(Declaration) gate"
     !scoped.is_a?(Dev::Deps::Declaration)
   end
+
+  test "with_scope re-homes the same ask under another context, keeping everything but the scope" do
+    Given "a fully-dressed scoped declaration"
+    hook = -> {}
+    original = Dev::Deps::ScopedDeclaration.new(
+      declaration: atom, scope: Dev::Deps::Scope.new(group: :app), platform: "x86_64-linux",
+      post_install: hook, materialization: { "target" => "Linux" },
+    )
+    target_scope = Dev::Deps::Scope.new(group: :editor, host: :darwin)
+
+    When "re-scoping"
+    rescoped = original.with_scope(target_scope)
+
+    Then "only the scope changed; the original is untouched"
+    rescoped.scope == target_scope
+    rescoped.declaration == atom
+    rescoped.platform == "x86_64-linux"
+    rescoped.post_install.equal?(hook)
+    rescoped.materialization == { "target" => "Linux" }
+    original.scope == Dev::Deps::Scope.new(group: :app)
+  end
 end

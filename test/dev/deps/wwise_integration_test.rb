@@ -168,9 +168,10 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
       integration.install_all([build_dependency])
     end
 
-    Then "the failure names the brew declaration that provides the CLI, and nothing was prompted for"
+    Then "the failure points at the integration manifest that provides the CLI (re-lock), and nothing was prompted for"
     error.failures.first.last.is_a?(Dev::Deps::WwiseIntegration::WwiseCliMissingError)
-    error.failures.first.last.message.include?('brew "wwise-cli", tap: "d3mlabs/d3mlabs"')
+    error.failures.first.last.message.include?("needed_by: wwise")
+    error.failures.first.last.message.include?("dev deps update")
     integration.credential_resolutions == 0
 
     Cleanup

@@ -680,4 +680,158 @@ class Dev::Deps::ResolverTest < Minitest::Test
     Then
     raises Dev::Deps::Repository::PackageNotFoundError
   end
+
+  # -- the needs walk: an integration's own manifest resolving into the project lock (ADR-0011) --
+
+  # A resolver over two integrations — :xcode (a tool the project declares)
+  # and :brew (what xcode's own manifest needs) — with the given needs table.
+  def needs_resolver(needs:, brew_universe: { "xcodes" => [version("1.6.2")] })
+    xcode_repo = StubRepository.new(universes: { "Xcode" => [version("26.1.1")] })
+    brew_repo = StubRepository.new(universes: brew_universe)
+    Dev::Deps::Resolver.new(
+      repositories: { xcode: xcode_repo, brew: brew_repo },
+      schemes: { xcode: Dev::Deps::ExactScheme.new(key: "version"), brew: Dev::Deps::ExactScheme.new(key: "version") },
+      needs: needs,
+    )
+  end
+
+  test "an integration's need resolves into the lock as a pin in the using declaration's scope, with provenance" do
+    Given "xcode's manifest needs the xcodes formula, and the project uses xcode in a scoped group"
+    needs = { xcode: [declaration(name: "xcodes", integration: :brew)] }
+    declarations = [declaration(name: "Xcode", integration: :xcode, group: :editor, host: :darwin, env: "dev")]
+
+    When "resolving"
+    result = needs_resolver(needs:).resolve(declarations)
+
+    Then "xcodes is an ordinary brew pin in the editor group, host and env inherited, needed_by xcode"
+    xcodes = result.find { |d| d.name == "xcodes" }
+    xcodes.integration == :brew
+    xcodes.group == :editor
+    xcodes.metadata["host"] == "darwin"
+    xcodes.metadata["env"] == "dev"
+    xcodes.metadata["needed_by"] == ["xcode"]
+    result.find { |d| d.name == "Xcode" }.metadata.key?("needed_by") == false
+  end
+
+  test "a need's own host narrows the using scope; a disjoint host drops the need" do
+    Given "a need gated to #{need_host.inspect}, used from a declaration gated to #{using_host.inspect}"
+    needs = { xcode: [declaration(name: "xcodes", integration: :brew, host: need_host)] }
+    declarations = [declaration(name: "Xcode", integration: :xcode, host: using_host)]
+
+    When "resolving"
+    result = needs_resolver(needs:).resolve(declarations)
+
+    Then "the pin carries the intersection, or does not exist"
+    xcodes = result.find { |d| d.name == "xcodes" }
+    xcodes&.metadata&.fetch("host", nil) == expected_host
+    xcodes.nil? == dropped
+
+    Where
+    need_host | using_host | expected_host | dropped
+    :darwin   | nil        | "darwin"      | false
+    nil       | :darwin    | "darwin"      | false
+    :darwin   | :darwin    | "darwin"      | false
+    :darwin   | :linux     | nil           | true
+  end
+
+  test "a project that also declares the needed tool merges with the need: one pin, provenance kept" do
+    Given "the project declares brew xcodes itself, in its own group, and uses xcode"
+    needs = { xcode: [declaration(name: "xcodes", integration: :brew)] }
+    declarations = [
+      declaration(name: "xcodes", integration: :brew, group: :build),
+      declaration(name: "Xcode", integration: :xcode, group: :editor),
+    ]
+
+    When "resolving"
+    result = needs_resolver(needs:).resolve(declarations)
+
+    Then "one xcodes pin, in the project's (first-declared) scope, still marked as needed by xcode"
+    result.count { |d| d.name == "xcodes" } == 1
+    xcodes = result.find { |d| d.name == "xcodes" }
+    xcodes.group == :build
+    xcodes.metadata["needed_by"] == ["xcode"]
+  end
+
+  test "a project declaration disagreeing with an integration's need is a ConflictingDeclarationError" do
+    Given "the project pins xcodes to one version and xcode's manifest asks another"
+    needs = { xcode: [declaration(name: "xcodes", integration: :brew, constraint: { "version" => "1.6.2" })] }
+    declarations = [
+      declaration(name: "Xcode", integration: :xcode),
+      declaration(name: "xcodes", integration: :brew, constraint: { "version" => "1.0.0" }),
+    ]
+
+    When "resolving"
+    error = assert_raises(Dev::Deps::Resolver::ConflictingDeclarationError) do
+      needs_resolver(needs:).resolve(declarations)
+    end
+
+    Then "the error names the integration whose need disagrees"
+    error.message.include?("needed by xcode")
+  end
+
+  test "a need shared by two integrations is one pin with both in needed_by, sorted" do
+    Given "xcode and a custom integration both need the same formula"
+    needs = {
+      xcode: [declaration(name: "xcodes", integration: :brew)],
+      zz_tool: [declaration(name: "xcodes", integration: :brew)],
+    }
+    resolver = Dev::Deps::Resolver.new(
+      repositories: {
+        xcode: StubRepository.new(universes: { "Xcode" => [version("26.1.1")] }),
+        zz_tool: StubRepository.new(universes: { "thing" => [version("1")] }),
+        brew: StubRepository.new(universes: { "xcodes" => [version("1.6.2")] }),
+      },
+      schemes: {},
+      needs: needs,
+    )
+    declarations = [
+      declaration(name: "thing", integration: :zz_tool),
+      declaration(name: "Xcode", integration: :xcode),
+    ]
+
+    When "resolving"
+    result = resolver.resolve(declarations)
+
+    Then
+    result.count { |d| d.name == "xcodes" } == 1
+    result.find { |d| d.name == "xcodes" }.metadata["needed_by"] == ["xcode", "zz_tool"]
+  end
+
+  test "needs chain: a needed pin's own integration may itself have needs" do
+    Given "a custom integration needing an xcode pin, whose integration needs the xcodes formula"
+    needs = {
+      custom: [declaration(name: "Xcode", integration: :xcode)],
+      xcode: [declaration(name: "xcodes", integration: :brew)],
+    }
+    resolver = Dev::Deps::Resolver.new(
+      repositories: {
+        custom: StubRepository.new(universes: { "thing" => [version("1")] }),
+        xcode: StubRepository.new(universes: { "Xcode" => [version("26.1.1")] }),
+        brew: StubRepository.new(universes: { "xcodes" => [version("1.6.2")] }),
+      },
+      schemes: {},
+      needs: needs,
+    )
+
+    When "resolving a project that uses only the custom integration"
+    result = resolver.resolve([declaration(name: "thing", integration: :custom, group: :tools)])
+
+    Then "all three pins exist, in the tools group, each need pointing at its user"
+    result.map(&:name).sort == ["Xcode", "thing", "xcodes"]
+    result.map(&:group).uniq == [:tools]
+    result.find { |d| d.name == "Xcode" }.metadata["needed_by"] == ["custom"]
+    result.find { |d| d.name == "xcodes" }.metadata["needed_by"] == ["xcode"]
+  end
+
+  test "an integration nobody uses contributes no pins" do
+    Given "a needs table for xcode, and a project that never declares xcode"
+    needs = { xcode: [declaration(name: "xcodes", integration: :brew)] }
+    declarations = [declaration(name: "jq", integration: :brew)]
+
+    When "resolving"
+    result = needs_resolver(needs:, brew_universe: { "jq" => [version("1.7")] }).resolve(declarations)
+
+    Then
+    result.map(&:name) == ["jq"]
+  end
 end

@@ -309,6 +309,22 @@ module Dev
           end
         end
 
+        # Every integration symbol → the Integration class that installs it,
+        # the input to the needs table (IntegrationNeeds). An aliased type
+        # maps to its target's class, since its pins install through that
+        # instance and so its needs are that class's. Built-in entries only:
+        # an integration from outside dev-core arrives as a dependency and
+        # its needs come in through that dependency's own manifest (#300).
+        #
+        # @return [Hash{Symbol => Class}]
+        sig { returns(T::Hash[Symbol, T.class_of(Integration)]) }
+        def integration_classes
+          INTEGRATIONS.each_with_object({}) do |entry, classes|
+            klass = entry.integration || alias_target(entry)&.integration
+            classes[entry.symbol] = klass if klass
+          end
+        end
+
         # Build the integration-type -> Integration hash for `dev deps install`
         # on this build host — the same set on a workstation, a box and inside
         # a build container, each against its own data root.
@@ -397,6 +413,18 @@ module Dev
             integrations[entry.symbol] = integrations.fetch(alias_target)
           end
           integrations
+        end
+
+        # The entry an aliased type installs through, if the entry is aliased.
+        #
+        # @param entry [Entry]
+        # @return [Entry, nil]
+        sig { params(entry: Entry).returns(T.nilable(Entry)) }
+        def alias_target(entry)
+          target = entry.install_alias
+          return nil unless target
+
+          INTEGRATIONS.find { |candidate| candidate.symbol == target }
         end
 
         # @param entry [Entry]

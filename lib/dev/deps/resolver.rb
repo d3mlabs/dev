@@ -24,7 +24,16 @@ module Dev
     # pin, and walks that version's edges to resolve transitives. Whole-set
     # solves (bundle lock) happen before resolution, in the integration's
     # Locker — by the time find runs, a tool-locked universe is already
-    # materialized. See docs/deps-architecture.md.
+    # materialized.
+    #
+    # Edges come from two places and ride one walk. A chosen version's
+    # Resolved declarations claim is the universe's edge (a ficsit mod needs
+    # a mod). The *needs table* is the integration's edge: an integration's
+    # own dependencies.rb exports the tooling it shells to (xcode needs
+    # `brew "xcodes"`), and every declaration of that integration pulls those
+    # exports into the project's lock as ordinary pins in their channel, in
+    # the using declaration's scope, with provenance (`needed_by`) the
+    # installer orders by. See docs/deps-architecture.md.
     class Resolver
       extend T::Sig
 
@@ -38,17 +47,26 @@ module Dev
       # constraint mismatch, missing requested platform, or empty universe.
       class NoSatisfyingVersionError < StandardError; end
 
+      # What two declarations of one package must agree on to resolve once.
+      Ask = T.type_alias { T::Hash[Symbol, T.untyped] }
+
       # @param repositories [Hash{Symbol => Repository}] integration type → repository
       # @param schemes [Hash{Symbol => VersionScheme}] integration type → constraint semantics
+      # @param needs [Hash{Symbol => Array<ScopedDeclaration>}] integration
+      #   type → the declarations its own manifest exports
+      #   (IntegrationNeeds#table); absent means the integration needs no
+      #   tooling of its own
       sig do
         params(
           repositories: T::Hash[Symbol, Repository],
           schemes: T::Hash[Symbol, VersionScheme],
+          needs: T::Hash[Symbol, T::Array[ScopedDeclaration]],
         ).void
       end
-      def initialize(repositories:, schemes:)
+      def initialize(repositories:, schemes:, needs: {})
         @repositories = repositories
         @schemes = schemes
+        @needs = needs
       end
 
       # Resolve all declarations into a flat Dependency list.
@@ -59,17 +77,28 @@ module Dev
       # integration their reporting Repository stamped on them (today always
       # its own).
       #
+      # The needs of a declaration's integration ride the same walk, with the
+      # integration as parent: each export of its manifest is queued under
+      # the using declaration's scope (narrowed by the need's own host/env,
+      # if it states any), and the pin it resolves to records the integration
+      # under `needed_by`. A project declaring the same tool itself merges
+      # with the need when the asks agree and is a ConflictingDeclarationError
+      # when they do not — the Gemfile convention: the library declares, the
+      # project locks, and two asks for one package must be one ask.
+      #
       # @param declarations [Array<ScopedDeclaration>] declared dependencies to resolve
       # @return [Array<Dependency>]
-      # @raise [ConflictingDeclarationError] if one package is declared with disagreeing constraints
+      # @raise [ConflictingDeclarationError] if one package is declared with
+      #   disagreeing asks, by the project or by an integration's manifest
       # @raise [UnknownIntegrationError] if a declaration's integration has no repository or scheme
       # @raise [NoSatisfyingVersionError] if a declaration cannot be satisfied
       sig { params(declarations: T::Array[ScopedDeclaration]).returns(T::Array[Dependency]) }
       def resolve(declarations)
-        reject_conflicts(declarations)
+        asks = reject_conflicts(declarations)
 
         platforms = declared_platforms(declarations)
         resolved = T.let({}, T::Hash[PackageId, Dependency])
+        needed_by = T.let({}, T::Hash[PackageId, T::Array[Symbol]])
         queue = declarations.dup
 
         while (decl = queue.shift)
@@ -80,29 +109,91 @@ module Dev
           chosen = decl.revision ? address(decl) : choose(decl, declared)
           resolved[id] = mint(chosen, decl, declared)
 
-          # Transitive deps inherit the declaring dep's Scope wholesale: a dep
-          # only needed in one group/host/env can't need its transitive
-          # closure anywhere else. Each Declaration arrives finished from the
-          # Repository (integration stamped, constraint normalized); only the
-          # context is stamped here, because context is a property of the
-          # path, not of the fact.
-          case (claim = chosen.declarations)
-          when Declarations::Resolved
-            claim.declarations.each do |edge|
-              edge_decl = ScopedDeclaration.new(declaration: edge, scope: decl.scope)
-              queue << edge_decl unless resolved.key?(package_id(edge_decl))
-            end
-          when Declarations::ToolOwned
-            # The ecosystem's tool owns the closure; there is nothing to walk.
-          else
-            T.absurd(claim)
-          end
+          queue.concat(universe_edges(chosen, decl))
+          queue.concat(needs_under(decl, asks, needed_by))
         end
 
-        resolved.values
+        stamp_provenance(resolved, needed_by)
       end
 
       private
+
+      # The chosen version's declared deps as requirements under the parent's
+      # context. Transitive deps inherit the declaring dep's Scope wholesale:
+      # a dep only needed in one group/host/env can't need its transitive
+      # closure anywhere else. Each Declaration arrives finished from the
+      # Repository (integration stamped, constraint normalized); only the
+      # context is stamped here, because context is a property of the path,
+      # not of the fact.
+      #
+      # @param chosen [PackageVersion] the version just pinned
+      # @param decl [ScopedDeclaration] the declaration it satisfies
+      # @return [Array<ScopedDeclaration>] the edges to queue
+      sig { params(chosen: PackageVersion, decl: ScopedDeclaration).returns(T::Array[ScopedDeclaration]) }
+      def universe_edges(chosen, decl)
+        case (claim = chosen.declarations)
+        when Declarations::Resolved
+          claim.declarations.map { |edge| ScopedDeclaration.new(declaration: edge, scope: decl.scope) }
+        when Declarations::ToolOwned
+          # The ecosystem's tool owns the closure; there is nothing to walk.
+          []
+        else
+          T.absurd(claim)
+        end
+      end
+
+      # The needs of the declaration's integration, as requirements under
+      # the declaration's context. A need whose own host/env is disjoint from
+      # the parent's applies nowhere beneath it and is skipped (a darwin-only
+      # tool under a linux-only use); the rest are checked against every ask
+      # seen so far and recorded as needed by this integration — recorded
+      # even when the package is already resolved, so the provenance is
+      # complete whichever path reached it first.
+      #
+      # @param decl [ScopedDeclaration] the using declaration (the parent)
+      # @param asks [Hash{Array(Symbol, String) => Ask}] every ask seen so far, by package; grown here
+      # @param needed_by [Hash{PackageId => Array<Symbol>}] provenance under construction; grown here
+      # @return [Array<ScopedDeclaration>] the needs to queue
+      # @raise [ConflictingDeclarationError] if a need disagrees with an earlier ask
+      sig do
+        params(
+          decl: ScopedDeclaration,
+          asks: T::Hash[[Symbol, String], Ask],
+          needed_by: T::Hash[PackageId, T::Array[Symbol]],
+        ).returns(T::Array[ScopedDeclaration])
+      end
+      def needs_under(decl, asks, needed_by)
+        @needs.fetch(decl.integration, []).filter_map do |need|
+          scope = need.scope.under(decl.scope)
+          next if scope.nil?
+
+          reject_disagreement(need, asks, needed_by_integration: decl.integration)
+          scoped = need.with_scope(scope)
+          (needed_by[package_id(scoped)] ||= []) << decl.integration
+          scoped
+        end
+      end
+
+      # Write each pin's provenance: the integrations whose manifests need
+      # it, sorted, so the lock reads the same whichever order the walk ran.
+      #
+      # @param resolved [Hash{PackageId => Dependency}] every minted pin
+      # @param needed_by [Hash{PackageId => Array<Symbol>}] provenance per package
+      # @return [Array<Dependency>] the pins, provenance stamped
+      sig do
+        params(
+          resolved: T::Hash[PackageId, Dependency],
+          needed_by: T::Hash[PackageId, T::Array[Symbol]],
+        ).returns(T::Array[Dependency])
+      end
+      def stamp_provenance(resolved, needed_by)
+        resolved.map do |id, pin|
+          next pin unless needed_by.key?(id)
+
+          parents = needed_by.fetch(id).map(&:to_s).uniq.sort
+          pin.with(metadata: pin.metadata.merge(Dependency::NEEDED_BY => parents))
+        end
+      end
 
       # Lift an addressed ask. The author forewent resolution: no universe is
       # queried, no scheme runs — the repository lifts the revision into a
@@ -331,20 +422,60 @@ module Dev
       # env may differ — they are axes, not asks.)
       #
       # @param declarations [Array<ScopedDeclaration>]
-      # @return [void]
+      # @return [Hash{Array(Symbol, String) => Ask}] the one ask per package,
+      #   for the walk to hold later asks (an integration's needs) to
       # @raise [ConflictingDeclarationError]
-      sig { params(declarations: T::Array[ScopedDeclaration]).void }
+      sig { params(declarations: T::Array[ScopedDeclaration]).returns(T::Hash[[Symbol, String], Ask]) }
       def reject_conflicts(declarations)
-        declarations.group_by { |d| [d.integration, d.name] }.each do |(integration, name), decls|
-          asks = decls.map do |d|
-            { constraint: d.constraint, source: d.source, revision: d.revision, materialization: d.materialization }
-          end.uniq
-          next if asks.size <= 1
+        declarations.group_by { |d| [d.integration, d.name] }.to_h do |(integration, name), decls|
+          asks = decls.map { |d| ask(d) }.uniq
+          if asks.size > 1
+            raise ConflictingDeclarationError,
+              "#{integration}/#{name} is declared with disagreeing asks: " \
+                "#{asks.map(&:inspect).join(" vs ")}"
+          end
 
-          raise ConflictingDeclarationError,
-            "#{integration}/#{name} is declared with disagreeing asks: " \
-              "#{asks.map(&:inspect).join(" vs ")}"
+          [[integration, name], T.must(asks.first)]
         end
+      end
+
+      # Hold a need to the ask already made for its package, if any: a
+      # project that declares the tool an integration needs merges with the
+      # need when the asks agree and conflicts when they do not. A need for a
+      # package nobody asked for yet becomes the ask later needs are held to.
+      #
+      # @param need [ScopedDeclaration] the need an integration's manifest exports
+      # @param asks [Hash{Array(Symbol, String) => Ask}] every ask seen so far; grown here
+      # @param needed_by_integration [Symbol] the integration whose manifest exports the need
+      # @return [void]
+      # @raise [ConflictingDeclarationError] if the need disagrees with the earlier ask
+      sig do
+        params(
+          need: ScopedDeclaration,
+          asks: T::Hash[[Symbol, String], Ask],
+          needed_by_integration: Symbol,
+        ).void
+      end
+      def reject_disagreement(need, asks, needed_by_integration:)
+        key = [need.integration, need.name]
+        earlier = asks[key]
+        if earlier && earlier != ask(need)
+          raise ConflictingDeclarationError,
+            "#{need.integration}/#{need.name} is declared with disagreeing asks: #{earlier.inspect} " \
+              "vs #{ask(need).inspect} (needed by #{needed_by_integration})"
+        end
+
+        asks[key] = ask(need)
+      end
+
+      # What a declaration asks for — everything two declarations of one
+      # package must agree on to resolve once.
+      #
+      # @param decl [ScopedDeclaration]
+      # @return [Ask]
+      sig { params(decl: ScopedDeclaration).returns(Ask) }
+      def ask(decl)
+        { constraint: decl.constraint, source: decl.source, revision: decl.revision, materialization: decl.materialization }
       end
 
       # Stamp the declaration's install-scoping axes (host, env) onto the

@@ -51,4 +51,37 @@ class Dev::Deps::ScopeTest < Minitest::Test
     Expect "the projection is empty — no absent keys smuggled in"
     scope.to_metadata == {}
   end
+
+  test "under: a need's scope placed under its user's takes the user's group and narrows host and env" do
+    Given "a need gated #{need_host.inspect}/#{need_env.inspect} under a user scoped #{parent_host.inspect}/#{parent_env.inspect}"
+    need = Dev::Deps::Scope.new(group: :app, host: need_host, env: need_env)
+    parent = Dev::Deps::Scope.new(group: :editor, host: parent_host, env: parent_env)
+
+    When "placing the need under the user"
+    result = need.under(parent)
+
+    Then "the group is the user's; each axis is whichever side is narrower"
+    result == Dev::Deps::Scope.new(group: :editor, host: expected_host, env: expected_env)
+
+    Where
+    need_host | need_env | parent_host | parent_env | expected_host | expected_env
+    nil       | nil      | nil         | nil        | nil           | nil
+    :darwin   | nil      | nil         | nil        | :darwin       | nil
+    nil       | nil      | :darwin     | "ci"       | :darwin       | "ci"
+    :darwin   | "dev"    | :darwin     | nil        | :darwin       | "dev"
+  end
+
+  test "under: disjoint hosts or envs have no intersection — the need does not apply" do
+    Given "a need and a user gated to different #{axis}"
+    need = Dev::Deps::Scope.new(**need_axes)
+    parent = Dev::Deps::Scope.new(**parent_axes)
+
+    Expect
+    need.under(parent).nil?
+
+    Where
+    axis    | need_axes          | parent_axes
+    "hosts" | { host: :darwin }  | { host: :linux }
+    "envs"  | { env: "ci" }      | { env: "dev" }
+  end
 end

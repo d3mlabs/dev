@@ -76,6 +76,18 @@ module Dev
         freeze
       end
 
+      # The same row under another context: what the Resolver's walk does to
+      # a need an integration's manifest exports — the ask and the per-row
+      # axes (platform, hook, materialization) are the manifest's, the
+      # context is the path's.
+      #
+      # @param scope [Scope] the context to resolve under
+      # @return [ScopedDeclaration]
+      sig { params(scope: Scope).returns(ScopedDeclaration) }
+      def with_scope(scope)
+        ScopedDeclaration.new(declaration:, scope:, platform:, post_install:, materialization:)
+      end
+
       # @return [String] the ask's package name (delegated)
       sig { returns(String) }
       def name = declaration.name

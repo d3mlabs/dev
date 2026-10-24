@@ -49,6 +49,27 @@ module Dev
         freeze
       end
 
+      # The context this scope resolves under when reached beneath a parent
+      # — the Resolver's walk from a using declaration into the needs its
+      # integration's manifest exports. Purpose is the consumer's, so the
+      # group is the parent's; on the host and env axes the result is what
+      # both agree on: an axis one side leaves open takes the other's value,
+      # and a value both state must match. nil when they disagree — no
+      # machine satisfies both, so a need scoped this way is simply not
+      # needed beneath that parent (a darwin-only tool under a linux-only
+      # use). A scope with nothing pinned narrows nothing: the parent's
+      # context is inherited wholesale.
+      #
+      # @param parent [Scope] the declaring parent's context
+      # @return [Scope, nil] the narrowed context, or nil when the two are
+      #   disjoint on some axis
+      sig { params(parent: Scope).returns(T.nilable(Scope)) }
+      def under(parent)
+        return nil if disjoint?(host, parent.host) || disjoint?(env, parent.env)
+
+        Scope.new(group: parent.group, host: host || parent.host, env: env || parent.env)
+      end
+
       # Install-scoping projection stamped onto minted pins, so host/env land
       # in the lockfile and the installer can filter on them. group is not
       # projected — it is a first-class Dependency field.
@@ -78,6 +99,24 @@ module Dev
       sig { returns(Integer) }
       def hash
         [self.class, group, host, env].hash
+      end
+
+      private
+
+      # Two values of one axis disagree only when both are stated and differ;
+      # an open side (nil) agrees with anything.
+      #
+      # @param mine [Symbol, String, nil] this scope's value
+      # @param theirs [Symbol, String, nil] the other scope's value
+      # @return [Boolean]
+      sig do
+        params(
+          mine: T.nilable(T.any(Symbol, String)),
+          theirs: T.nilable(T.any(Symbol, String)),
+        ).returns(T::Boolean)
+      end
+      def disjoint?(mine, theirs)
+        !mine.nil? && !theirs.nil? && mine != theirs
       end
     end
   end

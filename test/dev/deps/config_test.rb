@@ -25,7 +25,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
     gems = config.declarations.select { |d| d.integration == :bundler }
     gems.size == 2
     gems[0].name == "cli-ui"
-    gems[0].scope.group == Dev::Deps::DSL::DEFAULT_GEM_GROUP
+    gems[0].scope.group == Dev::Deps::DSL::DEFAULT_GROUP
     !gems[0].constraint.key?("version")
     gems[1].name == "rake"
     gems[1].constraint["version"] == "~> 13.0"
