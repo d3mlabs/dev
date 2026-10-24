@@ -6,6 +6,8 @@ require "dev/command_runner"
 require "dev/build_container_config"
 require "dev/credentials"
 require "dev/build_container"
+require "dev/shadowenv_llvm"
+require "dev/shadowenv_python"
 require "dev/shadowenv_ruby"
 require "support/fake_container_engine"
 
@@ -22,7 +24,7 @@ class CommandRunnerTest < Minitest::Test
     # don't run from a deleted directory (getcwd would raise ENOENT).
     @original_cwd = Dir.pwd
     @project_root = Pathname(Dir.mktmpdir("dev-runner-test"))
-    @runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", project_root: @project_root)
+    @runner = Dev::CommandRunner.new(ui: @ui, project_root: @project_root)
     @runner.stubs(:ensure_shadowenv_provisioned!)
   end
 
@@ -35,7 +37,7 @@ class CommandRunnerTest < Minitest::Test
   def container_runner(config)
     client = Dev::BuildContainer.new(engine: FakeContainerEngine.new)
     runner = Dev::CommandRunner.new(
-      ui: @ui, ruby_version: "4.0.1", build_container: config,
+      ui: @ui, build_container: config,
       project_root: @project_root, container_client: client,
     )
     [runner, client]
@@ -43,19 +45,40 @@ class CommandRunnerTest < Minitest::Test
 
   # --- Toolchain provisioning ---
 
-  test "run routes Ruby provisioning through the shared guarded ensure!" do
-    Given "a runner whose provisioning step is not stubbed"
-    runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", project_root: @project_root)
-    runner.stubs(:ensure_llvm_provisioned!)
-    runner.stubs(:ensure_python_provisioned!)
+  test "run provisions nothing for the interpreters: Ruby and Python are dependencies dev deps install activated" do
+    Given "a runner whose provisioning step is not stubbed, on a host that needs no LLVM"
+    runner = Dev::CommandRunner.new(ui: @ui, project_root: @project_root)
+    Dev::ShadowenvLlvm.stubs(:ci_or_linux?).returns(true)
     Kernel.stubs(:exec)
     cmd = Dev::ProjectCommand.new(run: "./bin/console", repl: true)
 
     When "we run a command"
     runner.exec_into(cmd)
 
-    Then "the declared Ruby is ensured for the project root"
-    1 * Dev::ShadowenvRuby.ensure!(ruby_version: "4.0.1", project_root: @project_root)
+    Then "no interpreter is resolved, built or activated on the way to the exec"
+    0 * Dev::ShadowenvRuby.activate!(keg: anything, version: anything, project_root: anything)
+    0 * Dev::ShadowenvPython.activate!(keg: anything, version: anything, project_root: anything)
+    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", "./bin/console")
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+  end
+
+  test "run provisions the host LLVM when the project needs it" do
+    Given "a runner whose provisioning step is not stubbed, over a project that needs LLVM"
+    runner = Dev::CommandRunner.new(ui: @ui, project_root: @project_root)
+    Dev::ShadowenvLlvm.stubs(:ci_or_linux?).returns(false)
+    Dev::ShadowenvLlvm.stubs(:project_needs_llvm?).with(@project_root).returns(true)
+    Dev::ShadowenvLlvm.stubs(:detect_llvm_prefix).returns("/opt/llvm")
+    Dev::ShadowenvLlvm.stubs(:provisioned?).with("/opt/llvm", project_root: @project_root).returns(false)
+    Kernel.stubs(:exec)
+    cmd = Dev::ProjectCommand.new(run: "./bin/console", repl: true)
+
+    When "we run a command"
+    runner.exec_into(cmd)
+
+    Then "the LLVM shadowenv is set up for the project root"
+    1 * Dev::ShadowenvLlvm.setup!(project_root: @project_root, llvm_prefix: "/opt/llvm")
 
     Cleanup
     Dir.chdir(@original_cwd)
@@ -278,7 +301,7 @@ class CommandRunnerTest < Minitest::Test
   test "run falls back to local execution when command has container: false" do
     Given "a runner with build_container but a command that opts out"
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry")
-    runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", build_container: config, project_root: @project_root)
+    runner = Dev::CommandRunner.new(ui: @ui, build_container: config, project_root: @project_root)
     runner.stubs(:ensure_shadowenv_provisioned!)
     cmd = Dev::ProjectCommand.new(run: "./bin/deploy.sh", repl: false, container: false)
 
@@ -292,14 +315,13 @@ class CommandRunnerTest < Minitest::Test
     Dir.chdir(@original_cwd)
   end
 
-  test "inside the container, a containerized command runs directly: no docker, the container Ruby ensured, shadowenv on" do
+  test "inside the container, a containerized command runs directly: no docker, shadowenv on" do
     Given "a runner that knows it is inside, over a persist container config"
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry", persist: true)
     client = Dev::BuildContainer.new(engine: FakeContainerEngine.new)
-    container_ruby = typed_mock(Dev::ContainerRuby)
     runner = Dev::CommandRunner.new(
-      ui: @ui, ruby_version: "4.0.1", build_container: config,
-      project_root: @project_root, container_client: client, inside_container: true, container_ruby: container_ruby,
+      ui: @ui, build_container: config,
+      project_root: @project_root, container_client: client, inside_container: true,
     )
     cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
     client.expects(:ensure_image!).never
@@ -310,9 +332,8 @@ class CommandRunnerTest < Minitest::Test
     When "we run the command"
     runner.exec_into(cmd)
 
-    Then "the store Ruby is ensured (not the host's), and the command execs under the project's shadowenv"
-    1 * container_ruby.ensure!(ruby_version: "4.0.1", project_root: @project_root)
-    0 * Dev::ShadowenvRuby.ensure!(ruby_version: anything, project_root: anything)
+    Then "nothing is provisioned (LLVM is the image's), and the command execs under the project's shadowenv"
+    0 * Dev::ShadowenvLlvm.setup!(project_root: anything, llvm_prefix: anything)
     1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/build.sh"))
 
     Cleanup
@@ -325,11 +346,10 @@ class CommandRunnerTest < Minitest::Test
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry", persist: true)
     client = Dev::BuildContainer.new(engine: FakeContainerEngine.new)
     runner = Dev::CommandRunner.new(
-      ui: @ui, ruby_version: "4.0.1", build_container: config,
+      ui: @ui, build_container: config,
       project_root: @project_root, container_client: client, host_platform: host,
     )
     runner.stubs(:ensure_llvm_provisioned!)
-    runner.stubs(:ensure_python_provisioned!)
     cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
     client.expects(:ensure_image!).never
     client.expects(:ensure_service!).never
@@ -339,8 +359,7 @@ class CommandRunnerTest < Minitest::Test
     When "we run the command"
     runner.exec_into(cmd)
 
-    Then "the host's own Ruby is ensured (this is the host, not a container), and the command execs under shadowenv"
-    1 * Dev::ShadowenvRuby.ensure!(ruby_version: "4.0.1", project_root: @project_root)
+    Then "the command execs under the host's shadowenv (this is the host, not a container)"
     1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/build.sh"))
 
     Cleanup
@@ -358,7 +377,7 @@ class CommandRunnerTest < Minitest::Test
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry")
     client = Dev::BuildContainer.new(engine: FakeContainerEngine.new)
     runner = Dev::CommandRunner.new(
-      ui: @ui, ruby_version: "4.0.1", build_container: config,
+      ui: @ui, build_container: config,
       project_root: @project_root, container_client: client, host_platform: "darwin-arm64",
     )
     cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
@@ -376,21 +395,15 @@ class CommandRunnerTest < Minitest::Test
     Dir.chdir(@original_cwd)
   end
 
-  test "inside the container, a repl command execs bare under shadowenv, and the host-only toolchains are not provisioned" do
-    Given "an inside runner over a project declaring python, and a repl command"
-    container_ruby = typed_mock(Dev::ContainerRuby)
-    container_ruby.stubs(:ensure!)
-    runner = Dev::CommandRunner.new(
-      ui: @ui, ruby_version: "4.0.1", project_root: @project_root, python_version: "3.12",
-      inside_container: true, container_ruby: container_ruby,
-    )
+  test "inside the container, a repl command execs bare under shadowenv, and the host-only LLVM is not provisioned" do
+    Given "an inside runner and a repl command"
+    runner = Dev::CommandRunner.new(ui: @ui, project_root: @project_root, inside_container: true)
     cmd = Dev::ProjectCommand.new(run: "./bin/console", repl: true)
 
     When "we run the command"
     runner.exec_into(cmd)
 
-    Then "the argv is shadowenv exec, sh -c and the command alone; python and llvm are the host's concern"
-    0 * Dev::ShadowenvPython.setup!(python_version: anything, project_root: anything)
+    Then "the argv is shadowenv exec, sh -c and the command alone; llvm is the image's concern"
     0 * Dev::ShadowenvLlvm.setup!(project_root: anything, llvm_prefix: anything)
     1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", "./bin/console")
 
@@ -400,7 +413,7 @@ class CommandRunnerTest < Minitest::Test
 
   test "run falls back to local execution when no build_container is configured" do
     Given "a runner without build_container"
-    runner = Dev::CommandRunner.new(ui: @ui, ruby_version: "4.0.1", project_root: @project_root)
+    runner = Dev::CommandRunner.new(ui: @ui, project_root: @project_root)
     runner.stubs(:ensure_shadowenv_provisioned!)
     cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
 

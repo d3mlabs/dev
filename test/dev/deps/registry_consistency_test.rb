@@ -30,7 +30,7 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
 
   # Every GroupDSL verb that creates a declaration, mapped to its integration
   # symbol. Adding a new declaration verb must add a Registry entry too.
-  DECLARATION_INTEGRATIONS = %i[bundler brew cmake luarocks ficsit gh steam xcode wwise pip].freeze
+  DECLARATION_INTEGRATIONS = %i[bundler brew cmake luarocks ficsit gh steam xcode wwise pip ruby python].freeze
 
   def source_file(klass)
     File.realpath(Object.const_source_location(klass.name).first)
@@ -94,6 +94,9 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
 
     Then ":url deps install through :cmake's instance, so deps.cmake stays whole"
     integrations.fetch(:cmake).equal?(integrations.fetch(:url))
+    # The interpreters install through brew's instance, so one activation covers every keg.
+    integrations.fetch(:brew).equal?(integrations.fetch(:ruby))
+    integrations.fetch(:brew).equal?(integrations.fetch(:python))
 
     Cleanup
     FileUtils.rm_rf(dir)

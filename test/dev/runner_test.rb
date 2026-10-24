@@ -5,7 +5,6 @@ require "test_helper"
 require "dev"
 require "dev/runner"
 require "fileutils"
-require "dev/shadowenv_ruby"
 require "stringio"
 require "tempfile"
 require "tmpdir"
@@ -563,7 +562,6 @@ class RunnerTest < Minitest::Test
       true }
     ui = fake_ui
     runner = build_runner(commands: {}, command_service: command_service, ui: ui, root: root)
-    Dev::ShadowenvRuby.stubs(:resolve_ruby_version).with("9.9.9").returns("9.9.9")
 
     When "we run a command with args"
     runner.run(["test", "--fast"])
@@ -572,8 +570,6 @@ class RunnerTest < Minitest::Test
     argv, context = contexts.fetch(0)
     argv == ["test", "--fast"]
     context.ui == ui
-    context.project!.ruby_version == "9.9.9"
-    context.project!.python_version == "3.12"
     context.project!.root == root
 
     Cleanup
@@ -740,15 +736,12 @@ class RunnerTest < Minitest::Test
 
   private
 
-  # Every run builds an ExecutionContext (the toolchain pass is eager now),
-  # so the helper always pins the project root to a temp dir and stubs the
-  # ruby resolution; tests needing specific toolchain behavior re-stub after
-  # (mocha matches the latest stub first) or pass their own root.
+  # Every run builds an ExecutionContext, so the helper always pins the
+  # project root to a temp dir; tests needing their own pass a root.
   def build_runner(name: "testproject", commands: {}, build: nil, runner: nil, command_service: nil,
     ui: fake_ui, out: StringIO.new, root: nil)
     root ||= (@tmp_roots ||= []).push(Pathname.new(Dir.mktmpdir("runner-test-"))).fetch(-1)
     Dev.stubs(:target_project_root).returns(root)
-    Dev::ShadowenvRuby.stubs(:resolve_ruby_version).returns("4.0.1")
 
     yaml = { "name" => name, "commands" => commands }
     yaml["build"] = build if build

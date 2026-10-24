@@ -1,8 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "fileutils"
 require "pathname"
+require "dev/shadowenv_file"
 
 module Dev
   # Shadowenv PATH activation: writes a `.shadowenv.d/<file>.lisp` that
@@ -11,10 +11,11 @@ module Dev
   # whichever keg brew linked, a published gh tree's `bin/` without a
   # hand-sourced script (ADR-0010, dev#289).
   #
-  # Integrations decide *which* directories; this module only renders and
-  # maintains the file. The provide record carries the activated set so a
-  # reader of the file can tell what it stands for, and so the file is
-  # rewritten exactly when the set changes.
+  # Integrations decide *which* directories; this module only renders the
+  # file and hands it to ShadowenvFile, which places it for the side this
+  # dev is on. The provide record carries the activated set so a reader of
+  # the file can tell what it stands for, and so the file is rewritten
+  # exactly when the set changes.
   module ShadowenvPath
     extend T::Sig
 
@@ -22,7 +23,8 @@ module Dev
 
     # Write the activation when it differs from what the project already
     # has, then trust shadowenv. An empty `paths` still writes the provide,
-    # so a set that shrank to nothing clears its stale prepends.
+    # so a set that shrank to nothing clears its stale prepends. Inside the
+    # build container the file is the `_container` sibling (ShadowenvFile).
     #
     # @param project_root [String, Pathname] project root (`.shadowenv.d` lives there)
     # @param filename [String] the lisp file, e.g. "515_brew.lisp"
@@ -38,17 +40,7 @@ module Dev
       ).returns(T::Boolean)
     end
     def setup!(project_root:, filename:, provide:, paths:)
-      content = generate_path_lisp(provide:, paths:)
-      shadowenv_d = File.join(project_root.to_s, ".shadowenv.d")
-      lisp_path = File.join(shadowenv_d, filename)
-      return false if File.exist?(lisp_path) && File.read(lisp_path) == content
-
-      FileUtils.mkdir_p(shadowenv_d)
-      File.write(lisp_path, content)
-      Dir.chdir(project_root.to_s) do
-        Kernel.system("shadowenv", "trust", out: File::NULL, err: File::NULL)
-      end
-      true
+      ShadowenvFile.write!(project_root:, filename:, body: generate_path_lisp(provide:, paths:))
     end
 
     # @param provide [Array(String, String)] integration name, activated set

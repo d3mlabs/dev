@@ -126,7 +126,6 @@ class Dev::Builtins::CacheGcCommandTest < Minitest::Test
       project: Dev::ProjectContext.new(
         name: "TestProject",
         root: Pathname.new("/tmp/cache-test"),
-        ruby_version: "4.0.1",
         build_container: build_container,
       ),
     )

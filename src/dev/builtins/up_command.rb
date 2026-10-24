@@ -91,7 +91,7 @@ module Dev
 
         # The host layer converges before project provisioning (self-update
         # + org Brewfile): project installs may lean on host tools (gh,
-        # rbenv). Warn-only — never blocks the project. Shipped skills link
+        # brew). Warn-only — never blocks the project. Shipped skills link
         # here too: `up` is the fresh-box bootstrap, so the machine's skill
         # links must exist after it, not after the first `dev plan`.
         @host_service.converge_tooling

@@ -61,7 +61,7 @@ class Dev::Builtins::DepsPathCommandTest < Minitest::Test
   def build_context(project_root)
     Dev::ExecutionContext.new(
       ui: typed_mock(Dev::Cli::Ui),
-      project: Dev::ProjectContext.new(name: "TestProject", root: project_root, ruby_version: "4.0.1"),
+      project: Dev::ProjectContext.new(name: "TestProject", root: project_root),
     )
   end
 end

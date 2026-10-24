@@ -19,13 +19,16 @@ module Dev
     # each contributing the one stable version it currently has.
     #
     # Brew is a moving registry (one current version per spec), but the
-    # family is enumerable first-class: `brew info --json=v1 <name>` reports
-    # the bare spec's facts plus its versioned_formulae list, and one batched
-    # info call fetches every sibling's facts. Each sibling's suffix rides
-    # its version as the version_suffix fact BrewScheme's version: constraint
-    # matches. Third-party tap formulae report an empty family and degrade to
-    # a singleton universe. Casks are a separate universe
-    # (BrewCaskRepository) under the :cask integration.
+    # family is enumerable first-class. For core, `brew info --json=v1 <name>`
+    # reports the bare spec's facts plus its versioned_formulae list; for a
+    # third-party tap brew reports an empty family, so the tap's own formula
+    # list (`brew tap-info --json`) is read instead and the bare spec is
+    # optional — a tap publishing one immutable `ruby@4.0.x` per patch is a
+    # family with no bare member. Either way one batched info call fetches
+    # every member's facts, and each member's suffix rides its version as
+    # the version_suffix fact a scheme matches (BrewScheme's version: picks
+    # a suffix; GemScheme, for :ruby, ranges over the stable versions).
+    # Casks are a separate universe (BrewCaskRepository) under :cask.
     #
     # Each version publishes its bottles: every bottle tag is a platform and
     # every bottle (URL + sha256) that platform's artifact, so the pin
@@ -78,18 +81,79 @@ module Dev
       sig { override.params(id: PackageId).returns(Package) }
       def find(id)
         tap = id.source
-        base_info = brew_info_with_tap(build_formula_spec(id.name, tap), tap)
+        infos = tap ? tap_family_infos(id.name, tap) : core_family_infos(id.name)
 
-        family = T.let(base_info["versioned_formulae"] || [], T::Array[String])
-        sibling_infos = family.empty? ? [] : brew_info_all(family.map { |name| build_formula_spec(name, tap) })
-
-        versions = (sibling_infos + [base_info])
+        versions = infos
           .select { |info| info.dig("versions", "stable") }
           .map { |info| version_from(info, tap) }
         Package.new(id: id, versions: versions)
       end
 
       private
+
+      # A core formula's family, as brew reports it: the bare spec's
+      # versioned_formulae siblings first, the bare spec last.
+      #
+      # @param name [String] formula name
+      # @return [Array<Hash>] brew info for each family member
+      # @raise [BrewInfoError] if `brew info` fails for the formula
+      sig { params(name: String).returns(T::Array[T::Hash[String, T.untyped]]) }
+      def core_family_infos(name)
+        base_info = T.must(brew_info_all([name]).first)
+        family = T.let(base_info["versioned_formulae"] || [], T::Array[String])
+        sibling_infos = family.empty? ? [] : brew_info_all(family)
+        sibling_infos + [base_info]
+      end
+
+      # A tap formula's family, read from the tap's own formula list. Brew
+      # computes versioned_formulae for core through the API and reports an
+      # empty family for a third-party tap formula, so `ruby@4.0.5`'s
+      # siblings are invisible to `brew info`; `brew tap-info --json` lists
+      # every formula the tap carries. The bare spec is optional — a tap
+      # may publish only `name@exact` files — and sits last when present.
+      #
+      # @param name [String] bare formula name
+      # @param tap [String] tap slug
+      # @return [Array<Hash>] brew info for each family member
+      # @raise [BrewInfoError] if the tap cannot be read or carries no member
+      sig { params(name: String, tap: String).returns(T::Array[T::Hash[String, T.untyped]]) }
+      def tap_family_infos(name, tap)
+        members = tap_formula_names(tap).select { |member| member == name || member.start_with?("#{name}@") }
+        siblings, bare = members.partition { |member| member != name }
+        specs = (siblings + bare).map { |member| build_formula_spec(member, tap) }
+        raise BrewInfoError, "#{tap} carries no formula #{name} or #{name}@*" if specs.empty?
+
+        brew_info_all(specs)
+      end
+
+      # The short names of every formula a tap carries, registering the tap
+      # first when this machine has never tapped it — resolving a
+      # `tap:`-scoped formula on a fresh host requires the tap to be present.
+      #
+      # @param tap [String] tap slug
+      # @return [Array<String>] formula names without the tap prefix
+      # @raise [BrewInfoError] if the tap cannot be read or registered
+      sig { params(tap: String).returns(T::Array[String]) }
+      def tap_formula_names(tap)
+        info = tap_info(tap)
+        unless info["installed"]
+          raise BrewInfoError, "brew tap #{tap} failed" unless register_tap(tap)
+
+          info = tap_info(tap)
+        end
+        T.let(info["formula_names"] || [], T::Array[String]).map { |full| full.delete_prefix("#{tap}/") }
+      end
+
+      # @param tap [String] tap slug
+      # @return [Hash] parsed `brew tap-info --json` for the tap
+      # @raise [BrewInfoError] if the command fails
+      sig { params(tap: String).returns(T::Hash[String, T.untyped]) }
+      def tap_info(tap)
+        out, _err, status = Open3.capture3("brew", "tap-info", "--json", tap)
+        raise BrewInfoError, "brew tap-info --json #{tap} failed" unless status.success?
+
+        JSON.parse(out).first
+      end
 
       # One family member's facts as a version: its stable version string,
       # every bottle it publishes — each tag a platform, each bottle the
@@ -141,23 +205,6 @@ module Dev
       sig { params(name: String, tap: T.nilable(String)).returns(String) }
       def build_formula_spec(name, tap)
         tap ? "#{tap}/#{name}" : name
-      end
-
-      # Query brew info, registering the declaration's tap first when the
-      # initial query fails — resolving a `tap:`-scoped formula on a machine
-      # that has never installed it requires the tap to be present.
-      #
-      # @param formula [String] formula spec (e.g. "xcodesorg/made/xcodes")
-      # @param tap [String, nil] tap slug from the declaration
-      # @return [Hash] parsed JSON info for the formula
-      # @raise [BrewInfoError] if the command fails
-      sig { params(formula: String, tap: T.nilable(String)).returns(T::Hash[String, T.untyped]) }
-      def brew_info_with_tap(formula, tap)
-        T.must(brew_info_all([formula]).first)
-      rescue BrewInfoError
-        raise unless tap && register_tap(tap)
-
-        T.must(brew_info_all([formula]).first)
       end
 
       # Query `brew info --json=v1` for one or more formulae in a single call.

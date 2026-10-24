@@ -44,6 +44,18 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
          .returns([JSON.generate(infos), "", stub(success?: true)])
   end
 
+  # `brew tap-info --json <tap>`: the tap's formula list (full names), or an
+  # uninstalled tap's empty one.
+  def tap_info_json(tap, names, installed: true)
+    JSON.generate([{ "name" => tap, "installed" => installed, "formula_names" => names.map { |name| "#{tap}/#{name}" } }])
+  end
+
+  def stub_tap_info(tap, names)
+    Open3.stubs(:capture3)
+         .with("brew", "tap-info", "--json", tap)
+         .returns([tap_info_json(tap, names), "", stub(success?: true)])
+  end
+
   test "find reports a family-less formula as a singleton universe" do
     Given "a formula with no versioned siblings"
     repository = Dev::Deps::BrewRepository.new
@@ -115,6 +127,7 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
   test "find qualifies family queries with the tap and records it as a fact" do
     Given "a tapped formula"
     repository = Dev::Deps::BrewRepository.new
+    stub_tap_info("someorg/sometap", ["mytool", "othertool"])
     stub_brew_info(["someorg/sometap/mytool"],
       [formula_json("mytool", stable: "1.2.0", sha: "mt12")])
 
@@ -128,18 +141,60 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
     package.version("1.2.0").metadata == { "tap" => "someorg/sometap", "format" => "source" }
   end
 
-  test "find registers the declared tap and retries when brew info fails untapped" do
+  test "find enumerates a tap formula's name@ family from the tap's own formula list, bare spec optional" do
+    Given "a tap publishing one immutable formula per patch and no bare formula, beside look-alike names"
+    repository = Dev::Deps::BrewRepository.new
+    stub_tap_info("d3mlabs/d3mlabs", ["dev", "ruby-build", "ruby@4.0.5", "ruby@4.0.6", "ruby@4.0.9", "rubyfmt"])
+    stub_brew_info(["d3mlabs/d3mlabs/ruby@4.0.5", "d3mlabs/d3mlabs/ruby@4.0.6", "d3mlabs/d3mlabs/ruby@4.0.9"], [
+      formula_json("ruby@4.0.5", stable: "4.0.5", tap: "d3mlabs/d3mlabs", tap_git_head: "532b8ac5"),
+      formula_json("ruby@4.0.6", stable: "4.0.6", tap: "d3mlabs/d3mlabs", tap_git_head: "532b8ac5"),
+      formula_json("ruby@4.0.9", stable: "4.0.9", tap: "d3mlabs/d3mlabs", tap_git_head: "532b8ac5", bottles: ["arm64_tahoe", "x86_64_linux"]),
+    ])
+
+    When "finding the bare name with the tap on the id"
+    package = repository.find(
+      Dev::Deps::PackageId.new(integration: :ruby, name: "ruby", source: "d3mlabs/d3mlabs"),
+    )
+
+    Then "brew info reports an empty family for a tap formula, so the tap's list is the universe: every ruby@ file, nothing else"
+    package.versions.map(&:version) == ["4.0.5", "4.0.6", "4.0.9"]
+    package.version("4.0.9").metadata == {
+      "tap" => "d3mlabs/d3mlabs", "version_suffix" => "4.0.9", "tap_commit" => "532b8ac5", "format" => "bottle",
+    }
+    package.version("4.0.5").metadata["format"] == "source"
+  end
+
+  test "find lists a tap family's bare spec last, as the unconstrained pick" do
+    Given "a tap carrying a bare formula and a versioned sibling"
+    repository = Dev::Deps::BrewRepository.new
+    stub_tap_info("someorg/sometap", ["tool", "tool@1"])
+    stub_brew_info(["someorg/sometap/tool@1", "someorg/sometap/tool"], [
+      formula_json("tool@1", stable: "1.9.0", tap: "someorg/sometap"),
+      formula_json("tool", stable: "2.0.0", tap: "someorg/sometap"),
+    ])
+
+    When "finding"
+    package = repository.find(
+      Dev::Deps::PackageId.new(integration: :brew, name: "tool", source: "someorg/sometap"),
+    )
+
+    Then
+    package.versions.map(&:version) == ["1.9.0", "2.0.0"]
+    package.version("1.9.0").metadata["version_suffix"] == "1"
+    package.version("2.0.0").metadata.key?("version_suffix") == false
+  end
+
+  test "find registers the declared tap and retries when it is not installed" do
     Given "a tapped formula on a machine that has never tapped it"
     repository = Dev::Deps::BrewRepository.new
-    brew_json = JSON.generate([formula_json("xcodes", stable: "1.6.2", sha: "xc123")])
-
     Open3.stubs(:capture3)
-         .with("brew", "info", "--json=v1", "xcodesorg/made/xcodes")
-         .returns(["", "Error: this command requires the tap", stub(success?: false)])
-         .then.returns([brew_json, "", stub(success?: true)])
+         .with("brew", "tap-info", "--json", "xcodesorg/made")
+         .returns([tap_info_json("xcodesorg/made", [], installed: false), "", stub(success?: true)])
+         .then.returns([tap_info_json("xcodesorg/made", ["xcodes"]), "", stub(success?: true)])
     Open3.stubs(:capture3)
          .with("brew", "tap", "xcodesorg/made")
          .returns(["", "", stub(success?: true)])
+    stub_brew_info(["xcodesorg/made/xcodes"], [formula_json("xcodes", stable: "1.6.2", sha: "xc123")])
 
     When "finding with the tap on the id"
     package = repository.find(
@@ -151,11 +206,26 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
     package.version("1.6.2").metadata["tap"] == "xcodesorg/made"
   end
 
+  test "find raises BrewInfoError when the tap carries neither the formula nor a name@ sibling" do
+    Given "a tap without the formula"
+    repository = Dev::Deps::BrewRepository.new
+    stub_tap_info("someorg/sometap", ["othertool"])
+
+    When "finding"
+    repository.find(Dev::Deps::PackageId.new(integration: :brew, name: "mytool", source: "someorg/sometap"))
+
+    Then "the error names the tap and the family it looked for"
+    error = raises Dev::Deps::BrewRepository::BrewInfoError
+    error.message.include?("someorg/sometap")
+    error.message.include?("mytool@*")
+  end
+
   # --- A: the facts an image build pins ---------------------------------------
 
   test "find records the tap commit brew reports as the tap_commit fact" do
     Given "a tapped formula whose tap is checked out at a commit"
     repository = Dev::Deps::BrewRepository.new
+    stub_tap_info("d3mlabs/d3mlabs", ["wwise-cli"])
     stub_brew_info(["d3mlabs/d3mlabs/wwise-cli"],
       [formula_json("wwise-cli", stable: "1.0.0", tap: "d3mlabs/d3mlabs", tap_git_head: "e5810c4f")])
 
@@ -171,6 +241,7 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
   test "find records how the image build gets a tap formula from its bottle block: #{description}" do
     Given "a tap formula (brew info reads it from source, so every bottle it has is listed)"
     repository = Dev::Deps::BrewRepository.new
+    stub_tap_info("someorg/sometap", ["mytool"])
     stub_brew_info(["someorg/sometap/mytool"],
       [formula_json("mytool", stable: "1.2.0", tap: "someorg/sometap", bottles: bottles)])
 

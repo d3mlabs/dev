@@ -10,7 +10,8 @@
 require "dev/deps"
 
 Dev::Deps.define do
-  # The project Ruby toolchain; dev provisions it (rbenv + shadowenv).
+  # The project Ruby: a brew pin from the d3mlabs tap (ruby@4.0.6), installed
+  # by `dev deps install` and activated in the project shadowenv.
   # No gem declarations — the hand-written Gemfile stays bundler-managed.
   ruby "4.0.6"
 end

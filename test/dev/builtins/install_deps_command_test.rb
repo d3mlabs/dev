@@ -5,7 +5,6 @@ require "test_helper"
 require "dev/builtins/install_deps_command"
 require "fileutils"
 require "pathname"
-require "dev/shadowenv_ruby"
 require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
@@ -22,7 +21,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     !command.hidden?
   end
 
-  test "call provisions the pinned Ruby, installs for the detected env/host, then runs both hygiene hooks scoped to the project" do
+  test "call installs for the detected env/host, then runs both hygiene hooks scoped to the project" do
     Given "a command with every collaborator faked, over a project that locks gems"
     root = Pathname.new(Dir.mktmpdir("install-deps-"))
     lock(root, gem_dep, brew_build_dep)
@@ -37,9 +36,6 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
       installer_factory: ->(_lockfile, _integrations) { installer },
       host_service: host_service,
     )
-    # Headless boxes reach dev deps install before any CommandRunner provisioning,
-    # so the builtin provisions the toolchain itself — the true boundary.
-    Dev::ShadowenvRuby.expects(:converge!).with(ruby_version: "4.0.1", project_root: root).once
 
     When "running dev deps install"
     command.call(args: no_args, context: build_context(root))
@@ -51,15 +47,12 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "--group narrows the install to the named groups and skips the project Ruby when no gems are selected" do
+  test "--group narrows the install to the named groups" do
     Given "a project locking a build-group brew dep and an app-group gem"
     root = Pathname.new(Dir.mktmpdir("install-deps-group-"))
     lock(root, gem_dep, brew_build_dep)
     installer = typed_mock(Dev::Deps::Installer)
     command = build_command(installer:)
-    # The image bootstrap runs this on Homebrew's Ruby: provisioning the
-    # project's pinned Ruby there would be waste nobody consumes.
-    Dev::ShadowenvRuby.expects(:converge!).never
 
     When "running dev deps install --group build"
     command.call(args: parsed_args(command, ["--group", "build"]), context: build_context(root))
@@ -73,18 +66,17 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "--group still provisions the project Ruby when the selection locks gems" do
+  test "--group=value is read like --group value" do
     Given "a project locking an app-group gem"
     root = Pathname.new(Dir.mktmpdir("install-deps-group-gems-"))
     lock(root, gem_dep, brew_build_dep)
     installer = typed_mock(Dev::Deps::Installer)
     command = build_command(installer:)
-    Dev::ShadowenvRuby.expects(:converge!).with(ruby_version: "4.0.1", project_root: root).once
 
     When "running dev deps install --group=app"
     command.call(args: parsed_args(command, ["--group=app"]), context: build_context(root))
 
-    Then "the pinned Ruby converged (bundler installs against it) and the app group installed"
+    Then "the app group installed"
     1 * installer.install(
       env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: [:app], except: [], integration_types: nil
     )
@@ -99,7 +91,6 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     lock(root, gem_dep, brew_build_dep, gh_build_dep)
     installer = typed_mock(Dev::Deps::Installer)
     command = build_command(installer:)
-    Dev::ShadowenvRuby.expects(:converge!).never
 
     When "running dev deps install --group build --integration brew"
     command.call(args: parsed_args(command, ["--group", "build", "--integration", "brew"]), context: build_context(root))
@@ -120,12 +111,11 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     lock(root, gem_dep, brew_build_dep)
     installer = typed_mock(Dev::Deps::Installer)
     command = build_command(installer:)
-    Dev::ShadowenvRuby.expects(:converge!).never
 
     When "running dev deps install --except app"
     command.call(args: parsed_args(command, ["--except", "app"]), context: build_context(root))
 
-    Then "the installer received the exclusion; the gem-less selection provisioned no Ruby"
+    Then "the installer received the exclusion"
     1 * installer.install(
       env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: nil, except: [:app], integration_types: nil
     )
@@ -134,23 +124,20 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "inside the container, the install excludes nothing by default (the container owns its data root, ADR-0008) and provisions the container Ruby, not the host's" do
+  test "inside the container, the install excludes nothing by default (the container owns its data root, ADR-0008)" do
     Given "an inside command over a project locking a build-group brew dep and an app-group gem"
     root = Pathname.new(Dir.mktmpdir("install-deps-inside-"))
     lock(root, gem_dep, brew_build_dep)
     installer = typed_mock(Dev::Deps::Installer)
-    container_ruby = typed_mock(Dev::ContainerRuby)
-    command = build_command(installer:, inside_container: true, container_ruby:)
+    command = build_command(installer:, inside_container: true)
 
     When "running dev deps install with no flags"
     command.call(args: no_args, context: build_context(root))
 
-    Then "the whole lock is installed, same as on a host, and the store Ruby is converged"
+    Then "the whole lock is installed, same as on a host — the locked Ruby included, as a brew pin from Linuxbrew"
     1 * installer.install(
       env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: nil, except: [], integration_types: nil
     )
-    1 * container_ruby.converge!(ruby_version: "4.0.1", project_root: root)
-    0 * Dev::ShadowenvRuby.converge!
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -161,8 +148,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     root = Pathname.new(Dir.mktmpdir("install-deps-inside-except-"))
     lock(root, gem_dep, brew_build_dep)
     installer = typed_mock(Dev::Deps::Installer)
-    container_ruby = typed_mock(Dev::ContainerRuby)
-    command = build_command(installer:, inside_container: true, container_ruby:)
+    command = build_command(installer:, inside_container: true)
 
     When "running dev deps install --except app"
     command.call(args: parsed_args(command, ["--except", "app"]), context: build_context(root))
@@ -171,8 +157,6 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     1 * installer.install(
       env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: nil, except: [:app], integration_types: nil
     )
-    0 * container_ruby.converge!
-    0 * Dev::ShadowenvRuby.converge!
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -183,7 +167,6 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     root = Pathname.new(Dir.mktmpdir("install-deps-inside-wiring-"))
     installer = typed_mock(Dev::Deps::Installer)
     installer.stubs(:install)
-    container_ruby = typed_mock(Dev::ContainerRuby)
     factory_inputs = []
     host_service = typed_mock(Dev::HostService)
     command = Dev::Builtins::InstallDepsCommand.new(
@@ -193,7 +176,6 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
       },
       host_service: host_service,
       inside_container: true,
-      container_ruby: container_ruby,
     )
 
     When "running dev deps install"
@@ -225,7 +207,6 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
       },
       host_service: quiet_host_service,
     )
-    Dev::ShadowenvRuby.stubs(:converge!)
 
     When "running dev deps install --group build --integration brew --pinned-taps"
     command.call(args: parsed_args(command, %w[--group build --integration brew --pinned-taps]), context: build_context(root))
@@ -252,7 +233,6 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
       },
       host_service: quiet_host_service,
     )
-    Dev::ShadowenvRuby.stubs(:converge!)
 
     When "running dev deps install"
     command.call(args: no_args, context: build_context(root))
@@ -271,10 +251,9 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     Given "a command with the default factory over an empty project"
     # The empty project keeps the real collaborators inert: the lockfile
     # pins nothing (install dispatches nothing). Only the machine-global
-    # boundaries — the Ruby provisioner and the host service — are faked.
+    # boundary — the host service — is faked.
     root = Pathname.new(Dir.mktmpdir("install-deps-default-"))
     command = Dev::Builtins::InstallDepsCommand.new(host_service: quiet_host_service)
-    Dev::ShadowenvRuby.stubs(:converge!)
 
     When "running dev deps install"
     command.call(args: no_args, context: build_context(root))
@@ -288,13 +267,11 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
 
   private
 
-  def build_command(installer: typed_mock(Dev::Deps::Installer), inside_container: false,
-                    container_ruby: typed_mock(Dev::ContainerRuby))
+  def build_command(installer: typed_mock(Dev::Deps::Installer), inside_container: false)
     Dev::Builtins::InstallDepsCommand.new(
       installer_factory: ->(_lockfile, _integrations) { installer },
       host_service: quiet_host_service,
       inside_container:,
-      container_ruby:,
     )
   end
 
@@ -329,7 +306,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
   def build_context(project_root)
     Dev::ExecutionContext.new(
       ui: typed_mock(Dev::Cli::Ui),
-      project: Dev::ProjectContext.new(name: "TestProject", root: project_root, ruby_version: "4.0.1"),
+      project: Dev::ProjectContext.new(name: "TestProject", root: project_root),
     )
   end
 end

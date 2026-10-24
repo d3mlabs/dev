@@ -736,12 +736,59 @@ class Dev::Deps::DSLTest < Minitest::Test
     When "a manifest sets ruby, python and declares a formula"
     config = Dev::Deps.define do
       ruby "4.0.1"
+      python "3.12"
       brew "jq"
     end
 
-    Then "the ruby requirement is on the config, not in the exports"
-    config.ruby_version_requirement == "4.0.1"
+    Then "the interpreters are declarations of the project, not in the exports"
+    config.declarations.map(&:name) == ["ruby", "python", "jq"]
     config.exports.map(&:name) == ["jq"]
+  end
+
+  test "ruby mints a :ruby declaration against the d3mlabs tap's ruby@ family: #{description}" do
+    When "a manifest declares a Ruby"
+    config = Dev::Deps.define { ruby version }
+    declaration = config.declarations.fetch(0)
+
+    Then "one declaration named ruby, resolved over the tap's ruby@X.Y.Z formulae with a rubygems requirement"
+    declaration.name == "ruby"
+    declaration.integration == :ruby
+    declaration.source == "d3mlabs/d3mlabs"
+    declaration.constraint == { "version" => requirement }
+    declaration.scope.group == Dev::Deps::DSL::DEFAULT_GROUP
+    # The tap is registered for the install, so no tap line is needed.
+    config.taps.map(&:name) == ["d3mlabs/d3mlabs"]
+
+    Where
+    description                         | version   | requirement
+    "an exact patch pins it"            | "4.0.5"   | "4.0.5"
+    "a requirement passes through"      | "~> 4.0"  | "~> 4.0"
+    "a minor means any patch of it"     | "4.0"     | "~> 4.0.0"
+    "a symbol reads as its string"      | :"4.0.6"  | "4.0.6"
+  end
+
+  test "ruby leaves a tap the manifest declares itself alone" do
+    When "the manifest taps d3mlabs with its own URL first"
+    config = Dev::Deps.define do
+      tap "d3mlabs/d3mlabs", url: "file:///tmp/tap"
+      ruby "4.0.5"
+    end
+
+    Then
+    config.taps.map { |tap| [tap.name, tap.url.to_s] } == [["d3mlabs/d3mlabs", "file:///tmp/tap"]]
+  end
+
+  test "python mints a :python declaration selecting core's python@minor" do
+    When "a manifest declares a Python minor"
+    config = Dev::Deps.define { python "3.12" }
+    declaration = config.declarations.fetch(0)
+
+    Then "one declaration named python, the minor as the formula suffix, no tap (homebrew/core is the channel)"
+    declaration.name == "python"
+    declaration.integration == :python
+    declaration.source.nil?
+    declaration.constraint == { "version" => "3.12" }
+    config.taps.empty?
   end
 
   test "an unknown top-level verb is still a NoMethodError" do

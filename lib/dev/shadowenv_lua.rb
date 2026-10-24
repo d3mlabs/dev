@@ -9,7 +9,7 @@ module Dev
   # Shadowenv Lua provisioning: generates .shadowenv.d/510_lua.lisp so that
   # lua, luarocks, and project-local lua_modules are in PATH / LUA_PATH / LUA_CPATH.
   #
-  # Mirrors ShadowenvRuby. Triggered when dev.yml declares `lua: "5.1"`.
+  # Triggered when dependencies.rb declares `lua_version "5.1"`.
   module ShadowenvLua
     extend T::Sig
     include Kernel

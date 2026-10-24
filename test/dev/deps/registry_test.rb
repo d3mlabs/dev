@@ -18,6 +18,19 @@ class Dev::Deps::RegistryTest < Minitest::Test
     classes[:brew] == Dev::Deps::BrewIntegration
     classes[:xcode] == Dev::Deps::XcodeIntegration
     classes[:url] == Dev::Deps::CmakeIntegration
+    classes[:ruby] == Dev::Deps::BrewIntegration
+    classes[:python] == Dev::Deps::BrewIntegration
     classes.values.all? { |klass| klass <= Dev::Deps::Integration }
+  end
+
+  test "the interpreters resolve over brew's universe with their own constraint semantics" do
+    When "listing the schemes"
+    schemes = Dev::Deps::Registry.schemes
+
+    Then "ruby ranges with rubygems requirements over the tap's ruby@ family; python selects a core suffix"
+    schemes.fetch(:ruby).is_a?(Dev::Deps::GemScheme)
+    schemes.fetch(:python).is_a?(Dev::Deps::BrewScheme)
+    Dev::Deps::Registry.repositories(project_root: Pathname("/tmp")).fetch(:ruby).is_a?(Dev::Deps::BrewRepository)
+    Dev::Deps::Registry.repositories(project_root: Pathname("/tmp")).fetch(:python).is_a?(Dev::Deps::BrewRepository)
   end
 end

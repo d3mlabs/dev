@@ -48,17 +48,9 @@ module Dev
       sig { returns(T::Array[ScopedDeclaration]) }
       attr_reader :exports
 
-      # @return [String, nil] declared Ruby version
-      sig { returns(T.nilable(String)) }
-      attr_reader :ruby_version_requirement
-
       # @return [String, nil] declared Lua version
       sig { returns(T.nilable(String)) }
       attr_reader :lua_version_value
-
-      # @return [String, nil] declared Python minor version
-      sig { returns(T.nilable(String)) }
-      attr_reader :python_version_value
 
       # @return [Hash{Symbol => Class, String}] custom integration registrations
       sig { returns(T::Hash[Symbol, T.untyped]) }
@@ -73,25 +65,37 @@ module Dev
         @taps = T.let({}, T::Hash[String, T::Hash[String, T.untyped]])
         @declarations = T.let([], T::Array[ScopedDeclaration])
         @exports = T.let([], T::Array[ScopedDeclaration])
-        @ruby_version_requirement = T.let(nil, T.nilable(String))
         @lua_version_value = T.let(nil, T.nilable(String))
-        @python_version_value = T.let(nil, T.nilable(String))
         @registered_integrations = T.let({}, T::Hash[Symbol, T.untyped])
         @registered_methods = T.let([], T::Array[Symbol])
       end
 
-      # Declare the project's Ruby toolchain — a first-class dependency, on equal
-      # footing with brew/cmake/gh. dev provisions this exact version (rbenv +
-      # shadowenv) before any command and writes it as the generated Gemfile's
-      # `ruby` directive. It is resolved specially (early, pre-dispatch) rather than
-      # through the resolver -> lockfile -> install pipeline because it is the
-      # interpreter every other dependency and command runs under.
+      # The tap publishing one immutable `ruby@X.Y.Z` formula per Ruby patch
+      # — the universe `ruby` resolves over (homebrew-d3mlabs#8).
+      RUBY_TAP = "d3mlabs/d3mlabs"
+
+      # Declare the project's Ruby: a dependency like any other, minted as a
+      # :ruby declaration the Resolver ranges over the tap's `ruby@X.Y.Z`
+      # family with rubygems requirement semantics (GemScheme), locked to one
+      # exact patch, and installed through brew as a keg-only bottle that dev
+      # activates in the project shadowenv. The locked version is also the
+      # generated Gemfile's `ruby` directive.
       #
-      # @param version [String, Symbol] exact Ruby version (e.g. "4.0.5")
+      # `"4.0.5"` pins that patch; `"~> 4.0"` takes the highest 4.0.x the tap
+      # has at `dev deps update` (a patch upgrade is a re-lock); a bare minor
+      # `"4.0"` means any patch of it, as `python "3.12"` does.
+      #
+      # @param version [String, Symbol] a rubygems requirement, exact or ranged
       # @return [void]
       sig { params(version: T.any(String, Symbol)).void }
       def ruby(version)
-        @ruby_version_requirement = version.to_s.strip
+        requirement = ruby_requirement(version.to_s.strip)
+        @taps[RUBY_TAP] ||= { "name" => RUBY_TAP, "url" => nil }
+        @declarations << ScopedDeclaration.new(
+          declaration: Declaration.new(name: "ruby", integration: :ruby, constraint: { "version" => requirement },
+            source: RUBY_TAP),
+          scope: Scope.new(group: DEFAULT_GROUP),
+        )
       end
 
       # Declare the Lua version for LuaRocks integration.
@@ -103,17 +107,22 @@ module Dev
         @lua_version_value = version.to_s.strip
       end
 
-      # Declare the project's Python toolchain. Like `ruby`, this is a first-class
-      # toolchain: dev provisions the interpreter (Homebrew python@<version>) and a
-      # project-local .venv (ShadowenvPython) before commands run, and pip deps
-      # (declared with `pip` inside a group) install into that venv. Resolved
-      # specially (pre-dispatch), not through the resolver -> lockfile pipeline.
+      # Declare the project's Python: a :python declaration selecting
+      # homebrew/core's `python@<minor>` (the minor is the formula suffix, as
+      # `brew "llvm", version: "18"` selects llvm@18), locked and installed
+      # through brew like any formula; dev builds the project `.venv` on the
+      # locked keg, and pip deps (declared with `pip` inside a group) install
+      # into that venv.
       #
       # @param version [String, Symbol] Python minor version (e.g. "3.12")
       # @return [void]
       sig { params(version: T.any(String, Symbol)).void }
       def python(version)
-        @python_version_value = version.to_s.strip
+        minor = version.to_s.strip
+        @declarations << ScopedDeclaration.new(
+          declaration: Declaration.new(name: "python", integration: :python, constraint: { "version" => minor }),
+          scope: Scope.new(group: DEFAULT_GROUP),
+        )
       end
 
       # Declare a Homebrew tap.
@@ -196,6 +205,17 @@ module Dev
         T.unsafe(group_dsl).public_send(verb, *args, **kwargs, &block)
         @declarations.concat(group_dsl.declarations)
         @exports.concat(group_dsl.declarations)
+      end
+
+      # The rubygems requirement a `ruby` argument means: a bare minor
+      # ("4.0") is any patch of it; anything else — an exact patch, an
+      # explicit requirement — is taken as written.
+      #
+      # @param version [String] the argument, stripped
+      # @return [String] a Gem::Requirement expression
+      sig { params(version: String).returns(String) }
+      def ruby_requirement(version)
+        version.match?(/\A\d+\.\d+\z/) ? "~> #{version}.0" : version
       end
     end
 

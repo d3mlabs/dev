@@ -27,9 +27,9 @@ require "support/parsed_args_helper"
 require "minitest/hell" if ENV["MT_HELL"]
 
 # Arm the provisioning kill-switch for every test process (dev#208): a test
-# that reaches a real install seam (rbenv install, brew install) without
-# stubbing the boundary fails fast with ProvisioningGuard::ForbiddenError
-# instead of building a Ruby on the developer's machine. Tests that drive a
+# that reaches a real install seam (brew install) without stubbing the
+# boundary fails fast with ProvisioningGuard::ForbiddenError instead of
+# installing on the developer's machine. Tests that drive a
 # seam themselves lift it via ProvisioningGuardHelper.
 ENV[Dev::ProvisioningGuard::ENV_VAR] = "1"
 Minitest::Test.include(ProvisioningGuardHelper)

@@ -773,6 +773,69 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "install_all hands an interpreter pin's keg to its language activation, after the PATH activation" do
+    Given "a locked Ruby, its keg in the Cellar, and the Ruby activation as a collaborator"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    lay_cellar(prefix, "ruby@4.0.9" => ["4.0.9"], "cmake" => ["4.4.3"])
+    ruby_activation = typed_mock(Module)
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir),
+      project_dir: dir, brew_prefix: prefix, interpreters: { ruby: ruby_activation },
+    )
+    deps = [
+      Dev::Deps::Dependency.new(name: "ruby", integration: :ruby, group: :app,
+        version: "4.0.9", hash: nil, metadata: { "tap" => "d3mlabs/d3mlabs", "version_suffix" => "4.0.9" }),
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
+        version: "4.4.3", hash: nil, metadata: {}),
+    ]
+    integration.stubs(:brew_installed?).returns(true)
+    integration.stubs(:verify_installed!)
+
+    When "installing all"
+    integration.install_all(deps)
+
+    Then "the keg is on the project PATH like any formula, and the Ruby activation gets the keg and the locked version"
+    _ * Kernel.system >> true
+    1 * ruby_activation.activate!(keg: Pathname(prefix) / "Cellar" / "ruby@4.0.9" / "4.0.9", version: "4.0.9",
+      project_root: Pathname(dir))
+    brew_lisp(dir).include?(%("#{prefix}/Cellar/ruby@4.0.9/4.0.9/bin"))
+    brew_lisp(dir).include?('(provide "brew" "cmake@4.4.3 ruby@4.0.9@4.0.9")')
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all raises when an interpreter pin's keg is not in the Cellar" do
+    Given "a locked Python whose keg brew does not have"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    python_activation = typed_mock(Module)
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir),
+      project_dir: dir, brew_prefix: prefix, interpreters: { python: python_activation },
+    )
+    deps = [
+      Dev::Deps::Dependency.new(name: "python", integration: :python, group: :app,
+        version: "3.12.8", hash: nil, metadata: { "version_suffix" => "3.12" }),
+    ]
+    integration.stubs(:brew_installed?).returns(true)
+    integration.stubs(:verify_installed!)
+
+    When "installing all"
+    integration.install_all(deps)
+
+    Then "an interpreter with no keg to activate is an error, not a silent skip — nothing would run under it"
+    _ * Kernel.system >> true
+    0 * python_activation.activate!
+    error = raises Dev::Deps::BrewIntegration::KegNotFoundError
+    error.message.include?("python@3.12")
+    error.message.include?("3.12.8")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "install_all without a project dir neither activates nor retains" do
     Given "an integration built with no project (the image bootstrap's shape)"
     dir = Dir.mktmpdir("dev-brew-int-test-")

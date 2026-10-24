@@ -202,7 +202,9 @@ sequenceDiagram
     participant lock as Lockfile
 
     Note over cmd: load dependencies.rb into ScopedDeclaration[]
-    cmd->>lkr: lock(bundler declarations)
+    cmd->>res: resolve(ruby / python declarations)
+    Note over cmd: the interpreters first - resolved and installed through brew (BrewIntegration) before any locker runs
+    cmd->>lkr: lock(bundler declarations, ruby_version: the locked ruby)
     lkr->>lkr: write Gemfile from declarations
     lkr->>bundler: shadowenv exec -- bundle lock
     bundler-->>lkr: Gemfile.lock written (or LockError)
@@ -280,13 +282,21 @@ of a channel (ADR-0010): `BrewIntegration` prepends the locked keg's
 `Cellar/<formula>/<keg>/bin` (`515_brew.lisp`) — whichever keg brew has
 linked, and alongside any other project's choice; `GhIntegration` prepends
 a published tree's `bin/` when it has one (`515_gh.lisp`);
-`XcodeIntegration` sets `DEVELOPER_DIR` (`520_xcode.lisp`); the Ruby and
-Python sugar verbs set their runtime (`510_*`, `540_*`). `ShadowenvPath`
-is the one writer for the PATH files: a `provide` record names the
-activated set, the file is rewritten only when the set changed, and an
-integration that knows no project (an image bootstrap, a test) activates
-nothing. `dev deps path` stays the answer for a script that needs the
-absolute path rather than PATH.
+`XcodeIntegration` sets `DEVELOPER_DIR` (`520_xcode.lisp`); a locked
+interpreter gets its language activation right after its keg's PATH
+activation — `BrewIntegration` hands the `:ruby` keg to
+`ShadowenvRuby.activate!` (`510_ruby.lisp`: `RUBY_ROOT`, `GEM_HOME`;
+`.ruby-version`) and the `:python` keg to `ShadowenvPython.activate!`
+(the project `.venv` built on the keg, `540_python.lisp`). `ShadowenvPath`
+renders the PATH files: a `provide` record names the activated set, the
+file is rewritten only when the set changed, and an integration that
+knows no project (an image bootstrap, a test) activates nothing.
+`ShadowenvFile` places every activation file for the side of the build
+container that wrote it: the project's `.shadowenv.d/` is bind-mounted,
+so the container writes a `_container` sibling gated on the inside
+marker, inert on the host and overriding inside, and neither side
+rewrites the other's file. `dev deps path` stays the answer for a script
+that needs the absolute path rather than PATH.
 
 ## Constraint semantics per integration
 
@@ -299,6 +309,8 @@ absolute path rather than PATH.
 | gh | `ExactScheme(key: "tag")` | the constraint names one release tag out of the enumerated releases+tags universe; no range grammar exists by design. Unconstrained selects the latest release. |
 | cmake | `GitScheme` | `tag:`/`branch:` match the version's `ref` fact over the enumerated `ls-remote` refs. `commit:` is not a constraint at all — it is a revision (continuous space, `at`). |
 | steam | `SteamScheme` | `branch:` selects by the version's branch fact (default `public`); optional `buildid:` is an exact assertion that fails loudly when it is no longer the branch tip. |
+| ruby | `GemScheme` | the `ruby` verb's version is a rubygems requirement over the d3mlabs tap's `ruby@X.Y.Z` family — one immutable formula per patch, enumerated from the tap's own formula list (`brew tap-info`), each member's `version_suffix` being its exact version: `"4.0.6"` pins, `"~> 4.0"` ranges, a bare minor `"4.0"` is `"~> 4.0.0"`. Resolves, locks (`ruby:`) and installs as a brew pin (`install_alias: :brew`). |
+| python | `BrewScheme` | the `python` verb's version is the minor, a formula suffix selecting homebrew/core's `python@<minor>` exactly as `brew "llvm", version: "18"` selects `llvm@18`; locks under `python:` and installs as a brew pin. |
 | brew, cask | `BrewScheme` | `version:` is a formula *suffix* (`"18"` selects the `llvm@18` sibling out of the enumerated spec family), matched against the `version_suffix` fact; the reported stable version is brew's record, not the coordinate. Casks have no suffix fact — versioned casks are distinct cask names (`temurin@21`), so `version:` on a cask is unsatisfiable by construction. |
 | url, xcode, wwise | — (no scheme) | no constraint grammar exists: url's universe is an observable-now singleton, xcode and wwise are revision-addressed (Apple publishes no registry; Audiokinetic's sits behind a login resolution never holds). Only the empty constraint is legal; anything else raises. A url `tag:` is a display label riding materialization, naming, never selection; a wwise `integration:` is the companion package's version, an install instruction riding materialization alongside `ue:`. |
 

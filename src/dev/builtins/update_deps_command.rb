@@ -12,7 +12,7 @@ require "dev/deps/lockfile"
 require "dev/deps/registry"
 require "dev/deps/resolver"
 require "dev/deps/tap_commit_carryover"
-require "dev/shadowenv_ruby"
+require "dev/deps/local_store"
 
 module Dev
   module Builtins
@@ -26,6 +26,9 @@ module Dev
       # (bin/docker-install-build-deps.sh runs it on Linux under CI=true).
       IMAGE_HOST = "linux"
       IMAGE_ENV = "ci"
+      # The pin types that are interpreters: installed before the lockers
+      # run, since the lockers' tools run under them.
+      INTERPRETER_TYPES = T.let(%i[ruby python].freeze, T::Array[Symbol])
 
       sig { override.returns(String) }
       def desc = "Resolve dependency constraints and write lockfiles"
@@ -42,12 +45,6 @@ module Dev
       def call(args:, context:)
         project = context.project!
         project_root = project.root
-        # Provision before locking: the lockers run their ecosystem tool under
-        # the project's shadowenv, and a fresh checkout has no .shadowenv.d
-        # yet — wrapping alone would still solve under the ambient Ruby (dev#76).
-        # converge!, not ensure!: re-checks the installed ruby's health behind
-        # a current lisp (#204).
-        ShadowenvRuby.converge!(ruby_version: project.ruby_version, project_root: project_root)
 
         deps_rb = project_root / "dependencies.rb"
         Dev::Deps.reset!
@@ -55,17 +52,6 @@ module Dev
 
         deps_config = Dev::Deps.last_config || Dev::Deps.define {}
         declarations = deps_config.declarations
-
-        # Lock, then resolve: integrations whose ecosystem tool owns the
-        # whole-set solve (bundler) materialize their tool lockfile first, so
-        # the repositories read an already-solved universe.
-        lockers = Dev::Deps::Registry.lockers(
-          project_root: project_root,
-          ruby_version_requirement: deps_config.ruby_version_requirement,
-        )
-        declarations.group_by(&:integration).each do |integration, typed_declarations|
-          lockers[integration]&.lock(typed_declarations)
-        end
 
         # The needs table: each integration's own manifest, so a declaration
         # pulls the tooling its integration shells to into this project's
@@ -76,6 +62,30 @@ module Dev
           schemes: Dev::Deps::Registry.schemes,
           needs: needs,
         )
+
+        # Interpreters before lockers: the lockers run their ecosystem tool
+        # under the project's shadowenv (bundle lock under the project Ruby),
+        # and a fresh checkout has no .shadowenv.d yet — wrapping alone would
+        # solve under the ambient Ruby (dev#76). So the interpreter pins are
+        # resolved and installed first, through brew like any formula, which
+        # activates them; the Gemfile's ruby directive is the locked version.
+        # Only the interpreter pins install here — whatever else that
+        # resolution carries (an integration's needs) waits for dev up.
+        interpreters = resolver.resolve(declarations.select { |decl| INTERPRETER_TYPES.include?(decl.integration) })
+          .select { |dep| INTERPRETER_TYPES.include?(dep.integration) }
+        install_interpreters!(project_root, interpreters) if interpreters.any?
+
+        # Lock, then resolve: integrations whose ecosystem tool owns the
+        # whole-set solve (bundler) materialize their tool lockfile first, so
+        # the repositories read an already-solved universe.
+        lockers = Dev::Deps::Registry.lockers(
+          project_root: project_root,
+          ruby_version: interpreters.find { |dep| dep.integration == :ruby }&.version,
+        )
+        declarations.group_by(&:integration).each do |integration, typed_declarations|
+          lockers[integration]&.lock(typed_declarations)
+        end
+
         lockfile = Dev::Deps::Lockfile.new(dir: project_root)
         # Resolve, then carry provenance: the Resolver is a pure function of
         # the declarations and the universe; which of two equally valid tap
@@ -91,6 +101,20 @@ module Dev
       end
 
       private
+
+      # Install the resolved interpreter pins through the brew integration —
+      # the same install `dev deps install` would run for them, bottle,
+      # verification and activation included — so the lockers that follow
+      # run under the interpreters the lock is about to pin.
+      #
+      # @param project_root [Pathname]
+      # @param interpreters [Array<Dev::Deps::Dependency>] the :ruby/:python pins
+      # @return [void]
+      sig { params(project_root: Pathname, interpreters: T::Array[Dev::Deps::Dependency]).void }
+      def install_interpreters!(project_root, interpreters)
+        integrations = Dev::Deps::Registry.host_integrations(project_root: project_root, store: Dev::Deps::LocalStore.new)
+        integrations.fetch(:brew).install_all(interpreters)
+      end
 
       # Name each formula the image build would compile from source: a
       # missing bottle for the image platform is the usual reason an image

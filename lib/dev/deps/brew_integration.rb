@@ -7,6 +7,8 @@ require "pathname"
 require "uri"
 require "dev/brew_env"
 require "dev/shadowenv_path"
+require "dev/shadowenv_python"
+require "dev/shadowenv_ruby"
 require_relative "brew_repository"
 require_relative "integration"
 require_relative "dependency"
@@ -45,6 +47,21 @@ module Dev
 
       class InstallError < StandardError; end
       class TapRegistrationError < StandardError; end
+
+      # An interpreter pin installed and verified, yet its keg is not in the
+      # Cellar to activate: nothing would run under the locked interpreter,
+      # which is worse than failing here.
+      class KegNotFoundError < StandardError
+        extend T::Sig
+
+        # @param formula [String] the formula (e.g. "ruby@4.0.9")
+        # @param locked [String] the version the lock pins
+        # @param cellar [Pathname, nil] where the keg was looked for
+        sig { params(formula: String, locked: String, cellar: T.nilable(Pathname)).void }
+        def initialize(formula:, locked:, cellar:)
+          super("#{formula} #{locked} has no keg under #{cellar || "(no brew prefix)"} to activate")
+        end
+      end
 
       # The keg brew has for a formula is not the version the lock pins:
       # either brew's formula moved on since `dev deps update` (the lock is
@@ -110,6 +127,18 @@ module Dev
       # before llvm and xcode (520), which keep the last word on what they set.
       LISP_FILENAME = "515_brew.lisp"
 
+      # The interpreters that are brew pins (Registry's :ruby and :python
+      # rows) and the language-specific activation each gets once its keg is
+      # installed and on the project PATH: gem env for Ruby, the project
+      # venv for Python. Keyed on the pin's integration symbol, so the step
+      # follows the lock, not a formula name. (A port on the Registry entry
+      # once #300 gives Entry its materialization — the table lives here
+      # until then.)
+      INTERPRETERS = T.let(
+        { ruby: Dev::ShadowenvRuby, python: Dev::ShadowenvPython }.freeze,
+        T::Hash[Symbol, T::Module[T.anything]],
+      )
+
       class << self
         extend T::Sig
 
@@ -138,6 +167,10 @@ module Dev
       # @param brew_env [BrewEnv, nil] the user's brew.env, where locked
       #   formulae are recorded as never-clean-up; nil records nothing (a
       #   caller with no user to speak for — tests, an image bootstrap)
+      # @param interpreters [Hash{Symbol => Module}] the language activation
+      #   for each interpreter pin type, by integration symbol: each answers
+      #   `activate!(keg:, version:, project_root:)` and is called after the
+      #   PATH activation with the locked keg (INTERPRETERS by default)
       sig do
         params(
           repository: T.nilable(Repository),
@@ -148,10 +181,11 @@ module Dev
           pin_taps: T::Boolean,
           tap_pinner: T.nilable(TapPinner),
           brew_env: T.nilable(BrewEnv),
+          interpreters: T::Hash[Symbol, T::Module[T.anything]],
         ).void
       end
       def initialize(repository:, store:, taps: [], project_dir: nil, brew_prefix: nil, pin_taps: false, tap_pinner: nil,
-        brew_env: nil)
+        brew_env: nil, interpreters: INTERPRETERS)
         super(repository:, store:)
         @taps = taps
         @project_dir = T.let(project_dir ? Pathname(project_dir) : nil, T.nilable(Pathname))
@@ -161,6 +195,7 @@ module Dev
         @pin_taps = pin_taps
         @tap_pinner = tap_pinner
         @brew_env = brew_env
+        @interpreters = interpreters
       end
 
       # @return [Boolean] whether installs pin taps at the lock's commits
@@ -199,11 +234,38 @@ module Dev
         failed = failures.map(&:first)
         installed_formulae = dependencies.reject { |dep| dep.metadata["cask"] || failed.include?(dep.name) }
         activate!(installed_formulae)
+        activate_interpreters!(installed_formulae)
         retain!(installed_formulae)
         raise PartialInstallError, failures if failures.any?
       end
 
       private
+
+      # Run each installed interpreter pin's language activation against its
+      # keg — after the PATH activation, so the keg's bin is already on the
+      # project PATH when the gem env or venv is built on it.
+      #
+      # @param formulae [Array<Dependency>] the formulae that installed
+      # @return [void]
+      # @raise [KegNotFoundError] if an interpreter's keg is not in the Cellar
+      sig { params(formulae: T::Array[Dependency]).void }
+      def activate_interpreters!(formulae)
+        project_dir = @project_dir
+        return unless project_dir
+
+        formulae.each do |dep|
+          activation = @interpreters[dep.integration]
+          locked = dep.version
+          next unless activation && locked
+
+          keg = keg_dir(dep)
+          raise KegNotFoundError.new(formula: formula_name(dep), locked:, cellar: cellar_dir(dep)) unless keg
+
+          # T.unsafe: the activation is a module answering activate! by
+          # contract (INTERPRETERS); its own sig validates at runtime.
+          T.unsafe(activation).activate!(keg:, version: locked, project_root: project_dir)
+        end
+      end
 
       # Put each locked keg's `bin` on the project PATH through shadowenv.
       # A formula that locked no version (a tap formula brew reports none
@@ -232,16 +294,33 @@ module Dev
       # @return [String, nil]
       sig { params(dep: Dependency).returns(T.nilable(String)) }
       def keg_bin(dep)
-        locked = dep.version
-        prefix = brew_prefix
-        return nil if locked.nil? || prefix.nil?
-
-        cellar = Pathname(prefix) / "Cellar" / formula_name(dep)
-        return nil unless cellar.directory?
-
-        keg = cellar.children.find { |child| child.directory? && child.basename.to_s.sub(/_\d+\z/, "") == locked }
-        bin = keg && keg / "bin"
+        bin = keg_dir(dep)&.join("bin")
         bin&.directory? ? bin.to_s : nil
+      end
+
+      # The keg whose version is the locked one, if the Cellar has it.
+      #
+      # @param dep [Dependency]
+      # @return [Pathname, nil]
+      sig { params(dep: Dependency).returns(T.nilable(Pathname)) }
+      def keg_dir(dep)
+        locked = dep.version
+        cellar = cellar_dir(dep)
+        return nil if locked.nil? || cellar.nil? || !cellar.directory?
+
+        cellar.children.find { |child| child.directory? && child.basename.to_s.sub(/_\d+\z/, "") == locked }
+      end
+
+      # The formula's Cellar directory, if brew's prefix is known.
+      #
+      # @param dep [Dependency]
+      # @return [Pathname, nil]
+      sig { params(dep: Dependency).returns(T.nilable(Pathname)) }
+      def cellar_dir(dep)
+        prefix = brew_prefix
+        return nil if prefix.nil?
+
+        Pathname(prefix) / "Cellar" / formula_name(dep)
       end
 
       # Tell brew never to clean up the locked formulae. Skipped when brew

@@ -156,7 +156,7 @@ module Dev
             repository_needs: %i[project_root],
             scheme: GemScheme,
             locker: BundlerLocker,
-            locker_needs: %i[project_root ruby_version_requirement],
+            locker_needs: %i[project_root ruby_version],
             integration: BundlerIntegration,
             integration_needs: %i[project_root],
           ),
@@ -175,6 +175,28 @@ module Dev
             repository: BrewCaskRepository,
             scheme: BrewScheme,
             integration: BrewIntegration,
+          ),
+          # The project's interpreters are brew formulae with their own
+          # constraint semantics, installed through brew's instance (the
+          # same install_all call, so one activation covers every keg):
+          # ruby ranges over the d3mlabs tap's immutable ruby@X.Y.Z family
+          # with rubygems requirements; python selects core's python@minor
+          # by suffix, as any versioned formula. Their own symbols keep the
+          # lock legible (`ruby:`/`python:` sections) and let the install
+          # step that activates an interpreter key on the pin, not its name.
+          Entry.new(
+            symbol: :ruby,
+            repository: BrewRepository,
+            scheme: GemScheme,
+            integration: nil,
+            install_alias: :brew,
+          ),
+          Entry.new(
+            symbol: :python,
+            repository: BrewRepository,
+            scheme: BrewScheme,
+            integration: nil,
+            install_alias: :brew,
           ),
           Entry.new(
             symbol: :cmake,
@@ -245,7 +267,7 @@ module Dev
             repository: PipRepository,
             scheme: Pep440Scheme,
             integration: PipIntegration,
-            integration_needs: %i[project_root python_version],
+            integration_needs: %i[project_root],
           ),
         ].freeze,
         T::Array[Entry],
@@ -289,16 +311,17 @@ module Dev
         # Resolver so each tool lockfile is materialized when find reads it.
         #
         # @param project_root [Pathname] project root (threaded to lockers that need it)
-        # @param ruby_version_requirement [String, nil] for the bundler-generated Gemfile
+        # @param ruby_version [String, nil] the exact Ruby the lock pins, for
+        #   the bundler-generated Gemfile's `ruby` directive
         # @return [Hash{Symbol => Locker}]
         sig do
           params(
             project_root: Pathname,
-            ruby_version_requirement: T.nilable(String),
+            ruby_version: T.nilable(String),
           ).returns(T::Hash[Symbol, Locker])
         end
-        def lockers(project_root:, ruby_version_requirement: nil)
-          context = { project_root:, ruby_version_requirement: }
+        def lockers(project_root:, ruby_version: nil)
+          context = { project_root:, ruby_version: }
           INTEGRATIONS.each_with_object({}) do |entry, lockers|
             locker = entry.locker
             next unless locker
@@ -332,9 +355,6 @@ module Dev
         # @param project_root [Pathname] project root (threaded to integrations that need it)
         # @param store [ArtifactStore] where installed trees and downloaded blobs live (passed to every integration)
         # @param taps [Array<Tap>] Homebrew taps for the brew integration
-        # @param ruby_version_requirement [String, nil] accepted for caller
-        #   convenience; install-time integrations don't need it today
-        # @param python_version [String, nil] for the pip integration's venv
         # @param pin_taps [Boolean] brew installs from taps checked out at the
         #   lock's commits (BrewIntegration), not brew's API
         # @return [Hash{Symbol => Integration}]
@@ -343,17 +363,11 @@ module Dev
             project_root: Pathname,
             store: ArtifactStore,
             taps: T::Array[Tap],
-            ruby_version_requirement: T.nilable(String),
-            python_version: T.nilable(String),
             pin_taps: T::Boolean,
           ).returns(T::Hash[Symbol, Integration])
         end
-        def host_integrations(project_root:, store:, taps: [], ruby_version_requirement: nil, python_version: nil,
-          pin_taps: false)
-          integrations_for(
-            INTEGRATIONS.select(&:host?),
-            project_root:, store:, taps:, ruby_version_requirement:, python_version:, pin_taps:,
-          )
+        def host_integrations(project_root:, store:, taps: [], pin_taps: false)
+          integrations_for(INTEGRATIONS.select(&:host?), project_root:, store:, taps:, pin_taps:)
         end
 
         private
@@ -365,8 +379,6 @@ module Dev
         # @param project_root [Pathname]
         # @param store [ArtifactStore]
         # @param taps [Array<Tap>]
-        # @param ruby_version_requirement [String, nil]
-        # @param python_version [String, nil]
         # @param pin_taps [Boolean]
         # @return [Hash{Symbol => Integration}]
         sig do
@@ -375,17 +387,13 @@ module Dev
             project_root: Pathname,
             store: ArtifactStore,
             taps: T::Array[Tap],
-            ruby_version_requirement: T.nilable(String),
-            python_version: T.nilable(String),
             pin_taps: T::Boolean,
           ).returns(T::Hash[Symbol, Integration])
         end
-        def integrations_for(entries, project_root:, store:, taps:, ruby_version_requirement:, python_version:, pin_taps:)
+        def integrations_for(entries, project_root:, store:, taps:, pin_taps:)
           context = {
             project_root:,
             project_dir: project_root,
-            ruby_version_requirement:,
-            python_version:,
             taps:,
             pin_taps:,
             brew_env: BrewEnv.new(path: BrewEnv.user_file),
