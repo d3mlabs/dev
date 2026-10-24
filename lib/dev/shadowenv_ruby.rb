@@ -48,8 +48,16 @@ module Dev
     end
 
     # The shadowenv lisp that activates one Ruby: clears any prior ruby/gem paths,
-    # then exports RUBY_ROOT/GEM_ROOT and a HOME-derived GEM_HOME
-    # (`~/.gem/<engine>/<version>`).
+    # then exports RUBY_ROOT and the keg's own gem dir as both GEM_ROOT and
+    # GEM_HOME.
+    #
+    # The gem home is the keg's, not a HOME-derived `~/.gem/<engine>/<version>`:
+    # a native extension links against the libruby of the build that compiled
+    # it, and two builds of one version — a keg beside an earlier rbenv install,
+    # a reinstalled keg — would share a version-keyed home and load each
+    # other's extensions ("linked to incompatible libruby"). Gems live and die
+    # with their keg instead, as plain `gem install` under that ruby would have
+    # them, and every project on that keg shares them.
     #
     # @param ruby_root [String] the installed Ruby's prefix
     # @param ruby_version [String] the version it provides
@@ -78,17 +86,9 @@ module Dev
         (env/set "RUBY_ENGINE" "ruby")
         (env/set "RUBY_VERSION" "#{ruby_version}")
         (env/set "GEM_ROOT" "#{gem_root}")
-
-        (when-let ((gem-root (env/get "GEM_ROOT")))
-          (env/prepend-to-pathlist "GEM_PATH" gem-root)
-          (env/prepend-to-pathlist "PATH" (path-concat gem-root "bin")))
-
-        (let ((gem-home
-              (path-concat (env/get "HOME") ".gem" (env/get "RUBY_ENGINE") (env/get "RUBY_VERSION"))))
-          (do
-            (env/set "GEM_HOME" gem-home)
-            (env/prepend-to-pathlist "GEM_PATH" gem-home)
-            (env/prepend-to-pathlist "PATH" (path-concat gem-home "bin"))))
+        (env/set "GEM_HOME" "#{gem_root}")
+        (env/prepend-to-pathlist "GEM_PATH" "#{gem_root}")
+        (env/prepend-to-pathlist "PATH" "#{File.join(gem_root, "bin")}")
       LISP
     end
 

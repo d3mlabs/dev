@@ -85,15 +85,25 @@ class ShadowenvRubyTest < Minitest::Test
     assert_includes result, '(env/set "RUBY_VERSION" "4.0.1")'
   end
 
-  test "generate_ruby_lisp derives GEM_HOME from HOME at activation time" do
-    When "we generate lisp"
-    result = Dev::ShadowenvRuby.generate_ruby_lisp("/opt/ruby/4.0.1", "4.0.1")
+  test "generate_ruby_lisp makes the keg's own gem dir the GEM_HOME, so two builds of one version never share extensions" do
+    Given "a keg laid out as brew pours it"
+    tmpdir = Dir.mktmpdir("shadowenv-gem-home-test-")
+    keg = File.join(tmpdir, "Cellar", "ruby@4.0.1", "4.0.1")
+    gem_dir = File.join(keg, "lib", "ruby", "gems", "4.0.0")
+    FileUtils.mkdir_p(gem_dir)
 
-    Then "GEM_HOME composes HOME/.gem/<engine>/<version> and rides GEM_PATH and PATH"
-    result.include?('(path-concat (env/get "HOME") ".gem" (env/get "RUBY_ENGINE") (env/get "RUBY_VERSION"))')
-    result.include?('(env/set "GEM_HOME" gem-home)')
-    result.include?('(env/prepend-to-pathlist "GEM_PATH" gem-home)')
-    result.include?('(env/prepend-to-pathlist "PATH" (path-concat gem-home "bin"))')
+    When "we generate lisp"
+    result = Dev::ShadowenvRuby.generate_ruby_lisp(keg, "4.0.1")
+
+    Then "GEM_HOME is GEM_ROOT, on GEM_PATH with its bin on PATH, and nothing derives from HOME"
+    result.include?(%((env/set "GEM_ROOT" "#{gem_dir}")))
+    result.include?(%((env/set "GEM_HOME" "#{gem_dir}")))
+    result.include?(%((env/prepend-to-pathlist "GEM_PATH" "#{gem_dir}")))
+    result.include?(%((env/prepend-to-pathlist "PATH" "#{gem_dir}/bin")))
+    !result.include?('(env/get "HOME")')
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
   end
 
   # --- ensure_shadowenv_shell_hook! ---
