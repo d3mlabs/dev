@@ -45,6 +45,21 @@ class Dev::Deps::StalenessTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "a retired build-deps.lock is not part of what an install consumed" do
+    Given "a synced, stamped project that then gains a stray build-deps.lock"
+    dir = Dir.mktmpdir("dev-staleness-test-")
+    project = build_synced_project(dir)
+    staleness = build_staleness(dir, project)
+    staleness.stamp_installed!
+    File.write(File.join(project, "build-deps.lock"), "brew:\n  cmake: { group: build, version: '3.31' }\n")
+
+    Expect "the install digest does not move: the file is Lockfile#read's to refuse, not a lock input"
+    staleness.lockfile_digest == staleness.stamp_path.read
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "editing dependencies.rb after dev deps update reports the manifest message" do
     Given "a synced project whose manifest then changes"
     dir = Dir.mktmpdir("dev-staleness-test-")

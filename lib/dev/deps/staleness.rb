@@ -42,7 +42,6 @@ module Dev
       LOCK_FILES = T.let(
         [
           Lockfile::DEPS_LOCK_FILE,
-          Lockfile::BUILD_DEPS_LOCK_FILE,
           "Gemfile.lock",
         ].freeze,
         T::Array[String],
