@@ -100,6 +100,7 @@ module Dev
         project: ProjectContext.new(
           name: manifest.name,
           root: Dev.target_project_root,
+          engine: manifest.engine,
           build_container: manifest.build_container,
         ),
       )
@@ -247,6 +248,7 @@ module Dev
       command_runner = CommandRunner.new(
         ui: context.ui,
         build_container: project.build_container,
+        engine: project.engine,
         project_root: project.root,
       )
       builtin_executor = BuiltinExecutor.new

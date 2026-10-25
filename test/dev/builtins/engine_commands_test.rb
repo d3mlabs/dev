@@ -5,10 +5,10 @@ require "test_helper"
 require "dev/builtins/engine_up_command"
 require "dev/builtins/engine_down_command"
 require "dev/builtins/engine_status_command"
-require "dev/build_container_config"
 require "dev/confirmer"
 require "dev/container_engine"
 require "dev/engine_provisioner"
+require "dev/engine_resources"
 require "pathname"
 require "stringio"
 
@@ -41,28 +41,26 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
 
   # --- up ---------------------------------------------------------------------
 
-  test "engine up provisions the engine sized from the project's resources hint" do
-    Given "a containerized project with a hint"
-    resources = Dev::BuildContainerConfig::Resources.new(cpus: 8, memory_gib: 24)
-    config = typed_mock(Dev::BuildContainerConfig)
-    config.stubs(:resources).returns(resources)
+  test "engine up provisions the engine sized from the project's engine hint" do
+    Given "a project with an `engine:` block"
+    resources = Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 24)
     provisioner = typed_mock(Dev::EngineProvisioner)
     provisioner.expects(:provision!).with(resources: resources).once
     out = StringIO.new
 
     When "bringing the engine up"
     Dev::Builtins::EngineUpCommand.new(provisioner: provisioner, out: out)
-      .call(args: no_args, context: project_context(build_container: config))
+      .call(args: no_args, context: project_context(engine: resources))
 
     Then
     out.string == "dev: engine up.\n"
   end
 
-  test "engine up outside a project (or in one without a container) provisions at the engine's defaults" do
+  test "engine up outside a project (or in one without a hint) provisions at the engine's defaults" do
     Given "#{description}"
     provisioner = typed_mock(Dev::EngineProvisioner)
     provisioner.expects(:provision!).with(resources: nil).once
-    context = in_project ? project_context(build_container: nil) : no_project
+    context = in_project ? project_context(engine: nil) : no_project
 
     When "bringing the engine up"
     Dev::Builtins::EngineUpCommand.new(provisioner: provisioner, out: StringIO.new).call(args: no_args, context: context)
@@ -344,12 +342,11 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
     Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui))
   end
 
-  def project_context(build_container:)
+  def project_context(engine:)
     Dev::ExecutionContext.new(
       ui: typed_mock(Dev::Cli::Ui),
       project: Dev::ProjectContext.new(
-        name: "TestProject", root: Pathname.new("/tmp/engine-test"),
-        build_container: build_container,
+        name: "TestProject", root: Pathname.new("/tmp/engine-test"), engine: engine,
       ),
     )
   end

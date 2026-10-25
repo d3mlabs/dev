@@ -136,7 +136,7 @@ module Dev
       lookup("default_org").first
     end
 
-    # How an engine below a repo's build.container.resources hint is treated
+    # How an engine below a repo's `engine:` hint is treated
     # (see Dev::EngineResourcesCheck). Unset means `enforce`.
     #
     # @return [String] one of ENGINE_RESOURCES_MODES

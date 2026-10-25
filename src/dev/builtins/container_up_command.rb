@@ -176,7 +176,7 @@ module Dev
       # @return [String] the image reference
       sig { params(cfg: BuildContainerConfig, project: ProjectContext).returns(String) }
       def ensure_image!(cfg, project)
-        @engine_provisioner.provision!(resources: cfg.resources)
+        @engine_provisioner.provision!(resources: project.engine)
         image_tag = project.project_image.ensure!(client:, publish: publish_image?)
         @out.puts "dev: image ready: #{image_tag}"
         image_tag

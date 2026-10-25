@@ -6,6 +6,7 @@ require "dev/command_runner"
 require "dev/build_container_config"
 require "dev/credentials"
 require "dev/build_container"
+require "dev/engine_resources"
 require "dev/shadowenv_llvm"
 require "dev/shadowenv_python"
 require "dev/shadowenv_ruby"
@@ -41,10 +42,10 @@ class CommandRunnerTest < Minitest::Test
   # host_platform defaults to one no lock or Dockerfile in these tests
   # declares, so the container path is taken on every CI host (a linux-amd64
   # runner *is* a linux/amd64 environment and would run on the host).
-  def container_runner(config, host_platform: "darwin-arm64")
+  def container_runner(config, host_platform: "darwin-arm64", engine: nil)
     client = Dev::BuildContainer.new(engine: FakeContainerEngine.new)
     runner = Dev::CommandRunner.new(
-      ui: @ui, build_container: config,
+      ui: @ui, build_container: config, engine: engine,
       project_root: @project_root, container_client: client, host_platform: host_platform,
     )
     [runner, client]
@@ -269,11 +270,12 @@ class CommandRunnerTest < Minitest::Test
       },
     )
     Dev::Deps::Lockfile.new(dir: @project_root).lock(Dev::EnvironmentImage.stamp([pin]))
-    runner, client = container_runner(Dev::BuildContainerConfig.new(persist: false))
+    engine = Dev::EngineResources::Hint.new(cpus: 8)
+    runner, client = container_runner(Dev::BuildContainerConfig.new(persist: false), engine: engine)
     cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
     client.expects(:ensure_image!).never
     client.expects(:ensure_environment_image!).once
-      .with { |image, publish:, resources:| image.name == "myapp-linux" && !publish && resources.nil? }
+      .with { |image, publish:, resources:| image.name == "myapp-linux" && !publish && resources == engine }
       .returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
     client.expects(:docker_run_command)
       .with("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: {})
@@ -297,7 +299,7 @@ class CommandRunnerTest < Minitest::Test
 
     When "the client's ensure_image! returns a tag and we run the command"
     client.expects(:ensure_image!)
-      .with(config, project_root: @project_root, push: false, publish: false, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc))
+      .with(config, project_root: @project_root, push: false, publish: false, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc), resources: nil)
       .returns("myregistry/myapp-linux:content-abc123")
     client.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: {})
@@ -472,7 +474,7 @@ class CommandRunnerTest < Minitest::Test
 
     When "the client returns a docker command and we run with args"
     client.expects(:ensure_image!)
-      .with(config, project_root: @project_root, push: false, publish: false, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc))
+      .with(config, project_root: @project_root, push: false, publish: false, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc), resources: nil)
       .returns("myregistry/myapp-linux:content-abc123")
     client.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/test.sh --verbose", volumes: [], env: {})
@@ -521,7 +523,7 @@ class CommandRunnerTest < Minitest::Test
 
     When "the command runs"
     client.expects(:ensure_image!)
-      .with(config, project_root: @project_root, push: false, publish: true, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc))
+      .with(config, project_root: @project_root, push: false, publish: true, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc), resources: nil)
       .returns("myregistry/myapp-linux:content-abc123")
     client.stubs(:docker_run_command).returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
     runner.exec_into(cmd)

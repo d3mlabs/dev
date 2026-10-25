@@ -13,7 +13,7 @@ module Dev
   # vz-virtualized with Rosetta so amd64 build images (e.g. the linux
   # cross-compile image) run on Apple silicon.
   #
-  # Sizing: the repo's build.container.resources hint is a per-project
+  # Sizing: the repo's `engine:` hint is a per-project
   # *minimum* against one VM every project on the machine shares. colima
   # applies --cpu/--memory whenever a VM starts from stopped (the disk, and
   # with it images and warm containers, survives), so resizing is cheap and

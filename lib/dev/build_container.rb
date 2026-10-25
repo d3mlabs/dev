@@ -342,7 +342,7 @@ module Dev
     #
     # @param image     [Dev::EnvironmentImage] the lock's image pin, materialised
     # @param publish   [Boolean] whether to make the registry hold the image
-    # @param resources [Dev::BuildContainerConfig::Resources, nil] the project's
+    # @param resources [Dev::EngineResources::Hint, nil] the project's
     #   engine-size hint, measured first (EngineResourcesCheck)
     # @return [String] image.ref
     # @raise [EngineResourcesCheck::UndersizedEngineError, RegistryLogin::LoginFailedError,
@@ -351,7 +351,7 @@ module Dev
       params(
         image: Dev::EnvironmentImage,
         publish: T::Boolean,
-        resources: T.nilable(Dev::BuildContainerConfig::Resources),
+        resources: T.nilable(Dev::EngineResources::Hint),
       ).returns(String)
     end
     def ensure_environment_image!(image, publish: false, resources: nil)
@@ -422,8 +422,8 @@ module Dev
     # the publisher's job is already done, and a host that is itself the build
     # environment (see ContainerUpCommand) never needs the image locally at all.
     #
-    # Before any image work, the engine is measured against the config's
-    # resources hint (EngineResourcesCheck) — read-only; `dev up` is the one
+    # Before any image work, the engine is measured against the project's
+    # engine hint (EngineResourcesCheck) — read-only; `dev up` is the one
     # place a VM gets resized. A build on half the cores the repo tuned for is
     # a slow, silent failure, and this is the last place to make it loud.
     #
@@ -434,6 +434,7 @@ module Dev
     #   registry, even on a local hit (default: false — only the provisioning step opts in)
     # @param build_args_provider [#call, nil] returns Hash{String => String} of build args
     # @param secrets_provider    [#call, nil] returns Hash{String => String} of secret id => value
+    # @param resources           [Dev::EngineResources::Hint, nil] the project's engine-size hint
     # @return [String] the full image:tag string
     # @raise [EngineResourcesCheck::UndersizedEngineError] when the engine falls short of the hint (enforce mode)
     sig do
@@ -444,12 +445,13 @@ module Dev
         publish: T::Boolean,
         build_args_provider: T.nilable(T.proc.returns(T::Hash[String, String])),
         secrets_provider: T.nilable(T.proc.returns(T::Hash[String, String])),
+        resources: T.nilable(Dev::EngineResources::Hint),
       ).returns(String)
     end
     def ensure_image!(config, project_root:, push: true, publish: false,
-                      build_args_provider: nil, secrets_provider: nil)
+                      build_args_provider: nil, secrets_provider: nil, resources: nil)
       $stderr.puts DOCKERFILE_DEPRECATION
-      @resources_check.check!(engine: @engine, hint: config.resources)
+      @resources_check.check!(engine: @engine, hint: resources)
       tag = self.class.image_with_tag(config, project_root:)
 
       if local_image?(tag)

@@ -68,11 +68,12 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
   # --- up ---------------------------------------------------------------------
 
   test "container up brings the engine up from the hint, resolves the image, and starts the service when persisted" do
-    Given "a persisted config, with every boundary stubbed"
+    Given "a persisted config and an engine hint, with every boundary stubbed"
     config = config(persist: true, volumes: ["~/.dev/engines/ue:/ue"])
+    engine = Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 24)
     order = sequence("engine, image, service")
     provisioner = typed_mock(Dev::EngineProvisioner)
-    provisioner.expects(:provision!).with(resources: config.resources).once.in_sequence(order)
+    provisioner.expects(:provision!).with(resources: engine).once.in_sequence(order)
     client = client()
     client.expects(:ensure_image!).with do |cfg, **kwargs|
       cfg == config && kwargs[:project_root] == ROOT && kwargs[:push] == false && kwargs[:publish] == false
@@ -93,7 +94,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: user_aligner,
       dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out,
-    ).call(args: no_args, context: project(config))
+    ).call(args: no_args, context: project(config, engine: engine))
 
     Then "every step is reported: the container's dev, then the deps it installs — an already-aligned user says nothing"
     out.string == "dev: image ready: #{TAG}\n" \
@@ -102,12 +103,13 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
       "dev: container deps installed\n"
   end
 
-  test "container up with an image pin resolves through ensure_environment_image!, the block's hint along" do
+  test "container up with an image pin resolves through ensure_environment_image!, the engine hint along" do
     Given "a checkout whose lock pins its image and whose container block names none"
     root = project_root_pinning("linux/amd64")
-    config = Dev::BuildContainerConfig.new(persist: false, resources: Dev::BuildContainerConfig::Resources.new(cpus: 8))
+    config = Dev::BuildContainerConfig.new(persist: false)
+    engine = Dev::EngineResources::Hint.new(cpus: 8)
     provisioner = typed_mock(Dev::EngineProvisioner)
-    provisioner.expects(:provision!).with(resources: config.resources).once
+    provisioner.expects(:provision!).with(resources: engine).once
     client = client()
     client.expects(:ensure_image!).never
     client.expects(:ensure_environment_image!).once
@@ -118,7 +120,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     When "bringing the container up on a host that is not the environment"
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, out: out, host_platform: "darwin-arm64",
-    ).call(args: no_args, context: project(config, root: root))
+    ).call(args: no_args, context: project(config, root: root, engine: engine))
 
     Then
     out.string == "dev: image ready: ghcr.io/d3mlabs/myapp-linux:deadbeef\n"
@@ -194,7 +196,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     config = config(persist: true, volumes: ["~/.dev/engines/ue:/ue"])
     order = sequence("engine, image, one-shot: dev then deps")
     provisioner = typed_mock(Dev::EngineProvisioner)
-    provisioner.expects(:provision!).with(resources: config.resources).once.in_sequence(order)
+    provisioner.expects(:provision!).with(resources: nil).once.in_sequence(order)
     client = client()
     client.expects(:ensure_image!).once.in_sequence(order).returns(TAG)
     client.expects(:ensure_service!).never
@@ -345,7 +347,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     config = config(persist: true)
     root = project_root_declaring("linux/amd64")
     provisioner = typed_mock(Dev::EngineProvisioner)
-    provisioner.expects(:provision!).with(resources: config.resources).once
+    provisioner.expects(:provision!).with(resources: nil).once
     client = client()
     client.expects(:ensure_image!).with do |cfg, **kwargs|
       cfg == config && kwargs[:project_root] == root && kwargs[:publish] == true
@@ -607,11 +609,11 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     )
   end
 
-  def project(build_container, root: ROOT)
+  def project(build_container, root: ROOT, engine: nil)
     Dev::ExecutionContext.new(
       ui: typed_mock(Dev::Cli::Ui),
       project: Dev::ProjectContext.new(
-        name: "TestProject", root: root, build_container: build_container,
+        name: "TestProject", root: root, engine: engine, build_container: build_container,
       ),
     )
   end

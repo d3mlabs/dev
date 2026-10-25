@@ -270,11 +270,11 @@ class BuildContainerTest < Minitest::Test
   end
 
   test "ensure_image! gates on the engine's resources before touching any image" do
-    Given "a config with a resources hint and a check that finds the engine short"
+    Given "an engine hint and a check that finds the engine short"
     dir = Dir.mktmpdir("build-container-test-")
     File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
-    resources = Dev::BuildContainerConfig::Resources.new(cpus: 12, memory_gib: 24)
-    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89", resources: resources)
+    resources = Dev::EngineResources::Hint.new(cpus: 12, memory_gib: 24)
+    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
     engine = FakeContainerEngine.new
     check = typed_mock(Dev::EngineResourcesCheck)
     check.expects(:check!).once.with(engine: engine, hint: resources)
@@ -282,7 +282,7 @@ class BuildContainerTest < Minitest::Test
     bc = Dev::BuildContainer.new(engine: engine, resources_check: check)
 
     When "ensuring the image"
-    bc.ensure_image!(config, project_root: Pathname(dir))
+    bc.ensure_image!(config, project_root: Pathname(dir), resources: resources)
 
     Then "the refusal is the outcome; no docker call was made"
     raises Dev::EngineResourcesCheck::UndersizedEngineError

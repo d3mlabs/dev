@@ -114,18 +114,18 @@ class Dev::ProjectImageTest < Minitest::Test
     FileUtils.rm_rf(legacy)
   end
 
-  test "ensure! resolves a pinned image through ensure_environment_image! with the block's resources hint" do
+  test "ensure! resolves a pinned image through ensure_environment_image! with the project's engine hint" do
     Given
     root = checkout(pins: [image_pin])
-    resources = Dev::BuildContainerConfig::Resources.new(cpus: 12)
-    config = Dev::BuildContainerConfig.new(persist: true, resources: resources)
+    engine = Dev::EngineResources::Hint.new(cpus: 12)
+    config = Dev::BuildContainerConfig.new(persist: true)
     client = typed_mock(Dev::BuildContainer)
     client.expects(:ensure_environment_image!).once
       .with { |image, publish:, resources:| image.name == "snappy-linux" && publish == true && resources.cpus == 12 }
       .returns("the-ref")
 
     When
-    result = Dev::ProjectImage.new(root:, config:).ensure!(client:, publish: true)
+    result = Dev::ProjectImage.new(root:, config:, engine:).ensure!(client:, publish: true)
 
     Then
     result == "the-ref"

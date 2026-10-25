@@ -2,7 +2,6 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/build_container_config"
 require "dev/engine_resources"
 
 transform!(RSpock::AST::Transformation)
@@ -12,7 +11,7 @@ class Dev::EngineResourcesTest < Minitest::Test
     engine = Dev::EngineResources.new(cpus: 12, memory_gib: 24)
 
     Expect "each hint answers as its fields demand"
-    engine.satisfies?(Dev::BuildContainerConfig::Resources.new(cpus: cpus, memory_gib: memory_gib)) == satisfied
+    engine.satisfies?(Dev::EngineResources::Hint.new(cpus: cpus, memory_gib: memory_gib)) == satisfied
 
     Where
     cpus | memory_gib | satisfied
@@ -51,6 +50,22 @@ class Dev::EngineResourcesTest < Minitest::Test
   test "to_s reads as the operator would say it" do
     Expect
     Dev::EngineResources.new(cpus: 12, memory_gib: 24).to_s == "12 cpus / 24 GiB"
+  end
+
+  test "Hint is the repo's floor: every field optional, a value by its fields" do
+    Given "two identical hints, one differing only by disk, and an empty one"
+    a = Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 24, disk_gib: 250)
+    b = Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 24, disk_gib: 250)
+    c = Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 24)
+    empty = Dev::EngineResources::Hint.new
+
+    Expect
+    a == b
+    a.eql?(b)
+    a.hash == b.hash
+    a != c
+    { a => :seen }.key?(b)
+    empty.cpus.nil? && empty.memory_gib.nil? && empty.disk_gib.nil?
   end
 
   test "from_bytes rounds the daemon's MemTotal up to the GiB the VM was given (the guest kernel keeps some)" do

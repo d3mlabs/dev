@@ -107,20 +107,24 @@ module Dev
       end
     end
 
+    # @param engine [Dev::EngineResources::Hint, nil] the project's engine
+    #   floor, measured before any image work
     sig do
       params(
         ui: Dev::Cli::Ui,
         project_root: Pathname,
         build_container: T.nilable(Dev::BuildContainerConfig),
+        engine: T.nilable(Dev::EngineResources::Hint),
         container_client: T.nilable(Dev::BuildContainer),
         inside_container: T::Boolean,
         host_platform: String,
       ).void
     end
-    def initialize(ui:, project_root:, build_container: nil, container_client: nil,
+    def initialize(ui:, project_root:, build_container: nil, engine: nil, container_client: nil,
                    inside_container: ContainerContext.inside?, host_platform: Platform.current)
       @ui = ui
       @build_container = build_container
+      @engine = engine
       @project_root = project_root
       @container_client = container_client
       @inside_container = inside_container
@@ -208,7 +212,7 @@ module Dev
     def run_in_container(shell_command, wait:)
       config = T.must(@build_container)
       client = container_client
-      image_tag = ProjectImage.new(root: @project_root, config:).ensure!(client:, publish: publish_image?)
+      image_tag = ProjectImage.new(root: @project_root, config:, engine: @engine).ensure!(client:, publish: publish_image?)
       docker_argv = container_command(config, image_tag, shell_command)
 
       Dir.chdir(@project_root)

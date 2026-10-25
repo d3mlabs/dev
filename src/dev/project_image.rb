@@ -6,6 +6,7 @@ require "dev/build_container"
 require "dev/build_container_config"
 require "dev/credentials"
 require "dev/deps/lockfile"
+require "dev/engine_resources"
 require "dev/environment_image"
 
 module Dev
@@ -32,10 +33,19 @@ module Dev
 
     # @param root [Pathname] the checkout (its deps.lock is read)
     # @param config [Dev::BuildContainerConfig, nil] the `build.container` block
-    sig { params(root: Pathname, config: T.nilable(Dev::BuildContainerConfig)).void }
-    def initialize(root:, config:)
+    # @param engine [Dev::EngineResources::Hint, nil] the project's engine
+    #   floor, measured before any image work
+    sig do
+      params(
+        root: Pathname,
+        config: T.nilable(Dev::BuildContainerConfig),
+        engine: T.nilable(Dev::EngineResources::Hint),
+      ).void
+    end
+    def initialize(root:, config:, engine: nil)
       @root = root
       @config = config
+      @engine = engine
     end
 
     # The lock's image, when the project has one.
@@ -86,7 +96,7 @@ module Dev
     sig { params(client: Dev::BuildContainer, publish: T::Boolean).returns(String) }
     def ensure!(client:, publish:)
       image = environment_image
-      return client.ensure_environment_image!(image, publish:, resources: @config&.resources) if image
+      return client.ensure_environment_image!(image, publish:, resources: @engine) if image
 
       config = T.must(@config)
       client.ensure_image!(
@@ -96,6 +106,7 @@ module Dev
         publish:,
         build_args_provider: -> { Credentials.resolve_build_args(config.build_args) },
         secrets_provider: -> { Credentials.resolve_build_args(config.build_secrets) },
+        resources: @engine,
       )
     end
 

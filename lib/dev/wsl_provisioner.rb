@@ -94,7 +94,7 @@ module Dev
       if (cpus || 0) > hardware.cpus || (memory_gib || 0) > hardware.memory_gib
         raise UnsatisfiableHintError,
           "this project needs #{describe(cpus, memory_gib)} but the Windows machine has #{hardware} — " \
-          ".wslconfig cannot grant more than the hardware. Lower the repo's resources hint, " \
+          ".wslconfig cannot grant more than the hardware. Lower the repo's `engine:` hint, " \
           "or set `engine_resources: warn` on this machine (`dev config set engine_resources warn`)."
       end
 
@@ -106,7 +106,7 @@ module Dev
         cpus: target_cpus || observed.cpus, memory_gib: target_memory || observed.memory_gib,
       )
       restart_needed = !observed.satisfies?(
-        BuildContainerConfig::Resources.new(cpus: target_cpus, memory_gib: target_memory),
+        EngineResources::Hint.new(cpus: target_cpus, memory_gib: target_memory),
       )
 
       write_needed = target_cpus != config.processors || target_memory != config.memory_gib ||

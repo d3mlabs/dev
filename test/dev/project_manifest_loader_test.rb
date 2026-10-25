@@ -196,8 +196,63 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
   end
 
-  test "#load extracts the build.container resources sizing block" do
-    Given "a dev.yml whose container declares VM sizing for its provisioner"
+  test "#load extracts the top-level engine sizing block (dev#307)" do
+    Given "a dev.yml declaring the engine floor its build was tuned for"
+    tmp = write_dev_yml(<<~YAML)
+      name: snappy
+      engine:
+        cpus: 8
+        memory_gib: 24
+        disk_gib: 250
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+
+    When "the manifest is loaded"
+    manifest = build_loader.load(Pathname.new(tmp.path))
+
+    Then "the sizing rides the manifest as integers"
+    manifest.engine == Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 24, disk_gib: 250)
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load leaves engine nil when the block is absent, and partial when half-declared" do
+    Given "one dev.yml without engine and one declaring only cpus"
+    without = write_dev_yml(<<~YAML)
+      name: snappy
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+    partial = write_dev_yml(<<~YAML)
+      name: snappy
+      engine:
+        cpus: 6
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+
+    When "the manifests are loaded"
+    no_engine = build_loader.load(Pathname.new(without.path)).engine
+    partial_engine = build_loader.load(Pathname.new(partial.path)).engine
+
+    Then
+    no_engine.nil?
+    partial_engine.cpus == 6
+    partial_engine.memory_gib.nil?
+    partial_engine.disk_gib.nil?
+
+    Cleanup
+    without.close!
+    partial.close!
+  end
+
+  test "#load still reads the legacy build.container.resources as the engine hint (gone with dev#311)" do
+    Given "a dev.yml on the Dockerfile path, sized the old way"
     tmp = write_dev_yml(<<~YAML)
       name: snappy
       build:
@@ -207,7 +262,6 @@ class ProjectManifestLoaderTest < Minitest::Test
           resources:
             cpus: 8
             memory_gib: 24
-            disk_gib: 250
       commands:
         build:
           run: ./bin/build.sh
@@ -216,51 +270,41 @@ class ProjectManifestLoaderTest < Minitest::Test
     When "the manifest is loaded"
     manifest = build_loader.load(Pathname.new(tmp.path))
 
-    Then "the sizing rides the config as integers"
-    manifest.build_container.resources == Dev::BuildContainerConfig::Resources.new(cpus: 8, memory_gib: 24, disk_gib: 250)
+    Then "the hint is the same one, read from the old place"
+    manifest.engine == Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 24)
 
     Cleanup
     tmp.close!
   end
 
-  test "#load leaves resources nil when the block is absent, and partial when half-declared" do
-    Given "one dev.yml without resources and one declaring only cpus"
-    without = write_dev_yml(<<~YAML)
+  test "#load refuses a dev.yml that sizes the engine in both places" do
+    Given "a dev.yml with `engine:` and `build.container.resources`"
+    tmp = write_dev_yml(<<~YAML)
       name: snappy
-      build:
-        container:
-          image: snappy-linux
-          registry: jpduchesne89
-      commands:
-        build:
-          run: ./bin/build.sh
-    YAML
-    partial = write_dev_yml(<<~YAML)
-      name: snappy
+      engine:
+        cpus: 8
       build:
         container:
           image: snappy-linux
           registry: jpduchesne89
           resources:
-            cpus: 6
+            cpus: 12
       commands:
         build:
           run: ./bin/build.sh
     YAML
 
-    When "the manifests are loaded"
-    no_resources = build_loader.load(Pathname.new(without.path)).build_container.resources
-    partial_resources = build_loader.load(Pathname.new(partial.path)).build_container.resources
+    When "the manifest is loaded"
+    error = assert_raises(Dev::ProjectManifestLoader::ConflictingEngineHintError) do
+      build_loader.load(Pathname.new(tmp.path))
+    end
 
-    Then
-    no_resources.nil?
-    partial_resources.cpus == 6
-    partial_resources.memory_gib.nil?
-    partial_resources.disk_gib.nil?
+    Then "the message names both keys and the one to keep"
+    error.message.include?("`engine:`")
+    error.message.include?("`build.container.resources`")
 
     Cleanup
-    without.close!
-    partial.close!
+    tmp.close!
   end
 
   test "#load extracts build.container build_args credential refs" do
