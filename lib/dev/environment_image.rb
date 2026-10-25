@@ -109,6 +109,23 @@ module Dev
         image
       end
 
+      # The lock-side step of a re-lock: every `:image` pin stamped with the
+      # digest this dev computes for it (a stale stored one is replaced —
+      # the re-lock is where staleness is cured), other pins untouched.
+      #
+      # @param pins [Array<Dev::Deps::Dependency>] the resolved pins
+      # @return [Array<Dev::Deps::Dependency>]
+      # @raise [PlatformError]
+      sig { params(pins: T::Array[Dev::Deps::Dependency]).returns(T::Array[Dev::Deps::Dependency]) }
+      def stamp(pins)
+        pins.map do |pin|
+          next pin unless pin.integration == :image
+
+          recipe = pin.with(metadata: pin.metadata.except(DIGEST_KEY))
+          from_pin(recipe).with_digest(recipe)
+        end
+      end
+
       private
 
       # @param name [String]

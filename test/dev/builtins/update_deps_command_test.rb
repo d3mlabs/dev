@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/environment_image"
 require "dev/builtins/update_deps_command"
 require "fileutils"
 require "pathname"
@@ -35,6 +36,31 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
 
     Then "the run completes and points at dev up"
     $stdout.string.include?("lockfiles updated")
+
+    Cleanup
+    $stdout = old_stdout
+    FileUtils.rm_rf(root)
+  end
+
+  test "call stamps every image pin with its content digest before writing the lock" do
+    Given "a resolver answering one image pin without a digest"
+    root = Pathname.new(Dir.mktmpdir("update-deps-image-"))
+    image_pin = Dev::Deps::Dependency.new(
+      name: "snappy-linux", integration: :image, group: :app, version: "ue5.8-3", hash: "SHA256=#{"a" * 64}",
+      metadata: { "from" => "ghcr.io/d3mlabs/floor", "platform" => "linux/amd64", "platforms" => ["linux/amd64"],
+                  "registry" => "ghcr.io/d3mlabs", "apt" => ["dos2unix"] },
+    )
+    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: [image_pin]))
+    command = Dev::Builtins::UpdateDepsCommand.new
+    old_stdout = $stdout
+    $stdout = StringIO.new
+
+    When "running dev deps update"
+    command.call(args: no_args, context: build_context(root))
+
+    Then "the lock's image entry carries the digest this dev computes"
+    locked = Dev::Deps::Lockfile.new(dir: root).read.find { |dep| dep.integration == :image }
+    locked.metadata["digest"] == Dev::EnvironmentImage.from_pin(image_pin).digest
 
     Cleanup
     $stdout = old_stdout

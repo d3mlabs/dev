@@ -122,6 +122,27 @@ class Dev::EnvironmentImageTest < Minitest::Test
     stamped.metadata.except("digest") == dep.metadata
   end
 
+  test "stamp writes the digest onto every :image pin and leaves other pins alone" do
+    Given
+    other = Dev::Deps::Dependency.new(name: "rake", integration: :bundler, group: :app, version: "13", hash: nil, metadata: {})
+
+    When
+    stamped = Dev::EnvironmentImage.stamp([other, pin, pin(name: "two")])
+
+    Then
+    stamped[0].equal?(other)
+    stamped[1].metadata["digest"] == Dev::EnvironmentImage.from_pin(pin).digest
+    stamped[2].metadata["digest"] == Dev::EnvironmentImage.from_pin(pin(name: "two")).digest
+  end
+
+  test "stamp re-stamps a pin carrying a stale digest: the re-lock is where staleness is cured, not refused" do
+    When
+    stamped = Dev::EnvironmentImage.stamp([pin(digest: "f" * 64)])
+
+    Then
+    stamped[0].metadata["digest"] == Dev::EnvironmentImage.from_pin(pin).digest
+  end
+
   private
 
   # Built from lines, not a heredoc: the test transformer cannot round-trip
