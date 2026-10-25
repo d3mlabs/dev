@@ -2,29 +2,21 @@
 # frozen_string_literal: true
 
 module Dev
-  # Value object for the build.container block in dev.yml.
+  # Legacy only (d3mlabs/dev#311): the `build.container` block of a dev.yml
+  # still on the hand-written Dockerfile path. `image`/`registry` name that
+  # Dockerfile's image; `build_args`, `build_secrets`, `content_globs`,
+  # `structure_globs` and `prewarm` feed its build; `persist`, `volumes`
+  # and `run_env` shape its container; a command opts out with
+  # `container: false`.
   #
-  # When present, commands run inside a Docker container by default. The
-  # image is the project's `image` pin in deps.lock (dev#277,
-  # Dev::EnvironmentImage); this block shapes the container around it.
-  #
-  # dev.yml example:
-  #   build:
-  #     container:
-  #       persist: true
-  #       volumes:
-  #         - "~/.dev/engines/unreal-engine-css:/ue"
-  #         - "~/.dev/wwise:/var/cache/dev/wwise-cli:ro"
-  #       run_env:
-  #         STAGING_DEPLOY_KEY: staging/deploy_key
-  #
-  # Deprecated (d3mlabs/dev#311): `image`/`registry` name a hand-written
-  # Dockerfile's image instead of the lock's pin, and `build_args`,
-  # `build_secrets`, `content_globs`, `structure_globs` and `prewarm` feed
-  # that Dockerfile's build. They are read and honoured until the consumers
-  # migrate; a lock with an `image` pin wins over them. The engine's sizing
-  # is not here: it is dev.yml's top-level `engine:` block
-  # (EngineResources::Hint), read for the legacy `resources` key too.
+  # A migrated project declares none of this here: the image is the lock's
+  # `image` pin (dev#277, Dev::EnvironmentImage), its shape is the `image`
+  # block's `persist`/`volume`/`run_env` verbs, a command's placement is
+  # `runs_on:` (dev#307), and the engine's sizing is dev.yml's top-level
+  # `engine:` (EngineResources::Hint — read for the legacy `resources` key
+  # too). The block is accepted exactly while the lock pins no image and
+  # refused, each key with its migration, the moment it does
+  # (ProjectImages); it is deleted with the path.
   #
   # volumes mount exactly as written. The container owns its own data root
   # (ADR-0008), so no volume is resolved against the host's locked trees;
