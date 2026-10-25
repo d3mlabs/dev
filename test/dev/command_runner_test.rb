@@ -37,11 +37,15 @@ class CommandRunnerTest < Minitest::Test
 
   # A containerized runner with its engine-injected BuildContainer client
   # injected, so tests stub the client instance instead of class methods.
-  def container_runner(config)
+  #
+  # host_platform defaults to one no lock or Dockerfile in these tests
+  # declares, so the container path is taken on every CI host (a linux-amd64
+  # runner *is* a linux/amd64 environment and would run on the host).
+  def container_runner(config, host_platform: "darwin-arm64")
     client = Dev::BuildContainer.new(engine: FakeContainerEngine.new)
     runner = Dev::CommandRunner.new(
       ui: @ui, build_container: config,
-      project_root: @project_root, container_client: client,
+      project_root: @project_root, container_client: client, host_platform: host_platform,
     )
     [runner, client]
   end
