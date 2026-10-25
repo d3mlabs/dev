@@ -26,6 +26,14 @@ module Dev
     # `commands:` holding something other than a mapping of name → entry.
     class InvalidCommandsError < ArgumentError; end
 
+    # `runs_on:` holding something other than a name (an image's, or
+    # `host`).
+    class InvalidRunsOnError < ArgumentError; end
+
+    # `runs_on:` beside the retired `container:` boolean — both answer
+    # "which environment does this command need?", and one answer is enough.
+    class ConflictingPlacementError < ArgumentError; end
+
     RESERVED_CHILD_NAME = "help"
 
     # Values may be nil for optional keys; `commands` nests further hashes.
@@ -39,6 +47,8 @@ module Dev
     # @raise [ReplGroupError] when `repl: true` is declared beside `commands`
     # @raise [ReservedChildNameError] when a child is named `help`
     # @raise [InvalidCommandsError] when `commands` is not a mapping
+    # @raise [InvalidRunsOnError] when `runs_on` is not a name
+    # @raise [ConflictingPlacementError] when `runs_on` and `container` are both declared
     sig { params(path: T::Array[String], cmd_hash: CommandHash).returns(ProjectNode) }
     def parse(path, cmd_hash)
       name = path.join(" ")
@@ -53,16 +63,41 @@ module Dev
       desc = desc.empty? ? "(no description)" : desc
       repl = cmd_hash["repl"] == true
       container = cmd_hash["container"] != false
+      runs_on = parse_runs_on(name, cmd_hash)
       hidden = cmd_hash["hidden"] == true
       if repl && !children.empty?
         raise ReplGroupError, "command '#{name}' cannot be both a repl and a group of commands"
       end
       return CommandGroup.new(path:, desc:, category: Command::Category::Project, children:, hidden:) if run.empty?
 
-      ProjectCommand.new(run:, desc:, repl:, container:, hidden:, children:)
+      ProjectCommand.new(run:, desc:, repl:, container:, runs_on:, hidden:, children:)
     end
 
     private
+
+    # The `runs_on:` value, unresolved: a non-empty string, declared alone.
+    #
+    # @param name [String] the command's path, for messages
+    # @param cmd_hash [CommandHash]
+    # @return [String, nil] nil when absent
+    # @raise [InvalidRunsOnError, ConflictingPlacementError]
+    sig { params(name: String, cmd_hash: CommandHash).returns(T.nilable(String)) }
+    def parse_runs_on(name, cmd_hash)
+      return nil unless cmd_hash.key?("runs_on")
+
+      raw = cmd_hash["runs_on"]
+      unless raw.is_a?(String) && !raw.empty?
+        raise InvalidRunsOnError,
+          "command '#{name}': 'runs_on' must name an image block or be '#{ProjectCommand::HOST}', got #{raw.inspect}"
+      end
+      if cmd_hash.key?("container")
+        raise ConflictingPlacementError,
+          "command '#{name}' declares both 'runs_on' and the retired 'container:' — keep 'runs_on' " \
+            "(`container: false` is `runs_on: #{ProjectCommand::HOST}`; `container: true` is the image's name, or nothing)"
+      end
+
+      raw
+    end
 
     # Parse the nested `commands:` mapping; absent or empty means none.
     #

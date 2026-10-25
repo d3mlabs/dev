@@ -84,6 +84,20 @@ class CommandTest < Minitest::Test
     cmd.container == false
   end
 
+  test "runs_on is nil by default, carried as given, and part of the value" do
+    Given
+    unplaced = Dev::ProjectCommand.new(run: "./bin/build.sh")
+    placed = Dev::ProjectCommand.new(run: "./bin/build.sh", runs_on: "snappy-linux")
+
+    Expect
+    unplaced.runs_on.nil?
+    placed.runs_on == "snappy-linux"
+    unplaced != placed
+    unplaced.hash != placed.hash
+    placed.with_children({ "x" => unplaced }).runs_on == "snappy-linux"
+    Dev::ProjectCommand::HOST == "host"
+  end
+
   test "a ProjectCommand never guards, stamps, or hides by default" do
     Given "a plain ProjectCommand"
     cmd = Dev::ProjectCommand.new(run: "./bin/test.sh")

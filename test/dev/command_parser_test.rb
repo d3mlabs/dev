@@ -251,6 +251,56 @@ class CommandParserTest < Minitest::Test
     cmd.container == true
   end
 
+  test "parse carries runs_on as written — a name the parser does not resolve (dev#307): #{value.inspect}" do
+    Given "a command hash naming where it runs"
+    parser = Dev::CommandParser.new
+    hash = { "run" => "./bin/build.sh", "runs_on" => value }
+
+    When "we parse it"
+    cmd = parser.parse(["cmd"], hash)
+
+    Then
+    cmd.runs_on == value
+
+    Where
+    value          | _
+    "snappy-linux" | "an image name"
+    "host"         | "the reserved value"
+  end
+
+  test "parse leaves runs_on nil when absent: the default is the project's to decide" do
+    Given
+    parser = Dev::CommandParser.new
+
+    Expect
+    parser.parse(["cmd"], { "run" => "./bin/build.sh" }).runs_on.nil?
+  end
+
+  test "parse rejects a runs_on that is not a name: #{value.inspect}" do
+    When
+    Dev::CommandParser.new.parse(["cmd"], { "run" => "./bin/build.sh", "runs_on" => value })
+
+    Then
+    error = raises(Dev::CommandParser::InvalidRunsOnError)
+    error.message.include?("cmd")
+
+    Where
+    value | _
+    ""    | "empty"
+    true  | "a boolean"
+    12    | "a number"
+  end
+
+  test "parse rejects runs_on beside container: one question, one key" do
+    When
+    Dev::CommandParser.new.parse(["deploy"], { "run" => "./bin/deploy.sh", "runs_on" => "host", "container" => false })
+
+    Then
+    error = raises(Dev::CommandParser::ConflictingPlacementError)
+    error.message.include?("deploy")
+    error.message.include?("runs_on")
+  end
+
   test "parse defaults hidden to false" do
     Given "a command hash without hidden"
     parser = Dev::CommandParser.new

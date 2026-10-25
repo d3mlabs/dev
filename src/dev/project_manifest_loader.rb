@@ -53,7 +53,37 @@ module Dev
         commands: raw_commands.to_h { |name, h| [name.to_s, @command_parser.parse([name.to_s], h)] },
         engine: parse_engine(yaml),
         build_container: parse_build_container(yaml),
+        legacy_keys: legacy_keys(yaml),
       )
+    end
+
+    # The retired keys this dev.yml carries, by path: `build.container` and
+    # every command's `container:` with its value (`commands.deploy.container:
+    # false`), nested commands included — the value decides the migration.
+    #
+    # @param yaml [Hash]
+    # @return [Array<String>] in document order
+    sig { params(yaml: T::Hash[String, T.untyped]).returns(T::Array[String]) }
+    def legacy_keys(yaml)
+      keys = []
+      keys << "build.container" if yaml.dig("build", "container").is_a?(Hash)
+      keys.concat(container_keys(["commands"], yaml["commands"]))
+    end
+
+    # @param path [Array<String>] the dev.yml path of this `commands:` mapping
+    # @param raw [Object] its value as YAML delivered it
+    # @return [Array<String>] the `container` keys under it, deepest last
+    sig { params(path: T::Array[String], raw: T.untyped).returns(T::Array[String]) }
+    def container_keys(path, raw)
+      return [] unless raw.is_a?(Hash)
+
+      raw.flat_map do |name, entry|
+        next [] unless entry.is_a?(Hash)
+
+        entry_path = path + [name.to_s]
+        own = entry.key?("container") ? ["#{(entry_path + ["container"]).join(".")}: #{entry["container"].inspect}"] : []
+        own + container_keys(entry_path + ["commands"], entry["commands"])
+      end
     end
 
     # `ruby:` is a removed dev.yml key — rejected at parse time with a

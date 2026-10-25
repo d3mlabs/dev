@@ -3,6 +3,7 @@
 
 require "sorbet-runtime"
 require_relative "../data_root"
+require_relative "../environment_image"
 require_relative "declaration"
 require_relative "scope"
 require_relative "scoped_declaration"
@@ -21,6 +22,11 @@ module Dev
     # itself.
     class DSL
       extend T::Sig
+
+      # An `image` block named `host` (EnvironmentImage::HOST): the word is
+      # dev.yml's `runs_on: host`, so an image of that name could never be
+      # run on.
+      class ReservedImageNameError < StandardError; end
 
       # Group an ungrouped declaration lands in. Bundler's default (unscoped)
       # group, mirroring a hand-written Gemfile's top section.
@@ -207,6 +213,11 @@ module Dev
       def image(name, from:, registry: nil, &block)
         name_str = name.to_s
         raise GroupDSL::EmptyNameError, "image name cannot be empty" if name_str.empty?
+        if name_str == EnvironmentImage::HOST
+          raise ReservedImageNameError,
+            "`#{EnvironmentImage::HOST}` cannot name an image: it is dev.yml's `runs_on: #{EnvironmentImage::HOST}`, " \
+              "the command placement that is no image"
+        end
 
         image_dsl = ImageDSL.new
         image_dsl.instance_eval(&block) if block

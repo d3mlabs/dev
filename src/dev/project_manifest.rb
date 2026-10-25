@@ -26,5 +26,11 @@ module Dev
     const :engine, T.nilable(Dev::EngineResources::Hint), default: nil
     # Deprecated (d3mlabs/dev#311): the `build.container` block.
     const :build_container, T.nilable(Dev::BuildContainerConfig), default: nil
+    # The retired keys dev.yml still carries, as dev.yml paths
+    # (`build.container`, `commands.deploy.container: false`), in document
+    # order.
+    # Accepted while the project is on the legacy path; refused with their
+    # migrations the moment its lock pins an image (ProjectImages).
+    const :legacy_keys, T::Array[String], default: []
   end
 end

@@ -649,6 +649,62 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
   end
 
+  test "#load records every legacy key it saw, by dev.yml path, for the refusal one layer up (dev#307)" do
+    Given "a dev.yml on the old shape: a container block and container: flags, one nested"
+    tmp = write_dev_yml(<<~YAML)
+      name: snappy
+      build:
+        container:
+          image: snappy-linux
+          registry: jpduchesne89
+      commands:
+        build:
+          run: ./bin/build.sh
+        deploy:
+          run: ./bin/deploy.sh
+          container: false
+        test:
+          run: ./bin/test.sh
+          commands:
+            editor:
+              run: ./bin/test-editor.sh
+              container: false
+    YAML
+
+    When "the manifest is loaded"
+    manifest = build_loader.load(Pathname.new(tmp.path))
+
+    Then "each key once, in document order, a flag with its value; a command without the key is not listed"
+    manifest.legacy_keys == [
+      "build.container", "commands.deploy.container: false", "commands.test.commands.editor.container: false",
+    ]
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load records no legacy keys for a dev.yml on the new shape" do
+    Given
+    tmp = write_dev_yml(<<~YAML)
+      name: snappy
+      engine: { cpus: 8 }
+      commands:
+        build: { run: ./bin/build.sh, runs_on: snappy-linux }
+        deploy: { run: ./bin/deploy.sh, runs_on: host }
+    YAML
+
+    When
+    manifest = build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    manifest.legacy_keys == []
+    manifest.commands["build"].runs_on == "snappy-linux"
+    manifest.commands["deploy"].runs_on == "host"
+
+    Cleanup
+    tmp.close!
+  end
+
   test "#load handles container: false on individual commands" do
     Given "a dev.yml with container opt-out on a command"
     tmp = write_dev_yml(<<~YAML)
