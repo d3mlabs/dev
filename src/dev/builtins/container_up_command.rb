@@ -9,32 +9,34 @@ require "dev/container_dev_provisioner"
 require "dev/container_user_aligner"
 require "dev/credentials"
 require "dev/engine_provisioner"
-require "dev/environment_platform"
 require "dev/platform"
+require "dev/project_images"
 
 module Dev
   module Builtins
     # `dev container up` — everything a containerized command needs before it
-    # runs, done ahead of time: the engine up and sized from this repo's hint,
-    # the image resolved (local → registry → build), and, when the project
+    # runs, done ahead of time: the engine up and sized from this repo's
+    # hint, once; then, image by image (ProjectImages#all, dev#307), the
+    # image resolved (local → registry → build) and, when the image
     # persists its container, the service container created or restarted
     # warm, its dev converged to the host's, and its side of the dependency
     # install run. `dev up` composes this after the host-side dependency
-    # install; a CI job runs it alone to publish the image
+    # install; a CI job runs it alone to publish the images
     # (`DEV_PUBLISH_IMAGE=1`).
     #
-    # The build container is this project's one service dependency (an
-    # environment service: commands execute in it), so this is the
+    # The build containers are this project's service dependency (an
+    # environment service: commands execute in them), so this is the
     # ServiceUp port `dev up` composes; `call` is the CLI adapter over it.
     #
-    # The platform rule: the container is needed exactly when this host's
-    # platform differs from the environment's (EnvironmentPlatform). A host
-    # that *is* the environment — a linux-x86_64 machine for a linux/amd64
-    # Dockerfile — installs everything itself and runs commands directly, so
-    # there is nothing to bring up here: no engine, no image, no container.
-    # The one exception is the publisher designation (DEV_PUBLISH_IMAGE=1):
-    # that host still resolves the image so the registry has it for the
-    # hosts that do need it, and still starts no container.
+    # The platform rule, asked of each image (ADR-0007): a container is
+    # needed exactly when this host's platform differs from the image's. A
+    # host that *is* an image's platform — a linux-x86_64 machine for a
+    # linux/amd64 image — installs everything itself and runs that image's
+    # commands directly, so there is nothing to bring up for it: no image,
+    # no container (and no engine, when every image is skipped). The one
+    # exception is the publisher designation (DEV_PUBLISH_IMAGE=1): that
+    # host still resolves the image so the registry has it for the hosts
+    # that do need it, and still starts no container.
     class ContainerUpCommand < ContainerCommand
       extend T::Sig
       include ServiceUp
@@ -97,59 +99,76 @@ module Dev
         up(project: context.project!)
       end
 
-      # @param project [ProjectContext] the checkout (its build.container is the service's config)
+      # @param project [ProjectContext] the checkout (its images are the service's)
       # @return [void]
       sig { override.params(project: ProjectContext).void }
       def up(project:)
-        cfg = T.must(project.build_container)
-        if host_is_environment?(project)
-          ensure_image!(cfg, project) if publish_image?
-          report_host_is_environment
-          return
+        images = project.project_images
+        provision_engine!(project, images.all.reject { |image| host_is?(image) && !publish_image? })
+        images.all.each do |image|
+          if host_is?(image)
+            ensure_image!(image, images) if publish_image?
+            report_host_is_environment(image)
+            next
+          end
+
+          image_tag = ensure_image!(image, images)
+          next unless image.persist
+
+          name = client.ensure_service!(image_tag, project_root: project.root, volumes: image.volumes)
+          @out.puts "dev: build container up: #{name}"
+          provision_inside!(name, image)
         end
-
-        image_tag = ensure_image!(cfg, project)
-        return unless cfg.persist
-
-        name = client.ensure_service!(image_tag, project_root: project.root, volumes: cfg.volumes)
-        @out.puts "dev: build container up: #{name}"
-        provision_inside!(name, cfg)
       end
 
-      # The cold topology: the same image, a one-shot container over the
-      # throwaway data root the caller made current (ColdRoot), the same
-      # in-container provisioning — then the container is gone. The
-      # persistent container, warm root mounted at its creation, is never
-      # touched. Persisted or not, the shape is the same: a cold run proves
-      # the project provisions from nothing.
+      # The cold topology: the same images, a one-shot container of each
+      # over the throwaway data root the caller made current (ColdRoot), the
+      # same in-container provisioning — then the container is gone. The
+      # persistent containers, warm root mounted at their creation, are
+      # never touched. Persisted or not, the shape is the same: a cold run
+      # proves the project provisions from nothing.
       #
       # @param project [ProjectContext]
       # @return [void]
       sig { override.params(project: ProjectContext).void }
       def cold_up(project:)
-        cfg = T.must(project.build_container)
-        if host_is_environment?(project)
-          report_host_is_environment
-          return
-        end
+        images = project.project_images
+        provision_engine!(project, images.all.reject { |image| host_is?(image) })
+        images.all.each do |image|
+          if host_is?(image)
+            report_host_is_environment(image)
+            next
+          end
 
-        image_tag = ensure_image!(cfg, project)
-        client.with_one_shot_container(image_tag, project_root: project.root, volumes: cfg.volumes) do |name|
-          @out.puts "dev: cold container up: #{name}"
-          provision_inside!(name, cfg)
+          image_tag = ensure_image!(image, images)
+          client.with_one_shot_container(image_tag, project_root: project.root, volumes: image.volumes) do |name|
+            @out.puts "dev: cold container up: #{name}"
+            provision_inside!(name, image)
+          end
         end
       end
 
       private
 
-      # Whether this host is the project's build environment (the platform
-      # rule's fact).
+      # Whether this host is the image's platform (the platform rule's
+      # fact, asked per image).
+      #
+      # @param image [ProjectImages::Image]
+      # @return [Boolean]
+      sig { params(image: ProjectImages::Image).returns(T::Boolean) }
+      def host_is?(image)
+        image.dev_platform == @host_platform
+      end
+
+      # Engine up and sized from the project's hint, once — and not at all
+      # when no image needs it.
       #
       # @param project [ProjectContext]
-      # @return [Boolean]
-      sig { params(project: ProjectContext).returns(T::Boolean) }
-      def host_is_environment?(project)
-        Dev::EnvironmentPlatform.host_is_environment?(project_root: project.root, host: @host_platform)
+      # @param needing [Array<ProjectImages::Image>] the images about to be resolved
+      # @return [void]
+      sig { params(project: ProjectContext, needing: T::Array[ProjectImages::Image]).void }
+      def provision_engine!(project, needing)
+        @engine_provisioner.provision!(resources: project.engine) if needing.any?
       end
 
       # The publisher designation: the provisioning step that volunteers to
@@ -162,22 +181,22 @@ module Dev
         ENV["DEV_PUBLISH_IMAGE"] == "1"
       end
 
+      # @param image [ProjectImages::Image] the image this host is the platform of
       # @return [void]
-      sig { void }
-      def report_host_is_environment
-        @out.puts "dev: this host is the build environment (#{@host_platform}) — commands run here, no container"
+      sig { params(image: ProjectImages::Image).void }
+      def report_host_is_environment(image)
+        @out.puts "dev: this host is the build environment (#{@host_platform}) — #{image.name}'s commands run here, no container"
       end
 
-      # Engine up and sized, image resolved (local → registry → build) —
-      # the lock's pin or the deprecated Dockerfile, ProjectImage's call.
+      # The image resolved (local → registry → build) — the lock's pin or
+      # the deprecated Dockerfile, ProjectImages' call.
       #
-      # @param cfg [BuildContainerConfig]
-      # @param project [ProjectContext]
+      # @param image [ProjectImages::Image]
+      # @param images [ProjectImages]
       # @return [String] the image reference
-      sig { params(cfg: BuildContainerConfig, project: ProjectContext).returns(String) }
-      def ensure_image!(cfg, project)
-        @engine_provisioner.provision!(resources: project.engine)
-        image_tag = project.project_image.ensure!(client:, publish: publish_image?)
+      sig { params(image: ProjectImages::Image, images: ProjectImages).returns(String) }
+      def ensure_image!(image, images)
+        image_tag = images.ensure!(image, client:, publish: publish_image?)
         @out.puts "dev: image ready: #{image_tag}"
         image_tag
       end
@@ -187,10 +206,10 @@ module Dev
       # of the lock (the container is a build host, ADR-0008).
       #
       # @param name [String] the running container
-      # @param cfg [BuildContainerConfig]
+      # @param image [ProjectImages::Image] whose `run_env` the install carries
       # @return [void]
-      sig { params(name: String, cfg: BuildContainerConfig).void }
-      def provision_inside!(name, cfg)
+      sig { params(name: String, image: ProjectImages::Image).void }
+      def provision_inside!(name, image)
         # Everything below writes the mounted data root as the container's
         # user, so that user becomes the mount's owner first — a no-op where
         # the ids already agree, reported only when it did something.
@@ -205,7 +224,7 @@ module Dev
         # dev current, its side of the install runs there (gems against the
         # store Ruby, container-scoped brew deps), carrying the run_env the
         # install-time integrations may need.
-        deps_installer.install!(name, env: Dev::Credentials.resolve_run_env(cfg.run_env))
+        deps_installer.install!(name, env: Dev::Credentials.resolve_run_env(image.run_env))
         @out.puts "dev: container deps installed"
       end
 

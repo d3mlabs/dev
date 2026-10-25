@@ -22,27 +22,31 @@ class Dev::ProjectImagesTest < Minitest::Test
 
   # --- all / named --------------------------------------------------------
 
-  test "all is the lock's image pins, in lock order, as images" do
+  test "pinned is the lock's image pins, in lock order, as images; all is the same set" do
     Given
     root = checkout(pins: [brew_pin, image_pin(name: "snappy-linux"), image_pin(name: "snappy-server")])
+    images = Dev::ProjectImages.new(root:)
 
     When
-    images = Dev::ProjectImages.new(root:).all
+    pinned = images.pinned
 
     Then
-    images.map(&:class).uniq == [Dev::EnvironmentImage]
-    images.map(&:name) == ["snappy-linux", "snappy-server"]
+    pinned.map(&:class).uniq == [Dev::EnvironmentImage]
+    pinned.map(&:name) == ["snappy-linux", "snappy-server"]
+    images.all == pinned
 
     Cleanup
     FileUtils.rm_rf(root)
   end
 
-  test "all is empty for a project pinning no image" do
+  test "pinned and all are empty for a project pinning no image and declaring no block" do
     Given
     root = checkout(pins: [brew_pin])
+    images = Dev::ProjectImages.new(root:)
 
     Expect
-    Dev::ProjectImages.new(root:).all == []
+    images.pinned == []
+    images.all == []
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -161,9 +165,12 @@ class Dev::ProjectImagesTest < Minitest::Test
     Given
     root = checkout(pins: [brew_pin], dockerfile: "FROM --platform=linux/amd64 ubuntu:24.04\n")
     config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
+    images = Dev::ProjectImages.new(root:, build_container: config, legacy_keys: ["build.container"])
 
-    Expect
-    Dev::ProjectImages.new(root:, build_container: config, legacy_keys: ["build.container"]).all == []
+    Expect "nothing pinned; the one image the lifecycle verbs act on is the Dockerfile's"
+    images.pinned == []
+    images.all.map(&:class) == [Dev::DockerfileImage]
+    images.all.map(&:name) == ["snappy-linux"]
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -227,7 +234,7 @@ class Dev::ProjectImagesTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "containerized? is whether any command could run in a container: a pin, or the legacy image" do
+  test "containerized? is whether any command could run in a container: a pin, or the legacy block" do
     Given
     pinned = checkout(pins: [image_pin])
     legacy = checkout(pins: [brew_pin], dockerfile: "FROM ubuntu:24.04\n")
@@ -241,6 +248,50 @@ class Dev::ProjectImagesTest < Minitest::Test
 
     Cleanup
     [pinned, legacy, plain].each { |dir| FileUtils.rm_rf(dir) }
+  end
+
+  test "containerized? decides membership without judging the project: a stale pin or a refused dev.yml still gets its container verbs" do
+    Given "a pin another dev locked, and a block the lock has retired"
+    stale = checkout(pins: [image_pin])
+    lock = Dev::Deps::Lockfile.new(dir: stale)
+    lock.lock(lock.read.map { |pin| pin.with(metadata: pin.metadata.merge(Dev::EnvironmentImage::DIGEST_KEY => "f" * 64)) })
+    refused = checkout(pins: [image_pin])
+    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
+    stale_images = Dev::ProjectImages.new(root: stale)
+    refused_images = Dev::ProjectImages.new(root: refused, build_container: config, legacy_keys: ["build.container"])
+
+    When "the verbs materialise the images"
+    stale_error = assert_raises(Dev::EnvironmentImage::StaleDigestError) { stale_images.all }
+    refused_error = assert_raises(Dev::ProjectImages::RetiredKeysError) { refused_images.all }
+
+    Then "membership answered; the verbs themselves raise, with the fix in the message"
+    stale_images.containerized?
+    refused_images.containerized?
+    stale_error.message.include?("dev deps update")
+    refused_error.message.include?("build.container.image")
+
+    Cleanup
+    [stale, refused].each { |dir| FileUtils.rm_rf(dir) }
+  end
+
+  test "containerized? over a retired build-deps.lock answers from the block alone: dev deps update must still be reachable" do
+    Given "a checkout still carrying build-deps.lock"
+    root = checkout(pins: [brew_pin])
+    (root / "build-deps.lock").write("")
+    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
+
+    When
+    with_block = Dev::ProjectImages.new(root:, build_container: config, legacy_keys: ["build.container"])
+    without = Dev::ProjectImages.new(root:)
+    error = assert_raises(Dev::Deps::Lockfile::RetiredBuildLockError) { without.pinned }
+
+    Then "membership from the block; the pins themselves still refuse"
+    with_block.containerized?
+    !without.containerized?
+    error.message.include?("dev deps update")
+
+    Cleanup
+    FileUtils.rm_rf(root)
   end
 
   # --- ensure! ------------------------------------------------------------

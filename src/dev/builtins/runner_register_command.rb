@@ -172,7 +172,7 @@ module Dev
           name: args.value(NAME_FLAG),
         )
 
-        container = context.project&.build_container
+        container = context.project&.project_images&.containerized? || false
         engine = context.project&.engine
         # The engine this host will build in, sized for this repo, before any
         # label contract (whose agent-host steps assume an engine exists).
@@ -181,7 +181,7 @@ module Dev
         contracts = @contracts_factory.call(labels, args.value(AGENT_USER_FLAG))
         contracts.each do |contract|
           contract.converge!(
-            container: !container.nil?,
+            container: container,
             cpus: engine&.cpus,
             memory_gib: engine&.memory_gib,
             disk_gib: engine&.disk_gib,

@@ -9,10 +9,10 @@ require "dev/container_engine"
 module Dev
   module Builtins
     # What the five `dev container` verbs share: they exist only in a project
-    # whose dev.yml declares `build.container` (the group is gated on it), and
-    # they act through one BuildContainer over the invoking user's engine,
-    # resolved lazily so a verb that never reaches docker (`tag`) never reads
-    # the engine record.
+    # with an environment image (the group is gated on
+    # ProjectImages#containerized?), and they act through one BuildContainer
+    # over the invoking user's engine, resolved lazily so a verb that never
+    # reaches docker (`tag`) never reads the engine record.
     class ContainerCommand < BuiltinCommand
       extend T::Sig
       extend T::Helpers
@@ -41,15 +41,6 @@ module Dev
       sig { returns(Dev::BuildContainer) }
       def client
         @container_client ||= BuildContainer.new(engine: Dev::ContainerEngine.resolve)
-      end
-
-      # The gate guarantees the config; T.must documents that.
-      #
-      # @param context [ExecutionContext]
-      # @return [Dev::BuildContainerConfig]
-      sig { params(context: ExecutionContext).returns(Dev::BuildContainerConfig) }
-      def config(context)
-        T.must(context.project!.build_container)
       end
     end
   end

@@ -78,7 +78,8 @@ module Dev
       @build_container = build_container
       @legacy_keys = legacy_keys
       @engine = engine
-      @all = T.let(nil, T.nilable(T::Array[EnvironmentImage]))
+      @pins = T.let(nil, T.nilable(T::Array[Deps::Dependency]))
+      @pinned = T.let(nil, T.nilable(T::Array[EnvironmentImage]))
     end
 
     # The lock's images, in lock order.
@@ -87,12 +88,25 @@ module Dev
     # @raise [RetiredKeysError] when the lock pins an image and dev.yml carries retired keys
     # @raise [EnvironmentImage::StaleDigestError] a pin was locked by another dev
     sig { returns(T::Array[EnvironmentImage]) }
-    def all
-      @all ||= begin
-        pins = Deps::Lockfile.new(dir: @root).read.select { |pin| pin.integration == :image }
+    def pinned
+      @pinned ||= begin
         refuse_retired_keys! if pins.any? && @legacy_keys.any?
         pins.map { |pin| EnvironmentImage.from_pin(pin) }
       end
+    end
+
+    # Every image the project's lifecycle verbs act on: the lock's, or —
+    # until d3mlabs/dev#311 — the one Dockerfile image the legacy block
+    # names when the lock pins none.
+    #
+    # @return [Array<Image>]
+    # @raise [RetiredKeysError, EnvironmentImage::StaleDigestError] as `pinned`
+    # @raise [NoEnvironmentImageError] a block that names no image, with nothing pinned
+    sig { returns(T::Array[Image]) }
+    def all
+      return pinned if pinned.any?
+
+      [legacy].compact
     end
 
     # @param name [String] an `image` block's name
@@ -100,17 +114,23 @@ module Dev
     # @raise [UnknownImageError]
     sig { params(name: String).returns(EnvironmentImage) }
     def named(name)
-      all.find { |image| image.name == name } ||
+      pinned.find { |image| image.name == name } ||
         raise(UnknownImageError, "no image named `#{name}`; the lock pins: #{names_or_none}")
     end
 
     # Whether any command of this project could run in a container: the
-    # lock pins an image, or the legacy block names one.
+    # lock pins an image, or dev.yml carries the legacy block. Membership
+    # only — nothing is materialised or judged here, so a project whose
+    # images would be refused (`pinned`) still gets the verbs that say why.
     #
     # @return [Boolean]
     sig { returns(T::Boolean) }
     def containerized?
-      all.any? || !legacy.nil?
+      pins.any? || !@build_container.nil?
+    rescue Deps::Lockfile::RetiredBuildLockError
+      # Membership never blocks the verb that fixes the lock (`dev deps
+      # update`); the verbs that need the pins raise this themselves.
+      !@build_container.nil?
     end
 
     # The command's environment.
@@ -124,17 +144,17 @@ module Dev
     sig { params(cmd: ProjectCommand, name: String).returns(Placement) }
     def for(cmd, name: cmd.run)
       return HOST if cmd.runs_on == ProjectCommand::HOST
-      return legacy_placement(cmd, name) if all.empty?
+      return legacy_placement(cmd, name) if pinned.empty?
 
       runs_on = cmd.runs_on
       if runs_on
-        all.find { |image| image.name == runs_on } ||
+        pinned.find { |image| image.name == runs_on } ||
           raise(UnknownImageError, "`#{name}` runs on `#{runs_on}`, which the lock does not pin; it pins: #{names_or_none}")
-      elsif all.size == 1
-        T.must(all.first)
+      elsif pinned.size == 1
+        T.must(pinned.first)
       else
         raise AmbiguousEnvironmentImageError,
-          "`#{name}` runs in a container but names no image — this project declares #{all.size}: #{names_or_none}; " \
+          "`#{name}` runs in a container but names no image — this project declares #{pinned.size}: #{names_or_none}; " \
             "add `runs_on: <name>` to the command in dev.yml"
       end
     end
@@ -158,6 +178,14 @@ module Dev
 
     private
 
+    # The lock's `image` pins, read once.
+    #
+    # @return [Array<Deps::Dependency>]
+    sig { returns(T::Array[Deps::Dependency]) }
+    def pins
+      @pins ||= Deps::Lockfile.new(dir: @root).read.select { |pin| pin.integration == :image }
+    end
+
     # Deprecated (d3mlabs/dev#311): the block's Dockerfile image, when the
     # lock pins none.
     #
@@ -166,7 +194,7 @@ module Dev
     sig { returns(T.nilable(DockerfileImage)) }
     def legacy
       config = @build_container
-      return nil if config.nil? || all.any?
+      return nil if config.nil? || pinned.any?
       unless config.dockerfile_image?
         raise NoEnvironmentImageError,
           "#{@root} declares no image: add an `image` block to dependencies.rb and run: dev deps update"
@@ -200,7 +228,7 @@ module Dev
     # @return [String] the pinned names, comma-separated, or "none"
     sig { returns(String) }
     def names_or_none
-      all.empty? ? "none" : all.map(&:name).join(", ")
+      pinned.empty? ? "none" : pinned.map(&:name).join(", ")
     end
 
     # @return [void]

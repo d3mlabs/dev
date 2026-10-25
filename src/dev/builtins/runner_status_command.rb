@@ -35,7 +35,7 @@ module Dev
       sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
         _ = args
-        @runner_status_factory.call(!context.project&.build_container.nil?).report
+        @runner_status_factory.call(context.project&.project_images&.containerized? || false).report
       end
     end
   end
