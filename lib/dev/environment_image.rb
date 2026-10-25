@@ -21,6 +21,10 @@ module Dev
   # the registry tag, the lock's `digest`, the marker's `digest=` inside the
   # image: every compare, dev#308's host rule included, is equality.
   #
+  # The pin also carries the container's shape — `persist`, `volumes`,
+  # `run_env` (dev#307) — read here for whoever runs the image; none of it
+  # is image content, so none of it is in the Dockerfile or the digest.
+  #
   # The lock stores the digest (UpdateDepsCommand stamps it via with_digest)
   # and from_pin checks it: a dev whose template differs from the one that
   # locked refuses with the re-lock to run, so the re-mint is a reviewed
@@ -81,6 +85,18 @@ module Dev
     sig { returns(String) }
     attr_reader :registry
 
+    # @return [Boolean] whether commands share one long-lived container
+    sig { returns(T::Boolean) }
+    attr_reader :persist
+
+    # @return [Array<String>] `docker run -v` specs, as declared
+    sig { returns(T::Array[String]) }
+    attr_reader :volumes
+
+    # @return [Hash{String => String}] `docker run -e` names → credential references
+    sig { returns(T::Hash[String, String]) }
+    attr_reader :run_env
+
     class << self
       extend T::Sig
 
@@ -99,6 +115,9 @@ module Dev
           platform: resolve_platform(pin.name, metadata["platform"], Array(metadata["platforms"])),
           apt: Array(metadata["apt"]).map(&:to_s),
           registry: metadata.fetch("registry"),
+          persist: metadata["persist"] == true,
+          volumes: Array(metadata["volumes"]).map(&:to_s),
+          run_env: (metadata["run_env"] || {}).to_h { |k, v| [k.to_s, v.to_s] },
         )
         stored = metadata[DIGEST_KEY]
         if stored && stored != image.digest
@@ -162,15 +181,21 @@ module Dev
     end
 
     sig do
-      params(name: String, from: String, from_digest: String, platform: String, apt: T::Array[String], registry: String).void
+      params(
+        name: String, from: String, from_digest: String, platform: String, apt: T::Array[String], registry: String,
+        persist: T::Boolean, volumes: T::Array[String], run_env: T::Hash[String, String],
+      ).void
     end
-    def initialize(name:, from:, from_digest:, platform:, apt:, registry:)
+    def initialize(name:, from:, from_digest:, platform:, apt:, registry:, persist: false, volumes: [], run_env: {})
       @name = name
       @from = from
       @from_digest = from_digest
       @platform = platform
       @apt = T.let(apt.sort.uniq.freeze, T::Array[String])
       @registry = registry
+      @persist = persist
+      @volumes = T.let(volumes.dup.freeze, T::Array[String])
+      @run_env = T.let(run_env.dup.freeze, T::Hash[String, String])
     end
 
     # @return [String] the floor pinned by digest — what the FROM line pulls

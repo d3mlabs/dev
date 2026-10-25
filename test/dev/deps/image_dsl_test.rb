@@ -55,6 +55,40 @@ class Dev::Deps::ImageDSLTest < Minitest::Test
     config.declarations[0].materialization == { "platform" => nil, "apt" => [], "registry" => "ghcr.io/d3mlabs" }
   end
 
+  test "persist, volume and run_env shape the image's container and ride the materialization (dev#307)" do
+    When "declaring the container's shape inside the block"
+    config = Dev::Deps.define do
+      image "snappy-linux", from: FLOOR do
+        persist true
+        volume "~/.dev/engines/unreal-engine-css:/ue"
+        volume "~/.dev/wwise:/var/cache/dev/wwise-cli:ro"
+        run_env "STAGING_DEPLOY_KEY" => "staging/deploy_key"
+        run_env "WWISE_TOKEN" => "wwise/token"
+      end
+    end
+
+    Then "each verb accumulates, as written"
+    materialization = config.declarations[0].materialization
+    materialization["persist"] == true
+    materialization["volumes"] == ["~/.dev/engines/unreal-engine-css:/ue", "~/.dev/wwise:/var/cache/dev/wwise-cli:ro"]
+    materialization["run_env"] == { "STAGING_DEPLOY_KEY" => "staging/deploy_key", "WWISE_TOKEN" => "wwise/token" }
+  end
+
+  test "a block declaring none of the container's shape carries none of its keys: the lock says nothing it was not told" do
+    When
+    config = Dev::Deps.define do
+      image "x", from: FLOOR do
+        persist false
+      end
+    end
+
+    Then
+    materialization = config.declarations[0].materialization
+    !materialization.key?("persist")
+    !materialization.key?("volumes")
+    !materialization.key?("run_env")
+  end
+
   test "several blocks declare several images: the design assumes none is the only one" do
     When
     config = Dev::Deps.define do
