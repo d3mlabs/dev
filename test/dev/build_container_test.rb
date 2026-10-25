@@ -15,12 +15,20 @@ class BuildContainerTest < Minitest::Test
 
   # Engine-injected instance under test: the docker CLI is a true boundary,
   # so the fake engine records argv instead of tests stubbing Kernel#system.
-  def build_container(engine: FakeContainerEngine.new)
-    Dev::BuildContainer.new(engine: engine)
+  # A Mac unless said otherwise: the data root's shape is the host OS's,
+  # and these tests run on either.
+  def build_container(engine: FakeContainerEngine.new, host_os: "darwin")
+    Dev::BuildContainer.new(engine: engine, host_os: host_os)
   end
 
   def service(name, running:)
     Dev::BuildContainer::ServiceContainer.new(name: name, running: running)
+  end
+
+  # A method, not a block: RSpock's source rewrite gives one-parameter
+  # blocks a trailing comma, which splats an Array argument.
+  def detached_run?(args)
+    args.first(2) == ["run", "-d"]
   end
 
   test "content_tag produces deterministic hash from Dockerfile and lockfile" do
@@ -219,6 +227,60 @@ class BuildContainerTest < Minitest::Test
     Cleanup
     ENV["DEV_DATA_ROOT"] = original
     FileUtils.rm_rf(root)
+  end
+
+  test "on Linux, #{what} bind-mounts the host's data root at its own path — one store, both sides (dev#308)" do
+    Given "a Linux host whose data root is #{root_kind}"
+    root = Dir.mktmpdir("linux-data-root")
+    original = ENV["DEV_DATA_ROOT"]
+    ENV["DEV_DATA_ROOT"] = root
+    engine = FakeContainerEngine.new
+    bc = build_container(engine: engine, host_os: "linux")
+
+    When
+    cmd = if what == "docker_run_command"
+      bc.docker_run_command("ghcr.io/d3mlabs/snappy-linux:abc", project_root: Pathname("/project"), shell_cmd: "./bin/build.sh")
+    else
+      bc.send(:create_service_container, "svc", "ghcr.io/d3mlabs/snappy-linux:abc", project_root: Pathname("/project"))
+      engine.runs.find(&method(:detached_run?))
+    end
+
+    Then "the host's root at the host's path, DEV_DATA_ROOT agreeing; no data-root volume; Linuxbrew still a volume"
+    cmd.each_cons(2).include?(["-v", "#{root}:#{root}"])
+    cmd.each_cons(2).include?(["-e", "DEV_DATA_ROOT=#{root}"])
+    cmd.each_cons(2).include?(["-v", "dev-linuxbrew:/home/linuxbrew/.linuxbrew"])
+    cmd.none? { |part| part.include?("dev-data-root") }
+    !engine.runs.include?(["volume", "create", "dev-data-root"])
+    engine.runs.include?(["volume", "create", "dev-linuxbrew"])
+    cmd.count { |part| part == "-v" } == 3
+
+    Cleanup
+    ENV["DEV_DATA_ROOT"] = original
+    FileUtils.rm_rf(root)
+
+    Where
+    what                       | root_kind
+    "docker_run_command"       | "the override"
+    "create_service_container" | "the override"
+  end
+
+  test "on Linux with the default root, the mount is /var/lib/dev on both sides" do
+    Given
+    original = ENV["DEV_DATA_ROOT"]
+    ENV.delete("DEV_DATA_ROOT")
+    Dev::Platform.stubs(:os).returns("linux")
+
+    When
+    cmd = build_container(host_os: "linux").docker_run_command(
+      "ghcr.io/d3mlabs/snappy-linux:abc", project_root: Pathname("/project"), shell_cmd: "./bin/build.sh",
+    )
+
+    Then
+    cmd.each_cons(2).include?(["-v", "/var/lib/dev:/var/lib/dev"])
+    cmd.each_cons(2).include?(["-e", "DEV_DATA_ROOT=/var/lib/dev"])
+
+    Cleanup
+    ENV["DEV_DATA_ROOT"] = original if original
   end
 
   test "docker_run_command expands ~ in volume host paths, re-rooting ~/.dev onto the data root" do

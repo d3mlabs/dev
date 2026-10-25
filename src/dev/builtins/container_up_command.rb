@@ -9,7 +9,7 @@ require "dev/container_dev_provisioner"
 require "dev/container_user_aligner"
 require "dev/credentials"
 require "dev/engine_provisioner"
-require "dev/platform"
+require "dev/host_rule"
 require "dev/project_images"
 
 module Dev
@@ -28,15 +28,18 @@ module Dev
     # environment service: commands execute in them), so this is the
     # ServiceUp port `dev up` composes; `call` is the CLI adapter over it.
     #
-    # The platform rule, asked of each image (ADR-0007): a container is
-    # needed exactly when this host's platform differs from the image's. A
-    # host that *is* an image's platform — a linux-x86_64 machine for a
-    # linux/amd64 image — installs everything itself and runs that image's
+    # The host rule, asked of each image (HostRule; ADR-0007 as amended by
+    # dev#308): a container is needed exactly when this host was not
+    # provisioned from the image. A host that was — its marker is the
+    # lock's pin — installs everything itself and runs that image's
     # commands directly, so there is nothing to bring up for it: no image,
-    # no container (and no engine, when every image is skipped). The one
-    # exception is the publisher designation (DEV_PUBLISH_IMAGE=1): that
-    # host still resolves the image so the registry has it for the hosts
-    # that do need it, and still starts no container.
+    # no container (and no engine, when every image is skipped). A host
+    # whose marker names the image under another digest has drifted: it is
+    # brought up like any other host and told so, and dev never converges
+    # its OS toward the lock. The one exception to "nothing to bring up" is
+    # the publisher designation (DEV_PUBLISH_IMAGE=1): a native host still
+    # resolves the image so the registry has it for the hosts that do need
+    # it, and still starts no container.
     class ContainerUpCommand < ContainerCommand
       extend T::Sig
       include ServiceUp
@@ -62,8 +65,7 @@ module Dev
       # @param deps_installer [Dev::ContainerDepsInstaller, nil] runs the
       #   container-side dependency install; resolved lazily the same way
       # @param out [IO, StringIO]
-      # @param host_platform [String] this host's platform key, measured
-      #   against the environment's (Platform.current)
+      # @param host_rule [Dev::HostRule] whether an image's work runs here
       sig do
         params(
           container_client: T.nilable(Dev::BuildContainer),
@@ -72,18 +74,18 @@ module Dev
           dev_provisioner: T.nilable(Dev::ContainerDevProvisioner),
           deps_installer: T.nilable(Dev::ContainerDepsInstaller),
           out: T.any(IO, StringIO),
-          host_platform: String,
+          host_rule: Dev::HostRule,
         ).void
       end
       def initialize(container_client: nil, engine_provisioner: Dev::EngineProvisioner.new,
                      user_aligner: nil, dev_provisioner: nil, deps_installer: nil, out: $stdout,
-                     host_platform: Dev::Platform.current)
+                     host_rule: Dev::HostRule.new)
         super(container_client:, out:)
         @engine_provisioner = engine_provisioner
         @user_aligner = user_aligner
         @dev_provisioner = dev_provisioner
         @deps_installer = deps_installer
-        @host_platform = host_platform
+        @host_rule = host_rule
       end
 
       sig { override.returns(String) }
@@ -108,10 +110,11 @@ module Dev
         images.all.each do |image|
           if host_is?(image)
             ensure_image!(image, images) if publish_image?
-            report_host_is_environment(image)
+            report_native(image)
             next
           end
 
+          report_drift(image)
           image_tag = ensure_image!(image, images)
           next unless image.persist
 
@@ -136,10 +139,11 @@ module Dev
         provision_engine!(project, images.all.reject { |image| host_is?(image) })
         images.all.each do |image|
           if host_is?(image)
-            report_host_is_environment(image)
+            report_native(image)
             next
           end
 
+          report_drift(image)
           image_tag = ensure_image!(image, images)
           client.with_one_shot_container(image_tag, project_root: project.root, volumes: image.volumes) do |name|
             @out.puts "dev: cold container up: #{name}"
@@ -150,14 +154,14 @@ module Dev
 
       private
 
-      # Whether this host is the image's platform (the platform rule's
-      # fact, asked per image).
+      # Whether the image's work runs on this host (the host rule, asked
+      # per image).
       #
       # @param image [ProjectImages::Image]
       # @return [Boolean]
       sig { params(image: ProjectImages::Image).returns(T::Boolean) }
       def host_is?(image)
-        image.dev_platform == @host_platform
+        @host_rule.native?(image)
       end
 
       # Engine up and sized from the project's hint, once — and not at all
@@ -181,11 +185,26 @@ module Dev
         ENV["DEV_PUBLISH_IMAGE"] == "1"
       end
 
-      # @param image [ProjectImages::Image] the image this host is the platform of
+      # @param image [ProjectImages::Image] an image whose work runs here
       # @return [void]
       sig { params(image: ProjectImages::Image).void }
-      def report_host_is_environment(image)
-        @out.puts "dev: this host is the build environment (#{@host_platform}) — #{image.name}'s commands run here, no container"
+      def report_native(image)
+        @out.puts "dev: #{@host_rule.why_native(image)} — #{image.name}'s commands run here, no container"
+      end
+
+      # Name both digests when this host was provisioned from the image
+      # under another recipe: the container is the fallback until whoever
+      # owns the host re-images it.
+      #
+      # @param image [ProjectImages::Image] an image whose work runs in a container
+      # @return [void]
+      sig { params(image: ProjectImages::Image).void }
+      def report_drift(image)
+        return unless @host_rule.drifted?(image)
+
+        pinned = T.cast(image, EnvironmentImage)
+        @out.puts "dev: this host was provisioned from #{@host_rule.host} but the lock's #{image.name} is " \
+                  "#{image.name}@#{pinned.short_digest} — its commands run inside until this host is re-imaged"
       end
 
       # The image resolved (local → registry → build) — the lock's pin or

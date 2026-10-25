@@ -17,6 +17,7 @@ require "dev/deps/staleness"
 require "dev/execution_context"
 require "dev/global_catalog"
 require "dev/group_executor"
+require "dev/host_rule"
 require "dev/overridden_executor"
 require "dev/project_executor"
 require "dev/project_manifest"
@@ -50,6 +51,7 @@ module Dev
         dev_yaml_path: T.nilable(Pathname),
         manifest_loader: ProjectManifestLoader,
         command_service: T.nilable(CommandService),
+        host_rule: HostRule,
       ).void
     end
     def initialize(
@@ -57,13 +59,17 @@ module Dev
       out: $stdout,
       dev_yaml_path: Dev.find_dev_yaml_file,
       manifest_loader: ProjectManifestLoader.new,
-      command_service: nil
+      command_service: nil,
+      host_rule: HostRule.new
     )
       @ui = ui
       @out = out
       @dev_yaml_path = dev_yaml_path
       @manifest_loader = manifest_loader
       @command_service = command_service
+      # One answer to "does this image's work run here?" for the command
+      # runner, the container bring-up and `dev up`'s inside check alike.
+      @host_rule = host_rule
     end
 
     # Runs the dev command specified by the given argv.
@@ -250,6 +256,7 @@ module Dev
         ui: context.ui,
         images: project.project_images,
         project_root: project.root,
+        host_rule: @host_rule,
       )
       builtin_executor = BuiltinExecutor.new
       project_executor = ProjectExecutor.new(command_runner:)
@@ -293,7 +300,7 @@ module Dev
       services_down = T.let([], T::Array[Builtins::ServiceDown])
       container_group = T.let(nil, T.nilable(Command))
       if project.project_images.containerized?
-        container_up = Builtins::ContainerUpCommand.new(out: @out)
+        container_up = Builtins::ContainerUpCommand.new(out: @out, host_rule: @host_rule)
         container_down = Builtins::ContainerDownCommand.new(out: @out)
         services_up << container_up
         services_down << container_down
@@ -305,7 +312,7 @@ module Dev
         "complete" => complete,
         # `up` composes the same install `dev deps install` runs (the user's
         # intent, extended — it receives the args), then the services.
-        "up" => Builtins::UpCommand.new(install_deps_command: install_deps, service_dependencies: services_up),
+        "up" => Builtins::UpCommand.new(install_deps_command: install_deps, service_dependencies: services_up, host_rule: @host_rule),
         # Bundler's verbs: update ≈ bundle update, install ≈ bundle install,
         # check ≈ bundle check (inspect and exit non-zero when unsatisfied).
         "deps" => CommandGroup.new(

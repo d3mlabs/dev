@@ -1,15 +1,23 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "dev/platform"
+
 module Dev
   # Where dev's host-side artifacts (engines, dep caches, steam depots) live.
   #
-  # On a plain machine that is `~/.dev`. On an agent host the register
-  # bootstrap provisions a shared root (plans#26: anything both identities use
-  # is system-visible, not per-user) and the data root points there — for the
-  # human *and* the agent, so one engine tree serves both. Resolution is
+  # On a Mac that is `~/.dev`. On an agent Mac the register bootstrap
+  # provisions a shared root (plans#26: anything both identities use is
+  # system-visible, not per-user) and the data root points there — for the
+  # human *and* the agent, so one engine tree serves both. On Linux it is
+  # `/var/lib/dev` (dev#308, ADR-0008's Linux variant): user-independent,
+  # because what the store holds is path-bound (UBT's build state, venvs,
+  # binstubs) and one tree must read the same from every account that
+  # builds it — and the path the container already uses, so a Linux host's
+  # bind mount shows the container the store at its own path. Resolution is
   # derivable, never recorded (plans#26: inspected, no record file):
-  # explicit `DEV_DATA_ROOT` env → the shared root when it exists → `~/.dev`.
+  # explicit `DEV_DATA_ROOT` env → (darwin) the shared root when it exists →
+  # (linux) `/var/lib/dev`, existing or not → `~/.dev`.
   #
   # `expand` is the seam every dev-managed path takes: a configured path under
   # the literal `~/.dev` prefix (the store's tree bases, volume specs) re-roots
@@ -24,6 +32,12 @@ module Dev
     # reads as what it is: shared.
     SHARED_ROOT = "/Users/Shared/dev"
 
+    # The Linux default, and where every container dev creates mounts its
+    # data root: fixed, because the store embeds absolute paths, and
+    # FHS-conventional for a program's variable state. `dev up` creates it
+    # (LinuxDataRootProvisioner); a default needs nothing to be in effect.
+    LINUX_ROOT = "/var/lib/dev"
+
     # The per-user default, and the literal prefix `expand` re-roots.
     HOME_ROOT = "~/.dev"
 
@@ -34,11 +48,13 @@ module Dev
       #
       # @param env [Hash{String => String}] process env (injectable for tests)
       # @param shared_root [String] shared-root location probed for presence
+      # @param host_os [String] "darwin" / "linux" / "windows" (injectable for tests)
       # @return [String]
-      sig { params(env: T::Hash[String, String], shared_root: String).returns(String) }
-      def path(env: ENV.to_h, shared_root: SHARED_ROOT)
+      sig { params(env: T::Hash[String, String], shared_root: String, host_os: String).returns(String) }
+      def path(env: ENV.to_h, shared_root: SHARED_ROOT, host_os: Platform.os)
         explicit = env["DEV_DATA_ROOT"]
         return File.expand_path(explicit) if explicit && !explicit.empty?
+        return LINUX_ROOT if host_os == "linux"
         return shared_root if File.directory?(shared_root)
 
         File.expand_path(HOME_ROOT)

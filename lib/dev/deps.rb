@@ -3,6 +3,7 @@
 
 require "pathname"
 require "sorbet-runtime"
+require_relative "platform"
 require_relative "deps/config"
 require_relative "deps/cli_ui"
 require_relative "deps/lockfile"
@@ -96,11 +97,7 @@ module Dev
       # @return [String] "darwin", "linux", or "windows"
       sig { returns(String) }
       def detect_host
-        case RUBY_PLATFORM
-        when /darwin/ then "darwin"
-        when /linux/ then "linux"
-        else "windows"
-        end
+        Dev::Platform.os
       end
     end
   end

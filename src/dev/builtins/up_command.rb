@@ -6,7 +6,9 @@ require "dev/credentials"
 require "dev/builtins/service_up"
 require "dev/cold_root"
 require "dev/container_context"
+require "dev/host_rule"
 require "dev/host_service"
+require "dev/linux_data_root_provisioner"
 
 module Dev
   module Builtins
@@ -46,21 +48,31 @@ module Dev
       #   dev-managed container (ContainerContext). Inside, `up` is the deps
       #   install alone: the host layer, credentials and service bring-up
       #   belong to the host dev that started the container.
+      # @param host_rule [Dev::HostRule] inside, whether this container is
+      #   still the lock's image (HostRule#assert_container_current!)
+      # @param data_root_provisioner [Dev::LinuxDataRootProvisioner, nil]
+      #   the step that makes a Linux host's `/var/lib/dev` exist; nil
+      #   where it does not apply (a Mac, an overridden root)
       sig do
         params(
           install_deps_command: InstallDepsCommand,
           host_service: Dev::HostService,
           service_dependencies: T::Array[ServiceUp],
           inside_container: T::Boolean,
+          host_rule: Dev::HostRule,
+          data_root_provisioner: T.nilable(Dev::LinuxDataRootProvisioner),
         ).void
       end
       def initialize(install_deps_command:, host_service: Dev::HostService.new, service_dependencies: [],
-                     inside_container: Dev::ContainerContext.inside?)
+                     inside_container: Dev::ContainerContext.inside?, host_rule: Dev::HostRule.new,
+                     data_root_provisioner: Dev::LinuxDataRootProvisioner.for_host)
         super()
         @install_deps_command = install_deps_command
         @host_service = host_service
         @service_dependencies = service_dependencies
         @inside_container = inside_container
+        @host_rule = host_rule
+        @data_root_provisioner = data_root_provisioner
       end
 
       sig { override.returns(String) }
@@ -97,6 +109,9 @@ module Dev
         @host_service.converge_tooling
         @host_service.install_rc_hook
         @host_service.sync_skills(project_root: nil)
+        # The data root is the machine's, so it is the host half's: it must
+        # exist at its final path before anything installs into it.
+        @data_root_provisioner&.provision!
         project = context.project
         if project.nil?
           # In-project runs sync learnings via the composed dev deps install
@@ -157,6 +172,7 @@ module Dev
       #   host-side topology (throwaway root, one-shot container) that has no
       #   meaning here; reported, then the plain install runs
       # @return [void]
+      # @raise [Dev::HostRule::ContainerDriftError] this container is not the lock's image
       sig { params(args: Cli::ParsedArgs, context: ExecutionContext, no_cache: T::Boolean).void }
       def call_inside(args:, context:, no_cache:)
         if context.project.nil?
@@ -165,6 +181,10 @@ module Dev
         end
 
         puts "dev: #{NO_CACHE_FLAG} runs from the host (a throwaway data root and a one-shot container) — ignored inside." if no_cache
+        # A container made from an older recipe cannot replace itself: say
+        # so here, before anything installs into it, rather than at the
+        # first command.
+        @host_rule.assert_container_current!(context.project!.project_images.pinned)
         @install_deps_command.call(args:, context:)
       end
 

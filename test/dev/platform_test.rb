@@ -34,6 +34,17 @@ class Dev::PlatformTest < Minitest::Test
     "darwin/arm64"  | "darwin-arm64"
   end
 
+  test "os is the key's first half on its own: #{ruby_platform} -> #{expected}" do
+    Expect
+    Dev::Platform.os(ruby_platform:) == expected
+
+    Where
+    ruby_platform       | expected
+    "x86_64-linux"      | "linux"
+    "arm64-darwin24"    | "darwin"
+    "x64-mingw-ucrt"    | "windows"
+  end
+
   test "current describes this process's platform" do
     Expect "an os-arch pair"
     Dev::Platform.current.match?(/\A(darwin|linux|windows)-(x86_64|arm64)\z/)

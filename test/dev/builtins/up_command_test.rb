@@ -7,6 +7,12 @@ require "dev/builtins/install_deps_command"
 require "dev/builtins/up_command"
 require "dev/build_container_config"
 require "dev/credentials"
+require "dev/deps/dependency"
+require "dev/deps/lockfile"
+require "dev/environment_image"
+require "dev/host_environment"
+require "dev/host_rule"
+require "dev/linux_data_root_provisioner"
 require "fileutils"
 require "pathname"
 require "stringio"
@@ -15,6 +21,13 @@ require "tmpdir"
 transform!(RSpock::AST::Transformation)
 class Dev::Builtins::UpCommandTest < Minitest::Test
   include SorbetHelper
+
+  def setup
+    # The data root step is a host fact (Linux, default root); these tests
+    # inject it where it is the subject and have none otherwise — on a
+    # Linux CI runner the default would reach for sudo.
+    Dev::LinuxDataRootProvisioner.stubs(:for_host).returns(nil)
+  end
 
   test "traits: staleness-exempt (it IS the remediation) and stamps on success" do
     Given "the builtin"
@@ -54,6 +67,44 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     command.call(args: no_args, context: build_context)
 
     Then "the expectations on the host service hold"
+    true
+  end
+
+  test "call makes the Linux data root exist as part of the host half, before the install" do
+    Given "a host whose data root step applies"
+    install_deps = install_deps_mock
+    provisioner = typed_mock(Dev::LinuxDataRootProvisioner)
+    order = []
+    provisioner.expects(:provision!).once.with { order.push(:root).any? }
+    install_deps.expects(:call).once.with { |**| order.push(:install).any? }
+    command = Dev::Builtins::UpCommand.new(
+      install_deps_command: install_deps, host_service: quiet_host_service, data_root_provisioner: provisioner,
+    )
+
+    When
+    command.call(args: no_args, context: build_context)
+
+    Then "the root exists before anything installs into it"
+    order == [:root, :install]
+  end
+
+  test "a projectless up still makes the data root: it is the machine's, not the project's" do
+    Given
+    host_service = typed_mock(Dev::HostService)
+    host_service.stubs(:converge_tooling)
+    host_service.stubs(:install_rc_hook)
+    host_service.stubs(:sync_skills)
+    host_service.stubs(:sync_learnings)
+    provisioner = typed_mock(Dev::LinuxDataRootProvisioner)
+    provisioner.expects(:provision!).once
+    command = Dev::Builtins::UpCommand.new(
+      install_deps_command: install_deps_mock, host_service: host_service, data_root_provisioner: provisioner,
+    )
+
+    When
+    capture_stdout { command.call(args: no_args, context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui))) }
+
+    Then
     true
   end
 
@@ -157,6 +208,41 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     0 * host_service.sync_skills
     0 * Dev::Credentials.resolve_build_args(anything)
     0 * service.up(project: anything)
+  end
+
+  test "inside a container of the lock's image, call installs" do
+    Given
+    root, current, _older = inside_fixture
+    (root / "marker").write(current.marker)
+    install_deps = install_deps_mock
+    command = inside_up_command(install_deps, root)
+    context = inside_context(root)
+
+    When
+    command.call(args: no_args, context: context)
+
+    Then
+    1 * install_deps.call(args: anything, context: context)
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "inside a container made from an older recipe, call refuses before installing: the container cannot replace itself" do
+    Given
+    root, _current, older = inside_fixture
+    (root / "marker").write(older.marker)
+    install_deps = install_deps_mock
+    install_deps.expects(:call).never
+    command = inside_up_command(install_deps, root)
+    error = assert_raises(Dev::HostRule::ContainerDriftError) { command.call(args: no_args, context: inside_context(root)) }
+
+    Expect
+    error.message.include?("this container is snappy-linux@#{older.short_digest}")
+    error.message.include?("re-create it from the host: `dev container reset && dev up`")
+
+    Cleanup
+    FileUtils.rm_rf(root)
   end
 
   test "inside the container without a project, call explains there is nothing to provision" do
@@ -312,6 +398,38 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     $stdout.string
   ensure
     $stdout = old_stdout
+  end
+
+  # A checkout pinning one image; returns [root, the lock's image, an older recipe of it].
+  def inside_fixture
+    root = Pathname(Dir.mktmpdir("up-inside"))
+    pin = Dev::Deps::Dependency.new(
+      name: "snappy-linux", integration: :image, group: :app, version: "ue5.8-3", hash: "SHA256=#{"a" * 64}",
+      metadata: {
+        "from" => "ghcr.io/d3mlabs/unreal-engine-build-base", "platform" => "linux/amd64",
+        "platforms" => ["linux/amd64"], "registry" => "ghcr.io/d3mlabs", "apt" => [],
+      },
+    )
+    Dev::Deps::Lockfile.new(dir: root).lock(Dev::EnvironmentImage.stamp([pin]))
+    current = Dev::EnvironmentImage.from_pin(Dev::Deps::Lockfile.new(dir: root).read.first)
+    older = Dev::EnvironmentImage.new(
+      name: current.name, from: current.from, from_digest: current.from_digest, platform: current.platform,
+      apt: ["libnss3"], registry: current.registry,
+    )
+    [root, current, older]
+  end
+
+  def inside_up_command(install_deps, root)
+    host_rule = Dev::HostRule.new(
+      host_environment: Dev::HostEnvironment.new(path: (root / "marker").to_s), host_platform: "linux-x86_64",
+    )
+    Dev::Builtins::UpCommand.new(
+      install_deps_command: install_deps, host_service: typed_mock(Dev::HostService), inside_container: true, host_rule: host_rule,
+    )
+  end
+
+  def inside_context(root)
+    Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui), project: Dev::ProjectContext.new(name: "snappy", root: root))
   end
 
   def build_context(build_container: nil)

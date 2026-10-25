@@ -12,6 +12,8 @@ require "dev/container_dev_provisioner"
 require "dev/deps/dependency"
 require "dev/deps/lockfile"
 require "dev/environment_image"
+require "dev/host_environment"
+require "dev/host_rule"
 require "dev/container_user_aligner"
 require "dev/engine_provisioner"
 require "support/fake_container_engine"
@@ -118,7 +120,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     When "bringing the container up on a host that is not the environment"
     Dev::Builtins::ContainerUpCommand.new(
-      container_client: client, engine_provisioner: provisioner, out: out, host_platform: "darwin-arm64",
+      container_client: client, engine_provisioner: provisioner, out: out, host_rule: rule("darwin-arm64"),
     ).call(args: no_args, context: project(nil, root: root, engine: engine))
 
     Then
@@ -157,7 +159,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     When
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: aligned_user,
-      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out, host_platform: "darwin-arm64",
+      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out, host_rule: rule("darwin-arm64"),
     ).call(args: no_args, context: project(nil, root: root, engine: engine))
 
     Then "one service — the persisted image's; the plain one stops at its image"
@@ -171,9 +173,10 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "the host rule is asked per image: a host that is one image's platform skips that one and brings the other up" do
-    Given "a linux/amd64 image and a linux/arm64 image, on a linux-arm64 host"
-    root = project_root_pinning("linux/amd64", images: { "snappy-linux" => {}, "snappy-arm" => { "platform" => "linux/arm64" } })
+  test "the host rule is asked per image: a host provisioned from one image skips that one and brings the other up" do
+    Given "two linux/amd64 images, on a linux-x86_64 host whose marker is one of them"
+    root = project_root_pinning("linux/amd64", images: { "snappy-linux" => {}, "snappy-server" => {} })
+    server = pinned(root).find { |image| image.name == "snappy-server" }
     provisioner = typed_mock(Dev::EngineProvisioner)
     provisioner.expects(:provision!).once
     client = client()
@@ -182,12 +185,42 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     When
     Dev::Builtins::ContainerUpCommand.new(
-      container_client: client, engine_provisioner: provisioner, out: out, host_platform: "linux-arm64",
+      container_client: client, engine_provisioner: provisioner, out: out,
+      host_rule: rule("linux-x86_64", marker: marker_for(root, server)),
+    ).call(args: no_args, context: project(nil, root: root))
+
+    Then "the linux image is brought up though the host is its platform too; the server image is the host's own"
+    out.string == "dev: image ready: ref-linux\n" \
+      "dev: this host was provisioned from snappy-server@#{server.short_digest} — snappy-server's commands run here, no container\n"
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "a host provisioned from an older recipe of the image has drifted: brought up like any other host, and told both digests" do
+    Given "the marker names the image under another digest"
+    root = project_root_pinning("linux/amd64", images: { "snappy-linux" => {} })
+    current = pinned(root).first
+    older = Dev::EnvironmentImage.new(
+      name: current.name, from: current.from, from_digest: current.from_digest, platform: current.platform,
+      apt: ["libnss3"], registry: current.registry,
+    )
+    provisioner = typed_mock(Dev::EngineProvisioner)
+    provisioner.expects(:provision!).once
+    client = client()
+    client.expects(:ensure_environment_image!).once.returns("ref-linux")
+    out = StringIO.new
+
+    When
+    Dev::Builtins::ContainerUpCommand.new(
+      container_client: client, engine_provisioner: provisioner, out: out,
+      host_rule: rule("linux-x86_64", marker: marker_for(root, older)),
     ).call(args: no_args, context: project(nil, root: root))
 
     Then
-    out.string == "dev: image ready: ref-linux\n" \
-      "dev: this host is the build environment (linux-arm64) — snappy-arm's commands run here, no container\n"
+    out.string == "dev: this host was provisioned from snappy-linux@#{older.short_digest} but the lock's snappy-linux is " \
+      "snappy-linux@#{current.short_digest} — its commands run inside until this host is re-imaged\n" \
+      "dev: image ready: ref-linux\n"
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -396,7 +429,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     When "bringing the container up on a linux-x86_64 host"
     Dev::Builtins::ContainerUpCommand.new(
-      container_client: client, engine_provisioner: provisioner, out: out, host_platform: "linux-x86_64",
+      container_client: client, engine_provisioner: provisioner, out: out, host_rule: rule("linux-x86_64"),
     ).call(args: no_args, context: project(config, root: root))
 
     Then "it says why once and stops"
@@ -423,7 +456,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     When "bringing the container up"
     Dev::Builtins::ContainerUpCommand.new(
-      container_client: client, engine_provisioner: provisioner, out: out, host_platform: "linux-x86_64",
+      container_client: client, engine_provisioner: provisioner, out: out, host_rule: rule("linux-x86_64"),
     ).call(args: no_args, context: project(config, root: root))
 
     Then "the image is resolved for the registry's sake, then the rule applies"
@@ -447,7 +480,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     When "bringing the container up"
     Dev::Builtins::ContainerUpCommand.new(
-      container_client: client, engine_provisioner: provisioner, out: out, host_platform: "darwin-arm64",
+      container_client: client, engine_provisioner: provisioner, out: out, host_rule: rule("darwin-arm64"),
     ).call(args: no_args, context: project(config, root: root))
 
     Then
@@ -469,7 +502,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     When "running the cold bring-up"
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: typed_mock(Dev::EngineProvisioner), out: out,
-      host_platform: "linux-x86_64",
+      host_rule: rule("linux-x86_64"),
     ).cold_up(project: project(config, root: root).project!)
 
     Then
@@ -747,6 +780,24 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     end
     Dev::Deps::Lockfile.new(dir: root).lock(Dev::EnvironmentImage.stamp(pins))
     root
+  end
+
+  # The host rule over a marker (absent by default) and a platform.
+  def rule(host_platform, marker: nil)
+    path = marker || "/nonexistent/dev-environment-marker"
+    Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: path), host_platform: host_platform)
+  end
+
+  # Write under +root+ the marker a host provisioned from +image+ carries.
+  def marker_for(root, image)
+    path = root / "etc-dev-environment"
+    path.write(image.marker)
+    path.to_s
+  end
+
+  def pinned(root)
+    Dev::Deps::Lockfile.new(dir: root).read.select { |pin| pin.integration == :image }
+      .map { |pin| Dev::EnvironmentImage.from_pin(pin) }
   end
 
   def status(local:, registry:, containers:)

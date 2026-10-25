@@ -34,6 +34,21 @@ module Dev
         key(ruby_platform: RUBY_PLATFORM, host_cpu: RbConfig::CONFIG.fetch("host_cpu"))
       end
 
+      # This process's OS, the key's first half on its own — what the
+      # `host:` declaration axis and every OS-shaped default (the data
+      # root, the engine) branch on.
+      #
+      # @param ruby_platform [String] RUBY_PLATFORM (injectable for tests)
+      # @return [String] "darwin", "linux", or "windows"
+      sig { params(ruby_platform: String).returns(String) }
+      def os(ruby_platform: RUBY_PLATFORM)
+        case ruby_platform
+        when /darwin/ then "darwin"
+        when /linux/ then "linux"
+        else "windows"
+        end
+      end
+
       # The key for a Ruby platform string and host CPU (injectable for tests).
       #
       # @param ruby_platform [String] RUBY_PLATFORM
@@ -41,12 +56,7 @@ module Dev
       # @return [String]
       sig { params(ruby_platform: String, host_cpu: String).returns(String) }
       def key(ruby_platform:, host_cpu:)
-        os = case ruby_platform
-        when /darwin/ then "darwin"
-        when /linux/ then "linux"
-        else "windows"
-        end
-        "#{os}-#{ARCHES.fetch(host_cpu, host_cpu)}"
+        "#{os(ruby_platform:)}-#{ARCHES.fetch(host_cpu, host_cpu)}"
       end
 
       # The key for a docker platform string (`<os>/<arch>`, as `FROM
