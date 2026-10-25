@@ -10,6 +10,7 @@ require "yaml"
 
 require "dev/colima_provisioner"
 require "dev/data_root"
+require "dev/data_root_migration"
 
 module Dev
   # The agent host bootstrap (plans#26 layer 3), converged by
@@ -389,30 +390,11 @@ module Dev
       step!("sudo", "chmod", "2775", path)
     end
 
-    # The one-off ~/.dev migration: artifact trees (engines, caches, steam
-    # depots) move to the shared root — a rename, so multi-GB engine trees
-    # cost nothing — while mutable per-user state (`state`) stays per-home
-    # (plans#26 pollution rule: sharing is for immutable artifacts and
-    # cooperative caches, never mutable state). Entries the shared root
-    # already holds are skipped: anything cheap is simply re-materialized by
-    # the next `dev up`, and a newer shared tree must never be clobbered by
-    # a stale home one.
+    # The one-off ~/.dev migration into the shared root (DataRootMigration:
+    # artifacts move, `state` stays per-home, what the root holds is kept).
     sig { void }
     def migrate_home_artifacts!
-      return unless File.directory?(@home_dev)
-
-      Dir.children(@home_dev).sort.each do |entry|
-        next if entry == "state"
-
-        destination = File.join(@shared_root, entry)
-        if File.exist?(destination)
-          @out.puts ">>> Skipping ~/.dev/#{entry} (already present in the shared root)."
-          next
-        end
-
-        @out.puts ">>> Migrating ~/.dev/#{entry} to #{destination} ..."
-        FileUtils.mv(File.join(@home_dev, entry), destination)
-      end
+      DataRootMigration.new(from: @home_dev, to: @shared_root, out: @out).run!
     end
 
     # @return [String] the agent's own settings file
