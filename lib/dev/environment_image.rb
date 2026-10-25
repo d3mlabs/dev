@@ -109,13 +109,6 @@ module Dev
         image
       end
 
-      # The lock-side step of a re-lock: every `:image` pin stamped with the
-      # digest this dev computes for it (a stale stored one is replaced —
-      # the re-lock is where staleness is cured), other pins untouched.
-      #
-      # @param pins [Array<Dev::Deps::Dependency>] the resolved pins
-      # @return [Array<Dev::Deps::Dependency>]
-      # @raise [PlatformError]
       # A docker platform (`linux/arm64/v8`) as dev's key (`linux-arm64`):
       # the variant is docker's, dev's keys have none.
       #
@@ -126,6 +119,13 @@ module Dev
         Platform.from_docker(docker_platform.split("/").take(2).join("/"))
       end
 
+      # The lock-side step of a re-lock: every `:image` pin stamped with the
+      # digest this dev computes for it (a stale stored one is replaced —
+      # the re-lock is where staleness is cured), other pins untouched.
+      #
+      # @param pins [Array<Dev::Deps::Dependency>] the resolved pins
+      # @return [Array<Dev::Deps::Dependency>]
+      # @raise [PlatformError]
       sig { params(pins: T::Array[Dev::Deps::Dependency]).returns(T::Array[Dev::Deps::Dependency]) }
       def stamp(pins)
         pins.map do |pin|

@@ -8,7 +8,8 @@ module Dev
     # `dev container status` — where this checkout stands against its image
     # and container, and what `dev container up` would do about it. A pure
     # report: the image is probed locally and in the registry, never pulled
-    # or built; containers are listed, never started.
+    # or built; containers are listed, never started. A pinned image
+    # (dev#277) is also described: its floor by digest and its platform.
     class ContainerStatusCommand < ContainerCommand
       extend T::Sig
 
@@ -21,10 +22,15 @@ module Dev
       sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
         cfg = config(context)
-        root = context.project!.root
-        status = client.service_status(BuildContainer.image_with_tag(cfg, project_root: root), root)
+        project = context.project!
+        image = project.environment_image
+        status = client.service_status(project.project_image.ref, project.root)
 
         @out.puts "image: #{status.image_tag} — #{image_state(status)}"
+        if image
+          @out.puts "floor: #{image.floor_ref}"
+          @out.puts "platform: #{image.platform}"
+        end
         current, others = status.containers.partition { |container| container.name == status.current_container_name }
         if cfg.persist
           @out.puts "container: #{persisted_state(current.first)}"

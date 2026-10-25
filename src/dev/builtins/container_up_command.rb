@@ -168,22 +168,16 @@ module Dev
         @out.puts "dev: this host is the build environment (#{@host_platform}) — commands run here, no container"
       end
 
-      # Engine up and sized, image resolved (local → registry → build).
+      # Engine up and sized, image resolved (local → registry → build) —
+      # the lock's pin or the deprecated Dockerfile, ProjectImage's call.
       #
       # @param cfg [BuildContainerConfig]
       # @param project [ProjectContext]
-      # @return [String] the image tag
+      # @return [String] the image reference
       sig { params(cfg: BuildContainerConfig, project: ProjectContext).returns(String) }
       def ensure_image!(cfg, project)
         @engine_provisioner.provision!(resources: cfg.resources)
-        image_tag = client.ensure_image!(
-          cfg,
-          project_root: project.root,
-          push: false,
-          publish: publish_image?,
-          build_args_provider: -> { Dev::Credentials.resolve_build_args(cfg.build_args) },
-          secrets_provider: -> { Dev::Credentials.resolve_build_args(cfg.build_secrets) },
-        )
+        image_tag = project.project_image.ensure!(client:, publish: publish_image?)
         @out.puts "dev: image ready: #{image_tag}"
         image_tag
       end

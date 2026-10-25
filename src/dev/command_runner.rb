@@ -11,6 +11,7 @@ require "dev/container_context"
 require "dev/container_engine"
 require "dev/environment_platform"
 require "dev/platform"
+require "dev/project_image"
 require "dev/shadowenv_llvm"
 
 module Dev
@@ -207,14 +208,7 @@ module Dev
     def run_in_container(shell_command, wait:)
       config = T.must(@build_container)
       client = container_client
-      image_tag = client.ensure_image!(
-        config,
-        project_root: @project_root,
-        push: false,
-        publish: publish_image?,
-        build_args_provider: -> { resolve_build_args(config) },
-        secrets_provider: -> { resolve_build_secrets(config) },
-      )
+      image_tag = ProjectImage.new(root: @project_root, config:).ensure!(client:, publish: publish_image?)
       docker_argv = container_command(config, image_tag, shell_command)
 
       Dir.chdir(@project_root)
@@ -268,28 +262,6 @@ module Dev
           env: resolve_run_env(config),
         )
       end
-    end
-
-    # Resolve docker build args declared in dev.yml from Dev::Credentials.
-    # Only invoked when the image actually needs building. Normally `dev up`
-    # has already prompted and stored these, so this resolves silently.
-    #
-    # @param config [Dev::BuildContainerConfig]
-    # @return [Hash{String => String}]
-    sig { params(config: Dev::BuildContainerConfig).returns(T::Hash[String, String]) }
-    def resolve_build_args(config)
-      Dev::Credentials.resolve_build_args(config.build_args)
-    end
-
-    # Resolve BuildKit build secrets declared in dev.yml from Dev::Credentials.
-    # Same shape and lazy timing as build args (only on a cache miss), but the
-    # values are mounted as BuildKit secrets rather than baked into image layers.
-    #
-    # @param config [Dev::BuildContainerConfig]
-    # @return [Hash{String => String}]
-    sig { params(config: Dev::BuildContainerConfig).returns(T::Hash[String, String]) }
-    def resolve_build_secrets(config)
-      Dev::Credentials.resolve_build_args(config.build_secrets)
     end
 
     # Resolve runtime env vars (build.container.run_env) for `docker run -e`:

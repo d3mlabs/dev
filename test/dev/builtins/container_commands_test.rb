@@ -9,6 +9,9 @@ require "dev/builtins/container_tag_command"
 require "dev/builtins/container_status_command"
 require "dev/build_container_config"
 require "dev/container_dev_provisioner"
+require "dev/deps/dependency"
+require "dev/deps/lockfile"
+require "dev/environment_image"
 require "dev/container_user_aligner"
 require "dev/engine_provisioner"
 require "support/fake_container_engine"
@@ -97,6 +100,31 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
       "dev: build container up: dev-myapp-linux-abc-content-abc123\n" \
       "dev: container dev installed at 0.2.98\n" \
       "dev: container deps installed\n"
+  end
+
+  test "container up with an image pin resolves through ensure_environment_image!, the block's hint along" do
+    Given "a checkout whose lock pins its image and whose container block names none"
+    root = project_root_pinning("linux/amd64")
+    config = Dev::BuildContainerConfig.new(persist: false, resources: Dev::BuildContainerConfig::Resources.new(cpus: 8))
+    provisioner = typed_mock(Dev::EngineProvisioner)
+    provisioner.expects(:provision!).with(resources: config.resources).once
+    client = client()
+    client.expects(:ensure_image!).never
+    client.expects(:ensure_environment_image!).once
+      .with { |image, publish:, resources:| image.name == "myapp-linux" && !publish && resources.cpus == 8 }
+      .returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
+    out = StringIO.new
+
+    When "bringing the container up on a host that is not the environment"
+    Dev::Builtins::ContainerUpCommand.new(
+      container_client: client, engine_provisioner: provisioner, out: out, host_platform: "darwin-arm64",
+    ).call(args: no_args, context: project(config, root: root))
+
+    Then
+    out.string == "dev: image ready: ghcr.io/d3mlabs/myapp-linux:deadbeef\n"
+
+    Cleanup
+    FileUtils.rm_rf(root)
   end
 
   test "container up reports a user alignment that did something: #{result}" do
@@ -468,7 +496,52 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     out.string == "#{TAG}\n"
   end
 
+  test "container tag prints a pinned image's ref: the digest tag the lock and the registry share" do
+    Given
+    root = project_root_pinning("linux/amd64")
+    image = Dev::EnvironmentImage.from_pin(Dev::Deps::Lockfile.new(dir: root).read.first)
+    out = StringIO.new
+
+    When
+    Dev::Builtins::ContainerTagCommand.new(container_client: client, out: out)
+      .call(args: no_args, context: project(nil, root: root))
+
+    Then
+    out.string == "#{image.ref}\n"
+    image.ref.end_with?(":#{image.digest}")
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
   # --- status -----------------------------------------------------------------
+
+  test "container status on a pinned image also says what the image is: its floor by digest and its platform" do
+    Given
+    root = project_root_pinning("linux/arm64")
+    image = Dev::EnvironmentImage.from_pin(Dev::Deps::Lockfile.new(dir: root).read.first)
+    client = client()
+    client.stubs(:service_status).with(image.ref, root).returns(
+      Dev::BuildContainer::ServiceStatus.new(
+        image_tag: image.ref, local_image: true, in_registry: true, current_container_name: CURRENT, containers: [],
+      ),
+    )
+    out = StringIO.new
+
+    When
+    Dev::Builtins::ContainerStatusCommand.new(container_client: client, out: out)
+      .call(args: no_args, context: project(Dev::BuildContainerConfig.new(persist: false), root: root))
+
+    Then
+    out.string.lines.first(3) == [
+      "image: #{image.ref} — local, in registry\n",
+      "floor: ghcr.io/d3mlabs/unreal-engine-build-base@sha256:#{"a" * 64}\n",
+      "platform: linux/arm64\n",
+    ]
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
 
   test "container status renders the image line: #{description}" do
     Given "an image #{description}"
@@ -547,6 +620,20 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
   def project_root_declaring(docker_platform)
     root = Pathname(Dir.mktmpdir("container-commands"))
     (root / "Dockerfile").write("FROM --platform=#{docker_platform} ubuntu:22.04\n")
+    root
+  end
+
+  # A real checkout root whose lock pins its image (dev#277), on that platform.
+  def project_root_pinning(docker_platform)
+    root = Pathname(Dir.mktmpdir("container-commands"))
+    pin = Dev::Deps::Dependency.new(
+      name: "myapp-linux", integration: :image, group: :app, version: "ue5.8-3", hash: "SHA256=#{"a" * 64}",
+      metadata: {
+        "from" => "ghcr.io/d3mlabs/unreal-engine-build-base", "platform" => docker_platform,
+        "platforms" => [docker_platform], "registry" => "ghcr.io/d3mlabs", "apt" => [],
+      },
+    )
+    Dev::Deps::Lockfile.new(dir: root).lock(Dev::EnvironmentImage.stamp([pin]))
     root
   end
 
