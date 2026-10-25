@@ -248,8 +248,7 @@ module Dev
       project = context.project!
       command_runner = CommandRunner.new(
         ui: context.ui,
-        build_container: project.build_container,
-        engine: project.engine,
+        images: project.project_images,
         project_root: project.root,
       )
       builtin_executor = BuiltinExecutor.new

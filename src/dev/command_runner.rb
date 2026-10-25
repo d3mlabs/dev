@@ -9,9 +9,8 @@ require "dev/credentials"
 require "dev/build_container"
 require "dev/container_context"
 require "dev/container_engine"
-require "dev/environment_platform"
 require "dev/platform"
-require "dev/project_image"
+require "dev/project_images"
 require "dev/shadowenv_llvm"
 
 module Dev
@@ -39,22 +38,23 @@ module Dev
   # Before every command, ensures the project's shadowenv Ruby environment is
   # provisioned (fast-path: skips if the project's ruby lisp is current).
   #
-  # When a build container is configured and the command opts in (default),
-  # the command runs inside the container via `docker run`. Otherwise it runs
-  # locally via `shadowenv exec`.
+  # Where a command runs is `placement`: the command's environment
+  # (ProjectImages#for — its `runs_on:`, or the project's one image) is an
+  # image or the host. An image means `docker run` / `docker exec` in a
+  # container of it; the host means `shadowenv exec` here.
   #
   # Inside a dev-managed container (ContainerContext.inside?) there is no
-  # further container to reach for: a containerized command runs directly
-  # at the project root, under `shadowenv exec` like any other. The
-  # interpreters it finds there are `dev deps install`'s doing — Ruby and
-  # Python are brew pins activated in the project shadowenv by the install,
-  # on the host and inside the container alike — and the host-only LLVM is
-  # left to the image.
+  # further container to reach for: every command runs directly at the
+  # project root, under `shadowenv exec` like any other. The interpreters
+  # it finds there are `dev deps install`'s doing — Ruby and Python are
+  # brew pins activated in the project shadowenv by the install, on the
+  # host and inside the container alike — and the host-only LLVM is left
+  # to the image.
   #
-  # On a host that *is* the environment (EnvironmentPlatform: the
-  # Dockerfile declares this host's own platform) there is no container to
-  # reach for either — the platform rule. The command runs directly as a
-  # host command does, under the host's shadowenv.
+  # On a host that *is* the command's environment (the image's platform is
+  # this host's) there is no container to reach for either — the platform
+  # rule (ADR-0007), asked of the command's image. The command runs
+  # directly as a host command does, under the host's shadowenv.
   class CommandRunner
     extend T::Sig
 
@@ -107,24 +107,24 @@ module Dev
       end
     end
 
-    # @param engine [Dev::EngineResources::Hint, nil] the project's engine
-    #   floor, measured before any image work
+    # @param images [Dev::ProjectImages] the project's images and where each
+    #   command runs; a project with none places everything on the host
+    # @param host_platform [String] this host's platform key, measured
+    #   against the command's image's
     sig do
       params(
         ui: Dev::Cli::Ui,
         project_root: Pathname,
-        build_container: T.nilable(Dev::BuildContainerConfig),
-        engine: T.nilable(Dev::EngineResources::Hint),
+        images: Dev::ProjectImages,
         container_client: T.nilable(Dev::BuildContainer),
         inside_container: T::Boolean,
         host_platform: String,
       ).void
     end
-    def initialize(ui:, project_root:, build_container: nil, engine: nil, container_client: nil,
+    def initialize(ui:, project_root:, images: Dev::ProjectImages.new(root: project_root), container_client: nil,
                    inside_container: ContainerContext.inside?, host_platform: Platform.current)
       @ui = ui
-      @build_container = build_container
-      @engine = engine
+      @images = images
       @project_root = project_root
       @container_client = container_client
       @inside_container = inside_container
@@ -169,31 +169,36 @@ module Dev
       shell_command = build_shell_command(cmd.run, args)
       @ui.print_header(shell_command)
 
-      if use_container?(cmd)
-        run_in_container(shell_command, wait:)
-      else
+      placement = placement(cmd)
+      if placement == ProjectImages::HOST
         ensure_shadowenv_provisioned!
         if cmd.repl
           run_bare(shell_command, wait:)
         else
           run_with_status_footer(shell_command, wait:)
         end
+      else
+        run_in_container(T.cast(placement, ProjectImages::Image), shell_command, wait:)
       end
     end
 
-    # Whether the command reaches into the build container: configured, opted
-    # in, not already there, and this host is not the environment itself.
-    sig { params(cmd: ProjectCommand).returns(T::Boolean) }
-    def use_container?(cmd)
-      !@build_container.nil? && cmd.container && !@inside_container && !host_is_environment?
-    end
-
-    # The platform rule's fact for this checkout (see EnvironmentPlatform).
+    # Where the command runs: here, or in a container of its image. Here
+    # when we are already inside a container, when the command's
+    # environment is the host, or when this host *is* the image's platform
+    # (the platform rule); the image otherwise.
     #
-    # @return [Boolean]
-    sig { returns(T::Boolean) }
-    def host_is_environment?
-      EnvironmentPlatform.host_is_environment?(project_root: @project_root, host: @host_platform)
+    # @param cmd [ProjectCommand]
+    # @return [ProjectImages::Placement]
+    # @raise [ProjectImages::UnknownImageError, ProjectImages::AmbiguousEnvironmentImageError]
+    sig { params(cmd: ProjectCommand).returns(ProjectImages::Placement) }
+    def placement(cmd)
+      return ProjectImages::HOST if @inside_container
+
+      placement = @images.for(cmd)
+      return placement if placement == ProjectImages::HOST
+
+      image = T.cast(placement, ProjectImages::Image)
+      image.dev_platform == @host_platform ? ProjectImages::HOST : image
     end
 
     # Whether the resolved image should be published to the shared registry.
@@ -208,12 +213,15 @@ module Dev
       ENV["DEV_PUBLISH_IMAGE"] == "1"
     end
 
-    sig { params(shell_command: String, wait: T::Boolean).void }
-    def run_in_container(shell_command, wait:)
-      config = T.must(@build_container)
+    # @param image [ProjectImages::Image] the command's environment
+    # @param shell_command [String]
+    # @param wait [Boolean]
+    # @return [void]
+    sig { params(image: ProjectImages::Image, shell_command: String, wait: T::Boolean).void }
+    def run_in_container(image, shell_command, wait:)
       client = container_client
-      image_tag = ProjectImage.new(root: @project_root, config:, engine: @engine).ensure!(client:, publish: publish_image?)
-      docker_argv = container_command(config, image_tag, shell_command)
+      image_tag = @images.ensure!(image, client:, publish: publish_image?)
+      docker_argv = container_command(image, image_tag, shell_command)
 
       Dir.chdir(@project_root)
       # The child argv carries the engine's argv prefix; its env (e.g. the
@@ -233,29 +241,26 @@ module Dev
     end
 
     # docker argv for a containerized command: a `docker exec` into the reused
-    # long-lived container when persist is set (its writable layer keeps the
-    # build tool's incremental state across commands), else a one-shot `docker
-    # run --rm`.
+    # long-lived container when the image persists (its writable layer keeps
+    # the build tool's incremental state across commands), else a one-shot
+    # `docker run --rm`. One persistent container per (image, workspace).
     #
-    # @param config        [Dev::BuildContainerConfig]
-    # @param image_tag      [String]
+    # @param image         [ProjectImages::Image] the command's environment
+    # @param image_tag     [String]
     # @param shell_command [String]
     # @return [Array<String>]
-    sig do
-      params(config: Dev::BuildContainerConfig, image_tag: String, shell_command: String)
-        .returns(T::Array[String])
-    end
-    def container_command(config, image_tag, shell_command)
-      # Volumes mount as configured. Nothing of the host's data root is
+    sig { params(image: ProjectImages::Image, image_tag: String, shell_command: String).returns(T::Array[String]) }
+    def container_command(image, image_tag, shell_command)
+      # Volumes mount as declared. Nothing of the host's data root is
       # resolved into them: the container owns its own (ADR-0008).
-      volumes = config.volumes
+      volumes = image.volumes
 
-      if config.persist
+      if image.persist
         container = container_client.ensure_service!(
           image_tag, project_root: @project_root, volumes: volumes,
         )
         container_client.docker_exec_command(
-          container, shell_cmd: shell_command, env: resolve_run_env(config),
+          container, shell_cmd: shell_command, env: resolve_run_env(image),
         )
       else
         container_client.docker_run_command(
@@ -263,20 +268,20 @@ module Dev
           project_root: @project_root,
           shell_cmd: shell_command,
           volumes: volumes,
-          env: resolve_run_env(config),
+          env: resolve_run_env(image),
         )
       end
     end
 
-    # Resolve runtime env vars (build.container.run_env) for `docker run -e`:
-    # best-effort and non-interactive (Dev::Credentials.resolve_run_env), so
-    # a missing runtime secret never blocks a command that doesn't need it.
+    # Resolve the image's `run_env` for `docker run -e`: best-effort and
+    # non-interactive (Dev::Credentials.resolve_run_env), so a missing
+    # runtime secret never blocks a command that doesn't need it.
     #
-    # @param config [Dev::BuildContainerConfig]
+    # @param image [ProjectImages::Image]
     # @return [Hash{String => String}]
-    sig { params(config: Dev::BuildContainerConfig).returns(T::Hash[String, String]) }
-    def resolve_run_env(config)
-      Dev::Credentials.resolve_run_env(config.run_env)
+    sig { params(image: ProjectImages::Image).returns(T::Hash[String, String]) }
+    def resolve_run_env(image)
+      Dev::Credentials.resolve_run_env(image.run_env)
     end
 
     sig { params(run_str: String, args: T::Array[String]).returns(String) }
