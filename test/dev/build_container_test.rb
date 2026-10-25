@@ -87,6 +87,18 @@ class BuildContainerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "image_with_tag refuses a config that names no image: that project's image is its lock's pin" do
+    Given
+    config = Dev::BuildContainerConfig.new(persist: true)
+
+    When
+    Dev::BuildContainer.image_with_tag(config, project_root: Pathname("/nowhere"))
+
+    Then
+    error = raises(Dev::BuildContainer::NoDockerfileImageError)
+    error.message.include?("`image` pin")
+  end
+
   test "image_with_tag combines config and content tag" do
     Given "a config and project"
     dir = Dir.mktmpdir("build-container-test-")

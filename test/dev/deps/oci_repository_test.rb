@@ -4,6 +4,7 @@
 require "test_helper"
 require "dev/deps/oci_repository"
 require "json"
+require "net/http"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::OciRepositoryTest < Minitest::Test
@@ -85,6 +86,60 @@ class Dev::Deps::OciRepositoryTest < Minitest::Test
     raises Dev::Deps::Repository::PackageNotFoundError
   end
 
+  test "find raises RegistryError carrying the status and body on any other answer" do
+    Given
+    repo = Dev::Deps::OciRepository.new(auth: gh_auth)
+    repo.expects(:get).with(MANIFEST_URL, headers: anything).returns(response(503, {}, "upstream unavailable\n"))
+
+    When
+    repo.find(Dev::Deps::PackageId.new(integration: :image, name: "x", source: FLOOR))
+
+    Then
+    error = raises(Dev::Deps::OciRepository::RegistryError)
+    error.message.include?("HTTP 503")
+    error.message.include?("upstream unavailable")
+    error.message.include?(MANIFEST_URL)
+  end
+
+  test "get is one Net::HTTP GET over TLS, the answer flattened to code, lower-cased headers and body" do
+    Given "the HTTP boundary, faked"
+    http = mock("http")
+    http.expects(:request).with { |req| req.is_a?(Net::HTTP::Get) && req["Authorization"] == "Bearer b" }
+      .returns(http_response(Net::HTTPOK, "200", { "Docker-Content-Digest" => "sha256:abc" }, "{}"))
+    Net::HTTP.expects(:start).with("ghcr.io", 443, use_ssl: true).yields(http)
+      .returns(http_response(Net::HTTPOK, "200", { "Docker-Content-Digest" => "sha256:abc" }, "{}"))
+
+    When
+    result = Dev::Deps::OciRepository.new(auth: gh_auth).send(:get, MANIFEST_URL, headers: { "Authorization" => "Bearer b" })
+
+    Then
+    result.code == 200
+    result.headers["docker-content-digest"] == "sha256:abc"
+    result.body == "{}"
+  end
+
+  test "get follows a redirect without carrying the registry's Authorization to the storage host" do
+    Given "a blob read that redirects to storage"
+    storage = "https://storage.example/blob?sig=1"
+    redirect = http_response(Net::HTTPFound, "302", { "Location" => storage }, "")
+    registry_http = mock("registry")
+    registry_http.expects(:request).returns(redirect)
+    storage_http = mock("storage")
+    storage_http.expects(:request).with { |req| req["Authorization"].nil? && req["Accept"] == "*/*" }
+      .returns(http_response(Net::HTTPOK, "200", {}, "blob"))
+    Net::HTTP.expects(:start).with("ghcr.io", 443, use_ssl: true).yields(registry_http).returns(redirect)
+    Net::HTTP.expects(:start).with("storage.example", 443, use_ssl: true).yields(storage_http)
+      .returns(http_response(Net::HTTPOK, "200", {}, "blob"))
+
+    When
+    result = Dev::Deps::OciRepository.new(auth: gh_auth)
+      .send(:get, CONFIG_URL, headers: { "Authorization" => "Bearer b", "Accept" => "*/*" })
+
+    Then
+    result.code == 200
+    result.body == "blob"
+  end
+
   test "find raises AccessDeniedError naming the scope to add when the token is refused after the challenge" do
     Given "a token without read:packages"
     repo = Dev::Deps::OciRepository.new(auth: gh_auth)
@@ -128,6 +183,15 @@ class Dev::Deps::OciRepositoryTest < Minitest::Test
 
   def response(code, headers, body)
     Dev::Deps::OciRepository::Response.new(code: code, headers: headers, body: body)
+  end
+
+  # A real Net::HTTPResponse of the given class, body pre-read.
+  def http_response(klass, code, headers, body)
+    resp = klass.new("1.1", code, klass.name.split("::").last)
+    headers.each { |key, value| resp[key] = value }
+    resp.instance_variable_set(:@body, body)
+    resp.instance_variable_set(:@read, true)
+    resp
   end
 
   def single_manifest
