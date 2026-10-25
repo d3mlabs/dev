@@ -336,6 +336,8 @@ One YAML lockfile, **`deps.lock`**, pins every dependency in every group to an e
 
 A lock describes what a dependency publishes, never the machine that wrote it. A pin whose version publishes one file carries that file's hash; a pin whose version publishes several platform builds carries a `platforms:` block — every published target with its hash and link — whether the declaration named platforms (ficsit targets) or not (brew bottles: every bottle tag the formula ships, `arm64_tahoe`, `x86_64_linux`, …, read once per formula from brew for tap formulae and from the public formula API for `homebrew/core`). The same `dev deps update` on a Mac and on a Linux box therefore writes the same bytes. The one fact a brew pin carries that is *not* published — `tap_commit`, the tap HEAD the pin was resolved at — is carried forward from the lock on disk for every tap none of whose pins changed, and moves to today's HEAD only when something in that tap did (see [Reproducible brew](#reproducible-brew)). So a re-lock that changes no formula — a gem bump, a mod bump, a `dev deps update` a week later — leaves every `tap_commit` in `deps.lock` where it was.
 
+An `image` pin is the one entry whose integrity facts describe something dev builds rather than downloads: under `image:`, the floor's tag as `version`, its registry digest as `hash`, then `from`, `platform`, `platforms` (what the floor publishes), `registry`, the sorted `apt` set, and `digest` — the SHA-256 of the Dockerfile dev generates from those, which is also the image's registry tag. `dev deps update` stamps it; every read checks it against what the running dev computes and refuses a mismatch with the same remediation. See [The environment image](#the-environment-image-the-locks-image-pin).
+
 ### Reproducible brew
 
 Brew is a moving registry: `brew install cmake` installs whatever `homebrew/core` has *today*, so a lock that merely records a version has no bite on its own. dev gives it two, one per side of the container boundary:
@@ -373,6 +375,14 @@ Dev::Deps.define do
   python "3.12" # optional Python: homebrew/core's python@3.12, plus a project .venv built on it
   gem "cli-ui"
   tap "d3mlabs/d3mlabs"
+
+  # The build environment for hosts whose platform is not linux/amd64: a floor
+  # image by tag (locked to its digest), the platform, and the OS packages the
+  # build needs on top. dev generates the Dockerfile; the image is the pin.
+  image "snappy-linux", from: "ghcr.io/d3mlabs/unreal-engine-build-base:ue5.8-3" do
+    platform "linux/amd64"
+    apt "winbind", "dos2unix"
+  end
 
   group :build do
     brew "cmake"
@@ -564,7 +574,7 @@ Four setups, each as cold → warm:
 | **Self-hosted runner** (a box) | its disk | install Homebrew + dev, `gh auth login` (dev pulls private releases through `gh`), `dev up` once — or `dev runner register`, which converges the engine and enrolls | probe. The store is version-keyed, so several branches are warm at once (last month's engine and this month's coexist); a `dev cache gc --keep N` step at the end of each job trims what no current lock names |
 | **Hosted runner** (GitHub larger runner, ephemeral) | **a checkpoint**: a GitHub custom image of the boot disk after `dev up`, written by a dedicated `main`-only job | the stock image: install Homebrew + dev, `dev up` installs the full lock — minutes to tens of minutes, the big trees dominating | boots the checkpoint; `dev up` is a probe. A PR that moves a lock installs the difference per run until it merges and the checkpoint job captures the new set |
 
-Two things are **not** warmth carriers, and the vocabulary keeps them apart. The **build image** (the Dockerfile's content-addressed tag) is the OS substrate for hosts whose platform is not the environment's; it holds what the OS needs and nothing from the lock. The **checkpoint** is a persistence mechanism for one host kind; it is not an artifact PRs mint, carries no recipe, and holds nothing the data root does not. Pre-materialized toolchains that are too slow to build per host are neither: they are store trees published once by a publisher repo and consumed through the lock like any other `gh` release.
+Two things are **not** warmth carriers, and the vocabulary keeps them apart. The **build image** (the lock's `image` pin, tagged by its content digest) is the OS substrate for hosts whose platform is not the environment's; it holds what the OS needs and nothing from the lock. The **checkpoint** is a persistence mechanism for one host kind; it is not an artifact PRs mint, carries no recipe, and holds nothing the data root does not. Pre-materialized toolchains that are too slow to build per host are neither: they are store trees published once by a publisher repo and consumed through the lock like any other `gh` release.
 
 ### The hosted recipe
 
@@ -580,7 +590,7 @@ What is on a checkpoint is exactly the host side of the lock as the platform rul
 
 ## Build container & caching model
 
-For repos that declare a `build.container`, dev builds and runs commands inside a content-addressed Docker image, backed by host-side caches it owns end to end. The guiding principle throughout is **content-addressing**: an artifact's identity is a hash of its inputs, so distinct versions coexist instead of overwriting, and identical inputs are never rebuilt.
+For repos that declare a `build.container`, dev builds and runs commands inside a content-addressed Docker image — the one the project's `image` block in `dependencies.rb` pins — backed by host-side caches it owns end to end. The guiding principle throughout is **content-addressing**: an artifact's identity is a hash of its inputs, so distinct versions coexist instead of overwriting, and identical inputs are never rebuilt.
 
 ### The container engine (per-user)
 
@@ -635,21 +645,24 @@ Resolution is per invoking user: an explicit `DOCKER_HOST` in the environment wi
 
 **Migrating a WSL2 box off Docker Desktop.** In Docker Desktop > Settings > Resources > WSL integration, untick the distro (dev refuses to converge while Desktop's shim provides `docker` there, and names this step). Open a new shell, `brew upgrade d3mlabs/d3mlabs/dev`, then `dev up` in a containerized repo: one sudo prompt installs `docker-ce` in the distro and enables it; if `.wslconfig` has to grow, `dev up` says so and you `wsl --shutdown` once. Runner services on the box (`sudo systemctl restart 'actions.runner.*'`) pick up the new `docker` group membership on restart. Then `dev runner register` in each repo the host serves. Desktop itself can stay installed for other distros or go — dev never touches it.
 
-### Content-addressed image tag
+### The environment image: the lock's `image` pin
 
-The image tag is `content-<hash>`, where the hash covers the `Dockerfile`, `.dockerignore`, both lockfiles, and any project-declared `content_globs` (file contents) / `structure_globs` (path set only). Any change to those inputs yields a new tag — and therefore a guaranteed rebuild — while an unchanged set is a guaranteed cache hit.
+The project's build environment is an `image` block in `dependencies.rb` ([dev#277](https://github.com/d3mlabs/dev/issues/277); the channel rule it amends is [ADR-0010](docs/DECISIONS.md#adr-0010--the-verb-follows-the-channel)'s 2026-10-25 note):
 
-`ensure_image!` resolves the image in three steps, cheapest first:
+```ruby
+image "snappy-linux", from: "ghcr.io/d3mlabs/unreal-engine-build-base:ue5.8-3" do
+  platform "linux/amd64"         # optional when the floor publishes one platform
+  apt "winbind", "dos2unix"      # the OS packages the build needs on top of the floor
+end
+```
 
-1. **local** — a matching local image is honored as-is (manual builds work).
-2. **pull** — otherwise pull the tag from the registry (the CI-produced image lands here).
-3. **build** — only on a miss, build it locally.
+`from:` is the **floor**: a base image the org publishes, named by tag and resolved by `dev deps update` to its registry digest (over the registry's HTTP API with your `gh auth` token — no engine needed, so a re-lock works with the VM down). The block's `apt` lines are the only OS packages a project declares, and only here; there is no `apt` verb. dev **generates the Dockerfile** — the floor by digest, one apt layer, then dev's contract: Linuxbrew on `PATH`, the `builder` user, `/project`, and a marker at `/etc/dev/environment` carrying the image's name and digest — and **the image is the pin**. The lock records, under `image:`, the floor's tag and digest, the platform, the sorted apt set and the image's `digest`: the SHA-256 of the generated Dockerfile, which is also its registry tag (`<registry>/<name>:<digest>`; the registry defaults to the floor's, `ghcr.io/d3mlabs`). A changed floor, a package added or dev's template changing all show up as a lock diff and a new tag; a dev that computes a different digest for the lock on disk refuses to run and names `dev deps update`. Nothing from the lock enters the image — the container's own `dev deps install` installs that inside ([ADR-0002](docs/DECISIONS.md#adr-0002--dependencies-install-where-they-are-consumed)) — so the image rebuilds when the OS layer changes and never when a dependency does.
 
-**Publishing** is separate from resolution. The provisioning step opts in (set `DEV_PUBLISH_IMAGE=1`, as CI's `dev up` does) so the resolved image is pushed to the shared registry — and this runs **even on a local hit** (step 1), not only after a build. That local-hit case is the whole point: the machine that built the image (e.g. the CI runner) keeps resolving its own local copy on every run, so without publish-on-hit the registry it is meant to populate would stay empty and no other machine could ever pull. The push is registry-guarded (a remote manifest check), so it is a no-op once the tag is published. A normal local build/run leaves `DEV_PUBLISH_IMAGE` unset and never pushes.
+Resolution (`BuildContainer#ensure_environment_image!`) goes cheapest first: **local** (a matching image is honoured as-is, no credential), then, logged in to the registry for the duration, **pull**, then **build** from the generated Dockerfile in an otherwise empty context — `--platform` pinned to the declared one, the digest passed as a build arg for the marker. **Publishing** is the provisioning step's opt-in (`DEV_PUBLISH_IMAGE=1`, as CI's `dev up` sets): the digest you built is pushed, a local hit is pushed if the registry lacks the tag, and a published tag is never replaced (apt is not reproducible, so a second build of one tag differs in bytes; first publisher wins). A normal local build/run never pushes.
 
-### Prewarm
+**The registry credential is your `gh` login.** dev runs `docker login <registry>` with `gh auth token` on stdin around the pull or push and `docker logout` after — the token rests nowhere, including a hosted runner's checkpoint. A classic token needs `read:packages` to pull and `write:packages` to publish; dev checks the scope first and names the `gh auth refresh -s …` to run. A workflow's `GITHUB_TOKEN` rides the same path through `GH_TOKEN`. One consequence to know: dev's logout also removes a `docker login` you made by hand to that registry. There is no per-repo registry secret and no login step in any workflow.
 
-A large base dependency (e.g. a game engine) is too big to stream into a `docker build` (BuildKit's build-context transport stalls under emulation). Instead, dev builds a cheap engine-free **base** image from the `Dockerfile`, then runs the project's `prewarm:` command in a container with the dependency volume-mounted and `build_secrets` file-mounted at `/run/secrets/<id>`, and commits the result as the content tag. Secrets are bind-mounted (never `-e`), so `docker commit` can't bake them into a layer.
+**Deprecated: the hand-written Dockerfile.** A `build.container` block naming `image:` and `registry:` beside a project `Dockerfile` still works — `content-<hash>` tags over Dockerfile + lock + `content_globs`/`structure_globs`, `prewarm`, `build_args`/`build_secrets` — with a deprecation line on every resolution; a lock with an `image` pin wins over those keys. The path, its keys and `dev container tag` go with [dev#311](https://github.com/d3mlabs/dev/issues/311) once cellbound-3d and snappy have migrated.
 
 ### The artifact store (version-keyed trees, content-addressed blobs)
 
@@ -691,8 +704,8 @@ Two intents sit on top, and they work on the project's **service dependencies** 
 | `dev container up` | On a host whose platform is the environment's ([the platform rule](#the-platform-rule-the-container-exists-for-a-platform-the-host-is-not)): nothing, unless `DEV_PUBLISH_IMAGE=1`, in which case the image is resolved and published and nothing else happens. Otherwise: engine up and sized from this repo's hint → image resolved (local → registry → build; publishes when `DEV_PUBLISH_IMAGE=1`) → with `persist`, the service container created, or restarted warm if it exists → the container's user made the data root's owner (one `test -w` probe when it already is) → the container's dev converged to this host's version (one `dev version` probe when already current) → the container's side of the dependency install run inside (`dev deps install`, with the resolvable `run_env` entries injected). Everything a containerized command would do lazily on first use, done ahead of time. |
 | `dev container down` | Stop this checkout's running containers (`stop -t 0` — PID 1 is `sleep infinity`, which ignores SIGTERM) and keep them: the writable layer is the incremental build state `persist` exists for. The engine stays up. |
 | `dev container reset` | Remove this checkout's containers, the current tag's and any stale one, discarding that state. The next command creates a fresh one from the image. |
-| `dev container tag` | Print the content-addressed tag the checkout resolves to. Pure — no engine, no network — so a workflow can capture it anywhere. |
-| `dev container status` | The image, local and in the registry; the current tag's container and its state; stale siblings waiting for `up` to reap them. With `persist` off, the `--rm` runs in flight. Probes only. |
+| `dev container tag` | Print the image reference the checkout resolves to — the lock's pin, tagged by its content digest. Pure — no engine, no network — so a workflow can capture it anywhere. Deprecated with the Dockerfile path (dev#311). |
+| `dev container status` | The image, local and in the registry, and for a pinned image its floor by digest and platform; the current tag's container and its state; stale siblings waiting for `up` to reap them. With `persist` off, the `--rm` runs in flight. Probes only. |
 
 Every container dev starts — the persistent service and the one-shot `--rm` run alike — carries the **label contract**: `dev.managed=true`, `dev.project_root` (the checkout's real path), `dev.project`, `dev.workspace` (the checkout id the name also embeds), `dev.image`. Set operations go by label, never by name: `container down|reset` and the stale reap filter on `dev.workspace`, `dev engine down|status` read `dev.managed` / `dev.project_root` to tell dev's containers (stopped unasked, named by checkout) from yours (listed, asked about). A container without the labels is yours as far as dev is concerned.
 

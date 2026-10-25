@@ -17,7 +17,9 @@ The first yes decides:
 ```mermaid
 flowchart TD
   start([a new dependency]) --> os{OS state? packages, users, kernel, daemons}
-  os -->|yes| prov["provisioning: base image Dockerfile, dev-box-setup, bring-up block - not declared"]
+  os -->|yes| inimg{inside the build environment?}
+  inimg -->|"yes: a package the build needs"| img["an image block: the image is the pin - floor by digest + apt layer"]
+  inimg -->|"no: the floor itself, users, kernel, daemons, a host that is the environment"| prov["provisioning: floor image Dockerfile, dev-box-setup, bring-up block - not declared"]
   os -->|no| lang{imported or linked under a language runtime?}
   lang -->|yes| eco["gem / pip / luarocks"]
   lang -->|no| sup{does a channel dev supports carry it?}
@@ -32,7 +34,7 @@ flowchart TD
   rehost -->|"no: EULA, login"| vendor["new vendor verb under the relaxed test - the only option left"]
 ```
 
-**OS state is provisioning.** Packages, users, kernel modules and daemons are not declared in `dependencies.rb`, not in the lock, and not installed or verified by `dev up`. They are installed by whoever sets the host up: the base image's Dockerfile, `dev-box-setup`, a workstation's bring-up block. This is a known gap, accepted; see ADR-0010.
+**OS state inside the build environment is an `image` block; the rest is provisioning.** A package the build needs on the OS — `winbind`, `dos2unix`, a `libxyz-dev` — goes in the project's `image` block in `dependencies.rb` (dev#277): a floor (`from:` a base image we publish, resolved to its digest), a `platform`, and `apt` lines. dev generates the Dockerfile and **the image is the pin**: the lock records the floor digest, the platform, the apt set and the content digest that is also the registry tag, so a package added is a reviewed lock diff and a new image, never a hand edit to a Dockerfile. `apt` exists only inside that block — there is no `apt` verb, and a tool brew carries is still `brew`. The image carries nothing from the lock; the container's own `dev deps install` installs that inside. Everything else — the floor image itself (its publisher's Dockerfile), users, kernel modules, daemons, and a host that *is* the environment's platform — is still installed by whoever sets the host up: `dev-box-setup`, a workstation's bring-up block. That gap stays, accepted; see ADR-0010 and its 2026-10-25 note.
 
 **A language runtime's own packages take its verb.** A Ruby library is `gem`, a Python one `pip`, a Lua one `luarocks`, whatever else might carry it.
 

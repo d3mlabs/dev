@@ -4,25 +4,28 @@
 module Dev
   # Value object for the build.container block in dev.yml.
   #
-  # When present, commands run inside a Docker container by default.
-  # Content-addressed image tags are computed from Dockerfile + build-deps.lock.
+  # When present, commands run inside a Docker container by default. The
+  # image is the project's `image` pin in deps.lock (dev#277,
+  # Dev::EnvironmentImage); this block shapes the container around it.
   #
   # dev.yml example:
   #   build:
   #     container:
-  #       image: snappy-linux
-  #       registry: jpduchesne89
+  #       persist: true
   #       volumes:
   #         - "~/.dev/engines/unreal-engine-css:/ue"
   #         - "~/.dev/wwise:/var/cache/dev/wwise-cli:ro"
-  #       build_args:
-  #         PRIVATE_REGISTRY_USER: registry/user
-  #       build_secrets:
-  #         PRIVATE_REGISTRY_TOKEN: registry/token
   #       run_env:
   #         STAGING_DEPLOY_KEY: staging/deploy_key
-  #       content_globs:
-  #         - "Mods/*/Source/*/*.Build.cs"
+  #       resources:
+  #         cpus: 12
+  #         memory_gib: 24
+  #
+  # Deprecated (d3mlabs/dev#311): `image`/`registry` name a hand-written
+  # Dockerfile's image instead of the lock's pin, and `build_args`,
+  # `build_secrets`, `content_globs`, `structure_globs` and `prewarm` feed
+  # that Dockerfile's build. They are read and honoured until the consumers
+  # migrate; a lock with an `image` pin wins over them.
   #
   # volumes mount exactly as written. The container owns its own data root
   # (ADR-0008), so no volume is resolved against the host's locked trees;
