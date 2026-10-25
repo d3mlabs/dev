@@ -102,6 +102,7 @@ module Dev
           root: Dev.target_project_root,
           engine: manifest.engine,
           build_container: manifest.build_container,
+          legacy_keys: manifest.legacy_keys,
         ),
       )
     end

@@ -657,6 +657,7 @@ class ProjectManifestLoaderTest < Minitest::Test
         container:
           image: snappy-linux
           registry: jpduchesne89
+          resources: { cpus: 8 }
       commands:
         build:
           run: ./bin/build.sh
@@ -676,7 +677,8 @@ class ProjectManifestLoaderTest < Minitest::Test
 
     Then "each key once, in document order, a flag with its value; a command without the key is not listed"
     manifest.legacy_keys == [
-      "build.container", "commands.deploy.container: false", "commands.test.commands.editor.container: false",
+      "build.container", "build.container.resources",
+      "commands.deploy.container: false", "commands.test.commands.editor.container: false",
     ]
 
     Cleanup

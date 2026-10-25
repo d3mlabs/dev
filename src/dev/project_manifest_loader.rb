@@ -67,6 +67,7 @@ module Dev
     def legacy_keys(yaml)
       keys = []
       keys << "build.container" if yaml.dig("build", "container").is_a?(Hash)
+      keys << "build.container.resources" if yaml.dig("build", "container", "resources").is_a?(Hash)
       keys.concat(container_keys(["commands"], yaml["commands"]))
     end
 
