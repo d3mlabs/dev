@@ -68,11 +68,12 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
   # --- up ---------------------------------------------------------------------
 
   test "container up brings the engine up from the hint, resolves the image, and starts the service when persisted" do
-    Given "a persisted config, with every boundary stubbed"
+    Given "a persisted config and an engine hint, with every boundary stubbed"
     config = config(persist: true, volumes: ["~/.dev/engines/ue:/ue"])
+    engine = Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 24)
     order = sequence("engine, image, service")
     provisioner = typed_mock(Dev::EngineProvisioner)
-    provisioner.expects(:provision!).with(resources: config.resources).once.in_sequence(order)
+    provisioner.expects(:provision!).with(resources: engine).once.in_sequence(order)
     client = client()
     client.expects(:ensure_image!).with do |cfg, **kwargs|
       cfg == config && kwargs[:project_root] == ROOT && kwargs[:push] == false && kwargs[:publish] == false
@@ -93,7 +94,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: user_aligner,
       dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out,
-    ).call(args: no_args, context: project(config))
+    ).call(args: no_args, context: project(config, engine: engine))
 
     Then "every step is reported: the container's dev, then the deps it installs — an already-aligned user says nothing"
     out.string == "dev: image ready: #{TAG}\n" \
@@ -102,12 +103,12 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
       "dev: container deps installed\n"
   end
 
-  test "container up with an image pin resolves through ensure_environment_image!, the block's hint along" do
-    Given "a checkout whose lock pins its image and whose container block names none"
+  test "container up with an image pin resolves through ensure_environment_image!, the engine hint along" do
+    Given "a checkout whose lock pins its image and whose dev.yml has no container block"
     root = project_root_pinning("linux/amd64")
-    config = Dev::BuildContainerConfig.new(persist: false, resources: Dev::BuildContainerConfig::Resources.new(cpus: 8))
+    engine = Dev::EngineResources::Hint.new(cpus: 8)
     provisioner = typed_mock(Dev::EngineProvisioner)
-    provisioner.expects(:provision!).with(resources: config.resources).once
+    provisioner.expects(:provision!).with(resources: engine).once
     client = client()
     client.expects(:ensure_image!).never
     client.expects(:ensure_environment_image!).once
@@ -118,10 +119,75 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     When "bringing the container up on a host that is not the environment"
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, out: out, host_platform: "darwin-arm64",
-    ).call(args: no_args, context: project(config, root: root))
+    ).call(args: no_args, context: project(nil, root: root, engine: engine))
 
     Then
     out.string == "dev: image ready: ghcr.io/d3mlabs/myapp-linux:deadbeef\n"
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "container up over two images: the engine sized once, each image resolved, a service only for the persisted one, in its shape" do
+    Given "a lock pinning a persisted image with volumes and run_env, and a plain one"
+    root = project_root_pinning("linux/amd64", images: {
+      "snappy-linux" => { "persist" => true, "volumes" => ["/e:/ue"], "run_env" => { "WWISE_TOKEN" => "wwise/token" } },
+      "snappy-server" => {},
+    })
+    Dev::Credentials.stubs(:load).returns(nil)
+    Dev::Credentials.stubs(:load).with("wwise", "token").returns("t0k")
+    engine = Dev::EngineResources::Hint.new(cpus: 8)
+    order = sequence("engine once, then image by image")
+    provisioner = typed_mock(Dev::EngineProvisioner)
+    provisioner.expects(:provision!).with(resources: engine).once.in_sequence(order)
+    client = client()
+    client.expects(:ensure_environment_image!).with { |image, **| image.name == "snappy-linux" }
+      .once.in_sequence(order).returns("ghcr.io/d3mlabs/snappy-linux:aaaa")
+    client.expects(:ensure_service!).with("ghcr.io/d3mlabs/snappy-linux:aaaa", project_root: root, volumes: ["/e:/ue"])
+      .once.in_sequence(order).returns("dev-snappy-linux-ws-aaaa")
+    deps_installer = typed_mock(Dev::ContainerDepsInstaller)
+    deps_installer.expects(:install!).with("dev-snappy-linux-ws-aaaa", env: { "WWISE_TOKEN" => "t0k" }).once.in_sequence(order)
+    client.expects(:ensure_environment_image!).with { |image, **| image.name == "snappy-server" }
+      .once.in_sequence(order).returns("ghcr.io/d3mlabs/snappy-server:bbbb")
+    dev_provisioner = typed_mock(Dev::ContainerDevProvisioner)
+    dev_provisioner.stubs(:host_version).returns("0.5.0")
+    dev_provisioner.stubs(:provision!).returns(:current)
+    out = StringIO.new
+
+    When
+    Dev::Builtins::ContainerUpCommand.new(
+      container_client: client, engine_provisioner: provisioner, user_aligner: aligned_user,
+      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out, host_platform: "darwin-arm64",
+    ).call(args: no_args, context: project(nil, root: root, engine: engine))
+
+    Then "one service — the persisted image's; the plain one stops at its image"
+    out.string == "dev: image ready: ghcr.io/d3mlabs/snappy-linux:aaaa\n" \
+      "dev: build container up: dev-snappy-linux-ws-aaaa\n" \
+      "dev: container dev current at 0.5.0\n" \
+      "dev: container deps installed\n" \
+      "dev: image ready: ghcr.io/d3mlabs/snappy-server:bbbb\n"
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "the host rule is asked per image: a host that is one image's platform skips that one and brings the other up" do
+    Given "a linux/amd64 image and a linux/arm64 image, on a linux-arm64 host"
+    root = project_root_pinning("linux/amd64", images: { "snappy-linux" => {}, "snappy-arm" => { "platform" => "linux/arm64" } })
+    provisioner = typed_mock(Dev::EngineProvisioner)
+    provisioner.expects(:provision!).once
+    client = client()
+    client.expects(:ensure_environment_image!).once.with { |image, **| image.name == "snappy-linux" }.returns("ref-linux")
+    out = StringIO.new
+
+    When
+    Dev::Builtins::ContainerUpCommand.new(
+      container_client: client, engine_provisioner: provisioner, out: out, host_platform: "linux-arm64",
+    ).call(args: no_args, context: project(nil, root: root))
+
+    Then
+    out.string == "dev: image ready: ref-linux\n" \
+      "dev: this host is the build environment (linux-arm64) — snappy-arm's commands run here, no container\n"
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -194,7 +260,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     config = config(persist: true, volumes: ["~/.dev/engines/ue:/ue"])
     order = sequence("engine, image, one-shot: dev then deps")
     provisioner = typed_mock(Dev::EngineProvisioner)
-    provisioner.expects(:provision!).with(resources: config.resources).once.in_sequence(order)
+    provisioner.expects(:provision!).with(resources: nil).once.in_sequence(order)
     client = client()
     client.expects(:ensure_image!).once.in_sequence(order).returns(TAG)
     client.expects(:ensure_service!).never
@@ -334,7 +400,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     ).call(args: no_args, context: project(config, root: root))
 
     Then "it says why once and stops"
-    out.string == "dev: this host is the build environment (linux-x86_64) — commands run here, no container\n"
+    out.string == "dev: this host is the build environment (linux-x86_64) — myapp-linux's commands run here, no container\n"
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -345,7 +411,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     config = config(persist: true)
     root = project_root_declaring("linux/amd64")
     provisioner = typed_mock(Dev::EngineProvisioner)
-    provisioner.expects(:provision!).with(resources: config.resources).once
+    provisioner.expects(:provision!).with(resources: nil).once
     client = client()
     client.expects(:ensure_image!).with do |cfg, **kwargs|
       cfg == config && kwargs[:project_root] == root && kwargs[:publish] == true
@@ -362,7 +428,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     Then "the image is resolved for the registry's sake, then the rule applies"
     out.string == "dev: image ready: #{TAG}\n" \
-      "dev: this host is the build environment (linux-x86_64) — commands run here, no container\n"
+      "dev: this host is the build environment (linux-x86_64) — myapp-linux's commands run here, no container\n"
 
     Cleanup
     old.nil? ? ENV.delete("DEV_PUBLISH_IMAGE") : ENV["DEV_PUBLISH_IMAGE"] = old
@@ -407,7 +473,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     ).cold_up(project: project(config, root: root).project!)
 
     Then
-    out.string == "dev: this host is the build environment (linux-x86_64) — commands run here, no container\n"
+    out.string == "dev: this host is the build environment (linux-x86_64) — myapp-linux's commands run here, no container\n"
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -481,7 +547,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
   # --- tag --------------------------------------------------------------------
 
-  test "container tag prints the content-addressed tag and nothing else, touching no engine" do
+  test "container tag prints the image's name and content-addressed tag, tab-separated, touching no engine" do
     Given "a config and a client that must not be used"
     config = config(persist: false)
     client = client()
@@ -493,13 +559,13 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     Dev::Builtins::ContainerTagCommand.new(container_client: client, out: out).call(args: no_args, context: project(config))
 
     Then "a workflow can capture it"
-    out.string == "#{TAG}\n"
+    out.string == "myapp-linux\t#{TAG}\n"
   end
 
-  test "container tag prints a pinned image's ref: the digest tag the lock and the registry share" do
+  test "container tag prints one line per pinned image: its name and the digest tag the lock and the registry share" do
     Given
-    root = project_root_pinning("linux/amd64")
-    image = Dev::EnvironmentImage.from_pin(Dev::Deps::Lockfile.new(dir: root).read.first)
+    root = project_root_pinning("linux/amd64", images: { "snappy-linux" => {}, "snappy-server" => {} })
+    images = Dev::Deps::Lockfile.new(dir: root).read.map { |pin| Dev::EnvironmentImage.from_pin(pin) }
     out = StringIO.new
 
     When
@@ -507,8 +573,8 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
       .call(args: no_args, context: project(nil, root: root))
 
     Then
-    out.string == "#{image.ref}\n"
-    image.ref.end_with?(":#{image.digest}")
+    out.string == images.map { |image| "#{image.name}\t#{image.ref}\n" }.join
+    images.all? { |image| image.ref.end_with?(":#{image.digest}") }
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -516,12 +582,12 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
   # --- status -----------------------------------------------------------------
 
-  test "container status on a pinned image also says what the image is: its floor by digest and its platform" do
+  test "container status on a pinned image probes the registry inside its login and says what the image is: floor by digest, platform" do
     Given
     root = project_root_pinning("linux/arm64")
     image = Dev::EnvironmentImage.from_pin(Dev::Deps::Lockfile.new(dir: root).read.first)
     client = client()
-    client.stubs(:service_status).with(image.ref, root).returns(
+    client.expects(:service_status).with(image.ref, root, registry: "ghcr.io").once.returns(
       Dev::BuildContainer::ServiceStatus.new(
         image_tag: image.ref, local_image: true, in_registry: true, current_container_name: CURRENT, containers: [],
       ),
@@ -530,14 +596,51 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     When
     Dev::Builtins::ContainerStatusCommand.new(container_client: client, out: out)
-      .call(args: no_args, context: project(Dev::BuildContainerConfig.new(persist: false), root: root))
+      .call(args: no_args, context: project(nil, root: root))
 
     Then
-    out.string.lines.first(3) == [
-      "image: #{image.ref} — local, in registry\n",
+    out.string.lines == [
+      "image: myapp-linux — #{image.ref} — local, in registry\n",
       "floor: ghcr.io/d3mlabs/unreal-engine-build-base@sha256:#{"a" * 64}\n",
       "platform: linux/arm64\n",
+      "container: not persisted (persist is off); none in flight\n",
     ]
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "container status prints one block per image, blank-line separated, each with its own containers" do
+    Given "two pinned images, the persisted one with a running container"
+    root = project_root_pinning("linux/amd64", images: { "snappy-linux" => { "persist" => true }, "snappy-server" => {} })
+    linux, server = Dev::Deps::Lockfile.new(dir: root).read.map { |pin| Dev::EnvironmentImage.from_pin(pin) }
+    client = client()
+    client.stubs(:service_status).with(linux.ref, root, registry: "ghcr.io").returns(
+      Dev::BuildContainer::ServiceStatus.new(
+        image_tag: linux.ref, local_image: true, in_registry: true, current_container_name: "dev-linux-ws-aaaa",
+        containers: [Dev::BuildContainer::ServiceContainer.new(name: "dev-linux-ws-aaaa", running: true)],
+      ),
+    )
+    client.stubs(:service_status).with(server.ref, root, registry: "ghcr.io").returns(
+      Dev::BuildContainer::ServiceStatus.new(
+        image_tag: server.ref, local_image: false, in_registry: true, current_container_name: "dev-server-ws-bbbb", containers: [],
+      ),
+    )
+    out = StringIO.new
+
+    When
+    Dev::Builtins::ContainerStatusCommand.new(container_client: client, out: out).call(args: no_args, context: project(nil, root: root))
+
+    Then
+    out.string == "image: snappy-linux — #{linux.ref} — local, in registry\n" \
+      "floor: #{linux.floor_ref}\n" \
+      "platform: linux/amd64\n" \
+      "container: dev-linux-ws-aaaa — running\n" \
+      "\n" \
+      "image: snappy-server — #{server.ref} — in registry, not local (dev container up pulls it)\n" \
+      "floor: #{server.floor_ref}\n" \
+      "platform: linux/amd64\n" \
+      "container: not persisted (persist is off); none in flight\n"
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -548,7 +651,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     status = status(local: local, registry: registry, containers: [])
 
     Expect
-    status_output(status, persist: true).lines.first == "image: #{TAG} — #{rendered}\n"
+    status_output(status, persist: true).lines.first == "image: myapp-linux — #{TAG} — #{rendered}\n"
 
     Where
     description                      | local | registry | rendered
@@ -556,6 +659,8 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     "local only"                     | true  | false    | "local, not in registry"
     "published, not pulled"          | false | true     | "in registry, not local (dev container up pulls it)"
     "nowhere"                        | false | false    | "not built (dev container up builds it)"
+    "local, registry unknown"        | true  | nil      | "local, registry unknown (gh auth login)"
+    "nowhere known"                  | false | nil      | "not local, registry unknown (gh auth login)"
   end
 
   test "container status renders the persisted container: #{description}" do
@@ -583,8 +688,8 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     Where
     description      | containers                | expected
-    "nothing"        | []                        | ["container: not persisted (build.container.persist is off); none in flight\n"]
-    "a run going"    | [["dev-myapp-x", true]]   | ["container: not persisted (build.container.persist is off); in flight: dev-myapp-x\n"]
+    "nothing"        | []                        | ["container: not persisted (persist is off); none in flight\n"]
+    "a run going"    | [["dev-myapp-x", true]]   | ["container: not persisted (persist is off); in flight: dev-myapp-x\n"]
   end
 
   private
@@ -607,11 +712,14 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     )
   end
 
-  def project(build_container, root: ROOT)
+  # A project context; a legacy block comes with its key recorded, as the
+  # loader records it.
+  def project(build_container, root: ROOT, engine: nil)
     Dev::ExecutionContext.new(
       ui: typed_mock(Dev::Cli::Ui),
       project: Dev::ProjectContext.new(
-        name: "TestProject", root: root, build_container: build_container,
+        name: "TestProject", root: root, engine: engine, build_container: build_container,
+        legacy_keys: build_container ? ["build.container"] : [],
       ),
     )
   end
@@ -623,17 +731,21 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     root
   end
 
-  # A real checkout root whose lock pins its image (dev#277), on that platform.
-  def project_root_pinning(docker_platform)
+  # A real checkout root whose lock pins its images (dev#277), each on that
+  # platform unless its metadata says otherwise; one `myapp-linux` by default.
+  def project_root_pinning(docker_platform, images: { "myapp-linux" => {} })
     root = Pathname(Dir.mktmpdir("container-commands"))
-    pin = Dev::Deps::Dependency.new(
-      name: "myapp-linux", integration: :image, group: :app, version: "ue5.8-3", hash: "SHA256=#{"a" * 64}",
-      metadata: {
-        "from" => "ghcr.io/d3mlabs/unreal-engine-build-base", "platform" => docker_platform,
-        "platforms" => [docker_platform], "registry" => "ghcr.io/d3mlabs", "apt" => [],
-      },
-    )
-    Dev::Deps::Lockfile.new(dir: root).lock(Dev::EnvironmentImage.stamp([pin]))
+    pins = images.map do |name, metadata|
+      platform = metadata.fetch("platform", docker_platform)
+      Dev::Deps::Dependency.new(
+        name: name, integration: :image, group: :app, version: "ue5.8-3", hash: "SHA256=#{"a" * 64}",
+        metadata: {
+          "from" => "ghcr.io/d3mlabs/unreal-engine-build-base", "platform" => platform,
+          "platforms" => [platform], "registry" => "ghcr.io/d3mlabs", "apt" => [],
+        }.merge(metadata),
+      )
+    end
+    Dev::Deps::Lockfile.new(dir: root).lock(Dev::EnvironmentImage.stamp(pins))
     root
   end
 
@@ -648,7 +760,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     config = config(persist: persist)
     client = client()
     Dev::BuildContainer.stubs(:image_with_tag).with(config, project_root: ROOT).returns(TAG)
-    client.stubs(:service_status).with(TAG, ROOT).returns(status)
+    client.stubs(:service_status).with(TAG, ROOT, registry: nil).returns(status)
     out = StringIO.new
     Dev::Builtins::ContainerStatusCommand.new(container_client: client, out: out).call(args: no_args, context: project(config))
     out.string

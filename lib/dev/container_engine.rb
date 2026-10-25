@@ -176,7 +176,7 @@ module Dev
     # What the daemon behind this engine has to offer, read live from
     # `docker info` — the one inspection that works for every engine (a
     # colima VM, bare dockerd, an explicit DOCKER_HOST). This is the fact the
-    # repo's `build.container.resources` minimum is checked against.
+    # repo's `engine:` minimum is checked against.
     #
     # @return [EngineResources, nil] nil when the daemon does not answer
     sig { returns(T.nilable(EngineResources)) }

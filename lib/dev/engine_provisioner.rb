@@ -1,7 +1,6 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "dev/build_container_config"
 require "dev/colima_provisioner"
 require "dev/container_engine"
 require "dev/deps"
@@ -16,7 +15,7 @@ require "dev/wsl_provisioner"
 module Dev
   # The engine step shared by `dev up` and `dev runner register`: bring the
   # resolved container engine to a state where `docker build` works for this
-  # project, sized to its build.container.resources hint.
+  # project, sized to its `engine:` hint.
   #
   # What that takes depends on the host OS — one engine per OS, see
   # ContainerEngine:
@@ -180,7 +179,7 @@ module Dev
 
     # Idempotently bring the engine up for a containerized project.
     #
-    # @param resources [BuildContainerConfig::Resources, nil] the repo's VM sizing hint
+    # @param resources [EngineResources::Hint, nil] the repo's VM sizing hint
     # @return [void]
     # @raise [ContainerEngine::UnknownEngineError] on an unrecognized container_engine record
     # @raise [ColimaProvisioner::StartFailedError] when the VM will not start
@@ -193,7 +192,7 @@ module Dev
     # @raise [WslProvisioner::EngineBusyError] when growing the WSL VM would stop other projects' containers
     # @raise [WslProvisioner::RestartRequiredError] when `.wslconfig` is ahead of the running VM
     # @raise [EngineResourcesCheck::UndersizedEngineError] when the engine still falls short of the hint
-    sig { params(resources: T.nilable(BuildContainerConfig::Resources)).void }
+    sig { params(resources: T.nilable(EngineResources::Hint)).void }
     def provision!(resources:)
       return if engine.kind == :explicit
 

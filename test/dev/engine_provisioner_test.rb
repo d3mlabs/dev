@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/build_container_config"
+require "dev/engine_resources"
 require "dev/colima_provisioner"
 require "dev/container_engine"
 require "dev/docker_cli_plugins"
@@ -73,7 +73,7 @@ class Dev::EngineProvisionerTest < Minitest::Test
     cli_plugins.expects(:ensure!).once.in_sequence(order).returns(:added)
     colima = typed_mock(Dev::ColimaProvisioner)
     colima.expects(:provision!).with(cpus: 8, memory_gib: 24, disk_gib: 250).once.in_sequence(order)
-    resources = Dev::BuildContainerConfig::Resources.new(cpus: 8, memory_gib: 24, disk_gib: 250)
+    resources = Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 24, disk_gib: 250)
 
     When "provisioning"
     build(dir, host_os: "darwin", colima: colima, cli_plugins: cli_plugins).provision!(resources: resources)
@@ -93,7 +93,7 @@ class Dev::EngineProvisionerTest < Minitest::Test
     cli_plugins.stubs(:ensure!).returns(:already_present)
     colima = typed_mock(Dev::ColimaProvisioner)
     colima.expects(:provision!).once.in_sequence(order)
-    resources = Dev::BuildContainerConfig::Resources.new(cpus: 12, memory_gib: 24)
+    resources = Dev::EngineResources::Hint.new(cpus: 12, memory_gib: 24)
     check = typed_mock(Dev::EngineResourcesCheck)
     check.expects(:check!).once.in_sequence(order)
       .with { |engine:, hint:, actual:| engine.kind == :colima && hint == resources && actual.nil? }
@@ -116,7 +116,7 @@ class Dev::EngineProvisionerTest < Minitest::Test
     dir = Dir.mktmpdir("dev-engine-provisioner-")
     cli_plugins = typed_mock(Dev::DockerCliPlugins)
     colima = typed_mock(Dev::ColimaProvisioner)
-    resources = Dev::BuildContainerConfig::Resources.new(cpus: 12, memory_gib: 24)
+    resources = Dev::EngineResources::Hint.new(cpus: 12, memory_gib: 24)
     check = typed_mock(Dev::EngineResourcesCheck)
     check.expects(:check!).once.with { |engine:, hint:, actual:| engine.kind == :docker && hint == resources && actual.nil? }
 
@@ -184,7 +184,7 @@ class Dev::EngineProvisionerTest < Minitest::Test
     linux_engine.expects(:provision!).once.in_sequence(order)
     wsl = typed_mock(Dev::WslProvisioner)
     wsl.expects(:provision!).with(cpus: 12, memory_gib: 24).once.in_sequence(order)
-    resources = Dev::BuildContainerConfig::Resources.new(cpus: 12, memory_gib: 24)
+    resources = Dev::EngineResources::Hint.new(cpus: 12, memory_gib: 24)
     vm = Dev::EngineResources.new(cpus: 28, memory_gib: 64)
     host = wsl_host(true)
     host.stubs(:observed).returns(vm)

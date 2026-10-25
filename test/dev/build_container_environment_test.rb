@@ -125,7 +125,7 @@ class Dev::BuildContainerEnvironmentTest < Minitest::Test
   test "the engine's resources are checked against the hint before any image work" do
     Given
     engine = engine_where(local: true)
-    resources = Dev::BuildContainerConfig::Resources.new(cpus: 12, memory_gib: 24)
+    resources = Dev::EngineResources::Hint.new(cpus: 12, memory_gib: 24)
     check = typed_mock(Dev::EngineResourcesCheck)
     check.expects(:check!).once.with(engine: engine, hint: resources)
       .raises(Dev::EngineResourcesCheck::UndersizedEngineError, "4 cpus")

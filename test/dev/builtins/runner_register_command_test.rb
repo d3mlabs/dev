@@ -366,13 +366,11 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
   # --- contracts --------------------------------------------------------
 
   test "register hands the contract the container fact and sizing hint" do
-    Given "a container repo with a resources block"
+    Given "a container repo with an `engine:` block"
     harness = build_harness(contracts: 1)
-    container = Dev::BuildContainerConfig.new(
-      image: "img", registry: "reg",
-      resources: Dev::BuildContainerConfig::Resources.new(cpus: 8, memory_gib: 24),
-    )
-    context = build_context(name: "Cellbound3D", build_container: container)
+    container = Dev::BuildContainerConfig.new(image: "img", registry: "reg")
+    engine = Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 24)
+    context = build_context(name: "Cellbound3D", build_container: container, engine: engine)
 
     When "registering"
     harness.command.call(args: no_args, context: context)
@@ -382,15 +380,15 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
   end
 
   test "register brings the engine up for the checked-out repo's hint before converging contracts (#197)" do
-    Given "a container repo with a resources block and an engine provisioner that records its call"
+    Given "a container repo with an `engine:` block and an engine provisioner that records its call"
     harness = build_harness(contracts: 1)
-    resources = Dev::BuildContainerConfig::Resources.new(cpus: 8, memory_gib: 24)
-    container = Dev::BuildContainerConfig.new(image: "img", registry: "reg", resources: resources)
+    resources = Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 24)
+    container = Dev::BuildContainerConfig.new(image: "img", registry: "reg")
     harness.engine.expects(:provision!).once.with do |resources:|
       harness.events << [:engine, resources.cpus, resources.memory_gib]
       true
     end
-    context = build_context(name: "Cellbound3D", build_container: container)
+    context = build_context(name: "Cellbound3D", build_container: container, engine: resources)
 
     When "registering"
     harness.command.call(args: no_args, context: context)
@@ -545,12 +543,13 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     dir
   end
 
-  def build_context(name:, build_container: nil)
+  def build_context(name:, build_container: nil, engine: nil)
     Dev::ExecutionContext.new(
       ui: typed_mock(Dev::Cli::Ui),
       project: Dev::ProjectContext.new(
         name: name,
         root: Pathname.new("/tmp/runner-test"),
+        engine: engine,
         build_container: build_container,
       ),
     )

@@ -2,47 +2,65 @@
 # frozen_string_literal: true
 
 require "dev/builtins/container_command"
+require "dev/environment_image"
+require "dev/project_images"
 
 module Dev
   module Builtins
-    # `dev container status` — where this checkout stands against its image
-    # and container, and what `dev container up` would do about it. A pure
-    # report: the image is probed locally and in the registry, never pulled
-    # or built; containers are listed, never started. A pinned image
-    # (dev#277) is also described: its floor by digest and its platform.
+    # `dev container status` — where this checkout stands against each of
+    # its images and their containers, and what `dev container up` would do
+    # about it: one block per image, blank-line separated. A pure report:
+    # the image is probed locally and in the registry, never pulled or
+    # built; containers are listed, never started. A pinned image (dev#277)
+    # is also described — its floor by digest and its platform — and its
+    # registry is probed from inside a login session (dev#313), so a private
+    # registry answers truthfully; a host without a credential sees the
+    # registry half as unknown, not absent.
     class ContainerStatusCommand < ContainerCommand
       extend T::Sig
 
       sig { override.returns(String) }
-      def desc = "Report this checkout's build image and container state"
+      def desc = "Report each build image's state and its container's"
 
       # @param args [Array<String>] unused
       # @param context [ExecutionContext] the project
       # @return [void]
       sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
-        cfg = config(context)
         project = context.project!
-        image = project.environment_image
-        status = client.service_status(project.project_image.ref, project.root)
+        project.project_images.all.each_with_index do |image, index|
+          @out.puts if index.positive?
+          report(image, project)
+        end
+      end
 
-        @out.puts "image: #{status.image_tag} — #{image_state(status)}"
-        if image
-          @out.puts "floor: #{image.floor_ref}"
-          @out.puts "platform: #{image.platform}"
+      private
+
+      # One image's block.
+      #
+      # @param image [ProjectImages::Image]
+      # @param project [ProjectContext]
+      # @return [void]
+      sig { params(image: ProjectImages::Image, project: ProjectContext).void }
+      def report(image, project)
+        pinned = image.is_a?(EnvironmentImage) ? image : nil
+        status = client.service_status(image.ref, project.root, registry: pinned&.registry_host)
+
+        @out.puts "image: #{image.name} — #{status.image_tag} — #{image_state(status)}"
+        if pinned
+          @out.puts "floor: #{pinned.floor_ref}"
+          @out.puts "platform: #{pinned.platform}"
         end
         current, others = status.containers.partition { |container| container.name == status.current_container_name }
-        if cfg.persist
+        if image.persist
           @out.puts "container: #{persisted_state(current.first)}"
           others.each do |container|
             @out.puts "stale: #{container.name} — #{running_word(container)} (dev container up removes it)"
           end
         else
-          @out.puts "container: not persisted (build.container.persist is off); #{in_flight(status.containers)}"
+          @out.puts "container: not persisted (persist is off); #{in_flight(status.containers)}"
         end
       end
-
-      private
 
       # @param status [Dev::BuildContainer::ServiceStatus]
       # @return [String]
@@ -51,7 +69,9 @@ module Dev
         case [status.local_image, status.in_registry]
         when [true, true] then "local, in registry"
         when [true, false] then "local, not in registry"
+        when [true, nil] then "local, registry unknown (gh auth login)"
         when [false, true] then "in registry, not local (dev container up pulls it)"
+        when [false, nil] then "not local, registry unknown (gh auth login)"
         else "not built (dev container up builds it)"
         end
       end

@@ -1,17 +1,16 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "dev/build_container_config"
 require "dev/container_engine"
 require "dev/engine_resources"
 require "dev/settings"
 require "stringio"
 
 module Dev
-  # The read-only gate between a repo's build.container.resources hint and
+  # The read-only gate between a repo's `engine:` hint and
   # the engine a containerized command is about to use: what the daemon
   # reports (ContainerEngine#resources) against what the repo declared it
-  # needs (BuildContainerConfig::Resources). Runs at `dev up` after the engine
+  # needs (EngineResources::Hint). Runs at `dev up` after the engine
   # is provisioned and again at every image resolution, so a VM that shrank
   # underneath a project — or was never resized — fails before a 40-minute
   # build does, silently, on half the cores it was tuned for.
@@ -46,7 +45,7 @@ module Dev
     # docker call that follows will report that failure in its own words.
     #
     # @param engine [Dev::ContainerEngine] the engine the command will use
-    # @param hint [BuildContainerConfig::Resources, nil] the repo's minimum; nil requires nothing
+    # @param hint [EngineResources::Hint, nil] the repo's minimum; nil requires nothing
     # @param actual [EngineResources, nil] the engine's size when the caller knows it better than
     #   `docker info` does (a WSL2 VM's daemon reports what its kernel kept, not what WSL gave the VM);
     #   nil asks the daemon
@@ -56,7 +55,7 @@ module Dev
     sig do
       params(
         engine: Dev::ContainerEngine,
-        hint: T.nilable(BuildContainerConfig::Resources),
+        hint: T.nilable(EngineResources::Hint),
         actual: T.nilable(EngineResources),
       ).void
     end
@@ -78,10 +77,10 @@ module Dev
 
     # @param engine [Dev::ContainerEngine]
     # @param actual [EngineResources] what the daemon reports
-    # @param hint [BuildContainerConfig::Resources] what the repo declared
+    # @param hint [EngineResources::Hint] what the repo declared
     # @return [String] the shortfall plus the fix for this engine kind
     sig do
-      params(engine: Dev::ContainerEngine, actual: EngineResources, hint: BuildContainerConfig::Resources)
+      params(engine: Dev::ContainerEngine, actual: EngineResources, hint: EngineResources::Hint)
         .returns(String)
     end
     def shortfall_message(engine, actual, hint)
@@ -115,9 +114,9 @@ module Dev
       end
     end
 
-    # @param hint [BuildContainerConfig::Resources]
+    # @param hint [EngineResources::Hint]
     # @return [String] the declared fields only, e.g. "12 cpus / 24 GiB" or "24 GiB"
-    sig { params(hint: BuildContainerConfig::Resources).returns(String) }
+    sig { params(hint: EngineResources::Hint).returns(String) }
     def hint_to_s(hint)
       parts = []
       parts << "#{hint.cpus} cpus" if hint.cpus

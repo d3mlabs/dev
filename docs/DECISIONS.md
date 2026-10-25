@@ -112,6 +112,8 @@ Format: Context → Decision → Consequences → Rejected. Status: `Accepted` u
 
 **Rejected.** A third state, "inside, but nothing made it" (`hosted-up`, a marker set by a workflow) — a second install and cache path for one shape, and a container boundary where there is none. Dropping the container when "no engine" or "no docker" is observed — stock hosted images ship docker with the daemon running, so the fact is not observable there, and removing docker from the machine contradicts `dev up` bringing the machine up, docker included. A separate verb for "run on the host" — `dev up` already knows when to bring the container up; the rule generalises to CI rather than CI getting its own verb. A per-repo Tests-only subset image — dev maintains one build image per repo.
 
+**Note (2026-10-25, [dev#307](https://github.com/d3mlabs/dev/issues/307)).** The rule is asked **per image**, not per project. A project may pin several `image` blocks and each command names its own with `runs_on:`; the platform compared with the host's is the command's image's (`EnvironmentImage#dev_platform`, the pin's — the Dockerfile read survives only for the deprecated path), so `CommandRunner#placement` and `dev container up` answer it image by image: one host can run one image's commands directly and another's in a container. "One build image per repo" above is superseded by "one image per environment the repo declares"; what the rule decides is unchanged.
+
 ---
 
 ## ADR-0008 — A data root belongs to a build host

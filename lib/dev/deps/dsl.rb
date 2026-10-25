@@ -3,6 +3,7 @@
 
 require "sorbet-runtime"
 require_relative "../data_root"
+require_relative "../environment_image"
 require_relative "declaration"
 require_relative "scope"
 require_relative "scoped_declaration"
@@ -21,6 +22,11 @@ module Dev
     # itself.
     class DSL
       extend T::Sig
+
+      # An `image` block named `host` (EnvironmentImage::HOST): the word is
+      # dev.yml's `runs_on: host`, so an image of that name could never be
+      # run on.
+      class ReservedImageNameError < StandardError; end
 
       # Group an ungrouped declaration lands in. Bundler's default (unscoped)
       # group, mirroring a hand-written Gemfile's top section.
@@ -207,6 +213,11 @@ module Dev
       def image(name, from:, registry: nil, &block)
         name_str = name.to_s
         raise GroupDSL::EmptyNameError, "image name cannot be empty" if name_str.empty?
+        if name_str == EnvironmentImage::HOST
+          raise ReservedImageNameError,
+            "`#{EnvironmentImage::HOST}` cannot name an image: it is dev.yml's `runs_on: #{EnvironmentImage::HOST}`, " \
+              "the command placement that is no image"
+        end
 
         image_dsl = ImageDSL.new
         image_dsl.instance_eval(&block) if block
@@ -217,7 +228,7 @@ module Dev
             "platform" => image_dsl.platform_value,
             "apt" => image_dsl.packages,
             "registry" => registry || ImageDSL.registry_of(from),
-          },
+          }.merge(image_dsl.container_shape),
         )
       end
 
@@ -263,9 +274,12 @@ module Dev
     end
 
     # DSL inside an `image` block (DSL#image): what the environment image is
-    # made of beyond its floor. Exactly two verbs — `platform` and `apt` —
-    # because exactly that much can be locked and compared; a `RUN` apt
-    # cannot express belongs in a floor of the project's own (`from:`).
+    # made of beyond its floor, and how its container is shaped. Two verbs
+    # make the image — `platform` and `apt` — because exactly that much can
+    # be locked and compared; a `RUN` apt cannot express belongs in a floor
+    # of the project's own (`from:`). Three shape the container the image
+    # runs as — `persist`, `volume`, `run_env` (dev#307) — and never enter
+    # the image or its digest.
     class ImageDSL
       extend T::Sig
 
@@ -298,10 +312,27 @@ module Dev
       sig { returns(T::Array[String]) }
       def packages = @packages.sort.uniq
 
+      # The container's shape as lock metadata: only what the block said —
+      # a block that said nothing adds nothing, so a lock without these
+      # keys reads as it did before they existed.
+      #
+      # @return [Hash{String => Object}] `persist`, `volumes`, `run_env`, each only when declared
+      sig { returns(T::Hash[String, T.untyped]) }
+      def container_shape
+        shape = {}
+        shape["persist"] = true if @persist
+        shape["volumes"] = @volumes.dup unless @volumes.empty?
+        shape["run_env"] = @run_env.dup unless @run_env.empty?
+        shape
+      end
+
       sig { void }
       def initialize
         @platform_value = T.let(nil, T.nilable(String))
         @packages = T.let([], T::Array[String])
+        @persist = T.let(false, T::Boolean)
+        @volumes = T.let([], T::Array[String])
+        @run_env = T.let({}, T::Hash[String, String])
       end
 
       # Name the image's platform (`os/arch[/variant]`). Required only when
@@ -329,6 +360,38 @@ module Dev
           end
         end
         @packages.concat(names)
+      end
+
+      # Run this image's commands in one long-lived container (a `docker
+      # exec` each) instead of a fresh `--rm` one: the writable layer keeps
+      # an incremental build's state between commands.
+      #
+      # @param enabled [Boolean]
+      # @return [void]
+      sig { params(enabled: T::Boolean).void }
+      def persist(enabled)
+        @persist = enabled
+      end
+
+      # Mount into this image's container, exactly as written (`docker run
+      # -v`). Repeatable.
+      #
+      # @param spec [String] `host:container[:opts]`
+      # @return [void]
+      sig { params(spec: String).void }
+      def volume(spec)
+        @volumes << spec
+      end
+
+      # Environment a command in this image's container receives (`docker
+      # run -e`), each value a Dev::Credentials "namespace/key" reference
+      # resolved when the command runs. Repeatable; later keys add.
+      #
+      # @param mapping [Hash{String => String}] env var name → credential reference
+      # @return [void]
+      sig { params(mapping: T::Hash[String, String]).void }
+      def run_env(mapping)
+        @run_env.merge!(mapping)
       end
 
       STORE_VERBS.each do |verb|

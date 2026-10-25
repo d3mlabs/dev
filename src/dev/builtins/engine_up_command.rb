@@ -40,7 +40,7 @@ module Dev
       # @raise [Dev::EngineProvisioner] see its provision! for the per-kind failures
       sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
-        @provisioner.provision!(resources: context.project&.build_container&.resources)
+        @provisioner.provision!(resources: context.project&.engine)
         @out.puts "dev: engine up."
       end
     end

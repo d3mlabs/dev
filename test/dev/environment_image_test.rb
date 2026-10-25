@@ -53,10 +53,29 @@ class Dev::EnvironmentImageTest < Minitest::Test
     "the image's name"   | { name: "other" }
   end
 
-  test "the digest ignores what is not image content: the registry it publishes to, apt order" do
-    Expect
+  test "the digest ignores what is not image content: the registry it publishes to, apt order, the container's shape" do
+    Given "the same recipe with and without the container's shape"
+    shaped = pin(persist: true, volumes: ["/e:/ue"], run_env: { "TOKEN" => "ns/token" })
+
+    Expect "the Dockerfile text — hence the digest — is identical"
     Dev::EnvironmentImage.from_pin(pin(registry: "elsewhere.io/x")).digest == Dev::EnvironmentImage.from_pin(pin).digest
     Dev::EnvironmentImage.from_pin(pin(apt: ["b", "a"])).digest == Dev::EnvironmentImage.from_pin(pin(apt: ["a", "b"])).digest
+    Dev::EnvironmentImage.from_pin(shaped).dockerfile == Dev::EnvironmentImage.from_pin(pin).dockerfile
+    Dev::EnvironmentImage.from_pin(shaped).digest == Dev::EnvironmentImage.from_pin(pin).digest
+  end
+
+  test "persist, volumes and run_env are read off the pin — the container's shape, absent by default (dev#307)" do
+    Given
+    bare = Dev::EnvironmentImage.from_pin(pin)
+    shaped = Dev::EnvironmentImage.from_pin(pin(persist: true, volumes: ["/e:/ue"], run_env: { "TOKEN" => "ns/token" }))
+
+    Expect
+    bare.persist == false
+    bare.volumes == []
+    bare.run_env == {}
+    shaped.persist == true
+    shaped.volumes == ["/e:/ue"]
+    shaped.run_env == { "TOKEN" => "ns/token" }
   end
 
   test "platform is inferred from a single-platform floor" do
@@ -166,9 +185,13 @@ class Dev::EnvironmentImageTest < Minitest::Test
   end
 
   def pin(name: "snappy-linux", from: "ghcr.io/d3mlabs/unreal-engine-build-base", from_digest: FLOOR_DIGEST,
-    platform: "linux/amd64", platforms: ["linux/amd64"], registry: "ghcr.io/d3mlabs", apt: ["dos2unix"], digest: nil)
+    platform: "linux/amd64", platforms: ["linux/amd64"], registry: "ghcr.io/d3mlabs", apt: ["dos2unix"], digest: nil,
+    persist: nil, volumes: nil, run_env: nil)
     metadata = { "from" => from, "platform" => platform, "platforms" => platforms, "registry" => registry, "apt" => apt }
     metadata["digest"] = digest if digest
+    metadata["persist"] = persist unless persist.nil?
+    metadata["volumes"] = volumes if volumes
+    metadata["run_env"] = run_env if run_env
     Dev::Deps::Dependency.new(
       name: name, integration: :image, group: :app, version: "ue5.8-3", hash: "SHA256=#{from_digest}", metadata: metadata,
     )

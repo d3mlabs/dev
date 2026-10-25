@@ -17,6 +17,15 @@ class Dev::ExecutionContextTest < Minitest::Test
     context.project!.equal?(project)
   end
 
+  test "project_images is the project's ProjectImages, one per context" do
+    Given "a project half"
+    project = Dev::ProjectContext.new(name: "TestProject", root: Pathname.new("/tmp/ctx-test"))
+
+    Expect
+    project.project_images.is_a?(Dev::ProjectImages)
+    project.project_images.equal?(project.project_images)
+  end
+
   test "project! raises ProjectRequiredError outside a project" do
     Given "a context with no project half"
     context = Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui))

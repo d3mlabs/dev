@@ -3,6 +3,9 @@
 
 require "test_helper"
 require "dev"
+require "dev/deps/dependency"
+require "dev/deps/lockfile"
+require "dev/environment_image"
 require "dev/runner"
 require "fileutils"
 require "stringio"
@@ -316,8 +319,40 @@ class RunnerTest < Minitest::Test
     When "we ask for the tag"
     runner.run(["container", "tag"])
 
-    Then "the content-addressed tag is the whole output"
-    out.string.match?(%r{\Amyregistry/myapp-linux:content-[0-9a-f]{12}\n\z})
+    Then "the image's name and content-addressed tag are the whole output"
+    out.string.match?(%r{\Amyapp-linux\tmyregistry/myapp-linux:content-[0-9a-f]{12}\n\z})
+  end
+
+  test "the container group is registered when the lock pins an image, with no build block at all (dev#307)" do
+    Given "a Runner over a checkout whose lock pins two images"
+    out = StringIO.new
+    root = Pathname.new(Dir.mktmpdir("runner-test-"))
+    (@tmp_roots ||= []).push(root)
+    pins = %w[snappy-linux snappy-server].map do |name|
+      Dev::Deps::Dependency.new(
+        name: name, integration: :image, group: :app, version: "ue5.8-3", hash: "SHA256=#{"a" * 64}",
+        metadata: {
+          "from" => "ghcr.io/d3mlabs/unreal-engine-build-base", "platform" => "linux/amd64",
+          "platforms" => ["linux/amd64"], "registry" => "ghcr.io/d3mlabs", "apt" => [],
+        },
+      )
+    end
+    Dev::Deps::Lockfile.new(dir: root).lock(Dev::EnvironmentImage.stamp(pins))
+    runner = build_runner(commands: {}, out: out, root: root)
+    Dev::ContainerEngine.expects(:resolve).never
+
+    When "we print usage, then ask for the tags"
+    runner.run([])
+    top = out.string.dup
+    out.truncate(0)
+    out.rewind
+    runner.run(["container", "tag"])
+
+    Then "the noun is listed, and tag prints one name<TAB>ref line per image"
+    top.include?("container")
+    top.lines.any? { |l| l.strip.start_with?("down ") }
+    out.string.lines.map { |l| l.split("\t").first } == %w[snappy-linux snappy-server]
+    out.string.lines.all? { |l| l.match?(%r{\tghcr\.io/d3mlabs/snappy-(linux|server):[0-9a-f]+\n\z}) }
   end
 
   test "#{name} is not registered without a build container" do

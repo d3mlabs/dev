@@ -4,8 +4,8 @@
 require "pathname"
 require_relative "build_container_config"
 require_relative "cli/ui"
-require "dev/environment_image"
-require_relative "project_image"
+require "dev/engine_resources"
+require_relative "project_images"
 
 module Dev
   # The project half of an execution context: everything resolved from the
@@ -20,25 +20,23 @@ module Dev
     # ProjectManifest#name).
     const :name, String
     const :root, Pathname
+    # The engine floor the project declares (ProjectManifest#engine).
+    const :engine, T.nilable(Dev::EngineResources::Hint), default: nil
+    # Deprecated (d3mlabs/dev#311): the `build.container` block.
     const :build_container, T.nilable(Dev::BuildContainerConfig), default: nil
+    # The retired dev.yml keys the project still carries (ProjectManifest#legacy_keys).
+    const :legacy_keys, T::Array[String], default: []
 
-    # The image this project's containerized commands run in, and how it is
-    # made ready (ProjectImage): the lock's `image` pin, or the deprecated
-    # Dockerfile the container block names.
+    # The project's environment images and where each command runs
+    # (ProjectImages). One instance per context: the lock is read once.
     #
-    # @return [Dev::ProjectImage]
-    sig { returns(Dev::ProjectImage) }
-    def project_image
-      Dev::ProjectImage.new(root: root, config: build_container)
-    end
-
-    # The lock's image, when the project has one; nil on the deprecated path.
-    #
-    # @return [Dev::EnvironmentImage, nil]
-    # @raise [ProjectImage::NoEnvironmentImageError, ProjectImage::AmbiguousEnvironmentImageError]
-    sig { returns(T.nilable(Dev::EnvironmentImage)) }
-    def environment_image
-      project_image.environment_image
+    # @return [Dev::ProjectImages]
+    sig { returns(Dev::ProjectImages) }
+    def project_images
+      @project_images ||= T.let(
+        Dev::ProjectImages.new(root: root, build_container: build_container, legacy_keys: legacy_keys, engine: engine),
+        T.nilable(Dev::ProjectImages),
+      )
     end
   end
 

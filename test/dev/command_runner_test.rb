@@ -6,12 +6,14 @@ require "dev/command_runner"
 require "dev/build_container_config"
 require "dev/credentials"
 require "dev/build_container"
+require "dev/engine_resources"
 require "dev/shadowenv_llvm"
 require "dev/shadowenv_python"
 require "dev/shadowenv_ruby"
 require "dev/deps/dependency"
 require "dev/deps/lockfile"
 require "dev/environment_image"
+require "dev/project_images"
 require "support/fake_container_engine"
 
 transform!(RSpock::AST::Transformation)
@@ -37,17 +39,42 @@ class CommandRunnerTest < Minitest::Test
 
   # A containerized runner with its engine-injected BuildContainer client
   # injected, so tests stub the client instance instead of class methods.
+  # `config` is the legacy block (its keys recorded as the loader would);
+  # nil is a project on the lock's pins alone.
   #
   # host_platform defaults to one no lock or Dockerfile in these tests
   # declares, so the container path is taken on every CI host (a linux-amd64
   # runner *is* a linux/amd64 environment and would run on the host).
-  def container_runner(config, host_platform: "darwin-arm64")
+  def container_runner(config, host_platform: "darwin-arm64", engine: nil, inside_container: false)
     client = Dev::BuildContainer.new(engine: FakeContainerEngine.new)
     runner = Dev::CommandRunner.new(
-      ui: @ui, build_container: config,
-      project_root: @project_root, container_client: client, host_platform: host_platform,
+      ui: @ui, images: images(config, engine:),
+      project_root: @project_root, container_client: client, host_platform: host_platform, inside_container:,
     )
     [runner, client]
+  end
+
+  def images(config, engine: nil)
+    Dev::ProjectImages.new(
+      root: @project_root, build_container: config, legacy_keys: config ? ["build.container"] : [], engine: engine,
+    )
+  end
+
+  # Lock the project to these image pins (dev#277), each on linux/amd64.
+  def lock_images(*names, persist: false, volumes: [], run_env: {})
+    pins = names.map do |name|
+      metadata = {
+        "from" => "ghcr.io/d3mlabs/unreal-engine-build-base", "platform" => "linux/amd64",
+        "platforms" => ["linux/amd64"], "registry" => "ghcr.io/d3mlabs", "apt" => [],
+      }
+      metadata["persist"] = true if persist
+      metadata["volumes"] = volumes.dup unless volumes.empty?
+      metadata["run_env"] = run_env.dup unless run_env.empty?
+      Dev::Deps::Dependency.new(
+        name: name, integration: :image, group: :app, version: "ue5.8-3", hash: "SHA256=#{"a" * 64}", metadata: metadata,
+      )
+    end
+    Dev::Deps::Lockfile.new(dir: @project_root).lock(Dev::EnvironmentImage.stamp(pins))
   end
 
   # --- Toolchain provisioning ---
@@ -259,21 +286,15 @@ class CommandRunnerTest < Minitest::Test
 
   # --- Container execution ---
 
-  test "run resolves a pinned image through ensure_environment_image! and runs in it" do
-    Given "a lock pinning the image; a container block that only shapes the container"
-    pin = Dev::Deps::Dependency.new(
-      name: "myapp-linux", integration: :image, group: :app, version: "ue5.8-3", hash: "SHA256=#{"a" * 64}",
-      metadata: {
-        "from" => "ghcr.io/d3mlabs/unreal-engine-build-base", "platform" => "linux/amd64",
-        "platforms" => ["linux/amd64"], "registry" => "ghcr.io/d3mlabs", "apt" => [],
-      },
-    )
-    Dev::Deps::Lockfile.new(dir: @project_root).lock(Dev::EnvironmentImage.stamp([pin]))
-    runner, client = container_runner(Dev::BuildContainerConfig.new(persist: false))
+  test "run resolves a pinned image through ensure_environment_image! and runs in it: the one image, no key needed" do
+    Given "a lock pinning one image and no container block anywhere"
+    lock_images("myapp-linux")
+    engine = Dev::EngineResources::Hint.new(cpus: 8)
+    runner, client = container_runner(nil, engine: engine)
     cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
     client.expects(:ensure_image!).never
     client.expects(:ensure_environment_image!).once
-      .with { |image, publish:, resources:| image.name == "myapp-linux" && !publish && resources.nil? }
+      .with { |image, publish:, resources:| image.name == "myapp-linux" && !publish && resources == engine }
       .returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
     client.expects(:docker_run_command)
       .with("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: {})
@@ -289,6 +310,98 @@ class CommandRunnerTest < Minitest::Test
     Dir.chdir(@original_cwd)
   end
 
+  test "runs_on picks the image among several, and the block's shape rides it: persist, volumes, run_env" do
+    Given "two pinned images; the command names the persisted one"
+    lock_images("snappy-linux", "snappy-server", persist: true, volumes: ["/e:/ue"], run_env: { "WWISE_TOKEN" => "wwise/token" })
+    ENV["WWISE_TOKEN"] = "tok-123"
+    runner, client = container_runner(nil)
+    cmd = Dev::ProjectCommand.new(run: "./bin/test-server.sh", repl: false, runs_on: "snappy-server")
+    client.expects(:ensure_environment_image!).once
+      .with { |image, **| image.name == "snappy-server" }
+      .returns("ghcr.io/d3mlabs/snappy-server:deadbeef")
+    client.expects(:ensure_service!)
+      .with("ghcr.io/d3mlabs/snappy-server:deadbeef", project_root: @project_root, volumes: ["/e:/ue"])
+      .returns("dev-snappy-server-deadbeef")
+    client.expects(:docker_exec_command)
+      .with("dev-snappy-server-deadbeef", shell_cmd: "./bin/test-server.sh", env: { "WWISE_TOKEN" => "tok-123" })
+      .returns(["docker", "exec", "dev-snappy-server-deadbeef", "sh", "-c", "./bin/test-server.sh"])
+    client.expects(:docker_run_command).never
+
+    When
+    runner.exec_into(cmd)
+
+    Then
+    1 * Kernel.exec({}, "docker", "exec", "dev-snappy-server-deadbeef", "sh", "-c", "./bin/test-server.sh")
+
+    Cleanup
+    ENV.delete("WWISE_TOKEN")
+    Dir.chdir(@original_cwd)
+  end
+
+  test "runs_on: host runs on this host whatever the lock pins" do
+    Given "two pinned images and a command placed on the host"
+    lock_images("snappy-linux", "snappy-server")
+    runner, client = container_runner(nil)
+    runner.stubs(:ensure_shadowenv_provisioned!)
+    cmd = Dev::ProjectCommand.new(run: "./bin/editor.sh", repl: false, runs_on: "host")
+    client.expects(:ensure_environment_image!).never
+
+    When
+    runner.exec_into(cmd)
+
+    Then
+    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/editor.sh"))
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+  end
+
+  test "a command naming no image among several is refused before anything runs" do
+    Given
+    lock_images("snappy-linux", "snappy-server")
+    runner, client = container_runner(nil)
+    client.expects(:ensure_environment_image!).never
+    Kernel.expects(:exec).never
+
+    When
+    runner.exec_into(Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false))
+
+    Then
+    raises Dev::ProjectImages::AmbiguousEnvironmentImageError
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+  end
+
+  test "the host rule is asked of the command's image: a host that is one image's platform runs that command here, the other's in a container" do
+    Given "a linux/amd64 image and a linux/arm64 image, on a linux-arm64 host"
+    lock_images("snappy-linux")
+    arm = Dev::Deps::Dependency.new(
+      name: "snappy-arm", integration: :image, group: :app, version: "ue5.8-3", hash: "SHA256=#{"b" * 64}",
+      metadata: {
+        "from" => "ghcr.io/d3mlabs/unreal-engine-build-base", "platform" => "linux/arm64",
+        "platforms" => ["linux/arm64"], "registry" => "ghcr.io/d3mlabs", "apt" => [],
+      },
+    )
+    lock = Dev::Deps::Lockfile.new(dir: @project_root)
+    lock.lock(Dev::EnvironmentImage.stamp(lock.read + [arm]))
+    runner, client = container_runner(nil, host_platform: "linux-arm64")
+    runner.stubs(:ensure_llvm_provisioned!)
+    client.expects(:ensure_environment_image!).once.with { |image, **| image.name == "snappy-linux" }.returns("ref-linux")
+    client.expects(:docker_run_command).once.returns(["docker", "run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh"])
+
+    When "one command runs on each"
+    runner.exec_into(Dev::ProjectCommand.new(run: "./bin/arm.sh", repl: false, runs_on: "snappy-arm"))
+    runner.exec_into(Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false, runs_on: "snappy-linux"))
+
+    Then "the arm command execs under the host's shadowenv; the linux one in docker"
+    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/arm.sh"))
+    1 * Kernel.exec({}, "docker", "run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh")
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+  end
+
   test "run execs docker run when build_container is configured and command opts in" do
     Given "a runner with build_container and a command with container: true (default)"
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry")
@@ -297,7 +410,7 @@ class CommandRunnerTest < Minitest::Test
 
     When "the client's ensure_image! returns a tag and we run the command"
     client.expects(:ensure_image!)
-      .with(config, project_root: @project_root, push: false, publish: false, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc))
+      .with(config, project_root: @project_root, push: false, publish: false, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc), resources: nil)
       .returns("myregistry/myapp-linux:content-abc123")
     client.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: {})
@@ -338,7 +451,7 @@ class CommandRunnerTest < Minitest::Test
   test "run falls back to local execution when command has container: false" do
     Given "a runner with build_container but a command that opts out"
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry")
-    runner = Dev::CommandRunner.new(ui: @ui, build_container: config, project_root: @project_root)
+    runner = Dev::CommandRunner.new(ui: @ui, images: images(config), project_root: @project_root)
     runner.stubs(:ensure_shadowenv_provisioned!)
     cmd = Dev::ProjectCommand.new(run: "./bin/deploy.sh", repl: false, container: false)
 
@@ -355,11 +468,7 @@ class CommandRunnerTest < Minitest::Test
   test "inside the container, a containerized command runs directly: no docker, shadowenv on" do
     Given "a runner that knows it is inside, over a persist container config"
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry", persist: true)
-    client = Dev::BuildContainer.new(engine: FakeContainerEngine.new)
-    runner = Dev::CommandRunner.new(
-      ui: @ui, build_container: config,
-      project_root: @project_root, container_client: client, inside_container: true,
-    )
+    runner, client = container_runner(config, inside_container: true)
     cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
     client.expects(:ensure_image!).never
     client.expects(:ensure_service!).never
@@ -381,11 +490,7 @@ class CommandRunnerTest < Minitest::Test
     Given "a persisted container config in a project whose Dockerfile declares the host's own platform"
     (@project_root / "Dockerfile").write("FROM --platform=#{docker_platform} ubuntu:22.04\n")
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry", persist: true)
-    client = Dev::BuildContainer.new(engine: FakeContainerEngine.new)
-    runner = Dev::CommandRunner.new(
-      ui: @ui, build_container: config,
-      project_root: @project_root, container_client: client, host_platform: host,
-    )
+    runner, client = container_runner(config, host_platform: host)
     runner.stubs(:ensure_llvm_provisioned!)
     cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
     client.expects(:ensure_image!).never
@@ -412,11 +517,7 @@ class CommandRunnerTest < Minitest::Test
     Given "a linux/amd64 environment on a darwin-arm64 host"
     (@project_root / "Dockerfile").write("FROM --platform=linux/amd64 ubuntu:22.04\n")
     config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry")
-    client = Dev::BuildContainer.new(engine: FakeContainerEngine.new)
-    runner = Dev::CommandRunner.new(
-      ui: @ui, build_container: config,
-      project_root: @project_root, container_client: client, host_platform: "darwin-arm64",
-    )
+    runner, client = container_runner(config, host_platform: "darwin-arm64")
     cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
     Kernel.stubs(:exec)
 
@@ -472,7 +573,7 @@ class CommandRunnerTest < Minitest::Test
 
     When "the client returns a docker command and we run with args"
     client.expects(:ensure_image!)
-      .with(config, project_root: @project_root, push: false, publish: false, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc))
+      .with(config, project_root: @project_root, push: false, publish: false, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc), resources: nil)
       .returns("myregistry/myapp-linux:content-abc123")
     client.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/test.sh --verbose", volumes: [], env: {})
@@ -521,7 +622,7 @@ class CommandRunnerTest < Minitest::Test
 
     When "the command runs"
     client.expects(:ensure_image!)
-      .with(config, project_root: @project_root, push: false, publish: true, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc))
+      .with(config, project_root: @project_root, push: false, publish: true, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc), resources: nil)
       .returns("myregistry/myapp-linux:content-abc123")
     client.stubs(:docker_run_command).returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
     runner.exec_into(cmd)

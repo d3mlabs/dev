@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "dev/environment_image"
 require_relative "cli/flag"
 require_relative "cli/parsed_args"
 require_relative "execution_context"
@@ -173,14 +174,18 @@ module Dev
   end
 
   # Project command from a dev.yml `commands:` entry. Pure data: the run
-  # string, optional description, repl flag, container opt-out, and the
-  # nested `commands:` as children. When build.container is declared,
-  # commands run inside the container by default unless container: false.
+  # string, optional description, repl flag, where it runs (`runs_on`), and
+  # the nested `commands:` as children. The placement is carried as
+  # written — an image name or HOST — and resolved by whoever runs it
+  # (ProjectImages): the parser knows nothing about images.
   class ProjectCommand
     extend T::Sig
     extend T::Helpers
     include Command
     final!
+
+    # The `runs_on:` value meaning "wherever dev itself runs".
+    HOST = EnvironmentImage::HOST
 
     sig(:final) { returns(String) }
     attr_reader :run
@@ -191,10 +196,16 @@ module Dev
     sig(:final) { returns(T::Boolean) }
     attr_reader :repl
 
-    # Whether this command should run inside the build container (when one is
-    # configured). Defaults to true; set to false via `container: false` in dev.yml.
+    # Deprecated (d3mlabs/dev#311): the `container:` boolean, read only on
+    # the legacy path (a project with no `image` pin). `runs_on` replaces
+    # it.
     sig(:final) { returns(T::Boolean) }
     attr_reader :container
+
+    # @return [String, nil] the `runs_on:` value as declared — an image
+    #   name or HOST; nil when the command leaves the choice to the project
+    sig(:final) { returns(T.nilable(String)) }
+    attr_reader :runs_on
 
     sig(:final) { override.returns(T::Hash[String, Command]) }
     attr_reader :children
@@ -205,16 +216,18 @@ module Dev
         desc: String,
         repl: T::Boolean,
         container: T::Boolean,
+        runs_on: T.nilable(String),
         hidden: T::Boolean,
         children: T::Hash[String, Command],
       ).void
     end
-    def initialize(run:, desc: "(no description)", repl: false, container: true, hidden: false, children: {})
+    def initialize(run:, desc: "(no description)", repl: false, container: true, runs_on: nil, hidden: false, children: {})
       super()
       @run = run
       @desc = desc
       @repl = repl
       @container = container
+      @runs_on = runs_on
       @hidden = hidden
       @children = T.let(children.freeze, T::Hash[String, Command])
     end
@@ -237,7 +250,9 @@ module Dev
     # @return [ProjectCommand]
     sig(:final) { params(children: T::Hash[String, Command]).returns(ProjectCommand) }
     def with_children(children)
-      ProjectCommand.new(run: @run, desc: @desc, repl: @repl, container: @container, hidden: @hidden, children:)
+      ProjectCommand.new(
+        run: @run, desc: @desc, repl: @repl, container: @container, runs_on: @runs_on, hidden: @hidden, children:,
+      )
     end
 
     sig(:final) { params(other: Object).returns(T::Boolean) }
@@ -245,7 +260,8 @@ module Dev
       return false unless other.is_a?(ProjectCommand)
 
       @run == other.run && @desc == other.desc && @repl == other.repl &&
-        @container == other.container && @hidden == other.hidden? && @children == other.children
+        @container == other.container && @runs_on == other.runs_on &&
+        @hidden == other.hidden? && @children == other.children
     end
 
     sig(:final) { params(other: Object).returns(T::Boolean) }
@@ -255,7 +271,7 @@ module Dev
 
     sig(:final) { returns(Integer) }
     def hash
-      [@run, @desc, @repl, @container, @hidden, @children].hash
+      [@run, @desc, @repl, @container, @runs_on, @hidden, @children].hash
     end
   end
 

@@ -2,30 +2,21 @@
 # frozen_string_literal: true
 
 module Dev
-  # Value object for the build.container block in dev.yml.
+  # Legacy only (d3mlabs/dev#311): the `build.container` block of a dev.yml
+  # still on the hand-written Dockerfile path. `image`/`registry` name that
+  # Dockerfile's image; `build_args`, `build_secrets`, `content_globs`,
+  # `structure_globs` and `prewarm` feed its build; `persist`, `volumes`
+  # and `run_env` shape its container; a command opts out with
+  # `container: false`.
   #
-  # When present, commands run inside a Docker container by default. The
-  # image is the project's `image` pin in deps.lock (dev#277,
-  # Dev::EnvironmentImage); this block shapes the container around it.
-  #
-  # dev.yml example:
-  #   build:
-  #     container:
-  #       persist: true
-  #       volumes:
-  #         - "~/.dev/engines/unreal-engine-css:/ue"
-  #         - "~/.dev/wwise:/var/cache/dev/wwise-cli:ro"
-  #       run_env:
-  #         STAGING_DEPLOY_KEY: staging/deploy_key
-  #       resources:
-  #         cpus: 12
-  #         memory_gib: 24
-  #
-  # Deprecated (d3mlabs/dev#311): `image`/`registry` name a hand-written
-  # Dockerfile's image instead of the lock's pin, and `build_args`,
-  # `build_secrets`, `content_globs`, `structure_globs` and `prewarm` feed
-  # that Dockerfile's build. They are read and honoured until the consumers
-  # migrate; a lock with an `image` pin wins over them.
+  # A migrated project declares none of this here: the image is the lock's
+  # `image` pin (dev#277, Dev::EnvironmentImage), its shape is the `image`
+  # block's `persist`/`volume`/`run_env` verbs, a command's placement is
+  # `runs_on:` (dev#307), and the engine's sizing is dev.yml's top-level
+  # `engine:` (EngineResources::Hint — read for the legacy `resources` key
+  # too). The block is accepted exactly while the lock pins no image and
+  # refused, each key with its migration, the moment it does
+  # (ProjectImages); it is deleted with the path.
   #
   # volumes mount exactly as written. The container owns its own data root
   # (ADR-0008), so no volume is resolved against the host's locked trees;
@@ -78,59 +69,8 @@ module Dev
   # while the image tag is unchanged, reaped when the tag changes, stopped
   # (kept warm) by `dev container down` and removed by `dev container reset`.
   # Default false (every other repo keeps `--rm`).
-  # resources, when set, is the *floor* this project's build was tuned for:
-  # `dev up` brings a colima VM up to at least it (ColimaProvisioner's
-  # ratchet), and every containerized command measures the engine against
-  # it first (EngineResourcesCheck — a hard failure, or a warning under the
-  # `engine_resources: warn` setting). Absent means the provisioner's
-  # defaults and no check.
   class BuildContainerConfig
     extend T::Sig
-
-    # The optional VM sizing hint under build.container.resources. Every
-    # field is optional: a repo can pin just the ones that matter.
-    class Resources
-      extend T::Sig
-
-      # @return [Integer, nil] CPU count for the engine VM
-      sig { returns(T.nilable(Integer)) }
-      attr_reader :cpus
-
-      # @return [Integer, nil] memory in GiB for the engine VM
-      sig { returns(T.nilable(Integer)) }
-      attr_reader :memory_gib
-
-      # @return [Integer, nil] disk in GiB for the engine VM — what the
-      #   container's data root and images need to fit on (ADR-0008);
-      #   grow-only, applied by the colima provisioner, not checked
-      sig { returns(T.nilable(Integer)) }
-      attr_reader :disk_gib
-
-      # @param cpus [Integer, nil] see #cpus
-      # @param memory_gib [Integer, nil] see #memory_gib
-      # @param disk_gib [Integer, nil] see #disk_gib
-      sig { params(cpus: T.nilable(Integer), memory_gib: T.nilable(Integer), disk_gib: T.nilable(Integer)).void }
-      def initialize(cpus: nil, memory_gib: nil, disk_gib: nil)
-        @cpus = cpus
-        @memory_gib = memory_gib
-        @disk_gib = disk_gib
-      end
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        other.is_a?(Resources) && @cpus == other.cpus && @memory_gib == other.memory_gib && @disk_gib == other.disk_gib
-      end
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other)
-        self == other
-      end
-
-      sig { returns(Integer) }
-      def hash
-        [@cpus, @memory_gib, @disk_gib].hash
-      end
-    end
 
     # Deprecated (d3mlabs/dev#311): the hand-written-Dockerfile image's
     # name. nil when the project's image is its lock's `image` pin (dev#277).
@@ -166,9 +106,6 @@ module Dev
     sig { returns(T::Boolean) }
     attr_reader :persist
 
-    sig { returns(T.nilable(Resources)) }
-    attr_reader :resources
-
     sig do
       params(
         image: T.nilable(String),
@@ -181,12 +118,10 @@ module Dev
         structure_globs: T::Array[String],
         prewarm: T.nilable(String),
         persist: T::Boolean,
-        resources: T.nilable(Resources),
       ).void
     end
     def initialize(image: nil, registry: nil, volumes: [], build_args: {}, build_secrets: {},
-                   run_env: {}, content_globs: [], structure_globs: [], prewarm: nil, persist: false,
-                   resources: nil)
+                   run_env: {}, content_globs: [], structure_globs: [], prewarm: nil, persist: false)
       @image = image
       @registry = registry
       @volumes = volumes
@@ -197,7 +132,6 @@ module Dev
       @structure_globs = structure_globs
       @prewarm = prewarm
       @persist = persist
-      @resources = resources
     end
 
     # Deprecated (d3mlabs/dev#311): the Dockerfile image's reference without
@@ -224,7 +158,7 @@ module Dev
         @volumes == other.volumes && @build_args == other.build_args &&
         @build_secrets == other.build_secrets && @run_env == other.run_env &&
         @content_globs == other.content_globs && @structure_globs == other.structure_globs &&
-        @prewarm == other.prewarm && @persist == other.persist && @resources == other.resources
+        @prewarm == other.prewarm && @persist == other.persist
     end
 
     sig { params(other: Object).returns(T::Boolean) }
@@ -235,7 +169,7 @@ module Dev
     sig { returns(Integer) }
     def hash
       [@image, @registry, @volumes, @build_args, @build_secrets, @run_env,
-       @content_globs, @structure_globs, @prewarm, @persist, @resources].hash
+       @content_globs, @structure_globs, @prewarm, @persist].hash
     end
   end
 end

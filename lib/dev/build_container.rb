@@ -14,6 +14,7 @@ require "dev/container_engine"
 require "dev/data_root"
 require "dev/engine_resources_check"
 require "dev/environment_image"
+require "dev/gh_auth"
 require "dev/registry_login"
 
 module Dev
@@ -86,12 +87,13 @@ module Dev
     end
 
     # What `dev container status` renders: image presence on both sides and
-    # this checkout's containers, the current tag's one named so stale
-    # siblings (reaped on the next `up`) can be told apart.
+    # this image's containers in the checkout, the current tag's one named
+    # so stale siblings (reaped on the next `up`) can be told apart.
+    # `in_registry` is nil when there was no credential to ask with.
     class ServiceStatus < T::Struct
       const :image_tag, String
       const :local_image, T::Boolean
-      const :in_registry, T::Boolean
+      const :in_registry, T.nilable(T::Boolean)
       const :current_container_name, String
       const :containers, T::Array[ServiceContainer]
     end
@@ -248,9 +250,21 @@ module Dev
       # no cross-thrash when a machine is both a dev box and a CI runner.
       sig { params(image_tag: String, project_root: Pathname).returns(String) }
       def service_container_name(image_tag, project_root)
-        image = image_basename(image_tag)
         tag = T.must(image_tag.split(":").last)
-        "dev-#{sanitize_container_name(image)}-#{workspace_id(project_root)}-#{sanitize_container_name(tag)}"
+        "#{service_container_prefix(image_tag, project_root)}#{sanitize_container_name(tag)}"
+      end
+
+      # What every container of this image in this checkout is named under,
+      # whatever its tag: the set key for "this image's containers here" —
+      # a project with several persisted images (dev#307) has one per image,
+      # and one image's stale container is never another's.
+      #
+      # @param image_tag    [String]
+      # @param project_root [Pathname]
+      # @return [String] `dev-<image>-<workspace>-`
+      sig { params(image_tag: String, project_root: Pathname).returns(String) }
+      def service_container_prefix(image_tag, project_root)
+        "dev-#{sanitize_container_name(image_basename(image_tag))}-#{workspace_id(project_root)}-"
       end
 
       # Bare image name (no registry, no tag). E.g.
@@ -342,7 +356,7 @@ module Dev
     #
     # @param image     [Dev::EnvironmentImage] the lock's image pin, materialised
     # @param publish   [Boolean] whether to make the registry hold the image
-    # @param resources [Dev::BuildContainerConfig::Resources, nil] the project's
+    # @param resources [Dev::EngineResources::Hint, nil] the project's
     #   engine-size hint, measured first (EngineResourcesCheck)
     # @return [String] image.ref
     # @raise [EngineResourcesCheck::UndersizedEngineError, RegistryLogin::LoginFailedError,
@@ -351,7 +365,7 @@ module Dev
       params(
         image: Dev::EnvironmentImage,
         publish: T::Boolean,
-        resources: T.nilable(Dev::BuildContainerConfig::Resources),
+        resources: T.nilable(Dev::EngineResources::Hint),
       ).returns(String)
     end
     def ensure_environment_image!(image, publish: false, resources: nil)
@@ -422,8 +436,8 @@ module Dev
     # the publisher's job is already done, and a host that is itself the build
     # environment (see ContainerUpCommand) never needs the image locally at all.
     #
-    # Before any image work, the engine is measured against the config's
-    # resources hint (EngineResourcesCheck) — read-only; `dev up` is the one
+    # Before any image work, the engine is measured against the project's
+    # engine hint (EngineResourcesCheck) — read-only; `dev up` is the one
     # place a VM gets resized. A build on half the cores the repo tuned for is
     # a slow, silent failure, and this is the last place to make it loud.
     #
@@ -434,6 +448,7 @@ module Dev
     #   registry, even on a local hit (default: false — only the provisioning step opts in)
     # @param build_args_provider [#call, nil] returns Hash{String => String} of build args
     # @param secrets_provider    [#call, nil] returns Hash{String => String} of secret id => value
+    # @param resources           [Dev::EngineResources::Hint, nil] the project's engine-size hint
     # @return [String] the full image:tag string
     # @raise [EngineResourcesCheck::UndersizedEngineError] when the engine falls short of the hint (enforce mode)
     sig do
@@ -444,12 +459,13 @@ module Dev
         publish: T::Boolean,
         build_args_provider: T.nilable(T.proc.returns(T::Hash[String, String])),
         secrets_provider: T.nilable(T.proc.returns(T::Hash[String, String])),
+        resources: T.nilable(Dev::EngineResources::Hint),
       ).returns(String)
     end
     def ensure_image!(config, project_root:, push: true, publish: false,
-                      build_args_provider: nil, secrets_provider: nil)
+                      build_args_provider: nil, secrets_provider: nil, resources: nil)
       $stderr.puts DOCKERFILE_DEPRECATION
-      @resources_check.check!(engine: @engine, hint: config.resources)
+      @resources_check.check!(engine: @engine, hint: resources)
       tag = self.class.image_with_tag(config, project_root:)
 
       if local_image?(tag)
@@ -722,17 +738,25 @@ module Dev
 
     # The facts `dev container status` renders; probes only, nothing changes.
     #
+    # The registry probe runs inside a login session when the registry is
+    # named (a pinned image's private registry, dev#313) — outside one, a
+    # private registry answers 401 and the image looks unpublished. A host
+    # with no credential to log in with gets the local half and nil for the
+    # registry's: unknown, not absent.
+    #
     # @param image_tag    [String]   the tag the checkout resolves to today
     # @param project_root [Pathname]
+    # @param registry     [String, nil] the registry host to log in to around
+    #   the probe; nil probes bare (the deprecated Dockerfile image's public registry)
     # @return [ServiceStatus]
-    sig { params(image_tag: String, project_root: Pathname).returns(ServiceStatus) }
-    def service_status(image_tag, project_root)
+    sig { params(image_tag: String, project_root: Pathname, registry: T.nilable(String)).returns(ServiceStatus) }
+    def service_status(image_tag, project_root, registry: nil)
       ServiceStatus.new(
         image_tag: image_tag,
         local_image: local_image?(image_tag),
-        in_registry: registry_has?(image_tag),
+        in_registry: registry ? registry_has_in_session?(registry, image_tag) : registry_has?(image_tag),
         current_container_name: self.class.service_container_name(image_tag, project_root),
-        containers: service_containers(project_root),
+        containers: image_containers(image_tag, project_root),
       )
     end
 
@@ -886,9 +910,36 @@ module Dev
     sig { params(image_tag: String, project_root: Pathname).void }
     def reap_stale_services!(image_tag, project_root)
       keep = self.class.service_container_name(image_tag, project_root)
-      service_containers(project_root).each do |container|
+      image_containers(image_tag, project_root).each do |container|
         remove_container(container.name) unless container.name == keep
       end
+    end
+
+    # This image's containers in the checkout, running or stopped, at any
+    # tag: the workspace's containers under the image's name prefix
+    # (service_container_prefix).
+    #
+    # @param image_tag    [String]
+    # @param project_root [Pathname]
+    # @return [Array<ServiceContainer>] in docker's order
+    sig { params(image_tag: String, project_root: Pathname).returns(T::Array[ServiceContainer]) }
+    def image_containers(image_tag, project_root)
+      prefix = self.class.service_container_prefix(image_tag, project_root)
+      service_containers(project_root).select { |container| container.name.start_with?(prefix) }
+    end
+
+    # The registry probe from inside a read-scope login session; nil when
+    # the host has no credential to open one with.
+    #
+    # @param registry  [String] the registry host
+    # @param image_tag [String]
+    # @return [Boolean, nil]
+    sig { params(registry: String, image_tag: String).returns(T.nilable(T::Boolean)) }
+    def registry_has_in_session?(registry, image_tag)
+      @registry_login.with(registry) { registry_has?(image_tag) }
+    rescue GhAuth::NotAuthenticatedError, GhAuth::MissingScopeError, GhAuth::GhMissingError,
+           RegistryLogin::LoginFailedError
+      nil
     end
 
     # This checkout's containers, running or stopped, by the workspace label —

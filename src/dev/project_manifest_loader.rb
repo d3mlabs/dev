@@ -3,6 +3,7 @@
 
 require "pathname"
 require "yaml"
+require "dev/engine_resources"
 require_relative "build_container_config"
 require_relative "command_parser"
 require_relative "project_manifest"
@@ -23,6 +24,11 @@ module Dev
     # clean `dev:` error.
     class UnsupportedDevYamlRubyError < RuntimeError; end
 
+    # Raised when dev.yml sizes the engine twice: the top-level `engine:`
+    # block and the legacy `build.container.resources` (d3mlabs/dev#311).
+    # One floor per project; dev does not pick.
+    class ConflictingEngineHintError < RuntimeError; end
+
     sig { params(command_parser: CommandParser).void }
     def initialize(command_parser: CommandParser.new)
       @command_parser = command_parser
@@ -34,6 +40,8 @@ module Dev
     # @return [ProjectManifest]
     # @raise [UnsupportedDevYamlRubyError] when dev.yml carries the removed
     #   `ruby:` key
+    # @raise [ConflictingEngineHintError] when the engine is sized in both
+    #   `engine:` and `build.container.resources`
     sig { params(dev_yml_path: Pathname).returns(ProjectManifest) }
     def load(dev_yml_path)
       yaml = YAML.load_file(dev_yml_path)
@@ -43,8 +51,40 @@ module Dev
       ProjectManifest.new(
         name: T.cast(yaml["name"], String),
         commands: raw_commands.to_h { |name, h| [name.to_s, @command_parser.parse([name.to_s], h)] },
+        engine: parse_engine(yaml),
         build_container: parse_build_container(yaml),
+        legacy_keys: legacy_keys(yaml),
       )
+    end
+
+    # The retired keys this dev.yml carries, by path: `build.container` and
+    # every command's `container:` with its value (`commands.deploy.container:
+    # false`), nested commands included — the value decides the migration.
+    #
+    # @param yaml [Hash]
+    # @return [Array<String>] in document order
+    sig { params(yaml: T::Hash[String, T.untyped]).returns(T::Array[String]) }
+    def legacy_keys(yaml)
+      keys = []
+      keys << "build.container" if yaml.dig("build", "container").is_a?(Hash)
+      keys << "build.container.resources" if yaml.dig("build", "container", "resources").is_a?(Hash)
+      keys.concat(container_keys(["commands"], yaml["commands"]))
+    end
+
+    # @param path [Array<String>] the dev.yml path of this `commands:` mapping
+    # @param raw [Object] its value as YAML delivered it
+    # @return [Array<String>] the `container` keys under it, deepest last
+    sig { params(path: T::Array[String], raw: T.untyped).returns(T::Array[String]) }
+    def container_keys(path, raw)
+      return [] unless raw.is_a?(Hash)
+
+      raw.flat_map do |name, entry|
+        next [] unless entry.is_a?(Hash)
+
+        entry_path = path + [name.to_s]
+        own = entry.key?("container") ? ["#{(entry_path + ["container"]).join(".")}: #{entry["container"].inspect}"] : []
+        own + container_keys(entry_path + ["commands"], entry["commands"])
+      end
     end
 
     # `ruby:` is a removed dev.yml key — rejected at parse time with a
@@ -107,7 +147,7 @@ module Dev
         build_args: build_args, build_secrets: build_secrets,
         run_env: run_env, content_globs: content_globs,
         structure_globs: structure_globs, prewarm: prewarm,
-        persist: persist, resources: parse_resources(container["resources"]),
+        persist: persist,
       )
     end
 
@@ -119,16 +159,39 @@ module Dev
       value.nil? || value.empty? ? nil : value
     end
 
+    # The engine floor: the top-level `engine:` block, or — until
+    # d3mlabs/dev#311 — the legacy `build.container.resources`, the same
+    # three fields in the old place. Never both.
+    #
+    # @param yaml [Hash]
+    # @return [EngineResources::Hint, nil]
+    # @raise [ConflictingEngineHintError]
+    sig { params(yaml: T::Hash[String, T.untyped]).returns(T.nilable(EngineResources::Hint)) }
+    def parse_engine(yaml)
+      engine = yaml["engine"]
+      legacy = yaml.dig("build", "container", "resources")
+      if engine.is_a?(Hash) && legacy.is_a?(Hash)
+        raise ConflictingEngineHintError,
+          "dev.yml sizes the engine in both `engine:` and `build.container.resources`; keep `engine:` " \
+            "(the `resources` key goes with d3mlabs/dev#311)"
+      end
+
+      parse_resources(engine.is_a?(Hash) ? engine : legacy)
+    end
+
     # Coerce the optional resources sizing block to integers at the parse
     # boundary; a missing or non-hash block is no hint at all.
-    sig { params(raw: T.untyped).returns(T.nilable(BuildContainerConfig::Resources)) }
+    #
+    # @param raw [Object, nil] the block as YAML gave it
+    # @return [EngineResources::Hint, nil]
+    sig { params(raw: T.untyped).returns(T.nilable(EngineResources::Hint)) }
     def parse_resources(raw)
       return nil unless raw.is_a?(Hash)
 
       cpus = raw["cpus"]
       memory_gib = raw["memory_gib"]
       disk_gib = raw["disk_gib"]
-      BuildContainerConfig::Resources.new(
+      EngineResources::Hint.new(
         cpus: cpus.nil? ? nil : Integer(cpus),
         memory_gib: memory_gib.nil? ? nil : Integer(memory_gib),
         disk_gib: disk_gib.nil? ? nil : Integer(disk_gib),

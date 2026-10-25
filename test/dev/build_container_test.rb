@@ -6,6 +6,7 @@ require "dev/build_container"
 require "dev/build_container_config"
 require "dev/engine_resources_check"
 require "support/fake_container_engine"
+require "support/fake_registry_login"
 require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
@@ -270,11 +271,11 @@ class BuildContainerTest < Minitest::Test
   end
 
   test "ensure_image! gates on the engine's resources before touching any image" do
-    Given "a config with a resources hint and a check that finds the engine short"
+    Given "an engine hint and a check that finds the engine short"
     dir = Dir.mktmpdir("build-container-test-")
     File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
-    resources = Dev::BuildContainerConfig::Resources.new(cpus: 12, memory_gib: 24)
-    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89", resources: resources)
+    resources = Dev::EngineResources::Hint.new(cpus: 12, memory_gib: 24)
+    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
     engine = FakeContainerEngine.new
     check = typed_mock(Dev::EngineResourcesCheck)
     check.expects(:check!).once.with(engine: engine, hint: resources)
@@ -282,7 +283,7 @@ class BuildContainerTest < Minitest::Test
     bc = Dev::BuildContainer.new(engine: engine, resources_check: check)
 
     When "ensuring the image"
-    bc.ensure_image!(config, project_root: Pathname(dir))
+    bc.ensure_image!(config, project_root: Pathname(dir), resources: resources)
 
     Then "the refusal is the outcome; no docker call was made"
     raises Dev::EngineResourcesCheck::UndersizedEngineError
@@ -1378,7 +1379,7 @@ class BuildContainerTest < Minitest::Test
     tag = "jpduchesne89/snappy-linux:content-abc"
     root = Pathname("/proj")
     current = service(Dev::BuildContainer.service_container_name(tag, root), running: true)
-    stale = service("dev-snappy-linux-abc-content-old", running: false)
+    stale = service(Dev::BuildContainer.service_container_name("jpduchesne89/snappy-linux:content-old", root), running: false)
     bc = build_container
     bc.stubs(:local_image?).with(tag).returns(true)
     bc.stubs(:registry_has?).with(tag).returns(false)
@@ -1393,6 +1394,73 @@ class BuildContainerTest < Minitest::Test
     status.in_registry == false
     status.current_container_name == current.name
     status.containers == [stale, current]
+  end
+
+  test "reap_stale_services! and service_status keep to the image's own containers: another image's are not stale siblings (dev#307)" do
+    Given "a checkout with two persisted images, each with a container, and a stale one of the first"
+    root = Pathname("/proj")
+    linux = "ghcr.io/d3mlabs/snappy-linux:aaaa"
+    server = "ghcr.io/d3mlabs/snappy-server:bbbb"
+    linux_current = service(Dev::BuildContainer.service_container_name(linux, root), running: true)
+    linux_stale = service(Dev::BuildContainer.service_container_name("ghcr.io/d3mlabs/snappy-linux:0000", root), running: false)
+    server_current = service(Dev::BuildContainer.service_container_name(server, root), running: true)
+    bc = build_container
+    bc.stubs(:service_containers).with(root).returns([linux_stale, linux_current, server_current])
+    bc.stubs(:local_image?).returns(true)
+    bc.stubs(:registry_has?).returns(true)
+
+    When "reaping for the first image, and reporting on it"
+    bc.reap_stale_services!(linux, root)
+    status = bc.service_status(linux, root)
+
+    Then "only the first image's stale container goes; the report lists the first image's containers alone"
+    1 * bc.remove_container(linux_stale.name) >> true
+    0 * bc.remove_container(server_current.name)
+    status.containers == [linux_stale, linux_current]
+  end
+
+  test "service_status probes the registry inside a login session when told the registry: read scope, the probe, logout (dev#313)" do
+    Given "a pinned image on a private registry, and a recording login"
+    tag = "ghcr.io/d3mlabs/snappy-linux:aaaa"
+    root = Pathname("/proj")
+    login = FakeRegistryLogin.new
+    bc = Dev::BuildContainer.new(engine: FakeContainerEngine.new, registry_login: login)
+    bc.stubs(:local_image?).with(tag).returns(false)
+    bc.stubs(:registry_has?).with(tag).returns(true)
+    bc.stubs(:service_containers).with(root).returns([])
+
+    When
+    status = bc.service_status(tag, root, registry: "ghcr.io")
+
+    Then "the registry's answer, asked from inside the session"
+    status.in_registry == true
+    login.sessions == [["ghcr.io", false]]
+  end
+
+  test "service_status without a credential to ask with leaves the registry half unknown rather than claiming absence (dev#313)" do
+    Given "a host with no gh auth: the login refuses with #{error}"
+    tag = "ghcr.io/d3mlabs/snappy-linux:aaaa"
+    root = Pathname("/proj")
+    login = FakeRegistryLogin.new
+    login.stubs(:with).raises(error, "no")
+    bc = Dev::BuildContainer.new(engine: FakeContainerEngine.new, registry_login: login)
+    bc.stubs(:local_image?).with(tag).returns(true)
+    bc.stubs(:service_containers).with(root).returns([])
+
+    When
+    status = bc.service_status(tag, root, registry: "ghcr.io")
+
+    Then "the local half is still answered; the registry half is nil"
+    status.local_image == true
+    status.in_registry.nil?
+    0 * bc.registry_has?(tag)
+
+    Where
+    error                                   | _
+    Dev::GhAuth::NotAuthenticatedError      | nil
+    Dev::GhAuth::MissingScopeError          | nil
+    Dev::GhAuth::GhMissingError             | nil
+    Dev::RegistryLogin::LoginFailedError    | nil
   end
 
   test "create_service_container runs detached, mounts project + volumes, idles, and carries the label contract" do

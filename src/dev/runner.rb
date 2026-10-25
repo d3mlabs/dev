@@ -100,7 +100,9 @@ module Dev
         project: ProjectContext.new(
           name: manifest.name,
           root: Dev.target_project_root,
+          engine: manifest.engine,
           build_container: manifest.build_container,
+          legacy_keys: manifest.legacy_keys,
         ),
       )
     end
@@ -182,7 +184,7 @@ module Dev
         repository: CommandRepository.new(
           root: CommandGroup.root(
             desc: "Development commands for #{manifest.name}",
-            children: build_builtins(manifest, dependency_service, help:, complete:),
+            children: build_builtins(manifest, context.project!, dependency_service, help:, complete:),
           ),
           project_commands: manifest.commands,
         ),
@@ -246,7 +248,7 @@ module Dev
       project = context.project!
       command_runner = CommandRunner.new(
         ui: context.ui,
-        build_container: project.build_container,
+        images: project.project_images,
         project_root: project.root,
       )
       builtin_executor = BuiltinExecutor.new
@@ -260,6 +262,7 @@ module Dev
     end
 
     # @param manifest [ProjectManifest]
+    # @param project [ProjectContext] the run's project half (its images decide the container verbs)
     # @param dependency_service [DependencyService]
     # @param help [Builtins::HelpCommand] built by the caller, which owns
     #   the tree self-reference
@@ -269,25 +272,27 @@ module Dev
     sig do
       params(
         manifest: ProjectManifest,
+        project: ProjectContext,
         dependency_service: DependencyService,
         help: Builtins::HelpCommand,
         complete: Builtins::CompleteCommand,
       ).returns(T::Hash[String, Command])
     end
-    def build_builtins(manifest, dependency_service, help:, complete:)
+    def build_builtins(manifest, project, dependency_service, help:, complete:)
       install_deps = Builtins::InstallDepsCommand.new
 
       # The project's service dependencies — what `dev up` brings up after
       # the install and `dev down` takes down in reverse — as their ports,
       # in bring-up order. This is the one expression that decides
-      # membership: the build container (an environment service) when
-      # `build.container` is declared. The port objects are the very
+      # membership: the build containers (an environment service) when the
+      # project has an image — the lock pins one, or the legacy block names
+      # one (ProjectImages#containerized?). The port objects are the very
       # instances the `container` verbs expose, so `dev up` and
       # `dev container up` are one operation with two entry points.
       services_up = T.let([], T::Array[Builtins::ServiceUp])
       services_down = T.let([], T::Array[Builtins::ServiceDown])
       container_group = T.let(nil, T.nilable(Command))
-      if manifest.build_container
+      if project.project_images.containerized?
         container_up = Builtins::ContainerUpCommand.new(out: @out)
         container_down = Builtins::ContainerDownCommand.new(out: @out)
         services_up << container_up

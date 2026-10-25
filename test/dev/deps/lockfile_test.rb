@@ -94,6 +94,37 @@ class Dev::Deps::LockfileTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "an image pin's container shape survives the round-trip: persist, volumes, run_env (dev#307)" do
+    Given "an image dependency as the DSL and resolver mint it"
+    dir = Dir.mktmpdir("dev-lockfile-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: dir)
+    metadata = {
+      "from" => "ghcr.io/d3mlabs/unreal-engine-build-base",
+      "platform" => "linux/amd64",
+      "platforms" => ["linux/amd64"],
+      "apt" => ["winbind"],
+      "registry" => "ghcr.io/d3mlabs",
+      "persist" => true,
+      "volumes" => ["~/.dev/engines/unreal-engine-css:/ue"],
+      "run_env" => { "STAGING_DEPLOY_KEY" => "staging/deploy_key" },
+    }
+    dep = Dev::Deps::Dependency.new(
+      name: "snappy-linux", integration: :image, group: :app, version: "ue5.8-3", hash: "SHA256=#{"a" * 64}",
+      metadata: metadata,
+    )
+
+    When "locking and reading back"
+    lockfile.lock([dep])
+    read_dep = lockfile.read.first
+
+    Then
+    read_dep.integration == :image
+    read_dep.metadata == metadata
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "lock records the manifest digest in the header and reads it back" do
     Given "a dependency and the digest of the manifest it came from"
     dir = Dir.mktmpdir("dev-lockfile-test-")

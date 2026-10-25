@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/build_container_config"
+require "dev/engine_resources"
 require "dev/engine_resources_check"
 require "dev/settings"
 require "support/fake_container_engine"
@@ -33,7 +33,7 @@ class Dev::EngineResourcesCheckTest < Minitest::Test
   end
 
   def hint(cpus: nil, memory_gib: nil)
-    Dev::BuildContainerConfig::Resources.new(cpus: cpus, memory_gib: memory_gib)
+    Dev::EngineResources::Hint.new(cpus: cpus, memory_gib: memory_gib)
   end
 
   def setup
@@ -80,7 +80,7 @@ class Dev::EngineResourcesCheckTest < Minitest::Test
     Where
     shape    | declared
     "absent" | nil
-    "empty"  | Dev::BuildContainerConfig::Resources.new(cpus: nil, memory_gib: nil)
+    "empty"  | Dev::EngineResources::Hint.new(cpus: nil, memory_gib: nil)
   end
 
   test "a caller who knows the engine's size better than `docker info` hands it in, and the daemon is not asked" do
