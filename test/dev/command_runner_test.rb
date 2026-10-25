@@ -13,6 +13,8 @@ require "dev/shadowenv_ruby"
 require "dev/deps/dependency"
 require "dev/deps/lockfile"
 require "dev/environment_image"
+require "dev/host_environment"
+require "dev/host_rule"
 require "dev/project_images"
 require "support/fake_container_engine"
 
@@ -42,16 +44,30 @@ class CommandRunnerTest < Minitest::Test
   # `config` is the legacy block (its keys recorded as the loader would);
   # nil is a project on the lock's pins alone.
   #
-  # host_platform defaults to one no lock or Dockerfile in these tests
-  # declares, so the container path is taken on every CI host (a linux-amd64
-  # runner *is* a linux/amd64 environment and would run on the host).
-  def container_runner(config, host_platform: "darwin-arm64", engine: nil, inside_container: false)
+  # host_platform defaults to one no Dockerfile in these tests declares, so
+  # the legacy container path is taken on every CI host (a linux-amd64
+  # runner *is* a linux/amd64 environment and would run on the host). The
+  # marker is the host rule's fact for pinned images: absent unless a test
+  # writes one (`marker:` a path under the project root).
+  def container_runner(config, host_platform: "darwin-arm64", engine: nil, inside_container: false, marker: nil)
     client = Dev::BuildContainer.new(engine: FakeContainerEngine.new)
     runner = Dev::CommandRunner.new(
-      ui: @ui, images: images(config, engine:),
-      project_root: @project_root, container_client: client, host_platform: host_platform, inside_container:,
+      ui: @ui, images: images(config, engine:), project_root: @project_root, container_client: client,
+      host_rule: host_rule(host_platform:, marker:), inside_container:,
     )
     [runner, client]
+  end
+
+  def host_rule(host_platform: "darwin-arm64", marker: nil)
+    path = marker || (@project_root / "no-marker").to_s
+    Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: path), host_platform: host_platform)
+  end
+
+  # Write the marker a host provisioned from +image+ carries; returns its path.
+  def provisioned_from(image)
+    path = @project_root / "etc-dev-environment"
+    path.write(image.marker)
+    path.to_s
   end
 
   def images(config, engine: nil)
@@ -373,30 +389,109 @@ class CommandRunnerTest < Minitest::Test
     Dir.chdir(@original_cwd)
   end
 
-  test "the host rule is asked of the command's image: a host that is one image's platform runs that command here, the other's in a container" do
-    Given "a linux/amd64 image and a linux/arm64 image, on a linux-arm64 host"
-    lock_images("snappy-linux")
-    arm = Dev::Deps::Dependency.new(
-      name: "snappy-arm", integration: :image, group: :app, version: "ue5.8-3", hash: "SHA256=#{"b" * 64}",
-      metadata: {
-        "from" => "ghcr.io/d3mlabs/unreal-engine-build-base", "platform" => "linux/arm64",
-        "platforms" => ["linux/arm64"], "registry" => "ghcr.io/d3mlabs", "apt" => [],
-      },
-    )
-    lock = Dev::Deps::Lockfile.new(dir: @project_root)
-    lock.lock(Dev::EnvironmentImage.stamp(lock.read + [arm]))
-    runner, client = container_runner(nil, host_platform: "linux-arm64")
+  test "the host rule is asked of the command's image: a host provisioned from one image runs that command here, the other's in a container" do
+    Given "two linux/amd64 images, on a linux-x86_64 host whose marker is one of them"
+    lock_images("snappy-linux", "snappy-server")
+    images = images(nil).pinned
+    server = images.find { |image| image.name == "snappy-server" }
+    runner, client = container_runner(nil, host_platform: "linux-x86_64", marker: provisioned_from(server))
     runner.stubs(:ensure_llvm_provisioned!)
     client.expects(:ensure_environment_image!).once.with { |image, **| image.name == "snappy-linux" }.returns("ref-linux")
     client.expects(:docker_run_command).once.returns(["docker", "run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh"])
 
     When "one command runs on each"
-    runner.exec_into(Dev::ProjectCommand.new(run: "./bin/arm.sh", repl: false, runs_on: "snappy-arm"))
+    runner.exec_into(Dev::ProjectCommand.new(run: "./bin/server.sh", repl: false, runs_on: "snappy-server"))
     runner.exec_into(Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false, runs_on: "snappy-linux"))
 
-    Then "the arm command execs under the host's shadowenv; the linux one in docker"
-    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/arm.sh"))
+    Then "the server command execs under the host's shadowenv; the linux one in docker, though the host is its platform too"
+    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/server.sh"))
     1 * Kernel.exec({}, "docker", "run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh")
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+  end
+
+  test "a pinned image's platform alone never makes a host native: no marker, the container — on #{host}" do
+    Given "a linux/amd64 image on a host of its platform, provisioned from nothing"
+    lock_images("snappy-linux")
+    runner, client = container_runner(nil, host_platform: host)
+    client.expects(:ensure_environment_image!).once.returns("ref-linux")
+    client.expects(:docker_run_command).once.returns(["docker", "run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh"])
+
+    When
+    runner.exec_into(Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false))
+
+    Then
+    1 * Kernel.exec({}, "docker", "run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh")
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+
+    Where
+    host           | _
+    "linux-x86_64" | nil
+    "darwin-arm64" | nil
+  end
+
+  test "a host provisioned from an older recipe of the image has drifted: the command runs in the lock's image" do
+    Given "the marker names the image under another digest"
+    lock_images("snappy-linux")
+    current = images(nil).pinned.first
+    older = Dev::EnvironmentImage.new(
+      name: current.name, from: current.from, from_digest: current.from_digest, platform: current.platform,
+      apt: ["libnss3"], registry: current.registry,
+    )
+    runner, client = container_runner(nil, host_platform: "linux-x86_64", marker: provisioned_from(older))
+    client.expects(:ensure_environment_image!).once.returns("ref-linux")
+    client.expects(:docker_run_command).once.returns(["docker", "run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh"])
+
+    When
+    runner.exec_into(Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false))
+
+    Then
+    1 * Kernel.exec({}, "docker", "run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh")
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+  end
+
+  test "inside a container of the lock's image, the image's command runs directly" do
+    Given
+    lock_images("snappy-linux")
+    runner, client = container_runner(nil, inside_container: true, marker: provisioned_from(images(nil).pinned.first))
+    client.expects(:docker_run_command).never
+
+    When
+    runner.exec_into(Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false))
+
+    Then
+    1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/build.sh"))
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+  end
+
+  test "inside a container that is not the lock's image, the command is refused: the container cannot replace itself" do
+    Given "a container made from an older recipe"
+    lock_images("snappy-linux")
+    current = images(nil).pinned.first
+    older = Dev::EnvironmentImage.new(
+      name: current.name, from: current.from, from_digest: current.from_digest, platform: current.platform,
+      apt: ["libnss3"], registry: current.registry,
+    )
+    runner, client = container_runner(nil, inside_container: true, marker: provisioned_from(older))
+    client.expects(:docker_run_command).never
+    Kernel.expects(:exec).never
+
+    When
+    error = assert_raises(Dev::HostRule::ContainerDriftError) do
+      runner.exec_into(Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false))
+    end
+
+    Then
+    error.message.include?("this container is snappy-linux@#{older.short_digest}")
+    error.message.include?("the lock's snappy-linux is snappy-linux@#{current.short_digest}")
+    error.message.include?("dev container reset && dev up")
 
     Cleanup
     Dir.chdir(@original_cwd)

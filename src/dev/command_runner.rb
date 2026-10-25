@@ -9,7 +9,7 @@ require "dev/credentials"
 require "dev/build_container"
 require "dev/container_context"
 require "dev/container_engine"
-require "dev/platform"
+require "dev/host_rule"
 require "dev/project_images"
 require "dev/shadowenv_llvm"
 
@@ -51,10 +51,13 @@ module Dev
   # host and inside the container alike — and the host-only LLVM is left
   # to the image.
   #
-  # On a host that *is* the command's environment (the image's platform is
-  # this host's) there is no container to reach for either — the platform
-  # rule (ADR-0007), asked of the command's image. The command runs
-  # directly as a host command does, under the host's shadowenv.
+  # On a host that *is* the command's environment there is no container to
+  # reach for either — the host rule (HostRule, ADR-0007 as amended by
+  # dev#308), asked of the command's image: a host provisioned from the
+  # image runs its commands directly, under the host's shadowenv, as a host
+  # command does. Inside a container, the same rule refuses work the
+  # container is not the image for (drift): the container cannot replace
+  # itself, the host can.
   class CommandRunner
     extend T::Sig
 
@@ -109,8 +112,7 @@ module Dev
 
     # @param images [Dev::ProjectImages] the project's images and where each
     #   command runs; a project with none places everything on the host
-    # @param host_platform [String] this host's platform key, measured
-    #   against the command's image's
+    # @param host_rule [Dev::HostRule] whether an image's work runs here
     sig do
       params(
         ui: Dev::Cli::Ui,
@@ -118,17 +120,17 @@ module Dev
         images: Dev::ProjectImages,
         container_client: T.nilable(Dev::BuildContainer),
         inside_container: T::Boolean,
-        host_platform: String,
+        host_rule: Dev::HostRule,
       ).void
     end
     def initialize(ui:, project_root:, images: Dev::ProjectImages.new(root: project_root), container_client: nil,
-                   inside_container: ContainerContext.inside?, host_platform: Platform.current)
+                   inside_container: ContainerContext.inside?, host_rule: Dev::HostRule.new)
       @ui = ui
       @images = images
       @project_root = project_root
       @container_client = container_client
       @inside_container = inside_container
-      @host_platform = host_platform
+      @host_rule = host_rule
     end
 
     # Hand the process over to the command: exec-replace, the right shape
@@ -183,22 +185,27 @@ module Dev
     end
 
     # Where the command runs: here, or in a container of its image. Here
-    # when we are already inside a container, when the command's
-    # environment is the host, or when this host *is* the image's platform
-    # (the platform rule); the image otherwise.
+    # when the command's environment is the host, when this host was
+    # provisioned from the image (the host rule), or when we are already
+    # inside a container of it; the image otherwise. Inside a container
+    # that is not the image's, the work is refused.
     #
     # @param cmd [ProjectCommand]
     # @return [ProjectImages::Placement]
     # @raise [ProjectImages::UnknownImageError, ProjectImages::AmbiguousEnvironmentImageError]
+    # @raise [HostRule::ContainerDriftError] inside a container that is not the lock's image
     sig { params(cmd: ProjectCommand).returns(ProjectImages::Placement) }
     def placement(cmd)
-      return ProjectImages::HOST if @inside_container
-
       placement = @images.for(cmd)
       return placement if placement == ProjectImages::HOST
 
       image = T.cast(placement, ProjectImages::Image)
-      image.dev_platform == @host_platform ? ProjectImages::HOST : image
+      if @inside_container
+        @host_rule.assert_container_is!(image)
+        return ProjectImages::HOST
+      end
+
+      @host_rule.native?(image) ? ProjectImages::HOST : image
     end
 
     # Whether the resolved image should be published to the shared registry.
