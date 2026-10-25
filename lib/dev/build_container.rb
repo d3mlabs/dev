@@ -119,9 +119,9 @@ module Dev
     SIGPENDING_ULIMIT = ["--ulimit", "sigpending=1000000"].freeze
 
     # Where the container's data root is mounted in every container dev
-    # creates. Fixed, because what the store holds embeds absolute paths
-    # (venvs, binstubs), and FHS-conventional for a program's variable state.
-    DATA_ROOT_MOUNT = "/var/lib/dev"
+    # creates — the Linux data root's own path (DataRoot::LINUX_ROOT), so a
+    # Linux host's bind mount reads the same on both sides.
+    DATA_ROOT_MOUNT = Dev::DataRoot::LINUX_ROOT
 
     # The container's data root is its own, not the host's (ADR-0008): a
     # named volume on the engine's disk, one per VM and shared by every
