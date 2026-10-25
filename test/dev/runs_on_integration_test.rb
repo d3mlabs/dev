@@ -4,6 +4,7 @@
 require "test_helper"
 require "dev"
 require "dev/container_engine"
+require "dev/deps"
 require "dev/deps/dependency"
 require "dev/deps/lockfile"
 require "dev/environment_image"
@@ -37,6 +38,11 @@ class RunsOnIntegrationTest < Minitest::Test
     @original_cwd = Dir.pwd
     @root = Pathname(Dir.mktmpdir("runs-on-fixture"))
     Dev.stubs(:target_project_root).returns(@root)
+    # A workstation: the fixture is never `dev up`'d, and in CI the
+    # staleness guard turns that into an exit(1) — a real one, which the
+    # tests below that do not expect an exit would take the whole suite
+    # down with (Minitest passes SystemExit through).
+    Dev::Deps.stubs(:detect_env).returns("dev")
     # A Mac: neither image's platform, so both commands reach their container.
     Dev::Platform.stubs(:current).returns("darwin-arm64")
     # Every docker call succeeds (the image is found locally) except the
