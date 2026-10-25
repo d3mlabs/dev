@@ -9,9 +9,10 @@ require "dev/container_engine"
 #
 #   engine = FakeContainerEngine.new { |args| args.first != "pull" }
 #   engine.runs      # => every run's docker args (after the prefix)
+#   engine.run_stdins # => what each run read off its `in:` (nil when none)
 #   engine.captures  # => every capture's docker args
 class FakeContainerEngine < Dev::ContainerEngine
-  attr_reader :runs, :run_envs, :captures
+  attr_reader :runs, :run_envs, :run_stdins, :captures
 
   # @param local_mounts [Boolean] what #local_mounts? answers
   # @param capture_result [String, Proc] stdout for capture calls (a proc
@@ -27,12 +28,16 @@ class FakeContainerEngine < Dev::ContainerEngine
     @run_handler = run_handler || ->(_args) { true }
     @runs = []
     @run_envs = []
+    @run_stdins = []
     @captures = []
   end
 
-  def run(args, env: {}, **_opts)
+  # Consumes `in:` as a child process would, so a caller that pipes a
+  # secret on stdin can be checked without the secret ever touching argv.
+  def run(args, env: {}, **opts)
     @runs << args
     @run_envs << env
+    @run_stdins << opts[:in]&.read
     !!@run_handler.call(args)
   end
 
