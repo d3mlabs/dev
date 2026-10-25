@@ -5,6 +5,7 @@ require "digest"
 require "fileutils"
 require "pathname"
 require "securerandom"
+require "tmpdir"
 require "yaml"
 
 require "dev/build_watcher"
@@ -12,13 +13,22 @@ require "dev/container_context"
 require "dev/container_engine"
 require "dev/data_root"
 require "dev/engine_resources_check"
+require "dev/environment_image"
+require "dev/registry_login"
 
 module Dev
   # Content-addressed Docker image management for build containers.
   #
-  # Computes a tag from the hash of Dockerfile + .dockerignore + deps.lock
-  # plus any project-declared content globs. Any change to those inputs
-  # produces a new tag, guaranteeing a rebuild.
+  # The image is the project's `image` pin (dev#277, `Dev::EnvironmentImage`):
+  # its tag is the digest of the Dockerfile dev generates, so a change to the
+  # floor, the platform, the apt set or dev's template is a new tag and a
+  # rebuild. `ensure_environment_image!` resolves it: local → (publisher:
+  # registry manifest) → pull → build → push, the registry entered once, by
+  # `Dev::RegistryLogin`, around whatever touches it.
+  #
+  # The hand-written-Dockerfile path (`ensure_image!`, `content_tag`,
+  # `image_with_tag`: a tag from the hash of Dockerfile + .dockerignore +
+  # deps.lock plus project globs) is deprecated and goes with d3mlabs/dev#311.
   #
   # Every docker invocation rides an injected Dev::ContainerEngine (the
   # per-user container substrate — see that class), so which daemon serves a
@@ -26,11 +36,8 @@ module Dev
   # name computation stays on the class (no engine, no side effects).
   #
   # Usage:
-  #   BuildContainer.new(engine:).ensure_image!(config, project_root: Pathname("..."))
-  #     # pulls or builds the image, returns the full image:tag string
-  #
-  #   BuildContainer.content_tag(project_root: Pathname("..."))
-  #     # returns the content-addressed tag without side effects
+  #   BuildContainer.new(engine:).ensure_environment_image!(image)
+  #     # pulls or builds the image, returns its ref (image.ref)
   class BuildContainer
     extend T::Sig
 
@@ -47,6 +54,17 @@ module Dev
 
     # `docker stop` on one of this checkout's containers failed.
     class StopFailedError < RuntimeError; end
+
+    # `docker build` returned nonzero.
+    class BuildFailedError < RuntimeError; end
+
+    # Which hand-written-Dockerfile inputs are deprecated, said once per
+    # process so a `dev` invocation that resolves the image twice does not
+    # nag twice.
+    DOCKERFILE_DEPRECATION =
+      "dev: the project Dockerfile + build.container.image/registry path is deprecated — " \
+      "declare an `image` block in dependencies.rb (the generated image is the pin); " \
+      "the Dockerfile path goes with d3mlabs/dev#311"
 
     # The label contract, read back by `dev container …` here and by
     # `dev engine down/status` through ContainerEngine#running_containers.
@@ -110,8 +128,10 @@ module Dev
     # Linuxbrew's prefix is a second mount point, not a subtree of the data
     # root: brew's fixed path must be a real directory (bottles refuse a
     # symlinked prefix), and a volume-subpath mount is neither created nor
-    # initialised by docker. Same volume semantics as the data root.
-    LINUXBREW_MOUNT = "/home/linuxbrew/.linuxbrew"
+    # initialised by docker. Same volume semantics as the data root. The
+    # generated image puts the prefix on PATH (EnvironmentImage), so the two
+    # are one constant.
+    LINUXBREW_MOUNT = EnvironmentImage::LINUXBREW_PREFIX
     LINUXBREW_VOLUME = "dev-linuxbrew"
 
     # @return [Dev::ContainerEngine] the engine every docker invocation rides
@@ -121,10 +141,19 @@ module Dev
     # @param engine [Dev::ContainerEngine] resolved for the invoking user
     # @param resources_check [Dev::EngineResourcesCheck] the engine-vs-hint
     #   gate every image resolution passes through first
-    sig { params(engine: Dev::ContainerEngine, resources_check: Dev::EngineResourcesCheck).void }
-    def initialize(engine:, resources_check: Dev::EngineResourcesCheck.new)
+    # @param registry_login [Dev::RegistryLogin, nil] the registry session
+    #   around pulls and pushes; defaults to one over this engine and gh's token
+    sig do
+      params(
+        engine: Dev::ContainerEngine,
+        resources_check: Dev::EngineResourcesCheck,
+        registry_login: T.nilable(Dev::RegistryLogin),
+      ).void
+    end
+    def initialize(engine:, resources_check: Dev::EngineResourcesCheck.new, registry_login: nil)
       @engine = engine
       @resources_check = resources_check
+      @registry_login = T.let(registry_login || Dev::RegistryLogin.new(engine:), Dev::RegistryLogin)
     end
 
     class << self
@@ -274,9 +303,91 @@ module Dev
       end
     end
 
-    # Ensure the build container image exists: use a local image if present,
-    # pull from registry if available, otherwise build. Returns the full
-    # image:tag string.
+    # Ensure the project's environment image exists on this engine (or, for a
+    # publisher, in the registry): local → (publisher: registry manifest) →
+    # pull → build from the generated Dockerfile → push when publishing.
+    # Returns the image's ref.
+    #
+    # The local check comes first and needs no credential: an image already
+    # here is usable offline, and a box that built it by hand is honoured.
+    # Everything past it touches the registry and runs inside one
+    # RegistryLogin session — read scope to pull, write scope to publish.
+    #
+    # Publishing is the *provisioning* guarantee (see ensure_image!): a local
+    # hit is pushed if the registry lacks the tag; a registry hit means the
+    # publisher's job is done and nothing is pulled; a miss builds and pushes
+    # without asking again. A tag is first-publisher-wins — apt is not
+    # reproducible, so two builds of one tag differ in bytes, and dev never
+    # replaces a published one.
+    #
+    # The build's context is a temp dir holding only the generated
+    # Dockerfile: nothing from the checkout enters the image (that is the
+    # point — the image is OS state, the lock is the project's), and the
+    # digest the marker records arrives as a build arg so the text the
+    # digest was computed over is exactly the text built.
+    #
+    # @param image     [Dev::EnvironmentImage] the lock's image pin, materialised
+    # @param publish   [Boolean] whether to make the registry hold the image
+    # @param resources [Dev::BuildContainerConfig::Resources, nil] the project's
+    #   engine-size hint, measured first (EngineResourcesCheck)
+    # @return [String] image.ref
+    # @raise [EngineResourcesCheck::UndersizedEngineError, RegistryLogin::LoginFailedError,
+    #   GhAuth::MissingScopeError, BuildFailedError]
+    sig do
+      params(
+        image: Dev::EnvironmentImage,
+        publish: T::Boolean,
+        resources: T.nilable(Dev::BuildContainerConfig::Resources),
+      ).returns(String)
+    end
+    def ensure_environment_image!(image, publish: false, resources: nil)
+      @resources_check.check!(engine: @engine, hint: resources)
+      ref = image.ref
+
+      if local_image?(ref)
+        $stderr.puts "dev: Container image found locally — #{ref}"
+        @registry_login.with(image.registry_host, publish: true) { publish!(ref) } if publish
+        return ref
+      end
+
+      @registry_login.with(image.registry_host, publish:) do
+        if publish && registry_has?(ref)
+          $stderr.puts "dev: Container image already published — #{ref}"
+        elsif pull(ref)
+          $stderr.puts "dev: Container image cache hit — #{ref}"
+        else
+          $stderr.puts "dev: Container image cache miss — building #{ref}"
+          build_generated!(image)
+          push!(ref) if publish
+        end
+      end
+      ref
+    end
+
+    # Build the generated Dockerfile: a temp dir as the (otherwise empty)
+    # context, `--platform` pinned to the declared one so the floor's index
+    # resolves to the platform the lock names rather than the daemon's.
+    #
+    # @param image [Dev::EnvironmentImage]
+    # @raise [BuildFailedError]
+    sig { params(image: Dev::EnvironmentImage).void }
+    def build_generated!(image)
+      Dir.mktmpdir("dev-image-") do |context|
+        dockerfile = File.join(context, "Dockerfile")
+        File.write(dockerfile, image.dockerfile)
+        arg_flags = image.build_args.flat_map { |name, value| ["--build-arg", "#{name}=#{value}"] }
+        args = [
+          "build", "--progress=plain", "--platform", image.platform, "-t", image.ref,
+          *arg_flags, "-f", dockerfile, context,
+        ]
+        success = @engine.run(args, env: { "DOCKER_BUILDKIT" => "1" })
+        raise BuildFailedError, "Docker build failed for #{image.ref}" unless success
+      end
+    end
+
+    # Deprecated (d3mlabs/dev#311): ensure the hand-written-Dockerfile image
+    # exists: use a local image if present, pull from registry if available,
+    # otherwise build. Returns the full image:tag string.
     #
     # The local check comes first so images built manually are honored.
     #
@@ -325,6 +436,7 @@ module Dev
     end
     def ensure_image!(config, project_root:, push: true, publish: false,
                       build_args_provider: nil, secrets_provider: nil)
+      $stderr.puts DOCKERFILE_DEPRECATION
       @resources_check.check!(engine: @engine, hint: config.resources)
       tag = self.class.image_with_tag(config, project_root:)
 
@@ -880,7 +992,7 @@ module Dev
         project_root.to_s,
       ]
       success = @engine.run(args, env: env)
-      raise "Docker build failed for #{image_tag}" unless success
+      raise BuildFailedError, "Docker build failed for #{image_tag}" unless success
     end
 
     # Stream push progress for the same liveness reason as pull: publishing a

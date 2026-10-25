@@ -212,6 +212,11 @@ module Dev
     sig { returns(String) }
     def ref = "#{@registry}/#{@name}:#{tag}"
 
+    # @return [String] the registry's host — what `docker login` takes
+    #   (`ghcr.io` of `ghcr.io/d3mlabs`)
+    sig { returns(String) }
+    def registry_host = T.must(@registry.split("/").first)
+
     # @return [Hash{String => String}] the build arg the marker reads
     sig { returns(T::Hash[String, String]) }
     def build_args = { DIGEST_BUILD_ARG => digest }
