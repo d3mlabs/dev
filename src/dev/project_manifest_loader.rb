@@ -87,9 +87,11 @@ module Dev
       container = build["container"]
       return nil unless container.is_a?(Hash)
 
-      image = container["image"]&.to_s
-      registry = container["registry"]&.to_s
-      return nil if image.nil? || image.empty? || registry.nil? || registry.empty?
+      # image/registry name a hand-written-Dockerfile image (deprecated,
+      # d3mlabs/dev#311); a block without them shapes the container around
+      # the lock's image pin (dev#277).
+      image = presence(container["image"])
+      registry = presence(container["registry"])
 
       volumes = Array(container["volumes"]).map(&:to_s)
       build_args = (container["build_args"] || {}).to_h { |k, v| [k.to_s, v.to_s] }
@@ -107,6 +109,14 @@ module Dev
         structure_globs: structure_globs, prewarm: prewarm,
         persist: persist, resources: parse_resources(container["resources"]),
       )
+    end
+
+    # @param raw [Object, nil] a scalar dev.yml value
+    # @return [String, nil] its string form, nil when absent or blank
+    sig { params(raw: T.untyped).returns(T.nilable(String)) }
+    def presence(raw)
+      value = raw&.to_s
+      value.nil? || value.empty? ? nil : value
     end
 
     # Coerce the optional resources sizing block to integers at the parse

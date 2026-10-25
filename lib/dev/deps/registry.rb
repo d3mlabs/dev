@@ -26,6 +26,7 @@ require_relative "wwise_integration"
 require_relative "pip_repository"
 require_relative "pip_integration"
 require_relative "url_repository"
+require_relative "oci_repository"
 require_relative "brew_cask_repository"
 require_relative "brew_scheme"
 require_relative "exact_scheme"
@@ -268,6 +269,17 @@ module Dev
             scheme: Pep440Scheme,
             integration: PipIntegration,
             integration_needs: %i[project_root],
+          ),
+          # An environment image's floor (dev#277): the tag is the whole
+          # ask (url model, so no scheme), resolved to the digest the
+          # registry serves. Nothing installs it — an image is not a store
+          # tree (ADR-0009) — the container layer reads the pin
+          # (Dev::EnvironmentImage) and builds or pulls the image from it.
+          Entry.new(
+            symbol: :image,
+            repository: OciRepository,
+            scheme: nil,
+            integration: nil,
           ),
         ].freeze,
         T::Array[Entry],

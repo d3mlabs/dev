@@ -33,4 +33,17 @@ class Dev::Deps::RegistryTest < Minitest::Test
     Dev::Deps::Registry.repositories(project_root: Pathname("/tmp")).fetch(:ruby).is_a?(Dev::Deps::BrewRepository)
     Dev::Deps::Registry.repositories(project_root: Pathname("/tmp")).fetch(:python).is_a?(Dev::Deps::BrewRepository)
   end
+
+  test "the image entry resolves a floor over the registry and installs nothing: an image is not a store tree" do
+    Given
+    entry = Dev::Deps::Registry::INTEGRATIONS.find { |candidate| candidate.symbol == :image }
+
+    Expect "OciRepository, no scheme (the tag is the whole ask), no integration, no alias — the container layer reads the pin"
+    entry.repository == Dev::Deps::OciRepository
+    entry.scheme.nil?
+    entry.integration.nil?
+    entry.install_alias.nil?
+    !entry.host?
+    !Dev::Deps::Registry.host_integrations(project_root: Pathname("/tmp"), store: Dev::Deps::LocalStore.new).key?(:image)
+  end
 end

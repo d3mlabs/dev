@@ -3,6 +3,8 @@
 
 require "pathname"
 
+require "dev/deps/lockfile"
+require "dev/environment_image"
 require "dev/platform"
 
 module Dev
@@ -16,9 +18,12 @@ module Dev
   # environment's: a Mac runs the linux/amd64 environment in a container;
   # a linux-x86_64 host *is* that environment and runs it directly.
   #
-  # The environment's platform is what the Dockerfile declares on its first
-  # `FROM --platform=…`. Nothing declared means nothing is known: the host is
-  # never taken for the environment, and the container stays the default.
+  # The environment's platform is the lock's `image` pin's (dev#277) — the
+  # image is the pin, and its platform is in it. A project still on the
+  # deprecated Dockerfile path declares it on the first `FROM --platform=…`
+  # (d3mlabs/dev#311 removes that read). Nothing declared means nothing is
+  # known: the host is never taken for the environment, and the container
+  # stays the default.
   module EnvironmentPlatform
     extend T::Sig
 
@@ -32,13 +37,37 @@ module Dev
     class << self
       extend T::Sig
 
-      # The platform the project's Dockerfile declares, as a dev platform key.
+      # The platform the project's environment declares, as a dev platform
+      # key: the lock's image pins first, the Dockerfile as the fallback.
       #
-      # @param project_root [Pathname] the checkout holding the Dockerfile
-      # @return [String, nil] e.g. "linux-x86_64"; nil when no Dockerfile
-      #   exists or its first FROM declares no literal platform
+      # @param project_root [Pathname] the checkout holding deps.lock
+      # @return [String, nil] e.g. "linux-x86_64"; nil when the image pins
+      #   disagree (d3mlabs/dev#307 decides which a command runs in), or with
+      #   no pin, when no Dockerfile exists or its first FROM declares no
+      #   literal platform
+      # @raise [Deps::Lockfile::RetiredBuildLockError] when build-deps.lock is still present
       sig { params(project_root: Pathname).returns(T.nilable(String)) }
       def declared(project_root:)
+        pins = Deps::Lockfile.new(dir: project_root).read.select { |pin| pin.integration == :image }
+        return pinned(pins) if pins.any?
+
+        from_dockerfile(project_root)
+      end
+
+      # @param pins [Array<Deps::Dependency>] the lock's image pins, at least one
+      # @return [String, nil] the one platform they share, or nil when they differ
+      sig { params(pins: T::Array[Deps::Dependency]).returns(T.nilable(String)) }
+      def pinned(pins)
+        platforms = pins.map { |pin| EnvironmentImage.dev_platform_of(pin.metadata.fetch("platform")) }.uniq
+        platforms.size == 1 ? platforms.first : nil
+      end
+
+      # Deprecated (d3mlabs/dev#311): the platform the Dockerfile's first FROM declares.
+      #
+      # @param project_root [Pathname]
+      # @return [String, nil]
+      sig { params(project_root: Pathname).returns(T.nilable(String)) }
+      def from_dockerfile(project_root)
         dockerfile = project_root / DOCKERFILE
         return nil unless dockerfile.file?
 
@@ -49,8 +78,8 @@ module Dev
         match && Platform.from_docker(T.must(match[1]))
       end
 
-      # Whether this host is the build environment: the Dockerfile declares
-      # a platform and it is the host's.
+      # Whether this host is the build environment: the project declares a
+      # platform and it is the host's.
       #
       # @param project_root [Pathname]
       # @param host [String] the host's platform key (Platform.current)

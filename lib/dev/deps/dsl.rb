@@ -28,9 +28,10 @@ module Dev
 
       # The GroupDSL verbs available ungrouped (every declaration verb; env
       # excluded — see the class comment). Registered integration verbs join
-      # them dynamically.
+      # them dynamically. `apt` is here only to refuse at the top level with
+      # the same message it refuses with in a group (see GroupDSL#apt).
       UNGROUPED_VERBS = T.let(
-        %i[brew cmake custom ficsit gem gh luarocks pip steam wwise xcode].freeze,
+        %i[apt brew cmake custom ficsit gem gh luarocks pip steam wwise xcode].freeze,
         T::Array[Symbol],
       )
 
@@ -178,6 +179,48 @@ module Dev
         @declarations.concat(group_dsl.declarations)
       end
 
+      # Declare an environment image (dev#277): the floor it derives from —
+      # a dependency, resolved to a digest at `dev deps update` — and, in the
+      # block, the project's OS layer as `apt` lines, which are the image's
+      # materialization (a distro package cannot be pinned; the image it
+      # produces can). dev builds the image from the lock and publishes it;
+      # a host runs inside it unless it was provisioned from it (dev#308).
+      #
+      # Top level only, and never an export: the environment is the
+      # project's, not a group's, and not something a library manifest can
+      # declare for its consumer. Several blocks declare several images
+      # (dev#307 links commands to them by name).
+      #
+      # @param name [String, Symbol] the image's name in the registry
+      # @param from [String] the floor, `<registry>/<repository>:<tag>`
+      # @param registry [String, nil] where the image publishes; defaults to
+      #   the floor's registry prefix — beside what it derives from
+      # @return [void]
+      sig do
+        params(
+          name: T.any(String, Symbol),
+          from: String,
+          registry: T.nilable(String),
+          block: T.nilable(T.proc.bind(ImageDSL).void),
+        ).void
+      end
+      def image(name, from:, registry: nil, &block)
+        name_str = name.to_s
+        raise GroupDSL::EmptyNameError, "image name cannot be empty" if name_str.empty?
+
+        image_dsl = ImageDSL.new
+        image_dsl.instance_eval(&block) if block
+        @declarations << ScopedDeclaration.new(
+          declaration: Declaration.new(name: name_str, integration: :image, source: from),
+          scope: Scope.new(group: DEFAULT_GROUP),
+          materialization: {
+            "platform" => image_dsl.platform_value,
+            "apt" => image_dsl.packages,
+            "registry" => registry || ImageDSL.registry_of(from),
+          },
+        )
+      end
+
       # The ungrouped declaration verbs, defined rather than caught by
       # method_missing: `gem` is also Kernel#gem (RubyGems), which an implicit
       # receiver would reach first.
@@ -216,6 +259,101 @@ module Dev
       sig { params(version: String).returns(String) }
       def ruby_requirement(version)
         version.match?(/\A\d+\.\d+\z/) ? "~> #{version}.0" : version
+      end
+    end
+
+    # DSL inside an `image` block (DSL#image): what the environment image is
+    # made of beyond its floor. Exactly two verbs — `platform` and `apt` —
+    # because exactly that much can be locked and compared; a `RUN` apt
+    # cannot express belongs in a floor of the project's own (`from:`).
+    class ImageDSL
+      extend T::Sig
+
+      # A store verb (gh, brew, gem, …) inside an image block: the fat
+      # image — store trees baked into the image — is dev#309, reserved,
+      # not built. Refused rather than ignored so the author knows the
+      # line did nothing.
+      class StoreVerbInImageError < StandardError; end
+
+      # An `apt` argument that is not a Debian package name — including
+      # `name=version`: a distro package cannot be pinned, the image is the
+      # pin.
+      class InvalidPackageNameError < StandardError; end
+
+      # Debian policy §5.6.1: lower-case alphanumerics, `+ - .`, at least
+      # two characters, starting alphanumeric.
+      PACKAGE_NAME = /\A[a-z0-9][a-z0-9+.-]+\z/
+
+      # The verbs that declare store content, each refused here by name.
+      STORE_VERBS = T.let(
+        %i[brew cmake custom ficsit gem gh luarocks pip steam wwise xcode].freeze,
+        T::Array[Symbol],
+      )
+
+      # @return [String, nil] the docker platform the block named
+      sig { returns(T.nilable(String)) }
+      attr_reader :platform_value
+
+      # @return [Array<String>] the apt packages, sorted and unique
+      sig { returns(T::Array[String]) }
+      def packages = @packages.sort.uniq
+
+      sig { void }
+      def initialize
+        @platform_value = T.let(nil, T.nilable(String))
+        @packages = T.let([], T::Array[String])
+      end
+
+      # Name the image's platform (`os/arch[/variant]`). Required only when
+      # the floor is multi-arch; inferred from the floor otherwise.
+      #
+      # @param docker_platform [String]
+      # @return [void]
+      sig { params(docker_platform: String).void }
+      def platform(docker_platform)
+        @platform_value = docker_platform
+      end
+
+      # Add distro packages to the image's OS layer.
+      #
+      # @param names [Array<String>] Debian package names, no versions
+      # @return [void]
+      # @raise [InvalidPackageNameError]
+      sig { params(names: String).void }
+      def apt(*names)
+        names.each do |name|
+          unless PACKAGE_NAME.match?(name)
+            raise InvalidPackageNameError,
+              "#{name.inspect} is not a package name — `apt` takes Debian package names, never versions: " \
+                "a distro package cannot be pinned, the image is the pin"
+          end
+        end
+        @packages.concat(names)
+      end
+
+      STORE_VERBS.each do |verb|
+        define_method(verb) do |*_args, **_kwargs, &_block|
+          raise StoreVerbInImageError,
+            "`#{verb}` inside an image block declares store content baked into the image — " \
+              "that is the fat image, d3mlabs/dev#309, not yet built. Declare it outside the block; " \
+              "the container's own `dev up` installs it."
+        end
+      end
+
+      class << self
+        extend T::Sig
+
+        # The registry prefix of a floor reference: everything before the
+        # last path segment. `ghcr.io/d3mlabs/unreal-engine-build-base:ue5.8-3`
+        # → `ghcr.io/d3mlabs`.
+        #
+        # @param from [String]
+        # @return [String]
+        sig { params(from: String).returns(String) }
+        def registry_of(from)
+          segments = from.split("/")
+          segments.take(segments.size - 1).join("/")
+        end
       end
     end
 
@@ -310,6 +448,11 @@ module Dev
       # says where. Refused rather than ignored, because a project still
       # saying it has a tree at the old path to move.
       class InstallDirRemovedError < StandardError; end
+
+      # `apt` outside an `image` block. A distro package is not a dependency
+      # dev can lock (ADR-0010, dev#284); the image its packages produce is,
+      # so the lines live in the block that produces it (dev#277).
+      class AptOutsideImageError < StandardError; end
 
       # The canonical git address: a full 40-char lowercase hex SHA.
       FULL_SHA = /\A[0-9a-f]{40}\z/
@@ -666,6 +809,17 @@ module Dev
         cask = constraint.delete(:cask)
         tap = constraint.delete(:tap)
         add_declaration(name_str, cask ? :cask : :brew, constraint, source: tap&.to_s)
+      end
+
+      # Refuse `apt` here: packages are image content, not pins.
+      #
+      # @param names [Array<String>] what the author tried to declare
+      # @raise [AptOutsideImageError] always
+      sig { params(names: String).void }
+      def apt(*names)
+        raise AptOutsideImageError,
+          "`apt #{names.map(&:inspect).join(", ")}` outside an image block — a distro package cannot be " \
+            "locked; the image its packages produce can. Declare it inside `image \"<name>\", from: <floor> do … end`."
       end
 
       # Scope member declarations to an environment ("ci" / "dev"). The env

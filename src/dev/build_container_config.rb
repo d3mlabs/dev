@@ -4,25 +4,28 @@
 module Dev
   # Value object for the build.container block in dev.yml.
   #
-  # When present, commands run inside a Docker container by default.
-  # Content-addressed image tags are computed from Dockerfile + build-deps.lock.
+  # When present, commands run inside a Docker container by default. The
+  # image is the project's `image` pin in deps.lock (dev#277,
+  # Dev::EnvironmentImage); this block shapes the container around it.
   #
   # dev.yml example:
   #   build:
   #     container:
-  #       image: snappy-linux
-  #       registry: jpduchesne89
+  #       persist: true
   #       volumes:
   #         - "~/.dev/engines/unreal-engine-css:/ue"
   #         - "~/.dev/wwise:/var/cache/dev/wwise-cli:ro"
-  #       build_args:
-  #         PRIVATE_REGISTRY_USER: registry/user
-  #       build_secrets:
-  #         PRIVATE_REGISTRY_TOKEN: registry/token
   #       run_env:
   #         STAGING_DEPLOY_KEY: staging/deploy_key
-  #       content_globs:
-  #         - "Mods/*/Source/*/*.Build.cs"
+  #       resources:
+  #         cpus: 12
+  #         memory_gib: 24
+  #
+  # Deprecated (d3mlabs/dev#311): `image`/`registry` name a hand-written
+  # Dockerfile's image instead of the lock's pin, and `build_args`,
+  # `build_secrets`, `content_globs`, `structure_globs` and `prewarm` feed
+  # that Dockerfile's build. They are read and honoured until the consumers
+  # migrate; a lock with an `image` pin wins over them.
   #
   # volumes mount exactly as written. The container owns its own data root
   # (ADR-0008), so no volume is resolved against the host's locked trees;
@@ -129,10 +132,14 @@ module Dev
       end
     end
 
-    sig { returns(String) }
+    # Deprecated (d3mlabs/dev#311): the hand-written-Dockerfile image's
+    # name. nil when the project's image is its lock's `image` pin (dev#277).
+    sig { returns(T.nilable(String)) }
     attr_reader :image
 
-    sig { returns(String) }
+    # Deprecated (d3mlabs/dev#311): the hand-written-Dockerfile image's
+    # registry. nil as above.
+    sig { returns(T.nilable(String)) }
     attr_reader :registry
 
     sig { returns(T::Array[String]) }
@@ -164,8 +171,8 @@ module Dev
 
     sig do
       params(
-        image: String,
-        registry: String,
+        image: T.nilable(String),
+        registry: T.nilable(String),
         volumes: T::Array[String],
         build_args: T::Hash[String, String],
         build_secrets: T::Hash[String, String],
@@ -177,7 +184,7 @@ module Dev
         resources: T.nilable(Resources),
       ).void
     end
-    def initialize(image:, registry:, volumes: [], build_args: {}, build_secrets: {},
+    def initialize(image: nil, registry: nil, volumes: [], build_args: {}, build_secrets: {},
                    run_env: {}, content_globs: [], structure_globs: [], prewarm: nil, persist: false,
                    resources: nil)
       @image = image
@@ -193,10 +200,20 @@ module Dev
       @resources = resources
     end
 
-    # Full image reference without tag (e.g. "jpduchesne89/snappy-linux").
-    sig { returns(String) }
+    # Deprecated (d3mlabs/dev#311): the Dockerfile image's reference without
+    # tag (e.g. "jpduchesne89/snappy-linux"); nil unless both halves are set.
+    sig { returns(T.nilable(String)) }
     def image_ref
+      return nil unless dockerfile_image?
+
       "#{@registry}/#{@image}"
+    end
+
+    # Whether the block names a hand-written-Dockerfile image (the deprecated
+    # path) rather than leaving the image to the lock's pin.
+    sig { returns(T::Boolean) }
+    def dockerfile_image?
+      !@image.nil? && !@registry.nil?
     end
 
     sig { params(other: Object).returns(T::Boolean) }

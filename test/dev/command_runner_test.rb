@@ -9,6 +9,9 @@ require "dev/build_container"
 require "dev/shadowenv_llvm"
 require "dev/shadowenv_python"
 require "dev/shadowenv_ruby"
+require "dev/deps/dependency"
+require "dev/deps/lockfile"
+require "dev/environment_image"
 require "support/fake_container_engine"
 
 transform!(RSpock::AST::Transformation)
@@ -34,11 +37,15 @@ class CommandRunnerTest < Minitest::Test
 
   # A containerized runner with its engine-injected BuildContainer client
   # injected, so tests stub the client instance instead of class methods.
-  def container_runner(config)
+  #
+  # host_platform defaults to one no lock or Dockerfile in these tests
+  # declares, so the container path is taken on every CI host (a linux-amd64
+  # runner *is* a linux/amd64 environment and would run on the host).
+  def container_runner(config, host_platform: "darwin-arm64")
     client = Dev::BuildContainer.new(engine: FakeContainerEngine.new)
     runner = Dev::CommandRunner.new(
       ui: @ui, build_container: config,
-      project_root: @project_root, container_client: client,
+      project_root: @project_root, container_client: client, host_platform: host_platform,
     )
     [runner, client]
   end
@@ -251,6 +258,36 @@ class CommandRunnerTest < Minitest::Test
   end
 
   # --- Container execution ---
+
+  test "run resolves a pinned image through ensure_environment_image! and runs in it" do
+    Given "a lock pinning the image; a container block that only shapes the container"
+    pin = Dev::Deps::Dependency.new(
+      name: "myapp-linux", integration: :image, group: :app, version: "ue5.8-3", hash: "SHA256=#{"a" * 64}",
+      metadata: {
+        "from" => "ghcr.io/d3mlabs/unreal-engine-build-base", "platform" => "linux/amd64",
+        "platforms" => ["linux/amd64"], "registry" => "ghcr.io/d3mlabs", "apt" => [],
+      },
+    )
+    Dev::Deps::Lockfile.new(dir: @project_root).lock(Dev::EnvironmentImage.stamp([pin]))
+    runner, client = container_runner(Dev::BuildContainerConfig.new(persist: false))
+    cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
+    client.expects(:ensure_image!).never
+    client.expects(:ensure_environment_image!).once
+      .with { |image, publish:, resources:| image.name == "myapp-linux" && !publish && resources.nil? }
+      .returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
+    client.expects(:docker_run_command)
+      .with("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: {})
+      .returns(["docker", "run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh"])
+
+    When
+    runner.exec_into(cmd)
+
+    Then
+    1 * Kernel.exec({}, "docker", "run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh")
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+  end
 
   test "run execs docker run when build_container is configured and command opts in" do
     Given "a runner with build_container and a command with container: true (default)"
