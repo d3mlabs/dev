@@ -36,17 +36,17 @@ module Dev
     HOST = :host
 
     # `runs_on:` names an image the lock does not pin.
-    class UnknownImageError < StandardError; end
+    class UnknownImageError < ArgumentError; end
 
     # The lock holds several `image` pins and the command names none.
-    class AmbiguousEnvironmentImageError < StandardError; end
+    class AmbiguousEnvironmentImageError < ArgumentError; end
 
     # A container block with no image anywhere: no `image` pin in the lock
     # and no Dockerfile image named in the block.
-    class NoEnvironmentImageError < StandardError; end
+    class NoEnvironmentImageError < ArgumentError; end
 
     # The lock pins an image and dev.yml still carries retired keys.
-    class RetiredKeysError < StandardError; end
+    class RetiredKeysError < ArgumentError; end
 
     # What each retired `build.container` key became.
     BLOCK_KEY_MIGRATIONS = T.let(
