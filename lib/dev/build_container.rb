@@ -58,6 +58,10 @@ module Dev
     # `docker build` returned nonzero.
     class BuildFailedError < RuntimeError; end
 
+    # The deprecated Dockerfile path was asked for a config that names no
+    # image (its image is the lock's pin — resolve through EnvironmentImage).
+    class NoDockerfileImageError < RuntimeError; end
+
     # Which hand-written-Dockerfile inputs are deprecated, said once per
     # process so a `dev` invocation that resolves the image twice does not
     # nag twice.
@@ -209,16 +213,24 @@ module Dev
         "#{TAG_PREFIX}#{hash}"
       end
 
-      # Full image reference with content-addressed tag.
+      # Deprecated (d3mlabs/dev#311): full Dockerfile-image reference with
+      # content-addressed tag.
       #
       # @param config       [Dev::BuildContainerConfig]
       # @param project_root [Pathname]
       # @return [String] e.g. "jpduchesne89/snappy-linux:content-a1b2c3d4e5f6"
+      # @raise [NoDockerfileImageError] when the config names no image
       sig { params(config: Dev::BuildContainerConfig, project_root: Pathname).returns(String) }
       def image_with_tag(config, project_root:)
+        image_ref = config.image_ref
+        if image_ref.nil?
+          raise NoDockerfileImageError,
+            "build.container names no image/registry: the project's image is its lock's `image` pin"
+        end
+
         globs = config.respond_to?(:content_globs) ? config.content_globs : []
         structure_globs = config.respond_to?(:structure_globs) ? config.structure_globs : []
-        "#{config.image_ref}:#{content_tag(project_root:, extra_globs: globs, structure_globs:)}"
+        "#{image_ref}:#{content_tag(project_root:, extra_globs: globs, structure_globs:)}"
       end
 
       # Container name for image_tag + workspace: "dev-<image>-<workspace>-<tag>",

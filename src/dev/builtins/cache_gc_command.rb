@@ -59,7 +59,7 @@ module Dev
         # content-tagged images while protecting the live tag.
         image_ref = T.let(nil, T.nilable(String))
         live_tag = T.let(nil, T.nilable(String))
-        if (cfg = project.build_container)
+        if (cfg = project.build_container) && cfg.dockerfile_image?
           image_ref = cfg.image_ref
           live_tag = BuildContainer.image_with_tag(cfg, project_root: project.root)
         end

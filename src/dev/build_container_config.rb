@@ -129,10 +129,14 @@ module Dev
       end
     end
 
-    sig { returns(String) }
+    # Deprecated (d3mlabs/dev#311): the hand-written-Dockerfile image's
+    # name. nil when the project's image is its lock's `image` pin (dev#277).
+    sig { returns(T.nilable(String)) }
     attr_reader :image
 
-    sig { returns(String) }
+    # Deprecated (d3mlabs/dev#311): the hand-written-Dockerfile image's
+    # registry. nil as above.
+    sig { returns(T.nilable(String)) }
     attr_reader :registry
 
     sig { returns(T::Array[String]) }
@@ -164,8 +168,8 @@ module Dev
 
     sig do
       params(
-        image: String,
-        registry: String,
+        image: T.nilable(String),
+        registry: T.nilable(String),
         volumes: T::Array[String],
         build_args: T::Hash[String, String],
         build_secrets: T::Hash[String, String],
@@ -177,7 +181,7 @@ module Dev
         resources: T.nilable(Resources),
       ).void
     end
-    def initialize(image:, registry:, volumes: [], build_args: {}, build_secrets: {},
+    def initialize(image: nil, registry: nil, volumes: [], build_args: {}, build_secrets: {},
                    run_env: {}, content_globs: [], structure_globs: [], prewarm: nil, persist: false,
                    resources: nil)
       @image = image
@@ -193,10 +197,20 @@ module Dev
       @resources = resources
     end
 
-    # Full image reference without tag (e.g. "jpduchesne89/snappy-linux").
-    sig { returns(String) }
+    # Deprecated (d3mlabs/dev#311): the Dockerfile image's reference without
+    # tag (e.g. "jpduchesne89/snappy-linux"); nil unless both halves are set.
+    sig { returns(T.nilable(String)) }
     def image_ref
+      return nil unless dockerfile_image?
+
       "#{@registry}/#{@image}"
+    end
+
+    # Whether the block names a hand-written-Dockerfile image (the deprecated
+    # path) rather than leaving the image to the lock's pin.
+    sig { returns(T::Boolean) }
+    def dockerfile_image?
+      !@image.nil? && !@registry.nil?
     end
 
     sig { params(other: Object).returns(T::Boolean) }

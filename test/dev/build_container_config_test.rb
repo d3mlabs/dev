@@ -14,6 +14,18 @@ class Dev::BuildContainerConfigTest < Minitest::Test
     config.image_ref == "jpduchesne89/snappy-linux"
   end
 
+  test "image and registry are optional (dev#277: the image is the lock's pin); image_ref is nil without both" do
+    Given "a block that only shapes the container"
+    config = Dev::BuildContainerConfig.new(volumes: ["engine:/engine"], persist: true)
+
+    Expect
+    config.image.nil?
+    config.registry.nil?
+    config.image_ref.nil?
+    !config.dockerfile_image?
+    Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89").dockerfile_image?
+  end
+
   test "equality compares image and registry" do
     Given "two identical configs"
     a = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")

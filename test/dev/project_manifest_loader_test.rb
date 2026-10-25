@@ -534,6 +534,34 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
   end
 
+  test "#load keeps a build.container block that names no image: the image is the lock's pin (dev#277)" do
+    Given "a dev.yml whose container block only shapes the container"
+    tmp = write_dev_yml(<<~YAML)
+      name: snappy
+      build:
+        container:
+          persist: true
+          volumes:
+            - engine:/engine
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+
+    When "the manifest is loaded"
+    manifest = build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    !manifest.build_container.nil?
+    manifest.build_container.image.nil?
+    manifest.build_container.registry.nil?
+    manifest.build_container.persist
+    manifest.build_container.volumes == ["engine:/engine"]
+
+    Cleanup
+    tmp.close!
+  end
+
   test "#load returns nil build_container when not declared" do
     Given "a dev.yml without build.container"
     tmp = write_dev_yml(<<~YAML)
