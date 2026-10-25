@@ -12,6 +12,7 @@ require "dev/build_watcher"
 require "dev/container_context"
 require "dev/container_engine"
 require "dev/data_root"
+require "dev/platform"
 require "dev/engine_resources_check"
 require "dev/environment_image"
 require "dev/gh_auth"
@@ -149,17 +150,22 @@ module Dev
     #   gate every image resolution passes through first
     # @param registry_login [Dev::RegistryLogin, nil] the registry session
     #   around pulls and pushes; defaults to one over this engine and gh's token
+    # @param host_os [String] "darwin" / "linux" / "windows" — the shape of
+    #   the container's data root (ADR-0008: a volume behind a Mac's VM
+    #   boundary, the host's own directory bind-mounted on Linux)
     sig do
       params(
         engine: Dev::ContainerEngine,
         resources_check: Dev::EngineResourcesCheck,
         registry_login: T.nilable(Dev::RegistryLogin),
+        host_os: String,
       ).void
     end
-    def initialize(engine:, resources_check: Dev::EngineResourcesCheck.new, registry_login: nil)
+    def initialize(engine:, resources_check: Dev::EngineResourcesCheck.new, registry_login: nil, host_os: Dev::Platform.os)
       @engine = engine
       @resources_check = resources_check
       @registry_login = T.let(registry_login || Dev::RegistryLogin.new(engine:), Dev::RegistryLogin)
+      @host_os = host_os
     end
 
     class << self
@@ -579,19 +585,41 @@ module Dev
       ]
     end
 
-    # The container's own data root and Linuxbrew prefix, each a named
-    # volume at its fixed path (ADR-0008). The dev inside (DEV_DATA_ROOT,
-    # set by env_flags) fills them from the lock; nothing of the host's
-    # directory is mounted. Both volumes are created first — `docker volume
-    # create` is idempotent — so the first container to mount them finds them
-    # initialised from the image.
+    # The container's data root and Linuxbrew prefix (ADR-0008).
+    #
+    # On a Mac the data root is the container's own: a named volume at its
+    # fixed path, filled from the lock by the dev inside (DEV_DATA_ROOT,
+    # set by env_flags); nothing of the host's directory is mounted, the
+    # VM boundary being the reason. On Linux there is no boundary, so the
+    # host's data root *is* the container's (dev#308): bind-mounted at the
+    # host's own path, so every absolute path the store embeds reads the
+    # same from both sides — one copy, nothing installed twice. The
+    # Linuxbrew prefix is a named volume on both: the host has no prefix to
+    # lend at that path, and bottles refuse a symlinked one. Volumes are
+    # created first — `docker volume create` is idempotent — so the first
+    # container to mount them finds them initialised from the image.
     #
     # @return [Array<String>] docker `-v` flags
     sig { returns(T::Array[String]) }
     def data_root_flags
-      @engine.run(["volume", "create", DATA_ROOT_VOLUME], out: File::NULL)
+      data_root = if @host_os == "linux"
+        "#{data_root_mount}:#{data_root_mount}"
+      else
+        @engine.run(["volume", "create", DATA_ROOT_VOLUME], out: File::NULL)
+        "#{DATA_ROOT_VOLUME}:#{DATA_ROOT_MOUNT}"
+      end
       @engine.run(["volume", "create", LINUXBREW_VOLUME], out: File::NULL)
-      ["-v", "#{DATA_ROOT_VOLUME}:#{DATA_ROOT_MOUNT}", "-v", "#{LINUXBREW_VOLUME}:#{LINUXBREW_MOUNT}"]
+      ["-v", data_root, "-v", "#{LINUXBREW_VOLUME}:#{LINUXBREW_MOUNT}"]
+    end
+
+    # Where the container finds its data root: the host's own path on
+    # Linux (the bind mount's, override included), the fixed mount point
+    # elsewhere.
+    #
+    # @return [String]
+    sig { returns(String) }
+    def data_root_mount
+      @host_os == "linux" ? Dev::DataRoot.path : DATA_ROOT_MOUNT
     end
 
     # Env for a container dev creates: the inside marker (see
@@ -604,7 +632,7 @@ module Dev
     sig { params(env: T::Hash[String, String]).returns(T::Array[String]) }
     def env_flags(env)
       ContainerContext::MARKER_ENV
-        .merge("DEV_DATA_ROOT" => DATA_ROOT_MOUNT)
+        .merge("DEV_DATA_ROOT" => data_root_mount)
         .merge(env)
         .flat_map { |name, value| ["-e", "#{name}=#{value}"] }
     end
