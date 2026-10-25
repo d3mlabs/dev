@@ -116,6 +116,16 @@ module Dev
       # @param pins [Array<Dev::Deps::Dependency>] the resolved pins
       # @return [Array<Dev::Deps::Dependency>]
       # @raise [PlatformError]
+      # A docker platform (`linux/arm64/v8`) as dev's key (`linux-arm64`):
+      # the variant is docker's, dev's keys have none.
+      #
+      # @param docker_platform [String]
+      # @return [String]
+      sig { params(docker_platform: String).returns(String) }
+      def dev_platform_of(docker_platform)
+        Platform.from_docker(docker_platform.split("/").take(2).join("/"))
+      end
+
       sig { params(pins: T::Array[Dev::Deps::Dependency]).returns(T::Array[Dev::Deps::Dependency]) }
       def stamp(pins)
         pins.map do |pin|
@@ -227,7 +237,7 @@ module Dev
 
     # @return [String] the platform as dev's key (`linux-x86_64`), variant dropped
     sig { returns(String) }
-    def dev_platform = Platform.from_docker(@platform.split("/").take(2).join("/"))
+    def dev_platform = self.class.dev_platform_of(@platform)
 
     # The pin with the digest stored beside its recipe — what the lock
     # writes, and what from_pin checks.
