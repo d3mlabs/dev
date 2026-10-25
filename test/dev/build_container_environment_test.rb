@@ -47,17 +47,17 @@ class Dev::BuildContainerEnvironmentTest < Minitest::Test
     engine.runs == [["image", "inspect", image.ref], ["manifest", "inspect", image.ref], ["push", image.ref]]
   end
 
-  test "a publisher whose tag the registry already holds pulls nothing and builds nothing" do
+  test "a publisher without the image pulls it like anyone else; a pull hit is the registry's copy and pushes nothing" do
     Given
-    engine = engine_where(local: false, in_registry: true)
+    engine = engine_where(local: false, in_registry: true, pull: true)
     bc = build_container(engine:, login: FakeRegistryLogin.new)
 
     When
     result = bc.ensure_environment_image!(image, publish: true)
 
-    Then "a tag is first-publisher-wins; dev never re-pushes one"
+    Then "no manifest shortcut: publishing is pushing the digest you built or found"
     result == image.ref
-    engine.runs == [["image", "inspect", image.ref], ["manifest", "inspect", image.ref]]
+    engine.runs == [["image", "inspect", image.ref], ["pull", image.ref]]
   end
 
   test "a pull hit enters the registry with read scope and pulls the ref" do
@@ -97,7 +97,7 @@ class Dev::BuildContainerEnvironmentTest < Minitest::Test
     !File.exist?(context)
   end
 
-  test "a publisher that had to build pushes the fresh image without asking the registry twice" do
+  test "a publisher that had to build pushes the fresh image without asking the registry" do
     Given
     engine = engine_where(local: false, in_registry: false, pull: false)
     bc = build_container(engine:, login: FakeRegistryLogin.new)
@@ -105,8 +105,8 @@ class Dev::BuildContainerEnvironmentTest < Minitest::Test
     When
     bc.ensure_environment_image!(image, publish: true)
 
-    Then
-    engine.runs.map(&:first) == ["image", "manifest", "pull", "build", "push"]
+    Then "a pull miss already said the registry lacks the tag"
+    engine.runs.map(&:first) == ["image", "pull", "build", "push"]
   end
 
   test "a failed build is an error naming the ref" do

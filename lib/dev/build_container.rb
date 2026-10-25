@@ -303,8 +303,7 @@ module Dev
       end
     end
 
-    # Ensure the project's environment image exists on this engine (or, for a
-    # publisher, in the registry): local → (publisher: registry manifest) →
+    # Ensure the project's environment image exists on this engine: local →
     # pull → build from the generated Dockerfile → push when publishing.
     # Returns the image's ref.
     #
@@ -313,12 +312,15 @@ module Dev
     # Everything past it touches the registry and runs inside one
     # RegistryLogin session — read scope to pull, write scope to publish.
     #
-    # Publishing is the *provisioning* guarantee (see ensure_image!): a local
-    # hit is pushed if the registry lacks the tag; a registry hit means the
-    # publisher's job is done and nothing is pulled; a miss builds and pushes
-    # without asking again. A tag is first-publisher-wins — apt is not
+    # Publishing is the *provisioning* guarantee (see ensure_image!): the
+    # digest you built or found is pushed — a local hit if the registry lacks
+    # the tag, a fresh build always; a pull hit is the registry's own copy
+    # and needs nothing. A tag is first-publisher-wins — apt is not
     # reproducible, so two builds of one tag differ in bytes, and dev never
-    # replaces a published one.
+    # replaces a published one. The old publisher shortcut (ask the registry
+    # first, skip the pull on a hit) is gone: the one host it spared a pull
+    # is a box that is the environment, and that box's first `dev up` pays
+    # it once.
     #
     # The build's context is a temp dir holding only the generated
     # Dockerfile: nothing from the checkout enters the image (that is the
@@ -351,9 +353,7 @@ module Dev
       end
 
       @registry_login.with(image.registry_host, publish:) do
-        if publish && registry_has?(ref)
-          $stderr.puts "dev: Container image already published — #{ref}"
-        elsif pull(ref)
+        if pull(ref)
           $stderr.puts "dev: Container image cache hit — #{ref}"
         else
           $stderr.puts "dev: Container image cache miss — building #{ref}"
