@@ -12,6 +12,7 @@ require "dev/deps/lockfile"
 require "dev/environment_image"
 require "dev/host_environment"
 require "dev/host_rule"
+require "dev/linux_data_root_provisioner"
 require "fileutils"
 require "pathname"
 require "stringio"
@@ -20,6 +21,13 @@ require "tmpdir"
 transform!(RSpock::AST::Transformation)
 class Dev::Builtins::UpCommandTest < Minitest::Test
   include SorbetHelper
+
+  def setup
+    # The data root step is a host fact (Linux, default root); these tests
+    # inject it where it is the subject and have none otherwise — on a
+    # Linux CI runner the default would reach for sudo.
+    Dev::LinuxDataRootProvisioner.stubs(:for_host).returns(nil)
+  end
 
   test "traits: staleness-exempt (it IS the remediation) and stamps on success" do
     Given "the builtin"
@@ -59,6 +67,44 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     command.call(args: no_args, context: build_context)
 
     Then "the expectations on the host service hold"
+    true
+  end
+
+  test "call makes the Linux data root exist as part of the host half, before the install" do
+    Given "a host whose data root step applies"
+    install_deps = install_deps_mock
+    provisioner = typed_mock(Dev::LinuxDataRootProvisioner)
+    order = []
+    provisioner.expects(:provision!).once.with { order.push(:root).any? }
+    install_deps.expects(:call).once.with { |**| order.push(:install).any? }
+    command = Dev::Builtins::UpCommand.new(
+      install_deps_command: install_deps, host_service: quiet_host_service, data_root_provisioner: provisioner,
+    )
+
+    When
+    command.call(args: no_args, context: build_context)
+
+    Then "the root exists before anything installs into it"
+    order == [:root, :install]
+  end
+
+  test "a projectless up still makes the data root: it is the machine's, not the project's" do
+    Given
+    host_service = typed_mock(Dev::HostService)
+    host_service.stubs(:converge_tooling)
+    host_service.stubs(:install_rc_hook)
+    host_service.stubs(:sync_skills)
+    host_service.stubs(:sync_learnings)
+    provisioner = typed_mock(Dev::LinuxDataRootProvisioner)
+    provisioner.expects(:provision!).once
+    command = Dev::Builtins::UpCommand.new(
+      install_deps_command: install_deps_mock, host_service: host_service, data_root_provisioner: provisioner,
+    )
+
+    When
+    capture_stdout { command.call(args: no_args, context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui))) }
+
+    Then
     true
   end
 
