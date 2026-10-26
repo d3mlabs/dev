@@ -9,6 +9,7 @@ require "dev/credentials"
 require "dev/build_container"
 require "dev/container_context"
 require "dev/container_engine"
+require "dev/container_github_token"
 require "dev/host_rule"
 require "dev/project_images"
 require "dev/shadowenv_llvm"
@@ -41,7 +42,11 @@ module Dev
   # Where a command runs is `placement`: the command's environment
   # (ProjectImages#for — its `runs_on:`, or the project's one image) is an
   # image or the host. An image means `docker run` / `docker exec` in a
-  # container of it; the host means `shadowenv exec` here.
+  # container of it; the host means `shadowenv exec` here. A command run
+  # inside carries the image's resolved `run_env` and the host's gh token
+  # as GH_TOKEN (ContainerGithubToken) — the same `-e` the container's own
+  # deps install gets, so a command that calls `gh` inside (a publisher's
+  # `gh release create`) has the auth the host holds.
   #
   # Inside a dev-managed container (ContainerContext.inside?) there is no
   # further container to reach for: every command runs directly at the
@@ -121,16 +126,19 @@ module Dev
         container_client: T.nilable(Dev::BuildContainer),
         inside_container: T::Boolean,
         host_rule: Dev::HostRule,
+        github_token: Dev::ContainerGithubToken,
       ).void
     end
     def initialize(ui:, project_root:, images: Dev::ProjectImages.new(root: project_root), container_client: nil,
-                   inside_container: ContainerContext.inside?, host_rule: Dev::HostRule.new)
+                   inside_container: ContainerContext.inside?, host_rule: Dev::HostRule.new,
+                   github_token: Dev::ContainerGithubToken.new)
       @ui = ui
       @images = images
       @project_root = project_root
       @container_client = container_client
       @inside_container = inside_container
       @host_rule = host_rule
+      @github_token = github_token
     end
 
     # Hand the process over to the command: exec-replace, the right shape
@@ -282,13 +290,14 @@ module Dev
 
     # Resolve the image's `run_env` for `docker run -e`: best-effort and
     # non-interactive (Dev::Credentials.resolve_run_env), so a missing
-    # runtime secret never blocks a command that doesn't need it.
+    # runtime secret never blocks a command that doesn't need it; then the
+    # host's gh token as GH_TOKEN unless the run_env named one.
     #
     # @param image [ProjectImages::Image]
     # @return [Hash{String => String}]
     sig { params(image: ProjectImages::Image).returns(T::Hash[String, String]) }
     def resolve_run_env(image)
-      Dev::Credentials.resolve_run_env(image.run_env)
+      @github_token.merge_into(Dev::Credentials.resolve_run_env(image.run_env))
     end
 
     sig { params(run_str: String, args: T::Array[String]).returns(String) }

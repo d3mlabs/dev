@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/container_github_token"
 require "dev"
 require "dev/container_engine"
 require "dev/deps"
@@ -165,7 +166,8 @@ class HostRuleIntegrationTest < Minitest::Test
     host_rule = Dev::HostRule.new(
       host_environment: Dev::HostEnvironment.new(path: @marker.to_s), host_platform: "linux-x86_64",
     )
-    Dev::Runner.new(dev_yaml_path: @root / "dev.yml", ui: ui, out: StringIO.new, host_rule: host_rule)
+    Dev::Runner.new(dev_yaml_path: @root / "dev.yml", ui: ui, out: StringIO.new, host_rule: host_rule,
+                    github_token: Dev::ContainerGithubToken.new(source: -> { nil }))
   end
 
   # Lock one image and return it.
