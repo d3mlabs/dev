@@ -18,6 +18,7 @@ require "dev/execution_context"
 require "dev/global_catalog"
 require "dev/group_executor"
 require "dev/host_rule"
+require "dev/container_github_token"
 require "dev/overridden_executor"
 require "dev/project_executor"
 require "dev/project_manifest"
@@ -52,6 +53,7 @@ module Dev
         manifest_loader: ProjectManifestLoader,
         command_service: T.nilable(CommandService),
         host_rule: HostRule,
+        github_token: ContainerGithubToken,
       ).void
     end
     def initialize(
@@ -60,7 +62,8 @@ module Dev
       dev_yaml_path: Dev.find_dev_yaml_file,
       manifest_loader: ProjectManifestLoader.new,
       command_service: nil,
-      host_rule: HostRule.new
+      host_rule: HostRule.new,
+      github_token: ContainerGithubToken.new
     )
       @ui = ui
       @out = out
@@ -70,6 +73,8 @@ module Dev
       # One answer to "does this image's work run here?" for the command
       # runner, the container bring-up and `dev up`'s inside check alike.
       @host_rule = host_rule
+      # The host's gh token, as every exec into a container carries it.
+      @github_token = github_token
     end
 
     # Runs the dev command specified by the given argv.
@@ -257,6 +262,7 @@ module Dev
         images: project.project_images,
         project_root: project.root,
         host_rule: @host_rule,
+        github_token: @github_token,
       )
       builtin_executor = BuiltinExecutor.new
       project_executor = ProjectExecutor.new(command_runner:)

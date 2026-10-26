@@ -31,7 +31,7 @@ class CommandRunnerTest < Minitest::Test
     # don't run from a deleted directory (getcwd would raise ENOENT).
     @original_cwd = Dir.pwd
     @project_root = Pathname(Dir.mktmpdir("dev-runner-test"))
-    @runner = Dev::CommandRunner.new(ui: @ui, project_root: @project_root)
+    @runner = Dev::CommandRunner.new(ui: @ui, project_root: @project_root, github_token: no_github_token)
     @runner.stubs(:ensure_shadowenv_provisioned!)
   end
 
@@ -49,14 +49,21 @@ class CommandRunnerTest < Minitest::Test
   # runner *is* a linux/amd64 environment and would run on the host). The
   # marker is the host rule's fact for pinned images: absent unless a test
   # writes one (`marker:` a path under the project root).
-  def container_runner(config, host_platform: "darwin-arm64", engine: nil, inside_container: false, marker: nil)
+  def container_runner(config, host_platform: "darwin-arm64", engine: nil, inside_container: false, marker: nil,
+                       github_token: no_github_token)
     client = Dev::BuildContainer.new(engine: FakeContainerEngine.new)
     runner = Dev::CommandRunner.new(
       ui: @ui, images: images(config, engine:), project_root: @project_root, container_client: client,
-      host_rule: host_rule(host_platform:, marker:), inside_container:,
+      host_rule: host_rule(host_platform:, marker:), inside_container:, github_token:,
     )
     [runner, client]
   end
+
+  # A host whose gh holds no login: the default for these tests, so the
+  # developer's own `gh auth token` never leaks into an expectation.
+  def no_github_token = Dev::ContainerGithubToken.new(source: -> { nil })
+
+  def host_github_token(token) = Dev::ContainerGithubToken.new(source: -> { token })
 
   def host_rule(host_platform: "darwin-arm64", marker: nil)
     path = marker || (@project_root / "no-marker").to_s
@@ -727,6 +734,58 @@ class CommandRunnerTest < Minitest::Test
 
     Cleanup
     ENV.delete("DEV_PUBLISH_IMAGE")
+    Dir.chdir(@original_cwd)
+  end
+
+  test "a command run inside carries the host's gh token as GH_TOKEN, after the run_env" do
+    Given "a host whose gh is logged in, and an image with a run_env"
+    config = Dev::BuildContainerConfig.new(
+      image: "myapp-linux", registry: "myregistry",
+      run_env: { "WWISE_TOKEN" => "wwise/token" },
+    )
+    runner, client = container_runner(config, github_token: host_github_token("gho_host"))
+    cmd = Dev::ProjectCommand.new(run: "./bin/ue/starter/publish.sh", repl: false)
+    ENV["WWISE_TOKEN"] = "tok-123"
+
+    When "the command runs"
+    client.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
+    client.expects(:docker_run_command)
+      .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/ue/starter/publish.sh",
+        volumes: [], env: { "WWISE_TOKEN" => "tok-123", "GH_TOKEN" => "gho_host" })
+      .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/ue/starter/publish.sh"])
+    runner.exec_into(cmd)
+
+    Then "docker run gets both: the run_env and the host's token"
+    1 * Kernel.exec({}, "docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/ue/starter/publish.sh")
+
+    Cleanup
+    ENV.delete("WWISE_TOKEN")
+    Dir.chdir(@original_cwd)
+  end
+
+  test "a GH_TOKEN the run_env names wins over the host's on a command run inside" do
+    Given "a host whose gh is logged in, and an image whose run_env names GH_TOKEN"
+    config = Dev::BuildContainerConfig.new(
+      image: "myapp-linux", registry: "myregistry",
+      run_env: { "GH_TOKEN" => "github/token" },
+    )
+    runner, client = container_runner(config, github_token: host_github_token("gho_host"))
+    cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
+    ENV["GH_TOKEN"] = "gho_mine"
+
+    When "the command runs"
+    client.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
+    client.expects(:docker_run_command)
+      .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh",
+        volumes: [], env: { "GH_TOKEN" => "gho_mine" })
+      .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
+    runner.exec_into(cmd)
+
+    Then "the run_env's token is the one injected"
+    1 * Kernel.exec({}, "docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh")
+
+    Cleanup
+    ENV.delete("GH_TOKEN")
     Dir.chdir(@original_cwd)
   end
 

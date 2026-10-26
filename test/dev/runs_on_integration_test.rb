@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/container_github_token"
 require "dev"
 require "dev/container_engine"
 require "dev/deps"
@@ -212,7 +213,10 @@ class RunsOnIntegrationTest < Minitest::Test
     yaml = { "name" => "fixture", "commands" => commands }
     yaml["build"] = build if build
     (@root / "dev.yml").write(YAML.dump(yaml))
-    Dev::Runner.new(dev_yaml_path: @root / "dev.yml", ui: fake_ui, out: StringIO.new)
+    # A host whose gh holds no login, so the developer's own token never
+    # enters an expected argv.
+    Dev::Runner.new(dev_yaml_path: @root / "dev.yml", ui: fake_ui, out: StringIO.new,
+      github_token: Dev::ContainerGithubToken.new(source: -> { nil }))
   end
 
   # Lock the pins and return their images.
