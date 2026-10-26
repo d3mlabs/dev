@@ -216,7 +216,7 @@ class RunsOnIntegrationTest < Minitest::Test
     # A host whose gh holds no login, so the developer's own token never
     # enters an expected argv.
     Dev::Runner.new(dev_yaml_path: @root / "dev.yml", ui: fake_ui, out: StringIO.new,
-                    github_token: Dev::ContainerGithubToken.new(source: -> { nil }))
+      github_token: Dev::ContainerGithubToken.new(source: -> { nil }))
   end
 
   # Lock the pins and return their images.

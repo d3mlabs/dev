@@ -167,7 +167,7 @@ class HostRuleIntegrationTest < Minitest::Test
       host_environment: Dev::HostEnvironment.new(path: @marker.to_s), host_platform: "linux-x86_64",
     )
     Dev::Runner.new(dev_yaml_path: @root / "dev.yml", ui: ui, out: StringIO.new, host_rule: host_rule,
-                    github_token: Dev::ContainerGithubToken.new(source: -> { nil }))
+      github_token: Dev::ContainerGithubToken.new(source: -> { nil }))
   end
 
   # Lock one image and return it.

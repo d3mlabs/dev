@@ -751,7 +751,7 @@ class CommandRunnerTest < Minitest::Test
     client.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
     client.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/ue/starter/publish.sh",
-                                                     volumes: [], env: { "WWISE_TOKEN" => "tok-123", "GH_TOKEN" => "gho_host" })
+        volumes: [], env: { "WWISE_TOKEN" => "tok-123", "GH_TOKEN" => "gho_host" })
       .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/ue/starter/publish.sh"])
     runner.exec_into(cmd)
 
@@ -777,7 +777,7 @@ class CommandRunnerTest < Minitest::Test
     client.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
     client.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh",
-                                                     volumes: [], env: { "GH_TOKEN" => "gho_mine" })
+        volumes: [], env: { "GH_TOKEN" => "gho_mine" })
       .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
     runner.exec_into(cmd)
 
