@@ -84,6 +84,12 @@ class CommandRunnerTest < Minitest::Test
   end
 
   # Lock the project to these image pins (dev#277), each on linux/amd64.
+  # What the (mocked) container client answers: a docker argv and the env
+  # its bare `-e NAME` flags resolve in (dev#317).
+  def invocation(*argv, env: {})
+    Dev::BuildContainer::Invocation.new(argv: argv, env: env)
+  end
+
   def lock_images(*names, persist: false, volumes: [], run_env: {})
     pins = names.map do |name|
       metadata = {
@@ -296,7 +302,7 @@ class CommandRunnerTest < Minitest::Test
     When "the image resolves and we run the command waiting"
     client.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
     client.stubs(:docker_run_command)
-      .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/up.sh"])
+      .returns(invocation("docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/up.sh"))
     runner.run_waiting(cmd)
 
     Then "docker runs as a waited child under the engine's env, never via exec"
@@ -321,7 +327,7 @@ class CommandRunnerTest < Minitest::Test
       .returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
     client.expects(:docker_run_command)
       .with("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: {})
-      .returns(["docker", "run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh"])
+      .returns(invocation("docker", "run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh"))
 
     When
     runner.exec_into(cmd)
@@ -347,7 +353,7 @@ class CommandRunnerTest < Minitest::Test
       .returns("dev-snappy-server-deadbeef")
     client.expects(:docker_exec_command)
       .with("dev-snappy-server-deadbeef", shell_cmd: "./bin/test-server.sh", env: { "WWISE_TOKEN" => "tok-123" })
-      .returns(["docker", "exec", "dev-snappy-server-deadbeef", "sh", "-c", "./bin/test-server.sh"])
+      .returns(invocation("docker", "exec", "dev-snappy-server-deadbeef", "sh", "-c", "./bin/test-server.sh"))
     client.expects(:docker_run_command).never
 
     When
@@ -404,7 +410,7 @@ class CommandRunnerTest < Minitest::Test
     runner, client = container_runner(nil, host_platform: "linux-x86_64", marker: provisioned_from(server))
     runner.stubs(:ensure_llvm_provisioned!)
     client.expects(:ensure_environment_image!).once.with { |image, **| image.name == "snappy-linux" }.returns("ref-linux")
-    client.expects(:docker_run_command).once.returns(["docker", "run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh"])
+    client.expects(:docker_run_command).once.returns(invocation("docker", "run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh"))
 
     When "one command runs on each"
     runner.exec_into(Dev::ProjectCommand.new(run: "./bin/server.sh", repl: false, runs_on: "snappy-server"))
@@ -423,7 +429,7 @@ class CommandRunnerTest < Minitest::Test
     lock_images("snappy-linux")
     runner, client = container_runner(nil, host_platform: host)
     client.expects(:ensure_environment_image!).once.returns("ref-linux")
-    client.expects(:docker_run_command).once.returns(["docker", "run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh"])
+    client.expects(:docker_run_command).once.returns(invocation("docker", "run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh"))
 
     When
     runner.exec_into(Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false))
@@ -450,7 +456,7 @@ class CommandRunnerTest < Minitest::Test
     )
     runner, client = container_runner(nil, host_platform: "linux-x86_64", marker: provisioned_from(older))
     client.expects(:ensure_environment_image!).once.returns("ref-linux")
-    client.expects(:docker_run_command).once.returns(["docker", "run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh"])
+    client.expects(:docker_run_command).once.returns(invocation("docker", "run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh"))
 
     When
     runner.exec_into(Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false))
@@ -516,7 +522,7 @@ class CommandRunnerTest < Minitest::Test
       .returns("myregistry/myapp-linux:content-abc123")
     client.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: {})
-      .returns(["docker", "run", "--rm", "-v", "#{@project_root}:/project", "-w", "/project", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
+      .returns(invocation("docker", "run", "--rm", "-v", "#{@project_root}:/project", "-w", "/project", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"))
     runner.exec_into(cmd)
 
     Then "exec is called with the engine env and the docker run command"
@@ -539,7 +545,7 @@ class CommandRunnerTest < Minitest::Test
       .returns("dev-myapp-linux-content-abc123")
     client.expects(:docker_exec_command)
       .with("dev-myapp-linux-content-abc123", shell_cmd: "./bin/build.sh", env: {})
-      .returns(["docker", "exec", "-w", "/project", "dev-myapp-linux-content-abc123", "sh", "-c", "./bin/build.sh"])
+      .returns(invocation("docker", "exec", "-w", "/project", "dev-myapp-linux-content-abc123", "sh", "-c", "./bin/build.sh"))
     client.expects(:docker_run_command).never
     runner.exec_into(cmd)
 
@@ -625,7 +631,7 @@ class CommandRunnerTest < Minitest::Test
 
     When "we run the command"
     client.expects(:ensure_image!).once.returns("myregistry/myapp-linux:content-abc123")
-    client.expects(:docker_run_command).once.returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
+    client.expects(:docker_run_command).once.returns(invocation("docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"))
     runner.exec_into(cmd)
 
     Then "docker ran it"
@@ -679,7 +685,7 @@ class CommandRunnerTest < Minitest::Test
       .returns("myregistry/myapp-linux:content-abc123")
     client.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/test.sh --verbose", volumes: [], env: {})
-      .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/test.sh --verbose"])
+      .returns(invocation("docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/test.sh --verbose"))
     runner.exec_into(cmd, args: ["--verbose"])
 
     Then "the args are included in the shell command passed to docker"
@@ -704,11 +710,11 @@ class CommandRunnerTest < Minitest::Test
     client.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
     client.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: { "WWISE_TOKEN" => "tok-123" })
-      .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
+      .returns(invocation("docker", "run", "--rm", "-e", "WWISE_TOKEN", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh", env: { "WWISE_TOKEN" => "tok-123" }))
     runner.exec_into(cmd)
 
-    Then "the ENV value is passed through to docker run"
-    1 * Kernel.exec({}, "docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh")
+    Then "the argv names the variable; its value reaches docker through the spawn env, never argv (dev#317)"
+    1 * Kernel.exec({ "WWISE_TOKEN" => "tok-123" }, "docker", "run", "--rm", "-e", "WWISE_TOKEN", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh")
 
     Cleanup
     ENV.delete("WWISE_TOKEN")
@@ -726,7 +732,7 @@ class CommandRunnerTest < Minitest::Test
     client.expects(:ensure_image!)
       .with(config, project_root: @project_root, push: false, publish: true, build_args_provider: instance_of(Proc), secrets_provider: instance_of(Proc), resources: nil)
       .returns("myregistry/myapp-linux:content-abc123")
-    client.stubs(:docker_run_command).returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
+    client.stubs(:docker_run_command).returns(invocation("docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"))
     runner.exec_into(cmd)
 
     Then "ensure_image! is asked to publish the resolved image"
@@ -752,11 +758,12 @@ class CommandRunnerTest < Minitest::Test
     client.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/ue/starter/publish.sh",
         volumes: [], env: { "WWISE_TOKEN" => "tok-123", "GH_TOKEN" => "gho_host" })
-      .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/ue/starter/publish.sh"])
+      .returns(invocation("docker", "run", "--rm", "-e", "WWISE_TOKEN", "-e", "GH_TOKEN", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/ue/starter/publish.sh",
+        env: { "WWISE_TOKEN" => "tok-123", "GH_TOKEN" => "gho_host" }))
     runner.exec_into(cmd)
 
-    Then "docker run gets both: the run_env and the host's token"
-    1 * Kernel.exec({}, "docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/ue/starter/publish.sh")
+    Then "docker run gets both by name on argv; both values ride the spawn env, the token on no argv (dev#317)"
+    1 * Kernel.exec({ "WWISE_TOKEN" => "tok-123", "GH_TOKEN" => "gho_host" }, "docker", "run", "--rm", "-e", "WWISE_TOKEN", "-e", "GH_TOKEN", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/ue/starter/publish.sh")
 
     Cleanup
     ENV.delete("WWISE_TOKEN")
@@ -778,7 +785,7 @@ class CommandRunnerTest < Minitest::Test
     client.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh",
         volumes: [], env: { "GH_TOKEN" => "gho_mine" })
-      .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
+      .returns(invocation("docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"))
     runner.exec_into(cmd)
 
     Then "the run_env's token is the one injected"
@@ -804,7 +811,7 @@ class CommandRunnerTest < Minitest::Test
     client.stubs(:ensure_image!).returns("myregistry/myapp-linux:content-abc123")
     client.expects(:docker_run_command)
       .with("myregistry/myapp-linux:content-abc123", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: {})
-      .returns(["docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"])
+      .returns(invocation("docker", "run", "--rm", "myregistry/myapp-linux:content-abc123", "sh", "-c", "./bin/build.sh"))
     runner.exec_into(cmd)
 
     Then "no env is injected and the command still runs"
