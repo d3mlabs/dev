@@ -55,8 +55,11 @@ module Dev
     # @raise [InstallFailedError] when the install exits nonzero
     sig { params(container: String, env: T::Hash[String, String]).void }
     def install!(container, env:)
-      env_flags = @github_token.merge_into(env).flat_map { |name, value| ["-e", "#{name}=#{value}"] }
-      installed = @engine.run(["exec", *env_flags, "-w", PROJECT_MOUNT, container, "dev", "deps", "install"])
+      # Names on the argv, values in the spawn env: a credential never
+      # reaches a process listing (dev#317).
+      container_env = @github_token.merge_into(env)
+      env_flags = container_env.keys.flat_map { |name| ["-e", name] }
+      installed = @engine.run(["exec", *env_flags, "-w", PROJECT_MOUNT, container, "dev", "deps", "install"], env: container_env)
       raise InstallFailedError.new(container:) unless installed
     end
   end

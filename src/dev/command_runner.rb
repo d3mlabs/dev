@@ -236,12 +236,14 @@ module Dev
     def run_in_container(image, shell_command, wait:)
       client = container_client
       image_tag = @images.ensure!(image, client:, publish: publish_image?)
-      docker_argv = container_command(image, image_tag, shell_command)
+      invocation = container_command(image, image_tag, shell_command)
 
       Dir.chdir(@project_root)
-      # The child argv carries the engine's argv prefix; its env (e.g. the
-      # colima DOCKER_HOST) rides the spawn env, same as child_env locally.
-      run_child([client.engine.env, *docker_argv], wait:)
+      # The child argv carries the engine's argv prefix and names the
+      # injected variables; their values and the engine's env (e.g. the
+      # colima DOCKER_HOST) ride the spawn env, same as child_env locally —
+      # nothing secret on an argv (dev#317).
+      run_child([client.engine.env.merge(invocation.env), *invocation.argv], wait:)
     end
 
     # The engine-injected docker operations, constructed at this seam (the
@@ -263,8 +265,8 @@ module Dev
     # @param image         [ProjectImages::Image] the command's environment
     # @param image_tag     [String]
     # @param shell_command [String]
-    # @return [Array<String>]
-    sig { params(image: ProjectImages::Image, image_tag: String, shell_command: String).returns(T::Array[String]) }
+    # @return [Dev::BuildContainer::Invocation]
+    sig { params(image: ProjectImages::Image, image_tag: String, shell_command: String).returns(Dev::BuildContainer::Invocation) }
     def container_command(image, image_tag, shell_command)
       # Volumes mount as declared. Nothing of the host's data root is
       # resolved into them: the container owns its own (ADR-0008).

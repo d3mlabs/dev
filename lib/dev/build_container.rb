@@ -99,6 +99,18 @@ module Dev
       const :containers, T::Array[ServiceContainer]
     end
 
+    # A docker command dev spawns, in two halves: the argv, where every
+    # injected variable is a bare `-e NAME`, and the env those names
+    # resolve in (docker reads a valueless `-e` from the client's own
+    # environment). argv is world-readable — `ps`, /proc — and the env is
+    # the process's own, so a credential appears in the second half and
+    # never in the first (dev#317). The caller spawns argv with env merged
+    # over the engine's.
+    class Invocation < T::Struct
+      const :argv, T::Array[String]
+      const :env, T::Hash[String, String]
+    end
+
     # Always-hashed inputs. deps.lock joins the Dockerfile so a dependency
     # bump invalidates a prewarmed image. Missing files are skipped (see
     # content_tag).
@@ -559,8 +571,9 @@ module Dev
     # @param shell_cmd    [String]   command to run inside the container
     # @param volumes      [Array<String>] extra "host:container" mounts; host
     #   paths may use ~ (e.g. "~/.dev/engines/unreal-engine-css:/ue")
-    # @param env          [Hash{String => String}] env vars to inject via `-e`
-    # @return [Array<String>] docker run command array
+    # @param env          [Hash{String => String}] env vars to inject (named
+    #   on argv, valued in the invocation's env)
+    # @return [Invocation] the docker run argv and the env it needs
     sig do
       params(
         image_tag: String,
@@ -568,21 +581,23 @@ module Dev
         shell_cmd: String,
         volumes: T::Array[String],
         env: T::Hash[String, String],
-      ).returns(T::Array[String])
+      ).returns(Invocation)
     end
     def docker_run_command(image_tag, project_root:, shell_cmd:, volumes: [], env: {})
-      [
+      container_env = container_env(env)
+      argv = [
         *@engine.argv_prefix, "run", "--rm",
         *SIGPENDING_ULIMIT,
         *self.class.label_flags(image_tag, project_root),
         "-v", "#{project_root}:/project",
         *data_root_flags,
         *volume_flags(volumes),
-        *env_flags(env),
+        *env_flags(container_env),
         "-w", "/project",
         image_tag,
         "sh", "-c", shell_cmd,
       ]
+      Invocation.new(argv: argv, env: container_env)
     end
 
     # The container's data root and Linuxbrew prefix (ADR-0008).
@@ -628,13 +643,24 @@ module Dev
     # dev-created container can lack either.
     #
     # @param env [Hash{String => String}] run_env entries resolved on the host
-    # @return [Array<String>] docker `-e` flags
-    sig { params(env: T::Hash[String, String]).returns(T::Array[String]) }
-    def env_flags(env)
+    # @return [Hash{String => String}] the container's full env
+    sig { params(env: T::Hash[String, String]).returns(T::Hash[String, String]) }
+    def container_env(env)
       ContainerContext::MARKER_ENV
         .merge("DEV_DATA_ROOT" => data_root_mount)
         .merge(env)
-        .flat_map { |name, value| ["-e", "#{name}=#{value}"] }
+    end
+
+    # The `-e` flags naming +env+'s variables — names only. docker fills a
+    # valueless `-e NAME` from the client process's environment, which is
+    # where the caller puts the values (Invocation); the argv, which any
+    # user on the host can read, never carries one.
+    #
+    # @param env [Hash{String => String}]
+    # @return [Array<String>] docker `-e NAME` flags
+    sig { params(env: T::Hash[String, String]).returns(T::Array[String]) }
+    def env_flags(env)
+      env.keys.flat_map { |name| ["-e", name] }
     end
 
     # "host:container" volume specs -> docker `-v` flags, expanding ~ in the host
@@ -713,21 +739,24 @@ module Dev
 
     # Build a `docker exec` command running shell_cmd inside the service container,
     # mirroring docker_run_command's working dir (/project) and `-e` env handling.
+    # The marker and data root are the container's since its creation, so
+    # only the per-command env is named here.
     #
     # @param container [String] running container name
     # @param shell_cmd [String]
-    # @param env       [Hash{String => String}] env vars to inject via `-e`
-    # @return [Array<String>] docker exec command array
+    # @param env       [Hash{String => String}] env vars to inject (named
+    #   on argv, valued in the invocation's env)
+    # @return [Invocation] the docker exec argv and the env it needs
     sig do
       params(
         container: String,
         shell_cmd: String,
         env: T::Hash[String, String],
-      ).returns(T::Array[String])
+      ).returns(Invocation)
     end
     def docker_exec_command(container, shell_cmd:, env: {})
-      env_flags = env.flat_map { |name, value| ["-e", "#{name}=#{value}"] }
-      [*@engine.argv_prefix, "exec", *env_flags, "-w", "/project", container, "sh", "-c", shell_cmd]
+      argv = [*@engine.argv_prefix, "exec", *env_flags(env), "-w", "/project", container, "sh", "-c", shell_cmd]
+      Invocation.new(argv: argv, env: env)
     end
 
     # Remove every container for this checkout — the current tag's and any
@@ -1012,18 +1041,19 @@ module Dev
       params(name: String, image_tag: String, project_root: Pathname, volumes: T::Array[String], one_shot: T::Boolean).void
     end
     def create_service_container(name, image_tag, project_root:, volumes: [], one_shot: false)
+      env = container_env({})
       args = [
         "run", "-d", *(one_shot ? ["--rm"] : []), "--name", name,
         *self.class.label_flags(image_tag, project_root),
         "-v", "#{project_root}:/project",
         *data_root_flags,
         *volume_flags(volumes),
-        *env_flags({}),
+        *env_flags(env),
         "-w", "/project",
         image_tag,
         "sleep", "infinity",
       ]
-      success = @engine.run(args, out: File::NULL, err: File::NULL)
+      success = @engine.run(args, env: env, out: File::NULL, err: File::NULL)
       raise "Failed to create service container #{name}" unless success
     end
 

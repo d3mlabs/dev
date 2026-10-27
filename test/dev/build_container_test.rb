@@ -130,7 +130,7 @@ class BuildContainerTest < Minitest::Test
       "jpduchesne89/snappy:content-abc123",
       project_root: Pathname("/project"),
       shell_cmd: "./bin/build.sh",
-    )
+    ).argv
 
     Then
     cmd[0] == "docker"
@@ -147,7 +147,7 @@ class BuildContainerTest < Minitest::Test
       "jpduchesne89/snappy:content-abc123",
       project_root: Pathname("/project"),
       shell_cmd: "./bin/build.sh",
-    )
+    ).argv
 
     Then "the run carries the widened sigpending bucket"
     cmd.include?("sigpending=1000000")
@@ -161,7 +161,7 @@ class BuildContainerTest < Minitest::Test
       project_root: Pathname("/project"),
       shell_cmd: "./bin/build.sh",
       volumes: ["/opt/engines/ue:/ue", "/var/cache/wwise:/wwise"],
-    )
+    ).argv
 
     Then
     cmd.include?("/opt/engines/ue:/ue")
@@ -171,34 +171,38 @@ class BuildContainerTest < Minitest::Test
     cmd.index("-w") > cmd.index("/var/cache/wwise:/wwise")
   end
 
-  test "docker_run_command renders env vars as -e flags" do
+  test "docker_run_command names env vars with bare -e flags and carries their values in the invocation's env, never on argv (dev#317)" do
     When "building a docker run command with env"
-    cmd = build_container.docker_run_command(
+    invocation = build_container.docker_run_command(
       "jpduchesne89/snappy:content-abc123",
       project_root: Pathname("/project"),
       shell_cmd: "./bin/build.sh",
       env: { "WWISE_TOKEN" => "tok-123" },
     )
+    cmd = invocation.argv
 
-    Then
-    cmd.include?("WWISE_TOKEN=tok-123")
-    cmd[cmd.index("WWISE_TOKEN=tok-123") - 1] == "-e"
-    cmd.index("-w") > cmd.index("WWISE_TOKEN=tok-123")
+    Then "argv says -e WWISE_TOKEN (docker reads the value from the client's env) before -w; the value is in env only"
+    cmd.each_cons(2).include?(["-e", "WWISE_TOKEN"])
+    cmd.index("-w") > cmd.index("WWISE_TOKEN")
+    cmd.none? { |part| part.include?("tok-123") }
+    invocation.env["WWISE_TOKEN"] == "tok-123"
   end
 
   test "docker_run_command marks the container as inside so the dev it runs knows where it is" do
     When "building a one-shot run with its own env"
-    cmd = build_container.docker_run_command(
+    invocation = build_container.docker_run_command(
       "jpduchesne89/snappy:content-abc123",
       project_root: Pathname("/project"),
       shell_cmd: "./bin/build.sh",
       env: { "WWISE_TOKEN" => "tok-123" },
     )
+    cmd = invocation.argv
 
-    Then "DEV_INSIDE_CONTAINER=1 rides -e beside the configured env, before the image"
-    cmd.each_cons(2).include?(["-e", "DEV_INSIDE_CONTAINER=1"])
-    cmd.include?("WWISE_TOKEN=tok-123")
-    cmd.index("DEV_INSIDE_CONTAINER=1") < cmd.index("jpduchesne89/snappy:content-abc123")
+    Then "DEV_INSIDE_CONTAINER rides -e beside the configured env, before the image; both values in the env"
+    cmd.each_cons(2).include?(["-e", "DEV_INSIDE_CONTAINER"])
+    cmd.each_cons(2).include?(["-e", "WWISE_TOKEN"])
+    cmd.index("DEV_INSIDE_CONTAINER") < cmd.index("jpduchesne89/snappy:content-abc123")
+    invocation.env.slice("DEV_INSIDE_CONTAINER", "WWISE_TOKEN") == { "DEV_INSIDE_CONTAINER" => "1", "WWISE_TOKEN" => "tok-123" }
   end
 
   test "docker_run_command mounts the container's own data root volumes, never the host's directory (ADR-0008)" do
@@ -209,11 +213,12 @@ class BuildContainerTest < Minitest::Test
     engine = FakeContainerEngine.new
 
     When "building a one-shot run"
-    cmd = build_container(engine: engine).docker_run_command(
+    invocation = build_container(engine: engine).docker_run_command(
       "jpduchesne89/snappy:content-abc123",
       project_root: Pathname("/project"),
       shell_cmd: "./bin/build.sh",
     )
+    cmd = invocation.argv
 
     Then "both volumes are created first (docker volume create is idempotent), mounted at the data root and the Linuxbrew prefix before the image, DEV_DATA_ROOT names the mount, and the host's directory appears nowhere"
     engine.runs.include?(["volume", "create", "dev-data-root"])
@@ -221,8 +226,10 @@ class BuildContainerTest < Minitest::Test
     cmd.each_cons(2).include?(["-v", "dev-data-root:/var/lib/dev"])
     cmd.each_cons(2).include?(["-v", "dev-linuxbrew:/home/linuxbrew/.linuxbrew"])
     cmd.index("dev-data-root:/var/lib/dev") < cmd.index("jpduchesne89/snappy:content-abc123")
-    cmd.each_cons(2).include?(["-e", "DEV_DATA_ROOT=/var/lib/dev"])
+    cmd.each_cons(2).include?(["-e", "DEV_DATA_ROOT"])
+    invocation.env["DEV_DATA_ROOT"] == "/var/lib/dev"
     cmd.none? { |part| part.include?(root) }
+    invocation.env.values.none? { |value| value.include?(root) }
 
     Cleanup
     ENV["DEV_DATA_ROOT"] = original
@@ -238,16 +245,19 @@ class BuildContainerTest < Minitest::Test
     bc = build_container(engine: engine, host_os: "linux")
 
     When
-    cmd = if what == "docker_run_command"
-      bc.docker_run_command("ghcr.io/d3mlabs/snappy-linux:abc", project_root: Pathname("/project"), shell_cmd: "./bin/build.sh")
+    cmd, env = if what == "docker_run_command"
+      invocation = bc.docker_run_command("ghcr.io/d3mlabs/snappy-linux:abc", project_root: Pathname("/project"), shell_cmd: "./bin/build.sh")
+      [invocation.argv, invocation.env]
     else
       bc.send(:create_service_container, "svc", "ghcr.io/d3mlabs/snappy-linux:abc", project_root: Pathname("/project"))
-      engine.runs.find(&method(:detached_run?))
+      index = engine.runs.index(&method(:detached_run?))
+      [engine.runs.fetch(index), engine.run_envs.fetch(index)]
     end
 
     Then "the host's root at the host's path, DEV_DATA_ROOT agreeing; no data-root volume; Linuxbrew still a volume"
     cmd.each_cons(2).include?(["-v", "#{root}:#{root}"])
-    cmd.each_cons(2).include?(["-e", "DEV_DATA_ROOT=#{root}"])
+    cmd.each_cons(2).include?(["-e", "DEV_DATA_ROOT"])
+    env["DEV_DATA_ROOT"] == root
     cmd.each_cons(2).include?(["-v", "dev-linuxbrew:/home/linuxbrew/.linuxbrew"])
     cmd.none? { |part| part.include?("dev-data-root") }
     !engine.runs.include?(["volume", "create", "dev-data-root"])
@@ -271,13 +281,14 @@ class BuildContainerTest < Minitest::Test
     Dev::Platform.stubs(:os).returns("linux")
 
     When
-    cmd = build_container(host_os: "linux").docker_run_command(
+    invocation = build_container(host_os: "linux").docker_run_command(
       "ghcr.io/d3mlabs/snappy-linux:abc", project_root: Pathname("/project"), shell_cmd: "./bin/build.sh",
     )
 
     Then
-    cmd.each_cons(2).include?(["-v", "/var/lib/dev:/var/lib/dev"])
-    cmd.each_cons(2).include?(["-e", "DEV_DATA_ROOT=/var/lib/dev"])
+    invocation.argv.each_cons(2).include?(["-v", "/var/lib/dev:/var/lib/dev"])
+    invocation.argv.each_cons(2).include?(["-e", "DEV_DATA_ROOT"])
+    invocation.env["DEV_DATA_ROOT"] == "/var/lib/dev"
 
     Cleanup
     ENV["DEV_DATA_ROOT"] = original if original
@@ -295,7 +306,7 @@ class BuildContainerTest < Minitest::Test
       project_root: Pathname("/project"),
       shell_cmd: "./bin/build.sh",
       volumes: ["~/.dev/engines/unreal-engine-css:/ue"],
-    )
+    ).argv
 
     Then
     cmd.include?("#{File.join(root, "engines/unreal-engine-css")}:/ue")
@@ -314,7 +325,7 @@ class BuildContainerTest < Minitest::Test
     When "building a docker run command"
     cmd = build_container(engine: engine).docker_run_command(
       "img:tag", project_root: Pathname("/project"), shell_cmd: "true",
-    )
+    ).argv
 
     Then "the prefix leads the argv"
     cmd[0, 3] == ["docker", "--context", "remote"]
@@ -1281,7 +1292,7 @@ class BuildContainerTest < Minitest::Test
     When "building a docker exec command"
     cmd = build_container.docker_exec_command(
       "dev-snappy-linux-content-abc", shell_cmd: "./bin/build.sh",
-    )
+    ).argv
 
     Then
     cmd[0] == "docker"
@@ -1292,17 +1303,19 @@ class BuildContainerTest < Minitest::Test
     cmd.last(3) == ["sh", "-c", "./bin/build.sh"]
   end
 
-  test "docker_exec_command renders env vars as -e flags before the container" do
+  test "docker_exec_command names env vars with bare -e flags before the container; the values ride the invocation's env, never argv (dev#317)" do
     When "building a docker exec command with env"
-    cmd = build_container.docker_exec_command(
+    invocation = build_container.docker_exec_command(
       "dev-snappy-linux-content-abc", shell_cmd: "./bin/build.sh",
       env: { "WWISE_TOKEN" => "tok-123" },
     )
+    cmd = invocation.argv
 
-    Then "the -e flag precedes the container name (a docker exec arg-order rule)"
-    cmd.include?("WWISE_TOKEN=tok-123")
-    cmd[cmd.index("WWISE_TOKEN=tok-123") - 1] == "-e"
-    cmd.index("WWISE_TOKEN=tok-123") < cmd.index("dev-snappy-linux-content-abc")
+    Then "the -e flag precedes the container name (a docker exec arg-order rule); the value is in env only"
+    cmd.each_cons(2).include?(["-e", "WWISE_TOKEN"])
+    cmd.index("WWISE_TOKEN") < cmd.index("dev-snappy-linux-content-abc")
+    cmd.none? { |part| part.include?("tok-123") }
+    invocation.env == { "WWISE_TOKEN" => "tok-123" }
   end
 
   test "ensure_service! creates the container when none exists" do
@@ -1555,10 +1568,11 @@ class BuildContainerTest < Minitest::Test
       "dev-x", "img:tag", project_root: Pathname("/project"), volumes: [],
     )
 
-    Then "the detached run carries DEV_INSIDE_CONTAINER=1 before the image"
+    Then "the detached run names DEV_INSIDE_CONTAINER before the image; its value rides the run's env"
     run = engine.runs.last
-    run.each_cons(2).include?(["-e", "DEV_INSIDE_CONTAINER=1"])
-    run.index("DEV_INSIDE_CONTAINER=1") < run.index("img:tag")
+    run.each_cons(2).include?(["-e", "DEV_INSIDE_CONTAINER"])
+    run.index("DEV_INSIDE_CONTAINER") < run.index("img:tag")
+    engine.run_envs.last["DEV_INSIDE_CONTAINER"] == "1"
   end
 
   test "create_service_container mounts the same two volumes as a one-shot run, so a recreated container finds its data root warm" do
@@ -1577,7 +1591,8 @@ class BuildContainerTest < Minitest::Test
     run = engine.runs.last
     run.each_cons(2).include?(["-v", "dev-data-root:/var/lib/dev"])
     run.each_cons(2).include?(["-v", "dev-linuxbrew:/home/linuxbrew/.linuxbrew"])
-    run.each_cons(2).include?(["-e", "DEV_DATA_ROOT=/var/lib/dev"])
+    run.each_cons(2).include?(["-e", "DEV_DATA_ROOT"])
+    engine.run_envs.last["DEV_DATA_ROOT"] == "/var/lib/dev"
     run.none? { |part| part.include?(root) }
 
     Cleanup
@@ -1591,7 +1606,7 @@ class BuildContainerTest < Minitest::Test
     labels = Dev::BuildContainer.service_labels("img:tag", root)
 
     When "building a one-shot run"
-    cmd = build_container.docker_run_command("img:tag", project_root: root, shell_cmd: "make")
+    cmd = build_container.docker_run_command("img:tag", project_root: root, shell_cmd: "make").argv
 
     Then "every label precedes the image"
     labels.all? { |key, value| cmd.each_cons(2).include?(["--label", "#{key}=#{value}"]) }
@@ -1659,7 +1674,8 @@ class BuildContainerTest < Minitest::Test
     create.each_cons(2).include?(["--name", seen[:name]])
     create.include?("/project:/project")
     create.include?("/e:/ue")
-    create.each_cons(2).include?(["-e", "DEV_INSIDE_CONTAINER=1"])
+    create.each_cons(2).include?(["-e", "DEV_INSIDE_CONTAINER"])
+    engine.run_envs.fetch(2)["DEV_INSIDE_CONTAINER"] == "1"
     create.last(2) == ["sleep", "infinity"]
     Dev::BuildContainer.service_labels("img:tag", root).all? { |k, v| create.each_cons(2).include?(["--label", "#{k}=#{v}"]) }
     seen[:runs_so_far] == 3
