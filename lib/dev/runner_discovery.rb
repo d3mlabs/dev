@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "etc"
 require "json"
 
 module Dev
@@ -12,6 +13,12 @@ module Dev
   # deliberately NOT here — GitHub is their single home; Dev::RunnerRegistry
   # reads them. Offline by construction, so register and status can find
   # this host's enrollments without the network.
+  #
+  # On a Linux host the enrollments live under the runner user's home, not
+  # the operator's (dev#310); `also_under` widens the scan to it. Each
+  # enrollment knows its owner — the user whose dir it is, which is the
+  # user its service runs as — so register can tell an enrollment running
+  # as the wrong identity.
   class RunnerDiscovery
     extend T::Sig
 
@@ -38,6 +45,9 @@ module Dev
       # The dir as a human types it: `~`-relative when under home, else
       # absolute. What unregister completes and register's remedy prints.
       const :display_dir, String
+
+      # The user whose dir this is — the one its service runs as.
+      const :owner, String
     end
 
     # The dir names a runner install may have under home: the suffixless
@@ -46,21 +56,35 @@ module Dev
     # configured.
     DIR_GLOBS = T.let(["actions-runner", "actions-runner-*"].freeze, T::Array[String])
 
-    # @param home [String] the home dir to scan (injectable for tests)
-    sig { params(home: String).void }
-    def initialize(home: Dir.home)
+    # @param home [String] the home dir to scan (injectable for tests); the
+    #   one display dirs are relative to
+    # @param homes [Array<String>] every home to scan (home included)
+    sig { params(home: String, homes: T::Array[String]).void }
+    def initialize(home: Dir.home, homes: [home])
       @home = home
+      @homes = homes
     end
 
-    # Every configured enrollment on this host, in dir order. Unconfigured
-    # dirs (downloaded but never registered, or garbage) are silently
-    # skipped — they are not enrollments.
+    # The same discovery, also scanning another user's home.
+    #
+    # @param home [String] the other home
+    # @return [RunnerDiscovery]
+    sig { params(home: String).returns(RunnerDiscovery) }
+    def also_under(home)
+      RunnerDiscovery.new(home: @home, homes: (@homes + [home]).uniq)
+    end
+
+    # Every configured enrollment on this host, in dir order per home.
+    # Unconfigured dirs (downloaded but never registered, or garbage) are
+    # silently skipped — they are not enrollments.
     #
     # @return [Array<Enrollment>]
     sig { returns(T::Array[Enrollment]) }
     def enrollments
-      dirs = DIR_GLOBS.flat_map { |pattern| Dir.glob(File.join(@home, pattern)) }
-      dirs.sort.filter_map { |dir| self.class.read(dir, home: @home) }
+      @homes.flat_map do |home|
+        dirs = DIR_GLOBS.flat_map { |pattern| Dir.glob(File.join(home, pattern)) }
+        dirs.sort.filter_map { |dir| self.class.read(dir, home: @home) }
+      end
     end
 
     # Every local enrollment serving a scope, in dir order. More than one
@@ -119,9 +143,20 @@ module Dev
           name: name,
           service_installed: File.exist?(File.join(dir, ".service")),
           display_dir: display_dir(dir, home),
+          owner: owner(dir),
         )
       rescue JSON::ParserError, Errno::ENOENT
         nil
+      end
+
+      # The dir's owner by name; the uid when it has no passwd entry.
+      #
+      # @param dir [String]
+      # @return [String]
+      sig { params(dir: String).returns(String) }
+      def owner(dir)
+        uid = File.stat(dir).uid
+        Etc.getpwuid(uid)&.name || uid.to_s
       end
 
       private

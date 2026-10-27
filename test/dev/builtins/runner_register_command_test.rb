@@ -9,6 +9,8 @@ require "dev/runner_discovery"
 require "dev/runner_registry"
 require "dev/runner_setup_config"
 require "dev/runner_teardown"
+require "dev/runner_user"
+require "etc"
 require "fileutils"
 require "json"
 require "pathname"
@@ -63,7 +65,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     Expect "no flag lists by name alone"
     command.flags.all? { |flag| !flag.desc.empty? }
-    command.flags.map(&:name) == ["--org", "--labels", "--ai-flow", "--dir", "--name", "--repo", "--agent-user", "--yes"]
+    command.flags.map(&:name) == ["--org", "--labels", "--ai-flow", "--dir", "--name", "--repo", "--agent-user", "--as", "--yes"]
   end
 
   # --- label + scope resolution ---------------------------------------
@@ -449,6 +451,118 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     seen == [[Dev::LabelContracts::AI_FLOW_LABELS.join(","), "ci"]]
   end
 
+  # --- the host rule: a runner user on Linux (dev#310) -----------------
+
+  test "on Linux, register converges the shared data root and the runner user, checks its gh login, then enrolls as it" do
+    Given "a Linux host (the factory answers a runner user) and a fresh scope"
+    runner_home = Dir.mktmpdir
+    runner_user = runner_user_mock(name: "runner", home: runner_home)
+    provisioner = typed_mock(Dev::LinuxDataRootProvisioner)
+    harness = build_harness(contracts: 1, runner_user: runner_user, data_root_provisioner: provisioner)
+    sequence = sequence("host rule")
+    provisioner.expects(:provision!).once.in_sequence(sequence)
+    runner_user.expects(:converge!).once.in_sequence(sequence)
+    runner_user.expects(:ensure_gh_authenticated!).once.in_sequence(sequence)
+
+    When "registering in the checkout"
+    harness.command.call(args: no_args, context: build_context(name: "cellbound3d"))
+
+    Then "the identity work precedes the contracts and the enrollment; the setup is wired for the runner user; no --as was named"
+    harness.events == [[:converge, false, nil, nil, nil], [:run], [:after_enroll, "/tmp/runner-dir"]]
+    harness.wirings.fetch(0).fetch(3) == runner_user
+    harness.as_names == [nil]
+  end
+
+  test "--as names the runner user the host rule converges" do
+    Given
+    runner_user = runner_user_mock(name: "ci", home: Dir.mktmpdir)
+    harness = build_harness(runner_user: runner_user)
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--as", "ci"]), context: build_context(name: "cellbound3d"))
+
+    Then
+    harness.as_names == ["ci"]
+    harness.wirings.fetch(0).fetch(3) == runner_user
+  end
+
+  test "a runner user with no gh login stops register before any contract or enrollment: the error carries the login command" do
+    Given
+    runner_user = runner_user_mock(name: "runner", home: Dir.mktmpdir)
+    runner_user.stubs(:ensure_gh_authenticated!).raises(Dev::RunnerUser::GhLoginRequiredError, "sudo -iu runner gh auth login --with-token")
+    harness = build_harness(contracts: 1, runner_user: runner_user)
+
+    When
+    harness.command.call(args: no_args, context: build_context(name: "cellbound3d"))
+
+    Then
+    error = raises Dev::RunnerUser::GhLoginRequiredError
+    error.message.include?("gh auth login --with-token")
+    harness.events == []
+    harness.wirings == []
+  end
+
+  test "an enrollment owned by another user — the operator's own, from before the rule — is drift: register says whose it is, asks, tears it down and enrolls fresh as the runner user" do
+    Given "an online enrollment in the operator's home, and a runner user as the rule (named so it cannot be this test's own user: hosted CI runs as `runner`)"
+    home = Dir.mktmpdir
+    dir = write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    registry = FakeRegistry.new(
+      runners: { ["JPDuchesne/snappy", "JPSFF"] => Dev::RunnerRegistry::Runner.new(id: 9, custom_labels: ["snappy"], status: "online") },
+    )
+    runner_user = runner_user_mock(name: "svc-runner", home: Dir.mktmpdir)
+    harness = build_harness(home: home, registry: registry, scope: "JPDuchesne/snappy", repo: "JPDuchesne/snappy", runner_user: runner_user)
+    harness.confirmer.expects(:confirm?).once.with("Unregister these and enroll fresh?").returns(true)
+
+    When "registering in the snappy checkout"
+    harness.command.call(args: no_args, context: build_context(name: "snappy"))
+
+    Then "torn down (as its owner — the teardown's business), then the fresh ceremony as the runner user; nothing amended"
+    harness.torn_down.map(&:dir) == [dir]
+    harness.events == [[:run]]
+    harness.wirings.fetch(0).fetch(3) == runner_user
+    registry.amends == []
+    harness.out.string.include?("runs as #{Etc.getpwuid(Process.uid).name}, not svc-runner")
+    harness.out.string.include?("~/actions-runner-snappy (no service)")
+  end
+
+  test "an enrollment under the runner user's home, owned by it and online, is the steady state: the amend path, no question" do
+    Given "the enrollment where the rule puts it (owned by this test's user, who plays the runner user)"
+    runner_home = Dir.mktmpdir
+    write_runner(runner_home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    registry = FakeRegistry.new(
+      runners: { ["JPDuchesne/snappy", "JPSFF"] => Dev::RunnerRegistry::Runner.new(id: 9, custom_labels: ["snappy"], status: "online") },
+    )
+    runner_user = runner_user_mock(name: Etc.getpwuid(Process.uid).name, home: runner_home)
+    harness = build_harness(home: Dir.mktmpdir, registry: registry, scope: "JPDuchesne/snappy", repo: "JPDuchesne/snappy", runner_user: runner_user)
+    harness.confirmer.expects(:confirm?).never
+
+    When "registering"
+    harness.command.call(args: no_args, context: build_context(name: "snappy"))
+
+    Then
+    harness.torn_down == []
+    harness.events == []
+    harness.out.string.include?("nothing to amend")
+  end
+
+  test "on a Mac there is no runner user: no data root step, the setup wired for the invoking user" do
+    Given "the factory answers nil, as RunnerUser.for_host does off Linux"
+    provisioner = typed_mock(Dev::LinuxDataRootProvisioner)
+    provisioner.expects(:provision!).never
+    harness = build_harness(runner_user: nil, data_root_provisioner: provisioner)
+
+    When
+    harness.command.call(args: no_args, context: build_context(name: "cellbound3d"))
+
+    Then
+    harness.wirings.fetch(0).fetch(3).nil?
+  end
+
+  test "--as carries a description, like every register flag" do
+    Expect
+    Dev::Builtins::RunnerRegisterCommand.new.flags.map(&:name).include?("--as")
+  end
+
   # --- plumbing ---------------------------------------------------------
 
   test "the default factories build the real collaborators" do
@@ -457,19 +571,21 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     # construction boundary and asserts the default factories' wiring (the
     # bare ue-engine label makes the default contracts factory resolve to no
     # contracts). Discovery is redirected at an empty home so the run never
-    # depends on this machine's enrollments.
+    # depends on this machine's enrollments, and the host rule is answered
+    # at its platform seam so the run never converges a user on this one.
     empty_discovery = Dev::RunnerDiscovery.new(home: Dir.mktmpdir)
     Dev::RunnerDiscovery.expects(:new).returns(empty_discovery)
+    Dev::RunnerUser.expects(:for_host).once.with(name: "ci").returns(nil)
     setup = typed_mock(Dev::RunnerSetup)
     setup.expects(:run).once
     setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
     setup.stubs(:resolve_scope).returns("owner/repo")
     Dev::RunnerSetup.expects(:new)
-      .with(config: Dev::RunnerSetupConfig.new(labels: "ue-engine"), repo: nil, org: false).returns(setup)
-    command = Dev::Builtins::RunnerRegisterCommand.new
+      .with(config: Dev::RunnerSetupConfig.new(labels: "ue-engine"), repo: nil, org: false, as_user: nil, home: nil).returns(setup)
+    command = Dev::Builtins::RunnerRegisterCommand.new(data_root_provisioner: nil)
 
-    When "running register"
-    command.call(args: parsed_args(command, ["--labels", "ue-engine"]), context: projectless_context)
+    When "running register with --as, the host rule's one input"
+    command.call(args: parsed_args(command, ["--labels", "ue-engine", "--as", "ci"]), context: projectless_context)
 
     Then "the expectations on the construction boundary hold"
     true
@@ -485,8 +601,8 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
     setup.stubs(:resolve_scope).returns("d3mlabs/Cellbound-3D")
     Dev::RunnerSetup.expects(:new)
-      .with(config: Dev::RunnerSetupConfig.new(labels: "cellbound-3d"), repo: nil, org: false).returns(setup)
-    command = Dev::Builtins::RunnerRegisterCommand.new
+      .with(config: Dev::RunnerSetupConfig.new(labels: "cellbound-3d"), repo: nil, org: false, as_user: nil, home: nil).returns(setup)
+    command = Dev::Builtins::RunnerRegisterCommand.new(runner_user_factory: ->(_name) { nil }, data_root_provisioner: nil)
 
     When "running bare register inside a checkout whose dev.yml name differs"
     command.call(args: no_args, context: build_context(name: "Cellbound3D"))
@@ -497,7 +613,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
   private
 
-  Harness = Struct.new(:command, :wirings, :events, :out, :engine, :torn_down, :confirmer, keyword_init: true)
+  Harness = Struct.new(:command, :wirings, :events, :out, :engine, :torn_down, :confirmer, :as_names, keyword_init: true)
 
   # A command over recording seams: the setup factory records each
   # (config, repo, org) wiring and answers with a no-op setup; contracts
@@ -507,10 +623,11 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
   # test scripts (tests that say nothing tolerate no question).
   def build_harness(contracts: 0, home: Dir.mktmpdir, registry: FakeRegistry.new,
                     scope: "d3mlabs/cellbound-3d", repo: "d3mlabs/cellbound-3d", contracts_factory: nil,
-                    repo_resolver: nil)
+                    repo_resolver: nil, runner_user: nil, data_root_provisioner: nil)
     wirings = []
     events = []
     torn_down = []
+    as_names = []
     out = StringIO.new
     setup = typed_mock(Dev::RunnerSetup)
     setup.stubs(:run).with { events << [:run] || true }
@@ -525,10 +642,17 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     teardown.define_singleton_method(:teardown!) { |enrollment| torn_down << enrollment }
     confirmer = typed_mock(Dev::Confirmer)
     command = Dev::Builtins::RunnerRegisterCommand.new(
-      runner_setup_factory: ->(config, repo_override, org) {
-        wirings << [config, repo_override, org]
+      runner_setup_factory: ->(config, repo_override, org, as_user) {
+        wirings << [config, repo_override, org, as_user]
         setup
       },
+      # The host rule's seam: nil is a Mac (no runner user); a test on the
+      # Linux rule injects one and sees what --as named.
+      runner_user_factory: ->(name) {
+        as_names << name
+        runner_user
+      },
+      data_root_provisioner: data_root_provisioner,
       # What `gh repo view` would answer for the enclosing checkout, unless overridden.
       repo_resolver: repo_resolver || ->(override) { override || repo },
       contracts_factory: contracts_factory || ->(_labels, _agent_user) {
@@ -542,7 +666,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
       out: out,
     )
     Harness.new(command: command, wirings: wirings, events: events, out: out, engine: engine,
-      torn_down: torn_down, confirmer: confirmer)
+      torn_down: torn_down, confirmer: confirmer, as_names: as_names)
   end
 
   # A .runner record the way config.sh writes it (UTF-8 BOM + JSON).
@@ -552,6 +676,18 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     record = { "agentName" => name, "gitHubUrl" => "https://github.com/#{scope}" }
     File.write(File.join(dir, ".runner"), "\uFEFF#{JSON.generate(record)}")
     dir
+  end
+
+  # The runner user as register sees it: a name and a home; the converge
+  # and login steps are mocha expectations each test may script (silent
+  # tests tolerate any call).
+  def runner_user_mock(name:, home:)
+    runner_user = typed_mock(Dev::RunnerUser)
+    runner_user.stubs(:name).returns(name)
+    runner_user.stubs(:home).returns(home)
+    runner_user.stubs(:converge!)
+    runner_user.stubs(:ensure_gh_authenticated!)
+    runner_user
   end
 
   def build_context(name:, build_container: nil, engine: nil)

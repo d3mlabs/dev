@@ -5,12 +5,14 @@ require "dev/command"
 require "dev/confirmer"
 require "dev/engine_provisioner"
 require "dev/label_contracts"
+require "dev/linux_data_root_provisioner"
 require "dev/project_manifest"
 require "dev/runner_discovery"
 require "dev/runner_registry"
 require "dev/runner_setup"
 require "dev/runner_setup_config"
 require "dev/runner_teardown"
+require "dev/runner_user"
 
 module Dev
   module Builtins
@@ -48,6 +50,17 @@ module Dev
     # `dev runner unregister` commands to do it by hand. One enrollment,
     # online, is the steady state and stays silent.
     #
+    # On Linux the enrollment is the **runner user's**, by rule (dev#310,
+    # RunnerUser): before anything enrolls, register converges the shared
+    # data root and the runner user (`runner`; `--as` renames it) in one
+    # sudo session, and refuses — naming the one `gh auth login` command —
+    # while that user has no gh login, since every job on the host fetches
+    # as it. Enrollments are looked for under both homes; one owned by
+    # anyone but the runner user (the operator's own, from before the
+    # rule) is drift and takes the same retire-and-enroll-fresh path as a
+    # superseded one, torn down as its owner and enrolled as the runner
+    # user. macOS has no runner user and register runs as it always has.
+    #
     # Enrollment state is inspected, never recorded: the labels live on
     # GitHub, the scope in the runner dir's own .runner record — nothing in
     # dev.yml, Settings, or any inventory file.
@@ -76,6 +89,7 @@ module Dev
       NAME_FLAG = "--name"
       REPO_FLAG = "--repo"
       AGENT_USER_FLAG = "--agent-user"
+      AS_FLAG = "--as"
       YES_FLAG = "--yes"
 
       # Builds the RunnerSetup for the resolved config and flags; injected
@@ -85,8 +99,13 @@ module Dev
           config: RunnerSetupConfig,
           repo: T.nilable(String),
           org: T::Boolean,
+          runner_user: T.nilable(Dev::RunnerUser),
         ).returns(Dev::RunnerSetup)
       end
+
+      # The host rule: the runner user for this host (nil off Linux), given
+      # what `--as` named; injected for tests.
+      RunnerUserFactory = T.type_alias { T.proc.params(name: T.nilable(String)).returns(T.nilable(Dev::RunnerUser)) }
 
       # Resolves the advertised labels' contracts; injected for tests.
       ContractsFactory = T.type_alias do
@@ -110,11 +129,15 @@ module Dev
           teardown: Dev::RunnerTeardown,
           confirmer: Dev::Confirmer,
           engine_provisioner: Dev::EngineProvisioner,
+          runner_user_factory: RunnerUserFactory,
+          data_root_provisioner: T.nilable(Dev::LinuxDataRootProvisioner),
           out: T.any(IO, StringIO),
         ).void
       end
       def initialize(
-        runner_setup_factory: ->(config, repo, org) { Dev::RunnerSetup.new(config:, repo:, org:) },
+        runner_setup_factory: ->(config, repo, org, runner_user) {
+          Dev::RunnerSetup.new(config:, repo:, org:, as_user: runner_user&.name, home: runner_user&.home)
+        },
         contracts_factory: ->(labels, agent_user) { Dev::LabelContracts.for(labels, agent_user: agent_user) },
         repo_resolver: ->(override) { override || Dev::RunnerSetup.current_repo },
         discovery: Dev::RunnerDiscovery.new,
@@ -126,6 +149,10 @@ module Dev
         confirmer: Dev::Confirmer.new,
         # `dev up`'s engine step, run here for the checked-out repo's hint.
         engine_provisioner: Dev::EngineProvisioner.new,
+        # The host rule (Linux: a runner user; elsewhere nil).
+        runner_user_factory: ->(name) { Dev::RunnerUser.for_host(name: name) },
+        # The shared data root the runner user joins; nil off Linux.
+        data_root_provisioner: Dev::LinuxDataRootProvisioner.for_host,
         out: $stdout
       )
         super()
@@ -137,6 +164,8 @@ module Dev
         @teardown = teardown
         @confirmer = confirmer
         @engine_provisioner = engine_provisioner
+        @runner_user_factory = runner_user_factory
+        @data_root_provisioner = data_root_provisioner
         @out = out
       end
 
@@ -156,6 +185,7 @@ module Dev
           Cli::Flag.new(NAME_FLAG, takes_value: true, desc: "the runner's name on GitHub; default: the hostname"),
           Cli::Flag.new(REPO_FLAG, takes_value: true, desc: "enroll for owner/repo instead of the enclosing checkout"),
           Cli::Flag.new(AGENT_USER_FLAG, takes_value: true, desc: "the OS user agent labels run the agent as; default: #{AgentBootstrap::DEFAULT_AGENT_USER}"),
+          Cli::Flag.new(AS_FLAG, takes_value: true, desc: "Linux: the OS user the runner service runs as; default: #{Dev::RunnerUser::DEFAULT_NAME}"),
           Cli::Flag.new(YES_FLAG, desc: "unregister superseded enrollments without asking"),
         ]
       end
@@ -178,6 +208,15 @@ module Dev
         # label contract (whose agent-host steps assume an engine exists).
         @engine_provisioner.provision!(resources: engine) if container
 
+        # The host rule: who the enrollment belongs to. Its sudo work rides
+        # the engine step's session; its gh login gates everything after.
+        runner_user = @runner_user_factory.call(args.value(AS_FLAG))
+        if runner_user
+          @data_root_provisioner&.provision!
+          runner_user.converge!
+          runner_user.ensure_gh_authenticated!
+        end
+
         contracts = @contracts_factory.call(labels, args.value(AGENT_USER_FLAG))
         contracts.each do |contract|
           contract.converge!(
@@ -188,14 +227,17 @@ module Dev
           )
         end
 
-        setup = @runner_setup_factory.call(config, args.value(REPO_FLAG), org)
+        setup = @runner_setup_factory.call(config, args.value(REPO_FLAG), org, runner_user)
         scope = setup.resolve_scope
         # --dir is the operator picking the dir: no discovery, no detection.
-        enrollments = config.dir ? [] : @discovery.enrollments_for(scope)
+        # The runner user's home is where the rule puts enrollments; the
+        # operator's is where the ones from before it are.
+        discovery = runner_user ? @discovery.also_under(runner_user.home) : @discovery
+        enrollments = config.dir ? [] : discovery.enrollments_for(scope)
         runner = enrollments.empty? ? nil : @registry.find(scope: scope, name: config.name || T.must(enrollments.first).name)
 
-        if superseded?(enrollments, runner)
-          retire!(scope, enrollments, runner, yes: args.flag?(YES_FLAG))
+        if superseded?(enrollments, runner, runner_user)
+          retire!(scope, enrollments, runner, runner_user, yes: args.flag?(YES_FLAG))
           enrollments = []
           runner = nil
         end
@@ -211,7 +253,7 @@ module Dev
           # GitHub has lost this enrollment (or --name renames it): the
           # re-enrollment reuses the discovered dir, never a second one.
           config = RunnerSetupConfig.new(labels: labels, dir: enrollment.dir, name: config.name)
-          setup = @runner_setup_factory.call(config, args.value(REPO_FLAG), org)
+          setup = @runner_setup_factory.call(config, args.value(REPO_FLAG), org, runner_user)
         end
         setup.run
         contracts.each { |contract| contract.after_enroll!(runner_dir: setup.resolve_dir) }
@@ -222,18 +264,40 @@ module Dev
       # Whether the enrollment on disk is not what is serving GitHub: more
       # than one local enrollment for the scope (one name, one registration
       # — the rest are `--replace` leftovers), or the runner GitHub holds
-      # is offline (nothing runs it). One enrollment that GitHub has lost
-      # is not this case: the re-enrollment path reuses its dir.
+      # is offline (nothing runs it), or — under the host rule — an
+      # enrollment runs as someone other than the runner user. One
+      # enrollment that GitHub has lost is not this case: the re-enrollment
+      # path reuses its dir.
       #
       # @param enrollments [Array<Dev::RunnerDiscovery::Enrollment>]
       # @param runner [Dev::RunnerRegistry::Runner, nil]
+      # @param runner_user [Dev::RunnerUser, nil] the host rule's user
       # @return [Boolean]
       sig do
-        params(enrollments: T::Array[Dev::RunnerDiscovery::Enrollment], runner: T.nilable(Dev::RunnerRegistry::Runner))
-          .returns(T::Boolean)
+        params(
+          enrollments: T::Array[Dev::RunnerDiscovery::Enrollment],
+          runner: T.nilable(Dev::RunnerRegistry::Runner),
+          runner_user: T.nilable(Dev::RunnerUser),
+        ).returns(T::Boolean)
       end
-      def superseded?(enrollments, runner)
-        enrollments.length > 1 || (!runner.nil? && !runner.online?)
+      def superseded?(enrollments, runner, runner_user)
+        enrollments.length > 1 || (!runner.nil? && !runner.online?) || !drifted(enrollments, runner_user).empty?
+      end
+
+      # The enrollments owned by someone other than the runner user; none
+      # without a runner user.
+      #
+      # @param enrollments [Array<Dev::RunnerDiscovery::Enrollment>]
+      # @param runner_user [Dev::RunnerUser, nil]
+      # @return [Array<Dev::RunnerDiscovery::Enrollment>]
+      sig do
+        params(enrollments: T::Array[Dev::RunnerDiscovery::Enrollment], runner_user: T.nilable(Dev::RunnerUser))
+          .returns(T::Array[Dev::RunnerDiscovery::Enrollment])
+      end
+      def drifted(enrollments, runner_user)
+        return [] unless runner_user
+
+        enrollments.reject { |enrollment| enrollment.owner == runner_user.name }
       end
 
       # List the superseded enrollments, ask, and unregister them all —
@@ -242,6 +306,7 @@ module Dev
       # @param scope [String]
       # @param enrollments [Array<Dev::RunnerDiscovery::Enrollment>]
       # @param runner [Dev::RunnerRegistry::Runner, nil]
+      # @param runner_user [Dev::RunnerUser, nil] the host rule's user
       # @param yes [Boolean] `--yes`: answer the question without asking
       # @raise [SupersededEnrollmentsError] when the operator declines
       sig do
@@ -249,14 +314,18 @@ module Dev
           scope: String,
           enrollments: T::Array[Dev::RunnerDiscovery::Enrollment],
           runner: T.nilable(Dev::RunnerRegistry::Runner),
+          runner_user: T.nilable(Dev::RunnerUser),
           yes: T::Boolean,
         ).void
       end
-      def retire!(scope, enrollments, runner, yes:)
+      def retire!(scope, enrollments, runner, runner_user, yes:)
         signs = []
         signs << "#{enrollments.length} local enrollments" if enrollments.length > 1
         signs << "GitHub lists '#{T.must(enrollments.first).name}' offline" if runner && !runner.online?
-        @out.puts ">>> #{scope} has #{signs.join(" and ")} — the enrollment on disk is not what is serving GitHub:"
+        drifted(enrollments, runner_user).each do |enrollment|
+          signs << "an enrollment that runs as #{enrollment.owner}, not #{T.must(runner_user).name}"
+        end
+        @out.puts ">>> #{scope} has #{signs.join(" and ")} — the enrollment on disk is not what should be serving GitHub:"
         enrollments.each do |enrollment|
           @out.puts "    #{enrollment.display_dir} (#{enrollment.service_installed ? "service installed" : "no service"})"
         end

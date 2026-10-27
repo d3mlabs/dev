@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "etc"
 require "stringio"
 
 require "dev/runner_discovery"
@@ -27,7 +28,11 @@ module Dev
   # else, so resolution works offline (shell completion rides on it).
   #
   # Same CLI boundary as RunnerSetup (an injectable Executor over gh /
-  # svc.sh / config.sh) and the same svc.sh OS split.
+  # svc.sh / config.sh) and the same svc.sh OS split. An enrollment that
+  # belongs to another user (the Linux runner user, dev#310) is
+  # deregistered as that user — `config.sh remove` and the file removal
+  # through `sudo -u` — while the unit stays root's and the token the
+  # operator's, as in RunnerSetup.
   class RunnerTeardown
     extend T::Sig
 
@@ -55,6 +60,8 @@ module Dev
     # @param host_platform [String] actions-runner platform slug; drives the
     #   svc.sh sudo split (systemd vs LaunchAgent)
     # @param home [String] what a leading `~` in a dir reference expands to
+    # @param current_user [String] the invoking user; an enrollment owned
+    #   by anyone else is deregistered as its owner
     sig do
       params(
         discovery: Dev::RunnerDiscovery,
@@ -62,15 +69,18 @@ module Dev
         out: T.any(IO, StringIO),
         host_platform: String,
         home: String,
+        current_user: String,
       ).void
     end
     def initialize(discovery: Dev::RunnerDiscovery.new, executor: RunnerSetup::Executor.new, out: $stdout,
-                   host_platform: RunnerSetup.detect_host_platform, home: Dir.home)
+                   host_platform: RunnerSetup.detect_host_platform, home: Dir.home,
+                   current_user: T.must(Etc.getpwuid(Process.uid)).name)
       @discovery = discovery
       @exec = executor
       @out = out
       @host_platform = host_platform
       @home = home
+      @current_user = current_user
     end
 
     # The enrollment a command-line reference names. A reference starting
@@ -154,7 +164,8 @@ module Dev
     sig { params(enrollment: Dev::RunnerDiscovery::Enrollment).returns(String) }
     def deregister(enrollment)
       @out.puts ">>> Removing the registration at #{enrollment.scope} ..."
-      RunnerSetup.remove_registration(enrollment.dir, enrollment.scope, executor: @exec, out: @out)
+      as_user = enrollment.owner == @current_user ? nil : enrollment.owner
+      RunnerSetup.remove_registration(enrollment.dir, enrollment.scope, executor: @exec, out: @out, as_user: as_user)
     rescue RunnerSetup::Error => e
       raise TeardownFailedError, e.message
     end

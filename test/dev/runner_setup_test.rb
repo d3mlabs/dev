@@ -197,6 +197,90 @@ class Dev::RunnerSetupTest < Minitest::Test
     FileUtils.remove_entry(dir)
   end
 
+  # --- enrolling as the runner user (dev#310) --------------------------
+
+  test "as another user, the dir defaults under that user's home" do
+    Given
+    config = Dev::RunnerSetupConfig.new(labels: "snappy")
+    setup = Dev::RunnerSetup.new(config: config, as_user: "runner", home: "/home/runner")
+
+    Expect
+    setup.resolve_dir == "/home/runner/actions-runner-snappy"
+  end
+
+  test "as another user, every step that touches the enrollment runs as that user through sudo, and the unit is installed for it" do
+    Given "a fresh dir under the runner user's home (nothing there yet) and an admin gh on the operator's side"
+    home = Dir.mktmpdir
+    dir = File.join(home, "actions-runner-snappy")
+    config = Dev::RunnerSetupConfig.new(labels: "snappy", dir: dir, name: "box")
+    exec = RecordingExecutor.new(&authed_responder)
+    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, out: silent,
+      host_platform: "linux-x64", as_user: "runner", home: home)
+
+    When
+    setup.run
+
+    Then "the operator's gh mints; mkdir, curl, tar, rm and config.sh run as runner; svc.sh installs the unit for runner, as root"
+    exec.calls.map { |call| call[:argv] }.include?(%w[gh auth status])
+    exec.systems.map { |call| call[:argv] } == [
+      ["sudo", "-u", "runner", "-H", "mkdir", "-p", dir],
+      ["sudo", "-u", "runner", "-H", "curl", "-fsSL", "-o", "actions-runner-linux-x64-#{Dev::RunnerSetup::DEFAULT_VERSION}.tar.gz",
+       "https://github.com/actions/runner/releases/download/v#{Dev::RunnerSetup::DEFAULT_VERSION}/actions-runner-linux-x64-#{Dev::RunnerSetup::DEFAULT_VERSION}.tar.gz",],
+      ["sudo", "-u", "runner", "-H", "tar", "xzf", "actions-runner-linux-x64-#{Dev::RunnerSetup::DEFAULT_VERSION}.tar.gz"],
+      ["sudo", "-u", "runner", "-H", "rm", "-f", "actions-runner-linux-x64-#{Dev::RunnerSetup::DEFAULT_VERSION}.tar.gz"],
+      ["sudo", "-u", "runner", "-H", "./config.sh",
+       "--url", "https://github.com/owner/repo", "--token", "TOKEN123",
+       "--labels", "snappy", "--name", "box", "--unattended", "--replace",],
+      ["sudo", "./svc.sh", "install", "runner"],
+      ["sudo", "./svc.sh", "start"],
+    ]
+    exec.systems.select { |call| call[:argv].include?("curl") || call[:argv].include?("./config.sh") || call[:argv].include?("./svc.sh") }
+      .all? { |call| call[:chdir] == dir }
+    !Dir.exist?(dir)
+
+    Cleanup
+    FileUtils.remove_entry(home)
+  end
+
+  test "as another user, the setup line says so" do
+    Given
+    dir = Dir.mktmpdir
+    config = Dev::RunnerSetupConfig.new(labels: "snappy", dir: dir, name: "box")
+    out = StringIO.new
+    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: RecordingExecutor.new(&authed_responder),
+      out: out, host_platform: "linux-x64", as_user: "runner", home: File.dirname(dir))
+
+    When
+    setup.run
+
+    Then
+    out.string.include?(">>> Setting up runner 'box' for owner/repo as runner (labels: snappy)")
+
+    Cleanup
+    FileUtils.remove_entry(dir)
+  end
+
+  test "remove_registration as another user clears the enrollment files as that user, through sudo, not with the operator's hands" do
+    Given "an enrolled dir"
+    dir = Dir.mktmpdir
+    %w[.runner .credentials .credentials_rsaparams .service].each { |f| File.write(File.join(dir, f), "x") }
+    exec = RecordingExecutor.new(&authed_responder)
+
+    When
+    outcome = Dev::RunnerSetup.remove_registration(dir, "owner/repo", executor: exec, out: silent, as_user: "runner")
+
+    Then
+    outcome == "registration removed"
+    exec.systems.map { |call| call[:argv] } == [
+      ["sudo", "-u", "runner", "-H", "rm", "-f", ".runner", ".credentials", ".credentials_rsaparams", ".service"],
+    ]
+    exec.calls.any? { |call| call[:argv] == ["sudo", "-u", "runner", "-H", "./config.sh", "remove", "--token", "RMTOKEN"] && call[:chdir] == dir }
+    File.exist?(File.join(dir, ".runner"))
+
+    Cleanup
+    FileUtils.remove_entry(dir)
+  end
+
   test "run with org scope registers against the org URL with an org-minted token" do
     Given "a runner dir that already has an executable config.sh"
     dir = Dir.mktmpdir

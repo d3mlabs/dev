@@ -3,6 +3,7 @@
 
 require "test_helper"
 require "dev/runner_discovery"
+require "etc"
 require "tmpdir"
 require "fileutils"
 require "json"
@@ -52,6 +53,33 @@ class Dev::RunnerDiscoveryTest < Minitest::Test
 
     Then
     installed == [true, false]
+  end
+
+  test "a discovery that also looks under another user's home sees that user's enrollments, dir-ordered, displayed absolute (dev#310)" do
+    Given "the operator's home and the runner user's, each with an enrollment"
+    home = Dir.mktmpdir
+    runner_home = Dir.mktmpdir
+    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    write_runner(runner_home, "actions-runner-cellbound-3d", scope: "d3mlabs/cellbound-3d", name: "JPSFF")
+
+    When "discovering over both"
+    enrollments = Dev::RunnerDiscovery.new(home: home).also_under(runner_home).enrollments
+
+    Then "both, the runner user's by absolute dir; the original discovery is unchanged"
+    enrollments.map { |e| [e.scope, e.display_dir] }.sort == [
+      ["JPDuchesne/snappy", "~/actions-runner-snappy"],
+      ["d3mlabs/cellbound-3d", File.join(runner_home, "actions-runner-cellbound-3d")],
+    ].sort
+    Dev::RunnerDiscovery.new(home: home).enrollments.map(&:scope) == ["JPDuchesne/snappy"]
+  end
+
+  test "an enrollment knows its owner — the user whose dir it is, which is the user its service runs as" do
+    Given
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+
+    Expect
+    Dev::RunnerDiscovery.new(home: home).enrollments.fetch(0).owner == Etc.getpwuid(Process.uid).name
   end
 
   test "display_dir is the dir relative to home with a ~, or absolute when outside home" do
