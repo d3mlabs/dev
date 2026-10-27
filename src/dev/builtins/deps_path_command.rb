@@ -40,6 +40,17 @@ module Dev
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
 
+      # A lockfile query, not a dependency consumer: it reads where the
+      # locked artifact lives and nothing else. The install stamp is
+      # per-checkout, so a fresh checkout over an already-populated store
+      # (an agent's persistent workspace, a second worktree) is "never
+      # installed" while every artifact is present — and in CI the guard
+      # would refuse the lookup with a provisioning nag instead of answering.
+      # Scripts call this path from hooks that must not flap on stamp state;
+      # a genuinely missing artifact still fails honestly in the accessor.
+      sig { override.returns(T::Boolean) }
+      def staleness_exempt? = true
+
       sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
         @accessor_factory.call(context.project!.root).print_path(args.positionals)

@@ -11,12 +11,12 @@ transform!(RSpock::AST::Transformation)
 class Dev::Builtins::DepsPathCommandTest < Minitest::Test
   include SorbetHelper
 
-  test "traits: guarded like any read command, never stamps, lifecycle section" do
+  test "traits: exempt from staleness (a lockfile query, not a consumer), never stamps, lifecycle section" do
     Given "the builtin"
     command = Dev::Builtins::DepsPathCommand.new
 
     Expect "the declarative traits"
-    command.staleness_exempt? == false
+    command.staleness_exempt? == true
     command.stamps? == false
     command.category == Dev::Command::Category::Lifecycle
   end
