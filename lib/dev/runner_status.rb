@@ -7,6 +7,8 @@ require "stringio"
 
 require "dev/agent_bootstrap"
 require "dev/data_root"
+require "dev/deps/dependency"
+require "dev/host_reach"
 require "dev/label_contracts"
 require "dev/runner_discovery"
 require "dev/runner_registry"
@@ -50,6 +52,8 @@ module Dev
     # @param brewfile_path [String, nil] the org Brewfile (nil when none ships)
     # @param container_required [Boolean] whether the served repo declares build.container
     # @param host_identity [Dev::RunnerUser, nil] the Linux host rule's user; nil elsewhere
+    # @param pins [Array<Dev::Deps::Dependency>] the enclosing checkout's lock, when run in one
+    # @param reach_factory [Proc] builds the reach check for an identity; injected for tests
     sig do
       params(
         discovery: Dev::RunnerDiscovery,
@@ -63,6 +67,8 @@ module Dev
         brewfile_path: T.nilable(String),
         container_required: T::Boolean,
         host_identity: T.nilable(Dev::RunnerUser),
+        pins: T::Array[Deps::Dependency],
+        reach_factory: T.proc.params(identity: Dev::RunnerUser).returns(T.nilable(HostReach)),
       ).void
     end
     def initialize(discovery: Dev::RunnerDiscovery.new, registry: Dev::RunnerRegistry.new,
@@ -73,8 +79,12 @@ module Dev
                    sudoers_path: AgentBootstrap::SUDOERS_PATH,
                    brewfile_path: self.class.default_brewfile_path,
                    container_required: false,
-                   host_identity: Dev::RunnerUser.for_host)
+                   host_identity: Dev::RunnerUser.for_host,
+                   pins: [],
+                   reach_factory: ->(identity) { HostReach.new(identity: identity) })
       @host_identity = host_identity
+      @pins = pins
+      @reach_factory = reach_factory
       @discovery = T.let(host_identity ? discovery.also_under(host_identity.home) : discovery, Dev::RunnerDiscovery)
       @registry = registry
       @out = out
@@ -106,7 +116,7 @@ module Dev
     sig { void }
     def report
       agent_dirs = report_enrollments
-      report_host_identity
+      report_host_reach if report_host_identity
       report_agent_host(agent_dirs) unless agent_dirs.empty?
       report_host_tooling
     end
@@ -187,20 +197,22 @@ module Dev
     end
 
     # The host identity: the runner user, its gh login, its token's expiry.
-    sig { void }
+    #
+    # @return [Boolean] whether the identity has a gh login to probe with
+    sig { returns(T::Boolean) }
     def report_host_identity
       identity = @host_identity
-      return unless identity
+      return false unless identity
 
       @out.puts "Host identity (#{identity.name}):"
       unless @executor.quiet?("id", "-u", identity.name)
         line(false, "user #{identity.name} exists (run `dev runner register`)")
-        return
+        return false
       end
       line(true, "user #{identity.name} exists")
       unless @executor.quiet?(*identity.sudo_argv("gh", "auth", "status"))
         line(false, "no gh login — `#{identity.login_command}`")
-        return
+        return false
       end
 
       login = @executor.capture(*identity.sudo_argv("gh", "api", "user", "--jq", ".login")).strip
@@ -212,6 +224,29 @@ module Dev
       else
         line(false, "gh login: #{login} (token expires #{expires.iso8601} — within #{EXPIRY_WARNING_DAYS} days; " \
                     "renew it, then `#{identity.login_command}`)")
+      end
+      true
+    end
+
+    # What the identity can read of the checkout's lock (HostReach): one
+    # line per target, the grant on each miss. Nothing without a lock.
+    sig { void }
+    def report_host_reach
+      identity = @host_identity
+      return unless identity && !@pins.empty?
+
+      reach = @reach_factory.call(identity)
+      return unless reach
+
+      @out.puts "Host reach (#{identity.name}, this checkout's lock):"
+      misses = reach.check(@pins).to_h { |verdict| [verdict.target.to_s, verdict.grant] }
+      HostReach.targets(@pins).each do |target|
+        grant = misses[target.to_s]
+        if grant
+          line(false, "cannot read #{target} — #{grant}")
+        else
+          line(true, "can read #{target}")
+        end
       end
     end
 

@@ -4,6 +4,8 @@
 require "test_helper"
 require "dev/runner_discovery"
 require "dev/runner_registry"
+require "dev/deps/dependency"
+require "dev/host_reach"
 require "dev/runner_status"
 require "dev/runner_user"
 require "etc"
@@ -44,6 +46,8 @@ end unless defined?(CannedRegistry)
 
 transform!(RSpock::AST::Transformation)
 class Dev::RunnerStatusTest < Minitest::Test
+  include SorbetHelper
+
   ALL_GREEN_PROBES = {
     ["id", "-u", "ai-agent"] => true,
     ["dseditgroup", "-o", "checkmember", "-m", "human", "ai"] => true,
@@ -174,6 +178,46 @@ class Dev::RunnerStatusTest < Minitest::Test
     "a token about to expire"   | true   | true      | 10         | "[!!] gh login: d3mlabs-buildhost (token expires #{(Date.today + 10).iso8601} — within 30 days; renew it, then `sudo -iu runner gh auth login --with-token`)"
     "no gh login"               | true   | false     | nil        | "[!!] no gh login — `sudo -iu runner gh auth login --with-token`"
     "no such user"              | false  | false     | nil        | "[!!] user runner exists (run `dev runner register`)"
+  end
+
+  test "with a checkout's lock, the host reach section says what the runner user can and cannot read — the grant on each miss" do
+    Given "two targets, one unreachable"
+    out = StringIO.new
+    pins = [
+      Dev::Deps::Dependency.new(name: "ue", integration: :gh, group: "build", version: "1", hash: nil, metadata: { "repo" => "d3mlabs/unreal-engine" }),
+      Dev::Deps::Dependency.new(name: "x-linux", integration: :image, group: "app", version: "1", hash: nil,
+        metadata: { "from" => "ghcr.io/d3mlabs/unreal-engine-build-base", "registry" => "ghcr.io/d3mlabs" }),
+    ]
+    reach = typed_mock(Dev::HostReach)
+    target = Dev::HostReach.targets(pins).fetch(0)
+    reach.stubs(:check).with(pins).returns([Dev::HostReach::Verdict.new(target: target, grant: "gh api -X PUT repos/d3mlabs/unreal-engine/collaborators/d3mlabs-buildhost -f permission=pull")])
+    executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "runner"] => true, ["sudo", "-u", "runner", "-H", "gh", "auth", "status"] => true },
+      capture_results: { ["sudo", "-u", "runner", "-H", "gh", "api", "user", "--jq", ".login"] => "d3mlabs-buildhost\n" })
+    status = build_status(out: out, executor: executor, host_identity: host_identity("runner"), pins: pins, reach: reach)
+
+    When
+    status.report
+
+    Then
+    out.string.include?("Host reach (runner, this checkout's lock):")
+    out.string.include?("[!!] cannot read d3mlabs/unreal-engine — gh api -X PUT repos/d3mlabs/unreal-engine/collaborators/d3mlabs-buildhost -f permission=pull")
+    out.string.include?("[ok] can read package ghcr.io/d3mlabs/unreal-engine-build-base")
+  end
+
+  test "no reach section without a lock to read (projectless) or without a gh login to probe with" do
+    Given
+    out = StringIO.new
+    pins = [Dev::Deps::Dependency.new(name: "ue", integration: :gh, group: "build", version: "1", hash: nil, metadata: { "repo" => "d3mlabs/unreal-engine" })]
+    reach = typed_mock(Dev::HostReach)
+    reach.expects(:check).never
+    executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "runner"] => true })
+    status = build_status(out: out, executor: executor, host_identity: host_identity("runner"), pins: pins, reach: reach)
+
+    When
+    status.report
+
+    Then
+    !out.string.include?("Host reach")
   end
 
   test "without a host identity (a Mac) no identity section and no runs-as line" do
@@ -336,8 +380,10 @@ class Dev::RunnerStatusTest < Minitest::Test
   def build_status(out:, home: Dir.mktmpdir, registry: CannedRegistry.new,
                    executor: CannedStatusExecutor.new, shared_root: Dir.mktmpdir,
                    sudoers_path: File.join(Dir.mktmpdir, "absent"), brewfile_path: nil,
-                   container_required: false, host_identity: nil)
+                   container_required: false, host_identity: nil, pins: [], reach: nil)
     Dev::RunnerStatus.new(
+      pins: pins,
+      reach_factory: ->(_identity) { reach },
       discovery: Dev::RunnerDiscovery.new(home: home),
       registry: registry,
       out: out,

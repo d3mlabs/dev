@@ -26,8 +26,8 @@ class Dev::Builtins::RunnerStatusCommandTest < Minitest::Test
     status = typed_mock(Dev::RunnerStatus)
     status.expects(:report).once
     command = Dev::Builtins::RunnerStatusCommand.new(
-      runner_status_factory: ->(container_required) {
-        seen << container_required
+      runner_status_factory: ->(container_required, project_root) {
+        seen << [container_required, project_root]
         status
       },
     )
@@ -36,15 +36,15 @@ class Dev::Builtins::RunnerStatusCommandTest < Minitest::Test
     When "running status inside a container repo"
     command.call(args: no_args, context: build_context(build_container: container))
 
-    Then "the container fact reaches the inspector"
-    seen == [true]
+    Then "the container fact and the checkout reach the inspector"
+    seen == [[true, Pathname.new("/tmp/runner-status-test")]]
   end
 
   test "status works projectless (the machine view needs no checkout)" do
     Given "a status factory"
     status = typed_mock(Dev::RunnerStatus)
     status.expects(:report).once
-    command = Dev::Builtins::RunnerStatusCommand.new(runner_status_factory: ->(_container) { status })
+    command = Dev::Builtins::RunnerStatusCommand.new(runner_status_factory: ->(_container, _root) { status })
 
     When "running status with no project"
     command.call(args: no_args, context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui)))
@@ -57,7 +57,7 @@ class Dev::Builtins::RunnerStatusCommandTest < Minitest::Test
     Given "a command with its default wiring, the construction boundary intercepted"
     status = typed_mock(Dev::RunnerStatus)
     status.expects(:report).once
-    Dev::RunnerStatus.expects(:new).with(container_required: false).returns(status)
+    Dev::RunnerStatus.expects(:new).with(container_required: false, pins: []).returns(status)
     command = Dev::Builtins::RunnerStatusCommand.new
 
     When "running status"
