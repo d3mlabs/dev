@@ -15,7 +15,7 @@ class Dev::ContainerUserAlignerTest < Minitest::Test
   test "align! does nothing when the container's user can already write the data root" do
     Given "a container whose user owns the mount (same uid as the host, or a mapped mount)"
     engine = FakeContainerEngine.new(capture_result: "1000 1000 builder builder 1000 1000 yes\n")
-    aligner = Dev::ContainerUserAligner.new(engine: engine)
+    aligner = Dev::ContainerUserAligner.new(engine: engine, host_os: "darwin")
 
     When "aligning"
     result = aligner.align!("dev-x")
@@ -29,7 +29,7 @@ class Dev::ContainerUserAlignerTest < Minitest::Test
   test "align! leaves a writable mount alone even when the uids differ (a mapped mount)" do
     Given "a Mac-style mount: another owner reported, but writable"
     engine = FakeContainerEngine.new(capture_result: "1000 1000 builder builder 501 20 yes\n")
-    aligner = Dev::ContainerUserAligner.new(engine: engine)
+    aligner = Dev::ContainerUserAligner.new(engine: engine, host_os: "darwin")
 
     When "aligning"
     result = aligner.align!("dev-x")
@@ -42,7 +42,7 @@ class Dev::ContainerUserAlignerTest < Minitest::Test
   test "align! gives the image user the mount owner's uid and gid when it cannot write the mount" do
     Given "a hosted-runner mount: owned by 1001:1001, container user builder 1000:1000, unwritable"
     engine = FakeContainerEngine.new(capture_result: "1000 1000 builder builder 1001 1001 no\n")
-    aligner = Dev::ContainerUserAligner.new(engine: engine)
+    aligner = Dev::ContainerUserAligner.new(engine: engine, host_os: "darwin")
 
     When "aligning"
     result = aligner.align!("dev-x")
@@ -55,7 +55,7 @@ class Dev::ContainerUserAlignerTest < Minitest::Test
   test "align! hands a root-owned mount to the container's user instead of remapping the user to root" do
     Given "the engine created the host directory itself, so the mount is root-owned"
     engine = FakeContainerEngine.new(capture_result: "1000 1000 builder builder 0 0 no\n")
-    aligner = Dev::ContainerUserAligner.new(engine: engine)
+    aligner = Dev::ContainerUserAligner.new(engine: engine, host_os: "darwin")
 
     When "aligning"
     result = aligner.align!("dev-x")
@@ -65,10 +65,43 @@ class Dev::ContainerUserAlignerTest < Minitest::Test
     engine.runs == [["exec", "--user", "root", "dev-x", "chown", "1000:1000", "/var/lib/dev"]]
   end
 
+  test "on a Linux bind mount the container's user is the host caller, in the root's group: #{what}" do
+    Given "a shared data root (<user>:dev 2775, dev#310) bind-mounted on a Linux host whose caller is uid #{host_uid}"
+    engine = FakeContainerEngine.new(capture_result: "#{uid} #{gid} builder builder 1000 1002 #{writable}\n")
+    aligner = Dev::ContainerUserAligner.new(engine: engine, host_os: "linux", host_uid: host_uid)
+
+    When "aligning"
+    result = aligner.align!("dev-x")
+
+    Then "the image user takes the caller's uid and the root's gid, whatever the mount's owner — or nothing, when it has them"
+    result == expected
+    engine.runs == (expected == :aligned ? [] : [["exec", "--user", "root", "dev-x", "sh", "-c", SCRIPT.read, "sh", "builder", "builder", uid.to_s, gid.to_s, host_uid.to_s, "1002"]])
+
+    Where
+    what                                                         | host_uid | uid  | gid  | writable | expected
+    "the operator owns the root; the image user is its uid"      | 1000     | 1000 | 1000 | "yes"    | :realigned
+    "the runner user: writable by the image uid, not the caller" | 1002     | 1000 | 1000 | "yes"    | :realigned
+    "a hosted runner at 1001 against an image user at 1000"      | 1001     | 1000 | 1000 | "no"     | :realigned
+    "already the caller in the root's group"                     | 1002     | 1002 | 1002 | "yes"    | :aligned
+  end
+
+  test "on a Linux bind mount a root-owned data root is still handed to the container's user, not the caller remapped to root" do
+    Given "the engine created the host directory itself"
+    engine = FakeContainerEngine.new(capture_result: "1000 1000 builder builder 0 0 no\n")
+    aligner = Dev::ContainerUserAligner.new(engine: engine, host_os: "linux", host_uid: 1002)
+
+    When "aligning"
+    result = aligner.align!("dev-x")
+
+    Then
+    result == :adopted
+    engine.runs == [["exec", "--user", "root", "dev-x", "chown", "1000:1000", "/var/lib/dev"]]
+  end
+
   test "align! raises ProbeFailedError when the container cannot be probed: #{description}" do
     Given "a probe that #{description}"
     engine = FakeContainerEngine.new(capture_result: output)
-    aligner = Dev::ContainerUserAligner.new(engine: engine)
+    aligner = Dev::ContainerUserAligner.new(engine: engine, host_os: "darwin")
 
     When "aligning"
     aligner.align!("dev-x")
@@ -86,7 +119,7 @@ class Dev::ContainerUserAlignerTest < Minitest::Test
   test "align! raises RealignFailedError, naming container and uid, when the realign script fails" do
     Given "an unwritable mount and a root exec that fails"
     engine = FakeContainerEngine.new(capture_result: "1000 1000 builder builder 1001 1001 no\n") { |_args| false }
-    aligner = Dev::ContainerUserAligner.new(engine: engine)
+    aligner = Dev::ContainerUserAligner.new(engine: engine, host_os: "darwin")
 
     When "aligning"
     aligner.align!("dev-x")
