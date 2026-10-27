@@ -82,8 +82,8 @@ class Dev::RunnerUserTest < Minitest::Test
     File.read(@executor.runs.fetch(4).fetch(4)) == "eval \"$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)\"\n"
   end
 
-  test "brew is found on the operator's PATH and resolved through its symlink; none on the PATH is nil" do
-    Given "a PATH with a bin dir whose brew is a symlink into a prefix"
+  test "brew is the one the operator's PATH names, never its symlink target: Linuxbrew's bin/brew points into Homebrew/bin, and brew's prefix is where the link lives" do
+    Given "a PATH with a bin dir whose brew is a symlink into the repository under the prefix (Linuxbrew's layout)"
     prefix = Dir.mktmpdir
     FileUtils.mkdir_p(File.join(prefix, "Homebrew", "bin"))
     File.write(File.join(prefix, "Homebrew", "bin", "brew"), "#!/bin/sh\n")
@@ -93,7 +93,8 @@ class Dev::RunnerUserTest < Minitest::Test
     empty = Dir.mktmpdir
 
     Expect
-    Dev::RunnerUser.brew_path(env_path: "#{empty}:#{prefix}/bin") == File.realpath(File.join(prefix, "Homebrew", "bin", "brew"))
+    Dev::RunnerUser.brew_path(env_path: "#{empty}:#{prefix}/bin") == File.join(prefix, "bin", "brew")
+    Dev::RunnerUser.host_path(brew: Dev::RunnerUser.brew_path(env_path: "#{prefix}/bin")) == "#{prefix}/bin:#{prefix}/sbin:#{Dev::RunnerUser::SYSTEM_PATH}"
     Dev::RunnerUser.brew_path(env_path: empty).nil?
     Dev::RunnerUser.brew_path(env_path: "").nil?
   end

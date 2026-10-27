@@ -95,15 +95,17 @@ module Dev
         nil
       end
 
-      # Homebrew's binary as the operator's PATH resolves it (symlinks
-      # followed), or nil without one.
+      # Homebrew's binary as the operator's PATH names it, or nil without
+      # one. Never its symlink target: Linuxbrew's `<prefix>/bin/brew` is a
+      # link into `<prefix>/Homebrew/bin/brew`, and brew takes its prefix
+      # from the path it is invoked by — through the target, `shellenv`
+      # answers `<prefix>/Homebrew`, whose bin holds brew alone.
       #
       # @param env_path [String]
       # @return [String, nil]
       sig { params(env_path: String).returns(T.nilable(String)) }
       def brew_path(env_path: ENV.fetch("PATH", ""))
-        found = env_path.split(File::PATH_SEPARATOR).map { |dir| File.join(dir, "brew") }.find { |candidate| File.executable?(candidate) }
-        found && File.realpath(found)
+        env_path.split(File::PATH_SEPARATOR).map { |dir| File.join(dir, "brew") }.find { |candidate| File.executable?(candidate) }
       end
 
       # The PATH the runner user's commands run on: brew's bin and sbin
