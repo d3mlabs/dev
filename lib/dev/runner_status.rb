@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "date"
 require "etc"
 require "stringio"
 
@@ -9,6 +10,7 @@ require "dev/data_root"
 require "dev/label_contracts"
 require "dev/runner_discovery"
 require "dev/runner_registry"
+require "dev/runner_user"
 require "dev/settings"
 
 module Dev
@@ -20,8 +22,22 @@ module Dev
   # re-derived from the host or GitHub every time (plans#26: inspected,
   # never recorded). No dev.yml involved: status is the machine's view,
   # not any repo's.
+  #
+  # Under the Linux host rule (dev#310, RunnerUser) the enrollments live
+  # under the runner user's home and run as it: status looks there too,
+  # says who each enrollment runs as (one owned by anyone else is drift),
+  # and reports the host identity — the user, its gh login, and when that
+  # login's token expires (a classic PAT's `github-authentication-token-
+  # expiration` header; a renewal nobody is warned of is a red run a
+  # year from now).
   class RunnerStatus
     extend T::Sig
+
+    # Days of token life left under which the line turns red.
+    EXPIRY_WARNING_DAYS = 30
+
+    # The response header a classic PAT with an expiry carries.
+    EXPIRATION_HEADER = T.let(/^github-authentication-token-expiration:\s*(\d{4}-\d{2}-\d{2})/i, Regexp)
 
     # @param discovery [Dev::RunnerDiscovery] this host's enrollments
     # @param registry [#find] the GitHub-side label reader (never mutates here)
@@ -33,6 +49,7 @@ module Dev
     # @param sudoers_path [String] expected sudoers drop-in location
     # @param brewfile_path [String, nil] the org Brewfile (nil when none ships)
     # @param container_required [Boolean] whether the served repo declares build.container
+    # @param host_identity [Dev::RunnerUser, nil] the Linux host rule's user; nil elsewhere
     sig do
       params(
         discovery: Dev::RunnerDiscovery,
@@ -45,6 +62,7 @@ module Dev
         sudoers_path: String,
         brewfile_path: T.nilable(String),
         container_required: T::Boolean,
+        host_identity: T.nilable(Dev::RunnerUser),
       ).void
     end
     def initialize(discovery: Dev::RunnerDiscovery.new, registry: Dev::RunnerRegistry.new,
@@ -54,8 +72,10 @@ module Dev
                    shared_root: DataRoot::SHARED_ROOT,
                    sudoers_path: AgentBootstrap::SUDOERS_PATH,
                    brewfile_path: self.class.default_brewfile_path,
-                   container_required: false)
-      @discovery = discovery
+                   container_required: false,
+                   host_identity: Dev::RunnerUser.for_host)
+      @host_identity = host_identity
+      @discovery = T.let(host_identity ? discovery.also_under(host_identity.home) : discovery, Dev::RunnerDiscovery)
       @registry = registry
       @out = out
       @executor = executor
@@ -86,6 +106,7 @@ module Dev
     sig { void }
     def report
       agent_dirs = report_enrollments
+      report_host_identity
       report_agent_host(agent_dirs) unless agent_dirs.empty?
       report_host_tooling
     end
@@ -116,6 +137,7 @@ module Dev
       enrollments.filter_map do |enrollment|
         @out.puts "Runner '#{enrollment.name}' (#{enrollment.display_dir}):"
         line(true, "registered: #{enrollment.scope}")
+        report_owner(enrollment)
         labels = report_labels(enrollment)
         enrollment.dir if labels && LabelContracts.agent_host?(labels.join(","))
       end
@@ -146,6 +168,63 @@ module Dev
     rescue RunnerRegistry::QueryError => e
       line(false, "labels unknown (#{e.message})")
       nil
+    end
+
+    # Who the enrollment runs as — its dir's owner — against the host
+    # rule. Nothing to say without a rule (a Mac).
+    #
+    # @param enrollment [Dev::RunnerDiscovery::Enrollment]
+    sig { params(enrollment: Dev::RunnerDiscovery::Enrollment).void }
+    def report_owner(enrollment)
+      identity = @host_identity
+      return unless identity
+
+      if enrollment.owner == identity.name
+        line(true, "runs as #{identity.name}")
+      else
+        line(false, "runs as #{enrollment.owner}, not #{identity.name} — drift (re-run `dev runner register`)")
+      end
+    end
+
+    # The host identity: the runner user, its gh login, its token's expiry.
+    sig { void }
+    def report_host_identity
+      identity = @host_identity
+      return unless identity
+
+      @out.puts "Host identity (#{identity.name}):"
+      unless @executor.quiet?("id", "-u", identity.name)
+        line(false, "user #{identity.name} exists (run `dev runner register`)")
+        return
+      end
+      line(true, "user #{identity.name} exists")
+      unless @executor.quiet?(*identity.sudo_argv("gh", "auth", "status"))
+        line(false, "no gh login — `#{identity.login_command}`")
+        return
+      end
+
+      login = @executor.capture(*identity.sudo_argv("gh", "api", "user", "--jq", ".login")).strip
+      expires = token_expiry(identity)
+      if expires.nil?
+        line(true, "gh login: #{login} (token does not expire)")
+      elsif expires - Date.today > EXPIRY_WARNING_DAYS
+        line(true, "gh login: #{login} (token expires #{expires.iso8601})")
+      else
+        line(false, "gh login: #{login} (token expires #{expires.iso8601} — within #{EXPIRY_WARNING_DAYS} days; " \
+                    "renew it, then `#{identity.login_command}`)")
+      end
+    end
+
+    # When the runner user's token expires, from the response header GitHub
+    # sets for expiring tokens; nil for one that does not.
+    #
+    # @param identity [Dev::RunnerUser]
+    # @return [Date, nil]
+    sig { params(identity: Dev::RunnerUser).returns(T.nilable(Date)) }
+    def token_expiry(identity)
+      headers = @executor.capture(*identity.sudo_argv("gh", "api", "user", "-i"))
+      match = EXPIRATION_HEADER.match(headers)
+      match && Date.parse(T.must(match[1]))
     end
 
     # Every fact the agent contract obliges, re-derived from the host.

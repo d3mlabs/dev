@@ -169,8 +169,41 @@ module Dev
         @out = out
       end
 
+      # The summary line, then what the operator needs at the prompt: who
+      # does what in a registration, the Linux runner-user rule, the one
+      # login command, the examples.
       sig { override.returns(String) }
-      def desc = "Enroll this host as a self-hosted runner, converging label contracts (--org, --labels, --ai-flow)"
+      def desc
+        <<~DESC
+          Enroll this host as a self-hosted runner, converging label contracts (--org, --labels, --ai-flow)
+
+          Converges (engine, label contracts), then enrolls — or amends an existing
+          enrollment's labels in place. Re-running is the idempotent no-op and the
+          drift repair.
+
+          Three identities meet in a registration:
+            you (gh auth)         mints the registration token — repo admin, or admin:org with --org
+            the runner user       owns the enrollment: the dir, config.sh's record, and the gh login
+                                  every job on this host fetches private dependencies with
+            root (sudo)           installs the service unit
+          and a job writes to its own repo with its GITHUB_TOKEN, never with a host login.
+
+          On Linux the runner user is `#{Dev::RunnerUser::DEFAULT_NAME}` by rule (--as renames it): created if absent, in
+          docker and #{LinuxDataRootProvisioner::GROUP}, no password, no sudo. Register refuses to enroll until it has
+          a gh login — the machine user's token (read access to what the jobs fetch),
+          pasted once:
+            #{Dev::RunnerUser.new(name: Dev::RunnerUser::DEFAULT_NAME).login_command}
+          An enrollment running as anyone else is drift: register offers to retire it
+          and enroll fresh as the runner user. On macOS the enrollment is yours (a
+          per-user LaunchAgent); the agent user is the second identity there.
+
+          Examples:
+            dev runner register                      # repo scope; label = the repo name
+            dev runner register --labels ue-engine   # repo scope, custom roles
+            dev runner register --org --ai-flow      # org agent host, the full ai-flow set
+            dev runner register --org --labels ai-build
+        DESC
+      end
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
@@ -181,7 +214,7 @@ module Dev
           Cli::Flag.new(ORG_FLAG, desc: "enroll at the org scope (needs admin:org); labels are required"),
           Cli::Flag.new(LABELS_FLAG, takes_value: true, desc: "comma-separated labels; default: the repo's name"),
           Cli::Flag.new(AI_FLOW_FLAG, desc: "the full ai-flow label set (#{LabelContracts::AI_FLOW_LABELS.join(",")})"),
-          Cli::Flag.new(DIR_FLAG, takes_value: true, desc: "the runner directory; default: ~/actions-runner-<first label>"),
+          Cli::Flag.new(DIR_FLAG, takes_value: true, desc: "the runner directory; default: actions-runner-<first label> under the enrollment owner's home"),
           Cli::Flag.new(NAME_FLAG, takes_value: true, desc: "the runner's name on GitHub; default: the hostname"),
           Cli::Flag.new(REPO_FLAG, takes_value: true, desc: "enroll for owner/repo instead of the enclosing checkout"),
           Cli::Flag.new(AGENT_USER_FLAG, takes_value: true, desc: "the OS user agent labels run the agent as; default: #{AgentBootstrap::DEFAULT_AGENT_USER}"),
