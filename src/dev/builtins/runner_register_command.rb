@@ -149,14 +149,14 @@ module Dev
       sig { override.returns(T::Array[Cli::Flag]) }
       def flags
         [
-          Cli::Flag.new(ORG_FLAG),
-          Cli::Flag.new(LABELS_FLAG, takes_value: true),
-          Cli::Flag.new(AI_FLOW_FLAG),
-          Cli::Flag.new(DIR_FLAG, takes_value: true),
-          Cli::Flag.new(NAME_FLAG, takes_value: true),
-          Cli::Flag.new(REPO_FLAG, takes_value: true),
-          Cli::Flag.new(AGENT_USER_FLAG, takes_value: true),
-          Cli::Flag.new(YES_FLAG),
+          Cli::Flag.new(ORG_FLAG, desc: "enroll at the org scope (needs admin:org); labels are required"),
+          Cli::Flag.new(LABELS_FLAG, takes_value: true, desc: "comma-separated labels; default: the repo's name"),
+          Cli::Flag.new(AI_FLOW_FLAG, desc: "the full ai-flow label set (#{LabelContracts::AI_FLOW_LABELS.join(",")})"),
+          Cli::Flag.new(DIR_FLAG, takes_value: true, desc: "the runner directory; default: ~/actions-runner-<first label>"),
+          Cli::Flag.new(NAME_FLAG, takes_value: true, desc: "the runner's name on GitHub; default: the hostname"),
+          Cli::Flag.new(REPO_FLAG, takes_value: true, desc: "enroll for owner/repo instead of the enclosing checkout"),
+          Cli::Flag.new(AGENT_USER_FLAG, takes_value: true, desc: "the OS user agent labels run the agent as; default: #{AgentBootstrap::DEFAULT_AGENT_USER}"),
+          Cli::Flag.new(YES_FLAG, desc: "unregister superseded enrollments without asking"),
         ]
       end
 

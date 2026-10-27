@@ -13,6 +13,12 @@ class Dev::Cli::FlagTest < Minitest::Test
     Dev::Cli::Flag.new("--keep", takes_value: true).name == "--keep"
   end
 
+  test "a flag carries a one-line description for the usage listing, empty unless given" do
+    Expect
+    Dev::Cli::Flag.new("--org").desc == ""
+    Dev::Cli::Flag.new("--org", desc: "enroll at the org scope").desc == "enroll at the org scope"
+  end
+
   test "#{name.inspect} is #{expected ? "accepted" : "refused"} as a flag name" do
     When "declaring it"
     error = begin

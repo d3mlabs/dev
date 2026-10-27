@@ -55,6 +55,17 @@ transform!(RSpock::AST::Transformation)
 class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
   include SorbetHelper
 
+  # --- usage ------------------------------------------------------------
+
+  test "every flag register declares carries a description, so `dev runner register --help` explains each" do
+    Given "the command as the CLI builds it"
+    command = Dev::Builtins::RunnerRegisterCommand.new
+
+    Expect "no flag lists by name alone"
+    command.flags.all? { |flag| !flag.desc.empty? }
+    command.flags.map(&:name) == ["--org", "--labels", "--ai-flow", "--dir", "--name", "--repo", "--agent-user", "--yes"]
+  end
+
   # --- label + scope resolution ---------------------------------------
 
   test "bare register derives the repo label from the repo name — lowercased, dashes kept, never from dev.yml name:" do

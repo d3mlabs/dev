@@ -15,7 +15,9 @@ module Dev
     # root's listing: the project's own commands, then the Lifecycle and
     # Development flow builtins); as one plain list otherwise. Alphabetical
     # within a section, so the listing is deterministic regardless of
-    # registration order.
+    # registration order. A node's own flags list after its description, in
+    # the order the command declares them — the command carries its
+    # documentation where the operator meets it.
     class UsagePrinter
       extend T::Sig
 
@@ -50,6 +52,7 @@ module Dev
         out.puts "#{command.is_a?(CommandGroup) ? "Usage:" : "      "} #{invocation} <command> [args...]" unless children.empty?
         out.puts ""
         out.puts command.desc
+        print_flags(command.flags, out) unless command.flags.empty?
         print_children(children, out) unless children.empty?
         return if path.any? || @epilogue.nil?
 
@@ -87,6 +90,25 @@ module Dev
         HEADINGS.each do |category, heading|
           section = sections[category]
           print_section(heading, section, out) if section
+        end
+      end
+
+      # The node's flags, one per line, in declaration order: a value-taking
+      # flag shows a `<value>` placeholder; descriptions align in one column
+      # sized to the longest label, and an undescribed flag lists by its
+      # label alone.
+      #
+      # @param flags [Array<Dev::Cli::Flag>]
+      # @param out [IO, StringIO]
+      # @return [void]
+      sig { params(flags: T::Array[Flag], out: T.any(IO, StringIO)).void }
+      def print_flags(flags, out)
+        labels = flags.map { |flag| flag.takes_value? ? "#{flag.name} <value>" : flag.name }
+        width = T.must(labels.map(&:length).max)
+        out.puts ""
+        out.puts "Flags:"
+        flags.zip(labels).each do |flag, label|
+          out.puts "  #{T.must(label).ljust(width)}  #{flag.desc}".rstrip
         end
       end
 
