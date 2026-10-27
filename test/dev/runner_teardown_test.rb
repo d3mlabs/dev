@@ -142,6 +142,33 @@ class Dev::RunnerTeardownTest < Minitest::Test
     )
   end
 
+  test "teardown! of another user's enrollment deregisters and clears the files as that user, through sudo (dev#310)" do
+    Given "an enrollment whose dir belongs to the runner user — the teardown runs as the operator"
+    home = Dir.mktmpdir
+    dir = write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    File.write(File.join(dir, ".service"), "actions.runner.JPDuchesne-snappy.JPSFF.service\n")
+    exec = RecordingExecutor.new(&minting_responder)
+    teardown = Dev::RunnerTeardown.new(discovery: Dev::RunnerDiscovery.new(home: home), executor: exec,
+      out: StringIO.new, host_platform: "linux-x64", home: home, current_user: "jpduchesne")
+    enrollment = teardown.resolve("~/actions-runner-snappy")
+    enrollment = Dev::RunnerDiscovery::Enrollment.new(dir: enrollment.dir, scope: enrollment.scope, name: enrollment.name,
+      service_installed: true, display_dir: enrollment.display_dir, owner: "runner")
+
+    When
+    teardown.teardown!(enrollment)
+
+    Then "the unit is root's either way; config.sh and rm run as the owner; nothing is removed with the operator's hands"
+    exec.calls == [
+      { argv: ["sudo", "./svc.sh", "stop"], chdir: dir },
+      { argv: ["sudo", "./svc.sh", "uninstall"], chdir: dir },
+      { argv: ["gh", "api", "-X", "POST", "repos/JPDuchesne/snappy/actions/runners/remove-token", "--jq", ".token"],
+        chdir: nil },
+      { argv: ["sudo", "-u", "runner", "-H", "./config.sh", "remove", "--token", "RMTOKEN"], chdir: dir },
+      { argv: ["sudo", "-u", "runner", "-H", "rm", "-f", ".runner", ".credentials", ".credentials_rsaparams", ".service"], chdir: dir },
+    ]
+    File.exist?(File.join(dir, ".runner"))
+  end
+
   test "teardown! skips the service steps when no service is installed, and says so" do
     Given "an enrollment without a .service marker"
     home = Dir.mktmpdir

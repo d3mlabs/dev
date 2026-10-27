@@ -24,6 +24,15 @@ module Dev
   # It installs a systemd service and touches the host filesystem + network, so it
   # runs on the host (a built-in command), never inside a build container.
   #
+  # The enrollment may belong to another OS user (`as_user:`, the Linux
+  # runner user of dev#310): then every step that touches its files — the
+  # dir, the download, `config.sh` — runs as that user through `sudo -u`,
+  # the dir defaults under that user's home, and the unit is installed for
+  # it (`svc.sh install <user>`). What needs the operator stays the
+  # operator's: `gh` mints the tokens (admin), `sudo` installs the unit
+  # (root). Without `as_user:` the enrollment is the invoking user's own,
+  # as `config.sh`/`svc.sh` assume.
+  #
   # The CLI boundary (gh / curl / tar / config.sh / svc.sh) is isolated behind an
   # injectable Executor so the orchestration can be exercised in tests without
   # real side effects.
@@ -80,6 +89,10 @@ module Dev
     # @param host_platform [String] actions-runner release platform slug for this
     #   host (e.g. "linux-x64", "osx-arm64"); defaults to detection. Drives both
     #   the tarball choice and the service-install shape (systemd vs LaunchAgent).
+    # @param as_user [String, nil] the OS user the enrollment belongs to and the
+    #   service runs as, when not the invoking user (dev#310)
+    # @param home [String, nil] the home the default dir lives under: the
+    #   enrollment owner's (defaults to the invoking user's)
     sig do
       params(
         config: Dev::RunnerSetupConfig,
@@ -88,16 +101,20 @@ module Dev
         executor: T.untyped,
         out: T.any(IO, StringIO),
         host_platform: String,
+        as_user: T.nilable(String),
+        home: T.nilable(String),
       ).void
     end
     def initialize(config:, repo: nil, org: false, executor: Executor.new, out: $stdout,
-                   host_platform: self.class.detect_host_platform)
+                   host_platform: self.class.detect_host_platform, as_user: nil, home: nil)
       @config = config
       @repo_override = repo
       @org = org
       @exec = executor
       @out = out
       @host_platform = host_platform
+      @as_user = as_user
+      @home = T.let(home || Dir.home, String)
     end
 
     class << self
@@ -165,24 +182,57 @@ module Dev
       #
       # @param dir [String] the runner install dir
       # @param scope [String] the scope the registration is under
-      # @param executor [#capture] CLI boundary
+      # @param executor [#capture, #system] CLI boundary
       # @param out [IO, StringIO] config.sh's output is echoed here
+      # @param as_user [String, nil] the enrollment's owner when not the
+      #   invoking user: config.sh and the file removal run as it
       # @return [String] what happened, in words ("registration removed" /
       #   "registration already gone from the server")
       # @raise [Error] when the token can't be minted or config.sh fails
       #   for another reason; the files are left as they were
-      sig { params(dir: String, scope: String, executor: T.untyped, out: T.any(IO, StringIO)).returns(String) }
-      def remove_registration(dir, scope, executor: Executor.new, out: $stdout)
+      sig do
+        params(dir: String, scope: String, executor: T.untyped, out: T.any(IO, StringIO), as_user: T.nilable(String))
+          .returns(String)
+      end
+      def remove_registration(dir, scope, executor: Executor.new, out: $stdout, as_user: nil)
         token = mint_token(scope, "remove-token", executor: executor)
-        stdout, stderr, ok = executor.capture("./config.sh", "remove", "--token", token, chdir: dir)
+        stdout, stderr, ok = executor.capture(*as_user_argv(as_user, ["./config.sh", "remove", "--token", token]), chdir: dir)
         out.print(stdout) unless stdout.empty?
         output = "#{stdout}\n#{stderr}".strip
         unless ok || output.match?(GONE_PATTERN)
           raise Error, "config.sh remove failed in #{dir} (try ./config.sh remove manually there): #{output}"
         end
 
-        ENROLLMENT_FILES.each { |file| FileUtils.rm_f(File.join(dir, file)) }
+        remove_files(ENROLLMENT_FILES, dir: dir, executor: executor, as_user: as_user)
         ok ? "registration removed" : "registration already gone from the server"
+      end
+
+      # A command as the enrollment's owner when that is another user, the
+      # command itself otherwise.
+      #
+      # @param as_user [String, nil]
+      # @param cmd [Array<String>]
+      # @return [Array<String>]
+      sig { params(as_user: T.nilable(String), cmd: T::Array[String]).returns(T::Array[String]) }
+      def as_user_argv(as_user, cmd)
+        as_user ? ["sudo", "-u", as_user, "-H", *cmd] : cmd
+      end
+
+      # Remove files in a runner dir: with the operator's own hands for its
+      # own enrollment, as the owner (through sudo) for another user's.
+      #
+      # @param files [Array<String>] names relative to dir
+      # @param dir [String]
+      # @param executor [#system]
+      # @param as_user [String, nil]
+      # @return [void]
+      sig { params(files: T::Array[String], dir: String, executor: T.untyped, as_user: T.nilable(String)).void }
+      def remove_files(files, dir:, executor:, as_user:)
+        if as_user
+          executor.system(*as_user_argv(as_user, ["rm", "-f", *files]), chdir: dir)
+        else
+          files.each { |file| FileUtils.rm_f(File.join(dir, file)) }
+        end
       end
 
       # The argv that drives svc.sh for one action, relative to the runner
@@ -216,8 +266,8 @@ module Dev
       name = resolve_name
       version = resolve_version
 
-      @out.puts ">>> Setting up runner '#{name}' for #{scope}#{@org ? " (org-wide)" : ""} " \
-                "(labels: #{@config.labels})"
+      @out.puts ">>> Setting up runner '#{name}' for #{scope}#{@org ? " (org-wide)" : ""}" \
+                "#{@as_user ? " as #{@as_user}" : ""} (labels: #{@config.labels})"
       download_runner(dir, version)
       remove_existing_config(dir, scope)
       token = mint_registration_token(scope)
@@ -227,13 +277,14 @@ module Dev
                 "It should show Idle on the GitHub Runners page."
     end
 
-    # Absolute install dir. Defaults to ~/actions-runner-<first label> so multiple
-    # repos can register distinct runners on the same box without colliding.
+    # Absolute install dir. Defaults to <home>/actions-runner-<first label> —
+    # the enrollment owner's home — so multiple repos can register distinct
+    # runners on the same box without colliding.
     #
     # @return [String]
     sig { returns(String) }
     def resolve_dir
-      File.expand_path(@config.dir || "~/actions-runner-#{default_dir_suffix}")
+      File.expand_path(@config.dir || File.join(@home, "actions-runner-#{default_dir_suffix}"))
     end
 
     # @return [String]
@@ -316,7 +367,7 @@ module Dev
     # @raise [Error] on download/extract failure
     sig { params(dir: String, version: String).void }
     def download_runner(dir, version)
-      FileUtils.mkdir_p(dir)
+      make_dir(dir)
       if File.executable?(File.join(dir, "config.sh"))
         @out.puts ">>> actions-runner already present in #{dir}."
         return
@@ -325,10 +376,33 @@ module Dev
       tarball = "actions-runner-#{@host_platform}-#{version}.tar.gz"
       url = "https://github.com/actions/runner/releases/download/v#{version}/#{tarball}"
       @out.puts ">>> Downloading actions-runner #{version} ..."
-      raise Error, "failed to download #{url}" unless @exec.system("curl", "-fsSL", "-o", tarball, url, chdir: dir)
-      raise Error, "failed to extract #{tarball}" unless @exec.system("tar", "xzf", tarball, chdir: dir)
+      raise Error, "failed to download #{url}" unless @exec.system(*as_user_argv("curl", "-fsSL", "-o", tarball, url), chdir: dir)
+      raise Error, "failed to extract #{tarball}" unless @exec.system(*as_user_argv("tar", "xzf", tarball), chdir: dir)
 
-      FileUtils.rm_f(File.join(dir, tarball))
+      self.class.remove_files([tarball], dir: dir, executor: @exec, as_user: @as_user)
+    end
+
+    # The runner dir: made with the operator's own hands for its own
+    # enrollment, as the owner for another user's (whose home the operator
+    # cannot write).
+    #
+    # @param dir [String]
+    # @return [void]
+    # @raise [Error] when the dir can't be made as the owner
+    sig { params(dir: String).void }
+    def make_dir(dir)
+      if @as_user
+        raise Error, "could not create #{dir} as #{@as_user}" unless @exec.system(*as_user_argv("mkdir", "-p", dir))
+      else
+        FileUtils.mkdir_p(dir)
+      end
+    end
+
+    # @param cmd [Array<String>]
+    # @return [Array<String>]
+    sig { params(cmd: String).returns(T::Array[String]) }
+    def as_user_argv(*cmd)
+      self.class.as_user_argv(@as_user, cmd)
     end
 
     # Make re-runs idempotent. config.sh refuses to configure a dir that already
@@ -351,7 +425,7 @@ module Dev
       existing_scope = existing_registration_scope(dir) || scope
       @out.puts ">>> Existing runner config found (#{existing_scope}); removing it before reconfiguring ..."
       uninstall_existing_service(dir)
-      outcome = self.class.remove_registration(dir, existing_scope, executor: @exec, out: @out)
+      outcome = self.class.remove_registration(dir, existing_scope, executor: @exec, out: @out, as_user: @as_user)
       @out.puts ">>> Existing config: #{outcome}."
     end
 
@@ -410,22 +484,27 @@ module Dev
     sig { params(dir: String, url: String, token: String, name: String).void }
     def configure_runner(dir:, url:, token:, name:)
       @out.puts ">>> Configuring the runner (--replace) ..."
-      return if @exec.system(*config_argv(url: url, token: token, name: name), chdir: dir)
+      argv = self.class.as_user_argv(@as_user, config_argv(url: url, token: token, name: name))
+      return if @exec.system(*argv, chdir: dir)
 
       raise Error, "config.sh failed to register the runner"
     end
 
     # svc.sh installs and starts the service unit (see .service_argv for the
-    # OS split). `svc.sh start` already echoes the unit status, so there's
-    # no separate status call (a redundant one prints the same service
-    # twice).
+    # OS split); for another user's enrollment the unit runs as that user
+    # (`svc.sh install <user>` sets the unit's User=). `svc.sh start`
+    # already echoes the unit status, so there's no separate status call
+    # (a redundant one prints the same service twice).
     #
     # @param dir [String] install dir
     # @raise [Error] when the service can't be installed or started
     sig { params(dir: String).void }
     def install_service(dir)
-      @out.puts ">>> Installing + starting the runner service ..."
-      raise Error, "svc.sh install failed" unless @exec.system(*service_argv("install"), chdir: dir)
+      @out.puts ">>> Installing + starting the runner service#{@as_user ? " as #{@as_user}" : ""} ..."
+      install = service_argv("install")
+      as_user = @as_user
+      install << as_user if as_user
+      raise Error, "svc.sh install failed" unless @exec.system(*install, chdir: dir)
       raise Error, "svc.sh start failed" unless @exec.system(*service_argv("start"), chdir: dir)
     end
 
