@@ -220,6 +220,25 @@ class Dev::RunnerStatusTest < Minitest::Test
     !out.string.include?("Host reach")
   end
 
+  test "the default reach factory is HostReach over the identity" do
+    Given "a status with no reach factory injected, HostReach intercepted at construction"
+    out = StringIO.new
+    pins = [Dev::Deps::Dependency.new(name: "ue", integration: :gh, group: "build", version: "1", hash: nil, metadata: { "repo" => "d3mlabs/unreal-engine" })]
+    identity = host_identity("svc-runner")
+    reach = typed_mock(Dev::HostReach)
+    reach.expects(:check).once.with(pins).returns([])
+    Dev::HostReach.expects(:new).once.with(identity: identity).returns(reach)
+    executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "svc-runner"] => true, ["sudo", "-u", "svc-runner", "-H", "gh", "auth", "status"] => true },
+      capture_results: { ["sudo", "-u", "svc-runner", "-H", "gh", "api", "user", "--jq", ".login"] => "d3mlabs-buildhost\n" })
+    status = build_status(out: out, executor: executor, host_identity: identity, pins: pins, reach_factory: :default)
+
+    When
+    status.report
+
+    Then
+    out.string.include?("[ok] can read d3mlabs/unreal-engine")
+  end
+
   test "without a host identity (a Mac) no identity section and no runs-as line" do
     Given
     out = StringIO.new
@@ -380,10 +399,12 @@ class Dev::RunnerStatusTest < Minitest::Test
   def build_status(out:, home: Dir.mktmpdir, registry: CannedRegistry.new,
                    executor: CannedStatusExecutor.new, shared_root: Dir.mktmpdir,
                    sudoers_path: File.join(Dir.mktmpdir, "absent"), brewfile_path: nil,
-                   container_required: false, host_identity: nil, pins: [], reach: nil)
+                   container_required: false, host_identity: nil, pins: [], reach: nil, reach_factory: ->(_identity) { reach })
+    # :default leaves RunnerStatus's own reach factory in place.
+    reach_wiring = reach_factory == :default ? {} : { reach_factory: reach_factory }
     Dev::RunnerStatus.new(
       pins: pins,
-      reach_factory: ->(_identity) { reach },
+      **reach_wiring,
       discovery: Dev::RunnerDiscovery.new(home: home),
       registry: registry,
       out: out,

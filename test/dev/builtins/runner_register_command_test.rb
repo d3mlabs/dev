@@ -643,6 +643,34 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     true
   end
 
+  test "the default pins reader is the checkout's lock and the default reach factory is HostReach over the runner user" do
+    Given "a checkout with one gh pin in its lock, a runner user as the host rule, and HostReach intercepted at construction"
+    root = Dir.mktmpdir
+    File.write(File.join(root, "deps.lock"), "gh:\n  UnrealEngine:\n    group: build\n    version: 5.6.1-css-83\n    repo: satisfactorymodding/UnrealEngine\n")
+    empty_discovery = Dev::RunnerDiscovery.new(home: Dir.mktmpdir)
+    # Once for the default wiring, once when it widens to the runner user's home.
+    Dev::RunnerDiscovery.expects(:new).twice.returns(empty_discovery)
+    runner_user = runner_user_mock(name: "svc-runner", home: Dir.mktmpdir)
+    Dev::RunnerUser.expects(:for_host).once.with(name: nil).returns(runner_user)
+    reach = typed_mock(Dev::HostReach)
+    the_lock = ->(pins) { pins.map(&:name) == ["UnrealEngine"] && pins.fetch(0).metadata.fetch("repo") == "satisfactorymodding/UnrealEngine" }
+    reach.expects(:check!).once.with(&the_lock)
+    Dev::HostReach.expects(:new).once.with(identity: runner_user).returns(reach)
+    setup = typed_mock(Dev::RunnerSetup)
+    setup.expects(:run).once
+    setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
+    setup.stubs(:resolve_scope).returns("owner/repo")
+    Dev::RunnerSetup.expects(:new)
+      .with(config: Dev::RunnerSetupConfig.new(labels: "ue-engine"), repo: nil, org: false, as_user: "svc-runner", home: runner_user.home).returns(setup)
+    command = Dev::Builtins::RunnerRegisterCommand.new(data_root_provisioner: nil)
+
+    When "registering in that checkout with default wiring"
+    command.call(args: parsed_args(command, ["--labels", "ue-engine"]), context: build_context(name: "snappy", root: root))
+
+    Then "the lock was read from the checkout and checked as the runner user"
+    true
+  end
+
   test "the default repo resolver asks RunnerSetup.current_repo — the one gh seam" do
     Given "a bare register with default wiring, gh answered at RunnerSetup's seam"
     empty_discovery = Dev::RunnerDiscovery.new(home: Dir.mktmpdir)
@@ -749,12 +777,12 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     runner_user
   end
 
-  def build_context(name:, build_container: nil, engine: nil)
+  def build_context(name:, build_container: nil, engine: nil, root: "/tmp/runner-test")
     Dev::ExecutionContext.new(
       ui: typed_mock(Dev::Cli::Ui),
       project: Dev::ProjectContext.new(
         name: name,
-        root: Pathname.new("/tmp/runner-test"),
+        root: Pathname.new(root),
         engine: engine,
         build_container: build_container,
       ),
