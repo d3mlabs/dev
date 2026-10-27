@@ -93,6 +93,18 @@ class Dev::RunnerUserTest < Minitest::Test
     !runner_user(homes: {}).exists?
   end
 
+  test "by default the passwd lookup is the host's: this user's own home, and no home for a name passwd does not know" do
+    Given "this test's own user, and a name no host has"
+    own = Etc.getpwuid(Process.uid)
+    unknown = "no-such-user-#{Process.pid}"
+
+    Expect
+    Dev::RunnerUser.new(name: own.name).home == own.dir
+    Dev::RunnerUser.new(name: own.name).exists?
+    !Dev::RunnerUser.new(name: unknown).exists?
+    Dev::RunnerUser.passwd_home(unknown).nil?
+  end
+
   test "ensure_gh_authenticated! asks gh as the runner user, through sudo, and is silent when it is logged in" do
     Given
     gh = GhExecutor.new(logged_in: true)

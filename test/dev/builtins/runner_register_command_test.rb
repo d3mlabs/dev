@@ -571,19 +571,21 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     # construction boundary and asserts the default factories' wiring (the
     # bare ue-engine label makes the default contracts factory resolve to no
     # contracts). Discovery is redirected at an empty home so the run never
-    # depends on this machine's enrollments.
+    # depends on this machine's enrollments, and the host rule is answered
+    # at its platform seam so the run never converges a user on this one.
     empty_discovery = Dev::RunnerDiscovery.new(home: Dir.mktmpdir)
     Dev::RunnerDiscovery.expects(:new).returns(empty_discovery)
+    Dev::RunnerUser.expects(:for_host).once.with(name: "ci").returns(nil)
     setup = typed_mock(Dev::RunnerSetup)
     setup.expects(:run).once
     setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
     setup.stubs(:resolve_scope).returns("owner/repo")
     Dev::RunnerSetup.expects(:new)
       .with(config: Dev::RunnerSetupConfig.new(labels: "ue-engine"), repo: nil, org: false, as_user: nil, home: nil).returns(setup)
-    command = Dev::Builtins::RunnerRegisterCommand.new(runner_user_factory: ->(_name) { nil }, data_root_provisioner: nil)
+    command = Dev::Builtins::RunnerRegisterCommand.new(data_root_provisioner: nil)
 
-    When "running register"
-    command.call(args: parsed_args(command, ["--labels", "ue-engine"]), context: projectless_context)
+    When "running register with --as, the host rule's one input"
+    command.call(args: parsed_args(command, ["--labels", "ue-engine", "--as", "ci"]), context: projectless_context)
 
     Then "the expectations on the construction boundary hold"
     true
