@@ -93,6 +93,9 @@ module Dev
     #   service runs as, when not the invoking user (dev#310)
     # @param home [String, nil] the home the default dir lives under: the
     #   enrollment owner's (defaults to the invoking user's)
+    # @param path [String, nil] the PATH the owner's commands run on
+    #   (RunnerUser#path); config.sh records it and the runner hands it to
+    #   every job. nil leaves sudo's.
     sig do
       params(
         config: Dev::RunnerSetupConfig,
@@ -103,10 +106,11 @@ module Dev
         host_platform: String,
         as_user: T.nilable(String),
         home: T.nilable(String),
+        path: T.nilable(String),
       ).void
     end
     def initialize(config:, repo: nil, org: false, executor: Executor.new, out: $stdout,
-                   host_platform: self.class.detect_host_platform, as_user: nil, home: nil)
+                   host_platform: self.class.detect_host_platform, as_user: nil, home: nil, path: nil)
       @config = config
       @repo_override = repo
       @org = org
@@ -115,6 +119,7 @@ module Dev
       @host_platform = host_platform
       @as_user = as_user
       @home = T.let(home || Dir.home, String)
+      @path = path
     end
 
     class << self
@@ -213,9 +218,12 @@ module Dev
       # @param as_user [String, nil]
       # @param cmd [Array<String>]
       # @return [Array<String>]
-      sig { params(as_user: T.nilable(String), cmd: T::Array[String]).returns(T::Array[String]) }
-      def as_user_argv(as_user, cmd)
-        as_user ? ["sudo", "-u", as_user, "-H", *cmd] : cmd
+      sig { params(as_user: T.nilable(String), cmd: T::Array[String], path: T.nilable(String)).returns(T::Array[String]) }
+      def as_user_argv(as_user, cmd, path: nil)
+        return cmd unless as_user
+
+        env = path ? ["env", "PATH=#{path}"] : []
+        ["sudo", "-u", as_user, "-H"] + env + cmd
       end
 
       # Remove files in a runner dir: with the operator's own hands for its
@@ -402,7 +410,7 @@ module Dev
     # @return [Array<String>]
     sig { params(cmd: String).returns(T::Array[String]) }
     def as_user_argv(*cmd)
-      self.class.as_user_argv(@as_user, cmd)
+      self.class.as_user_argv(@as_user, cmd, path: @path)
     end
 
     # Make re-runs idempotent. config.sh refuses to configure a dir that already
@@ -484,7 +492,7 @@ module Dev
     sig { params(dir: String, url: String, token: String, name: String).void }
     def configure_runner(dir:, url:, token:, name:)
       @out.puts ">>> Configuring the runner (--replace) ..."
-      argv = self.class.as_user_argv(@as_user, config_argv(url: url, token: token, name: name))
+      argv = self.class.as_user_argv(@as_user, config_argv(url: url, token: token, name: name), path: @path)
       return if @exec.system(*argv, chdir: dir)
 
       raise Error, "config.sh failed to register the runner"

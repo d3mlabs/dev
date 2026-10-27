@@ -156,10 +156,10 @@ class Dev::RunnerStatusTest < Minitest::Test
     out = StringIO.new
     headers = expires_in.nil? ? "HTTP/2.0 200 OK\n\n{}" : expiring_in(expires_in)
     executor = CannedStatusExecutor.new(
-      probe_results: { ["id", "-u", "runner"] => exists, ["sudo", "-u", "runner", "-H", "gh", "auth", "status"] => logged_in },
+      probe_results: { ["id", "-u", "runner"] => exists, ["sudo", "-u", "runner", "-H", "env", "PATH=/opt/brew/bin:/usr/bin", "gh", "auth", "status"] => logged_in },
       capture_results: {
-        ["sudo", "-u", "runner", "-H", "gh", "api", "user", "--jq", ".login"] => "d3mlabs-buildhost\n",
-        ["sudo", "-u", "runner", "-H", "gh", "api", "user", "-i"] => headers,
+        ["sudo", "-u", "runner", "-H", "env", "PATH=/opt/brew/bin:/usr/bin", "gh", "api", "user", "--jq", ".login"] => "d3mlabs-buildhost\n",
+        ["sudo", "-u", "runner", "-H", "env", "PATH=/opt/brew/bin:/usr/bin", "gh", "api", "user", "-i"] => headers,
       },
     )
     status = build_status(out: out, executor: executor, host_identity: host_identity("runner"))
@@ -191,8 +191,8 @@ class Dev::RunnerStatusTest < Minitest::Test
     reach = typed_mock(Dev::HostReach)
     target = Dev::HostReach.targets(pins).fetch(0)
     reach.stubs(:check).with(pins).returns([Dev::HostReach::Verdict.new(target: target, grant: "gh api -X PUT repos/d3mlabs/unreal-engine/collaborators/d3mlabs-buildhost -f permission=pull")])
-    executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "runner"] => true, ["sudo", "-u", "runner", "-H", "gh", "auth", "status"] => true },
-      capture_results: { ["sudo", "-u", "runner", "-H", "gh", "api", "user", "--jq", ".login"] => "d3mlabs-buildhost\n" })
+    executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "runner"] => true, ["sudo", "-u", "runner", "-H", "env", "PATH=/opt/brew/bin:/usr/bin", "gh", "auth", "status"] => true },
+      capture_results: { ["sudo", "-u", "runner", "-H", "env", "PATH=/opt/brew/bin:/usr/bin", "gh", "api", "user", "--jq", ".login"] => "d3mlabs-buildhost\n" })
     status = build_status(out: out, executor: executor, host_identity: host_identity("runner"), pins: pins, reach: reach)
 
     When
@@ -228,8 +228,8 @@ class Dev::RunnerStatusTest < Minitest::Test
     reach = typed_mock(Dev::HostReach)
     reach.expects(:check).once.with(pins).returns([])
     Dev::HostReach.expects(:new).once.with(identity: identity).returns(reach)
-    executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "svc-runner"] => true, ["sudo", "-u", "svc-runner", "-H", "gh", "auth", "status"] => true },
-      capture_results: { ["sudo", "-u", "svc-runner", "-H", "gh", "api", "user", "--jq", ".login"] => "d3mlabs-buildhost\n" })
+    executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "svc-runner"] => true, ["sudo", "-u", "svc-runner", "-H", "env", "PATH=/opt/brew/bin:/usr/bin", "gh", "auth", "status"] => true },
+      capture_results: { ["sudo", "-u", "svc-runner", "-H", "env", "PATH=/opt/brew/bin:/usr/bin", "gh", "api", "user", "--jq", ".login"] => "d3mlabs-buildhost\n" })
     status = build_status(out: out, executor: executor, host_identity: identity, pins: pins, reach_factory: :default)
 
     When
@@ -393,7 +393,7 @@ class Dev::RunnerStatusTest < Minitest::Test
 
   # The host rule's user as status sees it: a name and a home.
   def host_identity(name, home: Dir.mktmpdir)
-    Dev::RunnerUser.new(name: name, home_of: ->(_user) { home })
+    Dev::RunnerUser.new(name: name, home_of: ->(_user) { home }, brew: nil, path: "/opt/brew/bin:/usr/bin")
   end
 
   def build_status(out:, home: Dir.mktmpdir, registry: CannedRegistry.new,
