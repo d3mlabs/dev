@@ -10,6 +10,7 @@ require "dev/deps/integration"
 require "dev/deps/lockfile"
 require "dev/deps/registry"
 require "dev/host_service"
+require "dev/shadowenv_trust"
 
 module Dev
   module Builtins
@@ -45,6 +46,8 @@ module Dev
         ).returns(Dev::Deps::Installer)
       end
 
+      # @param shadowenv_trust [Dev::ShadowenvTrust] trusts the project's
+      #   shadowenv for the running user before the integrations spawn under it
       # @param inside_container [Boolean] whether this dev runs inside a
       #   dev-managed container (ContainerContext): the host-side hygiene
       #   hooks stay off there
@@ -52,6 +55,7 @@ module Dev
         params(
           installer_factory: InstallerFactory,
           host_service: Dev::HostService,
+          shadowenv_trust: Dev::ShadowenvTrust,
           inside_container: T::Boolean,
         ).void
       end
@@ -60,11 +64,13 @@ module Dev
           Dev::Deps::Installer.new(lockfile:, integrations:)
         },
         host_service: Dev::HostService.new,
+        shadowenv_trust: Dev::ShadowenvTrust.new,
         inside_container: Dev::ContainerContext.inside?
       )
         super()
         @installer_factory = installer_factory
         @host_service = host_service
+        @shadowenv_trust = shadowenv_trust
         @inside_container = inside_container
       end
 
@@ -109,6 +115,12 @@ module Dev
         integration_types = symbol_flags(args, INTEGRATION_FLAG)
         lockfile = Dev::Deps::Lockfile.new(dir: project.root)
 
+        # The integrations spawn under the project's shadowenv (bundler, pip
+        # — ShadowenvExec), which refuses a directory this user has not
+        # trusted. Trust is the user's, not the files': a fresh container's
+        # builder over an already-written .shadowenv.d has none, and the
+        # writers only trust after a write (Dev::ShadowenvTrust).
+        @shadowenv_trust.ensure!(project_root: project.root)
         installer = @installer_factory.call(lockfile, integrations(project, pin_taps:))
         installer.install(env:, host:, groups:, except:, integration_types:)
         return if @inside_container

@@ -21,6 +21,31 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     !command.hidden?
   end
 
+  test "call trusts the project's shadowenv for this user before any integration runs — trust is the user's, not the files'" do
+    Given "a command whose trust collaborator and installer are both expecting, in order"
+    root = Pathname.new(Dir.mktmpdir("install-deps-trust-"))
+    lock(root, gem_dep)
+    order = sequence("trust before install")
+    trust = typed_mock(Dev::ShadowenvTrust)
+    trust.expects(:ensure!).with(project_root: root).once.in_sequence(order)
+    installer = typed_mock(Dev::Deps::Installer)
+    installer.expects(:install).once.in_sequence(order)
+    command = Dev::Builtins::InstallDepsCommand.new(
+      installer_factory: ->(_lockfile, _integrations) { installer },
+      host_service: quiet_host_service,
+      shadowenv_trust: trust,
+    )
+
+    When "running dev deps install"
+    command.call(args: no_args, context: build_context(root))
+
+    Then "the sequence held"
+    true
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
   test "call installs for the detected env/host, then runs both hygiene hooks scoped to the project" do
     Given "a command with every collaborator faked, over a project that locks gems"
     root = Pathname.new(Dir.mktmpdir("install-deps-"))
@@ -35,6 +60,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     command = Dev::Builtins::InstallDepsCommand.new(
       installer_factory: ->(_lockfile, _integrations) { installer },
       host_service: host_service,
+      shadowenv_trust: quiet_shadowenv_trust,
     )
 
     When "running dev deps install"
@@ -175,6 +201,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
         installer
       },
       host_service: host_service,
+      shadowenv_trust: quiet_shadowenv_trust,
       inside_container: true,
     )
 
@@ -206,6 +233,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
         installer
       },
       host_service: quiet_host_service,
+      shadowenv_trust: quiet_shadowenv_trust,
     )
 
     When "running dev deps install --group build --integration brew --pinned-taps"
@@ -232,6 +260,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
         installer
       },
       host_service: quiet_host_service,
+      shadowenv_trust: quiet_shadowenv_trust,
     )
 
     When "running dev deps install"
@@ -271,8 +300,17 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
     Dev::Builtins::InstallDepsCommand.new(
       installer_factory: ->(_lockfile, _integrations) { installer },
       host_service: quiet_host_service,
+      shadowenv_trust: quiet_shadowenv_trust,
       inside_container:,
     )
+  end
+
+  # A trust that answers without touching the host: the trust test owns the
+  # real behaviour, here it is a collaborator the command calls.
+  def quiet_shadowenv_trust
+    trust = typed_mock(Dev::ShadowenvTrust)
+    trust.stubs(:ensure!).returns(true)
+    trust
   end
 
   # Writes a real deps.lock under the project root —
