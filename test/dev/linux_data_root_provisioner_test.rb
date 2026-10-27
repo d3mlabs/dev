@@ -92,13 +92,38 @@ class Dev::LinuxDataRootProvisionerTest < Minitest::Test
       %w[sudo groupadd -f dev],
       %w[sudo usermod -aG dev jp],
       ["sudo", "chgrp", "-Rh", "dev", @root],
-      ["sudo", "find", @root, "-name", "secrets-*", "-prune", "-o",
-       "-type", "d", "-exec", "chmod", "g+rwxs", "{}", "+", "-o",
-       "-exec", "chmod", "g+rw", "{}", "+",],
+      ["sudo", *Dev::LinuxDataRootProvisioner.share_tree_argv(@root)],
     ]
     @executor.runs.none? { |cmd| cmd.include?("chown") }
     @out.string.include?(">>> Sharing the data root #{@root} with group dev (one sudo prompt) ...")
     @out.string.include?("jp is in group dev from the next login")
+  end
+
+  test "the tree walk opens dirs and files to the group, prunes secrets dirs, and steps over symlinks — a dangling one (a fetched tree's link into a mod) does not fail it" do
+    Given "a real tree: a dir with a file, a secrets dir, a dangling symlink and a live one"
+    FileUtils.mkdir_p(File.join(@root, "gh", "tree"))
+    File.write(File.join(@root, "gh", "tree", "file"), "x")
+    FileUtils.mkdir_p(File.join(@root, "secrets-1000"))
+    File.write(File.join(@root, "secrets-1000", "token"), "t")
+    File.symlink("/nonexistent/Mods/Snappy", File.join(@root, "gh", "tree", "Snappy"))
+    File.symlink(File.join(@root, "gh", "tree", "file"), File.join(@root, "gh", "tree", "alias"))
+    File.chmod(0o755, @root)
+    File.chmod(0o755, File.join(@root, "gh"))
+    File.chmod(0o755, File.join(@root, "gh", "tree"))
+    File.chmod(0o644, File.join(@root, "gh", "tree", "file"))
+    File.chmod(0o700, File.join(@root, "secrets-1000"))
+    File.chmod(0o600, File.join(@root, "secrets-1000", "token"))
+
+    When "the walk runs for real, as this user"
+    ok = system(*Dev::LinuxDataRootProvisioner.share_tree_argv(@root), err: File::NULL)
+
+    Then "it succeeds; dirs are g+rwxs, files g+rw, secrets untouched, the live link's target widened once by its own path"
+    ok
+    (File.stat(File.join(@root, "gh", "tree")).mode & 0o2070) == 0o2070
+    (File.stat(File.join(@root, "gh", "tree", "file")).mode & 0o070) == 0o060
+    (File.stat(File.join(@root, "secrets-1000")).mode & 0o777) == 0o700
+    (File.stat(File.join(@root, "secrets-1000", "token")).mode & 0o777) == 0o600
+    File.lstat(File.join(@root, "gh", "tree", "Snappy")).symlink?
   end
 
   test "a present root this user cannot write is another identity's: the group fix is named, never a chown" do
