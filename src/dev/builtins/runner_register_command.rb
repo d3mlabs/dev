@@ -3,7 +3,9 @@
 
 require "dev/command"
 require "dev/confirmer"
+require "dev/deps/lockfile"
 require "dev/engine_provisioner"
+require "dev/host_reach"
 require "dev/label_contracts"
 require "dev/linux_data_root_provisioner"
 require "dev/project_manifest"
@@ -59,7 +61,11 @@ module Dev
     # anyone but the runner user (the operator's own, from before the
     # rule) is drift and takes the same retire-and-enroll-fresh path as a
     # superseded one, torn down as its owner and enrolled as the runner
-    # user. macOS has no runner user and register runs as it always has.
+    # user. With a checkout, the runner user's reach over its lock — every
+    # `gh` pin's repo, every image's floor package — is checked before
+    # enrolling (HostReach); a grant it lacks is this command's message,
+    # not a red run an hour in. macOS has no runner user and register runs
+    # as it always has.
     #
     # Enrollment state is inspected, never recorded: the labels live on
     # GitHub, the scope in the runner dir's own .runner record — nothing in
@@ -107,6 +113,12 @@ module Dev
       # what `--as` named; injected for tests.
       RunnerUserFactory = T.type_alias { T.proc.params(name: T.nilable(String)).returns(T.nilable(Dev::RunnerUser)) }
 
+      # The checkout's lock, as the reach check reads it; injected for tests.
+      PinsReader = T.type_alias { T.proc.params(root: Pathname).returns(T::Array[Dev::Deps::Dependency]) }
+
+      # The reach check for an identity; injected for tests.
+      ReachFactory = T.type_alias { T.proc.params(identity: Dev::RunnerUser).returns(Dev::HostReach) }
+
       # Resolves the advertised labels' contracts; injected for tests.
       ContractsFactory = T.type_alias do
         T.proc.params(
@@ -131,6 +143,8 @@ module Dev
           engine_provisioner: Dev::EngineProvisioner,
           runner_user_factory: RunnerUserFactory,
           data_root_provisioner: T.nilable(Dev::LinuxDataRootProvisioner),
+          pins_reader: PinsReader,
+          reach_factory: ReachFactory,
           out: T.any(IO, StringIO),
         ).void
       end
@@ -153,6 +167,8 @@ module Dev
         runner_user_factory: ->(name) { Dev::RunnerUser.for_host(name: name) },
         # The shared data root the runner user joins; nil off Linux.
         data_root_provisioner: Dev::LinuxDataRootProvisioner.for_host,
+        pins_reader: ->(root) { Dev::Deps::Lockfile.new(dir: root).read },
+        reach_factory: ->(identity) { Dev::HostReach.new(identity: identity) },
         out: $stdout
       )
         super()
@@ -166,6 +182,8 @@ module Dev
         @engine_provisioner = engine_provisioner
         @runner_user_factory = runner_user_factory
         @data_root_provisioner = data_root_provisioner
+        @pins_reader = pins_reader
+        @reach_factory = reach_factory
         @out = out
       end
 
@@ -242,12 +260,16 @@ module Dev
         @engine_provisioner.provision!(resources: engine) if container
 
         # The host rule: who the enrollment belongs to. Its sudo work rides
-        # the engine step's session; its gh login gates everything after.
+        # the engine step's session; its gh login gates everything after;
+        # and with a checkout, what that login can read of its lock is
+        # checked now rather than discovered by a red run (HostReach).
         runner_user = @runner_user_factory.call(args.value(AS_FLAG))
         if runner_user
           @data_root_provisioner&.provision!
           runner_user.converge!
           runner_user.ensure_gh_authenticated!
+          root = context.project&.root
+          @reach_factory.call(runner_user).check!(@pins_reader.call(root)) if root
         end
 
         contracts = @contracts_factory.call(labels, args.value(AGENT_USER_FLAG))

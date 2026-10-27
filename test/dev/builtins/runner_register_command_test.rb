@@ -4,6 +4,8 @@
 require "test_helper"
 require "dev/builtins/runner_register_command"
 require "dev/confirmer"
+require "dev/deps/dependency"
+require "dev/host_reach"
 require "dev/label_contracts"
 require "dev/runner_discovery"
 require "dev/runner_registry"
@@ -473,6 +475,41 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.as_names == [nil]
   end
 
+  test "with a checkout, register checks the runner user's reach over the lock after the gh login and before any contract: unreachable refuses with the grants" do
+    Given "a runner user that cannot read one of the repo's gh pins"
+    runner_user = runner_user_mock(name: "runner", home: Dir.mktmpdir)
+    reach = typed_mock(Dev::HostReach)
+    pins = [Dev::Deps::Dependency.new(name: "ue", integration: :gh, group: "build", version: "1", hash: nil, metadata: { "repo" => "d3mlabs/unreal-engine" })]
+    reach.expects(:check!).once.with(pins).raises(Dev::HostReach::UnreachableError, "runner cannot read d3mlabs/unreal-engine")
+    harness = build_harness(contracts: 1, runner_user: runner_user, reach: reach, pins: pins)
+
+    When
+    harness.command.call(args: no_args, context: build_context(name: "cellbound3d"))
+
+    Then "the lock was read from the checkout; nothing converged or enrolled"
+    error = raises Dev::HostReach::UnreachableError
+    error.message.include?("d3mlabs/unreal-engine")
+    harness.reach_roots == [Pathname.new("/tmp/runner-test")]
+    harness.events == []
+    harness.wirings == []
+  end
+
+  test "reach is not checked without a checkout (--org) or without a runner user (a Mac)" do
+    Given
+    reach = typed_mock(Dev::HostReach)
+    reach.expects(:check!).never
+    org = build_harness(runner_user: runner_user_mock(name: "runner", home: Dir.mktmpdir), reach: reach)
+    mac = build_harness(runner_user: nil, reach: reach)
+
+    When
+    org.command.call(args: parsed_args(org.command, ["--org", "--ai-flow"]), context: projectless_context)
+    mac.command.call(args: no_args, context: build_context(name: "cellbound3d"))
+
+    Then
+    org.reach_roots == []
+    mac.reach_roots == []
+  end
+
   test "--as names the runner user the host rule converges" do
     Given
     runner_user = runner_user_mock(name: "ci", home: Dir.mktmpdir)
@@ -606,6 +643,34 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     true
   end
 
+  test "the default pins reader is the checkout's lock and the default reach factory is HostReach over the runner user" do
+    Given "a checkout with one gh pin in its lock, a runner user as the host rule, and HostReach intercepted at construction"
+    root = Dir.mktmpdir
+    File.write(File.join(root, "deps.lock"), "gh:\n  UnrealEngine:\n    group: build\n    version: 5.6.1-css-83\n    repo: satisfactorymodding/UnrealEngine\n")
+    empty_discovery = Dev::RunnerDiscovery.new(home: Dir.mktmpdir)
+    # Once for the default wiring, once when it widens to the runner user's home.
+    Dev::RunnerDiscovery.expects(:new).twice.returns(empty_discovery)
+    runner_user = runner_user_mock(name: "svc-runner", home: Dir.mktmpdir)
+    Dev::RunnerUser.expects(:for_host).once.with(name: nil).returns(runner_user)
+    reach = typed_mock(Dev::HostReach)
+    the_lock = ->(pins) { pins.map(&:name) == ["UnrealEngine"] && pins.fetch(0).metadata.fetch("repo") == "satisfactorymodding/UnrealEngine" }
+    reach.expects(:check!).once.with(&the_lock)
+    Dev::HostReach.expects(:new).once.with(identity: runner_user).returns(reach)
+    setup = typed_mock(Dev::RunnerSetup)
+    setup.expects(:run).once
+    setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
+    setup.stubs(:resolve_scope).returns("owner/repo")
+    Dev::RunnerSetup.expects(:new)
+      .with(config: Dev::RunnerSetupConfig.new(labels: "ue-engine"), repo: nil, org: false, as_user: "svc-runner", home: runner_user.home).returns(setup)
+    command = Dev::Builtins::RunnerRegisterCommand.new(data_root_provisioner: nil)
+
+    When "registering in that checkout with default wiring"
+    command.call(args: parsed_args(command, ["--labels", "ue-engine"]), context: build_context(name: "snappy", root: root))
+
+    Then "the lock was read from the checkout and checked as the runner user"
+    true
+  end
+
   test "the default repo resolver asks RunnerSetup.current_repo — the one gh seam" do
     Given "a bare register with default wiring, gh answered at RunnerSetup's seam"
     empty_discovery = Dev::RunnerDiscovery.new(home: Dir.mktmpdir)
@@ -628,7 +693,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
   private
 
-  Harness = Struct.new(:command, :wirings, :events, :out, :engine, :torn_down, :confirmer, :as_names, keyword_init: true)
+  Harness = Struct.new(:command, :wirings, :events, :out, :engine, :torn_down, :confirmer, :as_names, :reach_roots, keyword_init: true)
 
   # A command over recording seams: the setup factory records each
   # (config, repo, org) wiring and answers with a no-op setup; contracts
@@ -638,11 +703,12 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
   # test scripts (tests that say nothing tolerate no question).
   def build_harness(contracts: 0, home: Dir.mktmpdir, registry: FakeRegistry.new,
                     scope: "d3mlabs/cellbound-3d", repo: "d3mlabs/cellbound-3d", contracts_factory: nil,
-                    repo_resolver: nil, runner_user: nil, data_root_provisioner: nil)
+                    repo_resolver: nil, runner_user: nil, data_root_provisioner: nil, reach: nil, pins: [])
     wirings = []
     events = []
     torn_down = []
     as_names = []
+    reach_roots = []
     out = StringIO.new
     setup = typed_mock(Dev::RunnerSetup)
     setup.stubs(:run).with { events << [:run] || true }
@@ -668,6 +734,12 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
         runner_user
       },
       data_root_provisioner: data_root_provisioner,
+      # The lock as the reach check reads it, and the check itself.
+      pins_reader: ->(root) {
+        reach_roots << root
+        pins
+      },
+      reach_factory: ->(_identity) { reach || Dev::HostReach.new(identity: runner_user, executor: nil) },
       # What `gh repo view` would answer for the enclosing checkout, unless overridden.
       repo_resolver: repo_resolver || ->(override) { override || repo },
       contracts_factory: contracts_factory || ->(_labels, _agent_user) {
@@ -681,7 +753,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
       out: out,
     )
     Harness.new(command: command, wirings: wirings, events: events, out: out, engine: engine,
-      torn_down: torn_down, confirmer: confirmer, as_names: as_names)
+      torn_down: torn_down, confirmer: confirmer, as_names: as_names, reach_roots: reach_roots)
   end
 
   # A .runner record the way config.sh writes it (UTF-8 BOM + JSON).
@@ -705,12 +777,12 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     runner_user
   end
 
-  def build_context(name:, build_container: nil, engine: nil)
+  def build_context(name:, build_container: nil, engine: nil, root: "/tmp/runner-test")
     Dev::ExecutionContext.new(
       ui: typed_mock(Dev::Cli::Ui),
       project: Dev::ProjectContext.new(
         name: name,
-        root: Pathname.new("/tmp/runner-test"),
+        root: Pathname.new(root),
         engine: engine,
         build_container: build_container,
       ),
