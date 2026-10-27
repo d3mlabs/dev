@@ -78,17 +78,23 @@ class HostRuleIntegrationTest < Minitest::Test
   test "a Linux host on the image's platform but provisioned from nothing runs the command inside — with its own data root bind-mounted" do
     Given "no marker"
     image = lock
-    execs = record_execs
+    execs = []
+    envs = []
+    Kernel.stubs(:exec).with do |env, *argv|
+      execs << argv
+      envs << env
+    end
 
     When
     exec!(runner, ["build"])
 
-    Then "docker run of the lock's image; the host's data root at its own path, the checkout: the two bind mounts"
+    Then "docker run of the lock's image; the host's data root at its own path, the checkout: the two bind mounts; DEV_DATA_ROOT named on argv, valued in the spawn env"
     execs.size == 1
     execs[0].first(3) == ["docker", "run", "--rm"]
     execs[0].last(6) == ["-w", "/project", image.ref, "sh", "-c", "./bin/build.sh"]
     bind_mounts(execs[0]) == ["#{@root}:/project", "#{@data_root}:#{@data_root}"]
-    execs[0].each_cons(2).include?(["-e", "DEV_DATA_ROOT=#{@data_root}"])
+    execs[0].each_cons(2).include?(["-e", "DEV_DATA_ROOT"])
+    envs[0]["DEV_DATA_ROOT"] == @data_root
   end
 
   test "a Linux host provisioned from an older recipe has drifted: the command runs inside the lock's image" do

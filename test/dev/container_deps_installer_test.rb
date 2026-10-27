@@ -17,8 +17,9 @@ class ContainerDepsInstallerTest < Minitest::Test
     When "installing"
     installer.install!("dev-myapp-abc", env: { "WWISE_TOKEN" => "t0k" })
 
-    Then "one docker exec, env first, in /project, running the builtin"
-    engine.runs == [["exec", "-e", "WWISE_TOKEN=t0k", "-w", "/project", "dev-myapp-abc", "dev", "deps", "install"]]
+    Then "one docker exec, the env named first (bare -e, the value in the spawn env — dev#317), in /project, running the builtin"
+    engine.runs == [["exec", "-e", "WWISE_TOKEN", "-w", "/project", "dev-myapp-abc", "dev", "deps", "install"]]
+    engine.run_envs == [{ "WWISE_TOKEN" => "t0k" }]
   end
 
   test "install! hands the host's gh token to the container as GH_TOKEN: the container fetches its own private releases (ADR-0008)" do
@@ -29,8 +30,9 @@ class ContainerDepsInstallerTest < Minitest::Test
     When "installing"
     installer.install!("dev-myapp-abc", env: {})
 
-    Then "the token rides the exec as -e, and only there"
-    engine.runs == [["exec", "-e", "GH_TOKEN=gho_secret", "-w", "/project", "dev-myapp-abc", "dev", "deps", "install"]]
+    Then "the exec names GH_TOKEN; the value rides the spawn env and appears on no argv"
+    engine.runs == [["exec", "-e", "GH_TOKEN", "-w", "/project", "dev-myapp-abc", "dev", "deps", "install"]]
+    engine.run_envs == [{ "GH_TOKEN" => "gho_secret" }]
   end
 
   test "install! leaves a GH_TOKEN the run_env already names alone" do
@@ -42,7 +44,8 @@ class ContainerDepsInstallerTest < Minitest::Test
     installer.install!("dev-myapp-abc", env: { "GH_TOKEN" => "gho_project" })
 
     Then "the project's wins"
-    engine.runs == [["exec", "-e", "GH_TOKEN=gho_project", "-w", "/project", "dev-myapp-abc", "dev", "deps", "install"]]
+    engine.runs == [["exec", "-e", "GH_TOKEN", "-w", "/project", "dev-myapp-abc", "dev", "deps", "install"]]
+    engine.run_envs == [{ "GH_TOKEN" => "gho_project" }]
   end
 
   test "an empty token from the host (gh auth token printed nothing) injects nothing" do
@@ -53,8 +56,9 @@ class ContainerDepsInstallerTest < Minitest::Test
     When "installing"
     installer.install!("dev-myapp-abc", env: {})
 
-    Then "no -e at all"
+    Then "no -e at all, and nothing in the spawn env"
     engine.runs == [["exec", "-w", "/project", "dev-myapp-abc", "dev", "deps", "install"]]
+    engine.run_envs == [{}]
   end
 
   test "HOST_GH_TOKEN asks gh on the PATH and answers #{expected.inspect} when gh #{behaviour}" do

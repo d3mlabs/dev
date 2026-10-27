@@ -40,6 +40,11 @@ $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 
 require "dev"
 require "dev/global_dispatch"
+require "dev/shared_umask"
+
+# On Linux the data root is one tree shared by two OS users through a
+# group (dev#310); dev and everything it spawns write it group-writable.
+Dev::SharedUmask.apply!
 
 # Global builtins (see Dev::GlobalCatalog) dispatch before any dev.yml
 # lookup — they are host- or workspace-global, not project commands. Help

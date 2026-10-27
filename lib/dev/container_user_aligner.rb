@@ -4,6 +4,7 @@
 require "pathname"
 require "dev/build_container"
 require "dev/container_engine"
+require "dev/platform"
 
 module Dev
   # Makes a build container's user the owner of its data root. The
@@ -11,18 +12,34 @@ module Dev
   # whatever user the image runs as; where that user cannot write the mount,
   # nothing inside can install.
   #
-  # Behavioural gate, not a platform guess: the container is asked whether
-  # its user can write the data root. Under ADR-0008 the data root is a
-  # named volume docker initialised from the image, owned by the image's
-  # user, so the answer is yes and nothing happens. It is no for a volume an
+  # Two shapes of data root, two rules (one probe either way: the
+  # container's ids, the mount's owner, and whether the user can write it).
+  #
+  # A **named volume** (a Mac, ADR-0008): the gate is behavioural. Docker
+  # initialised the volume from the image, owned by the image's user, so
+  # the user can write it and nothing happens. It cannot for a volume an
   # older image first mounted without declaring the directory (root-owned,
-  # empty): that mount is handed to the container's user. The remaining
-  # branch — a mount owned by some other non-root uid — gives the image user
-  # that owner's ids through bin/container-align-user.sh and re-owns what
-  # the old ids held on the container's root filesystem (all but the
-  # Cellar's keg contents, which Homebrew never writes into), so the next
-  # `docker exec` runs as that uid. Persistent containers keep the change in
-  # their writable layer, so the steady state is one probe.
+  # empty): that mount is handed to the container's user. A mount owned by
+  # some other non-root uid gives the image user that owner's ids.
+  #
+  # A **Linux bind mount** (dev#308): the host's own data root, shared
+  # between the operator and the runner user through the `dev` group
+  # (`<user>:dev 2775`, dev#310). Here the owner's ids are the wrong
+  # target — the runner user's container would write the root as the
+  # operator, and could not write its own checkout at /project — and
+  # writability is the wrong gate: the mount is writable by the image's uid
+  # whenever that happens to be the owner's. The container's user is the
+  # **host caller** (its uid) in the **root's group** (the mount's gid), so
+  # what it writes under /project is the caller's and what it writes under
+  # the root is the group's, like the host's own writes. A root-owned mount
+  # is adopted as on a volume.
+  #
+  # Realigning is bin/container-align-user.sh as root: the image user's
+  # passwd and group entries take the new ids, and what the old ids held on
+  # the container's root filesystem is re-owned (all but the Cellar's keg
+  # contents, which Homebrew never writes into), so the next `docker exec`
+  # runs as the new ids. Persistent containers keep the change in their
+  # writable layer, so the steady state is one probe.
   class ContainerUserAligner
     extend T::Sig
 
@@ -75,31 +92,37 @@ module Dev
     end
 
     # @param engine [Dev::ContainerEngine] the engine the container runs on
-    sig { params(engine: ContainerEngine).void }
-    def initialize(engine:)
+    # @param host_os [String] "darwin" / "linux" — a bind mount on Linux, a volume elsewhere
+    # @param host_uid [Integer] the host caller's uid, the Linux target
+    sig { params(engine: ContainerEngine, host_os: String, host_uid: Integer).void }
+    def initialize(engine:, host_os: Platform.os, host_uid: Process.uid)
       @engine = engine
+      @host_os = host_os
+      @host_uid = host_uid
     end
 
-    # Align the container's user with the mounted data root's owner.
+    # Align the container's user with its data root: the host caller in the
+    # root's group on a Linux bind mount, the mount's owner on a volume.
     #
     # @param container [String] a running container's name
-    # @return [Symbol] :aligned when the user could already write the mount,
-    #   :realigned after the user took the owner's ids, :adopted after a
-    #   root-owned mount was handed to the user
+    # @return [Symbol] :aligned when the user already had the right ids,
+    #   :realigned after it took them, :adopted after a root-owned mount was
+    #   handed to the user
     # @raise [ProbeFailedError] when the container cannot be probed
     # @raise [RealignFailedError] when the realign script fails
     sig { params(container: String).returns(Symbol) }
     def align!(container)
       probe = probe(container)
-      return :aligned if probe.writable
-
       if probe.owner_uid.zero?
         adopt!(container, probe)
-        :adopted
-      else
-        realign!(container, probe)
-        :realigned
+        return :adopted
       end
+
+      uid, gid = target(probe)
+      return :aligned if uid.nil? || gid.nil?
+
+      realign!(container, probe, uid, gid)
+      :realigned
     end
 
     private
@@ -120,17 +143,36 @@ module Dev
       )
     end
 
-    # Give the image user the mount owner's ids, as root.
+    # The ids the container's user should have, or nil when it has them.
+    #
+    # @param probe [Probe]
+    # @return [Array(Integer, Integer), nil] uid and gid, or nil for aligned
+    sig { params(probe: Probe).returns(T.nilable([Integer, Integer])) }
+    def target(probe)
+      if @host_os == "linux"
+        return nil if probe.uid == @host_uid && probe.gid == probe.owner_gid
+
+        [@host_uid, probe.owner_gid]
+      else
+        return nil if probe.writable
+
+        [probe.owner_uid, probe.owner_gid]
+      end
+    end
+
+    # Give the image user new ids, as root.
     #
     # @param container [String]
     # @param probe [Probe]
+    # @param uid [Integer]
+    # @param gid [Integer]
     # @return [void]
     # @raise [RealignFailedError]
-    sig { params(container: String, probe: Probe).void }
-    def realign!(container, probe)
-      args = [probe.user, probe.group, probe.uid, probe.gid, probe.owner_uid, probe.owner_gid].map(&:to_s)
+    sig { params(container: String, probe: Probe, uid: Integer, gid: Integer).void }
+    def realign!(container, probe, uid, gid)
+      args = [probe.user, probe.group, probe.uid, probe.gid, uid, gid].map(&:to_s)
       done = @engine.run(["exec", "--user", "root", container, "sh", "-c", SCRIPT.read, "sh", *args])
-      raise RealignFailedError.new(container:, uid: probe.owner_uid) unless done
+      raise RealignFailedError.new(container:, uid: uid) unless done
     end
 
     # Hand a root-owned mount to the container's user, as root.

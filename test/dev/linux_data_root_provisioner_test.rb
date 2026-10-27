@@ -140,6 +140,18 @@ class Dev::LinuxDataRootProvisionerTest < Minitest::Test
     "another group at 2775"           | false  | 0o2775  | false
   end
 
+  test "a root whose gid the group database does not know is not shared" do
+    Given "a root at 2775 whose gid names no group (the group database is the boundary)"
+    FileUtils.mkdir_p(@root)
+    File.chmod(0o2775, @root)
+    Etc.stubs(:getgrgid).raises(ArgumentError, "can't find group for 65534")
+
+    Expect
+    provisioner.status.writable
+    !provisioner.status.shared
+    @executor.runs.empty?
+  end
+
   test "headless without passwordless sudo, the step is refused before anything is created" do
     Given "no terminal, and sudo -n -v fails"
     executor = RecordingFailingExecutor.new
