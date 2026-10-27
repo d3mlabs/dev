@@ -4,6 +4,7 @@
 require "test_helper"
 require "dev/linux_data_root_provisioner"
 require "dev/privileged_steps"
+require "etc"
 require "fileutils"
 require "stringio"
 require "tmpdir"
@@ -40,7 +41,7 @@ class Dev::LinuxDataRootProvisionerTest < Minitest::Test
     super
   end
 
-  test "an absent root is created as root, handed to the user at 0755, and ~/.dev moved into it — one sudo session" do
+  test "an absent root is created as root, owned by the user, group-shared at 2775, and ~/.dev moved into it — one sudo session" do
     Given "a per-user root carrying an engine tree and state"
     FileUtils.mkdir_p(File.join(@home_dev, "engines", "ue5"))
     FileUtils.mkdir_p(File.join(@home_dev, "state"))
@@ -48,23 +49,27 @@ class Dev::LinuxDataRootProvisionerTest < Minitest::Test
     When
     provisioner.provision!
 
-    Then "the session, then exactly one privileged step, as its own argv"
+    Then "the session, the group and the membership, then the root — each its own argv"
     @executor.runs == [
       %w[sudo -v],
-      ["sudo", "install", "-d", "-o", "jp", "-g", "staff", "-m", "0755", @root],
+      %w[sudo groupadd -f dev],
+      %w[sudo usermod -aG dev jp],
+      ["sudo", "install", "-d", "-o", "jp", "-g", "dev", "-m", "2775", @root],
     ]
     File.directory?(File.join(@root, "engines", "ue5"))
     File.directory?(File.join(@home_dev, "state"))
-    @out.string.include?(">>> Creating the data root #{@root} (one sudo prompt) ...")
+    @out.string.include?(">>> Creating the data root #{@root}, shared with group dev (one sudo prompt) ...")
+    @out.string.include?("jp is in group dev from the next login")
   end
 
-  test "a present, writable root is the steady state: no sudo, nothing moved" do
-    Given
+  test "a present, writable, group-shared root is the steady state: no sudo, nothing moved" do
+    Given "a root already in this user's group at 2775"
     FileUtils.mkdir_p(@root)
+    File.chmod(0o2775, @root)
     FileUtils.mkdir_p(File.join(@home_dev, "engines"))
 
     When
-    provisioner.provision!
+    provisioner(group: own_group).provision!
 
     Then
     @executor.runs.empty?
@@ -72,7 +77,31 @@ class Dev::LinuxDataRootProvisionerTest < Minitest::Test
     @out.string.empty?
   end
 
-  test "a present root this user cannot write is another identity's: named with the command, never re-owned" do
+  test "a present, writable root not yet shared (the single-owner 0755 of dev#308) is converged in place: group and mode, never owner" do
+    Given "a single-owner root with a tree and a per-uid secrets dir"
+    FileUtils.mkdir_p(File.join(@root, "store"))
+    FileUtils.mkdir_p(File.join(@root, "secrets-1000"))
+    File.chmod(0o755, @root)
+
+    When
+    provisioner.provision!
+
+    Then "group, root mode, then the tree — secrets dirs pruned — with no chown anywhere"
+    @executor.runs == [
+      %w[sudo -v],
+      %w[sudo groupadd -f dev],
+      %w[sudo usermod -aG dev jp],
+      ["sudo", "chgrp", "-Rh", "dev", @root],
+      ["sudo", "find", @root, "-name", "secrets-*", "-prune", "-o",
+       "-type", "d", "-exec", "chmod", "g+rwxs", "{}", "+", "-o",
+       "-exec", "chmod", "g+rw", "{}", "+",],
+    ]
+    @executor.runs.none? { |cmd| cmd.include?("chown") }
+    @out.string.include?(">>> Sharing the data root #{@root} with group dev (one sudo prompt) ...")
+    @out.string.include?("jp is in group dev from the next login")
+  end
+
+  test "a present root this user cannot write is another identity's: the group fix is named, never a chown" do
     Given
     FileUtils.mkdir_p(@root)
     File.chmod(0o555, @root)
@@ -80,34 +109,52 @@ class Dev::LinuxDataRootProvisionerTest < Minitest::Test
 
     Expect
     error.message.include?("#{@root} exists but jp cannot write it")
-    error.message.include?("sudo chown -R jp:staff #{@root}")
+    error.message.include?("sudo usermod -aG dev jp")
+    error.message.include?("log in again")
+    error.message.include?("its owner's `dev up` shares it")
+    !error.message.include?("chown")
     @executor.runs.empty?
 
     Cleanup
     File.chmod(0o755, @root)
   end
 
-  test "status probes without root" do
+  test "status probes without root: present, writable, and whether the root is shared with the group — #{what}" do
     Given
     FileUtils.mkdir_p(@root)
+    File.chmod(mode, @root)
+    group = own ? own_group : "dev-nope"
 
     Expect
-    provisioner.status.present
-    provisioner.status.writable
-    !Dev::LinuxDataRootProvisioner.new(steps: steps, root: File.join(@dir, "absent"), home_dev: @home_dev, user: "jp", group: "staff", out: @out).status.present
+    provisioner(group: group).status.present
+    provisioner(group: group).status.writable
+    provisioner(group: group).status.shared == shared
+    !Dev::LinuxDataRootProvisioner.new(steps: steps, root: File.join(@dir, "absent"), home_dev: @home_dev, user: "jp", group: "dev", out: @out).status.present
     @executor.runs.empty?
+
+    Where
+    what                              | own    | mode    | shared
+    "the group at 2775"               | true   | 0o2775  | true
+    "the group without setgid"        | true   | 0o775   | false
+    "the group without group write"   | true   | 0o2755  | false
+    "another group at 2775"           | false  | 0o2775  | false
   end
 
   test "headless without passwordless sudo, the step is refused before anything is created" do
     Given "no terminal, and sudo -n -v fails"
     executor = RecordingFailingExecutor.new
     steps = Dev::PrivilegedSteps.new(executor: executor, tty: false, purpose: "create the data root")
-    provisioner = Dev::LinuxDataRootProvisioner.new(steps: steps, root: @root, home_dev: @home_dev, user: "jp", group: "staff", out: @out)
+    provisioner = Dev::LinuxDataRootProvisioner.new(steps: steps, root: @root, home_dev: @home_dev, user: "jp", group: "dev", out: @out)
     error = assert_raises(Dev::PrivilegedSteps::SudoRequiredError) { provisioner.provision! }
 
     Expect
     error.message.include?("dev needs root to create the data root")
     !File.exist?(@root)
+  end
+
+  test "the shared group is dev by default" do
+    Expect
+    Dev::LinuxDataRootProvisioner::GROUP == "dev"
   end
 
   test "for_host applies on Linux with the default root only: #{what}" do
@@ -124,12 +171,18 @@ class Dev::LinuxDataRootProvisionerTest < Minitest::Test
 
   private
 
+  # The group the test's own directories carry: the one name a tmpdir can
+  # be "shared with" without root.
+  def own_group
+    Etc.getgrgid(File.stat(@dir).gid).name
+  end
+
   def steps
     Dev::PrivilegedSteps.new(executor: @executor, tty: true, purpose: "create the data root")
   end
 
-  def provisioner
-    Dev::LinuxDataRootProvisioner.new(steps: steps, root: @root, home_dev: @home_dev, user: "jp", group: "staff", out: @out)
+  def provisioner(group: "dev")
+    Dev::LinuxDataRootProvisioner.new(steps: steps, root: @root, home_dev: @home_dev, user: "jp", group: group, out: @out)
   end
 end
 
