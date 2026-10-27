@@ -115,18 +115,18 @@ class Dev::RunnerStatusTest < Minitest::Test
   # --- the host identity (dev#310) --------------------------------------
 
   test "under the host rule, every enrollment says who it runs as; one owned by someone else is drift with register as the remedy" do
-    Given "an enrollment in the operator's home (owned by this test's user) and the runner user as the rule"
+    Given "an enrollment in the operator's home (owned by this test's user) and a runner user as the rule, named so it cannot be this test's own user (hosted CI runs as `runner`)"
     out = StringIO.new
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
     responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 9, custom_labels: ["snappy"], status: "online") }
-    status = build_status(out: out, home: home, registry: CannedRegistry.new(&responder), host_identity: host_identity("runner"))
+    status = build_status(out: out, home: home, registry: CannedRegistry.new(&responder), host_identity: host_identity("svc-runner"))
 
     When "reporting"
     status.report
 
     Then
-    out.string.include?("[!!] runs as #{Etc.getpwuid(Process.uid).name}, not runner — drift (re-run `dev runner register`)")
+    out.string.include?("[!!] runs as #{Etc.getpwuid(Process.uid).name}, not svc-runner — drift (re-run `dev runner register`)")
   end
 
   test "an enrollment under the runner user's home, owned by it, reads ok — and is found there" do
