@@ -19,15 +19,22 @@ module Dev
       sig { returns(String) }
       attr_reader :name
 
+      # The one line the command's usage prints beside the flag; empty
+      # lists the flag by name alone.
+      sig { returns(String) }
+      attr_reader :desc
+
       # @param name [String] the flag as typed, e.g. "--keep"
       # @param takes_value [Boolean] whether the flag consumes a value
+      # @param desc [String] what the flag does, for the usage listing
       # @raise [MalformedNameError] for a name that is not a flag
-      sig { params(name: String, takes_value: T::Boolean).void }
-      def initialize(name, takes_value: false)
+      sig { params(name: String, takes_value: T::Boolean, desc: String).void }
+      def initialize(name, takes_value: false, desc: "")
         raise MalformedNameError, "#{name.inspect} is not a flag name" unless name.match?(NAME_PATTERN)
 
         @name = name
         @takes_value = takes_value
+        @desc = desc
       end
 
       # @return [Boolean]
