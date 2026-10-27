@@ -503,13 +503,13 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
   end
 
   test "an enrollment owned by another user — the operator's own, from before the rule — is drift: register says whose it is, asks, tears it down and enrolls fresh as the runner user" do
-    Given "an online enrollment in the operator's home, and the runner user as the rule"
+    Given "an online enrollment in the operator's home, and a runner user as the rule (named so it cannot be this test's own user: hosted CI runs as `runner`)"
     home = Dir.mktmpdir
     dir = write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
     registry = FakeRegistry.new(
       runners: { ["JPDuchesne/snappy", "JPSFF"] => Dev::RunnerRegistry::Runner.new(id: 9, custom_labels: ["snappy"], status: "online") },
     )
-    runner_user = runner_user_mock(name: "runner", home: Dir.mktmpdir)
+    runner_user = runner_user_mock(name: "svc-runner", home: Dir.mktmpdir)
     harness = build_harness(home: home, registry: registry, scope: "JPDuchesne/snappy", repo: "JPDuchesne/snappy", runner_user: runner_user)
     harness.confirmer.expects(:confirm?).once.with("Unregister these and enroll fresh?").returns(true)
 
@@ -521,7 +521,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.events == [[:run]]
     harness.wirings.fetch(0).fetch(3) == runner_user
     registry.amends == []
-    harness.out.string.include?("runs as #{Etc.getpwuid(Process.uid).name}, not runner")
+    harness.out.string.include?("runs as #{Etc.getpwuid(Process.uid).name}, not svc-runner")
     harness.out.string.include?("~/actions-runner-snappy (no service)")
   end
 
