@@ -5,7 +5,10 @@ require "test_helper"
 require "dev/runner_discovery"
 require "dev/runner_registry"
 require "dev/runner_status"
+require "dev/runner_user"
+require "etc"
 require "fileutils"
+require "date"
 require "json"
 require "stringio"
 require "tmpdir"
@@ -107,6 +110,86 @@ class Dev::RunnerStatusTest < Minitest::Test
     out.string.include?("Runner 'JPSFF' (~/actions-runner):")
     out.string.include?("[ok] labels: snappy")
     out.string.include?("[!!] offline on GitHub — the registration is not being run (re-run `dev runner register`)")
+  end
+
+  # --- the host identity (dev#310) --------------------------------------
+
+  test "under the host rule, every enrollment says who it runs as; one owned by someone else is drift with register as the remedy" do
+    Given "an enrollment in the operator's home (owned by this test's user) and the runner user as the rule"
+    out = StringIO.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 9, custom_labels: ["snappy"], status: "online") }
+    status = build_status(out: out, home: home, registry: CannedRegistry.new(&responder), host_identity: host_identity("runner"))
+
+    When "reporting"
+    status.report
+
+    Then
+    out.string.include?("[!!] runs as #{Etc.getpwuid(Process.uid).name}, not runner — drift (re-run `dev runner register`)")
+  end
+
+  test "an enrollment under the runner user's home, owned by it, reads ok — and is found there" do
+    Given "the enrollment where the rule puts it (this test's user plays the runner user)"
+    out = StringIO.new
+    me = Etc.getpwuid(Process.uid).name
+    runner_home = Dir.mktmpdir
+    write_runner(runner_home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 9, custom_labels: ["snappy"], status: "online") }
+    status = build_status(out: out, home: Dir.mktmpdir, registry: CannedRegistry.new(&responder),
+      host_identity: host_identity(me, home: runner_home))
+
+    When "reporting"
+    status.report
+
+    Then
+    out.string.include?("Runner 'JPSFF' (#{File.join(runner_home, "actions-runner-snappy")}):")
+    out.string.include?("[ok] runs as #{me}")
+  end
+
+  test "the host identity section: the runner user exists, is logged in to GitHub as someone, and its token's expiry is read — #{what}" do
+    Given
+    out = StringIO.new
+    headers = expires_in.nil? ? "HTTP/2.0 200 OK\n\n{}" : expiring_in(expires_in)
+    executor = CannedStatusExecutor.new(
+      probe_results: { ["id", "-u", "runner"] => exists, ["sudo", "-u", "runner", "-H", "gh", "auth", "status"] => logged_in },
+      capture_results: {
+        ["sudo", "-u", "runner", "-H", "gh", "api", "user", "--jq", ".login"] => "d3mlabs-buildhost\n",
+        ["sudo", "-u", "runner", "-H", "gh", "api", "user", "-i"] => headers,
+      },
+    )
+    status = build_status(out: out, executor: executor, host_identity: host_identity("runner"))
+
+    When
+    status.report
+
+    Then
+    out.string.include?("Host identity (runner):")
+    out.string.include?(expected)
+
+    Where
+    what                        | exists | logged_in | expires_in | expected
+    "all good, token expires"   | true   | true      | 365        | "[ok] gh login: d3mlabs-buildhost (token expires #{(Date.today + 365).iso8601})"
+    "a token with no expiry"    | true   | true      | nil        | "[ok] gh login: d3mlabs-buildhost (token does not expire)"
+    "a token about to expire"   | true   | true      | 10         | "[!!] gh login: d3mlabs-buildhost (token expires #{(Date.today + 10).iso8601} — within 30 days; renew it, then `sudo -iu runner gh auth login --with-token`)"
+    "no gh login"               | true   | false     | nil        | "[!!] no gh login — `sudo -iu runner gh auth login --with-token`"
+    "no such user"              | false  | false     | nil        | "[!!] user runner exists (run `dev runner register`)"
+  end
+
+  test "without a host identity (a Mac) no identity section and no runs-as line" do
+    Given
+    out = StringIO.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs", name: "mac-box")
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: ["cellbound3d"], status: "online") }
+    status = build_status(out: out, home: home, registry: CannedRegistry.new(&responder))
+
+    When
+    status.report
+
+    Then
+    !out.string.include?("Host identity")
+    !out.string.include?("runs as")
   end
 
   test "degrades to labels-unknown when GitHub is unreachable" do
@@ -240,16 +323,27 @@ class Dev::RunnerStatusTest < Minitest::Test
     dir
   end
 
+  # `gh api user -i` headers for a token expiring in `days`.
+  def expiring_in(days)
+    "HTTP/2.0 200 OK\nGithub-Authentication-Token-Expiration: #{(Date.today + days).iso8601} 15:00:00 UTC\n\n{}"
+  end
+
+  # The host rule's user as status sees it: a name and a home.
+  def host_identity(name, home: Dir.mktmpdir)
+    Dev::RunnerUser.new(name: name, home_of: ->(_user) { home })
+  end
+
   def build_status(out:, home: Dir.mktmpdir, registry: CannedRegistry.new,
                    executor: CannedStatusExecutor.new, shared_root: Dir.mktmpdir,
                    sudoers_path: File.join(Dir.mktmpdir, "absent"), brewfile_path: nil,
-                   container_required: false)
+                   container_required: false, host_identity: nil)
     Dev::RunnerStatus.new(
       discovery: Dev::RunnerDiscovery.new(home: home),
       registry: registry,
       out: out,
       executor: executor,
       runner_user: "human",
+      host_identity: host_identity,
       shared_root: shared_root,
       sudoers_path: sudoers_path,
       brewfile_path: brewfile_path,

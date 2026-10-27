@@ -558,6 +558,21 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.wirings.fetch(0).fetch(3).nil?
   end
 
+  test "register's usage carries the three-identity table and the runner-user rule: who mints, who owns, who installs; the login line; examples" do
+    Given "the full desc, as `dev runner register --help` prints it"
+    desc = Dev::Builtins::RunnerRegisterCommand.new.desc
+
+    Expect "a one-line summary first, then the detail"
+    desc.lines.fetch(0).chomp == "Enroll this host as a self-hosted runner, converging label contracts (--org, --labels, --ai-flow)"
+    desc.include?("mints the registration token")
+    desc.include?("owns the enrollment")
+    desc.include?("installs the service unit")
+    desc.include?("runner user")
+    desc.include?("sudo -iu runner gh auth login --with-token")
+    desc.include?("dev runner register --org --ai-flow")
+    desc.include?("GITHUB_TOKEN")
+  end
+
   test "--as carries a description, like every register flag" do
     Expect
     Dev::Builtins::RunnerRegisterCommand.new.flags.map(&:name).include?("--as")
