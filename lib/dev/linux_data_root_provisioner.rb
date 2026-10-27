@@ -75,6 +75,24 @@ module Dev
 
         new
       end
+
+      # The walk that opens a root's tree to the group: dirs g+rwxs, files
+      # g+rw. `secrets-*` dirs are pruned (per-identity, BuildContainer);
+      # symlinks are stepped over — chmod follows them, and a fetched tree
+      # may carry a dangling one (a mod base's link into a mod that is not
+      # there), which would fail the step. The link's target, if inside
+      # the root, is reached by its own path.
+      #
+      # @param root [String]
+      # @return [Array<String>] find argv, no sudo
+      sig { params(root: String).returns(T::Array[String]) }
+      def share_tree_argv(root)
+        [
+          "find", root, "-name", "secrets-*", "-prune", "-o", "-type", "l", "-o",
+          "-type", "d", "-exec", "chmod", "g+rwxs", "{}", "+", "-o",
+          "-exec", "chmod", "g+rw", "{}", "+"
+        ]
+      end
     end
 
     # @param steps [Dev::PrivilegedSteps] the sudo contract
@@ -169,8 +187,7 @@ module Dev
     end
 
     # Converge a root that predates the group: group and mode, down the
-    # tree, no owner touched. `secrets-<uid>` dirs are pruned — they are
-    # per-identity by design (BuildContainer) and must not gain group bits.
+    # tree (share_tree_argv), no owner touched.
     #
     # @return [void]
     sig { void }
@@ -179,11 +196,8 @@ module Dev
       @steps.session!
       group_steps!
       @steps.step!("sudo", "chgrp", "-Rh", @group, @root)
-      @steps.step!(
-        "sudo", "find", @root, "-name", "secrets-*", "-prune", "-o",
-        "-type", "d", "-exec", "chmod", "g+rwxs", "{}", "+", "-o",
-        "-exec", "chmod", "g+rw", "{}", "+"
-      )
+      walk = ["sudo"] + self.class.share_tree_argv(@root)
+      @steps.step!(*T.unsafe(walk))
     end
 
     # The group exists and this user is in it; both idempotent.
