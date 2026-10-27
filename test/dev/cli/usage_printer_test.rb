@@ -237,6 +237,33 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
     lines.include?("  unit         Unit")
   end
 
+  test "print_node lists a command's flags after its description: switches by name, value-taking ones with a placeholder, each with its description" do
+    Given "a builtin declaring three flags, one undescribed"
+    printer = Dev::Cli::UsagePrinter.new
+    command = FakeBuiltin.new(desc: "Enroll this host", category: Dev::Command::Category::Lifecycle)
+    command.stubs(:flags).returns([
+      Dev::Cli::Flag.new("--org", desc: "enroll at the org scope"),
+      Dev::Cli::Flag.new("--labels", takes_value: true, desc: "comma-separated runner labels"),
+      Dev::Cli::Flag.new("--yes"),
+    ])
+    out = StringIO.new
+
+    When "printing the node"
+    printer.print_node(path: ["runner", "register"], command: command, out: out)
+
+    Then "a Flags section follows the description, in declaration order, names padded to one column"
+    out.string == <<~USAGE
+      Usage: dev runner register [args...]
+
+      Enroll this host
+
+      Flags:
+        --org             enroll at the org scope
+        --labels <value>  comma-separated runner labels
+        --yes
+    USAGE
+  end
+
   test "print_node renders a childless command as its one invocation and description" do
     Given "a leaf"
     printer = Dev::Cli::UsagePrinter.new
