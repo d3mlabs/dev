@@ -192,20 +192,43 @@ module Dev
       @steps.install_file!("eval \"$(#{brew} shellenv)\"\n", PROFILE_D, mode: "0644") if brew
     end
 
+    # An asker: a question, answered with the secret — or nil/"" when
+    # there is no terminal, or the user declined (Dev::Cli::Ui#ask_secret).
+    Ask = T.type_alias { T.proc.params(question: String).returns(T.nilable(String)) }
+
     # The runner user's gh must be logged in before anything enrolls: it
-    # is the identity every job fetches with.
+    # is the identity every job fetches with. Missing, and given something
+    # to ask with, the token is asked for — hidden input — and handed to
+    # `gh auth login --with-token` on stdin as the runner user, in this
+    # same run; the status is re-read after. Headless (nothing to ask
+    # with, or no answer), the message carries the one command.
     #
+    # @param ask [Proc, nil] how to ask for the token at a terminal
     # @return [void]
     # @raise [GhLoginRequiredError] with the login command
-    sig { void }
-    def ensure_gh_authenticated!
-      _out, _err, ok = @exec.capture(*sudo_argv("gh", "auth", "status"))
-      return if ok
+    sig { params(ask: T.nilable(Ask)).void }
+    def ensure_gh_authenticated!(ask: nil)
+      return if gh_authenticated?
+
+      token = ask&.call(
+        "#{@name} has no GitHub login, and every job on this host fetches as #{@name}. " \
+        "Paste the machine user's token (read access to what the jobs fetch; never an admin's)",
+      ).to_s.strip
+      raise GhLoginRequiredError, headless_message if token.empty?
+
+      _out, err, ok = @exec.capture(*sudo_argv("gh", "auth", "login", "--with-token"), stdin: token)
+      return if ok && gh_authenticated?
 
       raise GhLoginRequiredError,
-        "#{@name} has no GitHub login, and every job on this host fetches as #{@name}. Log it in once — " \
-        "paste the machine user's token (read access to what the jobs fetch; never an admin's), then Ctrl-D:\n  " \
+        "gh did not accept the token for #{@name}: #{err.strip}\nLog it in by hand — the token on stdin, then Ctrl-D:\n  " \
         "#{login_command}\nthen re-run dev runner register."
+    end
+
+    # @return [Boolean] whether the runner user's gh is logged in
+    sig { returns(T::Boolean) }
+    def gh_authenticated?
+      _out, _err, ok = @exec.capture(*sudo_argv("gh", "auth", "status"))
+      ok
     end
 
     # The one command that logs the runner user in; the token rides stdin.
@@ -214,6 +237,17 @@ module Dev
     sig { returns(String) }
     def login_command
       "sudo -iu #{@name} gh auth login --with-token"
+    end
+
+    # What register says when it cannot ask: the command, and what to
+    # paste into it.
+    #
+    # @return [String]
+    sig { returns(String) }
+    def headless_message
+      "#{@name} has no GitHub login, and every job on this host fetches as #{@name}. Log it in once — " \
+        "paste the machine user's token (read access to what the jobs fetch; never an admin's), then Ctrl-D:\n  " \
+        "#{login_command}\nthen re-run dev runner register."
     end
 
     # Run a command as the runner user, in its own home, on the host's

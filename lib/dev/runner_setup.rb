@@ -60,10 +60,14 @@ module Dev
 
       # @param chdir [String, nil] the directory to run in (the runner
       #   scripts are invoked relative to their install dir)
+      # @param stdin [String, nil] what the command reads on stdin (a
+      #   secret rides here, never argv)
       # @return [Array(String, String, Boolean)] stdout, stderr, success?
-      sig { params(argv: String, chdir: T.nilable(String)).returns([String, String, T::Boolean]) }
-      def capture(*argv, chdir: nil)
-        opts = chdir ? { chdir: chdir } : {}
+      sig { params(argv: String, chdir: T.nilable(String), stdin: T.nilable(String)).returns([String, String, T::Boolean]) }
+      def capture(*argv, chdir: nil, stdin: nil)
+        opts = {}
+        opts[:chdir] = chdir if chdir
+        opts[:stdin_data] = stdin if stdin
         out, err, status = Open3.capture3(*T.unsafe(argv), **opts)
         [out, err, status.success?]
       rescue Errno::ENOENT => e
