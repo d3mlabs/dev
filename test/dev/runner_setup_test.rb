@@ -215,20 +215,22 @@ class Dev::RunnerSetupTest < Minitest::Test
     config = Dev::RunnerSetupConfig.new(labels: "snappy", dir: dir, name: "box")
     exec = RecordingExecutor.new(&authed_responder)
     setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, out: silent,
-      host_platform: "linux-x64", as_user: "runner", home: home)
+      host_platform: "linux-x64", as_user: "runner", home: home, path: "/opt/brew/bin:/usr/bin")
 
     When
     setup.run
 
-    Then "the operator's gh mints; mkdir, curl, tar, rm and config.sh run as runner; svc.sh installs the unit for runner, as root"
+    Then "the operator's gh mints; mkdir, curl, tar, rm and config.sh run as runner on the host PATH (config.sh records it for every job); svc.sh installs the unit for runner, as root"
     exec.calls.map { |call| call[:argv] }.include?(%w[gh auth status])
+    as_runner = ["sudo", "-u", "runner", "-H", "env", "PATH=/opt/brew/bin:/usr/bin"]
     exec.systems.map { |call| call[:argv] } == [
-      ["sudo", "-u", "runner", "-H", "mkdir", "-p", dir],
-      ["sudo", "-u", "runner", "-H", "curl", "-fsSL", "-o", "actions-runner-linux-x64-#{Dev::RunnerSetup::DEFAULT_VERSION}.tar.gz",
+      [*as_runner, "mkdir", "-p", dir],
+      [*as_runner, "curl", "-fsSL", "-o", "actions-runner-linux-x64-#{Dev::RunnerSetup::DEFAULT_VERSION}.tar.gz",
        "https://github.com/actions/runner/releases/download/v#{Dev::RunnerSetup::DEFAULT_VERSION}/actions-runner-linux-x64-#{Dev::RunnerSetup::DEFAULT_VERSION}.tar.gz",],
-      ["sudo", "-u", "runner", "-H", "tar", "xzf", "actions-runner-linux-x64-#{Dev::RunnerSetup::DEFAULT_VERSION}.tar.gz"],
+      [*as_runner, "tar", "xzf", "actions-runner-linux-x64-#{Dev::RunnerSetup::DEFAULT_VERSION}.tar.gz"],
+      # The tarball's removal is the shared file-op helper (teardown's too): no PATH to carry.
       ["sudo", "-u", "runner", "-H", "rm", "-f", "actions-runner-linux-x64-#{Dev::RunnerSetup::DEFAULT_VERSION}.tar.gz"],
-      ["sudo", "-u", "runner", "-H", "./config.sh",
+      [*as_runner, "./config.sh",
        "--url", "https://github.com/owner/repo", "--token", "TOKEN123",
        "--labels", "snappy", "--name", "box", "--unattended", "--replace",],
       ["sudo", "./svc.sh", "install", "runner"],

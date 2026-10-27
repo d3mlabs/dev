@@ -68,6 +68,43 @@ class Dev::RunnerUserTest < Minitest::Test
     @out.string.include?(">>> Creating the runner user runner (one sudo prompt) ...")
   end
 
+  test "with Homebrew on the host, converge! gives every login shell its shellenv — so `sudo -iu runner gh` finds the gh brew installed" do
+    Given "brew at the operator's prefix"
+    user = runner_user(homes: { "runner" => "/home/runner" }, brew: "/home/linuxbrew/.linuxbrew/bin/brew")
+
+    When
+    user.converge!
+
+    Then "one root-owned profile.d file, installed from a staged copy, after the groups"
+    @executor.runs.map(&:first) == ["sudo"] * 5
+    @executor.runs.fetch(4).first(4) == %w[sudo install -m 0644]
+    @executor.runs.fetch(4).last == "/etc/profile.d/linuxbrew.sh"
+    File.read(@executor.runs.fetch(4).fetch(4)) == "eval \"$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)\"\n"
+  end
+
+  test "brew is found on the operator's PATH and resolved through its symlink; none on the PATH is nil" do
+    Given "a PATH with a bin dir whose brew is a symlink into a prefix"
+    prefix = Dir.mktmpdir
+    FileUtils.mkdir_p(File.join(prefix, "Homebrew", "bin"))
+    File.write(File.join(prefix, "Homebrew", "bin", "brew"), "#!/bin/sh\n")
+    File.chmod(0o755, File.join(prefix, "Homebrew", "bin", "brew"))
+    FileUtils.mkdir_p(File.join(prefix, "bin"))
+    File.symlink(File.join(prefix, "Homebrew", "bin", "brew"), File.join(prefix, "bin", "brew"))
+    empty = Dir.mktmpdir
+
+    Expect
+    Dev::RunnerUser.brew_path(env_path: "#{empty}:#{prefix}/bin") == File.realpath(File.join(prefix, "Homebrew", "bin", "brew"))
+    Dev::RunnerUser.brew_path(env_path: empty).nil?
+    Dev::RunnerUser.brew_path(env_path: "").nil?
+  end
+
+  test "the runner user's PATH is deliberate: brew's bin and sbin ahead of the system's, nothing of the operator's; without brew, the system's alone" do
+    Expect
+    Dev::RunnerUser.host_path(brew: "/home/linuxbrew/.linuxbrew/bin/brew") ==
+      "/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    Dev::RunnerUser.host_path(brew: nil) == "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  end
+
   test "a present runner user is converged: group membership only, no useradd, no chmod" do
     Given "the user exists with a home"
     user = runner_user(homes: { "runner" => "/home/runner" })
@@ -114,7 +151,7 @@ class Dev::RunnerUserTest < Minitest::Test
     user.ensure_gh_authenticated!
 
     Then
-    gh.calls == [%w[sudo -u runner -H gh auth status]]
+    gh.calls == [%w[sudo -u runner -H env PATH=/opt/brew/bin:/usr/bin gh auth status]]
   end
 
   test "a runner user with no gh login stops register with the one command that logs it in — the token on stdin, never argv" do
@@ -131,9 +168,10 @@ class Dev::RunnerUserTest < Minitest::Test
     user.login_command == "sudo -iu runner gh auth login --with-token"
   end
 
-  test "the sudo prefix that touches the runner user's files as that user" do
+  test "the sudo prefix that runs a command as the runner user, in its own home, on the host's PATH — not sudo's, not the operator's" do
     Expect
-    runner_user(homes: {}).sudo_argv("mkdir", "-p", "/home/runner/x") == %w[sudo -u runner -H mkdir -p /home/runner/x]
+    runner_user(homes: {}).sudo_argv("mkdir", "-p", "/home/runner/x") == %w[sudo -u runner -H env PATH=/opt/brew/bin:/usr/bin mkdir -p /home/runner/x]
+    runner_user(homes: {}).path == "/opt/brew/bin:/usr/bin"
   end
 
   test "the default runner user is runner, in docker and the data root's group" do
@@ -144,8 +182,9 @@ class Dev::RunnerUserTest < Minitest::Test
 
   private
 
-  def runner_user(homes:, gh: GhExecutor.new(logged_in: true), name: "runner")
+  def runner_user(homes:, gh: GhExecutor.new(logged_in: true), name: "runner", brew: nil)
     steps = Dev::PrivilegedSteps.new(executor: @executor, tty: true, purpose: "create the runner user")
-    Dev::RunnerUser.new(name: name, steps: steps, executor: gh, out: @out, home_of: ->(user) { homes[user] })
+    Dev::RunnerUser.new(name: name, steps: steps, executor: gh, out: @out, home_of: ->(user) { homes[user] },
+      brew: brew, path: "/opt/brew/bin:/usr/bin")
   end
 end

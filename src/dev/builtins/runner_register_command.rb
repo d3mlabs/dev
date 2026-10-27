@@ -150,7 +150,7 @@ module Dev
       end
       def initialize(
         runner_setup_factory: ->(config, repo, org, runner_user) {
-          Dev::RunnerSetup.new(config:, repo:, org:, as_user: runner_user&.name, home: runner_user&.home)
+          Dev::RunnerSetup.new(config:, repo:, org:, as_user: runner_user&.name, home: runner_user&.home, path: runner_user&.path)
         },
         contracts_factory: ->(labels, agent_user) { Dev::LabelContracts.for(labels, agent_user: agent_user) },
         repo_resolver: ->(override) { override || Dev::RunnerSetup.current_repo },
@@ -207,9 +207,11 @@ module Dev
           and a job writes to its own repo with its GITHUB_TOKEN, never with a host login.
 
           On Linux the runner user is `#{Dev::RunnerUser::DEFAULT_NAME}` by rule (--as renames it): created if absent, in
-          docker and #{LinuxDataRootProvisioner::GROUP}, no password, no sudo. Register refuses to enroll until it has
-          a gh login — the machine user's token (read access to what the jobs fetch),
-          pasted once:
+          docker and #{LinuxDataRootProvisioner::GROUP}, no password, no sudo; its commands and every job run on the
+          host PATH (brew's bin and sbin, then the system's — nothing of yours), and
+          Homebrew's shellenv lands in #{Dev::RunnerUser::PROFILE_D} so `sudo -iu` shells
+          find gh. Register refuses to enroll until it has a gh login — the machine
+          user's token (read access to what the jobs fetch), pasted once:
             #{Dev::RunnerUser.new(name: Dev::RunnerUser::DEFAULT_NAME).login_command}
           An enrollment running as anyone else is drift: register offers to retire it
           and enroll fresh as the runner user. On macOS the enrollment is yours (a

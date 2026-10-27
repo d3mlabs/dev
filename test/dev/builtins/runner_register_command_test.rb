@@ -606,6 +606,8 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     desc.include?("installs the service unit")
     desc.include?("runner user")
     desc.include?("sudo -iu runner gh auth login --with-token")
+    desc.include?("host PATH")
+    desc.include?("/etc/profile.d/linuxbrew.sh")
     desc.include?("dev runner register --org --ai-flow")
     desc.include?("GITHUB_TOKEN")
   end
@@ -633,7 +635,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
     setup.stubs(:resolve_scope).returns("owner/repo")
     Dev::RunnerSetup.expects(:new)
-      .with(config: Dev::RunnerSetupConfig.new(labels: "ue-engine"), repo: nil, org: false, as_user: nil, home: nil).returns(setup)
+      .with(config: Dev::RunnerSetupConfig.new(labels: "ue-engine"), repo: nil, org: false, as_user: nil, home: nil, path: nil).returns(setup)
     command = Dev::Builtins::RunnerRegisterCommand.new(data_root_provisioner: nil)
 
     When "running register with --as, the host rule's one input"
@@ -661,7 +663,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
     setup.stubs(:resolve_scope).returns("owner/repo")
     Dev::RunnerSetup.expects(:new)
-      .with(config: Dev::RunnerSetupConfig.new(labels: "ue-engine"), repo: nil, org: false, as_user: "svc-runner", home: runner_user.home).returns(setup)
+      .with(config: Dev::RunnerSetupConfig.new(labels: "ue-engine"), repo: nil, org: false, as_user: "svc-runner", home: runner_user.home, path: "/opt/brew/bin:/usr/bin").returns(setup)
     command = Dev::Builtins::RunnerRegisterCommand.new(data_root_provisioner: nil)
 
     When "registering in that checkout with default wiring"
@@ -681,7 +683,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
     setup.stubs(:resolve_scope).returns("d3mlabs/Cellbound-3D")
     Dev::RunnerSetup.expects(:new)
-      .with(config: Dev::RunnerSetupConfig.new(labels: "cellbound-3d"), repo: nil, org: false, as_user: nil, home: nil).returns(setup)
+      .with(config: Dev::RunnerSetupConfig.new(labels: "cellbound-3d"), repo: nil, org: false, as_user: nil, home: nil, path: nil).returns(setup)
     command = Dev::Builtins::RunnerRegisterCommand.new(runner_user_factory: ->(_name) { nil }, data_root_provisioner: nil)
 
     When "running bare register inside a checkout whose dev.yml name differs"
@@ -772,6 +774,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     runner_user = typed_mock(Dev::RunnerUser)
     runner_user.stubs(:name).returns(name)
     runner_user.stubs(:home).returns(home)
+    runner_user.stubs(:path).returns("/opt/brew/bin:/usr/bin")
     runner_user.stubs(:converge!)
     runner_user.stubs(:ensure_gh_authenticated!)
     runner_user
