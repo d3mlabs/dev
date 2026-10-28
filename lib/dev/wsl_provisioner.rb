@@ -85,8 +85,9 @@ module Dev
     sig { params(cpus: T.nilable(Integer), memory_gib: T.nilable(Integer), force: T::Boolean).void }
     def provision!(cpus: nil, memory_gib: nil, force: false)
       unless @host.interop?
-        @out.puts "dev: WSL interop is disabled, so %USERPROFILE%\\.wslconfig cannot be converged — " \
-          "size the VM yourself ([wsl2] processors= / memory=)."
+        @out.puts "dev: WSL interop is not available to this session (interop disabled, or no #{WslHost::INTEROP_SOCKET_VAR} — " \
+          "a service, not a login), so %USERPROFILE%\\.wslconfig cannot be converged from here — " \
+          "run `dev up` from a login shell, or size the VM yourself ([wsl2] processors= / memory=)."
         return
       end
 

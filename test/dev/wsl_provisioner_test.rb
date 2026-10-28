@@ -37,7 +37,7 @@ class Dev::WslProvisionerTest < Minitest::Test
   # executor and real temp files: the VM runs at +observed+ (cpus, GiB), the
   # Windows box has +hardware+, and +config+ is the current .wslconfig text
   # (nil for no file).
-  def provisioner(config: nil, observed: [4, 8], hardware: [28, 64], containers: [], interop: true)
+  def provisioner(config: nil, observed: [4, 8], hardware: [28, 64], containers: [], interop: true, session: true)
     File.write(wslconfig_path, config) if config
     File.write(File.join(@binfmt, "WSLInterop"), "enabled\n") if interop
     cpus, memory_gib = observed
@@ -48,6 +48,7 @@ class Dev::WslProvisionerTest < Minitest::Test
     )
     host = Dev::WslHost.new(
       executor: executor, host_os: "linux", proc_version_path: File.join(@dir, "version"), binfmt_dir: @binfmt,
+      env: session ? { "WSL_INTEROP" => "/run/WSL/8_interop" } : {},
     )
     [Dev::WslProvisioner.new(host: host, executor: executor, out: @out), executor]
   end
@@ -267,6 +268,28 @@ class Dev::WslProvisionerTest < Minitest::Test
     Then "a warning points at .wslconfig; no Windows binary was called and nothing was written"
     @out.string.include?(".wslconfig")
     @out.string.include?("interop")
+    executor.runs.none? { |bin, *_rest| bin.end_with?(".exe") }
+    wslconfig.nil?
+
+    Cleanup
+    nil
+  end
+
+  # dev#310 step 5: the runner user's jobs run from a systemd service, which
+  # WSL gives no interop socket — powershell.exe answers nothing there, and
+  # `.wslconfig` is the operator's file in any case. The VM's size is still
+  # checked after (EngineProvisioner, from the observed facts).
+  test "a session without interop (a service: the runner user's job) is told so in the warning, calls nothing Windows-side, and does not fail" do
+    Given "binfmt enabled, no WSL_INTEROP in the env"
+    prov, executor = provisioner(config: nil, observed: [4, 8], session: false)
+
+    When "provisioning"
+    prov.provision!(cpus: 12, memory_gib: 24)
+
+    Then "the warning names the session and where to converge from; no .exe, nothing written"
+    @out.string.include?("not available to this session")
+    @out.string.include?("login shell")
+    @out.string.include?(".wslconfig")
     executor.runs.none? { |bin, *_rest| bin.end_with?(".exe") }
     wslconfig.nil?
 

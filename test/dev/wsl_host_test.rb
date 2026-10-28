@@ -24,11 +24,17 @@ class Dev::WslHostTest < Minitest::Test
 
   # Build a host over the temp fixtures. Fixture files are only written when
   # given, so "absent" is a real missing file.
-  def host(executor: RecordedWslExecutor.new, host_os: "linux", proc_version: WSL_KERNEL, interop: "enabled")
+  # A login session's env: WSL's /init hands every session its interop
+  # socket; a systemd service (the runner user's jobs) gets none.
+  SESSION_ENV = { "WSL_INTEROP" => "/run/WSL/8_interop" }.freeze
+
+  def host(executor: RecordedWslExecutor.new, host_os: "linux", proc_version: WSL_KERNEL, interop: "enabled", env: SESSION_ENV)
     proc_version_path = File.join(@dir, "version")
     File.write(proc_version_path, proc_version) if proc_version
     File.write(File.join(@binfmt, "WSLInterop"), "#{interop}\ninterpreter /init\nflags: PF\n") if interop
-    Dev::WslHost.new(executor: executor, host_os: host_os, proc_version_path: proc_version_path, binfmt_dir: @binfmt)
+    # nil leaves WslHost's own default (the process env) in place.
+    env_wiring = env.nil? ? {} : { env: env }
+    Dev::WslHost.new(executor: executor, host_os: host_os, proc_version_path: proc_version_path, binfmt_dir: @binfmt, **env_wiring)
   end
 
   test "wsl? is the Microsoft kernel on a linux host" do
@@ -43,15 +49,28 @@ class Dev::WslHostTest < Minitest::Test
     "darwin" | WSL_KERNEL   | false
   end
 
-  test "interop? reads the binfmt registration" do
+  test "interop? is the binfmt registration and this session's socket: a service without WSL_INTEROP cannot run Windows binaries however binfmt reads" do
     Expect
-    host(interop: interop).interop? == enabled
+    host(interop: interop, env: env).interop? == enabled
 
     Where
-    interop    | enabled
-    "enabled"  | true
-    "disabled" | false
-    nil        | false
+    interop    | env                     | enabled
+    "enabled"  | SESSION_ENV             | true
+    "disabled" | SESSION_ENV             | false
+    nil        | SESSION_ENV             | false
+    "enabled"  | {}                      | false
+    "enabled"  | { "WSL_INTEROP" => "" } | false
+  end
+
+  test "the default env is the process's" do
+    Given "WSL_INTEROP unset in this process"
+    saved = ENV.delete("WSL_INTEROP")
+
+    Expect
+    !host(interop: "enabled", env: nil).interop?
+
+    Cleanup
+    ENV["WSL_INTEROP"] = saved if saved
   end
 
   test "windows_profile asks cmd.exe and converts through wslpath" do
