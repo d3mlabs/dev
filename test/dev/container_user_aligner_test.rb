@@ -175,9 +175,10 @@ class Dev::ContainerUserAlignerTest < Minitest::Test
     script.start_with?("#!/bin/sh")
     script.include?("/etc/passwd")
     script.include?("/etc/group")
-    script.include?("find / -xdev")
-    script.include?("-user \"$old_uid\" -exec chown -h \"$uid\"")
-    script.include?("-group \"$old_gid\" -exec chgrp -h \"$gid\"")
+    script.include?("find \"${root:-/}\" -xdev")
+    script.include?("/proc/self/mountinfo")
+    script.include?("! -user \"$old_uid\" -o -exec chown -h \"$uid\"")
+    script.include?("! -group \"$old_gid\" -o -exec chgrp -h \"$gid\"")
     SCRIPT.executable?
   end
 
@@ -187,8 +188,50 @@ class Dev::ContainerUserAlignerTest < Minitest::Test
 
     Expect "one find, with the Cellar's regular files pruned before either ownership test (overlay copy-up is paid per byte, and poured kegs are never written into)"
     script.scan(/^find /).size == 1
-    script.include?("cellar=\"/home/linuxbrew/.linuxbrew/Cellar\"")
-    script.include?("\\( -type f -path \"$cellar/*\" -prune \\) -o")
+    script.include?("cellar=\"$root/home/linuxbrew/.linuxbrew/Cellar\"")
+    script.include?("-type f -path \"$cellar/*\"")
+    script.include?("-prune -o")
+  end
+
+  # Reproduces dev#310 step 5's finding: the sweep re-owned the host's
+  # /var/lib/dev. `-xdev` keeps find from descending into a mount, but the
+  # mount point's own directory entry is still visited — and that inode is
+  # the host's directory (the bind mount's root), owned by the operator,
+  # i.e. by the image user's old uid.
+  test "the realign script re-owns the root filesystem but never a mount point, not even its top directory; Cellar regular files stay" do
+    Given "a tree standing in for /, a mountinfo naming a mount point in it, and a second group this user is in (chgrp needs no root for that)"
+    other_gid = Process.groups.find { |gid| gid != Process.gid }
+    skip "this user is in one group only" if other_gid.nil?
+    root = Dir.mktmpdir("align-root")
+    FileUtils.mkdir_p(File.join(root, "etc"))
+    File.write(File.join(root, "etc", "passwd"), "root:x:0:0:root:/root:/bin/sh\nbuilder:x:#{Process.uid}:#{Process.gid}::/home/builder:/bin/sh\n")
+    File.write(File.join(root, "etc", "group"), "root:x:0:\nbuilder:x:#{Process.gid}:\n")
+    FileUtils.mkdir_p(File.join(root, "home", "builder"))
+    File.write(File.join(root, "home", "builder", "file"), "")
+    FileUtils.mkdir_p(File.join(root, "var", "lib", "dev", "gh"))
+    File.write(File.join(root, "var", "lib", "dev", "gh", "tree"), "")
+    FileUtils.mkdir_p(File.join(root, "home", "linuxbrew", ".linuxbrew", "Cellar", "ruby", "bin"))
+    File.write(File.join(root, "home", "linuxbrew", ".linuxbrew", "Cellar", "ruby", "bin", "ruby"), "")
+    mountinfo = File.join(root, "mountinfo")
+    File.write(mountinfo, "22 1 0:21 / / rw - overlay overlay rw\n23 22 8:1 /var/lib/dev /var/lib/dev rw - ext4 /dev/sda1 rw\n")
+    gid_of = ->(*parts) { File.stat(File.join(root, *parts)).gid }
+
+    When "realigning builder from this user's gid to the other group, over that tree"
+    ok = system({ "ALIGN_ROOT" => root, "ALIGN_MOUNTINFO" => mountinfo }, "sh", SCRIPT.to_s, "builder", "builder", Process.uid.to_s, Process.gid.to_s, Process.uid.to_s, other_gid.to_s)
+
+    Then "the root filesystem's entries took the new gid; the mount point and what is under it did not; a Cellar keg's directory did, its regular file did not; passwd and group carry the new ids"
+    ok
+    gid_of.call("home", "builder", "file") == other_gid
+    gid_of.call("home", "builder") == other_gid
+    gid_of.call("var", "lib", "dev") == Process.gid
+    gid_of.call("var", "lib", "dev", "gh", "tree") == Process.gid
+    gid_of.call("home", "linuxbrew", ".linuxbrew", "Cellar", "ruby", "bin") == other_gid
+    gid_of.call("home", "linuxbrew", ".linuxbrew", "Cellar", "ruby", "bin", "ruby") == Process.gid
+    File.read(File.join(root, "etc", "passwd")).include?("builder:x:#{Process.uid}:#{other_gid}:")
+    File.read(File.join(root, "etc", "group")).include?("builder:x:#{other_gid}:")
+
+    Cleanup
+    FileUtils.rm_rf(root)
   end
 
   test "the realign script parses under sh -n" do
