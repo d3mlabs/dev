@@ -252,9 +252,15 @@ module Dev
       @home_of.call(@name) || "/home/#{@name}"
     end
 
-    # Make the user exist, in its groups, with brew in every login shell:
-    # one sudo session, one argv per step. Idempotent — a present user has
-    # its membership converged, the profile.d file is rewritten in place.
+    # Make the user exist, in its groups, with brew in every login shell,
+    # owning the toolchain: one sudo session, one argv per step.
+    # Idempotent — a present user has its membership converged, the
+    # profile.d file is rewritten in place, a toolchain already the runner
+    # user's is left alone. The hand-over is a step like the others, said
+    # out loud, not a question: on a Linux build host the rule is that
+    # jobs upgrade dev, and brew is single-owner, so the prefix is the
+    # runner user's (dev#337). Aborting leaves the host unmigrated, which
+    # `dev runner status` reports until a re-run.
     #
     # @return [void]
     # @raise [PrivilegedSteps::StepFailedError, PrivilegedSteps::SudoRequiredError]
@@ -272,6 +278,22 @@ module Dev
       end
       brew = @brew
       @steps.install_file!("eval \"$(#{brew} shellenv)\"\n", PROFILE_D, mode: "0644") if brew
+      own_toolchain!
+    end
+
+    # Hand the toolchain to the runner user when someone else owns it.
+    #
+    # @return [void]
+    sig { void }
+    def own_toolchain!
+      return if owns_toolchain?
+
+      owner = toolchain_owner
+      prefix = toolchain_roots.fetch(0)
+      @out.puts ">>> Handing the toolchain #{prefix} (owned by #{owner}) to #{@name}: jobs upgrade dev through it; " \
+                "brew as #{owner} becomes `sudo -iu #{@name} brew ...`"
+      chown = ["sudo", "chown", "-R", "#{@name}:#{@name}"] + toolchain_roots
+      @steps.step!(*T.unsafe(chown))
     end
 
     # An asker: a question, answered with the secret — or nil/"" when
