@@ -71,17 +71,28 @@ module Dev
       T::Array[String],
     )
 
+    # The env var WSL's /init gives every login session: the path of that
+    # session's interop socket, which the binfmt handler needs to run a
+    # Windows binary. A process without it — a systemd service, the runner
+    # user's jobs among them — has interop registered and unusable.
+    INTEROP_SOCKET_VAR = "WSL_INTEROP"
+
     # @param executor [#run, #quiet?, #capture] process seam for the interop binaries, `nproc`, and `dmesg`
     # @param host_os [String] "darwin" / "linux" / "windows"
     # @param proc_version_path [String] kernel banner; "microsoft" in it means WSL
     # @param binfmt_dir [String] where WSL registers its interop handler
-    sig { params(executor: T.untyped, host_os: String, proc_version_path: String, binfmt_dir: String).void }
+    # @param env [Hash] this process's environment (injectable for tests)
+    sig do
+      params(executor: T.untyped, host_os: String, proc_version_path: String, binfmt_dir: String,
+        env: T::Hash[String, T.nilable(String)]).void
+    end
     def initialize(executor: ProcessExecutor.new, host_os: Dev::Deps.detect_host, proc_version_path: PROC_VERSION,
-      binfmt_dir: BINFMT_DIR)
+      binfmt_dir: BINFMT_DIR, env: ENV.to_h)
       @executor = executor
       @host_os = host_os
       @proc_version_path = proc_version_path
       @binfmt_dir = binfmt_dir
+      @env = env
     end
 
     # Whether this Linux is a WSL2 distro.
@@ -95,12 +106,17 @@ module Dev
       File.read(@proc_version_path).match?(/microsoft/i)
     end
 
-    # Whether Windows binaries can be run from inside the distro (the
-    # `WSLInterop` binfmt handler is registered and enabled).
+    # Whether Windows binaries can be run from *this process*: the
+    # `WSLInterop` binfmt handler is registered and enabled, and the
+    # session has its interop socket (INTEROP_SOCKET_VAR). Without the
+    # socket a Windows binary exits silently with nothing — what a job
+    # under the runner user's systemd service sees.
     #
     # @return [Boolean]
     sig { returns(T::Boolean) }
     def interop?
+      return false if @env[INTEROP_SOCKET_VAR].to_s.empty?
+
       Dir.glob(File.join(@binfmt_dir, "WSLInterop*")).any? do |path|
         File.read(path).lines.first.to_s.strip == "enabled"
       end
