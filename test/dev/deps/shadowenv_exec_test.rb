@@ -28,11 +28,17 @@ class Dev::Deps::ShadowenvExecTest < Minitest::Test
     bin
   end
 
-  # Pins the exact scrub set rather than referencing the constant: dropping
-  # any key from it would silently re-open a leak — dev's own GEM_HOME
-  # (the Homebrew wrapper points it into the dev-core Cellar, dev#180) or a
-  # sandboxed harness's bundler overrides (dev#89).
-  test "runs the command through shadowenv exec in the project root with dev's Ruby env unset" do
+  # Pins the exact scrub set rather than referencing the constant. It is
+  # the transitional pair and nothing else: GEM_HOME, which the dev-core
+  # wrapper still exports into dev's process (dev#180), and the
+  # active-project marker that must go with it so shadowenv re-applies the
+  # lisps instead of leaving the child with no gem home (dev#274). The
+  # bundler and RUBYOPT/RUBYLIB keys that used to sit here were dead —
+  # bin/dev's sh layer strips them before any Ruby exists — and a second
+  # copy of that list is how two seams drift apart (dev#306 vs
+  # CommandRunner). When the wrapper stops exporting GEM_HOME, this pair
+  # goes and the seam clears nothing.
+  test "runs the command through shadowenv exec in the project root with the transitional pair unset" do
     Given "a project root and a caller-supplied env"
     dir = Dir.mktmpdir("dev-shadowenv-exec-test-")
     shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: dir)
@@ -41,16 +47,10 @@ class Dev::Deps::ShadowenvExecTest < Minitest::Test
     When "capturing a command"
     result = shadowenv_exec.capture3("bundle", "install", env: { "BUNDLE_GEMFILE" => "#{dir}/Gemfile" })
 
-    Then "the child is spawned under shadowenv with every scrub key nil'd and the caller's env kept"
+    Then "the child is spawned under shadowenv with exactly the pair nil'd and the caller's env kept"
     1 * Open3.capture3(
       {
-        "BUNDLE_PATH" => nil,
-        "BUNDLE_APP_CONFIG" => nil,
-        "BUNDLE_BIN" => nil,
         "GEM_HOME" => nil,
-        "GEM_PATH" => nil,
-        "RUBYOPT" => nil,
-        "RUBYLIB" => nil,
         "__shadowenv_data" => nil,
         "BUNDLE_GEMFILE" => "#{dir}/Gemfile",
       },

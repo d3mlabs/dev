@@ -10,6 +10,7 @@ require "dev/build_container"
 require "dev/container_context"
 require "dev/container_engine"
 require "dev/container_github_token"
+require "dev/deps/shadowenv_exec"
 require "dev/host_rule"
 require "dev/project_images"
 require "dev/shadowenv_llvm"
@@ -309,10 +310,18 @@ module Dev
       "#{run_str} #{args.shelljoin}"
     end
 
+    # The direct run's child env: what the project-toolchain seam clears
+    # (Dev::Deps::ShadowenvExec::RUBY_ENV_SCRUB — derived, never a copy of
+    # its own: this method once nil'd GEM_HOME alone and regressed with
+    # dev#274's LoadError after #306 fixed ShadowenvExec), plus dev's lib on
+    # RUBYLIB so a project's dev-aware scripts (bin/setup.rb, bin/tc.rb)
+    # can require it. RUBYLIB is set, not cleared, here: bin/dev's
+    # entrypoint stripped the caller's before any Ruby ran, so what this
+    # layers on is dev's own.
     sig { returns(T::Hash[String, T.nilable(String)]) }
     def child_env
       rubylib = [Dev::DEV_LIB_DIR, ENV["RUBYLIB"]].compact.join(File::PATH_SEPARATOR)
-      { "GEM_HOME" => nil, "RUBYLIB" => rubylib }
+      Dev::Deps::ShadowenvExec::RUBY_ENV_SCRUB.merge("RUBYLIB" => rubylib)
     end
 
     # Toolchain provisioning before command execution. The interpreters are
