@@ -235,6 +235,40 @@ class Dev::RunnerUserTest < Minitest::Test
     Dev::RunnerUser::GROUPS == ["docker", Dev::LinuxDataRootProvisioner::GROUP]
   end
 
+  # dev#337: the toolchain is brew's prefix (and, on Linuxbrew, the home it
+  # sits in); the runner user owns it, or the host has drifted.
+  test "the toolchain is brew's prefix plus the Linuxbrew home above it; the runner user owns it, or not, by the prefix's owner" do
+    Given "a Linuxbrew prefix owned by the operator, the same owned by the runner user, and a host without brew"
+    linuxbrew = "/home/linuxbrew/.linuxbrew/bin/brew"
+    operators = runner_user(homes: {}, brew: linuxbrew, owner_of: ->(_path) { "jpduchesne" })
+    runners = runner_user(homes: {}, brew: linuxbrew, owner_of: ->(_path) { "runner" })
+    brewless = runner_user(homes: {}, brew: nil, owner_of: ->(_path) { "jpduchesne" })
+    elsewhere = runner_user(homes: {}, brew: "/opt/brew/bin/brew", owner_of: ->(_path) { "jpduchesne" })
+
+    Expect "the roots, the owner, the verdict, and the one command that fixes drift"
+    operators.toolchain_roots == ["/home/linuxbrew/.linuxbrew", "/home/linuxbrew"]
+    elsewhere.toolchain_roots == ["/opt/brew"]
+    brewless.toolchain_roots == []
+    operators.toolchain_owner == "jpduchesne"
+    !operators.owns_toolchain?
+    runners.owns_toolchain?
+    brewless.owns_toolchain?
+    operators.chown_command == "sudo chown -R runner:runner /home/linuxbrew/.linuxbrew /home/linuxbrew"
+  end
+
+  test "the owner of a path is read from the filesystem: this user for a directory it made, nil for one that is not there" do
+    Given
+    dir = Dir.mktmpdir("dev-runner-user-test-")
+
+    Expect
+    Dev::RunnerUser.owner_of(dir) == Etc.getpwuid(Process.uid).name
+    Dev::RunnerUser.owner_of(File.join(dir, "missing")).nil?
+    Dev::RunnerUser.new(name: "runner", home_of: ->(_user) { nil }, brew: File.join(dir, "bin", "brew"), path: "/usr/bin").toolchain_owner == Etc.getpwuid(Process.uid).name
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   private
 
   # Lambdas, not blocks: a one-parameter block is emitted as |argv,| by the
@@ -242,9 +276,9 @@ class Dev::RunnerUserTest < Minitest::Test
   def logs_in = ->(argv) { argv.include?("login") }
   def last_three = ->(argv) { argv.last(3).join(" ") }
 
-  def runner_user(homes:, gh: GhExecutor.new(logged_in: true), name: "runner", brew: nil)
+  def runner_user(homes:, gh: GhExecutor.new(logged_in: true), name: "runner", brew: nil, owner_of: ->(_path) { name })
     steps = Dev::PrivilegedSteps.new(executor: @executor, tty: true, purpose: "create the runner user")
     Dev::RunnerUser.new(name: name, steps: steps, executor: gh, out: @out, home_of: ->(user) { homes[user] },
-      brew: brew, path: "/opt/brew/bin:/usr/bin")
+      brew: brew, path: "/opt/brew/bin:/usr/bin", owner_of: owner_of)
   end
 end
