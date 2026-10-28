@@ -56,6 +56,47 @@ class Dev::BinDevTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  # The formula vendors dev's runtime gems into libexec and installs the
+  # tree as libexec/dev/{bin,src,lib}. The Ruby half finds them by
+  # position (libexec/specifications beside its root), never by env — so
+  # the env dev was started in, hostile or not, neither helps nor hurts,
+  # and nothing is exported for children to inherit.
+  test "installed under a brew-style libexec, dev resolves its vendored gems in-process — the env has no say" do
+    Given "a libexec holding the two vendored gems and dev's tree, and a gem env pointing at nothing"
+    dir = Dir.mktmpdir("dev-bin-test-")
+    libexec = build_libexec(dir)
+    no_gems = File.join(dir, "no-gems")
+    FileUtils.mkdir_p(no_gems)
+
+    When "running the installed shim for the version"
+    out, err, status = Open3.capture3(no_gems_env(no_gems), "sh", File.join(libexec, "dev", "bin", "dev"), "--version", chdir: dir)
+
+    Then "dev booted on its vendored gems and answered"
+    status.success?
+    out.strip == File.read(File.join(DEV_ROOT, "VERSION")).strip
+    err.empty?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "from a source checkout, with nothing vendored beside it, the shell's gem env governs as before" do
+    Given "the repo's own shim, and a gem env pointing at nothing"
+    dir = Dir.mktmpdir("dev-bin-test-")
+    no_gems = File.join(dir, "no-gems")
+    FileUtils.mkdir_p(no_gems)
+
+    When "running the source shim"
+    _out, err, status = Open3.capture3(no_gems_env(no_gems), "sh", BIN_DEV, "--version", chdir: dir)
+
+    Then "it is the env's gems dev looks for — and finds none"
+    !status.success?
+    err.include?("sorbet-runtime")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "bare dev and dev --help outside a project print the projectless usage and exit 0" do
     Given "a directory with no dev.yml anywhere above it"
     dir = Dir.mktmpdir("dev-bin-test-")
@@ -203,6 +244,33 @@ class Dev::BinDevTest < Minitest::Test
   # Where the gh stub records that it ran.
   def gh_marker(dir)
     File.join(dir, "gh-was-run")
+  end
+
+  # The formula's layout in miniature: libexec/{specifications,gems} holding
+  # the two runtime gems the formula vendors (linked from wherever this
+  # suite's Ruby has them — RubyGems follows links), and libexec/dev with a
+  # copy of the shim (a copy, as brew installs: realpath must resolve
+  # inside the layout) beside links to the repo's src, lib and VERSION.
+  # Returns the libexec path.
+  def build_libexec(dir)
+    libexec = File.join(dir, "libexec")
+    FileUtils.mkdir_p([File.join(libexec, "specifications"), File.join(libexec, "gems"), File.join(libexec, "dev", "bin")])
+    %w[sorbet-runtime cli-ui].each do |name|
+      spec = Gem::Specification.find_by_name(name)
+      File.symlink(spec.spec_file, File.join(libexec, "specifications", File.basename(spec.spec_file)))
+      File.symlink(spec.gem_dir, File.join(libexec, "gems", File.basename(spec.gem_dir)))
+    end
+    FileUtils.cp(BIN_DEV, File.join(libexec, "dev", "bin", "dev"))
+    %w[src lib VERSION].each { |entry| File.symlink(File.join(DEV_ROOT, entry), File.join(libexec, "dev", entry)) }
+    libexec
+  end
+
+  # A gem env that resolves nothing, with the suite's own Ruby first on
+  # PATH so the shim's probe picks it deterministically. The suite runs
+  # under bundler; the shim's sh layer strips that activation itself, which
+  # is why these tests go through `sh`, not `ruby -x`.
+  def no_gems_env(no_gems)
+    { "GEM_HOME" => no_gems, "GEM_PATH" => no_gems, "PATH" => "#{File.dirname(RbConfig.ruby)}:#{ENV.fetch("PATH")}" }
   end
 
   # Variable names from `env` output — whole names, because the suite's
