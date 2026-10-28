@@ -8,6 +8,7 @@ require "dev/docker_cli_plugins"
 require "dev/engine_resources"
 require "dev/engine_resources_check"
 require "dev/linux_engine_provisioner"
+require "dev/prefix_volumes"
 require "dev/settings"
 require "dev/wsl_host"
 require "dev/wsl_provisioner"
@@ -56,6 +57,7 @@ module Dev
       const :linux, T.nilable(LinuxEngineProvisioner::Status)
       const :wsl, T.nilable(WslHost::Status)
       const :containers, T::Array[ContainerEngine::RunningContainer]
+      const :prefix_volumes, T::Array[PrefixVolumes::Volume], default: []
     end
 
     # @param settings [Dev::Settings] carries the optional container_engine record
@@ -140,6 +142,7 @@ module Dev
       EngineStatus.new(
         kind: engine.kind, running: running, stoppable: stoppable?, resources: resources,
         colima: colima, linux: linux, wsl: wsl, containers: engine.running_containers,
+        prefix_volumes: running ? PrefixVolumes.new(engine: engine, host_os: @host_os).list : [],
       )
     end
 

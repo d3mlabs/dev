@@ -212,11 +212,15 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
 
   # --- status -----------------------------------------------------------------
 
-  def status(kind:, running:, stoppable:, resources:, colima: nil, linux: nil, wsl: nil, containers: [])
+  def status(kind:, running:, stoppable:, resources:, colima: nil, linux: nil, wsl: nil, containers: [], prefix_volumes: [])
     Dev::EngineProvisioner::EngineStatus.new(
       kind: kind, running: running, stoppable: stoppable, resources: resources,
-      colima: colima, linux: linux, wsl: wsl, containers: containers,
+      colima: colima, linux: linux, wsl: wsl, containers: containers, prefix_volumes: prefix_volumes,
     )
+  end
+
+  def prefix_volume(name, user:, stale:, mounted_by: [])
+    Dev::PrefixVolumes::Volume.new(name: name, user: user, stale: stale, mounted_by: mounted_by)
   end
 
   def status_output(engine_status)
@@ -233,6 +237,7 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
     report = status(
       kind: :colima, running: true, stoppable: true, resources: Dev::EngineResources.new(cpus: 8, memory_gib: 16),
       colima: Dev::ColimaProvisioner::Vm.new(running: true, cpus: 8, memory_gib: 16, disk_gib: 100), containers: [MANAGED, FOREIGN],
+      prefix_volumes: [prefix_volume("dev-linuxbrew", user: nil, stale: false)],
     )
 
     Expect
@@ -241,6 +246,8 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
       containers running:
         snappy (~/src/snappy)
         my-postgres (not managed by dev)
+      prefix volumes:
+        dev-linuxbrew (the VM's)
     OUT
   end
 
@@ -253,8 +260,8 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
 
     Where
     description | vm | resources | expected
-    "stopped"   | Dev::ColimaProvisioner::Vm.new(running: false, cpus: 4, memory_gib: 8, disk_gib: 100) | Dev::EngineResources.new(cpus: 4, memory_gib: 8) | "engine: colima VM — stopped, 4 cpus / 8 GiB\ncontainers running: none\n"
-    "absent"    | nil | nil | "engine: colima VM — not created (dev engine up creates it)\ncontainers running: none\n"
+    "stopped"   | Dev::ColimaProvisioner::Vm.new(running: false, cpus: 4, memory_gib: 8, disk_gib: 100) | Dev::EngineResources.new(cpus: 4, memory_gib: 8) | "engine: colima VM — stopped, 4 cpus / 8 GiB\ncontainers running: none\nprefix volumes: none\n"
+    "absent"    | nil | nil | "engine: colima VM — not created (dev engine up creates it)\ncontainers running: none\nprefix volumes: none\n"
   end
 
   test "engine status on bare Linux: the daemon line and its converge facts" do
@@ -264,13 +271,22 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
       in_docker_group: true, systemd_enabled: nil,
     )
     report = status(kind: :docker, running: true, stoppable: true,
-      resources: Dev::EngineResources.new(cpus: 12, memory_gib: 32), linux: linux)
+      resources: Dev::EngineResources.new(cpus: 12, memory_gib: 32), linux: linux,
+      prefix_volumes: [
+        prefix_volume("dev-linuxbrew", user: nil, stale: true),
+        prefix_volume("dev-linuxbrew-jpduchesne", user: "jpduchesne", stale: false),
+        prefix_volume("dev-linuxbrew-runner", user: "runner", stale: false),
+      ])
 
     Expect
     status_output(report) == <<~OUT
       engine: dockerd — running, 12 cpus / 32 GiB
       dockerd: converged (docker group, buildx)
       containers running: none
+      prefix volumes:
+        dev-linuxbrew — stale: no host user (dev cache gc removes it)
+        dev-linuxbrew-jpduchesne (jpduchesne)
+        dev-linuxbrew-runner (runner)
     OUT
   end
 
@@ -287,6 +303,7 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
       engine: dockerd — stopped
       dockerd: not converged — Docker Desktop shim owns docker, not in the docker group, no buildx, systemd off in wsl.conf (dev engine up fixes this)
       containers running: none
+      prefix volumes: none
     OUT
   end
 
