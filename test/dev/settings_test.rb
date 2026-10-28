@@ -337,4 +337,27 @@ class Dev::SettingsTest < Minitest::Test
     ENV["DEV_DEFAULT_ORG"] = saved_env if saved_env
     FileUtils.rm_rf(dir)
   end
+
+  test "the machine's brew prefix is HOMEBREW_PREFIX when set, else the first standard location present, else nil" do
+    Given "a directory standing in for a prefix, named by HOMEBREW_PREFIX; then an empty HOMEBREW_PREFIX with /usr/local the one standard location present"
+    dir = Dir.mktmpdir("dev-settings-test-")
+    saved = ENV["HOMEBREW_PREFIX"]
+    ENV["HOMEBREW_PREFIX"] = dir
+    named = Dev::Settings.brew_prefix
+    system_path = Dev::Settings.new(config_path: File.join(dir, "u.yml")).system_config_path
+    ENV["HOMEBREW_PREFIX"] = ""
+    Dir.stubs(:exist?).returns(false)
+    Dir.stubs(:exist?).with("/usr/local").returns(true)
+    found = Dev::Settings.brew_prefix
+    Dir.unstub(:exist?)
+
+    Expect "the named prefix, the system layer under it, and the found one"
+    named == dir
+    system_path == File.join(dir, "etc", "dev", "config.yml")
+    found == "/usr/local"
+
+    Cleanup
+    saved ? ENV["HOMEBREW_PREFIX"] = saved : ENV.delete("HOMEBREW_PREFIX")
+    FileUtils.rm_rf(dir)
+  end
 end

@@ -46,6 +46,38 @@ module Dev
     # individuals who installed dev-core directly (no deployment).
     CORE_FORMULA = "dev-core"
 
+    # Answers whether this process may write the brew prefix.
+    PrefixWritable = T.type_alias { T.proc.returns(T::Boolean) }
+
+    class << self
+      extend T::Sig
+
+      # brew is single-owner: it refuses to write a prefix its caller does
+      # not own, and on a Linux build host the prefix is the runner user's
+      # by rule (dev#337), so the operator's `dev up` there must not try.
+      # brew's own test is the Cellar's writability; before a first install
+      # there is no Cellar and the prefix itself answers. No prefix, or one
+      # that is not there: not writable.
+      #
+      # @param prefix [String, nil] the brew prefix
+      # @return [Boolean]
+      sig { params(prefix: T.nilable(String)).returns(T::Boolean) }
+      def prefix_writable?(prefix)
+        return false unless prefix && File.directory?(prefix)
+
+        cellar = File.join(prefix, "Cellar")
+        File.writable?(File.directory?(cellar) ? cellar : prefix) ? true : false
+      end
+
+      # The probe for the machine's own prefix (Settings.brew_prefix).
+      #
+      # @return [Proc]
+      sig { returns(PrefixWritable) }
+      def default_prefix_writable
+        -> { prefix_writable?(Dev::Settings.brew_prefix) }
+      end
+    end
+
     # Runs brew commands. Split by what the caller needs: `run` streams
     # output to the terminal (installs the user should see), `quiet?` only
     # answers success (existence checks).
@@ -83,6 +115,9 @@ module Dev
     # @param synchronizer [Dev::Learnings::Synchronizer, Dev::Learnings::UnconfiguredSynchronizer]
     #   the org learnings read path (the unconfigured null object when no
     #   knowledge repo is set)
+    # @param prefix_writable [Proc] whether this process may write the brew
+    #   prefix (HostService.prefix_writable? on the machine's; injectable
+    #   so tests never read the machine)
     sig do
       params(
         settings: Dev::Settings,
@@ -92,6 +127,7 @@ module Dev
         own_skills: Dev::Skills::OwnSkills,
         gem_skills_factory: GemSkillsFactory,
         synchronizer: T.untyped,
+        prefix_writable: PrefixWritable,
       ).void
     end
     def initialize(settings: Dev::Settings.new, brew_executor: BrewExecutor.new,
@@ -99,7 +135,8 @@ module Dev
                    materializer: Dev::Skills::Materializer.new,
                    own_skills: Dev::Skills::OwnSkills.new,
                    gem_skills_factory: ->(project_root) { Dev::Deps::GemSkills.new(project_root: project_root) },
-                   synchronizer: Dev::Learnings::Synchronizer.for(settings: settings, materializer: materializer))
+                   synchronizer: Dev::Learnings::Synchronizer.for(settings: settings, materializer: materializer),
+                   prefix_writable: HostService.default_prefix_writable)
       @settings = settings
       @brew_executor = brew_executor
       @hook_installer = hook_installer
@@ -107,6 +144,7 @@ module Dev
       @own_skills = own_skills
       @gem_skills_factory = gem_skills_factory
       @synchronizer = synchronizer
+      @prefix_writable = prefix_writable
     end
 
     # The brew tooling layer (plans#26): brew converges brew — dev never
@@ -125,12 +163,16 @@ module Dev
     # tunable through brew, not dev. The Brewfile presence is convention,
     # not configuration: no file (tapless individual, CI) means the step
     # self-skips. A no-op on brewless machines (no prefix means no system
-    # config location, no Brewfile, nothing to upgrade).
+    # config location, no Brewfile, nothing to upgrade), and — silently —
+    # for a caller who does not own the prefix: on a Linux build host brew
+    # is the runner user's (dev#337), and the operator's own `dev up` there
+    # has nothing to converge and nothing to warn about; the jobs do it.
     #
     # @return [void]
     sig { void }
     def converge_tooling
       return unless system_config_path
+      return unless @prefix_writable.call
 
       warn_unnamed_deployment
       self_update
