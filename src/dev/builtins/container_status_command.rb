@@ -81,9 +81,14 @@ module Dev
       sig { params(current: T.nilable(Dev::BuildContainer::ServiceContainer)).returns(String) }
       def persisted_state(current)
         return "none (dev container up creates it)" if current.nil?
-        return "#{current.name} — running" if current.running
 
-        "#{current.name} — stopped (dev container up restarts it warm)"
+        state = current.running ? "running" : "stopped"
+        warm = current.running ? "" : " (dev container up restarts it warm)"
+        mounted = current.prefix_volume
+        return "#{current.name} — #{state}#{warm}" if mounted.nil?
+        return "#{current.name} — #{state}, prefix #{mounted}#{warm}" if mounted == client.prefix_volume
+
+        "#{current.name} — #{state}, prefix #{mounted} — not this user's, #{client.prefix_volume} (dev container up recreates it)"
       end
 
       # @param containers [Array<Dev::BuildContainer::ServiceContainer>]

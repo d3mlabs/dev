@@ -86,6 +86,8 @@ module Dev
     class ServiceContainer < T::Struct
       const :name, String
       const :running, T::Boolean
+      # The volume mounted at the Linuxbrew prefix; nil when unknown.
+      const :prefix_volume, T.nilable(String), default: nil
     end
 
     # What `dev container status` renders: image presence on both sides and
@@ -656,7 +658,6 @@ module Dev
         @engine.run(["volume", "create", DATA_ROOT_VOLUME], out: File::NULL)
         "#{DATA_ROOT_VOLUME}:#{DATA_ROOT_MOUNT}"
       end
-      prefix_volume = BuildContainer.prefix_volume(host_os: @host_os, host_user: @host_user)
       @engine.run(["volume", "create", prefix_volume], out: File::NULL)
       ["-v", data_root, "-v", "#{prefix_volume}:#{LINUXBREW_MOUNT}"]
     end
@@ -733,12 +734,39 @@ module Dev
       name = self.class.service_container_name(image_tag, project_root)
       reap_stale_services!(image_tag, project_root)
 
-      if container_exists?(name)
+      exists = container_exists?(name)
+      if exists && on_another_prefix_volume?(name)
+        # Mounts are fixed at creation: a container from before the per-user
+        # split (or another user's checkout at this path) mounts a prefix
+        # volume that is not this user's; reused, this user's aligner would
+        # hand that shared volume over and the other user's hand it back.
+        remove_container(name)
+        exists = false
+      end
+
+      if exists
         start_container(name) unless container_running?(name)
       else
         create_service_container(name, image_tag, project_root:, volumes:)
       end
       name
+    end
+
+    # The Linuxbrew prefix volume this host user's containers mount.
+    #
+    # @return [String]
+    sig { returns(String) }
+    def prefix_volume = BuildContainer.prefix_volume(host_os: @host_os, host_user: @host_user)
+
+    # The volume a container has mounted at the Linuxbrew prefix.
+    #
+    # @param name [String] the container
+    # @return [String, nil] nil when inspect reports none (or fails)
+    sig { params(name: String).returns(T.nilable(String)) }
+    def container_prefix_volume(name)
+      template = "{{range .Mounts}}{{if eq .Destination \"#{LINUXBREW_MOUNT}\"}}{{.Name}}{{end}}{{end}}"
+      mounted = @engine.capture(["container", "inspect", "-f", template, name]).strip
+      mounted.empty? ? nil : mounted
     end
 
     # Run +blk+ against a one-shot sibling of the service container: the
@@ -1047,8 +1075,20 @@ module Dev
       ])
       out.split("\n").map(&:strip).reject(&:empty?).map do |line|
         name, state = line.split("\t", 2)
-        ServiceContainer.new(name: T.must(name), running: state == "running")
+        ServiceContainer.new(name: T.must(name), running: state == "running", prefix_volume: container_prefix_volume(T.must(name)))
       end
+    end
+
+    # Whether a container mounts a prefix volume other than this user's. An
+    # unknown mount (inspect answered nothing) is not a reason to drop a
+    # warm container.
+    #
+    # @param name [String]
+    # @return [Boolean]
+    sig { params(name: String).returns(T::Boolean) }
+    def on_another_prefix_volume?(name)
+      mounted = container_prefix_volume(name)
+      !mounted.nil? && mounted != prefix_volume
     end
 
     sig { params(name: String).returns(T::Boolean) }

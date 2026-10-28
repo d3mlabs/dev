@@ -709,6 +709,9 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     "absent"                | []                                                           | ["container: none (dev container up creates it)\n"]
     "running"               | [[CURRENT, true]]                                            | ["container: #{CURRENT} — running\n"]
     "stopped"               | [[CURRENT, false]]                                           | ["container: #{CURRENT} — stopped (dev container up restarts it warm)\n"]
+    "running, on this user's prefix volume" | [[CURRENT, true, "dev-linuxbrew-jp"]]            | ["container: #{CURRENT} — running, prefix dev-linuxbrew-jp\n"]
+    "stopped, on this user's prefix volume" | [[CURRENT, false, "dev-linuxbrew-jp"]]           | ["container: #{CURRENT} — stopped, prefix dev-linuxbrew-jp (dev container up restarts it warm)\n"]
+    "stopped, on the legacy prefix volume"  | [[CURRENT, false, "dev-linuxbrew"]]              | ["container: #{CURRENT} — stopped, prefix dev-linuxbrew — not this user's, dev-linuxbrew-jp (dev container up recreates it)\n"]
     "current plus a stale"  | [["dev-myapp-linux-abc-content-old", false], [CURRENT, true]] | ["container: #{CURRENT} — running\n", "stale: dev-myapp-linux-abc-content-old — stopped (dev container up removes it)\n"]
     "only a stale one"      | [["dev-myapp-linux-abc-content-old", true]] | ["container: none (dev container up creates it)\n", "stale: dev-myapp-linux-abc-content-old — running (dev container up removes it)\n"]
   end
@@ -804,7 +807,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
   def status(local:, registry:, containers:)
     Dev::BuildContainer::ServiceStatus.new(
       image_tag: TAG, local_image: local, in_registry: registry, current_container_name: CURRENT,
-      containers: containers.map { |name, running| Dev::BuildContainer::ServiceContainer.new(name:, running:) },
+      containers: containers.map { |name, running, prefix_volume| Dev::BuildContainer::ServiceContainer.new(name:, running:, prefix_volume:) },
     )
   end
 
@@ -813,6 +816,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     client = client()
     Dev::BuildContainer.stubs(:image_with_tag).with(config, project_root: ROOT).returns(TAG)
     client.stubs(:service_status).with(TAG, ROOT, registry: nil).returns(status)
+    client.stubs(:prefix_volume).returns("dev-linuxbrew-jp")
     out = StringIO.new
     Dev::Builtins::ContainerStatusCommand.new(container_client: client, out: out).call(args: no_args, context: project(config))
     out.string
