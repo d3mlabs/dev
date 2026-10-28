@@ -44,6 +44,14 @@ module Dev
     # The host rule's name; `--as` overrides it.
     DEFAULT_NAME = "runner"
 
+    # What the machine user's token must carry, and why each: `repo` for
+    # the private fetches (the jobs' dependencies live under two owners,
+    # which a fine-grained token cannot span — so a classic token),
+    # `read:org` because `gh auth login` refuses a token without it, and
+    # `read:packages` because the host's gh token is also its registry
+    # login (ghcr pulls). Read-only every one; never an admin's token.
+    TOKEN_SCOPES = T.let(%w[repo read:org read:packages].freeze, T::Array[String])
+
     # The groups the runner user needs: the engine's socket and the shared
     # data root.
     GROUPS = T.let(["docker", LinuxDataRootProvisioner::GROUP].freeze, T::Array[String])
@@ -122,6 +130,14 @@ module Dev
 
         prefix = File.dirname(File.dirname(brew))
         "#{prefix}/bin:#{prefix}/sbin:#{SYSTEM_PATH}"
+      end
+
+      # The token in one phrase, for every place that asks for or explains it.
+      #
+      # @return [String]
+      sig { returns(String) }
+      def token_hint
+        "a classic token with #{TOKEN_SCOPES.join(", ")} — read-only, never an admin's"
       end
     end
 
@@ -212,7 +228,7 @@ module Dev
 
       token = ask&.call(
         "#{@name} has no GitHub login, and every job on this host fetches as #{@name}. " \
-        "Paste the machine user's token (read access to what the jobs fetch; never an admin's)",
+        "Paste the machine user's token (#{self.class.token_hint})",
       ).to_s.strip
       raise GhLoginRequiredError, headless_message if token.empty?
 
@@ -220,8 +236,9 @@ module Dev
       return if ok && gh_authenticated?
 
       raise GhLoginRequiredError,
-        "gh did not accept the token for #{@name}: #{err.strip}\nLog it in by hand — the token on stdin, then Ctrl-D:\n  " \
-        "#{login_command}\nthen re-run dev runner register."
+        "gh did not accept the token for #{@name}: #{err.strip}\n" \
+        "It needs #{self.class.token_hint}. Re-run dev runner register with one, or log #{@name} in by hand — " \
+        "the token on stdin, then Ctrl-D:\n  #{login_command}"
     end
 
     # @return [Boolean] whether the runner user's gh is logged in
@@ -246,7 +263,7 @@ module Dev
     sig { returns(String) }
     def headless_message
       "#{@name} has no GitHub login, and every job on this host fetches as #{@name}. Log it in once — " \
-        "paste the machine user's token (read access to what the jobs fetch; never an admin's), then Ctrl-D:\n  " \
+        "paste the machine user's token (#{self.class.token_hint}), then Ctrl-D:\n  " \
         "#{login_command}\nthen re-run dev runner register."
     end
 

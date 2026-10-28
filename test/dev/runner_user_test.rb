@@ -175,6 +175,7 @@ class Dev::RunnerUserTest < Minitest::Test
     error.message.include?("sudo -iu runner gh auth login --with-token")
     error.message.include?("paste the machine user's token")
     error.message.include?("re-run dev runner register")
+    Dev::RunnerUser::TOKEN_SCOPES.all? { |scope| error.message.include?(scope) }
     user.login_command == "sudo -iu runner gh auth login --with-token"
     gh.calls.none?(&logs_in)
   end
@@ -196,13 +197,14 @@ class Dev::RunnerUserTest < Minitest::Test
     questions.size == 1
     questions.fetch(0).include?("runner has no GitHub login")
     questions.fetch(0).include?("machine user's token")
+    questions.fetch(0).include?("repo, read:org, read:packages")
     gh.calls.map(&last_three) == ["gh auth status", "auth login --with-token", "gh auth status"]
     gh.calls.fetch(1) == %w[sudo -u runner -H env PATH=/opt/brew/bin:/usr/bin gh auth login --with-token]
     gh.stdins == [nil, "ghp_good", nil]
     gh.calls.flatten.grep(/ghp_/).empty?
   end
 
-  test "an asker that answers nothing (declined, or no terminal behind it) falls back to the headless message; a token gh refuses says so and names the command" do
+  test "an asker that answers nothing (declined, or no terminal behind it) falls back to the headless message; a token gh refuses says so, names the scopes it needs and the command" do
     Given
     declined = GhExecutor.new(logged_in: false)
     refused = GhExecutor.new(logged_in: false, accepts: "ghp_good")
@@ -216,6 +218,7 @@ class Dev::RunnerUserTest < Minitest::Test
     declined.calls.none?(&logs_in)
     bad.message.include?("gh did not accept the token")
     bad.message.include?("error validating token")
+    bad.message.include?("classic token with repo, read:org, read:packages")
     bad.message.include?("sudo -iu runner gh auth login --with-token")
     refused.calls.count(&logs_in) == 1
   end

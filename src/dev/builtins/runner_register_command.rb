@@ -210,9 +210,11 @@ module Dev
           docker and #{LinuxDataRootProvisioner::GROUP}, no password, no sudo; its commands and every job run on the
           host PATH (brew's bin and sbin, then the system's — nothing of yours), and
           Homebrew's shellenv lands in #{Dev::RunnerUser::PROFILE_D} so `sudo -iu` shells
-          find gh. Register needs it logged in to gh — the machine user's token (read
-          access to what the jobs fetch) — and asks for it, input hidden, the first
-          time; headless it prints the command instead and stops:
+          find gh. Register needs it logged in to gh — the machine user's token,
+          #{Dev::RunnerUser.token_hint}
+          (repo: the private fetches, under two owners; read:org: gh's own gate;
+          read:packages: the same login pulls from ghcr) — and asks for it, input
+          hidden, the first time; headless it prints the command instead and stops:
             #{Dev::RunnerUser.new(name: Dev::RunnerUser::DEFAULT_NAME).login_command}
           An enrollment running as anyone else is drift: register offers to retire it
           and enroll fresh as the runner user. On macOS the enrollment is yours (a
