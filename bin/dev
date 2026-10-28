@@ -65,13 +65,18 @@ $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 # project's gems into dev-core's Cellar) and nothing the caller exported
 # can misdirect dev (a GEM_PATH-less brew Ruby falls back to the
 # prefix-wide gem dir shared by every brew Ruby, where another Ruby's
-# native extensions live — dev#274). Default gems (json, open3, …) resolve
-# from the running Ruby's own stdlib regardless of Gem.path, so a path of
-# exactly [libexec] is complete. A source checkout has no specifications
-# dir beside it and keeps the shell's gem env, as always. Guarded by
-# test/dev/bin_dev_test.rb against a synthetic libexec.
+# native extensions live — dev#274). The vendored dir goes in FRONT of the
+# path dev would otherwise have (the caller's GEM_PATH, or the Ruby's
+# defaults when none) — never instead of it: default gems (json, open3)
+# resolve from the Ruby's stdlib regardless of Gem.path, but *bundled*
+# gems (reline, and readline on it — what CLI::UI::Prompt requires on
+# every tty or CI run) live in the Ruby's gem dir and are only reachable
+# through the path. A path of exactly [libexec] was 0.6.6, and broke every
+# interactive dev. A source checkout has no specifications dir beside it
+# and keeps the shell's gem env untouched. Guarded by
+# test/dev/bin_dev_test.rb against a synthetic libexec, both ways.
 vendored = File.dirname(root)
-Gem.use_paths(vendored, [vendored]) if File.directory?(File.join(vendored, "specifications"))
+Gem.use_paths(vendored, [vendored, *Gem.path]) if File.directory?(File.join(vendored, "specifications"))
 
 require "dev"
 require "dev/global_dispatch"
