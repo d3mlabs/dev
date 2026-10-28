@@ -80,6 +80,31 @@ class Dev::BinDevTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  # Selecting the vendored gems must not hide the Ruby's own: since Ruby
+  # 4, reline (and readline on top of it) are *bundled* gems — installed
+  # in the Ruby's gem dir, not resolvable from its default-gem specs the
+  # way json or open3 are. CLI::UI::Prompt requires them, and UiImpl loads
+  # it on every tty or CI run. A Gem.path of exactly [libexec] shipped in
+  # 0.6.6 and broke every interactive `dev` — the vendored dir goes in
+  # front of the caller's gem path, never instead of it.
+  test "installed under a libexec, a CI run outside a project still reaches the Ruby's bundled gems through CLI::UI" do
+    Given "a libexec holding the vendored gems and dev's tree, the caller's ordinary gem env, and CI set so the real UI loads"
+    dir = Dir.mktmpdir("dev-bin-test-")
+    libexec = build_libexec(dir)
+    env = { "CI" => "1", "PATH" => "#{File.dirname(RbConfig.ruby)}:#{ENV.fetch("PATH")}" }
+
+    When "running the installed shim bare, from a directory that is not a project"
+    out, err, status = Open3.capture3(env, "sh", File.join(libexec, "dev", "bin", "dev"), chdir: dir)
+
+    Then "the UI came up (reline found beside the Ruby) and dev answered as it does outside a project"
+    status.success?
+    out.include?("outside a project")
+    !err.include?("LoadError")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "from a source checkout, with nothing vendored beside it, the shell's gem env governs as before" do
     Given "the repo's own shim, and a gem env pointing at nothing"
     dir = Dir.mktmpdir("dev-bin-test-")
