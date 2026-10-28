@@ -213,7 +213,9 @@ module Dev
           find gh. Jobs upgrade dev through brew, and brew is single-owner, so
           brew's prefix is the runner user's: register hands it over (one chown,
           announced) when someone else owns it; a package by hand on the host is then
-          `sudo -iu #{Dev::RunnerUser::DEFAULT_NAME} brew ...`.
+          `sudo -iu #{Dev::RunnerUser::DEFAULT_NAME} brew ...`. Brew loads nothing from a tap
+          its user has not trusted, and trust is per user, so register also has the
+          runner user trust the deployment's tap (`brew trust --tap <tap>`, as that user).
           Register needs the runner user logged in to gh — the machine user's token,
           #{Dev::RunnerUser.token_hint}
           (repo: the private fetches, under two owners; read:org: gh's own gate;
