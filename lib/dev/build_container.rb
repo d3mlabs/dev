@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "digest"
+require "etc"
 require "fileutils"
 require "pathname"
 require "securerandom"
@@ -150,6 +151,12 @@ module Dev
     # initialised by docker. Same volume semantics as the data root. The
     # generated image puts the prefix on PATH (EnvironmentImage), so the two
     # are one constant.
+    #
+    # A brew prefix has one owner, and brew's only writer is that owner
+    # (dev#337). On a Mac the VM is one user's, so one volume per VM. On
+    # Linux the engine is shared by the host's users — the operator and the
+    # runner user (dev#310) each run containers as themselves — so the
+    # volume is per host user: `dev-linuxbrew-<user>` (see .prefix_volume).
     LINUXBREW_MOUNT = EnvironmentImage::LINUXBREW_PREFIX
     LINUXBREW_VOLUME = "dev-linuxbrew"
 
@@ -165,23 +172,47 @@ module Dev
     # @param host_os [String] "darwin" / "linux" / "windows" — the shape of
     #   the container's data root (ADR-0008: a volume behind a Mac's VM
     #   boundary, the host's own directory bind-mounted on Linux)
+    # @param host_user [String] the host user's name, whose prefix volume a
+    #   Linux container mounts
     sig do
       params(
         engine: Dev::ContainerEngine,
         resources_check: Dev::EngineResourcesCheck,
         registry_login: T.nilable(Dev::RegistryLogin),
         host_os: String,
+        host_user: String,
       ).void
     end
-    def initialize(engine:, resources_check: Dev::EngineResourcesCheck.new, registry_login: nil, host_os: Dev::Platform.os)
+    def initialize(engine:, resources_check: Dev::EngineResourcesCheck.new, registry_login: nil, host_os: Dev::Platform.os,
+                   host_user: BuildContainer.host_user)
       @engine = engine
       @resources_check = resources_check
       @registry_login = T.let(registry_login || Dev::RegistryLogin.new(engine:), Dev::RegistryLogin)
       @host_os = host_os
+      @host_user = host_user
     end
 
     class << self
       extend T::Sig
+
+      # The host user dev runs as, by name (the volume is named after it).
+      #
+      # @return [String]
+      sig { returns(String) }
+      def host_user
+        Etc.getpwuid(Process.uid)&.name || ENV.fetch("USER", Process.uid.to_s)
+      end
+
+      # The Linuxbrew prefix volume a container mounts: the host user's own
+      # on Linux, the VM's one on a Mac.
+      #
+      # @param host_os [String] "darwin" / "linux"
+      # @param host_user [String] the host user's name
+      # @return [String] the docker volume name
+      sig { params(host_os: String, host_user: String).returns(String) }
+      def prefix_volume(host_os: Dev::Platform.os, host_user: self.host_user)
+        host_os == "linux" ? "#{LINUXBREW_VOLUME}-#{host_user}" : LINUXBREW_VOLUME
+      end
 
       # Compute the content-addressed tag from Dockerfile + lockfiles + globs.
       #
@@ -609,10 +640,12 @@ module Dev
     # host's data root *is* the container's (dev#308): bind-mounted at the
     # host's own path, so every absolute path the store embeds reads the
     # same from both sides — one copy, nothing installed twice. The
-    # Linuxbrew prefix is a named volume on both: the host has no prefix to
-    # lend at that path, and bottles refuse a symlinked one. Volumes are
-    # created first — `docker volume create` is idempotent — so the first
-    # container to mount them finds them initialised from the image.
+    # Linuxbrew prefix is a named volume on both — the host user's own on
+    # Linux, where the engine is shared (.prefix_volume): the host has no
+    # prefix to lend at that path, and bottles refuse a symlinked one.
+    # Volumes are created first — `docker volume create` is idempotent — so
+    # the first container to mount them finds them initialised from the
+    # image.
     #
     # @return [Array<String>] docker `-v` flags
     sig { returns(T::Array[String]) }
@@ -623,8 +656,9 @@ module Dev
         @engine.run(["volume", "create", DATA_ROOT_VOLUME], out: File::NULL)
         "#{DATA_ROOT_VOLUME}:#{DATA_ROOT_MOUNT}"
       end
-      @engine.run(["volume", "create", LINUXBREW_VOLUME], out: File::NULL)
-      ["-v", data_root, "-v", "#{LINUXBREW_VOLUME}:#{LINUXBREW_MOUNT}"]
+      prefix_volume = BuildContainer.prefix_volume(host_os: @host_os, host_user: @host_user)
+      @engine.run(["volume", "create", prefix_volume], out: File::NULL)
+      ["-v", data_root, "-v", "#{prefix_volume}:#{LINUXBREW_MOUNT}"]
     end
 
     # Where the container finds its data root: the host's own path on

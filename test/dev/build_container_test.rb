@@ -17,8 +17,17 @@ class BuildContainerTest < Minitest::Test
   # so the fake engine records argv instead of tests stubbing Kernel#system.
   # A Mac unless said otherwise: the data root's shape is the host OS's,
   # and these tests run on either.
-  def build_container(engine: FakeContainerEngine.new, host_os: "darwin")
-    Dev::BuildContainer.new(engine: engine, host_os: host_os)
+  def build_container(engine: FakeContainerEngine.new, host_os: "darwin", host_user: "jp")
+    Dev::BuildContainer.new(engine: engine, host_os: host_os, host_user: host_user)
+  end
+
+  test "the Linuxbrew prefix volume is per host user on Linux and per VM on a Mac: one owner per prefix" do
+    Expect
+    Dev::BuildContainer.prefix_volume(host_os: "linux", host_user: "runner") == "dev-linuxbrew-runner"
+    Dev::BuildContainer.prefix_volume(host_os: "linux", host_user: "jpduchesne") == "dev-linuxbrew-jpduchesne"
+    Dev::BuildContainer.prefix_volume(host_os: "darwin", host_user: "jp") == "dev-linuxbrew"
+    Dev::BuildContainer.prefix_volume(host_os: "linux") == "dev-linuxbrew-#{Dev::BuildContainer.host_user}"
+    !Dev::BuildContainer.host_user.empty?
   end
 
   def service(name, running:)
@@ -254,14 +263,14 @@ class BuildContainerTest < Minitest::Test
       [engine.runs.fetch(index), engine.run_envs.fetch(index)]
     end
 
-    Then "the host's root at the host's path, DEV_DATA_ROOT agreeing; no data-root volume; Linuxbrew still a volume"
+    Then "the host's root at the host's path, DEV_DATA_ROOT agreeing; no data-root volume; Linuxbrew still a volume — the host user's own (brew is single-owner, and the engine is shared by the host's users)"
     cmd.each_cons(2).include?(["-v", "#{root}:#{root}"])
     cmd.each_cons(2).include?(["-e", "DEV_DATA_ROOT"])
     env["DEV_DATA_ROOT"] == root
-    cmd.each_cons(2).include?(["-v", "dev-linuxbrew:/home/linuxbrew/.linuxbrew"])
+    cmd.each_cons(2).include?(["-v", "dev-linuxbrew-jp:/home/linuxbrew/.linuxbrew"])
     cmd.none? { |part| part.include?("dev-data-root") }
     !engine.runs.include?(["volume", "create", "dev-data-root"])
-    engine.runs.include?(["volume", "create", "dev-linuxbrew"])
+    engine.runs.include?(["volume", "create", "dev-linuxbrew-jp"])
     cmd.count { |part| part == "-v" } == 3
 
     Cleanup

@@ -48,8 +48,9 @@ module Dev
       # an already-aligned user (the steady state) says nothing.
       USER_ALIGNMENT = T.let(
         {
-          realigned: "dev: container user took the data root owner's uid and gid",
+          realigned: "dev: container user took the ids its data root calls for",
           adopted: "dev: container user took over the root-owned data root",
+          prefix_adopted: "dev: container user took over its Linuxbrew prefix volume",
         }.freeze,
         T::Hash[Symbol, String],
       )

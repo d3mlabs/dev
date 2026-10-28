@@ -34,6 +34,14 @@ module Dev
   # the root is the group's, like the host's own writes. A root-owned mount
   # is adopted as on a volume.
   #
+  # The Linuxbrew prefix mount comes with the ids. It is a volume docker
+  # initialised from the image — owned by the image's user — and on Linux
+  # the host user's own (BuildContainer.prefix_volume, dev#337: a brew
+  # prefix has one owner, its only writer). Once the container's user has
+  # its final ids, a prefix owned by any other uid is handed to it: a
+  # recursive chown as root, cheap on a volume's real filesystem (no
+  # overlay copy-up), idempotent after.
+  #
   # Realigning is bin/container-align-user.sh as root: the image user's
   # passwd and group entries take the new ids, and what the old ids held on
   # the container's root filesystem is re-owned (all but the Cellar's keg
@@ -47,13 +55,15 @@ module Dev
     # carries it; its text travels to the container as the `sh -c` argument.
     SCRIPT = T.let(Pathname.new(File.expand_path("../../bin/container-align-user.sh", __dir__)), Pathname)
 
-    # What the container's user reports about itself and the mount, in one
-    # exec: uid, gid, user name, group name, the mount's owner uid and gid,
-    # and whether the user can write the mount.
+    # What the container's user reports about itself and the mounts, in one
+    # exec: uid, gid, user name, group name, the data root mount's owner uid
+    # and gid, whether the user can write it, and the Linuxbrew prefix
+    # mount's owner uid (`-` when there is no prefix).
     PROBE = T.let(
-      "printf '%s %s %s %s %s %s\\n' \"$(id -u)\" \"$(id -g)\" \"$(id -un)\" \"$(id -gn)\" " \
+      "printf '%s %s %s %s %s %s %s\\n' \"$(id -u)\" \"$(id -g)\" \"$(id -un)\" \"$(id -gn)\" " \
       "\"$(stat -c '%u %g' #{BuildContainer::DATA_ROOT_MOUNT})\" " \
-      "\"$([ -w #{BuildContainer::DATA_ROOT_MOUNT} ] && echo yes || echo no)\"".freeze,
+      "\"$([ -w #{BuildContainer::DATA_ROOT_MOUNT} ] && echo yes || echo no)\" " \
+      "\"$(stat -c '%u' #{BuildContainer::LINUXBREW_MOUNT} 2>/dev/null || echo -)\"".freeze,
       String,
     )
 
@@ -89,6 +99,7 @@ module Dev
       const :owner_uid, Integer
       const :owner_gid, Integer
       const :writable, T::Boolean
+      const :prefix_owner_uid, T.nilable(Integer)
     end
 
     # @param engine [Dev::ContainerEngine] the engine the container runs on
@@ -107,21 +118,26 @@ module Dev
     # @param container [String] a running container's name
     # @return [Symbol] :aligned when the user already had the right ids,
     #   :realigned after it took them, :adopted after a root-owned mount was
-    #   handed to the user
+    #   handed to the user, :prefix_adopted when only the Linuxbrew prefix
+    #   volume changed hands
     # @raise [ProbeFailedError] when the container cannot be probed
-    # @raise [RealignFailedError] when the realign script fails
+    # @raise [RealignFailedError] when the realign script or a chown fails
     sig { params(container: String).returns(Symbol) }
     def align!(container)
       probe = probe(container)
       if probe.owner_uid.zero?
         adopt!(container, probe)
+        own_prefix!(container, probe, probe.uid, probe.gid)
         return :adopted
       end
 
       uid, gid = target(probe)
-      return :aligned if uid.nil? || gid.nil?
+      if uid.nil? || gid.nil?
+        return own_prefix!(container, probe, probe.uid, probe.gid) ? :prefix_adopted : :aligned
+      end
 
       realign!(container, probe, uid, gid)
+      own_prefix!(container, probe, uid, gid)
       :realigned
     end
 
@@ -133,13 +149,15 @@ module Dev
     sig { params(container: String).returns(Probe) }
     def probe(container)
       fields = @engine.capture(["exec", container, "sh", "-c", PROBE]).split
-      raise ProbeFailedError.new(container:) unless fields.length == 7 && fields.values_at(0, 1, 4, 5).all? { |f| f.match?(/\A\d+\z/) }
+      raise ProbeFailedError.new(container:) unless fields.length == 8 && fields.values_at(0, 1, 4, 5).all? { |f| f.match?(/\A\d+\z/) }
 
+      prefix_owner = T.must(fields[7])
       Probe.new(
         uid: Integer(T.must(fields[0])), gid: Integer(T.must(fields[1])),
         user: T.must(fields[2]), group: T.must(fields[3]),
         owner_uid: Integer(T.must(fields[4])), owner_gid: Integer(T.must(fields[5])),
         writable: fields[6] == "yes",
+        prefix_owner_uid: prefix_owner.match?(/\A\d+\z/) ? Integer(prefix_owner) : nil,
       )
     end
 
@@ -173,6 +191,26 @@ module Dev
       args = [probe.user, probe.group, probe.uid, probe.gid, uid, gid].map(&:to_s)
       done = @engine.run(["exec", "--user", "root", container, "sh", "-c", SCRIPT.read, "sh", *args])
       raise RealignFailedError.new(container:, uid: uid) unless done
+    end
+
+    # Hand the Linuxbrew prefix mount to the container's user when another
+    # uid owns it, as root.
+    #
+    # @param container [String]
+    # @param probe [Probe]
+    # @param uid [Integer] the user's final uid
+    # @param gid [Integer] the user's final gid
+    # @return [Boolean] whether the prefix changed hands
+    # @raise [RealignFailedError]
+    sig { params(container: String, probe: Probe, uid: Integer, gid: Integer).returns(T::Boolean) }
+    def own_prefix!(container, probe, uid, gid)
+      owner = probe.prefix_owner_uid
+      return false if owner.nil? || owner == uid
+
+      done = @engine.run(["exec", "--user", "root", container, "chown", "-R", "#{uid}:#{gid}", BuildContainer::LINUXBREW_MOUNT])
+      raise RealignFailedError.new(container:, uid: uid) unless done
+
+      true
     end
 
     # Hand a root-owned mount to the container's user, as root.
