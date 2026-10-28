@@ -263,7 +263,7 @@ class Dev::RunnerUserTest < Minitest::Test
     Expect
     Dev::RunnerUser.owner_of(dir) == Etc.getpwuid(Process.uid).name
     Dev::RunnerUser.owner_of(File.join(dir, "missing")).nil?
-    runner_user(homes: {}, brew: File.join(dir, "bin", "brew"), owner_of: Dev::RunnerUser.method(:owner_of).to_proc).toolchain_owner == Etc.getpwuid(Process.uid).name
+    Dev::RunnerUser.new(name: "runner", home_of: ->(_user) { nil }, brew: File.join(dir, "bin", "brew"), path: "/usr/bin").toolchain_owner == Etc.getpwuid(Process.uid).name
 
     Cleanup
     FileUtils.rm_rf(dir)
