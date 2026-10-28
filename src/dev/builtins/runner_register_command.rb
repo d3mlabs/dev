@@ -210,7 +210,11 @@ module Dev
           docker and #{LinuxDataRootProvisioner::GROUP}, no password, no sudo; its commands and every job run on the
           host PATH (brew's bin and sbin, then the system's — nothing of yours), and
           Homebrew's shellenv lands in #{Dev::RunnerUser::PROFILE_D} so `sudo -iu` shells
-          find gh. Register needs it logged in to gh — the machine user's token,
+          find gh. Jobs upgrade dev through brew, and brew is single-owner, so
+          brew's prefix is the runner user's: register hands it over (one chown,
+          announced) when someone else owns it; a package by hand on the host is then
+          `sudo -iu #{Dev::RunnerUser::DEFAULT_NAME} brew ...`.
+          Register needs the runner user logged in to gh — the machine user's token,
           #{Dev::RunnerUser.token_hint}
           (repo: the private fetches, under two owners; read:org: gh's own gate;
           read:packages: the same login pulls from ghcr) — and asks for it, input

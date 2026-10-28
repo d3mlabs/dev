@@ -612,6 +612,8 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     desc.include?("sudo -iu runner gh auth login --with-token")
     desc.include?("classic token with repo, read:org, read:packages")
     desc.include?("host PATH")
+    desc.include?("brew's prefix is the runner user's")
+    desc.include?("sudo -iu runner brew")
     desc.include?("/etc/profile.d/linuxbrew.sh")
     desc.include?("dev runner register --org --ai-flow")
     desc.include?("GITHUB_TOKEN")

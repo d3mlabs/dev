@@ -91,6 +91,30 @@ class Dev::RunnerUserTest < Minitest::Test
     File.read(@executor.runs.fetch(4).fetch(4)) == "eval \"$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)\"\n"
   end
 
+  # dev#337: the toolchain is the runner user's by rule; a prefix owned by
+  # anyone else is converged like every other host fact — one step, said
+  # out loud, no question.
+  test "a toolchain owned by someone else is handed to the runner user as one more converged step; one already the runner user's is left alone" do
+    Given "a present runner user, Linuxbrew owned by the operator; and the same owned by the runner user"
+    linuxbrew = "/home/linuxbrew/.linuxbrew/bin/brew"
+    drifted = runner_user(homes: { "runner" => "/home/runner" }, brew: linuxbrew, owner_of: ->(_path) { "jpduchesne" })
+    drifted.converge!
+    drifted_runs = @executor.runs.dup
+    drifted_out = @out.string.dup
+    @executor.runs.clear
+    @out.truncate(0)
+    owned = runner_user(homes: { "runner" => "/home/runner" }, brew: linuxbrew, owner_of: ->(_path) { "runner" })
+    owned.converge!
+
+    Expect "the chown after the profile.d file, both roots, announced; nothing of the kind when nothing drifted"
+    drifted_runs.last == %w[sudo chown -R runner:runner /home/linuxbrew/.linuxbrew /home/linuxbrew]
+    drifted_runs.count(&chowns) == 1
+    drifted_out.include?(">>> Handing the toolchain /home/linuxbrew/.linuxbrew (owned by jpduchesne) to runner: jobs upgrade dev through it; " \
+                         "brew as jpduchesne becomes `sudo -iu runner brew ...`")
+    @executor.runs.none?(&chowns)
+    @out.string.empty?
+  end
+
   test "brew is the one the operator's PATH names, never its symlink target: Linuxbrew's bin/brew points into Homebrew/bin, and brew's prefix is where the link lives" do
     Given "a PATH with a bin dir whose brew is a symlink into the repository under the prefix (Linuxbrew's layout)"
     prefix = Dir.mktmpdir
@@ -274,6 +298,7 @@ class Dev::RunnerUserTest < Minitest::Test
   # Lambdas, not blocks: a one-parameter block is emitted as |argv,| by the
   # transform (rspockframework/ast-transform#21) and destructures an argv.
   def logs_in = ->(argv) { argv.include?("login") }
+  def chowns = ->(argv) { argv.include?("chown") }
   def last_three = ->(argv) { argv.last(3).join(" ") }
 
   def runner_user(homes:, gh: GhExecutor.new(logged_in: true), name: "runner", brew: nil, owner_of: ->(_path) { name })
