@@ -464,10 +464,14 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     sequence = sequence("host rule")
     provisioner.expects(:provision!).once.in_sequence(sequence)
     runner_user.expects(:converge!).once.in_sequence(sequence)
-    runner_user.expects(:ensure_gh_authenticated!).once.in_sequence(sequence)
+    ui = typed_mock(Dev::Cli::Ui)
+    ui.expects(:ask_secret).once.with("Token?").returns("ghp_x")
+    # The login gate is handed the terminal to ask at: its asker is the context UI's hidden prompt.
+    asks_the_ui = ->(**kw) { kw.fetch(:ask).call("Token?") == "ghp_x" }
+    runner_user.expects(:ensure_gh_authenticated!).once.with(&asks_the_ui).in_sequence(sequence)
 
     When "registering in the checkout"
-    harness.command.call(args: no_args, context: build_context(name: "cellbound3d"))
+    harness.command.call(args: no_args, context: build_context(name: "cellbound3d", ui: ui))
 
     Then "the identity work precedes the contracts and the enrollment; the setup is wired for the runner user; no --as was named"
     harness.events == [[:converge, false, nil, nil, nil], [:run], [:after_enroll, "/tmp/runner-dir"]]
@@ -780,9 +784,9 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     runner_user
   end
 
-  def build_context(name:, build_container: nil, engine: nil, root: "/tmp/runner-test")
+  def build_context(name:, build_container: nil, engine: nil, root: "/tmp/runner-test", ui: typed_mock(Dev::Cli::Ui))
     Dev::ExecutionContext.new(
-      ui: typed_mock(Dev::Cli::Ui),
+      ui: ui,
       project: Dev::ProjectContext.new(
         name: name,
         root: Pathname.new(root),
