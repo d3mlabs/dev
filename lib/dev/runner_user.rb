@@ -59,6 +59,13 @@ module Dev
     # A passwd lookup: the user's home, or nil when there is no such user.
     HomeOf = T.type_alias { T.proc.params(name: String).returns(T.nilable(String)) }
 
+    # An ownership lookup: the user name owning a path, or nil when the
+    # path is not there.
+    OwnerOf = T.type_alias { T.proc.params(path: String).returns(T.nilable(String)) }
+
+    # Linuxbrew's prefix is a dot-directory inside a home made for it.
+    LINUXBREW_PREFIX_NAME = ".linuxbrew"
+
     # The system's PATH on a Debian-family host; the runner user's PATH
     # starts from it, never from the operator's.
     SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -100,6 +107,17 @@ module Dev
       def passwd_home(user)
         Etc.getpwnam(user)&.dir
       rescue ArgumentError
+        nil
+      end
+
+      # The user name owning a path, or nil when the path is not there.
+      #
+      # @param path [String]
+      # @return [String, nil]
+      sig { params(path: String).returns(T.nilable(String)) }
+      def owner_of(path)
+        Etc.getpwuid(File.stat(path).uid)&.name
+      rescue SystemCallError, ArgumentError
         nil
       end
 
@@ -148,6 +166,7 @@ module Dev
     # @param home_of [Proc] passwd lookup (injectable for tests)
     # @param brew [String, nil] Homebrew's binary on this host, if any
     # @param path [String] the PATH the runner user's commands run on
+    # @param owner_of [Proc] who owns a path (injectable for tests)
     sig do
       params(
         name: String,
@@ -157,12 +176,14 @@ module Dev
         home_of: HomeOf,
         brew: T.nilable(String),
         path: String,
+        owner_of: OwnerOf,
       ).void
     end
     def initialize(name:, steps: PrivilegedSteps.new(purpose: "create the runner user #{name}"),
                    executor: RunnerSetup::Executor.new, out: $stdout,
                    home_of: ->(user) { RunnerUser.passwd_home(user) },
-                   brew: RunnerUser.brew_path, path: RunnerUser.host_path(brew: brew))
+                   brew: RunnerUser.brew_path, path: RunnerUser.host_path(brew: brew),
+                   owner_of: ->(path_to_own) { RunnerUser.owner_of(path_to_own) })
       @name = name
       @steps = steps
       @exec = executor
@@ -170,6 +191,51 @@ module Dev
       @home_of = home_of
       @brew = brew
       @path = path
+      @owner_of = owner_of
+    end
+
+    # The trees that make up the host's toolchain: brew's prefix and, on
+    # Linuxbrew, the home it sits in (`/home/linuxbrew/.linuxbrew` and
+    # `/home/linuxbrew` — the installer creates both for the same user).
+    # Empty on a host without brew.
+    #
+    # @return [Array<String>]
+    sig { returns(T::Array[String]) }
+    def toolchain_roots
+      brew = @brew
+      return [] unless brew
+
+      prefix = File.dirname(File.dirname(brew))
+      parent = File.dirname(prefix)
+      File.basename(prefix) == LINUXBREW_PREFIX_NAME ? [prefix, parent] : [prefix]
+    end
+
+    # Who owns the toolchain: the prefix's owner, nil without brew or a prefix.
+    #
+    # @return [String, nil]
+    sig { returns(T.nilable(String)) }
+    def toolchain_owner
+      prefix = toolchain_roots.first
+      prefix && @owner_of.call(prefix)
+    end
+
+    # brew is single-owner, and jobs upgrade dev through it (dev#337): on a
+    # Linux build host the prefix is the runner user's by rule. True also
+    # without brew — nothing to own, nothing drifted.
+    #
+    # @return [Boolean]
+    sig { returns(T::Boolean) }
+    def owns_toolchain?
+      owner = toolchain_owner
+      owner.nil? || owner == @name
+    end
+
+    # The one command that hands the toolchain to the runner user.
+    #
+    # @return [String]
+    sig { returns(String) }
+    def chown_command
+      "sudo chown -R #{@name}:#{@name} #{toolchain_roots.join(" ")}"
     end
 
     # @return [Boolean] whether the user exists

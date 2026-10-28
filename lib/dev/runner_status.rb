@@ -210,6 +210,7 @@ module Dev
         return false
       end
       line(true, "user #{identity.name} exists")
+      report_toolchain(identity)
       unless @executor.quiet?(*identity.sudo_argv("gh", "auth", "status"))
         line(false, "no gh login — `#{identity.login_command}`")
         return false
@@ -226,6 +227,26 @@ module Dev
                     "renew it, then `#{identity.login_command}`)")
       end
       true
+    end
+
+    # Who owns the toolchain (dev#337): jobs upgrade dev through brew, so
+    # the prefix is the runner user's by rule; anyone else's is drift —
+    # every job's `brew upgrade` fails, and dev stays where it is. Nothing
+    # on a host without brew.
+    #
+    # @param identity [Dev::RunnerUser]
+    # @return [void]
+    sig { params(identity: Dev::RunnerUser).void }
+    def report_toolchain(identity)
+      prefix = identity.toolchain_roots.first
+      return unless prefix
+
+      owner = identity.toolchain_owner
+      if identity.owns_toolchain?
+        line(true, "toolchain: #{prefix} owned by #{identity.name}")
+      else
+        line(false, "toolchain: #{prefix} owned by #{owner}, not #{identity.name} — jobs cannot upgrade dev (re-run `dev runner register`)")
+      end
     end
 
     # What the identity can read of the checkout's lock (HostReach): one

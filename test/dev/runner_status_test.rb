@@ -180,6 +180,43 @@ class Dev::RunnerStatusTest < Minitest::Test
     "no such user"              | false  | false     | nil        | "[!!] user runner exists (run `dev runner register`)"
   end
 
+  # dev#337: jobs upgrade dev through brew, so the prefix must be the
+  # runner user's; status says whose it is.
+  test "the host identity section reports who owns the toolchain: the runner user, or drift with the chown" do
+    Given "a logged-in runner user, and a Linuxbrew prefix owned by #{owner}"
+    out = StringIO.new
+    executor = CannedStatusExecutor.new(
+      probe_results: { ["id", "-u", "runner"] => true, ["sudo", "-u", "runner", "-H", "env", "PATH=/opt/brew/bin:/usr/bin", "gh", "auth", "status"] => true },
+      capture_results: { ["sudo", "-u", "runner", "-H", "env", "PATH=/opt/brew/bin:/usr/bin", "gh", "api", "user", "--jq", ".login"] => "d3mlabs-buildhost\n" },
+    )
+    identity = host_identity("runner", brew: "/home/linuxbrew/.linuxbrew/bin/brew", owner_of: ->(_path) { owner })
+    status = build_status(out: out, executor: executor, host_identity: identity)
+
+    When
+    status.report
+
+    Then
+    out.string.include?(expected)
+
+    Where
+    owner        | expected
+    "runner"     | "[ok] toolchain: /home/linuxbrew/.linuxbrew owned by runner"
+    "jpduchesne" | "[!!] toolchain: /home/linuxbrew/.linuxbrew owned by jpduchesne, not runner — jobs cannot upgrade dev (re-run `dev runner register`)"
+  end
+
+  test "a host without brew has no toolchain line" do
+    Given
+    out = StringIO.new
+    executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "runner"] => true })
+    status = build_status(out: out, executor: executor, host_identity: host_identity("runner"))
+
+    When
+    status.report
+
+    Then
+    !out.string.include?("toolchain:")
+  end
+
   test "with a checkout's lock, the host reach section says what the runner user can and cannot read — the grant on each miss" do
     Given "two targets, one unreachable"
     out = StringIO.new
@@ -392,8 +429,8 @@ class Dev::RunnerStatusTest < Minitest::Test
   end
 
   # The host rule's user as status sees it: a name and a home.
-  def host_identity(name, home: Dir.mktmpdir)
-    Dev::RunnerUser.new(name: name, home_of: ->(_user) { home }, brew: nil, path: "/opt/brew/bin:/usr/bin")
+  def host_identity(name, home: Dir.mktmpdir, brew: nil, owner_of: ->(_path) { name })
+    Dev::RunnerUser.new(name: name, home_of: ->(_user) { home }, brew: brew, path: "/opt/brew/bin:/usr/bin", owner_of: owner_of)
   end
 
   def build_status(out:, home: Dir.mktmpdir, registry: CannedRegistry.new,
