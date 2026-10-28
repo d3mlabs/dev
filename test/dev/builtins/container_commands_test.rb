@@ -253,9 +253,10 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     out.string.include?("dev: build container up: #{CURRENT}\n#{line}\ndev: container dev current at 0.2.98\n")
 
     Where
-    result     | line
-    :realigned | "dev: container user took the data root owner's uid and gid"
-    :adopted   | "dev: container user took over the root-owned data root"
+    result          | line
+    :realigned      | "dev: container user took the ids its data root calls for"
+    :adopted        | "dev: container user took over the root-owned data root"
+    :prefix_adopted | "dev: container user took over its Linuxbrew prefix volume"
   end
 
   test "container up injects the resolvable run_env into the in-container install" do
