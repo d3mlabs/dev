@@ -13,43 +13,23 @@ module Dev
     # `gem` would resolve to whatever Ruby the host carries; `shadowenv
     # exec` swaps in the project's.
     #
-    # Env hygiene is not this seam's job. A caller's hostile activation
-    # (a harness's `bundle exec`, a sandbox's BUNDLE_PATH) is stripped once,
-    # at bin/dev's entrypoint, before any Ruby exists; by the time this
-    # class runs those keys are gone, and a second list here is how two
-    # spawn sites drift apart (dev#306 fixed one and the other regressed
-    # with the identical failure). CommandRunner's direct run — the other
-    # `shadowenv exec` spawn — derives what it clears from this constant,
-    # never keeps its own.
-    #
-    # What remains, transitionally, is the one contamination dev inflicts
-    # on itself: the dev-core wrapper still exports GEM_HOME=libexec into
-    # dev's process (an installed dev no longer needs it — bin/dev selects
-    # its vendored gems in-process — but the wrapper is the tap's to
-    # change). A child inheriting it would install a project's gems into
-    # dev-core's Cellar (dev#180), so it is nil'd. Nil'ing it alone is the
-    # dev#274 failure: `shadowenv exec` applies the project's lisps only
-    # when the `__shadowenv_data` marker says they are not already active,
-    # so in a project shell it would hand the child an env with no GEM_HOME
-    # at all, and a brew Ruby then falls back to the prefix-wide gem dir
-    # shared by every brew Ruby, where another Ruby's native extensions
-    # live. The marker goes with the activation it describes, and
-    # `shadowenv exec` re-applies the lisps from the scrubbed base. When the
-    # wrapper stops exporting GEM_HOME, both keys go and this seam clears
-    # nothing.
+    # Env hygiene is not this seam's job, and it clears nothing. A caller's
+    # hostile activation (a harness's `bundle exec`, a sandbox's
+    # BUNDLE_PATH) is stripped once, at bin/dev's entrypoint, before any
+    # Ruby exists; an installed dev selects its own vendored gems in-process
+    # and exports nothing. So the env this seam inherits is the caller's,
+    # clean, and it passes through: in a project shell that is the
+    # activation itself (`__shadowenv_data` current, GEM_HOME at the keg);
+    # in a shell with none, `shadowenv exec` applies the project's lisps
+    # before the child runs. A `"KEY" => nil` here is per-spawn hygiene
+    # coming back — the discipline that failed four times (dev#180 nil'd
+    # the wrapper's GEM_HOME leak; #274/#306 found that nil'ing it without
+    # the marker made `shadowenv exec` a no-op and the child fell to brew's
+    # prefix-wide gem dir; #333 saw CommandRunner repeat #274) before the
+    # leak was fixed at its source. test/dev/spawn_seams_test.rb fails the
+    # build on a nil'd key in either seam.
     class ShadowenvExec
       extend T::Sig
-
-      # The transitional pair (see the class comment): dev's own GEM_HOME
-      # export and the active-project marker that must travel with it.
-      # test/dev/deps/shadowenv_exec_test.rb pins the exact set.
-      RUBY_ENV_SCRUB = T.let(
-        {
-          "GEM_HOME" => nil,
-          "__shadowenv_data" => nil,
-        }.freeze,
-        T::Hash[String, T.nilable(String)],
-      )
 
       # @param project_root [Pathname, String] root whose shadowenv the child runs under
       sig { params(project_root: T.any(String, Pathname)).void }
@@ -60,7 +40,7 @@ module Dev
       # Run a command under the project's toolchain and capture its output.
       #
       # @param command [Array<String>] argv to run under `shadowenv exec --`
-      # @param env [Hash{String => String, nil}] caller env for the child, layered over the scrub
+      # @param env [Hash{String => String, nil}] caller env for the child, layered over the inherited one
       # @return [Array(String, String, Process::Status)] stdout, stderr, exit status
       sig do
         params(
@@ -70,7 +50,7 @@ module Dev
       end
       def capture3(*command, env: {})
         argv = ["shadowenv", "exec", "--", *command]
-        T.unsafe(Open3).capture3(RUBY_ENV_SCRUB.merge(env), *argv, chdir: @project_root.to_s)
+        T.unsafe(Open3).capture3(env, *argv, chdir: @project_root.to_s)
       end
     end
   end

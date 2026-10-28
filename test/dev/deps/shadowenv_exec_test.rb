@@ -9,66 +9,10 @@ require "fileutils"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::ShadowenvExecTest < Minitest::Test
-  # A stand-in `shadowenv` that behaves like the real one when the project
-  # env is already active in the caller's shell: it applies nothing and
-  # execs the command with the env it inherited. That is the case the scrub
-  # exists for (dev#180) — under it, anything dev's own activation carries
-  # would reach the child unchanged.
-  def install_passthrough_shadowenv(dir)
-    bin = Pathname(dir) / "bin"
-    FileUtils.mkdir_p(bin)
-    shim = bin / "shadowenv"
-    shim.write(<<~SH)
-      #!/bin/sh
-      # argv: exec -- <command...>
-      shift 2
-      exec "$@"
-    SH
-    shim.chmod(0o755)
-    bin
-  end
-
-  # Pins the exact scrub set rather than referencing the constant. It is
-  # the transitional pair and nothing else: GEM_HOME, which the dev-core
-  # wrapper still exports into dev's process (dev#180), and the
-  # active-project marker that must go with it so shadowenv re-applies the
-  # lisps instead of leaving the child with no gem home (dev#274). The
-  # bundler and RUBYOPT/RUBYLIB keys that used to sit here were dead —
-  # bin/dev's sh layer strips them before any Ruby exists — and a second
-  # copy of that list is how two seams drift apart (dev#306 vs
-  # CommandRunner). When the wrapper stops exporting GEM_HOME, this pair
-  # goes and the seam clears nothing.
-  test "runs the command through shadowenv exec in the project root with the transitional pair unset" do
-    Given "a project root and a caller-supplied env"
-    dir = Dir.mktmpdir("dev-shadowenv-exec-test-")
-    shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: dir)
-    _pid, status = Process.wait2(Process.spawn("true"))
-
-    When "capturing a command"
-    result = shadowenv_exec.capture3("bundle", "install", env: { "BUNDLE_GEMFILE" => "#{dir}/Gemfile" })
-
-    Then "the child is spawned under shadowenv with exactly the pair nil'd and the caller's env kept"
-    1 * Open3.capture3(
-      {
-        "GEM_HOME" => nil,
-        "__shadowenv_data" => nil,
-        "BUNDLE_GEMFILE" => "#{dir}/Gemfile",
-      },
-      "shadowenv", "exec", "--", "bundle", "install", chdir: dir
-    ) >> ["out", "err", status]
-    result == ["out", "err", status]
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
   # A stand-in `shadowenv` with the real one's activation rule: with
   # __shadowenv_data in the env the project is "already active" and nothing
   # is applied; without it the project's lisp runs — here, setting GEM_HOME
-  # to the project's keg. The scrub nils GEM_HOME, so a child that inherits
-  # an "already active" marker would run with no gem home at all and fall
-  # back to the Ruby's shared Homebrew default (dev#274: json linked to
-  # another Ruby's libruby) — the marker goes with the activation it describes.
+  # to the project's keg.
   def install_rule_shadowenv(dir)
     bin = Pathname(dir) / "bin"
     FileUtils.mkdir_p(bin)
@@ -85,7 +29,33 @@ class Dev::Deps::ShadowenvExecTest < Minitest::Test
     bin
   end
 
-  test "a caller whose shell already activated the project still gets the activation re-applied" do
+  # Pinned to the caller's env exactly: this seam clears nothing. Env
+  # hygiene is bin/dev's, once, at the entrypoint; the GEM_HOME +
+  # __shadowenv_data pair that used to sit here compensated for the
+  # dev-core wrapper's GEM_HOME export (dev#180/#274/#306/#333), and the
+  # wrapper no longer exports it. A key reappearing here is a regression
+  # to per-spawn hygiene, not a fix.
+  test "runs the command through shadowenv exec in the project root with the caller's env and nothing cleared" do
+    Given "a project root and a caller-supplied env"
+    dir = Dir.mktmpdir("dev-shadowenv-exec-test-")
+    shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: dir)
+    _pid, status = Process.wait2(Process.spawn("true"))
+
+    When "capturing a command"
+    result = shadowenv_exec.capture3("bundle", "install", env: { "BUNDLE_GEMFILE" => "#{dir}/Gemfile" })
+
+    Then "the child is spawned under shadowenv with exactly the caller's env"
+    1 * Open3.capture3(
+      { "BUNDLE_GEMFILE" => "#{dir}/Gemfile" },
+      "shadowenv", "exec", "--", "bundle", "install", chdir: dir
+    ) >> ["out", "err", status]
+    result == ["out", "err", status]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a caller's active project shell reaches the child untouched: marker and gem home both inherited" do
     Given "dev running inside an active project shell (the marker and the lisp's GEM_HOME exported)"
     dir = Dir.mktmpdir("dev-shadowenv-exec-test-")
     shim_bin = install_rule_shadowenv(dir)
@@ -94,27 +64,28 @@ class Dev::Deps::ShadowenvExecTest < Minitest::Test
     ENV["GEM_HOME"] = "#{dir}/keg/lib/ruby/gems/4.0.0"
     shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: dir)
 
-    When "capturing a command that reports the gem home it sees"
+    When "capturing a command that reports the marker and gem home it sees"
     out, _err, status = shadowenv_exec.capture3(
-      "sh", "-c", 'printf "%s" "${GEM_HOME-unset}"',
+      "sh", "-c", 'printf "%s %s" "${__shadowenv_data-unset}" "${GEM_HOME-unset}"',
       env: { "PATH" => "#{shim_bin}:#{ENV.fetch("PATH")}" },
     )
 
-    Then "shadowenv applied the project again: the child has the keg's gem home, not none"
+    Then "shadowenv saw the activation as current and the child has the shell's keg gem home"
     status.success?
-    out == "#{dir}/keg/lib/ruby/gems/4.0.0"
+    out == "abc123:{} #{dir}/keg/lib/ruby/gems/4.0.0"
 
     Cleanup
     %w[__shadowenv_data GEM_HOME].each { |k| saved.key?(k) ? ENV[k] = saved[k] : ENV.delete(k) }
     FileUtils.rm_rf(dir)
   end
 
-  test "dev's own GEM_HOME does not reach the child even when shadowenv applies nothing" do
-    Given "dev running with its gem home exported, and a shadowenv that passes the env through untouched"
+  test "a caller with no active project gets the project's activation applied by shadowenv itself" do
+    Given "dev running from a shell with no marker and no gem home"
     dir = Dir.mktmpdir("dev-shadowenv-exec-test-")
-    shim_bin = install_passthrough_shadowenv(dir)
-    original_gem_home = ENV.fetch("GEM_HOME", nil)
-    ENV["GEM_HOME"] = "#{dir}/dev-core/libexec"
+    shim_bin = install_rule_shadowenv(dir)
+    saved = ENV.slice("__shadowenv_data", "GEM_HOME")
+    ENV.delete("__shadowenv_data")
+    ENV.delete("GEM_HOME")
     shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: dir)
 
     When "capturing a command that reports the gem home it sees"
@@ -123,12 +94,12 @@ class Dev::Deps::ShadowenvExecTest < Minitest::Test
       env: { "PATH" => "#{shim_bin}:#{ENV.fetch("PATH")}" },
     )
 
-    Then "the child sees no GEM_HOME"
+    Then "the project's lisp ran: the child has the keg's gem home"
     status.success?
-    out == "unset"
+    out == "#{dir}/keg/lib/ruby/gems/4.0.0"
 
     Cleanup
-    original_gem_home ? ENV["GEM_HOME"] = original_gem_home : ENV.delete("GEM_HOME")
+    %w[__shadowenv_data GEM_HOME].each { |k| saved.key?(k) ? ENV[k] = saved[k] : ENV.delete(k) }
     FileUtils.rm_rf(dir)
   end
 end

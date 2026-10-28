@@ -108,14 +108,12 @@ class CommandRunnerTest < Minitest::Test
 
   # --- Child env ---
 
-  # The direct run is a second `shadowenv exec` spawn beside ShadowenvExec;
-  # what it clears is ShadowenvExec's list, not a copy — dev#306 fixed one
-  # seam and this one regressed with the identical LoadError. Pinned to the
-  # exact pair rather than the constant: dropping the marker while GEM_HOME
-  # is still nil'd is the regression, and a constant reference would hide
-  # it (test/dev/deps/shadowenv_exec_test.rb pins the same pair, for the
-  # same reason).
-  test "a direct run hands its child ShadowenvExec's scrub, in full, plus dev's lib on RUBYLIB" do
+  # The direct run is a second `shadowenv exec` spawn beside ShadowenvExec
+  # and, like it, clears nothing: env hygiene is bin/dev's, once, at the
+  # entrypoint. The exact hash is pinned so a nil'd key — the per-spawn
+  # scrub that regressed this path with dev#274's LoadError (dev#333) —
+  # cannot creep back in unnoticed.
+  test "a direct run hands its child the inherited env plus dev's lib on RUBYLIB, and clears nothing" do
     Given "a runner over a project, with no RUBYLIB of the suite's own in the way"
     saved_rubylib = ENV.delete("RUBYLIB")
     runner = Dev::CommandRunner.new(ui: @ui, project_root: @project_root)
@@ -126,9 +124,9 @@ class CommandRunnerTest < Minitest::Test
     When "we run a command"
     runner.exec_into(cmd)
 
-    Then "the child's env nils dev's own gem home and the active-project marker — so shadowenv re-applies the lisps — and carries dev's lib"
+    Then "the child's env is dev's lib on RUBYLIB and nothing else — no key nil'd"
     1 * Kernel.exec(
-      { "GEM_HOME" => nil, "__shadowenv_data" => nil, "RUBYLIB" => Dev::DEV_LIB_DIR.to_s },
+      { "RUBYLIB" => Dev::DEV_LIB_DIR.to_s },
       "shadowenv", "exec", "--", "sh", "-c", "./bin/console"
     )
 
@@ -152,7 +150,7 @@ class CommandRunnerTest < Minitest::Test
     Then "no interpreter is resolved, built or activated on the way to the exec"
     0 * Dev::ShadowenvRuby.activate!(keg: anything, version: anything, project_root: anything)
     0 * Dev::ShadowenvPython.activate!(keg: anything, version: anything, project_root: anything)
-    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", "./bin/console")
+    1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", "./bin/console")
 
     Cleanup
     Dir.chdir(@original_cwd)
@@ -189,7 +187,7 @@ class CommandRunnerTest < Minitest::Test
 
     Then "header is printed and process is replaced via exec"
     1 * @ui.print_header("./bin/console")
-    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", "./bin/console")
+    1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", "./bin/console")
 
     Cleanup
     Dir.chdir(@original_cwd)
@@ -204,7 +202,7 @@ class CommandRunnerTest < Minitest::Test
 
     Then "header includes args and exec passes them through"
     1 * @ui.print_header("./bin/console --verbose")
-    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", "./bin/console --verbose")
+    1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", "./bin/console --verbose")
 
     Cleanup
     Dir.chdir(@original_cwd)
@@ -219,7 +217,7 @@ class CommandRunnerTest < Minitest::Test
 
     Then "header is printed and exec is called with a shell wrapper"
     1 * @ui.print_header("./bin/setup.rb")
-    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/setup.rb"))
+    1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/setup.rb"))
 
     Cleanup
     Dir.chdir(@original_cwd)
@@ -233,7 +231,7 @@ class CommandRunnerTest < Minitest::Test
     @runner.exec_into(cmd)
 
     Then "the shell wrapper includes exit code handling and Done/Failed output"
-    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c",
+    1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c",
       all_of(includes("./bin/test.sh"), includes("__dev_status=$?"), includes("Done"), includes("Failed")))
 
     Cleanup
@@ -249,7 +247,7 @@ class CommandRunnerTest < Minitest::Test
 
     Then "header and wrapper both include args"
     1 * @ui.print_header("./bin/test.sh -v")
-    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/test.sh -v"))
+    1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/test.sh -v"))
 
     Cleanup
     Dir.chdir(@original_cwd)
@@ -265,7 +263,7 @@ class CommandRunnerTest < Minitest::Test
     @runner.run_waiting(cmd)
 
     Then "the command runs as a waited child, never via exec"
-    1 * Kernel.system(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/setup.rb")) >> true
+    1 * Kernel.system(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/setup.rb")) >> true
     0 * Kernel.exec(any_parameters)
 
     Cleanup
@@ -410,7 +408,7 @@ class CommandRunnerTest < Minitest::Test
     runner.exec_into(cmd)
 
     Then
-    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/editor.sh"))
+    1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/editor.sh"))
 
     Cleanup
     Dir.chdir(@original_cwd)
@@ -448,7 +446,7 @@ class CommandRunnerTest < Minitest::Test
     runner.exec_into(Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false, runs_on: "snappy-linux"))
 
     Then "the server command execs under the host's shadowenv; the linux one in docker, though the host is its platform too"
-    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/server.sh"))
+    1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/server.sh"))
     1 * Kernel.exec({}, "docker", "run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh")
 
     Cleanup
@@ -598,7 +596,7 @@ class CommandRunnerTest < Minitest::Test
     runner.exec_into(cmd)
 
     Then "exec uses shadowenv, not docker"
-    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/deploy.sh"))
+    1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/deploy.sh"))
 
     Cleanup
     Dir.chdir(@original_cwd)
@@ -619,7 +617,7 @@ class CommandRunnerTest < Minitest::Test
 
     Then "nothing is provisioned (LLVM is the image's), and the command execs under the project's shadowenv"
     0 * Dev::ShadowenvLlvm.setup!(project_root: anything, llvm_prefix: anything)
-    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/build.sh"))
+    1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/build.sh"))
 
     Cleanup
     Dir.chdir(@original_cwd)
@@ -641,7 +639,7 @@ class CommandRunnerTest < Minitest::Test
     runner.exec_into(cmd)
 
     Then "the command execs under the host's shadowenv (this is the host, not a container)"
-    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/build.sh"))
+    1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/build.sh"))
 
     Cleanup
     Dir.chdir(@original_cwd)
@@ -682,7 +680,7 @@ class CommandRunnerTest < Minitest::Test
 
     Then "the argv is shadowenv exec, sh -c and the command alone; llvm is the image's concern"
     0 * Dev::ShadowenvLlvm.setup!(project_root: anything, llvm_prefix: anything)
-    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", "./bin/console")
+    1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", "./bin/console")
 
     Cleanup
     Dir.chdir(@original_cwd)
@@ -698,7 +696,7 @@ class CommandRunnerTest < Minitest::Test
     runner.exec_into(cmd)
 
     Then "exec uses shadowenv"
-    1 * Kernel.exec(has_entries("GEM_HOME" => nil, "RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/build.sh"))
+    1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/build.sh"))
 
     Cleanup
     Dir.chdir(@original_cwd)

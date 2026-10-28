@@ -45,13 +45,19 @@ class Dev::SpawnSeamsTest < Minitest::Test
     spawning.sort == SHADOWENV_EXEC_SEAMS.sort
   end
 
-  test "the direct run's child env is ShadowenvExec's scrub, derived, not a copy" do
-    Given "CommandRunner's source"
-    source = File.read(File.join(DEV_ROOT, "src/dev/command_runner.rb"))
+  # Env hygiene happens once, in bin/dev's sh layer. Neither seam clears a
+  # key of its own: a `"KEY" => nil` in either is per-spawn hygiene coming
+  # back (dev#180 → #274 → #306 → #333, each a key one seam nil'd and the
+  # other did not, or nil'd without its pair).
+  test "neither seam nils any env key for its child" do
+    Given "both seams' sources, comments stripped"
+    sources = SHADOWENV_EXEC_SEAMS.to_h do |seam|
+      code = File.readlines(File.join(DEV_ROOT, seam)).reject { |line| line.lstrip.start_with?("#") }.join
+      [seam, code]
+    end
 
-    Expect "child_env references the shared constant and spells no scrub key of its own"
-    source.include?("Dev::Deps::ShadowenvExec::RUBY_ENV_SCRUB")
-    !source.match?(/["']GEM_HOME["']\s*=>/)
-    !source.match?(/["']__shadowenv_data["']/)
+    Expect "no seam spells a nil'd env key, and the old pair is gone from both"
+    sources.values.none? { |code| code.match?(/["'][A-Za-z_]+["']\s*=>\s*nil\b/) }
+    sources.values.none? { |code| code.match?(/["'](?:GEM_HOME|__shadowenv_data)["']/) }
   end
 end
