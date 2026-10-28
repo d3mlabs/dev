@@ -3,6 +3,7 @@
 
 require "test_helper"
 require "dev/deps/cache_gc"
+require "dev/prefix_volumes"
 require "dev/deps/lockfile"
 require "dev/deps/dependency"
 require "dev/deps/local_store"
@@ -202,6 +203,39 @@ class Dev::Deps::CacheGcTest < Minitest::Test
 
     Then "both sources are present, blank lines dropped"
     sources == Set.new(["/mnt/engine", "/mnt/cache"])
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  # A prefix volume whose name carries no host user (a renamed user's;
+  # Linux's bare dev-linuxbrew from before the per-user split, #343) holds a
+  # bootstrapped brew and every keg it poured, and nothing will mount it
+  # again — unless a container from before still does, and that container
+  # is its checkout's to recreate first.
+  test "gc removes the stale prefix volumes no container mounts, keeps a mounted one and says why, and leaves live ones alone" do
+    Given "an engine with both users' volumes, the legacy one still mounted by an old container, and a gone user's"
+    dir = Dir.mktmpdir("dev-cache-gc-test-")
+    engine = FakeContainerEngine.new(capture_result: lambda { |args|
+      case args
+      in ["volume", "ls", *] then "dev-linuxbrew\ndev-linuxbrew-runner\ndev-linuxbrew-olduser\ndev-linuxbrew-jp\n"
+      in ["ps", "-a", "--filter", "volume=dev-linuxbrew", *] then "dev-snappy-linux-abc\n"
+      else ""
+      end
+    })
+    volumes = Dev::PrefixVolumes.new(engine: engine, host_os: "linux", user_exists: ->(name) { %w[jp runner].include?(name) })
+    out = StringIO.new
+    gc = Dev::Deps::CacheGc.new(lockfile: Dev::Deps::Lockfile.new(dir: dir), engine: engine, out: out, prefix_volumes: volumes)
+
+    When
+    gc.gc
+
+    Then
+    engine.runs.include?(["volume", "rm", "dev-linuxbrew-olduser"])
+    engine.runs.select { |*run| run.flatten.first(2) == %w[volume rm] } == [["volume", "rm", "dev-linuxbrew-olduser"]]
+    out.string.include?(">>> gc: removing prefix volume dev-linuxbrew-olduser (no host user olduser)\n")
+    out.string.include?(">>> gc: keeping prefix volume dev-linuxbrew (no host user) — mounted by dev-snappy-linux-abc (dev container up there recreates it)\n")
+    !out.string.include?("dev-linuxbrew-runner")
 
     Cleanup
     FileUtils.rm_rf(dir)

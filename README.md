@@ -715,6 +715,7 @@ dev owns the artifact store's layout, so it owns reclamation. `dev cache gc [--k
 
 - **Store trees** (multi-GB tree versions) get a tight default keep. Locked versions (current lockfiles) and in-use versions (mounted by a running container) are **never** evicted; orphan staging dirs from a killed install are always reclaimed.
 - **docker content tags** for the project image are pruned down to the live tag (never one backing a running container).
+- **Stale prefix volumes** — the engine's Linuxbrew prefix volumes whose name carries no host user (a renamed user's; Linux's bare `dev-linuxbrew` from before the per-user split) — are removed, each a bootstrapped brew and every keg it poured. One a container from before still mounts is kept and named: that container is its checkout's `dev container up` to recreate, and the volume goes on the next gc.
 - **Tool caches** (bundler's, brew's, pip's download caches in the store) are left alone by default and dropped **whole** with `--tool-caches`: their contents are the tool's, so dev never prunes inside one, and losing one costs a re-fetch, never correctness.
 
 A workflow/cron only *schedules* `dev cache gc`; it never reaches into the layout itself.

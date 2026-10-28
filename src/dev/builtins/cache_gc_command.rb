@@ -10,9 +10,10 @@ require "dev/build_container"
 module Dev
   module Builtins
     # `dev cache gc [--keep N] [--tool-caches]`: reclaim stale tree
-    # versions and, when a build container is configured, its stale
-    # content-tagged images; with `--tool-caches`, also drop the tools'
-    # download caches whole. A leaf of the `cache` group.
+    # versions, the engine's stale Linuxbrew prefix volumes and, when a
+    # build container is configured, its stale content-tagged images; with
+    # `--tool-caches`, also drop the tools' download caches whole. A leaf
+    # of the `cache` group.
     class CacheGcCommand < BuiltinCommand
       extend T::Sig
 
@@ -35,7 +36,7 @@ module Dev
       end
 
       sig { override.returns(String) }
-      def desc = "Reclaim stale tree versions and build images (--keep N; --tool-caches drops the tools' caches)"
+      def desc = "Reclaim stale tree versions, build images and prefix volumes (--keep N; --tool-caches drops the tools' caches)"
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Workflow
