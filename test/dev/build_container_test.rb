@@ -1356,9 +1356,10 @@ class BuildContainerTest < Minitest::Test
     When "ensuring the service"
     bc.ensure_service!(tag, project_root: root)
 
-    Then "the existing container is started, not recreated"
+    Then "the existing container, on this user's prefix volume, is started, not recreated"
     1 * bc.reap_stale_services!(tag, root) >> nil
     1 * bc.container_exists?(name) >> true
+    1 * bc.container_prefix_volume(name) >> "dev-linuxbrew"
     1 * bc.container_running?(name) >> false
     1 * bc.start_container(name) >> true
     0 * bc.create_service_container(name, tag,
@@ -1378,8 +1379,49 @@ class BuildContainerTest < Minitest::Test
     Then "neither start nor create is invoked"
     1 * bc.reap_stale_services!(tag, root) >> nil
     1 * bc.container_exists?(name) >> true
+    1 * bc.container_prefix_volume(name) >> "dev-linuxbrew"
     1 * bc.container_running?(name) >> true
     0 * bc.start_container(name)
+  end
+
+  # A container's mounts are fixed at creation. One created before the
+  # per-user split mounts the bare `dev-linuxbrew`; reused, it would have
+  # this user's aligner hand that shared volume over — and the other user's
+  # hand it back. The container is this checkout's to recreate.
+  test "ensure_service! recreates a container that mounts another prefix volume than this user's: #{what}" do
+    Given "a container on #{mounted.inspect}, this user's volume being dev-linuxbrew-jp (Linux)"
+    tag = "jpduchesne89/snappy-linux:content-abc"
+    root = Pathname("/proj")
+    name = Dev::BuildContainer.service_container_name(tag, root)
+    bc = build_container(host_os: "linux")
+
+    When
+    bc.ensure_service!(tag, project_root: root)
+
+    Then
+    1 * bc.reap_stale_services!(tag, root) >> nil
+    1 * bc.container_exists?(name) >> true
+    1 * bc.container_prefix_volume(name) >> mounted
+    recreated * bc.remove_container(name) >> true
+    recreated * bc.create_service_container(name, tag, project_root: root, volumes: []) >> true
+    reused * bc.container_running?(name) >> true
+
+    Where
+    what                        | mounted                   | recreated | reused
+    "the legacy shared volume"  | "dev-linuxbrew"           | 1         | 0
+    "another user's"            | "dev-linuxbrew-runner"    | 1         | 0
+    "its own"                   | "dev-linuxbrew-jp"        | 0         | 1
+    "unknown (inspect failed)"  | nil                       | 0         | 1
+  end
+
+  test "container_prefix_volume reads the volume mounted at the Linuxbrew prefix; nil when inspect says nothing" do
+    Given
+    engine = FakeContainerEngine.new(capture_result: ->(args) { args.first == "container" ? "dev-linuxbrew-runner\n" : "" })
+
+    Expect
+    build_container(engine: engine).container_prefix_volume("dev-x") == "dev-linuxbrew-runner"
+    engine.captures.last == ["container", "inspect", "-f", "{{range .Mounts}}{{if eq .Destination \"/home/linuxbrew/.linuxbrew\"}}{{.Name}}{{end}}{{end}}", "dev-x"]
+    build_container(engine: FakeContainerEngine.new).container_prefix_volume("dev-x").nil?
   end
 
   test "reap_stale_services! removes other-tag containers but keeps the current tag" do
@@ -1769,17 +1811,18 @@ class BuildContainerTest < Minitest::Test
   test "service_containers lists the checkout's containers by workspace label, running or not" do
     Given "docker ps reporting a running and an exited container, with surrounding noise"
     root = Pathname("/proj")
+    volumes = { "dev-snappy-abc-content-1" => "dev-linuxbrew-jp\n", "dev-snappy-abc-content-2" => "" }
     engine = FakeContainerEngine.new(
-      capture_result: "dev-snappy-abc-content-1\trunning\ndev-snappy-abc-content-2\texited\n\n",
+      capture_result: ->(args) { args.first == "ps" ? "dev-snappy-abc-content-1\trunning\ndev-snappy-abc-content-2\texited\n\n" : volumes.fetch(args.last) },
     )
     bc = build_container(engine: engine)
 
-    Expect "records in docker's order, from the label filter (a name regex would also match other checkouts' prefixes)"
-    bc.service_containers(root).map { |c| [c.name, c.running] } == [
-      ["dev-snappy-abc-content-1", true],
-      ["dev-snappy-abc-content-2", false],
+    Expect "records in docker's order, from the label filter (a name regex would also match other checkouts' prefixes), each with the prefix volume it mounts"
+    bc.service_containers(root).map { |c| [c.name, c.running, c.prefix_volume] } == [
+      ["dev-snappy-abc-content-1", true, "dev-linuxbrew-jp"],
+      ["dev-snappy-abc-content-2", false, nil],
     ]
-    engine.captures.last == [
+    engine.captures.first == [
       "ps", "-a",
       "--filter", "label=#{Dev::BuildContainer::WORKSPACE_LABEL}=#{Dev::BuildContainer.workspace_id(root)}",
       "--format", "{{.Names}}\t{{.State}}",
