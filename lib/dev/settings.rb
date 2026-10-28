@@ -206,17 +206,28 @@ module Dev
     end
 
     # The system layer an org deployment formula installs into the Homebrew
-    # prefix (pkgetc). Prefix from HOMEBREW_PREFIX when set, else the first
-    # standard install location present on this machine; nil (an empty
-    # layer) on brewless machines.
+    # prefix (pkgetc); nil (an empty layer) on brewless machines.
     #
     # @return [String, nil]
     sig { returns(T.nilable(String)) }
     def default_system_config_path
-      prefix = ENV["HOMEBREW_PREFIX"]
-      prefix = nil if prefix && prefix.empty?
-      prefix ||= ["/opt/homebrew", "/usr/local", "/home/linuxbrew/.linuxbrew"].find { |p| Dir.exist?(p) }
+      prefix = Settings.brew_prefix
       prefix && File.join(prefix, "etc", "dev", "config.yml")
+    end
+
+    class << self
+      extend T::Sig
+
+      # The machine's Homebrew prefix: HOMEBREW_PREFIX when set, else the
+      # first standard install location present; nil on brewless machines.
+      #
+      # @return [String, nil]
+      sig { returns(T.nilable(String)) }
+      def brew_prefix
+        prefix = ENV["HOMEBREW_PREFIX"]
+        prefix = nil if prefix && prefix.empty?
+        prefix || ["/opt/homebrew", "/usr/local", "/home/linuxbrew/.linuxbrew"].find { |p| Dir.exist?(p) }
+      end
     end
 
     # @param path [String, nil]

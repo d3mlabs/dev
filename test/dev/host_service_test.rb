@@ -59,6 +59,57 @@ class Dev::HostServiceTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  # dev#337: on a Linux build host the brew prefix belongs to the runner
+  # user; the operator's own `dev up` there must not warn about a brew it
+  # was never meant to write.
+  test "a brew prefix the caller cannot write is skipped silently — no self-update, no Brewfile, nothing on stderr" do
+    Given "a deployment and a Brewfile, on a host whose prefix is someone else's"
+    dir = Dir.mktmpdir("dev-host-service-test-")
+    write_system_config(dir, "deployment_formula: d3mlabs/d3mlabs/dev\n")
+    File.write(File.join(dir, "etc", "Brewfile"), "brew \"zstd\"\n")
+    executor = RecordingExecutor.new
+    service = build_service(dir, brew_executor: executor, prefix_writable: -> { false })
+
+    When "converging the tooling"
+    stderr = capture_stderr { service.converge_tooling }
+
+    Then "brew is never invoked and nothing is said"
+    executor.commands.empty?
+    stderr.empty?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "the writability probe answers for the Cellar when there is one, the prefix itself when not, and false for no prefix" do
+    Given "a prefix with a Cellar the caller owns, one whose Cellar is read-only, and one with no Cellar yet"
+    dir = Dir.mktmpdir("dev-host-service-test-")
+    owned = File.join(dir, "owned")
+    foreign = File.join(dir, "foreign")
+    bare = File.join(dir, "bare")
+    FileUtils.mkdir_p([File.join(owned, "Cellar"), File.join(foreign, "Cellar"), bare])
+    File.chmod(0o555, File.join(foreign, "Cellar"))
+
+    Expect "the Cellar decides when present; root sees everything as writable, so the read-only case is skipped for it"
+    Dev::HostService.prefix_writable?(owned)
+    Process.uid.zero? || !Dev::HostService.prefix_writable?(foreign)
+    Dev::HostService.prefix_writable?(bare)
+    !Dev::HostService.prefix_writable?(nil)
+    !Dev::HostService.prefix_writable?(File.join(dir, "missing"))
+
+    Cleanup
+    File.chmod(0o755, File.join(foreign, "Cellar"))
+    FileUtils.rm_rf(dir)
+  end
+
+  test "the default probe asks for the machine's brew prefix" do
+    Given "settings that know the prefix"
+    Dev::Settings.stubs(:brew_prefix).returns("/nonexistent/prefix")
+
+    Expect "a prefix that is not there is not writable"
+    !Dev::HostService.default_prefix_writable.call
+  end
+
   test "a bare host runs the self-update but has nothing to upgrade or bundle" do
     Given "no deployment config, no Brewfile, dev-core not brew-installed"
     dir = Dir.mktmpdir("dev-host-service-test-")
@@ -460,7 +511,7 @@ class Dev::HostServiceTest < Minitest::Test
                     materializer: Dev::Skills::Materializer.new,
                     own_skills: Dev::Skills::OwnSkills.new(root: File.join(dir, "global")),
                     gem_skills_factory: ->(root) { Dev::Deps::GemSkills.new(project_root: root) },
-                    synchronizer: nil)
+                    synchronizer: nil, prefix_writable: -> { true })
     settings = Dev::Settings.new(
       config_path: File.join(dir, "user", "config.yml"),
       system_config_path: File.join(dir, "etc", "config.yml"),
@@ -473,6 +524,7 @@ class Dev::HostServiceTest < Minitest::Test
       own_skills: own_skills,
       gem_skills_factory: gem_skills_factory,
       synchronizer: synchronizer || Dev::Learnings::Synchronizer.for(settings: settings, materializer: materializer),
+      prefix_writable: prefix_writable,
     )
   end
 
