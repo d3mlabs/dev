@@ -28,7 +28,7 @@ module Dev
       end
 
       sig { override.returns(String) }
-      def desc = "Report the container engine: kind, state, size, converge facts, running containers"
+      def desc = "Report the container engine: kind, state, size, converge facts, running containers, prefix volumes"
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Lifecycle
@@ -52,6 +52,12 @@ module Dev
         else
           @out.puts "containers running:"
           status.containers.each { |container| @out.puts "  #{container.describe(home: @home)}" }
+        end
+        if status.prefix_volumes.empty?
+          @out.puts "prefix volumes: none"
+        else
+          @out.puts "prefix volumes:"
+          status.prefix_volumes.each { |volume| @out.puts "  #{volume.describe}" }
         end
       end
 
