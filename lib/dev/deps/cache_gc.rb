@@ -8,6 +8,7 @@ require_relative "local_store"
 require_relative "lockfile"
 require_relative "tree_integrations"
 require_relative "../container_engine"
+require_relative "../prefix_volumes"
 
 module Dev
   module Deps
@@ -46,19 +47,23 @@ module Dev
       #   the in-use probes and image pruning see that user's daemon
       # @param store    [ArtifactStore] the store whose trees are reclaimed
       # @param out      [IO, StringIO] progress stream
+      # @param prefix_volumes [Dev::PrefixVolumes] the engine's Linuxbrew
+      #   prefix volumes, whose stale ones gc reclaims
       sig do
         params(
           lockfile: Lockfile,
           engine: Dev::ContainerEngine,
           store: ArtifactStore,
           out: T.any(IO, StringIO),
+          prefix_volumes: Dev::PrefixVolumes,
         ).void
       end
-      def initialize(lockfile:, engine:, store: LocalStore.new, out: $stdout)
+      def initialize(lockfile:, engine:, store: LocalStore.new, out: $stdout, prefix_volumes: Dev::PrefixVolumes.new(engine:))
         @lockfile = lockfile
         @engine = engine
         @store = store
         @out = out
+        @prefix_volumes = prefix_volumes
       end
 
       # Reclaim stale tree versions and docker content tags.
@@ -76,10 +81,32 @@ module Dev
         in_use = running_mount_sources
         gc_trees(keep: keep, in_use: in_use)
         gc_docker(image_ref: image_ref, live_tag: live_tag) if image_ref
+        gc_prefix_volumes
         gc_tool_caches if tool_caches
       end
 
       private
+
+      # Drop the Linuxbrew prefix volumes nothing will mount again — a host
+      # user's that is gone, Linux's bare `dev-linuxbrew` from before the
+      # per-user split — unless a container from before still mounts one:
+      # that container is its checkout's `dev container up` to recreate,
+      # and the volume goes on the gc after.
+      #
+      # @return [void]
+      sig { void }
+      def gc_prefix_volumes
+        @prefix_volumes.stale.each do |volume|
+          reason = volume.user ? "no host user #{volume.user}" : "no host user"
+          if volume.mounted_by.empty?
+            @out.puts ">>> gc: removing prefix volume #{volume.name} (#{reason})"
+            @prefix_volumes.remove!(volume)
+          else
+            @out.puts ">>> gc: keeping prefix volume #{volume.name} (#{reason}) — mounted by #{volume.mounted_by.join(", ")} " \
+                      "(dev container up there recreates it)"
+          end
+        end
+      end
 
       # Drop every tool cache, each as a unit.
       #
