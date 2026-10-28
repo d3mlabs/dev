@@ -6,52 +6,48 @@ require "pathname"
 
 module Dev
   module Deps
-    # The one spawn seam for subprocesses that must run under the project's
-    # provisioned Ruby toolchain: `shadowenv exec -- <command>` in the
-    # project root, with dev's own Ruby activation scrubbed from the child.
+    # The spawn seam for subprocesses that must run under the project's
+    # provisioned toolchain: `shadowenv exec -- <command>` in the project
+    # root. The dev process's PATH is the invoking shell's — headless
+    # services (CI, runners) have no shadowenv hook — so a bare `bundle` or
+    # `gem` would resolve to whatever Ruby the host carries; `shadowenv
+    # exec` swaps in the project's.
     #
-    # Both halves are load-bearing. The dev process's PATH is the invoking
-    # shell's — headless services (CI, runners) have no shadowenv hook — so a
-    # bare `bundle` or `gem` would resolve to whatever Ruby the host carries;
-    # `shadowenv exec` swaps in the project's. But `shadowenv exec` applies
-    # the project env only when it is not already active: invoked from a
-    # shell whose hook already loaded this project (the normal interactive
-    # case), it is a no-op that hands the child the env it inherited. Dev's
-    # own activation would then reach bundler unchanged — the Homebrew
-    # wrapper's GEM_HOME pointing into the dev-core Cellar, so `bundle
-    # install` writes the project's gems there (dev#180); a sandboxed
-    # harness's BUNDLE_PATH redirecting resolution into its ephemeral cache
-    # (dev#89). Baking the scrub into the seam means no bundler or gem
-    # shell-out has to remember it.
+    # Env hygiene is not this seam's job. A caller's hostile activation
+    # (a harness's `bundle exec`, a sandbox's BUNDLE_PATH) is stripped once,
+    # at bin/dev's entrypoint, before any Ruby exists; by the time this
+    # class runs those keys are gone, and a second list here is how two
+    # spawn sites drift apart (dev#306 fixed one and the other regressed
+    # with the identical failure). CommandRunner's direct run — the other
+    # `shadowenv exec` spawn — derives what it clears from this constant,
+    # never keeps its own.
     #
-    # The scrub and the no-op together would leave a child with no gem env
-    # at all: shadowenv's "already active" test is the `__shadowenv_data`
-    # marker in the env, and under it the project's lisp — which is what
-    # sets GEM_HOME to the locked keg (ADR-0012) — does not run. A brew Ruby
-    # with no GEM_HOME falls back to the prefix-wide default gem dir shared
-    # with every other brew Ruby, where another Ruby's native extensions
-    # live. So the marker is scrubbed with the activation it describes:
-    # `shadowenv exec` then applies the project's lisps from the scrubbed
-    # base, every time, whatever shell dev was started from.
+    # What remains, transitionally, is the one contamination dev inflicts
+    # on itself: the dev-core wrapper still exports GEM_HOME=libexec into
+    # dev's process (an installed dev no longer needs it — bin/dev selects
+    # its vendored gems in-process — but the wrapper is the tap's to
+    # change). A child inheriting it would install a project's gems into
+    # dev-core's Cellar (dev#180), so it is nil'd. Nil'ing it alone is the
+    # dev#274 failure: `shadowenv exec` applies the project's lisps only
+    # when the `__shadowenv_data` marker says they are not already active,
+    # so in a project shell it would hand the child an env with no GEM_HOME
+    # at all, and a brew Ruby then falls back to the prefix-wide gem dir
+    # shared by every brew Ruby, where another Ruby's native extensions
+    # live. The marker goes with the activation it describes, and
+    # `shadowenv exec` re-applies the lisps from the scrubbed base. When the
+    # wrapper stops exporting GEM_HOME, both keys go and this seam clears
+    # nothing.
     class ShadowenvExec
       extend T::Sig
 
-      # Env dev's own Ruby activation (or a harness's) may carry; each is
-      # explicitly unset in the child so bundler resolves from the project's
-      # canonical config. Dev never runs under bundler itself, so this is its
-      # equivalent of Bundler.original_env. `__shadowenv_data` is the active
-      # project marker (see the class comment).
+      # The transitional pair (see the class comment): dev's own GEM_HOME
+      # export and the active-project marker that must travel with it.
+      # test/dev/deps/shadowenv_exec_test.rb pins the exact set.
       RUBY_ENV_SCRUB = T.let(
-        [
-          "BUNDLE_PATH",
-          "BUNDLE_APP_CONFIG",
-          "BUNDLE_BIN",
-          "GEM_HOME",
-          "GEM_PATH",
-          "RUBYOPT",
-          "RUBYLIB",
-          "__shadowenv_data",
-        ].to_h { |name| [name, nil] }.freeze,
+        {
+          "GEM_HOME" => nil,
+          "__shadowenv_data" => nil,
+        }.freeze,
         T::Hash[String, T.nilable(String)],
       )
 

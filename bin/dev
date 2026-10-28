@@ -1,13 +1,31 @@
 #!/bin/sh
-# Self-defense against a caller's bundler activation (dev#94): a harness
-# running under `bundle exec` leaks RUBYOPT=-r.../bundler/setup and BUNDLE_*
-# into every child, and the interpreter activates the caller's bundle before
-# this script's Ruby half runs a single line — dev then can't load its own
-# gems. dev picks its own Ruby and gems; no caller's activation is ever
-# wanted, so the unset happens here in the sh layer, ahead of the version
-# probe below (which would itself crash under a hostile RUBYOPT). GEM_HOME/
-# GEM_PATH stay: they are legitimate user config, and the one resolution
-# they can redirect is guarded at its call site (dev#90).
+# The one place dev scrubs a caller's env — and the only env hygiene dev
+# does at all (test/dev/bin_dev_test.rb guards it; the org learning is
+# harness-env-scrub).
+#
+# What: the keys a bundler activation exports. A harness running dev
+# under `bundle exec` (dev#94, ai-flow#44) leaks RUBYOPT=-r.../bundler/setup
+# and BUNDLE_* into every child, and the interpreter acts on RUBYOPT before
+# the Ruby half runs a single line — dev would boot inside the caller's
+# bundle and fail to load its own gems. No caller's activation is ever
+# wanted: dev picks its own gems (the Ruby half, below) and its children
+# run under the project's shadowenv.
+#
+# Where: here, in the sh layer, ahead of the version probe (which would
+# itself crash under a hostile RUBYOPT), and nowhere else. Scrubbing once
+# at the entrypoint protects every spawn dev ever makes; per-spawn lists
+# are the discipline that keeps failing (dev#180, #274, #306 — each a key
+# added to one seam and not the other). The list is the source of truth:
+# bin_dev_test parses this line and checks it against what the locked
+# bundler actually exports, so a new bundler key shows up as a failing
+# test, not a leak.
+#
+# What stays: GEM_HOME and GEM_PATH. They are the caller's gem environment
+# — in a project shell, the project's activation. dev does not need them
+# cleared for itself (an installed dev selects its vendored gems
+# in-process, below, so the env cannot misdirect it) and must not clear
+# them for its children (they inherit the activation, and in a shell with
+# none the project's shadowenv sets both before anything runs under it).
 unset RUBYOPT RUBYLIB BUNDLE_GEMFILE BUNDLE_LOCKFILE BUNDLE_PATH \
   BUNDLE_APP_CONFIG BUNDLE_BIN BUNDLE_BIN_PATH BUNDLER_VERSION BUNDLER_SETUP
 
@@ -37,6 +55,23 @@ src = File.join(root, "src")
 lib = File.join(root, "lib")
 $LOAD_PATH.unshift(src) unless $LOAD_PATH.include?(src)
 $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
+
+# An installed dev's runtime gems (sorbet-runtime, cli-ui) are vendored by
+# the formula into the libexec that holds this tree — libexec/dev/bin/dev
+# beside libexec/specifications. Select them here, in-process, before the
+# first gem require: Gem.use_paths sets this process's gem home and path
+# and touches ENV not at all, so nothing is exported for children to
+# inherit (an exported GEM_HOME was dev#180: bundler installing a
+# project's gems into dev-core's Cellar) and nothing the caller exported
+# can misdirect dev (a GEM_PATH-less brew Ruby falls back to the
+# prefix-wide gem dir shared by every brew Ruby, where another Ruby's
+# native extensions live — dev#274). Default gems (json, open3, …) resolve
+# from the running Ruby's own stdlib regardless of Gem.path, so a path of
+# exactly [libexec] is complete. A source checkout has no specifications
+# dir beside it and keeps the shell's gem env, as always. Guarded by
+# test/dev/bin_dev_test.rb against a synthetic libexec.
+vendored = File.dirname(root)
+Gem.use_paths(vendored, [vendored]) if File.directory?(File.join(vendored, "specifications"))
 
 require "dev"
 require "dev/global_dispatch"

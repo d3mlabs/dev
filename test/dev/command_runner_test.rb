@@ -106,6 +106,37 @@ class CommandRunnerTest < Minitest::Test
     Dev::Deps::Lockfile.new(dir: @project_root).lock(Dev::EnvironmentImage.stamp(pins))
   end
 
+  # --- Child env ---
+
+  # The direct run is a second `shadowenv exec` spawn beside ShadowenvExec;
+  # what it clears is ShadowenvExec's list, not a copy — dev#306 fixed one
+  # seam and this one regressed with the identical LoadError. Pinned to the
+  # exact pair rather than the constant: dropping the marker while GEM_HOME
+  # is still nil'd is the regression, and a constant reference would hide
+  # it (test/dev/deps/shadowenv_exec_test.rb pins the same pair, for the
+  # same reason).
+  test "a direct run hands its child ShadowenvExec's scrub, in full, plus dev's lib on RUBYLIB" do
+    Given "a runner over a project, with no RUBYLIB of the suite's own in the way"
+    saved_rubylib = ENV.delete("RUBYLIB")
+    runner = Dev::CommandRunner.new(ui: @ui, project_root: @project_root)
+    runner.stubs(:ensure_shadowenv_provisioned!)
+    Kernel.stubs(:exec)
+    cmd = Dev::ProjectCommand.new(run: "./bin/console", repl: true)
+
+    When "we run a command"
+    runner.exec_into(cmd)
+
+    Then "the child's env nils dev's own gem home and the active-project marker — so shadowenv re-applies the lisps — and carries dev's lib"
+    1 * Kernel.exec(
+      { "GEM_HOME" => nil, "__shadowenv_data" => nil, "RUBYLIB" => Dev::DEV_LIB_DIR.to_s },
+      "shadowenv", "exec", "--", "sh", "-c", "./bin/console"
+    )
+
+    Cleanup
+    ENV["RUBYLIB"] = saved_rubylib if saved_rubylib
+    Dir.chdir(@original_cwd)
+  end
+
   # --- Toolchain provisioning ---
 
   test "run provisions nothing for the interpreters: Ruby and Python are dependencies dev deps install activated" do
