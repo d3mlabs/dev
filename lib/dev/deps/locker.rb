@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require_relative "scoped_declaration"
+require_relative "unlock_set"
 
 module Dev
   module Deps
@@ -16,6 +17,11 @@ module Dev
     # Repository#prepare: repositories answer per-package questions; lockers
     # solve whole sets. Integrations without a tool-owned solve have no
     # Locker. See docs/deps-architecture.md.
+    #
+    # A whole-set solve is where a subset re-lock cannot be a filter: the
+    # tool is told which of its packages to float (`bundle lock --update
+    # <gem>`) and keeps the rest of its own lockfile, so the UnlockSet
+    # reaches the Locker rather than the Resolver.
     class Locker
       extend T::Sig
 
@@ -23,9 +29,12 @@ module Dev
       #
       # @param declarations [Array<ScopedDeclaration>] every declaration
       #   of this integration type
+      # @param unlock [UnlockSet] which declarations float: none keeps the
+      #   tool's lockfile where it still satisfies the declarations, names
+      #   float those packages, all floats the whole set
       # @return [void]
-      sig { params(declarations: T::Array[ScopedDeclaration]).void }
-      def lock(declarations)
+      sig { params(declarations: T::Array[ScopedDeclaration], unlock: UnlockSet).void }
+      def lock(declarations, unlock: UnlockSet.none)
         raise NotImplementedError, "#{self.class}#lock must be implemented"
       end
     end

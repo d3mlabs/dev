@@ -160,14 +160,26 @@ ecosystem's canonical form and validated at the DSL boundary (a cmake
      through `ConflictingDeclarationError` when they don't), and their
      integration's needs queue in turn. Provenance is stamped last, as
      the pin's `needed_by` metadata (sorted integration names).
-3. **Carry provenance** — `TapCommitCarryover` reads the lock on disk and,
-   for every brew tap none of whose pins changed (same formula set; same
-   version, hash, group, scope and metadata but `tap_commit`), writes the
-   previous lock's `tap_commit` onto the resolved pins; a tap where
-   anything moved takes today's HEAD on every pin (one commit per tap,
-   the invariant a pinned install relies on). This is a policy of the
-   lock being written, so it lives in `dev deps update`, not in the
-   Resolver, which never sees the previous lock.
+3. **Carry the lock's pins** — `PinCarryover` decides, pin by pin, whether
+   the lock being written takes the pin just resolved or the one the lock
+   on disk has (`bundle install` against an existing `Gemfile.lock`;
+   ADR-0005 as extended by dev#355). A brew pin (formula or interpreter)
+   keeps the lock's version, hash, bottles and `tap_commit` when its
+   declaration did not change — same tap, group, host and env, and the
+   locked version still satisfies the constraint under the integration's
+   `VersionScheme` — and the lock records bottles for it (ADR-0004: what
+   a host converges to, dev#353). It floats when the author named it or
+   passed `--all` (the `UnlockSet`), when its declaration changed, when
+   an integration it is `needed_by` was named, or when the lock has no
+   bottle to pour; a floated pin that is otherwise identical to the
+   lock's keeps the previous `tap_commit`, else takes today's. In a
+   subset re-lock (`dev deps update <name>`) every non-brew pin not
+   floated is the lock's, verbatim. The outcome names the moves and
+   their reasons for the command to report. This is a policy of the lock
+   being written, so it lives in `dev deps update`, not in the Resolver,
+   which never sees the previous lock; the `UnlockSet` also reaches each
+   `Locker`, whose tool owns its own conservative solve (`bundle lock
+   --update <gem>`).
 4. **Write** — every pin goes to `deps.lock`, whatever its group
    (ADR-0011), nested by integration (`brew:` → `zlib:` → attrs) so the
    on-disk key carries the same (integration, name) identity the resolver
@@ -198,15 +210,18 @@ sequenceDiagram
     participant rep as Repository (per integration)
     participant backing as Backing service
     participant sch as VersionScheme (per integration)
-    participant carry as TapCommitCarryover
+    participant carry as PinCarryover
     participant lock as Lockfile
 
-    Note over cmd: load dependencies.rb into ScopedDeclaration[]
+    Note over cmd: load dependencies.rb into ScopedDeclaration[]; the UnlockSet from argv (names / --all / none)
+    cmd->>lock: read_for_relock
+    lock-->>cmd: previous pins
     cmd->>res: resolve(ruby / python declarations)
-    Note over cmd: the interpreters first - resolved and installed through brew (BrewIntegration) before any locker runs
-    cmd->>lkr: lock(bundler declarations, ruby_version: the locked ruby)
+    cmd->>carry: apply(declarations, previous, interpreter pins, unlock)
+    Note over cmd: the interpreters first - the kept (or floated) pins installed through brew (BrewIntegration) before any locker runs
+    cmd->>lkr: lock(bundler declarations, unlock, ruby_version: the locked ruby)
     lkr->>lkr: write Gemfile from declarations
-    lkr->>bundler: shadowenv exec -- bundle lock
+    lkr->>bundler: shadowenv exec -- bundle lock [--update [gem...]]
     bundler-->>lkr: Gemfile.lock written (or LockError)
     Note over cmd: IntegrationNeeds reads each integration's own dependencies.rb as a library - its exports are the needs table
     cmd->>res: resolve(all declarations)
@@ -236,13 +251,12 @@ sequenceDiagram
     end
     Note over res: stamp needed_by provenance onto the needed pins
     res-->>cmd: Dependency[] pins
-    cmd->>lock: read
-    lock-->>cmd: previous pins
-    cmd->>carry: apply(pins, previous pins)
-    Note over carry: per brew tap - pins unchanged? keep the previous tap_commit; else today's HEAD on every pin
-    carry-->>cmd: pins
+    cmd->>carry: apply(declarations, previous, pins, unlock)
+    Note over carry: per brew pin - declaration unchanged, not floated, bottles recorded? the lock's pin (tap_commit included); else today's, with the move's reason. Subset re-lock - every other unfloated pin is the lock's
+    carry-->>cmd: Outcome (pins, kept, moved)
     cmd->>lock: lock(pins, manifest_digest)
     Note over lock: writes deps.lock, nested by integration
+    Note over cmd: report each move with its reason, and what was kept
 ```
 
 ### Install flow (`dev deps install`)

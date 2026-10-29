@@ -5,6 +5,7 @@ require "test_helper"
 require "dev/deps"
 require "dev/deps/bundler_locker"
 require "dev/deps/shadowenv_exec"
+require "dev/deps/unlock_set"
 require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
@@ -67,6 +68,67 @@ class Dev::Deps::BundlerLockerTest < Minitest::Test
     locker.lock(bundler_declarations { gem "ffi" })
 
     Then "bundle lock was sent to the seam, not spawned bare (asserted on the mock)"
+    true
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "lock floats the named gems through bundler's own unlock, ignoring names from other channels" do
+    Given "a locker over the spawn seam, two gems declared, one of them and a brew formula named"
+    dir = Dir.mktmpdir("dev-bundler-locker-test-")
+    shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: dir)
+    shadowenv_exec.expects(:capture3)
+      .with("bundle", "lock", "--update", "rake", env: { "BUNDLE_GEMFILE" => (Pathname(dir) / "Gemfile").to_s })
+      .returns(succeeded)
+    locker = build_locker(dir, shadowenv_exec)
+    decls = bundler_declarations do
+      gem "ffi"
+      gem "rake"
+    end
+
+    When "dev deps update rake cmake"
+    locker.lock(decls, unlock: Dev::Deps::UnlockSet.new(names: ["rake", "cmake"]))
+
+    Then "bundle lock --update rake was sent (asserted on the mock)"
+    true
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "lock keeps bundle lock conservative when no gem is named" do
+    Given "a subset re-lock naming only a brew formula"
+    dir = Dir.mktmpdir("dev-bundler-locker-test-")
+    shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: dir)
+    shadowenv_exec.expects(:capture3)
+      .with("bundle", "lock", env: { "BUNDLE_GEMFILE" => (Pathname(dir) / "Gemfile").to_s })
+      .returns(succeeded)
+    locker = build_locker(dir, shadowenv_exec)
+
+    When "dev deps update cmake"
+    locker.lock(bundler_declarations { gem "ffi" }, unlock: Dev::Deps::UnlockSet.new(names: ["cmake"]))
+
+    Then "plain bundle lock: Gemfile.lock keeps every gem that still satisfies the Gemfile (asserted on the mock)"
+    true
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "lock floats every gem for the full re-lock" do
+    Given "a locker over the spawn seam"
+    dir = Dir.mktmpdir("dev-bundler-locker-test-")
+    shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: dir)
+    shadowenv_exec.expects(:capture3)
+      .with("bundle", "lock", "--update", env: { "BUNDLE_GEMFILE" => (Pathname(dir) / "Gemfile").to_s })
+      .returns(succeeded)
+    locker = build_locker(dir, shadowenv_exec)
+
+    When "dev deps update --all"
+    locker.lock(bundler_declarations { gem "ffi" }, unlock: Dev::Deps::UnlockSet.all)
+
+    Then "bundle lock --update was sent (asserted on the mock)"
     true
 
     Cleanup
