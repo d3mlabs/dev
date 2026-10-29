@@ -24,11 +24,12 @@ module Dev
     # or an interpreter; casks pin no version — keeps the lock's version
     # when its declaration is unchanged (same tap, same scope, and the
     # locked version still satisfies its constraint) and the lock can
-    # converge a host to that version: it records the version's bottles
-    # (ADR-0004), which `dev up` pours (dev#353). It floats when the author
-    # asked (the UnlockSet: `dev deps update <name>`, `--all`), when the
-    # declaration changed, or when the lock has no bottle to pour — the one
-    # move the author did not ask for, reported with its reason.
+    # converge a host to that version: it records the `tap_commit` at
+    # which the formula is that version, and `dev up` installs from the
+    # tap checked out there (dev#356). It floats when the author asked
+    # (the UnlockSet: `dev deps update <name>`, `--all`), when the
+    # declaration changed, or when the lock records no tap commit — the
+    # one move the author did not ask for, reported with its reason.
     #
     # `tap_commit` rides the pin (ADR-0005, refined by dev#355): a kept pin
     # keeps the commit it was resolved at — a commit where its formula is
@@ -50,7 +51,6 @@ module Dev
       # that are formulae (Registry's `install_alias: :brew` rows).
       BREW_INTEGRATIONS = T.let(%i[brew ruby python].freeze, T::Array[Symbol])
       TAP_COMMIT = "tap_commit"
-      PLATFORMS = "platforms"
 
       # A pin the lock takes from the resolution at another version than it
       # had (`from` nil when the lock had none), and why.
@@ -149,11 +149,11 @@ module Dev
         return Decision.new(pin: dep, move: Move.new(name: dep.name, from: nil, to: dep.version, reason: "new")) if prior.nil?
         return re_resolved(dep, prior, reason: unlock.all? ? "--all" : "named") if floats
         return re_resolved(dep, prior, reason: "declaration changed") unless ask && declaration_unchanged?(dep, prior, ask)
-        return Decision.new(pin: carried(dep, prior), kept: true) if pourable?(prior)
+        return Decision.new(pin: carried(dep, prior), kept: true) if convergeable?(prior)
 
         re_resolved(
           dep, prior,
-          reason: "the lock records no bottle for #{prior.version}, so no host could converge to it",
+          reason: "the lock records no tap commit for #{prior.version}, so no host could converge to it",
         )
       end
 
@@ -220,19 +220,17 @@ module Dev
       end
 
       # Whether a host can be converged to the lock's version: the lock
-      # records the version's bottles (ADR-0004), which `dev up` pours
-      # (dev#353). A pin in the pre-bottles shape, or a formula that
-      # publishes no bottle, leaves a host only `brew upgrade`, which
-      # reaches today's version and no other.
+      # records the tap commit at which the formula is that version, and
+      # `dev up` installs it from the tap checked out there (dev#356) —
+      # bottles or not. A pin written before tap commits were recorded
+      # leaves a host only `brew upgrade`, which reaches today's version
+      # and no other.
       #
       # @param prior [Dependency] the lock's pin
       # @return [Boolean]
       sig { params(prior: Dependency).returns(T::Boolean) }
-      def pourable?(prior)
-        bottles = prior.metadata[PLATFORMS]
-        return false unless bottles.is_a?(Hash)
-
-        !bottles.empty?
+      def convergeable?(prior)
+        !prior.metadata[TAP_COMMIT].to_s.empty?
       end
 
       # Everything the lock says about a pin but where it came from and

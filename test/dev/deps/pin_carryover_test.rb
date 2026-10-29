@@ -135,32 +135,37 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
     moves(outcome) == [["ruby", "4.0.5_1", "4.0.6", "declaration changed"]]
   end
 
-  test "floats, with the reason, a moved formula the lock records no bottle for: #{description}" do
-    Given "an unchanged declaration whose lock pin #{description}"
-    prior = if bottles.nil?
-      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: "4.4.4", hash: "SHA256=mac",
-        metadata: { "tap_commit" => OLD, "format" => "bottle" })
-    else
-      formula("cmake", version: "4.4.4", commit: OLD, platforms: bottles)
-    end
+  test "keeps a moved formula the lock records no bottle for, when it records the tap commit a host converges from" do
+    Given "an unchanged declaration whose lock pin is a source-only formula (no bottles) at a tap commit"
+    prior = formula("cmake", version: "4.4.4", commit: OLD, platforms: [])
     resolved = [formula("cmake", version: "4.4.5", commit: NEW)]
 
     When "carrying over"
     outcome = carryover.apply(declarations: [declared("cmake")], previous: [prior], resolved:, unlock: Dev::Deps::UnlockSet.none)
 
-    Then "no host could converge to the lock's version, so it floats and says why"
-    versions(outcome.pins) == { "cmake" => "4.4.5" }
-    outcome.kept == []
-    moves(outcome) == [["cmake", "4.4.4", "4.4.5", "the lock records no bottle for 4.4.4, so no host could converge to it"]]
-
-    Where
-    description                     | bottles
-    "predates bottle records"       | nil
-    "is a formula with no bottles"  | []
+    Then "a host installs it from the tap at that commit (dev#356), so the lock's version stands"
+    outcome.pins == [prior]
+    outcome.kept == [prior]
+    outcome.moved == []
   end
 
-  test "takes the resolution's shape for an unmoved formula the lock records no bottle for, moving nothing" do
-    Given "a lock pin in the pre-bottles shape, re-resolved to the same version with its bottles"
+  test "floats, with the reason, a moved formula the lock records no tap commit for" do
+    Given "an unchanged declaration whose lock pin has bottles but predates tap commits"
+    prior = formula("cmake", version: "4.4.4", commit: nil)
+    resolved = [formula("cmake", version: "4.4.5", commit: NEW)]
+
+    When "carrying over"
+    outcome = carryover.apply(declarations: [declared("cmake")], previous: [prior], resolved:, unlock: Dev::Deps::UnlockSet.none)
+
+    Then "a host behind it could only brew upgrade toward today's version, so it floats and says why"
+    versions(outcome.pins) == { "cmake" => "4.4.5" }
+    commits(outcome.pins) == { "cmake" => NEW }
+    outcome.kept == []
+    moves(outcome) == [["cmake", "4.4.4", "4.4.5", "the lock records no tap commit for 4.4.4, so no host could converge to it"]]
+  end
+
+  test "keeps an unmoved formula in the pre-bottles shape when it records a tap commit" do
+    Given "a lock pin with a tap commit and no bottle record, re-resolved to the same version with its bottles"
     prior = Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: "4.4.4", hash: "SHA256=mac",
       metadata: { "tap_commit" => OLD, "format" => "bottle" })
     resolved = [formula("cmake", version: "4.4.4", commit: NEW)]
@@ -168,8 +173,8 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
     When "carrying over"
     outcome = carryover.apply(declarations: [declared("cmake")], previous: [prior], resolved:, unlock: Dev::Deps::UnlockSet.none)
 
-    Then "the lock gains the bottles at today's commit; the version did not move"
-    outcome.pins == resolved
+    Then "the lock's pin stands as written — a kept pin is the lock's, bottle record included; `dev deps update cmake` refreshes it"
+    outcome.pins == [prior]
     outcome.moved == []
   end
 
