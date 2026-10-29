@@ -22,7 +22,25 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
   # @param dir [String] the test's data root
   # @return [Array<String>]
   def cache_env(dir)
-    ["env", "HOMEBREW_CACHE=#{dir}/tool-caches/brew"]
+    ["env", cache_assignment(dir)]
+  end
+
+  # The one assignment an escalated write hands to sudo itself: sudo
+  # matches the command, so `env` cannot stand in front of brew there.
+  #
+  # @param dir [String] the data root
+  # @return [String]
+  def cache_assignment(dir)
+    "HOMEBREW_CACHE=#{dir}/tool-caches/brew"
+  end
+
+  # The executable an escalated write names: the rule the agent host
+  # bootstrap grants is a path, and the agent's PATH is nobody's promise.
+  #
+  # @param prefix [String] the brew prefix
+  # @return [String]
+  def owner_brew(prefix)
+    File.join(prefix, "bin", "brew")
   end
 
   test "install_all calls brew install for each formula dep" do
@@ -486,7 +504,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     capture_io { integration.install_all([cmake_pin("4.4.5")]) }
 
     Then
-    1 * Open3.capture3("sudo", "-n", "-u", owner, *cache_env(dir), *PINNED_ENV, "brew", "install", "cmake") >> ["", "", stub(success?: true)]
+    1 * Open3.capture3("sudo", "-n", "-u", owner, cache_assignment(dir), *PINNED_ENV, owner_brew(prefix), "install", "cmake") >> ["", "", stub(success?: true)]
 
     Cleanup
     FileUtils.chmod(0o755, prefix)
@@ -760,7 +778,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     integration.stubs(:brew_installed?).returns(false)
     integration.stubs(:verify_installed!)
     Open3.expects(:capture3)
-         .with("sudo", "-n", "-u", owner, *cache_env(dir), "brew", "install", "cmake")
+         .with("sudo", "-n", "-u", owner, cache_assignment(dir), owner_brew(prefix), "install", "cmake")
          .returns(["", "", stub(success?: true)])
 
     When "installing all"
@@ -768,6 +786,67 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
 
     Then "brew ran through sudo -n as the prefix owner (Mocha-verified)"
     true
+
+    Cleanup
+    FileUtils.chmod(0o755, prefix)
+    FileUtils.rm_rf(dir)
+  end
+
+  test "an escalated write keeps brew in sudo's command position: assignments go to sudo, no env, the executable by path" do
+    Given "an unwritable prefix and a pinned-taps install, the longest environment a write carries"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    FileUtils.mkdir_p(prefix)
+    FileUtils.chmod(0o555, prefix)
+    owner = Etc.getpwuid(File.stat(prefix).uid).name
+    pinner = typed_mock(Dev::Deps::TapPinner)
+    pinner.stubs(:pin!)
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: prefix,
+      pin_taps: true, tap_pinner: pinner,
+    )
+    integration.stubs(:brew_installed?).returns(false)
+    integration.stubs(:verify_installed!)
+    argv = T.let(nil, T.nilable(T::Array[String]))
+    Open3.stubs(:capture3).with { |*args| argv = args if args.include?("install") }.returns(["", "", stub(success?: true)])
+
+    When "installing"
+    integration.install_all([cmake_pin("4.4.5")])
+
+    Then "sudoers matches the command, so the command is the owner's brew and every variable is a sudo assignment before it"
+    argv == ["sudo", "-n", "-u", owner, cache_assignment(dir), *PINNED_ENV, owner_brew(prefix), "install", "cmake"]
+    !argv.include?("env")
+
+    Cleanup
+    FileUtils.chmod(0o755, prefix)
+    FileUtils.rm_rf(dir)
+  end
+
+  test "sudo refusing the assignments is the stale-edge remediation too" do
+    Given "an unwritable prefix and a drop-in whose brew edge predates SETENV"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    FileUtils.mkdir_p(prefix)
+    FileUtils.chmod(0o555, prefix)
+    owner = Etc.getpwuid(File.stat(prefix).uid).name
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: prefix,
+    )
+    integration.stubs(:brew_installed?).returns(false)
+    integration.stubs(:verify_installed!)
+    refusal = "sudo: sorry, you are not allowed to set the following environment variables: HOMEBREW_CACHE\n"
+    Open3.stubs(:capture3)
+         .with("sudo", "-n", "-u", owner, cache_assignment(dir), owner_brew(prefix), "install", "cmake")
+         .returns(["", refusal, stub(success?: false)])
+
+    When "installing"
+    integration.install_all([legacy_cmake_pin("4.3.4")])
+
+    Then "the failure says the edge is stale and what rewrites it"
+    error = raises Dev::Deps::Integration::PartialInstallError
+    message = error.failures.fetch(0).fetch(1).message
+    message.include?("sudo -n was refused")
+    message.include?("dev runner register")
 
     Cleanup
     FileUtils.chmod(0o755, prefix)
@@ -793,7 +872,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     integration.stubs(:brew_installed?).returns(false)
     integration.stubs(:verify_installed!)
     Open3.stubs(:capture3)
-         .with("sudo", "-n", "-u", owner, *cache_env(dir), "brew", "install", "cmake")
+         .with("sudo", "-n", "-u", owner, cache_assignment(dir), owner_brew(prefix), "install", "cmake")
          .returns(["", "sudo: a password is required\n", stub(success?: false)])
 
     When "installing all and capturing the aggregate error"
@@ -827,7 +906,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
       taps: [tap], project_dir: dir, brew_prefix: prefix,
     )
     integration.expects(:system)
-               .with("sudo", "-n", "-u", owner, "brew", "tap", "org/tap", "https://github.com/org/homebrew-tap")
+               .with("sudo", "-n", "-u", owner, owner_brew(prefix), "tap", "org/tap", "https://github.com/org/homebrew-tap")
                .returns(true)
 
     When "installing all (no deps, taps only)"
@@ -878,7 +957,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
       store: Dev::Deps::LocalStore.new(data_root: dir),
       taps: [tap], project_dir: dir, brew_prefix: prefix,
     )
-    integration.stubs(:system).with("sudo", "-n", "-u", owner, "brew", "tap", "org/tap").returns(false)
+    integration.stubs(:system).with("sudo", "-n", "-u", owner, owner_brew(prefix), "tap", "org/tap").returns(false)
 
     When "installing all (no deps, taps only)"
     error = assert_raises(Dev::Deps::BrewIntegration::TapRegistrationError) do
