@@ -48,7 +48,8 @@ module Dev
     # @param agent_user [String] expected run-as user
     # @param runner_user [String] the enrolling user
     # @param shared_root [String] expected shared-root location
-    # @param sudoers_path [String] expected sudoers drop-in location
+    # @param brew_edge [AgentBootstrap::BrewEdge, AgentBootstrap::NoBrewEdge]
+    #   the brew edge register writes for this host, or why none is needed
     # @param brewfile_path [String, nil] the org Brewfile (nil when none ships)
     # @param container_required [Boolean] whether the served repo declares build.container
     # @param host_identity [Dev::RunnerUser, nil] the Linux host rule's user; nil elsewhere
@@ -63,7 +64,7 @@ module Dev
         agent_user: String,
         runner_user: String,
         shared_root: String,
-        sudoers_path: String,
+        brew_edge: AgentBootstrap::BrewEdgeDecision,
         brewfile_path: T.nilable(String),
         container_required: T::Boolean,
         host_identity: T.nilable(Dev::RunnerUser),
@@ -76,7 +77,7 @@ module Dev
                    agent_user: AgentBootstrap::DEFAULT_AGENT_USER,
                    runner_user: T.must(Etc.getpwuid(Process.uid)).name,
                    shared_root: DataRoot::SHARED_ROOT,
-                   sudoers_path: AgentBootstrap::SUDOERS_PATH,
+                   brew_edge: AgentBootstrap.new(agent_user: agent_user, runner_user: runner_user).brew_edge,
                    brewfile_path: self.class.default_brewfile_path,
                    container_required: false,
                    host_identity: Dev::RunnerUser.for_host,
@@ -92,7 +93,7 @@ module Dev
       @agent_user = agent_user
       @runner_user = runner_user
       @shared_root = shared_root
-      @sudoers_path = sudoers_path
+      @brew_edge = brew_edge
       @brewfile_path = brewfile_path
       @container_required = container_required
     end
@@ -296,7 +297,7 @@ module Dev
         )
         line(member_ok, "#{member} in the #{AgentBootstrap::GROUP} group")
       end
-      line(File.exist?(@sudoers_path), "sudoers edge present (#{@sudoers_path})")
+      report_sudoers_edges
       runner_dirs.each do |dir|
         line(work_tree_cooperative?(dir), "_work tree cooperative in #{dir} (group #{AgentBootstrap::GROUP}, setgid)")
       end
@@ -304,6 +305,65 @@ module Dev
       return unless @container_required
 
       line(@executor.quiet?("brew", "list", "--formula", "colima"), "colima installed (container engine)")
+    end
+
+    # The two edges the sudoers drop-in grants, read the way a job exercises
+    # them rather than stat'd: the drop-in is root-owned 0440, but the
+    # runner → agent edge is itself the privilege that lists the agent's
+    # rules without a prompt (`-n`, list-only — sudo's listpw is satisfied
+    # by any NOPASSWD rule). A refusal of the first probe is the finding,
+    # never a prompt, and without that edge the brew edge cannot be read.
+    sig { void }
+    def report_sudoers_edges
+      edge = "#{@runner_user} → #{@agent_user}, #{AgentBootstrap::EDGE_TAGS.join(":")}"
+      unless @executor.quiet?("sudo", "-n", "-u", @agent_user, "true")
+        line(false, "runner → agent sudoers edge missing (#{edge}) — the brew edge cannot be read without it " \
+                    "(run `dev runner register`)")
+        return
+      end
+
+      line(true, "runner → agent sudoers edge (#{edge})")
+      report_brew_edge
+    end
+
+    # The brew edge against the rules the agent's own `sudo -l` lists: the
+    # rule naming the owner and ending in the brew path, carrying every tag.
+    sig { void }
+    def report_brew_edge
+      edge = @brew_edge
+      case edge
+      when AgentBootstrap::NoBrewEdge
+        line(true, "no brew edge needed (#{edge.reason})")
+      when AgentBootstrap::BrewEdge
+        grant = "#{edge.agent} may run #{edge.path} as #{edge.owner}"
+        rule = brew_rule(edge)
+        if rule.nil?
+          line(false, "brew edge missing: #{grant} is not granted (run `dev runner register`)")
+          return
+        end
+
+        missing_tags = AgentBootstrap::EDGE_TAGS.reject { |tag| rule.include?(tag) }
+        if missing_tags.empty?
+          line(true, "brew edge: #{grant} (#{AgentBootstrap::EDGE_TAGS.join(", ")})")
+        else
+          line(false, "brew edge without #{missing_tags.join(", ")}: #{grant}, but not as dev's escalation " \
+                      "runs it (run `dev runner register`)")
+        end
+      else
+        T.absurd(edge)
+      end
+    end
+
+    # The agent's sudo rule granting the edge's path as its owner, if any —
+    # `sudo -l` prints one as `(<owner>) <tags>: <path>`, tags in its own
+    # order, so the match is on the owner and the path alone.
+    #
+    # @param edge [AgentBootstrap::BrewEdge]
+    # @return [String, nil]
+    sig { params(edge: AgentBootstrap::BrewEdge).returns(T.nilable(String)) }
+    def brew_rule(edge)
+      rules = @executor.capture("sudo", "-n", "-u", @agent_user, "sudo", "-n", "-l")
+      rules.lines.map(&:strip).find { |rule| rule.include?("(#{edge.owner})") && rule.end_with?(edge.path) }
     end
 
     # Group + setgid facts via stat, so inspection needs no privileges.

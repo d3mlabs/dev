@@ -495,6 +495,9 @@ class Dev::AgentBootstrapTest < Minitest::Test
     content.end_with?("\n")
   end
 
+  # The prefix owner is whoever runs the suite, so the agent is named
+  # explicitly: on an agent host the suite itself runs as `ai-agent`, and the
+  # default would make the owner the agent — a waived edge, not a granted one.
   test "sudoers content grants the agent a brew edge to the prefix owner" do
     Given "a host with brew at a known prefix owned by the human"
     dir = Dir.mktmpdir
@@ -503,41 +506,71 @@ class Dev::AgentBootstrapTest < Minitest::Test
     File.write(brew, "")
     owner = Etc.getpwuid(File.stat(dir).uid).name
     content = Dev::AgentBootstrap.new(
-      runner_user: "human", darwin: true, brew_executable: brew,
+      agent_user: "ci", runner_user: "human", darwin: true, brew_executable: brew,
     ).sudoers_content
 
     Expect "the agent may run exactly brew as the prefix owner, NOPASSWD, with the assignments dev's escalation hands sudo (SETENV)"
-    content.include?("ai-agent ALL=(#{owner}) NOPASSWD:SETENV: #{brew}")
+    content.include?("ci ALL=(#{owner}) NOPASSWD:SETENV: #{brew}")
     !content.include?("NOPASSWD: #{brew}")
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
-  test "sudoers content omits the brew edge when brew is absent" do
-    Given "a host with no brew executable"
-    content = Dev::AgentBootstrap.new(
-      runner_user: "human", darwin: true,
-      brew_executable: File.join(Dir.mktmpdir, "no-brew"),
-    ).sudoers_content
+  # dev#365: status inspects the host against the same facts the drop-in
+  # is written from, so they are exposed once and the rule rendered from them.
+  test "the brew edge is exposed as facts — agent, stat'd owner, brew path — and the drop-in carries exactly their rule" do
+    Given "a host with brew at a known prefix owned by the human"
+    dir = Dir.mktmpdir
+    brew = File.join(dir, "bin", "brew")
+    FileUtils.mkdir_p(File.dirname(brew))
+    File.write(brew, "")
+    owner = Etc.getpwuid(File.stat(dir).uid).name
+    bootstrap = Dev::AgentBootstrap.new(agent_user: "ci", runner_user: "human", darwin: true, brew_executable: brew)
 
-    Expect "only the spawn edge and the umask defaults remain"
-    content.lines.size == 2
+    When "reading the edge"
+    edge = bootstrap.brew_edge
+
+    Then "the facts are the three the rule names, every tag on it, and the content is built from them"
+    edge.is_a?(Dev::AgentBootstrap::BrewEdge)
+    edge.agent == "ci"
+    edge.owner == owner
+    edge.path == brew
+    Dev::AgentBootstrap::EDGE_TAGS.all? { |tag| edge.sudoers_rule.include?(tag) }
+    bootstrap.sudoers_content.lines.last == "#{edge.sudoers_rule}\n"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
-  test "sudoers content omits the brew edge when the agent already owns the prefix" do
+  test "sudoers content omits the brew edge when brew is absent, and says why" do
+    Given "a host with no brew executable"
+    bootstrap = Dev::AgentBootstrap.new(
+      runner_user: "human", darwin: true,
+      brew_executable: File.join(Dir.mktmpdir, "no-brew"),
+    )
+
+    Expect "only the spawn edge and the umask defaults remain; the waiver names the missing brew"
+    bootstrap.sudoers_content.lines.size == 2
+    bootstrap.brew_edge.is_a?(Dev::AgentBootstrap::NoBrewEdge)
+    bootstrap.brew_edge.reason == "no brew on this host"
+  end
+
+  test "sudoers content omits the brew edge when the agent already owns the prefix, and says why" do
     Given "a brew prefix owned by the agent user itself"
     dir = Dir.mktmpdir
     brew = File.join(dir, "bin", "brew")
     FileUtils.mkdir_p(File.dirname(brew))
     File.write(brew, "")
     owner = Etc.getpwuid(File.stat(dir).uid).name
-    content = Dev::AgentBootstrap.new(
+    bootstrap = Dev::AgentBootstrap.new(
       runner_user: "human", agent_user: owner, darwin: true, brew_executable: brew,
-    ).sudoers_content
+    )
 
-    Expect "no self-edge is emitted"
-    !content.include?(brew)
+    Expect "no self-edge is emitted; the waiver names the owner"
+    !bootstrap.sudoers_content.include?(brew)
+    bootstrap.brew_edge.is_a?(Dev::AgentBootstrap::NoBrewEdge)
+    bootstrap.brew_edge.reason == "#{owner} owns the brew prefix #{dir}"
 
     Cleanup
     FileUtils.rm_rf(dir)

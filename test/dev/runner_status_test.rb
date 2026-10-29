@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/agent_bootstrap"
 require "dev/runner_discovery"
 require "dev/runner_registry"
 require "dev/deps/dependency"
@@ -52,8 +53,18 @@ class Dev::RunnerStatusTest < Minitest::Test
     ["id", "-u", "ai-agent"] => true,
     ["dseditgroup", "-o", "checkmember", "-m", "human", "ai"] => true,
     ["dseditgroup", "-o", "checkmember", "-m", "ai-agent", "ai"] => true,
+    ["sudo", "-n", "-u", "ai-agent", "true"] => true,
     ["brew", "list", "--formula", "colima"] => true,
   }.freeze
+
+  # How the agent lists its own rules through the runner → agent edge.
+  AGENT_SUDO_LIST = ["sudo", "-n", "-u", "ai-agent", "sudo", "-n", "-l"].freeze
+
+  # The brew edge register writes on a Mac whose prefix is the human's.
+  HUMAN_BREW_EDGE = Dev::AgentBootstrap::BrewEdge.new(agent: "ai-agent", owner: "human", path: "/opt/homebrew/bin/brew")
+
+  # `sudo -l` as the agent, in sudo 1.9's layout (tags in its order, not ours).
+  AGENT_RULES_HEADER = "User ai-agent may run the following commands on mac:\n"
 
   test "reports a host with no enrollments" do
     Given "an empty home"
@@ -319,13 +330,16 @@ class Dev::RunnerStatusTest < Minitest::Test
     shared_root = Dir.mktmpdir
     executor = CannedStatusExecutor.new(
       probe_results: ALL_GREEN_PROBES,
-      capture_results: { ["stat", "-f", "%Sg %Sp", work] => "ai drwxrwsr-x\n" },
+      capture_results: {
+        ["stat", "-f", "%Sg %Sp", work] => "ai drwxrwsr-x\n",
+        AGENT_SUDO_LIST => "#{AGENT_RULES_HEADER}    (human) SETENV: NOPASSWD: /opt/homebrew/bin/brew\n",
+      },
     )
     responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: ["ai-build"], status: "online") }
     status = build_status(
       out: out, home: home, registry: CannedRegistry.new(&responder),
       executor: executor, shared_root: shared_root,
-      sudoers_path: existing_file, container_required: true,
+      brew_edge: HUMAN_BREW_EDGE, container_required: true,
     )
 
     When "reporting"
@@ -335,10 +349,77 @@ class Dev::RunnerStatusTest < Minitest::Test
     out.string.include?("Agent host")
     !out.string.include?("[!!]")
     out.string.include?("agent user ai-agent")
-    out.string.include?("sudoers edge")
+    out.string.include?("[ok] runner → agent sudoers edge (human → ai-agent, NOPASSWD:SETENV)")
+    out.string.include?("[ok] brew edge: ai-agent may run /opt/homebrew/bin/brew as human (NOPASSWD, SETENV)")
     out.string.include?("_work tree")
     out.string.include?("shared root")
     out.string.include?("colima")
+  end
+
+  # dev#365: the drop-in is root-owned 0440, so the edges are read the way a
+  # job exercises them — through the runner → agent edge, `-n`, list-only —
+  # and matched on the facts register writes, not on the file's presence.
+  test "the brew edge is read from the agent's own sudo rules — #{what}" do
+    Given "an agent-labeled enrollment on a host where the agent's rules list #{what}"
+    out = StringIO.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-x", scope: "d3mlabs", name: "box")
+    executor = CannedStatusExecutor.new(
+      probe_results: { ["sudo", "-n", "-u", "ai-agent", "true"] => true },
+      capture_results: { AGENT_SUDO_LIST => rules },
+    )
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-build"], status: "online") }
+    status = build_status(out: out, home: home, registry: CannedRegistry.new(&responder), executor: executor, brew_edge: HUMAN_BREW_EDGE)
+
+    When "reporting"
+    status.report
+
+    Then "the runner → agent edge reads ok, and the brew edge line names the shape found"
+    out.string.include?("[ok] runner → agent sudoers edge (human → ai-agent, NOPASSWD:SETENV)")
+    out.string.include?(expected)
+
+    Where
+    what                                    | rules                                                                         | expected
+    "the edge, tags in sudo's own order"    | "#{AGENT_RULES_HEADER}    (human) SETENV: NOPASSWD: /opt/homebrew/bin/brew\n" | "[ok] brew edge: ai-agent may run /opt/homebrew/bin/brew as human (NOPASSWD, SETENV)"
+    "the edge without SETENV (pre-dev#361)" | "#{AGENT_RULES_HEADER}    (human) NOPASSWD: /opt/homebrew/bin/brew\n"         | "[!!] brew edge without SETENV: ai-agent may run /opt/homebrew/bin/brew as human, but not as dev's escalation runs it (run `dev runner register`)"
+    "another path as the owner, not brew"   | "#{AGENT_RULES_HEADER}    (human) SETENV: NOPASSWD: /usr/local/bin/brew\n"    | "[!!] brew edge missing: ai-agent may run /opt/homebrew/bin/brew as human is not granted (run `dev runner register`)"
+    "no rules at all (sudo -l refused)"     | ""                                                                            | "[!!] brew edge missing: ai-agent may run /opt/homebrew/bin/brew as human is not granted (run `dev runner register`)"
+  end
+
+  test "a refused runner → agent probe is the finding: one red line, no prompt, and the brew edge is not read" do
+    Given "an agent-labeled enrollment on a host whose drop-in grants the human nothing"
+    out = StringIO.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-x", scope: "d3mlabs", name: "box")
+    executor = CannedStatusExecutor.new(probe_results: { ["sudo", "-n", "-u", "ai-agent", "true"] => false })
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-build"], status: "online") }
+    status = build_status(out: out, home: home, registry: CannedRegistry.new(&responder), executor: executor, brew_edge: HUMAN_BREW_EDGE)
+
+    When "reporting"
+    status.report
+
+    Then
+    out.string.include?("[!!] runner → agent sudoers edge missing (human → ai-agent, NOPASSWD:SETENV) — the brew edge cannot be read without it (run `dev runner register`)")
+    !out.string.include?("brew edge:")
+  end
+
+  test "a host register writes no brew edge for reads ok and says why, without listing the agent's rules" do
+    Given "an agent-labeled enrollment on a brewless host"
+    out = StringIO.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-x", scope: "d3mlabs", name: "box")
+    executor = CannedStatusExecutor.new(probe_results: { ["sudo", "-n", "-u", "ai-agent", "true"] => true })
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-build"], status: "online") }
+    status = build_status(
+      out: out, home: home, registry: CannedRegistry.new(&responder), executor: executor,
+      brew_edge: Dev::AgentBootstrap::NoBrewEdge.new(reason: "no brew on this host"),
+    )
+
+    When "reporting"
+    status.report
+
+    Then
+    out.string.include?("[ok] no brew edge needed (no brew on this host)")
   end
 
   test "flags every missing agent host fact" do
@@ -349,7 +430,6 @@ class Dev::RunnerStatusTest < Minitest::Test
     responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-learn"], status: "online") }
     status = build_status(
       out: out, home: home, registry: CannedRegistry.new(&responder),
-      sudoers_path: File.join(Dir.mktmpdir, "absent"),
       shared_root: File.join(Dir.mktmpdir, "absent"),
       container_required: true,
     )
@@ -357,8 +437,8 @@ class Dev::RunnerStatusTest < Minitest::Test
     When "reporting"
     status.report
 
-    Then "the report carries failure markers for each fact"
-    out.string.scan("[!!]").length >= 5
+    Then "the report carries failure markers for each fact (user, two memberships, the edge, _work, shared root, engine)"
+    out.string.scan("[!!]").length == 7
   end
 
   test "the engine line appears only when the served repo builds in a container" do
@@ -435,7 +515,7 @@ class Dev::RunnerStatusTest < Minitest::Test
 
   def build_status(out:, home: Dir.mktmpdir, registry: CannedRegistry.new,
                    executor: CannedStatusExecutor.new, shared_root: Dir.mktmpdir,
-                   sudoers_path: File.join(Dir.mktmpdir, "absent"), brewfile_path: nil,
+                   brew_edge: Dev::AgentBootstrap::NoBrewEdge.new(reason: "no brew on this host"), brewfile_path: nil,
                    container_required: false, host_identity: nil, pins: [], reach: nil, reach_factory: ->(_identity) { reach })
     # :default leaves RunnerStatus's own reach factory in place.
     reach_wiring = reach_factory == :default ? {} : { reach_factory: reach_factory }
@@ -449,7 +529,7 @@ class Dev::RunnerStatusTest < Minitest::Test
       runner_user: "human",
       host_identity: host_identity,
       shared_root: shared_root,
-      sudoers_path: sudoers_path,
+      brew_edge: brew_edge,
       brewfile_path: brewfile_path,
       container_required: container_required,
     )
