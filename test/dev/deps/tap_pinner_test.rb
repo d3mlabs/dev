@@ -143,6 +143,30 @@ class Dev::Deps::TapPinnerTest < Minitest::Test
     FileUtils.rm_rf(tmp)
   end
 
+  test "restore! returns a tap found detached (an interrupted pin's) to that commit, not a branch" do
+    Given "a full clone left detached at the newer commit"
+    tmp = Pathname(Dir.mktmpdir("dev-tap-pinner-"))
+    first, second = self.class.seed_remote(tmp / "remote")
+    tap_dir = tmp / "Taps" / "someorg" / "homebrew-sometap"
+    tap_dir.dirname.mkpath
+    clone(tmp / "remote", tap_dir)
+    Open3.capture3("git", "-C", tap_dir.to_s, "checkout", "-q", "--detach", second)
+    pinner = Dev::Deps::TapPinner.new(taps_root: tmp / "Taps", remote_urls: { "someorg/sometap" => (tmp / "remote").to_s })
+
+    When "pinning the older commit, then restoring"
+    pinner.pin!("someorg/sometap", first)
+    pinned_head = head_of(tap_dir)
+    pinner.restore!("someorg/sometap")
+
+    Then "the tap is back at the commit it was detached on"
+    pinned_head == first
+    head_of(tap_dir) == second
+    branch_of(tap_dir).empty?
+
+    Cleanup
+    FileUtils.rm_rf(tmp)
+  end
+
   test "restore! after two pins returns to the state before the first" do
     Given "a tap pin! created, pinned twice"
     tmp = Pathname(Dir.mktmpdir("dev-tap-pinner-"))
