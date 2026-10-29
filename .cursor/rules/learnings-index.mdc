@@ -55,6 +55,10 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  normalization gate: it must recognize every layout Cursor writes, since
  render re-serializes its output and any mis-split compounds on the next
  pull. → .cursor/skills/learnings/plan-parse-normalizes/
+- [architecture/integrations-converge] An integration's install path
+ brings the machine to the lock from any starting state and verifies
+ after; a remediation dev could run itself is a missing convergence step,
+ not an error message. → .cursor/skills/learnings/integrations-converge/
 
 ## toolchain
 
