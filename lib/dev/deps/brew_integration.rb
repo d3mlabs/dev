@@ -49,10 +49,11 @@ module Dev
     # it: a formula brew has at other versions than the lock pins (a
     # checkpoint behind a re-lock, a branch locking an older version) is
     # brought to the locked version before the verification fails. The
-    # lock carries every bottle the version publishes (ADR-0004), so the
-    # exact bottle for this machine is poured from its link — no index
-    # involved, up or down; a formula with no bottle to pour here is
-    # upgraded by brew from a refreshed index instead (dev#350).
+    # lock carries the `tap_commit` at which the formula is that version
+    # (ADR-0005), so it is installed from the tap checked out there, with
+    # brew reading the tap and not its API — up or down, bottle or not; a
+    # pin written before tap commits were recorded is upgraded by brew
+    # from a refreshed index instead (dev#350, dev#356).
     #
     # Env filtering (install vs skip based on ci/dev) is the caller's
     # responsibility — only pass deps that should be installed.
