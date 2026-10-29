@@ -598,7 +598,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     error.message.include?("homebrew/core")
     error.message.include?("aaaa")
     error.message.include?("bbbb")
-    error.message.include?("dev deps update")
+    error.message.include?("dev deps update --all")
     0 * pinner.pin!(anything, anything)
 
     Cleanup

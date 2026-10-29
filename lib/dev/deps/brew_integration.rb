@@ -108,8 +108,10 @@ module Dev
       end
 
       # Two formulae of one tap lock it at different commits: a tap is one
-      # checkout, and the lock is rewritten whole, so this is a hand-edited
-      # or merged lock.
+      # checkout, so a pinned install cannot serve both. A conservative
+      # re-lock keeps each pin's own commit (dev#355), so the taps of a lock
+      # whose pins moved at different times legitimately carry several —
+      # `--all` re-resolves every pin at one HEAD.
       class TapPinConflictError < StandardError
         extend T::Sig
 
@@ -117,7 +119,7 @@ module Dev
         # @param commits [Array<String>] the commits the lock names for it
         sig { params(tap: String, commits: T::Array[String]).void }
         def initialize(tap:, commits:)
-          super("the lock pins #{tap} at #{commits.join(" and ")} — run `dev deps update` to re-lock at one commit")
+          super("the lock pins #{tap} at #{commits.join(" and ")} — run `dev deps update --all` to re-lock at one commit")
         end
       end
 
