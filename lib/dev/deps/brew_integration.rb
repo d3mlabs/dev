@@ -1,9 +1,11 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "digest"
 require "etc"
 require "open3"
 require "pathname"
+require "tmpdir"
 require "uri"
 require "dev/brew_env"
 require "dev/shadowenv_path"
@@ -40,6 +42,15 @@ module Dev
     # user's own brew hygiene (ADR-0010, dev#289). Both are per-project side
     # effects and only happen when the integration knows its project.
     #
+    # A lock is enforced by verifying the keg, and satisfied by converging
+    # it: a formula brew has at other versions than the lock pins (a
+    # checkpoint behind a re-lock, a branch locking an older version) is
+    # brought to the locked version before the verification fails. The
+    # lock carries every bottle the version publishes (ADR-0004), so the
+    # exact bottle for this machine is poured from its link — no index
+    # involved, up or down; a formula with no bottle to pour here is
+    # upgraded by brew from a refreshed index instead (dev#350).
+    #
     # Env filtering (install vs skip based on ci/dev) is the caller's
     # responsibility — only pass deps that should be installed.
     class BrewIntegration < Integration
@@ -47,6 +58,33 @@ module Dev
 
       class InstallError < StandardError; end
       class TapRegistrationError < StandardError; end
+
+      # The bottle the lock names could not be downloaded from its link.
+      class BottleDownloadError < StandardError
+        extend T::Sig
+
+        # @param link [String] the bottle URL the lock carries
+        # @param stderr [String] what curl said
+        sig { params(link: String, stderr: String).void }
+        def initialize(link:, stderr:)
+          super("bottle download failed for #{link}: #{stderr.strip}")
+        end
+      end
+
+      # The downloaded bottle is not the bytes the lock names.
+      class BottleIntegrityError < StandardError
+        extend T::Sig
+
+        # @param formula [String] the formula (e.g. "cmake")
+        # @param locked [String] the version the lock pins
+        # @param tag [String] the bottle tag poured for this machine
+        # @param expected [String] the lock's SHA256 hex digest
+        # @param actual [String] the download's SHA256 hex digest
+        sig { params(formula: String, locked: String, tag: String, expected: String, actual: String).void }
+        def initialize(formula:, locked:, tag:, expected:, actual:)
+          super("SHA256 mismatch for the #{formula} #{locked} (#{tag}) bottle: the lock names #{expected}, got #{actual}")
+        end
+      end
 
       # An interpreter pin installed and verified, yet its keg is not in the
       # Cellar to activate: nothing would run under the locked interpreter,
@@ -63,9 +101,10 @@ module Dev
         end
       end
 
-      # The keg brew has for a formula is not the version the lock pins:
-      # either brew's formula moved on since `dev deps update` (the lock is
-      # stale) or this machine's keg is behind the lock.
+      # No keg of a formula is the version the lock pins, and converging
+      # did not produce one: brew's formula moved on since `dev deps update`
+      # and the version publishes no bottle this machine can pour, so the
+      # lock is stale.
       class VersionMismatchError < StandardError
         extend T::Sig
 
@@ -74,10 +113,10 @@ module Dev
         # @param locked [String] the version the lock pins
         sig { params(formula: String, installed: T::Array[String], locked: String).void }
         def initialize(formula:, installed:, locked:)
+          has = installed.empty? ? "no keg of #{formula}" : "#{formula} #{installed.join(", ")}"
           super(
-            "brew has #{formula} #{installed.join(", ")} but the lock pins #{locked} — " \
-            "if brew's formula moved on, run `dev deps update` to re-lock; " \
-            "if this machine is behind, `brew upgrade #{formula}`",
+            "brew has #{has} but the lock pins #{locked} and dev could not converge the keg — " \
+            "if brew's formula moved on, run `dev deps update` to re-lock",
           )
         end
       end
@@ -123,6 +162,15 @@ module Dev
       # checked-out taps, never the API, and brew does not move them.
       PINNED_ENV = T.let(["HOMEBREW_NO_INSTALL_FROM_API=1", "HOMEBREW_NO_AUTO_UPDATE=1"].freeze, T::Array[String])
       TOOL = "brew"
+      # brew's bottle file name: `<formula>--<version>.<tag>.bottle[.<rebuild>].tar.gz`.
+      # `brew --cache` answers it for the bottle brew would pour (the tag is
+      # this machine's), and `brew install <path>` pours a local file only
+      # when its name has this shape.
+      BOTTLE_FILENAME = /\.([a-z0-9_]+)\.bottle\.(?:\d+\.)?tar\.gz\z/
+      # GitHub Packages serves homebrew/core's bottles behind an anonymous
+      # bearer token — brew's own download strategy sends this same one.
+      GITHUB_PACKAGES_HOST = "ghcr.io"
+      GITHUB_PACKAGES_AUTH = "Authorization: Bearer QQ=="
       # After the project Ruby (510) so brew tools never shadow its bin;
       # before llvm and xcode (520), which keep the last word on what they set.
       LISP_FILENAME = "515_brew.lisp"
@@ -424,37 +472,197 @@ module Dev
       #
       # After the install step the keg is verified against the lock: brew
       # installs whatever its registry currently has, so the lock only means
-      # something if the result is checked (the B half of reproducible brew).
+      # something if the result is checked (the B half of reproducible brew)
+      # — and a keg at another version is converged before the check fails.
       #
       # @param dep [Dependency]
-      # @raise [InstallError] if brew install fails
-      # @raise [VersionMismatchError] if the keg is not the locked version
+      # @raise [InstallError] if a brew write fails
+      # @raise [BottleDownloadError, BottleIntegrityError] if the locked
+      #   bottle cannot be fetched as the lock describes it
+      # @raise [VersionMismatchError] if no keg is the locked version
       sig { params(dep: Dependency).void }
       def install_formula(dep)
         formula = formula_name(dep)
-        unless brew_installed?(formula)
-          spec = dep.metadata["tap"] ? "#{dep.metadata["tap"]}/#{formula}" : formula
-          run_brew_install(dep.name, spec)
-        end
+        run_brew_install(dep.name, install_spec(dep)) unless brew_installed?(formula)
 
         locked = dep.version
-        verify_installed!(formula, locked) if locked
+        verify_installed!(dep, formula, locked) if locked
       end
 
-      # Fail unless one of the formula's kegs is the locked version. Brew's
-      # own revision suffix (`_1`) is not part of the upstream version and
-      # is ignored.
+      # Fail unless one of the formula's kegs is the locked version, after
+      # converging the Cellar when none is. Brew's own revision suffix
+      # (`_1`) is not part of the upstream version and is ignored.
       #
-      # @param formula [String] the install spec (e.g. "llvm@18")
+      # Pinned-taps mode never converges: the formula comes from its tap at
+      # the locked commit, which is the whole install path there, and a
+      # `brew update` would move the checkout the pin just made.
+      #
+      # @param dep [Dependency]
+      # @param formula [String] the formula (e.g. "llvm@18")
       # @param locked [String] the version the lock pins
       # @return [void]
       # @raise [VersionMismatchError]
-      sig { params(formula: String, locked: String).void }
-      def verify_installed!(formula, locked)
+      sig { params(dep: Dependency, formula: String, locked: String).void }
+      def verify_installed!(dep, formula, locked)
         installed = installed_versions(formula)
         return if installed.include?(locked)
 
+        unless @pin_taps
+          converge!(dep, formula, locked, installed)
+          installed = installed_versions(formula)
+          return if installed.include?(locked)
+        end
+
         raise VersionMismatchError.new(formula:, installed:, locked:)
+      end
+
+      # Bring the formula to the locked version: pour the bottle the lock
+      # names for this machine when it names one, else have brew upgrade
+      # the formula from a refreshed index.
+      #
+      # @param dep [Dependency]
+      # @param formula [String]
+      # @param locked [String]
+      # @param installed [Array<String>] the keg versions brew has
+      # @return [void]
+      # @raise [InstallError, BottleDownloadError, BottleIntegrityError]
+      sig { params(dep: Dependency, formula: String, locked: String, installed: T::Array[String]).void }
+      def converge!(dep, formula, locked, installed)
+        has = installed.empty? ? "absent" : installed.join(", ")
+        puts ">>> brew: #{formula} is #{has} here — converging to the locked #{locked}"
+        spec = install_spec(dep)
+        tag, bottle = locked_bottle(dep, spec)
+        if tag && bottle
+          pour!(formula, locked, tag, bottle)
+        else
+          upgrade!(spec)
+        end
+      end
+
+      # The lock's bottle for this machine: the entry of the pin's
+      # `platforms` block under the tag brew would pour, when the pin
+      # records bottles (ADR-0004) and the version publishes one for it.
+      #
+      # @param dep [Dependency]
+      # @param spec [String] the install spec
+      # @return [[String, Hash], nil] the tag and its { "hash", "link" }
+      sig { params(dep: Dependency, spec: String).returns(T.nilable([String, T::Hash[String, T.untyped]])) }
+      def locked_bottle(dep, spec)
+        platforms = dep.metadata["platforms"]
+        return nil unless platforms
+
+        tag = bottle_tag(spec)
+        bottle = tag && platforms[tag]
+        return nil unless tag && bottle && bottle["hash"] && bottle["link"]
+
+        [tag, bottle]
+      end
+
+      # This machine's bottle tag, read off the file name brew would
+      # download the formula's bottle to — brew's own tag matching, older
+      # macOS fallbacks and `all` bottles included. nil when brew would
+      # build the formula from source (a tarball name carries no tag).
+      #
+      # @param spec [String] the install spec
+      # @return [String, nil]
+      sig { params(spec: String).returns(T.nilable(String)) }
+      def bottle_tag(spec)
+        out, _err, status = Open3.capture3("brew", "--cache", "--formula", spec)
+        return nil unless status.success?
+
+        BOTTLE_FILENAME.match(File.basename(out.strip))&.[](1)
+      end
+
+      # Pour the locked bottle. brew links a newer keg over the linked one
+      # (an upgrade), but refuses an older keg under it and any other
+      # version of a keg-only formula whose opt link is taken; when the
+      # plain pour leaves no locked keg, the second one skips those checks
+      # and brew's link — the project activates the keg by path, and brew's
+      # link stays the user's.
+      #
+      # @param formula [String]
+      # @param locked [String]
+      # @param tag [String] the bottle tag poured
+      # @param bottle [Hash] the lock's { "hash", "link" } for the tag
+      # @return [void]
+      # @raise [InstallError] if the forced pour fails
+      # @raise [BottleDownloadError, BottleIntegrityError]
+      sig { params(formula: String, locked: String, tag: String, bottle: T::Hash[String, T.untyped]).void }
+      def pour!(formula, locked, tag, bottle)
+        path = fetch_bottle(formula, locked, tag, bottle).to_s
+        puts ">>> brew: pouring the #{formula} #{locked} (#{tag}) bottle"
+        brew_write(["install", path])
+        return if installed_versions(formula).include?(locked)
+
+        brew_write!(["install", "--force", "--skip-link", path])
+      end
+
+      # The locked bottle as a local file in the store, fetched from the
+      # lock's link and checked against the lock's digest the first time.
+      # The store, not brew's download cache: brew prunes its own, and the
+      # file keeps brew's bottle name so `brew install` recognizes it.
+      #
+      # @param formula [String]
+      # @param locked [String]
+      # @param tag [String]
+      # @param bottle [Hash] the lock's { "hash", "link" }
+      # @return [Pathname]
+      # @raise [BottleDownloadError, BottleIntegrityError]
+      sig { params(formula: String, locked: String, tag: String, bottle: T::Hash[String, T.untyped]).returns(Pathname) }
+      def fetch_bottle(formula, locked, tag, bottle)
+        expected = bottle["hash"].to_s.delete_prefix("SHA256=")
+        key = "#{TOOL}/#{expected}/#{formula}--#{locked}.#{tag}.bottle.tar.gz"
+        cached = store!.blob(key)
+        return cached if cached
+
+        puts ">>> brew: downloading the #{formula} #{locked} (#{tag}) bottle"
+        Dir.mktmpdir("dev-brew-bottle-") do |tmpdir|
+          file = File.join(tmpdir, File.basename(key))
+          download_bottle(bottle["link"].to_s, file)
+          actual = Digest::SHA256.file(file).hexdigest
+          raise BottleIntegrityError.new(formula:, locked:, tag:, expected:, actual:) unless actual == expected
+
+          File.open(file, "rb") { |io| store!.put_blob(key, io) }
+        end
+        store!.blob_path(key)
+      end
+
+      # @param link [String] the bottle URL
+      # @param dest [String] where to write it
+      # @return [void]
+      # @raise [BottleDownloadError] if curl fails
+      sig { params(link: String, dest: String).void }
+      def download_bottle(link, dest)
+        auth = URI(link).host == GITHUB_PACKAGES_HOST ? ["-H", GITHUB_PACKAGES_AUTH] : []
+        _out, err, status = T.unsafe(Open3).capture3("curl", "-fsSL", *auth, "-o", dest, link)
+        raise BottleDownloadError.new(link:, stderr: err) unless status.success?
+      end
+
+      # No bottle to pour: refresh brew's index (a checkpoint's is as old as
+      # the checkpoint) and let brew upgrade the formula. This converges a
+      # machine behind the lock; a lock behind brew stays mismatched, and
+      # the verification says so. An offline `brew update` is a warning —
+      # the upgrade and the verification decide.
+      #
+      # @param spec [String] the install spec
+      # @return [void]
+      # @raise [InstallError] if brew upgrade fails
+      sig { params(spec: String).void }
+      def upgrade!(spec)
+        err, success = brew_write(["update"])
+        $stderr.puts "dev: warning: brew update failed (#{err.strip}) — upgrading from the index brew has" unless success
+        brew_write!(["upgrade", spec])
+      end
+
+      # The spec brew installs the dep by: the formula, tap-qualified for a
+      # tap formula.
+      #
+      # @param dep [Dependency]
+      # @return [String]
+      sig { params(dep: Dependency).returns(String) }
+      def install_spec(dep)
+        tap = dep.metadata["tap"]
+        tap ? "#{tap}/#{formula_name(dep)}" : formula_name(dep)
       end
 
       # The keg versions brew has for a formula, revision suffixes stripped.
@@ -488,24 +696,47 @@ module Dev
         system("brew list #{name} >/dev/null 2>&1")
       end
 
-      # Run `brew install` with the given spec (escalated to the prefix
-      # owner when the prefix is not ours — see the class doc).
+      # Run `brew install` with the given spec.
       #
       # @param name [String] dependency name (for error messages)
       # @param spec [String] full install spec (e.g. "cmake@3.31.4")
       # @raise [InstallError] if brew exits non-zero
       sig { params(name: String, spec: String).void }
       def run_brew_install(name, spec)
-        _out, err, status = T.unsafe(Open3).capture3(*escalation, *brew_env, "brew", "install", *spec.split)
-        return if status.success?
+        brew_write!(["install", *spec.split])
+      end
 
+      # Run a brew write and fail when it does.
+      #
+      # @param args [Array<String>] brew's argv (e.g. ["upgrade", "cmake"])
+      # @return [void]
+      # @raise [InstallError] if brew exits non-zero
+      sig { params(args: T::Array[String]).void }
+      def brew_write!(args)
+        err, success = brew_write(args)
+        return if success
+
+        command = "brew #{args.join(" ")}"
         if sudo_refused?(err)
           raise InstallError,
-            "brew install #{spec} needs the prefix owner and sudo -n was refused — " \
+            "#{command} needs the prefix owner and sudo -n was refused — " \
             "the brew sudoers edge is missing on this host; run `dev runner register` to re-converge it"
         end
 
-        raise InstallError, "brew install #{spec} failed: #{err}"
+        raise InstallError, "#{command} failed: #{err}"
+      end
+
+      # Run a brew write — install, upgrade, update — escalated to the
+      # prefix owner when the prefix is not ours (see the class doc) and
+      # under brew's env, reporting rather than raising.
+      #
+      # @param args [Array<String>] brew's argv
+      # @return [[String, Boolean]] brew's stderr and whether it succeeded
+      sig { params(args: T::Array[String]).returns([String, T::Boolean]) }
+      def brew_write(args)
+        _out, err, status = T.unsafe(Open3).capture3(*escalation, *brew_env, "brew", *args)
+        # success? is nil when the process did not exit normally — a failure.
+        [err, status.success? || false]
       end
 
       # argv inserted between the escalation and `brew` on every install:

@@ -7,6 +7,7 @@ require "dev/deps/brew_repository"
 require "dev/deps/local_store"
 require "dev/deps/dependency"
 require "dev/deps/tap"
+require "digest"
 require "etc"
 require "pathname"
 require "tmpdir"
@@ -175,6 +176,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     dep = Dev::Deps::Dependency.new(name: "llvm", integration: :brew, group: :build,
       version: "18.1.8", hash: nil, metadata: { "version_suffix" => "18" })
     integration.stubs(:brew_installed?).returns(true)
+    integration.stubs(:converge!)
     Open3.stubs(:capture3).with("brew", "list", "--versions", "llvm@18").returns([brew_list, "", stub(success?: true)])
 
     When "installing"
@@ -190,7 +192,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     passes || outcome.message.include?("llvm@18 18.1.9")
     passes || outcome.message.include?("18.1.8")
     passes || outcome.message.include?("dev deps update")
-    passes || outcome.message.include?("brew upgrade llvm@18")
+    passes || !outcome.message.include?("brew upgrade")
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -212,6 +214,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     dep = Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
       version: "4.4.3", hash: nil, metadata: {})
     integration.stubs(:brew_installed?).returns(false)
+    integration.stubs(:converge!)
     Open3.stubs(:capture3).with(*cache_env(dir), "brew", "install", "cmake").returns(["", "", stub(success?: true)])
     Open3.stubs(:capture3).with("brew", "list", "--versions", "cmake").returns(["cmake 4.5.0\n", "", stub(success?: true)])
 
@@ -223,6 +226,368 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     error.failures.fetch(0).fetch(1).is_a?(Dev::Deps::BrewIntegration::VersionMismatchError)
 
     Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  # --- Converging a keg at another version to the lock (dev#350) --------------
+
+  BOTTLE_BYTES = "not really a tarball, but the bytes the lock names\n"
+  BOTTLE_SHA = Digest::SHA256.hexdigest(BOTTLE_BYTES)
+  BOTTLE_LINK = "https://ghcr.io/v2/homebrew/core/cmake/blobs/sha256:#{BOTTLE_SHA}".freeze
+  GITHUB_PACKAGES_AUTH = "Authorization: Bearer QQ=="
+  # One bottle as the lock records it (ADR-0004): its digest and its link.
+  BOTTLE = { "hash" => "SHA256=#{BOTTLE_SHA}", "link" => BOTTLE_LINK }.freeze
+
+  # A cmake pin at `locked`, publishing BOTTLE for arm64_tahoe alone.
+  #
+  # @param locked [String]
+  # @return [Dev::Deps::Dependency]
+  def cmake_pin(locked)
+    Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: locked, hash: nil,
+      metadata: { "format" => "bottle", "platforms" => { "arm64_tahoe" => BOTTLE } })
+  end
+
+  # What `brew list --versions cmake` answers on successive calls.
+  #
+  # @param versions [Array<String>] one listing per call; the last repeats
+  # @return [void]
+  def brew_lists_cmake(*versions)
+    expectation = Open3.stubs(:capture3).with("brew", "list", "--versions", "cmake")
+    versions.each { |listing| expectation = expectation.returns(["cmake #{listing}\n", "", stub(success?: true)]).then }
+  end
+
+  # `brew --cache --formula <spec>` answering the path brew would download
+  # the formula's current bottle to — the basename carries this machine's
+  # bottle tag — or a source tarball path when brew would build it.
+  #
+  # @param basename [String]
+  # @param spec [String] the install spec asked about
+  # @return [void]
+  def brew_cache_answers(basename, spec: "cmake")
+    Open3.stubs(:capture3).with("brew", "--cache", "--formula", spec)
+         .returns(["/Users/me/Library/Caches/Homebrew/downloads/0123abcd--#{basename}\n", "", stub(success?: true)])
+  end
+
+  # A curl that writes `bytes` at its `-o` destination and succeeds: the
+  # download boundary, with the file real so the digest check is too.
+  #
+  # @param bytes [String]
+  # @return [Mocha::Expectation]
+  def curl_delivers(bytes)
+    Open3.stubs(:capture3).with do |*args|
+      args.first == "curl" && File.binwrite(args.fetch(args.index("-o") + 1), bytes)
+    end.returns(["", "", stub(success?: true)])
+  end
+
+  # @param dir [String] the store's data root
+  # @return [String] where the fetched cmake 4.4.5 bottle lands in the store,
+  #   under brew's own bottle file name
+  def bottle_blob(dir)
+    Dev::Deps::LocalStore.new(data_root: dir).blob_path("brew/#{BOTTLE_SHA}/cmake--4.4.5.arm64_tahoe.bottle.tar.gz").to_s
+  end
+
+  test "a keg at another version is converged by pouring the bottle the lock names for this machine" do
+    Given "cmake 4.4.4 installed, a lock pinning 4.4.5 with an arm64_tahoe bottle, and brew naming arm64_tahoe as this machine's tag"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
+    )
+    integration.stubs(:brew_installed?).returns(true)
+    brew_lists_cmake("4.4.4", "4.4.4 4.4.5")
+    brew_cache_answers("cmake--4.4.4.arm64_tahoe.bottle.1.tar.gz")
+    curl_delivers(BOTTLE_BYTES)
+
+    When "installing"
+    out, _err = capture_io { integration.install_all([cmake_pin("4.4.5")]) }
+
+    Then "the bottle is fetched from the lock's link, kept in the store under brew's bottle file name, and poured"
+    1 * Open3.capture3(*cache_env(dir), "brew", "install", bottle_blob(dir)) >> ["", "", stub(success?: true)]
+    File.binread(bottle_blob(dir)) == BOTTLE_BYTES
+    0 * Open3.capture3(*cache_env(dir), "brew", "update")
+    out.include?("converging")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "the GitHub Packages token rides the download of a ghcr.io bottle only: #{description}" do
+    Given "an integration and a bottle link"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
+    )
+
+    When "downloading"
+    integration.send(:download_bottle, link, "#{dir}/bottle.tar.gz")
+
+    Then "curl gets the header for ghcr.io and nothing else for a release asset (a token GitHub would reject)"
+    1 * Open3.capture3("curl", "-fsSL", *headers, "-o", "#{dir}/bottle.tar.gz", link) >> ["", "", stub(success?: true)]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+
+    Where
+    description          | link                                                                    | headers
+    "a core bottle"      | BOTTLE_LINK                                                             | ["-H", GITHUB_PACKAGES_AUTH]
+    "a tap bottle"       | "https://github.com/d3mlabs/homebrew-d3mlabs/releases/download/x/y.gz"  | []
+  end
+
+  test "a bottle already in the store is poured without downloading again" do
+    Given "the locked bottle cached by an earlier convergence"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    FileUtils.mkdir_p(File.dirname(bottle_blob(dir)))
+    File.binwrite(bottle_blob(dir), BOTTLE_BYTES)
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
+    )
+    integration.stubs(:brew_installed?).returns(true)
+    brew_lists_cmake("4.4.4", "4.4.4 4.4.5")
+    brew_cache_answers("cmake--4.4.4.arm64_tahoe.bottle.tar.gz")
+
+    When "installing"
+    capture_io { integration.install_all([cmake_pin("4.4.5")]) }
+
+    Then "no curl runs; the cached bottle is what brew pours"
+    0 * Open3.capture3("curl", any_parameters)
+    1 * Open3.capture3(*cache_env(dir), "brew", "install", bottle_blob(dir)) >> ["", "", stub(success?: true)]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a locked version older than the keg brew refuses to pour over it is poured forced and unlinked" do
+    Given "cmake 4.4.6 installed and linked, the lock pinning 4.4.5, and brew refusing the plain pour"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
+    )
+    integration.stubs(:brew_installed?).returns(true)
+    brew_lists_cmake("4.4.6", "4.4.6", "4.4.5 4.4.6")
+    brew_cache_answers("cmake--4.4.6.arm64_tahoe.bottle.tar.gz")
+    curl_delivers(BOTTLE_BYTES)
+    refusal = "Error: cmake 4.4.6 is already installed\nTo install 4.4.5, first run:\n  brew unlink cmake\n"
+    Open3.stubs(:capture3).with(*cache_env(dir), "brew", "install", bottle_blob(dir)).returns(["", refusal, stub(success?: false)])
+
+    When "installing"
+    capture_io { integration.install_all([cmake_pin("4.4.5")]) }
+
+    Then "the second pour skips brew's link and keg-only checks — the project activates the keg by path, the link stays the user's"
+    1 * Open3.capture3(*cache_env(dir), "brew", "install", "--force", "--skip-link", bottle_blob(dir)) >> ["", "", stub(success?: true)]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a forced pour that fails is the per-dep failure, with brew's own words" do
+    Given "both pours of the locked bottle failing"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
+    )
+    integration.stubs(:brew_installed?).returns(true)
+    brew_lists_cmake("4.4.6")
+    brew_cache_answers("cmake--4.4.6.arm64_tahoe.bottle.tar.gz")
+    curl_delivers(BOTTLE_BYTES)
+    Open3.stubs(:capture3).with { |*args| args.include?("install") }.returns(["", "Error: bottle cannot be poured\n", stub(success?: false)])
+
+    When "installing"
+    capture_io { integration.install_all([cmake_pin("4.4.5")]) }
+
+    Then
+    error = raises Dev::Deps::Integration::PartialInstallError
+    failure = error.failures.fetch(0).fetch(1)
+    failure.is_a?(Dev::Deps::BrewIntegration::InstallError)
+    failure.message.include?("--skip-link")
+    failure.message.include?("bottle cannot be poured")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a downloaded bottle whose bytes are not the lock's is refused before brew sees it" do
+    Given "a lock naming one digest and a download delivering other bytes"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
+    )
+    integration.stubs(:brew_installed?).returns(true)
+    brew_lists_cmake("4.4.4")
+    brew_cache_answers("cmake--4.4.4.arm64_tahoe.bottle.tar.gz")
+    curl_delivers("tampered bytes\n")
+
+    When "installing"
+    capture_io { integration.install_all([cmake_pin("4.4.5")]) }
+
+    Then "the typed integrity failure names both digests; nothing is cached or poured"
+    error = raises Dev::Deps::Integration::PartialInstallError
+    failure = error.failures.fetch(0).fetch(1)
+    failure.is_a?(Dev::Deps::BrewIntegration::BottleIntegrityError)
+    failure.message.include?(BOTTLE_SHA)
+    failure.message.include?(Digest::SHA256.hexdigest("tampered bytes\n"))
+    !File.exist?(bottle_blob(dir))
+    0 * Open3.capture3(*cache_env(dir), "brew", "install", any_parameters)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a bottle that cannot be downloaded is a typed failure naming the link" do
+    Given "curl failing on the lock's link"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
+    )
+    integration.stubs(:brew_installed?).returns(true)
+    brew_lists_cmake("4.4.4")
+    brew_cache_answers("cmake--4.4.4.arm64_tahoe.bottle.tar.gz")
+    Open3.stubs(:capture3).with { |*args| args.first == "curl" }.returns(["", "curl: (22) The requested URL returned error: 404\n", stub(success?: false)])
+
+    When "installing"
+    capture_io { integration.install_all([cmake_pin("4.4.5")]) }
+
+    Then
+    error = raises Dev::Deps::Integration::PartialInstallError
+    failure = error.failures.fetch(0).fetch(1)
+    failure.is_a?(Dev::Deps::BrewIntegration::BottleDownloadError)
+    failure.message.include?(BOTTLE_LINK)
+    failure.message.include?("404")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "without a bottle for this machine, brew's index is refreshed and the formula upgraded: #{description}" do
+    Given "a keg behind the lock, and a lock or a machine that offers no bottle to pour"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
+    )
+    dep = Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: "4.4.5", hash: nil,
+      metadata: metadata)
+    integration.stubs(:brew_installed?).returns(true)
+    brew_lists_cmake("4.4.4", "4.4.5")
+    brew_cache_answers(cache_basename, spec: spec)
+
+    When "installing"
+    capture_io { integration.install_all([dep]) }
+
+    Then "the index is refreshed (a checkpoint's is as old as the checkpoint), then brew upgrades the formula; nothing is downloaded by dev"
+    1 * Open3.capture3(*cache_env(dir), "brew", "update") >> ["", "", stub(success?: true)]
+    1 * Open3.capture3(*cache_env(dir), "brew", "upgrade", spec) >> ["", "", stub(success?: true)]
+    0 * Open3.capture3("curl", any_parameters)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+
+    Where
+    description                                  | metadata                                        | cache_basename                           | spec
+    "brew would build the formula from source"   | { "platforms" => { "arm64_tahoe" => BOTTLE } }  | "cmake-4.4.4.tar.gz"                     | "cmake"
+    "the lock has no bottle for this machine"    | { "platforms" => { "x86_64_linux" => BOTTLE } } | "cmake--4.4.4.arm64_tahoe.bottle.tar.gz" | "cmake"
+    "a pin written before bottles were recorded" | { "tap" => "d3mlabs/d3mlabs" }                  | "cmake--4.4.4.arm64_tahoe.bottle.tar.gz" | "d3mlabs/d3mlabs/cmake"
+  end
+
+  test "a failed brew update is a warning; the upgrade still runs against the index brew has" do
+    Given "an offline brew update"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
+    )
+    dep = Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: "4.4.5", hash: nil, metadata: {})
+    integration.stubs(:brew_installed?).returns(true)
+    brew_lists_cmake("4.4.4", "4.4.5")
+    brew_cache_answers("cmake-4.4.4.tar.gz")
+    Open3.stubs(:capture3).with(*cache_env(dir), "brew", "update").returns(["", "fatal: unable to access\n", stub(success?: false)])
+
+    When "installing"
+    _out, err = capture_io { integration.install_all([dep]) }
+
+    Then
+    1 * Open3.capture3(*cache_env(dir), "brew", "upgrade", "cmake") >> ["", "", stub(success?: true)]
+    err.include?("brew update failed")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a keg still at another version after the upgrade fails with the re-lock remediation" do
+    Given "brew's current formula is not the locked version either (the lock is behind brew), and no bottle to pour"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
+    )
+    dep = Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: "4.4.5", hash: nil, metadata: {})
+    integration.stubs(:brew_installed?).returns(true)
+    brew_lists_cmake("4.4.6")
+    brew_cache_answers("cmake-4.4.6.tar.gz")
+    Open3.stubs(:capture3).with(*cache_env(dir), "brew", "update").returns(["", "", stub(success?: true)])
+    Open3.stubs(:capture3).with(*cache_env(dir), "brew", "upgrade", "cmake").returns(["", "", stub(success?: true)])
+
+    When "installing"
+    capture_io { integration.install_all([dep]) }
+
+    Then "the mismatch names what brew has and what the lock pins, and points at dev deps update"
+    error = raises Dev::Deps::Integration::PartialInstallError
+    failure = error.failures.fetch(0).fetch(1)
+    failure.is_a?(Dev::Deps::BrewIntegration::VersionMismatchError)
+    failure.message.include?("cmake 4.4.6")
+    failure.message.include?("4.4.5")
+    failure.message.include?("dev deps update")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "pinned taps never converge: the tap at its locked commit is the whole install path" do
+    Given "pinned mode, with the formula already present at another version"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    pinner = typed_mock(Dev::Deps::TapPinner)
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
+      pin_taps: true, tap_pinner: pinner,
+    )
+    pin = cmake_pin("4.4.5")
+    dep = pin.with(metadata: pin.metadata.merge("tap_commit" => "3c67e3be"))
+    integration.stubs(:brew_installed?).returns(true)
+    brew_lists_cmake("4.4.4")
+
+    When "installing"
+    integration.install_all([dep])
+
+    Then "the mismatch is reported as is; brew's index and the lock's bottle are left alone"
+    1 * pinner.pin!("homebrew/core", "3c67e3be")
+    error = raises Dev::Deps::Integration::PartialInstallError
+    error.failures.fetch(0).fetch(1).is_a?(Dev::Deps::BrewIntegration::VersionMismatchError)
+    0 * Open3.capture3("brew", "--cache", any_parameters)
+    0 * Open3.capture3(*cache_env(dir), *PINNED_ENV, "brew", "update")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "convergence writes escalate to the prefix owner like installs do" do
+    Given "an unwritable brew prefix and a keg behind the lock with no bottle to pour"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    FileUtils.mkdir_p(prefix)
+    FileUtils.chmod(0o555, prefix)
+    owner = Etc.getpwuid(File.stat(prefix).uid).name
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: prefix,
+    )
+    dep = Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: "4.4.5", hash: nil, metadata: {})
+    integration.stubs(:brew_installed?).returns(true)
+    brew_lists_cmake("4.4.4", "4.4.5")
+    brew_cache_answers("cmake-4.4.4.tar.gz")
+
+    When "installing"
+    capture_io { integration.install_all([dep]) }
+
+    Then
+    1 * Open3.capture3("sudo", "-n", "-u", owner, *cache_env(dir), "brew", "update") >> ["", "", stub(success?: true)]
+    1 * Open3.capture3("sudo", "-n", "-u", owner, *cache_env(dir), "brew", "upgrade", "cmake") >> ["", "", stub(success?: true)]
+
+    Cleanup
+    FileUtils.chmod(0o755, prefix)
     FileUtils.rm_rf(dir)
   end
 
