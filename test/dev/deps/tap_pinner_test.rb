@@ -30,6 +30,20 @@ class Dev::Deps::TapPinnerTest < Minitest::Test
     Open3.capture3("git", "-C", dir.to_s, "rev-parse", "HEAD").fetch(0).strip
   end
 
+  def branch_of(dir)
+    Open3.capture3("git", "-C", dir.to_s, "symbolic-ref", "-q", "--short", "HEAD").fetch(0).strip
+  end
+
+  def shallow?(dir)
+    Open3.capture3("git", "-C", dir.to_s, "rev-parse", "--is-shallow-repository").fetch(0).strip == "true"
+  end
+
+  # A full clone of the remote, on its default branch — a developer's own
+  # `brew tap` checkout.
+  def clone(remote, dir)
+    Open3.capture3("git", "clone", "-q", remote.to_s, dir.to_s)
+  end
+
   test "pin! creates the tap at brew's layout and checks out the commit, fetching only that commit" do
     Given "a remote with two commits and no tap checked out yet"
     tmp = Pathname(Dir.mktmpdir("dev-tap-pinner-"))
@@ -79,6 +93,108 @@ class Dev::Deps::TapPinnerTest < Minitest::Test
     error = raises Dev::Deps::TapPinner::PinError
     error.message.include?("someorg/sometap")
     error.message.include?("deadbeef")
+
+    Cleanup
+    FileUtils.rm_rf(tmp)
+  end
+
+  test "restore! removes a tap pin! created: the host had no checkout and has none after" do
+    Given "no tap checked out, then a pin"
+    tmp = Pathname(Dir.mktmpdir("dev-tap-pinner-"))
+    first, _second = self.class.seed_remote(tmp / "remote")
+    pinner = Dev::Deps::TapPinner.new(taps_root: tmp / "Taps", remote_urls: { "someorg/sometap" => (tmp / "remote").to_s })
+    pinner.pin!("someorg/sometap", first)
+
+    When
+    pinner.restore!("someorg/sometap")
+
+    Then "the tap directory is gone"
+    !(tmp / "Taps" / "someorg" / "homebrew-sometap").exist?
+
+    Cleanup
+    FileUtils.rm_rf(tmp)
+  end
+
+  test "pin! on a developer's full clone fetches without shallowing it, and restore! returns it to its branch" do
+    Given "a full clone on its default branch at the newer commit"
+    tmp = Pathname(Dir.mktmpdir("dev-tap-pinner-"))
+    first, second = self.class.seed_remote(tmp / "remote")
+    tap_dir = tmp / "Taps" / "someorg" / "homebrew-sometap"
+    tap_dir.dirname.mkpath
+    clone(tmp / "remote", tap_dir)
+    branch = branch_of(tap_dir)
+    pinner = Dev::Deps::TapPinner.new(taps_root: tmp / "Taps", remote_urls: { "someorg/sometap" => (tmp / "remote").to_s })
+
+    When "pinning the older commit, then restoring"
+    pinner.pin!("someorg/sometap", first)
+    pinned_head = head_of(tap_dir)
+    pinned_shallow = shallow?(tap_dir)
+    pinner.restore!("someorg/sometap")
+
+    Then "the pin held the commit without a shallow boundary, and the clone is back where the developer left it"
+    pinned_head == first
+    !pinned_shallow
+    head_of(tap_dir) == second
+    branch_of(tap_dir) == branch
+    !branch.empty?
+    !shallow?(tap_dir)
+
+    Cleanup
+    FileUtils.rm_rf(tmp)
+  end
+
+  test "restore! returns a tap found detached (an interrupted pin's) to that commit, not a branch" do
+    Given "a full clone left detached at the newer commit"
+    tmp = Pathname(Dir.mktmpdir("dev-tap-pinner-"))
+    first, second = self.class.seed_remote(tmp / "remote")
+    tap_dir = tmp / "Taps" / "someorg" / "homebrew-sometap"
+    tap_dir.dirname.mkpath
+    clone(tmp / "remote", tap_dir)
+    Open3.capture3("git", "-C", tap_dir.to_s, "checkout", "-q", "--detach", second)
+    pinner = Dev::Deps::TapPinner.new(taps_root: tmp / "Taps", remote_urls: { "someorg/sometap" => (tmp / "remote").to_s })
+
+    When "pinning the older commit, then restoring"
+    pinner.pin!("someorg/sometap", first)
+    pinned_head = head_of(tap_dir)
+    pinner.restore!("someorg/sometap")
+
+    Then "the tap is back at the commit it was detached on"
+    pinned_head == first
+    head_of(tap_dir) == second
+    branch_of(tap_dir).empty?
+
+    Cleanup
+    FileUtils.rm_rf(tmp)
+  end
+
+  test "restore! after two pins returns to the state before the first" do
+    Given "a tap pin! created, pinned twice"
+    tmp = Pathname(Dir.mktmpdir("dev-tap-pinner-"))
+    first, second = self.class.seed_remote(tmp / "remote")
+    pinner = Dev::Deps::TapPinner.new(taps_root: tmp / "Taps", remote_urls: { "someorg/sometap" => (tmp / "remote").to_s })
+    pinner.pin!("someorg/sometap", first)
+    pinner.pin!("someorg/sometap", second)
+
+    When
+    pinner.restore!("someorg/sometap")
+
+    Then "absent, as before the first pin"
+    !(tmp / "Taps" / "someorg" / "homebrew-sometap").exist?
+
+    Cleanup
+    FileUtils.rm_rf(tmp)
+  end
+
+  test "restore! of a tap never pinned is a no-op" do
+    Given
+    tmp = Pathname(Dir.mktmpdir("dev-tap-pinner-"))
+    pinner = Dev::Deps::TapPinner.new(taps_root: tmp / "Taps")
+
+    When
+    pinner.restore!("someorg/sometap")
+
+    Then "nothing created, nothing raised"
+    !(tmp / "Taps").exist?
 
     Cleanup
     FileUtils.rm_rf(tmp)
