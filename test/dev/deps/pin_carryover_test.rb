@@ -121,6 +121,20 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
     moves(outcome) == [["ruby", "4.0.5", "4.0.6", "declaration changed"]]
   end
 
+  test "floats an interpreter pin whose locked version its scheme cannot read" do
+    Given "ruby '~> 4.0' locked at a brew revision (4.0.5_1), which is not a rubygems version"
+    declarations = [declared("ruby", integration: :ruby, constraint: { "version" => "~> 4.0" }, tap: "d3mlabs/d3mlabs", group: :app)]
+    previous = [formula("ruby", integration: :ruby, version: "4.0.5_1", suffix: "4.0.5", tap: "d3mlabs/d3mlabs", group: :app, commit: OLD)]
+    resolved = [formula("ruby", integration: :ruby, version: "4.0.6", suffix: "4.0.6", tap: "d3mlabs/d3mlabs", group: :app, commit: NEW)]
+
+    When "carrying over"
+    outcome = carryover.apply(declarations:, previous:, resolved:, unlock: Dev::Deps::UnlockSet.none)
+
+    Then "an unreadable lock version cannot be shown to satisfy the ask, so the pin re-resolves"
+    versions(outcome.pins) == { "ruby" => "4.0.6" }
+    moves(outcome) == [["ruby", "4.0.5_1", "4.0.6", "declaration changed"]]
+  end
+
   test "floats, with the reason, a moved formula the lock records no bottle for: #{description}" do
     Given "an unchanged declaration whose lock pin #{description}"
     prior = if bottles.nil?
