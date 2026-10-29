@@ -47,6 +47,38 @@ module Dev
     # The sudoers drop-in carrying the one-way spawn edge.
     SUDOERS_PATH = "/etc/sudoers.d/ai-flow-agent"
 
+    # The tags every edge in the drop-in carries: no prompt (jobs run
+    # unattended) and SETENV (the caller's `VAR=value` assignments ride
+    # through). Matched by name, since `sudo -l` prints them in its own order.
+    EDGE_TAGS = T.let(%w[NOPASSWD SETENV].freeze, T::Array[String])
+
+    # The brew escalation edge as facts — who may run which brew as whom —
+    # the single description the drop-in's rule is rendered from and the
+    # host is inspected against.
+    class BrewEdge < T::Struct
+      extend T::Sig
+
+      const :agent, String
+      const :owner, String
+      const :path, String
+
+      # The sudoers rule granting the edge.
+      #
+      # @return [String]
+      sig { returns(String) }
+      def sudoers_rule
+        "#{agent} ALL=(#{owner}) #{EDGE_TAGS.join(":")}: #{path}"
+      end
+    end
+
+    # Why the drop-in carries no brew edge: nothing for the agent to escalate.
+    class NoBrewEdge < T::Struct
+      const :reason, String
+    end
+
+    # What the drop-in does about brew: the edge it grants, or why none.
+    BrewEdgeDecision = T.type_alias { T.any(BrewEdge, NoBrewEdge) }
+
     # Where brew lives on supported hosts, in discovery order (Apple
     # Silicon, Intel mac, Linuxbrew).
     BREW_LOCATIONS = T.let(
@@ -269,22 +301,20 @@ module Dev
     sig { returns(String) }
     def sudoers_content
       lines = [
-        "#{@runner_user} ALL=(#{@agent_user}) NOPASSWD:SETENV: ALL",
+        "#{@runner_user} ALL=(#{@agent_user}) #{EDGE_TAGS.join(":")}: ALL",
         "Defaults>#{@agent_user} env_reset, umask=0002, umask_override",
       ]
       edge = brew_edge
-      lines << edge if edge
+      lines << edge.sudoers_rule if edge.is_a?(BrewEdge)
       "#{lines.join("\n")}\n"
     end
-
-    private
 
     # The brew escalation edge (the Homebrew single-user gap on cooperative
     # machines): the agent may run exactly brew as the prefix owner,
     # NOPASSWD, so `dev deps install` converges formulae without a human
     # even though the prefix belongs to the enrolling user. The owner is
     # stat'd here at bootstrap time — never hardcoded — and re-running
-    # register re-converges the edge. Omitted when the host has no brew or
+    # register re-converges the edge. Waived when the host has no brew or
     # the agent owns the prefix itself (nothing to escalate). Consumed by
     # Dev::Deps::BrewIntegration's `sudo -n` escalation, which runs this
     # exact path with the brew environment a write needs (its download
@@ -295,18 +325,20 @@ module Dev
     # run brew as the owner already runs arbitrary code as the owner
     # (`brew ruby`, `brew sh`, a formula from a local tap).
     #
-    # @return [String, nil]
-    sig { returns(T.nilable(String)) }
+    # @return [BrewEdge, NoBrewEdge] the edge, or why none is written
+    sig { returns(BrewEdgeDecision) }
     def brew_edge
       brew = @brew_executable
-      return nil unless brew && File.exist?(brew)
+      return NoBrewEdge.new(reason: "no brew on this host") unless brew && File.exist?(brew)
 
       prefix = File.dirname(File.dirname(brew))
       owner = T.must(Etc.getpwuid(File.stat(prefix).uid)).name
-      return nil if owner == @agent_user
+      return NoBrewEdge.new(reason: "#{@agent_user} owns the brew prefix #{prefix}") if owner == @agent_user
 
-      "#{@agent_user} ALL=(#{owner}) NOPASSWD:SETENV: #{brew}"
+      BrewEdge.new(agent: @agent_user, owner: owner, path: brew)
     end
+
+    private
 
     # @raise [UnsupportedPlatformError] off macOS
     sig { void }
