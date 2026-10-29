@@ -7,7 +7,6 @@ require "dev/deps/brew_repository"
 require "dev/deps/local_store"
 require "dev/deps/dependency"
 require "dev/deps/tap"
-require "digest"
 require "etc"
 require "pathname"
 require "tmpdir"
@@ -229,22 +228,27 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  # --- Converging a keg at another version to the lock (dev#350) --------------
+  # --- Converging a keg at another version to the lock (dev#350, dev#356) ----
 
-  BOTTLE_BYTES = "not really a tarball, but the bytes the lock names\n"
-  BOTTLE_SHA = Digest::SHA256.hexdigest(BOTTLE_BYTES)
-  BOTTLE_LINK = "https://ghcr.io/v2/homebrew/core/cmake/blobs/sha256:#{BOTTLE_SHA}".freeze
-  GITHUB_PACKAGES_AUTH = "Authorization: Bearer QQ=="
-  # One bottle as the lock records it (ADR-0004): its digest and its link.
-  BOTTLE = { "hash" => "SHA256=#{BOTTLE_SHA}", "link" => BOTTLE_LINK }.freeze
+  COMMIT = "3c67e3be0b6a8c7e2d5e2f5d3f8b1f2a5a4b0c0d"
 
-  # A cmake pin at `locked`, publishing BOTTLE for arm64_tahoe alone.
+  # A cmake pin at `locked`, from `tap` at COMMIT (homebrew/core when nil).
+  #
+  # @param locked [String]
+  # @param tap [String, nil]
+  # @return [Dev::Deps::Dependency]
+  def cmake_pin(locked, tap: nil)
+    metadata = { "format" => "bottle", "tap_commit" => COMMIT }
+    metadata["tap"] = tap if tap
+    Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: locked, hash: nil, metadata:)
+  end
+
+  # A pin written before the lock recorded tap commits.
   #
   # @param locked [String]
   # @return [Dev::Deps::Dependency]
-  def cmake_pin(locked)
-    Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: locked, hash: nil,
-      metadata: { "format" => "bottle", "platforms" => { "arm64_tahoe" => BOTTLE } })
+  def legacy_cmake_pin(locked)
+    Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: locked, hash: nil, metadata: {})
   end
 
   # What `brew list --versions cmake` answers on successive calls.
@@ -256,139 +260,107 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     versions.each { |listing| expectation = expectation.returns(["cmake #{listing}\n", "", stub(success?: true)]).then }
   end
 
-  # `brew --cache --formula <spec>` answering the path brew would download
-  # the formula's current bottle to — the basename carries this machine's
-  # bottle tag — or a source tarball path when brew would build it.
+  # An integration over a fake pinner, with brew refusing any argv that
+  # names a file: the install path is a formula spec from a pinned tap,
+  # never a bottle on disk (Homebrew installs none, dev#356).
   #
-  # @param basename [String]
-  # @param spec [String] the install spec asked about
-  # @return [void]
-  def brew_cache_answers(basename, spec: "cmake")
-    Open3.stubs(:capture3).with("brew", "--cache", "--formula", spec)
-         .returns(["/Users/me/Library/Caches/Homebrew/downloads/0123abcd--#{basename}\n", "", stub(success?: true)])
-  end
-
-  # A curl that writes `bytes` at its `-o` destination and succeeds: the
-  # download boundary, with the file real so the digest check is too.
-  #
-  # @param bytes [String]
-  # @return [Mocha::Expectation]
-  def curl_delivers(bytes)
-    Open3.stubs(:capture3).with do |*args|
-      args.first == "curl" && File.binwrite(args.fetch(args.index("-o") + 1), bytes)
-    end.returns(["", "", stub(success?: true)])
-  end
-
-  # @param dir [String] the store's data root
-  # @return [String] where the fetched cmake 4.4.5 bottle lands in the store,
-  #   under brew's own bottle file name
-  def bottle_blob(dir)
-    Dev::Deps::LocalStore.new(data_root: dir).blob_path("brew/#{BOTTLE_SHA}/cmake--4.4.5.arm64_tahoe.bottle.tar.gz").to_s
-  end
-
-  test "a keg at another version is converged by pouring the bottle the lock names for this machine" do
-    Given "cmake 4.4.4 installed, a lock pinning 4.4.5 with an arm64_tahoe bottle, and brew naming arm64_tahoe as this machine's tag"
-    dir = Dir.mktmpdir("dev-brew-int-test-")
-    integration = Dev::Deps::BrewIntegration.new(
+  # @param dir [String] the data root
+  # @param pinner [Mocha::Mock]
+  # @return [Dev::Deps::BrewIntegration]
+  def converging_integration(dir, pinner)
+    Open3.expects(:capture3).with { |*args| args.any? { |arg| arg.to_s.end_with?(".tar.gz") } }.never
+    Dev::Deps::BrewIntegration.new(
       repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
+      tap_pinner: pinner,
     )
+  end
+
+  test "a keg at another version is converged through its tap at the lock's commit: #{description}" do
+    Given "cmake 4.4.4 installed, the lock pinning 4.4.5 from a tap commit"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    pinner = typed_mock(Dev::Deps::TapPinner)
+    integration = converging_integration(dir, pinner)
     integration.stubs(:brew_installed?).returns(true)
     brew_lists_cmake("4.4.4", "4.4.4 4.4.5")
-    brew_cache_answers("cmake--4.4.4.arm64_tahoe.bottle.1.tar.gz")
-    curl_delivers(BOTTLE_BYTES)
 
     When "installing"
-    out, _err = capture_io { integration.install_all([cmake_pin("4.4.5")]) }
+    out, _err = capture_io { integration.install_all([cmake_pin("4.4.5", tap:)]) }
 
-    Then "the bottle is fetched from the lock's link, kept in the store under brew's bottle file name, and poured"
-    1 * Open3.capture3(*cache_env(dir), "brew", "install", bottle_blob(dir)) >> ["", "", stub(success?: true)]
-    File.binread(bottle_blob(dir)) == BOTTLE_BYTES
+    Then "the tap is pinned, brew installs the spec from it and not from the API, the tap is restored; nothing is downloaded by dev"
+    1 * pinner.pin!(pinned_tap, COMMIT)
+    1 * Open3.capture3(*cache_env(dir), *PINNED_ENV, "brew", "install", spec) >> ["", "", stub(success?: true)]
+    1 * pinner.restore!(pinned_tap)
     0 * Open3.capture3(*cache_env(dir), "brew", "update")
+    0 * Open3.capture3("curl", any_parameters)
     out.include?("converging")
 
     Cleanup
     FileUtils.rm_rf(dir)
-  end
-
-  test "the GitHub Packages token rides the download of a ghcr.io bottle only: #{description}" do
-    Given "an integration and a bottle link"
-    dir = Dir.mktmpdir("dev-brew-int-test-")
-    integration = Dev::Deps::BrewIntegration.new(
-      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
-    )
-
-    When "downloading"
-    integration.send(:download_bottle, link, "#{dir}/bottle.tar.gz")
-
-    Then "curl gets the header for ghcr.io and nothing else for a release asset (a token GitHub would reject)"
-    1 * Open3.capture3("curl", "-fsSL", *headers, "-o", "#{dir}/bottle.tar.gz", link) >> ["", "", stub(success?: true)]
-
-    Cleanup
-    FileUtils.rm_rf(dir)
 
     Where
-    description          | link                                                                    | headers
-    "a core bottle"      | BOTTLE_LINK                                                             | ["-H", GITHUB_PACKAGES_AUTH]
-    "a tap bottle"       | "https://github.com/d3mlabs/homebrew-d3mlabs/releases/download/x/y.gz"  | []
+    description      | tap                | pinned_tap         | spec
+    "a core formula" | nil                | "homebrew/core"    | "cmake"
+    "a tap formula"  | "d3mlabs/d3mlabs"  | "d3mlabs/d3mlabs"  | "d3mlabs/d3mlabs/cmake"
   end
 
-  test "a bottle already in the store is poured without downloading again" do
-    Given "the locked bottle cached by an earlier convergence"
+  test "a locked version older than the linked keg: brew's refusal is answered with --force --skip-link" do
+    Given "cmake 4.4.6 installed and linked, the lock pinning 4.4.5, and brew refusing the plain install"
     dir = Dir.mktmpdir("dev-brew-int-test-")
-    FileUtils.mkdir_p(File.dirname(bottle_blob(dir)))
-    File.binwrite(bottle_blob(dir), BOTTLE_BYTES)
-    integration = Dev::Deps::BrewIntegration.new(
-      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
-    )
+    pinner = typed_mock(Dev::Deps::TapPinner)
+    pinner.stubs(:pin!)
+    pinner.stubs(:restore!)
+    integration = converging_integration(dir, pinner)
     integration.stubs(:brew_installed?).returns(true)
-    brew_lists_cmake("4.4.4", "4.4.4 4.4.5")
-    brew_cache_answers("cmake--4.4.4.arm64_tahoe.bottle.tar.gz")
-
-    When "installing"
-    capture_io { integration.install_all([cmake_pin("4.4.5")]) }
-
-    Then "no curl runs; the cached bottle is what brew pours"
-    0 * Open3.capture3("curl", any_parameters)
-    1 * Open3.capture3(*cache_env(dir), "brew", "install", bottle_blob(dir)) >> ["", "", stub(success?: true)]
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  test "a locked version older than the keg brew refuses to pour over it is poured forced and unlinked" do
-    Given "cmake 4.4.6 installed and linked, the lock pinning 4.4.5, and brew refusing the plain pour"
-    dir = Dir.mktmpdir("dev-brew-int-test-")
-    integration = Dev::Deps::BrewIntegration.new(
-      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
-    )
-    integration.stubs(:brew_installed?).returns(true)
-    brew_lists_cmake("4.4.6", "4.4.6", "4.4.5 4.4.6")
-    brew_cache_answers("cmake--4.4.6.arm64_tahoe.bottle.tar.gz")
-    curl_delivers(BOTTLE_BYTES)
+    brew_lists_cmake("4.4.6", "4.4.5 4.4.6")
     refusal = "Error: cmake 4.4.6 is already installed\nTo install 4.4.5, first run:\n  brew unlink cmake\n"
-    Open3.stubs(:capture3).with(*cache_env(dir), "brew", "install", bottle_blob(dir)).returns(["", refusal, stub(success?: false)])
+    Open3.stubs(:capture3).with(*cache_env(dir), *PINNED_ENV, "brew", "install", "cmake").returns(["", refusal, stub(success?: false)])
 
     When "installing"
     capture_io { integration.install_all([cmake_pin("4.4.5")]) }
 
-    Then "the second pour skips brew's link and keg-only checks — the project activates the keg by path, the link stays the user's"
-    1 * Open3.capture3(*cache_env(dir), "brew", "install", "--force", "--skip-link", bottle_blob(dir)) >> ["", "", stub(success?: true)]
+    Then "the second install skips brew's link and keg-only checks — the project activates the keg by path, the link stays the user's"
+    1 * Open3.capture3(*cache_env(dir), *PINNED_ENV, "brew", "install", "--force", "--skip-link", "cmake") >> ["", "", stub(success?: true)]
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
-  test "a forced pour that fails is the per-dep failure, with brew's own words" do
-    Given "both pours of the locked bottle failing"
+  test "the tap is restored when brew refuses both installs, and the failure is the mismatch with brew's words" do
+    Given "a pinned formula today's brew will not read (an old commit's DSL)"
     dir = Dir.mktmpdir("dev-brew-int-test-")
-    integration = Dev::Deps::BrewIntegration.new(
-      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
-    )
+    pinner = typed_mock(Dev::Deps::TapPinner)
+    pinner.stubs(:pin!)
+    integration = converging_integration(dir, pinner)
     integration.stubs(:brew_installed?).returns(true)
     brew_lists_cmake("4.4.6")
-    brew_cache_answers("cmake--4.4.6.arm64_tahoe.bottle.tar.gz")
-    curl_delivers(BOTTLE_BYTES)
-    Open3.stubs(:capture3).with { |*args| args.include?("install") }.returns(["", "Error: bottle cannot be poured\n", stub(success?: false)])
+    dsl = "Error: homebrew/core/cmake: 'because' argument should use valid symbol or a string!\n"
+    Open3.stubs(:capture3).with { |*args| args.include?("install") }.returns(["", dsl, stub(success?: false)])
+
+    When "installing"
+    capture_io { integration.install_all([cmake_pin("4.4.5")]) }
+
+    Then "restored regardless; the mismatch names what brew has, what the lock pins, brew's reason, and the re-lock"
+    1 * pinner.restore!("homebrew/core")
+    error = raises Dev::Deps::Integration::PartialInstallError
+    failure = error.failures.fetch(0).fetch(1)
+    failure.is_a?(Dev::Deps::BrewIntegration::VersionMismatchError)
+    failure.message.include?("cmake 4.4.6")
+    failure.message.include?("4.4.5")
+    failure.message.include?("'because' argument")
+    failure.message.include?("dev deps update")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a tap that cannot be pinned is the per-dep failure, in git's words" do
+    Given "a remote without the commit"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    pinner = typed_mock(Dev::Deps::TapPinner)
+    pinner.stubs(:pin!).raises(Dev::Deps::TapPinner::PinError.new(tap: "homebrew/core", commit: COMMIT, step: "fetch", stderr: "fatal: remote error"))
+    integration = converging_integration(dir, pinner)
+    integration.stubs(:brew_installed?).returns(true)
+    brew_lists_cmake("4.4.4")
 
     When "installing"
     capture_io { integration.install_all([cmake_pin("4.4.5")]) }
@@ -396,110 +368,44 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     Then
     error = raises Dev::Deps::Integration::PartialInstallError
     failure = error.failures.fetch(0).fetch(1)
-    failure.is_a?(Dev::Deps::BrewIntegration::InstallError)
-    failure.message.include?("--skip-link")
-    failure.message.include?("bottle cannot be poured")
+    failure.is_a?(Dev::Deps::TapPinner::PinError)
+    failure.message.include?("fatal: remote error")
+    0 * Open3.capture3(*cache_env(dir), *PINNED_ENV, "brew", "install", any_parameters)
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
-  test "a downloaded bottle whose bytes are not the lock's is refused before brew sees it" do
-    Given "a lock naming one digest and a download delivering other bytes"
+  test "a pin written before the lock recorded tap commits converges by a refreshed index and brew upgrade" do
+    Given "a keg behind a legacy lock"
     dir = Dir.mktmpdir("dev-brew-int-test-")
-    integration = Dev::Deps::BrewIntegration.new(
-      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
-    )
-    integration.stubs(:brew_installed?).returns(true)
-    brew_lists_cmake("4.4.4")
-    brew_cache_answers("cmake--4.4.4.arm64_tahoe.bottle.tar.gz")
-    curl_delivers("tampered bytes\n")
-
-    When "installing"
-    capture_io { integration.install_all([cmake_pin("4.4.5")]) }
-
-    Then "the typed integrity failure names both digests; nothing is cached or poured"
-    error = raises Dev::Deps::Integration::PartialInstallError
-    failure = error.failures.fetch(0).fetch(1)
-    failure.is_a?(Dev::Deps::BrewIntegration::BottleIntegrityError)
-    failure.message.include?(BOTTLE_SHA)
-    failure.message.include?(Digest::SHA256.hexdigest("tampered bytes\n"))
-    !File.exist?(bottle_blob(dir))
-    0 * Open3.capture3(*cache_env(dir), "brew", "install", any_parameters)
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  test "a bottle that cannot be downloaded is a typed failure naming the link" do
-    Given "curl failing on the lock's link"
-    dir = Dir.mktmpdir("dev-brew-int-test-")
-    integration = Dev::Deps::BrewIntegration.new(
-      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
-    )
-    integration.stubs(:brew_installed?).returns(true)
-    brew_lists_cmake("4.4.4")
-    brew_cache_answers("cmake--4.4.4.arm64_tahoe.bottle.tar.gz")
-    Open3.stubs(:capture3).with { |*args| args.first == "curl" }.returns(["", "curl: (22) The requested URL returned error: 404\n", stub(success?: false)])
-
-    When "installing"
-    capture_io { integration.install_all([cmake_pin("4.4.5")]) }
-
-    Then
-    error = raises Dev::Deps::Integration::PartialInstallError
-    failure = error.failures.fetch(0).fetch(1)
-    failure.is_a?(Dev::Deps::BrewIntegration::BottleDownloadError)
-    failure.message.include?(BOTTLE_LINK)
-    failure.message.include?("404")
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  test "without a bottle for this machine, brew's index is refreshed and the formula upgraded: #{description}" do
-    Given "a keg behind the lock, and a lock or a machine that offers no bottle to pour"
-    dir = Dir.mktmpdir("dev-brew-int-test-")
-    integration = Dev::Deps::BrewIntegration.new(
-      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
-    )
-    dep = Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: "4.4.5", hash: nil,
-      metadata: metadata)
+    pinner = typed_mock(Dev::Deps::TapPinner)
+    integration = converging_integration(dir, pinner)
     integration.stubs(:brew_installed?).returns(true)
     brew_lists_cmake("4.4.4", "4.4.5")
-    brew_cache_answers(cache_basename, spec: spec)
 
     When "installing"
-    capture_io { integration.install_all([dep]) }
+    capture_io { integration.install_all([legacy_cmake_pin("4.4.5")]) }
 
-    Then "the index is refreshed (a checkpoint's is as old as the checkpoint), then brew upgrades the formula; nothing is downloaded by dev"
+    Then "the index is refreshed (a checkpoint's is as old as the checkpoint), then brew upgrades the formula; no tap is touched"
     1 * Open3.capture3(*cache_env(dir), "brew", "update") >> ["", "", stub(success?: true)]
-    1 * Open3.capture3(*cache_env(dir), "brew", "upgrade", spec) >> ["", "", stub(success?: true)]
-    0 * Open3.capture3("curl", any_parameters)
+    1 * Open3.capture3(*cache_env(dir), "brew", "upgrade", "cmake") >> ["", "", stub(success?: true)]
+    0 * pinner.pin!(any_parameters)
 
     Cleanup
     FileUtils.rm_rf(dir)
-
-    Where
-    description                                  | metadata                                        | cache_basename                           | spec
-    "brew would build the formula from source"   | { "platforms" => { "arm64_tahoe" => BOTTLE } }  | "cmake-4.4.4.tar.gz"                     | "cmake"
-    "the lock has no bottle for this machine"    | { "platforms" => { "x86_64_linux" => BOTTLE } } | "cmake--4.4.4.arm64_tahoe.bottle.tar.gz" | "cmake"
-    "a pin written before bottles were recorded" | { "tap" => "d3mlabs/d3mlabs" }                  | "cmake--4.4.4.arm64_tahoe.bottle.tar.gz" | "d3mlabs/d3mlabs/cmake"
   end
 
   test "a failed brew update is a warning; the upgrade still runs against the index brew has" do
     Given "an offline brew update"
     dir = Dir.mktmpdir("dev-brew-int-test-")
-    integration = Dev::Deps::BrewIntegration.new(
-      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
-    )
-    dep = Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: "4.4.5", hash: nil, metadata: {})
+    integration = converging_integration(dir, typed_mock(Dev::Deps::TapPinner))
     integration.stubs(:brew_installed?).returns(true)
     brew_lists_cmake("4.4.4", "4.4.5")
-    brew_cache_answers("cmake-4.4.4.tar.gz")
     Open3.stubs(:capture3).with(*cache_env(dir), "brew", "update").returns(["", "fatal: unable to access\n", stub(success?: false)])
 
     When "installing"
-    _out, err = capture_io { integration.install_all([dep]) }
+    _out, err = capture_io { integration.install_all([legacy_cmake_pin("4.4.5")]) }
 
     Then
     1 * Open3.capture3(*cache_env(dir), "brew", "upgrade", "cmake") >> ["", "", stub(success?: true)]
@@ -510,20 +416,16 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
   end
 
   test "a keg still at another version after the upgrade fails with the re-lock remediation" do
-    Given "brew's current formula is not the locked version either (the lock is behind brew), and no bottle to pour"
+    Given "brew's current formula is not the locked version either (the lock is behind brew), and no tap commit to pin"
     dir = Dir.mktmpdir("dev-brew-int-test-")
-    integration = Dev::Deps::BrewIntegration.new(
-      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
-    )
-    dep = Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: "4.4.5", hash: nil, metadata: {})
+    integration = converging_integration(dir, typed_mock(Dev::Deps::TapPinner))
     integration.stubs(:brew_installed?).returns(true)
     brew_lists_cmake("4.4.6")
-    brew_cache_answers("cmake-4.4.6.tar.gz")
     Open3.stubs(:capture3).with(*cache_env(dir), "brew", "update").returns(["", "", stub(success?: true)])
     Open3.stubs(:capture3).with(*cache_env(dir), "brew", "upgrade", "cmake").returns(["", "", stub(success?: true)])
 
     When "installing"
-    capture_io { integration.install_all([dep]) }
+    capture_io { integration.install_all([legacy_cmake_pin("4.4.5")]) }
 
     Then "the mismatch names what brew has and what the lock pins, and points at dev deps update"
     error = raises Dev::Deps::Integration::PartialInstallError
@@ -545,19 +447,18 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
       repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
       pin_taps: true, tap_pinner: pinner,
     )
-    pin = cmake_pin("4.4.5")
-    dep = pin.with(metadata: pin.metadata.merge("tap_commit" => "3c67e3be"))
     integration.stubs(:brew_installed?).returns(true)
     brew_lists_cmake("4.4.4")
 
     When "installing"
-    integration.install_all([dep])
+    integration.install_all([cmake_pin("4.4.5")])
 
-    Then "the mismatch is reported as is; brew's index and the lock's bottle are left alone"
-    1 * pinner.pin!("homebrew/core", "3c67e3be")
+    Then "the mismatch is reported as is; the tap stays pinned for the image, brew's index is left alone"
+    1 * pinner.pin!("homebrew/core", COMMIT)
+    0 * pinner.restore!(any_parameters)
     error = raises Dev::Deps::Integration::PartialInstallError
     error.failures.fetch(0).fetch(1).is_a?(Dev::Deps::BrewIntegration::VersionMismatchError)
-    0 * Open3.capture3("brew", "--cache", any_parameters)
+    0 * Open3.capture3(*cache_env(dir), *PINNED_ENV, "brew", "install", any_parameters)
     0 * Open3.capture3(*cache_env(dir), *PINNED_ENV, "brew", "update")
 
     Cleanup
@@ -565,26 +466,27 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
   end
 
   test "convergence writes escalate to the prefix owner like installs do" do
-    Given "an unwritable brew prefix and a keg behind the lock with no bottle to pour"
+    Given "an unwritable brew prefix and a keg behind the lock"
     dir = Dir.mktmpdir("dev-brew-int-test-")
     prefix = File.join(dir, "homebrew")
     FileUtils.mkdir_p(prefix)
     FileUtils.chmod(0o555, prefix)
     owner = Etc.getpwuid(File.stat(prefix).uid).name
+    pinner = typed_mock(Dev::Deps::TapPinner)
+    pinner.stubs(:pin!)
+    pinner.stubs(:restore!)
     integration = Dev::Deps::BrewIntegration.new(
       repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: prefix,
+      tap_pinner: pinner,
     )
-    dep = Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: "4.4.5", hash: nil, metadata: {})
     integration.stubs(:brew_installed?).returns(true)
     brew_lists_cmake("4.4.4", "4.4.5")
-    brew_cache_answers("cmake-4.4.4.tar.gz")
 
     When "installing"
-    capture_io { integration.install_all([dep]) }
+    capture_io { integration.install_all([cmake_pin("4.4.5")]) }
 
     Then
-    1 * Open3.capture3("sudo", "-n", "-u", owner, *cache_env(dir), "brew", "update") >> ["", "", stub(success?: true)]
-    1 * Open3.capture3("sudo", "-n", "-u", owner, *cache_env(dir), "brew", "upgrade", "cmake") >> ["", "", stub(success?: true)]
+    1 * Open3.capture3("sudo", "-n", "-u", owner, *cache_env(dir), *PINNED_ENV, "brew", "install", "cmake") >> ["", "", stub(success?: true)]
 
     Cleanup
     FileUtils.chmod(0o755, prefix)
