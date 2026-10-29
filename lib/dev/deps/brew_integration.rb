@@ -28,8 +28,13 @@ module Dev
     # escalate to the prefix owner via `sudo -n` when the prefix is not
     # writable by the current user — the owner is stat'd at runtime, never
     # hardcoded, and the NOPASSWD edge is converged by the agent host
-    # bootstrap (Dev::AgentBootstrap). On a single-user machine the prefix
-    # is writable and nothing changes.
+    # bootstrap (Dev::AgentBootstrap). That edge grants one command, the
+    # prefix's brew by path, so an escalated argv keeps brew in sudo's
+    # command position: the environment a write needs rides as sudo's own
+    # `VAR=value` assignments (the edge carries SETENV for them), never
+    # behind `env`, and the executable is `<prefix>/bin/brew`, not whatever
+    # the agent's PATH resolves (dev#361). On a single-user machine the
+    # prefix is writable and nothing changes.
     #
     # Brew links one keg per formula onto PATH and deletes the rest on
     # `brew upgrade`/`brew cleanup`; a lock names one exact version. So after
@@ -389,14 +394,14 @@ module Dev
         url = tap.url
         if tap.local? && project_dir && url
           path = resolve_file_url(url, project_dir)
-          success = system(*T.unsafe(escalation), "brew", "tap", tap.name, path)
+          success = system(*T.unsafe(escalation), brew_executable, "tap", tap.name, path)
           raise TapRegistrationError, "brew tap #{tap.name} #{path} failed#{escalation_hint}" unless success
         elsif url
           url_str = url.to_s
-          success = system(*T.unsafe(escalation), "brew", "tap", tap.name, url_str)
+          success = system(*T.unsafe(escalation), brew_executable, "tap", tap.name, url_str)
           raise TapRegistrationError, "brew tap #{tap.name} #{url_str} failed#{escalation_hint}" unless success
         else
-          success = system(*T.unsafe(escalation), "brew", "tap", tap.name)
+          success = system(*T.unsafe(escalation), brew_executable, "tap", tap.name)
           raise TapRegistrationError, "brew tap #{tap.name} failed#{escalation_hint}" unless success
         end
       end
@@ -627,7 +632,7 @@ module Dev
         if sudo_refused?(err)
           raise InstallError,
             "#{command} needs the prefix owner and sudo -n was refused — " \
-            "the brew sudoers edge is missing on this host; run `dev runner register` to re-converge it"
+            "the brew sudoers edge is missing or stale on this host; run `dev runner register` to re-converge it"
         end
 
         raise InstallError, "#{command} failed: #{err}"
@@ -644,22 +649,44 @@ module Dev
       # @return [[String, Boolean]] brew's stderr and whether it succeeded
       sig { params(args: T::Array[String], pinned: T::Boolean).returns([String, T::Boolean]) }
       def brew_write(args, pinned: @pin_taps)
-        _out, err, status = T.unsafe(Open3).capture3(*escalation, *brew_env(pinned:), "brew", *args)
+        _out, err, status = T.unsafe(Open3).capture3(*brew_command(args, pinned:))
         # success? is nil when the process did not exit normally — a failure.
         [err, status.success? || false]
       end
 
-      # argv inserted between the escalation and `brew` on every install:
-      # `env` with brew's download cache in the store (so the host, the
-      # container and a cold run share one, and `dev cache gc` can reclaim
-      # it) plus the pinned-taps variables when pinning. The `env` form, not
-      # a Ruby env hash, so the variables survive `sudo -n -u <owner>`.
+      # The full argv of a brew write. Every write carries brew's download
+      # cache in the store (so the host, the container and a cold run share
+      # one, and `dev cache gc` can reclaim it) plus the pinned-taps
+      # variables when pinning — as argv, not a Ruby env hash, so they
+      # survive sudo's `env_reset`. Unescalated: `env VAR=… brew args`.
+      # Escalated: `sudo -n -u <owner> VAR=… <prefix>/bin/brew args` — the
+      # assignments are sudo's own (sudoers matches the command, and an
+      # `env` in that position would never match the brew edge), and the
+      # executable is the one the edge names.
       #
+      # @param args [Array<String>] brew's argv
       # @param pinned [Boolean] whether to add the pinned-taps variables
       # @return [Array<String>]
-      sig { params(pinned: T::Boolean).returns(T::Array[String]) }
-      def brew_env(pinned:)
-        ["env", "HOMEBREW_CACHE=#{store!.tool_cache(TOOL)}", *(pinned ? PINNED_ENV : [])]
+      sig { params(args: T::Array[String], pinned: T::Boolean).returns(T::Array[String]) }
+      def brew_command(args, pinned:)
+        assignments = ["HOMEBREW_CACHE=#{store!.tool_cache(TOOL)}", *(pinned ? PINNED_ENV : [])]
+        sudo = escalation
+        return ["env", *assignments, "brew", *args] if sudo.empty?
+
+        [*sudo, *assignments, brew_executable, *args]
+      end
+
+      # The brew an escalated write runs: the prefix's own, by path — the
+      # agent host bootstrap grants exactly that path, and the agent's PATH
+      # is nobody's promise. Bare `brew` when not escalated.
+      #
+      # @return [String]
+      sig { returns(String) }
+      def brew_executable
+        prefix = brew_prefix
+        return "brew" if prefix.nil? || escalation.empty?
+
+        File.join(prefix, "bin", "brew")
       end
 
       # Check each formula's tap out at the one commit the lock names for it.
@@ -745,10 +772,12 @@ module Dev
       end
 
       # @param err [String] a brew invocation's stderr
-      # @return [Boolean] whether sudo -n refused for lack of a NOPASSWD rule
+      # @return [Boolean] whether sudo -n refused: no NOPASSWD rule for the
+      #   command, or a rule without SETENV for the assignments (an edge
+      #   from before dev#361) — both re-converged by `dev runner register`
       sig { params(err: String).returns(T::Boolean) }
       def sudo_refused?(err)
-        err.include?("a password is required")
+        err.include?("a password is required") || err.include?("not allowed to set the following environment variables")
       end
     end
   end
