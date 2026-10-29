@@ -23,8 +23,13 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
 - [testing/rspock-bare-assertions] In rspock `transform!`-ed test classes,
   bare `Then`/`Expect` statements are assertions; outside a transformed
   class they silently assert nothing.
-  → skill: rspock (ships in the rspock gem; linked by `dev up` /
-  `dev deps install`)
+ → skill: rspock (ships in the rspock gem; linked by `dev up` /
+ `dev deps install`)
+- [testing/suite-user-is-a-production-identity] The suite runs as
+ `runner` on CI and `ai-agent` on agent hosts — production identities;
+ a test that stats a real owner must name every other identity so none
+ can coincide with the suite's user.
+ → .cursor/skills/learnings/suite-user-is-a-production-identity/
 
 ## process
 
