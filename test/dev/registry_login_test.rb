@@ -3,6 +3,7 @@
 
 require "test_helper"
 require "dev/registry_login"
+require "dev/registry_credential"
 require "support/fake_container_engine"
 
 transform!(RSpock::AST::Transformation)
@@ -12,7 +13,7 @@ class Dev::RegistryLoginTest < Minitest::Test
   test "with logs the engine in to the registry with gh's token on stdin, yields, and logs out" do
     Given
     engine = FakeContainerEngine.new
-    login = Dev::RegistryLogin.new(engine:, auth: gh_auth(token: "gho_secret", login: "jpduchesne"))
+    login = Dev::RegistryLogin.new(engine:, credential: credential(token: "gho_secret", login: "jpduchesne"))
     order = []
 
     When
@@ -32,7 +33,7 @@ class Dev::RegistryLoginTest < Minitest::Test
   test "with logs out even when the block raises" do
     Given
     engine = FakeContainerEngine.new
-    login = Dev::RegistryLogin.new(engine:, auth: gh_auth)
+    login = Dev::RegistryLogin.new(engine:, credential: credential)
 
     When
     begin
@@ -48,9 +49,9 @@ class Dev::RegistryLoginTest < Minitest::Test
   test "with checks the scope the operation needs before touching the engine: #{publish ? "publishing" : "pulling"}" do
     Given "a token that reports its scopes and lacks the one needed"
     engine = FakeContainerEngine.new
-    auth = gh_auth
-    auth.expects(:require_scope!).with(scope).raises(Dev::GhAuth::MissingScopeError, "lacks #{scope}")
-    login = Dev::RegistryLogin.new(engine:, auth:)
+    credential = credential()
+    credential.expects(:require_scope!).with(scope).raises(Dev::GhAuth::MissingScopeError, "lacks #{scope}")
+    login = Dev::RegistryLogin.new(engine:, credential:)
 
     When
     login.with("ghcr.io", publish: publish) { flunk "the block must not run" }
@@ -65,10 +66,10 @@ class Dev::RegistryLoginTest < Minitest::Test
     true    | Dev::GhAuth::WRITE_PACKAGES
   end
 
-  test "a failed login is a LoginFailedError naming the registry, and nothing is yielded" do
+  test "a failed login is a LoginFailedError naming the registry and the token's source, and nothing is yielded: #{explicit ? "DEV_REGISTRY_TOKEN" : "gh"}" do
     Given
     engine = FakeContainerEngine.new(&method(:refuse_login))
-    login = Dev::RegistryLogin.new(engine:, auth: gh_auth)
+    login = Dev::RegistryLogin.new(engine:, credential: credential(explicit:))
 
     When
     login.with("ghcr.io") { flunk "the block must not run" }
@@ -76,6 +77,26 @@ class Dev::RegistryLoginTest < Minitest::Test
     Then
     error = raises(Dev::RegistryLogin::LoginFailedError)
     error.message.include?("ghcr.io")
+    error.message.include?(named)
+    !error.message.include?(unnamed)
+
+    Where
+    explicit | named                 | unnamed
+    false    | "gh auth refresh"     | "DEV_REGISTRY_TOKEN"
+    true     | "DEV_REGISTRY_TOKEN"  | "gh auth refresh"
+  end
+
+  test "an explicit token logs in under the anonymous name, on stdin like gh's" do
+    Given "a hosted job's own token in DEV_REGISTRY_TOKEN"
+    engine = FakeContainerEngine.new
+    login = Dev::RegistryLogin.new(engine:, credential: credential(token: "ghs_job", login: Dev::GhAuth::ANONYMOUS_LOGIN, explicit: true))
+
+    When
+    login.with("ghcr.io", publish: true) { :pushed }
+
+    Then
+    engine.runs == [["login", "ghcr.io", "-u", "token", "--password-stdin"], ["logout", "ghcr.io"]]
+    engine.run_stdins == ["ghs_job", nil]
   end
 
   private
@@ -84,10 +105,10 @@ class Dev::RegistryLoginTest < Minitest::Test
     argv.first != "login"
   end
 
-  def gh_auth(token: "t", login: "u")
-    auth = typed_mock(Dev::GhAuth)
-    auth.stubs(token: token, login: login)
-    auth.stubs(:require_scope!)
-    auth
+  def credential(token: "t", login: "u", explicit: false)
+    credential = typed_mock(Dev::RegistryCredential)
+    credential.stubs(token: token, login: login, explicit?: explicit)
+    credential.stubs(:require_scope!)
+    credential
   end
 end

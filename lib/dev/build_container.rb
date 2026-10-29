@@ -170,7 +170,7 @@ module Dev
     # @param resources_check [Dev::EngineResourcesCheck] the engine-vs-hint
     #   gate every image resolution passes through first
     # @param registry_login [Dev::RegistryLogin, nil] the registry session
-    #   around pulls and pushes; defaults to one over this engine and gh's token
+    #   around pulls and pushes; defaults to one over this engine and the registry credential (gh's token, or DEV_REGISTRY_TOKEN)
     # @param host_os [String] "darwin" / "linux" / "windows" — the shape of
     #   the container's data root (ADR-0008: a volume behind a Mac's VM
     #   boundary, the host's own directory bind-mounted on Linux)
