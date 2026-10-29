@@ -286,7 +286,14 @@ module Dev
     # stat'd here at bootstrap time — never hardcoded — and re-running
     # register re-converges the edge. Omitted when the host has no brew or
     # the agent owns the prefix itself (nothing to escalate). Consumed by
-    # Dev::Deps::BrewIntegration's `sudo -n` escalation.
+    # Dev::Deps::BrewIntegration's `sudo -n` escalation, which runs this
+    # exact path with the brew environment a write needs (its download
+    # cache in the store, the pinned-taps variables) as sudo's own
+    # `VAR=value` assignments — sudoers matches the command, so nothing
+    # may stand in front of brew — and sudo admits those assignments only
+    # under SETENV (dev#361). SETENV widens nothing material: a grant to
+    # run brew as the owner already runs arbitrary code as the owner
+    # (`brew ruby`, `brew sh`, a formula from a local tap).
     #
     # @return [String, nil]
     sig { returns(T.nilable(String)) }
@@ -298,7 +305,7 @@ module Dev
       owner = T.must(Etc.getpwuid(File.stat(prefix).uid)).name
       return nil if owner == @agent_user
 
-      "#{@agent_user} ALL=(#{owner}) NOPASSWD: #{brew}"
+      "#{@agent_user} ALL=(#{owner}) NOPASSWD:SETENV: #{brew}"
     end
 
     # @raise [UnsupportedPlatformError] off macOS

@@ -506,8 +506,9 @@ class Dev::AgentBootstrapTest < Minitest::Test
       runner_user: "human", darwin: true, brew_executable: brew,
     ).sudoers_content
 
-    Expect "the agent may run exactly brew as the prefix owner, NOPASSWD"
-    content.include?("ai-agent ALL=(#{owner}) NOPASSWD: #{brew}")
+    Expect "the agent may run exactly brew as the prefix owner, NOPASSWD, with the assignments dev's escalation hands sudo (SETENV)"
+    content.include?("ai-agent ALL=(#{owner}) NOPASSWD:SETENV: #{brew}")
+    !content.include?("NOPASSWD: #{brew}")
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -536,7 +537,7 @@ class Dev::AgentBootstrapTest < Minitest::Test
     ).sudoers_content
 
     Expect "no self-edge is emitted"
-    !content.include?("NOPASSWD: #{brew}")
+    !content.include?(brew)
 
     Cleanup
     FileUtils.rm_rf(dir)
