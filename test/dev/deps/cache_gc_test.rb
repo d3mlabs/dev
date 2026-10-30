@@ -7,6 +7,7 @@ require "dev/prefix_volumes"
 require "dev/deps/lockfile"
 require "dev/deps/dependency"
 require "dev/deps/local_store"
+require "dev/environment_image"
 require "support/fake_container_engine"
 require "set"
 require "tmpdir"
@@ -241,48 +242,91 @@ class Dev::Deps::CacheGcTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "gc_docker leaves non-content tags and in-use images alone" do
-    Given "an engine whose docker reports only a live tag and a plain tag"
+  test "gc_docker reaps every tag of a pinned image's repository but the lock's ref and the ones running containers back" do
+    Given "a lock pinning snappy-linux at one digest; docker holds that tag, two older ones, one of them running"
     dir = Dir.mktmpdir("dev-cache-gc-test-")
+    image = pinned_image("snappy-linux")
     engine = FakeContainerEngine.new(capture_result: lambda { |args|
       case args
-      when ["images", "repo/img", "--format", "{{.Repository}}:{{.Tag}}"]
-        "repo/img:latest\nrepo/img:content-abc\n"
-      when ["ps", "--format", "{{.Image}}"] then "repo/img:content-abc\n"
+      when ["images", image.repository, "--format", "{{.Repository}}:{{.Tag}}"]
+        "#{image.repository}:#{"0" * 64}\n#{image.ref}\n#{image.repository}:#{"1" * 64}\n"
+      when ["ps", "--format", "{{.Image}}"] then "#{image.repository}:#{"1" * 64}\n"
+      else ""
+      end
+    })
+    out = StringIO.new
+    gc = Dev::Deps::CacheGc.new(lockfile: Dev::Deps::Lockfile.new(dir: dir), engine: engine, out: out)
+
+    When "reaping for the lock's images"
+    gc.send(:gc_docker, images: [image])
+
+    Then "the one tag the lock does not name and no container runs is removed, and named"
+    engine.runs == [["rmi", "#{image.repository}:#{"0" * 64}"]]
+    out.string == ">>> gc: removing image #{image.repository}:#{"0" * 64}\n"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "gc_docker keeps to each pinned repository: another image's tags are never listed, and a project pinning none asks docker nothing" do
+    Given "two pinned images, each repository holding only the lock's ref"
+    dir = Dir.mktmpdir("dev-cache-gc-test-")
+    linux = pinned_image("snappy-linux")
+    server = pinned_image("snappy-server")
+    listed = []
+    engine = FakeContainerEngine.new(capture_result: lambda { |args|
+      case args
+      when ["images", linux.repository, "--format", "{{.Repository}}:{{.Tag}}"]
+        listed << linux.repository
+        "#{linux.ref}\n"
+      when ["images", server.repository, "--format", "{{.Repository}}:{{.Tag}}"]
+        listed << server.repository
+        "#{server.ref}\n"
       else ""
       end
     })
     gc = Dev::Deps::CacheGc.new(lockfile: Dev::Deps::Lockfile.new(dir: dir), engine: engine, out: StringIO.new)
 
-    When "pruning content tags"
-    gc.send(:gc_docker, image_ref: "repo/img", live_tag: nil)
+    When "reaping for both, then for none"
+    gc.send(:gc_docker, images: [linux, server])
+    gc.send(:gc_docker, images: [])
 
-    Then "nothing is removed: latest isn't a content tag, and the content tag is in use"
+    Then "each repository was listed once, nothing removed, and the empty set touched docker not at all"
+    listed == [linux.repository, server.repository]
     engine.runs.empty?
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
-  test "gc_docker removes a stale content tag through the engine" do
-    Given "an engine reporting a stale content tag next to the live one"
+  test "gc hands the images through to gc_docker beside the tree sweep" do
+    Given "a lock, one pinned image, and a gc whose docker half records what it was asked"
     dir = Dir.mktmpdir("dev-cache-gc-test-")
-    engine = FakeContainerEngine.new(capture_result: lambda { |args|
-      case args
-      when ["images", "repo/img", "--format", "{{.Repository}}:{{.Tag}}"]
-        "repo/img:content-old\nrepo/img:content-live\n"
-      else ""
-      end
-    })
-    gc = Dev::Deps::CacheGc.new(lockfile: Dev::Deps::Lockfile.new(dir: dir), engine: engine, out: StringIO.new)
+    lockfile = lock_engine(dir, version: "5.6.1-css-83")
+    image = pinned_image("snappy-linux")
+    gc = build_gc(dir, lockfile)
+    gc.expects(:gc_docker).with(images: [image]).once
 
-    When "pruning content tags"
-    gc.send(:gc_docker, image_ref: "repo/img", live_tag: "repo/img:content-live")
+    When
+    gc.gc(keep: 2, images: [image])
 
-    Then "only the stale tag is removed"
-    engine.runs == [["rmi", "repo/img:content-old"]]
+    Then
+    true
 
     Cleanup
     FileUtils.rm_rf(dir)
+  end
+
+  # A lock's image, as the gc sees it (EnvironmentImage#repository, #ref).
+  def pinned_image(name)
+    Dev::EnvironmentImage.from_pin(
+      Dev::Deps::Dependency.new(
+        name: name, integration: :image, group: :app, version: "ue5.8-3", hash: "SHA256=#{"a" * 64}",
+        metadata: {
+          "from" => "ghcr.io/d3mlabs/unreal-engine-build-base", "platform" => "linux/amd64",
+          "platforms" => ["linux/amd64"], "registry" => "ghcr.io/d3mlabs", "apt" => [],
+        },
+      ),
+    )
   end
 end

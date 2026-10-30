@@ -299,7 +299,7 @@ class RunnerTest < Minitest::Test
 
     Then "the noun is listed at the top and its five verbs inside"
     top.include?("container")
-    %w[up down reset tag status].all? { |verb| out.string.lines.any? { |l| l.strip.start_with?(verb) } }
+    %w[up down reset status].all? { |verb| out.string.lines.any? { |l| l.strip.start_with?(verb) } }
   end
 
   test "the container group is registered when the lock pins an image, with no build block at all (dev#307)" do
@@ -308,18 +308,12 @@ class RunnerTest < Minitest::Test
     runner = build_runner(commands: {}, out: out, root: pinned_root("snappy-linux", "snappy-server"))
     Dev::ContainerEngine.expects(:resolve).never
 
-    When "we print usage, then ask for the tags"
+    When "we print usage"
     runner.run([])
-    top = out.string.dup
-    out.truncate(0)
-    out.rewind
-    runner.run(["container", "tag"])
 
-    Then "the noun is listed, and tag prints one name<TAB>ref line per image"
-    top.include?("container")
-    top.lines.any? { |l| l.strip.start_with?("down ") }
-    out.string.lines.map { |l| l.split("\t").first } == %w[snappy-linux snappy-server]
-    out.string.lines.all? { |l| l.match?(%r{\tghcr\.io/d3mlabs/snappy-(linux|server):[0-9a-f]+\n\z}) }
+    Then "the noun is listed, and down beside it"
+    out.string.include?("container")
+    out.string.lines.any? { |l| l.strip.start_with?("down ") }
   end
 
   test "#{name} is not registered when the lock pins no image" do

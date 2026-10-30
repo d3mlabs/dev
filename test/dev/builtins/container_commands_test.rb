@@ -5,7 +5,6 @@ require "test_helper"
 require "dev/builtins/container_up_command"
 require "dev/builtins/container_down_command"
 require "dev/builtins/container_reset_command"
-require "dev/builtins/container_tag_command"
 require "dev/builtins/container_status_command"
 require "dev/container_dev_provisioner"
 require "dev/deps/dependency"
@@ -55,7 +54,6 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     Dev::Builtins::ContainerUpCommand       | true
     Dev::Builtins::ContainerDownCommand     | true
     Dev::Builtins::ContainerResetCommand    | true
-    Dev::Builtins::ContainerTagCommand      | true
     Dev::Builtins::ContainerStatusCommand   | true
   end
 
@@ -513,26 +511,6 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     "none"      | []                        | "dev: no build container to remove.\n"
     "one"       | ["dev-myapp-abc-content"] | "dev: removed dev-myapp-abc-content.\n"
     "two"       | ["dev-a", "dev-b"]        | "dev: removed dev-a, dev-b.\n"
-  end
-
-  # --- tag --------------------------------------------------------------------
-
-  test "container tag prints one line per pinned image: its name and the digest tag the lock and the registry share" do
-    Given
-    root = project_root_pinning("linux/amd64", images: { "snappy-linux" => {}, "snappy-server" => {} })
-    images = Dev::Deps::Lockfile.new(dir: root).read.map { |pin| Dev::EnvironmentImage.from_pin(pin) }
-    out = StringIO.new
-
-    When
-    Dev::Builtins::ContainerTagCommand.new(container_client: client, out: out)
-      .call(args: no_args, context: project(root: root))
-
-    Then
-    out.string == images.map { |image| "#{image.name}\t#{image.ref}\n" }.join
-    images.all? { |image| image.ref.end_with?(":#{image.digest}") }
-
-    Cleanup
-    FileUtils.rm_rf(root)
   end
 
   # --- status -----------------------------------------------------------------

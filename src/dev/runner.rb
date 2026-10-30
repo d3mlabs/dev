@@ -361,13 +361,12 @@ module Dev
     def container_builtins(up:, down:)
       CommandGroup.new(
         path: ["container"],
-        desc: "Manage this checkout's build container (up | down | reset | tag | status)",
+        desc: "Manage this checkout's build container (up | down | reset | status)",
         category: Command::Category::Lifecycle,
         children: {
           "up" => up,
           "down" => down,
           "reset" => Builtins::ContainerResetCommand.new(out: @out),
-          "tag" => Builtins::ContainerTagCommand.new(out: @out),
           "status" => Builtins::ContainerStatusCommand.new(out: @out),
         },
       )

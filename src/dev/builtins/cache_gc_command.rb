@@ -9,8 +9,8 @@ require "dev/deps/lockfile"
 module Dev
   module Builtins
     # `dev cache gc [--keep N] [--tool-caches]`: reclaim stale tree
-    # versions, the engine's stale Linuxbrew prefix volumes and, when a
-    # build container is configured, its stale content-tagged images; with
+    # versions, the engine's stale Linuxbrew prefix volumes and the tags of
+    # the lock's images that the lock no longer names; with
     # `--tool-caches`, also drop the tools' download caches whole. A leaf
     # of the `cache` group.
     class CacheGcCommand < BuiltinCommand
@@ -56,7 +56,7 @@ module Dev
         project = context.project!
         gc = @cache_gc_factory.call(Dev::Deps::Lockfile.new(dir: project.root))
         gc.gc(
-          keep: parse_keep(args), image_ref: nil, live_tag: nil,
+          keep: parse_keep(args), images: project.project_images.pinned,
           tool_caches: args.flag?(TOOL_CACHES_FLAG),
         )
       end

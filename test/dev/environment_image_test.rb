@@ -31,7 +31,8 @@ class Dev::EnvironmentImageTest < Minitest::Test
     image.digest == Digest::SHA256.hexdigest(image.dockerfile)
     image.digest.match?(/\A[0-9a-f]{64}\z/)
     image.tag == image.digest
-    image.ref == "ghcr.io/d3mlabs/snappy-linux:#{image.digest}"
+    image.repository == "ghcr.io/d3mlabs/snappy-linux"
+    image.ref == "#{image.repository}:#{image.digest}"
     image.build_args == { "DEV_ENVIRONMENT_DIGEST" => image.digest }
     image.marker == "name=snappy-linux\ndigest=#{image.digest}\n"
     image.short_digest == image.digest[0, 12]
