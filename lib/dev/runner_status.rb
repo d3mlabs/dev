@@ -51,7 +51,7 @@ module Dev
     # @param brew_edge [AgentBootstrap::BrewEdge, AgentBootstrap::NoBrewEdge]
     #   the brew edge register writes for this host, or why none is needed
     # @param brewfile_path [String, nil] the org Brewfile (nil when none ships)
-    # @param container_required [Boolean] whether the served repo declares build.container
+    # @param container_required [Boolean] whether the served repo's lock pins an image
     # @param host_identity [Dev::RunnerUser, nil] the Linux host rule's user; nil elsewhere
     # @param pins [Array<Dev::Deps::Dependency>] the enclosing checkout's lock, when run in one
     # @param reach_factory [Proc] builds the reach check for an identity; injected for tests

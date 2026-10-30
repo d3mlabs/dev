@@ -3,26 +3,23 @@
 
 require "test_helper"
 require "dev/build_container"
-require "dev/build_container_config"
 require "dev/command"
 require "dev/deps/dependency"
 require "dev/deps/lockfile"
-require "dev/dockerfile_image"
 require "dev/engine_resources"
 require "dev/environment_image"
 require "dev/project_images"
 require "pathname"
 require "tmpdir"
 
-# ProjectImages over a real temp checkout: deps.lock written by Lockfile,
-# the dev.yml facts as the loader would hand them over.
+# ProjectImages over a real temp checkout: deps.lock written by Lockfile.
 transform!(RSpock::AST::Transformation)
 class Dev::ProjectImagesTest < Minitest::Test
   include SorbetHelper
 
-  # --- all / named --------------------------------------------------------
+  # --- pinned / named -----------------------------------------------------
 
-  test "pinned is the lock's image pins, in lock order, as images; all is the same set" do
+  test "pinned is the lock's image pins, in lock order, as images" do
     Given
     root = checkout(pins: [brew_pin, image_pin(name: "snappy-linux"), image_pin(name: "snappy-server")])
     images = Dev::ProjectImages.new(root:)
@@ -33,20 +30,18 @@ class Dev::ProjectImagesTest < Minitest::Test
     Then
     pinned.map(&:class).uniq == [Dev::EnvironmentImage]
     pinned.map(&:name) == ["snappy-linux", "snappy-server"]
-    images.all == pinned
 
     Cleanup
     FileUtils.rm_rf(root)
   end
 
-  test "pinned and all are empty for a project pinning no image and declaring no block" do
+  test "pinned is empty for a project pinning no image" do
     Given
     root = checkout(pins: [brew_pin])
     images = Dev::ProjectImages.new(root:)
 
     Expect
     images.pinned == []
-    images.all == []
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -128,166 +123,50 @@ class Dev::ProjectImagesTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  # --- the scoped refusal (dev#307 §0) ---------------------------------
+  # --- containerized? -----------------------------------------------------
 
-  test "a project whose lock pins an image refuses every retired key with its migration" do
-    Given "a migrated lock and a dev.yml still on the old shape"
-    root = checkout(pins: [image_pin])
-    legacy_keys = [
-      "build.container", "build.container.resources", "commands.deploy.container: false", "commands.build.container: true",
-    ]
-    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89", persist: true,
-      volumes: ["/e:/ue"], run_env: { "T" => "ns/t" })
-
-    When
-    Dev::ProjectImages.new(root:, build_container: config, legacy_keys:).all
-
-    Then "one message, every key, each with where it goes"
-    error = raises(Dev::ProjectImages::RetiredKeysError)
-    error.message.include?("build.container.image")
-    error.message.include?("build.container.persist")
-    error.message.include?("persist true")
-    error.message.include?("build.container.volumes")
-    error.message.include?("volume ")
-    error.message.include?("build.container.run_env")
-    error.message.include?("run_env ")
-    error.message.include?("build.container.resources")
-    error.message.include?("`engine:`")
-    error.message.include?("commands.deploy.container: false")
-    error.message.include?("runs_on: host")
-    error.message.include?("commands.build.container: true")
-
-    Cleanup
-    FileUtils.rm_rf(root)
-  end
-
-  test "a project whose lock pins no image keeps its retired keys: the legacy path, untouched until it migrates" do
-    Given
-    root = checkout(pins: [brew_pin], dockerfile: "FROM --platform=linux/amd64 ubuntu:24.04\n")
-    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
-    images = Dev::ProjectImages.new(root:, build_container: config, legacy_keys: ["build.container"])
-
-    Expect "nothing pinned; the one image the lifecycle verbs act on is the Dockerfile's"
-    images.pinned == []
-    images.all.map(&:class) == [Dev::DockerfileImage]
-    images.all.map(&:name) == ["snappy-linux"]
-
-    Cleanup
-    FileUtils.rm_rf(root)
-  end
-
-  # --- the legacy path (gone with dev#311) ------------------------------
-
-  test "on the legacy path, for(cmd) is the Dockerfile image unless the command opted out: #{why}" do
-    Given
-    root = checkout(pins: [brew_pin], dockerfile: "FROM --platform=linux/amd64 ubuntu:24.04\n")
-    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89", persist: true)
-    images = Dev::ProjectImages.new(root:, build_container: config, legacy_keys: ["build.container"])
-
-    When
-    placement = images.for(cmd)
-
-    Then
-    (placement == :host ? :host : [placement.class, placement.name, placement.persist]) == expected
-
-    Cleanup
-    FileUtils.rm_rf(root)
-
-    Where
-    why                          | cmd                                                           | expected
-    "the default"                | Dev::ProjectCommand.new(run: "x")                             | [Dev::DockerfileImage, "snappy-linux", true]
-    "container: false"           | Dev::ProjectCommand.new(run: "x", container: false)           | :host
-    "runs_on: host, same thing"  | Dev::ProjectCommand.new(run: "x", runs_on: "host")            | :host
-  end
-
-  test "on the legacy path, a runs_on naming an image is refused: the lock pins none" do
-    Given
-    root = checkout(pins: [brew_pin], dockerfile: "FROM ubuntu:24.04\n")
-    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
-
-    When
-    Dev::ProjectImages.new(root:, build_container: config, legacy_keys: ["build.container"])
-      .for(Dev::ProjectCommand.new(run: "x", runs_on: "snappy-linux"), name: "build")
-
-    Then
-    error = raises(Dev::ProjectImages::UnknownImageError)
-    error.message.include?("pins none")
-
-    Cleanup
-    FileUtils.rm_rf(root)
-  end
-
-  test "a container block naming no image, with no pin, is NoEnvironmentImageError pointing at the block" do
-    Given "the half-migrated shape: the block shapes a container around an image that is nowhere"
-    root = checkout(pins: [brew_pin])
-    config = Dev::BuildContainerConfig.new(persist: true)
-
-    When
-    Dev::ProjectImages.new(root:, build_container: config, legacy_keys: ["build.container"]).for(Dev::ProjectCommand.new(run: "x"))
-
-    Then
-    error = raises(Dev::ProjectImages::NoEnvironmentImageError)
-    error.message.include?("`image` block")
-    error.message.include?("dev deps update")
-
-    Cleanup
-    FileUtils.rm_rf(root)
-  end
-
-  test "containerized? is whether any command could run in a container: a pin, or the legacy block" do
+  test "containerized? is whether any command could run in a container: the lock pins an image" do
     Given
     pinned = checkout(pins: [image_pin])
-    legacy = checkout(pins: [brew_pin], dockerfile: "FROM ubuntu:24.04\n")
     plain = checkout(pins: [brew_pin])
-    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
 
     Expect
     Dev::ProjectImages.new(root: pinned).containerized?
-    Dev::ProjectImages.new(root: legacy, build_container: config, legacy_keys: ["build.container"]).containerized?
     !Dev::ProjectImages.new(root: plain).containerized?
 
     Cleanup
-    [pinned, legacy, plain].each { |dir| FileUtils.rm_rf(dir) }
+    [pinned, plain].each { |dir| FileUtils.rm_rf(dir) }
   end
 
-  test "containerized? decides membership without judging the project: a stale pin or a refused dev.yml still gets its container verbs" do
-    Given "a pin another dev locked, and a block the lock has retired"
+  test "containerized? decides membership without judging the project: a stale pin still gets its container verbs" do
+    Given "a pin another dev locked"
     stale = checkout(pins: [image_pin])
     lock = Dev::Deps::Lockfile.new(dir: stale)
     lock.lock(lock.read.map { |pin| pin.with(metadata: pin.metadata.merge(Dev::EnvironmentImage::DIGEST_KEY => "f" * 64)) })
-    refused = checkout(pins: [image_pin])
-    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
     stale_images = Dev::ProjectImages.new(root: stale)
-    refused_images = Dev::ProjectImages.new(root: refused, build_container: config, legacy_keys: ["build.container"])
 
     When "the verbs materialise the images"
-    stale_error = assert_raises(Dev::EnvironmentImage::StaleDigestError) { stale_images.all }
-    refused_error = assert_raises(Dev::ProjectImages::RetiredKeysError) { refused_images.all }
+    stale_error = assert_raises(Dev::EnvironmentImage::StaleDigestError) { stale_images.pinned }
 
     Then "membership answered; the verbs themselves raise, with the fix in the message"
     stale_images.containerized?
-    refused_images.containerized?
     stale_error.message.include?("dev deps update")
-    refused_error.message.include?("build.container.image")
 
     Cleanup
-    [stale, refused].each { |dir| FileUtils.rm_rf(dir) }
+    FileUtils.rm_rf(stale)
   end
 
-  test "containerized? over a retired build-deps.lock answers from the block alone: dev deps update must still be reachable" do
+  test "containerized? over a retired build-deps.lock is false: dev deps update must still be reachable" do
     Given "a checkout still carrying build-deps.lock"
     root = checkout(pins: [brew_pin])
     (root / "build-deps.lock").write("")
-    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
 
     When
-    with_block = Dev::ProjectImages.new(root:, build_container: config, legacy_keys: ["build.container"])
-    without = Dev::ProjectImages.new(root:)
-    error = assert_raises(Dev::Deps::Lockfile::RetiredBuildLockError) { without.pinned }
+    images = Dev::ProjectImages.new(root:)
+    error = assert_raises(Dev::Deps::Lockfile::RetiredBuildLockError) { images.pinned }
 
-    Then "membership from the block; the pins themselves still refuse"
-    with_block.containerized?
-    !without.containerized?
+    Then "no membership; the pins themselves still refuse"
+    !images.containerized?
     error.message.include?("dev deps update")
 
     Cleanup
@@ -316,35 +195,11 @@ class Dev::ProjectImagesTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "ensure! on the legacy path hands the block to ensure_image!, publish and the hint through, never pushing on its own" do
-    Given
-    root = checkout(pins: [brew_pin], dockerfile: "FROM ubuntu:24.04\n")
-    engine = Dev::EngineResources::Hint.new(cpus: 12)
-    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
-    images = Dev::ProjectImages.new(root:, build_container: config, legacy_keys: ["build.container"], engine:)
-    client = typed_mock(Dev::BuildContainer)
-    client.expects(:ensure_image!).once
-      .with do |cfg, project_root:, push:, publish:, resources:, **|
-        cfg == config && project_root == root && !push && !publish && resources == engine
-      end
-      .returns("legacy-ref")
-
-    When
-    result = images.ensure!(images.for(Dev::ProjectCommand.new(run: "x")), client:, publish: false)
-
-    Then
-    result == "legacy-ref"
-
-    Cleanup
-    FileUtils.rm_rf(root)
-  end
-
   private
 
-  def checkout(pins:, dockerfile: nil)
+  def checkout(pins:)
     root = Pathname(Dir.mktmpdir("project-images"))
     Dev::Deps::Lockfile.new(dir: root).lock(Dev::EnvironmentImage.stamp(pins))
-    (root / "Dockerfile").write(dockerfile) if dockerfile
     root
   end
 

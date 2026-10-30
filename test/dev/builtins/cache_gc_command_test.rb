@@ -3,7 +3,6 @@
 
 require "test_helper"
 require "dev/builtins/cache_gc_command"
-require "dev/build_container_config"
 require "pathname"
 
 transform!(RSpock::AST::Transformation)
@@ -73,29 +72,6 @@ class Dev::Builtins::CacheGcCommandTest < Minitest::Test
     true
   end
 
-  test "gc with a build container also prunes stale images, protecting the live tag" do
-    Given "a context with a build container and a pinned live tag"
-    config = Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry")
-    gc = typed_mock(Dev::Deps::CacheGc)
-    gc.expects(:gc).with(
-      keep: Dev::Deps::CacheGc::DEFAULT_KEEP,
-      image_ref: "myregistry/myapp-linux",
-      live_tag: "myregistry/myapp-linux:content-abc123",
-      tool_caches: false,
-    ).once
-    command = build_command(gc)
-    context = build_context(build_container: config)
-    Dev::BuildContainer.stubs(:image_with_tag)
-      .with(config, project_root: context.project!.root)
-      .returns("myregistry/myapp-linux:content-abc123")
-
-    When "running cache gc"
-    command.call(args: no_args, context: context)
-
-    Then "the expectation on the GC holds"
-    true
-  end
-
   test "the default factory builds the real GC over the project lockfile" do
     Given "a command with its default collaborators"
     # The real CacheGc#gc shells out to docker, so the test intercepts the
@@ -120,14 +96,10 @@ class Dev::Builtins::CacheGcCommandTest < Minitest::Test
     Dev::Builtins::CacheGcCommand.new(cache_gc_factory: ->(_lockfile) { gc })
   end
 
-  def build_context(build_container: nil)
+  def build_context
     Dev::ExecutionContext.new(
       ui: typed_mock(Dev::Cli::Ui),
-      project: Dev::ProjectContext.new(
-        name: "TestProject",
-        root: Pathname.new("/tmp/cache-test"),
-        build_container: build_container,
-      ),
+      project: Dev::ProjectContext.new(name: "TestProject", root: Pathname.new("/tmp/cache-test")),
     )
   end
 end

@@ -7,7 +7,6 @@ require "dev/builtins/container_down_command"
 require "dev/builtins/container_reset_command"
 require "dev/builtins/container_tag_command"
 require "dev/builtins/container_status_command"
-require "dev/build_container_config"
 require "dev/container_dev_provisioner"
 require "dev/deps/dependency"
 require "dev/deps/lockfile"
@@ -17,16 +16,27 @@ require "dev/host_rule"
 require "dev/container_user_aligner"
 require "dev/engine_provisioner"
 require "support/fake_container_engine"
+require "fileutils"
 require "pathname"
 require "stringio"
+require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Builtins::ContainerCommandsTest < Minitest::Test
   include SorbetHelper
 
   ROOT = Pathname.new("/tmp/container-commands-test")
-  TAG = "myregistry/myapp-linux:content-abc123"
-  CURRENT = "dev-myapp-linux-abc-content-abc123"
+  TAG = "ghcr.io/d3mlabs/myapp-linux:deadbeef"
+  CURRENT = "dev-myapp-linux-abc-deadbeef"
+
+  def setup
+    @roots = []
+  end
+
+  def teardown
+    @roots.each { |root| FileUtils.rm_rf(root) }
+    super
+  end
 
   # --- traits -----------------------------------------------------------------
 
@@ -52,7 +62,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
   test "#{klass} is the #{port} port dev up / dev down compose; its CLI verb is the adapter over it" do
     Given "the builtin"
     command = klass.new(container_client: client, out: StringIO.new)
-    context = project(config(persist: true))
+    context = pinned_project(persist: true)
     command.expects(verb).with(project: context.project).once
 
     When "invoked as a CLI verb"
@@ -70,49 +80,48 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
   # --- up ---------------------------------------------------------------------
 
   test "container up brings the engine up from the hint, resolves the image, and starts the service when persisted" do
-    Given "a persisted config and an engine hint, with every boundary stubbed"
-    config = config(persist: true, volumes: ["~/.dev/engines/ue:/ue"])
+    Given "a persisted pin with a volume and an engine hint, with every boundary stubbed"
     engine = Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 24)
+    context = pinned_project(persist: true, volumes: ["~/.dev/engines/ue:/ue"], engine: engine)
+    root = context.project!.root
     order = sequence("engine, image, service")
     provisioner = typed_mock(Dev::EngineProvisioner)
     provisioner.expects(:provision!).with(resources: engine).once.in_sequence(order)
     client = client()
-    client.expects(:ensure_image!).with do |cfg, **kwargs|
-      cfg == config && kwargs[:project_root] == ROOT && kwargs[:push] == false && kwargs[:publish] == false
-    end.once.in_sequence(order).returns(TAG)
-    client.expects(:ensure_service!).with(TAG, project_root: ROOT, volumes: ["~/.dev/engines/ue:/ue"])
-      .once.in_sequence(order).returns("dev-myapp-linux-abc-content-abc123")
+    client.expects(:ensure_environment_image!)
+      .with { |image, publish:, resources:| image.name == "myapp-linux" && !publish && resources == engine }
+      .once.in_sequence(order).returns(TAG)
+    client.expects(:ensure_service!).with(TAG, project_root: root, volumes: ["~/.dev/engines/ue:/ue"])
+      .once.in_sequence(order).returns(CURRENT)
     user_aligner = typed_mock(Dev::ContainerUserAligner)
-    user_aligner.expects(:align!).with("dev-myapp-linux-abc-content-abc123").once.in_sequence(order).returns(:aligned)
+    user_aligner.expects(:align!).with(CURRENT).once.in_sequence(order).returns(:aligned)
     dev_provisioner = typed_mock(Dev::ContainerDevProvisioner)
     dev_provisioner.stubs(:host_version).returns("0.2.98")
-    dev_provisioner.expects(:provision!).with("dev-myapp-linux-abc-content-abc123").once.in_sequence(order)
-      .returns(:installed)
+    dev_provisioner.expects(:provision!).with(CURRENT).once.in_sequence(order).returns(:installed)
     deps_installer = typed_mock(Dev::ContainerDepsInstaller)
-    deps_installer.expects(:install!).with("dev-myapp-linux-abc-content-abc123", env: {}).once.in_sequence(order)
+    deps_installer.expects(:install!).with(CURRENT, env: {}).once.in_sequence(order)
     out = StringIO.new
 
     When "bringing the container up"
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: user_aligner,
       dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out,
-    ).call(args: no_args, context: project(config, engine: engine))
+    ).call(args: no_args, context: context)
 
     Then "every step is reported: the container's dev, then the deps it installs — an already-aligned user says nothing"
     out.string == "dev: image ready: #{TAG}\n" \
-      "dev: build container up: dev-myapp-linux-abc-content-abc123\n" \
+      "dev: build container up: #{CURRENT}\n" \
       "dev: container dev installed at 0.2.98\n" \
       "dev: container deps installed\n"
   end
 
-  test "container up with an image pin resolves through ensure_environment_image!, the engine hint along" do
-    Given "a checkout whose lock pins its image and whose dev.yml has no container block"
+  test "container up resolves the pin through ensure_environment_image!, the engine hint along" do
+    Given "a checkout whose lock pins its image"
     root = project_root_pinning("linux/amd64")
     engine = Dev::EngineResources::Hint.new(cpus: 8)
     provisioner = typed_mock(Dev::EngineProvisioner)
     provisioner.expects(:provision!).with(resources: engine).once
     client = client()
-    client.expects(:ensure_image!).never
     client.expects(:ensure_environment_image!).once
       .with { |image, publish:, resources:| image.name == "myapp-linux" && !publish && resources.cpus == 8 }
       .returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
@@ -120,8 +129,8 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     When "bringing the container up on a host that is not the environment"
     Dev::Builtins::ContainerUpCommand.new(
-      container_client: client, engine_provisioner: provisioner, out: out, host_rule: rule("darwin-arm64"),
-    ).call(args: no_args, context: project(nil, root: root, engine: engine))
+      container_client: client, engine_provisioner: provisioner, out: out, host_rule: rule,
+    ).call(args: no_args, context: project(root: root, engine: engine))
 
     Then
     out.string == "dev: image ready: ghcr.io/d3mlabs/myapp-linux:deadbeef\n"
@@ -159,8 +168,8 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     When
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: aligned_user,
-      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out, host_rule: rule("darwin-arm64"),
-    ).call(args: no_args, context: project(nil, root: root, engine: engine))
+      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out, host_rule: rule,
+    ).call(args: no_args, context: project(root: root, engine: engine))
 
     Then "one service — the persisted image's; the plain one stops at its image"
     out.string == "dev: image ready: ghcr.io/d3mlabs/snappy-linux:aaaa\n" \
@@ -174,7 +183,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
   end
 
   test "the host rule is asked per image: a host provisioned from one image skips that one and brings the other up" do
-    Given "two linux/amd64 images, on a linux-x86_64 host whose marker is one of them"
+    Given "two linux/amd64 images, on a host whose marker is one of them"
     root = project_root_pinning("linux/amd64", images: { "snappy-linux" => {}, "snappy-server" => {} })
     server = pinned(root).find { |image| image.name == "snappy-server" }
     provisioner = typed_mock(Dev::EngineProvisioner)
@@ -186,8 +195,8 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     When
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, out: out,
-      host_rule: rule("linux-x86_64", marker: marker_for(root, server)),
-    ).call(args: no_args, context: project(nil, root: root))
+      host_rule: rule(marker: marker_for(root, server)),
+    ).call(args: no_args, context: project(root: root))
 
     Then "the linux image is brought up though the host is its platform too; the server image is the host's own"
     out.string == "dev: image ready: ref-linux\n" \
@@ -214,8 +223,8 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     When
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, out: out,
-      host_rule: rule("linux-x86_64", marker: marker_for(root, older)),
-    ).call(args: no_args, context: project(nil, root: root))
+      host_rule: rule(marker: marker_for(root, older)),
+    ).call(args: no_args, context: project(root: root))
 
     Then
     out.string == "dev: this host was provisioned from snappy-linux@#{older.short_digest} but the lock's snappy-linux is " \
@@ -227,12 +236,12 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
   end
 
   test "container up reports a user alignment that did something: #{result}" do
-    Given "a persisted config whose container's user could not write the data root"
-    config = config(persist: true)
+    Given "a persisted pin whose container's user could not write the data root"
+    context = pinned_project(persist: true)
     provisioner = typed_mock(Dev::EngineProvisioner)
     provisioner.stubs(:provision!)
     client = client()
-    client.stubs(:ensure_image!).returns(TAG)
+    client.stubs(:ensure_environment_image!).returns(TAG)
     client.stubs(:ensure_service!).returns(CURRENT)
     user_aligner = typed_mock(Dev::ContainerUserAligner)
     user_aligner.stubs(:align!).returns(result)
@@ -247,7 +256,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: user_aligner,
       dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out,
-    ).call(args: no_args, context: project(config))
+    ).call(args: no_args, context: context)
 
     Then "the alignment is reported before the container's dev"
     out.string.include?("dev: build container up: #{CURRENT}\n#{line}\ndev: container dev current at 0.2.98\n")
@@ -260,17 +269,14 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
   end
 
   test "container up injects the resolvable run_env into the in-container install" do
-    Given "a persisted config declaring run_env, one entry resolvable"
-    config = Dev::BuildContainerConfig.new(
-      image: "myapp-linux", registry: "myregistry", persist: true,
-      run_env: { "WWISE_TOKEN" => "wwise/token", "MISSING" => "x/y" },
-    )
+    Given "a persisted pin declaring run_env, one entry resolvable"
+    context = pinned_project(persist: true, run_env: { "WWISE_TOKEN" => "wwise/token", "MISSING" => "x/y" })
     Dev::Credentials.stubs(:load).returns(nil)
     Dev::Credentials.stubs(:load).with("wwise", "token").returns("t0k")
     provisioner = typed_mock(Dev::EngineProvisioner)
     provisioner.stubs(:provision!)
     client = client()
-    client.stubs(:ensure_image!).returns(TAG)
+    client.stubs(:ensure_environment_image!).returns(TAG)
     client.stubs(:ensure_service!).returns(CURRENT)
     dev_provisioner = typed_mock(Dev::ContainerDevProvisioner)
     dev_provisioner.stubs(:host_version).returns("0.2.98")
@@ -281,7 +287,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: aligned_user,
       dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: StringIO.new,
-    ).call(args: no_args, context: project(config))
+    ).call(args: no_args, context: context)
 
     Then "the install sees the resolved entry only"
     1 * deps_installer.install!(CURRENT, env: { "WWISE_TOKEN" => "t0k" })
@@ -290,15 +296,16 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
   # --- cold_up ----------------------------------------------------------------
 
   test "cold_up resolves the image, then provisions dev and installs deps in a one-shot container — never the persistent one" do
-    Given "a persisted config whose boundaries record what they see"
-    config = config(persist: true, volumes: ["~/.dev/engines/ue:/ue"])
+    Given "a persisted pin whose boundaries record what they see"
+    context = pinned_project(persist: true, volumes: ["~/.dev/engines/ue:/ue"])
+    root = context.project!.root
     order = sequence("engine, image, one-shot: dev then deps")
     provisioner = typed_mock(Dev::EngineProvisioner)
     provisioner.expects(:provision!).with(resources: nil).once.in_sequence(order)
     client = client()
-    client.expects(:ensure_image!).once.in_sequence(order).returns(TAG)
+    client.expects(:ensure_environment_image!).once.in_sequence(order).returns(TAG)
     client.expects(:ensure_service!).never
-    client.expects(:with_one_shot_container).with(TAG, project_root: ROOT, volumes: ["~/.dev/engines/ue:/ue"])
+    client.expects(:with_one_shot_container).with(TAG, project_root: root, volumes: ["~/.dev/engines/ue:/ue"])
       .once.in_sequence(order).yields("dev-myapp-cold-1234")
     user_aligner = typed_mock(Dev::ContainerUserAligner)
     user_aligner.expects(:align!).with("dev-myapp-cold-1234").once.in_sequence(order).returns(:aligned)
@@ -313,7 +320,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: user_aligner,
       dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out,
-    ).cold_up(project: project(config).project)
+    ).cold_up(project: context.project!)
 
     Then "the steps are reported against the one-shot container"
     out.string == "dev: image ready: #{TAG}\n" \
@@ -323,13 +330,13 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
   end
 
   test "cold_up runs the one-shot install for a non-persisted project too: the topology is the same" do
-    Given "a non-persisted config"
-    config = config(persist: false)
+    Given "a non-persisted pin"
+    context = pinned_project(persist: false)
     provisioner = typed_mock(Dev::EngineProvisioner)
     provisioner.stubs(:provision!)
     client = client()
-    client.stubs(:ensure_image!).returns(TAG)
-    client.expects(:with_one_shot_container).with(TAG, project_root: ROOT, volumes: []).once.yields("dev-myapp-cold-1")
+    client.stubs(:ensure_environment_image!).returns(TAG)
+    client.expects(:with_one_shot_container).with(TAG, project_root: context.project!.root, volumes: []).once.yields("dev-myapp-cold-1")
     dev_provisioner = typed_mock(Dev::ContainerDevProvisioner)
     dev_provisioner.stubs(:host_version).returns("0.2.98")
     dev_provisioner.stubs(:provision!).returns(:installed)
@@ -339,19 +346,19 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: aligned_user,
       dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: StringIO.new,
-    ).cold_up(project: project(config).project)
+    ).cold_up(project: context.project!)
 
     Then "the install ran inside the one-shot container"
     1 * deps_installer.install!("dev-myapp-cold-1", env: {})
   end
 
   test "container up reports the container's dev as current when the provisioner found nothing to do" do
-    Given "a persisted config whose container already carries the host's dev"
-    config = config(persist: true)
+    Given "a persisted pin whose container already carries the host's dev"
+    context = pinned_project(persist: true)
     provisioner = typed_mock(Dev::EngineProvisioner)
     provisioner.stubs(:provision!)
     client = client()
-    client.stubs(:ensure_image!).returns(TAG)
+    client.stubs(:ensure_environment_image!).returns(TAG)
     client.stubs(:ensure_service!).returns(CURRENT)
     dev_provisioner = typed_mock(Dev::ContainerDevProvisioner)
     dev_provisioner.stubs(:host_version).returns("0.2.98")
@@ -362,25 +369,25 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: aligned_user,
       dev_provisioner: dev_provisioner, out: out,
-    ).call(args: no_args, context: project(config))
+    ).call(args: no_args, context: context)
 
     Then
     out.string.include?("dev: container dev current at 0.2.98\n")
   end
 
   test "container up on a non-persisted project stops at the image" do
-    Given "a config without persist"
-    config = config(persist: false)
+    Given "a pin without persist"
+    context = pinned_project(persist: false)
     provisioner = typed_mock(Dev::EngineProvisioner)
     provisioner.stubs(:provision!)
     client = client()
-    client.stubs(:ensure_image!).returns(TAG)
+    client.stubs(:ensure_environment_image!).returns(TAG)
     client.expects(:ensure_service!).never
     out = StringIO.new
 
     When "bringing the container up"
     Dev::Builtins::ContainerUpCommand.new(container_client: client, engine_provisioner: provisioner, out: out)
-      .call(args: no_args, context: project(config))
+      .call(args: no_args, context: context)
 
     Then
     out.string == "dev: image ready: #{TAG}\n"
@@ -388,12 +395,12 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
   test "container up publishes to the registry only when DEV_PUBLISH_IMAGE=1" do
     Given "the env flag #{flag.inspect}"
-    config = config(persist: false)
+    context = pinned_project(persist: false)
     provisioner = typed_mock(Dev::EngineProvisioner)
     provisioner.stubs(:provision!)
     client = client()
     captured = {}
-    client.stubs(:ensure_image!).with do |_cfg, **kwargs|
+    client.stubs(:ensure_environment_image!).with do |_image, **kwargs|
       captured = kwargs
       true
     end.returns(TAG)
@@ -402,7 +409,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     When "bringing the container up"
     Dev::Builtins::ContainerUpCommand.new(container_client: client, engine_provisioner: provisioner, out: StringIO.new)
-      .call(args: no_args, context: project(config))
+      .call(args: no_args, context: context)
 
     Then
     captured.fetch(:publish) == publish
@@ -417,39 +424,17 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     "1"   | true
   end
 
-  test "on a host that is the environment, container up touches nothing: no engine, no image, no container" do
-    Given "a persisted config in a project whose Dockerfile declares the host's own platform"
-    config = config(persist: true)
-    root = project_root_declaring("linux/amd64")
-    provisioner = typed_mock(Dev::EngineProvisioner)
-    provisioner.expects(:provision!).never
-    client = client()
-    client.expects(:ensure_image!).never
-    client.expects(:ensure_service!).never
-    out = StringIO.new
-
-    When "bringing the container up on a linux-x86_64 host"
-    Dev::Builtins::ContainerUpCommand.new(
-      container_client: client, engine_provisioner: provisioner, out: out, host_rule: rule("linux-x86_64"),
-    ).call(args: no_args, context: project(config, root: root))
-
-    Then "it says why once and stops"
-    out.string == "dev: this host is the build environment (linux-x86_64) — myapp-linux's commands run here, no container\n"
-
-    Cleanup
-    FileUtils.rm_rf(root)
-  end
-
-  test "on a host that is the environment, DEV_PUBLISH_IMAGE=1 still publishes the image — and still starts no container" do
-    Given "the publisher designation, on a linux-x86_64 host of a linux/amd64 environment"
-    config = config(persist: true)
-    root = project_root_declaring("linux/amd64")
+  test "on a host provisioned from the image, DEV_PUBLISH_IMAGE=1 still publishes the image — and still starts no container" do
+    Given "the publisher designation, on a host whose marker is the lock's image"
+    context = pinned_project(persist: true)
+    root = context.project!.root
+    image = pinned(root).first
     provisioner = typed_mock(Dev::EngineProvisioner)
     provisioner.expects(:provision!).with(resources: nil).once
     client = client()
-    client.expects(:ensure_image!).with do |cfg, **kwargs|
-      cfg == config && kwargs[:project_root] == root && kwargs[:publish] == true
-    end.once.returns(TAG)
+    client.expects(:ensure_environment_image!)
+      .with { |resolved, publish:, **| resolved.name == "myapp-linux" && publish }
+      .once.returns(TAG)
     client.expects(:ensure_service!).never
     out = StringIO.new
     old = ENV.fetch("DEV_PUBLISH_IMAGE", nil)
@@ -457,84 +442,35 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     When "bringing the container up"
     Dev::Builtins::ContainerUpCommand.new(
-      container_client: client, engine_provisioner: provisioner, out: out, host_rule: rule("linux-x86_64"),
-    ).call(args: no_args, context: project(config, root: root))
+      container_client: client, engine_provisioner: provisioner, out: out, host_rule: rule(marker: marker_for(root, image)),
+    ).call(args: no_args, context: context)
 
     Then "the image is resolved for the registry's sake, then the rule applies"
     out.string == "dev: image ready: #{TAG}\n" \
-      "dev: this host is the build environment (linux-x86_64) — myapp-linux's commands run here, no container\n"
+      "dev: this host was provisioned from myapp-linux@#{image.short_digest} — myapp-linux's commands run here, no container\n"
 
     Cleanup
     old.nil? ? ENV.delete("DEV_PUBLISH_IMAGE") : ENV["DEV_PUBLISH_IMAGE"] = old
-    FileUtils.rm_rf(root)
   end
 
-  test "on a host of another platform, container up is unchanged by the declaration" do
-    Given "a linux/amd64 environment on a darwin-arm64 host"
-    config = config(persist: false)
-    root = project_root_declaring("linux/amd64")
-    provisioner = typed_mock(Dev::EngineProvisioner)
-    provisioner.stubs(:provision!)
+  test "cold_up on a host provisioned from the image proves nothing a container could: it says so and stops" do
+    Given "a host whose marker is the lock's image"
+    context = pinned_project(persist: true)
+    root = context.project!.root
+    image = pinned(root).first
     client = client()
-    client.expects(:ensure_image!).once.returns(TAG)
-    out = StringIO.new
-
-    When "bringing the container up"
-    Dev::Builtins::ContainerUpCommand.new(
-      container_client: client, engine_provisioner: provisioner, out: out, host_rule: rule("darwin-arm64"),
-    ).call(args: no_args, context: project(config, root: root))
-
-    Then
-    out.string == "dev: image ready: #{TAG}\n"
-
-    Cleanup
-    FileUtils.rm_rf(root)
-  end
-
-  test "cold_up on a host that is the environment proves nothing a container could: it says so and stops" do
-    Given "a linux/amd64 environment on a linux-x86_64 host"
-    config = config(persist: true)
-    root = project_root_declaring("linux/amd64")
-    client = client()
-    client.expects(:ensure_image!).never
+    client.expects(:ensure_environment_image!).never
     client.expects(:with_one_shot_container).never
     out = StringIO.new
 
     When "running the cold bring-up"
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: typed_mock(Dev::EngineProvisioner), out: out,
-      host_rule: rule("linux-x86_64"),
-    ).cold_up(project: project(config, root: root).project!)
+      host_rule: rule(marker: marker_for(root, image)),
+    ).cold_up(project: context.project!)
 
     Then
-    out.string == "dev: this host is the build environment (linux-x86_64) — myapp-linux's commands run here, no container\n"
-
-    Cleanup
-    FileUtils.rm_rf(root)
-  end
-
-  test "container up's providers resolve the declared build args and secrets through the credentials store, lazily" do
-    Given "a config declaring build args and secrets, with both boundaries stubbed"
-    config = config(persist: false, build_args: { "GH_USER" => "github/user" },
-      build_secrets: { "GH_TOKEN" => "github/token" })
-    Dev::Credentials.stubs(:resolve_build_args).with({ "GH_USER" => "github/user" }).returns({ "GH_USER" => "jp" })
-    Dev::Credentials.stubs(:resolve_build_args).with({ "GH_TOKEN" => "github/token" }).returns({ "GH_TOKEN" => "s3" })
-    provisioner = typed_mock(Dev::EngineProvisioner)
-    provisioner.stubs(:provision!)
-    client = client()
-    captured = {}
-    client.stubs(:ensure_image!).with do |_cfg, **kwargs|
-      captured = kwargs
-      true
-    end.returns(TAG)
-
-    When "bringing the container up, then invoking the providers ensure_image! received"
-    Dev::Builtins::ContainerUpCommand.new(container_client: client, engine_provisioner: provisioner, out: StringIO.new)
-      .call(args: no_args, context: project(config))
-
-    Then "each provider resolves its declared credentials"
-    captured.fetch(:build_args_provider).call == { "GH_USER" => "jp" }
-    captured.fetch(:secrets_provider).call == { "GH_TOKEN" => "s3" }
+    out.string == "dev: this host was provisioned from myapp-linux@#{image.short_digest} — myapp-linux's commands run here, no container\n"
   end
 
   # --- down / reset -----------------------------------------------------------
@@ -547,7 +483,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     When "bringing the container down"
     Dev::Builtins::ContainerDownCommand.new(container_client: client, out: out)
-      .call(args: no_args, context: project(config(persist: true)))
+      .call(args: no_args, context: project)
 
     Then
     out.string == expected
@@ -567,7 +503,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     When "resetting"
     Dev::Builtins::ContainerResetCommand.new(container_client: client, out: out)
-      .call(args: no_args, context: project(config(persist: true)))
+      .call(args: no_args, context: project)
 
     Then
     out.string == expected
@@ -581,21 +517,6 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
   # --- tag --------------------------------------------------------------------
 
-  test "container tag prints the image's name and content-addressed tag, tab-separated, touching no engine" do
-    Given "a config and a client that must not be used"
-    config = config(persist: false)
-    client = client()
-    client.expects(:ensure_image!).never
-    Dev::BuildContainer.stubs(:image_with_tag).with(config, project_root: ROOT).returns(TAG)
-    out = StringIO.new
-
-    When "printing the tag"
-    Dev::Builtins::ContainerTagCommand.new(container_client: client, out: out).call(args: no_args, context: project(config))
-
-    Then "a workflow can capture it"
-    out.string == "myapp-linux\t#{TAG}\n"
-  end
-
   test "container tag prints one line per pinned image: its name and the digest tag the lock and the registry share" do
     Given
     root = project_root_pinning("linux/amd64", images: { "snappy-linux" => {}, "snappy-server" => {} })
@@ -604,7 +525,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     When
     Dev::Builtins::ContainerTagCommand.new(container_client: client, out: out)
-      .call(args: no_args, context: project(nil, root: root))
+      .call(args: no_args, context: project(root: root))
 
     Then
     out.string == images.map { |image| "#{image.name}\t#{image.ref}\n" }.join
@@ -630,7 +551,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     When
     Dev::Builtins::ContainerStatusCommand.new(container_client: client, out: out)
-      .call(args: no_args, context: project(nil, root: root))
+      .call(args: no_args, context: project(root: root))
 
     Then
     out.string.lines == [
@@ -663,7 +584,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     out = StringIO.new
 
     When
-    Dev::Builtins::ContainerStatusCommand.new(container_client: client, out: out).call(args: no_args, context: project(nil, root: root))
+    Dev::Builtins::ContainerStatusCommand.new(container_client: client, out: out).call(args: no_args, context: project(root: root))
 
     Then
     out.string == "image: snappy-linux — #{linux.ref} — local, in registry\n" \
@@ -685,7 +606,8 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     status = status(local: local, registry: registry, containers: [])
 
     Expect
-    status_output(status, persist: true).lines.first == "image: myapp-linux — #{TAG} — #{rendered}\n"
+    status_output(status, persist: true).lines.first.end_with?(" — #{rendered}\n")
+    status_output(status, persist: true).lines.first.start_with?("image: myapp-linux — ghcr.io/d3mlabs/myapp-linux:")
 
     Where
     description                      | local | registry | rendered
@@ -742,30 +664,23 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     aligner
   end
 
-  def config(persist:, volumes: [], build_args: {}, build_secrets: {})
-    Dev::BuildContainerConfig.new(
-      image: "myapp-linux", registry: "myregistry", persist: persist, volumes: volumes,
-      build_args: build_args, build_secrets: build_secrets,
-    )
-  end
-
-  # A project context; a legacy block comes with its key recorded, as the
-  # loader records it.
-  def project(build_container, root: ROOT, engine: nil)
+  # A project context over +root+ (a checkout, or a path nothing reads).
+  def project(root: ROOT, engine: nil)
     Dev::ExecutionContext.new(
       ui: typed_mock(Dev::Cli::Ui),
-      project: Dev::ProjectContext.new(
-        name: "TestProject", root: root, engine: engine, build_container: build_container,
-        legacy_keys: build_container ? ["build.container"] : [],
-      ),
+      project: Dev::ProjectContext.new(name: "TestProject", root: root, engine: engine),
     )
   end
 
-  # A real checkout root whose Dockerfile declares the environment's platform.
-  def project_root_declaring(docker_platform)
-    root = Pathname(Dir.mktmpdir("container-commands"))
-    (root / "Dockerfile").write("FROM --platform=#{docker_platform} ubuntu:22.04\n")
-    root
+  # A project over a real checkout whose lock pins one `myapp-linux` in the
+  # given shape; the checkout is removed in teardown.
+  def pinned_project(persist:, volumes: [], run_env: {}, engine: nil)
+    metadata = { "persist" => persist }
+    metadata["volumes"] = volumes unless volumes.empty?
+    metadata["run_env"] = run_env unless run_env.empty?
+    root = project_root_pinning("linux/amd64", images: { "myapp-linux" => metadata })
+    @roots << root
+    project(root: root, engine: engine)
   end
 
   # A real checkout root whose lock pins its images (dev#277), each on that
@@ -786,10 +701,10 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     root
   end
 
-  # The host rule over a marker (absent by default) and a platform.
-  def rule(host_platform, marker: nil)
+  # The host rule over a marker (absent by default).
+  def rule(marker: nil)
     path = marker || "/nonexistent/dev-environment-marker"
-    Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: path), host_platform: host_platform)
+    Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: path))
   end
 
   # Write under +root+ the marker a host provisioned from +image+ carries.
@@ -811,14 +726,18 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     )
   end
 
+  # `dev container status` over a pinned `myapp-linux` whose client answers
+  # +status+; the image's own lines (floor, platform) dropped, so callers
+  # see the image line then the container lines.
   def status_output(status, persist:)
-    config = config(persist: persist)
+    context = pinned_project(persist: persist)
+    image = pinned(context.project!.root).first
     client = client()
-    Dev::BuildContainer.stubs(:image_with_tag).with(config, project_root: ROOT).returns(TAG)
-    client.stubs(:service_status).with(TAG, ROOT, registry: nil).returns(status)
+    client.stubs(:service_status).with(image.ref, context.project!.root, registry: "ghcr.io")
+      .returns(status.with(image_tag: image.ref))
     client.stubs(:prefix_volume).returns("dev-linuxbrew-jp")
     out = StringIO.new
-    Dev::Builtins::ContainerStatusCommand.new(container_client: client, out: out).call(args: no_args, context: project(config))
-    out.string
+    Dev::Builtins::ContainerStatusCommand.new(container_client: client, out: out).call(args: no_args, context: context)
+    out.string.lines.reject { |line| line.start_with?("floor: ", "platform: ") }.join
   end
 end

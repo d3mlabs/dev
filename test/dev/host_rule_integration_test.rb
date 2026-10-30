@@ -170,7 +170,7 @@ class HostRuleIntegrationTest < Minitest::Test
     ui = typed_mock(Dev::Cli::Ui)
     ui.stubs(:print_header)
     host_rule = Dev::HostRule.new(
-      host_environment: Dev::HostEnvironment.new(path: @marker.to_s), host_platform: "linux-x86_64",
+      host_environment: Dev::HostEnvironment.new(path: @marker.to_s),
     )
     Dev::Runner.new(dev_yaml_path: @root / "dev.yml", ui: ui, out: StringIO.new, host_rule: host_rule,
       github_token: Dev::ContainerGithubToken.new(source: -> { nil }))

@@ -4,7 +4,6 @@
 require "test_helper"
 require "dev/builtins/container_down_command"
 require "dev/builtins/down_command"
-require "dev/build_container_config"
 require "dev/container_engine"
 require "dev/engine_provisioner"
 require "pathname"
@@ -109,10 +108,7 @@ class Dev::Builtins::DownCommandTest < Minitest::Test
   def project
     Dev::ExecutionContext.new(
       ui: typed_mock(Dev::Cli::Ui),
-      project: Dev::ProjectContext.new(
-        name: "TestProject", root: Pathname.new("/tmp/down-test"),
-        build_container: Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry", persist: true),
-      ),
+      project: Dev::ProjectContext.new(name: "TestProject", root: Pathname.new("/tmp/down-test")),
     )
   end
 end

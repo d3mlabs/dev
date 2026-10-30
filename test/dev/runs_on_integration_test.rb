@@ -131,9 +131,10 @@ class RunsOnIntegrationTest < Minitest::Test
     @stderr.string.include?("snappy-linux, snappy-server")
   end
 
-  test "once the lock pins an image, container: and every build.container.* key are refused with their migration" do
-    Given "a migrated lock under a dev.yml still on the old shape"
-    lock(image_pin("snappy-linux"))
+  test "whatever the lock pins, container: and every build.container.* key are refused at load with their migration" do
+    Given "a lock pinning no image under a dev.yml still on the old shape — the Dockerfile path it was on is gone"
+    lock(Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: "3.31", hash: "SHA256=0", metadata: {}))
+    (@root / "Dockerfile").write("FROM --platform=linux/amd64 ubuntu:24.04\n")
     runner = runner(
       { "build" => { "run" => "./bin/build.sh" }, "editor" => { "run" => "./bin/editor.sh", "container" => false } },
       build: { "container" => { "image" => "snappy-linux", "registry" => "jpduchesne89", "persist" => true,
@@ -146,37 +147,13 @@ class RunsOnIntegrationTest < Minitest::Test
     runner.run(["build"])
 
     Then "one message: each retired key and where it goes"
+    @stderr.string.include?("declare an `image` block in dependencies.rb")
     @stderr.string.include?("build.container.image → delete it")
     @stderr.string.include?("build.container.registry → delete it")
     @stderr.string.include?("build.container.persist → `persist true` in the `image` block")
     @stderr.string.include?("build.container.volumes → `volume \"…\"` lines in the `image` block")
     @stderr.string.include?("build.container.resources → `engine:` at the top level of dev.yml")
     @stderr.string.include?("commands.editor.container: false → `runs_on: host`")
-  end
-
-  test "a legacy project — a Dockerfile, build.container, container: false — is untouched" do
-    Given "no image pin; the deprecated shape, as the consumers run it today"
-    lock(Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: "3.31", hash: "SHA256=0", metadata: {}))
-    (@root / "Dockerfile").write("FROM --platform=linux/amd64 ubuntu:24.04\n")
-    runner = runner(
-      { "build" => { "run" => "./bin/build.sh" }, "editor" => { "run" => "./bin/editor.sh", "container" => false } },
-      build: { "container" => { "image" => "snappy-linux", "registry" => "jpduchesne89" } },
-    )
-    tag = Dev::BuildContainer.image_with_tag(
-      Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89"), project_root: @root,
-    )
-    execs = record_execs
-
-    When
-    exec!(runner, ["build"])
-    exec!(runner, ["editor"])
-
-    Then "build in the Dockerfile image's container, editor on the host"
-    execs.size == 2
-    execs[0].first(3) == ["docker", "run", "--rm"]
-    execs[0].last(6) == ["-w", "/project", tag, "sh", "-c", "./bin/build.sh"]
-    execs[1].first(5) == ["shadowenv", "exec", "--", "sh", "-c"]
-    execs[1].last.include?("./bin/editor.sh")
   end
 
   private

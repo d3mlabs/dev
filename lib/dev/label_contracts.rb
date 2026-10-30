@@ -43,7 +43,7 @@ module Dev
 
       # Converge the pre-enrollment requirements.
       #
-      # @param container [Boolean] whether the served repo declares build.container
+      # @param container [Boolean] whether the served repo's lock pins an image
       # @param cpus [Integer, nil] engine VM sizing hint
       # @param memory_gib [Integer, nil] engine VM sizing hint
       # @param disk_gib [Integer, nil] engine VM disk hint (grow-only)

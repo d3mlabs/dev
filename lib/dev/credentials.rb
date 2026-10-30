@@ -67,7 +67,7 @@ module Dev
       end
     end
 
-    # Resolve runtime env vars declared in dev.yml (build.container.run_env)
+    # Resolve runtime env vars an `image` block declares (`run_env`)
     # for injection into the container.
     #
     # Best-effort and non-interactive by design: an entry is injected only

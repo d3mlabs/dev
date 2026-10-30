@@ -196,12 +196,6 @@ module Dev
     sig(:final) { returns(T::Boolean) }
     attr_reader :repl
 
-    # Deprecated (d3mlabs/dev#311): the `container:` boolean, read only on
-    # the legacy path (a project with no `image` pin). `runs_on` replaces
-    # it.
-    sig(:final) { returns(T::Boolean) }
-    attr_reader :container
-
     # @return [String, nil] the `runs_on:` value as declared — an image
     #   name or HOST; nil when the command leaves the choice to the project
     sig(:final) { returns(T.nilable(String)) }
@@ -215,18 +209,16 @@ module Dev
         run: String,
         desc: String,
         repl: T::Boolean,
-        container: T::Boolean,
         runs_on: T.nilable(String),
         hidden: T::Boolean,
         children: T::Hash[String, Command],
       ).void
     end
-    def initialize(run:, desc: "(no description)", repl: false, container: true, runs_on: nil, hidden: false, children: {})
+    def initialize(run:, desc: "(no description)", repl: false, runs_on: nil, hidden: false, children: {})
       super()
       @run = run
       @desc = desc
       @repl = repl
-      @container = container
       @runs_on = runs_on
       @hidden = hidden
       @children = T.let(children.freeze, T::Hash[String, Command])
@@ -251,7 +243,7 @@ module Dev
     sig(:final) { params(children: T::Hash[String, Command]).returns(ProjectCommand) }
     def with_children(children)
       ProjectCommand.new(
-        run: @run, desc: @desc, repl: @repl, container: @container, runs_on: @runs_on, hidden: @hidden, children:,
+        run: @run, desc: @desc, repl: @repl, runs_on: @runs_on, hidden: @hidden, children:,
       )
     end
 
@@ -260,7 +252,7 @@ module Dev
       return false unless other.is_a?(ProjectCommand)
 
       @run == other.run && @desc == other.desc && @repl == other.repl &&
-        @container == other.container && @runs_on == other.runs_on &&
+        @runs_on == other.runs_on &&
         @hidden == other.hidden? && @children == other.children
     end
 
@@ -271,7 +263,7 @@ module Dev
 
     sig(:final) { returns(Integer) }
     def hash
-      [@run, @desc, @repl, @container, @runs_on, @hidden, @children].hash
+      [@run, @desc, @repl, @runs_on, @hidden, @children].hash
     end
   end
 

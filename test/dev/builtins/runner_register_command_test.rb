@@ -5,6 +5,8 @@ require "test_helper"
 require "dev/builtins/runner_register_command"
 require "dev/confirmer"
 require "dev/deps/dependency"
+require "dev/deps/lockfile"
+require "dev/environment_image"
 require "dev/host_reach"
 require "dev/label_contracts"
 require "dev/runner_discovery"
@@ -381,11 +383,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
   # --- contracts --------------------------------------------------------
 
   test "register hands the contract the container fact and sizing hint" do
-    Given "a container repo with an `engine:` block"
+    Given "a container repo (its lock pins an image) with an `engine:` block"
     harness = build_harness(contracts: 1)
-    container = Dev::BuildContainerConfig.new(image: "img", registry: "reg")
     engine = Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 24)
-    context = build_context(name: "Cellbound3D", build_container: container, engine: engine)
+    context = build_context(name: "Cellbound3D", root: image_checkout, engine: engine)
 
     When "registering"
     harness.command.call(args: no_args, context: context)
@@ -398,12 +399,11 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     Given "a container repo with an `engine:` block and an engine provisioner that records its call"
     harness = build_harness(contracts: 1)
     resources = Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 24)
-    container = Dev::BuildContainerConfig.new(image: "img", registry: "reg")
     harness.engine.expects(:provision!).once.with do |resources:|
       harness.events << [:engine, resources.cpus, resources.memory_gib]
       true
     end
-    context = build_context(name: "Cellbound3D", build_container: container, engine: resources)
+    context = build_context(name: "Cellbound3D", root: image_checkout, engine: resources)
 
     When "registering"
     harness.command.call(args: no_args, context: context)
@@ -424,7 +424,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     true
   end
 
-  test "a project without build.container registers without touching the engine" do
+  test "a project whose lock pins no image registers without touching the engine" do
     Given "a plain repo"
     harness = build_harness
     harness.engine.expects(:provision!).never
@@ -788,16 +788,26 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     runner_user
   end
 
-  def build_context(name:, build_container: nil, engine: nil, root: "/tmp/runner-test", ui: typed_mock(Dev::Cli::Ui))
+  def build_context(name:, engine: nil, root: "/tmp/runner-test", ui: typed_mock(Dev::Cli::Ui))
     Dev::ExecutionContext.new(
       ui: ui,
-      project: Dev::ProjectContext.new(
-        name: name,
-        root: Pathname.new(root),
-        engine: engine,
-        build_container: build_container,
-      ),
+      project: Dev::ProjectContext.new(name: name, root: Pathname.new(root), engine: engine),
     )
+  end
+
+  # A checkout whose lock pins one image: the container fact, as the
+  # commands read it (ProjectImages#containerized?).
+  def image_checkout
+    root = Dir.mktmpdir("runner-image-checkout")
+    pin = Dev::Deps::Dependency.new(
+      name: "snappy-linux", integration: :image, group: :app, version: "ue5.8-3", hash: "SHA256=#{"a" * 64}",
+      metadata: {
+        "from" => "ghcr.io/d3mlabs/unreal-engine-build-base", "platform" => "linux/amd64",
+        "platforms" => ["linux/amd64"], "registry" => "ghcr.io/d3mlabs", "apt" => [],
+      },
+    )
+    Dev::Deps::Lockfile.new(dir: Pathname(root)).lock(Dev::EnvironmentImage.stamp([pin]))
+    root
   end
 
   def projectless_context

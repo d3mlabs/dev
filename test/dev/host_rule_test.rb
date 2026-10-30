@@ -5,8 +5,6 @@ require "test_helper"
 require "dev/host_rule"
 require "dev/host_environment"
 require "dev/environment_image"
-require "dev/dockerfile_image"
-require "dev/build_container_config"
 require "dev/deps/dependency"
 require "pathname"
 require "tmpdir"
@@ -41,7 +39,7 @@ class Dev::HostRuleTest < Minitest::Test
   test "a pinned image's work runs here exactly when this host was provisioned from it: #{what}" do
     Given
     File.write(@marker, marker_text) if marker_text
-    host = rule(host_platform: "linux-x86_64")
+    host = rule
 
     Expect
     host.native?(image) == native
@@ -54,37 +52,12 @@ class Dev::HostRuleTest < Minitest::Test
     "another image"                   | image(name: "snappy-server").marker | false
   end
 
-  test "a legacy Dockerfile image keeps the platform rule, marker or none: #{what}" do
-    Given
-    (@dir / "Dockerfile").write("FROM --platform=linux/amd64 ubuntu:24.04\n")
-    legacy = Dev::DockerfileImage.new(
-      config: Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89"), root: @dir,
-    )
-
-    Expect
-    rule(host_platform: host).native?(legacy) == native
-
-    Where
-    what                   | host           | native
-    "the image's platform" | "linux-x86_64" | true
-    "another platform"     | "darwin-arm64" | false
-  end
-
-  test "why a host is native, for the up report: #{what}" do
+  test "why a host is native, for the up report" do
     Given
     File.write(@marker, image.marker)
-    (@dir / "Dockerfile").write("FROM --platform=linux/amd64 ubuntu:24.04\n")
-    legacy = Dev::DockerfileImage.new(
-      config: Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89"), root: @dir,
-    )
 
     Expect
-    rule(host_platform: "linux-x86_64").why_native(which == :pinned ? image : legacy) == why
-
-    Where
-    what      | which   | why
-    "a pin"   | :pinned | "this host was provisioned from snappy-linux@#{image.digest[0, 12]}"
-    "legacy"  | :legacy | "this host is the build environment (linux-x86_64)"
+    rule.why_native(image) == "this host was provisioned from snappy-linux@#{image.digest[0, 12]}"
   end
 
   test "drift is a marker that names the image under another digest — not an absent marker, not another image" do
@@ -128,20 +101,6 @@ class Dev::HostRuleTest < Minitest::Test
     "no marker at all"  | nil                                 | "no image"
   end
 
-  test "a legacy container has no marker to compare: nothing is asserted" do
-    Given
-    (@dir / "Dockerfile").write("FROM --platform=linux/amd64 ubuntu:24.04\n")
-    legacy = Dev::DockerfileImage.new(
-      config: Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89"), root: @dir,
-    )
-
-    When
-    rule.assert_container_is!(legacy)
-
-    Then
-    true
-  end
-
   test "a container's pins are current when the one the marker names carries the marker's digest: #{what}" do
     Given
     File.write(@marker, marker_text)
@@ -169,7 +128,7 @@ class Dev::HostRuleTest < Minitest::Test
     self.class.image(name: name, apt: apt)
   end
 
-  def rule(host_platform: "darwin-arm64", marker: @marker)
-    Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: marker), host_platform: host_platform)
+  def rule(marker: @marker)
+    Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: marker))
   end
 end

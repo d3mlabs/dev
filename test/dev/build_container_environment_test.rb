@@ -3,7 +3,6 @@
 
 require "test_helper"
 require "dev/build_container"
-require "dev/build_container_config"
 require "dev/engine_resources_check"
 require "dev/environment_image"
 require "support/fake_container_engine"
@@ -137,25 +136,6 @@ class Dev::BuildContainerEnvironmentTest < Minitest::Test
     Then
     raises Dev::EngineResourcesCheck::UndersizedEngineError
     engine.runs.empty?
-  end
-
-  test "the Dockerfile path is deprecated: ensure_image! says so on stderr and names the image block" do
-    Given
-    dir = Dir.mktmpdir("build-container-test-")
-    File.write(File.join(dir, "Dockerfile"), "FROM ubuntu:24.04")
-    config = Dev::BuildContainerConfig.new(image: "snappy-linux", registry: "jpduchesne89")
-    bc = build_container(engine: engine_where(local: true), login: FakeRegistryLogin.new)
-
-    When
-    _out, err = capture_io { bc.ensure_image!(config, project_root: Pathname(dir)) }
-
-    Then
-    err.include?("deprecated")
-    err.include?("image")
-    err.include?("d3mlabs/dev#311")
-
-    Cleanup
-    FileUtils.rm_rf(dir)
   end
 
   private

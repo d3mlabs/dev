@@ -28,8 +28,8 @@ module Dev
     #   dev runner register --org --ai-flow    # org agent host, the full ai-flow set
     #   dev runner register --org --labels ai-build  # org custom pool
     #
-    # register is idempotent and self-healing: when the enclosing checkout
-    # declares `build.container`, it first brings the engine up for that
+    # register is idempotent and self-healing: when the enclosing checkout's
+    # lock pins an image, it first brings the engine up for that
     # repo's resources hint — the same EngineProvisioner step as `dev up`,
     # for the invoking user, on every OS (the runner runs as that user, as
     # GitHub's config.sh/svc.sh do; sizes ratchet across the repos a host
@@ -72,7 +72,7 @@ module Dev
     # dev.yml, Settings, or any inventory file.
     #
     # `--org` needs no project; bare register runs inside the checkout it
-    # enrolls (its `build.container` hint sizes the engine) and derives its
+    # enrolls (its `engine:` hint sizes the engine) and derives its
     # label from that repo's name — the GitHub spelling, lowercased, since a
     # repo-scoped runner is that repo's object and the workflows targeting it
     # live there; dev.yml `name:` is the package identity and may differ.

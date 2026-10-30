@@ -2,7 +2,6 @@
 # frozen_string_literal: true
 
 require "pathname"
-require_relative "build_container_config"
 require_relative "cli/ui"
 require "dev/engine_resources"
 require_relative "project_images"
@@ -22,10 +21,6 @@ module Dev
     const :root, Pathname
     # The engine floor the project declares (ProjectManifest#engine).
     const :engine, T.nilable(Dev::EngineResources::Hint), default: nil
-    # Deprecated (d3mlabs/dev#311): the `build.container` block.
-    const :build_container, T.nilable(Dev::BuildContainerConfig), default: nil
-    # The retired dev.yml keys the project still carries (ProjectManifest#legacy_keys).
-    const :legacy_keys, T::Array[String], default: []
 
     # The project's environment images and where each command runs
     # (ProjectImages). One instance per context: the lock is read once.
@@ -34,7 +29,7 @@ module Dev
     sig { returns(Dev::ProjectImages) }
     def project_images
       @project_images ||= T.let(
-        Dev::ProjectImages.new(root: root, build_container: build_container, legacy_keys: legacy_keys, engine: engine),
+        Dev::ProjectImages.new(root: root, engine: engine),
         T.nilable(Dev::ProjectImages),
       )
     end

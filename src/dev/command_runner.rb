@@ -10,6 +10,7 @@ require "dev/build_container"
 require "dev/container_context"
 require "dev/container_engine"
 require "dev/container_github_token"
+require "dev/environment_image"
 require "dev/host_rule"
 require "dev/project_images"
 require "dev/shadowenv_llvm"
@@ -188,7 +189,7 @@ module Dev
           run_with_status_footer(shell_command, wait:)
         end
       else
-        run_in_container(T.cast(placement, ProjectImages::Image), shell_command, wait:)
+        run_in_container(T.cast(placement, EnvironmentImage), shell_command, wait:)
       end
     end
 
@@ -207,7 +208,7 @@ module Dev
       placement = @images.for(cmd)
       return placement if placement == ProjectImages::HOST
 
-      image = T.cast(placement, ProjectImages::Image)
+      image = T.cast(placement, EnvironmentImage)
       if @inside_container
         @host_rule.assert_container_is!(image)
         return ProjectImages::HOST
@@ -228,11 +229,11 @@ module Dev
       ENV["DEV_PUBLISH_IMAGE"] == "1"
     end
 
-    # @param image [ProjectImages::Image] the command's environment
+    # @param image [EnvironmentImage] the command's environment
     # @param shell_command [String]
     # @param wait [Boolean]
     # @return [void]
-    sig { params(image: ProjectImages::Image, shell_command: String, wait: T::Boolean).void }
+    sig { params(image: EnvironmentImage, shell_command: String, wait: T::Boolean).void }
     def run_in_container(image, shell_command, wait:)
       client = container_client
       image_tag = @images.ensure!(image, client:, publish: publish_image?)
@@ -262,11 +263,11 @@ module Dev
     # the build tool's incremental state across commands), else a one-shot
     # `docker run --rm`. One persistent container per (image, workspace).
     #
-    # @param image         [ProjectImages::Image] the command's environment
+    # @param image         [EnvironmentImage] the command's environment
     # @param image_tag     [String]
     # @param shell_command [String]
     # @return [Dev::BuildContainer::Invocation]
-    sig { params(image: ProjectImages::Image, image_tag: String, shell_command: String).returns(Dev::BuildContainer::Invocation) }
+    sig { params(image: EnvironmentImage, image_tag: String, shell_command: String).returns(Dev::BuildContainer::Invocation) }
     def container_command(image, image_tag, shell_command)
       # Volumes mount as declared. Nothing of the host's data root is
       # resolved into them: the container owns its own (ADR-0008).
@@ -295,9 +296,9 @@ module Dev
     # runtime secret never blocks a command that doesn't need it; then the
     # host's gh token as GH_TOKEN unless the run_env named one.
     #
-    # @param image [ProjectImages::Image]
+    # @param image [EnvironmentImage]
     # @return [Hash{String => String}]
-    sig { params(image: ProjectImages::Image).returns(T::Hash[String, String]) }
+    sig { params(image: EnvironmentImage).returns(T::Hash[String, String]) }
     def resolve_run_env(image)
       @github_token.merge_into(Dev::Credentials.resolve_run_env(image.run_env))
     end

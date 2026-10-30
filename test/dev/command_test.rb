@@ -68,22 +68,6 @@ class CommandTest < Minitest::Test
     cmd.repl == true
   end
 
-  test "container defaults to true" do
-    Given "a ProjectCommand without explicit container"
-    cmd = Dev::ProjectCommand.new(run: "./bin/build.sh")
-
-    Expect
-    cmd.container == true
-  end
-
-  test "container can be set to false" do
-    Given "a ProjectCommand with container: false"
-    cmd = Dev::ProjectCommand.new(run: "./bin/deploy.sh", container: false)
-
-    Expect
-    cmd.container == false
-  end
-
   test "runs_on is nil by default, carried as given, and part of the value" do
     Given
     unplaced = Dev::ProjectCommand.new(run: "./bin/build.sh")
@@ -264,14 +248,14 @@ class CommandTest < Minitest::Test
   test "a ProjectCommand carries its nested commands as children and #with_children rebuilds it" do
     Given "a project command with a child"
     child = Dev::ProjectCommand.new(run: "rspec spec/unit")
-    cmd = Dev::ProjectCommand.new(run: "./bin/test.sh", desc: "All tests", container: false, hidden: true)
+    cmd = Dev::ProjectCommand.new(run: "./bin/test.sh", desc: "All tests", hidden: true)
     headed = cmd.with_children({ "unit" => child })
 
     Expect "children are part of the value; every other attribute carries over"
     cmd.children == {}
     headed.children == { "unit" => child }
     headed == Dev::ProjectCommand.new(
-      run: "./bin/test.sh", desc: "All tests", container: false, hidden: true, children: { "unit" => child },
+      run: "./bin/test.sh", desc: "All tests", hidden: true, children: { "unit" => child },
     )
     headed != cmd
   end
@@ -388,15 +372,6 @@ class CommandTest < Minitest::Test
     Dev::ProjectCommand.new(run: "r1", desc: "d1", repl: false) | nil                                                          | false
   end
 
-  test "#== considers container field" do
-    Given "two commands differing only in container"
-    a = Dev::ProjectCommand.new(run: "r1", desc: "d1", repl: false, container: true)
-    b = Dev::ProjectCommand.new(run: "r1", desc: "d1", repl: false, container: false)
-
-    Expect
-    a != b
-  end
-
   test "#eql? returns #{expected} for #{other}" do
     Given "a reference command"
     cmd = Dev::ProjectCommand.new(run: "r1", desc: "d1", repl: false)
@@ -427,14 +402,5 @@ class CommandTest < Minitest::Test
     Dev::ProjectCommand.new(run: "r1", desc: "d1", repl: false) | Dev::ProjectCommand.new(run: "r1", desc: "d1", repl: true)  | false
     Dev::ProjectCommand.new(run: "r1", desc: "d1", repl: false) | Dev::ProjectCommand.new(run: "r1", desc: "d2", repl: false) | false
     Dev::ProjectCommand.new(run: "r1", desc: "d1", repl: false) | Dev::ProjectCommand.new(run: "r2", desc: "d1", repl: false) | false
-  end
-
-  test "#hash differs when container differs" do
-    Given "two commands differing only in container"
-    a = Dev::ProjectCommand.new(run: "r1", desc: "d1", repl: false, container: true)
-    b = Dev::ProjectCommand.new(run: "r1", desc: "d1", repl: false, container: false)
-
-    Expect
-    a.hash != b.hash
   end
 end

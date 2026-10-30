@@ -5,7 +5,6 @@ require "dev/command"
 require "dev/container_engine"
 require "dev/deps/cache_gc"
 require "dev/deps/lockfile"
-require "dev/build_container"
 
 module Dev
   module Builtins
@@ -56,16 +55,8 @@ module Dev
       def call(args:, context:)
         project = context.project!
         gc = @cache_gc_factory.call(Dev::Deps::Lockfile.new(dir: project.root))
-        # The build container config (when present) lets GC also prune stale
-        # content-tagged images while protecting the live tag.
-        image_ref = T.let(nil, T.nilable(String))
-        live_tag = T.let(nil, T.nilable(String))
-        if (cfg = project.build_container) && cfg.dockerfile_image?
-          image_ref = cfg.image_ref
-          live_tag = BuildContainer.image_with_tag(cfg, project_root: project.root)
-        end
         gc.gc(
-          keep: parse_keep(args), image_ref: image_ref, live_tag: live_tag,
+          keep: parse_keep(args), image_ref: nil, live_tag: nil,
           tool_caches: args.flag?(TOOL_CACHES_FLAG),
         )
       end

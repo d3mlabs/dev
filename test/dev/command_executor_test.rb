@@ -76,7 +76,7 @@ class Dev::CommandExecutorTest < Minitest::Test
 
   test "a project command dispatches to the project strategy's exec tail-call" do
     Given "a composite whose project strategy expects exec_into"
-    command = Dev::ProjectCommand.new(run: "./bin/test.sh", desc: "Run tests", container: false)
+    command = Dev::ProjectCommand.new(run: "./bin/test.sh", desc: "Run tests")
     context = build_context
     strategies = build_strategies
     strategies.fetch(:project_executor)
@@ -92,7 +92,7 @@ class Dev::CommandExecutorTest < Minitest::Test
 
   test "a project command against a builtin-only composite is a wiring bug" do
     Given "a composite wired without project arms (the projectless wiring)"
-    command = Dev::ProjectCommand.new(run: "./bin/test.sh", desc: "Run tests", container: false)
+    command = Dev::ProjectCommand.new(run: "./bin/test.sh", desc: "Run tests")
     executor = build_builtin_only_executor
 
     When "executing"
@@ -106,7 +106,7 @@ class Dev::CommandExecutorTest < Minitest::Test
     Given "a composite wired without project arms (the projectless wiring)"
     command = Dev::OverriddenCommand.new(
       builtin: FakeBuiltin.new,
-      project: Dev::ProjectCommand.new(run: "./bin/up.rb", desc: "Setup", container: false),
+      project: Dev::ProjectCommand.new(run: "./bin/up.rb", desc: "Setup"),
     )
     executor = build_builtin_only_executor
 
@@ -129,7 +129,7 @@ class Dev::CommandExecutorTest < Minitest::Test
     Given "a composite whose overridden strategy expects the dispatch"
     command = Dev::OverriddenCommand.new(
       builtin: FakeBuiltin.new,
-      project: Dev::ProjectCommand.new(run: "./bin/up.rb", desc: "Setup", container: false),
+      project: Dev::ProjectCommand.new(run: "./bin/up.rb", desc: "Setup"),
     )
     context = build_context
     strategies = build_strategies

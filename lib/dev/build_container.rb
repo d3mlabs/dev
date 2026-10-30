@@ -9,7 +9,6 @@ require "securerandom"
 require "tmpdir"
 require "yaml"
 
-require "dev/build_watcher"
 require "dev/container_context"
 require "dev/container_engine"
 require "dev/data_root"
@@ -29,10 +28,6 @@ module Dev
   # registry manifest) → pull → build → push, the registry entered once, by
   # `Dev::RegistryLogin`, around whatever touches it.
   #
-  # The hand-written-Dockerfile path (`ensure_image!`, `content_tag`,
-  # `image_with_tag`: a tag from the hash of Dockerfile + .dockerignore +
-  # deps.lock plus project globs) is deprecated and goes with d3mlabs/dev#311.
-  #
   # Every docker invocation rides an injected Dev::ContainerEngine (the
   # per-user container substrate — see that class), so which daemon serves a
   # build is a provisioning decision, never an assumption here. Pure tag and
@@ -49,29 +44,11 @@ module Dev
     # remote engine brings its sync strategy instead of reaching this raise.
     class LocalMountsUnsupportedError < RuntimeError; end
 
-    # The per-uid secrets dir under the data root failed verification (symlink,
-    # non-directory, or owned by another user). Writing 0600 secret files into
-    # a dir someone else controls lets its owner swap contents between file
-    # write and container bind mount, so this is a hard stop, never a fallback.
-    class SecretDirCompromisedError < RuntimeError; end
-
     # `docker stop` on one of this checkout's containers failed.
     class StopFailedError < RuntimeError; end
 
     # `docker build` returned nonzero.
     class BuildFailedError < RuntimeError; end
-
-    # The deprecated Dockerfile path was asked for a config that names no
-    # image (its image is the lock's pin — resolve through EnvironmentImage).
-    class NoDockerfileImageError < RuntimeError; end
-
-    # Which hand-written-Dockerfile inputs are deprecated, said once per
-    # process so a `dev` invocation that resolves the image twice does not
-    # nag twice.
-    DOCKERFILE_DEPRECATION =
-      "dev: the project Dockerfile + build.container.image/registry path is deprecated — " \
-      "declare an `image` block in dependencies.rb (the generated image is the pin); " \
-      "the Dockerfile path goes with d3mlabs/dev#311"
 
     # The label contract, read back by `dev container …` here and by
     # `dev engine down/status` through ContainerEngine#running_containers.
@@ -113,12 +90,6 @@ module Dev
       const :argv, T::Array[String]
       const :env, T::Hash[String, String]
     end
-
-    # Always-hashed inputs. deps.lock joins the Dockerfile so a dependency
-    # bump invalidates a prewarmed image. Missing files are skipped (see
-    # content_tag).
-    CONTENT_FILES = ["Dockerfile", ".dockerignore", "deps.lock"].freeze
-    TAG_PREFIX = "content-"
 
     # Rosetta-for-Linux forwards cross-thread signals through rt_tgsigqueueinfo
     # and aborts the whole process when the kernel answers EAGAIN ("rosetta
@@ -214,76 +185,6 @@ module Dev
       sig { params(host_os: String, host_user: String).returns(String) }
       def prefix_volume(host_os: Dev::Platform.os, host_user: self.host_user)
         host_os == "linux" ? "#{LINUXBREW_VOLUME}-#{host_user}" : LINUXBREW_VOLUME
-      end
-
-      # Compute the content-addressed tag from Dockerfile + lockfiles + globs.
-      #
-      # @param project_root    [Pathname] project root containing Dockerfile etc.
-      # @param extra_globs      [Array<String>] additional project-relative globs whose
-      #   matched files contribute to the hash (path + content), e.g. a mod's
-      #   *.Build.cs. Sorted for determinism; missing matches contribute nothing.
-      # @param structure_globs  [Array<String>] project-relative globs whose matched
-      #   *paths* (not contents) contribute to the hash. Use for inputs where the set
-      #   of matching files is structural but their contents are not, e.g. one
-      #   *.Build.cs per build module: adding/removing a module changes the path set
-      #   (and the tag), while editing a module's dependency list does not. Sorted
-      #   for determinism; missing matches contribute nothing.
-      # @return [String] tag like "content-a1b2c3d4e5f6"
-      sig do
-        params(
-          project_root: Pathname,
-          extra_globs: T::Array[String],
-          structure_globs: T::Array[String],
-        ).returns(String)
-      end
-      def content_tag(project_root:, extra_globs: [], structure_globs: [])
-        root = Pathname(project_root)
-        file_content = CONTENT_FILES
-          .map { |f| root / f }
-          .select(&:exist?)
-          .map(&:read)
-          .join
-
-        # A recursive glob (e.g. "bin/image/**/*") also matches directories; hash
-        # only files. The files under a matched dir are matched in their own right,
-        # so skipping the dir entry loses nothing — and avoids Errno::EISDIR on read.
-        glob_content = extra_globs
-          .flat_map { |pattern| Dir.glob(pattern, base: root.to_s) }
-          .uniq
-          .select { |rel| (root / rel).file? }
-          .sort
-          .map { |rel| "#{rel}\n#{(root / rel).read}" }
-          .join
-
-        # Paths only: the *existence* of these files matters, not their contents.
-        structure_content = structure_globs
-          .flat_map { |pattern| Dir.glob(pattern, base: root.to_s) }
-          .uniq
-          .sort
-          .join("\n")
-
-        hash = Digest::SHA256.hexdigest(file_content + glob_content + structure_content)[0, 12]
-        "#{TAG_PREFIX}#{hash}"
-      end
-
-      # Deprecated (d3mlabs/dev#311): full Dockerfile-image reference with
-      # content-addressed tag.
-      #
-      # @param config       [Dev::BuildContainerConfig]
-      # @param project_root [Pathname]
-      # @return [String] e.g. "jpduchesne89/snappy-linux:content-a1b2c3d4e5f6"
-      # @raise [NoDockerfileImageError] when the config names no image
-      sig { params(config: Dev::BuildContainerConfig, project_root: Pathname).returns(String) }
-      def image_with_tag(config, project_root:)
-        image_ref = config.image_ref
-        if image_ref.nil?
-          raise NoDockerfileImageError,
-            "build.container names no image/registry: the project's image is its lock's `image` pin"
-        end
-
-        globs = config.respond_to?(:content_globs) ? config.content_globs : []
-        structure_globs = config.respond_to?(:structure_globs) ? config.structure_globs : []
-        "#{image_ref}:#{content_tag(project_root:, extra_globs: globs, structure_globs:)}"
       end
 
       # Container name for image_tag + workspace: "dev-<image>-<workspace>-<tag>",
@@ -389,7 +290,7 @@ module Dev
     # Everything past it touches the registry and runs inside one
     # RegistryLogin session — read scope to pull, write scope to publish.
     #
-    # Publishing is the *provisioning* guarantee (see ensure_image!): the
+    # Publishing is the *provisioning* guarantee: the
     # digest you built or found is pushed — a local hit if the registry lacks
     # the tag, a fresh build always; a pull hit is the registry's own copy
     # and needs nothing. A tag is first-publisher-wins — apt is not
@@ -460,141 +361,6 @@ module Dev
         success = @engine.run(args, env: { "DOCKER_BUILDKIT" => "1" })
         raise BuildFailedError, "Docker build failed for #{image.ref}" unless success
       end
-    end
-
-    # Deprecated (d3mlabs/dev#311): ensure the hand-written-Dockerfile image
-    # exists: use a local image if present, pull from registry if available,
-    # otherwise build. Returns the full image:tag string.
-    #
-    # The local check comes first so images built manually are honored.
-    #
-    # build_args_provider / secrets_provider are lazy sources of docker
-    # --build-arg and BuildKit --secret values (e.g. credentials). They are only
-    # called on a cache miss so cache hits never trigger credential resolution or
-    # prompts.
-    #
-    # Publishing (`publish: true`) is the *provisioning* guarantee: after the
-    # image is resolved by any path — built OR found locally — it is published to
-    # the shared registry so other machines can pull it. The local-hit case is
-    # the one that matters: the machine that originally built the image (e.g. the
-    # CI runner) keeps hitting its own local copy on every run, so without
-    # publish-on-hit the registry it is meant to populate stays empty forever and
-    # no other machine can ever pull. `push:` (legacy) only pushes a freshly built
-    # image; `publish:` subsumes it and additionally covers the local hit, so the
-    # provisioning step sets `publish: true` while build/run steps leave both off.
-    # Publishing also short-circuits the other way: with no local copy, the
-    # registry is asked for the manifest before anything is pulled — a hit means
-    # the publisher's job is already done, and a host that is itself the build
-    # environment (see ContainerUpCommand) never needs the image locally at all.
-    #
-    # Before any image work, the engine is measured against the project's
-    # engine hint (EngineResourcesCheck) — read-only; `dev up` is the one
-    # place a VM gets resized. A build on half the cores the repo tuned for is
-    # a slow, silent failure, and this is the last place to make it loud.
-    #
-    # @param config              [Dev::BuildContainerConfig]
-    # @param project_root        [Pathname]
-    # @param push                [Boolean] whether to push a freshly built image (default: true)
-    # @param publish             [Boolean] whether to publish the resolved image to the
-    #   registry, even on a local hit (default: false — only the provisioning step opts in)
-    # @param build_args_provider [#call, nil] returns Hash{String => String} of build args
-    # @param secrets_provider    [#call, nil] returns Hash{String => String} of secret id => value
-    # @param resources           [Dev::EngineResources::Hint, nil] the project's engine-size hint
-    # @return [String] the full image:tag string
-    # @raise [EngineResourcesCheck::UndersizedEngineError] when the engine falls short of the hint (enforce mode)
-    sig do
-      params(
-        config: Dev::BuildContainerConfig,
-        project_root: Pathname,
-        push: T::Boolean,
-        publish: T::Boolean,
-        build_args_provider: T.nilable(T.proc.returns(T::Hash[String, String])),
-        secrets_provider: T.nilable(T.proc.returns(T::Hash[String, String])),
-        resources: T.nilable(Dev::EngineResources::Hint),
-      ).returns(String)
-    end
-    def ensure_image!(config, project_root:, push: true, publish: false,
-                      build_args_provider: nil, secrets_provider: nil, resources: nil)
-      $stderr.puts DOCKERFILE_DEPRECATION
-      @resources_check.check!(engine: @engine, hint: resources)
-      tag = self.class.image_with_tag(config, project_root:)
-
-      if local_image?(tag)
-        $stderr.puts "dev: Container image found locally — #{tag}"
-        publish!(tag) if publish
-        return tag
-      end
-
-      # A publisher's job is to make the registry hold the image, not to hold
-      # it itself: a manifest lookup settles that before paying for a pull.
-      if publish && registry_has?(tag)
-        $stderr.puts "dev: Container image already published — #{tag}"
-        return tag
-      end
-
-      if pull(tag)
-        $stderr.puts "dev: Container image cache hit — #{tag}"
-        return tag
-      end
-
-      $stderr.puts "dev: Container image cache miss — building #{tag}"
-      build_args = build_args_provider ? build_args_provider.call : {}
-      secrets = secrets_provider ? secrets_provider.call : {}
-
-      prewarm = config.respond_to?(:prewarm) ? config.prewarm : nil
-      if prewarm
-        build_and_prewarm!(tag, config:, project_root:, build_args:, secrets:, prewarm:)
-      else
-        build!(tag, project_root:, build_args:, secrets:)
-      end
-
-      # A publisher only gets here after a registry miss, so the fresh build is
-      # unpublished by construction — push it without asking again.
-      push!(tag) if push || publish
-      tag
-    end
-
-    # Two-phase image creation for prewarmed images: build a cheap base from the
-    # Dockerfile, then run the prewarm command in a container with the build-dep
-    # volumes mounted and secrets delivered as files, and commit the result to the
-    # content-addressed tag.
-    #
-    # Why not a single `docker build` with the dependency as a BuildKit
-    # build-context? BuildKit *streams* a build-context from the client on demand;
-    # for a large, randomly-read dependency (e.g. a ~30GB engine read during
-    # compilation) that transport stalls/deadlocks, especially under emulation. A
-    # plain `-v` volume (virtiofs on colima) is the robust path the runtime
-    # already uses, so the prewarm reuses it.
-    #
-    # @param tag          [String] final content-addressed tag to commit
-    # @param config       [Dev::BuildContainerConfig]
-    # @param project_root [Pathname]
-    # @param build_args   [Hash{String => String}]
-    # @param secrets      [Hash{String => String}] secret id => value
-    # @param prewarm      [String] shell command to run inside the base container
-    sig do
-      params(
-        tag: String,
-        config: Dev::BuildContainerConfig,
-        project_root: Pathname,
-        build_args: T::Hash[String, String],
-        secrets: T::Hash[String, String],
-        prewarm: String,
-      ).void
-    end
-    def build_and_prewarm!(tag, config:, project_root:, build_args:, secrets:, prewarm:)
-      base_tag = "#{tag}-base"
-      # The base is engine-free and secret-free: no BuildKit secrets. Those are
-      # supplied to the prewarm run, not the Dockerfile. Volumes mount as
-      # configured: nothing of the host's data root is resolved into them.
-      build!(base_tag, project_root:, build_args:, secrets: {})
-      prewarm_commit!(base_tag, tag, volumes: config.volumes, prewarm:, secrets:)
-    ensure
-      # The committed image references the base's layers, so dropping the base tag
-      # frees the name without removing shared data. T.must: Sorbet sees base_tag
-      # as possibly uninitialized in ensure, but its assignment is the first
-      # statement and cannot raise.
-      remove_image(T.must(base_tag))
     end
 
     # Build a docker run command for executing a shell command inside the container.
@@ -714,7 +480,7 @@ module Dev
       end
     end
 
-    # --- persistent service container (build.container.persist) ----------
+    # --- persistent service container (the image block's `persist`) ------
 
     # Ensure the long-lived service container for image_tag exists and is running,
     # reaping any container left from a previous image tag of the same project.
@@ -857,170 +623,27 @@ module Dev
 
     # The facts `dev container status` renders; probes only, nothing changes.
     #
-    # The registry probe runs inside a login session when the registry is
-    # named (a pinned image's private registry, dev#313) — outside one, a
-    # private registry answers 401 and the image looks unpublished. A host
-    # with no credential to log in with gets the local half and nil for the
-    # registry's: unknown, not absent.
+    # The registry probe runs inside a login session (the image's private
+    # registry, dev#313) — outside one, a private registry answers 401 and
+    # the image looks unpublished. A host with no credential to log in with
+    # gets the local half and nil for the registry's: unknown, not absent.
     #
     # @param image_tag    [String]   the tag the checkout resolves to today
     # @param project_root [Pathname]
-    # @param registry     [String, nil] the registry host to log in to around
-    #   the probe; nil probes bare (the deprecated Dockerfile image's public registry)
+    # @param registry     [String]   the registry host to log in to around the probe
     # @return [ServiceStatus]
-    sig { params(image_tag: String, project_root: Pathname, registry: T.nilable(String)).returns(ServiceStatus) }
-    def service_status(image_tag, project_root, registry: nil)
+    sig { params(image_tag: String, project_root: Pathname, registry: String).returns(ServiceStatus) }
+    def service_status(image_tag, project_root, registry:)
       ServiceStatus.new(
         image_tag: image_tag,
         local_image: local_image?(image_tag),
-        in_registry: registry ? registry_has_in_session?(registry, image_tag) : registry_has?(image_tag),
+        in_registry: registry_has_in_session?(registry, image_tag),
         current_container_name: self.class.service_container_name(image_tag, project_root),
         containers: image_containers(image_tag, project_root),
       )
     end
 
-    # Run the prewarm command in a container off the base image and commit the
-    # result to final_tag. Build-dep volumes (e.g. the engine) are mounted with
-    # `-v`; secrets are written to host temp files and bind-mounted at
-    # /run/secrets/<id> (a bind mount, so the value is never captured by
-    # `docker commit`, which only persists the container's writable layer).
-    # Secrets are deliberately NOT passed via `-e`, since `docker commit` would
-    # bake run-time env into the committed image config.
-    #
-    # @param base_tag  [String]
-    # @param final_tag [String]
-    # @param volumes   [Array<String>] "host:container" build-dep mounts, as configured
-    # @param prewarm   [String] shell command run via `sh -c`
-    # @param secrets   [Hash{String => String}] secret id => value
-    sig do
-      params(
-        base_tag: String,
-        final_tag: String,
-        volumes: T::Array[String],
-        prewarm: String,
-        secrets: T::Hash[String, String],
-      ).void
-    end
-    def prewarm_commit!(base_tag, final_tag, volumes:, prewarm:, secrets:)
-      container = prewarm_container_name
-      secret_files = write_secret_files(secrets)
-      secret_mounts = secret_files.flat_map { |id, path| ["-v", "#{path}:/run/secrets/#{id}:ro"] }
-
-      run_argv = [
-        *@engine.argv_prefix, "run", "--name", container,
-        *SIGPENDING_ULIMIT,
-        *volume_flags(volumes),
-        *secret_mounts,
-        base_tag,
-        "sh", "-c", prewarm,
-      ]
-
-      raise "Prewarm run failed for #{final_tag}" unless run_watched(run_argv, container: container)
-      raise "docker commit failed for #{final_tag}" unless @engine.run(["commit", container, final_tag])
-    ensure
-      # T.must: Sorbet sees container as possibly uninitialized in ensure, but
-      # its assignment is the first statement and cannot raise.
-      @engine.run(["rm", "-f", T.must(container)], out: File::NULL, err: File::NULL)
-      secret_files&.each_value { |path| File.delete(path) if File.exist?(path) }
-    end
-
-    # Run the prewarm docker command under the hung-build watcher, which detects
-    # the Rosetta clang deadlock (silent, idle container) and retries transient
-    # crashes while failing fast on real compile errors. Isolated here so callers
-    # (and tests) treat it as a single boundary.
-    #
-    # @param argv      [Array<String>] docker run command
-    # @param container [String] the run's --name, so a stall can be killed
-    # @return [Boolean] whether a run succeeded within the retry budget
-    sig { params(argv: T::Array[String], container: String).returns(T::Boolean) }
-    def run_watched(argv, container:)
-      BuildWatcher.new(container_name: container, engine: @engine).run(argv)
-    end
-
-    # Write each secret value to a private host temp file for bind-mounting into
-    # the prewarm container. Returns {id => path}; caller deletes the files.
-    #
-    # The files live under the data root, NOT Dir.tmpdir: on macOS + colima the
-    # VM shares $HOME and /Users/Shared but not /var/folders, and docker turns a
-    # bind mount from an unshared host path into an empty directory — the
-    # prewarm then reads an empty secret and fails far from the cause.
-    #
-    # @param secrets [Hash{String => String}]
-    # @return [Hash{String => String}] secret id => temp file path
-    # @raise [SecretDirCompromisedError] when the per-uid dir fails verification
-    sig { params(secrets: T::Hash[String, String]).returns(T::Hash[String, String]) }
-    def write_secret_files(secrets)
-      dir = secrets_dir
-      sweep_stale_secrets(dir)
-      secrets.each_with_object({}) do |(id, value), files|
-        path = File.join(dir, "dev-secret-#{SecureRandom.hex(8)}")
-        File.open(path, File::WRONLY | File::CREAT | File::EXCL, 0o600) { |f| f.write(value) }
-        files[id] = path
-      end
-    end
-
-    # The per-identity secrets dir under the data root: secrets-<uid>, 0700,
-    # verified before use. Per-uid rather than a shared sticky-1777 dir because
-    # a shared dir's owner can unlink and replace anyone's files (sticky only
-    # stops non-owners) — a secret-substitution vector between file write and
-    # bind mount. Verification guards the unprovisioned-machine case: the data
-    # root's parent (/Users/Shared) ships world-writable, so any local user can
-    # pre-own the tree before provisioning; a pre-existing entry here is
-    # attacker-suspect until lstat proves it a real directory we own. The dir
-    # sits directly under the data root (not a shared tmp/) so no world-writable
-    # parent can rename a verified dir out from under us post-check.
-    #
-    # @return [String] verified dir path
-    # @raise [SecretDirCompromisedError]
-    sig { returns(String) }
-    def secrets_dir
-      dir = File.join(Dev::DataRoot.path, "secrets-#{Process.uid}")
-      begin
-        Dir.mkdir(dir, 0o700)
-      rescue Errno::EEXIST
-        # Pre-existing entry: verified below like everything else.
-      end
-      st = File.lstat(dir)
-      unless st.directory? && st.uid == Process.uid
-        raise SecretDirCompromisedError,
-          "#{dir} is not a directory owned by uid #{Process.uid} " \
-          "(found #{st.directory? ? "dir" : "non-dir"} owned by uid #{st.uid}). " \
-          "Refusing to write secrets there — remove it and re-run."
-      end
-      # Ours, but normalize the mode (a setgid data root propagates g+s on
-      # Linux; older dev versions never created this dir, so no legacy modes).
-      File.chmod(0o700, dir) if (st.mode & 0o7777) != 0o700
-      dir
-    end
-
-    # Delete day-old dev-secret-* leftovers. The caller's ensure covers normal
-    # failures, but SIGKILL strands 0600 files under the data root, which —
-    # unlike /var/folders — macOS never purges. A day's grace keeps concurrent
-    # runs' live files safe (they exist for minutes, not hours).
-    #
-    # @param dir [String] the verified per-uid secrets dir
-    sig { params(dir: String).void }
-    def sweep_stale_secrets(dir)
-      Dir.glob(File.join(dir, "dev-secret-*")).each do |path|
-        File.delete(path) if Time.now - File.mtime(path) > 86_400
-      rescue Errno::ENOENT
-        # A concurrent sweep won the race; the file is gone either way.
-      end
-    end
-
     # --- internal helpers ------------------------------------------------
-
-    # Unique name for the throwaway prewarm container; pid + random suffix so
-    # concurrent dev invocations never collide.
-    sig { returns(String) }
-    def prewarm_container_name
-      "dev-prewarm-#{Process.pid}-#{rand(1_000_000)}"
-    end
-
-    sig { params(image_tag: String).void }
-    def remove_image(image_tag)
-      @engine.run(["image", "rm", "-f", image_tag], out: File::NULL, err: File::NULL)
-    end
 
     # Remove service containers for this checkout that don't match the current
     # tag's name, so a Dockerfile/dep bump (new tag) doesn't leave the old one
@@ -1148,46 +771,6 @@ module Dev
     sig { params(image_tag: String).returns(T::Boolean) }
     def pull(image_tag)
       @engine.run(["pull", image_tag], err: File::NULL)
-    end
-
-    # Build the image with BuildKit. secrets are passed as `--secret
-    # id=NAME,env=NAME` with the value exported into docker's environment for
-    # that invocation, so the value is mounted only for the requesting RUN and
-    # never persists in a layer. Nothing from the data root enters the build:
-    # a lock is not an image input (ADR-0008).
-    #
-    # @param image_tag      [String]
-    # @param project_root   [Pathname]
-    # @param build_args     [Hash{String => String}]
-    # @param secrets        [Hash{String => String}] secret id => value
-    sig do
-      params(
-        image_tag: String,
-        project_root: Pathname,
-        build_args: T::Hash[String, String],
-        secrets: T::Hash[String, String],
-      ).void
-    end
-    def build!(image_tag, project_root:, build_args: {}, secrets: {})
-      arg_flags = build_args.flat_map { |name, value| ["--build-arg", "#{name}=#{value}"] }
-      secret_flags = secrets.keys.flat_map { |id| ["--secret", "id=#{id},env=#{id}"] }
-
-      # BuildKit is required for --secret; enable it explicitly
-      # so the build behaves the same regardless of the host Docker default. Secret
-      # values travel via the environment (referenced by env=), never on argv.
-      env = { "DOCKER_BUILDKIT" => "1" }.merge(secrets)
-
-      # --progress=plain: BuildKit's auto renderer detects non-TTY stdout (CI log
-      # pipes) and goes near-silent, so a long image build (msvc-wine download,
-      # WineHQ install) looks hung for tens of minutes. Plain progress prints every
-      # step with timestamps and streams RUN output, giving CI logs a heartbeat.
-      args = [
-        "build", "--progress=plain", "-t", image_tag,
-        *arg_flags, *secret_flags,
-        project_root.to_s,
-      ]
-      success = @engine.run(args, env: env)
-      raise BuildFailedError, "Docker build failed for #{image_tag}" unless success
     end
 
     # Stream push progress for the same liveness reason as pull: publishing a

@@ -2,9 +2,12 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/build_container_config"
 require "dev/builtins/runner_status_command"
+require "dev/deps/dependency"
+require "dev/deps/lockfile"
+require "dev/environment_image"
 require "pathname"
+require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Builtins::RunnerStatusCommandTest < Minitest::Test
@@ -31,13 +34,13 @@ class Dev::Builtins::RunnerStatusCommandTest < Minitest::Test
         status
       },
     )
-    container = Dev::BuildContainerConfig.new(image: "img", registry: "reg")
+    root = image_checkout
 
-    When "running status inside a container repo"
-    command.call(args: no_args, context: build_context(build_container: container))
+    When "running status inside a container repo (its lock pins an image)"
+    command.call(args: no_args, context: build_context(root: root))
 
     Then "the container fact and the checkout reach the inspector"
-    seen == [[true, Pathname.new("/tmp/runner-status-test")]]
+    seen == [[true, Pathname.new(root)]]
   end
 
   test "status works projectless (the machine view needs no checkout)" do
@@ -69,14 +72,25 @@ class Dev::Builtins::RunnerStatusCommandTest < Minitest::Test
 
   private
 
-  def build_context(build_container: nil)
+  def build_context(root: "/tmp/runner-status-test")
     Dev::ExecutionContext.new(
       ui: typed_mock(Dev::Cli::Ui),
-      project: Dev::ProjectContext.new(
-        name: "Cellbound3D",
-        root: Pathname.new("/tmp/runner-status-test"),
-        build_container: build_container,
-      ),
+      project: Dev::ProjectContext.new(name: "Cellbound3D", root: Pathname.new(root)),
     )
+  end
+
+  # A checkout whose lock pins one image: the container fact, as the
+  # commands read it (ProjectImages#containerized?).
+  def image_checkout
+    root = Dir.mktmpdir("runner-image-checkout")
+    pin = Dev::Deps::Dependency.new(
+      name: "snappy-linux", integration: :image, group: :app, version: "ue5.8-3", hash: "SHA256=#{"a" * 64}",
+      metadata: {
+        "from" => "ghcr.io/d3mlabs/unreal-engine-build-base", "platform" => "linux/amd64",
+        "platforms" => ["linux/amd64"], "registry" => "ghcr.io/d3mlabs", "apt" => [],
+      },
+    )
+    Dev::Deps::Lockfile.new(dir: Pathname(root)).lock(Dev::EnvironmentImage.stamp([pin]))
+    root
   end
 end

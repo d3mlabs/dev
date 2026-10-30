@@ -98,7 +98,6 @@ class CommandParserTest < Minitest::Test
     hash = {
       "run" => "./bin/test.sh",
       "desc" => "All tests",
-      "container" => false,
       "hidden" => true,
       "commands" => { "unit" => { "run" => "rspec" } },
     }
@@ -110,7 +109,6 @@ class CommandParserTest < Minitest::Test
     cmd == Dev::ProjectCommand.new(
       run: "./bin/test.sh",
       desc: "All tests",
-      container: false,
       hidden: true,
       children: { "unit" => Dev::ProjectCommand.new(run: "rspec") },
     )
@@ -215,42 +213,6 @@ class CommandParserTest < Minitest::Test
     cmd.repl == false
   end
 
-  test "parse defaults container to true" do
-    Given "a command hash without container"
-    parser = Dev::CommandParser.new
-    hash = { "run" => "./bin/build.sh" }
-
-    When "we parse it"
-    cmd = parser.parse(["cmd"], hash)
-
-    Then
-    cmd.container == true
-  end
-
-  test "parse with container false sets container to false" do
-    Given "a command hash with container: false"
-    parser = Dev::CommandParser.new
-    hash = { "run" => "./bin/deploy.sh", "container" => false }
-
-    When "we parse it"
-    cmd = parser.parse(["cmd"], hash)
-
-    Then
-    cmd.container == false
-  end
-
-  test "parse with container true sets container to true" do
-    Given "a command hash with container: true"
-    parser = Dev::CommandParser.new
-    hash = { "run" => "./bin/build.sh", "container" => true }
-
-    When "we parse it"
-    cmd = parser.parse(["cmd"], hash)
-
-    Then
-    cmd.container == true
-  end
-
   test "parse carries runs_on as written — a name the parser does not resolve (dev#307): #{value.inspect}" do
     Given "a command hash naming where it runs"
     parser = Dev::CommandParser.new
@@ -289,16 +251,6 @@ class CommandParserTest < Minitest::Test
     ""    | "empty"
     true  | "a boolean"
     12    | "a number"
-  end
-
-  test "parse rejects runs_on beside container: one question, one key" do
-    When
-    Dev::CommandParser.new.parse(["deploy"], { "run" => "./bin/deploy.sh", "runs_on" => "host", "container" => false })
-
-    Then
-    error = raises(Dev::CommandParser::ConflictingPlacementError)
-    error.message.include?("deploy")
-    error.message.include?("runs_on")
   end
 
   test "parse defaults hidden to false" do

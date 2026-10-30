@@ -28,7 +28,7 @@ module Dev
       sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
         project = context.project!
-        project.project_images.all.each_with_index do |image, index|
+        project.project_images.pinned.each_with_index do |image, index|
           @out.puts if index.positive?
           report(image, project)
         end
@@ -38,19 +38,16 @@ module Dev
 
       # One image's block.
       #
-      # @param image [ProjectImages::Image]
+      # @param image [EnvironmentImage]
       # @param project [ProjectContext]
       # @return [void]
-      sig { params(image: ProjectImages::Image, project: ProjectContext).void }
+      sig { params(image: EnvironmentImage, project: ProjectContext).void }
       def report(image, project)
-        pinned = image.is_a?(EnvironmentImage) ? image : nil
-        status = client.service_status(image.ref, project.root, registry: pinned&.registry_host)
+        status = client.service_status(image.ref, project.root, registry: image.registry_host)
 
         @out.puts "image: #{image.name} — #{status.image_tag} — #{image_state(status)}"
-        if pinned
-          @out.puts "floor: #{pinned.floor_ref}"
-          @out.puts "platform: #{pinned.platform}"
-        end
+        @out.puts "floor: #{image.floor_ref}"
+        @out.puts "platform: #{image.platform}"
         current, others = status.containers.partition { |container| container.name == status.current_container_name }
         if image.persist
           @out.puts "container: #{persisted_state(current.first)}"

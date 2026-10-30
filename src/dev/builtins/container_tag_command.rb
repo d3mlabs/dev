@@ -22,7 +22,7 @@ module Dev
       # @return [void]
       sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
-        context.project!.project_images.all.each { |image| @out.puts "#{image.name}\t#{image.ref}" }
+        context.project!.project_images.pinned.each { |image| @out.puts "#{image.name}\t#{image.ref}" }
       end
     end
   end
