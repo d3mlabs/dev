@@ -61,7 +61,7 @@ An own formula in the tap or an own release in a repo we control is legitimate o
 
 Which channel to repackage into follows what the package needs: a **brew formula and bottle** when it has transitive runtime dependencies to declare (`depends_on` installs the closure a bare tree cannot — Ruby's openssl, libyaml, zlib); a **`gh` release** when it is a self-contained tree, large, or licensed (private repo); **source** (`cmake github:` or `gh build:`) when the build wants it.
 
-A *thin lift* — a formula that re-hosts an artifact a supported channel already carries, without changing the bytes — is a stopgap and names its retirement condition. Three exist in the tap today (`clang-format@18.1.8`, `powershell@7.4.0`, `axslcc`); none is wrong where it sits, and [homebrew-d3mlabs#6](https://github.com/d3mlabs/homebrew-d3mlabs/issues/6) retires them now that `gh` trees activate on PATH.
+A *thin lift* — a formula that re-hosts an artifact a supported channel already carries, without changing the bytes — is a stopgap and names its retirement condition. The tap's three (`clang-format@18.1.8`, `powershell@7.4.0`, `axslcc`) were retired 2026-10-29 under [homebrew-d3mlabs#6](https://github.com/d3mlabs/homebrew-d3mlabs/issues/6): clang-format became a `pip` pin in the consumer's venv (the same PyPI wheel, on PATH through the project shadowenv), the other two had no live consumer once `gh` trees activate on PATH.
 
 The economics behind the rule: a channel costs dev once and nothing per package; a repackage costs a formula or release per upstream version, per platform, for as long as we consume it.
 
