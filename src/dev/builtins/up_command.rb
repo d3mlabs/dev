@@ -41,8 +41,8 @@ module Dev
       #   given the project. They are operations, not CLI intents: `dev up`
       #   orchestrates them and never hands them the user's args (contrast
       #   install_deps_command). Composed in bring-up order at the root from
-      #   dev.yml: the build container (an environment service,
-      #   `build.container`) today; application services later. What this
+      #   dev.yml: the build container (an environment service, the lock's
+      #   `image` pins) today; application services later. What this
       #   project provides to others is never in this list.
       # @param inside_container [Boolean] whether this dev runs inside a
       #   dev-managed container (ContainerContext). Inside, `up` is the deps
@@ -123,7 +123,6 @@ module Dev
           return
         end
 
-        provision_build_credentials(project)
         @install_deps_command.call(args:, context:)
         # After the install: a service's bring-up may need locked deps on
         # disk (the build container's image build mounts version-resolved
@@ -153,7 +152,6 @@ module Dev
           return
         end
 
-        provision_build_credentials(project)
         Dev::ColdRoot.with do |root|
           puts "dev: cold run — data root #{root} (removed afterwards)"
           @install_deps_command.call(args:, context:)
@@ -186,18 +184,6 @@ module Dev
         # first command.
         @host_rule.assert_container_current!(context.project!.project_images.pinned)
         @install_deps_command.call(args:, context:)
-      end
-
-      # `dev up` is the provisioning command: after it succeeds, every other
-      # command should work unattended. Resolving docker build args here
-      # (prompting and storing credentials on first run) keeps the lazily
-      # triggered image build in containerized commands non-interactive.
-      sig { params(project: ProjectContext).void }
-      def provision_build_credentials(project)
-        config = project.build_container
-        return if config.nil? || config.build_args.empty?
-
-        Dev::Credentials.resolve_build_args(config.build_args)
       end
     end
   end

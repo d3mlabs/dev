@@ -229,8 +229,8 @@ module Dev
       ensure_shared_root!
     end
 
-    # Step 6, invoked by the label contract only when a served repo declares
-    # `build.container` (the only place local-vs-remote is expressed):
+    # Step 6, invoked by the label contract only when a served repo's lock
+    # pins an image (the only place local-vs-remote is expressed):
     # converge the agent's own engine — colima installed (the macOS engine,
     # per-user by nature), the agent's `container_engine: colima`
     # record written into its own config (resolution never crosses the sudo

@@ -285,14 +285,10 @@ class RunnerTest < Minitest::Test
     out.string.include?("Clone a GitHub repo")
   end
 
-  test "the container group is registered with every verb when a build container is configured" do
-    Given "a Runner with a build container"
+  test "the container group is registered with every verb when the lock pins an image" do
+    Given "a Runner over a checkout whose lock pins an image"
     out = StringIO.new
-    runner = build_runner(
-      commands: {},
-      build: { "container" => { "image" => "myapp-linux", "registry" => "myregistry" } },
-      out: out,
-    )
+    runner = build_runner(commands: {}, out: out, root: pinned_root("myapp-linux"))
 
     When "we print usage, then the group's usage"
     runner.run([])
@@ -303,60 +299,25 @@ class RunnerTest < Minitest::Test
 
     Then "the noun is listed at the top and its five verbs inside"
     top.include?("container")
-    %w[up down reset tag status].all? { |verb| out.string.lines.any? { |l| l.strip.start_with?(verb) } }
-  end
-
-  test "container tag answers through the composition root without touching an engine" do
-    Given "a Runner with a build container"
-    out = StringIO.new
-    runner = build_runner(
-      commands: {},
-      build: { "container" => { "image" => "myapp-linux", "registry" => "myregistry" } },
-      out: out,
-    )
-    Dev::ContainerEngine.expects(:resolve).never
-
-    When "we ask for the tag"
-    runner.run(["container", "tag"])
-
-    Then "the image's name and content-addressed tag are the whole output"
-    out.string.match?(%r{\Amyapp-linux\tmyregistry/myapp-linux:content-[0-9a-f]{12}\n\z})
+    %w[up down reset status].all? { |verb| out.string.lines.any? { |l| l.strip.start_with?(verb) } }
   end
 
   test "the container group is registered when the lock pins an image, with no build block at all (dev#307)" do
     Given "a Runner over a checkout whose lock pins two images"
     out = StringIO.new
-    root = Pathname.new(Dir.mktmpdir("runner-test-"))
-    (@tmp_roots ||= []).push(root)
-    pins = %w[snappy-linux snappy-server].map do |name|
-      Dev::Deps::Dependency.new(
-        name: name, integration: :image, group: :app, version: "ue5.8-3", hash: "SHA256=#{"a" * 64}",
-        metadata: {
-          "from" => "ghcr.io/d3mlabs/unreal-engine-build-base", "platform" => "linux/amd64",
-          "platforms" => ["linux/amd64"], "registry" => "ghcr.io/d3mlabs", "apt" => [],
-        },
-      )
-    end
-    Dev::Deps::Lockfile.new(dir: root).lock(Dev::EnvironmentImage.stamp(pins))
-    runner = build_runner(commands: {}, out: out, root: root)
+    runner = build_runner(commands: {}, out: out, root: pinned_root("snappy-linux", "snappy-server"))
     Dev::ContainerEngine.expects(:resolve).never
 
-    When "we print usage, then ask for the tags"
+    When "we print usage"
     runner.run([])
-    top = out.string.dup
-    out.truncate(0)
-    out.rewind
-    runner.run(["container", "tag"])
 
-    Then "the noun is listed, and tag prints one name<TAB>ref line per image"
-    top.include?("container")
-    top.lines.any? { |l| l.strip.start_with?("down ") }
-    out.string.lines.map { |l| l.split("\t").first } == %w[snappy-linux snappy-server]
-    out.string.lines.all? { |l| l.match?(%r{\tghcr\.io/d3mlabs/snappy-(linux|server):[0-9a-f]+\n\z}) }
+    Then "the noun is listed, and down beside it"
+    out.string.include?("container")
+    out.string.lines.any? { |l| l.strip.start_with?("down ") }
   end
 
-  test "#{name} is not registered without a build container" do
-    Given "a Runner without a build container"
+  test "#{name} is not registered when the lock pins no image" do
+    Given "a Runner over a checkout pinning no image"
     runner = build_runner(commands: {})
     old_stderr = $stderr
     $stderr = StringIO.new
@@ -375,22 +336,6 @@ class RunnerTest < Minitest::Test
     name        | argv
     "container" | ["container", "status"]
     "down"      | ["down"]
-  end
-
-  test "down is registered beside up when a build container is configured" do
-    Given "a Runner with a build container"
-    out = StringIO.new
-    runner = build_runner(
-      commands: {},
-      build: { "container" => { "image" => "myapp-linux", "registry" => "myregistry" } },
-      out: out,
-    )
-
-    When "we print usage"
-    runner.run([])
-
-    Then "down is listed"
-    out.string.lines.any? { |l| l.strip.start_with?("down ") }
   end
 
   test "runner is ungated: every project catalog lists it" do
@@ -773,13 +718,12 @@ class RunnerTest < Minitest::Test
 
   # Every run builds an ExecutionContext, so the helper always pins the
   # project root to a temp dir; tests needing their own pass a root.
-  def build_runner(name: "testproject", commands: {}, build: nil, runner: nil, command_service: nil,
+  def build_runner(name: "testproject", commands: {}, runner: nil, command_service: nil,
     ui: fake_ui, out: StringIO.new, root: nil)
     root ||= (@tmp_roots ||= []).push(Pathname.new(Dir.mktmpdir("runner-test-"))).fetch(-1)
     Dev.stubs(:target_project_root).returns(root)
 
     yaml = { "name" => name, "commands" => commands }
-    yaml["build"] = build if build
     yaml["runner"] = runner if runner
     # Held in @tmp_files until teardown: a Tempfile that falls out of scope is
     # unlinked by its finalizer at the next GC, under a Runner still reading it.
@@ -788,6 +732,23 @@ class RunnerTest < Minitest::Test
     tmp.flush
 
     Dev::Runner.new(dev_yaml_path: Pathname.new(tmp.path), ui: ui, out: out, command_service: command_service)
+  end
+
+  # A checkout whose lock pins these images (dev#277), removed in teardown.
+  def pinned_root(*names)
+    root = Pathname.new(Dir.mktmpdir("runner-test-"))
+    (@tmp_roots ||= []).push(root)
+    pins = names.map do |name|
+      Dev::Deps::Dependency.new(
+        name: name, integration: :image, group: :app, version: "ue5.8-3", hash: "SHA256=#{"a" * 64}",
+        metadata: {
+          "from" => "ghcr.io/d3mlabs/unreal-engine-build-base", "platform" => "linux/amd64",
+          "platforms" => ["linux/amd64"], "registry" => "ghcr.io/d3mlabs", "apt" => [],
+        },
+      )
+    end
+    Dev::Deps::Lockfile.new(dir: root).lock(Dev::EnvironmentImage.stamp(pins))
+    root
   end
 
   def teardown

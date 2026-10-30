@@ -12,8 +12,7 @@ module Dev
   # substrate. Whether a repo's build runs containerized is a repo-shape
   # detail; *which daemon serves it* is a per-user provisioning decision, so
   # the engine is resolved from the invoking user's own config and injected
-  # into everything that composes docker argv (BuildContainer, BuildWatcher,
-  # CacheGc). One engine per host OS: macOS users (human and agent alike)
+  # into everything that composes docker argv (BuildContainer, CacheGc). One engine per host OS: macOS users (human and agent alike)
   # ride their own colima VM — the only macOS engine whose whole lifecycle
   # dev can own (start, idle-stop, resize); Linux and WSL2 ride the bare
   # dockerd already running on the host, where there is no VM to own. A

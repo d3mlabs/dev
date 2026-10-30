@@ -145,57 +145,6 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
   end
 
-  test "#load extracts build.container config" do
-    Given "a dev.yml file with build.container"
-    tmp = write_dev_yml(<<~YAML)
-      name: snappy
-      build:
-        container:
-          image: snappy-linux
-          registry: jpduchesne89
-      commands:
-        build:
-          run: ./bin/build.sh
-    YAML
-
-    When "the manifest is loaded"
-    manifest = build_loader.load(Pathname.new(tmp.path))
-
-    Then
-    !manifest.build_container.nil?
-    manifest.build_container.image == "snappy-linux"
-    manifest.build_container.registry == "jpduchesne89"
-    manifest.build_container.image_ref == "jpduchesne89/snappy-linux"
-
-    Cleanup
-    tmp.close!
-  end
-
-  test "#load extracts build.container volumes" do
-    Given "a dev.yml file with container volumes"
-    tmp = write_dev_yml(<<~YAML)
-      name: snappy
-      build:
-        container:
-          image: snappy-linux
-          registry: jpduchesne89
-          volumes:
-            - "~/.dev/engines/unreal-engine-css:/ue"
-      commands:
-        build:
-          run: ./bin/build.sh
-    YAML
-
-    When "the manifest is loaded"
-    manifest = build_loader.load(Pathname.new(tmp.path))
-
-    Then
-    manifest.build_container.volumes == ["~/.dev/engines/unreal-engine-css:/ue"]
-
-    Cleanup
-    tmp.close!
-  end
-
   test "#load extracts the top-level engine sizing block (dev#307)" do
     Given "a dev.yml declaring the engine floor its build was tuned for"
     tmp = write_dev_yml(<<~YAML)
@@ -251,380 +200,6 @@ class ProjectManifestLoaderTest < Minitest::Test
     partial.close!
   end
 
-  test "#load still reads the legacy build.container.resources as the engine hint (gone with dev#311)" do
-    Given "a dev.yml on the Dockerfile path, sized the old way"
-    tmp = write_dev_yml(<<~YAML)
-      name: snappy
-      build:
-        container:
-          image: snappy-linux
-          registry: jpduchesne89
-          resources:
-            cpus: 8
-            memory_gib: 24
-      commands:
-        build:
-          run: ./bin/build.sh
-    YAML
-
-    When "the manifest is loaded"
-    manifest = build_loader.load(Pathname.new(tmp.path))
-
-    Then "the hint is the same one, read from the old place"
-    manifest.engine == Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 24)
-
-    Cleanup
-    tmp.close!
-  end
-
-  test "#load refuses a dev.yml that sizes the engine in both places" do
-    Given "a dev.yml with `engine:` and `build.container.resources`"
-    tmp = write_dev_yml(<<~YAML)
-      name: snappy
-      engine:
-        cpus: 8
-      build:
-        container:
-          image: snappy-linux
-          registry: jpduchesne89
-          resources:
-            cpus: 12
-      commands:
-        build:
-          run: ./bin/build.sh
-    YAML
-
-    When "the manifest is loaded"
-    error = assert_raises(Dev::ProjectManifestLoader::ConflictingEngineHintError) do
-      build_loader.load(Pathname.new(tmp.path))
-    end
-
-    Then "the message names both keys and the one to keep"
-    error.message.include?("`engine:`")
-    error.message.include?("`build.container.resources`")
-
-    Cleanup
-    tmp.close!
-  end
-
-  test "#load extracts build.container build_args credential refs" do
-    Given "a dev.yml file with container build_args"
-    tmp = write_dev_yml(<<~YAML)
-      name: snappy
-      build:
-        container:
-          image: snappy-linux
-          registry: jpduchesne89
-          build_args:
-            WWISE_EMAIL: wwise/email
-            WWISE_PASSWORD: wwise/password
-      commands:
-        build:
-          run: ./bin/build.sh
-    YAML
-
-    When "the manifest is loaded"
-    manifest = build_loader.load(Pathname.new(tmp.path))
-
-    Then
-    manifest.build_container.build_args == {
-      "WWISE_EMAIL" => "wwise/email",
-      "WWISE_PASSWORD" => "wwise/password",
-    }
-
-    Cleanup
-    tmp.close!
-  end
-
-  test "#load extracts build.container run_env credential refs" do
-    Given "a dev.yml file with container run_env"
-    tmp = write_dev_yml(<<~YAML)
-      name: snappy
-      build:
-        container:
-          image: snappy-linux
-          registry: jpduchesne89
-          run_env:
-            WWISE_TOKEN: wwise/token
-      commands:
-        build:
-          run: ./bin/build.sh
-    YAML
-
-    When "the manifest is loaded"
-    manifest = build_loader.load(Pathname.new(tmp.path))
-
-    Then
-    manifest.build_container.run_env == { "WWISE_TOKEN" => "wwise/token" }
-
-    Cleanup
-    tmp.close!
-  end
-
-  test "#load extracts build.container build_secrets credential refs" do
-    Given "a dev.yml file with container build_secrets"
-    tmp = write_dev_yml(<<~YAML)
-      name: snappy
-      build:
-        container:
-          image: snappy-linux
-          registry: jpduchesne89
-          build_secrets:
-            WWISE_TOKEN: wwise/token
-      commands:
-        build:
-          run: ./bin/build.sh
-    YAML
-
-    When "the manifest is loaded"
-    manifest = build_loader.load(Pathname.new(tmp.path))
-
-    Then
-    manifest.build_container.build_secrets == { "WWISE_TOKEN" => "wwise/token" }
-
-    Cleanup
-    tmp.close!
-  end
-
-  test "#load extracts build.container content_globs" do
-    Given "a dev.yml file with container content_globs"
-    tmp = write_dev_yml(<<~YAML)
-      name: snappy
-      build:
-        container:
-          image: snappy-linux
-          registry: jpduchesne89
-          content_globs:
-            - "Mods/*/Source/*/*.Build.cs"
-      commands:
-        build:
-          run: ./bin/build.sh
-    YAML
-
-    When "the manifest is loaded"
-    manifest = build_loader.load(Pathname.new(tmp.path))
-
-    Then
-    manifest.build_container.content_globs == ["Mods/*/Source/*/*.Build.cs"]
-
-    Cleanup
-    tmp.close!
-  end
-
-  test "#load extracts build.container structure_globs" do
-    Given "a dev.yml file with container structure_globs"
-    tmp = write_dev_yml(<<~YAML)
-      name: snappy
-      build:
-        container:
-          image: snappy-linux
-          registry: jpduchesne89
-          structure_globs:
-            - "Mods/*/Source/*/*.Build.cs"
-      commands:
-        build:
-          run: ./bin/build.sh
-    YAML
-
-    When "the manifest is loaded"
-    manifest = build_loader.load(Pathname.new(tmp.path))
-
-    Then
-    manifest.build_container.structure_globs == ["Mods/*/Source/*/*.Build.cs"]
-
-    Cleanup
-    tmp.close!
-  end
-
-  test "#load extracts build.container prewarm command" do
-    Given "a dev.yml file with a container prewarm command"
-    tmp = write_dev_yml(<<~YAML)
-      name: snappy
-      build:
-        container:
-          image: snappy-linux
-          registry: jpduchesne89
-          prewarm: "bash /work/bin/prewarm.sh"
-      commands:
-        build:
-          run: ./bin/build.sh
-    YAML
-
-    When "the manifest is loaded"
-    manifest = build_loader.load(Pathname.new(tmp.path))
-
-    Then
-    manifest.build_container.prewarm == "bash /work/bin/prewarm.sh"
-
-    Cleanup
-    tmp.close!
-  end
-
-  test "#load defaults build.container prewarm to nil" do
-    Given "a dev.yml file without a prewarm command"
-    tmp = write_dev_yml(<<~YAML)
-      name: snappy
-      build:
-        container:
-          image: snappy-linux
-          registry: jpduchesne89
-      commands:
-        build:
-          run: ./bin/build.sh
-    YAML
-
-    When "the manifest is loaded"
-    manifest = build_loader.load(Pathname.new(tmp.path))
-
-    Then
-    manifest.build_container.prewarm.nil?
-
-    Cleanup
-    tmp.close!
-  end
-
-  test "#load defaults build.container build_secrets, content_globs and structure_globs to empty" do
-    Given "a dev.yml file without build_secrets, content_globs or structure_globs"
-    tmp = write_dev_yml(<<~YAML)
-      name: snappy
-      build:
-        container:
-          image: snappy-linux
-          registry: jpduchesne89
-      commands:
-        build:
-          run: ./bin/build.sh
-    YAML
-
-    When "the manifest is loaded"
-    manifest = build_loader.load(Pathname.new(tmp.path))
-
-    Then
-    manifest.build_container.build_secrets == {}
-    manifest.build_container.content_globs == []
-    manifest.build_container.structure_globs == []
-
-    Cleanup
-    tmp.close!
-  end
-
-  test "#load defaults build.container volumes to empty" do
-    Given "a dev.yml file without container volumes"
-    tmp = write_dev_yml(<<~YAML)
-      name: snappy
-      build:
-        container:
-          image: snappy-linux
-          registry: jpduchesne89
-      commands:
-        build:
-          run: ./bin/build.sh
-    YAML
-
-    When "the manifest is loaded"
-    manifest = build_loader.load(Pathname.new(tmp.path))
-
-    Then
-    manifest.build_container.volumes == []
-
-    Cleanup
-    tmp.close!
-  end
-
-  test "#load extracts build.container persist flag" do
-    Given "a dev.yml file with persist: true"
-    tmp = write_dev_yml(<<~YAML)
-      name: snappy
-      build:
-        container:
-          image: snappy-linux
-          registry: jpduchesne89
-          persist: true
-      commands:
-        build:
-          run: ./bin/build.sh
-    YAML
-
-    When "the manifest is loaded"
-    manifest = build_loader.load(Pathname.new(tmp.path))
-
-    Then
-    manifest.build_container.persist == true
-
-    Cleanup
-    tmp.close!
-  end
-
-  test "#load defaults build.container persist to false" do
-    Given "a dev.yml file without persist"
-    tmp = write_dev_yml(<<~YAML)
-      name: snappy
-      build:
-        container:
-          image: snappy-linux
-          registry: jpduchesne89
-      commands:
-        build:
-          run: ./bin/build.sh
-    YAML
-
-    When "the manifest is loaded"
-    manifest = build_loader.load(Pathname.new(tmp.path))
-
-    Then
-    manifest.build_container.persist == false
-
-    Cleanup
-    tmp.close!
-  end
-
-  test "#load keeps a build.container block that names no image: the image is the lock's pin (dev#277)" do
-    Given "a dev.yml whose container block only shapes the container"
-    tmp = write_dev_yml(<<~YAML)
-      name: snappy
-      build:
-        container:
-          persist: true
-          volumes:
-            - engine:/engine
-      commands:
-        build:
-          run: ./bin/build.sh
-    YAML
-
-    When "the manifest is loaded"
-    manifest = build_loader.load(Pathname.new(tmp.path))
-
-    Then
-    !manifest.build_container.nil?
-    manifest.build_container.image.nil?
-    manifest.build_container.registry.nil?
-    manifest.build_container.persist
-    manifest.build_container.volumes == ["engine:/engine"]
-
-    Cleanup
-    tmp.close!
-  end
-
-  test "#load returns nil build_container when not declared" do
-    Given "a dev.yml without build.container"
-    tmp = write_dev_yml(<<~YAML)
-      name: myproject
-      commands:
-        up:
-          run: ./bin/setup.rb
-    YAML
-
-    When "the manifest is loaded"
-    manifest = build_loader.load(Pathname.new(tmp.path))
-
-    Then
-    manifest.build_container.nil?
-
-    Cleanup
-    tmp.close!
-  end
-
   test "#load warns and ignores the retired runner block" do
     Given "a dev.yml still carrying the retired key"
     tmp = write_dev_yml(<<~YAML)
@@ -649,18 +224,24 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
   end
 
-  test "#load records every legacy key it saw, by dev.yml path, for the refusal one layer up (dev#307)" do
-    Given "a dev.yml on the old shape: a container block and container: flags, one nested"
+  test "#load refuses a dev.yml on the retired shape at load, every key with where it went (dev#307, dev#311)" do
+    Given "a dev.yml still on the Dockerfile path: the block with its keys, and container: flags, one nested"
     tmp = write_dev_yml(<<~YAML)
       name: snappy
       build:
         container:
           image: snappy-linux
           registry: jpduchesne89
+          persist: true
+          volumes: ["/e:/ue"]
+          run_env: { T: ns/t }
+          build_args: { WWISE_EMAIL: audiokinetic/email }
+          prewarm: ./bin/prewarm.sh
           resources: { cpus: 8 }
       commands:
         build:
           run: ./bin/build.sh
+          container: true
         deploy:
           run: ./bin/deploy.sh
           container: false
@@ -673,19 +254,49 @@ class ProjectManifestLoaderTest < Minitest::Test
     YAML
 
     When "the manifest is loaded"
-    manifest = build_loader.load(Pathname.new(tmp.path))
+    build_loader.load(Pathname.new(tmp.path))
 
-    Then "each key once, in document order, a flag with its value; a command without the key is not listed"
-    manifest.legacy_keys == [
-      "build.container", "build.container.resources",
-      "commands.deploy.container: false", "commands.test.commands.editor.container: false",
-    ]
+    Then "one error, before any command exists: each key once, in document order, with its migration"
+    error = raises(Dev::ProjectManifestLoader::RetiredKeysError)
+    error.message.include?("declare an `image` block in dependencies.rb")
+    error.message.include?("build.container.image → delete it")
+    error.message.include?("build.container.persist → `persist true`")
+    error.message.include?("build.container.volumes → `volume ")
+    error.message.include?("build.container.run_env → `run_env ")
+    error.message.include?("build.container.build_args → delete it")
+    error.message.include?("build.container.prewarm → delete it")
+    error.message.include?("build.container.resources → `engine:`")
+    error.message.include?("commands.build.container: true → delete it")
+    error.message.include?("commands.deploy.container: false → `runs_on: host`")
+    error.message.include?("commands.test.commands.editor.container: false → `runs_on: host`")
+    error.message.index("build.container.image") < error.message.index("commands.deploy.container")
 
     Cleanup
     tmp.close!
   end
 
-  test "#load records no legacy keys for a dev.yml on the new shape" do
+  test "#load refuses an empty build.container block too: the block itself is retired" do
+    Given
+    tmp = write_dev_yml(<<~YAML)
+      name: snappy
+      build:
+        container: {}
+      commands:
+        build: { run: ./bin/build.sh }
+    YAML
+
+    When
+    build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    error = raises(Dev::ProjectManifestLoader::RetiredKeysError)
+    error.message.include?("build.container → delete the block")
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load accepts a dev.yml on the new shape: engine at the top level, placement by runs_on" do
     Given
     tmp = write_dev_yml(<<~YAML)
       name: snappy
@@ -699,7 +310,7 @@ class ProjectManifestLoaderTest < Minitest::Test
     manifest = build_loader.load(Pathname.new(tmp.path))
 
     Then
-    manifest.legacy_keys == []
+    manifest.engine.cpus == 8
     manifest.commands["build"].runs_on == "snappy-linux"
     manifest.commands["deploy"].runs_on == "host"
 
@@ -707,32 +318,6 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
   end
 
-  test "#load handles container: false on individual commands" do
-    Given "a dev.yml with container opt-out on a command"
-    tmp = write_dev_yml(<<~YAML)
-      name: snappy
-      build:
-        container:
-          image: snappy-linux
-          registry: jpduchesne89
-      commands:
-        build:
-          run: ./bin/build.sh
-        deploy:
-          run: ./bin/deploy.sh
-          container: false
-    YAML
-
-    When "the manifest is loaded"
-    manifest = build_loader.load(Pathname.new(tmp.path))
-
-    Then
-    manifest.commands["build"].container == true
-    manifest.commands["deploy"].container == false
-
-    Cleanup
-    tmp.close!
-  end
 
   private
 

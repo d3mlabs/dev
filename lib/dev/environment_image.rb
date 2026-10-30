@@ -247,9 +247,14 @@ module Dev
     sig { returns(String) }
     def tag = digest
 
-    # @return [String] the full image reference, `<registry>/<name>:<tag>`
+    # @return [String] the image's repository, `<registry>/<name>` — the
+    #   project's own; every tag under it is one of this image's builds
     sig { returns(String) }
-    def ref = "#{@registry}/#{@name}:#{tag}"
+    def repository = "#{@registry}/#{@name}"
+
+    # @return [String] the full image reference, `<repository>:<tag>`
+    sig { returns(String) }
+    def ref = "#{repository}:#{tag}"
 
     # @return [String] the registry's host — what `docker login` takes
     #   (`ghcr.io` of `ghcr.io/d3mlabs`)

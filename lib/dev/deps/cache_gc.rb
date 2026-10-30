@@ -8,6 +8,7 @@ require_relative "local_store"
 require_relative "lockfile"
 require_relative "tree_integrations"
 require_relative "../container_engine"
+require_relative "../environment_image"
 require_relative "../prefix_volumes"
 
 module Dev
@@ -15,7 +16,7 @@ module Dev
     # Garbage-collects the host-side caches dev owns, surfaced as `dev cache gc`.
     #
     # dev owns the artifact store (version-keyed trees, content-addressed
-    # blobs) and the content-tagged docker images, so it also owns the policy
+    # blobs) and the lock's docker images, so it also owns the policy
     # for reclaiming them. A workflow only *schedules* this; it never reaches
     # into the layout itself — nor does this class: trees are enumerated and
     # removed through the store.
@@ -66,21 +67,19 @@ module Dev
         @prefix_volumes = prefix_volumes
       end
 
-      # Reclaim stale tree versions and docker content tags.
+      # Reclaim stale tree versions and the images the lock no longer names.
       #
       # @param keep      [Integer] versions to retain per tree base (locked and
       #   in-use versions are always retained, even beyond this count)
-      # @param image_ref [String, nil] "registry/image" to prune content tags for
-      # @param live_tag  [String, nil] the current content tag to never prune
+      # @param images    [Array<Dev::EnvironmentImage>] the lock's image pins —
+      #   the live set; every other tag of their repositories is stale
       # @param tool_caches [Boolean] also drop every tool cache whole
       # @return [void]
-      sig do
-        params(keep: Integer, image_ref: T.nilable(String), live_tag: T.nilable(String), tool_caches: T::Boolean).void
-      end
-      def gc(keep: DEFAULT_KEEP, image_ref: nil, live_tag: nil, tool_caches: false)
+      sig { params(keep: Integer, images: T::Array[Dev::EnvironmentImage], tool_caches: T::Boolean).void }
+      def gc(keep: DEFAULT_KEEP, images: [], tool_caches: false)
         in_use = running_mount_sources
         gc_trees(keep: keep, in_use: in_use)
-        gc_docker(image_ref: image_ref, live_tag: live_tag) if image_ref
+        gc_docker(images: images)
         gc_prefix_volumes
         gc_tool_caches if tool_caches
       end
@@ -200,23 +199,27 @@ module Dev
         Set.new(sources.split("\n").map(&:strip).reject(&:empty?))
       end
 
-      # Remove content-addressed image tags for image_ref except the live tag and
-      # any tag backing a running container.
+      # Remove every tag of each pinned image's repository that is not the
+      # lock's ref and backs no running container. The lock is the live set
+      # (one digest tag per lock change, ~5 GB each) and the repository is
+      # the project's own, so nothing another project owns is in scope; a
+      # project pinning no image asks docker nothing.
       #
-      # @param image_ref [String]
-      # @param live_tag  [String, nil]
-      sig { params(image_ref: String, live_tag: T.nilable(String)).void }
-      def gc_docker(image_ref:, live_tag:)
-        tags = @engine.capture(["images", image_ref, "--format", "{{.Repository}}:{{.Tag}}"])
-          .split("\n").map(&:strip).reject(&:empty?)
+      # @param images [Array<Dev::EnvironmentImage>] the lock's image pins
+      sig { params(images: T::Array[Dev::EnvironmentImage]).void }
+      def gc_docker(images:)
+        return if images.empty?
+
         in_use_images = running_image_refs
+        images.each do |image|
+          tags = @engine.capture(["images", image.repository, "--format", "{{.Repository}}:{{.Tag}}"])
+            .split("\n").map(&:strip).reject(&:empty?)
+          tags.each do |tag|
+            next if tag == image.ref || in_use_images.include?(tag)
 
-        tags.each do |tag|
-          next unless tag.include?(":content-")
-          next if tag == live_tag || in_use_images.include?(tag)
-
-          @out.puts ">>> gc: removing image #{tag}"
-          @engine.run(["rmi", tag], out: File::NULL, err: File::NULL)
+            @out.puts ">>> gc: removing image #{tag}"
+            @engine.run(["rmi", tag], out: File::NULL, err: File::NULL)
+          end
         end
       end
 

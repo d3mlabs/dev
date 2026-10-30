@@ -112,8 +112,6 @@ module Dev
           name: manifest.name,
           root: Dev.target_project_root,
           engine: manifest.engine,
-          build_container: manifest.build_container,
-          legacy_keys: manifest.legacy_keys,
         ),
       )
     end
@@ -298,8 +296,8 @@ module Dev
       # the install and `dev down` takes down in reverse — as their ports,
       # in bring-up order. This is the one expression that decides
       # membership: the build containers (an environment service) when the
-      # project has an image — the lock pins one, or the legacy block names
-      # one (ProjectImages#containerized?). The port objects are the very
+      # project has an image — the lock pins one
+      # (ProjectImages#containerized?). The port objects are the very
       # instances the `container` verbs expose, so `dev up` and
       # `dev container up` are one operation with two entry points.
       services_up = T.let([], T::Array[Builtins::ServiceUp])
@@ -352,9 +350,9 @@ module Dev
       builtins
     end
 
-    # The container verbs exist only where `build.container` is declared:
-    # they are this checkout's image and container, so a project without one
-    # has nothing for them to act on (the engine's own verbs are global).
+    # The container verbs exist only where the lock pins an image: they are
+    # this checkout's image and container, so a project without one has
+    # nothing for them to act on (the engine's own verbs are global).
     #
     # @param up [Builtins::ContainerUpCommand] the instance `dev up` also holds as a port
     # @param down [Builtins::ContainerDownCommand] likewise for `dev down`
@@ -363,13 +361,12 @@ module Dev
     def container_builtins(up:, down:)
       CommandGroup.new(
         path: ["container"],
-        desc: "Manage this checkout's build container (up | down | reset | tag | status)",
+        desc: "Manage this checkout's build container (up | down | reset | status)",
         category: Command::Category::Lifecycle,
         children: {
           "up" => up,
           "down" => down,
           "reset" => Builtins::ContainerResetCommand.new(out: @out),
-          "tag" => Builtins::ContainerTagCommand.new(out: @out),
           "status" => Builtins::ContainerStatusCommand.new(out: @out),
         },
       )

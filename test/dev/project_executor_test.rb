@@ -14,7 +14,7 @@ class Dev::ProjectExecutorTest < Minitest::Test
   include SorbetHelper
 
   def build_command
-    Dev::ProjectCommand.new(run: "./bin/test.sh", desc: "Run tests", container: false)
+    Dev::ProjectCommand.new(run: "./bin/test.sh", desc: "Run tests")
   end
 
   test "exec_into hands the command to the runner's exec message with exact args" do

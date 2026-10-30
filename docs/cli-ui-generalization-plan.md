@@ -24,7 +24,7 @@ dev has **four** disjoint ways to talk to the terminal, with no shared rules:
 | Core (`Dev::Cli::Ui`) | prints a bold header, then `exec`s | minimal; no shared vocab |
 | Deps (`Dev::Deps::CliUI`) | `with_spinner`/`step_ok`/`step_fail` + plain fallback | **swallows failures** (see §3) |
 | `bin/*.rb` (setup, release, …) | call `CLI::UI` directly (`frame`, `spinner`) | each re-derives router setup |
-| Integrations / `BuildWatcher` | raw `puts ">>> …"` | no spinner, no progress, no glyphs |
+| Integrations (`BuildWatcher`, since deleted — dev#311) | raw `puts ">>> …"` | no spinner, no progress, no glyphs |
 
 So the engine download on `dev up` prints flat `>>> Downloading…` lines while
 `setup.rb`/`release.rb` right next to it render framed spinners. There's no
@@ -132,7 +132,7 @@ Backends:
 2. **Host integrations** (`gh`, `steam`, `ficsit`): replace raw `puts` with
    `frame` + `step` + `download` (real sizes from the lockfile). This is the
    `dev up` win the request started from.
-3. **`BuildWatcher`**: add the docked heartbeat via `Dev::UI.task` (interactive:
+3. **`BuildWatcher`** (deleted with the Dockerfile path, dev#311 — moot): add the docked heartbeat via `Dev::UI.task` (interactive:
    `working — idle 90s, CPU 180%`; CI: a throttled plain line), keeping the
    existing kill/retry/give-up lines.
 4. Other raw-`puts` spots → facade.

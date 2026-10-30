@@ -4,15 +4,16 @@
 require "pathname"
 require "yaml"
 require "dev/engine_resources"
-require_relative "build_container_config"
 require_relative "command_parser"
 require_relative "project_manifest"
 
 module Dev
   # The boundary coercion for dev.yml: #load parses it once and rejects the
-  # removed `ruby:` key at parse time. dependencies.rb is not read here —
-  # the toolchain is a dependency, and only the deps commands evaluate that
-  # file.
+  # removed keys at parse time — `ruby:`, and the Dockerfile path's
+  # `build.container` block with every command's `container:` flag
+  # (dev#307, dev#311), each with where it went. dependencies.rb is not
+  # read here — the toolchain is a dependency, and only the deps commands
+  # evaluate that file.
   #
   # Stateless: reusable across manifests, inputs arrive as method arguments.
   class ProjectManifestLoader
@@ -24,10 +25,27 @@ module Dev
     # clean `dev:` error.
     class UnsupportedDevYamlRubyError < RuntimeError; end
 
-    # Raised when dev.yml sizes the engine twice: the top-level `engine:`
-    # block and the legacy `build.container.resources` (d3mlabs/dev#311).
-    # One floor per project; dev does not pick.
-    class ConflictingEngineHintError < RuntimeError; end
+    # Raised when dev.yml still carries the Dockerfile path's keys: the
+    # `build.container` block, a command's `container:` flag. The
+    # environment is the lock's `image` block (dev#277); the message lists
+    # each key with its migration. RuntimeError so the CLI boundary reports
+    # it as a clean `dev:` error.
+    class RetiredKeysError < RuntimeError; end
+
+    # What each key of the retired `build.container` block became.
+    BLOCK_KEY_MIGRATIONS = T.let(
+      {
+        "image" => "delete it — the image is the lock's `image` pin",
+        "registry" => "delete it — `registry:` on the `image` block, if not the floor's",
+        "persist" => "`persist true` in the `image` block",
+        "volumes" => "`volume \"…\"` lines in the `image` block",
+        "run_env" => "`run_env \"VAR\" => \"ns/key\"` lines in the `image` block",
+        "resources" => "`engine:` at the top level of dev.yml",
+      }.freeze,
+      T::Hash[String, String],
+    )
+    # The block's keys that fed the Dockerfile build and have no successor.
+    GONE_WITH_THE_DOCKERFILE = "delete it — the Dockerfile path is gone (d3mlabs/dev#311)"
 
     sig { params(command_parser: CommandParser).void }
     def initialize(command_parser: CommandParser.new)
@@ -40,50 +58,71 @@ module Dev
     # @return [ProjectManifest]
     # @raise [UnsupportedDevYamlRubyError] when dev.yml carries the removed
     #   `ruby:` key
-    # @raise [ConflictingEngineHintError] when the engine is sized in both
-    #   `engine:` and `build.container.resources`
+    # @raise [RetiredKeysError] when dev.yml carries `build.container` or a
+    #   command's `container:` flag
     sig { params(dev_yml_path: Pathname).returns(ProjectManifest) }
     def load(dev_yml_path)
       yaml = YAML.load_file(dev_yml_path)
       reject_removed_ruby_key(yaml)
+      reject_retired_keys(yaml)
       warn_retired_runner_key(yaml)
       raw_commands = yaml["commands"] || {}
       ProjectManifest.new(
         name: T.cast(yaml["name"], String),
         commands: raw_commands.to_h { |name, h| [name.to_s, @command_parser.parse([name.to_s], h)] },
-        engine: parse_engine(yaml),
-        build_container: parse_build_container(yaml),
-        legacy_keys: legacy_keys(yaml),
+        engine: parse_resources(yaml["engine"]),
       )
     end
 
-    # The retired keys this dev.yml carries, by path: `build.container` and
-    # every command's `container:` with its value (`commands.deploy.container:
-    # false`), nested commands included — the value decides the migration.
+    # The Dockerfile path's keys are refused before any command exists:
+    # the `build.container` block (each key it carries, with where it
+    # went) and every command's `container:` flag, nested commands
+    # included — in document order, one message.
     #
     # @param yaml [Hash]
-    # @return [Array<String>] in document order
-    sig { params(yaml: T::Hash[String, T.untyped]).returns(T::Array[String]) }
-    def legacy_keys(yaml)
-      keys = []
-      keys << "build.container" if yaml.dig("build", "container").is_a?(Hash)
-      keys << "build.container.resources" if yaml.dig("build", "container", "resources").is_a?(Hash)
-      keys.concat(container_keys(["commands"], yaml["commands"]))
+    # @return [void]
+    # @raise [RetiredKeysError]
+    sig { params(yaml: T::Hash[String, T.untyped]).void }
+    def reject_retired_keys(yaml)
+      lines = []
+      block = yaml.dig("build", "container")
+      lines.concat(block_migrations(block)) if block.is_a?(Hash)
+      lines.concat(container_flag_migrations(["commands"], yaml["commands"]))
+      return if lines.empty?
+
+      raise RetiredKeysError,
+        "dev.yml carries the retired Dockerfile path's keys — declare an `image` block in dependencies.rb " \
+          "(d3mlabs/dev#277) and migrate each (dev#307, dev#311):\n  #{lines.join("\n  ")}"
+    end
+
+    # @param block [Hash] the `build.container` mapping
+    # @return [Array<String>] a line per key the block carries; one for an empty block
+    sig { params(block: T::Hash[T.untyped, T.untyped]).returns(T::Array[String]) }
+    def block_migrations(block)
+      lines = block.keys.map do |key|
+        "build.container.#{key} → #{BLOCK_KEY_MIGRATIONS.fetch(key.to_s, GONE_WITH_THE_DOCKERFILE)}"
+      end
+      lines.empty? ? ["build.container → delete the block"] : lines
     end
 
     # @param path [Array<String>] the dev.yml path of this `commands:` mapping
     # @param raw [Object] its value as YAML delivered it
-    # @return [Array<String>] the `container` keys under it, deepest last
+    # @return [Array<String>] a migration line per `container:` flag under it, deepest last
     sig { params(path: T::Array[String], raw: T.untyped).returns(T::Array[String]) }
-    def container_keys(path, raw)
+    def container_flag_migrations(path, raw)
       return [] unless raw.is_a?(Hash)
 
       raw.flat_map do |name, entry|
         next [] unless entry.is_a?(Hash)
 
         entry_path = path + [name.to_s]
-        own = entry.key?("container") ? ["#{(entry_path + ["container"]).join(".")}: #{entry["container"].inspect}"] : []
-        own + container_keys(entry_path + ["commands"], entry["commands"])
+        own = []
+        if entry.key?("container")
+          value = entry["container"]
+          went = value == false ? "`runs_on: #{ProjectCommand::HOST}`" : "delete it (the image's name under `runs_on:`, or nothing)"
+          own << "#{(entry_path + ["container"]).join(".")}: #{value.inspect} → #{went}"
+        end
+        own + container_flag_migrations(entry_path + ["commands"], entry["commands"])
       end
     end
 
@@ -119,68 +158,8 @@ module Dev
                    "from the repo name (`dev runner register`); delete the block."
     end
 
-    sig { params(yaml: T::Hash[String, T.untyped]).returns(T.nilable(BuildContainerConfig)) }
-    def parse_build_container(yaml)
-      build = yaml["build"]
-      return nil unless build.is_a?(Hash)
-
-      container = build["container"]
-      return nil unless container.is_a?(Hash)
-
-      # image/registry name a hand-written-Dockerfile image (deprecated,
-      # d3mlabs/dev#311); a block without them shapes the container around
-      # the lock's image pin (dev#277).
-      image = presence(container["image"])
-      registry = presence(container["registry"])
-
-      volumes = Array(container["volumes"]).map(&:to_s)
-      build_args = (container["build_args"] || {}).to_h { |k, v| [k.to_s, v.to_s] }
-      build_secrets = (container["build_secrets"] || {}).to_h { |k, v| [k.to_s, v.to_s] }
-      run_env = (container["run_env"] || {}).to_h { |k, v| [k.to_s, v.to_s] }
-      content_globs = Array(container["content_globs"]).map(&:to_s)
-      structure_globs = Array(container["structure_globs"]).map(&:to_s)
-      prewarm = container["prewarm"]&.to_s
-      prewarm = nil if prewarm&.empty?
-      persist = container["persist"] == true
-      BuildContainerConfig.new(
-        image: image, registry: registry, volumes: volumes,
-        build_args: build_args, build_secrets: build_secrets,
-        run_env: run_env, content_globs: content_globs,
-        structure_globs: structure_globs, prewarm: prewarm,
-        persist: persist,
-      )
-    end
-
-    # @param raw [Object, nil] a scalar dev.yml value
-    # @return [String, nil] its string form, nil when absent or blank
-    sig { params(raw: T.untyped).returns(T.nilable(String)) }
-    def presence(raw)
-      value = raw&.to_s
-      value.nil? || value.empty? ? nil : value
-    end
-
-    # The engine floor: the top-level `engine:` block, or — until
-    # d3mlabs/dev#311 — the legacy `build.container.resources`, the same
-    # three fields in the old place. Never both.
-    #
-    # @param yaml [Hash]
-    # @return [EngineResources::Hint, nil]
-    # @raise [ConflictingEngineHintError]
-    sig { params(yaml: T::Hash[String, T.untyped]).returns(T.nilable(EngineResources::Hint)) }
-    def parse_engine(yaml)
-      engine = yaml["engine"]
-      legacy = yaml.dig("build", "container", "resources")
-      if engine.is_a?(Hash) && legacy.is_a?(Hash)
-        raise ConflictingEngineHintError,
-          "dev.yml sizes the engine in both `engine:` and `build.container.resources`; keep `engine:` " \
-            "(the `resources` key goes with d3mlabs/dev#311)"
-      end
-
-      parse_resources(engine.is_a?(Hash) ? engine : legacy)
-    end
-
-    # Coerce the optional resources sizing block to integers at the parse
-    # boundary; a missing or non-hash block is no hint at all.
+    # The engine floor, the top-level `engine:` block, coerced to integers
+    # at the parse boundary; a missing or non-hash block is no hint at all.
     #
     # @param raw [Object, nil] the block as YAML gave it
     # @return [EngineResources::Hint, nil]

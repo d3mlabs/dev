@@ -5,8 +5,6 @@ require "test_helper"
 require "dev/builtins/container_up_command"
 require "dev/builtins/install_deps_command"
 require "dev/builtins/up_command"
-require "dev/build_container_config"
-require "dev/credentials"
 require "dev/deps/dependency"
 require "dev/deps/lockfile"
 require "dev/environment_image"
@@ -122,47 +120,10 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     When "running up outside any project"
     stdout = capture_stdout { command.call(args: no_args, context: context) }
 
-    Then "deps install and credentials never run, and the bootstrap message points at projects"
+    Then "deps install never runs, and the bootstrap message points at projects"
     0 * install_deps.call(args: anything, context: anything)
-    0 * Dev::Credentials.resolve_build_args(anything)
     stdout.include?("dev: host layer converged.")
     stdout.include?("no dev.yml here — run dev up inside a project to provision it too")
-  end
-
-  test "call resolves docker build arg credentials before anything else" do
-    Given "a context whose build container declares build_args"
-    command = build_command
-    context = build_context(build_container: container_config(build_args: { "WWISE_EMAIL" => "wwise/email" }))
-
-    When "running up"
-    command.call(args: no_args, context: context)
-
-    Then "build args are resolved (prompting and storing on first run)"
-    1 * Dev::Credentials.resolve_build_args({ "WWISE_EMAIL" => "wwise/email" })
-  end
-
-  test "call skips credential provisioning without a build container" do
-    Given "a context without a build container"
-    command = build_command
-    context = build_context
-
-    When "running up"
-    command.call(args: no_args, context: context)
-
-    Then "credentials are never resolved"
-    0 * Dev::Credentials.resolve_build_args(anything)
-  end
-
-  test "call skips credential provisioning when the container declares no build_args" do
-    Given "a context whose build container has no build_args"
-    command = build_command
-    context = build_context(build_container: container_config(build_args: {}))
-
-    When "running up"
-    command.call(args: no_args, context: context)
-
-    Then "credentials are never resolved"
-    0 * Dev::Credentials.resolve_build_args(anything)
   end
 
   test "call brings the service dependencies up, in order, after the deps install they may depend on — through the port, not the CLI" do
@@ -170,7 +131,7 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     order = sequence("deps, then services in order")
     install_deps = install_deps_mock
     install_deps.expects(:call).once.in_sequence(order)
-    context = build_context(build_container: container_config(build_args: {}))
+    context = build_context
     first = typed_mock(Dev::Builtins::ContainerUpCommand)
     second = typed_mock(Dev::Builtins::ContainerUpCommand)
     first.expects(:up).with(project: context.project).once.in_sequence(order)
@@ -187,12 +148,12 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     true
   end
 
-  test "inside the container, call is the deps install alone: no host converge, credentials or service bring-up" do
+  test "inside the container, call is the deps install alone: no host converge or service bring-up" do
     Given "an inside up command whose host service and service dependency must stay untouched"
     host_service = typed_mock(Dev::HostService)
     install_deps = install_deps_mock
     service = typed_mock(Dev::Builtins::ContainerUpCommand)
-    context = build_context(build_container: container_config(build_args: { "TOKEN" => "wwise/token" }))
+    context = build_context
     command = Dev::Builtins::UpCommand.new(
       install_deps_command: install_deps, host_service: host_service,
       service_dependencies: [service], inside_container: true,
@@ -206,7 +167,6 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     0 * host_service.converge_tooling
     0 * host_service.install_rc_hook
     0 * host_service.sync_skills
-    0 * Dev::Credentials.resolve_build_args(anything)
     0 * service.up(project: anything)
   end
 
@@ -282,8 +242,7 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     }.once
     service.expects(:up).never
     host_service = typed_mock(Dev::HostService)
-    context = build_context(build_container: container_config(build_args: { "TOKEN" => "wwise/token" }))
-    Dev::Credentials.stubs(:resolve_build_args).returns({ "TOKEN" => "x" })
+    context = build_context
     command = Dev::Builtins::UpCommand.new(
       install_deps_command: install_deps, host_service: host_service, service_dependencies: [service],
     )
@@ -297,7 +256,6 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     seen[:cold_root] == seen[:install_root]
     !File.exist?(seen[:cold_root])
     ENV.fetch("DEV_DATA_ROOT") == warm
-    1 * Dev::Credentials.resolve_build_args({ "TOKEN" => "wwise/token" })
     0 * host_service.converge_tooling
     0 * host_service.install_rc_hook
     0 * host_service.sync_skills
@@ -387,10 +345,6 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     host_service
   end
 
-  def container_config(build_args:)
-    Dev::BuildContainerConfig.new(image: "myapp-linux", registry: "myregistry", build_args: build_args)
-  end
-
   def capture_stdout
     old_stdout = $stdout
     $stdout = StringIO.new
@@ -421,7 +375,7 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
 
   def inside_up_command(install_deps, root)
     host_rule = Dev::HostRule.new(
-      host_environment: Dev::HostEnvironment.new(path: (root / "marker").to_s), host_platform: "linux-x86_64",
+      host_environment: Dev::HostEnvironment.new(path: (root / "marker").to_s),
     )
     Dev::Builtins::UpCommand.new(
       install_deps_command: install_deps, host_service: typed_mock(Dev::HostService), inside_container: true, host_rule: host_rule,
@@ -432,14 +386,10 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui), project: Dev::ProjectContext.new(name: "snappy", root: root))
   end
 
-  def build_context(build_container: nil)
+  def build_context
     Dev::ExecutionContext.new(
       ui: typed_mock(Dev::Cli::Ui),
-      project: Dev::ProjectContext.new(
-        name: "TestProject",
-        root: Pathname.new("/tmp/up-test"),
-        build_container: build_container,
-      ),
+      project: Dev::ProjectContext.new(name: "TestProject", root: Pathname.new("/tmp/up-test")),
     )
   end
 end

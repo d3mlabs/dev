@@ -9,6 +9,7 @@ require "dev/container_dev_provisioner"
 require "dev/container_user_aligner"
 require "dev/credentials"
 require "dev/engine_provisioner"
+require "dev/environment_image"
 require "dev/host_rule"
 require "dev/project_images"
 
@@ -95,7 +96,7 @@ module Dev
       # The CLI verb: an adapter over the ServiceUp port.
       #
       # @param args [Array<String>] unused
-      # @param context [ExecutionContext] the project (the group is gated on build.container)
+      # @param context [ExecutionContext] the project (the group is gated on the lock's image pins)
       # @return [void]
       sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
@@ -107,8 +108,8 @@ module Dev
       sig { override.params(project: ProjectContext).void }
       def up(project:)
         images = project.project_images
-        provision_engine!(project, images.all.reject { |image| host_is?(image) && !publish_image? })
-        images.all.each do |image|
+        provision_engine!(project, images.pinned.reject { |image| host_is?(image) && !publish_image? })
+        images.pinned.each do |image|
           if host_is?(image)
             ensure_image!(image, images) if publish_image?
             report_native(image)
@@ -137,8 +138,8 @@ module Dev
       sig { override.params(project: ProjectContext).void }
       def cold_up(project:)
         images = project.project_images
-        provision_engine!(project, images.all.reject { |image| host_is?(image) })
-        images.all.each do |image|
+        provision_engine!(project, images.pinned.reject { |image| host_is?(image) })
+        images.pinned.each do |image|
           if host_is?(image)
             report_native(image)
             next
@@ -158,9 +159,9 @@ module Dev
       # Whether the image's work runs on this host (the host rule, asked
       # per image).
       #
-      # @param image [ProjectImages::Image]
+      # @param image [EnvironmentImage]
       # @return [Boolean]
-      sig { params(image: ProjectImages::Image).returns(T::Boolean) }
+      sig { params(image: EnvironmentImage).returns(T::Boolean) }
       def host_is?(image)
         @host_rule.native?(image)
       end
@@ -169,9 +170,9 @@ module Dev
       # when no image needs it.
       #
       # @param project [ProjectContext]
-      # @param needing [Array<ProjectImages::Image>] the images about to be resolved
+      # @param needing [Array<EnvironmentImage>] the images about to be resolved
       # @return [void]
-      sig { params(project: ProjectContext, needing: T::Array[ProjectImages::Image]).void }
+      sig { params(project: ProjectContext, needing: T::Array[EnvironmentImage]).void }
       def provision_engine!(project, needing)
         @engine_provisioner.provision!(resources: project.engine) if needing.any?
       end
@@ -186,9 +187,9 @@ module Dev
         ENV["DEV_PUBLISH_IMAGE"] == "1"
       end
 
-      # @param image [ProjectImages::Image] an image whose work runs here
+      # @param image [EnvironmentImage] an image whose work runs here
       # @return [void]
-      sig { params(image: ProjectImages::Image).void }
+      sig { params(image: EnvironmentImage).void }
       def report_native(image)
         @out.puts "dev: #{@host_rule.why_native(image)} — #{image.name}'s commands run here, no container"
       end
@@ -197,24 +198,22 @@ module Dev
       # under another recipe: the container is the fallback until whoever
       # owns the host re-images it.
       #
-      # @param image [ProjectImages::Image] an image whose work runs in a container
+      # @param image [EnvironmentImage] an image whose work runs in a container
       # @return [void]
-      sig { params(image: ProjectImages::Image).void }
+      sig { params(image: EnvironmentImage).void }
       def report_drift(image)
         return unless @host_rule.drifted?(image)
 
-        pinned = T.cast(image, EnvironmentImage)
         @out.puts "dev: this host was provisioned from #{@host_rule.host} but the lock's #{image.name} is " \
-                  "#{image.name}@#{pinned.short_digest} — its commands run inside until this host is re-imaged"
+                  "#{image.name}@#{image.short_digest} — its commands run inside until this host is re-imaged"
       end
 
-      # The image resolved (local → registry → build) — the lock's pin or
-      # the deprecated Dockerfile, ProjectImages' call.
+      # The image resolved (local → registry → build), ProjectImages' call.
       #
-      # @param image [ProjectImages::Image]
+      # @param image [EnvironmentImage]
       # @param images [ProjectImages]
       # @return [String] the image reference
-      sig { params(image: ProjectImages::Image, images: ProjectImages).returns(String) }
+      sig { params(image: EnvironmentImage, images: ProjectImages).returns(String) }
       def ensure_image!(image, images)
         image_tag = images.ensure!(image, client:, publish: publish_image?)
         @out.puts "dev: image ready: #{image_tag}"
@@ -226,9 +225,9 @@ module Dev
       # of the lock (the container is a build host, ADR-0008).
       #
       # @param name [String] the running container
-      # @param image [ProjectImages::Image] whose `run_env` the install carries
+      # @param image [EnvironmentImage] whose `run_env` the install carries
       # @return [void]
-      sig { params(name: String, image: ProjectImages::Image).void }
+      sig { params(name: String, image: EnvironmentImage).void }
       def provision_inside!(name, image)
         # Everything below writes the mounted data root as the container's
         # user, so that user becomes the mount's owner first — a no-op where

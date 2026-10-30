@@ -38,7 +38,7 @@ class Dev::OverriddenExecutorTest < Minitest::Test
   def build_command(stamps:)
     Dev::OverriddenCommand.new(
       builtin: FakeBuiltin.new(stamps: stamps),
-      project: Dev::ProjectCommand.new(run: "./bin/up.rb", desc: "Setup", container: false),
+      project: Dev::ProjectCommand.new(run: "./bin/up.rb", desc: "Setup"),
     )
   end
 
