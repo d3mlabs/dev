@@ -189,8 +189,8 @@ module Dev
 
       # Container name for image_tag + workspace: "dev-<image>-<workspace>-<tag>",
       # registry dropped and any char Docker forbids in a name (notably ':') replaced
-      # with '-'. E.g. "reg/snappy-linux:content-abc" in /work/snappy ->
-      # "dev-snappy-linux-9f86d08-content-abc".
+      # with '-'. E.g. "reg/snappy-linux:deadbeef" in /work/snappy ->
+      # "dev-snappy-linux-9f86d08-deadbeef".
       #
       # The <workspace> segment is what keys the persistent container to the checkout
       # it is bind-mounted to. Without it the container is keyed by image tag ALONE,
@@ -220,7 +220,7 @@ module Dev
       end
 
       # Bare image name (no registry, no tag). E.g.
-      # "reg/snappy-linux:content-abc" -> "snappy-linux".
+      # "reg/snappy-linux:deadbeef" -> "snappy-linux".
       sig { params(image_tag: String).returns(String) }
       def image_basename(image_tag)
         T.must(T.must(image_tag.split("/").last).split(":").first)
