@@ -46,27 +46,6 @@ module Dev
         prompt_and_store(namespace, key, env_var, prompt_label, create_url)
     end
 
-    # Resolve docker build args declared in dev.yml (build.container.build_args).
-    #
-    # Each value is a "namespace/key" credential reference; the arg name
-    # doubles as the ENV var override. Prompts and stores on first use.
-    #
-    # @param build_args [Hash{String => String}] arg name => credential reference
-    # @return [Hash{String => String}] arg name => resolved value
-    sig { params(build_args: T::Hash[String, String]).returns(T::Hash[String, String]) }
-    def resolve_build_args(build_args)
-      build_args.to_h do |arg_name, credential_ref|
-        namespace, key = credential_ref.split("/", 2)
-        value = resolve(
-          namespace: T.must(namespace),
-          key: T.must(key),
-          env_var: arg_name,
-          prompt_label: "#{namespace} #{key} (docker build arg #{arg_name})",
-        )
-        [arg_name, value]
-      end
-    end
-
     # Resolve runtime env vars an `image` block declares (`run_env`)
     # for injection into the container.
     #
