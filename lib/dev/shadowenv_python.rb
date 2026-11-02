@@ -55,10 +55,11 @@ module Dev
     end
 
     # Activate one installed Python in the project shadowenv: this side's
-    # venv is built on the keg's interpreter — rebuilt when an existing venv
-    # was built on another one, so the venv always runs the locked Python —
-    # pip is made importable, and the lisp (placed for this side of the
-    # build container by ShadowenvFile) puts the venv first on PATH.
+    # venv is built on the keg's interpreter and pinned to the keg —
+    # rebuilt when an existing venv was built on another one, so the venv
+    # always runs the locked Python — pip is made importable, and the lisp
+    # (placed for this side of the build container by ShadowenvFile) puts
+    # the venv first on PATH.
     #
     # @param keg [Pathname] the installed Python's prefix (brew's keg)
     # @param version [String] the version the lock pins
@@ -73,10 +74,37 @@ module Dev
       unless venv_python.executable?
         python = keg_python(keg, version)
         raise VenvError, "#{python} -m venv #{venv} failed" unless Kernel.system(python.to_s, "-m", "venv", venv.to_s)
+
+        pin_venv_to_keg!(venv, python)
       end
       ensure_pip!(venv_python.to_s)
 
       ShadowenvFile.write!(project_root:, filename: LISP_FILENAME, body: generate_python_lisp(version, venv.to_s))
+    end
+
+    # Point a freshly built venv at the keg that built it. `python -m venv`
+    # links the venv's interpreter to `sys._base_executable`, which a brew
+    # Python derives from its configured prefix — `<prefix>/opt/<formula>/bin`,
+    # brew's link to whichever keg is current — and records that bin as
+    # pyvenv.cfg's `home`, where Python looks for its stdlib. Left so, a
+    # `brew upgrade` moves every project venv off its lock without touching
+    # it. Every interpreter name in the venv's bin becomes a symlink to the
+    # keg's interpreter (the venv module's own layout chains `python` and
+    # `python3` through `pythonX.Y`, but a copied venv does not, so all three
+    # are repointed rather than trusting the chain), and `home` becomes the
+    # keg's bin, so the venv runs the keg's binary on the keg's stdlib and
+    # describes itself as built on it.
+    #
+    # @param venv [Pathname]
+    # @param python [Pathname] the keg's interpreter, `<keg>/bin/pythonX.Y`
+    # @return [void]
+    sig { params(venv: Pathname, python: Pathname).void }
+    def pin_venv_to_keg!(venv, python)
+      ["python", "python3", python.basename.to_s].each do |name|
+        FileUtils.ln_sf(python.to_s, (venv / "bin" / name).to_s)
+      end
+      cfg = venv / "pyvenv.cfg"
+      cfg.write(cfg.read.sub(/^home\s*=.*$/, "home = #{python.dirname}"))
     end
 
     # The keg's interpreter. brew's `python@X.Y` keg ships `bin/pythonX.Y`
@@ -91,15 +119,15 @@ module Dev
       keg / "bin" / "python#{version.split(".").first(2).join(".")}"
     end
 
-    # Whether a venv was built on the given keg: by a Python of the locked
-    # version, from this brew prefix. A venv's pyvenv.cfg records the
-    # interpreter that built it as `version`, and its bin directory as
-    # `home` — which a brew Python computes from its configured prefix, so
-    # it reads `<prefix>/opt/<formula>/bin` (brew's link to whichever keg
-    # is current, never the keg's own bin; `executable` and `command` go
-    # through the same link). The version is the keg's identity then, and
-    # the home tells this prefix's venv from another's — a checkout copied
-    # from a machine whose brew lives elsewhere, or a prefix that moved.
+    # Whether a venv was built on the given keg: pyvenv.cfg records the
+    # version of the Python that built it as `version` and, once
+    # pin_venv_to_keg! has run, the keg's bin as `home`. The home tells this
+    # prefix's keg from another's — a checkout copied from a machine whose
+    # brew lives elsewhere, or a prefix that moved (each side of the build
+    # container has its own venv, so the other side's prefix is not one of
+    # them) — and a home through brew's opt link is a venv from before dev
+    # pinned venvs to the keg, running whichever keg brew has current:
+    # rebuilt once, like any other interpreter's.
     #
     # @param venv [Pathname]
     # @param keg [Pathname] `<prefix>/Cellar/<formula>/<version>`
@@ -115,8 +143,7 @@ module Dev
       home = contents[/^home\s*=\s*(.+)$/, 1]&.strip
       return false unless built_by == version && home
 
-      formula_bins = [keg / "bin", keg.parent.parent.parent / "opt" / keg.parent.basename / "bin"]
-      formula_bins.any? { |bin| bin.cleanpath == Pathname(home).cleanpath }
+      Pathname(home).cleanpath == (keg / "bin").cleanpath
     end
 
     # Guarantee pip is importable inside the venv. `python -m venv` normally seeds
