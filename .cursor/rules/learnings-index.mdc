@@ -60,6 +60,11 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  the venv) gets one path per side of the build container, decided from
  `ContainerContext.inside?` in one place.
  → .cursor/skills/learnings/per-side-project-state/
+- [architecture/repository-failure-is-unresolved] A `Repository#find`
+ failure is an `Unresolved` verdict ("universe unreadable"), never "bad
+ declaration": validate a declaration's shape at the DSL boundary, not in
+ `find`, or a subset re-lock keeps a stale pin for a broken line.
+ → .cursor/skills/learnings/repository-failure-is-unresolved/
 
 ## toolchain
 
