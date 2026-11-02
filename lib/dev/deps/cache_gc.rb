@@ -133,16 +133,19 @@ module Dev
       end
 
       # The lock's tree deps grouped by where their integration places them:
-      # one base per identity, however many names the lock gives it.
+      # one base per identity, however many names the lock gives it. The
+      # version is the key's, not the pin's: a url source is keyed by its
+      # digest while its pin version is a display label, or nothing.
       #
       # @return [Hash{String => Set<String>}] tree base => locked versions
       sig { returns(T::Hash[String, T::Set[String]]) }
       def locked_versions_by_base
         @lockfile.read.each_with_object({}) do |dep, acc|
           integration = TREE_INTEGRATIONS[dep.integration]
-          next unless integration && dep.version
+          next unless integration
 
-          (acc[integration.tree_key(dep).base] ||= Set.new) << dep.version
+          key = integration.tree_key(dep)
+          (acc[key.base] ||= Set.new) << key.version
         end
       end
 
