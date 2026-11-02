@@ -182,6 +182,83 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  # --- Reading the Cellar: one brew call per batch, not per keg (dev#375) -----
+
+  test "install_all reads the Cellar once for the batch: one brew list --versions for the formulae, one for the casks, nothing per keg" do
+    Given "two locked formulae and a cask, all installed"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
+    )
+    deps = [
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: "3.31.4", hash: nil, metadata: {}),
+      Dev::Deps::Dependency.new(name: "llvm", integration: :brew, group: :build, version: "18.1.8", hash: nil,
+        metadata: { "version_suffix" => "18" }),
+      Dev::Deps::Dependency.new(name: "blender", integration: :cask, group: :asset, version: "5.1", hash: nil,
+        metadata: { "cask" => true }),
+    ]
+
+    When "installing all"
+    integration.install_all(deps)
+
+    Then "brew is asked once about the formulae and once about the casks; every keg reads from that, and nothing is installed"
+    0 * Open3.capture3(any_parameters)
+    0 * integration.system(any_parameters)
+    1 * Open3.capture3("brew", "list", "--versions", "--formula", "cmake", "llvm@18") >>
+      ["cmake 3.31.4\nllvm@18 18.1.8_1\n", "", stub(success?: true)]
+    1 * Open3.capture3("brew", "list", "--versions", "--cask", "blender") >> ["blender 5.1.2\n", "", stub(success?: true)]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a formula the listing lacks is installed, and the Cellar is re-read after the write; brew's exit 1 for a missing name is no error" do
+    Given "cmake absent and llvm@18 installed, which brew lists with exit status 1"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
+    )
+    deps = [
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: "3.31.4", hash: nil, metadata: {}),
+      Dev::Deps::Dependency.new(name: "llvm", integration: :brew, group: :build, version: "18.1.8", hash: nil,
+        metadata: { "version_suffix" => "18" }),
+    ]
+    listing = Open3.stubs(:capture3).with("brew", "list", "--versions", "--formula", "cmake", "llvm@18")
+    listing.returns(["llvm@18 18.1.8\n", "", stub(success?: false)]).then
+      .returns(["cmake 3.31.4\nllvm@18 18.1.8\n", "", stub(success?: true)])
+
+    When "installing all"
+    integration.install_all(deps)
+
+    Then "only cmake is installed, and its verification reads the re-listed Cellar"
+    1 * Open3.capture3(*cache_env(dir), "brew", "install", "cmake") >> ["", "", stub(success?: true)]
+    0 * Open3.capture3(*cache_env(dir), "brew", "install", "llvm@18")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a Cellar that lists nothing (brew absent) leaves every formula to its install, which then fails in brew's own words" do
+    Given "no brew on PATH"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
+    )
+    dep = Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: "3.31.4", hash: nil, metadata: {})
+    Open3.stubs(:capture3).with("brew", "list", "--versions", "--formula", "cmake").raises(Errno::ENOENT, "brew")
+    Open3.stubs(:capture3).with(*cache_env(dir), "brew", "install", "cmake").returns(["", "brew: not found\n", stub(success?: false)])
+
+    When "installing all"
+    integration.install_all([dep])
+
+    Then "the per-dep failure is the install's"
+    error = raises Dev::Deps::Integration::PartialInstallError
+    error.failures.fetch(0).fetch(1).is_a?(Dev::Deps::BrewIntegration::InstallError)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   # --- B: verify the installed version against the lock -----------------------
 
   test "install_formula verifies the installed version against the lock: #{description}" do
@@ -194,7 +271,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
       version: "18.1.8", hash: nil, metadata: { "version_suffix" => "18" })
     integration.stubs(:brew_installed?).returns(true)
     integration.stubs(:converge!)
-    Open3.stubs(:capture3).with("brew", "list", "--versions", "llvm@18").returns([brew_list, "", stub(success?: true)])
+    Open3.stubs(:capture3).with("brew", "list", "--versions", "--formula", "llvm@18").returns([brew_list, "", stub(success?: true)])
 
     When "installing"
     outcome = begin
@@ -233,7 +310,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     integration.stubs(:brew_installed?).returns(false)
     integration.stubs(:converge!)
     Open3.stubs(:capture3).with(*cache_env(dir), "brew", "install", "cmake").returns(["", "", stub(success?: true)])
-    Open3.stubs(:capture3).with("brew", "list", "--versions", "cmake").returns(["cmake 4.5.0\n", "", stub(success?: true)])
+    Open3.stubs(:capture3).with("brew", "list", "--versions", "--formula", "cmake").returns(["cmake 4.5.0\n", "", stub(success?: true)])
 
     When "installing"
     integration.install_all([dep])
@@ -274,7 +351,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
   # @param versions [Array<String>] one listing per call; the last repeats
   # @return [void]
   def brew_lists_cmake(*versions)
-    expectation = Open3.stubs(:capture3).with("brew", "list", "--versions", "cmake")
+    expectation = Open3.stubs(:capture3).with("brew", "list", "--versions", "--formula", "cmake")
     versions.each { |listing| expectation = expectation.returns(["cmake #{listing}\n", "", stub(success?: true)]).then }
   end
 
@@ -525,7 +602,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     integration.install_all([dep])
 
     Then "brew list --versions is never consulted"
-    0 * Open3.capture3("brew", "list", "--versions", anything)
+    0 * Open3.capture3("brew", "list", "--versions", any_parameters)
 
     Cleanup
     FileUtils.rm_rf(dir)
