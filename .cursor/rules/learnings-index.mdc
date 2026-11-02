@@ -63,6 +63,10 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
 
 ## toolchain
 
+- [toolchain/bundle-path-per-ruby-build] A `BUNDLE_PATH` shared by two
+ builds of the same Ruby version (rbenv + brew keg) breaks native
+ extensions under the one that did not compile them; key it by
+ `RUBY_ROOT`. → .cursor/skills/learnings/bundle-path-per-ruby-build/
 
 ## org tier
 
