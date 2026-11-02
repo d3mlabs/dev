@@ -40,9 +40,20 @@ module Dev
     # build compiles it). Brew's local info for a core formula lists only
     # this machine's bottle, so core bottles come from the public formula
     # API.
+    #
+    # Every brew the repository spawns runs under HOMEBREW_NO_AUTO_UPDATE=1.
+    # Brew's default is an implicit auto-update first — refreshing its
+    # formula API cache under a lock in `$(brew --prefix)/var/homebrew/locks`,
+    # which only the prefix owner can write. A resolution asks brew
+    # questions, and on a shared prefix (an agent user, a second developer,
+    # a runner service user) the question must not fail on a write dev
+    # never wanted: hosts converge from the tap at the lock's `tap_commit`,
+    # not from brew's live index, so the refresh is of no use here (dev#372).
     class BrewRepository < Repository
       extend T::Sig
 
+      # The env every brew query is spawned with (see the class doc).
+      READ_ENV = T.let({ "HOMEBREW_NO_AUTO_UPDATE" => "1" }.freeze, T::Hash[String, String])
       # The Homebrew core tap, whose formulae brew reads from the API.
       CORE_TAP = "homebrew/core"
       # The bottle tag of the build-container image's platform.
@@ -149,8 +160,8 @@ module Dev
       # @raise [BrewInfoError] if the command fails
       sig { params(tap: String).returns(T::Hash[String, T.untyped]) }
       def tap_info(tap)
-        out, _err, status = Open3.capture3("brew", "tap-info", "--json", tap)
-        raise BrewInfoError, "brew tap-info --json #{tap} failed" unless status.success?
+        out, _err, success = brew(["tap-info", "--json", tap])
+        raise BrewInfoError, "brew tap-info --json #{tap} failed" unless success
 
         JSON.parse(out).first
       end
@@ -214,8 +225,8 @@ module Dev
       # @raise [BrewInfoError] if the command fails
       sig { params(formulae: T::Array[String]).returns(T::Array[T::Hash[String, T.untyped]]) }
       def brew_info_all(formulae)
-        out, _err, status = T.unsafe(Open3).capture3("brew", "info", "--json=v1", *formulae)
-        raise BrewInfoError, "brew info --json=v1 #{formulae.join(" ")} failed" unless status.success?
+        out, _err, success = brew(["info", "--json=v1", *formulae])
+        raise BrewInfoError, "brew info --json=v1 #{formulae.join(" ")} failed" unless success
 
         JSON.parse(out)
       end
@@ -224,10 +235,21 @@ module Dev
       # @return [Boolean] whether `brew tap` succeeded
       sig { params(tap: String).returns(T::Boolean) }
       def register_tap(tap)
-        _out, _err, status = Open3.capture3("brew", "tap", tap)
+        _out, _err, success = brew(["tap", tap])
+        success
+      end
+
+      # Spawn brew under READ_ENV — the one place the repository runs it,
+      # so no query can forget the env (see the class doc).
+      #
+      # @param args [Array<String>] brew's argv
+      # @return [Array(String, String, Boolean)] stdout, stderr, success?
+      sig { params(args: T::Array[String]).returns([String, String, T::Boolean]) }
+      def brew(args)
+        out, err, status = T.unsafe(Open3).capture3(READ_ENV, "brew", *args)
         # success? is nil (not false) when the process didn't exit normally,
         # e.g. it was killed by a signal — coerce that to a failure.
-        status.success? || false
+        [out, err, status.success? || false]
       end
 
       # Every bottle a formula publishes, by tag, in a stable order. A tap

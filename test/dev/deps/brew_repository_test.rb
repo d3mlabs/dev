@@ -7,6 +7,10 @@ require "json"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::BrewRepositoryTest < Minitest::Test
+  # The env every read query spawns brew under: no implicit auto-update,
+  # whose API-cache refresh takes a lock only the prefix owner can write.
+  READ_ENV = Dev::Deps::BrewRepository::READ_ENV
+
   # A bottle entry as both brew info and the formula API list it.
   def bottle_file(name, sha)
     { "cellar" => ":any", "url" => bottle_url(name, sha), "sha256" => sha }
@@ -40,7 +44,7 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
 
   def stub_brew_info(specs, infos)
     Open3.stubs(:capture3)
-         .with("brew", "info", "--json=v1", *specs)
+         .with(READ_ENV, "brew", "info", "--json=v1", *specs)
          .returns([JSON.generate(infos), "", stub(success?: true)])
   end
 
@@ -52,7 +56,7 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
 
   def stub_tap_info(tap, names)
     Open3.stubs(:capture3)
-         .with("brew", "tap-info", "--json", tap)
+         .with(READ_ENV, "brew", "tap-info", "--json", tap)
          .returns([tap_info_json(tap, names), "", stub(success?: true)])
   end
 
@@ -188,11 +192,11 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
     Given "a tapped formula on a machine that has never tapped it"
     repository = Dev::Deps::BrewRepository.new
     Open3.stubs(:capture3)
-         .with("brew", "tap-info", "--json", "xcodesorg/made")
+         .with(READ_ENV, "brew", "tap-info", "--json", "xcodesorg/made")
          .returns([tap_info_json("xcodesorg/made", [], installed: false), "", stub(success?: true)])
          .then.returns([tap_info_json("xcodesorg/made", ["xcodes"]), "", stub(success?: true)])
     Open3.stubs(:capture3)
-         .with("brew", "tap", "xcodesorg/made")
+         .with(READ_ENV, "brew", "tap", "xcodesorg/made")
          .returns(["", "", stub(success?: true)])
     stub_brew_info(["xcodesorg/made/xcodes"], [formula_json("xcodes", stable: "1.6.2", sha: "xc123")])
 
@@ -316,7 +320,7 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
     Given "a formula that brew info cannot resolve"
     repository = Dev::Deps::BrewRepository.new
     Open3.stubs(:capture3)
-         .with("brew", "info", "--json=v1", "nonexistent")
+         .with(READ_ENV, "brew", "info", "--json=v1", "nonexistent")
          .returns(["", "Error: No available formula", stub(success?: false)])
 
     When "finding the package"
@@ -324,5 +328,24 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
 
     Then
     raises Dev::Deps::BrewRepository::BrewInfoError
+  end
+
+  # --- shared prefixes: reads never write -------------------------------------
+
+  test "find spawns every brew query with HOMEBREW_NO_AUTO_UPDATE=1, so a non-owner uid can resolve on a shared prefix" do
+    Given "a tap formula on a machine that has never tapped it — every brew the repository runs, in one resolution"
+    repository = Dev::Deps::BrewRepository.new
+    Open3.stubs(:capture3)
+         .with(READ_ENV, "brew", "tap-info", "--json", "xcodesorg/made")
+         .returns([tap_info_json("xcodesorg/made", [], installed: false), "", stub(success?: true)])
+         .then.returns([tap_info_json("xcodesorg/made", ["xcodes"]), "", stub(success?: true)])
+
+    When "finding with the tap on the id"
+    repository.find(Dev::Deps::PackageId.new(integration: :brew, name: "xcodes", source: "xcodesorg/made"))
+
+    Then "tap and info carry the env (tap-info above answers only under it): brew's implicit auto-update takes a lock under the prefix owner's var/homebrew/locks"
+    1 * Open3.capture3(READ_ENV, "brew", "tap", "xcodesorg/made") >> ["", "", stub(success?: true)]
+    1 * Open3.capture3(READ_ENV, "brew", "info", "--json=v1", "xcodesorg/made/xcodes") >>
+      [JSON.generate([formula_json("xcodes", stable: "1.6.2")]), "", stub(success?: true)]
   end
 end
