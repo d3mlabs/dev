@@ -55,6 +55,11 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  normalization gate: it must recognize every layout Cursor writes, since
  render re-serializes its output and any mis-split compounds on the next
  pull. → .cursor/skills/learnings/plan-parse-normalizes/
+- [architecture/per-side-project-state] Anything dev generates into the
+ bind-mounted project tree that binds an interpreter or OS/arch (lisps,
+ the venv) gets one path per side of the build container, decided from
+ `ContainerContext.inside?` in one place.
+ → .cursor/skills/learnings/per-side-project-state/
 
 ## toolchain
 
