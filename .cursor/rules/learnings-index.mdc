@@ -23,8 +23,12 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
 - [testing/rspock-bare-assertions] In rspock `transform!`-ed test classes,
   bare `Then`/`Expect` statements are assertions; outside a transformed
   class they silently assert nothing.
-  → skill: rspock (ships in the rspock gem; linked by `dev up` /
-  `dev deps install`)
+ → skill: rspock (ships in the rspock gem; linked by `dev up` /
+ `dev deps install`)
+- [testing/fake-tools-from-observation] A fake of an external tool (brew,
+ python, gh) transcribes the real tool's probed behaviour — argv, layout,
+ where its symlinks point — never the author's belief about it.
+ → .cursor/skills/learnings/fake-tools-from-observation/
 
 ## process
 
