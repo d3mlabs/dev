@@ -224,7 +224,8 @@ module Dev
             #{Dev::RunnerUser.new(name: Dev::RunnerUser::DEFAULT_NAME).login_command}
           An enrollment running as anyone else is drift: register offers to retire it
           and enroll fresh as the runner user. On macOS the enrollment is yours (a
-          per-user LaunchAgent); the agent user is the second identity there.
+          per-user LaunchAgent); the agent user is the second identity there, and its
+          own brew user — register has it trust the deployment's tap the same way.
 
           Examples:
             dev runner register                      # repo scope; label = the repo name

@@ -48,11 +48,12 @@ class Dev::AgentBootstrapTest < Minitest::Test
     '"memory":25769803776,"disk":107374182400,"runtime":"docker"}'
 
   # Filesystem-facing params always point at tmp paths: an already-provisioned
-  # shared root (DDC dir included) and no ~/.dev to migrate, so identity-step
-  # tests stay focused.
+  # shared root (DDC dir included) and no ~/.dev to migrate; and no
+  # deployment tap (the host's Settings never decide a test), so
+  # identity-step tests stay focused.
   def bootstrap(executor, darwin: true, **kwargs)
     provisioned_root = Dir.mktmpdir.tap { |root| FileUtils.mkdir_p(File.join(root, "ddc")) }
-    defaults = { shared_root: provisioned_root, home_dev: File.join(Dir.mktmpdir, "absent-home-dev") }
+    defaults = { shared_root: provisioned_root, home_dev: File.join(Dir.mktmpdir, "absent-home-dev"), tap: nil }
     Dev::AgentBootstrap.new(
       runner_user: "human", executor: executor, out: StringIO.new, darwin: darwin,
       **defaults.merge(kwargs)
@@ -267,10 +268,75 @@ class Dev::AgentBootstrapTest < Minitest::Test
     executor.runs.empty?
   end
 
+  # dev#374: the agent is a different brew user from the operator, and
+  # Homebrew 7's tap trust is per user — without this step every tap
+  # formula `dev deps` touched as the agent was refused, and a /build pass
+  # ran `brew trust` itself to get on.
+  test "converge! has the agent user trust the deployment's tap — as the agent, through sudo, the brew dev found" do
+    Given "a converged host with brew and the org tap"
+    brew = brew_in(Dir.mktmpdir)
+    executor = converged_identity_executor(brew_executable: brew)
+    out = StringIO.new
+
+    When "converging"
+    bootstrap(executor, out: out, brew_executable: brew, tap: org_tap).converge!
+
+    Then "the one step is brew trust as the agent, and it is announced"
+    executor.runs == [["sudo", "-H", "-u", "ai-agent", "--", brew, "trust", "--tap", "d3mlabs/d3mlabs"]]
+    out.string.include?(">>> Trusting the tap d3mlabs/d3mlabs for ai-agent")
+    !out.string.include?("warning")
+  end
+
+  test "converge! issues no trust step without brew on the host" do
+    Given "a converged host without brew, and the org tap"
+    executor = converged_identity_executor(brew_executable: nil)
+
+    When "converging"
+    bootstrap(executor, brew_executable: nil, tap: org_tap).converge!
+
+    Then
+    executor.runs.empty?
+  end
+
+  test "a brew without `trust` (nonzero exit) is a warning naming the by-hand command, not StepFailedError" do
+    Given "a converged host whose brew predates `brew trust`"
+    brew = brew_in(Dir.mktmpdir)
+    executor = converged_identity_executor(fail_matching: "trust", brew_executable: brew)
+    out = StringIO.new
+
+    When "converging"
+    bootstrap(executor, out: out, brew_executable: brew, tap: org_tap).converge!
+
+    Then "it ran, it was refused, and register went on"
+    executor.runs.count(&trusts) == 1
+    out.string.include?("dev: warning: could not trust the tap d3mlabs/d3mlabs for ai-agent")
+    out.string.include?("`sudo -iu ai-agent brew trust --tap d3mlabs/d3mlabs`")
+  end
+
+  # A lambda, not a block: a one-parameter block is emitted as |argv,| by
+  # the transform (rspockframework/ast-transform#21) and destructures an argv.
+  def trusts = ->(argv) { argv.include?("trust") }
+  def org_tap = Dev::TapTrust::Tap.new(user: "d3mlabs", repo: "d3mlabs")
+
+  # A brew binary at <prefix>/bin/brew, as BREW_LOCATIONS discovers one.
+  def brew_in(prefix)
+    File.join(prefix, "bin", "brew").tap do |brew|
+      FileUtils.mkdir_p(File.dirname(brew))
+      File.write(brew, "")
+    end
+  end
+
   # An executor whose identity probes (user, group, memberships, sudoers) all
-  # answer converged, so shared-root tests isolate their own step.
-  def converged_identity_executor
+  # answer converged, so shared-root and trust tests isolate their own step.
+  # The sudoers drop-in on "disk" is the one a bootstrap with the same brew
+  # would write, so the brew edge never drifts between probe and desire.
+  #
+  # @param fail_matching [String, nil] run() fails when the argv mentions this token
+  # @param bootstrap_kwargs [Hash] what the bootstrap under test is built
+  #   with that shapes the drop-in (`brew_executable:`)
+  def converged_identity_executor(fail_matching: nil, **bootstrap_kwargs)
     RecordedBootstrapExecutor.new(
+      fail_matching: fail_matching,
       probe_results: {
         ["id", "-u", "ai-agent"] => true,
         ["dseditgroup", "-o", "read", "ai"] => true,
@@ -279,7 +345,7 @@ class Dev::AgentBootstrapTest < Minitest::Test
       },
       capture_results: {
         ["sudo", "cat", "/etc/sudoers.d/ai-flow-agent"] =>
-          Dev::AgentBootstrap.new(runner_user: "human", darwin: true).sudoers_content,
+          Dev::AgentBootstrap.new(runner_user: "human", darwin: true, **bootstrap_kwargs).sudoers_content,
       },
     )
   end
