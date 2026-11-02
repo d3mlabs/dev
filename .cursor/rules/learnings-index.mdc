@@ -60,6 +60,11 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  the venv) gets one path per side of the build container, decided from
  `ContainerContext.inside?` in one place.
  → .cursor/skills/learnings/per-side-project-state/
+- [architecture/unresolved-carries-any-failure] `Resolver::Unresolved`
+ wraps any repository StandardError — an unparseable source included —
+ so a consumer that keeps a lock pin on one must still judge the
+ declaration against the pin it keeps.
+ → .cursor/skills/learnings/unresolved-carries-any-failure/
 
 ## toolchain
 
