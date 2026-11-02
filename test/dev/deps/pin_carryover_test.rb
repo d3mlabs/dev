@@ -376,7 +376,7 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
     floor = declared("cellbound-3d-linux", integration: :image, tap: "ghcr.io/d3mlabs/unreal-engine-build-base:ue5.8-3")
     denied = Dev::Deps::OciRepository::AccessDeniedError.new("the registry refused gh's token")
     floor_before = Dev::Deps::Dependency.new(name: "cellbound-3d-linux", integration: :image, group: :app, version: "ue5.8-3",
-      hash: "SHA256=#{"a" * 64}", metadata: {})
+      hash: "SHA256=#{"a" * 64}", metadata: { "from" => "ghcr.io/d3mlabs/unreal-engine-build-base" })
     resolved = [Dev::Deps::Resolver::Unresolved.new(declaration: floor, error: denied)]
 
     When "carrying over"
@@ -392,6 +392,29 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
     "the floor is named"                      | Dev::Deps::UnlockSet.new(names: ["cellbound-3d-linux"])   | ->(pin) { [pin] }
     "a bare re-lock takes today's non-brew"   | Dev::Deps::UnlockSet.none                                 | ->(pin) { [pin] }
     "the lock has no pin to keep"             | Dev::Deps::UnlockSet.new(names: ["clang-format"])         | ->(_pin) { [] }
+  end
+
+  test "a subset re-lock does not carry an image pin onto an edited floor its registry did not answer for: #{description}" do
+    Given "a lock pin resolved from one floor, and a declaration that now names #{description}"
+    floor = declared("cellbound-3d-linux", integration: :image, tap: edited)
+    floor_before = Dev::Deps::Dependency.new(name: "cellbound-3d-linux", integration: :image, group: :app, version: "ue5.8-3",
+      hash: "SHA256=#{"a" * 64}", metadata: { "from" => "ghcr.io/d3mlabs/unreal-engine-build-base" })
+    failure = Dev::Deps::OciRepository::ReferenceError.new("#{edited.inspect} is not a floor reference")
+    resolved = [Dev::Deps::Resolver::Unresolved.new(declaration: floor, error: failure)]
+
+    When "dev deps update clang-format"
+    carryover.apply(declarations: [floor, declared("clang-format", integration: :pip)], previous: [floor_before], resolved:,
+      unlock: Dev::Deps::UnlockSet.new(names: ["clang-format"]))
+
+    Then "the old digest is not kept behind a changed declaration: the repository's failure is the re-lock's"
+    error = raises Dev::Deps::OciRepository::ReferenceError
+    error.equal?(failure)
+
+    Where
+    description             | edited
+    "another repository"    | "ghcr.io/typo/unreal-engine-build-base:ue5.8-3"
+    "another tag"           | "ghcr.io/d3mlabs/unreal-engine-build-base:ue5.8-4"
+    "no reference at all"   | "unreal-engine-build-base"
   end
 
   test "an unresolved need of a named integration propagates: the author asked for what it pulls in to float" do

@@ -185,10 +185,12 @@ ecosystem's canonical form and validated at the DSL boundary (a cmake
    floated is the lock's, verbatim — and so needs nothing from today's
    universe: when the Resolver hands back an `Unresolved` for such a
    declaration (its registry refused the host's token, dev#373), the
-   lock's pin stands, reported as kept with the registry's refusal. Any
-   other re-lock — `--all`, the declaration named, a bare re-lock, no pin
-   to keep — needs the answer that never came, and the repository's
-   failure propagates. The outcome names the moves and their reasons for
+   lock's pin stands, reported as kept with the registry's refusal —
+   provided it was resolved from the floor the declaration names (an
+   `image` pin records its `from`; its version is the tag). Any other
+   re-lock — `--all`, the declaration named, a bare re-lock, no pin to
+   keep, a floor that was edited — needs the answer that never came, and
+   the repository's failure propagates. The outcome names the moves and their reasons for
    the command to report. This is a policy of the lock being written, so
    it lives in `dev deps update`, not in the Resolver, which never sees
    the previous lock; the `UnlockSet` also reaches each `Locker`, whose
@@ -265,7 +267,7 @@ sequenceDiagram
     Note over res: stamp needed_by provenance onto the needed pins
     res-->>cmd: verdicts (Dependency pins, Unresolved declarations)
     cmd->>carry: apply(declarations, previous, verdicts, unlock)
-    Note over carry: per brew pin - declaration unchanged, not floated, tap commit recorded? the lock's pin (tap_commit included); else today's, with the move's reason. Subset re-lock - every other unfloated pin is the lock's, an Unresolved one included (kept, registry unreachable); any other Unresolved raises the repository's error
+    Note over carry: per brew pin - declaration unchanged, not floated, tap commit recorded? the lock's pin (tap_commit included); else today's, with the move's reason. Subset re-lock - every other unfloated pin is the lock's, an Unresolved one included when the pin was resolved from the declaration's floor (kept, registry unreachable); any other Unresolved raises the repository's error
     carry-->>cmd: Outcome (pins, kept, moved, unreachable)
     cmd->>lock: lock(pins, manifest_digest)
     Note over lock: writes deps.lock, nested by integration

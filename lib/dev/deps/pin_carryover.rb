@@ -45,10 +45,13 @@ module Dev
     # needs nothing from today's universe, so when the universe did not
     # answer for its declaration (the Resolver's Unresolved: an image floor
     # in a registry the host has no token for, dev#373) the lock's pin
-    # stands all the same, reported as kept for want of an answer. Every
-    # other shape — `--all`, the declaration named, a bare re-lock, no pin
-    # to keep — needs today's answer, and the repository's failure
-    # propagates as it would have from the resolution.
+    # stands all the same, reported as kept for want of an answer —
+    # provided the pin was resolved from the floor the declaration names:
+    # an image pin records its floor, and an edited floor nobody answered
+    # for is a changed declaration, not a kept one. Every other shape —
+    # `--all`, the declaration named, a bare re-lock, no pin to keep, a
+    # floor that moved — needs today's answer, and the repository's
+    # failure propagates as it would have from the resolution.
     #
     # Pure over the declarations, the previous lock and the resolution; the
     # Resolver never sees the previous lock.
@@ -59,6 +62,12 @@ module Dev
       # that are formulae (Registry's `install_alias: :brew` rows).
       BREW_INTEGRATIONS = T.let(%i[brew ruby python].freeze, T::Array[Symbol])
       TAP_COMMIT = "tap_commit"
+
+      # The image channel, and the metadata key under which its pin records
+      # the floor it was resolved from (OciRepository#find: the reference
+      # less its tag, which is the pin's version).
+      IMAGE_INTEGRATION = :image
+      FLOOR = "from"
 
       # A pin the lock takes from the resolution at another version than it
       # had (`from` nil when the lock had none), and why.
@@ -202,8 +211,9 @@ module Dev
       # The rule for a declaration whose universe did not answer. A subset
       # re-lock would carry an unfloated pin the lock has verbatim, whatever
       # today's answer — so none is needed, and the lock's pin stands, kept
-      # for want of an answer. Everything else needs the answer that never
-      # came, and the repository's failure is the re-lock's.
+      # for want of an answer, as long as it still answers the declaration's
+      # source. Everything else needs the answer that never came, and the
+      # repository's failure is the re-lock's.
       #
       # @param unresolved [Resolver::Unresolved] the declaration and the failure
       # @param prior [Dependency, nil] the lock's pin of the same identity
@@ -220,9 +230,30 @@ module Dev
         ).returns(Decision)
       end
       def decide_unresolved(unresolved, prior, floats:, unlock:)
-        raise unresolved.error unless unlock.subset? && prior && !floats
+        carried = unlock.subset? && prior && !floats && resolved_from?(prior, unresolved.declaration.source)
+        raise unresolved.error unless carried
 
         Decision.new(pin: prior, unreachable: unresolved.error)
+      end
+
+      # Whether the lock's pin was resolved from the source the declaration
+      # names. With no answer from the universe this is the one judgment
+      # the carry-over can still make, and it keeps an edited floor from
+      # hiding behind the registry's failure: `from: "ghcr.io/typo/…"` is a
+      # parse error dressed as a refusal, and the old digest must not be
+      # kept under it. An image pin records its floor and the tag it
+      # resolved; the other channels' pins record no source this rule can
+      # hold a declaration against, and carry as the subset rule carries
+      # them when they do resolve.
+      #
+      # @param prior [Dependency] the lock's pin
+      # @param source [String, nil] the declaration's source
+      # @return [Boolean]
+      sig { params(prior: Dependency, source: T.nilable(String)).returns(T::Boolean) }
+      def resolved_from?(prior, source)
+        return true unless prior.integration == IMAGE_INTEGRATION
+
+        "#{prior.metadata[FLOOR]}:#{prior.version}" == source
       end
 
       # The brew rule: new pins and floated pins are the resolution's; a
