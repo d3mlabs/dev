@@ -43,7 +43,7 @@ module Dev
     sig { params(keg: Pathname, version: String, project_root: Pathname).void }
     def activate!(keg:, version:, project_root:)
       venv = project_root / VENV_DIR
-      FileUtils.rm_rf(venv) if venv.exist? && !venv_built_on?(venv, keg)
+      FileUtils.rm_rf(venv) if venv.exist? && !venv_built_on?(venv, keg, version)
       venv_python = venv / "bin" / "python"
       unless venv_python.executable?
         python = keg_python(keg, version)
@@ -66,19 +66,33 @@ module Dev
       keg / "bin" / "python#{version.split(".").first(2).join(".")}"
     end
 
-    # Whether a venv was built on the given keg: a venv's pyvenv.cfg records
-    # the interpreter's bin directory as `home`.
+    # Whether a venv was built on the given keg: by a Python of the locked
+    # version, from this brew prefix. A venv's pyvenv.cfg records the
+    # interpreter that built it as `version`, and its bin directory as
+    # `home` — which a brew Python computes from its configured prefix, so
+    # it reads `<prefix>/opt/<formula>/bin` (brew's link to whichever keg
+    # is current, never the keg's own bin; `executable` and `command` go
+    # through the same link). The version is the keg's identity then, and
+    # the home tells this prefix's venv from another's — the build
+    # container's Linuxbrew builds the same version on the same mounted
+    # project.
     #
     # @param venv [Pathname]
-    # @param keg [Pathname]
+    # @param keg [Pathname] `<prefix>/Cellar/<formula>/<version>`
+    # @param version [String] the version the lock pins
     # @return [Boolean]
-    sig { params(venv: Pathname, keg: Pathname).returns(T::Boolean) }
-    def venv_built_on?(venv, keg)
+    sig { params(venv: Pathname, keg: Pathname, version: String).returns(T::Boolean) }
+    def venv_built_on?(venv, keg, version)
       cfg = venv / "pyvenv.cfg"
       return false unless cfg.file?
 
-      home = cfg.read[/^home\s*=\s*(.+)$/, 1]&.strip
-      !home.nil? && Pathname(home).cleanpath == (keg / "bin").cleanpath
+      contents = cfg.read
+      built_by = contents[/^version\s*=\s*(.+)$/, 1]&.strip
+      home = contents[/^home\s*=\s*(.+)$/, 1]&.strip
+      return false unless built_by == version && home
+
+      formula_bins = [keg / "bin", keg.parent.parent.parent / "opt" / keg.parent.basename / "bin"]
+      formula_bins.any? { |bin| bin.cleanpath == Pathname(home).cleanpath }
     end
 
     # Guarantee pip is importable inside the venv. `python -m venv` normally seeds

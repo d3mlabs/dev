@@ -63,7 +63,93 @@ class ShadowenvPythonTest < Minitest::Test
 
     Then "the first activation rebuilt the venv on the keg; the second left it alone"
     File.read(log).lines.count { |line| line.start_with?("-m venv") } == 1
-    File.read(File.join(venv, "pyvenv.cfg")).include?("home = #{keg / "bin"}")
+    File.read(File.join(venv, "pyvenv.cfg")).include?("home = #{File.join(tmpdir, "opt", "python@3.12", "bin")}")
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "activate! keeps a venv whose pyvenv.cfg reads as a brew Python writes it: every path through the opt link, only the version naming the keg" do
+    Given "a venv built by the locked 3.12.8 keg, whose cfg paths all go through an opt link that now points at a newer keg"
+    tmpdir = Dir.mktmpdir("shadowenv-python-test-")
+    keg = Pathname(tmpdir) / "Cellar" / "python@3.12" / "3.12.8_1"
+    log = write_keg_python(keg)
+    venv = File.join(tmpdir, ".venv")
+    FileUtils.mkdir_p(File.join(venv, "bin"))
+    write_fake_executable(File.join(venv, "bin", "python"), "#!/bin/sh\nexit 0\n")
+    File.write(File.join(venv, "pyvenv.cfg"), <<~CFG)
+      home = #{File.join(tmpdir, "opt", "python@3.12", "bin")}
+      include-system-site-packages = false
+      version = 3.12.8
+      executable = #{File.join(tmpdir, "Cellar", "python@3.12", "3.12.9", "Frameworks", "Python.framework", "Versions", "3.12", "bin", "python3.12")}
+      command = #{File.join(tmpdir, "opt", "python@3.12", "bin", "python3.12")} -m venv #{venv}
+    CFG
+
+    When "activating"
+    Dev::ShadowenvPython.activate!(keg: keg, version: "3.12.8", project_root: Pathname(tmpdir))
+
+    Then "the keg's interpreter was never asked to build a venv"
+    !File.exist?(log)
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "activate! keeps a venv from an older Python that records only home and version" do
+    Given "a venv whose pyvenv.cfg has home = the opt link's bin and the locked version"
+    tmpdir = Dir.mktmpdir("shadowenv-python-test-")
+    keg = Pathname(tmpdir) / "Cellar" / "python@3.12" / "3.12.8_1"
+    log = write_keg_python(keg)
+    venv = File.join(tmpdir, ".venv")
+    FileUtils.mkdir_p(File.join(venv, "bin"))
+    write_fake_executable(File.join(venv, "bin", "python"), "#!/bin/sh\nexit 0\n")
+    File.write(File.join(venv, "pyvenv.cfg"), "home = #{File.join(tmpdir, "opt", "python@3.12", "bin")}\nversion = 3.12.8\n")
+
+    When "activating"
+    Dev::ShadowenvPython.activate!(keg: keg, version: "3.12.8", project_root: Pathname(tmpdir))
+
+    Then "the keg's interpreter was never asked to build a venv"
+    !File.exist?(log)
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "activate! rebuilds a venv built by another version of the same minor, whose cfg otherwise reads the same" do
+    Given "a venv built by 3.12.7 through the same opt link, the lock now pinning 3.12.8"
+    tmpdir = Dir.mktmpdir("shadowenv-python-test-")
+    keg = Pathname(tmpdir) / "Cellar" / "python@3.12" / "3.12.8_1"
+    log = write_keg_python(keg)
+    venv = File.join(tmpdir, ".venv")
+    FileUtils.mkdir_p(File.join(venv, "bin"))
+    write_fake_executable(File.join(venv, "bin", "python"), "#!/bin/sh\nexit 0\n")
+    File.write(File.join(venv, "pyvenv.cfg"), "home = #{File.join(tmpdir, "opt", "python@3.12", "bin")}\nversion = 3.12.7\n")
+
+    When "activating"
+    Dev::ShadowenvPython.activate!(keg: keg, version: "3.12.8", project_root: Pathname(tmpdir))
+
+    Then "the venv was rebuilt on the locked keg"
+    File.read(log).lines.count { |line| line.start_with?("-m venv") } == 1
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "activate! rebuilds a venv of the locked version built under another brew prefix (the build container's)" do
+    Given "a venv built by 3.12.8 from a Linuxbrew prefix, the project now activating on this prefix's keg"
+    tmpdir = Dir.mktmpdir("shadowenv-python-test-")
+    keg = Pathname(tmpdir) / "Cellar" / "python@3.12" / "3.12.8_1"
+    log = write_keg_python(keg)
+    venv = File.join(tmpdir, ".venv")
+    FileUtils.mkdir_p(File.join(venv, "bin"))
+    write_fake_executable(File.join(venv, "bin", "python"), "#!/bin/sh\nexit 0\n")
+    File.write(File.join(venv, "pyvenv.cfg"), "home = /home/linuxbrew/.linuxbrew/opt/python@3.12/bin\nversion = 3.12.8\n")
+
+    When "activating"
+    Dev::ShadowenvPython.activate!(keg: keg, version: "3.12.8", project_root: Pathname(tmpdir))
+
+    Then "the venv was rebuilt on the locked keg"
+    File.read(log).lines.count { |line| line.start_with?("-m venv") } == 1
 
     Cleanup
     FileUtils.rm_rf(tmpdir)
@@ -135,12 +221,17 @@ class ShadowenvPythonTest < Minitest::Test
     path
   end
 
-  # A keg's bin/python3 stand-in: logs every invocation; `-m venv <dir>`
-  # materializes a minimal venv whose pyvenv.cfg names this keg's bin as its
-  # home, as a real venv's does. Returns the log path.
+  # A brew keg's bin/python3.12 stand-in under a prefix laid out like
+  # brew's (`<prefix>/Cellar/<formula>/<version>`, with `<prefix>/opt/<formula>`
+  # linked to the keg): logs every invocation; `-m venv <dir>` materializes
+  # a minimal venv whose pyvenv.cfg reads as a brew Python's does — `home`
+  # is the opt link's bin, not the keg's. Returns the log path.
   def write_keg_python(keg)
     log = File.join(keg, "invocations.log")
     FileUtils.mkdir_p(File.join(keg, "bin"))
+    opt = keg.parent.parent.parent / "opt" / keg.parent.basename
+    FileUtils.mkdir_p(opt.dirname)
+    FileUtils.ln_s(keg, opt) unless opt.symlink?
     script = [
       "#!/bin/sh",
       "echo \"$@\" >> \"#{log}\"",
@@ -148,7 +239,7 @@ class ShadowenvPythonTest < Minitest::Test
       "  mkdir -p \"$3/bin\"",
       "  printf '#!/bin/sh\\nexit 0\\n' > \"$3/bin/python\"",
       "  chmod 755 \"$3/bin/python\"",
-      "  printf 'home = %s\\nversion = 3.12.8\\n' \"#{File.join(keg, "bin")}\" > \"$3/pyvenv.cfg\"",
+      "  printf 'home = %s\\nversion = 3.12.8\\n' \"#{opt / "bin"}\" > \"$3/pyvenv.cfg\"",
       "fi",
       "exit 0",
     ].join("\n")
