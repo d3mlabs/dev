@@ -20,7 +20,9 @@ module Dev
     # Lifecycle handler for Homebrew dependencies.
     #
     # install_all installs each formula/cask via brew. Registers taps
-    # (if configured) before the first install.
+    # (if configured) before the first install, and reads what brew has of
+    # the whole batch in one `brew list --versions` per kind, so a warm
+    # machine pays one brew start, not two per keg.
     #
     # Homebrew assumes exactly one non-root owner of exactly one prefix, so
     # on cooperative shared machines (plans#26) a sandboxed agent user
@@ -217,6 +219,9 @@ module Dev
         @tap_pinner = tap_pinner
         @brew_env = brew_env
         @interpreters = interpreters
+        @batch_formulae = T.let([], T::Array[String])
+        @batch_casks = T.let([], T::Array[String])
+        @cellar = T.let(nil, T.nilable(T::Hash[String, T::Array[String]]))
       end
 
       # @return [Boolean] whether installs pin taps at the lock's commits
@@ -244,7 +249,9 @@ module Dev
       sig { params(dependencies: T::Array[Dependency]).void }
       def install_all(dependencies)
         ensure_taps_registered
-        pin_taps!(dependencies.reject { |dep| dep.metadata["cask"] }) if @pin_taps
+        casks, formulae = dependencies.partition { |dep| dep.metadata["cask"] }
+        pin_taps!(formulae) if @pin_taps
+        begin_batch!(formulae: formulae.map { |dep| formula_name(dep) }, casks: casks.map(&:name))
         failures = collect_failures(dependencies) do |dep|
           if dep.metadata["cask"]
             install_cask(dep)
@@ -582,14 +589,63 @@ module Dev
 
       # The keg versions brew has for a formula, revision suffixes stripped.
       #
-      # @param formula [String]
-      # @return [Array<String>] empty when brew reports none
+      # @param formula [String] a formula of the current batch
+      # @return [Array<String>] empty when brew has none
       sig { params(formula: String).returns(T::Array[String]) }
       def installed_versions(formula)
-        out, _err, status = T.unsafe(Open3).capture3("brew", "list", "--versions", formula)
-        return [] unless status.success?
+        cellar.fetch(formula, [])
+      end
 
-        out.split.drop(1).map { |version| version.sub(/_\d+\z/, "") }
+      # Name the formulae and casks one install_all is about: what the
+      # Cellar is read for. Forgets any earlier batch's reading.
+      #
+      # @param formulae [Array<String>] formula names (`llvm@18`, not `llvm`)
+      # @param casks [Array<String>] cask tokens
+      # @return [void]
+      sig { params(formulae: T::Array[String], casks: T::Array[String]).void }
+      def begin_batch!(formulae:, casks:)
+        @batch_formulae = formulae
+        @batch_casks = casks
+        @cellar = nil
+      end
+
+      # What brew has installed of the batch, by name: read on first need
+      # and held until a write, so a batch of N already-installed formulae
+      # costs one brew start for the formulae and one for the casks rather
+      # than two per keg (each `brew list` boots brew's Ruby; on Linuxbrew
+      # that is over a second a call — dev#375). A formula and a cask
+      # sharing a name share the entry; dev declares one or the other.
+      #
+      # @return [Hash{String => Array<String>}] installed versions by name,
+      #   revision suffixes stripped; a name brew lacks has no entry
+      sig { returns(T::Hash[String, T::Array[String]]) }
+      def cellar
+        @cellar ||= begin
+          listing = T.let({}, T::Hash[String, T::Array[String]])
+          listing.merge!(list_versions("--formula", @batch_formulae)) unless @batch_formulae.empty?
+          listing.merge!(list_versions("--cask", @batch_casks)) unless @batch_casks.empty?
+          listing
+        end
+      end
+
+      # Ask brew for the versions it has of the named formulae or casks.
+      # `brew list --versions` prints one line per name it has and exits 1
+      # when any name is missing, so stdout is the answer and the status is
+      # not. No brew at all reads as nothing installed: the install that
+      # follows fails in brew's own words, as it always did.
+      #
+      # @param kind [String] `--formula` or `--cask`
+      # @param names [Array<String>]
+      # @return [Hash{String => Array<String>}]
+      sig { params(kind: String, names: T::Array[String]).returns(T::Hash[String, T::Array[String]]) }
+      def list_versions(kind, names)
+        out, _err, _status = T.unsafe(Open3).capture3("brew", "list", "--versions", kind, *names)
+        out.lines.to_h do |line|
+          name, *versions = T.let(line.split, T::Array[String])
+          [T.must(name), versions.map { |version| version.sub(/_\d+\z/, "") }]
+        end
+      rescue Errno::ENOENT
+        {}
       end
 
       # Install a Homebrew cask.
@@ -602,13 +658,13 @@ module Dev
         run_brew_install(dep.name, "--cask #{dep.name}")
       end
 
-      # Check if a formula/cask is already installed.
+      # Whether brew has a formula or cask of the current batch at any version.
       #
-      # @param name [String] formula or cask name
-      # @return [Boolean, nil] nil when the brew command itself cannot run
-      sig { params(name: String).returns(T.nilable(T::Boolean)) }
+      # @param name [String] formula (`llvm@18`) or cask name
+      # @return [Boolean]
+      sig { params(name: String).returns(T::Boolean) }
       def brew_installed?(name)
-        system("brew list #{name} >/dev/null 2>&1")
+        cellar.key?(name)
       end
 
       # Run `brew install` with the given spec.
@@ -643,7 +699,9 @@ module Dev
 
       # Run a brew write — install, upgrade, update — escalated to the
       # prefix owner when the prefix is not ours (see the class doc) and
-      # under brew's env, reporting rather than raising.
+      # under brew's env, reporting rather than raising. A write may have
+      # changed the Cellar, so its reading is dropped: the next question
+      # asks brew again.
       #
       # @param args [Array<String>] brew's argv
       # @param pinned [Boolean] read the formula from its checked-out tap,
@@ -653,6 +711,7 @@ module Dev
       sig { params(args: T::Array[String], pinned: T::Boolean).returns([String, T::Boolean]) }
       def brew_write(args, pinned: @pin_taps)
         _out, err, status = T.unsafe(Open3).capture3(*brew_command(args, pinned:))
+        @cellar = nil
         # success? is nil when the process did not exit normally — a failure.
         [err, status.success? || false]
       end
