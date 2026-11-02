@@ -113,3 +113,13 @@ flowchart LR
 ```
 
 The verb is a channel choice. Warmth is shape × the host's persistence mechanism, and has nothing to do with which group a dependency is in or whether it is "build" or "runtime". A workstation and a box persist the data root and brew prefix continuously on a disk; a Mac's container persists them on two named volumes; a hosted runner persists them discretely in the **checkpoint** — a GitHub custom image of the whole boot disk, minted by a `main`-only job after a green run that changed a lock file. A cache action for a workdir ([dev#265](https://github.com/d3mlabs/dev/issues/265)) is an optimization of the gap between the checkpoint and the current lock, built only if the measured gap warrants it. See [Setting up a host](../README.md#setting-up-a-host-warmth-is-the-data-root).
+
+## What the checkout carries, and gitignores
+
+Two things dev installs live in the project tree rather than the data root, because they are the project's own activation state: `.shadowenv.d/` (the activation lisps, machine-specific absolute paths — one file per side of the build container, the container's a `_container` sibling) and, for a project that declares a `python`, the venv the pin's activation builds. **The venv is per side**: a venv is built for one interpreter on one OS/arch, and the project is bind-mounted into the build container, so one shared `.venv` would be a macOS venv to the host and a Linux venv to the container in turn, each `dev up` rebuilding what the other side just built ([dev#379](https://github.com/d3mlabs/dev/issues/379)). The host builds `.venv`, the container builds `.venv-container` beside it, and both stay warm. A project's `.gitignore` names all three:
+
+```gitignore
+.shadowenv.d/
+.venv/
+.venv-container/
+```
