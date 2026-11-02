@@ -60,6 +60,11 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  the venv) gets one path per side of the build container, decided from
  `ContainerContext.inside?` in one place.
  → .cursor/skills/learnings/per-side-project-state/
+- [architecture/shared-prefix-reads-never-write] dev runs as uids that do
+ not own the brew prefix: the escalated `brew_write` install is the only
+ prefix write; every other spawn (brew queries, gem/bundler checks) runs in
+ a mode that writes nothing there — a tool's default run is not a read.
+ → .cursor/skills/learnings/shared-prefix-reads-never-write/
 
 ## toolchain
 
