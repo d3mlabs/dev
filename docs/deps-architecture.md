@@ -301,7 +301,9 @@ interpreter gets its language activation right after its keg's PATH
 activation — `BrewIntegration` hands the `:ruby` keg to
 `ShadowenvRuby.activate!` (`510_ruby.lisp`: `RUBY_ROOT`, `GEM_HOME`;
 `.ruby-version`) and the `:python` keg to `ShadowenvPython.activate!`
-(the project `.venv` built on the keg, `540_python.lisp`). `ShadowenvPath`
+(the project `.venv` built on the keg and pinned to it — its interpreter
+links and pyvenv.cfg `home` name the keg, not brew's opt link —
+`540_python.lisp`). `ShadowenvPath`
 renders the PATH files: a `provide` record names the activated set, the
 file is rewritten only when the set changed, and an integration that
 knows no project (an image bootstrap, a test) activates nothing.
