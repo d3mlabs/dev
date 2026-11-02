@@ -14,6 +14,12 @@ require "open3"
 module EnsureBundler
   class BundlerInstallError < StandardError; end
 
+  # `bundle --version` prints "Bundler version X.Y.Z" through Bundler 3 and a
+  # bare "X.Y.Z" from Bundler 4 on. Anchored to a whole line so version-like
+  # fragments elsewhere in the output (gem paths in a warning or backtrace)
+  # are never mistaken for the bundler version.
+  VERSION_LINE = /^(?:Bundler version )?(\d+\.\d+\.\d+)$/
+
   class << self
     extend T::Sig
 
@@ -28,11 +34,7 @@ module EnsureBundler
       load File.join(dev_root, "dependencies.rb") unless defined?(BUNDLER_VERSION)
 
       requirement = Gem::Requirement.new(BUNDLER_VERSION)
-      current = begin
-        out = `bundle --version 2>&1`.strip
-        m = out.match(/Bundler version (\d+\.\d+\.\d+)/)
-        m ? Gem::Version.new(T.must(m[1])) : nil
-      end
+      current = installed_version
       return true if current && requirement.satisfied_by?(current)
 
       puts "Ensuring bundler #{BUNDLER_VERSION}..."
@@ -42,6 +44,26 @@ module EnsureBundler
       end
       Gem.clear_paths
       true
+    end
+
+    private
+
+    # The version of the bundler that `bundle` on PATH runs.
+    #
+    # Not an error path: no bundler is a legitimate state the caller resolves
+    # by installing one, so it reads as nil rather than raising.
+    #
+    # @return [Gem::Version, nil] nil when `bundle` is absent, fails, or
+    #   prints nothing recognizable as a version
+    sig { returns(T.nilable(Gem::Version)) }
+    def installed_version
+      out, status = Open3.capture2e("bundle", "--version")
+      return nil unless status.success?
+
+      match = out.match(VERSION_LINE)
+      match && Gem::Version.new(T.must(match[1]))
+    rescue Errno::ENOENT
+      nil
     end
   end
 end
