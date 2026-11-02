@@ -11,6 +11,7 @@ require "yaml"
 require "dev/colima_provisioner"
 require "dev/data_root"
 require "dev/data_root_migration"
+require "dev/tap_trust"
 
 module Dev
   # The agent host bootstrap (plans#26 layer 3), converged by
@@ -21,10 +22,12 @@ module Dev
   # record file, every fact here is re-derivable from the host.
   #
   # What it converges: the hidden non-admin agent OS user, the shared `ai`
-  # group, and the one-way sudoers edge (runner user → agent, SETENV, with
+  # group, the one-way sudoers edge (runner user → agent, SETENV, with
   # the agent-side umask defaults that keep agent-created dirs
-  # group-writable). The only constants shared with ai-flow are the user and
-  # group names.
+  # group-writable), and the agent's trust of the deployment's tap — the
+  # agent is a different brew user from the operator, and brew's tap trust
+  # is per user (TapTrust, dev#374). The only constants shared with ai-flow
+  # are the user and group names.
   #
   # macOS-only today: the admin CLIs (sysadminctl, dseditgroup, visudo) are
   # Darwin's, and the only agent hosts are Macs (plans#26 approach
@@ -133,11 +136,12 @@ module Dev
       end
     end
 
-    # Adapts the bootstrap executor into ColimaProvisioner's seam, crossing
-    # the user boundary: every colima invocation runs as the agent (its VM,
-    # its socket). Probes use `sudo -n` so a missing credential fails fast
-    # instead of hanging on a swallowed password prompt — the caller primes
-    # sudo first.
+    # Adapts the bootstrap executor into the seam ColimaProvisioner and
+    # TapTrust run through, crossing the user boundary: every colima
+    # invocation runs as the agent (its VM, its socket), and so does the
+    # `brew trust` that lands in the agent's own trust file. Probes use
+    # `sudo -n` so a missing credential fails fast instead of hanging on a
+    # swallowed password prompt — the caller primes sudo first.
     class SudoAgentExecutor
       extend T::Sig
 
@@ -184,7 +188,11 @@ module Dev
     # @param home_dev [String] the per-user data dir migrated out of
     # @param launch_agents_dir [String] where svc.sh installs runner plists
     # @param brew_executable [String, nil] the host's brew binary (discovered
-    #   from BREW_LOCATIONS; injectable for tests; nil = no brew edge)
+    #   from BREW_LOCATIONS; injectable for tests; nil = no brew edge, no
+    #   tap to trust)
+    # @param tap [String, nil] the deployment's tap, which the agent user
+    #   must trust before brew will load its formulae for it (TapTrust);
+    #   nil for none
     sig do
       params(
         agent_user: String,
@@ -196,13 +204,15 @@ module Dev
         home_dev: String,
         launch_agents_dir: String,
         brew_executable: T.nilable(String),
+        tap: T.nilable(String),
       ).void
     end
     def initialize(agent_user: DEFAULT_AGENT_USER, runner_user: T.must(Etc.getpwuid(Process.uid)).name,
                    executor: Executor.new, out: $stdout, darwin: RUBY_PLATFORM.include?("darwin"),
                    shared_root: DataRoot::SHARED_ROOT, home_dev: File.expand_path(DataRoot::HOME_ROOT),
                    launch_agents_dir: File.join(Dir.home, "Library", "LaunchAgents"),
-                   brew_executable: BREW_LOCATIONS.find { |path| File.exist?(path) })
+                   brew_executable: BREW_LOCATIONS.find { |path| File.exist?(path) },
+                   tap: TapTrust.deployment_tap)
       @agent_user = agent_user
       @runner_user = runner_user
       @executor = executor
@@ -212,10 +222,19 @@ module Dev
       @home_dev = home_dev
       @launch_agents_dir = launch_agents_dir
       @brew_executable = brew_executable
+      @as_agent = T.let(SudoAgentExecutor.new(executor: executor, agent_user: agent_user), SudoAgentExecutor)
+      # `run` streams: the trust step may be the first sudo of a converged
+      # host's re-run, and its password prompt has to reach the terminal.
+      @tap_trust = T.let(
+        TapTrust.new(user: agent_user, brew: brew_executable, tap: tap, out: out,
+          run_as_user: ->(argv) { @as_agent.run(*argv) }),
+        TapTrust,
+      )
     end
 
     # Converge the host-singular facts: agent user, group, sudoers edge,
-    # shared root (with the one-off ~/.dev migration).
+    # shared root (with the one-off ~/.dev migration), and the agent's
+    # trust of the deployment's tap (after the user exists to hold it).
     #
     # @return [void]
     # @raise [UnsupportedPlatformError] off macOS
@@ -227,6 +246,7 @@ module Dev
       ensure_group!
       ensure_sudoers!
       ensure_shared_root!
+      @tap_trust.trust!
     end
 
     # Step 6, invoked by the label contract only when a served repo's lock
@@ -253,7 +273,7 @@ module Dev
       ensure_colima_installed!
       ensure_agent_engine_record!
       ColimaProvisioner
-        .new(executor: SudoAgentExecutor.new(executor: @executor, agent_user: @agent_user))
+        .new(executor: @as_agent)
         .provision!(cpus: cpus, memory_gib: memory_gib, disk_gib: disk_gib)
     end
 

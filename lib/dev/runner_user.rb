@@ -8,7 +8,7 @@ require "dev/linux_data_root_provisioner"
 require "dev/platform"
 require "dev/privileged_steps"
 require "dev/runner_setup"
-require "dev/settings"
+require "dev/tap_trust"
 
 module Dev
   # The OS user a Linux host's runner services run as (dev#310) — the
@@ -151,18 +151,6 @@ module Dev
         "#{prefix}/bin:#{prefix}/sbin:#{SYSTEM_PATH}"
       end
 
-      # The tap a deployment formula lives in: `user/repo` of a
-      # tap-qualified `user/repo/name`; nil for a bare name (dev-core, no
-      # tap to trust) or no deployment at all.
-      #
-      # @param formula [String, nil] Settings#deployment_formula
-      # @return [String, nil]
-      sig { params(formula: T.nilable(String)).returns(T.nilable(String)) }
-      def deployment_tap(formula: Settings.new.deployment_formula)
-        parts = formula.to_s.split("/")
-        parts.size == 3 ? parts.first(2).join("/") : nil
-      end
-
       # The token in one phrase, for every place that asks for or explains it.
       #
       # @return [String]
@@ -181,7 +169,8 @@ module Dev
     # @param path [String] the PATH the runner user's commands run on
     # @param owner_of [Proc] who owns a path (injectable for tests)
     # @param tap [String, nil] the deployment's tap, which the runner user
-    #   must trust before brew will load dev's formula for it; nil for none
+    #   must trust before brew will load dev's formula for it (TapTrust);
+    #   nil for none
     sig do
       params(
         name: String,
@@ -200,7 +189,7 @@ module Dev
                    home_of: ->(user) { RunnerUser.passwd_home(user) },
                    brew: RunnerUser.brew_path, path: RunnerUser.host_path(brew: brew),
                    owner_of: ->(path_to_own) { RunnerUser.owner_of(path_to_own) },
-                   tap: RunnerUser.deployment_tap)
+                   tap: TapTrust.deployment_tap)
       @name = name
       @steps = steps
       @exec = executor
@@ -209,7 +198,13 @@ module Dev
       @brew = brew
       @path = path
       @owner_of = owner_of
-      @tap = tap
+      # Streams (`system`, not `capture`): brew's own refusal is the
+      # warning's context, and the sudo session is already open.
+      @tap_trust = T.let(
+        TapTrust.new(user: name, brew: brew, tap: tap, out: out,
+          run_as_user: ->(argv) { @exec.system(*sudo_argv(*argv)) == true }),
+        TapTrust,
+      )
     end
 
     # The trees that make up the host's toolchain: brew's prefix and, on
@@ -297,29 +292,9 @@ module Dev
       brew = @brew
       @steps.install_file!("eval \"$(#{brew} shellenv)\"\n", PROFILE_D, mode: "0644") if brew
       own_toolchain!
-      trust_tap!
-    end
-
-    # Have the runner user trust the deployment's tap. Homebrew 7 loads no
-    # formula from a third-party tap its user has not trusted, and trust is
-    # per user (`~/.homebrew/trust.json`) — the operator's does not carry
-    # over, and the first `brew upgrade` of dev in a job was refused the
-    # formula. Run as the runner user, in the sudo session; idempotent. A
-    # brew too old for `trust` has no gate to pass, so its refusal is a
-    # warning naming the by-hand command, not a stop.
-    #
-    # @return [void]
-    sig { void }
-    def trust_tap!
-      tap = @tap
-      return unless tap && @brew
-
-      @out.puts ">>> Trusting the tap #{tap} for #{@name} (brew loads nothing from a tap its user has not trusted)"
-      _out, err, ok = @exec.capture(*sudo_argv("brew", "trust", "--tap", tap))
-      return if ok
-
-      @out.puts "dev: warning: could not trust the tap #{tap} for #{@name} (#{err.strip.lines.last.to_s.strip}) — " \
-                "if jobs are refused the formula: `sudo -iu #{@name} brew trust --tap #{tap}`"
+      # The deployment's tap, trusted by the runner user — the operator's
+      # trust does not carry over (TapTrust); in the session, as that user.
+      @tap_trust.trust!
     end
 
     # Hand the toolchain to the runner user when someone else owns it.

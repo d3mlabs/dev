@@ -24,7 +24,8 @@ class Dev::RunnerUserTest < Minitest::Test
 
   # Answers `gh auth status` from a flag — flipped to logged-in by a
   # `gh auth login --with-token` whose stdin carries the accepted token;
-  # records every call with what rode its stdin.
+  # records every call with what rode its stdin. The streamed `brew trust`
+  # (`system`) answers from `trusts:` — false for a brew without the command.
   class GhExecutor
     attr_reader :calls, :stdins
 
@@ -36,10 +37,15 @@ class Dev::RunnerUserTest < Minitest::Test
       @stdins = []
     end
 
+    def system(*argv, chdir: nil)
+      @calls << argv
+      @stdins << nil
+      @trusts
+    end
+
     def capture(*argv, chdir: nil, stdin: nil)
       @calls << argv
       @stdins << stdin
-      return (@trusts ? ["", "", true] : ["", "Error: Unknown command: trust", false]) if argv.include?("trust")
       if argv.include?("login")
         @logged_in = (stdin == @accepts)
         return @logged_in ? ["", "✓ Logged in as d3mlabs-buildhost", true] : ["", "error validating token", false]
@@ -120,8 +126,10 @@ class Dev::RunnerUserTest < Minitest::Test
   # Homebrew 7 loads nothing from a tap a user has not trusted, and trust
   # is per user (~/.homebrew/trust.json): the operator's does not carry
   # to the runner user, whose first `brew upgrade` of dev in a job was
-  # refused the deployment formula (dev#310 step 5).
-  test "with brew and a deployment tap, converge! has the runner user trust the tap — as that user, announced; a brew without `trust` is a warning, not a stop" do
+  # refused the deployment formula (dev#310 step 5). The step itself is
+  # TapTrust's (shared with the macOS agent bootstrap, dev#374); what is
+  # the runner user's here is how it runs — as that user, on the host PATH.
+  test "with brew and a deployment tap, converge! has the runner user trust the tap — as that user, on the host PATH, streamed; a brew without `trust` is a warning, not a stop" do
     Given "a runner user on a host with brew and the org tap; and one whose brew predates `brew trust`"
     trusting = GhExecutor.new(logged_in: true)
     user = runner_user(homes: { "runner" => "/home/runner" }, brew: "/home/linuxbrew/.linuxbrew/bin/brew", gh: trusting, tap: "d3mlabs/d3mlabs")
@@ -131,15 +139,16 @@ class Dev::RunnerUserTest < Minitest::Test
     old = GhExecutor.new(logged_in: true, trusts: false)
     runner_user(homes: { "runner" => "/home/runner" }, brew: "/home/linuxbrew/.linuxbrew/bin/brew", gh: old, tap: "d3mlabs/d3mlabs").converge!
 
-    Expect "brew trust as the runner user, on the host PATH; the refusal is one warning naming the by-hand command"
+    Expect "brew trust as the runner user, on the host PATH, the brew dev found; the refusal is one warning naming the by-hand command"
     trusting.calls.count(&trusts) == 1
-    trusting.calls.find(&trusts) == %w[sudo -u runner -H env PATH=/opt/brew/bin:/usr/bin brew trust --tap d3mlabs/d3mlabs]
+    trusting.calls.find(&trusts) == %w[sudo -u runner -H env PATH=/opt/brew/bin:/usr/bin /home/linuxbrew/.linuxbrew/bin/brew trust --tap d3mlabs/d3mlabs]
     first_out.include?(">>> Trusting the tap d3mlabs/d3mlabs for runner (brew loads nothing from a tap its user has not trusted)")
-    @out.string.include?("dev: warning: could not trust the tap d3mlabs/d3mlabs for runner (Error: Unknown command: trust)")
+    !first_out.include?("warning")
+    @out.string.include?("dev: warning: could not trust the tap d3mlabs/d3mlabs for runner")
     @out.string.include?("sudo -iu runner brew trust --tap d3mlabs/d3mlabs")
   end
 
-  test "no tap to trust without a deployment formula, a bare formula name, or brew" do
+  test "no tap to trust without a deployment tap, or without brew" do
     Given
     bare = GhExecutor.new(logged_in: true)
     runner_user(homes: { "runner" => "/home/runner" }, brew: "/home/linuxbrew/.linuxbrew/bin/brew", gh: bare, tap: nil).converge!
@@ -149,10 +158,6 @@ class Dev::RunnerUserTest < Minitest::Test
     Expect
     bare.calls.none?(&trusts)
     brewless.calls.none?(&trusts)
-    Dev::RunnerUser.deployment_tap(formula: "d3mlabs/d3mlabs/dev") == "d3mlabs/d3mlabs"
-    Dev::RunnerUser.deployment_tap(formula: "dev-core").nil?
-    Dev::RunnerUser.deployment_tap(formula: nil).nil?
-    [nil, %r{\A[^/]+/[^/]+\z}].any? { |shape| shape === Dev::RunnerUser.deployment_tap }
   end
 
   test "brew is the one the operator's PATH names, never its symlink target: Linuxbrew's bin/brew points into Homebrew/bin, and brew's prefix is where the link lives" do
