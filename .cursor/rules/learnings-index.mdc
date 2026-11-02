@@ -60,6 +60,11 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  the venv) gets one path per side of the build container, decided from
  `ContainerContext.inside?` in one place.
  → .cursor/skills/learnings/per-side-project-state/
+- [architecture/per-identity-brew-state] Brew keeps tap trust and other
+ state per invoking user, and a host runs brew as several identities
+ (operator, Linux runner user, macOS agent user): every per-user brew
+ surface is one shared step each identity's bootstrap calls (TapTrust).
+ → .cursor/skills/learnings/per-identity-brew-state/
 
 ## toolchain
 
