@@ -12,9 +12,19 @@ module Dev
     # CMake-specific lifecycle handler.
     #
     # install_all:
-    #   1. Fetches each dep's source (git clone or tarball extract) into build/_deps/<name>-src/
+    #   1. Publishes each dep's source (git clone or tarball extract) to the
+    #      store, under ~/.dev/cmake/<source>/<revision>/ (see .tree_key), and
+    #      links build/_deps/<name>-src at the published tree
     #   2. Generates deps.cmake (set variables for each dep: repo+sha or url+hash, dep lists)
     #   3. Generates deps.targets.cmake (cmake_targets, cmake_namespace per dep)
+    #
+    # The source lives in the store, not the checkout, so that a hosted job's
+    # checkout clean (`actions/checkout` with `clean: true`) does not wipe
+    # it — the checkpoint keeps the data root warm, so a warm run re-creates
+    # the link and clones nothing — and two worktrees of one project share
+    # one clone. The link is dev's own: it is re-pointed whenever the lock
+    # moves. A populated plain directory at the link's path — a checkout
+    # from before sources lived in the store — is left alone, as it was.
     class CmakeIntegration < Integration
       extend T::Sig
 
@@ -22,6 +32,16 @@ module Dev
       class GitCheckoutError < StandardError; end
       class DownloadError < StandardError; end
       class ExtractError < StandardError; end
+      # A url pin locked without a digest has no immutable identity to
+      # publish under; `dev deps update` locks one.
+      class MissingDigestError < StandardError; end
+
+      MARKER_FILE = ".dev-cmake-source"
+      # The checkout-side path a consumer's CMake (and post-install hooks)
+      # read a dep's source from: FetchContent's own layout, so a project
+      # pointing FETCHCONTENT_SOURCE_DIR_<NAME> there finds it.
+      SOURCES_DIR = "build/_deps"
+      SOURCE_SUFFIX = "-src"
 
       DEPS_CMAKE_FILE = "deps.cmake"
       TARGETS_CMAKE_FILE = "deps.targets.cmake"
@@ -40,8 +60,51 @@ module Dev
 
       TEXT
 
+      class << self
+        extend T::Sig
+
+        # A cmake source lives at `~/.dev/cmake/<source>/<revision>`: the
+        # git remote or download URL the lock records is the identity, the
+        # pinned sha (git) or the locked digest (url) the version — the two
+        # facts that make a checkout immutable.
+        #
+        # @param dep [Dependency] a locked cmake or url dependency
+        # @return [TreeKey]
+        # @raise [MissingDigestError] for a url pin the lock carries no digest for
+        sig { override.params(dep: Dependency).returns(TreeKey) }
+        def tree_key(dep)
+          url = dep.metadata["url"]
+          source = url || dep.metadata.fetch("repo")
+          revision = url ? dep.hash : dep.version
+          if revision.nil?
+            raise MissingDigestError, "#{dep.name}: #{url} is locked without a digest — run dev deps update"
+          end
+
+          TreeKey.new(base: "#{Integration::TREES_ROOT}/cmake/#{source_identity(source)}", version: revision, marker: MARKER_FILE)
+        end
+
+        private
+
+        # The path-shaped identity of a git remote or download URL: scheme
+        # and login dropped, an scp-style `host:path` flattened, `.git`
+        # stripped — so `https://github.com/google/highway.git` and
+        # `git@github.com:google/highway` name one tree.
+        #
+        # @param source [String] the lock's repo or url
+        # @return [String] a relative path
+        sig { params(source: String).returns(String) }
+        def source_identity(source)
+          source
+            .sub(%r{\A[a-z][a-z0-9+.-]*://}i, "")
+            .sub(%r{\A[^/@]+@}, "")
+            .sub(%r{\A([^/:]+):}, '\1/')
+            .delete_suffix("/")
+            .delete_suffix(".git")
+        end
+      end
+
       # @param repository    [Repository, nil]   source adapter for cmake deps
-      # @param store         [ArtifactStore, nil] artifact store (blobs: downloaded tarballs)
+      # @param store         [ArtifactStore, nil] artifact store (trees: published sources; blobs: downloaded tarballs)
       # @param project_root  [String, Pathname]  project root directory
       sig do
         params(
@@ -68,7 +131,7 @@ module Dev
       sig { params(dependencies: T::Array[Dependency]).void }
       def install_all(dependencies)
         failures = collect_failures(dependencies) do |dep|
-          fetch_dep(dep)
+          install_source(dep)
           run_post_install(dep)
         end
         raise PartialInstallError, failures if failures.any?
@@ -91,34 +154,67 @@ module Dev
         hooks.each { |hook| hook.call(dep, @project_root) }
       end
 
-      # Fetch a single dependency's source into build/_deps/<name>-src/.
-      # Skips if the destination is already populated.
+      # Make a dependency's source readable at build/_deps/<name>-src: the
+      # published tree, published first when the store has none, linked
+      # there. A populated plain directory at that path is a checkout from
+      # before sources lived in the store, and is kept as is.
       #
       # @param dep [Dependency]
       sig { params(dep: Dependency).void }
-      def fetch_dep(dep)
-        deps_dir = @project_root / "build" / "_deps"
-        dest = deps_dir / "#{dep.name}-src"
-        return if populated?(dest, dep)
+      def install_source(dep)
+        link = source_link(dep)
+        return if !link.symlink? && populated?(link, dep)
 
-        FileUtils.mkdir_p(deps_dir)
+        tree = store!.tree(tree_key(dep)) || publish_source(dep)
+        link_source(link, tree)
+      end
 
-        if dep.metadata["url"]
-          fetch_tarball(dep, dest)
-        elsif dep.metadata["repo"]
-          fetch_git(dep, dest)
+      # @param dep [Dependency]
+      # @return [Pathname] the checkout-side path of the dep's source
+      sig { params(dep: Dependency).returns(Pathname) }
+      def source_link(dep)
+        @project_root / SOURCES_DIR / "#{dep.name}#{SOURCE_SUFFIX}"
+      end
+
+      # Fetch the dep's source (git clone or tarball extract) into staging
+      # and publish it as the tree its key names.
+      #
+      # @param dep [Dependency]
+      # @return [Pathname] the published tree
+      sig { params(dep: Dependency).returns(Pathname) }
+      def publish_source(dep)
+        key = tree_key(dep)
+        puts ">>> Fetching #{dep.name} source into #{store!.tree_path(key)}"
+        store!.publish_tree(key) do |staging|
+          source = staging / "source"
+          dep.metadata["url"] ? fetch_tarball(dep, source) : fetch_git(dep, source)
+          source
         end
+      end
+
+      # Point the checkout's link at the published tree. A link at another
+      # tree (the lock moved) or an empty directory (an interrupted fetch
+      # from before) gives way; the tree itself is never touched.
+      #
+      # @param link [Pathname] build/_deps/<name>-src
+      # @param tree [Pathname] the published tree
+      sig { params(link: Pathname, tree: Pathname).void }
+      def link_source(link, tree)
+        return if link.symlink? && link.readlink == tree
+
+        FileUtils.rm_rf(link)
+        link.dirname.mkpath
+        File.symlink(tree.to_s, link.to_s)
       end
 
       # Clone a git repo and check out the pinned SHA.
       #
       # @param dep  [Dependency]
-      # @param dest [Pathname] destination directory
+      # @param dest [Pathname] destination directory, absent
       # @raise [GitCloneError]   if git clone fails
       # @raise [GitCheckoutError] if git checkout fails
       sig { params(dep: Dependency, dest: Pathname).void }
       def fetch_git(dep, dest)
-        FileUtils.rm_rf(dest)
         system("git", "clone", "--no-checkout", "-q", dep.metadata["repo"], dest.to_s) ||
           raise(GitCloneError, "git clone #{dep.metadata["repo"]} failed")
         system("git", "-c", "advice.detachedHead=false", "checkout", dep.version,
@@ -130,7 +226,7 @@ module Dev
       # extract it.
       #
       # @param dep  [Dependency]
-      # @param dest [Pathname] destination directory
+      # @param dest [Pathname] destination directory, absent
       # @raise [DownloadError] if curl download fails
       sig { params(dep: Dependency, dest: Pathname).void }
       def fetch_tarball(dep, dest)
@@ -150,11 +246,10 @@ module Dev
       # Extract a tarball into the destination, expecting a single top-level directory.
       #
       # @param tarball_path [String, Pathname] path to the .tar.gz
-      # @param dest         [Pathname]         extraction destination
+      # @param dest         [Pathname]         extraction destination, absent
       # @raise [ExtractError] if tar extraction fails or tarball has no top-level directory
       sig { params(tarball_path: T.any(String, Pathname), dest: Pathname).void }
       def extract_tarball(tarball_path, dest)
-        FileUtils.rm_rf(dest)
         Dir.mktmpdir("dev-cmake-extract-") do |tmpdir|
           system("tar", "xzf", tarball_path.to_s, "-C", tmpdir) ||
             raise(ExtractError, "tar extract failed")
@@ -164,7 +259,9 @@ module Dev
         end
       end
 
-      # Check if a dep's source directory is already populated.
+      # Whether a source directory holds a fetched source — the test that
+      # kept a checkout's own build/_deps/<name>-src from being re-fetched
+      # when the source lived there, and still keeps it from being replaced.
       #
       # @param dest [Pathname]   source directory to check
       # @param dep  [Dependency]

@@ -104,6 +104,28 @@ class Dev::Deps::CacheGcTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "gc keeps a cmake source by the version its tree is keyed on, not the pin's label" do
+    Given "a url source published under its digest beside two older digests, locked under a display label"
+    dir = Dir.mktmpdir("dev-cache-gc-test-")
+    base = File.join(dir, "cmake", "example.com", "boost-1.90.0.tar.gz")
+    seed_versions(base, "SHA256=aaaa", "SHA256=bbbb", "SHA256=cccc") # cccc newest
+    lockfile = Dev::Deps::Lockfile.new(dir: dir)
+    lockfile.lock([
+      Dev::Deps::Dependency.new(name: "boost", integration: :url, group: :app,
+        version: "1.90.0", hash: "SHA256=aaaa", metadata: { "url" => "https://example.com/boost-1.90.0.tar.gz" }),
+    ])
+    gc = build_gc(dir, lockfile, out: StringIO.new)
+
+    When "collecting with keep: 2"
+    gc.gc(keep: 2)
+
+    Then "the locked digest survives with the newest other; the label never names a tree"
+    Dir.children(base).sort == ["SHA256=aaaa", "SHA256=cccc"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "gc never removes a version mounted by a running container, even if unlocked and old" do
     Given "an old unlocked version that a live container has mounted"
     dir = Dir.mktmpdir("dev-cache-gc-test-")

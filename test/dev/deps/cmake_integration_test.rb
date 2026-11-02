@@ -28,12 +28,260 @@ class StubRepository < Dev::Deps::Repository
   end
 end unless defined?(StubRepository)
 
+# CmakeIntegration with the git boundary replaced by writing a checkout
+# fixture where the clone would land (or failing the clone, for the names
+# in fail_names). Publication, the marker, the link and the batch artifacts
+# all run for real against the filesystem.
+class FixtureCmakeIntegration < Dev::Deps::CmakeIntegration
+  attr_reader :fetch_count
+
+  def initialize(fail_names: [], **kwargs)
+    super(**kwargs)
+    @fail_names = fail_names
+    @fetch_count = 0
+  end
+
+  private
+
+  def fetch_git(dep, dest)
+    @fetch_count += 1
+    raise GitCloneError, "git clone #{dep.metadata["repo"]} failed" if @fail_names.include?(dep.name)
+
+    dest.mkpath
+    (dest / "CMakeLists.txt").write("# #{dep.name} at #{dep.version}")
+  end
+end unless defined?(FixtureCmakeIntegration)
+
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::CmakeIntegrationTest < Minitest::Test
   def prepopulate_dep(root, name)
     dep_src = File.join(root, "build", "_deps", "#{name}-src")
     FileUtils.mkdir_p(dep_src)
     File.write(File.join(dep_src, "CMakeLists.txt"), "cmake_minimum_required(VERSION 3.20)")
+  end
+
+  HIGHWAY_SHA = "457c891775a7397bdb0376bb1031e6e027af1c48"
+
+  def git_dependency(name: "highway", repo: "https://github.com/google/highway", version: HIGHWAY_SHA)
+    Dev::Deps::Dependency.new(
+      name: name, integration: :cmake, group: :app,
+      version: version, hash: nil, metadata: { "repo" => repo },
+    )
+  end
+
+  def url_dependency(hash: "SHA256=deadbeef", url: "https://example.com/boost-1.90.0.tar.gz")
+    Dev::Deps::Dependency.new(
+      name: "boost", integration: :url, group: :app,
+      version: "1.90.0", hash: hash, metadata: { "url" => url },
+    )
+  end
+
+  # A store and a fixture integration for a checkout at `root`, over `data_root`.
+  def fixture_integration(root, data_root, fail_names: [])
+    FixtureCmakeIntegration.new(
+      fail_names: fail_names,
+      repository: Dev::Deps::GitRepository.new,
+      store: Dev::Deps::LocalStore.new(data_root: data_root),
+      project_root: root,
+    )
+  end
+
+  # Where the store publishes a git source under `data_root`.
+  def published_source(data_root, sha: HIGHWAY_SHA)
+    Pathname(data_root) / "cmake" / "github.com" / "google" / "highway" / sha
+  end
+
+  def source_link(root, name) = Pathname(root) / "build" / "_deps" / "#{name}-src"
+
+  # A real .tar.gz with one top-level directory, as upstream tarballs ship.
+  def build_tarball(dir)
+    content = File.join(dir, "boost-1.90.0")
+    FileUtils.mkdir_p(content)
+    File.write(File.join(content, "CMakeLists.txt"), "# boost")
+    tarball = File.join(dir, "boost.tar.gz")
+    system("tar", "czf", tarball, "-C", dir, "boost-1.90.0") || raise("fixture build failed")
+    tarball
+  end
+
+  test "tree_key places a git source by identity: ~/.dev/cmake/<host>/<path>/<sha>" do
+    Given "a locked git cmake dep"
+    dep = git_dependency
+
+    When "asking where its source lives"
+    key = Dev::Deps::CmakeIntegration.tree_key(dep)
+
+    Then "the base is the remote under the cmake root, the version the pinned sha, the marker cmake's"
+    [key.base, key.version, key.marker, key.platform] ==
+      ["~/.dev/cmake/github.com/google/highway", HIGHWAY_SHA, Dev::Deps::CmakeIntegration::MARKER_FILE, nil]
+  end
+
+  test "tree_key names one tree for the spellings of a remote: #{repo}" do
+    Expect "scheme, login, scp-style colon and .git suffix fall away"
+    Dev::Deps::CmakeIntegration.tree_key(git_dependency(repo: repo)).base == "~/.dev/cmake/github.com/google/highway"
+
+    Where
+    repo                                       | _
+    "https://github.com/google/highway"        | nil
+    "https://github.com/google/highway.git"    | nil
+    "https://github.com/google/highway/"       | nil
+    "git@github.com:google/highway.git"        | nil
+    "ssh://git@github.com/google/highway.git"  | nil
+  end
+
+  test "tree_key places a url source by identity and digest: ~/.dev/cmake/<host>/<path>/<digest>" do
+    Given "a locked url dep whose pin version is a display label"
+    dep = url_dependency(hash: "SHA256=deadbeef")
+
+    When "asking where its source lives"
+    key = Dev::Deps::CmakeIntegration.tree_key(dep)
+
+    Then "the base is the download URL under the cmake root and the version the locked digest, not the label"
+    [key.base, key.version] == ["~/.dev/cmake/example.com/boost-1.90.0.tar.gz", "SHA256=deadbeef"]
+  end
+
+  test "tree_key raises MissingDigestError for a url pin locked without a digest" do
+    Given "a url dep with no hash"
+    dep = url_dependency(hash: nil)
+
+    When "asking where its source lives"
+    error = assert_raises(Dev::Deps::CmakeIntegration::MissingDigestError) do
+      Dev::Deps::CmakeIntegration.tree_key(dep)
+    end
+
+    Then "the remediation is a re-lock"
+    error.message.include?("dev deps update")
+  end
+
+  test "install_all publishes a git source to the store once and links build/_deps/<name>-src at it" do
+    Given "a checkout, an empty data root and a git dep"
+    dir = Dir.mktmpdir("dev-cmake-int-test-")
+    root = File.join(dir, "checkout")
+    data_root = File.join(dir, "data")
+    integration = fixture_integration(root, data_root)
+    deps = [git_dependency]
+
+    When "installing"
+    integration.install_all(deps)
+    link = source_link(root, "highway")
+
+    Then "the source is a marker-stamped tree in the store and the checkout path is a link to it"
+    integration.fetch_count == 1
+    (published_source(data_root) / "CMakeLists.txt").read == "# highway at #{HIGHWAY_SHA}"
+    (published_source(data_root) / Dev::Deps::CmakeIntegration::MARKER_FILE).read == HIGHWAY_SHA
+    link.symlink?
+    link.readlink == published_source(data_root)
+    (link / "CMakeLists.txt").file?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a second install over a warm store is a stat: the link is re-created from the store, nothing is fetched" do
+    Given "a published source whose checkout link a clean wiped"
+    dir = Dir.mktmpdir("dev-cmake-int-test-")
+    root = File.join(dir, "checkout")
+    data_root = File.join(dir, "data")
+    fixture_integration(root, data_root).install_all([git_dependency])
+    FileUtils.rm_rf(File.join(root, "build"))
+    integration = fixture_integration(root, data_root)
+
+    When "installing again"
+    integration.install_all([git_dependency])
+
+    Then "no fetch, and the link points at the published tree again"
+    integration.fetch_count == 0
+    source_link(root, "highway").readlink == published_source(data_root)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "two worktrees of one project share the published source" do
+    Given "two checkouts over one data root"
+    dir = Dir.mktmpdir("dev-cmake-int-test-")
+    data_root = File.join(dir, "data")
+    first = fixture_integration(File.join(dir, "worktree-a"), data_root)
+    second = fixture_integration(File.join(dir, "worktree-b"), data_root)
+
+    When "each installs the same lock"
+    first.install_all([git_dependency])
+    second.install_all([git_dependency])
+
+    Then "one fetch between them, both links at the one tree"
+    [first.fetch_count, second.fetch_count] == [1, 0]
+    source_link(File.join(dir, "worktree-a"), "highway").readlink == published_source(data_root)
+    source_link(File.join(dir, "worktree-b"), "highway").readlink == published_source(data_root)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a lock that moves to another sha publishes beside the old tree and re-points the link" do
+    Given "a checkout linked at one sha, and the lock at another"
+    dir = Dir.mktmpdir("dev-cmake-int-test-")
+    root = File.join(dir, "checkout")
+    data_root = File.join(dir, "data")
+    fixture_integration(root, data_root).install_all([git_dependency])
+    integration = fixture_integration(root, data_root)
+    moved = git_dependency(version: "0" * 40)
+
+    When "installing the moved lock"
+    integration.install_all([moved])
+
+    Then "the new sha is published, the old tree stands, the link follows the lock"
+    integration.fetch_count == 1
+    published_source(data_root, sha: "0" * 40).directory?
+    published_source(data_root).directory?
+    source_link(root, "highway").readlink == published_source(data_root, sha: "0" * 40)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a pre-existing plain build/_deps/<name>-src is kept: nothing is fetched or published" do
+    Given "a checkout whose build/_deps holds a populated plain directory from before"
+    dir = Dir.mktmpdir("dev-cmake-int-test-")
+    root = File.join(dir, "checkout")
+    data_root = File.join(dir, "data")
+    prepopulate_dep(root, "highway")
+    integration = fixture_integration(root, data_root)
+    link = source_link(root, "highway")
+
+    When "installing"
+    integration.install_all([git_dependency])
+
+    Then "the directory is untouched and the store has no tree for it"
+    integration.fetch_count == 0
+    !link.symlink?
+    (link / "CMakeLists.txt").read == "cmake_minimum_required(VERSION 3.20)"
+    !published_source(data_root).exist?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all publishes a url source from the store's cached tarball, keyed by its digest" do
+    Given "a url dep whose tarball is already a blob in the store"
+    dir = Dir.mktmpdir("dev-cmake-int-test-")
+    root = File.join(dir, "checkout")
+    data_root = File.join(dir, "data")
+    store = Dev::Deps::LocalStore.new(data_root: data_root)
+    dep = url_dependency(hash: "SHA256=cafef00d")
+    store.put_blob(dep.hash, File.open(build_tarball(File.join(dir, "fixture"))))
+    integration = Dev::Deps::CmakeIntegration.new(repository: Dev::Deps::UrlRepository.new, store: store, project_root: root)
+    published = Pathname(data_root) / "cmake" / "example.com" / "boost-1.90.0.tar.gz" / "SHA256=cafef00d"
+
+    When "installing"
+    integration.install_all([dep])
+
+    Then "the extracted top-level directory is the published tree and the link reads it"
+    (published / "CMakeLists.txt").read == "# boost"
+    (published / Dev::Deps::CmakeIntegration::MARKER_FILE).read == "SHA256=cafef00d"
+    (source_link(root, "boost") / "CMakeLists.txt").file?
+    File.read(File.join(root, "deps.cmake")).include?('set(dep_boost_hash "SHA256=cafef00d")')
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
   test "install_all generates deps.cmake with repo+sha entries" do
@@ -188,7 +436,7 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     deps = [
       Dev::Deps::Dependency.new(
         name: "bad_url", integration: :cmake, group: :app,
-        version: "1.0.0", hash: nil,
+        version: "1.0.0", hash: "SHA256=feedface",
         metadata: { "url" => "https://example.com/missing.tar.gz" },
       ),
     ]
@@ -217,7 +465,7 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     deps = [
       Dev::Deps::Dependency.new(
         name: "bad_tar", integration: :cmake, group: :app,
-        version: "1.0.0", hash: nil,
+        version: "1.0.0", hash: "SHA256=feedface",
         metadata: { "url" => "https://example.com/bad.tar.gz" },
       ),
     ]
@@ -428,35 +676,15 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
   test "install_all leaves batch artifacts untouched when any dep fails, still attempting the rest" do
     Given "two git deps (first fails to clone) and pre-existing batch artifacts"
     dir = Dir.mktmpdir("dev-cmake-int-test-")
-    store = Dev::Deps::LocalStore.new(data_root: dir)
-    integration = Dev::Deps::CmakeIntegration.new(
-      repository: Dev::Deps::GitRepository.new, store: store, project_root: dir,
-    )
+    integration = fixture_integration(dir, dir, fail_names: ["bad_repo"])
     previous_deps_cmake = "# previous consistent deps.cmake\n"
     previous_targets_cmake = "# previous consistent deps.targets.cmake\n"
     File.write(File.join(dir, "deps.cmake"), previous_deps_cmake)
     File.write(File.join(dir, "deps.targets.cmake"), previous_targets_cmake)
     deps = [
-      Dev::Deps::Dependency.new(
-        name: "bad_repo", integration: :cmake, group: :app,
-        version: "abc123", hash: nil,
-        metadata: { "repo" => "https://example.com/bad_repo" },
-      ),
-      Dev::Deps::Dependency.new(
-        name: "good_repo", integration: :cmake, group: :test,
-        version: "def456", hash: nil,
-        metadata: { "repo" => "https://example.com/good_repo" },
-      ),
+      git_dependency(name: "bad_repo", repo: "https://example.com/bad_repo", version: "abc123"),
+      git_dependency(name: "good_repo", repo: "https://example.com/good_repo", version: "def456"),
     ]
-    integration.stubs(:system)
-               .with("git", "clone", "--no-checkout", "-q", "https://example.com/bad_repo", anything)
-               .returns(false)
-    integration.expects(:system)
-               .with("git", "clone", "--no-checkout", "-q", "https://example.com/good_repo", anything)
-               .returns(true)
-    integration.stubs(:system)
-               .with("git", "-c", "advice.detachedHead=false", "checkout", anything, chdir: anything)
-               .returns(true)
 
     When "installing all and capturing the aggregate error"
     error = nil
@@ -466,9 +694,11 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
       error = e
     end
 
-    Then "good_repo was still cloned (Mocha-verified), artifacts are stale-but-consistent"
+    Then "good_repo was still fetched and published, artifacts are stale-but-consistent"
     error.is_a?(Dev::Deps::Integration::PartialInstallError)
     error.failures.map(&:first) == ["bad_repo"]
+    integration.fetch_count == 2
+    source_link(dir, "good_repo").symlink?
     File.read(File.join(dir, "deps.cmake")) == previous_deps_cmake
     File.read(File.join(dir, "deps.targets.cmake")) == previous_targets_cmake
 
