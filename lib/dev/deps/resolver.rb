@@ -14,7 +14,8 @@ require_relative "version_scheme"
 module Dev
   module Deps
     # Resolves all dependency declarations into a flat list of pinned
-    # Dependencies.
+    # Dependencies — and, for a declaration whose universe could not be
+    # read, the declaration itself with the failure (Unresolved).
     #
     # The choice layer of the deps pipeline: repositories report facts (which
     # versions exist — Repository#find), schemes evaluate predicates (does a
@@ -47,6 +48,23 @@ module Dev
       # constraint mismatch, missing requested platform, or empty universe.
       class NoSatisfyingVersionError < StandardError; end
 
+      # A declaration whose universe could not be read: its repository
+      # failed before any version could be chosen (a registry that refused
+      # the host's token, a network that is down, a package the universe has
+      # no entry for), so no pin was minted. The failure rides along for the
+      # caller to decide on — the Resolver chooses among the versions that
+      # exist and has no policy for a universe it cannot see. `needed_by`
+      # is the provenance a pin would have carried in its metadata.
+      class Unresolved < T::Struct
+        const :declaration, ScopedDeclaration
+        const :error, StandardError
+        const :needed_by, T::Array[String], default: []
+      end
+
+      # The walk's conclusion for one package identity: the pin minted for
+      # it, or the declaration left unresolved.
+      Verdict = T.type_alias { T.any(Dependency, Unresolved) }
+
       # What two declarations of one package must agree on to resolve once.
       Ask = T.type_alias { T::Hash[Symbol, T.untyped] }
 
@@ -69,13 +87,20 @@ module Dev
         @needs = needs
       end
 
-      # Resolve all declarations into a flat Dependency list.
+      # Resolve all declarations into a flat list of verdicts, one per
+      # package identity, in walk order: a pin for every declaration whose
+      # universe answered, and an Unresolved for every one whose repository
+      # could not report it. Only the universe's silence is a verdict; a
+      # declaration the walk can judge wrong — unknown integration,
+      # disagreeing asks, nothing satisfying — raises as before.
       #
       # The resolved set is keyed by PackageId, so the same name under two
       # integrations is two packages — each resolves against its own
       # integration's universe. Transitive declarations resolve under the
       # integration their reporting Repository stamped on them (today always
-      # its own).
+      # its own). An unresolved declaration has no version to walk the edges
+      # of, but its integration's needs do not depend on the version and are
+      # walked all the same.
       #
       # The needs of a declaration's integration ride the same walk, with the
       # integration as parent: each export of its manifest is queued under
@@ -87,33 +112,40 @@ module Dev
       # project locks, and two asks for one package must be one ask.
       #
       # @param declarations [Array<ScopedDeclaration>] declared dependencies to resolve
-      # @return [Array<Dependency>]
+      # @return [Array<Dependency, Unresolved>] one verdict per package identity
       # @raise [ConflictingDeclarationError] if one package is declared with
       #   disagreeing asks, by the project or by an integration's manifest
       # @raise [UnknownIntegrationError] if a declaration's integration has no repository or scheme
       # @raise [NoSatisfyingVersionError] if a declaration cannot be satisfied
-      sig { params(declarations: T::Array[ScopedDeclaration]).returns(T::Array[Dependency]) }
+      sig { params(declarations: T::Array[ScopedDeclaration]).returns(T::Array[Verdict]) }
       def resolve(declarations)
         asks = reject_conflicts(declarations)
 
         platforms = declared_platforms(declarations)
-        resolved = T.let({}, T::Hash[PackageId, Dependency])
+        verdicts = T.let({}, T::Hash[PackageId, Verdict])
         needed_by = T.let({}, T::Hash[PackageId, T::Array[Symbol]])
         queue = declarations.dup
 
         while (decl = queue.shift)
           id = package_id(decl)
-          next if resolved.key?(id)
+          next if verdicts.key?(id)
 
           declared = platforms[[decl.integration, decl.name]] || []
           chosen = decl.revision ? address(decl) : choose(decl, declared)
-          resolved[id] = mint(chosen, decl, declared)
+          case chosen
+          when PackageVersion
+            verdicts[id] = mint(chosen, decl, declared)
+            queue.concat(universe_edges(chosen, decl))
+          when Unresolved
+            verdicts[id] = chosen
+          else
+            T.absurd(chosen)
+          end
 
-          queue.concat(universe_edges(chosen, decl))
           queue.concat(needs_under(decl, asks, needed_by))
         end
 
-        stamp_provenance(resolved, needed_by)
+        stamp_provenance(verdicts, needed_by)
       end
 
       private
@@ -174,24 +206,30 @@ module Dev
         end
       end
 
-      # Write each pin's provenance: the integrations whose manifests need
-      # it, sorted, so the lock reads the same whichever order the walk ran.
+      # Write each verdict's provenance: the integrations whose manifests
+      # need the package, sorted, so the lock reads the same whichever order
+      # the walk ran. A pin carries it in its metadata; an unresolved
+      # declaration carries it beside the declaration.
       #
-      # @param resolved [Hash{PackageId => Dependency}] every minted pin
+      # @param verdicts [Hash{PackageId => Dependency, Unresolved}] the walk's conclusions
       # @param needed_by [Hash{PackageId => Array<Symbol>}] provenance per package
-      # @return [Array<Dependency>] the pins, provenance stamped
+      # @return [Array<Dependency, Unresolved>] the verdicts, provenance stamped
       sig do
         params(
-          resolved: T::Hash[PackageId, Dependency],
+          verdicts: T::Hash[PackageId, Verdict],
           needed_by: T::Hash[PackageId, T::Array[Symbol]],
-        ).returns(T::Array[Dependency])
+        ).returns(T::Array[Verdict])
       end
-      def stamp_provenance(resolved, needed_by)
-        resolved.map do |id, pin|
-          next pin unless needed_by.key?(id)
+      def stamp_provenance(verdicts, needed_by)
+        verdicts.map do |id, verdict|
+          next verdict unless needed_by.key?(id)
 
           parents = needed_by.fetch(id).map(&:to_s).uniq.sort
-          pin.with(metadata: pin.metadata.merge(Dependency::NEEDED_BY => parents))
+          case verdict
+          when Dependency then verdict.with(metadata: verdict.metadata.merge(Dependency::NEEDED_BY => parents))
+          when Unresolved then Unresolved.new(declaration: verdict.declaration, error: verdict.error, needed_by: parents)
+          else T.absurd(verdict)
+          end
         end
       end
 
@@ -219,17 +257,24 @@ module Dev
       # highest version that satisfies the constraint (per the integration's
       # scheme) and publishes every explicitly requested platform.
       #
+      # The repository's query is the walk's one I/O, and its failure is the
+      # one failure that is not a verdict on the declaration: the universe
+      # may well hold a satisfying version this host cannot see. So it comes
+      # back as an Unresolved for the caller, where every other failure here
+      # is the declaration being wrong and raises.
+      #
       # @param decl [ScopedDeclaration] the declaration to satisfy
       # @param platforms [Array<String, nil>] union of the declaring groups'
       #   platforms; nil entries mean "the integration's default"
-      # @return [PackageVersion] the chosen version
+      # @return [PackageVersion, Unresolved] the chosen version, or the
+      #   declaration with the repository's failure
       # @raise [UnknownIntegrationError] if repository or scheme is unwired
       # @raise [NoSatisfyingVersionError] if nothing in the universe qualifies
       sig do
         params(
           decl: ScopedDeclaration,
           platforms: T::Array[T.nilable(String)],
-        ).returns(PackageVersion)
+        ).returns(T.any(PackageVersion, Unresolved))
       end
       def choose(decl, platforms)
         repository = @repositories[decl.integration]
@@ -245,7 +290,11 @@ module Dev
               "constraint #{decl.constraint.inspect}"
         end
 
-        package = repository.find(package_id(decl))
+        package = begin
+          repository.find(package_id(decl))
+        rescue StandardError => e
+          return Unresolved.new(declaration: decl, error: e)
+        end
         explicit = platforms.compact
         candidates = package.versions.select do |version|
           (scheme.nil? || satisfies?(scheme, version, decl.constraint)) &&

@@ -85,7 +85,10 @@ module Dev
         # The Resolver is a pure function of the declarations and the
         # universe; which pin the lock being written takes — today's or the
         # one on disk — is a question about that lock, answered here against
-        # the lock on disk (PinCarryover), once per resolution. The needs'
+        # the lock on disk (PinCarryover), once per resolution. That includes
+        # a declaration whose registry did not answer: a subset re-lock keeps
+        # the lock's pin for one it would carry anyway (dev#373), and any
+        # other re-lock surfaces the registry's failure. The needs'
         # declarations are part of what the resolution answered.
         lockfile = Dev::Deps::Lockfile.new(dir: project_root)
         previous = lockfile.read_for_relock
@@ -162,7 +165,10 @@ module Dev
 
       # Say which pins moved, each with why, and which the lock on disk
       # kept — the author asked for a conservative re-lock, so a move they
-      # did not ask for has to be visible by name.
+      # did not ask for has to be visible by name. A pin kept because its
+      # registry did not answer is named with the registry's refusal: the
+      # lock is right, but the next re-lock that needs that registry will
+      # want what the message asks for.
       #
       # @param outcome [Dev::Deps::PinCarryover::Outcome]
       # @return [void]
@@ -174,6 +180,9 @@ module Dev
           else
             puts "dev: moved #{move.name} #{move.from} → #{move.to} (#{move.reason})"
           end
+        end
+        outcome.unreachable.each do |kept|
+          puts "dev: kept (registry unreachable): #{kept.pin.name} #{kept.pin.version} — #{kept.error.message}"
         end
         return if outcome.kept.empty?
 

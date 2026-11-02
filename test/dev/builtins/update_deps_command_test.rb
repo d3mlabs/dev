@@ -4,6 +4,11 @@
 require "test_helper"
 require "dev/environment_image"
 require "dev/builtins/update_deps_command"
+require "dev/deps/oci_repository"
+require "dev/deps/package"
+require "dev/deps/package_id"
+require "dev/deps/package_version"
+require "dev/deps/repository"
 require "digest"
 require "fileutils"
 require "pathname"
@@ -350,6 +355,52 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "call <name> finishes on a host that can reach only the named declaration's registry, keeping the floor it would carry anyway" do
+    Given "dev#373: a lock with an image floor and a pip pin, a token GHCR refuses, and a pip index that answers"
+    root = Pathname.new(Dir.mktmpdir("update-deps-floor-denied-"))
+    write_floor_manifest(root)
+    Dev::Deps::Lockfile.new(dir: root).lock(Dev::EnvironmentImage.stamp([floor_pin, pip_pin("17.0.6")]))
+    floor_before = (root / "deps.lock").read[/image:.*?(?=\npip:)/m]
+    Dev::Deps::Registry.expects(:repositories).returns({ image: denied_oci_repository, pip: pip_repository("18.1.8") })
+    command = Dev::Builtins::UpdateDepsCommand.new
+    old_stdout = $stdout
+    $stdout = StringIO.new
+
+    When "running dev deps update clang-format"
+    command.call(args: parsed_args(command, ["clang-format"]), context: build_context(root))
+
+    Then "the floor's lock section is byte-identical, clang-format moved, and the output says what the registry refused"
+    (root / "deps.lock").read[/image:.*?(?=\npip:)/m] == floor_before
+    Dev::Deps::Lockfile.new(dir: root).read.to_h { |dep| [dep.name, dep.version] } == { "cellbound-3d-linux" => "ue5.8-3", "clang-format" => "18.1.8" }
+    $stdout.string.include?("dev: kept (registry unreachable): cellbound-3d-linux ue5.8-3 — the registry refused gh's token")
+    $stdout.string.include?("lockfiles updated")
+
+    Cleanup
+    $stdout = old_stdout
+    FileUtils.rm_rf(root)
+  end
+
+  test "call --all still needs every registry: the floor's refusal propagates" do
+    Given "the same lock and the same refused token"
+    root = Pathname.new(Dir.mktmpdir("update-deps-floor-denied-all-"))
+    write_floor_manifest(root)
+    Dev::Deps::Lockfile.new(dir: root).lock(Dev::EnvironmentImage.stamp([floor_pin, pip_pin("17.0.6")]))
+    before = (root / "deps.lock").read
+    Dev::Deps::Registry.expects(:repositories).returns({ image: denied_oci_repository, pip: pip_repository("18.1.8") })
+    command = Dev::Builtins::UpdateDepsCommand.new
+
+    When "running dev deps update --all"
+    command.call(args: parsed_args(command, ["--all"]), context: build_context(root))
+
+    Then "the registry's own error, naming the scope to add; the lock is untouched"
+    error = raises Dev::Deps::OciRepository::AccessDeniedError
+    error.message.include?("read:packages")
+    (root / "deps.lock").read == before
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
   test "call refuses a name the manifest does not declare, listing the names it does" do
     Given "a manifest declaring cmake and rake"
     root = Pathname.new(Dir.mktmpdir("update-deps-unknown-"))
@@ -480,6 +531,55 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
   end
 
   private
+
+  FLOOR = "ghcr.io/d3mlabs/unreal-engine-build-base:ue5.8-3"
+
+  # cellbound-3d's shape at dev#373: an image floor and the pip tool being added.
+  def write_floor_manifest(root)
+    File.write(root / "dependencies.rb", <<~RUBY)
+      require "dev/deps"
+      Dev::Deps.define do
+        image "cellbound-3d-linux", from: "#{FLOOR}" do
+          platform "linux/amd64"
+        end
+        pip "clang-format", "18.1.8"
+      end
+    RUBY
+  end
+
+  # The floor's pin as the lock on disk carries it.
+  def floor_pin
+    Dev::Deps::Dependency.new(
+      name: "cellbound-3d-linux", integration: :image, group: :app, version: "ue5.8-3", hash: "SHA256=#{"a" * 64}",
+      metadata: { "from" => "ghcr.io/d3mlabs/unreal-engine-build-base", "platform" => "linux/amd64",
+                  "platforms" => ["linux/amd64"], "registry" => "ghcr.io/d3mlabs", "apt" => [] },
+    )
+  end
+
+  def pip_pin(version)
+    Dev::Deps::Dependency.new(name: "clang-format", integration: :pip, group: :app, version:, hash: nil, metadata: {})
+  end
+
+  # A real OciRepository whose registry refuses the token outright.
+  def denied_oci_repository
+    auth = typed_mock(Dev::GhAuth)
+    auth.stubs(token: "t", login: "u")
+    repository = Dev::Deps::OciRepository.new(auth:)
+    repository.stubs(:get).returns(Dev::Deps::OciRepository::Response.new(code: 403, headers: {}, body: "denied"))
+    repository
+  end
+
+  # A pip index offering clang-format at one version.
+  def pip_repository(version)
+    repository = typed_mock(Dev::Deps::Repository)
+    repository.stubs(:find).with { |id| id.name == "clang-format" }.returns(
+      Dev::Deps::Package.new(
+        id: Dev::Deps::PackageId.new(integration: :pip, name: "clang-format", source: nil),
+        versions: [Dev::Deps::PackageVersion.new(version:)],
+      ),
+    )
+    repository
+  end
 
   # A bottled core-tap formula pin as BrewRepository resolves it.
   def brew_pin(name, version, commit: "0f1ba9ea", group: :build)
