@@ -18,8 +18,12 @@ module Dev
   # the Windows story, since dev runs inside the distro.
   #
   # Probe first, prompt only when there is work: a converged box costs a few
-  # read-only checks and no sudo. When something is missing, one `sudo -v`
-  # asks for the password and the steps that follow ride the cached
+  # read-only checks and no sudo. The installed state is a stat, like every
+  # other presence check — the docker binary on PATH, the buildx plugin file
+  # in a CLI plugin dir — never a docker spawn: `docker buildx version` was
+  # the first touch of the CLI and its plugin on a hosted runner's cold disk,
+  # 7.4s on every `dev up` (dev#400). When something is missing, one `sudo
+  # -v` asks for the password and the steps that follow ride the cached
   # credential, each as its own argv so a failure names what failed.
   #
   # Refusals come before any install, as typed errors with the way out:
@@ -77,6 +81,11 @@ module Dev
     DESKTOP_SHIM_MARKER = "/docker-desktop/"
     WSL_CONF = "/etc/wsl.conf"
     GROUP = "docker"
+    # Where the docker CLI looks for its plugins: the system dir the
+    # `docker-buildx-plugin` deb installs into, and the user's own.
+    SYSTEM_CLI_PLUGINS = "/usr/libexec/docker/cli-plugins"
+    USER_CLI_PLUGINS = ".docker/cli-plugins"
+    BUILDX_PLUGIN = "docker-buildx"
 
     # @param executor [#run, #quiet?, #capture] process seam; `run` streams so the sudo prompt reaches the TTY
     # @param wsl [Boolean] whether this Linux is a WSL2 distro (adds the wsl.conf systemd step)
@@ -85,6 +94,7 @@ module Dev
     # @param path [String] PATH to resolve `docker` and `apt-get` on
     # @param os_release_path [String] for the distro id and codename
     # @param wsl_conf_path [String] the distro's /etc/wsl.conf
+    # @param cli_plugin_dirs [Array<String>] where the buildx plugin file may be
     sig do
       params(
         executor: T.untyped,
@@ -94,15 +104,18 @@ module Dev
         path: String,
         os_release_path: String,
         wsl_conf_path: String,
+        cli_plugin_dirs: T::Array[String],
       ).void
     end
     def initialize(executor: ProcessExecutor.new, wsl: WslHost.new.wsl?, user: T.must(Etc.getpwuid(Process.uid)).name,
-      out: $stderr, path: ENV.fetch("PATH", ""), os_release_path: DebianHost::OS_RELEASE, wsl_conf_path: WSL_CONF)
+      out: $stderr, path: ENV.fetch("PATH", ""), os_release_path: DebianHost::OS_RELEASE, wsl_conf_path: WSL_CONF,
+      cli_plugin_dirs: [SYSTEM_CLI_PLUGINS, File.join(Dir.home, USER_CLI_PLUGINS)])
       @executor = executor
       @wsl = wsl
       @user = user
       @out = out
       @wsl_conf_path = wsl_conf_path
+      @cli_plugin_dirs = cli_plugin_dirs
       @host = T.let(DebianHost.new(executor: executor, path: path, os_release_path: os_release_path), DebianHost)
       @steps = T.let(PrivilegedSteps.new(executor: executor, tty: true, purpose: "converge dockerd"), PrivilegedSteps)
     end
@@ -115,7 +128,7 @@ module Dev
         docker_path: docker,
         desktop_shim: !docker.nil? && desktop_shim?(docker),
         dockerd_active: T.unsafe(@executor).quiet?("systemctl", "is-active", "--quiet", "docker"),
-        buildx: !docker.nil? && T.unsafe(@executor).quiet?("docker", "buildx", "version"),
+        buildx: buildx_installed?,
         in_docker_group: groups.include?(GROUP),
         systemd_enabled: @wsl ? systemd_enabled? : nil,
       )
@@ -224,6 +237,19 @@ module Dev
     sig { params(docker: String).returns(T::Boolean) }
     def desktop_shim?(docker)
       File.realpath(docker).include?(DESKTOP_SHIM_MARKER)
+    end
+
+    # Whether the buildx plugin file is in a CLI plugin dir — the same
+    # presence test the CLI applies when it loads plugins (a regular,
+    # executable file), so what passes here is what `docker build` finds.
+    #
+    # @return [Boolean]
+    sig { returns(T::Boolean) }
+    def buildx_installed?
+      @cli_plugin_dirs.any? do |dir|
+        plugin = File.join(dir, BUILDX_PLUGIN)
+        File.file?(plugin) && File.executable?(plugin)
+      end
     end
 
     # @return [Array<String>] the invoking user's groups

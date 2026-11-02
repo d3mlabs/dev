@@ -10,10 +10,14 @@ module Dev
   # The read-only gate between a repo's `engine:` hint and
   # the engine a containerized command is about to use: what the daemon
   # reports (ContainerEngine#resources) against what the repo declared it
-  # needs (EngineResources::Hint). Runs at `dev up` after the engine
-  # is provisioned and again at every image resolution, so a VM that shrank
-  # underneath a project — or was never resized — fails before a 40-minute
-  # build does, silently, on half the cores it was tuned for.
+  # needs (EngineResources::Hint). One owner per path, one `docker info`
+  # per path (dev#400): EngineProvisioner runs it after sizing the engine
+  # (`dev up`, `dev container up`, `dev engine up`), CommandRunner before a
+  # containerized command's image resolution (no provisioner ran there) —
+  # so a VM that shrank underneath a project, or was never resized, fails
+  # before a 40-minute build does, silently, on half the cores it was tuned
+  # for. The answer is never cached: `provision!` resizes the daemon and
+  # must read after, and `dev engine status` wants live.
   #
   # Never resizes: sizing is ColimaProvisioner's job, and only `dev up` may
   # stop a VM. The check decides between two outcomes per the

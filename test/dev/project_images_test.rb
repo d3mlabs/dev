@@ -2,11 +2,9 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/build_container"
 require "dev/command"
 require "dev/deps/dependency"
 require "dev/deps/lockfile"
-require "dev/engine_resources"
 require "dev/environment_image"
 require "dev/project_images"
 require "pathname"
@@ -168,28 +166,6 @@ class Dev::ProjectImagesTest < Minitest::Test
     Then "no membership; the pins themselves still refuse"
     !images.containerized?
     error.message.include?("dev deps update")
-
-    Cleanup
-    FileUtils.rm_rf(root)
-  end
-
-  # --- ensure! ------------------------------------------------------------
-
-  test "ensure! resolves a pinned image through ensure_environment_image! with the project's engine hint" do
-    Given
-    root = checkout(pins: [image_pin])
-    engine = Dev::EngineResources::Hint.new(cpus: 12)
-    images = Dev::ProjectImages.new(root:, engine:)
-    client = typed_mock(Dev::BuildContainer)
-    client.expects(:ensure_environment_image!).once
-      .with { |image, publish:, resources:| image.name == "snappy-linux" && publish == true && resources.cpus == 12 }
-      .returns("the-ref")
-
-    When
-    result = images.ensure!(images.named("snappy-linux"), client:, publish: true)
-
-    Then
-    result == "the-ref"
 
     Cleanup
     FileUtils.rm_rf(root)

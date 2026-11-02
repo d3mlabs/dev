@@ -2,9 +2,7 @@
 # frozen_string_literal: true
 
 require "pathname"
-require "dev/build_container"
 require "dev/deps/lockfile"
-require "dev/engine_resources"
 require "dev/environment_image"
 require_relative "command"
 
@@ -32,11 +30,9 @@ module Dev
     class AmbiguousEnvironmentImageError < ArgumentError; end
 
     # @param root [Pathname] the checkout (its deps.lock is read, once)
-    # @param engine [Dev::EngineResources::Hint, nil] the project's engine floor, measured before any image work
-    sig { params(root: Pathname, engine: T.nilable(Dev::EngineResources::Hint)).void }
-    def initialize(root:, engine: nil)
+    sig { params(root: Pathname).void }
+    def initialize(root:)
       @root = root
-      @engine = engine
       @pins = T.let(nil, T.nilable(T::Array[Deps::Dependency]))
       @pinned = T.let(nil, T.nilable(T::Array[EnvironmentImage]))
     end
@@ -99,18 +95,6 @@ module Dev
           "`#{name}` runs in a container but names no image — this project declares #{pinned.size}: #{names_or_none}; " \
             "add `runs_on: <name>` to the command in dev.yml"
       end
-    end
-
-    # Make an image ready on the client's engine through
-    # `ensure_environment_image!`, the project's engine floor measured first.
-    #
-    # @param image [Dev::EnvironmentImage]
-    # @param client [Dev::BuildContainer]
-    # @param publish [Boolean] the publisher designation (DEV_PUBLISH_IMAGE=1)
-    # @return [String] the ready image's reference
-    sig { params(image: EnvironmentImage, client: Dev::BuildContainer, publish: T::Boolean).returns(String) }
-    def ensure!(image, client:, publish:)
-      client.ensure_environment_image!(image, publish:, resources: @engine)
     end
 
     private

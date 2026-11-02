@@ -111,13 +111,13 @@ module Dev
         provision_engine!(project, images.pinned.reject { |image| host_is?(image) && !publish_image? })
         images.pinned.each do |image|
           if host_is?(image)
-            ensure_image!(image, images) if publish_image?
+            ensure_image!(image) if publish_image?
             report_native(image)
             next
           end
 
           report_drift(image)
-          image_tag = ensure_image!(image, images)
+          image_tag = ensure_image!(image)
           next unless image.persist
 
           name = client.ensure_service!(image_tag, project_root: project.root, volumes: image.volumes)
@@ -146,7 +146,7 @@ module Dev
           end
 
           report_drift(image)
-          image_tag = ensure_image!(image, images)
+          image_tag = ensure_image!(image)
           client.with_one_shot_container(image_tag, project_root: project.root, volumes: image.volumes) do |name|
             @out.puts "dev: cold container up: #{name}"
             provision_inside!(name, image)
@@ -166,8 +166,10 @@ module Dev
         @host_rule.native?(image)
       end
 
-      # Engine up and sized from the project's hint, once — and not at all
-      # when no image needs it.
+      # Engine up, sized from the project's hint and measured against it,
+      # once — and not at all when no image needs it. The provisioner is
+      # this path's one owner of the engine-floor gate (dev#400): the image
+      # steps below do not measure again.
       #
       # @param project [ProjectContext]
       # @param needing [Array<EnvironmentImage>] the images about to be resolved
@@ -208,14 +210,13 @@ module Dev
                   "#{image.name}@#{image.short_digest} — its commands run inside until this host is re-imaged"
       end
 
-      # The image resolved (local → registry → build), ProjectImages' call.
+      # The image resolved (local → registry → build).
       #
       # @param image [EnvironmentImage]
-      # @param images [ProjectImages]
       # @return [String] the image reference
-      sig { params(image: EnvironmentImage, images: ProjectImages).returns(String) }
-      def ensure_image!(image, images)
-        image_tag = images.ensure!(image, client:, publish: publish_image?)
+      sig { params(image: EnvironmentImage).returns(String) }
+      def ensure_image!(image)
+        image_tag = client.ensure_environment_image!(image, publish: publish_image?)
         @out.puts "dev: image ready: #{image_tag}"
         image_tag
       end
