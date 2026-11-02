@@ -2,11 +2,14 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/deps/brew_repository"
 require "dev/deps/brew_scheme"
 require "dev/deps/declaration"
 require "dev/deps/dependency"
 require "dev/deps/gem_scheme"
+require "dev/deps/oci_repository"
 require "dev/deps/pin_carryover"
+require "dev/deps/resolver"
 require "dev/deps/scope"
 require "dev/deps/scoped_declaration"
 require "dev/deps/unlock_set"
@@ -343,6 +346,89 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
     outcome.pins[0] == previous[0]
     outcome.pins[1].equal?(cask)
     outcome.pins[2].equal?(gh)
+  end
+
+  test "a subset re-lock keeps the lock's pin for a declaration whose registry did not answer, and says so" do
+    Given "dev#373: an image floor the host has no token for, beside the pip declaration being re-locked"
+    floor = declared("cellbound-3d-linux", integration: :image, tap: "ghcr.io/d3mlabs/unreal-engine-build-base:ue5.8-3")
+    declarations = [floor, declared("clang-format", integration: :pip, constraint: { "version" => "18.1.8" })]
+    floor_before = Dev::Deps::Dependency.new(name: "cellbound-3d-linux", integration: :image, group: :app, version: "ue5.8-3",
+      hash: "SHA256=#{"a" * 64}", metadata: { "from" => "ghcr.io/d3mlabs/unreal-engine-build-base" })
+    previous = [floor_before, Dev::Deps::Dependency.new(name: "clang-format", integration: :pip, group: :app, version: "17.0.6", hash: nil, metadata: {})]
+    denied = Dev::Deps::OciRepository::AccessDeniedError.new("the registry refused gh's token")
+    resolved = [
+      Dev::Deps::Resolver::Unresolved.new(declaration: floor, error: denied),
+      Dev::Deps::Dependency.new(name: "clang-format", integration: :pip, group: :app, version: "18.1.8", hash: nil, metadata: {}),
+    ]
+
+    When "dev deps update clang-format"
+    outcome = carryover.apply(declarations:, previous:, resolved:, unlock: Dev::Deps::UnlockSet.new(names: ["clang-format"]))
+
+    Then "the floor is the lock's pin, in its place, reported with the registry's refusal; clang-format moves"
+    versions(outcome.pins) == { "cellbound-3d-linux" => "ue5.8-3", "clang-format" => "18.1.8" }
+    outcome.pins[0].equal?(floor_before)
+    outcome.unreachable.map { |kept| [kept.pin, kept.error] } == [[floor_before, denied]]
+    outcome.kept == []
+  end
+
+  test "a declaration whose registry did not answer propagates the failure when the re-lock needs today's answer: #{description}" do
+    Given "an image floor the registry refuses"
+    floor = declared("cellbound-3d-linux", integration: :image, tap: "ghcr.io/d3mlabs/unreal-engine-build-base:ue5.8-3")
+    denied = Dev::Deps::OciRepository::AccessDeniedError.new("the registry refused gh's token")
+    floor_before = Dev::Deps::Dependency.new(name: "cellbound-3d-linux", integration: :image, group: :app, version: "ue5.8-3",
+      hash: "SHA256=#{"a" * 64}", metadata: { "from" => "ghcr.io/d3mlabs/unreal-engine-build-base" })
+    resolved = [Dev::Deps::Resolver::Unresolved.new(declaration: floor, error: denied)]
+
+    When "carrying over"
+    carryover.apply(declarations: [floor, declared("clang-format", integration: :pip)], previous: previous_for.call(floor_before), resolved:, unlock:)
+
+    Then "the registry's own error surfaces"
+    error = raises Dev::Deps::OciRepository::AccessDeniedError
+    error.equal?(denied)
+
+    Where
+    description                               | unlock                                                    | previous_for
+    "--all floats everything"                 | Dev::Deps::UnlockSet.all                                  | ->(pin) { [pin] }
+    "the floor is named"                      | Dev::Deps::UnlockSet.new(names: ["cellbound-3d-linux"])   | ->(pin) { [pin] }
+    "a bare re-lock takes today's non-brew"   | Dev::Deps::UnlockSet.none                                 | ->(pin) { [pin] }
+    "the lock has no pin to keep"             | Dev::Deps::UnlockSet.new(names: ["clang-format"])         | ->(_pin) { [] }
+  end
+
+  test "a subset re-lock does not carry an image pin onto an edited floor its registry did not answer for: #{description}" do
+    Given "a lock pin resolved from one floor, and a declaration that now names #{description}"
+    floor = declared("cellbound-3d-linux", integration: :image, tap: edited)
+    floor_before = Dev::Deps::Dependency.new(name: "cellbound-3d-linux", integration: :image, group: :app, version: "ue5.8-3",
+      hash: "SHA256=#{"a" * 64}", metadata: { "from" => "ghcr.io/d3mlabs/unreal-engine-build-base" })
+    failure = Dev::Deps::OciRepository::ReferenceError.new("#{edited.inspect} is not a floor reference")
+    resolved = [Dev::Deps::Resolver::Unresolved.new(declaration: floor, error: failure)]
+
+    When "dev deps update clang-format"
+    carryover.apply(declarations: [floor, declared("clang-format", integration: :pip)], previous: [floor_before], resolved:,
+      unlock: Dev::Deps::UnlockSet.new(names: ["clang-format"]))
+
+    Then "the old digest is not kept behind a changed declaration: the repository's failure is the re-lock's"
+    error = raises Dev::Deps::OciRepository::ReferenceError
+    error.equal?(failure)
+
+    Where
+    description             | edited
+    "another repository"    | "ghcr.io/typo/unreal-engine-build-base:ue5.8-3"
+    "another tag"           | "ghcr.io/d3mlabs/unreal-engine-build-base:ue5.8-4"
+    "no reference at all"   | "unreal-engine-build-base"
+  end
+
+  test "an unresolved need of a named integration propagates: the author asked for what it pulls in to float" do
+    Given "dev deps update xcode, with brew unable to answer for xcodes"
+    declarations = [declared("xcode", integration: :xcode, group: :app), declared("xcodes", tap: "xcodesorg/made", group: :app)]
+    previous = [formula("xcodes", version: "1.6.1", tap: "xcodesorg/made", group: :app, commit: OLD, metadata: { "needed_by" => ["xcode"] })]
+    outage = Dev::Deps::BrewRepository::BrewInfoError.new("brew info failed")
+    resolved = [Dev::Deps::Resolver::Unresolved.new(declaration: declarations.fetch(1), error: outage, needed_by: ["xcode"])]
+
+    When "carrying over"
+    carryover.apply(declarations:, previous:, resolved:, unlock: Dev::Deps::UnlockSet.new(names: ["xcode"]))
+
+    Then
+    raises Dev::Deps::BrewRepository::BrewInfoError
   end
 
   test "a brew pin with no declaration behind it floats rather than being kept on a guess" do

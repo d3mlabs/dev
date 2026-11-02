@@ -5,6 +5,7 @@ require "sorbet-runtime"
 require_relative "brew_repository"
 require_relative "dependency"
 require_relative "package_version"
+require_relative "resolver"
 require_relative "scoped_declaration"
 require_relative "unlock_set"
 require_relative "version_scheme"
@@ -40,7 +41,17 @@ module Dev
     # refuses (BrewIntegration#pin_taps!) with `--all` as the remediation.
     #
     # A subset re-lock carries every pin it did not float verbatim from the
-    # lock on disk, whatever its channel — `bundle update <gem>`.
+    # lock on disk, whatever its channel — `bundle update <gem>`. Such a pin
+    # needs nothing from today's universe, so when the universe did not
+    # answer for its declaration (the Resolver's Unresolved: an image floor
+    # in a registry the host has no token for, dev#373) the lock's pin
+    # stands all the same, reported as kept for want of an answer —
+    # provided the pin was resolved from the floor the declaration names:
+    # an image pin records its floor, and an edited floor nobody answered
+    # for is a changed declaration, not a kept one. Every other shape —
+    # `--all`, the declaration named, a bare re-lock, no pin to keep, a
+    # floor that moved — needs today's answer, and the repository's
+    # failure propagates as it would have from the resolution.
     #
     # Pure over the declarations, the previous lock and the resolution; the
     # Resolver never sees the previous lock.
@@ -52,6 +63,12 @@ module Dev
       BREW_INTEGRATIONS = T.let(%i[brew ruby python].freeze, T::Array[Symbol])
       TAP_COMMIT = "tap_commit"
 
+      # The image channel, and the metadata key under which its pin records
+      # the floor it was resolved from (OciRepository#find: the reference
+      # less its tag, which is the pin's version).
+      IMAGE_INTEGRATION = :image
+      FLOOR = "from"
+
       # A pin the lock takes from the resolution at another version than it
       # had (`from` nil when the lock had none), and why.
       class Move < T::Struct
@@ -61,12 +78,22 @@ module Dev
         const :reason, String
       end
 
+      # A pin the lock keeps for want of an answer: the declaration's
+      # repository failed, and the re-lock would have carried the lock's pin
+      # whatever it answered.
+      class Unreachable < T::Struct
+        const :pin, Dependency
+        const :error, StandardError
+      end
+
       # What the lock being written holds, and how it got there: the pins,
-      # which of them are the lock on disk's (kept), and which moved.
+      # which of them are the lock on disk's (kept, and kept because the
+      # universe did not answer), and which moved.
       class Outcome < T::Struct
         const :pins, T::Array[Dependency]
         const :kept, T::Array[Dependency]
         const :moved, T::Array[Move]
+        const :unreachable, T::Array[Unreachable]
       end
 
       # One pin's verdict.
@@ -74,6 +101,7 @@ module Dev
         const :pin, Dependency
         const :kept, T::Boolean, default: false
         const :move, T.nilable(Move), default: nil
+        const :unreachable, T.nilable(StandardError), default: nil
       end
 
       # @param schemes [Hash{Symbol => VersionScheme}] integration → its
@@ -87,15 +115,19 @@ module Dev
       # @param declarations [Array<ScopedDeclaration>] every declaration the
       #   resolution answered — the project's and the integration needs'
       # @param previous [Array<Dependency>] the pins the lock on disk carries
-      # @param resolved [Array<Dependency>] the pins just resolved
+      # @param resolved [Array<Dependency, Resolver::Unresolved>] the
+      #   resolution's verdicts: the pins just resolved, and the declarations
+      #   whose universe did not answer
       # @param unlock [UnlockSet] which declarations the author floats
       # @return [Outcome] resolved, pin for pin, with the lock's pins carried
       #   where the rule says so
+      # @raise [StandardError] the repository's failure for an unresolved
+      #   declaration whose pin the lock cannot carry
       sig do
         params(
           declarations: T::Array[ScopedDeclaration],
           previous: T::Array[Dependency],
-          resolved: T::Array[Dependency],
+          resolved: T::Array[Resolver::Verdict],
           unlock: UnlockSet,
         ).returns(Outcome)
       end
@@ -104,15 +136,17 @@ module Dev
         asks = declarations.each_with_object({}) { |decl, acc| acc[[decl.integration, decl.name]] ||= decl }
         floated_integrations = declarations.select { |decl| unlock.floats?(decl.name) }.map { |decl| decl.integration.to_s }.uniq
 
-        decisions = resolved.map do |dep|
-          prior = before[identity(dep)]
-          floats = unlock.floats?(dep.name) || (needed_by(dep) & floated_integrations).any?
-          if BREW_INTEGRATIONS.include?(dep.integration)
-            decide_brew(dep, prior, asks[identity(dep)], floats:, unlock:)
-          elsif unlock.subset? && prior && !floats
-            Decision.new(pin: prior, kept: true)
+        decisions = resolved.map do |verdict|
+          case verdict
+          when Dependency
+            floats = floats?(verdict.name, needed_by(verdict), floated_integrations, unlock)
+            decide(verdict, before[identity(verdict)], asks[identity(verdict)], floats:, unlock:)
+          when Resolver::Unresolved
+            decl = verdict.declaration
+            floats = floats?(decl.name, verdict.needed_by, floated_integrations, unlock)
+            decide_unresolved(verdict, before[[decl.integration, decl.name]], floats:, unlock:)
           else
-            Decision.new(pin: dep)
+            T.absurd(verdict)
           end
         end
 
@@ -120,10 +154,107 @@ module Dev
           pins: decisions.map(&:pin),
           kept: decisions.select(&:kept).map(&:pin),
           moved: decisions.filter_map(&:move),
+          unreachable: decisions.filter_map do |decision|
+            error = decision.unreachable
+            Unreachable.new(pin: decision.pin, error:) if error
+          end,
         )
       end
 
       private
+
+      # Whether the author asked for a pin to float: by name, or through an
+      # integration that needs it being named.
+      #
+      # @param name [String] the pin's name
+      # @param needed_by [Array<String>] the integrations whose manifests need it
+      # @param floated_integrations [Array<String>] the integrations with a named declaration
+      # @param unlock [UnlockSet]
+      # @return [Boolean]
+      sig do
+        params(name: String, needed_by: T::Array[String], floated_integrations: T::Array[String], unlock: UnlockSet)
+          .returns(T::Boolean)
+      end
+      def floats?(name, needed_by, floated_integrations, unlock)
+        unlock.floats?(name) || (needed_by & floated_integrations).any?
+      end
+
+      # The rule for a resolved pin: brew has its own; every other channel
+      # takes the resolution, except in a subset re-lock, where an unfloated
+      # pin the lock has is the lock's, verbatim.
+      #
+      # @param dep [Dependency] the resolved pin
+      # @param prior [Dependency, nil] the lock's pin of the same identity
+      # @param ask [ScopedDeclaration, nil] the declaration it answers
+      # @param floats [Boolean] whether the author asked for it to float
+      # @param unlock [UnlockSet]
+      # @return [Decision]
+      sig do
+        params(
+          dep: Dependency,
+          prior: T.nilable(Dependency),
+          ask: T.nilable(ScopedDeclaration),
+          floats: T::Boolean,
+          unlock: UnlockSet,
+        ).returns(Decision)
+      end
+      def decide(dep, prior, ask, floats:, unlock:)
+        if BREW_INTEGRATIONS.include?(dep.integration)
+          decide_brew(dep, prior, ask, floats:, unlock:)
+        elsif unlock.subset? && prior && !floats
+          Decision.new(pin: prior, kept: true)
+        else
+          Decision.new(pin: dep)
+        end
+      end
+
+      # The rule for a declaration whose universe did not answer. A subset
+      # re-lock would carry an unfloated pin the lock has verbatim, whatever
+      # today's answer — so none is needed, and the lock's pin stands, kept
+      # for want of an answer, as long as it still answers the declaration's
+      # source. Everything else needs the answer that never came, and the
+      # repository's failure is the re-lock's.
+      #
+      # @param unresolved [Resolver::Unresolved] the declaration and the failure
+      # @param prior [Dependency, nil] the lock's pin of the same identity
+      # @param floats [Boolean] whether the author asked for it to float
+      # @param unlock [UnlockSet]
+      # @return [Decision]
+      # @raise [StandardError] the repository's failure, when the pin cannot be carried
+      sig do
+        params(
+          unresolved: Resolver::Unresolved,
+          prior: T.nilable(Dependency),
+          floats: T::Boolean,
+          unlock: UnlockSet,
+        ).returns(Decision)
+      end
+      def decide_unresolved(unresolved, prior, floats:, unlock:)
+        carried = unlock.subset? && prior && !floats && resolved_from?(prior, unresolved.declaration.source)
+        raise unresolved.error unless carried
+
+        Decision.new(pin: prior, unreachable: unresolved.error)
+      end
+
+      # Whether the lock's pin was resolved from the source the declaration
+      # names. With no answer from the universe this is the one judgment
+      # the carry-over can still make, and it keeps an edited floor from
+      # hiding behind the registry's failure: `from: "ghcr.io/typo/…"` is a
+      # parse error dressed as a refusal, and the old digest must not be
+      # kept under it. An image pin records its floor and the tag it
+      # resolved; the other channels' pins record no source this rule can
+      # hold a declaration against, and carry as the subset rule carries
+      # them when they do resolve.
+      #
+      # @param prior [Dependency] the lock's pin
+      # @param source [String, nil] the declaration's source
+      # @return [Boolean]
+      sig { params(prior: Dependency, source: T.nilable(String)).returns(T::Boolean) }
+      def resolved_from?(prior, source)
+        return true unless prior.integration == IMAGE_INTEGRATION
+
+        "#{prior.metadata[FLOOR]}:#{prior.version}" == source
+      end
 
       # The brew rule: new pins and floated pins are the resolution's; a
       # changed declaration re-resolves; an unchanged one keeps the lock's

@@ -124,7 +124,15 @@ ecosystem's canonical form and validated at the DSL boundary (a cmake
      loudly (`NoAddressableSpaceError`);
    - otherwise builds the `PackageId` (the declaration's `source` rides
      the id) and calls `find(id)` — identity in, universe out; nothing
-     version-shaped crosses this seam;
+     version-shaped crosses this seam. This is the walk's one I/O, and
+     its failure is the one failure that is not a verdict on the
+     declaration: the repository's error (a registry refusing the host's
+     token, a network down, no such package) comes back as an
+     `Unresolved` — the declaration, the error, and the `needed_by` a pin
+     would have carried — in the pin's place in the result, and the walk
+     goes on (the declaration's needs still queue; it has no version
+     whose edges could). What a missing universe means is the caller's
+     policy (`PinCarryover`, below);
    - filters the reported versions through the integration's scheme
      (`satisfies?`, fact-aware: schemes may match universe facts like a
      steam branch or a git ref), treating scheme-unparseable universe
@@ -174,12 +182,19 @@ ecosystem's canonical form and validated at the DSL boundary (a cmake
    bottle to pour; a floated pin that is otherwise identical to the
    lock's keeps the previous `tap_commit`, else takes today's. In a
    subset re-lock (`dev deps update <name>`) every non-brew pin not
-   floated is the lock's, verbatim. The outcome names the moves and
-   their reasons for the command to report. This is a policy of the lock
-   being written, so it lives in `dev deps update`, not in the Resolver,
-   which never sees the previous lock; the `UnlockSet` also reaches each
-   `Locker`, whose tool owns its own conservative solve (`bundle lock
-   --update <gem>`).
+   floated is the lock's, verbatim — and so needs nothing from today's
+   universe: when the Resolver hands back an `Unresolved` for such a
+   declaration (its registry refused the host's token, dev#373), the
+   lock's pin stands, reported as kept with the registry's refusal —
+   provided it was resolved from the floor the declaration names (an
+   `image` pin records its `from`; its version is the tag). Any other
+   re-lock — `--all`, the declaration named, a bare re-lock, no pin to
+   keep, a floor that was edited — needs the answer that never came, and
+   the repository's failure propagates. The outcome names the moves and their reasons for
+   the command to report. This is a policy of the lock being written, so
+   it lives in `dev deps update`, not in the Resolver, which never sees
+   the previous lock; the `UnlockSet` also reaches each `Locker`, whose
+   tool owns its own conservative solve (`bundle lock --update <gem>`).
 4. **Write** — every pin goes to `deps.lock`, whatever its group
    (ADR-0011), nested by integration (`brew:` → `zlib:` → attrs) so the
    on-disk key carries the same (integration, name) identity the resolver
@@ -237,7 +252,7 @@ sequenceDiagram
             rep->>backing: query universe (registry API / Gemfile.lock / ls-remote / GraphQL)
             backing-->>rep: raw versions, platforms, declared deps, digests
             Note over rep: normalize upstream constraints into dev's shape, stamp its integration, state its Declarations claim (Resolved | ToolOwned)
-            rep-->>res: Package (PackageVersion facts)
+            rep-->>res: Package (PackageVersion facts) — or a failure (token refused, network down), recorded as an Unresolved verdict in the pin's place; the walk goes on
             res->>sch: satisfies?(version, constraint) each, then sort
             sch-->>res: ordered satisfying candidates
             Note over res: drop versions missing an explicitly requested platform, pick max (NoSatisfyingVersionError if none), mint the Dependency pin into the PackageId-keyed resolved set — version facts + declaration materialization + artifact projection + Scope
@@ -250,13 +265,13 @@ sequenceDiagram
         end
     end
     Note over res: stamp needed_by provenance onto the needed pins
-    res-->>cmd: Dependency[] pins
-    cmd->>carry: apply(declarations, previous, pins, unlock)
-    Note over carry: per brew pin - declaration unchanged, not floated, bottles recorded? the lock's pin (tap_commit included); else today's, with the move's reason. Subset re-lock - every other unfloated pin is the lock's
-    carry-->>cmd: Outcome (pins, kept, moved)
+    res-->>cmd: verdicts (Dependency pins, Unresolved declarations)
+    cmd->>carry: apply(declarations, previous, verdicts, unlock)
+    Note over carry: per brew pin - declaration unchanged, not floated, tap commit recorded? the lock's pin (tap_commit included); else today's, with the move's reason. Subset re-lock - every other unfloated pin is the lock's, an Unresolved one included when the pin was resolved from the declaration's floor (kept, registry unreachable); any other Unresolved raises the repository's error
+    carry-->>cmd: Outcome (pins, kept, moved, unreachable)
     cmd->>lock: lock(pins, manifest_digest)
     Note over lock: writes deps.lock, nested by integration
-    Note over cmd: report each move with its reason, and what was kept
+    Note over cmd: report each move with its reason, each pin kept for want of an answer with the registry's refusal, and what was kept
 ```
 
 ### Install flow (`dev deps install`)
