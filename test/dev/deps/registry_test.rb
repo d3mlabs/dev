@@ -44,6 +44,6 @@ class Dev::Deps::RegistryTest < Minitest::Test
     entry.integration.nil?
     entry.install_alias.nil?
     !entry.host?
-    !Dev::Deps::Registry.host_integrations(project_root: Pathname("/tmp"), store: Dev::Deps::LocalStore.new).key?(:image)
+    !Dev::Deps::Registry.host_integrations(project_root: Pathname("/tmp"), project_name: "proj", store: Dev::Deps::LocalStore.new).key?(:image)
   end
 end

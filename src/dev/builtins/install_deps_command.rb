@@ -149,7 +149,9 @@ module Dev
       # @return [Hash{Symbol => Dev::Deps::Integration}]
       sig { params(project: ProjectContext, pin_taps: T::Boolean).returns(T::Hash[Symbol, Dev::Deps::Integration]) }
       def integrations(project, pin_taps:)
-        Dev::Deps::Registry.host_integrations(project_root: project.root, store: Dev::Deps::LocalStore.new, pin_taps:)
+        Dev::Deps::Registry.host_integrations(
+          project_root: project.root, project_name: project.name, store: Dev::Deps::LocalStore.new, pin_taps:,
+        )
       end
 
       # The symbols named by a repeatable flag, or nil when the flag never

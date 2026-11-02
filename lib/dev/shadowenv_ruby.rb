@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "pathname"
+require "dev/deps/artifact_store"
 require "dev/shadowenv_file"
 require "dev/shell_rc_hook"
 
@@ -27,12 +28,27 @@ module Dev
     # container by ShadowenvFile), `.ruby-version` carries the version, the
     # directory is trusted and the shell hook ensured.
     #
+    # The project's name and the store are the interpreter activation
+    # contract's (BrewIntegration::INTERPRETERS): what ShadowenvPython homes
+    # the venv by. The Ruby activation keeps nothing in the store yet — the
+    # gem home is the keg's — until the per-project gem home (dev#294).
+    #
     # @param keg [Pathname] the installed Ruby's prefix (brew's keg)
     # @param version [String] the version the lock pins
     # @param project_root [Pathname]
+    # @param project_name [String] the project's package identity (dev.yml `name`)
+    # @param store [Deps::ArtifactStore] where per-project state lives
     # @return [void]
-    sig { params(keg: Pathname, version: String, project_root: Pathname).void }
-    def activate!(keg:, version:, project_root:)
+    sig do
+      params(
+        keg: Pathname,
+        version: String,
+        project_root: Pathname,
+        project_name: String,
+        store: Deps::ArtifactStore,
+      ).void
+    end
+    def activate!(keg:, version:, project_root:, project_name:, store:)
       ShadowenvFile.write!(project_root:, filename: LISP_FILENAME, body: generate_ruby_lisp(keg.to_s, version))
       File.write(project_root / ".ruby-version", "#{version}\n")
       ensure_shadowenv_shell_hook!

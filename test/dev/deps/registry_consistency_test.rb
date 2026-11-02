@@ -89,6 +89,7 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
     When "building host integrations from the registry"
     integrations = Dev::Deps::Registry.host_integrations(
       project_root: Pathname(dir),
+      project_name: "proj",
       store: Dev::Deps::LocalStore.new(data_root: dir),
     )
 
@@ -108,7 +109,7 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
 
     When "building the host's integrations"
     integrations = Dev::Deps::Registry.host_integrations(
-      project_root: Pathname(dir), store: Dev::Deps::LocalStore.new(data_root: dir), pin_taps: pin_taps,
+      project_root: Pathname(dir), project_name: "proj", store: Dev::Deps::LocalStore.new(data_root: dir), pin_taps: pin_taps,
     )
 
     Then
