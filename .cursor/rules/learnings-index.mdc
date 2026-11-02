@@ -60,6 +60,10 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  the venv) gets one path per side of the build container, decided from
  `ContainerContext.inside?` in one place.
  → .cursor/skills/learnings/per-side-project-state/
+- [architecture/sudo-crosses-home] Every sudo dev emits as another host
+ identity carries `-H`: brew's trust store, cache and brew.env are per
+ user under HOME, and macOS sudo keeps the caller's HOME.
+ → .cursor/skills/learnings/sudo-crosses-home/
 
 ## toolchain
 
