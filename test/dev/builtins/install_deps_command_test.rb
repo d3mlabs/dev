@@ -210,7 +210,9 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
 
     Then "every installing type is wired inside — the container is a host with its own data root — and the host-side hooks do not run"
     _, integrations = factory_inputs.fetch(0)
-    integrations.keys.sort == Dev::Deps::Registry.host_integrations(project_root: root, store: Dev::Deps::LocalStore.new(data_root: root.to_s)).keys.sort
+    integrations.keys.sort == Dev::Deps::Registry.host_integrations(
+      project_root: root, project_name: "TestProject", store: Dev::Deps::LocalStore.new(data_root: root.to_s),
+    ).keys.sort
     integrations.key?(:bundler)
     integrations.key?(:brew)
     integrations.key?(:cmake)

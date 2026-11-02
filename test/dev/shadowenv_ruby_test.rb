@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/deps/local_store"
 require "dev/shadowenv_ruby"
 require "fileutils"
 require "tmpdir"
@@ -17,15 +18,19 @@ class ShadowenvRubyTest < Minitest::Test
     FileUtils.mkdir_p(keg / "bin")
 
     When "activating"
-    Dev::ShadowenvRuby.activate!(keg: keg, version: "4.0.9", project_root: Pathname(tmpdir))
+    Dev::ShadowenvRuby.activate!(
+      keg: keg, version: "4.0.9", project_root: Pathname(tmpdir),
+      project_name: "proj", store: Dev::Deps::LocalStore.new(data_root: tmpdir),
+    )
 
-    Then "the lisp names the keg as RUBY_ROOT, .ruby-version carries the locked version, the shell hook is ensured"
+    Then "the lisp names the keg as RUBY_ROOT, .ruby-version carries the locked version, the shell hook is ensured, the store is untouched"
     _ * Dev::ShadowenvRuby.ensure_shadowenv_shell_hook! >> :added
     lisp = File.read(File.join(tmpdir, ".shadowenv.d", "510_ruby.lisp"))
     lisp.include?('(provide "ruby" "4.0.9")')
     lisp.include?(%((env/set "RUBY_ROOT" "#{keg}")))
     lisp.include?(%((env/prepend-to-pathlist "PATH" "#{keg / "bin"}")))
     File.read(File.join(tmpdir, ".ruby-version")) == "4.0.9\n"
+    Dir.children(tmpdir).sort == [".ruby-version", ".shadowenv.d", "Cellar"]
 
     Cleanup
     FileUtils.rm_rf(tmpdir)

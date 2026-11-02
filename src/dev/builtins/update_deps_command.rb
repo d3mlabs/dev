@@ -109,7 +109,7 @@ module Dev
         interpreters = carryover.apply(
           declarations: answered, previous:, resolved: resolver.resolve(interpreter_declarations), unlock:,
         ).pins.select { |dep| INTERPRETER_TYPES.include?(dep.integration) }
-        install_interpreters!(project_root, interpreters) if interpreters.any?
+        install_interpreters!(project, interpreters) if interpreters.any?
 
         # Lock, then resolve: integrations whose ecosystem tool owns the
         # whole-set solve (bundler) materialize their tool lockfile first, so
@@ -195,12 +195,14 @@ module Dev
       # verification and activation included — so the lockers that follow
       # run under the interpreters the lock is about to pin.
       #
-      # @param project_root [Pathname]
+      # @param project [ProjectContext]
       # @param interpreters [Array<Dev::Deps::Dependency>] the :ruby/:python pins
       # @return [void]
-      sig { params(project_root: Pathname, interpreters: T::Array[Dev::Deps::Dependency]).void }
-      def install_interpreters!(project_root, interpreters)
-        integrations = Dev::Deps::Registry.host_integrations(project_root: project_root, store: Dev::Deps::LocalStore.new)
+      sig { params(project: ProjectContext, interpreters: T::Array[Dev::Deps::Dependency]).void }
+      def install_interpreters!(project, interpreters)
+        integrations = Dev::Deps::Registry.host_integrations(
+          project_root: project.root, project_name: project.name, store: Dev::Deps::LocalStore.new,
+        )
         integrations.fetch(:brew).install_all(interpreters)
       end
 

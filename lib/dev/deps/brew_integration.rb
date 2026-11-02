@@ -131,6 +131,20 @@ module Dev
         end
       end
 
+      # An interpreter pin installed for a project the integration knows the
+      # root of but not the name: the language activation homes the
+      # project's state in the store under its name, so there is nowhere to
+      # put it. A dev bug — Registry supplies both from the project context.
+      class ProjectNameRequiredError < StandardError
+        extend T::Sig
+
+        # @param project_dir [Pathname] the project the pin was installed for
+        sig { params(project_dir: Pathname).void }
+        def initialize(project_dir:)
+          super("an interpreter pin was installed for #{project_dir} without the project's name — BrewIntegration needs project_name: alongside project_dir:")
+        end
+      end
+
       # brew itself cannot be asked where its taps live.
       class BrewUnavailableError < StandardError
         extend T::Sig
@@ -153,10 +167,13 @@ module Dev
       # The interpreters that are brew pins (Registry's :ruby and :python
       # rows) and the language-specific activation each gets once its keg is
       # installed and on the project PATH: gem env for Ruby, the project
-      # venv for Python. Keyed on the pin's integration symbol, so the step
-      # follows the lock, not a formula name. (A port on the Registry entry
-      # once #300 gives Entry its materialization — the table lives here
-      # until then.)
+      # venv for Python. Each answers
+      # `activate!(keg:, version:, project_root:, project_name:, store:)` —
+      # the project's name keys its state in the store (the venv under
+      # `~/.dev/venv/<project>`). Keyed on the pin's integration symbol, so
+      # the step follows the lock, not a formula name. (A port on the
+      # Registry entry once #300 gives Entry its materialization — the table
+      # lives here until then.)
       INTERPRETERS = T.let(
         { ruby: Dev::ShadowenvRuby, python: Dev::ShadowenvPython }.freeze,
         T::Hash[Symbol, T::Module[T.anything]],
@@ -180,6 +197,9 @@ module Dev
       # @param store [ArtifactStore, nil] the store whose brew tool cache brew downloads into
       # @param taps [Array<Tap>] Homebrew taps to register before installing
       # @param project_dir [String, Pathname, nil] project root for resolving file:// tap URLs
+      # @param project_name [String, nil] the project's package identity
+      #   (dev.yml `name`), which the interpreter activations key the
+      #   project's store state by; nil with project_dir nil (no project)
       # @param brew_prefix [String, Pathname, nil] the Homebrew prefix
       #   (discovered via `brew --prefix` when nil; injectable for tests)
       # @param pin_taps [Boolean] check each formula's tap out at the commit
@@ -192,14 +212,16 @@ module Dev
       #   caller with no user to speak for — tests, an image bootstrap)
       # @param interpreters [Hash{Symbol => Module}] the language activation
       #   for each interpreter pin type, by integration symbol: each answers
-      #   `activate!(keg:, version:, project_root:)` and is called after the
-      #   PATH activation with the locked keg (INTERPRETERS by default)
+      #   `activate!(keg:, version:, project_root:, project_name:, store:)`
+      #   and is called after the PATH activation with the locked keg
+      #   (INTERPRETERS by default)
       sig do
         params(
           repository: T.nilable(Repository),
           store: T.nilable(ArtifactStore),
           taps: T::Array[Tap],
           project_dir: T.nilable(T.any(String, Pathname)),
+          project_name: T.nilable(String),
           brew_prefix: T.nilable(T.any(String, Pathname)),
           pin_taps: T::Boolean,
           tap_pinner: T.nilable(TapPinner),
@@ -207,11 +229,12 @@ module Dev
           interpreters: T::Hash[Symbol, T::Module[T.anything]],
         ).void
       end
-      def initialize(repository:, store:, taps: [], project_dir: nil, brew_prefix: nil, pin_taps: false, tap_pinner: nil,
-        brew_env: nil, interpreters: INTERPRETERS)
+      def initialize(repository:, store:, taps: [], project_dir: nil, project_name: nil, brew_prefix: nil, pin_taps: false,
+        tap_pinner: nil, brew_env: nil, interpreters: INTERPRETERS)
         super(repository:, store:)
         @taps = taps
         @project_dir = T.let(project_dir ? Pathname(project_dir) : nil, T.nilable(Pathname))
+        @project_name = project_name
         @taps_registered = T.let(false, T::Boolean)
         @brew_prefix = T.let(brew_prefix&.to_s, T.nilable(String))
         @brew_prefix_resolved = T.let(!brew_prefix.nil?, T::Boolean)
@@ -276,6 +299,8 @@ module Dev
       # @param formulae [Array<Dependency>] the formulae that installed
       # @return [void]
       # @raise [KegNotFoundError] if an interpreter's keg is not in the Cellar
+      # @raise [ProjectNameRequiredError] if an interpreter installed for a
+      #   project whose name the integration was not given
       sig { params(formulae: T::Array[Dependency]).void }
       def activate_interpreters!(formulae)
         project_dir = @project_dir
@@ -289,9 +314,12 @@ module Dev
           keg = keg_dir(dep)
           raise KegNotFoundError.new(formula: formula_name(dep), locked:, cellar: cellar_dir(dep)) unless keg
 
+          project_name = @project_name
+          raise ProjectNameRequiredError.new(project_dir:) unless project_name
+
           # T.unsafe: the activation is a module answering activate! by
           # contract (INTERPRETERS); its own sig validates at runtime.
-          T.unsafe(activation).activate!(keg:, version: locked, project_root: project_dir)
+          T.unsafe(activation).activate!(keg:, version: locked, project_root: project_dir, project_name:, store: store!)
         end
       end
 

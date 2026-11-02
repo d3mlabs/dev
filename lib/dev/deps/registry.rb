@@ -166,7 +166,7 @@ module Dev
             repository: BrewRepository,
             scheme: BrewScheme,
             integration: BrewIntegration,
-            integration_needs: %i[taps project_dir pin_taps brew_env],
+            integration_needs: %i[taps project_dir project_name pin_taps brew_env],
           ),
           # Casks are declared with the brew DSL verb (cask: true) but are a
           # separate universe: Homebrew publishes no versions or bottle
@@ -365,6 +365,8 @@ module Dev
         # a build container, each against its own data root.
         #
         # @param project_root [Pathname] project root (threaded to integrations that need it)
+        # @param project_name [String] the project's package identity (dev.yml
+        #   `name`): what keys the project's own state in the store (the venv)
         # @param store [ArtifactStore] where installed trees and downloaded blobs live (passed to every integration)
         # @param taps [Array<Tap>] Homebrew taps for the brew integration
         # @param pin_taps [Boolean] brew installs from taps checked out at the
@@ -373,13 +375,14 @@ module Dev
         sig do
           params(
             project_root: Pathname,
+            project_name: String,
             store: ArtifactStore,
             taps: T::Array[Tap],
             pin_taps: T::Boolean,
           ).returns(T::Hash[Symbol, Integration])
         end
-        def host_integrations(project_root:, store:, taps: [], pin_taps: false)
-          integrations_for(INTEGRATIONS.select(&:host?), project_root:, store:, taps:, pin_taps:)
+        def host_integrations(project_root:, project_name:, store:, taps: [], pin_taps: false)
+          integrations_for(INTEGRATIONS.select(&:host?), project_root:, project_name:, store:, taps:, pin_taps:)
         end
 
         private
@@ -389,6 +392,7 @@ module Dev
         #
         # @param entries [Array<Entry>] the entries that install
         # @param project_root [Pathname]
+        # @param project_name [String]
         # @param store [ArtifactStore]
         # @param taps [Array<Tap>]
         # @param pin_taps [Boolean]
@@ -397,15 +401,17 @@ module Dev
           params(
             entries: T::Array[Entry],
             project_root: Pathname,
+            project_name: String,
             store: ArtifactStore,
             taps: T::Array[Tap],
             pin_taps: T::Boolean,
           ).returns(T::Hash[Symbol, Integration])
         end
-        def integrations_for(entries, project_root:, store:, taps:, pin_taps:)
+        def integrations_for(entries, project_root:, project_name:, store:, taps:, pin_taps:)
           context = {
             project_root:,
             project_dir: project_root,
+            project_name:,
             taps:,
             pin_taps:,
             brew_env: BrewEnv.new(path: BrewEnv.user_file),

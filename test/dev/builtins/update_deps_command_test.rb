@@ -118,7 +118,8 @@ class Dev::Builtins::UpdateDepsCommandTest < Minitest::Test
     order = sequence("install the interpreter, then lock")
     brew = mock
     brew.expects(:install_all).with([ruby_pin]).in_sequence(order)
-    Dev::Deps::Registry.expects(:host_integrations).with { |**kwargs| kwargs.fetch(:project_root) == root }
+    Dev::Deps::Registry.expects(:host_integrations)
+      .with { |**kwargs| kwargs.fetch(:project_root) == root && kwargs.fetch(:project_name) == "TestProject" }
       .returns({ brew: brew, ruby: brew })
     locker = mock
     locker.expects(:lock).in_sequence(order)
