@@ -168,9 +168,9 @@ module Dev
     # @param brew [String, nil] Homebrew's binary on this host, if any
     # @param path [String] the PATH the runner user's commands run on
     # @param owner_of [Proc] who owns a path (injectable for tests)
-    # @param tap [String, nil] the deployment's tap, which the runner user
-    #   must trust before brew will load dev's formula for it (TapTrust);
-    #   nil for none
+    # @param tap [Dev::TapTrust::Tap, nil] the deployment's tap, which the
+    #   runner user must trust before brew will load dev's formula for it
+    #   (TapTrust); nil for none
     sig do
       params(
         name: String,
@@ -181,7 +181,7 @@ module Dev
         brew: T.nilable(String),
         path: String,
         owner_of: OwnerOf,
-        tap: T.nilable(String),
+        tap: T.nilable(TapTrust::Tap),
       ).void
     end
     def initialize(name:, steps: PrivilegedSteps.new(purpose: "create the runner user #{name}"),

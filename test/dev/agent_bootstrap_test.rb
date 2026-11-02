@@ -279,7 +279,7 @@ class Dev::AgentBootstrapTest < Minitest::Test
     out = StringIO.new
 
     When "converging"
-    bootstrap(executor, out: out, brew_executable: brew, tap: "d3mlabs/d3mlabs").converge!
+    bootstrap(executor, out: out, brew_executable: brew, tap: org_tap).converge!
 
     Then "the one step is brew trust as the agent, and it is announced"
     executor.runs == [["sudo", "-H", "-u", "ai-agent", "--", brew, "trust", "--tap", "d3mlabs/d3mlabs"]]
@@ -292,7 +292,7 @@ class Dev::AgentBootstrapTest < Minitest::Test
     executor = converged_identity_executor(brew_executable: nil)
 
     When "converging"
-    bootstrap(executor, brew_executable: nil, tap: "d3mlabs/d3mlabs").converge!
+    bootstrap(executor, brew_executable: nil, tap: org_tap).converge!
 
     Then
     executor.runs.empty?
@@ -305,7 +305,7 @@ class Dev::AgentBootstrapTest < Minitest::Test
     out = StringIO.new
 
     When "converging"
-    bootstrap(executor, out: out, brew_executable: brew, tap: "d3mlabs/d3mlabs").converge!
+    bootstrap(executor, out: out, brew_executable: brew, tap: org_tap).converge!
 
     Then "it ran, it was refused, and register went on"
     executor.runs.count(&trusts) == 1
@@ -316,6 +316,7 @@ class Dev::AgentBootstrapTest < Minitest::Test
   # A lambda, not a block: a one-parameter block is emitted as |argv,| by
   # the transform (rspockframework/ast-transform#21) and destructures an argv.
   def trusts = ->(argv) { argv.include?("trust") }
+  def org_tap = Dev::TapTrust::Tap.new(user: "d3mlabs", repo: "d3mlabs")
 
   # A brew binary at <prefix>/bin/brew, as BREW_LOCATIONS discovers one.
   def brew_in(prefix)

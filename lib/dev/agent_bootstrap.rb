@@ -190,9 +190,9 @@ module Dev
     # @param brew_executable [String, nil] the host's brew binary (discovered
     #   from BREW_LOCATIONS; injectable for tests; nil = no brew edge, no
     #   tap to trust)
-    # @param tap [String, nil] the deployment's tap, which the agent user
-    #   must trust before brew will load its formulae for it (TapTrust);
-    #   nil for none
+    # @param tap [Dev::TapTrust::Tap, nil] the deployment's tap, which the
+    #   agent user must trust before brew will load its formulae for it
+    #   (TapTrust); nil for none
     sig do
       params(
         agent_user: String,
@@ -204,7 +204,7 @@ module Dev
         home_dev: String,
         launch_agents_dir: String,
         brew_executable: T.nilable(String),
-        tap: T.nilable(String),
+        tap: T.nilable(TapTrust::Tap),
       ).void
     end
     def initialize(agent_user: DEFAULT_AGENT_USER, runner_user: T.must(Etc.getpwuid(Process.uid)).name,

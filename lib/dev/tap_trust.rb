@@ -28,33 +28,54 @@ module Dev
     # ahead of the warning, and a sudo prompt reaches it at all.
     RunAsUser = T.type_alias { T.proc.params(argv: T::Array[String]).returns(T::Boolean) }
 
+    # A Homebrew tap, `user/repo` — the unit brew's per-user trust is
+    # granted to. Built once at the settings boundary (deployment_tap) so
+    # nothing downstream re-splits a formula string.
+    class Tap < T::Struct
+      extend T::Sig
+
+      const :user, String
+      const :repo, String
+
+      # The spelling brew takes after `--tap`.
+      #
+      # @return [String]
+      sig { returns(String) }
+      def to_s = "#{user}/#{repo}"
+    end
+
+    # A tap-qualified formula name: `user/repo/name`, three non-empty
+    # slash-free segments. A bare name (dev-core) has no tap to trust.
+    QUALIFIED_FORMULA = T.let(%r{\A([^/]+)/([^/]+)/[^/]+\z}, Regexp)
+
     class << self
       extend T::Sig
 
-      # The tap a deployment formula lives in: `user/repo` of a
-      # tap-qualified `user/repo/name`; nil for a bare name (dev-core, no
-      # tap to trust) or no deployment at all.
+      # The tap a deployment formula lives in; nil for a bare name or no
+      # deployment at all.
       #
       # @param formula [String, nil] Settings#deployment_formula
-      # @return [String, nil]
-      sig { params(formula: T.nilable(String)).returns(T.nilable(String)) }
+      # @return [Tap, nil]
+      sig { params(formula: T.nilable(String)).returns(T.nilable(Tap)) }
       def deployment_tap(formula: Settings.new.deployment_formula)
-        parts = formula.to_s.split("/")
-        parts.size == 3 ? parts.first(2).join("/") : nil
+        qualified = QUALIFIED_FORMULA.match(formula.to_s)
+        return nil unless qualified
+
+        Tap.new(user: T.must(qualified[1]), repo: T.must(qualified[2]))
       end
     end
 
     # @param user [String] the identity whose trust is converged
     # @param run_as_user [Proc] how to run a command as that user
     # @param brew [String, nil] Homebrew's binary on this host, if any
-    # @param tap [String, nil] the deployment's tap; nil for none to trust
+    # @param tap [Tap, nil] the deployment's tap; nil for none to trust
     # @param out [IO, StringIO]
     sig do
       params(
         user: String,
         run_as_user: RunAsUser,
         brew: T.nilable(String),
-        tap: T.nilable(String),
+        tap: T.nilable(Tap),
         out: T.any(IO, StringIO),
       ).void
     end
@@ -78,7 +99,7 @@ module Dev
       return unless tap && brew
 
       @out.puts ">>> Trusting the tap #{tap} for #{@user} (brew loads nothing from a tap its user has not trusted)"
-      return if @run_as_user.call([brew, "trust", "--tap", tap])
+      return if @run_as_user.call([brew, "trust", "--tap", tap.to_s])
 
       @out.puts "dev: warning: could not trust the tap #{tap} for #{@user} (brew's refusal is above; a brew without " \
                 "`trust` has no gate to pass) — if brew as #{@user} is refused the tap's formulae: " \

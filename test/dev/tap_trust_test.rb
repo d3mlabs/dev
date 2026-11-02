@@ -16,7 +16,7 @@ class Dev::TapTrustTest < Minitest::Test
     runs = []
     out = StringIO.new
     trust = Dev::TapTrust.new(
-      user: "ai-agent", brew: "/opt/homebrew/bin/brew", tap: "d3mlabs/d3mlabs", out: out,
+      user: "ai-agent", brew: "/opt/homebrew/bin/brew", tap: org_tap, out: out,
       run_as_user: recording(runs),
     )
 
@@ -32,7 +32,7 @@ class Dev::TapTrustTest < Minitest::Test
     Given "a run-as-user seam that fails (a brew without the command)"
     out = StringIO.new
     trust = Dev::TapTrust.new(
-      user: "runner", brew: "/home/linuxbrew/.linuxbrew/bin/brew", tap: "d3mlabs/d3mlabs", out: out,
+      user: "runner", brew: "/home/linuxbrew/.linuxbrew/bin/brew", tap: org_tap, out: out,
       run_as_user: ->(_argv) { false },
     )
 
@@ -49,22 +49,33 @@ class Dev::TapTrustTest < Minitest::Test
     runs = []
     out = StringIO.new
     Dev::TapTrust.new(user: "runner", brew: "/opt/homebrew/bin/brew", tap: nil, out: out, run_as_user: recording(runs)).trust!
-    Dev::TapTrust.new(user: "runner", brew: nil, tap: "d3mlabs/d3mlabs", out: out, run_as_user: recording(runs)).trust!
+    Dev::TapTrust.new(user: "runner", brew: nil, tap: org_tap, out: out, run_as_user: recording(runs)).trust!
 
     Expect
     runs.empty?
     out.string.empty?
   end
 
-  test "the deployment's tap is the user/repo of a tap-qualified formula; none for a bare name or no deployment" do
+  test "the deployment's tap is the user/repo of a tap-qualified formula, as a Tap; none for a bare name, a malformed one, or no deployment" do
+    Given
+    tap = Dev::TapTrust.deployment_tap(formula: "d3mlabs/d3mlabs/dev")
+
     Expect
-    Dev::TapTrust.deployment_tap(formula: "d3mlabs/d3mlabs/dev") == "d3mlabs/d3mlabs"
+    tap.is_a?(Dev::TapTrust::Tap)
+    tap.user == "d3mlabs"
+    tap.repo == "d3mlabs"
+    tap.to_s == "d3mlabs/d3mlabs"
     Dev::TapTrust.deployment_tap(formula: "dev-core").nil?
+    Dev::TapTrust.deployment_tap(formula: "d3mlabs//dev").nil?
     Dev::TapTrust.deployment_tap(formula: nil).nil?
-    [nil, %r{\A[^/]+/[^/]+\z}].any? { |shape| shape === Dev::TapTrust.deployment_tap }
+    [NilClass, Dev::TapTrust::Tap].any? { |shape| shape === Dev::TapTrust.deployment_tap }
   end
 
   private
+
+  def org_tap
+    Dev::TapTrust::Tap.new(user: "d3mlabs", repo: "d3mlabs")
+  end
 
   # A run-as-user seam that records every argv into +runs+ and succeeds.
   # A lambda, not a block: a one-parameter block is emitted as |argv,| by

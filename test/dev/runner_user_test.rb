@@ -132,12 +132,12 @@ class Dev::RunnerUserTest < Minitest::Test
   test "with brew and a deployment tap, converge! has the runner user trust the tap — as that user, on the host PATH, streamed; a brew without `trust` is a warning, not a stop" do
     Given "a runner user on a host with brew and the org tap; and one whose brew predates `brew trust`"
     trusting = GhExecutor.new(logged_in: true)
-    user = runner_user(homes: { "runner" => "/home/runner" }, brew: "/home/linuxbrew/.linuxbrew/bin/brew", gh: trusting, tap: "d3mlabs/d3mlabs")
+    user = runner_user(homes: { "runner" => "/home/runner" }, brew: "/home/linuxbrew/.linuxbrew/bin/brew", gh: trusting, tap: org_tap)
     user.converge!
     first_out = @out.string.dup
     @out.truncate(0)
     old = GhExecutor.new(logged_in: true, trusts: false)
-    runner_user(homes: { "runner" => "/home/runner" }, brew: "/home/linuxbrew/.linuxbrew/bin/brew", gh: old, tap: "d3mlabs/d3mlabs").converge!
+    runner_user(homes: { "runner" => "/home/runner" }, brew: "/home/linuxbrew/.linuxbrew/bin/brew", gh: old, tap: org_tap).converge!
 
     Expect "brew trust as the runner user, on the host PATH, the brew dev found; the refusal is one warning naming the by-hand command"
     trusting.calls.count(&trusts) == 1
@@ -153,7 +153,7 @@ class Dev::RunnerUserTest < Minitest::Test
     bare = GhExecutor.new(logged_in: true)
     runner_user(homes: { "runner" => "/home/runner" }, brew: "/home/linuxbrew/.linuxbrew/bin/brew", gh: bare, tap: nil).converge!
     brewless = GhExecutor.new(logged_in: true)
-    runner_user(homes: { "runner" => "/home/runner" }, brew: nil, gh: brewless, tap: "d3mlabs/d3mlabs").converge!
+    runner_user(homes: { "runner" => "/home/runner" }, brew: nil, gh: brewless, tap: org_tap).converge!
 
     Expect
     bare.calls.none?(&trusts)
@@ -347,6 +347,7 @@ class Dev::RunnerUserTest < Minitest::Test
   def last_three = ->(argv) { argv.last(3).join(" ") }
 
   def trusts = ->(argv) { argv.include?("trust") }
+  def org_tap = Dev::TapTrust::Tap.new(user: "d3mlabs", repo: "d3mlabs")
 
   def runner_user(homes:, gh: GhExecutor.new(logged_in: true), name: "runner", brew: nil, owner_of: ->(_path) { name }, tap: nil)
     steps = Dev::PrivilegedSteps.new(executor: @executor, tty: true, purpose: "create the runner user")
