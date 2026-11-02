@@ -12,13 +12,12 @@ description: >-
 The checkout is bind-mounted into the build container, so one path in the
 project tree is seen by two build hosts whose prefixes, interpreters and
 OS/arch differ. Anything dev generates there that binds one of those — a
-lisp with absolute paths, a venv (`bin/python` is one interpreter, wheels
-one platform), a native module tree — gets one path per side, decided
-from `Dev::ContainerContext.inside?` in exactly one place that the writer
-and every reader resolve through.
+lisp with absolute paths, a venv, a native module tree — gets one path per
+side, decided from `Dev::ContainerContext.inside?` in exactly one place
+that the writer and every reader resolve through.
 
-Wrong — one path for both sides, kept right by an honest freshness check,
-so each side's `dev up` finds the other's venv and rebuilds, every pass:
+Wrong — one path for both sides behind an honest freshness check, so each
+side's `dev up` finds the other's venv and rebuilds, every pass:
 
     venv = project_root / ".venv"
     FileUtils.rm_rf(venv) unless venv_built_on?(venv, keg, version)
@@ -29,12 +28,13 @@ Right — the side decides the path, in one function; the lisp follows:
       project_root / (inside ? CONTAINER_VENV_DIR : HOST_VENV_DIR)
     end
 
-`ShadowenvFile` is the same rule for lisps (`510_ruby_container.lisp`
-beside `510_ruby.lisp`). A new project-tree artifact asks: does its content
-depend on the side? If yes, split it and name both paths in
-docs/deps-channels.md ("What the checkout carries"); once a per-project
-key under the data root exists (dev#294), prefer the data root.
+`ShadowenvFile` is the same rule for lisps. A new project-tree artifact
+asks two questions. Is it installed state? Then it lives in the store under
+the project's key with the side in the key (`ShadowenvPython.venv_key`:
+`~/.dev/venv/<name>/<side>/<keg>`, dev#399) and only a link or the lisp
+stays in the tree — a checkout clean wipes the tree, not the store. Does
+what stays depend on the side? Then split it and name both paths in
+docs/deps-channels.md ("What the checkout carries").
 
-learned-from: dev#379 (the venv flip-flop dev#376's honest check exposed);
-`ContainerRuby` → `ShadowenvFile` had solved the same shape for lisps.
-date: 2026-11-01
+learned-from: dev#379 (the venv flip-flop dev#376 exposed); dev#399 (venv in the store).
+date: 2026-11-02
