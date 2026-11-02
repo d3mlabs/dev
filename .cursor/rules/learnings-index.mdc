@@ -60,6 +60,12 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  the venv) gets one path per side of the build container, decided from
  `ContainerContext.inside?` in one place.
  → .cursor/skills/learnings/per-side-project-state/
+- [architecture/installed-state-in-the-store] Anything dev installs lives
+ in the store under an identity key (per-project state under dev.yml
+ `name`), never in the checkout, which a hosted clean wipes: the project
+ tree holds a symlink or a lisp path, and path-bound artifacts run by
+ their store path.
+ → .cursor/skills/learnings/installed-state-in-the-store/
 
 ## toolchain
 
