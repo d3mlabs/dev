@@ -5,6 +5,7 @@ require "sorbet-runtime"
 require_relative "brew_repository"
 require_relative "dependency"
 require_relative "package_version"
+require_relative "repository"
 require_relative "resolver"
 require_relative "scoped_declaration"
 require_relative "unlock_set"
@@ -83,7 +84,7 @@ module Dev
       # whatever it answered.
       class Unreachable < T::Struct
         const :pin, Dependency
-        const :error, StandardError
+        const :error, Repository::UnreadableUniverseError
       end
 
       # What the lock being written holds, and how it got there: the pins,
@@ -101,7 +102,7 @@ module Dev
         const :pin, Dependency
         const :kept, T::Boolean, default: false
         const :move, T.nilable(Move), default: nil
-        const :unreachable, T.nilable(StandardError), default: nil
+        const :unreachable, T.nilable(Repository::UnreadableUniverseError), default: nil
       end
 
       # @param schemes [Hash{Symbol => VersionScheme}] integration → its
@@ -239,12 +240,13 @@ module Dev
       # Whether the lock's pin was resolved from the source the declaration
       # names. With no answer from the universe this is the one judgment
       # the carry-over can still make, and it keeps an edited floor from
-      # hiding behind the registry's failure: `from: "ghcr.io/typo/…"` is a
-      # parse error dressed as a refusal, and the old digest must not be
-      # kept under it. An image pin records its floor and the tag it
-      # resolved; the other channels' pins record no source this rule can
-      # hold a declaration against, and carry as the subset rule carries
-      # them when they do resolve.
+      # hiding behind the registry's failure: a floor moved to a repository
+      # the registry refuses is a changed declaration, and the old digest
+      # must not be kept under it (a floor that does not parse never gets
+      # this far — the DSL refuses it at load, dev#395). An image pin
+      # records its floor and the tag it resolved; the other channels' pins
+      # record no source this rule can hold a declaration against, and
+      # carry as the subset rule carries them when they do resolve.
       #
       # @param prior [Dependency] the lock's pin
       # @param source [String, nil] the declaration's source

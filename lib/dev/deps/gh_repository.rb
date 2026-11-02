@@ -33,11 +33,14 @@ module Dev
     class GhRepository < Repository
       extend T::Sig
 
-      class GhMissingError < StandardError; end
-      class AuthenticationError < StandardError; end
-      class RepoAccessError < StandardError; end
-      class ApiError < StandardError; end
-      class InconsistentReleasesError < StandardError; end
+      # Each the universe not being readable from this host: no gh CLI, a
+      # gh that is not logged in, a repo the account cannot see, an API
+      # that failed, or an API whose answers contradict each other.
+      class GhMissingError < UnreadableUniverseError; end
+      class AuthenticationError < UnreadableUniverseError; end
+      class RepoAccessError < UnreadableUniverseError; end
+      class ApiError < UnreadableUniverseError; end
+      class InconsistentReleasesError < UnreadableUniverseError; end
 
       # GitHub's maximum page size; fewer results than this ends pagination.
       PER_PAGE = 100

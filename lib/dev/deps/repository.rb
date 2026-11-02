@@ -20,8 +20,18 @@ module Dev
     class Repository
       extend T::Sig
 
+      # The universe could not be read for the identity: the backing service
+      # refused this host, did not answer, or has no entry under it. The one
+      # failure that is not a verdict on the declaration — the universe may
+      # well hold a satisfying version this host cannot see — so the Resolver
+      # records it as an Unresolved in the pin's place and walks on. Every
+      # repository's unreachable-case errors subclass it; anything else a
+      # repository raises (a source that does not parse, a bug) is the
+      # declaration being wrong and propagates.
+      class UnreadableUniverseError < StandardError; end
+
       # The universe has no package under the requested identity.
-      class PackageNotFoundError < StandardError; end
+      class PackageNotFoundError < UnreadableUniverseError; end
 
       # A revision was addressed against an integration whose universe has no
       # continuous space (nothing exists outside the published versions).

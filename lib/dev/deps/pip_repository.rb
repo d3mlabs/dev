@@ -22,7 +22,9 @@ module Dev
       extend T::Sig
 
       class ProjectNotFoundError < PackageNotFoundError; end
-      class ApiError < StandardError; end
+
+      # PyPI answered anything but the project document or a 404.
+      class ApiError < UnreadableUniverseError; end
 
       PYPI_HOST = "https://pypi.org"
 

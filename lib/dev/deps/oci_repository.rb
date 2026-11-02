@@ -4,9 +4,11 @@
 require "digest"
 require "json"
 require "net/http"
+require "openssl"
 require "uri"
 
 require_relative "../gh_auth"
+require_relative "floor_reference"
 require_relative "package"
 require_relative "package_id"
 require_relative "package_version"
@@ -24,6 +26,13 @@ module Dev
     # by digest verifies. Platforms are facts beside it: the index's entries,
     # or the lone manifest's config `os/architecture`.
     #
+    # Two types, one per side of the registry (dev#395): the source is read
+    # as a FloorReference — the author's ask, whose grammar that type owns —
+    # and the registry's answer is gathered as a ResolvedFloor before it is
+    # mapped onto Package/PackageVersion as the last step. The pin's
+    # metadata is the serialization boundary: the string shape survives
+    # only there.
+    #
     # Registry HTTP, not the engine: `dev deps update` resolves a floor with
     # no daemon running and on a host that has none. The credential is the
     # host's gh token (GhAuth) — the floor lives in GHCR under the org, and a
@@ -34,14 +43,12 @@ module Dev
     class OciRepository < Repository
       extend T::Sig
 
-      # The source is not `<registry>/<repository>:<tag>`.
-      class ReferenceError < StandardError; end
-
       # The registry refused the token after the challenge was answered.
-      class AccessDeniedError < StandardError; end
+      class AccessDeniedError < UnreadableUniverseError; end
 
-      # Any other non-success from the registry.
-      class RegistryError < StandardError; end
+      # Any other non-success from the registry, or no answer at all (a
+      # registry that is down or unreachable).
+      class RegistryError < UnreadableUniverseError; end
 
       # What the registry says a floor is made of: one manifest or an index.
       MANIFEST_MEDIA_TYPES = T.let(
@@ -62,11 +69,6 @@ module Dev
         T::Array[String],
       )
 
-      # `<host>/<repository>:<tag>` — the host has a dot or a port (so a bare
-      # Hub name is refused: the floor is never a floating `ubuntu:22.04`),
-      # the tag is a tag, never a digest.
-      REFERENCE = %r{\A(?<host>[a-z0-9.-]+(?::\d+)?)/(?<repository>[a-z0-9._/-]+):(?<tag>[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})\z}
-
       # Attestation manifests ride an index under this pseudo-platform.
       UNKNOWN_PLATFORM = "unknown/unknown"
 
@@ -77,22 +79,13 @@ module Dev
         const :body, String
       end
 
-      # A parsed floor reference.
-      class Reference < T::Struct
-        extend T::Sig
-
-        const :host, String
-        const :repository, String
-        const :tag, String
-
-        sig { returns(String) }
-        def name = "#{host}/#{repository}"
-
-        sig { returns(String) }
-        def manifest_url = "https://#{host}/v2/#{repository}/manifests/#{tag}"
-
-        sig { params(digest: String).returns(String) }
-        def blob_url(digest) = "https://#{host}/v2/#{repository}/blobs/#{digest}"
+      # The registry's answer for a floor: the reference it was asked for,
+      # the manifest digest it serves for the tag (as the registry spells
+      # it, `sha256:<hex>`), and the platforms the floor publishes.
+      class ResolvedFloor < T::Struct
+        const :reference, FloorReference
+        const :digest, String
+        const :platforms, T::Array[String]
       end
 
       # @param auth [Dev::GhAuth] the token the challenge is answered with
@@ -104,58 +97,80 @@ module Dev
 
       # @param id [PackageId] its source is the floor reference
       # @return [Package] the tag as one version: digest, `from`, `platforms`
-      # @raise [ReferenceError, PackageNotFoundError, AccessDeniedError, RegistryError]
+      # @raise [FloorReference::ReferenceError] if the source is not a floor
+      #   reference — the declaration being wrong, never the registry's silence
+      # @raise [PackageNotFoundError, AccessDeniedError, RegistryError] the
+      #   universe could not be read
       sig { override.params(id: PackageId).returns(Package) }
       def find(id)
-        ref = parse(id.source)
-        manifest, bearer = fetch_manifest(ref)
-        digest = manifest.headers["docker-content-digest"] || "sha256:#{Digest::SHA256.hexdigest(manifest.body)}"
-
-        Package.new(
-          id: id,
-          versions: [
-            PackageVersion.new(
-              version: ref.tag,
-              digest: "SHA256=#{digest.delete_prefix("sha256:")}",
-              metadata: { "from" => ref.name, "platforms" => platforms(ref, manifest, bearer) },
-            ),
-          ],
-        )
+        floor = fetch_floor(FloorReference.parse(id.source))
+        Package.new(id: id, versions: [version_of(floor)])
       end
 
       private
 
-      # @param source [String, nil]
-      # @return [Reference]
-      # @raise [ReferenceError]
-      sig { params(source: T.nilable(String)).returns(Reference) }
-      def parse(source)
-        match = source && REFERENCE.match(source)
-        unless match
-          raise ReferenceError,
-            "#{source.inspect} is not a floor reference — declare `from: \"<registry>/<repository>:<tag>\"` " \
-              "(a registry host, a repository, a tag to resolve; dev locks the digest)"
-        end
+      # Ask the registry what the floor is: its manifest digest and the
+      # platforms it publishes.
+      #
+      # @param ref [FloorReference]
+      # @return [ResolvedFloor]
+      # @raise [PackageNotFoundError, AccessDeniedError, RegistryError]
+      sig { params(ref: FloorReference).returns(ResolvedFloor) }
+      def fetch_floor(ref)
+        manifest, bearer = fetch_manifest(ref)
+        digest = manifest.headers["docker-content-digest"] || "sha256:#{Digest::SHA256.hexdigest(manifest.body)}"
+        ResolvedFloor.new(reference: ref, digest: digest, platforms: platforms(ref, manifest, bearer))
+      end
 
-        Reference.new(host: T.must(match[:host]), repository: T.must(match[:repository]), tag: T.must(match[:tag]))
+      # The floor as the one version of its package: the tag is the version,
+      # the manifest digest its integrity hash in dev's spelling, and the
+      # reference less its tag is `from` — the metadata hash is where the
+      # reference becomes a string again, for the lock to serialize and
+      # PinCarryover to read back.
+      #
+      # @param floor [ResolvedFloor]
+      # @return [PackageVersion]
+      sig { params(floor: ResolvedFloor).returns(PackageVersion) }
+      def version_of(floor)
+        PackageVersion.new(
+          version: floor.reference.tag,
+          digest: "SHA256=#{floor.digest.delete_prefix("sha256:")}",
+          metadata: { "from" => floor.reference.name, "platforms" => floor.platforms },
+        )
       end
 
       # The manifest, answering one Bearer challenge on the way.
       #
-      # @param ref [Reference]
+      # @param ref [FloorReference]
       # @return [Array(Response, String | nil)] the manifest and the bearer token used, if any
-      sig { params(ref: Reference).returns([Response, T.nilable(String)]) }
+      sig { params(ref: FloorReference).returns([Response, T.nilable(String)]) }
       def fetch_manifest(ref)
         accept = { "Accept" => MANIFEST_MEDIA_TYPES.join(", ") }
-        response = get(ref.manifest_url, headers: accept)
+        response = get(manifest_url(ref), headers: accept)
         bearer = T.let(nil, T.nilable(String))
         if response.code == 401 && (challenge = response.headers["www-authenticate"])
           bearer = token_for(challenge)
-          response = get(ref.manifest_url, headers: accept.merge("Authorization" => "Bearer #{bearer}"))
+          response = get(manifest_url(ref), headers: accept.merge("Authorization" => "Bearer #{bearer}"))
         end
         check!(response, ref)
         [response, bearer]
       end
+
+      # Where the registry serves the floor's manifest: a registry concern,
+      # derived from the reference and kept here.
+      #
+      # @param ref [FloorReference]
+      # @return [String]
+      sig { params(ref: FloorReference).returns(String) }
+      def manifest_url(ref) = "https://#{ref.host}/v2/#{ref.repository}/manifests/#{ref.tag}"
+
+      # Where the registry serves one of the floor's blobs.
+      #
+      # @param ref [FloorReference]
+      # @param digest [String] the blob's digest, as the manifest names it
+      # @return [String]
+      sig { params(ref: FloorReference, digest: String).returns(String) }
+      def blob_url(ref, digest) = "https://#{ref.host}/v2/#{ref.repository}/blobs/#{digest}"
 
       # Trade gh's token for the registry's bearer token at the realm the
       # challenge names, for the scope it names.
@@ -180,11 +195,11 @@ module Dev
       # The platforms the floor publishes: an index lists them; a lone
       # manifest's config names its one.
       #
-      # @param ref [Reference]
+      # @param ref [FloorReference]
       # @param manifest [Response]
       # @param bearer [String, nil] the session's token, reused for the config blob
       # @return [Array<String>] docker platform strings, `os/arch[/variant]`
-      sig { params(ref: Reference, manifest: Response, bearer: T.nilable(String)).returns(T::Array[String]) }
+      sig { params(ref: FloorReference, manifest: Response, bearer: T.nilable(String)).returns(T::Array[String]) }
       def platforms(ref, manifest, bearer)
         document = JSON.parse(manifest.body)
         if INDEX_MEDIA_TYPES.include?(document["mediaType"]) || document.key?("manifests")
@@ -192,9 +207,9 @@ module Dev
             .reject { |platform| platform.start_with?(UNKNOWN_PLATFORM) }
         end
 
-        config_digest = document.dig("config", "digest") or raise RegistryError, "manifest names no config: #{ref.manifest_url}"
+        config_digest = document.dig("config", "digest") or raise RegistryError, "manifest names no config: #{manifest_url(ref)}"
         headers = bearer ? { "Authorization" => "Bearer #{bearer}" } : {}
-        config = get(ref.blob_url(config_digest), headers: headers)
+        config = get(blob_url(ref, config_digest), headers: headers)
         check!(config, ref)
         [T.must(platform_string(JSON.parse(config.body)))]
       end
@@ -209,15 +224,15 @@ module Dev
       end
 
       # @param response [Response]
-      # @param ref [Reference]
+      # @param ref [FloorReference]
       # @raise [PackageNotFoundError, AccessDeniedError, RegistryError]
-      sig { params(response: Response, ref: Reference).void }
+      sig { params(response: Response, ref: FloorReference).void }
       def check!(response, ref)
         case response.code
         when 200 then nil
-        when 404 then raise PackageNotFoundError, "#{ref.name}:#{ref.tag} — the registry has no such tag"
+        when 404 then raise PackageNotFoundError, "#{ref} — the registry has no such tag"
         when 401, 403 then raise AccessDeniedError, denied_message
-        else raise RegistryError, "#{ref.manifest_url} answered HTTP #{response.code}: #{response.body.strip}"
+        else raise RegistryError, "#{manifest_url(ref)} answered HTTP #{response.code}: #{response.body.strip}"
         end
       end
 
@@ -228,11 +243,14 @@ module Dev
       end
 
       # The HTTP boundary, one GET; redirects followed (blob reads redirect
-      # to storage).
+      # to storage). A registry that does not answer at all is a
+      # RegistryError like one that answers badly: either way the universe
+      # could not be read.
       #
       # @param url [String]
       # @param headers [Hash{String => String}]
       # @return [Response]
+      # @raise [RegistryError] if the transport fails before any answer
       sig { params(url: String, headers: T::Hash[String, String]).returns(Response) }
       def get(url, headers:)
         uri = URI(url)
@@ -248,6 +266,8 @@ module Dev
           headers: response.each_header.to_h { |key, value| [key.downcase, value] },
           body: response.body.to_s,
         )
+      rescue SocketError, SystemCallError, Timeout::Error, OpenSSL::SSL::SSLError, EOFError => e
+        raise RegistryError, "#{url} did not answer: #{e.message}"
       end
     end
   end

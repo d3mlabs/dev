@@ -21,7 +21,8 @@ module Dev
     class FicsitRepository < Repository
       extend T::Sig
 
-      class ApiError < StandardError; end
+      # ficsit.app answered with an error or a non-success status.
+      class ApiError < UnreadableUniverseError; end
       class ModNotFoundError < PackageNotFoundError; end
 
       API_HOST = "https://api.ficsit.app"

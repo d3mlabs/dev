@@ -172,6 +172,23 @@ class Dev::Deps::ImageDSLTest < Minitest::Test
     error.message.include?("runs_on")
   end
 
+  test "a from: that is not <registry>/<repository>:<tag> is a load error where it is written, never a registry failure later: #{why}" do
+    When "declaring an image on a malformed floor"
+    Dev::Deps.define { image "x", from: floor }
+
+    Then "the reference's own error, pointing at the shape to declare"
+    error = raises(Dev::Deps::FloorReference::ReferenceError)
+    error.message.include?(floor.inspect)
+    error.message.include?("<registry>/<repository>:<tag>")
+
+    Where
+    why                                       | floor
+    "a bare Hub name: no registry host"       | "ubuntu:22.04"
+    "no tag to resolve"                       | "ghcr.io/d3mlabs/unreal-engine-build-base"
+    "a digest where the tag goes"             | "ghcr.io/d3mlabs/unreal-engine-build-base@sha256:abc"
+    "a typo'd separator (dev#395)"            | "ghcr.io/d3mlabs/unreal-engine-build-base;ue5.8-3"
+  end
+
   test "image without from: is an ArgumentError: the floor is not optional" do
     When
     Dev::Deps.define { image "x" }
