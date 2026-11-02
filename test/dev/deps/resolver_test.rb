@@ -2,7 +2,9 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "json"
 require "dev/deps/brew_repository"
+require "dev/deps/floor_reference"
 require "dev/deps/oci_repository"
 require "dev/deps/resolver"
 require "dev/deps/repository"
@@ -695,7 +697,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
 
   test "an unresolved declaration is recorded once however many rows declare it, and its integration's needs still walk" do
     Given "xcode's registry down, Xcode declared in two groups, and xcode's manifest needing the xcodes formula"
-    outage = SocketError.new("getaddrinfo: nodename nor servname provided")
+    outage = Dev::Deps::Repository::UnreadableUniverseError.new("getaddrinfo: nodename nor servname provided")
     xcode_repo = StubRepository.new
     xcode_repo.define_singleton_method(:find) { |_id| raise outage }
     brew_repo = StubRepository.new(universes: { "xcodes" => [version("1.6.2")] })
@@ -737,6 +739,29 @@ class Dev::Deps::ResolverTest < Minitest::Test
     result[1].is_a?(Dev::Deps::Resolver::Unresolved)
     result[1].declaration.name == "xcodes"
     result[1].needed_by == ["xcode"]
+  end
+
+  test "a repository failure that is not its universe being unreadable propagates — the declaration is wrong, not the registry silent: #{description}" do
+    Given "dev#395: a repository that raises something other than the shared unreachable-case failure"
+    repo = StubRepository.new(universes: { "clang-format" => [version("18.1.8")] })
+    repo.define_singleton_method(:find) { |id| id.name == "floor" ? raise(failure) : super(id) }
+    declarations = [
+      declaration(name: "floor", integration: :cmake, group: :app, source: "ghcr.io/typo/base;tag"),
+      declaration(name: "clang-format", integration: :cmake, group: :app),
+    ]
+
+    When "resolving"
+    resolver_for(:cmake, repo).resolve(declarations)
+
+    Then "the repository's own error, not an Unresolved the carry-over would read as a refusal"
+    error = raises(failure.class)
+    error.equal?(failure)
+
+    Where
+    description                            | failure
+    "a source the repository cannot parse" | Dev::Deps::FloorReference::ReferenceError.new("\"ghcr.io/typo/base;tag\" is not a floor reference")
+    "a bug inside the repository"          | NoMethodError.new("undefined method `fetch' for nil")
+    "a malformed registry answer"          | JSON::ParserError.new("unexpected token")
   end
 
   test "a package the universe has no entry for is unresolved, not an error: the caller decides what a missing universe means" do

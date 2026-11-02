@@ -62,10 +62,12 @@ module Dev
       FORMAT_BOTTLE = "bottle"
       FORMAT_SOURCE = "source"
 
-      class BrewInfoError < StandardError; end
+      # A brew query (`info`, `tap-info`, `tap`) failed or found nothing:
+      # brew could not read the formula's universe.
+      class BrewInfoError < UnreadableUniverseError; end
 
       # The public formula API did not answer for a core formula.
-      class FormulaApiError < StandardError
+      class FormulaApiError < UnreadableUniverseError
         extend T::Sig
 
         # @param name [String] formula name

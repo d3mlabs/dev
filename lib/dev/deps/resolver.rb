@@ -55,9 +55,13 @@ module Dev
       # caller to decide on — the Resolver chooses among the versions that
       # exist and has no policy for a universe it cannot see. `needed_by`
       # is the provenance a pin would have carried in its metadata.
+      #
+      # The error is the repository's unreachable-case class and nothing
+      # wider: a source the repository cannot parse, or a bug inside it, is
+      # a declaration the walk can judge wrong and raises (dev#395).
       class Unresolved < T::Struct
         const :declaration, ScopedDeclaration
-        const :error, StandardError
+        const :error, Repository::UnreadableUniverseError
         const :needed_by, T::Array[String], default: []
       end
 
@@ -92,7 +96,8 @@ module Dev
       # universe answered, and an Unresolved for every one whose repository
       # could not report it. Only the universe's silence is a verdict; a
       # declaration the walk can judge wrong — unknown integration,
-      # disagreeing asks, nothing satisfying — raises as before.
+      # disagreeing asks, nothing satisfying, a source its repository cannot
+      # read as one — raises as before.
       #
       # The resolved set is keyed by PackageId, so the same name under two
       # integrations is two packages — each resolves against its own
@@ -257,11 +262,13 @@ module Dev
       # highest version that satisfies the constraint (per the integration's
       # scheme) and publishes every explicitly requested platform.
       #
-      # The repository's query is the walk's one I/O, and its failure is the
-      # one failure that is not a verdict on the declaration: the universe
-      # may well hold a satisfying version this host cannot see. So it comes
-      # back as an Unresolved for the caller, where every other failure here
-      # is the declaration being wrong and raises.
+      # The repository's query is the walk's one I/O, and its failure to
+      # read the universe is the one failure that is not a verdict on the
+      # declaration: the universe may well hold a satisfying version this
+      # host cannot see. So that failure — and only that one, the
+      # repositories' shared UnreadableUniverseError — comes back as an
+      # Unresolved for the caller; every other failure here, a repository's
+      # own included, is the declaration being wrong and raises.
       #
       # @param decl [ScopedDeclaration] the declaration to satisfy
       # @param platforms [Array<String, nil>] union of the declaring groups'
@@ -270,6 +277,8 @@ module Dev
       #   declaration with the repository's failure
       # @raise [UnknownIntegrationError] if repository or scheme is unwired
       # @raise [NoSatisfyingVersionError] if nothing in the universe qualifies
+      # @raise [StandardError] whatever the repository raises that is not its
+      #   universe being unreadable
       sig do
         params(
           decl: ScopedDeclaration,
@@ -292,7 +301,7 @@ module Dev
 
         package = begin
           repository.find(package_id(decl))
-        rescue StandardError => e
+        rescue Repository::UnreadableUniverseError => e
           return Unresolved.new(declaration: decl, error: e)
         end
         explicit = platforms.compact

@@ -6,6 +6,7 @@ require "dev/deps/brew_repository"
 require "dev/deps/brew_scheme"
 require "dev/deps/declaration"
 require "dev/deps/dependency"
+require "dev/deps/floor_reference"
 require "dev/deps/gem_scheme"
 require "dev/deps/oci_repository"
 require "dev/deps/pin_carryover"
@@ -395,11 +396,11 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
   end
 
   test "a subset re-lock does not carry an image pin onto an edited floor its registry did not answer for: #{description}" do
-    Given "a lock pin resolved from one floor, and a declaration that now names #{description}"
+    Given "a lock pin resolved from one floor, and a declaration that now names #{description}, which the registry refuses"
     floor = declared("cellbound-3d-linux", integration: :image, tap: edited)
     floor_before = Dev::Deps::Dependency.new(name: "cellbound-3d-linux", integration: :image, group: :app, version: "ue5.8-3",
       hash: "SHA256=#{"a" * 64}", metadata: { "from" => "ghcr.io/d3mlabs/unreal-engine-build-base" })
-    failure = Dev::Deps::OciRepository::ReferenceError.new("#{edited.inspect} is not a floor reference")
+    failure = Dev::Deps::OciRepository::AccessDeniedError.new("the registry refused gh's token")
     resolved = [Dev::Deps::Resolver::Unresolved.new(declaration: floor, error: failure)]
 
     When "dev deps update clang-format"
@@ -407,14 +408,25 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
       unlock: Dev::Deps::UnlockSet.new(names: ["clang-format"]))
 
     Then "the old digest is not kept behind a changed declaration: the repository's failure is the re-lock's"
-    error = raises Dev::Deps::OciRepository::ReferenceError
+    error = raises Dev::Deps::OciRepository::AccessDeniedError
     error.equal?(failure)
 
     Where
     description             | edited
     "another repository"    | "ghcr.io/typo/unreal-engine-build-base:ue5.8-3"
     "another tag"           | "ghcr.io/d3mlabs/unreal-engine-build-base:ue5.8-4"
-    "no reference at all"   | "unreal-engine-build-base"
+  end
+
+  test "an Unresolved carries only the repositories' unreadable-universe failure: a malformed floor never reaches the carry-over as one (dev#395)" do
+    Given "the error a typo'd from: raises — at dependencies.rb load, and from OciRepository#find, never as a verdict"
+    floor = declared("cellbound-3d-linux", integration: :image, tap: "unreal-engine-build-base")
+    failure = Dev::Deps::FloorReference::ReferenceError.new("\"unreal-engine-build-base\" is not a floor reference")
+
+    When "building the verdict the Resolver would never build"
+    Dev::Deps::Resolver::Unresolved.new(declaration: floor, error: failure)
+
+    Then "the type refuses it"
+    raises TypeError
   end
 
   test "an unresolved need of a named integration propagates: the author asked for what it pulls in to float" do

@@ -5,6 +5,7 @@ require "sorbet-runtime"
 require_relative "../data_root"
 require_relative "../environment_image"
 require_relative "declaration"
+require_relative "floor_reference"
 require_relative "scope"
 require_relative "scoped_declaration"
 
@@ -198,11 +199,18 @@ module Dev
       # declare for its consumer. Several blocks declare several images
       # (dev#307 links commands to them by name).
       #
+      # The floor is parsed here, at the declaration boundary: a malformed
+      # `from:` is a `dependencies.rb` error where it is written, never a
+      # registry failure at re-lock time (dev#395). The declaration's source
+      # stays the reference's string form — the atom is shared across
+      # integrations and the lock serializes it.
+      #
       # @param name [String, Symbol] the image's name in the registry
       # @param from [String] the floor, `<registry>/<repository>:<tag>`
       # @param registry [String, nil] where the image publishes; defaults to
       #   the floor's registry prefix — beside what it derives from
       # @return [void]
+      # @raise [FloorReference::ReferenceError] if `from:` is not a floor reference
       sig do
         params(
           name: T.any(String, Symbol),
@@ -220,15 +228,16 @@ module Dev
               "the command placement that is no image"
         end
 
+        floor = FloorReference.parse(from)
         image_dsl = ImageDSL.new
         image_dsl.instance_eval(&block) if block
         @declarations << ScopedDeclaration.new(
-          declaration: Declaration.new(name: name_str, integration: :image, source: from),
+          declaration: Declaration.new(name: name_str, integration: :image, source: floor.to_s),
           scope: Scope.new(group: DEFAULT_GROUP),
           materialization: {
             "platform" => image_dsl.platform_value,
             "apt" => image_dsl.packages,
-            "registry" => registry || ImageDSL.registry_of(from),
+            "registry" => registry || floor.registry,
           }.merge(image_dsl.container_shape),
         )
       end
@@ -401,22 +410,6 @@ module Dev
             "`#{verb}` inside an image block declares store content baked into the image — " \
               "that is the fat image, d3mlabs/dev#309, not yet built. Declare it outside the block; " \
               "the container's own `dev up` installs it."
-        end
-      end
-
-      class << self
-        extend T::Sig
-
-        # The registry prefix of a floor reference: everything before the
-        # last path segment. `ghcr.io/d3mlabs/unreal-engine-build-base:ue5.8-3`
-        # → `ghcr.io/d3mlabs`.
-        #
-        # @param from [String]
-        # @return [String]
-        sig { params(from: String).returns(String) }
-        def registry_of(from)
-          segments = from.split("/")
-          segments.take(segments.size - 1).join("/")
         end
       end
     end

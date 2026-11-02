@@ -125,14 +125,18 @@ ecosystem's canonical form and validated at the DSL boundary (a cmake
    - otherwise builds the `PackageId` (the declaration's `source` rides
      the id) and calls `find(id)` — identity in, universe out; nothing
      version-shaped crosses this seam. This is the walk's one I/O, and
-     its failure is the one failure that is not a verdict on the
-     declaration: the repository's error (a registry refusing the host's
-     token, a network down, no such package) comes back as an
-     `Unresolved` — the declaration, the error, and the `needed_by` a pin
-     would have carried — in the pin's place in the result, and the walk
-     goes on (the declaration's needs still queue; it has no version
-     whose edges could). What a missing universe means is the caller's
-     policy (`PinCarryover`, below);
+     its failure to read the universe is the one failure that is not a
+     verdict on the declaration: the repository's
+     `Repository::UnreadableUniverseError` (a registry refusing the
+     host's token, a network down, no such package — every repository's
+     unreachable-case errors subclass it) comes back as an `Unresolved`
+     — the declaration, the error, and the `needed_by` a pin would have
+     carried — in the pin's place in the result, and the walk goes on
+     (the declaration's needs still queue; it has no version whose edges
+     could). Anything else a repository raises — a source it cannot read
+     as one (`FloorReference::ReferenceError`), a bug — is the
+     declaration being wrong and propagates (dev#395). What a missing
+     universe means is the caller's policy (`PinCarryover`, below);
    - filters the reported versions through the integration's scheme
      (`satisfies?`, fact-aware: schemes may match universe facts like a
      steam branch or a git ref), treating scheme-unparseable universe
@@ -512,7 +516,15 @@ resolution.
    variant your ecosystem warrants, normalizing upstream constraint
    syntax into dev's shape as you do (no upstream scheme means SemVer).
    Raise a subclass of `Repository::PackageNotFoundError` when the
-   identity doesn't exist. Never pick a version.
+   identity doesn't exist, and a subclass of
+   `Repository::UnreadableUniverseError` for every other way the
+   universe could not be read from this host (service down, token
+   refused, tool missing) — those are the failures the Resolver records
+   as `Unresolved`; a source that does not parse, or anything else, is
+   the declaration being wrong and must stay outside that class. Parse
+   a structured source into its own value object (`FloorReference` for
+   the `image` floor), shared with the DSL verb so the grammar lives
+   once. Never pick a version.
 2. **Scheme** — subclass `VersionScheme` with your ecosystem's
    `satisfies?`/`sort`, nesting
    `InvalidConstraintError`/`InvalidVersionError` under the shared bases.

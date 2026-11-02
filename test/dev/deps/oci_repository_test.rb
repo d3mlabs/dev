@@ -155,15 +155,38 @@ class Dev::Deps::OciRepositoryTest < Minitest::Test
     error.message.include?("read:packages")
   end
 
-  test "a source that is not <registry>/<repository>:<tag> is a ReferenceError: #{source.inspect}" do
-    Given
+  test "find raises RegistryError when the registry does not answer at all: #{failure.class}" do
+    Given "a registry that is down"
     repo = Dev::Deps::OciRepository.new(auth: gh_auth)
+    Net::HTTP.expects(:start).with("ghcr.io", 443, use_ssl: true).raises(failure)
+
+    When
+    repo.find(Dev::Deps::PackageId.new(integration: :image, name: "x", source: FLOOR))
+
+    Then "no answer reads as the universe being unreadable, like a bad answer does"
+    error = raises(Dev::Deps::OciRepository::RegistryError)
+    error.message.include?(MANIFEST_URL)
+    error.message.include?(failure.message)
+
+    Where
+    failure                                                            | _
+    SocketError.new("getaddrinfo: nodename nor servname provided")     | "dns"
+    Errno::ECONNREFUSED.new                                            | "nothing listening"
+    Net::OpenTimeout.new("execution expired")                          | "connect timeout"
+    OpenSSL::SSL::SSLError.new("certificate verify failed")            | "tls"
+  end
+
+  test "a source that is not <registry>/<repository>:<tag> is the reference's error, before any registry call: #{source.inspect}" do
+    Given "a repository that must never reach the registry"
+    repo = Dev::Deps::OciRepository.new(auth: gh_auth)
+    repo.expects(:get).never
 
     When
     repo.find(Dev::Deps::PackageId.new(integration: :image, name: "x", source: source))
 
-    Then
-    raises Dev::Deps::OciRepository::ReferenceError
+    Then "the declaration is wrong, not the universe unreadable"
+    error = raises Dev::Deps::FloorReference::ReferenceError
+    !error.is_a?(Dev::Deps::Repository::UnreadableUniverseError)
 
     Where
     why | source
@@ -171,6 +194,17 @@ class Dev::Deps::OciRepositoryTest < Minitest::Test
     "no tag: nothing to resolve"                             | "ghcr.io/d3mlabs/unreal-engine-build-base"
     "a digest is already resolved; declare the tag"          | "ghcr.io/d3mlabs/unreal-engine-build-base@sha256:abc"
     "no source at all"                                       | nil
+  end
+
+  test "the registry's refusals are the shared unreadable-universe failure the Resolver records: #{error_class}" do
+    Expect
+    error_class < Dev::Deps::Repository::UnreadableUniverseError
+
+    Where
+    error_class                                      | _
+    Dev::Deps::OciRepository::AccessDeniedError      | "token refused"
+    Dev::Deps::OciRepository::RegistryError          | "registry down or answering badly"
+    Dev::Deps::Repository::PackageNotFoundError      | "no such tag"
   end
 
   private

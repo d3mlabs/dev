@@ -15,7 +15,8 @@ module Dev
     class LuaRocksRepository < Repository
       extend T::Sig
 
-      class SearchError < StandardError; end
+      # `luarocks search` failed: the manifest could not be read.
+      class SearchError < UnreadableUniverseError; end
       class RockNotFoundError < PackageNotFoundError; end
 
       # Report a rock's available versions from `luarocks search`.

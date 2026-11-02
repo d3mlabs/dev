@@ -27,7 +27,8 @@ module Dev
     class UrlRepository < Repository
       extend T::Sig
 
-      class DownloadError < StandardError; end
+      # The download that is this universe's observation failed.
+      class DownloadError < UnreadableUniverseError; end
 
       # Report a URL dependency's universe: the one artifact behind the URL.
       #
