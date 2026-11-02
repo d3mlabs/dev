@@ -3,11 +3,12 @@
 
 require "fileutils"
 require "pathname"
+require "dev/container_context"
 require "dev/shadowenv_file"
 
 module Dev
   # The language-specific half of a locked Python's activation in the
-  # project shadowenv: the project-local .venv built on the installed keg,
+  # project shadowenv: the project-local venv built on the installed keg,
   # and .shadowenv.d/540_python.lisp so the venv's bin is first on PATH and
   # VIRTUAL_ENV points at it for every dev command.
   #
@@ -17,6 +18,15 @@ module Dev
   # once the keg is installed and its bin is on the project PATH. This
   # module owns the (empty) venv; the package set is installed into it by
   # Dev::Deps::PipIntegration, exactly as LuaRocks fills lua_modules/.
+  #
+  # The venv is per side of the build container. A venv is built for one
+  # interpreter on one OS/arch (its `bin/python` is that interpreter, its
+  # wheels compiled for that platform), and the project is bind-mounted into
+  # the container, so one `.venv` would be a macOS venv to the host and a
+  # Linux venv to the container in turn — each side's `dev up` rebuilding
+  # what the other just built. Each side owns a venv at its own path, as
+  # each owns its activation lisp (ShadowenvFile), and `venv_path` is the
+  # one place that path is decided.
   module ShadowenvPython
     extend T::Sig
     include Kernel
@@ -25,15 +35,30 @@ module Dev
     class VenvError < StandardError; end
 
     LISP_FILENAME = "540_python.lisp"
-    VENV_DIR = ".venv"
+    # The host's venv: the conventional name, so editors and tools that look
+    # for a project venv find the one the developer's machine runs.
+    HOST_VENV_DIR = ".venv"
+    # The build container's venv, beside the host's in the bind-mounted
+    # project: suffixed as the container-side lisps are.
+    CONTAINER_VENV_DIR = ".venv-container"
 
     module_function
 
-    # Activate one installed Python in the project shadowenv: the project
-    # `.venv` is built on the keg's interpreter — rebuilt when an existing
-    # venv was built on another one, so the venv always runs the locked
-    # Python — pip is made importable, and the lisp (placed for this side of
-    # the build container by ShadowenvFile) puts the venv first on PATH.
+    # The project venv for one side of the build container.
+    #
+    # @param project_root [Pathname]
+    # @param inside [Boolean] whether this dev runs inside the build container
+    # @return [Pathname] `<project>/.venv` on the host, `<project>/.venv-container` inside
+    sig { params(project_root: Pathname, inside: T::Boolean).returns(Pathname) }
+    def venv_path(project_root, inside: ContainerContext.inside?)
+      project_root / (inside ? CONTAINER_VENV_DIR : HOST_VENV_DIR)
+    end
+
+    # Activate one installed Python in the project shadowenv: this side's
+    # venv is built on the keg's interpreter — rebuilt when an existing venv
+    # was built on another one, so the venv always runs the locked Python —
+    # pip is made importable, and the lisp (placed for this side of the
+    # build container by ShadowenvFile) puts the venv first on PATH.
     #
     # @param keg [Pathname] the installed Python's prefix (brew's keg)
     # @param version [String] the version the lock pins
@@ -42,7 +67,7 @@ module Dev
     # @raise [VenvError] if the venv cannot be created or pip bootstrapped
     sig { params(keg: Pathname, version: String, project_root: Pathname).void }
     def activate!(keg:, version:, project_root:)
-      venv = project_root / VENV_DIR
+      venv = venv_path(project_root)
       FileUtils.rm_rf(venv) if venv.exist? && !venv_built_on?(venv, keg, version)
       venv_python = venv / "bin" / "python"
       unless venv_python.executable?
@@ -73,9 +98,8 @@ module Dev
     # it reads `<prefix>/opt/<formula>/bin` (brew's link to whichever keg
     # is current, never the keg's own bin; `executable` and `command` go
     # through the same link). The version is the keg's identity then, and
-    # the home tells this prefix's venv from another's — the build
-    # container's Linuxbrew builds the same version on the same mounted
-    # project.
+    # the home tells this prefix's venv from another's — a checkout copied
+    # from a machine whose brew lives elsewhere, or a prefix that moved.
     #
     # @param venv [Pathname]
     # @param keg [Pathname] `<prefix>/Cellar/<formula>/<version>`

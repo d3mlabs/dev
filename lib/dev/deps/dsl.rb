@@ -117,8 +117,9 @@ module Dev
       # Declare the project's Python: a :python declaration selecting
       # homebrew/core's `python@<minor>` (the minor is the formula suffix, as
       # `brew "llvm", version: "18"` selects llvm@18), locked and installed
-      # through brew like any formula; dev builds the project `.venv` on the
-      # locked keg, and pip deps (declared with `pip` inside a group) install
+      # through brew like any formula; dev builds the project venv on the
+      # locked keg (`.venv` on the host, `.venv-container` inside the build
+      # container), and pip deps (declared with `pip` inside a group) install
       # into that venv.
       #
       # @param version [String, Symbol] Python minor version (e.g. "3.12")

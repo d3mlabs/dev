@@ -27,6 +27,59 @@ class ShadowenvPythonTest < Minitest::Test
   end
 
 
+  test "venv_path is #{expected} on the #{side} side of the build container" do
+    Expect
+    Dev::ShadowenvPython.venv_path(Pathname("/tmp/proj"), inside: inside) == Pathname("/tmp/proj") / expected
+
+    Where
+    side        | inside | expected
+    "host"      | false  | ".venv"
+    "container" | true   | ".venv-container"
+  end
+
+  test "venv_path reads the side from the inside marker when none is given" do
+    Given "a process carrying the inside marker"
+    original = ENV[Dev::ContainerContext::MARKER]
+    ENV[Dev::ContainerContext::MARKER] = "1"
+
+    When "resolving the venv path without naming a side"
+    path = Dev::ShadowenvPython.venv_path(Pathname("/tmp/proj"))
+
+    Then "it is the container's"
+    path == Pathname("/tmp/proj") / Dev::ShadowenvPython::CONTAINER_VENV_DIR
+
+    Cleanup
+    original ? ENV[Dev::ContainerContext::MARKER] = original : ENV.delete(Dev::ContainerContext::MARKER)
+  end
+
+  test "activate! inside the build container builds its own venv and leaves the host's alone" do
+    Given "a project whose host side already has its venv, and a dev running inside the container"
+    tmpdir = Dir.mktmpdir("shadowenv-python-test-")
+    keg = Pathname(tmpdir) / "Cellar" / "python@3.12" / "3.12.8"
+    log = write_keg_python(keg)
+    host_venv = File.join(tmpdir, ".venv")
+    FileUtils.mkdir_p(File.join(host_venv, "bin"))
+    File.write(File.join(host_venv, "pyvenv.cfg"), "home = /opt/homebrew/opt/python@3.12/bin\nversion = 3.12.8\n")
+    original = ENV[Dev::ContainerContext::MARKER]
+    ENV[Dev::ContainerContext::MARKER] = "1"
+
+    When "activating twice inside"
+    Dev::ShadowenvPython.activate!(keg: keg, version: "3.12.8", project_root: Pathname(tmpdir))
+    Dev::ShadowenvPython.activate!(keg: keg, version: "3.12.8", project_root: Pathname(tmpdir))
+
+    Then "one venv was built, at the container's path; the host's cfg is untouched; the container lisp activates the container's venv"
+    File.read(log).lines.select { |line| line.start_with?("-m venv") } == ["-m venv #{File.join(tmpdir, ".venv-container")}\n"]
+    File.executable?(File.join(tmpdir, ".venv-container", "bin", "python")) == true
+    File.read(File.join(host_venv, "pyvenv.cfg")) == "home = /opt/homebrew/opt/python@3.12/bin\nversion = 3.12.8\n"
+    lisp = File.read(File.join(tmpdir, ".shadowenv.d", "540_python_container.lisp"))
+    lisp.include?(%((env/set "VIRTUAL_ENV" "#{File.join(tmpdir, ".venv-container")}")))
+    !File.exist?(File.join(tmpdir, ".shadowenv.d", "540_python.lisp"))
+
+    Cleanup
+    original ? ENV[Dev::ContainerContext::MARKER] = original : ENV.delete(Dev::ContainerContext::MARKER)
+    FileUtils.rm_rf(tmpdir)
+  end
+
   test "activate! builds the project venv on the keg's pythonX.Y and writes the lisp" do
     Given "a project root and the locked Python's keg"
     tmpdir = Dir.mktmpdir("shadowenv-python-test-")
@@ -135,8 +188,8 @@ class ShadowenvPythonTest < Minitest::Test
     FileUtils.rm_rf(tmpdir)
   end
 
-  test "activate! rebuilds a venv of the locked version built under another brew prefix (the build container's)" do
-    Given "a venv built by 3.12.8 from a Linuxbrew prefix, the project now activating on this prefix's keg"
+  test "activate! rebuilds a venv of the locked version built under another brew prefix" do
+    Given "a venv built by 3.12.8 from a Linuxbrew prefix (a checkout copied from another machine), the project now activating on this prefix's keg"
     tmpdir = Dir.mktmpdir("shadowenv-python-test-")
     keg = Pathname(tmpdir) / "Cellar" / "python@3.12" / "3.12.8_1"
     log = write_keg_python(keg)

@@ -3,6 +3,7 @@
 
 require "open3"
 require "pathname"
+require "dev/container_context"
 require "dev/shadowenv_python"
 require_relative "integration"
 require_relative "dependency"
@@ -11,14 +12,15 @@ module Dev
   module Deps
     # Lifecycle handler for pip dependencies.
     #
-    # Installs each locked package into the project-local venv (.venv) —
-    # the Python analogue of LuaRocks installing into lua_modules/. The venv
-    # is the locked Python's: the :python pin's activation builds it on the
-    # installed keg (ShadowenvPython.activate!), in brew's batch ahead of
-    # this one, so by the time pip deps install the venv is there and runs
-    # the pinned interpreter. pip resolves the transitive tree at install,
-    # and downloads into the store's pip tool cache (PIP_CACHE_DIR) — pip
-    # owns the fetch and the install; dev names where the cache lives.
+    # Installs each locked package into the project-local venv — the Python
+    # analogue of LuaRocks installing into lua_modules/. The venv is the
+    # locked Python's, for this side of the build container: the :python
+    # pin's activation builds it on the installed keg
+    # (ShadowenvPython.activate!), in brew's batch ahead of this one, so by
+    # the time pip deps install the venv is there and runs the pinned
+    # interpreter. pip resolves the transitive tree at install, and
+    # downloads into the store's pip tool cache (PIP_CACHE_DIR) — pip owns
+    # the fetch and the install; dev names where the cache lives.
     class PipIntegration < Integration
       extend T::Sig
 
@@ -32,17 +34,20 @@ module Dev
 
       # @param repository    [Repository, nil]  source adapter for pip deps
       # @param store         [ArtifactStore, nil] the store whose pip tool cache pip downloads into
-      # @param project_root  [String, Pathname] project root (holds the .venv)
+      # @param project_root  [String, Pathname] project root (holds the venv)
+      # @param inside_container [Boolean] whether this dev runs inside the
+      #   build container — which side's venv pip installs into
       sig do
         params(
           repository: T.nilable(Repository),
           store: T.nilable(ArtifactStore),
           project_root: T.any(String, Pathname),
+          inside_container: T::Boolean,
         ).void
       end
-      def initialize(repository:, store:, project_root:)
+      def initialize(repository:, store:, project_root:, inside_container: ContainerContext.inside?)
         super(repository:, store:)
-        @project_root = T.let(Pathname(project_root), Pathname)
+        @venv = T.let(ShadowenvPython.venv_path(Pathname(project_root), inside: inside_container), Pathname)
       end
 
       # Install all pip deps into the project venv.
@@ -57,10 +62,10 @@ module Dev
         # Invoke `python -m pip` (not the `pip` console script): ensurepip always
         # provides the module, but the bin/pip wrapper can be absent on a venv
         # built by a Homebrew interpreter, which would fail with ENOENT.
-        python = @project_root / ShadowenvPython::VENV_DIR / "bin" / "python"
+        python = @venv / "bin" / "python"
         unless python.executable?
           raise MissingVenvError,
-            "pip dependencies are locked but #{@project_root / ShadowenvPython::VENV_DIR} has no interpreter: " \
+            "pip dependencies are locked but #{@venv} has no interpreter: " \
               "declare `python \"<minor>\"` in dependencies.rb and run dev deps update, then dev up"
         end
 
