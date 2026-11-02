@@ -258,6 +258,7 @@ module Dev
       command_runner = CommandRunner.new(
         ui: context.ui,
         images: project.project_images,
+        engine_hint: project.engine,
         project_root: project.root,
         host_rule: @host_rule,
         github_token: @github_token,

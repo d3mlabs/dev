@@ -3,7 +3,6 @@
 
 require "test_helper"
 require "dev/build_container"
-require "dev/engine_resources_check"
 require "dev/environment_image"
 require "support/fake_container_engine"
 require "support/fake_registry_login"
@@ -121,21 +120,20 @@ class Dev::BuildContainerEnvironmentTest < Minitest::Test
     error.message.include?(image.ref)
   end
 
-  test "the engine's resources are checked against the hint before any image work" do
+  # The engine-floor gate has one owner per path (the provisioner on `dev
+  # up`, the command runner otherwise — dev#400); the image step measures
+  # nothing itself, so a path never reads `docker info` twice.
+  test "image resolution never reads docker info: the engine-floor gate is its caller's, not the image step's" do
     Given
     engine = engine_where(local: true)
-    resources = Dev::EngineResources::Hint.new(cpus: 12, memory_gib: 24)
-    check = typed_mock(Dev::EngineResourcesCheck)
-    check.expects(:check!).once.with(engine: engine, hint: resources)
-      .raises(Dev::EngineResourcesCheck::UndersizedEngineError, "4 cpus")
-    bc = Dev::BuildContainer.new(engine: engine, resources_check: check, registry_login: FakeRegistryLogin.new)
+    bc = build_container(engine:, login: FakeRegistryLogin.new)
 
     When
-    bc.ensure_environment_image!(image, resources: resources)
+    bc.ensure_environment_image!(image)
 
-    Then
-    raises Dev::EngineResourcesCheck::UndersizedEngineError
-    engine.runs.empty?
+    Then "the inspect is the only docker spawn; nothing was captured"
+    engine.runs == [["image", "inspect", image.ref]]
+    engine.captures.empty?
   end
 
   private

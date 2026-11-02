@@ -3,7 +3,6 @@
 
 require "test_helper"
 require "dev/build_container"
-require "dev/engine_resources_check"
 require "support/fake_container_engine"
 require "support/fake_registry_login"
 require "tmpdir"

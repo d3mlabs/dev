@@ -9,7 +9,9 @@ require "dev/docker_cli_plugins"
 require "dev/engine_provisioner"
 require "dev/engine_resources_check"
 require "dev/settings"
+require "support/fake_container_engine"
 require "fileutils"
+require "stringio"
 require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
@@ -129,6 +131,41 @@ class Dev::EngineProvisionerTest < Minitest::Test
 
     Cleanup
     FileUtils.rm_rf(dir)
+  end
+
+  # The `dev up` path's one owner of the engine-floor gate is this
+  # provisioner (dev#400): one `docker info`, read live after sizing. The
+  # spawn shape is pinned against a real check so a second read — a memo
+  # miss, a gate in the image step — cannot return unnoticed.
+  test "on #{host_os}, provision! reads docker info exactly once, after sizing, against a real check" do
+    Given "a #{host_os} host, a 12/24 engine, and a hint it meets"
+    dir = Dir.mktmpdir("dev-engine-provisioner-")
+    cli_plugins = typed_mock(Dev::DockerCliPlugins)
+    cli_plugins.stubs(:ensure!).returns(:already_present)
+    colima = typed_mock(Dev::ColimaProvisioner)
+    colima.stubs(:provision!)
+    engine = FakeContainerEngine.new(kind: kind, capture_result: "12 #{24 * 1024**3}")
+    check = Dev::EngineResourcesCheck.new(settings: build_settings(dir), out: StringIO.new)
+    provisioner = Dev::EngineProvisioner.new(
+      settings: build_settings(dir), colima: colima, cli_plugins: cli_plugins, resources_check: check,
+      linux_engine: quiet_linux_engine, wsl: quiet_wsl, wsl_host: wsl_host(false), host_os: host_os, env: {},
+      engine: engine,
+    )
+
+    When "provisioning"
+    provisioner.provision!(resources: Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 16))
+
+    Then "one docker info and nothing else spawned on the engine"
+    engine.captures == [["info", "--format", "{{.NCPU}} {{.MemTotal}}"]]
+    engine.runs.empty?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+
+    Where
+    host_os  | kind
+    "darwin" | :colima
+    "linux"  | :docker
   end
 
   test "no resources hint hands nil sizing to colima (its defaults apply)" do

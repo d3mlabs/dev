@@ -10,6 +10,8 @@ require "dev/build_container"
 require "dev/container_context"
 require "dev/container_engine"
 require "dev/container_github_token"
+require "dev/engine_resources"
+require "dev/engine_resources_check"
 require "dev/environment_image"
 require "dev/host_rule"
 require "dev/project_images"
@@ -48,6 +50,12 @@ module Dev
   # as GH_TOKEN (ContainerGithubToken) — the same `-e` the container's own
   # deps install gets, so a command that calls `gh` inside (a publisher's
   # `gh release create`) has the auth the host holds.
+  #
+  # No engine provisioner runs on this path, so the runner is the one owner
+  # of the engine-floor gate here (EngineResourcesCheck, dev#400): the
+  # project's `engine:` hint is measured against the engine once, before
+  # the image is reached for. `dev up` has its own owner (EngineProvisioner)
+  # and measures after sizing; neither path reads `docker info` twice.
   #
   # Inside a dev-managed container (ContainerContext.inside?) there is no
   # further container to reach for: every command runs directly at the
@@ -118,23 +126,31 @@ module Dev
 
     # @param images [Dev::ProjectImages] the project's images and where each
     #   command runs; a project with none places everything on the host
+    # @param engine_hint [Dev::EngineResources::Hint, nil] the project's
+    #   engine floor, measured before a container is reached for
+    # @param resources_check [Dev::EngineResourcesCheck] the engine-vs-hint gate
     # @param host_rule [Dev::HostRule] whether an image's work runs here
     sig do
       params(
         ui: Dev::Cli::Ui,
         project_root: Pathname,
         images: Dev::ProjectImages,
+        engine_hint: T.nilable(Dev::EngineResources::Hint),
+        resources_check: Dev::EngineResourcesCheck,
         container_client: T.nilable(Dev::BuildContainer),
         inside_container: T::Boolean,
         host_rule: Dev::HostRule,
         github_token: Dev::ContainerGithubToken,
       ).void
     end
-    def initialize(ui:, project_root:, images: Dev::ProjectImages.new(root: project_root), container_client: nil,
+    def initialize(ui:, project_root:, images: Dev::ProjectImages.new(root: project_root), engine_hint: nil,
+                   resources_check: Dev::EngineResourcesCheck.new, container_client: nil,
                    inside_container: ContainerContext.inside?, host_rule: Dev::HostRule.new,
                    github_token: Dev::ContainerGithubToken.new)
       @ui = ui
       @images = images
+      @engine_hint = engine_hint
+      @resources_check = resources_check
       @project_root = project_root
       @container_client = container_client
       @inside_container = inside_container
@@ -233,10 +249,12 @@ module Dev
     # @param shell_command [String]
     # @param wait [Boolean]
     # @return [void]
+    # @raise [EngineResourcesCheck::UndersizedEngineError] when the engine falls short of the project's floor
     sig { params(image: EnvironmentImage, shell_command: String, wait: T::Boolean).void }
     def run_in_container(image, shell_command, wait:)
       client = container_client
-      image_tag = @images.ensure!(image, client:, publish: publish_image?)
+      @resources_check.check!(engine: client.engine, hint: @engine_hint)
+      image_tag = client.ensure_environment_image!(image, publish: publish_image?)
       invocation = container_command(image, image_tag, shell_command)
 
       Dir.chdir(@project_root)

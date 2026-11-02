@@ -13,7 +13,6 @@ require "dev/container_context"
 require "dev/container_engine"
 require "dev/data_root"
 require "dev/platform"
-require "dev/engine_resources_check"
 require "dev/environment_image"
 require "dev/gh_auth"
 require "dev/registry_login"
@@ -32,6 +31,11 @@ module Dev
   # per-user container substrate — see that class), so which daemon serves a
   # build is a provisioning decision, never an assumption here. Pure tag and
   # name computation stays on the class (no engine, no side effects).
+  #
+  # Whether the engine is big enough for the project is not asked here
+  # either: that gate (EngineResourcesCheck) has one owner per path — the
+  # engine provisioner when the path provisions, the command runner when it
+  # does not — so each path reads `docker info` once, live (dev#400).
   #
   # Usage:
   #   BuildContainer.new(engine:).ensure_environment_image!(image)
@@ -138,8 +142,6 @@ module Dev
     attr_reader :engine
 
     # @param engine [Dev::ContainerEngine] resolved for the invoking user
-    # @param resources_check [Dev::EngineResourcesCheck] the engine-vs-hint
-    #   gate every image resolution passes through first
     # @param registry_login [Dev::RegistryLogin, nil] the registry session
     #   around pulls and pushes; defaults to one over this engine and the registry credential (gh's token, or DEV_REGISTRY_TOKEN)
     # @param host_os [String] "darwin" / "linux" / "windows" — the shape of
@@ -150,16 +152,13 @@ module Dev
     sig do
       params(
         engine: Dev::ContainerEngine,
-        resources_check: Dev::EngineResourcesCheck,
         registry_login: T.nilable(Dev::RegistryLogin),
         host_os: String,
         host_user: String,
       ).void
     end
-    def initialize(engine:, resources_check: Dev::EngineResourcesCheck.new, registry_login: nil, host_os: Dev::Platform.os,
-                   host_user: BuildContainer.host_user)
+    def initialize(engine:, registry_login: nil, host_os: Dev::Platform.os, host_user: BuildContainer.host_user)
       @engine = engine
-      @resources_check = resources_check
       @registry_login = T.let(registry_login || Dev::RegistryLogin.new(engine:), Dev::RegistryLogin)
       @host_os = host_os
       @host_user = host_user
@@ -308,20 +307,10 @@ module Dev
     #
     # @param image     [Dev::EnvironmentImage] the lock's image pin, materialised
     # @param publish   [Boolean] whether to make the registry hold the image
-    # @param resources [Dev::EngineResources::Hint, nil] the project's
-    #   engine-size hint, measured first (EngineResourcesCheck)
     # @return [String] image.ref
-    # @raise [EngineResourcesCheck::UndersizedEngineError, RegistryLogin::LoginFailedError,
-    #   GhAuth::MissingScopeError, BuildFailedError]
-    sig do
-      params(
-        image: Dev::EnvironmentImage,
-        publish: T::Boolean,
-        resources: T.nilable(Dev::EngineResources::Hint),
-      ).returns(String)
-    end
-    def ensure_environment_image!(image, publish: false, resources: nil)
-      @resources_check.check!(engine: @engine, hint: resources)
+    # @raise [RegistryLogin::LoginFailedError, GhAuth::MissingScopeError, BuildFailedError]
+    sig { params(image: Dev::EnvironmentImage, publish: T::Boolean).returns(String) }
+    def ensure_environment_image!(image, publish: false)
       ref = image.ref
 
       if local_image?(ref)

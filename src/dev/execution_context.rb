@@ -28,10 +28,7 @@ module Dev
     # @return [Dev::ProjectImages]
     sig { returns(Dev::ProjectImages) }
     def project_images
-      @project_images ||= T.let(
-        Dev::ProjectImages.new(root: root, engine: engine),
-        T.nilable(Dev::ProjectImages),
-      )
+      @project_images ||= T.let(Dev::ProjectImages.new(root: root), T.nilable(Dev::ProjectImages))
     end
   end
 

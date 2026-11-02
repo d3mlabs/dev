@@ -15,6 +15,7 @@ require "dev/host_rule"
 require "dev/container_user_aligner"
 require "dev/engine_provisioner"
 require "support/fake_container_engine"
+require "support/fake_registry_login"
 require "fileutils"
 require "pathname"
 require "stringio"
@@ -87,7 +88,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     provisioner.expects(:provision!).with(resources: engine).once.in_sequence(order)
     client = client()
     client.expects(:ensure_environment_image!)
-      .with { |image, publish:, resources:| image.name == "myapp-linux" && !publish && resources == engine }
+      .with { |image, publish:| image.name == "myapp-linux" && !publish }
       .once.in_sequence(order).returns(TAG)
     client.expects(:ensure_service!).with(TAG, project_root: root, volumes: ["~/.dev/engines/ue:/ue"])
       .once.in_sequence(order).returns(CURRENT)
@@ -113,7 +114,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
       "dev: container deps installed\n"
   end
 
-  test "container up resolves the pin through ensure_environment_image!, the engine hint along" do
+  test "container up sizes the engine from the hint, then resolves the pin through ensure_environment_image!" do
     Given "a checkout whose lock pins its image"
     root = project_root_pinning("linux/amd64")
     engine = Dev::EngineResources::Hint.new(cpus: 8)
@@ -121,7 +122,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     provisioner.expects(:provision!).with(resources: engine).once
     client = client()
     client.expects(:ensure_environment_image!).once
-      .with { |image, publish:, resources:| image.name == "myapp-linux" && !publish && resources.cpus == 8 }
+      .with { |image, publish:| image.name == "myapp-linux" && !publish }
       .returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
     out = StringIO.new
 
@@ -132,6 +133,31 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
     Then
     out.string == "dev: image ready: ghcr.io/d3mlabs/myapp-linux:deadbeef\n"
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  # The engine-floor gate is the provisioner's on this path (dev#400): the
+  # image step over the client's engine reads nothing, so `dev up` reads
+  # `docker info` once — inside `provision!`, after sizing.
+  test "container up measures the engine in the provisioner alone: the image step never reads docker info" do
+    Given "a checkout whose lock pins its image, a floor, and a client whose engine would answer docker info"
+    root = project_root_pinning("linux/amd64")
+    engine = Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 16)
+    provisioner = typed_mock(Dev::EngineProvisioner)
+    provisioner.expects(:provision!).with(resources: engine).once
+    client_engine = FakeContainerEngine.new(kind: :docker, capture_result: "12 #{24 * 1_073_741_824}")
+    client = Dev::BuildContainer.new(engine: client_engine, registry_login: FakeRegistryLogin.new)
+
+    When "bringing the container up on a host that is not the environment"
+    Dev::Builtins::ContainerUpCommand.new(
+      container_client: client, engine_provisioner: provisioner, out: StringIO.new, host_rule: rule,
+    ).call(args: no_args, context: project(root: root, engine: engine))
+
+    Then "the image was inspected (and found), and the client's engine was never asked its size"
+    client_engine.runs.map(&:first) == ["image"]
+    client_engine.captures.empty?
 
     Cleanup
     FileUtils.rm_rf(root)

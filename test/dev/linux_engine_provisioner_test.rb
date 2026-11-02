@@ -8,16 +8,15 @@ require "tmpdir"
 require "fileutils"
 
 # Records every invocation; systemctl, docker, id, dpkg, and sudo are true
-# boundaries. The machine it describes: whether dockerd is active, whether
-# buildx answers, which groups the user has, which containers run, and which
-# streamed command (if any) fails.
+# boundaries. The machine it describes: whether dockerd is active, which
+# groups the user has, which containers run, and which streamed command (if
+# any) fails. Whether docker and its buildx plugin are installed is the
+# filesystem's to say (see `install`), never a docker spawn's.
 class RecordedLinuxExecutor
   attr_reader :runs
 
-  def initialize(dockerd_active: true, buildx: true, groups: %w[jpduchesne docker], containers: [], arch: "amd64",
-    failing: nil)
+  def initialize(dockerd_active: true, groups: %w[jpduchesne docker], containers: [], arch: "amd64", failing: nil)
     @dockerd_active = dockerd_active
-    @buildx = buildx
     @groups = groups
     @containers = containers
     @arch = arch
@@ -34,7 +33,6 @@ class RecordedLinuxExecutor
     @runs << cmd
     case cmd
     when ["systemctl", "is-active", "--quiet", "docker"] then @dockerd_active
-    when ["docker", "buildx", "version"] then @buildx
     else true
     end
   end
@@ -52,6 +50,10 @@ class RecordedLinuxExecutor
   def sudo_runs
     @runs.select { |bin, *_rest| bin == "sudo" }
   end
+
+  def docker_runs
+    @runs.select { |bin, *_rest| bin == "docker" }
+  end
 end unless defined?(RecordedLinuxExecutor)
 
 transform!(RSpock::AST::Transformation)
@@ -63,6 +65,10 @@ class Dev::LinuxEngineProvisionerTest < Minitest::Test
     @dir = Dir.mktmpdir("linux-engine-test-")
     @bin = File.join(@dir, "bin")
     FileUtils.mkdir_p(@bin)
+    # The two places the docker CLI looks for its plugins: the deb's system
+    # dir and the user's own.
+    @system_plugins = File.join(@dir, "usr", "libexec", "docker", "cli-plugins")
+    @user_plugins = File.join(@dir, "home", ".docker", "cli-plugins")
     @out = StringIO.new
   end
 
@@ -79,6 +85,11 @@ class Dev::LinuxEngineProvisionerTest < Minitest::Test
     path
   end
 
+  # The `docker-buildx-plugin` deb's one file, where it lands.
+  def install_buildx(dir: @system_plugins)
+    install("docker-buildx", dir: dir)
+  end
+
   def provisioner(executor: RecordedLinuxExecutor.new, wsl: false, os_release: UBUNTU, wsl_conf: SYSTEMD_ON,
     extra_path: [])
     os_release_path = File.join(@dir, "os-release")
@@ -89,12 +100,14 @@ class Dev::LinuxEngineProvisionerTest < Minitest::Test
       executor: executor, wsl: wsl, user: "jpduchesne", out: @out,
       path: ([@bin] + extra_path).join(File::PATH_SEPARATOR),
       os_release_path: os_release_path, wsl_conf_path: wsl_conf_path,
+      cli_plugin_dirs: [@system_plugins, @user_plugins],
     )
   end
 
   test "a converged bare-Linux box: probes only, no sudo" do
     Given "docker-ce installed and active, buildx present, user in the group"
     install("docker")
+    install_buildx
     install("apt-get")
     executor = RecordedLinuxExecutor.new
     prov = provisioner(executor: executor)
@@ -105,6 +118,54 @@ class Dev::LinuxEngineProvisionerTest < Minitest::Test
     Then "nothing was run as root and nothing was printed"
     executor.sudo_runs.empty?
     @out.string.empty?
+
+    Cleanup
+    nil
+  end
+
+  # The installed state is a stat (dev#400): `docker buildx version` was the
+  # first touch of the docker CLI and its plugin on a hosted runner's cold
+  # checkpoint disk, 7.4s on every `dev up` to learn what two stats say.
+  test "the current-state probe spawns no docker: the binary and the buildx plugin are stats, #{where}" do
+    Given "docker on PATH and the plugin #{where}"
+    install("docker")
+    install_buildx(dir: where == "in the user's dir" ? @user_plugins : @system_plugins) unless where == "absent"
+    executor = RecordedLinuxExecutor.new
+    prov = provisioner(executor: executor)
+
+    When "asking"
+    status = prov.status
+
+    Then "buildx is read off the filesystem, and no docker process was spawned to learn it"
+    status.buildx == buildx
+    executor.docker_runs.empty?
+
+    Cleanup
+    nil
+
+    Where
+    where                 | buildx
+    "in the system dir"   | true
+    "in the user's dir"   | true
+    "absent"              | false
+  end
+
+  test "docker installed without its buildx plugin: the packages are (re)installed, nothing else" do
+    Given "docker-ce present and active, the user in the group, no plugin file anywhere"
+    install("docker")
+    install("apt-get")
+    executor = RecordedLinuxExecutor.new
+    prov = provisioner(executor: executor)
+
+    When "provisioning"
+    prov.provision!
+
+    Then "the install steps run and the service is (re)enabled; buildx was never asked to answer"
+    executor.sudo_runs.last(2) == [
+      %w[sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin],
+      %w[sudo systemctl enable --now docker],
+    ]
+    executor.docker_runs.empty?
 
     Cleanup
     nil
@@ -155,7 +216,7 @@ class Dev::LinuxEngineProvisionerTest < Minitest::Test
   test "nothing installed on Ubuntu: one sudo credential prompt, then the exact install steps" do
     Given "a fresh WSL Ubuntu with systemd already on, docker absent, user not yet in the group"
     install("apt-get")
-    executor = RecordedLinuxExecutor.new(dockerd_active: false, buildx: false, groups: %w[jpduchesne sudo])
+    executor = RecordedLinuxExecutor.new(dockerd_active: false, groups: %w[jpduchesne sudo])
     prov = provisioner(executor: executor, wsl: true)
 
     When "provisioning"
@@ -187,6 +248,7 @@ class Dev::LinuxEngineProvisionerTest < Minitest::Test
   test "installed but stopped, user already in the group: only the enable step" do
     Given "docker-ce present, daemon not running"
     install("docker")
+    install_buildx
     install("apt-get")
     executor = RecordedLinuxExecutor.new(dockerd_active: false)
     prov = provisioner(executor: executor)
@@ -204,6 +266,7 @@ class Dev::LinuxEngineProvisionerTest < Minitest::Test
   test "WSL without systemd in /etc/wsl.conf: writes it and asks for the VM restart" do
     Given "a converged daemon on a distro whose wsl.conf lacks [boot] systemd"
     install("docker")
+    install_buildx
     install("apt-get")
     executor = RecordedLinuxExecutor.new
     prov = provisioner(executor: executor, wsl: true, wsl_conf: wsl_conf)
@@ -233,6 +296,7 @@ class Dev::LinuxEngineProvisionerTest < Minitest::Test
   test "WSL with systemd spelled differently still counts" do
     Given "a wsl.conf with spaces and capitals"
     install("docker")
+    install_buildx
     install("apt-get")
     executor = RecordedLinuxExecutor.new
     prov = provisioner(executor: executor, wsl: true, wsl_conf: "[Boot]\nSystemd = True\n")
@@ -249,7 +313,7 @@ class Dev::LinuxEngineProvisionerTest < Minitest::Test
 
   test "no apt-get: refuse with the distro's own instructions, no sudo" do
     Given "a non-Debian distro without docker"
-    executor = RecordedLinuxExecutor.new(dockerd_active: false, buildx: false)
+    executor = RecordedLinuxExecutor.new(dockerd_active: false)
     prov = provisioner(executor: executor, os_release: "ID=fedora\nVERSION_ID=42\n")
 
     When "provisioning"
@@ -267,7 +331,7 @@ class Dev::LinuxEngineProvisionerTest < Minitest::Test
   test "a failing step raises StepFailedError naming it, and stops there" do
     Given "an apt-get update that fails"
     install("apt-get")
-    executor = RecordedLinuxExecutor.new(dockerd_active: false, buildx: false, failing: "apt-get update")
+    executor = RecordedLinuxExecutor.new(dockerd_active: false, failing: "apt-get update")
     prov = provisioner(executor: executor)
 
     When "provisioning"
@@ -318,6 +382,7 @@ class Dev::LinuxEngineProvisionerTest < Minitest::Test
   test "status reports the daemon facts" do
     Given "an installed, active daemon with buildx and group membership, on WSL with systemd"
     docker = install("docker")
+    install_buildx
     executor = RecordedLinuxExecutor.new
     prov = provisioner(executor: executor, wsl: true)
 
@@ -340,6 +405,7 @@ class Dev::LinuxEngineProvisionerTest < Minitest::Test
   test "status on bare Linux has no systemd fact to report" do
     Given "no WSL"
     install("docker")
+    install_buildx
     prov = provisioner(executor: RecordedLinuxExecutor.new, wsl: false)
 
     Expect

@@ -6,6 +6,8 @@ require "dev/command_runner"
 require "dev/credentials"
 require "dev/build_container"
 require "dev/engine_resources"
+require "dev/engine_resources_check"
+require "dev/settings"
 require "dev/shadowenv_llvm"
 require "dev/shadowenv_python"
 require "dev/shadowenv_ruby"
@@ -42,15 +44,37 @@ class CommandRunnerTest < Minitest::Test
   # injected, so tests stub the client instance instead of class methods.
   # The project is on the lock's pins alone (lock_images). The marker is
   # the host rule's fact: absent unless a test writes one (`marker:` a
-  # path under the project root).
-  def container_runner(engine: nil, inside_container: false, marker: nil, github_token: no_github_token)
-    client = Dev::BuildContainer.new(engine: FakeContainerEngine.new)
+  # path under the project root). The engine-floor gate passes unless a
+  # test hands in its own check (`resources_check:`) over a sized engine
+  # (`engine:`).
+  def container_runner(engine_hint: nil, engine: FakeContainerEngine.new, resources_check: passing_check,
+    inside_container: false, marker: nil, github_token: no_github_token)
+    client = Dev::BuildContainer.new(engine:)
     runner = Dev::CommandRunner.new(
-      ui: @ui, images: images(engine:), project_root: @project_root, container_client: client,
+      ui: @ui, images:, project_root: @project_root, engine_hint:, resources_check:, container_client: client,
       host_rule: host_rule(marker:), inside_container:, github_token:,
     )
     [runner, client]
   end
+
+  # A gate that passes whatever it is shown; tests about the gate pass a
+  # real one over hermetic settings.
+  def passing_check
+    typed_mock(Dev::EngineResourcesCheck).tap { |check| check.stubs(:check!) }
+  end
+
+  def real_check
+    Dev::EngineResourcesCheck.new(settings: Dev::Settings.new(
+      config_path: (@project_root / "user-config.yml").to_s, system_config_path: (@project_root / "system-config.yml").to_s,
+    ))
+  end
+
+  # An engine whose `docker info` reports the given size.
+  def engine_sized(cpus:, memory_gib:)
+    FakeContainerEngine.new(kind: :docker, capture_result: "#{cpus} #{memory_gib * 1_073_741_824}")
+  end
+
+  DOCKER_INFO = ["info", "--format", "{{.NCPU}} {{.MemTotal}}"].freeze
 
   # A host whose gh holds no login: the default for these tests, so the
   # developer's own `gh auth token` never leaks into an expectation.
@@ -70,8 +94,8 @@ class CommandRunnerTest < Minitest::Test
     path.to_s
   end
 
-  def images(engine: nil)
-    Dev::ProjectImages.new(root: @project_root, engine: engine)
+  def images
+    Dev::ProjectImages.new(root: @project_root)
   end
 
   # Lock the project to these image pins (dev#277), each on linux/amd64.
@@ -338,11 +362,10 @@ class CommandRunnerTest < Minitest::Test
   test "run resolves a pinned image through ensure_environment_image! and runs in it: the one image, no key needed" do
     Given "a lock pinning one image"
     lock_images("myapp-linux")
-    engine = Dev::EngineResources::Hint.new(cpus: 8)
-    runner, client = container_runner(engine: engine)
+    runner, client = container_runner
     cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
     client.expects(:ensure_environment_image!).once
-      .with { |image, publish:, resources:| image.name == "myapp-linux" && !publish && resources == engine }
+      .with { |image, publish:| image.name == "myapp-linux" && !publish }
       .returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
     client.expects(:docker_run_command)
       .with("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, shell_cmd: "./bin/build.sh", volumes: [], env: {})
@@ -353,6 +376,96 @@ class CommandRunnerTest < Minitest::Test
 
     Then
     1 * Kernel.exec({}, "docker", "run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh")
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+  end
+
+  # --- The engine-floor gate (dev#400) ---
+  #
+  # No provisioner runs on this path, so the runner owns the gate: one
+  # `docker info`, live, before the image is reached for — and none inside
+  # the image step. The spawn shape is pinned so a second read cannot creep
+  # back into BuildContainer.
+
+  test "a containerized command measures the engine against the project's floor once, before the image is reached for" do
+    Given "a lock pinning one image, a 12/24 engine, and a hint it meets"
+    lock_images("myapp-linux")
+    engine = engine_sized(cpus: 12, memory_gib: 24)
+    runner, client = container_runner(engine:, engine_hint: Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 16),
+      resources_check: real_check)
+    client.stubs(:docker_run_command)
+      .returns(invocation("docker", "run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh"))
+
+    When "the command runs"
+    runner.exec_into(Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false))
+
+    Then "one docker info, then the image's inspect — nothing measured twice"
+    engine.captures == [DOCKER_INFO]
+    engine.runs.map(&:first) == ["image"]
+    1 * Kernel.exec({}, "docker", "run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh")
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+  end
+
+  test "a containerized command on an undersized engine is refused before any image work" do
+    Given "a lock pinning one image, a 4/8 engine, and a 12/24 floor, with the machine's own escape hatch out of the way"
+    saved_mode = ENV.delete("DEV_ENGINE_RESOURCES")
+    lock_images("myapp-linux")
+    engine = engine_sized(cpus: 4, memory_gib: 8)
+    runner, client = container_runner(engine:, engine_hint: Dev::EngineResources::Hint.new(cpus: 12, memory_gib: 24),
+      resources_check: real_check)
+    client.expects(:docker_run_command).never
+    Kernel.expects(:exec).never
+
+    When "the command runs"
+    runner.exec_into(Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false))
+
+    Then "the gate's verdict is the run's verdict, and the image was never inspected, pulled or built"
+    error = raises Dev::EngineResourcesCheck::UndersizedEngineError
+    error.message.include?("4 cpus / 8 GiB")
+    error.message.include?("12 cpus / 24 GiB")
+    engine.captures == [DOCKER_INFO]
+    engine.runs.empty?
+
+    Cleanup
+    ENV["DEV_ENGINE_RESOURCES"] = saved_mode if saved_mode
+    Dir.chdir(@original_cwd)
+  end
+
+  test "a project declaring no floor never asks the daemon its size" do
+    Given "a lock pinning one image and no hint"
+    lock_images("myapp-linux")
+    engine = FakeContainerEngine.new(kind: :docker, capture_result: ->(_args) { raise "docker info was called" })
+    runner, client = container_runner(engine:, engine_hint: nil, resources_check: real_check)
+    client.stubs(:docker_run_command)
+      .returns(invocation("docker", "run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh"))
+
+    When "the command runs"
+    runner.exec_into(Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false))
+
+    Then
+    engine.captures.empty?
+    1 * Kernel.exec({}, "docker", "run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh")
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+  end
+
+  test "a host command never measures the engine: no container is reached for" do
+    Given "two pinned images, a floor, and a command placed on the host"
+    lock_images("snappy-linux", "snappy-server")
+    engine = FakeContainerEngine.new(kind: :docker, capture_result: ->(_args) { raise "docker info was called" })
+    runner, client = container_runner(engine:, engine_hint: Dev::EngineResources::Hint.new(cpus: 12), resources_check: real_check)
+    client.expects(:ensure_environment_image!).never
+
+    When
+    runner.exec_into(Dev::ProjectCommand.new(run: "./bin/editor.sh", repl: false, runs_on: "host"))
+
+    Then
+    engine.captures.empty?
+    1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/editor.sh"))
 
     Cleanup
     Dir.chdir(@original_cwd)
@@ -608,7 +721,7 @@ class CommandRunnerTest < Minitest::Test
 
     When "the command runs"
     client.expects(:ensure_environment_image!)
-      .with { |image, publish:, resources:| image.name == "myapp-linux" && publish && resources.nil? }
+      .with { |image, publish:| image.name == "myapp-linux" && publish }
       .returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
     client.stubs(:docker_run_command).returns(invocation("docker", "run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh"))
     runner.exec_into(cmd)
