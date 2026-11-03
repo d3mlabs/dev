@@ -29,8 +29,9 @@ asserted from `File.stat` and the first logged brew call checked to have
 already seen the hardened dir.
 
 Text-matching tests stay for contract lines (pins, flags); the real run
-is for behaviour. Keep the preamble in a support file, not a heredoc
-(see rspock-no-foreign-heredocs).
+is for behaviour. Keep the preamble in a `.sh` support file rather than a
+Ruby heredoc: it gets shellcheck and highlighting, and the test reads as
+"run this script with that one" instead of carrying a shell program inline.
 
 learned-from: dev#406 build pass — the issue asked for "a test asserting
 the mode after a provision against a dir pre-set to 775", which no text

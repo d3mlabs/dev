@@ -25,10 +25,6 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
   class they silently assert nothing.
  → skill: rspock (ships in the rspock gem; linked by `dev up` /
  `dev deps install`)
-- [testing/rspock-no-foreign-heredocs] A heredoc of shell text inside a
- `transform!`-ed test class hangs or errors ast_transform at load; keep
- such text in a file under test/support/.
- → .cursor/skills/learnings/rspock-no-foreign-heredocs/
 - [testing/sh-scripts-run-with-function-stubs] To assert what a shipped
  bin/*.sh does, run it under `sh -c` with brew/git/dev stubbed as shell
  functions prepended from test/support/ — functions beat the PATH the
