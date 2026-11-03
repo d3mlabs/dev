@@ -31,6 +31,24 @@ export HOMEBREW_NO_ENV_HINTS=1
 # isolation, so the redundant sandbox is off for any from-source build.
 export HOMEBREW_NO_SANDBOX_LINUX=1
 
+# Homebrew >= 7.0.11 refuses to read or write its trust store when
+# ~/.homebrew, or a trust.json already in it, is group- or world-writable —
+# and trust is evaluated by `brew trust`, `brew tap` and `brew install`
+# alike, so one such dir fails the whole provision. Older brews created the
+# dir with the caller's umask (a 002 umask left one container at 775, dev#406);
+# nothing else in dev sets the mode. Hardened before the first brew call,
+# owner-only bits removed, so a 700/755 dir is untouched. Entries are
+# iterated with an existence check because an empty dir leaves the glob
+# unexpanded.
+trust_store="$HOME/.homebrew"
+mkdir -p "$trust_store"
+chmod g-w,o-w "$trust_store"
+for trust_store_entry in "$trust_store"/*; do
+  if [ -e "$trust_store_entry" ]; then
+    chmod g-w,o-w "$trust_store_entry"
+  fi
+done
+
 if ! command -v brew >/dev/null 2>&1; then
   echo "dev: no brew in this container — installing Linuxbrew into /home/linuxbrew/.linuxbrew" >&2
   # The installer wants its prefix to exist and be writable by the user

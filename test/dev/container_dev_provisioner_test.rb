@@ -2,6 +2,10 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "open3"
+require "tmpdir"
+require "fileutils"
+require "pathname"
 require "dev/container_dev_provisioner"
 require "support/fake_container_engine"
 
@@ -10,6 +14,11 @@ class Dev::ContainerDevProvisionerTest < Minitest::Test
   include SorbetHelper
 
   SCRIPT = Dev::ContainerDevProvisioner::SCRIPT
+
+  # brew, git and dev as shell functions, prepended to the script's text so a
+  # test can run the whole provision (see the file's header for why functions
+  # and not a PATH shim).
+  STUBBED_TOOLS = Pathname.new(File.expand_path("../support/container_provision_stubs.sh", __dir__))
 
   test "provision! is a no-op when the container's dev already reports the host's version" do
     Given "a container whose dev version equals the host's"
@@ -91,6 +100,62 @@ class Dev::ContainerDevProvisionerTest < Minitest::Test
     script.include?("NONINTERACTIVE=1")
     script.include?("https://raw.githubusercontent.com/Homebrew/install/#{pin}/install.sh")
     script.index("brew trust d3mlabs/d3mlabs") < script.index("brew tap --quiet d3mlabs/d3mlabs")
+  end
+
+  test "the install script hardens a #{initial_mode} ~/.homebrew to #{hardened_mode} before its first brew call (Homebrew >= 7.0.11 refuses group-writable)" do
+    Given "a home whose trust-store dir and brew.env carry mode #{initial_mode}/#{initial_file_mode}, and a tap dir"
+    home = Dir.mktmpdir("dev-provision-home-")
+    tap_dir = Dir.mktmpdir("dev-provision-tap-")
+    trust_store = File.join(home, ".homebrew")
+    brew_env = File.join(trust_store, "brew.env")
+    Dir.mkdir(trust_store)
+    File.write(brew_env, "")
+    File.chmod(initial_mode.to_i(8), trust_store)
+    File.chmod(initial_file_mode.to_i(8), brew_env)
+    brew_calls = File.join(home, "brew-calls.log")
+
+    When "the script provisions 0.2.98 with brew, git and dev stubbed as shell functions ahead of its text"
+    _out, _err, status = Open3.capture3(
+      { "HOME" => home, "DEV_TEST_TAP_DIR" => tap_dir, "DEV_TEST_BREW_CALLS" => brew_calls },
+      "sh", "-c", STUBBED_TOOLS.read + SCRIPT.read, "sh", "0.2.98"
+    )
+
+    Then "the provision succeeds, the dir and its entries lost their group/world write bits, and the dir was already hardened when brew first ran"
+    status.success?
+    format("%o", File.stat(trust_store).mode & 0o777) == hardened_mode
+    format("%o", File.stat(brew_env).mode & 0o777) == hardened_file_mode
+    File.readlines(brew_calls, chomp: true).first == "--repo d3mlabs/d3mlabs #{hardened_listing}"
+
+    Cleanup
+    FileUtils.rm_rf(home)
+    FileUtils.rm_rf(tap_dir)
+
+    Where
+    initial_mode | initial_file_mode | hardened_mode | hardened_file_mode | hardened_listing
+    "775"        | "664"             | "755"         | "644"              | "drwxr-xr-x"
+    "755"        | "644"             | "755"         | "644"              | "drwxr-xr-x"
+    "700"        | "600"             | "700"         | "600"              | "drwx------"
+  end
+
+  test "the install script creates a missing ~/.homebrew owner-writable only, so a 002 umask cannot leave it group-writable" do
+    Given "a home with no trust-store dir and a 002 umask"
+    home = Dir.mktmpdir("dev-provision-home-")
+    tap_dir = Dir.mktmpdir("dev-provision-tap-")
+    brew_calls = File.join(home, "brew-calls.log")
+
+    When "the script provisions 0.2.98 under that umask"
+    _out, _err, status = Open3.capture3(
+      { "HOME" => home, "DEV_TEST_TAP_DIR" => tap_dir, "DEV_TEST_BREW_CALLS" => brew_calls },
+      "sh", "-c", "umask 002\n" + STUBBED_TOOLS.read + SCRIPT.read, "sh", "0.2.98"
+    )
+
+    Then "the provision succeeds and the dir it created has no group/world write bits"
+    status.success?
+    format("%o", File.stat(File.join(home, ".homebrew")).mode & 0o777) == "755"
+
+    Cleanup
+    FileUtils.rm_rf(home)
+    FileUtils.rm_rf(tap_dir)
   end
 
   test "the install script parses under sh -n" do
