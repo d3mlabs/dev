@@ -66,6 +66,11 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  tree holds a symlink or a lisp path, and path-bound artifacts run by
  their store path.
  → .cursor/skills/learnings/installed-state-in-the-store/
+- [architecture/load-time-binding-keeps-repair-reachable] A binding Runner
+ does against the lock at load (placements, targets) refuses bad
+ declarations but degrades on an unreadable lock, so `dev deps update`
+ stays reachable; consumers of the bound value stay total.
+ → .cursor/skills/learnings/load-time-binding-keeps-repair-reachable/
 
 ## toolchain
 
