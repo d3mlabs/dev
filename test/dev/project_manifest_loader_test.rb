@@ -478,6 +478,27 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
   end
 
+  test "#load refuses a single build-named command too, in the singular" do
+    Given
+    tmp = write_dev_yml(<<~YAML)
+      name: snappy
+      targets:
+        snappy-steam: { platforms: [win64] }
+      commands:
+        snappy-steam-win64: { run: ./bin/build.sh }
+    YAML
+
+    When
+    build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    error = raises(Dev::ProjectManifestLoader::BuildNamedCommandError)
+    error.message.include?("names a command like a build: 'snappy-steam-win64'")
+
+    Cleanup
+    tmp.close!
+  end
+
   test "#load accepts commands whose names merely share a prefix with a target but spell no build" do
     Given
     tmp = write_dev_yml(<<~YAML)
