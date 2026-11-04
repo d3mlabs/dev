@@ -24,6 +24,15 @@ class Dev::Cli::UiImplTest < Minitest::Test
     1 * @cli_ui.puts(anything)
   end
 
+  test "#print_crossing prints the one dim line about entering a container of the image" do
+    When
+    @ui.print_crossing("snappy-linux")
+
+    Then
+    1 * @cli_ui.fmt("{{gray:→ in snappy-linux}}")
+    1 * @cli_ui.puts(anything)
+  end
+
   test "#ask_secret is CLI::UI's hidden-input prompt when a terminal is behind stdin, and nil (no question asked) when not" do
     Given "a prompt seam and two stdins"
     prompt = typed_mock(CLI::UI::Prompt, class_of: true)
@@ -46,6 +55,14 @@ class Dev::Cli::NoUiTest < Minitest::Test
 
     Expect "print_header writes the command name to stdout"
     assert_output("./bin/setup.rb\n") { ui.print_header("./bin/setup.rb") }
+  end
+
+  test "#print_crossing writes the crossing line plain to stdout" do
+    Given
+    ui = Dev::Cli::NoUi.new
+
+    Expect
+    assert_output("→ in snappy-linux\n") { ui.print_crossing("snappy-linux") }
   end
 
   test "#ask_secret never asks: nil, nothing written" do

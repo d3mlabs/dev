@@ -5,6 +5,7 @@ require "test_helper"
 require "dev/command"
 require "dev/command_parser"
 require "dev/project_manifest"
+require "dev/environment_ref"
 require "dev/project_manifest_loader"
 require "fileutils"
 require "stringio"
@@ -267,8 +268,8 @@ class ProjectManifestLoaderTest < Minitest::Test
     error.message.include?("build.container.prewarm → delete it")
     error.message.include?("build.container.resources → `engine:`")
     error.message.include?("commands.build.container: true → delete it")
-    error.message.include?("commands.deploy.container: false → `runs_on: host`")
-    error.message.include?("commands.test.commands.editor.container: false → `runs_on: host`")
+    error.message.include?("commands.deploy.container: false → `environment: host`")
+    error.message.include?("commands.test.commands.editor.container: false → `environment: host`")
     error.message.index("build.container.image") < error.message.index("commands.deploy.container")
 
     Cleanup
@@ -296,14 +297,43 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
   end
 
-  test "#load accepts a dev.yml on the new shape: engine at the top level, placement by runs_on" do
+  test "#load refuses a command's runs_on: at load with its environment: replacement, nested commands included (dev#409)" do
+    Given "a dev.yml still placing commands by runs_on, one value not even a name"
+    tmp = write_dev_yml(<<~YAML)
+      name: snappy
+      commands:
+        build: { run: ./bin/build.sh, runs_on: snappy-linux }
+        deploy: { run: ./bin/deploy.sh, runs_on: host }
+        test:
+          run: ./bin/test.sh
+          commands:
+            editor: { run: ./bin/editor.sh, runs_on: true }
+    YAML
+
+    When
+    build_loader.load(Pathname.new(tmp.path))
+
+    Then "one message: the key's new name, and each occurrence with its one-line replacement, in document order"
+    error = raises(Dev::ProjectManifestLoader::RetiredKeysError)
+    error.message.include?("`runs_on:` is `environment:`")
+    error.message.include?("commands.build.runs_on: \"snappy-linux\" → `environment: snappy-linux`")
+    error.message.include?("commands.deploy.runs_on: \"host\" → `environment: host`")
+    error.message.include?("commands.test.commands.editor.runs_on: true → `environment: <image name> | host`")
+    error.message.index("commands.build.runs_on") < error.message.index("commands.deploy.runs_on")
+    error.message.index("commands.deploy.runs_on") < error.message.index("commands.test.commands.editor.runs_on")
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load accepts a dev.yml on the new shape: engine at the top level, placement by environment, as unbound references" do
     Given
     tmp = write_dev_yml(<<~YAML)
       name: snappy
       engine: { cpus: 8 }
       commands:
-        build: { run: ./bin/build.sh, runs_on: snappy-linux }
-        deploy: { run: ./bin/deploy.sh, runs_on: host }
+        build: { run: ./bin/build.sh, environment: snappy-linux }
+        deploy: { run: ./bin/deploy.sh, environment: host }
     YAML
 
     When
@@ -311,8 +341,9 @@ class ProjectManifestLoaderTest < Minitest::Test
 
     Then
     manifest.engine.cpus == 8
-    manifest.commands["build"].runs_on == "snappy-linux"
-    manifest.commands["deploy"].runs_on == "host"
+    manifest.commands["build"].environment == Dev::EnvironmentRef::Image.new(name: "snappy-linux")
+    manifest.commands["deploy"].environment == Dev::EnvironmentRef::Host.new
+    manifest.commands["build"].placement.nil?
 
     Cleanup
     tmp.close!

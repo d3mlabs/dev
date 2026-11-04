@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/container_context"
 require "dev/host_rule"
 require "dev/host_environment"
 require "dev/environment_image"
@@ -50,6 +51,34 @@ class Dev::HostRuleTest < Minitest::Test
     "the lock's image"                | image.marker                       | true
     "a drifted recipe"                | image(apt: ["libnss3"]).marker     | false
     "another image"                   | image(name: "snappy-server").marker | false
+  end
+
+  test "running an image's work crosses into a container exactly when this is a host not provisioned from it: #{what}" do
+    Given
+    File.write(@marker, marker_text) if marker_text
+    host = rule(inside_container: inside)
+
+    Expect
+    host.enters_container?(image) == crosses
+    host.inside_container? == inside
+
+    Where
+    what                                     | marker_text                         | inside | crosses
+    "a bare host"                            | nil                                 | false  | true
+    "a host provisioned from the image"      | image.marker                        | false  | false
+    "a host provisioned from another image"  | image(name: "snappy-server").marker | false  | true
+    "a drifted host"                         | image(apt: ["libnss3"]).marker      | false  | true
+    "inside a container of the image"        | image.marker                        | true   | false
+    "inside a drifted container (not asked)" | image(apt: ["libnss3"]).marker      | true   | false
+  end
+
+  test "inside is a host fact, read from the container marker by default" do
+    Given
+    Dev::ContainerContext.stubs(:inside?).returns(true)
+
+    Expect
+    Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: @marker)).inside_container?
+    !rule.inside_container?
   end
 
   test "why a host is native, for the up report" do
@@ -128,7 +157,7 @@ class Dev::HostRuleTest < Minitest::Test
     self.class.image(name: name, apt: apt)
   end
 
-  def rule(marker: @marker)
-    Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: marker))
+  def rule(marker: @marker, inside_container: false)
+    Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: marker), inside_container:)
   end
 end

@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require_relative "command"
+require_relative "environment_ref"
 
 module Dev
   # Parses a dev.yml command hash into its ProjectNode: a ProjectCommand
@@ -26,9 +27,9 @@ module Dev
     # `commands:` holding something other than a mapping of name → entry.
     class InvalidCommandsError < ArgumentError; end
 
-    # `runs_on:` holding something other than a name (an image's, or
+    # `environment:` holding something other than a name (an image's, or
     # `host`).
-    class InvalidRunsOnError < ArgumentError; end
+    class InvalidEnvironmentError < ArgumentError; end
 
     RESERVED_CHILD_NAME = "help"
 
@@ -43,7 +44,7 @@ module Dev
     # @raise [ReplGroupError] when `repl: true` is declared beside `commands`
     # @raise [ReservedChildNameError] when a child is named `help`
     # @raise [InvalidCommandsError] when `commands` is not a mapping
-    # @raise [InvalidRunsOnError] when `runs_on` is not a name
+    # @raise [InvalidEnvironmentError] when `environment` is not a name
     sig { params(path: T::Array[String], cmd_hash: CommandHash).returns(ProjectNode) }
     def parse(path, cmd_hash)
       name = path.join(" ")
@@ -57,34 +58,36 @@ module Dev
       desc = cmd_hash["desc"].to_s
       desc = desc.empty? ? "(no description)" : desc
       repl = cmd_hash["repl"] == true
-      runs_on = parse_runs_on(name, cmd_hash)
+      environment = parse_environment(name, cmd_hash)
       hidden = cmd_hash["hidden"] == true
       if repl && !children.empty?
         raise ReplGroupError, "command '#{name}' cannot be both a repl and a group of commands"
       end
       return CommandGroup.new(path:, desc:, category: Command::Category::Project, children:, hidden:) if run.empty?
 
-      ProjectCommand.new(run:, desc:, repl:, runs_on:, hidden:, children:)
+      ProjectCommand.new(run:, desc:, repl:, environment:, hidden:, children:)
     end
 
     private
 
-    # The `runs_on:` value, unresolved: a non-empty string, declared alone.
+    # The `environment:` value as a reference — unresolved: the lock is
+    # the composition root's to consult (ProjectImages#bind), so the
+    # parser stays lock-free. A non-empty string, declared alone.
     #
     # @param name [String] the command's path, for messages
     # @param cmd_hash [CommandHash]
-    # @return [String, nil] nil when absent
-    # @raise [InvalidRunsOnError]
-    sig { params(name: String, cmd_hash: CommandHash).returns(T.nilable(String)) }
-    def parse_runs_on(name, cmd_hash)
-      return nil unless cmd_hash.key?("runs_on")
+    # @return [EnvironmentRef, nil] nil when absent
+    # @raise [InvalidEnvironmentError]
+    sig { params(name: String, cmd_hash: CommandHash).returns(T.nilable(EnvironmentRef)) }
+    def parse_environment(name, cmd_hash)
+      return nil unless cmd_hash.key?("environment")
 
-      raw = cmd_hash["runs_on"]
+      raw = cmd_hash["environment"]
       unless raw.is_a?(String) && !raw.empty?
-        raise InvalidRunsOnError,
-          "command '#{name}': 'runs_on' must name an image block or be '#{ProjectCommand::HOST}', got #{raw.inspect}"
+        raise InvalidEnvironmentError,
+          "command '#{name}': 'environment' must name an image block or be '#{EnvironmentRef::HOST}', got #{raw.inspect}"
       end
-      raw
+      EnvironmentRef.parse(raw)
     end
 
     # Parse the nested `commands:` mapping; absent or empty means none.

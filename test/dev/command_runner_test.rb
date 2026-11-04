@@ -14,6 +14,7 @@ require "dev/shadowenv_ruby"
 require "dev/deps/dependency"
 require "dev/deps/lockfile"
 require "dev/environment_image"
+require "dev/environment_ref"
 require "dev/host_environment"
 require "dev/host_rule"
 require "dev/project_images"
@@ -27,6 +28,7 @@ class CommandRunnerTest < Minitest::Test
   def setup
     @ui = typed_mock(Dev::Cli::Ui)
     @ui.stubs(:print_header)
+    @ui.stubs(:print_crossing)
     # CommandRunner#run chdirs into @project_root, which teardown deletes.
     # Each test restores @original_cwd in its Cleanup block so later tests
     # don't run from a deleted directory (getcwd would raise ENOENT).
@@ -51,10 +53,18 @@ class CommandRunnerTest < Minitest::Test
     inside_container: false, marker: nil, github_token: no_github_token)
     client = Dev::BuildContainer.new(engine:)
     runner = Dev::CommandRunner.new(
-      ui: @ui, images:, project_root: @project_root, engine_hint:, resources_check:, container_client: client,
-      host_rule: host_rule(marker:), inside_container:, github_token:,
+      ui: @ui, project_root: @project_root, engine_hint:, resources_check:, container_client: client,
+      host_rule: host_rule(marker:, inside_container:), github_token:,
     )
     [runner, client]
+  end
+
+  # A project command bound against the lock as it stands now — what the
+  # composition root hands the runner (PlacementBinder): the runner reads
+  # the placement, it never resolves a name. Call it after lock_images.
+  def command(run, repl: false, environment: nil)
+    ref = environment && Dev::EnvironmentRef.parse(environment)
+    Dev::ProjectCommand.new(run:, repl:).with_placement(images.bind(ref, subject: run))
   end
 
   # A gate that passes whatever it is shown; tests about the gate pass a
@@ -82,9 +92,9 @@ class CommandRunnerTest < Minitest::Test
 
   def host_github_token(token) = Dev::ContainerGithubToken.new(source: -> { token })
 
-  def host_rule(marker: nil)
+  def host_rule(marker: nil, inside_container: false)
     path = marker || (@project_root / "no-marker").to_s
-    Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: path))
+    Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: path), inside_container:)
   end
 
   # Write the marker a host provisioned from +image+ carries; returns its path.
@@ -134,7 +144,7 @@ class CommandRunnerTest < Minitest::Test
     runner = Dev::CommandRunner.new(ui: @ui, project_root: @project_root)
     runner.stubs(:ensure_shadowenv_provisioned!)
     Kernel.stubs(:exec)
-    cmd = Dev::ProjectCommand.new(run: "./bin/console", repl: true)
+    cmd = command("./bin/console", repl: true)
 
     When "we run a command"
     runner.exec_into(cmd)
@@ -157,7 +167,7 @@ class CommandRunnerTest < Minitest::Test
     runner = Dev::CommandRunner.new(ui: @ui, project_root: @project_root)
     Dev::ShadowenvLlvm.stubs(:ci_or_linux?).returns(true)
     Kernel.stubs(:exec)
-    cmd = Dev::ProjectCommand.new(run: "./bin/console", repl: true)
+    cmd = command("./bin/console", repl: true)
 
     When "we run a command"
     runner.exec_into(cmd)
@@ -179,7 +189,7 @@ class CommandRunnerTest < Minitest::Test
     Dev::ShadowenvLlvm.stubs(:detect_llvm_prefix).returns("/opt/llvm")
     Dev::ShadowenvLlvm.stubs(:provisioned?).with("/opt/llvm", project_root: @project_root).returns(false)
     Kernel.stubs(:exec)
-    cmd = Dev::ProjectCommand.new(run: "./bin/console", repl: true)
+    cmd = command("./bin/console", repl: true)
 
     When "we run a command"
     runner.exec_into(cmd)
@@ -195,7 +205,7 @@ class CommandRunnerTest < Minitest::Test
 
   test "run prints header and execs directly when repl" do
     Given "a repl command"
-    cmd = Dev::ProjectCommand.new(run: "./bin/console", repl: true)
+    cmd = command("./bin/console", repl: true)
 
     When "we run the command"
     @runner.exec_into(cmd)
@@ -210,7 +220,7 @@ class CommandRunnerTest < Minitest::Test
 
   test "run prints header and execs with args when repl" do
     Given "a repl command with args"
-    cmd = Dev::ProjectCommand.new(run: "./bin/console", repl: true)
+    cmd = command("./bin/console", repl: true)
 
     When "we run the command with extra args"
     @runner.exec_into(cmd, args: ["--verbose"])
@@ -225,7 +235,7 @@ class CommandRunnerTest < Minitest::Test
 
   test "run prints header and execs with shell wrapper for non-repl" do
     Given "a non-repl command"
-    cmd = Dev::ProjectCommand.new(run: "./bin/setup.rb", repl: false)
+    cmd = command("./bin/setup.rb", repl: false)
 
     When "we run the command"
     @runner.exec_into(cmd)
@@ -240,7 +250,7 @@ class CommandRunnerTest < Minitest::Test
 
   test "non-repl shell wrapper includes status check and Done message" do
     Given "a non-repl command"
-    cmd = Dev::ProjectCommand.new(run: "./bin/test.sh", repl: false)
+    cmd = command("./bin/test.sh", repl: false)
 
     When "we run the command"
     @runner.exec_into(cmd)
@@ -255,7 +265,7 @@ class CommandRunnerTest < Minitest::Test
 
   test "non-repl shell wrapper includes args" do
     Given "a non-repl command with args"
-    cmd = Dev::ProjectCommand.new(run: "./bin/test.sh", repl: false)
+    cmd = command("./bin/test.sh", repl: false)
 
     When "we run with args"
     @runner.exec_into(cmd, args: ["-v"])
@@ -272,7 +282,7 @@ class CommandRunnerTest < Minitest::Test
 
   test "run_waiting spawns and waits instead of exec-replacing the process" do
     Given "a non-repl command"
-    cmd = Dev::ProjectCommand.new(run: "./bin/setup.rb", repl: false)
+    cmd = command("./bin/setup.rb", repl: false)
 
     When "we run the command waiting"
     @runner.run_waiting(cmd)
@@ -287,7 +297,7 @@ class CommandRunnerTest < Minitest::Test
 
   test "run_waiting raises CommandFailedError carrying the child's exit status" do
     Given "a child that exits 7"
-    cmd = Dev::ProjectCommand.new(run: "./bin/setup.rb", repl: false)
+    cmd = command("./bin/setup.rb", repl: false)
     Kernel.stubs(:system).returns(false)
     # Kernel.system is stubbed, so wait on a real child here to leave the
     # thread-local $? at exit status 7 — what a real failed child would set.
@@ -305,7 +315,7 @@ class CommandRunnerTest < Minitest::Test
 
   test "run_waiting raises CommandKilledError carrying the terminating signal" do
     Given "a child killed by SIGTERM"
-    cmd = Dev::ProjectCommand.new(run: "./bin/setup.rb", repl: false)
+    cmd = command("./bin/setup.rb", repl: false)
     Kernel.stubs(:system).returns(false)
     # Kernel.system is stubbed, so wait on a real signal-killed child here to
     # leave the thread-local $? signaled — what a real killed child would set.
@@ -323,7 +333,7 @@ class CommandRunnerTest < Minitest::Test
 
   test "run_waiting raises CommandSpawnError when the child never started" do
     Given "a child that cannot be spawned"
-    cmd = Dev::ProjectCommand.new(run: "./bin/setup.rb", repl: false)
+    cmd = command("./bin/setup.rb", repl: false)
     # Kernel.system returns nil (not false) when the child never started.
     Kernel.stubs(:system).returns(nil)
 
@@ -341,7 +351,7 @@ class CommandRunnerTest < Minitest::Test
     Given "a runner over a lock pinning one image"
     lock_images("myapp-linux")
     runner, client = container_runner
-    cmd = Dev::ProjectCommand.new(run: "./bin/up.sh", repl: false)
+    cmd = command("./bin/up.sh", repl: false)
 
     When "the image resolves and we run the command waiting"
     client.stubs(:ensure_environment_image!).returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
@@ -363,7 +373,7 @@ class CommandRunnerTest < Minitest::Test
     Given "a lock pinning one image"
     lock_images("myapp-linux")
     runner, client = container_runner
-    cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
+    cmd = command("./bin/build.sh", repl: false)
     client.expects(:ensure_environment_image!).once
       .with { |image, publish:| image.name == "myapp-linux" && !publish }
       .returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
@@ -398,7 +408,7 @@ class CommandRunnerTest < Minitest::Test
       .returns(invocation("docker", "run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh"))
 
     When "the command runs"
-    runner.exec_into(Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false))
+    runner.exec_into(command("./bin/build.sh", repl: false))
 
     Then "one docker info, then the image's inspect — nothing measured twice"
     engine.captures == [DOCKER_INFO]
@@ -420,7 +430,7 @@ class CommandRunnerTest < Minitest::Test
     Kernel.expects(:exec).never
 
     When "the command runs"
-    runner.exec_into(Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false))
+    runner.exec_into(command("./bin/build.sh", repl: false))
 
     Then "the gate's verdict is the run's verdict, and the image was never inspected, pulled or built"
     error = raises Dev::EngineResourcesCheck::UndersizedEngineError
@@ -443,7 +453,7 @@ class CommandRunnerTest < Minitest::Test
       .returns(invocation("docker", "run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh"))
 
     When "the command runs"
-    runner.exec_into(Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false))
+    runner.exec_into(command("./bin/build.sh", repl: false))
 
     Then
     engine.captures.empty?
@@ -461,7 +471,7 @@ class CommandRunnerTest < Minitest::Test
     client.expects(:ensure_environment_image!).never
 
     When
-    runner.exec_into(Dev::ProjectCommand.new(run: "./bin/editor.sh", repl: false, runs_on: "host"))
+    runner.exec_into(command("./bin/editor.sh", repl: false, environment: "host"))
 
     Then
     engine.captures.empty?
@@ -471,12 +481,12 @@ class CommandRunnerTest < Minitest::Test
     Dir.chdir(@original_cwd)
   end
 
-  test "runs_on picks the image among several, and the block's shape rides it: persist, volumes, run_env" do
+  test "environment: picks the image among several, and the block's shape rides it: persist, volumes, run_env" do
     Given "two pinned images; the command names the persisted one"
     lock_images("snappy-linux", "snappy-server", persist: true, volumes: ["/e:/ue"], run_env: { "WWISE_TOKEN" => "wwise/token" })
     ENV["WWISE_TOKEN"] = "tok-123"
     runner, client = container_runner
-    cmd = Dev::ProjectCommand.new(run: "./bin/test-server.sh", repl: false, runs_on: "snappy-server")
+    cmd = command("./bin/test-server.sh", repl: false, environment: "snappy-server")
     client.expects(:ensure_environment_image!).once
       .with { |image, **| image.name == "snappy-server" }
       .returns("ghcr.io/d3mlabs/snappy-server:deadbeef")
@@ -499,12 +509,12 @@ class CommandRunnerTest < Minitest::Test
     Dir.chdir(@original_cwd)
   end
 
-  test "runs_on: host runs on this host whatever the lock pins" do
+  test "environment: host runs on this host whatever the lock pins" do
     Given "two pinned images and a command placed on the host"
     lock_images("snappy-linux", "snappy-server")
     runner, client = container_runner
     runner.stubs(:ensure_shadowenv_provisioned!)
-    cmd = Dev::ProjectCommand.new(run: "./bin/editor.sh", repl: false, runs_on: "host")
+    cmd = command("./bin/editor.sh", repl: false, environment: "host")
     client.expects(:ensure_environment_image!).never
 
     When
@@ -517,9 +527,9 @@ class CommandRunnerTest < Minitest::Test
     Dir.chdir(@original_cwd)
   end
 
-  test "a command naming no image among several is refused before anything runs" do
-    Given
-    lock_images("snappy-linux", "snappy-server")
+  test "a command the composition root left unbound is refused before anything runs: the runner never resolves a name" do
+    Given "a pinned image and a command straight from the parser"
+    lock_images("snappy-linux")
     runner, client = container_runner
     client.expects(:ensure_environment_image!).never
     Kernel.expects(:exec).never
@@ -528,7 +538,32 @@ class CommandRunnerTest < Minitest::Test
     runner.exec_into(Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false))
 
     Then
-    raises Dev::ProjectImages::AmbiguousEnvironmentImageError
+    error = raises(Dev::ProjectCommand::UnboundPlacementError)
+    error.message.include?("dev deps update")
+
+    Cleanup
+    Dir.chdir(@original_cwd)
+  end
+
+  test "one dim crossing line is printed when a command enters a container, and none on a host or native run" do
+    Given "two images; a host provisioned from one; a command on each, and one on the host"
+    lock_images("snappy-linux", "snappy-server")
+    server = images.named("snappy-server")
+    runner, client = container_runner(marker: provisioned_from(server))
+    runner.stubs(:ensure_llvm_provisioned!)
+    client.stubs(:ensure_environment_image!).returns("ref-linux")
+    client.stubs(:docker_run_command).returns(invocation("docker", "run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh"))
+    Kernel.stubs(:exec)
+
+    When
+    runner.exec_into(command("./bin/build.sh", environment: "snappy-linux"))
+    runner.exec_into(command("./bin/server.sh", environment: "snappy-server"))
+    runner.exec_into(command("./bin/editor.sh", environment: "host"))
+
+    Then "the crossing into snappy-linux's container is the one line"
+    1 * @ui.print_crossing("snappy-linux")
+    0 * @ui.print_crossing("snappy-server")
+    0 * @ui.print_crossing("host")
 
     Cleanup
     Dir.chdir(@original_cwd)
@@ -545,8 +580,8 @@ class CommandRunnerTest < Minitest::Test
     client.expects(:docker_run_command).once.returns(invocation("docker", "run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh"))
 
     When "one command runs on each"
-    runner.exec_into(Dev::ProjectCommand.new(run: "./bin/server.sh", repl: false, runs_on: "snappy-server"))
-    runner.exec_into(Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false, runs_on: "snappy-linux"))
+    runner.exec_into(command("./bin/server.sh", repl: false, environment: "snappy-server"))
+    runner.exec_into(command("./bin/build.sh", repl: false, environment: "snappy-linux"))
 
     Then "the server command execs under the host's shadowenv; the linux one in docker, though the host is its platform too"
     1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/server.sh"))
@@ -564,7 +599,7 @@ class CommandRunnerTest < Minitest::Test
     client.expects(:docker_run_command).once.returns(invocation("docker", "run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh"))
 
     When
-    runner.exec_into(Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false))
+    runner.exec_into(command("./bin/build.sh", repl: false))
 
     Then
     1 * Kernel.exec({}, "docker", "run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh")
@@ -586,7 +621,7 @@ class CommandRunnerTest < Minitest::Test
     client.expects(:docker_run_command).once.returns(invocation("docker", "run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh"))
 
     When
-    runner.exec_into(Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false))
+    runner.exec_into(command("./bin/build.sh", repl: false))
 
     Then
     1 * Kernel.exec({}, "docker", "run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh")
@@ -602,7 +637,7 @@ class CommandRunnerTest < Minitest::Test
     client.expects(:docker_run_command).never
 
     When
-    runner.exec_into(Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false))
+    runner.exec_into(command("./bin/build.sh", repl: false))
 
     Then
     1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/build.sh"))
@@ -625,7 +660,7 @@ class CommandRunnerTest < Minitest::Test
 
     When
     error = assert_raises(Dev::HostRule::ContainerDriftError) do
-      runner.exec_into(Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false))
+      runner.exec_into(command("./bin/build.sh", repl: false))
     end
 
     Then
@@ -639,8 +674,8 @@ class CommandRunnerTest < Minitest::Test
 
   test "inside the container, a repl command execs bare under shadowenv, and the host-only LLVM is not provisioned" do
     Given "an inside runner and a repl command"
-    runner = Dev::CommandRunner.new(ui: @ui, project_root: @project_root, inside_container: true)
-    cmd = Dev::ProjectCommand.new(run: "./bin/console", repl: true)
+    runner = Dev::CommandRunner.new(ui: @ui, project_root: @project_root, host_rule: host_rule(inside_container: true))
+    cmd = command("./bin/console", repl: true)
 
     When "we run the command"
     runner.exec_into(cmd)
@@ -657,7 +692,7 @@ class CommandRunnerTest < Minitest::Test
     Given "a runner over a project pinning no image"
     runner = Dev::CommandRunner.new(ui: @ui, project_root: @project_root)
     runner.stubs(:ensure_shadowenv_provisioned!)
-    cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
+    cmd = command("./bin/build.sh", repl: false)
 
     When "we run the command"
     runner.exec_into(cmd)
@@ -673,7 +708,7 @@ class CommandRunnerTest < Minitest::Test
     Given "a pinned image and a command with args"
     lock_images("myapp-linux")
     runner, client = container_runner
-    cmd = Dev::ProjectCommand.new(run: "./bin/test.sh", repl: false)
+    cmd = command("./bin/test.sh", repl: false)
 
     When "the client returns a docker command and we run with args"
     client.stubs(:ensure_environment_image!).returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
@@ -694,7 +729,7 @@ class CommandRunnerTest < Minitest::Test
     Given "a pinned image declaring run_env and the ENV var set"
     lock_images("myapp-linux", run_env: { "WWISE_TOKEN" => "wwise/token" })
     runner, client = container_runner
-    cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
+    cmd = command("./bin/build.sh", repl: false)
     ENV["WWISE_TOKEN"] = "tok-123"
 
     When "the image is ready and the command runs"
@@ -716,7 +751,7 @@ class CommandRunnerTest < Minitest::Test
     Given "a pinned image and DEV_PUBLISH_IMAGE=1 in the env"
     lock_images("myapp-linux")
     runner, client = container_runner
-    cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
+    cmd = command("./bin/build.sh", repl: false)
     ENV["DEV_PUBLISH_IMAGE"] = "1"
 
     When "the command runs"
@@ -738,7 +773,7 @@ class CommandRunnerTest < Minitest::Test
     Given "a host whose gh is logged in, and a pinned image with a run_env"
     lock_images("myapp-linux", run_env: { "WWISE_TOKEN" => "wwise/token" })
     runner, client = container_runner(github_token: host_github_token("gho_host"))
-    cmd = Dev::ProjectCommand.new(run: "./bin/ue/starter/publish.sh", repl: false)
+    cmd = command("./bin/ue/starter/publish.sh", repl: false)
     ENV["WWISE_TOKEN"] = "tok-123"
 
     When "the command runs"
@@ -762,7 +797,7 @@ class CommandRunnerTest < Minitest::Test
     Given "a host whose gh is logged in, and a pinned image whose run_env names GH_TOKEN"
     lock_images("myapp-linux", run_env: { "GH_TOKEN" => "github/token" })
     runner, client = container_runner(github_token: host_github_token("gho_host"))
-    cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
+    cmd = command("./bin/build.sh", repl: false)
     ENV["GH_TOKEN"] = "gho_mine"
 
     When "the command runs"
@@ -785,7 +820,7 @@ class CommandRunnerTest < Minitest::Test
     Given "a pinned image with run_env whose value is not in ENV or storage"
     lock_images("myapp-linux", run_env: { "WWISE_TOKEN" => "wwise/token" })
     runner, client = container_runner
-    cmd = Dev::ProjectCommand.new(run: "./bin/build.sh", repl: false)
+    cmd = command("./bin/build.sh", repl: false)
     ENV.delete("WWISE_TOKEN")
 
     When "the credential is not stored and the command runs"

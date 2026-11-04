@@ -5,7 +5,15 @@ require "test_helper"
 require "dev/cli/flag_vocabulary"
 require "dev/cli/usage_printer"
 require "dev/command"
+require "dev/deps/dependency"
+require "dev/environment_image"
+require "dev/host_environment"
+require "dev/host_rule"
+require "dev/placement"
+require "fileutils"
+require "pathname"
 require "stringio"
+require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Cli::UsagePrinterTest < Minitest::Test
@@ -21,6 +29,15 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
     attr_reader :desc, :category
 
     def call(args:, context:); end
+  end
+
+  def setup
+    @marker_dir = Pathname(Dir.mktmpdir("usage-printer-host"))
+  end
+
+  def teardown
+    FileUtils.rm_rf(@marker_dir)
+    super
   end
 
   def lifecycle_builtin(desc: "a lifecycle builtin")
@@ -276,9 +293,128 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
     out.string == "Usage: dev test unit [args...]\n\nUnit tests\n"
   end
 
+  # --- the environment column (dev#409) ----------------------------------
+
+  test "project rows carry their environment on this machine as a trailing column; builtins and groups carry none" do
+    Given "a host provisioned from one of two images; commands placed on each, on the host, and unplaced shapes beside them"
+    linux = image("cellbound-3d-linux")
+    server = image("cellbound-3d-server")
+    host_rule = host_rule(provisioned_from: server)
+    children = {
+      "build" => bound(Dev::ProjectCommand.new(run: "./bin/build", desc: "Build"), Dev::Placement::Image.new(image: linux)),
+      "serve" => bound(Dev::ProjectCommand.new(run: "./bin/serve", desc: "Run the dedicated server"), Dev::Placement::Image.new(image: server)),
+      "s" => bound(Dev::ProjectCommand.new(run: "./bin/dev-s", desc: "Inner loop"), Dev::Placement::Host.new),
+      "db" => build_group(["db"], desc: "Database chores"),
+      "up" => Dev::OverriddenCommand.new(
+        builtin: lifecycle_builtin(desc: "builtin up"),
+        project: bound(Dev::ProjectCommand.new(run: "./bin/setup", desc: "Setup"), Dev::Placement::Host.new),
+      ),
+      "deps" => lifecycle_builtin(desc: "Manage dependencies"),
+    }
+
+    When "printing the root to a non-terminal"
+    out = StringIO.new
+    Dev::Cli::UsagePrinter.new(host_rule:).print_node(path: [], command: Dev::CommandGroup.root(desc: "d", children:), out:)
+    lines = out.string.lines.map(&:chomp)
+
+    Then "one column per section, padded to its longest summary: the image (container) when entered from here, the image when native, host; nothing on a group or a plain builtin"
+    lines.include?("  build        Build                     cellbound-3d-linux (container)")
+    lines.include?("  serve        Run the dedicated server  cellbound-3d-server")
+    lines.include?("  s            Inner loop                host")
+    lines.include?("  db …         Database chores")
+    lines.include?("  up           Setup#{" " * 16}host")
+    lines.include?("  deps         Manage dependencies")
+    !out.string.include?("\e[")
+  end
+
+  test "the environment column is dim on a terminal and plain anywhere else" do
+    Given
+    command = bound(Dev::ProjectCommand.new(run: "./bin/dev-s", desc: "Inner loop"), Dev::Placement::Host.new)
+    root = Dev::CommandGroup.root(desc: "d", children: { "s" => command })
+    tty = StringIO.new
+    tty.define_singleton_method(:tty?) { true }
+    pipe = StringIO.new
+
+    When
+    Dev::Cli::UsagePrinter.new(host_rule: host_rule).print_node(path: [], command: root, out: tty)
+    Dev::Cli::UsagePrinter.new(host_rule: host_rule).print_node(path: [], command: root, out: pipe)
+
+    Then
+    tty.string.include?("  s            Inner loop  \e[2mhost\e[0m\n")
+    pipe.string.include?("  s            Inner loop  host\n")
+  end
+
+  test "a command the composition root could not bind lists without a column: the lock said why on stderr" do
+    Expect
+    print_root({ "test" => Dev::ProjectCommand.new(run: "rspec", desc: "Run tests") }).include?("  test         Run tests\n")
+  end
+
+  test "a node's own usage says its environment in a sentence: #{what}" do
+    Given
+    linux = image("cellbound-3d-linux")
+    host_rule = host_rule(provisioned_from: native ? linux : nil)
+    command = bound(Dev::ProjectCommand.new(run: "./bin/build", desc: "Build"), placement_for(placement, linux))
+    out = StringIO.new
+
+    When
+    Dev::Cli::UsagePrinter.new(host_rule:).print_node(path: ["build"], command:, out:)
+
+    Then "the sentence follows the description"
+    out.string == "Usage: dev build [args...]\n\nBuild\n#{sentence}\n"
+
+    Where
+    what                         | placement | native | sentence
+    "the host"                   | :host     | false  | "Runs on the host."
+    "an image entered from here" | :image    | false  | "Runs in cellbound-3d-linux, in a container on this machine."
+    "an image this host is"      | :image    | true   | "Runs in cellbound-3d-linux, natively on this machine."
+  end
+
+  test "an overridden slot's own usage says the project body's environment" do
+    Given
+    overridden = Dev::OverriddenCommand.new(
+      builtin: lifecycle_builtin(desc: "builtin up"),
+      project: bound(Dev::ProjectCommand.new(run: "./bin/setup", desc: "Setup"), Dev::Placement::Host.new),
+    )
+    out = StringIO.new
+
+    When
+    Dev::Cli::UsagePrinter.new(host_rule: host_rule).print_node(path: ["up"], command: overridden, out:)
+
+    Then
+    out.string.lines.map(&:chomp).fetch(3) == "Runs on the host."
+  end
+
   def build_group(path, desc: "a group", category: Dev::Command::Category::Project, children: nil)
     Dev::CommandGroup.new(
       path: path, desc: desc, category: category, children: children || { "child" => workflow_builtin },
     )
+  end
+
+  def bound(command, placement)
+    command.with_placement(placement)
+  end
+
+  def placement_for(kind, image)
+    kind == :host ? Dev::Placement::Host.new : Dev::Placement::Image.new(image:)
+  end
+
+  def image(name)
+    Dev::EnvironmentImage.from_pin(
+      Dev::Deps::Dependency.new(
+        name: name, integration: :image, group: :app, version: "ue5.8-3", hash: "SHA256=#{"a" * 64}",
+        metadata: {
+          "from" => "ghcr.io/d3mlabs/unreal-engine-build-base", "platform" => "linux/amd64",
+          "platforms" => ["linux/amd64"], "registry" => "ghcr.io/d3mlabs", "apt" => [],
+        },
+      ),
+    )
+  end
+
+  # A host rule over a real marker file: a host provisioned from +image+,
+  # or a bare one.
+  def host_rule(provisioned_from: nil)
+    marker = @marker_dir / "environment-#{provisioned_from&.name || "none"}"
+    marker.write(provisioned_from.marker) if provisioned_from
+    Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: marker.to_s), inside_container: false)
   end
 end

@@ -3,6 +3,8 @@
 
 require "stringio"
 require_relative "../command"
+require_relative "../host_rule"
+require_relative "../placement"
 require_relative "flag_vocabulary"
 
 module Dev
@@ -18,6 +20,15 @@ module Dev
     # registration order. A node's own flags list after its description, in
     # the order the command declares them — the command carries its
     # documentation where the operator meets it.
+    #
+    # Every command with a project body — a project command, a builtin a
+    # project overrode — also says where it runs on this machine (dev#409):
+    # a dim trailing column on its listing row, a sentence in its own
+    # usage. The environment is the command's bound placement under the
+    # host rule: `host`, the image's name, or the image's name with
+    # `(container)` when running it from here enters a container. A
+    # builtin with no project body runs on the host by construction and is
+    # not annotated.
     class UsagePrinter
       extend T::Sig
 
@@ -31,12 +42,20 @@ module Dev
         T::Hash[Command::Category, String],
       )
 
+      # What the environment column appends to an image's name when
+      # running it from here enters a container of it.
+      CONTAINER_SUFFIX = " (container)"
+
       # @param epilogue [String, nil] the root usage's closing line
       #   (examples, or the hint that project commands need a dev.yml) —
       #   the one line that is about the tool rather than a node
-      sig { params(epilogue: T.nilable(String)).void }
-      def initialize(epilogue: nil)
+      # @param host_rule [Dev::HostRule] whether an image's work crosses
+      #   into a container from this machine — what the environment column
+      #   reads, so it agrees with where the command runner places it
+      sig { params(epilogue: T.nilable(String), host_rule: HostRule).void }
+      def initialize(epilogue: nil, host_rule: HostRule.new)
         @epilogue = epilogue
+        @host_rule = host_rule
       end
 
       # @param path [Array<String>] the path that reached the node (empty
@@ -52,6 +71,8 @@ module Dev
         out.puts "#{command.is_a?(CommandGroup) ? "Usage:" : "      "} #{invocation} <command> [args...]" unless children.empty?
         out.puts ""
         out.puts command.desc
+        sentence = environment_sentence(command)
+        out.puts sentence if sentence
         print_flags(command.flags, out) unless command.flags.empty?
         print_children(children, out) unless children.empty?
         return if path.any? || @epilogue.nil?
@@ -120,11 +141,19 @@ module Dev
       def print_section(heading, commands, out)
         out.puts ""
         out.puts "#{heading}:"
-        # Nodes with children carry a trailing ellipsis: the reader learns
-        # there is more beneath without the listing expanding the whole tree.
-        commands.sort_by { |name, _command| name }.each do |name, command|
+        rows = commands.sort_by { |name, _command| name }.map do |name, command|
+          # Nodes with children carry a trailing ellipsis: the reader learns
+          # there is more beneath without the listing expanding the whole tree.
           label = command.children.empty? ? name : "#{name} …"
-          out.puts "  #{label.ljust(12)} #{summary(command)}"
+          [label, summary(command), environment_label(command)]
+        end
+        # The environment is a column: summaries pad to the longest in the
+        # section so the labels line up, and a row with none ends at its
+        # summary.
+        width = T.must(rows.map { |_label, summary, _environment| summary.length }.max)
+        rows.each do |label, summary, environment|
+          prefix = "  #{label.ljust(12)} "
+          out.puts(environment ? "#{prefix}#{summary.ljust(width)}  #{dim(environment, out)}" : "#{prefix}#{summary}")
         end
       end
 
@@ -137,6 +166,77 @@ module Dev
       sig { params(command: Command).returns(String) }
       def summary(command)
         command.desc.lines.fetch(0, "").chomp
+      end
+
+      # The listing row's environment column: `host`, the image's name, or
+      # the name with CONTAINER_SUFFIX when running it from here enters a
+      # container. Nothing for a command with no project body, and nothing
+      # for one the composition root could not bind (the lock was
+      # unreadable; it said so on stderr).
+      #
+      # @param command [Dev::Command]
+      # @return [String, nil]
+      sig { params(command: Command).returns(T.nilable(String)) }
+      def environment_label(command)
+        placement = placement_of(command)
+        return nil if placement.nil?
+
+        case placement
+        when Placement::Host then placement.name
+        when Placement::Image
+          @host_rule.enters_container?(placement.image) ? "#{placement.name}#{CONTAINER_SUFFIX}" : placement.name
+        else
+          # simplecov:disable — the sealed placement has no third shape;
+          # T.absurd keeps the static proof.
+          T.absurd(placement)
+          # simplecov:enable
+        end
+      end
+
+      # The node's own usage says the same in a sentence.
+      #
+      # @param command [Dev::Command]
+      # @return [String, nil] nil when the row would carry no column either
+      sig { params(command: Command).returns(T.nilable(String)) }
+      def environment_sentence(command)
+        placement = placement_of(command)
+        return nil if placement.nil?
+
+        case placement
+        when Placement::Host then "Runs on the host."
+        when Placement::Image
+          where = @host_rule.enters_container?(placement.image) ? "in a container on this machine" : "natively on this machine"
+          "Runs in #{placement.name}, #{where}."
+        else
+          # simplecov:disable — see environment_label.
+          T.absurd(placement)
+          # simplecov:enable
+        end
+      end
+
+      # The bound placement of a command with a project body; nil for the
+      # shapes that have none (a builtin, a group).
+      #
+      # @param command [Dev::Command]
+      # @return [Dev::Placement, nil]
+      sig { params(command: Command).returns(T.nilable(Placement)) }
+      def placement_of(command)
+        case command
+        when ProjectCommand then command.placement
+        when OverriddenCommand then command.project.placement
+        else nil
+        end
+      end
+
+      # Dim on a terminal; plain text anywhere else (a pipe, a test's
+      # StringIO), so the column never leaks escape codes into a capture.
+      #
+      # @param text [String]
+      # @param out [IO, StringIO]
+      # @return [String]
+      sig { params(text: String, out: T.any(IO, StringIO)).returns(String) }
+      def dim(text, out)
+        out.tty? ? "\e[2m#{text}\e[0m" : text
       end
     end
   end

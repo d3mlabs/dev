@@ -163,13 +163,13 @@ class Dev::Deps::ImageDSLTest < Minitest::Test
     "a b"           | "a space"
   end
 
-  test "an image named host is a load error: the name is dev.yml's `runs_on: host`, the placement that is no image" do
+  test "an image named host is a load error: the name is dev.yml's `environment: host`, the placement that is no image" do
     When
     Dev::Deps.define { image "host", from: FLOOR }
 
     Then
     error = raises(Dev::Deps::DSL::ReservedImageNameError)
-    error.message.include?("runs_on")
+    error.message.include?("environment: host")
   end
 
   test "image without from: is an ArgumentError: the floor is not optional" do
