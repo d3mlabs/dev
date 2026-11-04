@@ -9,7 +9,10 @@ description: >-
 
 - **`src/dev/`** — the typed (Sorbet) CLI core: Runner, command
   parser/registry, dev.yml config parsing, CLI UI, GlobalDispatch. Owns
-  dispatch and execution, no feature logic.
+  dispatch and execution, no feature logic. Requires point one way:
+  `src/` requires `lib/`, never the reverse — a value both need (e.g.
+  `EnvironmentRef`, moved for dev#412 so `Lifecycle::Target` could carry
+  it) lives in `lib/dev/`.
 - **`lib/dev/cd/`** — checkout jumping: RepoDiscovery walks the workspace
   root, Matcher ranks, ShellHook owns the RC function (a child process
   cannot cd its parent shell).
