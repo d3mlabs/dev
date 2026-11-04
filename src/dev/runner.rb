@@ -365,6 +365,9 @@ module Dev
           category: Command::Category::Workflow,
           children: { "gc" => Builtins::CacheGcCommand.new },
         ),
+        # Hidden plumbing for a target's `package:` script (dev#192): dev's
+        # own archive forms over any directory.
+        "pack" => Builtins::PackCommand.new(out: @out),
       }, T::Hash[String, Command])
       builtins["container"] = container_group if container_group
       # `down` reverses what `up` adds; a project with no service dependency

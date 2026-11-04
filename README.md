@@ -124,19 +124,38 @@ commands:
   - `repl`: *(optional, default `false`)* When `true`, the command execs directly without a status footer. Use this for long-running interactive sessions like consoles and REPLs where a trailing `✓ Done` doesn't make sense.
   - `environment`: *(optional)* The environment the command's body runs in: a name from `dependencies.rb`'s `image` blocks, or `host`. An image name means a container of that image (or this machine, when it was provisioned from it); `host` means this machine via `shadowenv exec` — provisioning, deploying, the editor. Omitted, the command runs in the project's one image when the lock pins exactly one, on the host when it pins none, and is refused — both names listed — when it pins several. An image may not be named `host`. Every `environment:` is bound against the lock when `dev.yml` loads, so a name the lock does not pin fails before any command runs, and `dev help` shows where each command runs on this machine. See [Commands link to images by name](#commands-link-to-images-by-name-environment).
   - `hidden`: *(optional, default `false`)* When `true`, the command is still callable (`dev <cmd>`) but omitted from `dev` / `dev --help` output. Use for internal plumbing — e.g. a `build` primitive that an intent command (`test`, `release`) calls but that developers shouldn't invoke directly.
-- `targets`: *(optional)* What the project can build, one entry per **target** — the content axis: a client, the client with Steamworks compiled in, a dedicated server, a library, a gem ([dev#192](https://github.com/d3mlabs/dev/issues/192)). Each declares `desc`, and the axes it varies over: `platforms` (a subset of dev's closed set `win64 | linux64 | macos`, first = default) and `configs` (a subset of `debug | dev | release`, first = default). dev derives the target's **builds** — target × platform × config — each named `<target>[-<platform>[-<config>]]`, a segment present exactly when the target declares that axis; a target with neither axis is its own single build, named as the target. Partially qualified, a build name is a pattern (an omitted segment means "any"). Validated at load: a target name is lower-case alphanumeric segments joined by single dashes and may not end in a platform or config id (that would spell a build of a shorter target); an id outside the sets is refused with the set listed; with targets declared, `commands: build:` and `commands: package:` are refused (the verbs are derived from the targets), and no command may be named like a build or a pattern, so a positional `dev build <build>` is never ambiguous. The lifecycle verbs, the builder and packager keys (`build:`, `package:`, `packager:`) and a target's `environment:` land with the rest of dev#192.
+- `targets`: *(optional)* What the project can build, one entry per **target** — the content axis: a client, the client with Steamworks compiled in, a dedicated server, a library, a gem ([dev#192](https://github.com/d3mlabs/dev/issues/192)). Each declares `desc`, and the axes it varies over: `platforms` (a subset of dev's closed set `win64 | linux64 | macos`, first = default) and `configs` (a subset of `debug | dev | release`, first = default). dev derives the target's **builds** — target × platform × config — each named `<target>[-<platform>[-<config>]]`, a segment present exactly when the target declares that axis; a target with neither axis is its own single build, named as the target. Partially qualified, a build name is a pattern (an omitted segment means "any"). Validated at load: a target name is lower-case alphanumeric segments joined by single dashes and may not end in a platform or config id (that would spell a build of a shorter target); an id outside the sets is refused with the set listed; with targets declared, `commands: build:` and `commands: package:` are refused (the verbs are derived from the targets), and no command may be named like a build or a pattern, so a positional `dev build <build>` is never ambiguous. The lifecycle verbs and a target's `environment:` land with the rest of dev#192.
+
+  Each target also says how its builds are made, through two **ports** between dev and the toolchain — the **builder** makes the runnable *install* (what the toolchain calls done: the compiled, cooked and staged game; a laid-out file set), the **packager** turns the install into the *archive* (the one file a release attaches and a channel uploads). The builder never knows the archive format and the packager never knows the toolchain, which is why they are declared separately:
+  - `build`: *(optional)* The builder's script form: a shell command run at the repo root with the build in its env (below) and `DEV_INSTALL` naming the directory to stage into. Omitted, the target has nothing to compile — `build` is a no-op for it and `package` runs alone (a gem, an org payload).
+  - `package`: *(optional)* The packager's script form: a shell command with the same env plus `DEV_ARTIFACT`, the archive path **without its extension**; the script appends the extension of what it writes (`"$DEV_ARTIFACT.zip"`), and what appeared at `$DEV_ARTIFACT.*` is the archive (the lexically first file) and its parts. For dev's own forms with a twist, the hidden `dev pack DIR [--out STEM] [--format zip|tar] [--split SIZE]` archives any directory and prints the files it wrote (`dev pack "$DEV_INSTALL" --out "$DEV_ARTIFACT"`).
+  - `packager`: *(optional, default `archive`)* A built-in packager by name, exclusive with `package`: **`archive`** — dev zips the install's contents as `<build>.zip` (symlinks kept); as a mapping it takes the tar form, `{ archive: { format: tar } }` for `<build>.tar.zst` or `{ archive: { split: 2GiB } }` to cut the stream into `<build>.tar.zst.00`, `.01`, … of at most that size plus `<build>.MANIFEST` (each part's SHA-256, `sha256sum -c` form) — the split set the gh integration already reads, and GitHub's 2 GiB asset limit is what it is for (the tar form needs `zstd` on PATH, the project's fact to declare); **`as-is`** — the install already is the archive (Alpakit's zip, `gem build`'s `.gem`): the one file it holds is adopted as `<build>.<its extension>`; **`none`** — built, never shipped (the Editor `dev test` runs, a library the clients link): invisible to `package`, `release` and `deploy`. `builder: <name>` and `packager: <name>` for integrations (an Unreal builder, a `rubygem` packager) land with [dev#433](https://github.com/d3mlabs/dev/issues/433); `builder:` is refused until then.
+
+  **The scripts' env contract.** A `build:` or `package:` line reads its parameters from the environment, never from flags: `DEV_TARGET`, then `DEV_PLATFORM` and `DEV_CONFIG` — each set exactly when the target declares that axis, so a `case` over an undeclared axis fails under `set -u` rather than matching an empty string — `DEV_INSTALL` (the install directory, created for the builder), and for `package:` also `DEV_ARTIFACT`. The mapping from dev's ids to the toolchain's switches (`dev → Development`, `win64 → Win64`) is the script's `case`, and a declared name it does not handle must fail loudly (`*) exit 2`); a nonzero exit is reported with the script, the build and the code.
 
   ```yaml
   targets:
+    cellbound-3d-editor:                # compile only, never shipped
+      desc: Editor (dev test, the fast loop)
+      platforms: [linux64, macos]
+      build: ./bin/build-editor
+      packager: none
     cellbound-3d:                       # builds: cellbound-3d-win64-dev … cellbound-3d-linux64-release
       desc: Client
       platforms: [win64, linux64]
       configs: [dev, release]
-    cellbound-3d-server:                # builds: cellbound-3d-server-linux64-{dev,release}
-      desc: Dedicated server
-      platforms: [linux64]
-      configs: [dev, release]
-    rspock:                             # one build, named rspock
+      build: ./bin/build                # DEV_TARGET DEV_PLATFORM DEV_CONFIG → stage into $DEV_INSTALL
+                                        # packager omitted: dev zips the install
+    snappy-steam:                       # Alpakit's zip is the archive
+      desc: Client mod against the Steam game
+      platforms: [win64]
+      build: ./bin/build.sh
+      packager: as-is
+    ue-toolchain:                       # one build; tar.zst parts under GitHub's asset limit
+      desc: The engine toolchain tarball
+      build: ./publisher/build.sh
+      packager: { archive: { split: 2GiB } }
+    rspock:                             # one build, named rspock; nothing to compile
       desc: The gem
   ```
 - A project spec on a **builtin's name** merges with it: `run` on a builtin is the `super()` override above; subcommands always merge child by child (new children are added, same-named children override — `deps:`, `cache:`, `runner:` accept new verbs this way); `up:` with only `commands:` keeps bare `dev up` as the builtin and adds the children.

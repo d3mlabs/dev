@@ -105,12 +105,46 @@ class Dev::Lifecycle::TargetTest < Minitest::Test
     error.message.include?("configs lists release more than once")
   end
 
-  test "targets are values: equal by name, desc and axes" do
+  test "targets are values: equal by name, desc, axes, builder and packager" do
     Expect
     client_target == client_target
     client_target.hash == client_target.hash
     client_target != steamworks_target
     client_target != Dev::Lifecycle::Target.new(name: "cellbound-3d", desc: "Client", platforms: client_target.platforms)
+    client_target != Dev::Lifecycle::Target.new(
+      name: "cellbound-3d", desc: "Client", platforms: client_target.platforms, configs: client_target.configs,
+      builder: Dev::Lifecycle::BuilderSpec::Script.new(command: "./bin/build"),
+    )
+    client_target != Dev::Lifecycle::Target.new(
+      name: "cellbound-3d", desc: "Client", platforms: client_target.platforms, configs: client_target.configs,
+      packager: Dev::Lifecycle::PackagerSpec::None.new,
+    )
     { client_target => 1 }.key?(client_target)
+  end
+
+  test "a target declares nothing to compile and dev's archive packager unless it says otherwise" do
+    Given
+    target = Dev::Lifecycle::Target.new(name: "rspock")
+
+    Expect
+    target.builder.nil?
+    !target.buildable?
+    target.packager == Dev::Lifecycle::PackagerSpec::Archive.new
+    target.packageable?
+  end
+
+  test "a target with a build: line is buildable; one with packager: none is built, never shipped" do
+    Given
+    editor = Dev::Lifecycle::Target.new(
+      name: "cellbound-3d-editor",
+      builder: Dev::Lifecycle::BuilderSpec::Script.new(command: "./bin/build-editor"),
+      packager: Dev::Lifecycle::PackagerSpec::None.new,
+    )
+
+    Expect
+    editor.buildable?
+    editor.builder.to_s == "./bin/build-editor"
+    !editor.packageable?
+    editor.packager.to_s == "none"
   end
 end

@@ -435,10 +435,33 @@ class RunnerTest < Minitest::Test
     runner.run(%w[complete test])
     inside = out.string.lines.map(&:chomp)
 
-    Then "builtins, groups and project commands at the top; the group's children inside; complete itself hidden"
+    Then "builtins, groups and project commands at the top; the group's children inside; complete and pack hidden"
     (%w[help up deps plan test] - top).empty?
     !top.include?("complete")
+    !top.include?("pack")
     inside == %w[e2e unit]
+  end
+
+  test "dev pack is a hidden project builtin: callable, absent from the usage" do
+    Given "a Runner over an empty dev.yml, and a directory to archive"
+    out = StringIO.new
+    runner = build_runner(out: out)
+    install = Pathname(Dir.mktmpdir("runner-pack-"))
+    (@tmp_roots ||= []).push(install)
+    (install / "a.txt").write("a")
+    stem = install / "out/archive"
+
+    When "listing the usage, then packing"
+    runner.run(["help"])
+    usage = out.string
+    out.truncate(0)
+    out.rewind
+    runner.run(["pack", install.to_s, "--out", stem.to_s])
+
+    Then "the usage never names pack; the zip is written and printed"
+    !usage.include?(" pack ")
+    out.string == "#{stem}.zip\n"
+    (install / "out/archive.zip").file?
   end
 
   test "dev complete outside a project offers the projectless catalog, global commands included" do
