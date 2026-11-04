@@ -4,9 +4,11 @@
 require "pathname"
 require "yaml"
 require "dev/engine_resources"
+require "dev/lifecycle"
 require_relative "command_parser"
 require_relative "environment_ref"
 require_relative "project_manifest"
+require_relative "target_parser"
 
 module Dev
   # The boundary coercion for dev.yml: #load parses it once and rejects the
@@ -16,6 +18,13 @@ module Dev
   # dev#409) — each with where it went. dependencies.rb is not read here —
   # the toolchain is a dependency, and only the deps commands evaluate that
   # file.
+  #
+  # With `targets:` declared (dev#192) it also holds the two rules that span
+  # targets and commands: `build` and `package` are derived from the
+  # targets, so a project may not declare them as commands; and no command
+  # may be named like a build, so a positional `dev build <build>` is never
+  # ambiguous. Both are vacuous without targets — the derived verbs do not
+  # exist then, and a project's own `build:` is a plain command.
   #
   # Stateless: reusable across manifests, inputs arrive as method arguments.
   class ProjectManifestLoader
@@ -34,6 +43,19 @@ module Dev
     # message lists each key with its migration. RuntimeError so the CLI
     # boundary reports it as a clean `dev:` error.
     class RetiredKeysError < RuntimeError; end
+
+    # Raised when a project with `targets:` declares `commands: build:` or
+    # `commands: package:` — the verbs are derived from the targets
+    # (dev#192, K1); what the project wanted to run is a target's builder.
+    class DerivedCommandDeclaredError < RuntimeError; end
+
+    # Raised when a project with `targets:` names a command like one of its
+    # builds (or a pattern over them): `dev build <build>` is positional,
+    # so the two vocabularies may not overlap (dev#192, *The model*).
+    class BuildNamedCommandError < RuntimeError; end
+
+    # The verbs `targets:` derives; a project may not declare them.
+    DERIVED_COMMANDS = T.let(["build", "package"].freeze, T::Array[String])
 
     # The key `runs_on:` became: the environment a command's body executes
     # in — the domain's own noun, where `runs_on` is GitHub's word for a
@@ -57,9 +79,10 @@ module Dev
     # The block's keys that fed the Dockerfile build and have no successor.
     GONE_WITH_THE_DOCKERFILE = "delete it — the Dockerfile path is gone (d3mlabs/dev#311)"
 
-    sig { params(command_parser: CommandParser).void }
-    def initialize(command_parser: CommandParser.new)
+    sig { params(command_parser: CommandParser, target_parser: TargetParser).void }
+    def initialize(command_parser: CommandParser.new, target_parser: TargetParser.new)
       @command_parser = command_parser
+      @target_parser = target_parser
     end
 
     # Parse dev.yml into a manifest.
@@ -70,6 +93,10 @@ module Dev
     #   `ruby:` key
     # @raise [RetiredKeysError] when dev.yml carries `build.container`, a
     #   command's `container:` flag or a command's `runs_on:`
+    # @raise [DerivedCommandDeclaredError] when `targets:` is declared
+    #   beside `commands: build:` or `commands: package:`
+    # @raise [BuildNamedCommandError] when `targets:` is declared and a
+    #   command is named like one of its builds
     sig { params(dev_yml_path: Pathname).returns(ProjectManifest) }
     def load(dev_yml_path)
       yaml = YAML.load_file(dev_yml_path)
@@ -77,11 +104,76 @@ module Dev
       reject_retired_keys(yaml)
       warn_retired_runner_key(yaml)
       raw_commands = yaml["commands"] || {}
+      commands = T.let(
+        raw_commands.to_h { |name, h| [name.to_s, @command_parser.parse([name.to_s], h)] },
+        T::Hash[String, ProjectNode],
+      )
+      targets = @target_parser.parse_all(yaml["targets"])
+      reject_derived_commands(commands, targets)
+      reject_build_named_commands(commands, targets)
       ProjectManifest.new(
         name: T.cast(yaml["name"], String),
-        commands: raw_commands.to_h { |name, h| [name.to_s, @command_parser.parse([name.to_s], h)] },
+        commands:,
+        targets:,
         engine: parse_resources(yaml["engine"]),
       )
+    end
+
+    # With targets declared, `build` and `package` exist as derived verbs,
+    # so a project command of either name is refused with what to declare
+    # instead.
+    #
+    # @param commands [Hash{String => ProjectNode}] the top-level commands
+    # @param targets [Hash{String => Lifecycle::Target}]
+    # @return [void]
+    # @raise [DerivedCommandDeclaredError]
+    sig { params(commands: T::Hash[String, ProjectNode], targets: T::Hash[String, Lifecycle::Target]).void }
+    def reject_derived_commands(commands, targets)
+      return if targets.empty?
+
+      declared = DERIVED_COMMANDS & commands.keys
+      return if declared.empty?
+
+      keys = declared.map { |verb| "`commands: #{verb}:`" }.join(" and ")
+      raise DerivedCommandDeclaredError,
+        "dev.yml declares #{keys} beside `targets:`, but #{declared.join(" and ")} #{declared.one? ? "is" : "are"} " \
+          "derived from `targets:` — declare what it ran as a target's builder and delete the command (d3mlabs/dev#192)"
+    end
+
+    # With targets declared, no command at any depth may be named like a
+    # build or a build pattern of them: the lifecycle verbs take the build
+    # positionally, and a child of the same name would shadow it.
+    #
+    # @param commands [Hash{String => ProjectNode}] the top-level commands
+    # @param targets [Hash{String => Lifecycle::Target}]
+    # @return [void]
+    # @raise [BuildNamedCommandError]
+    sig { params(commands: T::Hash[String, ProjectNode], targets: T::Hash[String, Lifecycle::Target]).void }
+    def reject_build_named_commands(commands, targets)
+      return if targets.empty?
+
+      build_names = targets.values.flat_map(&:pattern_names)
+      offending = command_paths(commands).select { |path| build_names.include?(T.must(path.last)) }
+      return if offending.empty?
+
+      raise BuildNamedCommandError,
+        "dev.yml names #{offending.one? ? "a command" : "commands"} like a build: " \
+          "#{offending.map { |path| "'#{path.join(" ")}'" }.join(", ")} — the lifecycle verbs take a build " \
+          "positionally (`dev build <build>`), so rename the command or the target (d3mlabs/dev#192)"
+    end
+
+    # Every command path in the tree, parents before children, in
+    # declaration order.
+    #
+    # @param commands [Hash{String => Command}] one level of the tree
+    # @param prefix [Array<String>] the path to this level
+    # @return [Array<Array<String>>]
+    sig { params(commands: T::Hash[String, Command], prefix: T::Array[String]).returns(T::Array[T::Array[String]]) }
+    def command_paths(commands, prefix = [])
+      commands.flat_map do |name, node|
+        path = prefix + [name]
+        [path] + command_paths(node.children, path)
+      end
     end
 
     # The retired keys are refused before any command exists: the

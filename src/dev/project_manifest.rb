@@ -2,11 +2,12 @@
 # frozen_string_literal: true
 
 require "dev/engine_resources"
+require "dev/lifecycle"
 require_relative "command"
 
 module Dev
-  # The project declaration as dev.yml states it (name, commands, engine
-  # sizing), coerced once at the boundary. Immutable —
+  # The project declaration as dev.yml states it (name, commands, targets,
+  # engine sizing), coerced once at the boundary. Immutable —
   # ProjectManifestLoader is the only writer, and it reads the file exactly
   # once. The toolchain is not here: `ruby` / `python` are dependencies
   # declared in dependencies.rb, which only the deps commands read.
@@ -20,6 +21,10 @@ module Dev
     # The project's command tree as declared: runnable commands (with any
     # nested `commands:` as children) and groups.
     const :commands, T::Hash[String, ProjectNode]
+    # What the project can build (`targets:`, dev#192), in declaration
+    # order — the first is what bare `build` means. Empty when the project
+    # declares none, and then no lifecycle verb exists for it.
+    const :targets, T::Hash[String, Lifecycle::Target], default: {}
     # The engine floor this project's build was tuned for (`engine:`); nil
     # means the provisioner's defaults and no check.
     const :engine, T.nilable(Dev::EngineResources::Hint), default: nil
