@@ -9,6 +9,9 @@ transform!(RSpock::AST::Transformation)
 class Dev::Lifecycle::TargetTest < Minitest::Test
   include LifecycleFixtures
 
+  LINUX = Dev::EnvironmentRef::Image.new(name: "cellbound-3d-linux")
+  HOST = Dev::EnvironmentRef::Host.new
+
   test "a target declares its axes; each present axis contributes a segment to every build" do
     Given
     target = client_target
@@ -105,7 +108,7 @@ class Dev::Lifecycle::TargetTest < Minitest::Test
     error.message.include?("configs lists release more than once")
   end
 
-  test "targets are values: equal by name, desc, axes, builder and packager" do
+  test "targets are values: equal by name, desc, axes, builder, packager and environment" do
     Expect
     client_target == client_target
     client_target.hash == client_target.hash
@@ -119,6 +122,7 @@ class Dev::Lifecycle::TargetTest < Minitest::Test
       name: "cellbound-3d", desc: "Client", platforms: client_target.platforms, configs: client_target.configs,
       packager: Dev::Lifecycle::PackagerSpec::None.new,
     )
+    client_target != with_environment(client_target, single(LINUX))
     { client_target => 1 }.key?(client_target)
   end
 
@@ -146,5 +150,68 @@ class Dev::Lifecycle::TargetTest < Minitest::Test
     editor.builder.to_s == "./bin/build-editor"
     !editor.packageable?
     editor.packager.to_s == "none"
+  end
+
+  test "a target declaring no environment leaves every build to the project's default, as a command does" do
+    Expect
+    client_target.environment.nil?
+    client_target.environment_for(PLATFORM::Win64).nil?
+    gem_target.environment_for(nil).nil?
+  end
+
+  test "a single environment is every build's, whatever its platform" do
+    Given
+    target = with_environment(client_target, single(LINUX))
+
+    Expect
+    target.environment_for(PLATFORM::Win64) == LINUX
+    target.environment_for(PLATFORM::Linux64) == LINUX
+    with_environment(gem_target, single(HOST)).environment_for(nil) == HOST
+  end
+
+  test "a per-platform environment answers each declared platform with its own reference" do
+    Given "the editor: built in the Linux image on linux64, on the host on macos"
+    target = Dev::Lifecycle::Target.new(
+      name: "cellbound-3d-editor",
+      platforms: [PLATFORM::Linux64, PLATFORM::Macos],
+      environment: per_platform(PLATFORM::Linux64 => LINUX, PLATFORM::Macos => HOST),
+    )
+
+    Expect
+    target.environment_for(PLATFORM::Linux64) == LINUX
+    target.environment_for(PLATFORM::Macos) == HOST
+  end
+
+  test "a per-platform environment must name exactly the declared platforms: #{fault}" do
+    When
+    Dev::Lifecycle::Target.new(name: "cellbound-3d", platforms: platforms, environment: per_platform(references))
+
+    Then
+    error = raises(Dev::Lifecycle::Target::EnvironmentPlatformsError)
+    error.message.include?("target 'cellbound-3d'")
+    error.message.include?(says)
+
+    Where
+    fault               | platforms                            | references                                            | says
+    "an undeclared one" | [PLATFORM::Win64]                    | { PLATFORM::Win64 => LINUX, PLATFORM::Macos => HOST } | "names macos, which the target does not declare"
+    "a missing one"     | [PLATFORM::Win64, PLATFORM::Linux64] | { PLATFORM::Win64 => LINUX }                          | "leaves out linux64"
+    "both at once"      | [PLATFORM::Win64, PLATFORM::Linux64] | { PLATFORM::Win64 => LINUX, PLATFORM::Macos => HOST } | "names macos, which the target does not declare and leaves out linux64"
+    "no platforms"      | []                                   | { PLATFORM::Win64 => LINUX }                          | "declares no platforms, so `environment:` takes one value"
+  end
+
+  private
+
+  def single(reference)
+    Dev::Lifecycle::TargetEnvironment::Single.new(reference:)
+  end
+
+  def per_platform(references)
+    Dev::Lifecycle::TargetEnvironment::PerPlatform.new(references:)
+  end
+
+  def with_environment(target, environment)
+    Dev::Lifecycle::Target.new(
+      name: target.name, desc: target.desc, platforms: target.platforms, configs: target.configs, environment:,
+    )
   end
 end

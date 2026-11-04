@@ -5,6 +5,7 @@ require "digest"
 require "shellwords"
 
 require "dev/deps/dependency"
+require "dev/lifecycle/platform"
 require "dev/platform"
 
 module Dev
@@ -22,8 +23,11 @@ module Dev
   # image: every compare, dev#308's host rule included, is equality.
   #
   # The pin also carries the container's shape — `persist`, `volumes`,
-  # `run_env` (dev#307) — read here for whoever runs the image; none of it
-  # is image content, so none of it is in the Dockerfile or the digest.
+  # `run_env` (dev#307) — read here for whoever runs the image, and the
+  # image's capability — `target_platforms`, the build platforms its
+  # toolchain emits (dev#192, K8), what a target's `environment:` is
+  # checked against; none of it is image content, so none of it is in the
+  # Dockerfile or the digest.
   #
   # The lock stores the digest (UpdateDepsCommand stamps it via with_digest)
   # and from_pin checks it: a dev whose template differs from the one that
@@ -39,6 +43,11 @@ module Dev
     # The lock's `digest` is not what this dev computes for the entry: the
     # entry was locked by a dev with another template.
     class StaleDigestError < StandardError; end
+
+    # The pin's `target_platforms` carries an id outside dev's platform
+    # set: the entry was locked by a dev that knows a platform this one
+    # does not.
+    class TargetPlatformError < StandardError; end
 
     # The floor contract dev's template relies on (ADR-0006, build-base): the
     # unprivileged user builds run as, and Linuxbrew's fixed prefix, a
@@ -102,6 +111,11 @@ module Dev
     sig { returns(T::Hash[String, String]) }
     attr_reader :run_env
 
+    # @return [Array<Lifecycle::Platform>] the build platforms this image
+    #   produces; empty when the block declared none
+    sig { returns(T::Array[Lifecycle::Platform]) }
+    attr_reader :target_platforms
+
     class << self
       extend T::Sig
 
@@ -109,7 +123,7 @@ module Dev
       #
       # @param pin [Dev::Deps::Dependency] an `:image` pin
       # @return [EnvironmentImage]
-      # @raise [PlatformError, StaleDigestError]
+      # @raise [PlatformError, StaleDigestError, TargetPlatformError]
       sig { params(pin: Dev::Deps::Dependency).returns(EnvironmentImage) }
       def from_pin(pin)
         metadata = pin.metadata
@@ -123,6 +137,7 @@ module Dev
           persist: metadata["persist"] == true,
           volumes: Array(metadata["volumes"]).map(&:to_s),
           run_env: (metadata["run_env"] || {}).to_h { |k, v| [k.to_s, v.to_s] },
+          target_platforms: Array(metadata["target_platforms"]).map { |id| parse_target_platform(pin.name, id.to_s) },
         )
         stored = metadata[DIGEST_KEY]
         if stored && stored != image.digest
@@ -183,15 +198,28 @@ module Dev
 
         declared
       end
+
+      # @param name [String]
+      # @param id [String] one entry of the pin's `target_platforms`
+      # @return [Lifecycle::Platform]
+      # @raise [TargetPlatformError]
+      sig { params(name: String, id: String).returns(Lifecycle::Platform) }
+      def parse_target_platform(name, id)
+        Lifecycle::Platform.parse(id)
+      rescue Lifecycle::UnknownPlatformError => e
+        raise TargetPlatformError, "image #{name}: target_platforms: #{e.message} — the lock was written by another dev"
+      end
     end
 
     sig do
       params(
         name: String, from: String, from_digest: String, platform: String, apt: T::Array[String], registry: String,
         persist: T::Boolean, volumes: T::Array[String], run_env: T::Hash[String, String],
+        target_platforms: T::Array[Lifecycle::Platform],
       ).void
     end
-    def initialize(name:, from:, from_digest:, platform:, apt:, registry:, persist: false, volumes: [], run_env: {})
+    def initialize(name:, from:, from_digest:, platform:, apt:, registry:, persist: false, volumes: [], run_env: {},
+      target_platforms: [])
       @name = name
       @from = from
       @from_digest = from_digest
@@ -201,7 +229,16 @@ module Dev
       @persist = persist
       @volumes = T.let(volumes.dup.freeze, T::Array[String])
       @run_env = T.let(run_env.dup.freeze, T::Hash[String, String])
+      @target_platforms = T.let(target_platforms.dup.freeze, T::Array[Lifecycle::Platform])
     end
+
+    # Whether this image's toolchain emits +platform+ — the capability
+    # side of the load-time check against a target's `environment:`.
+    #
+    # @param platform [Lifecycle::Platform]
+    # @return [Boolean]
+    sig { params(platform: Lifecycle::Platform).returns(T::Boolean) }
+    def produces?(platform) = @target_platforms.include?(platform)
 
     # @return [String] the floor pinned by digest — what the FROM line pulls
     sig { returns(String) }

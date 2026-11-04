@@ -208,9 +208,14 @@ module Dev
       service
     end
 
-    # Bind every project command's `environment:` against the lock before
-    # the tree is assembled (dev#409): an unknown or ambiguous name fails
-    # here, at load, and the usage printer reads each command's placement.
+    # Bind every `environment:` against the lock before the tree is
+    # assembled (dev#409): each project command's, and each target's per
+    # platform with the image capability check (dev#192, K8). An unknown
+    # or ambiguous name, or a build pointed at an image that does not
+    # produce its platform, fails here, at load, and the usage printer
+    # reads each command's placement. The target placements are what the
+    # lifecycle verbs dispatch by once they exist (dev#413, dev#414); until
+    # then binding them is the load-time check and nothing holds them.
     #
     # A lock dev cannot read — a pin locked by another dev's template, a
     # retired build-deps.lock — is a different failure: its remediation
@@ -224,9 +229,12 @@ module Dev
     # @param project [ProjectContext]
     # @return [Hash{String => ProjectNode}]
     # @raise [ProjectImages::UnknownImageError, ProjectImages::AmbiguousEnvironmentImageError]
+    # @raise [PlacementBinder::ImageDoesNotProduceError]
     sig { params(manifest: ProjectManifest, project: ProjectContext).returns(T::Hash[String, ProjectNode]) }
     def bind_placements(manifest, project)
-      PlacementBinder.new(images: project.project_images).bind(manifest.commands)
+      binder = PlacementBinder.new(images: project.project_images)
+      binder.bind_targets(manifest.targets)
+      binder.bind(manifest.commands)
     rescue EnvironmentImage::StaleDigestError, Deps::Lockfile::RetiredBuildLockError => e
       $stderr.puts "dev: #{e.message}"
       manifest.commands

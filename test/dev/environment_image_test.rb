@@ -79,6 +79,34 @@ class Dev::EnvironmentImageTest < Minitest::Test
     shaped.run_env == { "TOKEN" => "ns/token" }
   end
 
+  test "target_platforms are read off the pin as dev's platform ids — the image's capability, none by default (dev#192)" do
+    Given
+    bare = Dev::EnvironmentImage.from_pin(pin)
+    capable = Dev::EnvironmentImage.from_pin(pin(target_platforms: ["win64", "linux64"]))
+
+    Expect
+    bare.target_platforms == []
+    !bare.produces?(Dev::Lifecycle::Platform::Linux64)
+    capable.target_platforms == [Dev::Lifecycle::Platform::Win64, Dev::Lifecycle::Platform::Linux64]
+    capable.produces?(Dev::Lifecycle::Platform::Win64)
+    !capable.produces?(Dev::Lifecycle::Platform::Macos)
+  end
+
+  test "the digest ignores target_platforms: a capability is not image content" do
+    Expect
+    Dev::EnvironmentImage.from_pin(pin(target_platforms: ["win64"])).digest == Dev::EnvironmentImage.from_pin(pin).digest
+  end
+
+  test "a target_platforms id outside dev's set is a lock written by another dev, refused naming the image" do
+    When
+    Dev::EnvironmentImage.from_pin(pin(target_platforms: ["win64", "ps5"]))
+
+    Then
+    error = raises(Dev::EnvironmentImage::TargetPlatformError)
+    error.message.include?("image snappy-linux: target_platforms")
+    error.message.include?("win64, linux64, macos")
+  end
+
   test "platform is inferred from a single-platform floor" do
     Expect
     Dev::EnvironmentImage.from_pin(pin(platform: nil, platforms: ["linux/arm64/v8"])).platform == "linux/arm64/v8"
@@ -187,9 +215,10 @@ class Dev::EnvironmentImageTest < Minitest::Test
 
   def pin(name: "snappy-linux", from: "ghcr.io/d3mlabs/unreal-engine-build-base", from_digest: FLOOR_DIGEST,
     platform: "linux/amd64", platforms: ["linux/amd64"], registry: "ghcr.io/d3mlabs", apt: ["dos2unix"], digest: nil,
-    persist: nil, volumes: nil, run_env: nil)
+    persist: nil, volumes: nil, run_env: nil, target_platforms: nil)
     metadata = { "from" => from, "platform" => platform, "platforms" => platforms, "registry" => registry, "apt" => apt }
     metadata["digest"] = digest if digest
+    metadata["target_platforms"] = target_platforms if target_platforms
     metadata["persist"] = persist unless persist.nil?
     metadata["volumes"] = volumes if volumes
     metadata["run_env"] = run_env if run_env

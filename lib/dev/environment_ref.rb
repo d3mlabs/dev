@@ -13,7 +13,9 @@ module Dev
   #
   # A standalone value rather than a field private to ProjectCommand: a
   # lifecycle target names its environment with the same key and the same
-  # two shapes (dev#192), and binds through the same seam.
+  # two shapes (dev#192, Lifecycle::TargetEnvironment), and binds through
+  # the same seam — which is why it lives in lib beside EnvironmentImage,
+  # where the lifecycle vocabulary can reach it, and not in the CLI core.
   #
   # Sealed: a third shape is unrepresentable, so binding is a case over
   # two variants with a T.absurd proof.

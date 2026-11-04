@@ -4,9 +4,9 @@
 require "pathname"
 require "yaml"
 require "dev/engine_resources"
+require "dev/environment_ref"
 require "dev/lifecycle"
 require_relative "command_parser"
-require_relative "environment_ref"
 require_relative "project_manifest"
 require_relative "target_parser"
 

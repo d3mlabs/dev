@@ -350,15 +350,20 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
   end
 
-  test "#load parses targets: into the manifest beside the commands (dev#192)" do
+  test "#load parses targets: into the manifest beside the commands, environment: as declared (dev#192)" do
     Given "cellbound-3d's declarations after adoption, minus the keys sibling milestones add"
     tmp = write_dev_yml(<<~YAML)
       name: cellbound-3d
       targets:
+        cellbound-3d-editor:
+          desc: Editor
+          platforms: [linux64, macos]
+          environment: { linux64: cellbound-3d-linux, macos: host }
         cellbound-3d:
           desc: Client
           platforms: [win64, linux64]
           configs: [dev, release]
+          environment: cellbound-3d-linux
         opencell:
           desc: Simulation library
       commands:
@@ -372,14 +377,44 @@ class ProjectManifestLoaderTest < Minitest::Test
     manifest = build_loader.load(Pathname.new(tmp.path))
 
     Then
-    manifest.targets.keys == ["cellbound-3d", "opencell"]
+    manifest.targets.keys == ["cellbound-3d-editor", "cellbound-3d", "opencell"]
     manifest.targets["cellbound-3d"].platforms == [Dev::Lifecycle::Platform::Win64, Dev::Lifecycle::Platform::Linux64]
     manifest.targets["cellbound-3d"].configs == [Dev::Lifecycle::Config::Development, Dev::Lifecycle::Config::Release]
+    manifest.targets["cellbound-3d"].environment_for(Dev::Lifecycle::Platform::Win64) == Dev::EnvironmentRef::Image.new(name: "cellbound-3d-linux")
+    manifest.targets["cellbound-3d-editor"].environment_for(Dev::Lifecycle::Platform::Linux64) == Dev::EnvironmentRef::Image.new(name: "cellbound-3d-linux")
+    manifest.targets["cellbound-3d-editor"].environment_for(Dev::Lifecycle::Platform::Macos) == Dev::EnvironmentRef::Host.new
     manifest.targets["opencell"].builds.map(&:name) == ["opencell"]
+    manifest.targets["opencell"].environment.nil?
     manifest.commands.keys == ["deploy"]
 
     Cleanup
     tmp.close!
+  end
+
+  test "#load surfaces a target's environment: faults from the parser and the target: #{fault}" do
+    Given
+    tmp = write_dev_yml(<<~YAML)
+      name: cellbound-3d
+      targets:
+        cellbound-3d:
+          platforms: [win64, linux64]
+          environment: #{environment_yaml}
+    YAML
+
+    When
+    build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    raises error_class
+
+    Cleanup
+    tmp.close!
+
+    Where
+    fault                       | environment_yaml                        | error_class
+    "not a name"                | "[cellbound-3d-linux]"                  | Dev::TargetParser::InvalidEnvironmentError
+    "a key outside the id set"  | "{ Win64: cellbound-3d-linux }"         | Dev::TargetParser::InvalidEnvironmentError
+    "a platform left out"       | "{ win64: cellbound-3d-linux }"         | Dev::Lifecycle::Target::EnvironmentPlatformsError
   end
 
   test "#load leaves targets empty when the key is absent, and a project build: command is then a plain command" do

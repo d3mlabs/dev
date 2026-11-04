@@ -4,7 +4,7 @@
 require "pathname"
 require "dev/deps/lockfile"
 require "dev/environment_image"
-require_relative "environment_ref"
+require "dev/environment_ref"
 require_relative "placement"
 
 module Dev
