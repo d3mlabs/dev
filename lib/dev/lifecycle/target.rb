@@ -1,7 +1,9 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "builder_spec"
 require_relative "config"
+require_relative "packager_spec"
 require_relative "platform"
 # Build and Target reference each other (a build names its target, a target
 # enumerates its builds); build.rb requires this file, and `dev/lifecycle`
@@ -15,6 +17,11 @@ module Dev
     # platforms and configs it declares (dev#192, K1). Each declared axis
     # contributes one segment to the names of the target's builds; a target
     # declaring neither is its own single build.
+    #
+    # It also declares how its builds are made: a builder (`build:`; none
+    # for a target with nothing to compile) and a packager (`package:` or
+    # `packager:`; dev's `archive` unless declared, `none` for a target
+    # that is built and never shipped).
     #
     # Owns the one rule that keeps the build grammar unambiguous: a target
     # name may not end in a platform or config id, because
@@ -41,23 +48,49 @@ module Dev
       # In declaration order: the first is the default `build` picks.
       const :platforms, T::Array[Platform], default: []
       const :configs, T::Array[Config], default: []
+      # nil: nothing to compile — `build` is a no-op and `package` runs alone.
+      const :builder, T.nilable(BuilderSpec), default: nil
+      const :packager, PackagerSpec, factory: -> { PackagerSpec::Archive.new }
 
       # @param name [String] the `targets:` key
       # @param desc [String]
       # @param platforms [Array<Platform>] the declared subset, first = default
       # @param configs [Array<Config>] the declared subset, first = default
+      # @param builder [BuilderSpec, nil] how the install is made; nil for nothing to compile
+      # @param packager [PackagerSpec] how the install becomes the archive; dev's `archive` by default
       # @raise [InvalidTargetNameError]
       # @raise [ReservedTargetSuffixError]
       # @raise [DuplicateAxisValueError]
       sig do
-        params(name: String, desc: String, platforms: T::Array[Platform], configs: T::Array[Config]).void
+        params(
+          name: String,
+          desc: String,
+          platforms: T::Array[Platform],
+          configs: T::Array[Config],
+          builder: T.nilable(BuilderSpec),
+          packager: PackagerSpec,
+        ).void
       end
-      def initialize(name:, desc: "(no description)", platforms: [], configs: [])
+      def initialize(name:, desc: "(no description)", platforms: [], configs: [], builder: nil,
+                     packager: PackagerSpec::Archive.new)
         super
         validate_name!
         validate_unique!("platforms", platforms)
         validate_unique!("configs", configs)
       end
+
+      # Whether the target has something to compile (`build:` declared).
+      #
+      # @return [Boolean]
+      sig { returns(T::Boolean) }
+      def buildable? = !builder.nil?
+
+      # Whether the target is ever shipped: every packager but `none`. A
+      # target that is not is invisible to `package`, `release` and `deploy`.
+      #
+      # @return [Boolean]
+      sig { returns(T::Boolean) }
+      def packageable? = !packager.is_a?(PackagerSpec::None)
 
       # Whether builds of this target carry a platform segment.
       #
@@ -107,14 +140,15 @@ module Dev
       sig { params(other: Object).returns(T::Boolean) }
       def ==(other)
         other.is_a?(Target) && name == other.name && desc == other.desc &&
-          platforms == other.platforms && configs == other.configs
+          platforms == other.platforms && configs == other.configs &&
+          builder == other.builder && packager == other.packager
       end
 
       sig { params(other: Object).returns(T::Boolean) }
       def eql?(other) = self == other
 
       sig { returns(Integer) }
-      def hash = [Target, name, desc, platforms, configs].hash
+      def hash = [Target, name, desc, platforms, configs, builder, packager].hash
 
       private
 

@@ -3,9 +3,23 @@
 
 require_relative "lifecycle/platform"
 require_relative "lifecycle/config"
+require_relative "lifecycle/shell"
+require_relative "lifecycle/byte_size"
+require_relative "lifecycle/packed_archive"
+require_relative "lifecycle/builder"
+require_relative "lifecycle/packager"
+require_relative "lifecycle/archive"
+require_relative "lifecycle/builder_spec"
+require_relative "lifecycle/packager_spec"
 require_relative "lifecycle/target"
 require_relative "lifecycle/build_pattern"
 require_relative "lifecycle/build"
+require_relative "lifecycle/script_env"
+require_relative "lifecycle/script_builder"
+require_relative "lifecycle/script_packager"
+require_relative "lifecycle/as_is_packager"
+require_relative "lifecycle/none_packager"
+require_relative "lifecycle/ports"
 require_relative "lifecycle/git_state"
 require_relative "lifecycle/build_id"
 require_relative "lifecycle/manifest"
@@ -22,9 +36,17 @@ module Dev
   # `release.json`. Platform and Config are the two closed id sets every
   # surface spells the axes in.
   #
-  # The verbs that act on these (`build`, `package`, `deploy`, `release`),
-  # the Builder/Packager ports and the dispatch are the sibling milestones'
-  # (dev#411–#415); this module is what they all speak.
+  # Between dev and the toolchain sit two ports, one per verb: the
+  # **Builder** makes a build's install (ScriptBuilder — the target's
+  # `build:` line over the ScriptEnv contract), the **Packager** makes the
+  # archive (Archive — dev's own zip or split tar, the default;
+  # AsIsPackager; NonePackager; ScriptPackager for a `package:` line).
+  # Ports resolves a target's declarations (BuilderSpec, PackagerSpec) into
+  # them for a checkout.
+  #
+  # The verbs that act on these (`build`, `package`, `deploy`, `release`)
+  # and the dispatch are the sibling milestones' (dev#413–#415); this
+  # module is what they all speak.
   module Lifecycle
   end
 end
