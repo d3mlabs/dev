@@ -180,6 +180,52 @@ class EnvironmentIntegrationTest < Minitest::Test
     @stderr.string.include?("snappy-linux, snappy-server")
   end
 
+  test "a target's build pointed at an image that does not produce its platform fails at load — at dev help, with the fix named (dev#192 K8)" do
+    Given "the Linux image declares linux64 only; the client asks it for win64"
+    lock(image_pin("snappy-linux", "target_platforms" => ["linux64"]), image_pin("snappy-server"))
+    runner = runner(
+      COMMANDS.slice("editor"),
+      targets: { "snappy" => { "platforms" => ["win64", "linux64"], "environment" => "snappy-linux" } },
+    )
+    Kernel.expects(:exec).never
+    Kernel.expects(:exit).with(1).once
+
+    When
+    runner.run(["help"])
+
+    Then
+    @stderr.string.include?("dev: `snappy-win64` builds in snappy-linux, which does not produce win64")
+    @stderr.string.include?("add `target_platforms :win64` to its image block in dependencies.rb")
+  end
+
+  test "target_platforms declared in the image block reach the lock and satisfy the check, so the project loads and runs" do
+    Given "the image block as cellbound-3d writes it, locked through the real DSL materialization"
+    declaration = Dev::Deps.define do
+      image "snappy-linux", from: "ghcr.io/d3mlabs/unreal-engine-build-base:ue5.8-3" do
+        platform "linux/amd64"
+        target_platforms :win64, :linux64
+      end
+    end.declarations[0]
+    lock(image_pin("snappy-linux", declaration.materialization))
+    runner = runner(
+      COMMANDS.slice("editor"),
+      targets: {
+        "snappy" => { "platforms" => ["win64", "linux64"], "environment" => "snappy-linux" },
+        "snappy-editor" => { "platforms" => ["linux64", "macos"], "environment" => { "linux64" => "snappy-linux", "macos" => "host" } },
+      },
+    )
+    execs = record_execs
+
+    When
+    exec!(runner, ["editor"])
+
+    Then "no refusal: the lock carries the capability and the command ran"
+    !@stderr.string.include?("does not produce")
+    !@stderr.string.include?("the lock does not pin")
+    execs.size == 1
+    Dev::Deps::Lockfile.new(dir: @root).read.find { |pin| pin.name == "snappy-linux" }.metadata["target_platforms"] == ["win64", "linux64"]
+  end
+
   test "a lock another dev locked keeps its remediation reachable: the message once on stderr, help without the column, a project command refused" do
     Given "a pin whose stored digest is not this dev's"
     lock(image_pin("snappy-linux"))
@@ -272,9 +318,10 @@ class EnvironmentIntegrationTest < Minitest::Test
 
   # A Runner over a dev.yml written into the fixture root, on a bare host
   # (no marker: nothing is native here).
-  def runner(commands, build: nil, ui: fake_ui, out: StringIO.new)
+  def runner(commands, build: nil, targets: nil, ui: fake_ui, out: StringIO.new)
     yaml = { "name" => "fixture", "commands" => commands }
     yaml["build"] = build if build
+    yaml["targets"] = targets if targets
     (@root / "dev.yml").write(YAML.dump(yaml))
     host_rule = Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: (@root / "no-marker").to_s))
     # A host whose gh holds no login, so the developer's own token never

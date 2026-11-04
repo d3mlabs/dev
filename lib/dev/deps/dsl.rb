@@ -4,6 +4,7 @@
 require "sorbet-runtime"
 require_relative "../data_root"
 require_relative "../environment_image"
+require_relative "../lifecycle/platform"
 require_relative "declaration"
 require_relative "scope"
 require_relative "scoped_declaration"
@@ -228,8 +229,9 @@ module Dev
           materialization: {
             "platform" => image_dsl.platform_value,
             "apt" => image_dsl.packages,
+          }.merge(image_dsl.capability).merge(
             "registry" => registry || ImageDSL.registry_of(from),
-          }.merge(image_dsl.container_shape),
+          ).merge(image_dsl.container_shape),
         )
       end
 
@@ -275,12 +277,17 @@ module Dev
     end
 
     # DSL inside an `image` block (DSL#image): what the environment image is
-    # made of beyond its floor, and how its container is shaped. Two verbs
-    # make the image — `platform` and `apt` — because exactly that much can
-    # be locked and compared; a `RUN` apt cannot express belongs in a floor
-    # of the project's own (`from:`). Three shape the container the image
-    # runs as — `persist`, `volume`, `run_env` (dev#307) — and never enter
-    # the image or its digest.
+    # made of beyond its floor, what it can build, and how its container is
+    # shaped. Two verbs make the image — `platform` and `apt` — because
+    # exactly that much can be locked and compared; a `RUN` apt cannot
+    # express belongs in a floor of the project's own (`from:`). One states
+    # the image's capability — `target_platforms`, the build platforms its
+    # toolchain emits (dev#192, K8) — a fact only the image's author holds
+    # (msvc-wine and a Wine prefix are what make win64 possible), locked
+    # with the image and checked against each target's `environment:` at
+    # load. Three shape the container the image runs as — `persist`,
+    # `volume`, `run_env` (dev#307). None of the last four enters the image
+    # or its digest.
     class ImageDSL
       extend T::Sig
 
@@ -294,6 +301,9 @@ module Dev
       # `name=version`: a distro package cannot be pinned, the image is the
       # pin.
       class InvalidPackageNameError < StandardError; end
+
+      # A `target_platforms` argument outside dev's platform ids.
+      class UnknownTargetPlatformError < StandardError; end
 
       # Debian policy §5.6.1: lower-case alphanumerics, `+ - .`, at least
       # two characters, starting alphanumeric.
@@ -313,6 +323,21 @@ module Dev
       sig { returns(T::Array[String]) }
       def packages = @packages.sort.uniq
 
+      # What the image can build, as lock metadata: `target_platforms`, the
+      # ids in the platform set's own order and unique — only when the
+      # block declared any, so a lock without the key reads as it did
+      # before it existed (an image that declares nothing produces no
+      # build platform, and no cross-platform build may name it).
+      #
+      # @return [Hash{String => Array<String>}] `target_platforms`, only when declared
+      sig { returns(T::Hash[String, T::Array[String]]) }
+      def capability
+        return {} if @target_platforms.empty?
+
+        declared = Lifecycle::Platform.values.select { |platform| @target_platforms.include?(platform) }
+        { "target_platforms" => declared.map(&:serialize) }
+      end
+
       # The container's shape as lock metadata: only what the block said —
       # a block that said nothing adds nothing, so a lock without these
       # keys reads as it did before they existed.
@@ -331,6 +356,7 @@ module Dev
       def initialize
         @platform_value = T.let(nil, T.nilable(String))
         @packages = T.let([], T::Array[String])
+        @target_platforms = T.let([], T::Array[Lifecycle::Platform])
         @persist = T.let(false, T::Boolean)
         @volumes = T.let([], T::Array[String])
         @run_env = T.let({}, T::Hash[String, String])
@@ -361,6 +387,19 @@ module Dev
           end
         end
         @packages.concat(names)
+      end
+
+      # Declare the build platforms this image's toolchain emits — the
+      # capability a target's `environment:` is checked against for each
+      # of its builds (dev#192, K8). dev's closed platform ids, as symbols
+      # (`target_platforms :win64, :linux64`). Repeatable.
+      #
+      # @param ids [Array<Symbol, String>] platform ids
+      # @return [void]
+      # @raise [UnknownTargetPlatformError]
+      sig { params(ids: T.any(Symbol, String)).void }
+      def target_platforms(*ids)
+        @target_platforms.concat(ids.map { |id| parse_target_platform(id.to_s) })
       end
 
       # Run this image's commands in one long-lived container (a `docker
@@ -418,6 +457,18 @@ module Dev
           segments = from.split("/")
           segments.take(segments.size - 1).join("/")
         end
+      end
+
+      private
+
+      # @param id [String] one `target_platforms` argument
+      # @return [Lifecycle::Platform]
+      # @raise [UnknownTargetPlatformError] listing the set
+      sig { params(id: String).returns(Lifecycle::Platform) }
+      def parse_target_platform(id)
+        Lifecycle::Platform.parse(id)
+      rescue Lifecycle::UnknownPlatformError => e
+        raise UnknownTargetPlatformError, "`target_platforms` takes dev's platform ids: #{e.message}"
       end
     end
 

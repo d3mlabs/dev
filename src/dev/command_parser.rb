@@ -1,8 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "dev/environment_ref"
 require_relative "command"
-require_relative "environment_ref"
 
 module Dev
   # Parses a dev.yml command hash into its ProjectNode: a ProjectCommand

@@ -1,9 +1,9 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "dev/environment_ref"
 require_relative "cli/flag"
 require_relative "cli/parsed_args"
-require_relative "environment_ref"
 require_relative "execution_context"
 require_relative "placement"
 

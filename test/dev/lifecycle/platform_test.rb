@@ -25,6 +25,17 @@ class Dev::Lifecycle::PlatformTest < Minitest::Test
     Dev::Lifecycle::Platform.ids == ["win64", "linux64", "macos"]
   end
 
+  test "a host produces the platform of its OS — arch is implied by era: #{os}" do
+    Expect
+    Dev::Lifecycle::Platform.for_host_os(os) == platform
+
+    Where
+    os        | platform
+    "darwin"  | Dev::Lifecycle::Platform::Macos
+    "linux"   | Dev::Lifecycle::Platform::Linux64
+    "windows" | Dev::Lifecycle::Platform::Win64
+  end
+
   test "parse refuses an id outside the set, listing it: #{id.inspect}" do
     When
     Dev::Lifecycle::Platform.parse(id)

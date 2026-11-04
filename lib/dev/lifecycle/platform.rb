@@ -28,8 +28,24 @@ module Dev
         Macos = new("macos")
       end
 
+      # What a host of each OS produces natively — the `host` side of the
+      # capability check (dev#192, K8). Arch is implied by era, so the OS
+      # alone decides: a Mac is the macos era's arm64, a Linux or Windows
+      # host the x86_64 one.
+      HOST_OS_PLATFORMS = T.let(
+        { "darwin" => Macos, "linux" => Linux64, "windows" => Win64 }.freeze,
+        T::Hash[String, Platform],
+      )
+
       class << self
         extend T::Sig
+
+        # The platform a host of +os+ produces natively.
+        #
+        # @param os [String] Dev::Platform.os — "darwin", "linux" or "windows"
+        # @return [Platform]
+        sig { params(os: String).returns(Platform) }
+        def for_host_os(os) = HOST_OS_PLATFORMS.fetch(os)
 
         # The platform an id names — the deserialization every boundary
         # goes through.

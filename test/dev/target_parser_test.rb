@@ -230,9 +230,75 @@ class Dev::TargetParserTest < Minitest::Test
     raises error_class
 
     Where
-    name                 | entry                                    | error_class
-    "cellbound-3d-win64" | {}                                       | Dev::Lifecycle::Target::ReservedTargetSuffixError
-    "Cellbound"          | {}                                       | Dev::Lifecycle::Target::InvalidTargetNameError
-    "opencell"           | { "configs" => ["release", "release"] }  | Dev::Lifecycle::Target::DuplicateAxisValueError
+    name                 | entry                                                                              | error_class
+    "cellbound-3d-win64" | {}                                                                                 | Dev::Lifecycle::Target::ReservedTargetSuffixError
+    "Cellbound"          | {}                                                                                 | Dev::Lifecycle::Target::InvalidTargetNameError
+    "opencell"           | { "configs" => ["release", "release"] }                                            | Dev::Lifecycle::Target::DuplicateAxisValueError
+    "opencell"           | { "platforms" => ["win64"], "environment" => { "linux64" => "cellbound-3d-linux" } } | Dev::Lifecycle::Target::EnvironmentPlatformsError
+  end
+
+  test "environment: as one name is a single reference for every build — an image's, or host" do
+    Given
+    raw = YAML.safe_load(<<~YAML)
+      cellbound-3d:
+        platforms: [win64, linux64]
+        configs: [dev, release]
+        environment: cellbound-3d-linux
+      opencell:
+        environment: host
+    YAML
+
+    When
+    targets = Dev::TargetParser.new.parse_all(raw)
+
+    Then
+    targets["cellbound-3d"].environment == Dev::Lifecycle::TargetEnvironment::Single.new(
+      reference: Dev::EnvironmentRef::Image.new(name: "cellbound-3d-linux"),
+    )
+    targets["opencell"].environment == Dev::Lifecycle::TargetEnvironment::Single.new(reference: Dev::EnvironmentRef::Host.new)
+  end
+
+  test "environment: as a mapping is one reference per platform id, in declaration order" do
+    Given "the editor, as cellbound-3d's dev.yml spells it"
+    raw = YAML.safe_load(<<~YAML)
+      platforms: [linux64, macos]
+      environment: { linux64: cellbound-3d-linux, macos: host }
+    YAML
+
+    When
+    target = Dev::TargetParser.new.parse("cellbound-3d-editor", raw)
+
+    Then
+    target.environment == Dev::Lifecycle::TargetEnvironment::PerPlatform.new(
+      references: {
+        Dev::Lifecycle::Platform::Linux64 => Dev::EnvironmentRef::Image.new(name: "cellbound-3d-linux"),
+        Dev::Lifecycle::Platform::Macos => Dev::EnvironmentRef::Host.new,
+      },
+    )
+  end
+
+  test "environment: omitted leaves the target to the project's default" do
+    Expect
+    Dev::TargetParser.new.parse("opencell", {}).environment.nil?
+  end
+
+  test "environment: must be a name or a mapping of platform id to name: #{raw.inspect}" do
+    When
+    Dev::TargetParser.new.parse("opencell", { "platforms" => ["win64"], "environment" => raw })
+
+    Then
+    error = raises(Dev::TargetParser::InvalidEnvironmentError)
+    error.message.include?("target 'opencell': 'environment'")
+    error.message.include?(says)
+
+    Where
+    raw                        | says
+    nil                        | "got nil"
+    ""                         | 'got ""'
+    42                         | "got 42"
+    ["cellbound-3d-linux"]     | "got [\"cellbound-3d-linux\"]"
+    { "win64" => nil }         | "got nil"
+    { "win64" => "" }          | 'got ""'
+    { "Win64" => "cb-linux" }  | "unknown platform \"Win64\" (expected win64, linux64, macos)"
   end
 end

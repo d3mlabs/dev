@@ -89,6 +89,54 @@ class Dev::Deps::ImageDSLTest < Minitest::Test
     !materialization.key?("run_env")
   end
 
+  test "target_platforms declares what the image's toolchain emits and rides the materialization beside apt (dev#192)" do
+    When "declaring the capability, repeatably, in any order and spelling"
+    config = Dev::Deps.define do
+      image "cellbound-3d-linux", from: FLOOR do
+        platform "linux/amd64"
+        target_platforms :linux64
+        target_platforms :win64, "linux64"
+        apt "winbind"
+      end
+    end
+
+    Then "the ids in the platform set's own order, unique, between apt and registry"
+    config.declarations[0].materialization == {
+      "platform" => "linux/amd64",
+      "apt" => ["winbind"],
+      "target_platforms" => ["win64", "linux64"],
+      "registry" => "ghcr.io/d3mlabs",
+    }
+  end
+
+  test "a block declaring no target_platforms carries no key: an image that says nothing produces nothing" do
+    When
+    config = Dev::Deps.define { image "x", from: FLOOR }
+
+    Then
+    !config.declarations[0].materialization.key?("target_platforms")
+  end
+
+  test "a target_platforms id outside dev's set is a load error listing the set: #{id.inspect}" do
+    When
+    Dev::Deps.define do
+      image "x", from: FLOOR do
+        target_platforms id
+      end
+    end
+
+    Then
+    error = raises(Dev::Deps::ImageDSL::UnknownTargetPlatformError)
+    error.message.include?("target_platforms")
+    error.message.include?("win64, linux64, macos")
+
+    Where
+    id
+    :Win64
+    "linux/amd64"
+    :ps5
+  end
+
   test "several blocks declare several images: the design assumes none is the only one" do
     When
     config = Dev::Deps.define do
