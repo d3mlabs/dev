@@ -1,10 +1,11 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "dev/environment_image"
 require_relative "cli/flag"
 require_relative "cli/parsed_args"
+require_relative "environment_ref"
 require_relative "execution_context"
+require_relative "placement"
 
 module Dev
   # Sealed command hierarchy. A command is one of exactly four shapes:
@@ -174,18 +175,24 @@ module Dev
   end
 
   # Project command from a dev.yml `commands:` entry. Pure data: the run
-  # string, optional description, repl flag, where it runs (`runs_on`), and
-  # the nested `commands:` as children. The placement is carried as
-  # written — an image name or HOST — and resolved by whoever runs it
-  # (ProjectImages): the parser knows nothing about images.
+  # string, optional description, repl flag, the environment it names
+  # (`environment:`, an EnvironmentRef as written — the parser knows
+  # nothing about images), the nested `commands:` as children — and, once
+  # the composition root has bound the reference against the lock, its
+  # Placement (with_placement). Whoever runs the command reads the bound
+  # value; nothing downstream of the root resolves a name.
   class ProjectCommand
     extend T::Sig
     extend T::Helpers
     include Command
     final!
 
-    # The `runs_on:` value meaning "wherever dev itself runs".
-    HOST = EnvironmentImage::HOST
+    # The placement was read before the composition root bound it. The
+    # root binds every project command at load; it leaves the tree unbound
+    # only when the lock itself cannot be read (it says so on stderr and
+    # keeps the tree so the re-lock stays reachable), so a project command
+    # asked to run then refuses rather than guess.
+    class UnboundPlacementError < RuntimeError; end
 
     sig(:final) { returns(String) }
     attr_reader :run
@@ -196,10 +203,15 @@ module Dev
     sig(:final) { returns(T::Boolean) }
     attr_reader :repl
 
-    # @return [String, nil] the `runs_on:` value as declared — an image
-    #   name or HOST; nil when the command leaves the choice to the project
-    sig(:final) { returns(T.nilable(String)) }
-    attr_reader :runs_on
+    # @return [EnvironmentRef, nil] the `environment:` value as declared;
+    #   nil when the command leaves the choice to the project
+    sig(:final) { returns(T.nilable(EnvironmentRef)) }
+    attr_reader :environment
+
+    # @return [Placement, nil] the environment bound against the lock; nil
+    #   until the composition root binds it
+    sig(:final) { returns(T.nilable(Placement)) }
+    attr_reader :placement
 
     sig(:final) { override.returns(T::Hash[String, Command]) }
     attr_reader :children
@@ -209,19 +221,45 @@ module Dev
         run: String,
         desc: String,
         repl: T::Boolean,
-        runs_on: T.nilable(String),
+        environment: T.nilable(EnvironmentRef),
         hidden: T::Boolean,
         children: T::Hash[String, Command],
+        placement: T.nilable(Placement),
       ).void
     end
-    def initialize(run:, desc: "(no description)", repl: false, runs_on: nil, hidden: false, children: {})
+    def initialize(run:, desc: "(no description)", repl: false, environment: nil, hidden: false, children: {},
+                   placement: nil)
       super()
       @run = run
       @desc = desc
       @repl = repl
-      @runs_on = runs_on
+      @environment = environment
       @hidden = hidden
       @children = T.let(children.freeze, T::Hash[String, Command])
+      @placement = placement
+    end
+
+    # The bound placement, for whoever runs the command.
+    #
+    # @return [Placement]
+    # @raise [UnboundPlacementError] when the composition root left the
+    #   command unbound (the lock could not be read at load)
+    sig(:final) { returns(Placement) }
+    def placement!
+      @placement || raise(UnboundPlacementError,
+        "`#{@run}` has no environment bound: the lock could not be read at load — re-lock it (dev deps update) and retry")
+    end
+
+    # The same command with its environment bound (the composition root's
+    # step between parsing and assembling the tree).
+    #
+    # @param placement [Placement]
+    # @return [ProjectCommand]
+    sig(:final) { params(placement: Placement).returns(ProjectCommand) }
+    def with_placement(placement)
+      ProjectCommand.new(
+        run: @run, desc: @desc, repl: @repl, environment: @environment, hidden: @hidden, children: @children, placement:,
+      )
     end
 
     sig(:final) { override.returns(T::Boolean) }
@@ -243,7 +281,7 @@ module Dev
     sig(:final) { params(children: T::Hash[String, Command]).returns(ProjectCommand) }
     def with_children(children)
       ProjectCommand.new(
-        run: @run, desc: @desc, repl: @repl, runs_on: @runs_on, hidden: @hidden, children:,
+        run: @run, desc: @desc, repl: @repl, environment: @environment, hidden: @hidden, children:, placement: @placement,
       )
     end
 
@@ -252,7 +290,7 @@ module Dev
       return false unless other.is_a?(ProjectCommand)
 
       @run == other.run && @desc == other.desc && @repl == other.repl &&
-        @runs_on == other.runs_on &&
+        @environment == other.environment && @placement == other.placement &&
         @hidden == other.hidden? && @children == other.children
     end
 
@@ -263,7 +301,7 @@ module Dev
 
     sig(:final) { returns(Integer) }
     def hash
-      [@run, @desc, @repl, @runs_on, @hidden, @children].hash
+      [@run, @desc, @repl, @environment, @placement, @hidden, @children].hash
     end
   end
 

@@ -1,22 +1,23 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "dev/container_context"
 require "dev/environment_image"
 require "dev/host_environment"
-require "dev/project_images"
 
 module Dev
   # Does an image's work run on this machine, or in a container of the
-  # image? One answer for the two callers that ask it — CommandRunner
-  # placing a command, `dev container up` deciding what to bring up — and
-  # one rule: native exactly when this host was provisioned from the
-  # image — its `/etc/dev/environment` marker names the image at the
-  # lock's digest (HostEnvironment; the host rule, dev#308, ADR-0007
-  # amended). A bare host, a Mac, a host baked from an older recipe all
-  # fail it and run inside; dev never converges a host's OS toward the
-  # lock.
+  # image? One answer for the callers that ask it — CommandRunner placing
+  # a command, the usage printer saying where each command runs, `dev
+  # container up` deciding what to bring up — and one rule: native exactly
+  # when this host was provisioned from the image — its
+  # `/etc/dev/environment` marker names the image at the lock's digest
+  # (HostEnvironment; the host rule, dev#308, ADR-0007 amended). A bare
+  # host, a Mac, a host baked from an older recipe all fail it and run
+  # inside; dev never converges a host's OS toward the lock.
   #
-  # Inside a container the same marker is the container's own, and a
+  # Inside a container (ContainerContext.inside?) there is no further
+  # container to enter: the same marker is the container's own, and a
   # mismatch is not a fallback but an error: the container cannot replace
   # itself (assert_container_is!, assert_container_current!).
   class HostRule
@@ -27,10 +28,19 @@ module Dev
     class ContainerDriftError < RuntimeError; end
 
     # @param host_environment [Dev::HostEnvironment] what this machine was provisioned from
-    sig { params(host_environment: HostEnvironment).void }
-    def initialize(host_environment: HostEnvironment.new)
+    # @param inside_container [Boolean] whether this dev runs inside a
+    #   dev-managed container (the other of dev's two states)
+    sig { params(host_environment: HostEnvironment, inside_container: T::Boolean).void }
+    def initialize(host_environment: HostEnvironment.new, inside_container: ContainerContext.inside?)
       @host_environment = host_environment
+      @inside_container = inside_container
     end
+
+    # Whether this dev runs inside a dev-managed container.
+    #
+    # @return [Boolean]
+    sig { returns(T::Boolean) }
+    def inside_container? = @inside_container
 
     # What this machine was provisioned from, for a report line
     # (`name@<12 hex>`, or what is missing).
@@ -46,6 +56,20 @@ module Dev
     sig { params(image: EnvironmentImage).returns(T::Boolean) }
     def native?(image)
       @host_environment.provisioned_from?(image)
+    end
+
+    # Whether running +image+'s work from here crosses into a container of
+    # it: false on a host provisioned from the image (native) and inside
+    # any container (there is no further container to enter — whether
+    # this one is the image's is assert_container_is!'s question), true on
+    # every other host. The one fact the usage printer's environment
+    # column and the run-time crossing line both read.
+    #
+    # @param image [Dev::EnvironmentImage]
+    # @return [Boolean]
+    sig { params(image: EnvironmentImage).returns(T::Boolean) }
+    def enters_container?(image)
+      !@inside_container && !native?(image)
     end
 
     # The reason native? held, for a report line.

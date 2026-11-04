@@ -5,15 +5,17 @@ require "pathname"
 require "yaml"
 require "dev/engine_resources"
 require_relative "command_parser"
+require_relative "environment_ref"
 require_relative "project_manifest"
 
 module Dev
   # The boundary coercion for dev.yml: #load parses it once and rejects the
-  # removed keys at parse time — `ruby:`, and the Dockerfile path's
+  # removed keys at parse time — `ruby:`, the Dockerfile path's
   # `build.container` block with every command's `container:` flag
-  # (dev#307, dev#311), each with where it went. dependencies.rb is not
-  # read here — the toolchain is a dependency, and only the deps commands
-  # evaluate that file.
+  # (dev#307, dev#311), and every command's `runs_on:` (now `environment:`,
+  # dev#409) — each with where it went. dependencies.rb is not read here —
+  # the toolchain is a dependency, and only the deps commands evaluate that
+  # file.
   #
   # Stateless: reusable across manifests, inputs arrive as method arguments.
   class ProjectManifestLoader
@@ -25,12 +27,20 @@ module Dev
     # clean `dev:` error.
     class UnsupportedDevYamlRubyError < RuntimeError; end
 
-    # Raised when dev.yml still carries the Dockerfile path's keys: the
-    # `build.container` block, a command's `container:` flag. The
-    # environment is the lock's `image` block (dev#277); the message lists
-    # each key with its migration. RuntimeError so the CLI boundary reports
-    # it as a clean `dev:` error.
+    # Raised when dev.yml still carries a retired key: the Dockerfile
+    # path's `build.container` block and a command's `container:` flag
+    # (the environment is the lock's `image` block, dev#277), or a
+    # command's `runs_on:` (the key is `environment:`, dev#409). The
+    # message lists each key with its migration. RuntimeError so the CLI
+    # boundary reports it as a clean `dev:` error.
     class RetiredKeysError < RuntimeError; end
+
+    # The key `runs_on:` became: the environment a command's body executes
+    # in — the domain's own noun, where `runs_on` is GitHub's word for a
+    # runner label (dev#409).
+    ENVIRONMENT_KEY = "environment"
+    # The retired spelling of ENVIRONMENT_KEY.
+    RUNS_ON_KEY = "runs_on"
 
     # What each key of the retired `build.container` block became.
     BLOCK_KEY_MIGRATIONS = T.let(
@@ -58,8 +68,8 @@ module Dev
     # @return [ProjectManifest]
     # @raise [UnsupportedDevYamlRubyError] when dev.yml carries the removed
     #   `ruby:` key
-    # @raise [RetiredKeysError] when dev.yml carries `build.container` or a
-    #   command's `container:` flag
+    # @raise [RetiredKeysError] when dev.yml carries `build.container`, a
+    #   command's `container:` flag or a command's `runs_on:`
     sig { params(dev_yml_path: Pathname).returns(ProjectManifest) }
     def load(dev_yml_path)
       yaml = YAML.load_file(dev_yml_path)
@@ -74,10 +84,11 @@ module Dev
       )
     end
 
-    # The Dockerfile path's keys are refused before any command exists:
-    # the `build.container` block (each key it carries, with where it
-    # went) and every command's `container:` flag, nested commands
-    # included — in document order, one message.
+    # The retired keys are refused before any command exists: the
+    # Dockerfile path's `build.container` block (each key it carries, with
+    # where it went) and every command's `container:` flag, and every
+    # command's `runs_on:` with its `environment:` replacement — nested
+    # commands included, in document order, one message.
     #
     # @param yaml [Hash]
     # @return [void]
@@ -87,12 +98,13 @@ module Dev
       lines = []
       block = yaml.dig("build", "container")
       lines.concat(block_migrations(block)) if block.is_a?(Hash)
-      lines.concat(container_flag_migrations(["commands"], yaml["commands"]))
+      lines.concat(command_key_migrations(["commands"], yaml["commands"]))
       return if lines.empty?
 
       raise RetiredKeysError,
-        "dev.yml carries the retired Dockerfile path's keys — declare an `image` block in dependencies.rb " \
-          "(d3mlabs/dev#277) and migrate each (dev#307, dev#311):\n  #{lines.join("\n  ")}"
+        "dev.yml carries retired keys — migrate each (the Dockerfile path is gone, d3mlabs/dev#311: " \
+          "declare an `image` block in dependencies.rb; `#{RUNS_ON_KEY}:` is `#{ENVIRONMENT_KEY}:`, d3mlabs/dev#409):" \
+          "\n  #{lines.join("\n  ")}"
     end
 
     # @param block [Hash] the `build.container` mapping
@@ -107,9 +119,10 @@ module Dev
 
     # @param path [Array<String>] the dev.yml path of this `commands:` mapping
     # @param raw [Object] its value as YAML delivered it
-    # @return [Array<String>] a migration line per `container:` flag under it, deepest last
+    # @return [Array<String>] a migration line per `container:` flag and
+    #   per `runs_on:` under it, deepest last
     sig { params(path: T::Array[String], raw: T.untyped).returns(T::Array[String]) }
-    def container_flag_migrations(path, raw)
+    def command_key_migrations(path, raw)
       return [] unless raw.is_a?(Hash)
 
       raw.flat_map do |name, entry|
@@ -119,10 +132,21 @@ module Dev
         own = []
         if entry.key?("container")
           value = entry["container"]
-          went = value == false ? "`runs_on: #{ProjectCommand::HOST}`" : "delete it (the image's name under `runs_on:`, or nothing)"
+          went = if value == false
+            "`#{ENVIRONMENT_KEY}: #{EnvironmentRef::HOST}`"
+          else
+            "delete it (the image's name under `#{ENVIRONMENT_KEY}:`, or nothing)"
+          end
           own << "#{(entry_path + ["container"]).join(".")}: #{value.inspect} → #{went}"
         end
-        own + container_flag_migrations(entry_path + ["commands"], entry["commands"])
+        if entry.key?(RUNS_ON_KEY)
+          value = entry[RUNS_ON_KEY]
+          # The value's domain is unchanged — an `image` block's name, or
+          # `host` — so a well-formed value migrates verbatim.
+          went = value.is_a?(String) ? "`#{ENVIRONMENT_KEY}: #{value}`" : "`#{ENVIRONMENT_KEY}: <image name> | #{EnvironmentRef::HOST}`"
+          own << "#{(entry_path + [RUNS_ON_KEY]).join(".")}: #{value.inspect} → #{went}"
+        end
+        own + command_key_migrations(entry_path + ["commands"], entry["commands"])
       end
     end
 

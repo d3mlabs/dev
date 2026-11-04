@@ -53,8 +53,9 @@ module Dev
     # (dev#308 compares it to the lock): `name=…\ndigest=…\n`.
     MARKER_PATH = "/etc/dev/environment"
 
-    # The one placement that is no image — dev.yml's `runs_on: host`,
-    # "wherever dev itself runs" (dev#307) — so no image may bear the name.
+    # The one placement that is no image — dev.yml's `environment: host`,
+    # "wherever dev itself runs" (dev#307, dev#409) — so no image may bear
+    # the name.
     HOST = "host"
 
     # The build arg the marker's digest arrives through.

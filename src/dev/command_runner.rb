@@ -7,14 +7,13 @@ require "dev/cli/ui"
 require "dev/command"
 require "dev/credentials"
 require "dev/build_container"
-require "dev/container_context"
 require "dev/container_engine"
 require "dev/container_github_token"
 require "dev/engine_resources"
 require "dev/engine_resources_check"
 require "dev/environment_image"
 require "dev/host_rule"
-require "dev/project_images"
+require "dev/placement"
 require "dev/shadowenv_llvm"
 
 module Dev
@@ -42,14 +41,15 @@ module Dev
   # Before every command, ensures the project's shadowenv Ruby environment is
   # provisioned (fast-path: skips if the project's ruby lisp is current).
   #
-  # Where a command runs is `placement`: the command's environment
-  # (ProjectImages#for — its `runs_on:`, or the project's one image) is an
-  # image or the host. An image means `docker run` / `docker exec` in a
-  # container of it; the host means `shadowenv exec` here. A command run
-  # inside carries the image's resolved `run_env` and the host's gh token
-  # as GH_TOKEN (ContainerGithubToken) — the same `-e` the container's own
-  # deps install gets, so a command that calls `gh` inside (a publisher's
-  # `gh release create`) has the auth the host holds.
+  # Where a command runs is `placement`: the command's environment — its
+  # `environment:` bound against the lock at load (ProjectCommand#placement,
+  # dev#409) — is an image or the host. An image means `docker run` /
+  # `docker exec` in a container of it, announced by one dim crossing line
+  # (`→ in <image>`); the host means `shadowenv exec` here, silently. A
+  # command run inside carries the image's resolved `run_env` and the
+  # host's gh token as GH_TOKEN (ContainerGithubToken) — the same `-e` the
+  # container's own deps install gets, so a command that calls `gh` inside
+  # (a publisher's `gh release create`) has the auth the host holds.
   #
   # No engine provisioner runs on this path, so the runner is the one owner
   # of the engine-floor gate here (EngineResourcesCheck, dev#400): the
@@ -57,7 +57,7 @@ module Dev
   # the image is reached for. `dev up` has its own owner (EngineProvisioner)
   # and measures after sizing; neither path reads `docker info` twice.
   #
-  # Inside a dev-managed container (ContainerContext.inside?) there is no
+  # Inside a dev-managed container (HostRule#inside_container?) there is no
   # further container to reach for: every command runs directly at the
   # project root, under `shadowenv exec` like any other. The interpreters
   # it finds there are `dev deps install`'s doing — Ruby and Python are
@@ -124,36 +124,29 @@ module Dev
       end
     end
 
-    # @param images [Dev::ProjectImages] the project's images and where each
-    #   command runs; a project with none places everything on the host
     # @param engine_hint [Dev::EngineResources::Hint, nil] the project's
     #   engine floor, measured before a container is reached for
     # @param resources_check [Dev::EngineResourcesCheck] the engine-vs-hint gate
-    # @param host_rule [Dev::HostRule] whether an image's work runs here
+    # @param host_rule [Dev::HostRule] whether an image's work runs here —
+    #   and whether this dev already runs inside a container
     sig do
       params(
         ui: Dev::Cli::Ui,
         project_root: Pathname,
-        images: Dev::ProjectImages,
         engine_hint: T.nilable(Dev::EngineResources::Hint),
         resources_check: Dev::EngineResourcesCheck,
         container_client: T.nilable(Dev::BuildContainer),
-        inside_container: T::Boolean,
         host_rule: Dev::HostRule,
         github_token: Dev::ContainerGithubToken,
       ).void
     end
-    def initialize(ui:, project_root:, images: Dev::ProjectImages.new(root: project_root), engine_hint: nil,
-                   resources_check: Dev::EngineResourcesCheck.new, container_client: nil,
-                   inside_container: ContainerContext.inside?, host_rule: Dev::HostRule.new,
-                   github_token: Dev::ContainerGithubToken.new)
+    def initialize(ui:, project_root:, engine_hint: nil, resources_check: Dev::EngineResourcesCheck.new,
+                   container_client: nil, host_rule: Dev::HostRule.new, github_token: Dev::ContainerGithubToken.new)
       @ui = ui
-      @images = images
       @engine_hint = engine_hint
       @resources_check = resources_check
       @project_root = project_root
       @container_client = container_client
-      @inside_container = inside_container
       @host_rule = host_rule
       @github_token = github_token
     end
@@ -197,40 +190,42 @@ module Dev
       @ui.print_header(shell_command)
 
       placement = placement(cmd)
-      if placement == ProjectImages::HOST
+      case placement
+      when Placement::Host
         ensure_shadowenv_provisioned!
         if cmd.repl
           run_bare(shell_command, wait:)
         else
           run_with_status_footer(shell_command, wait:)
         end
+      when Placement::Image
+        run_in_container(placement.image, shell_command, wait:)
       else
-        run_in_container(T.cast(placement, EnvironmentImage), shell_command, wait:)
+        # simplecov:disable — the sealed placement has no third shape;
+        # T.absurd keeps the static proof.
+        T.absurd(placement)
+        # simplecov:enable
       end
     end
 
-    # Where the command runs: here, or in a container of its image. Here
-    # when the command's environment is the host, when this host was
-    # provisioned from the image (the host rule), or when we are already
-    # inside a container of it; the image otherwise. Inside a container
-    # that is not the image's, the work is refused.
+    # Where the command runs on this machine: here, or in a container of
+    # its image. Here when the command's environment is the host, when this
+    # host was provisioned from the image (the host rule), or when we are
+    # already inside a container of it; the image otherwise. Inside a
+    # container that is not the image's, the work is refused.
     #
-    # @param cmd [ProjectCommand]
-    # @return [ProjectImages::Placement]
-    # @raise [ProjectImages::UnknownImageError, ProjectImages::AmbiguousEnvironmentImageError]
+    # @param cmd [ProjectCommand] bound at load (ProjectCommand#placement!)
+    # @return [Placement] Host to run here, Image to enter a container of it
+    # @raise [ProjectCommand::UnboundPlacementError] when the lock could not be read at load
     # @raise [HostRule::ContainerDriftError] inside a container that is not the lock's image
-    sig { params(cmd: ProjectCommand).returns(ProjectImages::Placement) }
+    sig { params(cmd: ProjectCommand).returns(Placement) }
     def placement(cmd)
-      placement = @images.for(cmd)
-      return placement if placement == ProjectImages::HOST
+      placement = cmd.placement!
+      return placement unless placement.is_a?(Placement::Image)
 
-      image = T.cast(placement, EnvironmentImage)
-      if @inside_container
-        @host_rule.assert_container_is!(image)
-        return ProjectImages::HOST
-      end
-
-      @host_rule.native?(image) ? ProjectImages::HOST : image
+      image = placement.image
+      @host_rule.assert_container_is!(image) if @host_rule.inside_container?
+      @host_rule.enters_container?(image) ? placement : Placement::Host.new
     end
 
     # Whether the resolved image should be published to the shared registry.
@@ -245,6 +240,10 @@ module Dev
       ENV["DEV_PUBLISH_IMAGE"] == "1"
     end
 
+    # The crossing: the one moment the mental model can be wrong, so the
+    # one line dev prints about where a command runs (a native or host run
+    # prints nothing beyond the footer).
+    #
     # @param image [EnvironmentImage] the command's environment
     # @param shell_command [String]
     # @param wait [Boolean]
@@ -252,6 +251,7 @@ module Dev
     # @raise [EngineResourcesCheck::UndersizedEngineError] when the engine falls short of the project's floor
     sig { params(image: EnvironmentImage, shell_command: String, wait: T::Boolean).void }
     def run_in_container(image, shell_command, wait:)
+      @ui.print_crossing(image.name)
       client = container_client
       @resources_check.check!(engine: client.engine, hint: @engine_hint)
       image_tag = client.ensure_environment_image!(image, publish: publish_image?)
@@ -352,7 +352,7 @@ module Dev
     # Inside the container LLVM is the image's concern: nothing to do.
     sig { void }
     def ensure_shadowenv_provisioned!
-      return if @inside_container
+      return if @host_rule.inside_container?
 
       ensure_llvm_provisioned!(@project_root)
     end

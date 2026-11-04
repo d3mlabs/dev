@@ -30,7 +30,7 @@ transform!(RSpock::AST::Transformation)
 class HostRuleIntegrationTest < Minitest::Test
   include SorbetHelper
 
-  COMMANDS = { "build" => { "run" => "./bin/build.sh" }, "editor" => { "run" => "./bin/editor.sh", "runs_on" => "host" } }.freeze
+  COMMANDS = { "build" => { "run" => "./bin/build.sh" }, "editor" => { "run" => "./bin/editor.sh", "environment" => "host" } }.freeze
 
   def setup
     @original_cwd = Dir.pwd
@@ -128,7 +128,7 @@ class HostRuleIntegrationTest < Minitest::Test
     @stderr.string.include?("re-create it from the host: `dev container reset && dev up`")
   end
 
-  test "runs_on: host is the host whatever the marker says" do
+  test "environment: host is the host whatever the marker says" do
     Given
     lock
     execs = record_execs
@@ -169,6 +169,7 @@ class HostRuleIntegrationTest < Minitest::Test
     (@root / "dev.yml").write(YAML.dump({ "name" => "snappy", "commands" => COMMANDS }))
     ui = typed_mock(Dev::Cli::Ui)
     ui.stubs(:print_header)
+    ui.stubs(:print_crossing)
     host_rule = Dev::HostRule.new(
       host_environment: Dev::HostEnvironment.new(path: @marker.to_s),
     )

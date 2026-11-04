@@ -24,8 +24,8 @@ module Dev
       extend T::Sig
 
       # An `image` block named `host` (EnvironmentImage::HOST): the word is
-      # dev.yml's `runs_on: host`, so an image of that name could never be
-      # run on.
+      # dev.yml's `environment: host`, so an image of that name could never
+      # be named as an environment.
       class ReservedImageNameError < StandardError; end
 
       # Group an ungrouped declaration lands in. Bundler's default (unscoped)
@@ -216,7 +216,7 @@ module Dev
         raise GroupDSL::EmptyNameError, "image name cannot be empty" if name_str.empty?
         if name_str == EnvironmentImage::HOST
           raise ReservedImageNameError,
-            "`#{EnvironmentImage::HOST}` cannot name an image: it is dev.yml's `runs_on: #{EnvironmentImage::HOST}`, " \
+            "`#{EnvironmentImage::HOST}` cannot name an image: it is dev.yml's `environment: #{EnvironmentImage::HOST}`, " \
               "the command placement that is no image"
         end
 

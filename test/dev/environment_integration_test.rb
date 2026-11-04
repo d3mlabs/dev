@@ -9,6 +9,8 @@ require "dev/deps"
 require "dev/deps/dependency"
 require "dev/deps/lockfile"
 require "dev/environment_image"
+require "dev/host_environment"
+require "dev/host_rule"
 require "dev/platform"
 require "dev/runner"
 require "dev/shadowenv_llvm"
@@ -19,25 +21,25 @@ require "stringio"
 require "tmpdir"
 require "yaml"
 
-# dev#307's done-when, through the composition root: a checkout whose lock
-# pins two images and whose dev.yml places each command by name. The
-# process boundaries are faked — the engine (the image is "found locally",
-# so no registry is reached), the exec — and everything between dev.yml
-# and the argv dev would exec is real.
+# dev#307's and dev#409's done-whens, through the composition root: a
+# checkout whose lock pins two images and whose dev.yml places each command
+# by name with `environment:`, bound against the lock at load. The process
+# boundaries are faked — the engine (the image is "found locally", so no
+# registry is reached), the exec — and everything between dev.yml and the
+# argv dev would exec is real.
 transform!(RSpock::AST::Transformation)
-class RunsOnIntegrationTest < Minitest::Test
+class EnvironmentIntegrationTest < Minitest::Test
   include SorbetHelper
 
   COMMANDS = {
-    "build" => { "run" => "./bin/build.sh", "runs_on" => "snappy-linux" },
-    "test-server" => { "run" => "./bin/test-server.sh", "runs_on" => "snappy-server" },
-    "editor" => { "run" => "./bin/editor.sh", "runs_on" => "host" },
-    "lint" => { "run" => "./bin/lint.sh" },
+    "build" => { "run" => "./bin/build.sh", "environment" => "snappy-linux", "desc" => "Build the game" },
+    "test-server" => { "run" => "./bin/test-server.sh", "environment" => "snappy-server", "desc" => "Test the server" },
+    "editor" => { "run" => "./bin/editor.sh", "environment" => "host", "desc" => "Open the editor" },
   }.freeze
 
   def setup
     @original_cwd = Dir.pwd
-    @root = Pathname(Dir.mktmpdir("runs-on-fixture"))
+    @root = Pathname(Dir.mktmpdir("environment-fixture"))
     Dev.stubs(:target_project_root).returns(@root)
     # A workstation: the fixture is never `dev up`'d, and in CI the
     # staleness guard turns that into an exit(1) — a real one, which the
@@ -88,7 +90,7 @@ class RunsOnIntegrationTest < Minitest::Test
     mounts.include?("/e:/ue")
   end
 
-  test "runs_on: host runs the command here, whatever the lock pins" do
+  test "environment: host runs the command here, whatever the lock pins" do
     Given
     lock(image_pin("snappy-linux"), image_pin("snappy-server"))
     runner = runner(COMMANDS)
@@ -100,35 +102,118 @@ class RunsOnIntegrationTest < Minitest::Test
     1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/editor.sh"))
   end
 
-  test "a command naming none fails with both names listed" do
+  test "a container-placed run prints the crossing line once; a host run prints nothing extra" do
     Given
     lock(image_pin("snappy-linux"), image_pin("snappy-server"))
-    runner = runner(COMMANDS)
-    Kernel.expects(:exec).never
-    Kernel.expects(:exit).with(1).once
+    ui = fake_ui
+    runner = runner(COMMANDS, ui:)
+    record_execs
 
     When
-    runner.run(["lint"])
-
-    Then "the refusal names the command's run line, both images, and the key to add"
-    @stderr.string.include?("`./bin/lint.sh` runs in a container but names no image")
-    @stderr.string.include?("snappy-linux, snappy-server")
-    @stderr.string.include?("runs_on: <name>")
-  end
-
-  test "a command naming an image the lock does not pin is refused with what it does pin" do
-    Given
-    lock(image_pin("snappy-linux"), image_pin("snappy-server"))
-    runner = runner({ "deploy" => { "run" => "./bin/deploy.sh", "runs_on" => "snappy-srv" } })
-    Kernel.expects(:exec).never
-    Kernel.expects(:exit).with(1).once
-
-    When
-    runner.run(["deploy"])
+    exec!(runner, ["build"])
+    exec!(runner, ["editor"])
 
     Then
-    @stderr.string.include?("`./bin/deploy.sh` runs on `snappy-srv`")
+    1 * ui.print_crossing("snappy-linux")
+    0 * ui.print_crossing("host")
+  end
+
+  test "dev help shows each project command's environment on this machine; builtins are not annotated" do
+    Given "a Mac: neither image is native here"
+    lock(image_pin("snappy-linux"), image_pin("snappy-server"))
+    out = StringIO.new
+    runner = runner(COMMANDS, out:)
+
+    When
+    runner.run(["help"])
+    lines = out.string.lines.map(&:chomp)
+
+    Then "a trailing column per project command, in a container where the host rule enters one"
+    lines.include?("  build        Build the game   snappy-linux (container)")
+    lines.include?("  test-server  Test the server  snappy-server (container)")
+    lines.include?("  editor       Open the editor  host")
+    lines.grep(/^  deps /).first == "  deps …       Manage dependencies (update | install | check | path)"
+  end
+
+  test "dev help <cmd> says the environment in a sentence" do
+    Given
+    lock(image_pin("snappy-linux"), image_pin("snappy-server"))
+    out = StringIO.new
+    runner = runner(COMMANDS, out:)
+
+    When
+    runner.run(["help", "build"])
+
+    Then
+    out.string == "Usage: dev build [args...]\n\nBuild the game\nRuns in snappy-linux, in a container on this machine.\n"
+  end
+
+  test "a command naming none among several pins fails at load — at dev help, with both names listed" do
+    Given
+    lock(image_pin("snappy-linux"), image_pin("snappy-server"))
+    runner = runner(COMMANDS.merge("lint" => { "run" => "./bin/lint.sh" }))
+    Kernel.expects(:exec).never
+    Kernel.expects(:exit).with(1).once
+
+    When
+    runner.run(["help"])
+
+    Then "the refusal names the command, both images, and the key to add"
+    @stderr.string.include?("dev: `lint` runs in a container but names no image")
     @stderr.string.include?("snappy-linux, snappy-server")
+    @stderr.string.include?("environment: <name>")
+  end
+
+  test "a command naming an image the lock does not pin fails at load with the pin list, whatever command is asked for" do
+    Given
+    lock(image_pin("snappy-linux"), image_pin("snappy-server"))
+    runner = runner(COMMANDS.merge("deploy" => { "run" => "./bin/deploy.sh", "environment" => "snappy-srv" }))
+    Kernel.expects(:exec).never
+    Kernel.expects(:exit).with(1).twice
+
+    When
+    runner.run(["help"])
+    runner.run(["build"])
+
+    Then
+    @stderr.string.include?("dev: `deploy` runs in `snappy-srv`, which the lock does not pin")
+    @stderr.string.include?("snappy-linux, snappy-server")
+  end
+
+  test "a lock another dev locked keeps its remediation reachable: the message once on stderr, help without the column, a project command refused" do
+    Given "a pin whose stored digest is not this dev's"
+    lock(image_pin("snappy-linux"))
+    lockfile = Dev::Deps::Lockfile.new(dir: @root)
+    lockfile.lock(lockfile.read.map { |pin| pin.with(metadata: pin.metadata.merge(Dev::EnvironmentImage::DIGEST_KEY => "f" * 64)) })
+    out = StringIO.new
+    runner = runner(COMMANDS, out:)
+    Kernel.expects(:exec).never
+    Kernel.expects(:exit).with(1).once
+
+    When
+    runner.run(["help"])
+    runner.run(["build"])
+
+    Then
+    @stderr.string.scan("run: dev deps update").size >= 1
+    out.string.include?("  build        Build the game\n")
+    @stderr.string.include?("`./bin/build.sh` has no environment bound")
+  end
+
+  test "runs_on: is refused at load with its one-line replacement (dev#409)" do
+    Given
+    lock(image_pin("snappy-linux"))
+    runner = runner({ "build" => { "run" => "./bin/build.sh", "runs_on" => "snappy-linux" }, "editor" => { "run" => "./bin/editor.sh", "runs_on" => "host" } })
+    Kernel.expects(:exec).never
+    Kernel.expects(:exit).with(1).once
+
+    When
+    runner.run(["build"])
+
+    Then
+    @stderr.string.include?("`runs_on:` is `environment:`")
+    @stderr.string.include?("commands.build.runs_on: \"snappy-linux\" → `environment: snappy-linux`")
+    @stderr.string.include?("commands.editor.runs_on: \"host\" → `environment: host`")
   end
 
   test "whatever the lock pins, container: and every build.container.* key are refused at load with their migration" do
@@ -153,7 +238,7 @@ class RunsOnIntegrationTest < Minitest::Test
     @stderr.string.include?("build.container.persist → `persist true` in the `image` block")
     @stderr.string.include?("build.container.volumes → `volume \"…\"` lines in the `image` block")
     @stderr.string.include?("build.container.resources → `engine:` at the top level of dev.yml")
-    @stderr.string.include?("commands.editor.container: false → `runs_on: host`")
+    @stderr.string.include?("commands.editor.container: false → `environment: host`")
   end
 
   private
@@ -185,14 +270,16 @@ class RunsOnIntegrationTest < Minitest::Test
     execs
   end
 
-  # A Runner over a dev.yml written into the fixture root.
-  def runner(commands, build: nil)
+  # A Runner over a dev.yml written into the fixture root, on a bare host
+  # (no marker: nothing is native here).
+  def runner(commands, build: nil, ui: fake_ui, out: StringIO.new)
     yaml = { "name" => "fixture", "commands" => commands }
     yaml["build"] = build if build
     (@root / "dev.yml").write(YAML.dump(yaml))
+    host_rule = Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: (@root / "no-marker").to_s))
     # A host whose gh holds no login, so the developer's own token never
     # enters an expected argv.
-    Dev::Runner.new(dev_yaml_path: @root / "dev.yml", ui: fake_ui, out: StringIO.new,
+    Dev::Runner.new(dev_yaml_path: @root / "dev.yml", ui:, out:, host_rule:,
       github_token: Dev::ContainerGithubToken.new(source: -> { nil }))
   end
 
@@ -216,6 +303,7 @@ class RunsOnIntegrationTest < Minitest::Test
   def fake_ui
     ui = typed_mock(Dev::Cli::Ui)
     ui.stubs(:print_header)
+    ui.stubs(:print_crossing)
     ui
   end
 end

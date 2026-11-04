@@ -3,6 +3,8 @@
 
 require "test_helper"
 require "dev/command"
+require "dev/environment_ref"
+require "dev/placement"
 
 # A minimal builtin for exercising the trait defaults, the hierarchy's
 # open edge, and the OverriddenCommand composition.
@@ -68,18 +70,49 @@ class CommandTest < Minitest::Test
     cmd.repl == true
   end
 
-  test "runs_on is nil by default, carried as given, and part of the value" do
+  test "environment is nil by default, carried as the parsed reference, and part of the value" do
     Given
     unplaced = Dev::ProjectCommand.new(run: "./bin/build.sh")
-    placed = Dev::ProjectCommand.new(run: "./bin/build.sh", runs_on: "snappy-linux")
+    placed = Dev::ProjectCommand.new(run: "./bin/build.sh", environment: Dev::EnvironmentRef::Image.new(name: "snappy-linux"))
 
     Expect
-    unplaced.runs_on.nil?
-    placed.runs_on == "snappy-linux"
+    unplaced.environment.nil?
+    placed.environment == Dev::EnvironmentRef::Image.new(name: "snappy-linux")
     unplaced != placed
     unplaced.hash != placed.hash
-    placed.with_children({ "x" => unplaced }).runs_on == "snappy-linux"
-    Dev::ProjectCommand::HOST == "host"
+    placed.with_children({ "x" => unplaced }).environment == Dev::EnvironmentRef::Image.new(name: "snappy-linux")
+  end
+
+  test "placement is nil until bound; with_placement binds it, keeping everything else, and it is part of the value" do
+    Given
+    parsed = Dev::ProjectCommand.new(run: "./bin/build.sh", desc: "Build", repl: false, hidden: true,
+      environment: Dev::EnvironmentRef::Host.new, children: { "x" => Dev::ProjectCommand.new(run: "x") })
+
+    When
+    bound = parsed.with_placement(Dev::Placement::Host.new)
+
+    Then
+    parsed.placement.nil?
+    bound.placement == Dev::Placement::Host.new
+    bound.placement! == Dev::Placement::Host.new
+    bound.run == "./bin/build.sh"
+    bound.desc == "Build"
+    bound.hidden?
+    bound.environment == Dev::EnvironmentRef::Host.new
+    bound.children == parsed.children
+    bound != parsed
+    bound.hash != parsed.hash
+    bound.with_children({}).placement == Dev::Placement::Host.new
+  end
+
+  test "placement! on an unbound command refuses with the re-lock to run" do
+    When
+    Dev::ProjectCommand.new(run: "./bin/build.sh").placement!
+
+    Then
+    error = raises(Dev::ProjectCommand::UnboundPlacementError)
+    error.message.include?("`./bin/build.sh` has no environment bound")
+    error.message.include?("dev deps update")
   end
 
   test "a ProjectCommand never guards, stamps, or hides by default" do

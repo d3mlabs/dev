@@ -17,8 +17,19 @@ module Dev
 
       interface!
 
+      # What the crossing line says before the environment's name.
+      CROSSING_PREFIX = "→ in "
+
       sig { abstract.params(command: String).void }
       def print_header(command); end
+
+      # The one line about where a command runs, printed only at a
+      # crossing — when the command's body enters a container of its
+      # image (dev#409). Dim: a note under the header, not a header.
+      #
+      # @param environment [String] the image's name
+      sig { abstract.params(environment: String).void }
+      def print_crossing(environment); end
 
       # Ask for a secret at the terminal, input hidden. nil when there is
       # no terminal to ask at (a pipe, CI): the caller falls back to its
@@ -50,6 +61,11 @@ module Dev
         @cli_ui.puts(@cli_ui.fmt("{{bold:#{command}}}"))
       end
 
+      sig { override.params(environment: String).void }
+      def print_crossing(environment)
+        @cli_ui.puts(@cli_ui.fmt("{{gray:#{CROSSING_PREFIX}#{environment}}}"))
+      end
+
       sig { override.params(question: String).returns(T.nilable(String)) }
       def ask_secret(question)
         return nil unless @input.tty?
@@ -65,6 +81,11 @@ module Dev
       sig { override.params(command: String).void }
       def print_header(command)
         $stdout.puts(command)
+      end
+
+      sig { override.params(environment: String).void }
+      def print_crossing(environment)
+        $stdout.puts("#{CROSSING_PREFIX}#{environment}")
       end
 
       sig { override.params(question: String).returns(T.nilable(String)) }

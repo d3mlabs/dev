@@ -4,6 +4,7 @@
 require "test_helper"
 require "dev/command"
 require "dev/command_parser"
+require "dev/environment_ref"
 
 transform!(RSpock::AST::Transformation)
 class CommandParserTest < Minitest::Test
@@ -213,38 +214,40 @@ class CommandParserTest < Minitest::Test
     cmd.repl == false
   end
 
-  test "parse carries runs_on as written — a name the parser does not resolve (dev#307): #{value.inspect}" do
+  test "parse emits the environment as a typed reference — a name the parser does not resolve (dev#409): #{value.inspect}" do
     Given "a command hash naming where it runs"
     parser = Dev::CommandParser.new
-    hash = { "run" => "./bin/build.sh", "runs_on" => value }
+    hash = { "run" => "./bin/build.sh", "environment" => value }
 
     When "we parse it"
     cmd = parser.parse(["cmd"], hash)
 
-    Then
-    cmd.runs_on == value
+    Then "the reference, unbound"
+    cmd.environment == expected
+    cmd.placement.nil?
 
     Where
-    value          | _
-    "snappy-linux" | "an image name"
-    "host"         | "the reserved value"
+    value          | expected
+    "snappy-linux" | Dev::EnvironmentRef::Image.new(name: "snappy-linux")
+    "host"         | Dev::EnvironmentRef::Host.new
   end
 
-  test "parse leaves runs_on nil when absent: the default is the project's to decide" do
+  test "parse leaves environment nil when absent: the default is the project's to decide" do
     Given
     parser = Dev::CommandParser.new
 
     Expect
-    parser.parse(["cmd"], { "run" => "./bin/build.sh" }).runs_on.nil?
+    parser.parse(["cmd"], { "run" => "./bin/build.sh" }).environment.nil?
   end
 
-  test "parse rejects a runs_on that is not a name: #{value.inspect}" do
+  test "parse rejects an environment that is not a name: #{value.inspect}" do
     When
-    Dev::CommandParser.new.parse(["cmd"], { "run" => "./bin/build.sh", "runs_on" => value })
+    Dev::CommandParser.new.parse(["cmd"], { "run" => "./bin/build.sh", "environment" => value })
 
     Then
-    error = raises(Dev::CommandParser::InvalidRunsOnError)
+    error = raises(Dev::CommandParser::InvalidEnvironmentError)
     error.message.include?("cmd")
+    error.message.include?("'environment'")
 
     Where
     value | _

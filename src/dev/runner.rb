@@ -13,13 +13,16 @@ require "dev/command_repository"
 require "dev/command_runner"
 require "dev/command_service"
 require "dev/dependency_service"
+require "dev/deps/lockfile"
 require "dev/deps/staleness"
+require "dev/environment_image"
 require "dev/execution_context"
 require "dev/global_catalog"
 require "dev/group_executor"
 require "dev/host_rule"
 require "dev/container_github_token"
 require "dev/overridden_executor"
+require "dev/placement_binder"
 require "dev/project_executor"
 require "dev/project_manifest"
 require "dev/project_manifest_loader"
@@ -185,7 +188,9 @@ module Dev
       # captures the `service` local assigned below and dereferences it
       # only at call time, when it exists.
       service = T.let(nil, T.nilable(CommandService))
-      usage_printer = Cli::UsagePrinter.new(epilogue: PROJECT_EPILOGUE)
+      # The printer says where each project command runs on this machine,
+      # so it reads the same host rule the command runner places by.
+      usage_printer = Cli::UsagePrinter.new(epilogue: PROJECT_EPILOGUE, host_rule: @host_rule)
       root_provider = -> { T.must(service).root }
       help = Builtins::HelpCommand.new(usage_printer:, out: @out, root_provider:)
       complete = Builtins::CompleteCommand.new(out: @out, root_provider:)
@@ -195,12 +200,36 @@ module Dev
             desc: "Development commands for #{manifest.name}",
             children: build_builtins(manifest, context.project!, dependency_service, help:, complete:),
           ),
-          project_commands: manifest.commands,
+          project_commands: bind_placements(manifest, context.project!),
         ),
         executor: build_executor(context, usage_printer),
         dependency_service: dependency_service,
       )
       service
+    end
+
+    # Bind every project command's `environment:` against the lock before
+    # the tree is assembled (dev#409): an unknown or ambiguous name fails
+    # here, at load, and the usage printer reads each command's placement.
+    #
+    # A lock dev cannot read — a pin locked by another dev's template, a
+    # retired build-deps.lock — is a different failure: its remediation
+    # (`dev deps update`) is a project builtin served by this very tree,
+    # so it must not make the tree unbuildable. The commands stay in the
+    # tree unbound: the lock's message goes to stderr once, help lists the
+    # commands without their environments, and a project command asked to
+    # run refuses (ProjectCommand#placement!) rather than guess.
+    #
+    # @param manifest [ProjectManifest]
+    # @param project [ProjectContext]
+    # @return [Hash{String => ProjectNode}]
+    # @raise [ProjectImages::UnknownImageError, ProjectImages::AmbiguousEnvironmentImageError]
+    sig { params(manifest: ProjectManifest, project: ProjectContext).returns(T::Hash[String, ProjectNode]) }
+    def bind_placements(manifest, project)
+      PlacementBinder.new(images: project.project_images).bind(manifest.commands)
+    rescue EnvironmentImage::StaleDigestError, Deps::Lockfile::RetiredBuildLockError => e
+      $stderr.puts "dev: #{e.message}"
+      manifest.commands
     end
 
     # The projectless tree: `up` (its host half is the fresh-box bootstrap
@@ -216,7 +245,7 @@ module Dev
     sig { returns(CommandService) }
     def build_projectless_command_service
       service = T.let(nil, T.nilable(CommandService))
-      usage_printer = Cli::UsagePrinter.new(epilogue: PROJECTLESS_EPILOGUE)
+      usage_printer = Cli::UsagePrinter.new(epilogue: PROJECTLESS_EPILOGUE, host_rule: @host_rule)
       root_provider = -> { T.must(service).root }
       builtins = T.let(
         {
@@ -257,7 +286,6 @@ module Dev
       project = context.project!
       command_runner = CommandRunner.new(
         ui: context.ui,
-        images: project.project_images,
         engine_hint: project.engine,
         project_root: project.root,
         host_rule: @host_rule,
