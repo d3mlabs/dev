@@ -7,6 +7,7 @@ require "dev/command_parser"
 require "dev/project_manifest"
 require "dev/environment_ref"
 require "dev/project_manifest_loader"
+require "dev/target_parser"
 require "fileutils"
 require "stringio"
 require "tempfile"
@@ -349,11 +350,204 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
   end
 
+  test "#load parses targets: into the manifest beside the commands (dev#192)" do
+    Given "cellbound-3d's declarations after adoption, minus the keys sibling milestones add"
+    tmp = write_dev_yml(<<~YAML)
+      name: cellbound-3d
+      targets:
+        cellbound-3d:
+          desc: Client
+          platforms: [win64, linux64]
+          configs: [dev, release]
+        opencell:
+          desc: Simulation library
+      commands:
+        deploy:
+          desc: Ship an artifact to a channel
+          commands:
+            staging: { desc: rsync to the gamebox, run: ./bin/stage }
+    YAML
+
+    When
+    manifest = build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    manifest.targets.keys == ["cellbound-3d", "opencell"]
+    manifest.targets["cellbound-3d"].platforms == [Dev::Lifecycle::Platform::Win64, Dev::Lifecycle::Platform::Linux64]
+    manifest.targets["cellbound-3d"].configs == [Dev::Lifecycle::Config::Development, Dev::Lifecycle::Config::Release]
+    manifest.targets["opencell"].builds.map(&:name) == ["opencell"]
+    manifest.commands.keys == ["deploy"]
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load leaves targets empty when the key is absent, and a project build: command is then a plain command" do
+    Given
+    tmp = write_dev_yml(<<~YAML)
+      name: snappy
+      commands:
+        build: { run: ./bin/build.sh }
+        package: { run: ./bin/package.sh }
+    YAML
+
+    When
+    manifest = build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    manifest.targets == {}
+    manifest.commands.keys == ["build", "package"]
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load refuses commands: build: or package: beside targets:, since the verbs are derived (dev#192)" do
+    Given "a dev.yml half-migrated: targets declared, the old build and package commands kept"
+    tmp = write_dev_yml(<<~YAML)
+      name: cellbound-3d
+      targets:
+        cellbound-3d: { platforms: [win64], configs: [dev] }
+      commands:
+        build: { run: ./bin/build }
+        package: { run: ./bin/package }
+        test: { run: ./bin/test }
+    YAML
+
+    When
+    build_loader.load(Pathname.new(tmp.path))
+
+    Then "one message naming both keys and what to declare instead"
+    error = raises(Dev::ProjectManifestLoader::DerivedCommandDeclaredError)
+    error.message.include?("`commands: build:` and `commands: package:`")
+    error.message.include?("build and package are derived from `targets:`")
+    error.message.include?("a target's builder")
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load refuses a single derived command too, in the singular" do
+    Given
+    tmp = write_dev_yml(<<~YAML)
+      name: snappy
+      targets:
+        snappy-steam: { platforms: [win64] }
+      commands:
+        build: { run: ./bin/build.sh }
+    YAML
+
+    When
+    build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    error = raises(Dev::ProjectManifestLoader::DerivedCommandDeclaredError)
+    error.message.include?("declares `commands: build:` beside `targets:`, but build is derived")
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load refuses a command named like a build or a pattern over the targets, at any depth (dev#192)" do
+    Given "a command named as a target, and a nested one named as a build pattern"
+    tmp = write_dev_yml(<<~YAML)
+      name: cellbound-3d
+      targets:
+        cellbound-3d: { platforms: [win64, linux64], configs: [dev, release] }
+        opencell: {}
+      commands:
+        opencell: { run: ./bin/build-sim.sh }
+        deploy:
+          commands:
+            staging: { run: ./bin/stage }
+            cellbound-3d-win64: { run: ./bin/stage-win }
+        test: { run: ./bin/test }
+    YAML
+
+    When
+    build_loader.load(Pathname.new(tmp.path))
+
+    Then "one message listing every offender by path"
+    error = raises(Dev::ProjectManifestLoader::BuildNamedCommandError)
+    error.message.include?("'opencell', 'deploy cellbound-3d-win64'")
+    error.message.include?("`dev build <build>`")
+    !error.message.include?("'test'")
+    !error.message.include?("'deploy staging'")
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load refuses a single build-named command too, in the singular" do
+    Given
+    tmp = write_dev_yml(<<~YAML)
+      name: snappy
+      targets:
+        snappy-steam: { platforms: [win64] }
+      commands:
+        snappy-steam-win64: { run: ./bin/build.sh }
+    YAML
+
+    When
+    build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    error = raises(Dev::ProjectManifestLoader::BuildNamedCommandError)
+    error.message.include?("names a command like a build: 'snappy-steam-win64'")
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load accepts commands whose names merely share a prefix with a target but spell no build" do
+    Given
+    tmp = write_dev_yml(<<~YAML)
+      name: cellbound-3d
+      targets:
+        cellbound-3d: { platforms: [win64], configs: [dev] }
+      commands:
+        cellbound-3d-editor: { run: ./bin/editor }
+        s: { run: dev package && dev deploy staging }
+    YAML
+
+    When
+    manifest = build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    manifest.commands.keys == ["cellbound-3d-editor", "s"]
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load surfaces the target parser's and the target's own errors unchanged: #{fault}" do
+    Given
+    tmp = write_dev_yml(<<~YAML)
+      name: cellbound-3d
+      targets:
+        #{targets_yaml}
+    YAML
+
+    When
+    build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    raises error_class
+
+    Cleanup
+    tmp.close!
+
+    Where
+    fault                   | targets_yaml                                       | error_class
+    "a reserved suffix"     | "cellbound-3d-win64: { platforms: [win64] }"       | Dev::Lifecycle::Target::ReservedTargetSuffixError
+    "an unknown id"         | "cellbound-3d: { platforms: [windows-x64] }"       | Dev::TargetParser::InvalidAxisError
+    "a non-mapping entry"   | "cellbound-3d: ./bin/build"                        | Dev::TargetParser::InvalidTargetError
+  end
 
   private
 
   def build_loader
-    Dev::ProjectManifestLoader.new(command_parser: Dev::CommandParser.new)
+    Dev::ProjectManifestLoader.new(command_parser: Dev::CommandParser.new, target_parser: Dev::TargetParser.new)
   end
 
   def write_dev_yml(content)
