@@ -50,7 +50,7 @@ module Dev
     private
 
     # One build's row: its name, its target's description, its placement —
-    # left unbound (no column) when the lock could not be read at load, as
+    # left unbound (no column) when the lock could not place it at load, as
     # a command's row is — and the host note when this machine is not the
     # build's platform.
     #

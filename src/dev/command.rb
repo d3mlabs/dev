@@ -379,11 +379,11 @@ module Dev
     #
     # @return [Placement]
     # @raise [UnboundPlacementError] when the composition root left the
-    #   command unbound (the lock could not be read at load)
+    #   command unbound (the lock could not place it at load)
     sig(:final) { returns(Placement) }
     def placement!
       @placement || raise(UnboundPlacementError,
-        "`#{@run}` has no environment bound: the lock could not be read at load — re-lock it (dev deps update) and retry")
+        "`#{@run}` has no environment bound: the lock could not place it at load — re-lock it (dev deps update) and retry")
     end
 
     # The same command with its environment bound (the composition root's

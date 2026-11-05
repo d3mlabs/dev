@@ -216,7 +216,7 @@ module Dev
     #
     # @param cmd [ProjectCommand] bound at load (ProjectCommand#placement!)
     # @return [Placement] Host to run here, Image to enter a container of it
-    # @raise [ProjectCommand::UnboundPlacementError] when the lock could not be read at load
+    # @raise [ProjectCommand::UnboundPlacementError] when the lock could not place it at load
     # @raise [HostRule::ContainerDriftError] inside a container that is not the lock's image
     sig { params(cmd: ProjectCommand).returns(Placement) }
     def placement(cmd)

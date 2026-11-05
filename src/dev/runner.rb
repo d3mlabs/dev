@@ -235,28 +235,30 @@ module Dev
     # target placements are what `build` and `package` dispatch by
     # (dev#414), the channel placements what `deploy` does (dev#415).
     #
-    # A lock dev cannot read — a pin locked by another dev's template, a
-    # retired build-deps.lock — is a different failure: its remediation
-    # (`dev deps update`) is a project builtin served by this very tree,
-    # so it must not make the tree unbuildable. The commands stay in the
-    # tree unbound and no target or channel is placed: the lock's message
-    # goes to stderr once, help lists the commands, builds and channels
-    # without their environments, and a project command, build or deploy
-    # asked to run refuses (ProjectCommand#placement!, BuildDispatcher,
-    # DeployCommand) rather than guess.
+    # A lock out of step with the manifest — a pin locked by another dev's
+    # template, a retired build-deps.lock, an image pinned before its block
+    # declared the `target_platforms` a build now asks of it (dev#450) —
+    # is a different failure: its remediation (`dev deps update`) is a
+    # project builtin served by this very tree, so it must not make the
+    # tree unbuildable. The commands stay in the tree unbound and no target
+    # or channel is placed: the error's message goes to stderr once, help
+    # lists the commands, builds and channels without their environments,
+    # and a project command, build or deploy asked to run refuses
+    # (ProjectCommand#placement!, BuildDispatcher, DeployCommand) rather
+    # than guess.
     #
     # @param manifest [ProjectManifest]
     # @param project [ProjectContext]
     # @return [Bindings]
     # @raise [ProjectImages::UnknownImageError, ProjectImages::AmbiguousEnvironmentImageError]
-    # @raise [PlacementBinder::ImageDoesNotProduceError]
     sig { params(manifest: ProjectManifest, project: ProjectContext).returns(Bindings) }
     def bind_placements(manifest, project)
       binder = PlacementBinder.new(images: project.project_images)
       targets = binder.bind_targets(manifest.targets)
       channels = binder.bind_channels(manifest.channels)
       Bindings.new(commands: binder.bind(manifest.commands), targets:, channels:)
-    rescue EnvironmentImage::StaleDigestError, Deps::Lockfile::RetiredBuildLockError => e
+    rescue EnvironmentImage::StaleDigestError, Deps::Lockfile::RetiredBuildLockError,
+           PlacementBinder::ImageDoesNotProduceError => e
       $stderr.puts "dev: #{e.message}"
       Bindings.new(commands: manifest.commands, targets: {}, channels: {})
     end

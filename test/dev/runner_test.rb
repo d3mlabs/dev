@@ -385,6 +385,33 @@ class RunnerTest < Minitest::Test
     out.string.include?("--no-build") == false
   end
 
+  test "a build whose image does not produce its platform is reported at load and left unbound, so dev deps update stays reachable (dev#450)" do
+    Given "a lock whose image declares no target_platforms, and a target asking it for win64"
+    out = StringIO.new
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    runner = build_runner(out: out, root: pinned_root("snappy-linux"), targets: {
+      "snappy-steam" => { "desc" => "The Steam client", "platforms" => ["win64"], "build" => "true" },
+    })
+
+    When "we print build's listing, then deps update's usage"
+    runner.run(["help", "build"])
+    listing = out.string.dup
+    out.truncate(0)
+    out.rewind
+    runner.run(["deps", "update", "--help"])
+
+    Then "the mismatch is named once on stderr, the build lists without an environment column, and the relock is served"
+    $stderr.string.include?("`snappy-steam-win64` builds in snappy-linux, which does not produce win64")
+    $stderr.string.include?("add `target_platforms :win64` to its image block")
+    listing.include?("snappy-steam-win64 The Steam client")
+    listing.include?("snappy-linux") == false
+    out.string.include?("Usage: dev deps update")
+
+    Cleanup
+    $stderr = old_stderr
+  end
+
   test "bare dev build runs the first declared target's build script with the env contract, into the store" do
     Given "a project whose first target's build script records its env"
     root = Pathname.new(Dir.mktmpdir("runner-test-"))
