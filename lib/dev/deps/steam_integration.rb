@@ -74,25 +74,49 @@ module Dev
         puts ">>> Installed #{dep.name}@#{dep.version} to #{published / SERVER_SUBDIR}"
       end
 
+      # SteamCMD's one known cold-start flake: on a user's first run (an
+      # empty ~/Steam) app_update can race its own appinfo fetch and fail
+      # with this before the app's manifest is cached; the next run has it.
+      # A fresh runner account provisioning a depot its colleague had
+      # already installed is exactly that first run (snappy#138).
+      MISSING_CONFIGURATION = "Missing configuration"
+
       # SteamCMD boundary. Isolated so tests can stub it. +force_install_dir must
       # precede +login (it binds the install dir for the session that follows),
       # and `validate` makes the step self-healing after an interrupted download.
+      #
+      # SteamCMD reports the reason for a failed install on stdout (its
+      # `ERROR!` line); stderr carries only the wrapper's startup line, so
+      # the error names what stdout said.
       #
       # @param dep [Dependency]
       # @param server_dir [Pathname] depot install dir
       # @raise [ProvisionError] if SteamCMD fails
       sig { params(dep: Dependency, server_dir: Pathname).void }
       def provision(dep, server_dir)
-        _out, err, status = SteamCmd.run(
+        out, err, status = app_update(dep, server_dir)
+        out, err, status = app_update(dep, server_dir) if !status.success? && out.include?(MISSING_CONFIGURATION)
+        return if status.success?
+
+        reported = out.lines.map(&:strip).select { |line| line.start_with?("ERROR!") }
+        reason = reported.empty? ? err.strip : reported.join("; ")
+        raise ProvisionError, "steamcmd app_update #{dep.metadata["app"]} failed: #{reason}"
+      end
+
+      # One `app_update … validate` run.
+      #
+      # @param dep [Dependency]
+      # @param server_dir [Pathname] depot install dir
+      # @return [Array(String, String, Process::Status)] stdout, stderr, status
+      sig { params(dep: Dependency, server_dir: Pathname).returns([String, String, Process::Status]) }
+      def app_update(dep, server_dir)
+        SteamCmd.run(
           "+@sSteamCmdForcePlatformType", steam_platform_for(dep.metadata["platform"]),
           "+force_install_dir", server_dir.to_s,
           "+login", "anonymous",
           "+app_update", dep.metadata["app"], "validate",
           "+quit",
         )
-        return if status.success?
-
-        raise ProvisionError, "steamcmd app_update #{dep.metadata["app"]} failed: #{err.strip}"
       end
 
       # Map the declared platform (a dev platform name, riding the pin via the
