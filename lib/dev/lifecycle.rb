@@ -31,6 +31,13 @@ require_relative "lifecycle/channel"
 require_relative "lifecycle/script_publisher"
 require_relative "lifecycle/ports"
 require_relative "lifecycle/store"
+require_relative "lifecycle/git"
+require_relative "lifecycle/snapshot_branch"
+require_relative "lifecycle/snapshot"
+require_relative "lifecycle/snapshot_commit"
+require_relative "lifecycle/snapshot_branches"
+require_relative "lifecycle/workflow_triggers"
+require_relative "lifecycle/snapshot_sync"
 
 module Dev
   # The vocabulary and the store of the build lifecycle (dev#192): a project
@@ -58,6 +65,13 @@ module Dev
   # after template, Dispatch and DispatchResolver, dev#413), derived by the
   # sibling milestones (dev#414, dev#415); this module is what they all
   # speak.
+  #
+  # The **sync step** of the remote dispatch (K7) is here too: SnapshotSync
+  # commits the working tree through a temporary index (SnapshotCommit),
+  # pushes it to a SnapshotBranch (`dev/build/<runner>/<id>`) in the
+  # `origin` namespace SnapshotBranches owns — and prunes by age for
+  # `dev cache gc` — after WorkflowTriggers has checked that no project
+  # workflow would run on the push; Git is the one CLI boundary they share.
   module Lifecycle
   end
 end

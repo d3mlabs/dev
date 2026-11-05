@@ -1,16 +1,19 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "pathname"
 require "dev/command"
 require "dev/container_engine"
 require "dev/deps/cache_gc"
 require "dev/deps/lockfile"
+require "dev/lifecycle"
 
 module Dev
   module Builtins
     # `dev cache gc [--keep N] [--tool-caches]`: reclaim stale tree
-    # versions, the engine's stale Linuxbrew prefix volumes and the tags of
-    # the lock's images that the lock no longer names; with
+    # versions, the engine's stale Linuxbrew prefix volumes, the tags of
+    # the lock's images that the lock no longer names, and the snapshot
+    # branches of remote dispatches older than the retention; with
     # `--tool-caches`, also drop the tools' download caches whole. A leaf
     # of the `cache` group.
     class CacheGcCommand < BuiltinCommand
@@ -24,18 +27,28 @@ module Dev
         T.proc.params(lockfile: Dev::Deps::Lockfile).returns(Dev::Deps::CacheGc)
       end
 
-      sig { params(cache_gc_factory: CacheGcFactory).void }
+      # Builds the snapshot-branch namespace over a project's checkout
+      # (per-call project root).
+      SnapshotBranchesFactory = T.type_alias do
+        T.proc.params(root: Pathname).returns(Dev::Lifecycle::SnapshotBranches)
+      end
+
+      sig { params(cache_gc_factory: CacheGcFactory, snapshot_branches_factory: SnapshotBranchesFactory).void }
       def initialize(
         cache_gc_factory: ->(lockfile) {
           Dev::Deps::CacheGc.new(lockfile:, engine: Dev::ContainerEngine.resolve)
+        },
+        snapshot_branches_factory: ->(root) {
+          Dev::Lifecycle::SnapshotBranches.new(git: Dev::Lifecycle::Git.new(root:))
         }
       )
         super()
         @cache_gc_factory = cache_gc_factory
+        @snapshot_branches_factory = snapshot_branches_factory
       end
 
       sig { override.returns(String) }
-      def desc = "Reclaim stale tree versions, build images and prefix volumes (--keep N; --tool-caches drops the tools' caches)"
+      def desc = "Reclaim stale tree versions, build images, prefix volumes and snapshot branches (--keep N; --tool-caches drops the tools' caches)"
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Workflow
@@ -59,6 +72,7 @@ module Dev
           keep: parse_keep(args), images: project.project_images.pinned,
           tool_caches: args.flag?(TOOL_CACHES_FLAG),
         )
+        @snapshot_branches_factory.call(project.root).prune
       end
 
       private
