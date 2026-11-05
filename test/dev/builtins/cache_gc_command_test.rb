@@ -102,28 +102,61 @@ class Dev::Builtins::CacheGcCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "the default factory builds the real GC over the project lockfile" do
+  test "gc prunes the snapshot branches of the project's origin after the local tiers" do
+    Given "a cache command over a GC and a snapshot namespace, both expecting"
+    order = sequence("tiers")
+    gc = typed_mock(Dev::Deps::CacheGc)
+    gc.expects(:gc).once.in_sequence(order)
+    branches = typed_mock(Dev::Lifecycle::SnapshotBranches)
+    branches.expects(:prune).with.once.in_sequence(order).returns([])
+    command = build_command(gc, snapshot_branches: branches)
+
+    When "running cache gc"
+    command.call(args: no_args, context: build_context)
+
+    Then "the expectations hold, in order"
+    true
+  end
+
+  test "the default factories build the real GC over the project lockfile and the snapshot namespace over its checkout" do
     Given "a command with its default collaborators"
-    # The real CacheGc#gc shells out to docker, so the test intercepts the
-    # construction boundary and asserts the default factory's composition.
+    # The real CacheGc#gc shells out to docker and the real prune to git, so
+    # the test intercepts both construction boundaries and asserts the
+    # default factories' composition.
+    root = Pathname.new("/tmp/cache-test")
     gc = typed_mock(Dev::Deps::CacheGc)
     gc.expects(:gc).with(keep: Dev::Deps::CacheGc::DEFAULT_KEEP, images: [], tool_caches: false).once
     Dev::Deps::CacheGc.expects(:new)
       .with { |**kwargs| kwargs.fetch(:lockfile).is_a?(Dev::Deps::Lockfile) }
       .returns(gc)
+    branches = typed_mock(Dev::Lifecycle::SnapshotBranches)
+    branches.expects(:prune).once.returns([])
+    Dev::Lifecycle::SnapshotBranches.expects(:new)
+      .with { |**kwargs| kwargs.fetch(:git).root == root }
+      .returns(branches)
     command = Dev::Builtins::CacheGcCommand.new
 
     When "running cache gc"
-    command.call(args: no_args, context: build_context)
+    command.call(args: no_args, context: build_context(root:))
 
-    Then "the expectations on the construction boundary hold"
+    Then "the expectations on the construction boundaries hold"
     true
   end
 
   private
 
-  def build_command(gc)
-    Dev::Builtins::CacheGcCommand.new(cache_gc_factory: ->(_lockfile) { gc })
+  def build_command(gc, snapshot_branches: quiet_snapshot_branches)
+    Dev::Builtins::CacheGcCommand.new(
+      cache_gc_factory: ->(_lockfile) { gc },
+      snapshot_branches_factory: ->(_root) { snapshot_branches },
+    )
+  end
+
+  # A namespace with nothing to prune, for the tests about the other tiers.
+  def quiet_snapshot_branches
+    branches = typed_mock(Dev::Lifecycle::SnapshotBranches)
+    branches.stubs(:prune).returns([])
+    branches
   end
 
   def build_context(root: Pathname.new("/tmp/cache-test"))

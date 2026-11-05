@@ -24,6 +24,7 @@ Seven nouns, each one class, none playing two roles.
 | Store | `Lifecycle::Store` | `<data root>/artifacts/<project>/<build>/` — one directory per declared build, holding the install, the archive and the manifest. Keyed by the project's `name:`, never the checkout. |
 | Channel | `Lifecycle::Channel` | Where artifacts ship to: a name, the builds it **accepts** (patterns in the build grammar) and a publisher spec. Declared as a child of `commands: deploy:`. |
 | Publisher | `Lifecycle::Publisher` | The channel's protocol — the port `deploy` runs over the selected artifacts. `ScriptPublisher` is the `run:` form; integration publishers plug in behind the same interface ([dev#422](https://github.com/d3mlabs/dev/issues/422)). |
+| Snapshot | `Lifecycle::Snapshot` | The working tree as a remote build host can reach it: a commit made through a temporary index, on its `Lifecycle::SnapshotBranch` (`dev/build/<runner>/<id>`) at `origin`, for as long as a remote dispatch needs it. See [The sync step](#the-sync-step). |
 
 ## Declarations
 
@@ -394,7 +395,7 @@ has nothing to check.
 | `host` | any | **native** — the seam runs here |
 | image *I* | provisioned from *I* (the box, a hosted runner) | **native** |
 | image *I* | inside *I*'s container | **native** (a container of another image is `ContainerDriftError`) |
-| image *I* | neither (a Mac) | refused, `RemoteDispatchUnavailableError`, with the hosts that would do named — until milestone B's remote dispatch (a snapshot branch run on an enrolled runner, or in the project's container as the degenerate runner) |
+| image *I* | neither (a Mac) | refused, `RemoteDispatchUnavailableError`, with the hosts that would do named — until milestone B's remote dispatch (a [snapshot branch](#the-sync-step) run on an enrolled runner, or in the project's container as the degenerate runner) |
 
 The environment column of `dev help build` is the same resolution read
 for display: `host`; `cellbound-3d-linux` when this machine runs it
@@ -410,6 +411,85 @@ env only; `after` stamps and reports. Always spawn-and-wait — never an
 exec-replace, which would make `after` unreachable
 (`.cursor/skills/learnings/command-runner-exec`). A failure in the seam
 short-circuits `after`.
+
+## The sync step
+
+A remote dispatch runs the verb on a host that has the build's
+environment — an enrolled runner ([dev#420](https://github.com/d3mlabs/dev/issues/420)),
+or the project's container as the degenerate runner
+([dev#421](https://github.com/d3mlabs/dev/issues/421)). What that host
+builds is the operator's **working tree**, uncommitted changes included,
+and the one transport every host already has to it is the project's
+GitHub remote (K7 in the plan; [ADR-0008](DECISIONS.md#adr-0008--a-data-root-belongs-to-a-build-host)).
+`Lifecycle::SnapshotSync#sync(runner:) { |snapshot| … }` is that step,
+in order:
+
+1. **Refuse while nothing has left the machine** if a project workflow
+   would run on the push. `Lifecycle::WorkflowTriggers` reads
+   `.github/workflows/*.yml` and answers GitHub's own question for the
+   branch about to be pushed: an `on: push` with no `branches` /
+   `branches-ignore` / `tags` filter fires for every branch; a `branches`
+   list fires when a pattern matches (`!` negations in order; `**` as
+   GitHub reads it); a `branches-ignore` list fires when none does; a
+   trigger filtered on tags only never fires for a branch; `paths` do not
+   narrow branches. One firing workflow is
+   `UnfilteredPushTriggerError`, naming every such file and both fixes:
+   filter on the project's branches (`on: push: branches: [main]`) or
+   exclude dev's namespace (`branches-ignore: ['dev/build/**']`). Without
+   this, every remote `dev package` would also be a CI run on a tree
+   nobody committed.
+2. **Commit the working tree through a temporary index**
+   (`Lifecycle::SnapshotCommit`): `GIT_INDEX_FILE` pointed at a scratch
+   file, seeded from HEAD, `git add --all` over it — tracked files as
+   modified, new files, deletions, `.gitignore` honoured, a tracked file
+   `.gitignore` also names kept — then `write-tree` and `commit-tree`
+   with HEAD as parent. HEAD, the branch and the operator's own index
+   never move. A **clean** tree snapshots to HEAD itself: its tree is
+   HEAD's, and the artifact the runner stamps then names the commit the
+   operator is at. A repository with no commit yet snapshots to a
+   parentless commit. The commit's identity is dev's own, so the step
+   works on a host with no `user.*` configured.
+3. **Push** the commit to `refs/heads/dev/build/<runner>/<id>` on
+   `origin` (`Lifecycle::SnapshotBranches#push`: `--force`, the
+   namespace is dev's; `--no-verify`, a pre-push hook guards the
+   project's branches, not a throwaway one; never a prompt). A branch
+   rather than a hidden ref because `workflow_dispatch` accepts only a
+   branch or a tag, and a branch rather than a tag because a tag cannot
+   be force-moved for a retry and `git fetch --tags` would drag every
+   snapshot into every clone.
+4. **Hand the snapshot to the dispatch** — the block receives a
+   `Lifecycle::Snapshot` (the sha, the branch): the `ref` the
+   `workflow_dispatch` names, the sha the crossing line prints and the
+   container fetches.
+5. **Delete the branch** when the block returns, however it returns.
+   Best-effort: a dispatch that succeeded is not failed by a lost
+   connection afterwards; a delete the remote refused is reported with
+   the prune named as the fallback.
+
+**The branch grammar.** `dev/build/<runner>/<utc instant>-<nonce>` —
+`dev/build/cellbound-3d/20261105T173000Z-a1b2c3`. The runner segment is
+the label the dispatch targets (one ref segment: letters, digits, `.`,
+`_`, `-`; `InvalidRunnerLabelError` otherwise), the instant is spelled
+as every instant in dev's names (`BuildId`'s), the nonce keeps two
+snapshots minted in one second apart. `SnapshotBranch.parse` reads a
+branch back from its short name or its full ref, and a name under the
+namespace outside the grammar is not dev's
+(`MalformedSnapshotBranchError`; the prune leaves it alone).
+
+**Retention.** A branch outlives its dispatch only when the delete did
+not happen — a killed dev, a lost connection, a read-only credential.
+`dev cache gc` prunes every `dev/build/*` branch on `origin` **older than
+seven days** (`SnapshotBranches::MAX_AGE_DAYS`), reading each age from
+the name — so the prune is one `git ls-remote` and one `git push
+--delete`, no fetch of the snapshots' objects, no API call per branch.
+It is one more tier of the gc, best-effort like the others: an `origin`
+that cannot be listed or written is reported and skipped, never a
+failure of the gc. A workflow only *schedules* `dev cache gc`; nothing
+else prunes the namespace.
+
+**Trust.** A snapshot-branch build is unreviewed code running on the
+host as its job user — the trust `dev s` extends today; the runbook
+says so.
 
 ## Adding a port implementation
 
