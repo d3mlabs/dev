@@ -146,6 +146,66 @@ class Dev::Deps::SteamIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "a failed app_update names SteamCMD's own ERROR line, which is on stdout, not stderr's startup noise" do
+    Given "SteamCMD failing the install twice, the reason on stdout as it reports it"
+    integration = Dev::Deps::SteamIntegration.new(repository: nil, store: Dev::Deps::LocalStore.new(data_root: "/nonexistent"))
+    Dev::Deps::SteamCmd.stubs(:run).returns([
+      "Loading Steam API...OK\n Update state (0x3) reconfiguring, progress: 0.00 (0 / 0)\nERROR! Failed to install app '1690800' (Missing configuration)\n",
+      "steamcmd.sh[4124533]: Starting  /var/lib/dev/steamcmd/linux32/steamcmd\n",
+      failed_status,
+    ])
+
+    When
+    integration.send(:provision, build_dependency, Pathname("/tmp/nowhere"))
+
+    Then
+    error = raises(Dev::Deps::SteamIntegration::ProvisionError)
+    error.message.include?("ERROR! Failed to install app '1690800' (Missing configuration)")
+    !error.message.include?("Starting  /var/lib/dev/steamcmd")
+  end
+
+  test "Missing configuration — SteamCMD's cold-appinfo flake on a user's first run — is retried once (snappy#138)" do
+    Given "SteamCMD failing with Missing configuration, then succeeding"
+    integration = Dev::Deps::SteamIntegration.new(repository: nil, store: Dev::Deps::LocalStore.new(data_root: "/nonexistent"))
+    answers = [
+      ["ERROR! Failed to install app '1690800' (Missing configuration)\n", "", failed_status],
+      ["Success! App '1690800' fully installed.\n", "", ok_status],
+    ]
+    runs = 0
+    Dev::Deps::SteamCmd.stubs(:run).with { runs += 1 }.returns(*answers)
+
+    When
+    integration.send(:provision, build_dependency, Pathname("/tmp/nowhere"))
+
+    Then "the second run's success is the outcome, and there was no third"
+    runs == 2
+  end
+
+  test "any other app_update failure is not retried" do
+    Given "SteamCMD failing for a reason a retry would not change"
+    integration = Dev::Deps::SteamIntegration.new(repository: nil, store: Dev::Deps::LocalStore.new(data_root: "/nonexistent"))
+    Dev::Deps::SteamCmd.expects(:run).once.returns(
+      ["ERROR! Failed to install app '1690800' (No subscription)\n", "", failed_status],
+    )
+
+    When
+    integration.send(:provision, build_dependency, Pathname("/tmp/nowhere"))
+
+    Then
+    error = raises(Dev::Deps::SteamIntegration::ProvisionError)
+    error.message.include?("(No subscription)")
+  end
+
+  def ok_status
+    system("true")
+    $CHILD_STATUS
+  end
+
+  def failed_status
+    system("false")
+    $CHILD_STATUS
+  end
+
   test "install_all raises ProvisionError when no appmanifest is produced" do
     Given "a provisioner that writes nothing"
     dir = Dir.mktmpdir("dev-steam-int-test-")
