@@ -217,6 +217,25 @@ module Dev
     # and what its seam and `after` read instead of argv.
     Env = type_member
 
+    # One thing a verb acts on, as its own usage lists it (dev#192, K2):
+    # a build for `build`/`package`, with the placement its target
+    # declares for it — the usage printer renders the placement as the
+    # environment column, under the host rule — and a note when this
+    # machine cannot produce it where it is placed.
+    class Subject < T::Struct
+      const :name, String
+      const :desc, String
+      const :placement, T.nilable(Placement), default: nil
+      const :note, T.nilable(String), default: nil
+    end
+
+    # The section a verb's usage prints beneath its flags: a heading and
+    # the subjects, in declaration order.
+    class Listing < T::Struct
+      const :heading, String
+      const :subjects, T::Array[Subject]
+    end
+
     # @param children [Hash{String => Command}] subcommands, when the verb
     #   heads a subtree (`deploy`'s channels)
     sig { params(children: T::Hash[String, Command]).void }
@@ -231,6 +250,14 @@ module Dev
     # verb's to choose.
     sig { override.returns(Category) }
     def category = Category::Lifecycle
+
+    # What `dev help <verb>` lists beneath the verb's flags — every build
+    # the project declares, with its environment on this machine, for
+    # `build` and `package`. Nil for a verb with nothing to enumerate.
+    #
+    # @return [Listing, nil]
+    sig { overridable.returns(T.nilable(Listing)) }
+    def listing = nil
 
     # The stage before the seam: consume the flags and positionals into
     # the verb's Env (the build, where its install goes, …), resolve where

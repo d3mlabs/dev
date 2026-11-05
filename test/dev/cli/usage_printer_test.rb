@@ -398,6 +398,59 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
     "an image this host is"      | :image    | true   | "Runs in cellbound-3d-linux, natively on this machine."
   end
 
+  # --- a lifecycle verb's listing (dev#414) -----------------------------
+
+  test "a verb's own usage lists its subjects after its flags, in its order, labels fitted, each with its environment" do
+    Given "a host provisioned from neither image, and a verb listing four builds"
+    linux = image("cellbound-3d-linux")
+    verb = FakeVerb.new(desc: "Build a target")
+    verb.stubs(:flags).returns([Dev::Cli::Flag.new("--target", takes_value: true, desc: "the target")])
+    verb.stubs(:listing).returns(
+      Dev::LifecycleCommand::Listing.new(
+        heading: "Builds",
+        subjects: [
+          Dev::LifecycleCommand::Subject.new(name: "cellbound-3d-win64-dev", desc: "Client", placement: Dev::Placement::Image.new(image: linux)),
+          Dev::LifecycleCommand::Subject.new(name: "cellbound-3d-editor-macos", desc: "Editor", placement: Dev::Placement::Host.new),
+          Dev::LifecycleCommand::Subject.new(
+            name: "cellbound-3d-editor-linux64", desc: "Editor", placement: Dev::Placement::Host.new, note: "(linux64 only)",
+          ),
+          Dev::LifecycleCommand::Subject.new(name: "rspock", desc: "The gem"),
+        ],
+      ),
+    )
+    out = StringIO.new
+
+    When
+    Dev::Cli::UsagePrinter.new(host_rule: host_rule).print_node(path: ["build"], command: verb, out:)
+
+    Then "the section follows the flags; declaration order kept; the environment as a command's column, the note after it"
+    out.string == <<~USAGE
+      Usage: dev build [args...]
+
+      Build a target
+
+      Flags:
+        --target <value>  the target
+
+      Builds:
+        cellbound-3d-win64-dev      Client   cellbound-3d-linux (container)
+        cellbound-3d-editor-macos   Editor   host
+        cellbound-3d-editor-linux64 Editor   host (linux64 only)
+        rspock                      The gem
+    USAGE
+  end
+
+  test "a verb with nothing to list prints no listing section" do
+    Given
+    out = StringIO.new
+
+    When
+    Dev::Cli::UsagePrinter.new(host_rule: host_rule).print_node(path: ["deploy"], command: FakeVerb.new(desc: "Ship"), out:)
+
+    Then
+    out.string == "Usage: dev deploy [args...]\n\nShip\n"
+  end
+
   test "an overridden slot's own usage says the project body's environment" do
     Given
     overridden = Dev::OverriddenCommand.new(

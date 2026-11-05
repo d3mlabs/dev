@@ -11,9 +11,10 @@ require_relative "target"
 module Dev
   module Lifecycle
     # The artifact store of one project: `<data root>/artifacts/<project>/
-    # <build>/{<archive>, build-id.json}` (dev#192, K9) — one directory per
-    # build, overwritten in place, the manifest authoritative (lifted from
-    # cellbound-3d's `Staging::Slots`). Under the data root, not the
+    # <build>/{<archive>, build-id.json, install/}` (dev#192, K9) — one
+    # directory per build, overwritten in place, the manifest authoritative
+    # (lifted from cellbound-3d's `Staging::Slots`), the builder's install
+    # beside the archive it was packaged into. Under the data root, not the
     # checkout: a checkout clean wipes `dist/`, and one host serves several
     # checkouts of a project. Keyed by the project's dev.yml `name`, as every
     # per-project state in the store is.
@@ -28,6 +29,7 @@ module Dev
       extend T::Sig
 
       ARTIFACTS_DIR = "artifacts"
+      INSTALL_DIR = "install"
 
       # An artifact directory whose `build-id.json` is of a different build
       # than the directory is named for.
@@ -52,6 +54,26 @@ module Dev
       # @return [Pathname]
       sig { params(build: Build).returns(Pathname) }
       def dir(build) = @root / build.name
+
+      # Where a build's install goes: the directory the builder writes
+      # (`DEV_INSTALL`) and the packager reads, beside the archive it
+      # becomes. Inside the artifact directory so one build's state is one
+      # directory, reclaimed as one; the manifest alone says whether the
+      # directory is an artifact, so the install's presence changes nothing
+      # the store reads.
+      #
+      # @param build [Build]
+      # @return [Pathname]
+      sig { params(build: Build).returns(Pathname) }
+      def install_dir(build) = dir(build) / INSTALL_DIR
+
+      # The archive's path without its extension — what the packager is
+      # handed (`DEV_ARTIFACT`) and appends its format's extension to.
+      #
+      # @param build [Build]
+      # @return [Pathname]
+      sig { params(build: Build).returns(Pathname) }
+      def archive_stem(build) = dir(build) / build.name
 
       # The stamped artifact of a build, or nil when none has been packaged
       # (or one was started and never stamped).

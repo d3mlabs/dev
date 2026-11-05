@@ -37,6 +37,8 @@ class Dev::Lifecycle::ScriptBuilderTest < Minitest::Test
     builder.command == "sh ./build.sh"
     builder.to_s == "sh ./build.sh"
     builder.target_options_schema == []
+    builder.name == "script"
+    builder.version.nil?
 
     Cleanup
     FileUtils.rm_rf(root)

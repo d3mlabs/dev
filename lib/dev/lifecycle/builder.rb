@@ -40,6 +40,22 @@ module Dev
       # @return [Array<String>]
       sig { abstract.returns(T::Array[String]) }
       def target_options_schema; end
+
+      # What the artifact's manifest records as the install's provenance
+      # (`build-id.json`'s `builder`): `script` for the script form, an
+      # integration's name for its own.
+      #
+      # @return [String]
+      sig { abstract.returns(String) }
+      def name; end
+
+      # The builder's own version beside its name (`builder_version`): an
+      # engine tag for an integration that has one; nil for a script, which
+      # has none of its own.
+      #
+      # @return [String, nil]
+      sig { abstract.returns(T.nilable(String)) }
+      def version; end
     end
   end
 end

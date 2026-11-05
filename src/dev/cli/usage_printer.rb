@@ -29,7 +29,10 @@ module Dev
     # host rule: `host`, the image's name, or the image's name with
     # `(container)` when running it from here enters a container. A
     # builtin with no project body runs on the host by construction and is
-    # not annotated.
+    # not annotated. A lifecycle verb's own usage lists what it acts on
+    # (LifecycleCommand#listing — the builds, for `build` and `package`)
+    # in the same three columns, each with the environment its target
+    # declares for it.
     class UsagePrinter
       extend T::Sig
 
@@ -47,6 +50,10 @@ module Dev
       # What the environment column appends to an image's name when
       # running it from here enters a container of it.
       CONTAINER_SUFFIX = " (container)"
+
+      # The label column of a command section: wide enough for a command
+      # name, so the summaries line up across sections.
+      LABEL_WIDTH = 12
 
       # @param epilogue [String, nil] the root usage's closing line
       #   (examples, or the hint that project commands need a dev.yml) —
@@ -76,6 +83,8 @@ module Dev
         sentence = environment_sentence(command)
         out.puts sentence if sentence
         print_flags(command.flags, out) unless command.flags.empty?
+        listing = command.is_a?(LifecycleCommand) ? command.listing : nil
+        print_listing(listing, out) if listing
         print_children(children, out) unless children.empty?
         return if path.any? || @epilogue.nil?
 
@@ -141,21 +150,56 @@ module Dev
       # @return [void]
       sig { params(heading: String, commands: T::Array[[String, Command]], out: T.any(IO, StringIO)).void }
       def print_section(heading, commands, out)
-        out.puts ""
-        out.puts "#{heading}:"
         rows = commands.sort_by { |name, _command| name }.map do |name, command|
           # Nodes with children carry a trailing ellipsis: the reader learns
           # there is more beneath without the listing expanding the whole tree.
           label = command.children.empty? ? name : "#{name} …"
           [label, summary(command), environment_label(command)]
         end
-        # The environment is a column: summaries pad to the longest in the
-        # section so the labels line up, and a row with none ends at its
-        # summary.
-        width = T.must(rows.map { |_label, summary, _environment| summary.length }.max)
+        print_rows(heading, rows, out, label_width: LABEL_WIDTH)
+      end
+
+      # A lifecycle verb's subjects (LifecycleCommand#listing) in the same
+      # three columns as a command section, in the verb's order — the
+      # builds as declared, which is what makes the first one the bare
+      # verb's default. The environment is the subject's placement under
+      # the host rule, as a command's is, with the verb's note when this
+      # machine cannot produce the build there.
+      #
+      # @param listing [Dev::LifecycleCommand::Listing]
+      # @param out [IO, StringIO]
+      # @return [void]
+      sig { params(listing: LifecycleCommand::Listing, out: T.any(IO, StringIO)).void }
+      def print_listing(listing, out)
+        rows = listing.subjects.map do |subject|
+          environment = [placement_label(subject.placement), subject.note].compact.join(" ")
+          [subject.name, subject.desc, environment.empty? ? nil : environment]
+        end
+        # Build names run long (`cellbound-3d-steamworks-win64-release`), so
+        # the label column fits the longest rather than a command name's.
+        label_width = rows.map { |label, _summary, _environment| label.length }.max || LABEL_WIDTH
+        print_rows(listing.heading, rows, out, label_width: [LABEL_WIDTH, label_width].max)
+      end
+
+      # One headed block of rows: labels padded to the given width, the
+      # summary column to the longest summary, the environment dim and
+      # last. A row with no environment ends at its summary.
+      #
+      # @param heading [String]
+      # @param rows [Array<[String, String, String?]>] label, summary, environment
+      # @param out [IO, StringIO]
+      # @param label_width [Integer]
+      # @return [void]
+      sig do
+        params(heading: String, rows: T::Array[[String, String, T.nilable(String)]], out: T.any(IO, StringIO), label_width: Integer).void
+      end
+      def print_rows(heading, rows, out, label_width:)
+        out.puts ""
+        out.puts "#{heading}:"
+        summary_width = T.must(rows.map { |_label, summary, _environment| summary.length }.max)
         rows.each do |label, summary, environment|
-          prefix = "  #{label.ljust(12)} "
-          out.puts(environment ? "#{prefix}#{summary.ljust(width)}  #{dim(environment, out)}" : "#{prefix}#{summary}")
+          prefix = "  #{label.ljust(label_width)} "
+          out.puts(environment ? "#{prefix}#{summary.ljust(summary_width)}  #{dim(environment, out)}" : "#{prefix}#{summary}")
         end
       end
 
@@ -179,8 +223,14 @@ module Dev
       # @param command [Dev::Command]
       # @return [String, nil]
       sig { params(command: Command).returns(T.nilable(String)) }
-      def environment_label(command)
-        placement = placement_of(command)
+      def environment_label(command) = placement_label(placement_of(command))
+
+      # A placement as the column spells it; nil for none.
+      #
+      # @param placement [Dev::Placement, nil]
+      # @return [String, nil]
+      sig { params(placement: T.nilable(Placement)).returns(T.nilable(String)) }
+      def placement_label(placement)
         return nil if placement.nil?
 
         case placement
