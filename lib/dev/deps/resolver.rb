@@ -300,7 +300,7 @@ module Dev
           (scheme.nil? || satisfies?(scheme, version, decl.constraint)) &&
             publishes_platforms?(version, explicit)
         end
-        raise NoSatisfyingVersionError, no_satisfying_message(decl, package, explicit) if candidates.empty?
+        raise NoSatisfyingVersionError, no_satisfying_message(decl, package, explicit, scheme) if candidates.empty?
 
         # A universe can list one version string several times (e.g. per-arch
         # rows); selection is over distinct version strings, first fact wins.
@@ -565,20 +565,30 @@ module Dev
       end
 
       # A NoSatisfyingVersionError message that says why: what was asked,
-      # what the universe held.
+      # what the universe held. When the constraint alone rules out every
+      # version (not the platform filter), the scheme gets first say
+      # (VersionScheme#unsatisfied) — a fact-matching ecosystem can name
+      # the fact that moved where a count cannot.
       #
       # @param decl [ScopedDeclaration]
       # @param package [Package]
       # @param explicit [Array<String>] explicitly requested platforms
+      # @param scheme [VersionScheme, nil] the integration's semantics, if any
       # @return [String]
       sig do
         params(
           decl: ScopedDeclaration,
           package: Package,
           explicit: T::Array[String],
+          scheme: T.nilable(VersionScheme),
         ).returns(String)
       end
-      def no_satisfying_message(decl, package, explicit)
+      def no_satisfying_message(decl, package, explicit, scheme)
+        if scheme && package.versions.none? { |version| satisfies?(scheme, version, decl.constraint) }
+          explained = scheme.unsatisfied(name: decl.name, constraint: decl.constraint, versions: package.versions)
+          return explained if explained
+        end
+
         wanted = decl.constraint.empty? ? "any version" : decl.constraint.inspect
         wanted += " on #{explicit.join(", ")}" unless explicit.empty?
         "no version of #{decl.name} satisfies #{wanted} " \

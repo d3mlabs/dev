@@ -42,6 +42,37 @@ module Dev
       def sort(versions)
         versions.sort_by(&:to_i)
       end
+
+      # The two ways a Steam constraint goes unsatisfied, each named with
+      # the universe fact that decides it: the branch is not one the app
+      # publishes, or the pinned buildid is no longer that branch's tip.
+      # A version count would say nothing here — the universe is always
+      # one buildid per branch — so this replaces the generic message.
+      #
+      # @param name [String] the declaration's name
+      # @param constraint [Hash] "branch" (default public), optional "buildid"
+      # @param versions [Array<PackageVersion>] one per branch, buildid as
+      #   version and "branch" in metadata
+      # @return [String]
+      sig do
+        override.params(
+          name: String,
+          constraint: T::Hash[String, T.untyped],
+          versions: T::Array[PackageVersion],
+        ).returns(String)
+      end
+      def unsatisfied(name:, constraint:, versions:)
+        branch = (constraint["branch"] || DEFAULT_BRANCH).to_s
+        tip = versions.find { |version| version.metadata["branch"].to_s == branch }
+        if tip.nil?
+          branches = versions.sort_by { |version| version.metadata["branch"].to_s }
+            .map { |version| "#{version.metadata["branch"]} #{version.version}" }
+          return "#{name}: Steam publishes no `#{branch}` branch (branches: #{branches.join(", ")})"
+        end
+
+        "#{name}: buildid #{constraint["buildid"]} is no longer the tip of `#{branch}` (now #{tip.version}); " \
+          "Steam serves only branch tips — bump `buildid:` to it, or drop `buildid:` to follow the branch"
+      end
     end
   end
 end
