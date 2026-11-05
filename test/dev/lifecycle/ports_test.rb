@@ -42,6 +42,20 @@ class Dev::Lifecycle::PortsTest < Minitest::Test
     Dev::Lifecycle::PackagerSpec::Script.new(command: "./bin/package")                                             | Dev::Lifecycle::ScriptPackager   | "./bin/package"
   end
 
+  test "a channel's run: line becomes a ScriptPublisher at the project root" do
+    Given
+    ports = Dev::Lifecycle::Ports.new(project_root: Pathname("/project"))
+    channel = Dev::Lifecycle::Channel.new(
+      name: "staging",
+      accepts: [Dev::Lifecycle::BuildPattern.new(target: Dev::Lifecycle::Target.new(name: "rspock"))],
+      publisher: Dev::Lifecycle::PublisherSpec::Script.new(command: "./bin/stage"),
+    )
+
+    Expect
+    ports.publisher_for(channel).is_a?(Dev::Lifecycle::ScriptPublisher)
+    ports.publisher_for(channel).command == "./bin/stage"
+  end
+
   test "the script ports run at the project root the Ports were built over, through its shell" do
     Given "a project whose scripts leave a trace, and a target declaring both"
     root = Pathname(Dir.mktmpdir("ports-"))

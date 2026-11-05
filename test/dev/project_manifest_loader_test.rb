@@ -370,7 +370,7 @@ class ProjectManifestLoaderTest < Minitest::Test
         deploy:
           desc: Ship an artifact to a channel
           commands:
-            staging: { desc: rsync to the gamebox, run: ./bin/stage }
+            staging: { desc: rsync to the gamebox, targets: [cellbound-3d-win64], run: ./bin/stage }
     YAML
 
     When
@@ -385,7 +385,124 @@ class ProjectManifestLoaderTest < Minitest::Test
     manifest.targets["cellbound-3d-editor"].environment_for(Dev::Lifecycle::Platform::Macos) == Dev::EnvironmentRef::Host.new
     manifest.targets["opencell"].builds.map(&:name) == ["opencell"]
     manifest.targets["opencell"].environment.nil?
-    manifest.commands.keys == ["deploy"]
+    manifest.commands == {}
+    manifest.channels.keys == ["staging"]
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load lifts commands: deploy: out of the command tree as channels when targets are declared (dev#415)" do
+    Given "two channels beside a plain command"
+    tmp = write_dev_yml(<<~YAML)
+      name: cellbound-3d
+      targets:
+        cellbound-3d:
+          platforms: [win64, linux64]
+          configs: [dev, release]
+          environment: cellbound-3d-linux
+        cellbound-3d-server:
+          platforms: [linux64]
+          environment: cellbound-3d-linux
+      commands:
+        test: { run: ./bin/test }
+        deploy:
+          commands:
+            staging:
+              desc: rsync to the gamebox
+              targets: [cellbound-3d-win64, cellbound-3d-server]
+              run: ./bin/stage
+              environment: host
+            steam:
+              targets: [cellbound-3d-release]
+              run: ./bin/steam-upload
+    YAML
+
+    When
+    manifest = build_loader.load(Pathname.new(tmp.path))
+
+    Then "the channels are parsed against the targets; the command tree holds only the plain command"
+    manifest.commands.keys == ["test"]
+    manifest.channels.keys == ["staging", "steam"]
+    manifest.channels["staging"].desc == "rsync to the gamebox"
+    manifest.channels["staging"].builds.map(&:name) == ["cellbound-3d-win64-dev", "cellbound-3d-win64-release", "cellbound-3d-server-linux64"]
+    manifest.channels["staging"].publisher ==
+      Dev::Lifecycle::PublisherSpec::Script.new(command: "./bin/stage", environment: Dev::EnvironmentRef::Host.new)
+    manifest.channels["steam"].builds.map(&:name) == ["cellbound-3d-win64-release", "cellbound-3d-linux64-release"]
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load surfaces a channel's faults from the parser and the pattern grammar: #{fault}" do
+    Given
+    tmp = write_dev_yml(<<~YAML)
+      name: cellbound-3d
+      targets:
+        cellbound-3d: { platforms: [win64] }
+      commands:
+        deploy:
+          #{deploy_yaml}
+    YAML
+
+    When
+    build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    raises error_class
+
+    Cleanup
+    tmp.close!
+
+    Where
+    fault                         | deploy_yaml                                                                | error_class
+    "a run: on deploy"            | "run: ./bin/deploy"                                                        | Dev::ChannelParser::DeployBodyError
+    "no channels"                 | "desc: Ship"                                                               | Dev::ChannelParser::NoChannelsError
+    "a child without targets:"    | "commands: { staging: { run: ./bin/stage } }"                              | Dev::ChannelParser::ChannelAcceptsError
+    "a child without run:"        | "commands: { staging: { targets: [cellbound-3d] } }"                       | Dev::ChannelParser::ChannelProtocolError
+    "a child with children"       | "commands: { staging: { targets: [cellbound-3d], run: r, commands: {} } }" | Dev::ChannelParser::ChannelChildrenError
+    "a child named help"          | "commands: { help: { targets: [cellbound-3d], run: r } }"                  | Dev::ChannelParser::ReservedChannelNameError
+    "a pattern naming no target"  | "commands: { staging: { targets: [snappy], run: r } }"                     | Dev::Lifecycle::BuildPattern::UnknownTargetError
+  end
+
+  test "#load keeps deploy a plain command, children included, in a project without targets" do
+    Given
+    tmp = write_dev_yml(<<~YAML)
+      name: snappy
+      commands:
+        deploy:
+          desc: Ship
+          commands:
+            staging: { run: ./bin/stage }
+    YAML
+
+    When
+    manifest = build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    manifest.channels == {}
+    manifest.commands["deploy"].children.keys == ["staging"]
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load refuses a channel-shaped deploy child in a project without targets: its patterns have nothing to name" do
+    Given
+    tmp = write_dev_yml(<<~YAML)
+      name: snappy
+      commands:
+        deploy:
+          commands:
+            staging: { targets: [snappy], run: ./bin/stage }
+    YAML
+
+    When
+    build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    error = raises(Dev::ProjectManifestLoader::ChannelWithoutTargetsError)
+    error.message.include?("targets:")
 
     Cleanup
     tmp.close!
@@ -492,7 +609,7 @@ class ProjectManifestLoaderTest < Minitest::Test
         opencell: {}
       commands:
         opencell: { run: ./bin/build-sim.sh }
-        deploy:
+        ship:
           commands:
             staging: { run: ./bin/stage }
             cellbound-3d-win64: { run: ./bin/stage-win }
@@ -504,10 +621,10 @@ class ProjectManifestLoaderTest < Minitest::Test
 
     Then "one message listing every offender by path"
     error = raises(Dev::ProjectManifestLoader::BuildNamedCommandError)
-    error.message.include?("'opencell', 'deploy cellbound-3d-win64'")
+    error.message.include?("'opencell', 'ship cellbound-3d-win64'")
     error.message.include?("`dev build <build>`")
     !error.message.include?("'test'")
-    !error.message.include?("'deploy staging'")
+    !error.message.include?("'ship staging'")
 
     Cleanup
     tmp.close!

@@ -11,8 +11,9 @@ module Dev
   # The composition root's step between parsing dev.yml and assembling the
   # command tree (dev#409): every `environment:` reference bound against
   # the lock into its Placement — each ProjectCommand's, the tree's shape
-  # untouched (#bind), and each target's, one per platform it declares
-  # (#bind_targets, dev#192 K8). Binding here, before
+  # untouched (#bind), each target's, one per platform it declares
+  # (#bind_targets, dev#192 K8), and each channel's protocol
+  # (#bind_channels, K5). Binding here, before
   # CommandRepository#assemble, is what makes an unknown or ambiguous name
   # fail at load — `dev help` included — instead of when the command runs,
   # and what lets the usage printer say where each command runs without a
@@ -77,6 +78,30 @@ module Dev
     sig { params(targets: T::Hash[String, Lifecycle::Target]).returns(T::Hash[String, TargetPlacement]) }
     def bind_targets(targets)
       targets.to_h { |name, target| [name, bind_target(target)] }
+    end
+
+    # Bind every channel's protocol environment — a script channel's
+    # `run:` is placed as a command's body is (dev#192, K5). In
+    # declaration order.
+    #
+    # @param channels [Hash{String => Lifecycle::Channel}] the parsed channels
+    # @return [Hash{String => Placement}] by channel name
+    # @raise [ProjectImages::UnknownImageError] a channel names an image the lock does not pin
+    # @raise [ProjectImages::AmbiguousEnvironmentImageError] a channel names none among several
+    sig { params(channels: T::Hash[String, Lifecycle::Channel]).returns(T::Hash[String, Placement]) }
+    def bind_channels(channels)
+      channels.to_h do |name, channel|
+        spec = channel.publisher
+        placement = case spec
+        when Lifecycle::PublisherSpec::Script then @images.bind(spec.environment, subject: "deploy #{name}")
+        else
+          # simplecov:disable — the sealed spec has no other variant yet;
+          # T.absurd keeps the static proof.
+          T.absurd(spec)
+          # simplecov:enable
+        end
+        [name, placement]
+      end
     end
 
     private

@@ -15,17 +15,21 @@ require_relative "lifecycle/target_environment"
 require_relative "lifecycle/target"
 require_relative "lifecycle/build_pattern"
 require_relative "lifecycle/build"
-require_relative "lifecycle/script_env"
-require_relative "lifecycle/script_builder"
-require_relative "lifecycle/script_packager"
-require_relative "lifecycle/as_is_packager"
-require_relative "lifecycle/none_packager"
-require_relative "lifecycle/ports"
 require_relative "lifecycle/git_state"
 require_relative "lifecycle/build_id"
 require_relative "lifecycle/project_version"
 require_relative "lifecycle/manifest"
 require_relative "lifecycle/artifact"
+require_relative "lifecycle/script_env"
+require_relative "lifecycle/script_builder"
+require_relative "lifecycle/script_packager"
+require_relative "lifecycle/as_is_packager"
+require_relative "lifecycle/none_packager"
+require_relative "lifecycle/publisher"
+require_relative "lifecycle/publisher_spec"
+require_relative "lifecycle/channel"
+require_relative "lifecycle/script_publisher"
+require_relative "lifecycle/ports"
 require_relative "lifecycle/store"
 
 module Dev
@@ -43,8 +47,11 @@ module Dev
   # `build:` line over the ScriptEnv contract), the **Packager** makes the
   # archive (Archive — dev's own zip or split tar, the default;
   # AsIsPackager; NonePackager; ScriptPackager for a `package:` line).
-  # Ports resolves a target's declarations (BuilderSpec, PackagerSpec) into
-  # them for a checkout.
+  # A **channel** (Channel — a `deploy` child: the builds it accepts and
+  # its protocol) ships artifacts through a third port, the **Publisher**
+  # (ScriptPublisher — the child's `run:` once per archive, over the same
+  # env contract). Ports resolves the declarations (BuilderSpec,
+  # PackagerSpec, PublisherSpec) into them for a checkout.
   #
   # The verbs that act on these (`build`, `package`, `deploy`, `release`)
   # are LifecycleCommands in the CLI core (src/dev: the before → seam →

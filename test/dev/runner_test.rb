@@ -8,6 +8,7 @@ require "dev/deps/lockfile"
 require "dev/environment_image"
 require "dev/runner"
 require "fileutils"
+require "open3"
 require "stringio"
 require "tempfile"
 require "tmpdir"
@@ -402,6 +403,81 @@ class RunnerTest < Minitest::Test
     Then "site-dev was built into <data root>/artifacts/<project>/site-dev/install"
     (data_root / "artifacts" / "testproject" / "site-dev" / "install" / "env").read == "site dev\n"
     out.string == "built site-dev → #{data_root / "artifacts" / "testproject" / "site-dev" / "install"}\n"
+  end
+
+  test "deploy is registered in Lifecycle iff the project declares a channel; its usage lists each channel's accept set and protocol" do
+    Given "a project with two channels, and one with targets but none"
+    out = StringIO.new
+    with_channels = build_runner(out: out, targets: {
+      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "true" },
+      "rspock" => { "desc" => "The gem" },
+    }, commands: {
+      "deploy" => { "commands" => {
+        "staging" => { "desc" => "rsync to the box", "targets" => ["site"], "run" => "./bin/stage", "environment" => "host" },
+        "rubygems" => { "desc" => "gem push", "targets" => ["rspock"], "run" => "gem push \"$DEV_ARTIFACT\"", "environment" => "host" },
+      } },
+    })
+    without = StringIO.new
+    build_runner(out: without, targets: { "rspock" => { "desc" => "The gem" } }).run([])
+
+    When "we print usage, then deploy's, then a channel's"
+    with_channels.run([])
+    root_usage = out.string.dup
+    out.truncate(0)
+    out.rewind
+    with_channels.run(["help", "deploy"])
+    deploy_usage = out.string.dup
+    out.truncate(0)
+    out.rewind
+    with_channels.run(["help", "deploy", "staging"])
+
+    Then
+    root_usage.lines.any? { |l| l.strip.start_with?("deploy …") }
+    without.string.lines.none? { |l| l.strip.start_with?("deploy") }
+    deploy_usage.include?(<<~USAGE)
+      Commands:
+        rubygems     gem push          host
+                     Accepts: rspock
+                     Protocol: run: gem push "$DEV_ARTIFACT"
+        staging      rsync to the box  host
+                     Accepts: site-dev, site-release
+                     Protocol: run: ./bin/stage
+    USAGE
+    out.string.include?("Runs on the host.\nAccepts: site-dev, site-release\nProtocol: run: ./bin/stage\n")
+    out.string.include?("--allow-stale")
+    out.string.include?("--dry-run")
+  end
+
+  test "dev deploy <channel> ships the stored artifact through the channel's run: line with the artifact env, never building" do
+    Given "a project whose channel script records its env, and a packaged artifact in the store"
+    root = Pathname.new(Dir.mktmpdir("runner-test-"))
+    (@tmp_roots ||= []).push(root)
+    Open3.capture2e("git", "-C", root.to_s, "init", "-q")
+    Open3.capture2e("git", "-C", root.to_s, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "one")
+    outside = Pathname.new(Dir.mktmpdir("runner-test-"))
+    @tmp_roots.push(outside)
+    data_root = outside / "data"
+    Dev::DataRoot.stubs(:path).returns(data_root.to_s)
+    out = StringIO.new
+    runner = build_runner(out: out, root: root, targets: {
+      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "echo site > \"$DEV_INSTALL/index.html\"" },
+    }, commands: {
+      "deploy" => { "commands" => {
+        "staging" => { "targets" => ["site"], "run" => "echo \"$DEV_CHANNEL $DEV_BUILD $DEV_ARTIFACT\" >> \"#{outside}/shipped\"", "environment" => "host" },
+      } },
+    })
+    runner.run(["package", "site-release"])
+    out.truncate(0)
+    out.rewind
+
+    When
+    runner.run(["deploy", "staging"])
+
+    Then "the one stored config shipped; the script saw the channel, the build and the archive file"
+    archive = data_root / "artifacts" / "testproject" / "site-release" / "site-release.zip"
+    (outside / "shipped").read == "staging site-release #{archive}\n"
+    out.string.start_with?("deployed site-release (")
+    out.string.include?("→ staging: #{archive}")
   end
 
   test "runner is ungated: every project catalog lists it" do
