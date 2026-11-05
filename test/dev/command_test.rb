@@ -33,6 +33,19 @@ class FakeBuiltin < Dev::BuiltinCommand
   end
 end unless defined?(FakeBuiltin)
 
+# A minimal lifecycle verb for the second open edge's trait defaults.
+class FakeVerb < Dev::LifecycleCommand
+  Env = type_member { { fixed: String } }
+
+  def desc = "fake verb"
+
+  def before(args:, context:) = Dev::Dispatch::Outcome::Run.new(args.positionals.join(" "))
+
+  def seam(env, context:); end
+
+  def after(env, context:); end
+end unless defined?(FakeVerb)
+
 transform!(RSpock::AST::Transformation)
 class CommandTest < Minitest::Test
   extend T::Sig
@@ -157,12 +170,47 @@ class CommandTest < Minitest::Test
     builtin.desc == "open edge"
   end
 
-  test "including Command directly raises: the seal admits only its four declared variants" do
+  test "including Command directly raises: the seal admits only its five declared variants" do
     When "including the sealed module outside its declaring file"
     Class.new { include Dev::Command }
 
     Then "sorbet-runtime rejects the include"
     raises RuntimeError
+  end
+
+  test "subclassing LifecycleCommand is the hierarchy's other declared open edge" do
+    Given "a verb subclass"
+    verb = FakeVerb.new
+
+    Expect "it enters the sealed hierarchy through the LifecycleCommand variant, not the builtin one"
+    verb.is_a?(Dev::LifecycleCommand)
+    verb.is_a?(Dev::Command)
+    !verb.is_a?(Dev::BuiltinCommand)
+    verb.desc == "fake verb"
+  end
+
+  test "a lifecycle verb lists under Lifecycle, takes dev's flag handling, and neither guards, stamps nor hides by default" do
+    Given
+    verb = FakeVerb.new
+
+    Expect "the section is the shape's; the stamp is the verb's own after-step, not the installed one"
+    verb.category == Dev::Command::Category::Lifecycle
+    !verb.opaque_args?
+    !verb.hidden?
+    !verb.staleness_exempt?
+    !verb.stamps?
+    verb.flags == []
+  end
+
+  test "a lifecycle verb heads a subtree when given children, none by default" do
+    Given
+    channel = FakeVerb.new
+    bare = FakeVerb.new
+    headed = FakeVerb.new(children: { "staging" => channel })
+
+    Expect
+    bare.children == {}
+    headed.children == { "staging" => channel }
   end
 
   test "ProjectCommand is final: subclassing raises, keeping descent closed" do
@@ -213,12 +261,12 @@ class CommandTest < Minitest::Test
 
   test "an OverriddenCommand takes its category from the builtin slot" do
     Given "a lifecycle builtin slot overridden by a project command"
-    builtin = FakeBuiltin.new(category: Dev::Command::Category::Lifecycle)
+    builtin = FakeBuiltin.new(category: Dev::Command::Category::Environment)
     project = Dev::ProjectCommand.new(run: "./bin/up.sh", desc: "project up")
     cmd = Dev::OverriddenCommand.new(builtin: builtin, project: project)
 
-    Expect "the slot's group holds: an overriding up: still lists under Lifecycle"
-    cmd.category == Dev::Command::Category::Lifecycle
+    Expect "the slot's group holds: an overriding up: still lists under Environment"
+    cmd.category == Dev::Command::Category::Environment
   end
 
   test "an OverriddenCommand exposes its typed halves" do
@@ -323,7 +371,7 @@ class CommandTest < Minitest::Test
     group = Dev::CommandGroup.new(
       path: ["deps"],
       desc: "Dependency lookups",
-      category: Dev::Command::Category::Lifecycle,
+      category: Dev::Command::Category::Environment,
       children: { "path" => path },
       hidden: true,
     )
@@ -333,7 +381,7 @@ class CommandTest < Minitest::Test
     group.path == ["deps"]
     group.children == { "path" => path }
     group.desc == "Dependency lookups"
-    group.category == Dev::Command::Category::Lifecycle
+    group.category == Dev::Command::Category::Environment
     group.hidden?
   end
 

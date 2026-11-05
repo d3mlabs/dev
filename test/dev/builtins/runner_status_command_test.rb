@@ -18,7 +18,7 @@ class Dev::Builtins::RunnerStatusCommandTest < Minitest::Test
     command = Dev::Builtins::RunnerStatusCommand.new
 
     Expect
-    command.category == Dev::Command::Category::Lifecycle
+    command.category == Dev::Command::Category::Environment
     command.staleness_exempt? == false
     command.stamps? == false
   end

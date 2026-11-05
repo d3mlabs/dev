@@ -113,7 +113,7 @@ class Dev::Cli::FlagVocabularyTest < Minitest::Test
     Given "a builtin declaring nothing and a group"
     vocabulary = Dev::Cli::FlagVocabulary.new
     group = Dev::CommandGroup.new(
-      path: ["deps"], desc: "deps", category: Dev::Command::Category::Lifecycle,
+      path: ["deps"], desc: "deps", category: Dev::Command::Category::Environment,
       children: { "path" => VocabularyFakeBuiltin.new },
     )
 

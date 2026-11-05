@@ -69,7 +69,7 @@ module Dev
       def desc = "Remove one of this host's runner enrollments, named by scope or dir (--yes skips the confirmation)"
 
       sig { override.returns(Command::Category) }
-      def category = Command::Category::Lifecycle
+      def category = Command::Category::Environment
 
       sig { override.returns(T::Array[Cli::Flag]) }
       def flags = [Cli::Flag.new(YES_FLAG), Cli::Flag.new(ORG_FLAG)]

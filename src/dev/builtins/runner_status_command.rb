@@ -36,7 +36,7 @@ module Dev
       def desc = "Inspect this host's runner enrollments and their contract facts"
 
       sig { override.returns(Command::Category) }
-      def category = Command::Category::Lifecycle
+      def category = Command::Category::Environment
 
       sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)

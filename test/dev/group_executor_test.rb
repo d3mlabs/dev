@@ -21,7 +21,7 @@ class Dev::GroupExecutorTest < Minitest::Test
   test "execute prints the group's usage to the injected stream" do
     Given "a printer expecting the group and the executor's stream"
     group = Dev::CommandGroup.new(
-      path: ["deps"], desc: "Dependency lookups", category: Dev::Command::Category::Lifecycle,
+      path: ["deps"], desc: "Dependency lookups", category: Dev::Command::Category::Environment,
       children: { "path" => FakeBuiltin.new },
     )
     out = StringIO.new

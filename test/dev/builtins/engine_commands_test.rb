@@ -28,7 +28,7 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
     Expect
     command.staleness_exempt? == true
     command.stamps? == false
-    command.category == Dev::Command::Category::Lifecycle
+    command.category == Dev::Command::Category::Environment
     command.hidden? == false
     !command.desc.empty?
 

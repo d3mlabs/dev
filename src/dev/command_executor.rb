@@ -6,23 +6,26 @@ require_relative "cli/parsed_args"
 require_relative "command"
 require_relative "execution_context"
 require_relative "group_executor"
+require_relative "lifecycle_executor"
 require_relative "overridden_executor"
 require_relative "project_executor"
 
 module Dev
   # The dispatching composite over the sealed Command variants: the case +
   # T.absurd sends each variant to its injected strategy and does nothing
-  # else. Builtin bodies go to BuiltinExecutor (in-process), project
+  # else. Builtin bodies go to BuiltinExecutor (in-process), lifecycle
+  # verbs to LifecycleExecutor (before → seam → after, in-process), project
   # commands to ProjectExecutor's exec tail-call, overridden slots to
   # OverriddenExecutor (builtin stage, then the project tail), and pure
   # groups to GroupExecutor (their usage).
   class CommandExecutor
     extend T::Sig
 
-    # A project or overridden command reached a composite wired without its
-    # project arms. Those variants are only registered when a project
-    # exists, and the projectless wiring is builtin-only — so reaching this
-    # is a dev wiring bug; the raise keeps the invariant explicit.
+    # A project, overridden or lifecycle command reached a composite wired
+    # without its project arms. Those variants are only registered when a
+    # project exists (the verbs derive from its `targets:`), and the
+    # projectless wiring is builtin-only — so reaching this is a dev wiring
+    # bug; the raise keeps the invariant explicit.
     class ProjectExecutionUnavailableError < StandardError; end
 
     # The project arms are optional: outside any project (no dev.yml) the
@@ -34,19 +37,25 @@ module Dev
     #   wirings (e.g. `runner`), so the group arm is never optional
     # @param project_executor [ProjectExecutor, nil]
     # @param overridden_executor [OverriddenExecutor, nil]
+    # @param lifecycle_executor [LifecycleExecutor, nil] the verbs' template
+    #   strategy; a project arm, since the verbs exist only with a
+    #   project's `targets:`
     sig do
       params(
         builtin_executor: BuiltinExecutor,
         group_executor: GroupExecutor,
         project_executor: T.nilable(ProjectExecutor),
         overridden_executor: T.nilable(OverriddenExecutor),
+        lifecycle_executor: T.nilable(LifecycleExecutor),
       ).void
     end
-    def initialize(builtin_executor:, group_executor:, project_executor: nil, overridden_executor: nil)
+    def initialize(builtin_executor:, group_executor:, project_executor: nil, overridden_executor: nil,
+                   lifecycle_executor: nil)
       @builtin_executor = builtin_executor
       @group_executor = group_executor
       @project_executor = project_executor
       @overridden_executor = overridden_executor
+      @lifecycle_executor = lifecycle_executor
     end
 
     # Dispatch one command to its strategy.
@@ -64,6 +73,8 @@ module Dev
       case command
       when BuiltinCommand
         @builtin_executor.execute(command, args:, context:)
+      when LifecycleCommand
+        lifecycle_executor.execute(command, args:, context:)
       when ProjectCommand
         project_executor.exec_into(command, args: args.words)
       when OverriddenCommand
@@ -72,7 +83,7 @@ module Dev
         # A group takes no args, so only the node itself is dispatched.
         @group_executor.execute(command)
       else
-        # simplecov:disable — the sealed hierarchy leaves no fifth variant
+        # simplecov:disable — the sealed hierarchy leaves no sixth variant
         # to construct, so this arm is unreachable at runtime; T.absurd keeps
         # the static exhaustiveness proof.
         T.absurd(command)
@@ -96,6 +107,14 @@ module Dev
     def overridden_executor
       @overridden_executor ||
         raise(ProjectExecutionUnavailableError, "overridden command dispatched to a builtin-only executor")
+    end
+
+    # @return [LifecycleExecutor]
+    # @raise [ProjectExecutionUnavailableError]
+    sig { returns(LifecycleExecutor) }
+    def lifecycle_executor
+      @lifecycle_executor ||
+        raise(ProjectExecutionUnavailableError, "lifecycle verb dispatched to a builtin-only executor")
     end
   end
 end

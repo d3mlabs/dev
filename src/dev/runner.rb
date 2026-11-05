@@ -21,6 +21,7 @@ require "dev/global_catalog"
 require "dev/group_executor"
 require "dev/host_rule"
 require "dev/container_github_token"
+require "dev/lifecycle_executor"
 require "dev/overridden_executor"
 require "dev/placement_binder"
 require "dev/project_executor"
@@ -282,9 +283,10 @@ module Dev
     # Wire the executor composite: one CommandRunner (built from the run's
     # context, the process boundary's collaborators), one BuiltinExecutor,
     # and one ProjectExecutor, shared with the OverriddenExecutor that
-    # composes them for the virtual-dispatch arm; the GroupExecutor shares
-    # help's printer and stream (bare `dev` and `dev help` print the same
-    # root usage).
+    # composes them for the virtual-dispatch arm; the LifecycleExecutor
+    # (the verbs' before → seam → after template, no process collaborator
+    # of its own); the GroupExecutor shares help's printer and stream
+    # (bare `dev` and `dev help` print the same root usage).
     #
     # @param context [ExecutionContext]
     # @param usage_printer [Cli::UsagePrinter]
@@ -306,6 +308,7 @@ module Dev
         group_executor: GroupExecutor.new(usage_printer:, out: @out),
         project_executor:,
         overridden_executor: OverriddenExecutor.new(builtin_executor:, project_executor:),
+        lifecycle_executor: LifecycleExecutor.new,
       )
     end
 
@@ -359,7 +362,7 @@ module Dev
         "deps" => CommandGroup.new(
           path: ["deps"],
           desc: "Manage dependencies (update | install | check | path)",
-          category: Command::Category::Lifecycle,
+          category: Command::Category::Environment,
           children: {
             "update" => Builtins::UpdateDepsCommand.new,
             "install" => install_deps,
@@ -402,7 +405,7 @@ module Dev
       CommandGroup.new(
         path: ["container"],
         desc: "Manage this checkout's build container (up | down | reset | status)",
-        category: Command::Category::Lifecycle,
+        category: Command::Category::Environment,
         children: {
           "up" => up,
           "down" => down,
@@ -424,7 +427,7 @@ module Dev
         "runner" => CommandGroup.new(
           path: ["runner"],
           desc: "Enroll, inspect or unenroll this host as a self-hosted runner",
-          category: Command::Category::Lifecycle,
+          category: Command::Category::Environment,
           children: {
             "register" => Builtins::RunnerRegisterCommand.new,
             "status" => Builtins::RunnerStatusCommand.new,

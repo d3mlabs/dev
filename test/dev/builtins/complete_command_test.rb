@@ -56,7 +56,7 @@ class Dev::Builtins::CompleteCommandTest < Minitest::Test
     tree = {
       "up" => FakeBuiltin.new,
       "runner" => Dev::CommandGroup.new(
-        path: ["runner"], desc: "r", category: Dev::Command::Category::Lifecycle,
+        path: ["runner"], desc: "r", category: Dev::Command::Category::Environment,
         children: { "unregister" => leaf, "status" => FakeBuiltin.new },
       ),
     }
@@ -83,7 +83,7 @@ class Dev::Builtins::CompleteCommandTest < Minitest::Test
     leaf = FakeBuiltin.new(completions: ->(_words) { %w[zeta alpha] })
     tree = {
       "runner" => Dev::CommandGroup.new(
-        path: ["runner"], desc: "r", category: Dev::Command::Category::Lifecycle,
+        path: ["runner"], desc: "r", category: Dev::Command::Category::Environment,
         children: { "unregister" => leaf, "status" => FakeBuiltin.new },
       ),
     }
@@ -116,7 +116,7 @@ class Dev::Builtins::CompleteCommandTest < Minitest::Test
       "help" => FakeBuiltin.new,
       "secret" => FakeBuiltin.new(hidden: true),
       "deps" => Dev::CommandGroup.new(
-        path: ["deps"], desc: "d", category: Dev::Command::Category::Lifecycle,
+        path: ["deps"], desc: "d", category: Dev::Command::Category::Environment,
         children: { "path" => FakeBuiltin.new, "plumbing" => FakeBuiltin.new(hidden: true) },
       ),
       "test" => FakeBuiltin.new.with_children({

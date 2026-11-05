@@ -49,7 +49,7 @@ module Dev
       def desc = "Resolve dependency constraints and write lockfiles, keeping unchanged pins (<name>… or --all to float)"
 
       sig { override.returns(Command::Category) }
-      def category = Command::Category::Lifecycle
+      def category = Command::Category::Environment
 
       sig { override.returns(T::Array[Cli::Flag]) }
       def flags = [Cli::Flag.new(ALL_FLAG, desc: "float every pin to the registries' current versions")]

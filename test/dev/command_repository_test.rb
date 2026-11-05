@@ -22,6 +22,20 @@ class RepositoryFakeBuiltin < Dev::BuiltinCommand
   def call(args:, context:); end
 end unless defined?(RepositoryFakeBuiltin)
 
+# A lifecycle verb for the slot-refusal assertions: the repository only
+# reads its shape, so its stages do nothing.
+class RepositoryFakeVerb < Dev::LifecycleCommand
+  Env = type_member { { fixed: String } }
+
+  def desc = "a verb"
+
+  def before(args:, context:) = Dev::Dispatch::Outcome::Done.new
+
+  def seam(env, context:); end
+
+  def after(env, context:); end
+end unless defined?(RepositoryFakeVerb)
+
 transform!(RSpock::AST::Transformation)
 class Dev::CommandRepositoryTest < Minitest::Test
   ROOT_DESC = "Development commands for testproject"
@@ -261,6 +275,31 @@ class Dev::CommandRepositoryTest < Minitest::Test
 
     Then
     raises Dev::CommandRepository::UnoverridableCommandError
+  end
+
+  test "a project #{what} landing on a lifecycle verb's slot is refused: a verb admits no project command" do
+    Given "a lifecycle verb in the builtin tree"
+    verb = RepositoryFakeVerb.new
+
+    When "a project node lands on its name"
+    build_repository(builtins: { "build" => verb }, project_commands: { "build" => project_node })
+
+    Then
+    error = raises(Dev::CommandRepository::LifecycleSlotError)
+    error.message.include?("command 'build': a lifecycle verb admits no project command")
+
+    Where
+    what      | project_node
+    "command" | Dev::ProjectCommand.new(run: "./bin/build")
+    "group"   | Dev::CommandGroup.new(path: ["build"], desc: "g", category: Dev::Command::Category::Project, children: { "sim" => Dev::ProjectCommand.new(run: "x") })
+  end
+
+  test "a lifecycle verb with no project node on its name keeps its slot" do
+    Given
+    verb = RepositoryFakeVerb.new
+
+    Expect
+    fetch(build_repository(builtins: { "build" => verb }, project_commands: {}), "build").equal?(verb)
   end
 
   test "a project-side node that is not a parsed project node cannot merge: a wiring bug" do

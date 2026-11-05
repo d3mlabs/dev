@@ -45,7 +45,9 @@ Every node dev defines — a builtin or a group — has a declared flag vocabula
 
 Grouped as `dev help` lists them. **Scope** says where the command works: *anywhere* needs no `dev.yml`; *project* needs one; *gated* exists only when the `dev.yml` declares the named config.
 
-**Lifecycle** — provisioning, dependency state, and machine enrollment:
+**Lifecycle** — the build lifecycle's verbs over the project's `targets:` ([dev#192](https://github.com/d3mlabs/dev/issues/192)). The section is reserved for `build`, `package`, `deploy <channel>` and `release <version>`, each derived from the declarations rather than declared as a command; none has landed yet. A verb is its own command shape (`LifecycleCommand`, beside the builtins): dev's stage **around** a replaceable seam — the target's builder, its packager, the channel's protocol — run as *before → seam → after*, always spawn-and-wait so the step after the seam (the artifact's manifest stamp, the deploy receipt) is reachable, with the flags consumed into the env the seam sees (`DEV_TARGET`, `DEV_PLATFORM`, …) and never forwarded as argv. Where the seam runs is a **dispatch**, decided per build from the target's `environment:` under the host rule: *native* — here — when the environment is `host`, or an image this machine was provisioned from (the box, a runner, the container from inside); a machine that is neither is refused with the fix named until the remote dispatch lands (milestone B).
+
+**Environment** — provisioning, dependency state, and machine enrollment:
 
 | Command | Scope | Purpose | Details |
 |---|---|---|---|
@@ -553,7 +555,7 @@ A manifest read this way follows the Gemfile/gemspec convention: **ungrouped dec
 
 ### Dependency commands
 
-The Lifecycle builtins (see [Built-in commands](#built-in-commands)) that drive the four stages above. The dependency verbs live under one noun, `dev deps` (bare `dev deps` lists them), and are Bundler's, because that is the model every Rubyist already carries:
+The Environment builtins (see [Built-in commands](#built-in-commands)) that drive the four stages above. The dependency verbs live under one noun, `dev deps` (bare `dev deps` lists them), and are Bundler's, because that is the model every Rubyist already carries:
 
 - **`dev deps update [<name>…] [--all]`** — resolve constraints from `dependencies.rb`, write lockfiles (recording the manifest digest for the staleness check), and warn, per brew formula the image build installs, when its tap ships no `x86_64_linux` bottle for the locked version — the image build's `brew install` would compile it instead of downloading it (see [Reproducible brew](#reproducible-brew)). Always available (no need to define in `dev.yml`). The re-lock is **conservative**, like `bundle install` against an existing `Gemfile.lock`: a pin whose declaration did not change — same constraint still satisfied by the locked version, same tap, same group, host and env — keeps the lock's version, `tap_commit` included, however far brew's index has moved on the machine running it; adding one `brew "gh"` line moves nothing else in the brew section. The one move you did not ask for is a locked version the lock cannot converge a host to (it records no `tap_commit` for it — a pin older than tap-commit records; hosts install a locked version from the tap at that commit, bottle or not), which floats and is reported by name with that reason. Gems are conservative by bundler's own rule.
   - `dev deps update <name> [<name>…]` — re-resolve only the named declarations and what they need (the integration tooling they pull in, `needed_by`) — `bundle update <gem>`; every other pin is the lock's, whatever its channel. A name `dependencies.rb` does not declare is an error listing the names it does.

@@ -22,9 +22,18 @@ module Dev
 
     # A project node landed on a builtin-side node that is neither a
     # BuiltinCommand nor a CommandGroup — nothing to compose an override
-    # from. Builtin trees hold only those two shapes, so reaching this is a
-    # dev wiring bug.
+    # from. Builtin trees hold those two shapes and the lifecycle verbs, so
+    # outside a verb's slot reaching this is a dev wiring bug.
     class UnoverridableCommandError < StandardError; end
+
+    # A project node landed on a lifecycle verb's slot. A verb is a stage
+    # around its own seam, not a body a project run can follow (dev#192,
+    # K1b): `build`/`package`/`release` admit no project node — the parser
+    # already refuses `commands: build:`/`package:` — and `deploy`'s
+    # channels merge by their own rule once the lock contributes them
+    # (dev#422). Until then no project node has a lifecycle slot to land
+    # on, so this is the explicit refusal for the day one does.
+    class LifecycleSlotError < StandardError; end
 
     # Where argv landed in the tree: the node, the path that reached it,
     # and the tokens left over for it.
@@ -143,12 +152,17 @@ module Dev
     # @param project [Command] a parsed project node
     # @param path [Array<String>]
     # @return [Command]
+    # @raise [LifecycleSlotError] when the builtin side is a lifecycle verb
     # @raise [UnoverridableCommandError] when the builtin side is not a
     #   BuiltinCommand or CommandGroup, or the project side is not a
     #   ProjectNode (both wiring bugs: the parser emits only ProjectNodes,
     #   the composition roots only builtins and groups)
     sig { params(builtin: Command, project: Command, path: T::Array[String]).returns(Command) }
     def merge(builtin, project, path)
+      if builtin.is_a?(LifecycleCommand)
+        raise LifecycleSlotError,
+          "command '#{path.join(" ")}': a lifecycle verb admits no project command; it is derived from `targets:`"
+      end
       unless builtin.is_a?(BuiltinCommand) || builtin.is_a?(CommandGroup)
         raise UnoverridableCommandError,
           "command '#{path.join(" ")}': a project command cannot override a #{builtin.class.name}"

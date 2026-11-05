@@ -46,8 +46,10 @@ module Dev
   # them for a checkout.
   #
   # The verbs that act on these (`build`, `package`, `deploy`, `release`)
-  # and the dispatch are the sibling milestones' (dev#413–#415); this
-  # module is what they all speak.
+  # are LifecycleCommands in the CLI core (src/dev: the before → seam →
+  # after template, Dispatch and DispatchResolver, dev#413), derived by the
+  # sibling milestones (dev#414, dev#415); this module is what they all
+  # speak.
   module Lifecycle
   end
 end

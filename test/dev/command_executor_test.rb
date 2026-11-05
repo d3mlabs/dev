@@ -21,6 +21,20 @@ class Dev::CommandExecutorTest < Minitest::Test
     def call(args:, context:); end
   end
 
+  # Minimal lifecycle verb fake, for the same reason: the composite reads
+  # only the variant's type.
+  class FakeVerb < Dev::LifecycleCommand
+    Env = type_member { { fixed: String } }
+
+    def desc = "a verb"
+
+    def before(args:, context:) = Dev::Dispatch::Outcome::Done.new
+
+    def seam(env, context:); end
+
+    def after(env, context:); end
+  end
+
   def build_context
     ui = typed_mock(Dev::Cli::Ui)
     Dev::ExecutionContext.new(
@@ -30,20 +44,49 @@ class Dev::CommandExecutorTest < Minitest::Test
   end
 
   # Strategy mocks are strict: any message a test doesn't expect is an
-  # unexpected invocation, so each arm proves the other three stayed silent.
+  # unexpected invocation, so each arm proves the other four stayed silent.
   def build_strategies
     {
       builtin_executor: typed_mock(Dev::BuiltinExecutor),
       group_executor: typed_mock(Dev::GroupExecutor),
       project_executor: typed_mock(Dev::ProjectExecutor),
       overridden_executor: typed_mock(Dev::OverriddenExecutor),
+      lifecycle_executor: typed_mock(Dev::LifecycleExecutor),
     }
+  end
+
+  test "a lifecycle verb dispatches to the lifecycle strategy with exact args" do
+    Given "a composite whose lifecycle strategy expects the dispatch"
+    command = FakeVerb.new
+    context = build_context
+    strategies = build_strategies
+    args = Dev::Cli::ParsedArgs.new(words: ["cellbound-3d-win64-dev"], positionals: ["cellbound-3d-win64-dev"])
+    strategies.fetch(:lifecycle_executor)
+      .expects(:execute).with(command, args: args, context: context).once
+    executor = Dev::CommandExecutor.new(**strategies)
+
+    When "executing"
+    executor.execute(command, args: args, context: context)
+
+    Then "the expectation held and no other strategy was consulted"
+    true
+  end
+
+  test "a lifecycle verb against a builtin-only composite is a wiring bug" do
+    Given "a composite wired without project arms (the projectless wiring)"
+    executor = build_builtin_only_executor
+
+    When "executing"
+    executor.execute(FakeVerb.new, args: no_args, context: build_context)
+
+    Then
+    raises Dev::CommandExecutor::ProjectExecutionUnavailableError
   end
 
   test "a command group dispatches to the group strategy" do
     Given "a composite whose group strategy expects the dispatch"
     command = Dev::CommandGroup.new(
-      path: ["deps"], desc: "Dependency lookups", category: Dev::Command::Category::Lifecycle,
+      path: ["deps"], desc: "Dependency lookups", category: Dev::Command::Category::Environment,
       children: { "path" => FakeBuiltin.new },
     )
     strategies = build_strategies

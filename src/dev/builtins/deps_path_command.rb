@@ -38,7 +38,7 @@ module Dev
       def desc = "Print a locked artifact's path (path ficsit <mod> <platform> | path xcode | path gh <name> | path wwise <name>)"
 
       sig { override.returns(Command::Category) }
-      def category = Command::Category::Lifecycle
+      def category = Command::Category::Environment
 
       # A lockfile query, not a dependency consumer: it reads where the
       # locked artifact lives and nothing else. The install stamp is

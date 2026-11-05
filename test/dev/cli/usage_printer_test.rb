@@ -31,6 +31,24 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
     def call(args:, context:); end
   end
 
+  # Minimal lifecycle verb fake: its section is the shape's own.
+  class FakeVerb < Dev::LifecycleCommand
+    Env = type_member { { fixed: String } }
+
+    def initialize(desc:)
+      super()
+      @desc = desc
+    end
+
+    attr_reader :desc
+
+    def before(args:, context:) = Dev::Dispatch::Outcome::Done.new
+
+    def seam(env, context:); end
+
+    def after(env, context:); end
+  end
+
   def setup
     @marker_dir = Pathname(Dir.mktmpdir("usage-printer-host"))
   end
@@ -40,8 +58,8 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
     super
   end
 
-  def lifecycle_builtin(desc: "a lifecycle builtin")
-    FakeBuiltin.new(desc: desc, category: Dev::Command::Category::Lifecycle)
+  def environment_builtin(desc: "an environment builtin")
+    FakeBuiltin.new(desc: desc, category: Dev::Command::Category::Environment)
   end
 
   def workflow_builtin(desc: "a workflow builtin")
@@ -73,12 +91,13 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
     !err.string.include?("Examples")
   end
 
-  test "the root renders the three sections in fixed order when its children span categories" do
+  test "the root renders the four sections in fixed order when its children span categories" do
     Given "one command per category"
     children = {
-      "up" => lifecycle_builtin(desc: "Provision"),
+      "up" => environment_builtin(desc: "Provision"),
       "help" => workflow_builtin(desc: "Show this usage"),
       "test" => Dev::ProjectCommand.new(run: "rspec", desc: "Run tests"),
+      "package" => FakeVerb.new(desc: "Package a build"),
     }
 
     When "printing the root"
@@ -89,11 +108,21 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
     lines.fetch(0) == "Usage: dev <command> [args...]"
     lines.fetch(2) == "Development commands for myproject"
     lines.index("Project commands:") < lines.index("  test         Run tests")
-    lines.index("Lifecycle:") < lines.index("  up           Provision")
+    lines.index("Lifecycle:") < lines.index("  package      Package a build")
+    lines.index("Environment:") < lines.index("  up           Provision")
     lines.index("Development flow:") < lines.index("  help         Show this usage")
     lines.index("Project commands:") < lines.index("Lifecycle:")
-    lines.index("Lifecycle:") < lines.index("Development flow:")
+    lines.index("Lifecycle:") < lines.index("Environment:")
+    lines.index("Environment:") < lines.index("Development flow:")
     !lines.include?("Commands:")
+  end
+
+  test "a lifecycle verb carries no environment column: where it runs is its dispatch's, decided per build" do
+    Given
+    output = print_root({ "package" => FakeVerb.new(desc: "Package a build"), "up" => environment_builtin })
+
+    Expect
+    output.include?("  package      Package a build\n")
   end
 
   test "the root closes with the epilogue; other nodes do not" do
@@ -114,71 +143,71 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
 
   test "a root printed without an epilogue ends at its listing" do
     Given "no epilogue"
-    output = print_root({ "up" => lifecycle_builtin }, epilogue: nil)
+    output = print_root({ "up" => environment_builtin }, epilogue: nil)
 
     Expect
-    output.lines.last == "  up           a lifecycle builtin\n"
+    output.lines.last == "  up           an environment builtin\n"
   end
 
   test "commands list alphabetically within a section" do
-    Given "lifecycle commands registered out of alphabetical order"
+    Given "environment commands registered out of alphabetical order"
     children = {
-      "update-deps" => lifecycle_builtin,
-      "check" => lifecycle_builtin,
-      "install-deps" => lifecycle_builtin,
+      "update-deps" => environment_builtin,
+      "check" => environment_builtin,
+      "install-deps" => environment_builtin,
     }
 
     When "printing the root"
     lines = print_root(children).lines.map(&:chomp)
 
     Then "the section lists them alphabetically"
-    lines.index("  check        a lifecycle builtin") <
-      lines.index("  install-deps a lifecycle builtin")
-    lines.index("  install-deps a lifecycle builtin") <
-      lines.index("  update-deps  a lifecycle builtin")
+    lines.index("  check        an environment builtin") <
+      lines.index("  install-deps an environment builtin")
+    lines.index("  install-deps an environment builtin") <
+      lines.index("  update-deps  an environment builtin")
   end
 
   test "children of one category list under a plain Commands heading, whatever the category" do
     Given "roots whose children share a category"
     project_only = print_root({ "test" => Dev::ProjectCommand.new(run: "rspec", desc: "Run tests") })
-    lifecycle_only = print_root({ "up" => lifecycle_builtin })
+    environment_only = print_root({ "up" => environment_builtin })
 
     Expect "no section headings"
     project_only.include?("\nCommands:\n  test         Run tests\n")
     !project_only.include?("Project commands:")
-    lifecycle_only.include?("\nCommands:\n")
-    !lifecycle_only.include?("Lifecycle:")
+    environment_only.include?("\nCommands:\n")
+    !environment_only.include?("Environment:")
   end
 
   test "sections without commands are omitted" do
-    Given "children spanning two of the three categories"
+    Given "children spanning two of the four categories"
     output = print_root({ "test" => Dev::ProjectCommand.new(run: "rspec", desc: "Run tests"), "help" => workflow_builtin })
 
     Expect "no empty section header renders"
     output.include?("Project commands:")
     output.include?("Development flow:")
-    !output.include?("Lifecycle:")
+    !output.include?("Environment:")
   end
 
   test "an overridden slot lists under the builtin's section with the project's desc" do
-    Given "a lifecycle slot overridden by a project command, beside a project command"
+    Given "an environment slot overridden by a project command, beside a project command"
     overridden = Dev::OverriddenCommand.new(
-      builtin: lifecycle_builtin(desc: "builtin up"),
+      builtin: environment_builtin(desc: "builtin up"),
       project: Dev::ProjectCommand.new(run: "./bin/up.rb", desc: "Project setup"),
     )
 
     When "printing the root"
     output = print_root({ "up" => overridden, "test" => Dev::ProjectCommand.new(run: "rspec", desc: "Run tests") })
 
-    Then "the slot renders under Lifecycle with the override's description"
+    Then "the slot renders under Environment with the override's description"
     lines = output.lines.map(&:chomp)
-    lines.index("Lifecycle:") < lines.index("  up           Project setup")
+    lines.index("Environment:") < lines.index("  up           Project setup")
     !output.include?("builtin up")
   end
 
   test "nodes with children list with a trailing ellipsis, groups and runnable commands alike" do
     Given "a group and a runnable command heading a child"
-    group = build_group(["deps"], category: Dev::Command::Category::Lifecycle, desc: "Dependency lookups")
+    group = build_group(["deps"], category: Dev::Command::Category::Environment, desc: "Dependency lookups")
     test = Dev::ProjectCommand.new(run: "./bin/test.sh", desc: "All tests", children: { "unit" => workflow_builtin })
 
     When "printing the root"
@@ -196,9 +225,9 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
       ["deps"],
       desc: "Dependency lookups",
       children: {
-        "path" => lifecycle_builtin(desc: "Print a locked artifact's path"),
+        "path" => environment_builtin(desc: "Print a locked artifact's path"),
         "plumbing" => Dev::ProjectCommand.new(run: "x", desc: "internal", hidden: true),
-        "check" => build_group(["deps", "check"], desc: "Checks", category: Dev::Command::Category::Lifecycle),
+        "check" => build_group(["deps", "check"], desc: "Checks", category: Dev::Command::Category::Environment),
       },
     )
     out = StringIO.new
@@ -257,7 +286,7 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
   test "print_node lists a command's flags after its description: switches by name, value-taking ones with a placeholder, each with its description" do
     Given "a builtin declaring three flags, one undescribed"
     printer = Dev::Cli::UsagePrinter.new
-    command = FakeBuiltin.new(desc: "Enroll this host", category: Dev::Command::Category::Lifecycle)
+    command = FakeBuiltin.new(desc: "Enroll this host", category: Dev::Command::Category::Environment)
     command.stubs(:flags).returns([
       Dev::Cli::Flag.new("--org", desc: "enroll at the org scope"),
       Dev::Cli::Flag.new("--labels", takes_value: true, desc: "comma-separated runner labels"),
@@ -306,10 +335,10 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
       "s" => bound(Dev::ProjectCommand.new(run: "./bin/dev-s", desc: "Inner loop"), Dev::Placement::Host.new),
       "db" => build_group(["db"], desc: "Database chores"),
       "up" => Dev::OverriddenCommand.new(
-        builtin: lifecycle_builtin(desc: "builtin up"),
+        builtin: environment_builtin(desc: "builtin up"),
         project: bound(Dev::ProjectCommand.new(run: "./bin/setup", desc: "Setup"), Dev::Placement::Host.new),
       ),
-      "deps" => lifecycle_builtin(desc: "Manage dependencies"),
+      "deps" => environment_builtin(desc: "Manage dependencies"),
     }
 
     When "printing the root to a non-terminal"
@@ -372,7 +401,7 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
   test "an overridden slot's own usage says the project body's environment" do
     Given
     overridden = Dev::OverriddenCommand.new(
-      builtin: lifecycle_builtin(desc: "builtin up"),
+      builtin: environment_builtin(desc: "builtin up"),
       project: bound(Dev::ProjectCommand.new(run: "./bin/setup", desc: "Setup"), Dev::Placement::Host.new),
     )
     out = StringIO.new

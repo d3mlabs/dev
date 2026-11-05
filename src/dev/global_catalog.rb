@@ -112,7 +112,7 @@ module Dev
         "engine" => CommandGroup.new(
           path: ["engine"],
           desc: "Manage the container engine (up | down | status)",
-          category: Command::Category::Lifecycle,
+          category: Command::Category::Environment,
           children: {
             "up" => Builtins::EngineUpCommand.new(out: @out),
             "down" => Builtins::EngineDownCommand.new(out: @out),

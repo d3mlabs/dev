@@ -78,7 +78,7 @@ module Dev
       def desc = "Install locked dependencies on this machine (--group/--except/--integration narrow; --pinned-taps pins brew's taps)"
 
       sig { override.returns(Command::Category) }
-      def category = Command::Category::Lifecycle
+      def category = Command::Category::Environment
 
       sig { override.returns(T::Array[Cli::Flag]) }
       def flags
