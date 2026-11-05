@@ -180,22 +180,29 @@ class EnvironmentIntegrationTest < Minitest::Test
     @stderr.string.include?("snappy-linux, snappy-server")
   end
 
-  test "a target's build pointed at an image that does not produce its platform fails at load — at dev help, with the fix named (dev#192 K8)" do
+  test "a target's build pointed at an image that does not produce its platform is reported at load with the fix named; help lists it unbound and the build refuses until the re-lock (dev#192 K8, dev#450)" do
     Given "the Linux image declares linux64 only; the client asks it for win64"
     lock(image_pin("snappy-linux", "target_platforms" => ["linux64"]), image_pin("snappy-server"))
+    out = StringIO.new
     runner = runner(
       COMMANDS.slice("editor"),
+      out:,
       targets: { "snappy" => { "platforms" => ["win64", "linux64"], "environment" => "snappy-linux" } },
     )
     Kernel.expects(:exec).never
     Kernel.expects(:exit).with(1).once
 
     When
-    runner.run(["help"])
+    runner.run(["help", "build"])
+    runner.run(["build", "snappy-linux64"])
 
-    Then
-    @stderr.string.include?("dev: `snappy-win64` builds in snappy-linux, which does not produce win64")
+    Then "the mismatch is on stderr once per load, the builds list without a column, and the build asked to run is refused as unbound"
+    @stderr.string.scan("dev: `snappy-win64` builds in snappy-linux, which does not produce win64").size == 2
     @stderr.string.include?("add `target_platforms :win64` to its image block in dependencies.rb")
+    out.string.include?("snappy-win64")
+    out.string.include?("snappy-linux64")
+    !out.string.include?("snappy-linux ")
+    @stderr.string.include?("`snappy-linux64` has no environment bound")
   end
 
   test "target_platforms declared in the image block reach the lock and satisfy the check, so the project loads and runs" do

@@ -109,6 +109,6 @@ class Dev::BuildDispatcherTest < Minitest::Test
 
     Then
     error = raises(Dev::BuildDispatcher::UnboundTargetError)
-    error.message == "`rspock` has no environment bound: the lock could not be read at load — re-lock it (dev deps update) and retry"
+    error.message == "`rspock` has no environment bound: the lock could not place it at load — re-lock it (dev deps update) and retry"
   end
 end

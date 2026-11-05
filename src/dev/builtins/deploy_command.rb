@@ -53,7 +53,7 @@ module Dev
       # @param publisher [Lifecycle::Publisher] the channel's protocol
       # @param resolver [DispatchResolver] where the protocol runs
       # @param placement [Placement, nil] the protocol's bound environment;
-      #   nil when the lock could not be read at load
+      #   nil when the lock could not place it at load
       # @param out [IO, StringIO]
       sig do
         params(
@@ -140,7 +140,7 @@ module Dev
       sig { returns(Placement) }
       def placement!
         @placement || raise(UnboundChannelError,
-          "`deploy #{@channel}` has no environment bound: the lock could not be read at load — re-lock it (dev deps update) and retry")
+          "`deploy #{@channel}` has no environment bound: the lock could not place it at load — re-lock it (dev deps update) and retry")
       end
     end
   end

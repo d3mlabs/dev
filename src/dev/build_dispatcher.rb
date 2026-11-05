@@ -18,15 +18,15 @@ module Dev
   # placements for its environment column.
   #
   # The placements are those of every declared target, keyed by name. The
-  # root leaves them empty when the lock could not be read at load (it said
-  # so on stderr and kept the tree so the re-lock stays reachable), so a
+  # root leaves them empty when the lock could not place them at load (it
+  # said why on stderr and kept the tree so the re-lock stays reachable), so a
   # verb asked to run then refuses rather than guess — the same posture as
   # ProjectCommand#placement!.
   class BuildDispatcher
     extend T::Sig
 
-    # A build's target has no placement bound: the lock could not be read
-    # at load.
+    # A build's target has no placement bound: the lock could not place it
+    # at load (unreadable, or its image does not produce the platform).
     class UnboundTargetError < RuntimeError; end
 
     # @param placements [Hash{String => TargetPlacement}] one per declared
@@ -40,7 +40,7 @@ module Dev
     end
 
     # Whether the build's target has a placement bound — false only when
-    # the lock could not be read at load, the state `dev help` renders
+    # the lock could not place it at load, the state `dev help` renders
     # without an environment column.
     #
     # @param build [Lifecycle::Build]
@@ -90,7 +90,7 @@ module Dev
     sig { params(build: Lifecycle::Build).returns(TargetPlacement) }
     def target_placement(build)
       @placements[build.target.name] || raise(UnboundTargetError,
-        "`#{build}` has no environment bound: the lock could not be read at load — re-lock it (dev deps update) and retry")
+        "`#{build}` has no environment bound: the lock could not place it at load — re-lock it (dev deps update) and retry")
     end
   end
 end

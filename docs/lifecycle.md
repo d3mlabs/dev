@@ -347,7 +347,7 @@ missing step rather than performing it:
 
 | Verb | Needs | When missing |
 | --- | --- | --- |
-| `build <build>` | the build's environment, able to produce its platform | refused at load (an image without the `target_platforms`), or at the verb (a host-placed build whose platform this machine is not; an environment this machine is not, until milestone B's remote dispatch — an enrolled runner or the project's container) |
+| `build <build>` | the build's environment, able to produce its platform | reported at load and left unbound (an image without the `target_platforms`: refuses until `dev deps update`), or refused at the verb (a host-placed build whose platform this machine is not; an environment this machine is not, until milestone B's remote dispatch — an enrolled runner or the project's container) |
 | `package <build>` | a current build | makes it (make-like): the builder runs when the artifact is not current, `--no-build` trusts the install |
 | `deploy <channel>` | an artifact per accepted (target, platform) in the store, a channel, the channel's environment | "`dev package <build>` first" — never builds; a channel exists or `deploy` does not; an unbound environment (the lock unreadable) lists without a column and refuses until `dev deps update` |
 | `release <version>` (milestone D) | the release's targets packaged at the tag | packages at the tag, so staleness cannot arise |
@@ -364,19 +364,23 @@ under the same host rule when `deploy` runs.
 
 **At load**, for every build with a platform, the environment named for
 that platform must produce it: an image through the `target_platforms`
-its block declares (`ImageDoesNotProduceError` otherwise, with the fix
-named); `host` produces the platform this machine is, which cannot be a
-load-time refusal because the same `dev.yml` loads on a Mac and on the
-Linux box. A build with no platform has nothing to check.
+its lock entry carries (`ImageDoesNotProduceError` otherwise, with the
+fix named — reported, not fatal, see step 1 below, because the lock
+entry lags the block until the re-lock); `host` produces the platform
+this machine is, which cannot be a load-time refusal because the same
+`dev.yml` loads on a Mac and on the Linux box. A build with no platform
+has nothing to check.
 
 **At the verb**, `Dev::BuildDispatcher` answers for the selected build:
 
-1. Is the target bound at all? When the lock could not be read at load
-   (a pin locked by another dev's template, a retired `build-deps.lock`)
-   nothing is placed: `dev help build` lists the builds without an
-   environment column and the verb refuses (`UnboundTargetError`) until
-   `dev deps update` re-locks, since that remediation is served by the
-   same tree.
+1. Is the target bound at all? When the lock could not place the builds
+   at load (a pin locked by another dev's template, a retired
+   `build-deps.lock`, an image pinned before its block declared the
+   `target_platforms` a build now asks of it) nothing is placed: the
+   error is printed once on stderr, `dev help build` lists the builds
+   without an environment column and the verb refuses
+   (`UnboundTargetError`) until `dev deps update` re-locks, since that
+   remediation is served by the same tree.
 2. Can this host produce the build where it is placed?
    `TargetPlacement#assert_buildable_here!`: a host-placed `linux64`
    build on a Mac is refused (`HostDoesNotProduceError`) and marked
