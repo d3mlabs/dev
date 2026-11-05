@@ -40,12 +40,12 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
   # --- traits -----------------------------------------------------------------
 
-  test "#{klass} is a visible Lifecycle verb; #{klass} is staleness-exempt: #{exempt}" do
+  test "#{klass} is a visible Environment verb; #{klass} is staleness-exempt: #{exempt}" do
     Given "the builtin over a stand-in client"
     command = klass.new(container_client: client, out: StringIO.new)
 
     Expect "the declarative traits"
-    command.category == Dev::Command::Category::Lifecycle
+    command.category == Dev::Command::Category::Environment
     command.hidden? == false
     command.staleness_exempt? == exempt
     command.stamps? == false

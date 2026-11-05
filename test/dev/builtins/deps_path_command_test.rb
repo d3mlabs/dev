@@ -18,7 +18,7 @@ class Dev::Builtins::DepsPathCommandTest < Minitest::Test
     Expect "the declarative traits"
     command.staleness_exempt? == true
     command.stamps? == false
-    command.category == Dev::Command::Category::Lifecycle
+    command.category == Dev::Command::Category::Environment
   end
 
   test "call builds the accessor over the project in hand and asks it for the path" do

@@ -29,7 +29,7 @@ module Dev
       def desc = "Start the container engine (sized from this project's resources hint when inside one)"
 
       sig { override.returns(Command::Category) }
-      def category = Command::Category::Lifecycle
+      def category = Command::Category::Environment
 
       sig { override.returns(T::Boolean) }
       def staleness_exempt? = true

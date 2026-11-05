@@ -81,8 +81,8 @@ class RunnerTest < Minitest::Test
 
     Then "the three sections render in order"
     lines = out.string.lines.map(&:chomp)
-    lines.index("Project commands:") < lines.index("Lifecycle:")
-    lines.index("Lifecycle:") < lines.index("Development flow:")
+    lines.index("Project commands:") < lines.index("Environment:")
+    lines.index("Environment:") < lines.index("Development flow:")
   end
 
   test "#{argv.inspect} prints the same root usage as bare dev" do
@@ -180,7 +180,7 @@ class RunnerTest < Minitest::Test
     $stderr = old_stderr
   end
 
-  test "usage lists the deps group in Lifecycle, not the retired flat dependency verbs" do
+  test "usage lists the deps group in Environment, not the retired flat dependency verbs" do
     Given "a Runner with no project commands"
     out = StringIO.new
     runner = build_runner(commands: {}, out: out)
@@ -497,7 +497,7 @@ class RunnerTest < Minitest::Test
     out.string.include?("  plan …       Sync Cursor plans with GitHub issues")
     out.string.include?("  skills …     Skill materialization: every channel dev links into an agent's discovery roots")
     out.string.include?("  runner …     Enroll, inspect or unenroll this host as a self-hosted runner")
-    out.string.include?("Lifecycle:")
+    out.string.include?("Environment:")
     out.string.lines.last == "#{Dev::Runner::PROJECTLESS_EPILOGUE}\n"
   end
 

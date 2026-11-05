@@ -44,7 +44,7 @@ module Dev
       def desc = "Stop this checkout's service dependencies, and the engine if nothing else uses it"
 
       sig { override.returns(Command::Category) }
-      def category = Command::Category::Lifecycle
+      def category = Command::Category::Environment
 
       sig { override.returns(T::Boolean) }
       def staleness_exempt? = true

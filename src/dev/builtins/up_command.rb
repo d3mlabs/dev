@@ -79,7 +79,7 @@ module Dev
       def desc = "Install locked deps and bring the build container up, then run the project's up command (if defined); --no-cache does it from nothing"
 
       sig { override.returns(Command::Category) }
-      def category = Command::Category::Lifecycle
+      def category = Command::Category::Environment
 
       # Its own cold-run switch, plus everything the composed install takes
       # (the args are handed on to it).

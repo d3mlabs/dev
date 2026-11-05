@@ -21,7 +21,7 @@ module Dev
       def desc = "Check dependency state freshness (manifest vs lockfiles vs installed)"
 
       sig { override.returns(Command::Category) }
-      def category = Command::Category::Lifecycle
+      def category = Command::Category::Environment
 
       # check IS the explicit staleness inspection — guarding before it
       # would report the same thing twice.

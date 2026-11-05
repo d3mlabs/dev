@@ -14,8 +14,9 @@ module Dev
     # `dev help <path…>` prints for any node: how to invoke it, its
     # description, and its visible children. Children render as sections
     # keyed by their Category trait when they span more than one (the
-    # root's listing: the project's own commands, then the Lifecycle and
-    # Development flow builtins); as one plain list otherwise. Alphabetical
+    # root's listing: the project's own commands, then the Lifecycle verbs,
+    # the Environment and the Development flow builtins); as one plain list
+    # otherwise. Alphabetical
     # within a section, so the listing is deterministic regardless of
     # registration order. A node's own flags list after its description, in
     # the order the command declares them — the command carries its
@@ -37,6 +38,7 @@ module Dev
         {
           Command::Category::Project => "Project commands",
           Command::Category::Lifecycle => "Lifecycle",
+          Command::Category::Environment => "Environment",
           Command::Category::Workflow => "Development flow",
         }.freeze,
         T::Hash[Command::Category, String],

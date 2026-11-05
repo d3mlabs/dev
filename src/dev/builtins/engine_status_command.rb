@@ -31,7 +31,7 @@ module Dev
       def desc = "Report the container engine: kind, state, size, converge facts, running containers, prefix volumes"
 
       sig { override.returns(Command::Category) }
-      def category = Command::Category::Lifecycle
+      def category = Command::Category::Environment
 
       sig { override.returns(T::Boolean) }
       def staleness_exempt? = true

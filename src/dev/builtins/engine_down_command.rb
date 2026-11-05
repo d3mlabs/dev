@@ -56,7 +56,7 @@ module Dev
       def desc = "Stop the container engine, stopping dev's build containers first (--force: the rest too)"
 
       sig { override.returns(Command::Category) }
-      def category = Command::Category::Lifecycle
+      def category = Command::Category::Environment
 
       sig { override.returns(T::Array[Cli::Flag]) }
       def flags = [Cli::Flag.new(FORCE_FLAG)]

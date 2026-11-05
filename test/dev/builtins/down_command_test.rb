@@ -18,12 +18,12 @@ class Dev::Builtins::DownCommandTest < Minitest::Test
   )
   THEIRS = Dev::ContainerEngine::RunningContainer.new(name: "my-postgres", managed: false, project_root: nil)
 
-  test "traits: a visible Lifecycle verb, staleness-exempt, no stamp" do
+  test "traits: a visible Environment verb, staleness-exempt, no stamp" do
     Given "the builtin"
     command = down_command(services: [], provisioner: typed_mock(Dev::EngineProvisioner))
 
     Expect
-    command.category == Dev::Command::Category::Lifecycle
+    command.category == Dev::Command::Category::Environment
     command.staleness_exempt? == true
     command.stamps? == false
     !command.hidden?

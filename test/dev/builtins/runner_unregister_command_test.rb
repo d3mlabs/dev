@@ -15,13 +15,13 @@ transform!(RSpock::AST::Transformation)
 class Dev::Builtins::RunnerUnregisterCommandTest < Minitest::Test
   include SorbetHelper
 
-  test "traits: a visible Lifecycle leaf that never stamps" do
+  test "traits: a visible Environment leaf that never stamps" do
     Given "the builtin"
     command = build_harness(home: Dir.mktmpdir).command
 
     Expect
     command.hidden? == false
-    command.category == Dev::Command::Category::Lifecycle
+    command.category == Dev::Command::Category::Environment
     command.stamps? == false
     command.desc.include?("--yes")
   end

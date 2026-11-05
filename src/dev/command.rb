@@ -4,15 +4,19 @@
 require "dev/environment_ref"
 require_relative "cli/flag"
 require_relative "cli/parsed_args"
+require_relative "dispatch"
 require_relative "execution_context"
 require_relative "placement"
 
 module Dev
-  # Sealed command hierarchy. A command is one of exactly four shapes:
+  # Sealed command hierarchy. A command is one of exactly five shapes:
   #
-  # - BuiltinCommand: a Ruby body dev ships (an abstract class, the
-  #   hierarchy's one declared open edge; subclasses live under
+  # - BuiltinCommand: a Ruby body dev ships (an abstract class, one of the
+  #   hierarchy's two declared open edges; subclasses live under
   #   src/dev/builtins/)
+  # - LifecycleCommand: a build-lifecycle verb (build, package, deploy,
+  #   release — dev#192) — a Ruby stage around a replaceable seam, run as
+  #   before → seam → after (the other open edge)
   # - ProjectCommand: pure data parsed from a dev.yml `commands:` entry
   # - OverriddenCommand: a project command occupying a builtin's slot (the
   #   builtin runs first, like a hardcoded super())
@@ -25,8 +29,8 @@ module Dev
   # `test` that happens to have children, forwarding the flag. The shapes
   # differ only in what the bare invocation does.
   #
-  # Sealing makes a fifth variant unrepresentable: CommandExecutor
-  # dispatches exhaustively over these four (case + T.absurd), and Sorbet
+  # Sealing makes a sixth variant unrepresentable: CommandExecutor
+  # dispatches exhaustively over these five (case + T.absurd), and Sorbet
   # requires a sealed module's direct heirs beside it, which is why the
   # hierarchy shares this file.
   #
@@ -35,11 +39,11 @@ module Dev
   # descendant, so builtins subclassing an abstract BuiltinCommand class
   # raise at definition time unless sorbet-runtime internals are faked open
   # (the ivar pokes this file used to carry). A sealed module's `included`
-  # hook fires only for its direct includers — the four heirs below —
+  # hook fires only for its direct includers — the five heirs below —
   # because `include` never transfers singleton methods, so subclassing
-  # BuiltinCommand is an honest open edge with nothing to suppress. Descent
-  # is closed everywhere it is not explicitly declared: the data shapes are
-  # final!.
+  # BuiltinCommand or LifecycleCommand is an honest open edge with nothing
+  # to suppress. Descent is closed everywhere it is not explicitly
+  # declared: the data shapes are final!.
   module Command
     extend T::Sig
     extend T::Helpers
@@ -59,8 +63,12 @@ module Dev
     # lands in a section silently.
     class Category < T::Enum
       enums do
-        # Environment provisioning and dependency state (up, check, ...).
+        # The build lifecycle's verbs over the project's targets (build,
+        # package, deploy, release — dev#192).
         Lifecycle = new
+        # Environment provisioning and dependency state (up, deps,
+        # container, engine, runner, down).
+        Environment = new
         # Day-to-day development tooling (cd, plan, help, ...).
         Workflow = new
         # Commands the project defines in dev.yml.
@@ -172,6 +180,87 @@ module Dev
     # positionals; an opaque command reads its words.
     sig { abstract.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
     def call(args:, context:); end
+  end
+
+  # A build-lifecycle verb (dev#192, K1b): dev's stage **around** a
+  # replaceable seam — the builder for `build`, the packager for `package`,
+  # the channel's protocol for `deploy` — run by LifecycleExecutor as
+  # before → seam → after. Not a BuiltinCommand: a builtin is one body; an
+  # OverriddenCommand runs the builtin then the project's run with the
+  # same argv. A verb needs a step *after* the seam (`package` stamps the
+  # manifest, `deploy` records the receipt), so every seam is spawn-and-wait
+  # (Lifecycle::Shell; an exec-replace would make `after` unreachable, as
+  # dev#85 found for the stamp), a failure in the seam short-circuits
+  # `after` (it raises; nothing catches it before the CLI boundary), and
+  # the seam never sees argv: `before` **consumes** the flags into the
+  # verb's `Env` — the typed form of what the seam runs against, which the
+  # script forms spell as `DEV_*` (Lifecycle::ScriptEnv) — and returns the
+  # Dispatch outcome: `Run(env)` to run the seam here, `Done` when the
+  # dispatch ran the verb on another host (dev#420).
+  #
+  # The hierarchy's second open edge, a class for the same reason as
+  # BuiltinCommand. Subclasses — one per verb, under src/dev/builtins/ —
+  # fix `Env` to their own struct and take their collaborators (the
+  # targets' placements, the ports, the store, the DispatchResolver)
+  # through the constructor. A project node never lands on a verb's slot:
+  # `build`/`package`/`release` admit none, and `deploy`'s channel merge is
+  # the repository's third case when the lock contributes channels
+  # (dev#422). Always `Category::Lifecycle`.
+  class LifecycleCommand
+    extend T::Sig
+    extend T::Helpers
+    extend T::Generic
+    include Command
+    abstract!
+
+    # What the verb's `before` resolves from the flags and positionals,
+    # and what its seam and `after` read instead of argv.
+    Env = type_member
+
+    # @param children [Hash{String => Command}] subcommands, when the verb
+    #   heads a subtree (`deploy`'s channels)
+    sig { params(children: T::Hash[String, Command]).void }
+    def initialize(children: {})
+      @children = T.let(children.freeze, T::Hash[String, Command])
+    end
+
+    sig { override.returns(T::Hash[String, Command]) }
+    attr_reader :children
+
+    # The four verbs list together: the section is the shape's, not each
+    # verb's to choose.
+    sig { override.returns(Category) }
+    def category = Category::Lifecycle
+
+    # The stage before the seam: consume the flags and positionals into
+    # the verb's Env (the build, where its install goes, …), resolve where
+    # it runs and dispatch it. The seam sees nothing of `args`.
+    #
+    # @param args [Cli::ParsedArgs] parsed against this command's `flags`
+    # @param context [ExecutionContext]
+    # @return [Dispatch::Outcome] Run(env) to run the seam here; Done when
+    #   the dispatch ran the verb elsewhere
+    sig { abstract.params(args: Cli::ParsedArgs, context: ExecutionContext).returns(Dispatch::Outcome[Env]) }
+    def before(args:, context:); end
+
+    # The replaceable seam, run with the env only: the builder, the
+    # packager, or the channel's protocol. Must return — a raise here is
+    # the failure that skips `after`.
+    #
+    # @param env [Env] what `before` resolved
+    # @param context [ExecutionContext]
+    # @return [void]
+    sig { abstract.params(env: Env, context: ExecutionContext).void }
+    def seam(env, context:); end
+
+    # The stage after a seam that returned: the stamp, the receipt, the
+    # report line.
+    #
+    # @param env [Env] what `before` resolved
+    # @param context [ExecutionContext]
+    # @return [void]
+    sig { abstract.params(env: Env, context: ExecutionContext).void }
+    def after(env, context:); end
   end
 
   # Project command from a dev.yml `commands:` entry. Pure data: the run
@@ -368,7 +457,7 @@ module Dev
     def completions(words) = @builtin.completions(words)
 
     # The usage section belongs to the slot too: an overriding `up:` still
-    # lists under Lifecycle, with the project's description.
+    # lists under Environment, with the project's description.
     sig(:final) { override.returns(Category) }
     def category = @builtin.category
 

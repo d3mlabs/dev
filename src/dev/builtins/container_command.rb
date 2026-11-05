@@ -28,7 +28,7 @@ module Dev
       end
 
       sig { override.returns(Command::Category) }
-      def category = Command::Category::Lifecycle
+      def category = Command::Category::Environment
 
       # The container verbs are lifecycle plumbing, never a staleness nag:
       # a fresh CI checkout has no stamp and `container up` is how it gets one.
