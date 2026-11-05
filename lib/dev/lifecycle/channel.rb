@@ -8,15 +8,15 @@ require_relative "publisher_spec"
 module Dev
   module Lifecycle
     # One destination `deploy` ships to (dev#192, K5): a `deploy` child in
-    # dev.yml — its name, the builds it **accepts** (`targets:`, a list of
-    # build patterns in the one grammar) and its **protocol** (the
-    # PublisherSpec: the child's `run:` line today; an integration's
-    # publisher with dev#422). The accept set is the channel's statement of
-    # what may reach it — a Windows box takes `cellbound-3d-win64`, any
-    # config, so dev builds reach it; a store that takes release builds
-    # only says `cellbound-3d-win64-release`. A build outside the set is
-    # shipped only under `--force`; a config is never implied by the
-    # channel.
+    # dev.yml, or a channel the lock contributes (dev#422) — its name, the
+    # builds it **accepts** (`targets:`, a list of build patterns in the
+    # one grammar) and its **protocol** (the PublisherSpec: the child's
+    # `run:` line, or an integration's publisher). The accept set is the
+    # channel's statement of what may reach it — a Windows box takes
+    # `cellbound-3d-win64`, any config, so dev builds reach it; a store
+    # that takes release builds only says `cellbound-3d-win64-release`. A
+    # build outside the set is shipped only under `--force`; a config is
+    # never implied by the channel.
     #
     # Owns the invariant that a channel accepts something: a channel with
     # an empty accept set could ship nothing and would be a typo kept.
@@ -26,8 +26,11 @@ module Dev
       # `targets:` on the channel lists no pattern.
       class EmptyAcceptSetError < ArgumentError; end
 
+      # What `dev help deploy` shows beside a channel declared without `desc`.
+      NO_DESCRIPTION = "(no description)"
+
       const :name, String
-      const :desc, String, default: "(no description)"
+      const :desc, String, default: NO_DESCRIPTION
       # In declaration order; the order the artifacts ship in.
       const :accepts, T::Array[BuildPattern]
       const :publisher, PublisherSpec
@@ -38,7 +41,7 @@ module Dev
       # @param desc [String]
       # @raise [EmptyAcceptSetError]
       sig { params(name: String, accepts: T::Array[BuildPattern], publisher: PublisherSpec, desc: String).void }
-      def initialize(name:, accepts:, publisher:, desc: "(no description)")
+      def initialize(name:, accepts:, publisher:, desc: NO_DESCRIPTION)
         super
         raise EmptyAcceptSetError, "channel '#{name}': `targets:` lists no build — name the builds it accepts" if accepts.empty?
       end

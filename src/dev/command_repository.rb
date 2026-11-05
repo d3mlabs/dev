@@ -29,10 +29,14 @@ module Dev
     # A project node landed on a lifecycle verb's slot. A verb is a stage
     # around its own seam, not a body a project run can follow (dev#192,
     # K1b): `build`/`package`/`release` admit no project node — the parser
-    # already refuses `commands: build:`/`package:` — and `deploy`'s
-    # channels merge by their own rule once the lock contributes them
-    # (dev#422). Until then no project node has a lifecycle slot to land
-    # on, so this is the explicit refusal for the day one does.
+    # already refuses `commands: build:`/`package:` — and the one place a
+    # project declaration meets a lifecycle builtin, a `deploy` child on a
+    # channel the lock contributes (`targets:` configures it, `run:`
+    # replaces its protocol), is merged at the channel level before this
+    # tree exists: the loader lifts `deploy`'s children out of the command
+    # tree (ChannelParser) and ChannelBinder applies that rule (dev#422).
+    # So no project node has a lifecycle slot to land on, and this is the
+    # explicit refusal for the day one does.
     class LifecycleSlotError < StandardError; end
 
     # Where argv landed in the tree: the node, the path that reached it,

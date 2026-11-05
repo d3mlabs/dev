@@ -213,23 +213,25 @@ class Dev::PlacementBinderTest < Minitest::Test
     error.message.include?("`rspock` runs in a container but names no image")
   end
 
-  test "bind_channels places each channel's run: as a command's body: named image, host, or the project's one image (dev#415)" do
+  test "bind_channels places each channel's run: as a command's body: named image, host, or the project's one image (dev#415); an integration publisher is dev's own code, so host (dev#422)" do
     Given
     lock(image_pin("snappy-linux"))
     channels = parse_channels(
       "staging" => { "targets" => ["snappy"], "run" => "./bin/stage", "environment" => "host" },
       "steam" => { "targets" => ["snappy"], "run" => "./bin/steam-upload", "environment" => "snappy-linux" },
       "mirror" => { "targets" => ["snappy"], "run" => "./bin/mirror" },
+      "brew" => { "targets" => ["snappy"] },
     )
 
     When
     bound = binder.bind_channels(channels)
 
     Then
-    bound.keys == ["staging", "steam", "mirror"]
+    bound.keys == ["staging", "steam", "mirror", "brew"]
     bound["staging"] == Dev::Placement::Host.new
     bound["steam"] == Dev::Placement::Image.new(image: images.named("snappy-linux"))
     bound["mirror"] == Dev::Placement::Image.new(image: images.named("snappy-linux"))
+    bound["brew"] == Dev::Placement::Host.new
   end
 
   test "a channel's environment the lock does not pin fails at binding, under the channel's path" do

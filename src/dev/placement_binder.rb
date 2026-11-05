@@ -81,8 +81,10 @@ module Dev
     end
 
     # Bind every channel's protocol environment — a script channel's
-    # `run:` is placed as a command's body is (dev#192, K5). In
-    # declaration order.
+    # `run:` is placed as a command's body is (dev#192, K5); an
+    # integration's publisher is dev's own code and runs where dev runs,
+    # so it is placed on the host without a reference to bind (dev#422).
+    # In declaration order.
     #
     # @param channels [Hash{String => Lifecycle::Channel}] the parsed channels
     # @return [Hash{String => Placement}] by channel name
@@ -94,8 +96,9 @@ module Dev
         spec = channel.publisher
         placement = case spec
         when Lifecycle::PublisherSpec::Script then @images.bind(spec.environment, subject: "deploy #{name}")
+        when Lifecycle::PublisherSpec::Integration then Placement::Host.new
         else
-          # simplecov:disable — the sealed spec has no other variant yet;
+          # simplecov:disable — the sealed spec has no other variant;
           # T.absurd keeps the static proof.
           T.absurd(spec)
           # simplecov:enable

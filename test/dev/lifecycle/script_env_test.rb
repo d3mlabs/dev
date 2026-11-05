@@ -11,7 +11,7 @@ transform!(RSpock::AST::Transformation)
 class Dev::Lifecycle::ScriptEnvTest < Minitest::Test
   include LifecycleFixtures
 
-  test "a channel's run: sees the artifact's axes, the archive file, the channel and the manifest's keys" do
+  test "a channel's run: sees the artifact's axes, the archive file, the channel, the track, the scratch and the manifest's keys" do
     Given "an artifact packaged from a clean tree"
     manifest = Dev::Lifecycle::Manifest::Artifact.new(
       stamp: Dev::Lifecycle::Manifest::Stamp.now(dev_version: "0.7.2", now: Time.utc(2026, 11, 4, 12, 0, 0)),
@@ -27,12 +27,16 @@ class Dev::Lifecycle::ScriptEnvTest < Minitest::Test
     artifact = Dev::Lifecycle::Artifact.new(dir: Pathname("/data/artifacts/cellbound-3d/cellbound-3d-win64-dev"), manifest:)
 
     Expect
-    Dev::Lifecycle::ScriptEnv.for_deploy(artifact, channel: "staging") == {
+    Dev::Lifecycle::ScriptEnv.for_deploy(
+      artifact, channel: "staging", track: Dev::Lifecycle::Track::Testing, scratch: Pathname("/data/artifacts/cellbound-3d/.staging"),
+    ) == {
       "DEV_TARGET" => "cellbound-3d",
       "DEV_PLATFORM" => "win64",
       "DEV_CONFIG" => "dev",
       "DEV_ARTIFACT" => "/data/artifacts/cellbound-3d/cellbound-3d-win64-dev/cellbound-3d-win64-dev.zip",
       "DEV_CHANNEL" => "staging",
+      "DEV_TRACK" => "testing",
+      "DEV_SCRATCH" => "/data/artifacts/cellbound-3d/.staging",
       "DEV_BUILD" => "cellbound-3d-win64-dev",
       "DEV_BUILD_ID" => "1.2.0+3f2a1c9d8e7b",
       "DEV_SHA" => "3f2a1c9d8e7b",
@@ -55,10 +59,14 @@ class Dev::Lifecycle::ScriptEnvTest < Minitest::Test
       archive: "rspock.gem",
       archive_sha256: "cd" * 32,
     )
-    env = Dev::Lifecycle::ScriptEnv.for_deploy(Dev::Lifecycle::Artifact.new(dir: Pathname("/store/rspock"), manifest:), channel: "rubygems")
+    env = Dev::Lifecycle::ScriptEnv.for_deploy(
+      Dev::Lifecycle::Artifact.new(dir: Pathname("/store/rspock"), manifest:),
+      channel: "rubygems", track: Dev::Lifecycle::Track::Live, scratch: Pathname("/store/.rubygems"),
+    )
 
     Expect
-    env.slice("DEV_SHA", "DEV_DIRTY", "DEV_ARTIFACT") == { "DEV_SHA" => "unknown", "DEV_DIRTY" => "true", "DEV_ARTIFACT" => "/store/rspock/rspock.gem" }
+    env.slice("DEV_SHA", "DEV_DIRTY", "DEV_ARTIFACT", "DEV_TRACK") ==
+      { "DEV_SHA" => "unknown", "DEV_DIRTY" => "true", "DEV_ARTIFACT" => "/store/rspock/rspock.gem", "DEV_TRACK" => "live" }
     !env.key?("DEV_PLATFORM")
     !env.key?("DEV_INSTALL")
   end

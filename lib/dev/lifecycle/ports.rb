@@ -23,22 +23,32 @@ module Dev
     # Turns a target's and a channel's declarations into their ports for
     # this checkout (dev#192, K1, K5): a `build:` line becomes a
     # ScriptBuilder at the project root, a `package:` line a
-    # ScriptPackager, a channel's `run:` a ScriptPublisher, and the
-    # built-in packagers are their own ports. The one place the sealed
-    # specs are matched, so dev#433's integration builders and dev#422's
-    # publishers have one site to join.
+    # ScriptPackager, a channel's `run:` a ScriptPublisher, a channel
+    # naming an integration the publisher the lock contributed under that
+    # name, and the built-in packagers are their own ports. The one place
+    # the sealed specs are matched, so dev#433's integration builders have
+    # one site to join.
     #
-    # The project root and the shell are fixed for a checkout and so are
-    # constructor-owned; the target is per call.
+    # The project root, the shell and the lock's publishers are fixed for
+    # a checkout and so are constructor-owned; the target is per call.
     class Ports
       extend T::Sig
 
+      # A channel names an integration publisher the table does not hold.
+      # The composition root binds every channel's reference against the
+      # lock before the tree exists (ChannelBinder), so reaching this is a
+      # dev wiring bug, not a dev.yml error.
+      class UnknownPublisherError < StandardError; end
+
       # @param project_root [Pathname] where the script forms run
       # @param shell [Shell] the process boundary the script forms and the archive share
-      sig { params(project_root: Pathname, shell: Shell).void }
-      def initialize(project_root:, shell: Shell.new)
+      # @param publishers [Hash{String => Publisher}] the publishers the
+      #   lock contributes, by channel name (dev#422)
+      sig { params(project_root: Pathname, shell: Shell, publishers: T::Hash[String, Publisher]).void }
+      def initialize(project_root:, shell: Shell.new, publishers: {})
         @project_root = project_root
         @shell = shell
+        @publishers = publishers
       end
 
       # The target's builder, or nil when it declares nothing to compile.
@@ -84,13 +94,20 @@ module Dev
       #
       # @param channel [Channel]
       # @return [Publisher]
+      # @raise [UnknownPublisherError]
       sig { params(channel: Channel).returns(Publisher) }
       def publisher_for(channel)
         spec = channel.publisher
         case spec
         when PublisherSpec::Script then ScriptPublisher.new(command: spec.command, project_root: @project_root, shell: @shell)
+        when PublisherSpec::Integration
+          @publishers.fetch(spec.name) do
+            raise UnknownPublisherError,
+              "channel '#{channel}' names the #{spec.name} publisher, which the lock did not contribute " \
+                "(it contributes: #{@publishers.empty? ? "none" : @publishers.keys.join(", ")})"
+          end
         else
-          # simplecov:disable — the sealed spec has no other variant yet;
+          # simplecov:disable — the sealed spec has no other variant;
           # T.absurd keeps the static proof.
           T.absurd(spec)
           # simplecov:enable

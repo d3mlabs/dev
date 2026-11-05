@@ -32,6 +32,10 @@ module Dev
     class InvalidEnvironmentError < ArgumentError; end
 
     RESERVED_CHILD_NAME = "help"
+    # The key naming the environment a command's body executes in — the
+    # domain's own noun, where `runs_on` (retired, dev#409) is GitHub's
+    # word for a runner label.
+    ENVIRONMENT_KEY = "environment"
 
     # Values may be nil for optional keys; `commands` nests further hashes.
     CommandHash = T.type_alias { T::Hash[String, T.untyped] }
@@ -80,12 +84,12 @@ module Dev
     # @raise [InvalidEnvironmentError]
     sig { params(name: String, cmd_hash: CommandHash).returns(T.nilable(EnvironmentRef)) }
     def parse_environment(name, cmd_hash)
-      return nil unless cmd_hash.key?("environment")
+      return nil unless cmd_hash.key?(ENVIRONMENT_KEY)
 
-      raw = cmd_hash["environment"]
+      raw = cmd_hash[ENVIRONMENT_KEY]
       unless raw.is_a?(String) && !raw.empty?
         raise InvalidEnvironmentError,
-          "command '#{name}': 'environment' must name an image block or be '#{EnvironmentRef::HOST}', got #{raw.inspect}"
+          "command '#{name}': '#{ENVIRONMENT_KEY}' must name an image block or be '#{EnvironmentRef::HOST}', got #{raw.inspect}"
       end
       EnvironmentRef.parse(raw)
     end

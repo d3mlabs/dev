@@ -7,6 +7,7 @@ require_relative "channel"
 require_relative "publisher"
 require_relative "script_env"
 require_relative "shell"
+require_relative "track"
 
 module Dev
   module Lifecycle
@@ -16,7 +17,9 @@ module Dev
     # The script owns the protocol — unzip and rsync, scp, an upload API —
     # and resolves its own credentials (`dev cred get deploy.staging host`
     # as its first line); dev owns which archives reach it and what a
-    # failure means. The archives are the script's read-only input; the
+    # failure means. The archives are the script's read-only input — what
+    # it unpacks or wraps goes in the channel's scratch (`DEV_SCRATCH`),
+    # created before the first run so the script can use it as it is; the
     # first failing run ends the deploy, the archives before it shipped.
     # Spawn-and-wait, as every lifecycle seam is: the stage has work after
     # the protocol returns.
@@ -46,13 +49,17 @@ module Dev
 
       # @param artifacts [Array<Artifact>] shipped in this order, one run each
       # @param channel [Channel]
+      # @param track [Track] what `DEV_TRACK` carries
+      # @param scratch [Pathname] what `DEV_SCRATCH` carries; created here
       # @return [void]
       # @raise [DeployScriptFailedError] at the first archive the script fails on
       # @raise [Shell::SpawnError]
-      sig { override.params(artifacts: T::Array[Artifact], channel: Channel).void }
-      def publish(artifacts, channel:)
+      sig { override.params(artifacts: T::Array[Artifact], channel: Channel, track: Track, scratch: Pathname).void }
+      def publish(artifacts, channel:, track:, scratch:)
+        scratch.mkpath
         artifacts.each do |artifact|
-          status = @shell.run(["sh", "-c", @command], chdir: @project_root, env: ScriptEnv.for_deploy(artifact, channel: channel.name))
+          env = ScriptEnv.for_deploy(artifact, channel: channel.name, track:, scratch:)
+          status = @shell.run(["sh", "-c", @command], chdir: @project_root, env:)
           next if status.success?
 
           raise DeployScriptFailedError,

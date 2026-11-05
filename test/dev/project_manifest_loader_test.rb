@@ -415,7 +415,6 @@ class ProjectManifestLoaderTest < Minitest::Test
               environment: host
             steam:
               targets: [cellbound-3d-release]
-              run: ./bin/steam-upload
     YAML
 
     When
@@ -429,6 +428,7 @@ class ProjectManifestLoaderTest < Minitest::Test
     manifest.channels["staging"].publisher ==
       Dev::Lifecycle::PublisherSpec::Script.new(command: "./bin/stage", environment: Dev::EnvironmentRef::Host.new)
     manifest.channels["steam"].builds.map(&:name) == ["cellbound-3d-win64-release", "cellbound-3d-linux64-release"]
+    manifest.channels["steam"].publisher == Dev::Lifecycle::PublisherSpec::Integration.new(name: "steam")
 
     Cleanup
     tmp.close!
@@ -459,7 +459,7 @@ class ProjectManifestLoaderTest < Minitest::Test
     "a run: on deploy"            | "run: ./bin/deploy"                                                        | Dev::ChannelParser::DeployBodyError
     "no channels"                 | "desc: Ship"                                                               | Dev::ChannelParser::NoChannelsError
     "a child without targets:"    | "commands: { staging: { run: ./bin/stage } }"                              | Dev::ChannelParser::ChannelAcceptsError
-    "a child without run:"        | "commands: { staging: { targets: [cellbound-3d] } }"                       | Dev::ChannelParser::ChannelProtocolError
+    "an environment: without run:" | "commands: { steam: { targets: [cellbound-3d], environment: host } }"     | Dev::ChannelParser::ChannelEnvironmentError
     "a child with children"       | "commands: { staging: { targets: [cellbound-3d], run: r, commands: {} } }" | Dev::ChannelParser::ChannelChildrenError
     "a child named help"          | "commands: { help: { targets: [cellbound-3d], run: r } }"                  | Dev::ChannelParser::ReservedChannelNameError
     "a pattern naming no target"  | "commands: { staging: { targets: [snappy], run: r } }"                     | Dev::Lifecycle::BuildPattern::UnknownTargetError
