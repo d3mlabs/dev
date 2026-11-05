@@ -77,9 +77,10 @@ class Dev::DeploySelectorTest < Minitest::Test
     When
     selection = select(channel("cellbound-3d", "rspock"))
 
-    Then
+    Then "and a selection from the store is for the testing track: working artifacts never touch live"
     selection.artifacts.map(&:name) == ["cellbound-3d-win64-dev", "cellbound-3d-linux64-release", "rspock"]
     selection.stale == []
+    selection.track == Dev::Lifecycle::Track::Testing
   end
 
   test "--config picks among several artifacts of an accepted build; without it two candidates are a refusal naming both" do

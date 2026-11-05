@@ -23,7 +23,12 @@ Seven nouns, each one class, none playing two roles.
 | Artifact | `Lifecycle::Artifact` | What `package` makes of one build: the archive beside its `build-id.json`, in the store. A directory without the manifest is not one. |
 | Store | `Lifecycle::Store` | `<data root>/artifacts/<project>/<build>/` — one directory per declared build, holding the install, the archive and the manifest. Keyed by the project's `name:`, never the checkout. |
 | Channel | `Lifecycle::Channel` | Where artifacts ship to: a name, the builds it **accepts** (patterns in the build grammar) and a publisher spec. Declared as a child of `commands: deploy:`. |
-| Publisher | `Lifecycle::Publisher` | The channel's protocol — the port `deploy` runs over the selected artifacts. `ScriptPublisher` is the `run:` form; integration publishers plug in behind the same interface ([dev#422](https://github.com/d3mlabs/dev/issues/422)). |
+| Publisher | `Lifecycle::Publisher` | The channel's protocol — the port `deploy` runs over the selected artifacts, answering with a receipt. `ScriptPublisher` is the `run:` form; integration publishers plug in behind the same interface ([dev#422](https://github.com/d3mlabs/dev/issues/422)). |
+| Receipt | `Lifecycle::Receipt` | The publisher's one-line statement of what it did (`run: ./bin/stage`); what the deploy's status carries. |
+| Track | `Lifecycle::Track` | Which kind of thing a deploy shipped: `testing` (artifacts from the store) or `live` (a release's archives, [dev#425](https://github.com/d3mlabs/dev/issues/425)). The verb's decision from where the artifacts came, never the publisher's. |
+| Deployment record | `Lifecycle::DeploymentRecord` | What dev says about one deploy: the channel, the ref it was made from, the track, the builds with their ids, how it ended and the receipt. One per distinct commit among the shipped artifacts. |
+| Deployment ledger | `Lifecycle::GithubDeployments` | The records as GitHub Deployments on the project's repo (environment = channel, ref = commit or tag, payload = track + builds, one status), written through `gh api`; `Lifecycle::Deployment` is a record as the forge holds it (id, when, page). |
+| Release tag | `Lifecycle::ReleaseTag` | `v<version>` — the ref a release's deployments are recorded against, and what `deploy status --release V` reads. |
 | Snapshot | `Lifecycle::Snapshot` | The working tree as a remote build host can reach it: a commit made through a temporary index, on its `Lifecycle::SnapshotBranch` (`dev/build/<runner>/<id>`) at `origin`, for as long as a remote dispatch needs it. See [The sync step](#the-sync-step). |
 
 ## Declarations
@@ -103,8 +108,8 @@ Load-time rules: `deploy` itself may carry no `run:` (`DeployBodyError`)
 and must have a child (`NoChannelsError`); a child must be a mapping
 (`InvalidChannelError`) with `targets:` (`ChannelAcceptsError`) and a
 protocol (`ChannelProtocolError`), may not have `commands:` of its own
-(`ChannelChildrenError`) and may not be named `help`
-(`ReservedChannelNameError`). A `deploy` child carrying `targets:` in a
+(`ChannelChildrenError`) and may not be named `help` or `status`
+(`ReservedChannelNameError` — both are `deploy`'s own children). A `deploy` child carrying `targets:` in a
 project without targets is refused (`ChannelWithoutTargetsError`): there
 is no build for it to accept. Without targets, `deploy` stays a plain
 project command, children included.
@@ -122,7 +127,7 @@ toolchain.
 | --- | --- | --- | --- |
 | Builder | `Lifecycle::Builder#build(build, install)`, `#name`, `#version` | `ScriptBuilder` (`name` = `script`, no version) | `build: <command>` |
 | Packager | `Lifecycle::Packager#package(build, install, archive_stem) → PackedArchive` | `Archive` (zip / tar.zst, optionally split), `AsIsPackager`, `ScriptPackager`, `NonePackager` | `packager:` / `package:` |
-| Publisher | `Lifecycle::Publisher#publish(artifacts, channel:)` | `ScriptPublisher` | a channel's `run: <command>` |
+| Publisher | `Lifecycle::Publisher#publish(artifacts, channel:) → Receipt` | `ScriptPublisher` | a channel's `run: <command>` |
 
 A third port, the **publisher**, is the channel's: it takes the
 artifacts `deploy` selected and ships them, never choosing on its own and
@@ -215,7 +220,8 @@ something for it to act on:
 | --- | --- | --- | --- |
 | `build [BUILD]` | `targets:` non-empty | every build | the target's builder (nothing, for a target with no `build:` — the verb says so) |
 | `package [BUILD] [--no-build]` | `targets:` non-empty | every build of a target whose packager is not `none` | the builder when stale, then the packager |
-| `deploy <channel> [BUILD] [--config C] [--allow-stale] [--force] [--dry-run]` | a channel exists under `commands: deploy:` | the channel's accepted artifacts, from the store | the channel's publisher, once per archive |
+| `deploy <channel> [BUILD] [--config C] [--allow-stale] [--force] [--dry-run]` | a channel exists under `commands: deploy:` | the channel's accepted artifacts, from the store | the channel's publisher, once per archive; `after` records the deploy on the forge |
+| `deploy status [--release V]` | a channel exists under `commands: deploy:` | every channel's latest recorded deploy; the release's tag only under `--release` | — (reads the ledger; a builtin child of `deploy`, which reserves the name `status`) |
 | `release <version>` | a `release:` block | — | milestone D |
 
 A project without targets lists neither `build` nor `package`, and
@@ -225,7 +231,8 @@ build with its target's `desc` and its environment; `dev help package`
 lists the shippable ones. Both verbs complete every pattern
 (`cellbound-3d`, `cellbound-3d-dev`, …) and every build. `deploy` is a
 group whose children are the channels (`Dev::Builtins::DeployCommand`,
-one per channel): bare `dev deploy` prints the channels, `dev help
+one per channel) plus `status` (`Dev::Builtins::DeployStatusCommand`,
+which reads the ledger): bare `dev deploy` prints them, `dev help
 deploy` lists each with its environment column, its accept set expanded
 to builds (`Accepts: …`) and its protocol's source (`Protocol: run:
 ./bin/stage`), and a channel completes its accept patterns and the builds
@@ -310,8 +317,67 @@ nonzero exit (`DeployScriptFailedError`, the archive and code named; the
 ones before it shipped) — skipped under `--dry-run`; `after` prints one
 line per artifact (`deployed <build> (<build id>) → <channel>: <archive>`,
 `would deploy …` under `--dry-run`, `— stale, shipped under
---allow-stale` when it was). The receipt as a GitHub Deployment is
-[dev#423](https://github.com/d3mlabs/dev/issues/423).
+--allow-stale` when it was).
+
+### The deploy receipt
+
+Every deploy that ships is recorded (K5/K6,
+[dev#423](https://github.com/d3mlabs/dev/issues/423)) as a **GitHub
+Deployment** on the project's repo — `gh repo view`'s, resolved once per
+run and only when a record is written or read, so `dev help` never asks
+the forge. The record (`Lifecycle::DeploymentRecord`) maps onto GitHub's
+object as:
+
+| GitHub Deployment | dev |
+| --- | --- |
+| `environment` | the channel's name |
+| `ref` | the commit the artifacts were packaged from (`build-id.json`'s sha); a release's tag (`v1.2.0`) under [dev#425](https://github.com/d3mlabs/dev/issues/425). One deployment per distinct commit among the shipped artifacts, so `--allow-stale` shipping two commits records two — the ledger is honest about provenance. An artifact packaged outside git has no ref and is not recordable (`UnknownRefError`). |
+| `payload` | `{ schema: 1, track: testing \| live, builds: [{ name, build_id }] }` — dev's, and what `status` reads back |
+| `description` | `dev deploy <channel>: <build names>` |
+| `production_environment` | `true` for the live track |
+| `auto_merge`, `required_contexts` | `false`, `[]` — the ledger describes a deploy, it never gates one |
+| one status | `success` with the publisher's **receipt** as its description (cut at GitHub's 140 characters), or `failure` with the protocol's error when the seam refused |
+
+The receipt crosses from the seam to `after` on the verb's env
+(`DeployEnv#receipt`, as `PackageEnv#packed` does for the archive). The
+**track** is the verb's decision from where the artifacts came —
+`DeploySelector::Selection#track`, `testing` for the store — never the
+publisher's. Recording is best-effort around the protocol and never
+masks it: a deploy that shipped but could not be recorded
+(`NotRecordedError`) fails *after* the `deployed …` lines, so the upload
+is never mistaken for undone; a failed deploy whose failure record the
+forge refuses says so on stderr beside the protocol's own error.
+`--dry-run` records nothing. `after` names what it wrote: `recorded as
+GitHub Deployment #41 (testing track) →
+https://github.com/<owner>/<repo>/deployments/staging`. The write goes
+through `gh api`, so the token `gh` holds needs `deployments: write`
+(the `repo` scope has it; a fine-grained token names it).
+
+### What `deploy status` does
+
+`dev deploy status [--release V]` (`Dev::Builtins::DeployStatusCommand`)
+reads the ledger back, per channel in declaration order: the latest
+deployment — `GithubDeployments#latest`, the first of
+`?environment=<channel>&per_page=1`, its first status — as one headline
+and then the builds it carried:
+
+```
+rubygems  – nothing deployed
+staging   ✓ testing from 3f2a1c9d8e7b at 2026-11-05 17:02 UTC — run: ./bin/stage
+          cellbound-3d-server-linux64-release (1.4.0+3f2a1c9d8e7b)
+steam     ✗ testing from 9b8c7d6e5f4a at 2026-11-04 09:10 UTC — failed: deploy script `./bin/steam` for cellbound-3d-win64-release → steam exited 2
+```
+
+A deployment the forge holds without a status reads `… pending …`.
+`--release 1.2.0` asks the same question of the release's tag only
+(`&ref=v1.2.0`), so the output is the checklist of which channels carry
+that release and which still read `– v1.2.0 not deployed`. The command
+takes no positional and lives under `deploy` because status is the
+**channel's**, not the release's: the release records what the cut
+made, the ledger what each channel received — which is also why
+`ChannelParser` refuses a channel named `status`. Every failure of the
+forge is a typed `GithubDeployments::Error` (`RepoUnresolvedError`,
+`ApiError`, `MalformedDeploymentError`) and surfaces as the command's.
 
 ## The channel contract
 
@@ -337,9 +403,14 @@ either:
   gets the artifacts, in order, one call per deploy.
 
 Credentials are the publisher's concern — the project's `dev cred` store
-or the script's environment — never `dev.yml`'s. A channel's **tracks**
-(Steam's beta branches, a GitHub release's draft/prerelease) and its
-**receipt** are milestone D's, beside `release`.
+or the script's environment — never `dev.yml`'s. A publisher **returns a
+receipt** (`Lifecycle::Receipt`): one line stating what it did, which
+the verb writes into the deploy's GitHub Deployment status ([The deploy
+receipt](#the-deploy-receipt)); `ScriptPublisher`'s is `run: <command>`.
+The **track** a deploy is recorded on is the verb's, from where the
+artifacts came, not the publisher's; a channel's own tracks (Steam's beta
+branches, a GitHub release's draft/prerelease) ride on the integration
+publisher ([dev#422](https://github.com/d3mlabs/dev/issues/422)).
 
 ## The dependency graph
 
@@ -350,7 +421,8 @@ missing step rather than performing it:
 | --- | --- | --- |
 | `build <build>` | the build's environment, able to produce its platform | reported at load and left unbound (an image without the `target_platforms`: refuses until `dev deps update`), or refused at the verb (a host-placed build whose platform this machine is not; an environment this machine is not, until milestone B's remote dispatch — an enrolled runner or the project's container) |
 | `package <build>` | a current build | makes it (make-like): the builder runs when the artifact is not current, `--no-build` trusts the install |
-| `deploy <channel>` | an artifact per accepted (target, platform) in the store, a channel, the channel's environment | "`dev package <build>` first" — never builds; a channel exists or `deploy` does not; an unbound environment (the lock unreadable) lists without a column and refuses until `dev deps update` |
+| `deploy <channel>` | an artifact per accepted (target, platform) in the store, a channel, the channel's environment; to record, a repo `gh` can reach with `deployments: write` | "`dev package <build>` first" — never builds; a channel exists or `deploy` does not; an unbound environment (the lock unreadable) lists without a column and refuses until `dev deps update`; a record the forge refuses fails after the shipped lines, naming the refusal |
+| `deploy status [--release V]` | a channel, a repo `gh` can reach | a channel exists or `deploy` does not; the forge's refusal is the command's error |
 | `release <version>` (milestone D) | the release's targets packaged at the tag | packages at the tag, so staleness cannot arise |
 
 ## Dispatch resolution

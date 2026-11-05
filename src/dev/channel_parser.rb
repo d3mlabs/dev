@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "dev/lifecycle"
+require_relative "builtins/deploy_status_command"
 require_relative "command"
 require_relative "command_parser"
 
@@ -36,7 +37,8 @@ module Dev
     # A `deploy` child that is not a mapping (a bare string, a list).
     class InvalidChannelError < ArgumentError; end
 
-    # A channel named `help`: the tree reserves the word under every node.
+    # A channel named `help` (the tree reserves the word under every node)
+    # or `status` (`dev deploy status` is dev's, beside the channels).
     class ReservedChannelNameError < ArgumentError; end
 
     # A `deploy` child without `targets:`, or with one that is not a
@@ -52,6 +54,9 @@ module Dev
 
     DEPLOY = "deploy"
     ACCEPTS_KEY = "targets"
+    # Names no channel may take: `help` under every node, `status` for the
+    # ledger's own child of `deploy`.
+    RESERVED_NAMES = T.let([CommandParser::RESERVED_CHILD_NAME, Builtins::DeployStatusCommand::NAME].freeze, T::Array[String])
 
     DeployHash = T.type_alias { T::Hash[String, T.untyped] }
 
@@ -114,7 +119,7 @@ module Dev
 
       children.to_h do |name, entry|
         name = name.to_s
-        if name == CommandParser::RESERVED_CHILD_NAME
+        if RESERVED_NAMES.include?(name)
           raise ReservedChannelNameError, "command '#{DEPLOY}': '#{name}' is reserved and cannot name a channel"
         end
         unless entry.is_a?(Hash)

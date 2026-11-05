@@ -64,9 +64,10 @@ class Dev::Lifecycle::ScriptPublisherTest < Minitest::Test
     linux64 = artifact("cellbound-3d-linux64-dev")
 
     When
-    publisher.publish([win64, linux64], channel: channel("sh ./stage.sh"))
+    receipt = publisher.publish([win64, linux64], channel: channel("sh ./stage.sh"))
 
-    Then
+    Then "the receipt is the line that shipped: a script has no way to say what landed"
+    receipt == Dev::Lifecycle::Receipt.new(summary: "run: sh ./stage.sh")
     (@root / "shipped").read.lines.map(&:chomp) == [
       "#{@project.realpath} steam cellbound-3d-win64-dev dev 1.2.0+3f2a1c9d8e7b 3f2a1c9d8e7b false unset",
       win64.archive.to_s,
