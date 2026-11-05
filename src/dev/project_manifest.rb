@@ -25,6 +25,11 @@ module Dev
     # order — the first is what bare `build` means. Empty when the project
     # declares none, and then no lifecycle verb exists for it.
     const :targets, T::Hash[String, Lifecycle::Target], default: {}
+    # Where the project ships artifacts (`commands: deploy:`'s children,
+    # dev#192 K5), in declaration order — lifted out of `commands` once
+    # targets exist, since `deploy` is derived from them. Empty when the
+    # project declares none, and then `deploy` does not exist for it.
+    const :channels, T::Hash[String, Lifecycle::Channel], default: {}
     # The engine floor this project's build was tuned for (`engine:`); nil
     # means the provisioner's defaults and no check.
     const :engine, T.nilable(Dev::EngineResources::Hint), default: nil

@@ -55,6 +55,15 @@ module Dev
       # name, so the summaries line up across sections.
       LABEL_WIDTH = 12
 
+      # One line of a headed block — a command's or a verb subject's — and
+      # the detail lines that follow it.
+      class Row < T::Struct
+        const :label, String
+        const :summary, String
+        const :environment, T.nilable(String), default: nil
+        const :details, T::Array[String], default: []
+      end
+
       # @param epilogue [String, nil] the root usage's closing line
       #   (examples, or the hint that project commands need a dev.yml) —
       #   the one line that is about the tool rather than a node
@@ -82,6 +91,7 @@ module Dev
         out.puts command.desc
         sentence = environment_sentence(command)
         out.puts sentence if sentence
+        details(command).each { |line| out.puts line }
         print_flags(command.flags, out) unless command.flags.empty?
         listing = command.is_a?(LifecycleCommand) ? command.listing : nil
         print_listing(listing, out) if listing
@@ -154,7 +164,7 @@ module Dev
           # Nodes with children carry a trailing ellipsis: the reader learns
           # there is more beneath without the listing expanding the whole tree.
           label = command.children.empty? ? name : "#{name} …"
-          [label, summary(command), environment_label(command)]
+          Row.new(label:, summary: summary(command), environment: environment_label(command), details: details(command))
         end
         print_rows(heading, rows, out, label_width: LABEL_WIDTH)
       end
@@ -173,35 +183,44 @@ module Dev
       def print_listing(listing, out)
         rows = listing.subjects.map do |subject|
           environment = [placement_label(subject.placement), subject.note].compact.join(" ")
-          [subject.name, subject.desc, environment.empty? ? nil : environment]
+          Row.new(label: subject.name, summary: subject.desc, environment: environment.empty? ? nil : environment)
         end
         # Build names run long (`cellbound-3d-steamworks-win64-release`), so
         # the label column fits the longest rather than a command name's.
-        label_width = rows.map { |label, _summary, _environment| label.length }.max || LABEL_WIDTH
+        label_width = rows.map { |row| row.label.length }.max || LABEL_WIDTH
         print_rows(listing.heading, rows, out, label_width: [LABEL_WIDTH, label_width].max)
       end
 
       # One headed block of rows: labels padded to the given width, the
       # summary column to the longest summary, the environment dim and
-      # last. A row with no environment ends at its summary.
+      # last; a row with no environment ends at its summary. A row's
+      # details follow it, indented to the summary column.
       #
       # @param heading [String]
-      # @param rows [Array<[String, String, String?]>] label, summary, environment
+      # @param rows [Array<Row>]
       # @param out [IO, StringIO]
       # @param label_width [Integer]
       # @return [void]
-      sig do
-        params(heading: String, rows: T::Array[[String, String, T.nilable(String)]], out: T.any(IO, StringIO), label_width: Integer).void
-      end
+      sig { params(heading: String, rows: T::Array[Row], out: T.any(IO, StringIO), label_width: Integer).void }
       def print_rows(heading, rows, out, label_width:)
         out.puts ""
         out.puts "#{heading}:"
-        summary_width = T.must(rows.map { |_label, summary, _environment| summary.length }.max)
-        rows.each do |label, summary, environment|
-          prefix = "  #{label.ljust(label_width)} "
-          out.puts(environment ? "#{prefix}#{summary.ljust(summary_width)}  #{dim(environment, out)}" : "#{prefix}#{summary}")
+        summary_width = T.must(rows.map { |row| row.summary.length }.max)
+        rows.each do |row|
+          prefix = "  #{row.label.ljust(label_width)} "
+          environment = row.environment
+          out.puts(environment ? "#{prefix}#{row.summary.ljust(summary_width)}  #{dim(environment, out)}" : "#{prefix}#{row.summary}")
+          row.details.each { |line| out.puts "#{" " * prefix.length}#{line}" }
         end
       end
+
+      # A verb's detail lines (LifecycleCommand#details); nothing for the
+      # other shapes.
+      #
+      # @param command [Dev::Command]
+      # @return [Array<String>]
+      sig { params(command: Command).returns(T::Array[String]) }
+      def details(command) = command.is_a?(LifecycleCommand) ? command.details : []
 
       # A desc's first line. A multi-line desc is a summary line plus detail
       # that only the node's own usage prints (print_node puts the whole
@@ -266,8 +285,9 @@ module Dev
         end
       end
 
-      # The bound placement of a command with a project body; nil for the
-      # shapes that have none (a builtin, a group).
+      # The bound placement of a command with a project body, or of a verb
+      # whose seam runs in one place (a channel's protocol); nil for the
+      # shapes that have none (a builtin, a group, a verb placed per build).
       #
       # @param command [Dev::Command]
       # @return [Dev::Placement, nil]
@@ -276,6 +296,7 @@ module Dev
         case command
         when ProjectCommand then command.placement
         when OverriddenCommand then command.project.placement
+        when LifecycleCommand then command.placement
         else nil
         end
       end

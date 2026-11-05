@@ -259,6 +259,26 @@ module Dev
     sig { overridable.returns(T.nilable(Listing)) }
     def listing = nil
 
+    # Where the verb's seam runs when that is one place — a channel's
+    # protocol (dev#192, K5) — as the usage printer's environment column
+    # and sentence read it, the way a project command's placement is read.
+    # Nil for a verb placed per build (`build`, `package`: the listing
+    # carries each build's), and for one the composition root could not
+    # bind.
+    #
+    # @return [Placement, nil]
+    sig { overridable.returns(T.nilable(Placement)) }
+    def placement = nil
+
+    # Lines the usage prints beneath the verb's description — in its own
+    # usage and under its row in its parent's listing — for what a one-line
+    # summary cannot carry: a channel's accept set and where its protocol
+    # comes from. Nothing by default.
+    #
+    # @return [Array<String>]
+    sig { overridable.returns(T::Array[String]) }
+    def details = []
+
     # The stage before the seam: consume the flags and positionals into
     # the verb's Env (the build, where its install goes, …), resolve where
     # it runs and dispatch it. The seam sees nothing of `args`.

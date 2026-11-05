@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/channel_parser"
 require "dev/command"
 require "dev/command_parser"
 require "dev/deps/dependency"
@@ -212,6 +213,38 @@ class Dev::PlacementBinderTest < Minitest::Test
     error.message.include?("`rspock` runs in a container but names no image")
   end
 
+  test "bind_channels places each channel's run: as a command's body: named image, host, or the project's one image (dev#415)" do
+    Given
+    lock(image_pin("snappy-linux"))
+    channels = parse_channels(
+      "staging" => { "targets" => ["snappy"], "run" => "./bin/stage", "environment" => "host" },
+      "steam" => { "targets" => ["snappy"], "run" => "./bin/steam-upload", "environment" => "snappy-linux" },
+      "mirror" => { "targets" => ["snappy"], "run" => "./bin/mirror" },
+    )
+
+    When
+    bound = binder.bind_channels(channels)
+
+    Then
+    bound.keys == ["staging", "steam", "mirror"]
+    bound["staging"] == Dev::Placement::Host.new
+    bound["steam"] == Dev::Placement::Image.new(image: images.named("snappy-linux"))
+    bound["mirror"] == Dev::Placement::Image.new(image: images.named("snappy-linux"))
+  end
+
+  test "a channel's environment the lock does not pin fails at binding, under the channel's path" do
+    Given
+    lock(image_pin("snappy-linux"))
+    channels = parse_channels("steam" => { "targets" => ["snappy"], "run" => "./bin/steam-upload", "environment" => "snappy-win" })
+
+    When
+    binder.bind_channels(channels)
+
+    Then
+    error = raises(Dev::ProjectImages::UnknownImageError)
+    error.message.include?("`deploy steam` runs in `snappy-win`")
+  end
+
   test "a node that is not a parsed project node is a wiring bug" do
     Given "a builtin smuggled into the parsed tree"
     lock(image_pin("snappy-linux"))
@@ -246,6 +279,11 @@ class Dev::PlacementBinderTest < Minitest::Test
 
   def parse_targets(targets)
     Dev::TargetParser.new.parse_all(targets)
+  end
+
+  def parse_channels(channels)
+    snappy = parse_targets("snappy" => {}).values
+    Dev::ChannelParser.new.parse_all({ "commands" => channels }, snappy)
   end
 
   def lock(*pins)

@@ -451,6 +451,66 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
     out.string == "Usage: dev deploy [args...]\n\nShip\n"
   end
 
+  # --- a channel's details and placement (dev#415) -----------------------
+
+  test "a verb with a placement and details lists them: the environment as its column, each detail on its own line under the row, rows in name order" do
+    Given "a deploy group of two channels, one placed in an image this host is not, one on the host, beside an unplaced verb"
+    linux = image("cellbound-3d-linux")
+    staging = FakeVerb.new(desc: "rsync to the gamebox")
+    staging.stubs(:placement).returns(Dev::Placement::Host.new)
+    staging.stubs(:details).returns(["Accepts: cellbound-3d-win64-dev, cellbound-3d-linux64-dev", "Protocol: run: ./bin/stage"])
+    steam = FakeVerb.new(desc: "Steam depots")
+    steam.stubs(:placement).returns(Dev::Placement::Image.new(image: linux))
+    steam.stubs(:details).returns(["Accepts: cellbound-3d-steamworks-win64-release", "Protocol: run: ./bin/steam-upload"])
+    group = build_group(["deploy"], desc: "Ship an artifact to a channel", category: Dev::Command::Category::Lifecycle,
+      children: { "staging" => staging, "steam" => steam, "mirror" => FakeVerb.new(desc: "A bare verb") })
+    out = StringIO.new
+
+    When
+    Dev::Cli::UsagePrinter.new(host_rule: host_rule).print_node(path: ["deploy"], command: group, out:)
+
+    Then
+    out.string == <<~USAGE
+      Usage: dev deploy <command> [args...]
+
+      Ship an artifact to a channel
+
+      Commands:
+        mirror       A bare verb
+        staging      rsync to the gamebox  host
+                     Accepts: cellbound-3d-win64-dev, cellbound-3d-linux64-dev
+                     Protocol: run: ./bin/stage
+        steam        Steam depots          cellbound-3d-linux (container)
+                     Accepts: cellbound-3d-steamworks-win64-release
+                     Protocol: run: ./bin/steam-upload
+    USAGE
+  end
+
+  test "a placed verb's own usage says its environment in a sentence, then its details, before its flags" do
+    Given
+    staging = FakeVerb.new(desc: "rsync to the gamebox")
+    staging.stubs(:placement).returns(Dev::Placement::Host.new)
+    staging.stubs(:details).returns(["Accepts: rspock", "Protocol: run: ./bin/stage"])
+    staging.stubs(:flags).returns([Dev::Cli::Flag.new("--dry-run", desc: "select and report, ship nothing")])
+    out = StringIO.new
+
+    When
+    Dev::Cli::UsagePrinter.new(host_rule: host_rule).print_node(path: ["deploy", "staging"], command: staging, out:)
+
+    Then
+    out.string == <<~USAGE
+      Usage: dev deploy staging [args...]
+
+      rsync to the gamebox
+      Runs on the host.
+      Accepts: rspock
+      Protocol: run: ./bin/stage
+
+      Flags:
+        --dry-run  select and report, ship nothing
+    USAGE
+  end
+
   test "an overridden slot's own usage says the project body's environment" do
     Given
     overridden = Dev::OverriddenCommand.new(

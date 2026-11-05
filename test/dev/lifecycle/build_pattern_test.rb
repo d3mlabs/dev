@@ -127,6 +127,19 @@ class Dev::Lifecycle::BuildPatternTest < Minitest::Test
     "rspock-gem"                     | "gem"         | "the grammar is rspock"
   end
 
+  test "per_platform splits a pattern along the platform axis only, leaving the config as written: #{name}" do
+    Expect
+    Dev::Lifecycle::BuildPattern.parse(name, all_targets).per_platform.map(&:name) == split
+
+    Where
+    name                                     | split
+    "cellbound-3d"                           | ["cellbound-3d-win64", "cellbound-3d-linux64"]
+    "cellbound-3d-release"                   | ["cellbound-3d-win64-release", "cellbound-3d-linux64-release"]
+    "cellbound-3d-linux64"                   | ["cellbound-3d-linux64"]
+    "cellbound-3d-steamworks-win64-release"  | ["cellbound-3d-steamworks-win64-release"]
+    "rspock"                                 | ["rspock"]
+  end
+
   test "patterns are values" do
     Expect
     Dev::Lifecycle::BuildPattern.parse("cellbound-3d-win64", all_targets) ==

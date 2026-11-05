@@ -166,6 +166,21 @@ module Dev
       sig { returns(T::Array[Build]) }
       def builds = target.builds.select { |candidate| matches?(candidate) }
 
+      # The pattern split along the platform axis, the config axis left as
+      # written: one pattern per declared platform it admits — itself when
+      # it names one already, or when the target declares none. What a
+      # channel ships one artifact per (dev#192, K5): a platform is a
+      # destination's fact (a Windows box, a Steam depot), a config the
+      # operator's choice.
+      #
+      # @return [Array<BuildPattern>] in the target's platform order
+      sig { returns(T::Array[BuildPattern]) }
+      def per_platform
+        return [self] if platform || !target.platforms?
+
+        target.platforms.map { |declared| BuildPattern.new(target:, platform: declared, config:) }
+      end
+
       # The pattern with each omitted axis filled by the target's default
       # (its first declared value) — what a bare `build <target>` means.
       #

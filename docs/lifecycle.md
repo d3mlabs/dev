@@ -1,17 +1,19 @@
 # The lifecycle
 
 How `dev` turns a project's `targets:` into builds, artifacts and the
-verbs over them. This is the reference the `lib/dev/lifecycle` and
-`src/dev/builtins/{build,package}_command.rb` comments point at: the
-declarations, the two ports and their env contract, the build grammar,
-which verbs exist when, and how a verb decides where it runs. The
+verbs over them, and its `deploy` channels into the places they ship
+to. This is the reference the `lib/dev/lifecycle` and
+`src/dev/builtins/{build,package,deploy}_command.rb` comments point at:
+the declarations, the ports and their env contract, the build grammar,
+which verbs exist when, the channel contract, the dependency graph, and
+how a verb decides where it runs. The
 decision record is
 [ADR-0013](DECISIONS.md#adr-0013-the-lifecycle-model-targets-derived-builds-two-ports-a-stamped-store);
 the plan is [dev#192](https://github.com/d3mlabs/dev/issues/192).
 
 ## Ontology
 
-Five nouns, each one class, none playing two roles.
+Seven nouns, each one class, none playing two roles.
 
 | Concept | Class | What it is |
 | --- | --- | --- |
@@ -20,6 +22,8 @@ Five nouns, each one class, none playing two roles.
 | Build pattern | `Lifecycle::BuildPattern` | A build name with an axis left out; names a set, and has one *default build* (the target's first of each omitted axis). What the verbs' positional parses to. |
 | Artifact | `Lifecycle::Artifact` | What `package` makes of one build: the archive beside its `build-id.json`, in the store. A directory without the manifest is not one. |
 | Store | `Lifecycle::Store` | `<data root>/artifacts/<project>/<build>/` — one directory per declared build, holding the install, the archive and the manifest. Keyed by the project's `name:`, never the checkout. |
+| Channel | `Lifecycle::Channel` | Where artifacts ship to: a name, the builds it **accepts** (patterns in the build grammar) and a publisher spec. Declared as a child of `commands: deploy:`. |
+| Publisher | `Lifecycle::Publisher` | The channel's protocol — the port `deploy` runs over the selected artifacts. `ScriptPublisher` is the `run:` form; integration publishers plug in behind the same interface ([dev#422](https://github.com/d3mlabs/dev/issues/422)). |
 
 ## Declarations
 
@@ -66,6 +70,44 @@ readings.
 on the first declared target's default build. A project lists its
 fast-loop target first.
 
+### Channels
+
+With targets declared, `commands: deploy:` is not a command: each child
+is a **channel**, parsed by `Dev::ChannelParser` against the targets and
+lifted out of the command tree into `ProjectManifest#channels`.
+
+```yaml
+commands:
+  deploy:
+    commands:
+      staging:
+        desc: rsync to the gamebox
+        targets: [cellbound-3d-server]
+        run: ./bin/stage
+        environment: host
+      steam:
+        desc: Steam depots
+        targets: [cellbound-3d-steamworks-win64-release, cellbound-3d-server-linux64-release]
+        run: ./bin/steam-upload
+```
+
+| Key | Meaning |
+| --- | --- |
+| `desc` | One line; what `dev help deploy` shows beside the channel. |
+| `targets` | The **accept set**: a non-empty list of builds or patterns in the build grammar, parsed at load (`BuildPattern.parse`), so a name no target spells is refused before anything runs. |
+| `run` | The protocol's script form: a shell command run at the repo root once per archive, with the env contract below. Required until integration publishers land. |
+| `environment` | Where the protocol runs — a command's key, values and binding (`Dev::PlacementBinder#bind_channels`). |
+
+Load-time rules: `deploy` itself may carry no `run:` (`DeployBodyError`)
+and must have a child (`NoChannelsError`); a child must be a mapping
+(`InvalidChannelError`) with `targets:` (`ChannelAcceptsError`) and a
+protocol (`ChannelProtocolError`), may not have `commands:` of its own
+(`ChannelChildrenError`) and may not be named `help`
+(`ReservedChannelNameError`). A `deploy` child carrying `targets:` in a
+project without targets is refused (`ChannelWithoutTargetsError`): there
+is no build for it to accept. Without targets, `deploy` stays a plain
+project command, children included.
+
 ## Ports and the env contract
 
 Two ports separate dev from the toolchain. The **builder** makes the
@@ -79,9 +121,15 @@ toolchain.
 | --- | --- | --- | --- |
 | Builder | `Lifecycle::Builder#build(build, install)`, `#name`, `#version` | `ScriptBuilder` (`name` = `script`, no version) | `build: <command>` |
 | Packager | `Lifecycle::Packager#package(build, install, archive_stem) → PackedArchive` | `Archive` (zip / tar.zst, optionally split), `AsIsPackager`, `ScriptPackager`, `NonePackager` | `packager:` / `package:` |
+| Publisher | `Lifecycle::Publisher#publish(artifacts, channel:)` | `ScriptPublisher` | a channel's `run: <command>` |
 
-`Lifecycle::Ports` maps a target's specs to port instances; it is the only
-place that knows which class implements which declaration. Integration
+A third port, the **publisher**, is the channel's: it takes the
+artifacts `deploy` selected and ships them, never choosing on its own and
+never rewriting an archive (see [The channel contract](#the-channel-contract)).
+
+`Lifecycle::Ports` maps a target's specs — and a channel's — to port
+instances; it is the only place that knows which class implements which
+declaration. Integration
 builders and packagers (an Unreal builder, a `rubygem` packager) plug in
 behind the same two interfaces
 ([dev#433](https://github.com/d3mlabs/dev/issues/433)); the manifest's
@@ -97,8 +145,16 @@ flags, which the verb consumes before the seam runs (`Lifecycle::ScriptEnv`):
 | `DEV_TARGET` | always | the target's name |
 | `DEV_PLATFORM` | iff the target declares `platforms` | `win64` / `linux64` / `macos` |
 | `DEV_CONFIG` | iff the target declares `configs` | `debug` / `dev` / `release` |
-| `DEV_INSTALL` | always | the install directory, created before the builder runs |
-| `DEV_ARTIFACT` | `package:` only | the archive path **without its extension**; the script appends what it writes |
+| `DEV_INSTALL` | `build:` and `package:` | the install directory, created before the builder runs |
+| `DEV_ARTIFACT` | `package:` | the archive path **without its extension**; the script appends what it writes |
+| `DEV_ARTIFACT` | a channel's `run:` | the archive **file** — the path with its extension, as the store holds it |
+| `DEV_CHANNEL` | a channel's `run:` | the channel's name |
+| `DEV_BUILD` | a channel's `run:` | the build's full name (`cellbound-3d-win64-release`) |
+| `DEV_BUILD_ID` | a channel's `run:` | the manifest's build id (`1.4.0+0123456789ab`) |
+| `DEV_SHA` | a channel's `run:` | the commit the artifact was packaged at; `unknown` outside git |
+| `DEV_DIRTY` | a channel's `run:` | `true` / `false` — whether that tree had uncommitted changes |
+| `DEV_PACKAGED_AT` | a channel's `run:` | the UTC instant (`20261104T123000Z`) |
+| `DEV_ARCHIVE_SHA256` | a channel's `run:` | the archive's digest as stamped |
 
 An axis the target does not declare is *unset*, not empty, so a script's
 `case "$DEV_PLATFORM"` over an undeclared axis fails under `set -u`
@@ -158,15 +214,21 @@ something for it to act on:
 | --- | --- | --- | --- |
 | `build [BUILD]` | `targets:` non-empty | every build | the target's builder (nothing, for a target with no `build:` — the verb says so) |
 | `package [BUILD] [--no-build]` | `targets:` non-empty | every build of a target whose packager is not `none` | the builder when stale, then the packager |
-| `deploy [CHANNEL] [BUILD]` | a channel exists | — | milestone C ([dev#192](https://github.com/d3mlabs/dev/issues/192)) |
+| `deploy <channel> [BUILD] [--config C] [--allow-stale] [--force] [--dry-run]` | a channel exists under `commands: deploy:` | the channel's accepted artifacts, from the store | the channel's publisher, once per archive |
 | `release <version>` | a `release:` block | — | milestone D |
 
 A project without targets lists neither `build` nor `package`, and
-`dev build` there is "command not found", not "no targets declared".
-`dev help build` lists every build with its target's `desc` and its
-environment; `dev help package` lists the shippable ones. Both verbs
-complete every pattern (`cellbound-3d`, `cellbound-3d-dev`, …) and every
-build.
+`dev build` there is "command not found", not "no targets declared";
+one without a channel lists no `deploy`. `dev help build` lists every
+build with its target's `desc` and its environment; `dev help package`
+lists the shippable ones. Both verbs complete every pattern
+(`cellbound-3d`, `cellbound-3d-dev`, …) and every build. `deploy` is a
+group whose children are the channels (`Dev::Builtins::DeployCommand`,
+one per channel): bare `dev deploy` prints the channels, `dev help
+deploy` lists each with its environment column, its accept set expanded
+to builds (`Accepts: …`) and its protocol's source (`Protocol: run:
+./bin/stage`), and a channel completes its accept patterns and the builds
+they span.
 
 ### What `package` does
 
@@ -209,12 +271,96 @@ artifact is still re-archived and re-stamped — only the compile is
 skipped; the archive is cheap next to the build and the stamp's instant
 moves with it.
 
+### What `deploy` does
+
+`deploy` never builds (K4): it ships what `package` left in the store,
+and refuses — naming the `dev package` that would fix it — when that is
+not enough. For `dev deploy <channel> [BUILD]`, `Dev::DeploySelector`
+decides what ships, in order:
+
+1. The candidates: the channel's accept set spelled out **per platform**
+   (`Channel#artifact_patterns` — `cellbound-3d` over two platforms is
+   two entries, each with its config open), or, with a `BUILD`
+   positional, that name or pattern split the same way and narrowed to
+   the builds the channel accepts. A positional spanning no accepted
+   build is `OutsideAcceptSetError` with the accept set named; `--force`
+   keeps every build the positional spans. `--force` without a positional
+   is refused: it only widens what was named. One artifact ships per
+   entry.
+2. The config, per entry: `--config C` keeps the builds of that config
+   (`NoAcceptedConfigError` when none is accepted); otherwise every
+   accepted config is a candidate.
+3. The store: among the candidates, the artifacts that exist. None is
+   `MissingArtifactError` ("`dev package <build>` first; deploy never
+   builds"); several is `AmbiguousArtifactError`, both listed, with
+   `--config` as the fix — the "unique match or explicit" rule of
+   cellbound-3d's staging deploy.
+4. Staleness: an artifact whose `build-id.json` is not from a clean tree
+   at this commit (`Manifest::Artifact#current?`, the same rule
+   `package` reads) is `StaleArtifactError` unless `--allow-stale`, which
+   ships it and marks it in the report.
+
+Then the verb's template: `before` resolves where the protocol runs (the
+channel's `environment:` under the host rule), reads the tree once and
+consumes the argv into the selection; the seam is the publisher —
+`ScriptPublisher` runs the `run:` line at the repo root once per archive,
+with `Lifecycle::ScriptEnv.for_deploy`'s env, and stops at the first
+nonzero exit (`DeployScriptFailedError`, the archive and code named; the
+ones before it shipped) — skipped under `--dry-run`; `after` prints one
+line per artifact (`deployed <build> (<build id>) → <channel>: <archive>`,
+`would deploy …` under `--dry-run`, `— stale, shipped under
+--allow-stale` when it was). The receipt as a GitHub Deployment is
+[dev#423](https://github.com/d3mlabs/dev/issues/423).
+
+## The channel contract
+
+A channel is a destination; its **publisher** is the protocol that
+reaches it. Two kinds share one interface,
+`Lifecycle::Publisher#publish(artifacts, channel:)`:
+
+| Publisher | Declared as | Knows |
+| --- | --- | --- |
+| `ScriptPublisher` | the channel's `run:` | nothing but its env: the script owns the endpoint, the credentials, the tool |
+| an integration publisher ([dev#422](https://github.com/d3mlabs/dev/issues/422)) | the lock's `steam` / `gh` dependency, named by the channel | the endpoint, the app id and depots, the release asset layout — from the integration's declaration, not from `dev.yml` |
+
+Both obey two constraints, which is what makes the verb the same over
+either:
+
+- **A publisher reads the archive and never rewrites it.** The file in
+  the store is what `build-id.json`'s `archive_sha256` says, before and
+  after a deploy; a channel that needs another layout copies into its
+  own staging.
+- **A publisher ships what the verb selected, never selecting on its
+  own.** The accept set, the config choice, the staleness and force rules
+  are `DeploySelector`'s and identical for every protocol; a publisher
+  gets the artifacts, in order, one call per deploy.
+
+Credentials are the publisher's concern — the project's `dev cred` store
+or the script's environment — never `dev.yml`'s. A channel's **tracks**
+(Steam's beta branches, a GitHub release's draft/prerelease) and its
+**receipt** are milestone D's, beside `release`.
+
+## The dependency graph
+
+Each verb needs exactly what the one before it leaves, and names the
+missing step rather than performing it:
+
+| Verb | Needs | When missing |
+| --- | --- | --- |
+| `build <build>` | the build's environment, able to produce its platform | refused at load (an image without the `target_platforms`), or at the verb (a host-placed build whose platform this machine is not; an environment this machine is not, until milestone B's remote dispatch — an enrolled runner or the project's container) |
+| `package <build>` | a current build | makes it (make-like): the builder runs when the artifact is not current, `--no-build` trusts the install |
+| `deploy <channel>` | an artifact per accepted (target, platform) in the store, a channel, the channel's environment | "`dev package <build>` first" — never builds; a channel exists or `deploy` does not; an unbound environment (the lock unreadable) lists without a column and refuses until `dev deps update` |
+| `release <version>` (milestone D) | the release's targets packaged at the tag | packages at the tag, so staleness cannot arise |
+
 ## Dispatch resolution
 
 Where a verb's seam runs is decided per build, before anything runs, from
 the target's `environment:` bound against the lock at load
 (`Dev::PlacementBinder#bind_targets` → one `Dev::TargetPlacement` per
 target, a `Placement::Host` or `Placement::Image` per declared platform).
+A channel's protocol is placed the same way from the channel's
+`environment:` (`#bind_channels` → one `Placement` per channel), resolved
+under the same host rule when `deploy` runs.
 
 **At load**, for every build with a platform, the environment named for
 that platform must produce it: an image through the `target_platforms`
@@ -264,8 +410,9 @@ short-circuits `after`.
 ## Adding a port implementation
 
 A new builder implements `Lifecycle::Builder` (`build`, `name`,
-`version`), a new packager `Lifecycle::Packager` (`package`); both are
-wired in `Lifecycle::Ports` from a new `BuilderSpec` / `PackagerSpec`
-variant, and nowhere else. The verbs, the selector, the dispatcher and
-the store do not change: they see ports and builds, never scripts or
-formats.
+`version`), a new packager `Lifecycle::Packager` (`package`), a new
+publisher `Lifecycle::Publisher` (`publish`); each is wired in
+`Lifecycle::Ports` from a new `BuilderSpec` / `PackagerSpec` /
+`PublisherSpec` variant, and nowhere else. The verbs, the selectors, the
+dispatcher and the store do not change: they see ports, builds and
+channels, never scripts, formats or endpoints.

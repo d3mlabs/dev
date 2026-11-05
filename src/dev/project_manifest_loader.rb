@@ -6,6 +6,7 @@ require "yaml"
 require "dev/engine_resources"
 require "dev/environment_ref"
 require "dev/lifecycle"
+require_relative "channel_parser"
 require_relative "command_parser"
 require_relative "project_manifest"
 require_relative "target_parser"
@@ -19,12 +20,17 @@ module Dev
   # the toolchain is a dependency, and only the deps commands evaluate that
   # file.
   #
-  # With `targets:` declared (dev#192) it also holds the two rules that span
+  # With `targets:` declared (dev#192) it also holds the rules that span
   # targets and commands: `build` and `package` are derived from the
-  # targets, so a project may not declare them as commands; and no command
-  # may be named like a build, so a positional `dev build <build>` is never
-  # ambiguous. Both are vacuous without targets — the derived verbs do not
-  # exist then, and a project's own `build:` is a plain command.
+  # targets, so a project may not declare them as commands; no command may
+  # be named like a build, so a positional `dev build <build>` is never
+  # ambiguous; and `commands: deploy:` is the project's channels — lifted
+  # out of the command tree into the manifest's `channels` (ChannelParser),
+  # since `deploy` is derived from them. All are vacuous without targets —
+  # the derived verbs do not exist then, and a project's own `build:` or
+  # `deploy:` is a plain command — except that a `deploy` child shaped
+  # like a channel (`targets:`) without any target to accept is refused
+  # with the fix named, rather than silently kept as a command.
   #
   # Stateless: reusable across manifests, inputs arrive as method arguments.
   class ProjectManifestLoader
@@ -54,6 +60,11 @@ module Dev
     # so the two vocabularies may not overlap (dev#192, *The model*).
     class BuildNamedCommandError < RuntimeError; end
 
+    # Raised when a `deploy` child declares `targets:` — the shape of a
+    # channel — in a project that declares no `targets:` at the top level:
+    # there is no build for it to accept (dev#192, K5).
+    class ChannelWithoutTargetsError < RuntimeError; end
+
     # The verbs `targets:` derives; a project may not declare them.
     DERIVED_COMMANDS = T.let(["build", "package"].freeze, T::Array[String])
 
@@ -79,10 +90,11 @@ module Dev
     # The block's keys that fed the Dockerfile build and have no successor.
     GONE_WITH_THE_DOCKERFILE = "delete it — the Dockerfile path is gone (d3mlabs/dev#311)"
 
-    sig { params(command_parser: CommandParser, target_parser: TargetParser).void }
-    def initialize(command_parser: CommandParser.new, target_parser: TargetParser.new)
+    sig { params(command_parser: CommandParser, target_parser: TargetParser, channel_parser: ChannelParser).void }
+    def initialize(command_parser: CommandParser.new, target_parser: TargetParser.new, channel_parser: ChannelParser.new)
       @command_parser = command_parser
       @target_parser = target_parser
+      @channel_parser = channel_parser
     end
 
     # Parse dev.yml into a manifest.
@@ -97,6 +109,10 @@ module Dev
     #   beside `commands: build:` or `commands: package:`
     # @raise [BuildNamedCommandError] when `targets:` is declared and a
     #   command is named like one of its builds
+    # @raise [ChannelWithoutTargetsError] when a `deploy` child declares
+    #   `targets:` and the project declares none
+    # @raise [ChannelParser::DeployBodyError] and the channel rules, when
+    #   `targets:` is declared and `commands: deploy:` is not a tree of channels
     sig { params(dev_yml_path: Pathname).returns(ProjectManifest) }
     def load(dev_yml_path)
       yaml = YAML.load_file(dev_yml_path)
@@ -104,19 +120,42 @@ module Dev
       reject_retired_keys(yaml)
       warn_retired_runner_key(yaml)
       raw_commands = yaml["commands"] || {}
+      targets = @target_parser.parse_all(yaml["targets"])
+      channels = parse_channels(raw_commands, targets)
+      # Once targets exist, `deploy` is the channels' and not a command.
+      raw_commands = raw_commands.except(ChannelParser::DEPLOY) if targets.any?
       commands = T.let(
         raw_commands.to_h { |name, h| [name.to_s, @command_parser.parse([name.to_s], h)] },
         T::Hash[String, ProjectNode],
       )
-      targets = @target_parser.parse_all(yaml["targets"])
       reject_derived_commands(commands, targets)
       reject_build_named_commands(commands, targets)
       ProjectManifest.new(
         name: T.cast(yaml["name"], String),
         commands:,
         targets:,
+        channels:,
         engine: parse_resources(yaml["engine"]),
       )
+    end
+
+    # With targets declared, `commands: deploy:` is the project's channels
+    # and leaves the command tree (the caller drops the key). Without
+    # targets, `deploy` stays a plain command — unless a child already
+    # carries `targets:`, the one shape that cannot mean anything there.
+    #
+    # @param raw_commands [Hash] the `commands` mapping as YAML delivered it
+    # @param targets [Hash{String => Lifecycle::Target}]
+    # @return [Hash{String => Lifecycle::Channel}] empty without targets
+    # @raise [ChannelWithoutTargetsError]
+    sig { params(raw_commands: T::Hash[T.untyped, T.untyped], targets: T::Hash[String, Lifecycle::Target]).returns(T::Hash[String, Lifecycle::Channel]) }
+    def parse_channels(raw_commands, targets)
+      return @channel_parser.parse_all(raw_commands[ChannelParser::DEPLOY], targets.values) if targets.any?
+      return {} unless @channel_parser.channels_declared?(raw_commands)
+
+      raise ChannelWithoutTargetsError,
+        "dev.yml declares a `deploy` channel (`#{ChannelParser::ACCEPTS_KEY}:` on a `deploy` child) but no `targets:` — " \
+          "a channel accepts builds, so declare the targets they come from (d3mlabs/dev#192)"
     end
 
     # With targets declared, `build` and `package` exist as derived verbs,

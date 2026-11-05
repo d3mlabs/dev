@@ -16,6 +16,7 @@ require "dev/command_repository"
 require "dev/command_runner"
 require "dev/command_service"
 require "dev/dependency_service"
+require "dev/deploy_selector"
 require "dev/deps/lockfile"
 require "dev/deps/staleness"
 require "dev/dispatch_resolver"
@@ -28,6 +29,7 @@ require "dev/container_github_token"
 require "dev/lifecycle"
 require "dev/lifecycle_executor"
 require "dev/overridden_executor"
+require "dev/placement"
 require "dev/placement_binder"
 require "dev/project_executor"
 require "dev/project_manifest"
@@ -55,10 +57,12 @@ module Dev
     PROJECTLESS_EPILOGUE = "Run dev inside a project that defines a dev.yml to see its commands."
 
     # What binding the lock yields: the project commands with their
-    # placements, and the target placements the lifecycle verbs dispatch by.
+    # placements, the target placements the lifecycle verbs dispatch by,
+    # and each channel's protocol placement `deploy` dispatches by.
     class Bindings < T::Struct
       const :commands, T::Hash[String, ProjectNode]
       const :targets, T::Hash[String, TargetPlacement]
+      const :channels, T::Hash[String, Placement]
     end
 
     sig do
@@ -212,7 +216,7 @@ module Dev
         repository: CommandRepository.new(
           root: CommandGroup.root(
             desc: "Development commands for #{manifest.name}",
-            children: build_builtins(manifest, context.project!, dependency_service, help:, complete:, target_placements: bindings.targets),
+            children: build_builtins(manifest, context.project!, dependency_service, help:, complete:, bindings:),
           ),
           project_commands: bindings.commands,
         ),
@@ -223,21 +227,23 @@ module Dev
     end
 
     # Bind every `environment:` against the lock before the tree is
-    # assembled (dev#409): each project command's, and each target's per
-    # platform with the image capability check (dev#192, K8). An unknown
-    # or ambiguous name, or a build pointed at an image that does not
-    # produce its platform, fails here, at load, and the usage printer
-    # reads each command's placement; the target placements are what
-    # `build` and `package` dispatch by (dev#414).
+    # assembled (dev#409): each project command's, each target's per
+    # platform with the image capability check (dev#192, K8), and each
+    # channel's protocol (K5). An unknown or ambiguous name, or a build
+    # pointed at an image that does not produce its platform, fails here,
+    # at load, and the usage printer reads each command's placement; the
+    # target placements are what `build` and `package` dispatch by
+    # (dev#414), the channel placements what `deploy` does (dev#415).
     #
     # A lock dev cannot read — a pin locked by another dev's template, a
     # retired build-deps.lock — is a different failure: its remediation
     # (`dev deps update`) is a project builtin served by this very tree,
     # so it must not make the tree unbuildable. The commands stay in the
-    # tree unbound and no target is placed: the lock's message goes to
-    # stderr once, help lists the commands and builds without their
-    # environments, and a project command or build asked to run refuses
-    # (ProjectCommand#placement!, BuildDispatcher) rather than guess.
+    # tree unbound and no target or channel is placed: the lock's message
+    # goes to stderr once, help lists the commands, builds and channels
+    # without their environments, and a project command, build or deploy
+    # asked to run refuses (ProjectCommand#placement!, BuildDispatcher,
+    # DeployCommand) rather than guess.
     #
     # @param manifest [ProjectManifest]
     # @param project [ProjectContext]
@@ -248,10 +254,11 @@ module Dev
     def bind_placements(manifest, project)
       binder = PlacementBinder.new(images: project.project_images)
       targets = binder.bind_targets(manifest.targets)
-      Bindings.new(commands: binder.bind(manifest.commands), targets:)
+      channels = binder.bind_channels(manifest.channels)
+      Bindings.new(commands: binder.bind(manifest.commands), targets:, channels:)
     rescue EnvironmentImage::StaleDigestError, Deps::Lockfile::RetiredBuildLockError => e
       $stderr.puts "dev: #{e.message}"
-      Bindings.new(commands: manifest.commands, targets: {})
+      Bindings.new(commands: manifest.commands, targets: {}, channels: {})
     end
 
     # The projectless tree: `up` (its host half is the fresh-box bootstrap
@@ -332,8 +339,8 @@ module Dev
     #   the tree self-reference
     # @param complete [Builtins::CompleteCommand] likewise (the completion
     #   plumbing walks the same tree)
-    # @param target_placements [Hash{String => TargetPlacement}] where each
-    #   target's builds run, by target name (empty when the lock was unreadable)
+    # @param bindings [Bindings] where each target's builds and each
+    #   channel's protocol run (both empty when the lock was unreadable)
     # @return [Hash{String => Command}] the root's children
     sig do
       params(
@@ -342,10 +349,10 @@ module Dev
         dependency_service: DependencyService,
         help: Builtins::HelpCommand,
         complete: Builtins::CompleteCommand,
-        target_placements: T::Hash[String, TargetPlacement],
+        bindings: Bindings,
       ).returns(T::Hash[String, Command])
     end
-    def build_builtins(manifest, project, dependency_service, help:, complete:, target_placements:)
+    def build_builtins(manifest, project, dependency_service, help:, complete:, bindings:)
       install_deps = Builtins::InstallDepsCommand.new
 
       # The project's service dependencies — what `dev up` brings up after
@@ -404,8 +411,9 @@ module Dev
       end
       # The lifecycle verbs are derived from `targets:` (dev#192, K1, K4): a
       # project that declares none has nothing to build, so they are absent
-      # rather than present and refusing.
-      builtins.merge!(lifecycle_builtins(manifest, project, target_placements)) if manifest.targets.any?
+      # rather than present and refusing. `deploy` likewise from the
+      # channels (K5), which need targets to accept builds from.
+      builtins.merge!(lifecycle_builtins(manifest, project, bindings)) if manifest.targets.any?
       builtins.merge!(runner_builtins)
       # The global builtins are dispatched before the Runner (bin/dev); they
       # join the project tree so help lists one complete tree.
@@ -439,29 +447,51 @@ module Dev
     # build), one dispatcher (build → where it runs, under the host rule the
     # rest of the tree places by), one store under the data root, shared
     # by both verbs so they agree on every name. The project's `VERSION`
-    # file, when any, leads the build id.
+    # file, when any, leads the build id. `deploy`, when the project
+    # declares channels: a group heading one command per channel, each
+    # selecting from the same store and dispatching its protocol by the
+    # channel's bound placement through the same resolver.
     #
     # @param manifest [ProjectManifest]
     # @param project [ProjectContext]
-    # @param target_placements [Hash{String => TargetPlacement}]
+    # @param bindings [Bindings]
     # @return [Hash{String => Command}]
-    sig do
-      params(manifest: ProjectManifest, project: ProjectContext, target_placements: T::Hash[String, TargetPlacement])
-        .returns(T::Hash[String, Command])
-    end
-    def lifecycle_builtins(manifest, project, target_placements)
+    sig { params(manifest: ProjectManifest, project: ProjectContext, bindings: Bindings).returns(T::Hash[String, Command]) }
+    def lifecycle_builtins(manifest, project, bindings)
       targets = manifest.targets.values
       selector = BuildSelector.new(targets:)
-      dispatcher = BuildDispatcher.new(placements: target_placements, resolver: DispatchResolver.new(host_rule: @host_rule))
+      resolver = DispatchResolver.new(host_rule: @host_rule)
+      dispatcher = BuildDispatcher.new(placements: bindings.targets, resolver:)
       listing = BuildListing.new(targets:, dispatcher:)
       ports = Lifecycle::Ports.new(project_root: project.root)
       store = Lifecycle::Store.new(project_name: project.name, targets:)
-      {
+      verbs = T.let({
         "build" => Builtins::BuildCommand.new(selector:, dispatcher:, listing:, ports:, store:, out: @out),
         "package" => Builtins::PackageCommand.new(
           selector:, dispatcher:, listing:, ports:, store:, semver: Lifecycle::ProjectVersion.read(project.root), out: @out,
         ),
-      }
+      }, T::Hash[String, Command])
+      return verbs if manifest.channels.empty?
+
+      channels = manifest.channels.to_h do |name, channel|
+        command = Builtins::DeployCommand.new(
+          channel:,
+          selector: DeploySelector.new(channel:, targets:, store:),
+          publisher: ports.publisher_for(channel),
+          resolver:,
+          placement: bindings.channels[name],
+          out: @out,
+        )
+        [name, T.let(command, Command)]
+      end
+      verbs["deploy"] = CommandGroup.new(
+        path: ["deploy"],
+        desc: "Ship an artifact to a channel (deploy <channel> [BUILD] [--config C] [--allow-stale] [--force] [--dry-run])\n" \
+              "Selects from the store, never builds; each channel lists the builds it accepts and its protocol.",
+        category: Command::Category::Lifecycle,
+        children: channels,
+      )
+      verbs
     end
 
     # `runner` is ungated: enrollment is a machine concern (register derives
