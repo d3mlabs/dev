@@ -3,6 +3,9 @@
 
 require "pathname"
 require "stringio"
+require "dev/build_dispatcher"
+require "dev/build_listing"
+require "dev/build_selector"
 require "dev/builtin_executor"
 require "dev/builtins"
 require "dev/cli"
@@ -15,12 +18,14 @@ require "dev/command_service"
 require "dev/dependency_service"
 require "dev/deps/lockfile"
 require "dev/deps/staleness"
+require "dev/dispatch_resolver"
 require "dev/environment_image"
 require "dev/execution_context"
 require "dev/global_catalog"
 require "dev/group_executor"
 require "dev/host_rule"
 require "dev/container_github_token"
+require "dev/lifecycle"
 require "dev/lifecycle_executor"
 require "dev/overridden_executor"
 require "dev/placement_binder"
@@ -48,6 +53,13 @@ module Dev
     PROJECT_EPILOGUE = "Run 'dev help <command>' for a command's usage."
     # …and outside one: the real gap is the missing dev.yml.
     PROJECTLESS_EPILOGUE = "Run dev inside a project that defines a dev.yml to see its commands."
+
+    # What binding the lock yields: the project commands with their
+    # placements, and the target placements the lifecycle verbs dispatch by.
+    class Bindings < T::Struct
+      const :commands, T::Hash[String, ProjectNode]
+      const :targets, T::Hash[String, TargetPlacement]
+    end
 
     sig do
       params(
@@ -195,13 +207,14 @@ module Dev
       root_provider = -> { T.must(service).root }
       help = Builtins::HelpCommand.new(usage_printer:, out: @out, root_provider:)
       complete = Builtins::CompleteCommand.new(out: @out, root_provider:)
+      bindings = bind_placements(manifest, context.project!)
       service = CommandService.new(
         repository: CommandRepository.new(
           root: CommandGroup.root(
             desc: "Development commands for #{manifest.name}",
-            children: build_builtins(manifest, context.project!, dependency_service, help:, complete:),
+            children: build_builtins(manifest, context.project!, dependency_service, help:, complete:, target_placements: bindings.targets),
           ),
-          project_commands: bind_placements(manifest, context.project!),
+          project_commands: bindings.commands,
         ),
         executor: build_executor(context, usage_printer),
         dependency_service: dependency_service,
@@ -214,31 +227,31 @@ module Dev
     # platform with the image capability check (dev#192, K8). An unknown
     # or ambiguous name, or a build pointed at an image that does not
     # produce its platform, fails here, at load, and the usage printer
-    # reads each command's placement. The target placements are what the
-    # lifecycle verbs dispatch by once they exist (dev#413, dev#414); until
-    # then binding them is the load-time check and nothing holds them.
+    # reads each command's placement; the target placements are what
+    # `build` and `package` dispatch by (dev#414).
     #
     # A lock dev cannot read — a pin locked by another dev's template, a
     # retired build-deps.lock — is a different failure: its remediation
     # (`dev deps update`) is a project builtin served by this very tree,
     # so it must not make the tree unbuildable. The commands stay in the
-    # tree unbound: the lock's message goes to stderr once, help lists the
-    # commands without their environments, and a project command asked to
-    # run refuses (ProjectCommand#placement!) rather than guess.
+    # tree unbound and no target is placed: the lock's message goes to
+    # stderr once, help lists the commands and builds without their
+    # environments, and a project command or build asked to run refuses
+    # (ProjectCommand#placement!, BuildDispatcher) rather than guess.
     #
     # @param manifest [ProjectManifest]
     # @param project [ProjectContext]
-    # @return [Hash{String => ProjectNode}]
+    # @return [Bindings]
     # @raise [ProjectImages::UnknownImageError, ProjectImages::AmbiguousEnvironmentImageError]
     # @raise [PlacementBinder::ImageDoesNotProduceError]
-    sig { params(manifest: ProjectManifest, project: ProjectContext).returns(T::Hash[String, ProjectNode]) }
+    sig { params(manifest: ProjectManifest, project: ProjectContext).returns(Bindings) }
     def bind_placements(manifest, project)
       binder = PlacementBinder.new(images: project.project_images)
-      binder.bind_targets(manifest.targets)
-      binder.bind(manifest.commands)
+      targets = binder.bind_targets(manifest.targets)
+      Bindings.new(commands: binder.bind(manifest.commands), targets:)
     rescue EnvironmentImage::StaleDigestError, Deps::Lockfile::RetiredBuildLockError => e
       $stderr.puts "dev: #{e.message}"
-      manifest.commands
+      Bindings.new(commands: manifest.commands, targets: {})
     end
 
     # The projectless tree: `up` (its host half is the fresh-box bootstrap
@@ -319,6 +332,8 @@ module Dev
     #   the tree self-reference
     # @param complete [Builtins::CompleteCommand] likewise (the completion
     #   plumbing walks the same tree)
+    # @param target_placements [Hash{String => TargetPlacement}] where each
+    #   target's builds run, by target name (empty when the lock was unreadable)
     # @return [Hash{String => Command}] the root's children
     sig do
       params(
@@ -327,9 +342,10 @@ module Dev
         dependency_service: DependencyService,
         help: Builtins::HelpCommand,
         complete: Builtins::CompleteCommand,
+        target_placements: T::Hash[String, TargetPlacement],
       ).returns(T::Hash[String, Command])
     end
-    def build_builtins(manifest, project, dependency_service, help:, complete:)
+    def build_builtins(manifest, project, dependency_service, help:, complete:, target_placements:)
       install_deps = Builtins::InstallDepsCommand.new
 
       # The project's service dependencies — what `dev up` brings up after
@@ -386,6 +402,10 @@ module Dev
       unless services_down.empty?
         builtins["down"] = Builtins::DownCommand.new(service_dependencies: services_down, out: @out)
       end
+      # The lifecycle verbs are derived from `targets:` (dev#192, K1, K4): a
+      # project that declares none has nothing to build, so they are absent
+      # rather than present and refusing.
+      builtins.merge!(lifecycle_builtins(manifest, project, target_placements)) if manifest.targets.any?
       builtins.merge!(runner_builtins)
       # The global builtins are dispatched before the Runner (bin/dev); they
       # join the project tree so help lists one complete tree.
@@ -413,6 +433,35 @@ module Dev
           "status" => Builtins::ContainerStatusCommand.new(out: @out),
         },
       )
+    end
+
+    # `build` and `package` over the project's targets: one selector (argv →
+    # build), one dispatcher (build → where it runs, under the host rule the
+    # rest of the tree places by), one store under the data root, shared
+    # by both verbs so they agree on every name. The project's `VERSION`
+    # file, when any, leads the build id.
+    #
+    # @param manifest [ProjectManifest]
+    # @param project [ProjectContext]
+    # @param target_placements [Hash{String => TargetPlacement}]
+    # @return [Hash{String => Command}]
+    sig do
+      params(manifest: ProjectManifest, project: ProjectContext, target_placements: T::Hash[String, TargetPlacement])
+        .returns(T::Hash[String, Command])
+    end
+    def lifecycle_builtins(manifest, project, target_placements)
+      targets = manifest.targets.values
+      selector = BuildSelector.new(targets:)
+      dispatcher = BuildDispatcher.new(placements: target_placements, resolver: DispatchResolver.new(host_rule: @host_rule))
+      listing = BuildListing.new(targets:, dispatcher:)
+      ports = Lifecycle::Ports.new(project_root: project.root)
+      store = Lifecycle::Store.new(project_name: project.name, targets:)
+      {
+        "build" => Builtins::BuildCommand.new(selector:, dispatcher:, listing:, ports:, store:, out: @out),
+        "package" => Builtins::PackageCommand.new(
+          selector:, dispatcher:, listing:, ports:, store:, semver: Lifecycle::ProjectVersion.read(project.root), out: @out,
+        ),
+      }
     end
 
     # `runner` is ungated: enrollment is a machine concern (register derives

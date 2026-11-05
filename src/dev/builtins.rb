@@ -14,6 +14,7 @@ module Dev
   module Builtins; end
 end
 
+require_relative "builtins/build_command"
 require_relative "builtins/cache_gc_command"
 require_relative "builtins/cd_command"
 require_relative "builtins/check_command"
@@ -39,6 +40,7 @@ require_relative "builtins/learnings_invariants_command"
 require_relative "builtins/learnings_status_command"
 require_relative "builtins/learnings_sync_command"
 require_relative "builtins/pack_command"
+require_relative "builtins/package_command"
 require_relative "builtins/plan_hook_after_edit_command"
 require_relative "builtins/plan_init_command"
 require_relative "builtins/plan_link_command"

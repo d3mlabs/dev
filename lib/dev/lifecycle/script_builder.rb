@@ -60,6 +60,17 @@ module Dev
       sig { override.returns(T::Array[String]) }
       def target_options_schema = []
 
+      # What the manifest records for an install a `build:` line made.
+      NAME = "script"
+
+      sig { override.returns(String) }
+      def name = NAME
+
+      # A script has no version of its own: the tree it ran in is the
+      # provenance, and the manifest's sha records that.
+      sig { override.returns(T.nilable(String)) }
+      def version = nil
+
       # The declaration as `dev help` renders it: the line itself.
       sig { returns(String) }
       def to_s = @command

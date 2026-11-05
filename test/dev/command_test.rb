@@ -200,6 +200,7 @@ class CommandTest < Minitest::Test
     !verb.staleness_exempt?
     !verb.stamps?
     verb.flags == []
+    verb.listing.nil?
   end
 
   test "a lifecycle verb heads a subtree when given children, none by default" do

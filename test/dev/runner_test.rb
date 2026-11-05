@@ -338,6 +338,72 @@ class RunnerTest < Minitest::Test
     "down"      | ["down"]
   end
 
+  test "build and package are registered in Lifecycle iff the project declares targets" do
+    Given "a Runner over a project with two targets, and one without"
+    out = StringIO.new
+    with_targets = build_runner(out: out, targets: {
+      "rspock" => { "desc" => "The gem", "build" => "true" },
+      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "true" },
+    })
+    without = StringIO.new
+    build_runner(out: without).run([])
+
+    When "we print usage, then build's own"
+    with_targets.run([])
+    root_usage = out.string.dup
+    out.truncate(0)
+    out.rewind
+    with_targets.run(["help", "build"])
+
+    Then "the verbs sit in the Lifecycle section, build's usage names the bare default; the other project has neither"
+    root_usage.include?("Lifecycle:")
+    root_usage.lines.any? { |l| l.strip.start_with?("build ") }
+    root_usage.lines.any? { |l| l.strip.start_with?("package ") }
+    out.string.include?("Bare `dev build` is `rspock`.")
+    without.string.lines.none? { |l| l.strip.start_with?("build ", "package ") }
+  end
+
+  test "dev help build lists every build with its environment column" do
+    Given "a Runner over a project with targets placed on the host (no image pinned)"
+    out = StringIO.new
+    runner = build_runner(out: out, targets: {
+      "rspock" => { "desc" => "The gem" },
+      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "true" },
+    })
+
+    When
+    runner.run(["help", "build"])
+
+    Then
+    out.string.include?(<<~LISTING)
+      Builds:
+        rspock       The gem   host
+        site-dev     The site  host
+        site-release The site  host
+    LISTING
+    out.string.include?("--no-build") == false
+  end
+
+  test "bare dev build runs the first declared target's build script with the env contract, into the store" do
+    Given "a project whose first target's build script records its env"
+    root = Pathname.new(Dir.mktmpdir("runner-test-"))
+    (@tmp_roots ||= []).push(root)
+    data_root = root / "data"
+    Dev::DataRoot.stubs(:path).returns(data_root.to_s)
+    out = StringIO.new
+    runner = build_runner(out: out, root: root, targets: {
+      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "echo \"$DEV_TARGET $DEV_CONFIG\" > \"$DEV_INSTALL/env\"" },
+      "rspock" => { "desc" => "The gem" },
+    })
+
+    When
+    runner.run(["build"])
+
+    Then "site-dev was built into <data root>/artifacts/<project>/site-dev/install"
+    (data_root / "artifacts" / "testproject" / "site-dev" / "install" / "env").read == "site dev\n"
+    out.string == "built site-dev → #{data_root / "artifacts" / "testproject" / "site-dev" / "install"}\n"
+  end
+
   test "runner is ungated: every project catalog lists it" do
     Given "a Runner with a plain dev.yml (no runner block — the key is retired)"
     out = StringIO.new
@@ -741,12 +807,13 @@ class RunnerTest < Minitest::Test
 
   # Every run builds an ExecutionContext, so the helper always pins the
   # project root to a temp dir; tests needing their own pass a root.
-  def build_runner(name: "testproject", commands: {}, runner: nil, command_service: nil,
+  def build_runner(name: "testproject", commands: {}, targets: nil, runner: nil, command_service: nil,
     ui: fake_ui, out: StringIO.new, root: nil)
     root ||= (@tmp_roots ||= []).push(Pathname.new(Dir.mktmpdir("runner-test-"))).fetch(-1)
     Dev.stubs(:target_project_root).returns(root)
 
     yaml = { "name" => name, "commands" => commands }
+    yaml["targets"] = targets if targets
     yaml["runner"] = runner if runner
     # Held in @tmp_files until teardown: a Tempfile that falls out of scope is
     # unlinked by its finalizer at the next GC, under a Runner still reading it.
