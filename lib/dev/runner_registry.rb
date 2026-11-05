@@ -7,9 +7,11 @@ require "dev/runner_setup"
 
 module Dev
   # The GitHub-side view of the self-hosted runners enrolled at a scope:
-  # find one by name, amend its custom labels in place. Labels have exactly
-  # one home — GitHub — so this is both how register converges an existing
-  # enrollment's labels without re-enrolling and how status reports them
+  # find one by name, ask whether one carrying a label is available, amend
+  # a runner's custom labels in place. Labels have exactly one home —
+  # GitHub — so this is how register converges an existing enrollment's
+  # labels without re-enrolling, how status reports them, and how the
+  # remote dispatch learns a repo's enrolled runner is there to target
   # (plans#26: inspected, never recorded).
   #
   # The gh CLI boundary rides the same Executor seam RunnerSetup uses, so
@@ -45,6 +47,14 @@ module Dev
       # @return [Boolean]
       sig { returns(T::Boolean) }
       def online? = status == "online"
+
+      # Whether the runner advertises a custom label — compared the way
+      # GitHub routes a `runs-on` demand against it, case-insensitively.
+      #
+      # @param label [String]
+      # @return [Boolean]
+      sig { params(label: String).returns(T::Boolean) }
+      def carries?(label) = custom_labels.any? { |custom| custom.casecmp?(label) }
     end
 
     # @param executor [#capture] CLI boundary (injectable for tests)
@@ -62,14 +72,29 @@ module Dev
     #   silent not-found, so callers can tell "gone" from "unknown"
     sig { params(scope: String, name: String).returns(T.nilable(Runner)) }
     def find(scope:, name:)
-      out, err, ok = @exec.capture("gh", "api", "--paginate", "#{api_base(scope)}/actions/runners", "--jq", ".runners[]")
-      raise QueryError, "could not list the runners at #{scope}: #{err.strip}" unless ok
-
-      record = out.each_line.map { |line| JSON.parse(line) }.find { |runner| runner["name"] == name }
+      record = runners(scope).find { |candidate| candidate["name"] == name }
       return nil if record.nil?
 
-      custom = Array(record["labels"]).select { |label| label["type"] == "custom" }.map { |label| label["name"].to_s }
-      Runner.new(id: Integer(record.fetch("id")), custom_labels: custom, status: record.fetch("status").to_s)
+      runner_from(record)
+    end
+
+    # The first runner at `scope` that is online and carries `label` —
+    # "available" as the remote dispatch means it: GitHub would route a
+    # `runs-on: [self-hosted, <label>]` job in that scope to it now (busy
+    # included; the job queues behind it). nil when no online runner
+    # carries the label: none enrolled, or enrolled and offline — a
+    # registration nothing is running, which is not a host to dispatch
+    # to. Only the enrollment's own custom labels count; GitHub's
+    # read-only ones (self-hosted, the OS, the arch) name no enrollment.
+    #
+    # @param scope [String] "owner/repo" or "owner"
+    # @param label [String] the custom label the job would demand
+    # @return [Runner, nil]
+    # @raise [QueryError] when GitHub can't be queried — loud, so an
+    #   outage is never read as "no runner, build elsewhere"
+    sig { params(scope: String, label: String).returns(T.nilable(Runner)) }
+    def available(scope:, label:)
+      runners(scope).lazy.map { |record| runner_from(record) }.find { |runner| runner.online? && runner.carries?(label) }
     end
 
     # Replace the runner's custom labels with `labels` (GitHub's PUT
@@ -91,6 +116,30 @@ module Dev
     end
 
     private
+
+    # Every runner GitHub lists at a scope, one record per `--jq
+    # .runners[]` line, paginated so a scope with many is read whole.
+    #
+    # @param scope [String] "owner/repo" or "owner"
+    # @return [Array<Hash>] GitHub's runner objects
+    # @raise [QueryError] when GitHub can't be queried
+    sig { params(scope: String).returns(T::Array[T::Hash[String, T.untyped]]) }
+    def runners(scope)
+      out, err, ok = @exec.capture("gh", "api", "--paginate", "#{api_base(scope)}/actions/runners", "--jq", ".runners[]")
+      raise QueryError, "could not list the runners at #{scope}: #{err.strip}" unless ok
+
+      out.each_line.map { |line| JSON.parse(line) }
+    end
+
+    # The subset of a runner record dev reads (see Runner).
+    #
+    # @param record [Hash] GitHub's runner object
+    # @return [Runner]
+    sig { params(record: T::Hash[String, T.untyped]).returns(Runner) }
+    def runner_from(record)
+      custom = Array(record["labels"]).select { |label| label["type"] == "custom" }.map { |label| label["name"].to_s }
+      Runner.new(id: Integer(record.fetch("id")), custom_labels: custom, status: record.fetch("status").to_s)
+    end
 
     # The API path prefix for a scope, following its shape (repos/... for
     # "owner/repo", orgs/... for a bare org) — same convention as

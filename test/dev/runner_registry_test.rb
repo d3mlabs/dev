@@ -22,6 +22,19 @@ class Dev::RunnerRegistryTest < Minitest::Test
     end
   end
 
+  # On the class, ahead of the tests: Where cells are evaluated there, at
+  # definition.
+  class << self
+    # One `--jq .runners[]` output line: GitHub's runner object with
+    # read-only labels (self-hosted, OS, arch) alongside the custom ones,
+    # its status ("online" / "offline") and whether it is running a job.
+    def runner_json(id:, name:, custom:, status: "online", busy: false)
+      labels = [{ "name" => "self-hosted", "type" => "read-only" }] +
+               custom.map { |l| { "name" => l, "type" => "custom" } }
+      JSON.generate({ "id" => id, "name" => name, "status" => status, "busy" => busy, "labels" => labels })
+    end
+  end
+
   test "find returns the named runner's id and custom labels at an org scope" do
     Given "a gh answering with two runners, one line each"
     lines = [
@@ -92,6 +105,61 @@ class Dev::RunnerRegistryTest < Minitest::Test
     error.message.include?("network is unreachable")
   end
 
+  test "available answers the first online runner carrying the label: #{what}" do
+    Given "a gh listing the scope's runners"
+    exec = RecordingExecutor.new { [lines.join("\n"), "", true] }
+    registry = Dev::RunnerRegistry.new(executor: exec)
+
+    When "asking at the repo scope"
+    runner = registry.available(scope: "d3mlabs/cellbound-3d", label: "cellbound-3d")
+
+    Then "the repo endpoint is paginated, and the answer is GitHub's: label present, listener connected"
+    exec.captures == [["gh", "api", "--paginate", "repos/d3mlabs/cellbound-3d/actions/runners", "--jq", ".runners[]"]]
+    runner&.id == id
+
+    Where
+    what                                             | lines                                                                                                                              | id
+    "one online runner carries it"                   | [runner_json(id: 7, name: "box", custom: ["cellbound-3d"])]                                                                        | 7
+    "the label is matched case-insensitively"        | [runner_json(id: 7, name: "box", custom: ["Cellbound-3D"])]                                                                        | 7
+    "an offline one carrying it is skipped"          | [runner_json(id: 7, name: "box", custom: ["cellbound-3d"], status: "offline"), runner_json(id: 8, name: "mac", custom: ["cellbound-3d"])] | 8
+    "a busy one still counts"                        | [runner_json(id: 7, name: "box", custom: ["cellbound-3d"], busy: true)]                                                            | 7
+    "the only one carrying it is offline"            | [runner_json(id: 7, name: "box", custom: ["cellbound-3d"], status: "offline")]                                                     | nil
+    "the scope's runners carry other labels"         | [runner_json(id: 7, name: "box", custom: ["ue-engine"])]                                                                           | nil
+    "nothing is enrolled at the scope"               | []                                                                                                                                 | nil
+  end
+
+  test "available never matches a read-only label: self-hosted is GitHub's, not an enrollment's" do
+    Given
+    exec = RecordingExecutor.new { [runner_json(id: 7, name: "box", custom: []), "", true] }
+    registry = Dev::RunnerRegistry.new(executor: exec)
+
+    Expect
+    registry.available(scope: "d3mlabs/cellbound-3d", label: "self-hosted").nil?
+  end
+
+  test "available raises when GitHub cannot be queried — never a silent 'no runner'" do
+    Given
+    exec = RecordingExecutor.new { ["", "HTTP 401: Bad credentials", false] }
+    registry = Dev::RunnerRegistry.new(executor: exec)
+
+    When
+    registry.available(scope: "d3mlabs/cellbound-3d", label: "cellbound-3d")
+
+    Then
+    error = raises Dev::RunnerRegistry::QueryError
+    error.message.include?("Bad credentials")
+  end
+
+  test "Runner#carries? reads the custom labels case-insensitively, as GitHub routes them" do
+    Given
+    runner = Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["Cellbound-3D", "ue-engine"], status: "online")
+
+    Expect
+    runner.carries?("cellbound-3d")
+    runner.carries?("UE-ENGINE")
+    !runner.carries?("snappy")
+  end
+
   test "amend! replaces the runner's custom labels in place" do
     Given "a recording gh"
     exec = RecordingExecutor.new { ["", "", true] }
@@ -126,12 +194,7 @@ class Dev::RunnerRegistryTest < Minitest::Test
 
   private
 
-  # One `--jq .runners[]` output line: GitHub's runner object with read-only
-  # labels (self-hosted, OS, arch) alongside the custom ones, and its
-  # status ("online" / "offline").
-  def runner_json(id:, name:, custom:, status: "online")
-    labels = [{ "name" => "self-hosted", "type" => "read-only" }] +
-             custom.map { |l| { "name" => l, "type" => "custom" } }
-    JSON.generate({ "id" => id, "name" => name, "status" => status, "busy" => false, "labels" => labels })
+  def runner_json(id:, name:, custom:, status: "online", busy: false)
+    self.class.runner_json(id: id, name: name, custom: custom, status: status, busy: busy)
   end
 end

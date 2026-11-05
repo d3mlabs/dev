@@ -5,6 +5,7 @@ require "dev/command"
 require "dev/confirmer"
 require "dev/deps/lockfile"
 require "dev/engine_provisioner"
+require "dev/enrolled_runner"
 require "dev/host_reach"
 require "dev/label_contracts"
 require "dev/linux_data_root_provisioner"
@@ -72,10 +73,14 @@ module Dev
     # dev.yml, Settings, or any inventory file.
     #
     # `--org` needs no project; bare register runs inside the checkout it
-    # enrolls (its `engine:` hint sizes the engine) and derives its
-    # label from that repo's name — the GitHub spelling, lowercased, since a
-    # repo-scoped runner is that repo's object and the workflows targeting it
-    # live there; dev.yml `name:` is the package identity and may differ.
+    # enrolls (its `engine:` hint sizes the engine) and makes that repo's
+    # **enrolled runner** (Dev::EnrolledRunner): repo scope, the repo's
+    # name as label — the GitHub spelling, lowercased, since a repo-scoped
+    # runner is that repo's object and the workflows targeting it live
+    # there; dev.yml `name:` is the package identity and may differ. That
+    # enrollment is what the lifecycle verbs' remote dispatch targets from
+    # a machine that is not a build's environment, found through the same
+    # derivation over the Actions API (Dev::EnrolledRunnerLookup).
     # `--dir`/`--name`/`--repo` override the enrollment identity (`--repo`
     # moves the label with it); `--agent-user` the ai-agent default run-as
     # user. A leaf of the `runner` group (RunnerStatusCommand and
@@ -446,6 +451,7 @@ module Dev
       # @param org [Boolean]
       # @return [String] comma-separated labels (config.sh shape)
       # @raise [ArgumentError] on an underivable or contradictory request
+      # @raise [Dev::EnrolledRunner::MalformedRepoError] when the repo (`--repo`) is not an owner/repo
       # @raise [Dev::RunnerSetup::Error] when gh cannot resolve the checkout
       sig { params(args: Cli::ParsedArgs, context: ExecutionContext, org: T::Boolean).returns(String) }
       def resolve_labels(args, context, org)
@@ -469,18 +475,9 @@ module Dev
             "the repo label derives from the enclosing checkout (which also sizes the engine) — " \
               "run inside one or pass --labels"
         end
-        repo_label(@repo_resolver.call(args.value(REPO_FLAG)))
-      end
-
-      # GitHub matches runner labels case-insensitively but stores them as
-      # created; lowercasing keeps the amend compare exact. Dashes stay —
-      # labels allow them, and the repo name is the identity.
-      #
-      # @param repo [String] "owner/repo"
-      # @return [String] the repo name, lowercased
-      sig { params(repo: String).returns(String) }
-      def repo_label(repo)
-        T.must(repo.split("/").last).downcase
+        # The one derivation (EnrolledRunner): what this enrolls is what
+        # the remote dispatch's lookup asks GitHub for.
+        Dev::EnrolledRunner.for(@repo_resolver.call(args.value(REPO_FLAG))).label
       end
     end
   end

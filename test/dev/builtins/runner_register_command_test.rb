@@ -6,6 +6,7 @@ require "dev/builtins/runner_register_command"
 require "dev/confirmer"
 require "dev/deps/dependency"
 require "dev/deps/lockfile"
+require "dev/enrolled_runner"
 require "dev/environment_image"
 require "dev/host_reach"
 require "dev/label_contracts"
@@ -115,6 +116,31 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     config.labels == "unreal-engine"
     repo_override == "d3mlabs/unreal-engine"
     asked == ["d3mlabs/unreal-engine"]
+  end
+
+  test "bare register derives the same enrolled runner the lookup asks GitHub for — one derivation, not two" do
+    Given "a checkout"
+    harness = build_harness(repo: "d3mlabs/cellbound-3d")
+
+    When "running register with no flags"
+    harness.command.call(args: no_args, context: build_context(name: "Cellbound3D"))
+
+    Then "the label is EnrolledRunner's, so what register enrolls is what the remote dispatch will find"
+    harness.wirings.fetch(0).fetch(0).labels == Dev::EnrolledRunner.for("d3mlabs/cellbound-3d").label
+  end
+
+  test "--repo without an owner is refused before anything converges: a bare name would enroll at an org scope" do
+    Given "a harness"
+    harness = build_harness(contracts: 1)
+
+    When "registering for a repo spelled without its owner"
+    harness.command.call(args: parsed_args(harness.command, ["--repo", "cellbound-3d"]), context: build_context(name: "Cellbound3D"))
+
+    Then
+    error = raises Dev::EnrolledRunner::MalformedRepoError
+    error.message.include?("cellbound-3d")
+    harness.events == []
+    harness.wirings == []
   end
 
   test "--org --ai-flow enrolls the full ai-flow label vocabulary" do
