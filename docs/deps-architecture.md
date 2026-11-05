@@ -343,7 +343,7 @@ that needs the absolute path rather than PATH.
 | luarocks | `RockScheme` | rockspec-style comparators and `~>` |
 | gh | `ExactScheme(key: "tag")` | the constraint names one release tag out of the enumerated releases+tags universe; no range grammar exists by design. Unconstrained selects the latest release. |
 | cmake | `GitScheme` | `tag:`/`branch:` match the version's `ref` fact over the enumerated `ls-remote` refs. `commit:` is not a constraint at all — it is a revision (continuous space, `at`). |
-| steam | `SteamScheme` | `branch:` selects by the version's branch fact (default `public`); optional `buildid:` is an exact assertion that fails loudly when it is no longer the branch tip. |
+| steam | `SteamScheme` | `branch:` selects by the version's branch fact (default `public`); optional `buildid:` is an exact assertion that fails loudly when it is no longer the branch tip — the failure names the current tip and the two ways out (bump `buildid:`, or drop it to follow the branch). |
 | ruby | `GemScheme` | the `ruby` verb's version is a rubygems requirement over the d3mlabs tap's `ruby@X.Y.Z` family — one immutable formula per patch, enumerated from the tap's own formula list (`brew tap-info`), each member's `version_suffix` being its exact version: `"4.0.6"` pins, `"~> 4.0"` ranges, a bare minor `"4.0"` is `"~> 4.0.0"`. Resolves, locks (`ruby:`) and installs as a brew pin (`install_alias: :brew`). |
 | python | `BrewScheme` | the `python` verb's version is the minor, a formula suffix selecting homebrew/core's `python@<minor>` exactly as `brew "llvm", version: "18"` selects `llvm@18`; locks under `python:` and installs as a brew pin. |
 | brew, cask | `BrewScheme` | `version:` is a formula *suffix* (`"18"` selects the `llvm@18` sibling out of the enumerated spec family), matched against the `version_suffix` fact; the reported stable version is brew's record, not the coordinate. Casks have no suffix fact — versioned casks are distinct cask names (`temurin@21`), so `version:` on a cask is unsatisfiable by construction. |
@@ -518,6 +518,10 @@ resolution.
 2. **Scheme** — subclass `VersionScheme` with your ecosystem's
    `satisfies?`/`sort`, nesting
    `InvalidConstraintError`/`InvalidVersionError` under the shared bases.
+   Override `unsatisfied` only when your ecosystem can say *why* nothing
+   matched better than the Resolver's generic message — a fact-matching
+   scheme naming the fact that moved (Steam's branch tip); a range scheme
+   leaves it alone.
    If the constraint names one exact coordinate, `ExactScheme(key:)`
    probably already covers you. Every ecosystem with a constraint grammar
    states its real semantics — there is no satisfies-everything scheme; an

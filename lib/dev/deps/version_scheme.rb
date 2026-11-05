@@ -58,6 +58,29 @@ module Dev
       def sort(versions)
         raise NotImplementedError, "#{self.class}#sort must be implemented"
       end
+
+      # Why nothing in the universe satisfies the constraint, in the
+      # ecosystem's own terms — when the scheme can say more than the
+      # Resolver's generic "no version satisfies <constraint>". A range
+      # scheme has nothing to add (the constraint and the count say it
+      # all); a fact-matching scheme does: which fact moved, and to what.
+      # The Resolver uses the answer as the NoSatisfyingVersionError's
+      # message, so it names the declaration and the fix.
+      #
+      # @param name [String] the declaration's name
+      # @param constraint [Hash] the declaration's constraint hash
+      # @param versions [Array<PackageVersion>] the universe as reported
+      # @return [String, nil] nil to take the Resolver's generic message
+      sig do
+        params(
+          name: String,
+          constraint: T::Hash[String, T.untyped],
+          versions: T::Array[PackageVersion],
+        ).returns(T.nilable(String))
+      end
+      def unsatisfied(name:, constraint:, versions:)
+        nil
+      end
     end
   end
 end

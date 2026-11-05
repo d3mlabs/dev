@@ -16,6 +16,7 @@ require "dev/deps/scope"
 require "dev/deps/scoped_declaration"
 require "dev/deps/exact_scheme"
 require "dev/deps/semver_scheme"
+require "dev/deps/steam_scheme"
 
 # Stub repository over a canned universe: name -> [PackageVersion, ...].
 # Records every find call (id) and at call (id + revision) for assertion.
@@ -149,6 +150,23 @@ class Dev::Deps::ResolverTest < Minitest::Test
 
     Then
     raises Dev::Deps::Resolver::NoSatisfyingVersionError
+  end
+
+  test "NoSatisfyingVersionError carries the scheme's own explanation when it has one (dev#451)" do
+    Given "a Steam universe whose public tip has moved past the pinned buildid"
+    repo = StubRepository.new(universes: { "SatisfactoryServer" => [version("26000000", metadata: { "branch" => "public" })] })
+    declarations = [
+      declaration(name: "SatisfactoryServer", integration: :steam, group: :integration, source: "1690800",
+        constraint: { "buildid" => 25782485, "branch" => "public" }),
+    ]
+
+    When "resolving"
+    resolver_for(:steam, repo, scheme: Dev::Deps::SteamScheme.new).resolve(declarations)
+
+    Then "the error says what moved and how to fix the declaration, not how many versions the universe held"
+    error = raises(Dev::Deps::Resolver::NoSatisfyingVersionError)
+    error.message.include?("buildid 25782485 is no longer the tip of `public` (now 26000000)")
+    !error.message.include?("universe: 1 version(s)")
   end
 
   test "raises ConflictingDeclarationError when one name carries two constraints" do
