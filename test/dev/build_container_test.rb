@@ -624,8 +624,8 @@ class BuildContainerTest < Minitest::Test
       project_root: root, volumes: ["/engines/ue:/ue"],
     )
 
-    Then "it is a detached, named run that bind-mounts the project + engine and sleeps"
-    engine.runs.last[0, 4] == ["run", "-d", "--name", "dev-x"]
+    Then "it is a detached, named run under an init that reaps orphans, bind-mounting the project + engine, sleeping"
+    engine.runs.last[0, 5] == ["run", "-d", "--init", "--name", "dev-x"]
     engine.runs.last.include?("/project:/project")
     engine.runs.last.include?("/engines/ue:/ue")
     engine.runs.last.include?("img:tag")

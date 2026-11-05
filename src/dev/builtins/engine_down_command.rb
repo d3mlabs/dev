@@ -97,8 +97,8 @@ module Dev
 
       private
 
-      # `stop -t 0`: PID 1 is `sleep infinity` in dev's containers, which
-      # ignores SIGTERM, and the user's are being stopped on purpose anyway.
+      # `stop -t 0`: dev's containers only idle (an init over `sleep
+      # infinity`), and the user's are being stopped on purpose anyway.
       #
       # @param engine [Dev::ContainerEngine]
       # @param container [Dev::ContainerEngine::RunningContainer]

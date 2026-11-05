@@ -593,8 +593,8 @@ module Dev
     # Stop this checkout's running containers, keeping them — their writable
     # layer (the build tool's incremental state) is the whole point of
     # `persist`, and `ensure_service!` restarts a stopped one warm. Backs
-    # `dev container down`. `-t 0`: PID 1 is `sleep infinity`, which ignores
-    # SIGTERM, so docker's grace period would only add the wait.
+    # `dev container down`. `-t 0`: the container only idles (an init over
+    # `sleep infinity`), so there is nothing a grace period would let finish.
     #
     # @param project_root [Pathname] the checkout whose containers to stop
     # @return [Array<String>] names of the containers stopped
@@ -722,6 +722,15 @@ module Dev
     # extra volumes (e.g. the engine), the label contract, the inside marker
     # (inherited by every `docker exec`), and `sleep infinity` so it stays up.
     #
+    # `--init`: docker's init (tini) is PID 1 and `sleep` its child. Every
+    # `docker exec` runs under PID 1, and a process whose parent exits is
+    # re-parented to it — `sleep` never wait()s, so each orphan stayed a
+    # zombie for the container's life. A Win64 compile under wine orphans
+    # thousands (cl.exe, link.exe, the wrapper shells); over days of a
+    # persistent container the box ran out of process slots mid-build and
+    # every fork — the build's, the runner's — failed with EAGAIN
+    # (satisfactory-mod-base run 42056469331). An init reaps them.
+    #
     # @param one_shot [Boolean] `--rm`: the container goes when it stops
     sig do
       params(name: String, image_tag: String, project_root: Pathname, volumes: T::Array[String], one_shot: T::Boolean).void
@@ -729,7 +738,7 @@ module Dev
     def create_service_container(name, image_tag, project_root:, volumes: [], one_shot: false)
       env = container_env({})
       args = [
-        "run", "-d", *(one_shot ? ["--rm"] : []), "--name", name,
+        "run", "-d", "--init", *(one_shot ? ["--rm"] : []), "--name", name,
         *self.class.label_flags(image_tag, project_root),
         "-v", "#{project_root}:/project",
         *data_root_flags,
