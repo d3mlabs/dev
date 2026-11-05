@@ -69,6 +69,10 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
 
 ## toolchain
 
+- [toolchain/psych-workflow-on-key] Psych reads a GitHub workflow's bare
+ `on:` key as YAML 1.1's `true`; a reader keyed on the string `"on"`
+ silently finds no trigger in any workflow.
+ → .cursor/skills/learnings/psych-workflow-on-key/
 
 ## org tier
 
