@@ -102,9 +102,10 @@ module Dev
         when PublisherSpec::Script then ScriptPublisher.new(command: spec.command, project_root: @project_root, shell: @shell)
         when PublisherSpec::Integration
           @publishers.fetch(spec.name) do
+            contributed = @publishers.empty? ? "none" : @publishers.keys.join(", ")
             raise UnknownPublisherError,
               "channel '#{channel}' names the #{spec.name} publisher, which the lock did not contribute " \
-                "(it contributes: #{@publishers.empty? ? "none" : @publishers.keys.join(", ")})"
+                "(it contributes: #{contributed})"
           end
         else
           # simplecov:disable — the sealed spec has no other variant;

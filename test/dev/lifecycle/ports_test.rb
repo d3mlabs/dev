@@ -89,6 +89,23 @@ class Dev::Lifecycle::PortsTest < Minitest::Test
     error.message.include?("it contributes: brew")
   end
 
+  test "a lock contributing no publisher at all says so, rather than listing nothing" do
+    Given
+    ports = Dev::Lifecycle::Ports.new(project_root: Pathname("/project"))
+    channel = Dev::Lifecycle::Channel.new(
+      name: "steam",
+      accepts: [Dev::Lifecycle::BuildPattern.new(target: Dev::Lifecycle::Target.new(name: "rspock"))],
+      publisher: Dev::Lifecycle::PublisherSpec::Integration.new(name: "steam"),
+    )
+
+    When
+    ports.publisher_for(channel)
+
+    Then
+    error = raises Dev::Lifecycle::Ports::UnknownPublisherError
+    error.message.include?("(it contributes: none)")
+  end
+
   test "the script ports run at the project root the Ports were built over, through its shell" do
     Given "a project whose scripts leave a trace, and a target declaring both"
     root = Pathname(Dir.mktmpdir("ports-"))
