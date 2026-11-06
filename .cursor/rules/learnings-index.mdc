@@ -23,8 +23,12 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
 - [testing/rspock-bare-assertions] In rspock `transform!`-ed test classes,
   bare `Then`/`Expect` statements are assertions; outside a transformed
   class they silently assert nothing.
-  → skill: rspock (ships in the rspock gem; linked by `dev up` /
-  `dev deps install`)
+ → skill: rspock (ships in the rspock gem; linked by `dev up` /
+ `dev deps install`)
+- [testing/streamed-child-stdin] A child dev streams on its own stdio
+ (`gh run watch`) gets `in: File::NULL`: one left on dev's stdin blocks
+ on the first read, and a stub that reads stdin hangs the whole suite.
+ → .cursor/skills/learnings/streamed-child-stdin/
 
 ## process
 
