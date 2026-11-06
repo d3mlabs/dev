@@ -28,7 +28,11 @@ Seven nouns, each one class, none playing two roles.
 | Track | `Lifecycle::Track` | Which of a channel's two tracks a deploy ships on — `testing` from the store, `live` from a release ([dev#425](https://github.com/d3mlabs/dev/issues/425)). Decided by the source, never the operator. |
 | Deployment record | `Lifecycle::DeploymentRecord` | What dev says about one deploy: the channel, the ref it was made from, the track, the builds with their ids, how it ended and the receipt. One per distinct commit among the shipped artifacts. |
 | Deployment ledger | `Lifecycle::GithubDeployments` | The records as GitHub Deployments on the project's repo (environment = channel, ref = commit or tag, payload = track + builds, one status), written through `gh api`; `Lifecycle::Deployment` is a record as the forge holds it (id, when, page). |
-| Release tag | `Lifecycle::ReleaseTag` | `v<version>` — the ref a release's deployments are recorded against, and what `deploy status --release V` reads. |
+| Release tag | `Lifecycle::ReleaseTag` | `v<version>` — the tag `release` cuts, the ref a release's deployments are recorded against, and what `deploy status --release V` reads. |
+| Release builds | `Lifecycle::ReleaseBuilds` | What a release contains: the fully-qualified, packageable builds `release.targets` names, or every build of every packageable target under `release: {}`. Owns the list's rules. |
+| Release cut | `Lifecycle::ReleaseCut` | The git half of `release`, lifted from dev's `bin/release.rb`: a clean tree on a branch, the `VERSION` bump when the project keeps one, the tag, the push — read into a `Plan` first, resumable when HEAD is already tagged. |
+| Release assets | `Lifecycle::ReleaseAssets` | An artifact's archive under its release name, `<build>-<version>.<ext>` (a split set's parts and a rewritten `MANIFEST`), with the entry `release.json` records for it. |
+| Release archive | `Lifecycle::GithubReleases` | The release on the forge: one GitHub release per tag, created once, its assets uploaded with `--clobber` so a retry replaces what a failed run half-attached. Through `gh`, like the ledger. |
 | Snapshot | `Lifecycle::Snapshot` | The working tree as a remote build host can reach it: a commit made through a temporary index, on its `Lifecycle::SnapshotBranch` (`dev/build/<runner>/<id>`) at `origin`, for as long as a remote dispatch needs it. See [The sync step](#the-sync-step). |
 
 ## Declarations
@@ -136,6 +140,49 @@ channels since `deploy`'s children never land on the builtin's slot:
 | without `run:` | a publisher of that name | the declaration **configures** it: `targets:` is the accept set, `desc` is the row, the protocol is the integration's |
 | without `run:` | none | refused at load (`ChannelBinder::ChannelProtocolError`), naming both fixes: declare `run:`, or depend on an integration whose publisher knows the endpoint |
 | — | a publisher | the channel appears as the lock's: every packageable build accepted, a stock `desc`; a project with nothing packageable gets no row |
+
+### The release
+
+With targets declared, `commands: release:` is not a command either
+([dev#424](https://github.com/d3mlabs/dev/issues/424)): it says what a
+release **contains**, parsed by `Dev::ReleaseParser` against the targets
+into `Lifecycle::ReleaseBuilds` and lifted out of the command tree into
+`ProjectManifest#release`. The verb's body is dev's own (below).
+
+```yaml
+commands:
+  release:
+    desc: Cut a release
+    targets: [cellbound-3d-release, cellbound-3d-server-linux64-release, rspock]
+```
+
+```yaml
+commands:
+  release: {}                           # every build of every packageable target
+```
+
+| Key | Meaning |
+| --- | --- |
+| `desc` | One line, optional; the verb's row is dev's. |
+| `targets` | The builds a release contains: a non-empty list in the build grammar, **the config named** — `cellbound-3d-release` spells both platforms at release config; `cellbound-3d-win64`, spanning `dev` and `release`, is refused at load (`ReleaseBuilds::ConfigNotNamedError`) with the names to pick. A target of `packager: none` has nothing to attach (`NotPackageableError`); a build named twice is refused (`DuplicateBuildError`); a name no target spells is the grammar's error. |
+
+The empty form — `release: {}`, or `release:` with nothing under it — is
+every build of every packageable target, allowed when each such target
+declares at most one config; a target with several is refused
+(`ConfigNotNamedError`) naming the fully-qualified alternatives, since
+the release would otherwise attach both configs of one target. A project
+with nothing packageable has nothing to release (`NothingToReleaseError`).
+
+Load-time rules: `release` may carry no `run:` (`ReleaseBodyError` — the
+body is dev's cut), no `commands:` (`ReleaseChildrenError` — the verb
+takes a version) and no key but `targets` and `desc`
+(`UnknownReleaseKeyError` — where each build runs is its target's
+`environment:`); `release:` must be a mapping or empty
+(`InvalidReleaseError`); `targets:` a non-empty list of strings
+(`ReleaseTargetsError`). A `release` carrying `targets:` in a project
+without targets is refused (`ReleaseWithoutTargetsError`); without
+targets, `release` stays a plain project command — dev's own
+`bin/release.rb` until [dev#429](https://github.com/d3mlabs/dev/issues/429).
 
 ## Ports and the env contract
 
@@ -248,11 +295,13 @@ something for it to act on:
 | `package [BUILD] [--no-build]` | `targets:` non-empty | every build of a target whose packager is not `none` | the builder when stale, then the packager |
 | `deploy <channel> [BUILD] [--config C] [--allow-stale] [--force] [--dry-run]` | a channel exists — declared under `commands: deploy:` or contributed by the lock | the channel's accepted artifacts, from the store | the channel's publisher, over the selection, on the testing track; `after` records the deploy on the forge |
 | `deploy status [--release V]` | a channel exists — declared or contributed | every channel's latest recorded deploy; the release's tag only under `--release` | — (reads the ledger; a builtin child of `deploy`, which reserves the name `status`) |
-| `release <version>` | a `release:` block | — | milestone D |
+| `release <version>` | `commands: release:` declared (`targets:` or the empty form) and at least one packageable target | the release builds, each packaged at the tag | the cut and the push, then `package` per release build, each dispatched by its own environment; `after` creates the GitHub release and attaches the archives |
 
 A project without targets lists neither `build` nor `package`, and
 `dev build` there is "command not found", not "no targets declared";
-one without a channel lists no `deploy`. `dev help build` lists every
+one without a channel lists no `deploy`; one without a `release:` block
+lists no `release`, and `dev help release` lists what a release contains
+under `Release builds:`. `dev help build` lists every
 build with its target's `desc` and its environment; `dev help package`
 lists the shippable ones. Both verbs complete every pattern
 (`cellbound-3d`, `cellbound-3d-dev`, …) and every build. `deploy` is a
@@ -300,7 +349,9 @@ build, in order:
 The build id (`Lifecycle::BuildId`) is `<semver>+<sha>` from a clean tree,
 `<semver>+<sha>.dirty.<utc instant>` from a dirty one, `<semver>+unknown.<utc>`
 outside git; the semver is the first line of the repo's `VERSION` file
-(`Lifecycle::ProjectVersion`), `0.0.0` when there is none. A current
+(`Lifecycle::ProjectVersion`) as it is when the stamp is written — so an
+artifact packaged after `release`'s bump commit carries the released
+version — `0.0.0` when there is none. A current
 artifact is still re-archived and re-stamped — only the compile is
 skipped; the archive is cheap next to the build and the stamp's instant
 moves with it.
@@ -411,6 +462,79 @@ made, the ledger what each channel received — which is also why
 forge is a typed `GithubDeployments::Error` (`RepoUnresolvedError`,
 `ApiError`, `MalformedDeploymentError`) and surfaces as the command's.
 
+### What `release` does
+
+`dev release <version>` (`Dev::Builtins::ReleaseCommand`) is **cut and
+stop** (K4): the tag and the archives on the forge, nothing deployed —
+distribution is `dev deploy <channel> --release <version>` per channel
+([dev#425](https://github.com/d3mlabs/dev/issues/425)), a week later
+from the same bytes if need be. The cut is lifted from dev's own
+`bin/release.rb`; the verb orchestrates from wherever it was invoked
+(K10), its own dispatch native, and runs `package` **as itself** per
+release build so each dispatches by its target's `environment:`. In
+order:
+
+1. **`before` — the plan.** The version becomes the tag (`ReleaseTag`,
+   `v1.2.0`). `ReleaseCut#plan` reads the checkout and moves nothing: the
+   tree must be clean (`DirtyTreeError`, with `git status`) and HEAD on
+   a branch (`DetachedHeadError`); a tag of that name elsewhere than HEAD
+   is a version already cut (`TagElsewhereError`); a tag already **on**
+   HEAD means a previous run's cut landed and this one **resumes**. The
+   bump: when the project keeps a `VERSION` file whose version is not
+   the release's, `from → to`; none otherwise. The notes: the one-line
+   log since the previous tag, `Release v1.2.0.` for a first release.
+2. **The seam — cut, push, package.** The plan is announced (`cutting
+   v1.2.0 on main: bump VERSION 1.1.0 → 1.2.0, tag, push`, or `resuming
+   v1.2.0: HEAD is already tagged — …`). `cut!` writes `VERSION`,
+   commits `Bump version to 1.2.0` and tags HEAD — a no-op when
+   resuming; `push!` pushes the branch and the tag to `origin`
+   (idempotent). Then, for each release build in declaration order,
+   `package` runs through the `LifecycleExecutor` with the build as its
+   positional — the builder when stale, the packager, the stamp — and
+   the artifact is read back from the store, which must be **current at
+   the tag's commit** (`ArtifactNotAtTagError` otherwise: packaged
+   elsewhere, or the tree moved). The bump commit makes every earlier
+   artifact stale by construction, which is why the cut comes first and
+   why the build ids read `1.2.0+<tag sha>`. A failure here leaves the
+   tag pushed and the release uncreated; the retry resumes.
+3. **`after` — the forge.** `ReleaseAssets` gathers each archive under
+   its release name, `<build>-<version>.<ext>` (`cellbound-3d-win64-release-1.2.0.zip`;
+   a split set's parts as `<build>-<version>.tar.zst.00`, … with a
+   rewritten `<build>-<version>.MANIFEST`), as links in a temporary
+   directory, and `release.json` (`Manifest::Release`) is written beside
+   them. `GithubReleases` finds the tag's release or creates it
+   (`gh release create v1.2.0 --verify-tag`, title the tag, notes from
+   the plan) and uploads every asset with `--clobber`, so a run that died
+   mid-upload is healed by the next. The report:
+
+```
+released v1.2.0 (0123456789ab) → https://github.com/d3mlabs/cellbound-3d/releases/tag/v1.2.0
+  cellbound-3d-win64-release-1.2.0.zip (1.2.0+0123456789ab)
+  cellbound-3d-server-linux64-release-1.2.0.zip (1.2.0+0123456789ab)
+  release.json
+nothing deployed — `dev deploy <channel> --release 1.2.0` ships it
+```
+
+`release.json` is what `deploy --release` reads to pick a channel's
+archives out of the release and verify them:
+
+```json
+{
+  "stamp": { "schema": 1, "dev_version": "…", "written_at": "20261106T123000Z" },
+  "tag": "v1.2.0", "sha": "0123456789abcdef…",
+  "archives": [
+    { "build": "cellbound-3d-win64-release", "name": "cellbound-3d-win64-release-1.2.0.zip",
+      "sha256": "…", "build_id": "1.2.0+0123456789ab" }
+  ]
+}
+```
+
+A `release` without a version, or with two, is refused before the plan
+(`VersionArgumentError`); a word that cannot name a tag is the tag's
+refusal. Every failure of the forge is a typed `GithubReleases::Error`
+(`ApiError`, `MalformedReleaseError`), a refused push is git's own, and
+each surfaces as the command's.
+
 ## The channel contract
 
 A channel is a destination; its **publisher** is the protocol that
@@ -480,7 +604,7 @@ missing step rather than performing it:
 | `package <build>` | a current build | makes it (make-like): the builder runs when the artifact is not current, `--no-build` trusts the install |
 | `deploy <channel>` | an artifact per accepted (target, platform) in the store, a channel, the channel's environment, a protocol (`run:` or a publisher the lock contributes under the channel's name); to record, a repo `gh` can reach with `deployments: write` | "`dev package <build>` first" — never builds; a channel exists or `deploy` does not; an unbound environment (the lock unreadable) lists without a column and refuses until `dev deps update`; a channel with neither protocol is refused at load, both fixes named; a record the forge refuses fails after the shipped lines, naming the refusal |
 | `deploy status [--release V]` | a channel, a repo `gh` can reach | a channel exists or `deploy` does not; the forge's refusal is the command's error |
-| `release <version>` (milestone D) | the release's targets packaged at the tag | packages at the tag, so staleness cannot arise |
+| `release <version>` | a clean checkout on a branch with `origin`, the version not yet cut (or cut on HEAD: a resume), `release:` naming packageable builds; a repo `gh` can reach with `contents: write` | refuses before anything moves (dirty, detached, the tag elsewhere); packages each release build **at the tag** itself, so staleness cannot arise; a tag pushed with no release yet is what the retry resumes; the forge's refusal is the command's error |
 
 ## Dispatch resolution
 

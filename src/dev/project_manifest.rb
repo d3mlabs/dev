@@ -30,6 +30,11 @@ module Dev
     # targets exist, since `deploy` is derived from them. Empty when the
     # project declares none, and then `deploy` does not exist for it.
     const :channels, T::Hash[String, Lifecycle::Channel], default: {}
+    # What a release contains (`commands: release:`, dev#192 K4) — lifted
+    # out of `commands` once targets exist, since `release` is derived
+    # from them. Nil when the project declares none, and then `release`
+    # does not exist for it.
+    const :release, T.nilable(Lifecycle::ReleaseBuilds), default: nil
     # The engine floor this project's build was tuned for (`engine:`); nil
     # means the provisioner's defaults and no check.
     const :engine, T.nilable(Dev::EngineResources::Hint), default: nil

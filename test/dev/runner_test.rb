@@ -366,6 +366,35 @@ class RunnerTest < Minitest::Test
     without.string.lines.none? { |l| l.strip.start_with?("build ", "package ") }
   end
 
+  test "release is registered in Lifecycle iff the project declares one; its usage lists the release builds (dev#424)" do
+    Given "a project with `release: {}`, one with `release.targets`, and one with targets but no release"
+    every_build = StringIO.new
+    build_runner(out: every_build, targets: {
+      "rspock" => { "desc" => "The gem" },
+      "site" => { "desc" => "The site", "configs" => ["release"], "build" => "true" },
+    }, commands: { "release" => {} }).run(["help", "release"])
+    declared = StringIO.new
+    build_runner(out: declared, targets: {
+      "rspock" => { "desc" => "The gem" },
+      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "true" },
+    }, commands: { "release" => { "targets" => ["site-release"] } }).run(["help", "release"])
+    without = StringIO.new
+    build_runner(out: without, targets: { "rspock" => { "desc" => "The gem" } }).run([])
+
+    Expect "the verb takes a version and lists what a release contains; the other project has no release"
+    every_build.string.include?("release <version>")
+    every_build.string.include?(<<~LISTING)
+      Release builds:
+        rspock       The gem   host
+        site-release The site  host
+    LISTING
+    declared.string.include?(<<~LISTING)
+      Release builds:
+        site-release The site  host
+    LISTING
+    without.string.lines.none? { |l| l.strip.start_with?("release") }
+  end
+
   test "dev help build lists every build with its environment column" do
     Given "a Runner over a project with targets placed on the host (no image pinned)"
     out = StringIO.new
@@ -1046,10 +1075,11 @@ class RunnerTest < Minitest::Test
     tmp.write(YAML.dump(yaml))
     tmp.flush
 
-    # The deployment ledger is the forge: scripted, never reached.
+    # The deployment ledger and the release archive are the forge: scripted, never reached.
     Dev::Runner.new(
       dev_yaml_path: Pathname.new(tmp.path), ui: ui, out: out, command_service: command_service,
       deployments_factory: ->(_root) { Dev::Lifecycle::GithubDeployments.new(gh:) },
+      releases_factory: ->(_root) { Dev::Lifecycle::GithubReleases.new(gh:) },
     )
   end
 

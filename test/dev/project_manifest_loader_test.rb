@@ -508,6 +508,153 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
   end
 
+  test "#load lifts commands: release: out of the command tree as the release's builds when targets are declared (dev#424)" do
+    Given
+    tmp = write_dev_yml(<<~YAML)
+      name: cellbound-3d
+      targets:
+        cellbound-3d:
+          platforms: [win64, linux64]
+          configs: [dev, release]
+        cellbound-3d-server:
+          platforms: [linux64]
+      commands:
+        test: { run: ./bin/test }
+        release:
+          desc: Cut a release
+          targets: [cellbound-3d-release, cellbound-3d-server]
+    YAML
+
+    When
+    manifest = build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    manifest.commands.keys == ["test"]
+    manifest.release.names == ["cellbound-3d-win64-release", "cellbound-3d-linux64-release", "cellbound-3d-server-linux64"]
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load reads #{form} as every build of every packageable target" do
+    Given
+    tmp = write_dev_yml(<<~YAML)
+      name: cellbound-3d
+      targets:
+        cellbound-3d: { platforms: [win64, linux64], configs: [release] }
+        cellbound-3d-editor: { platforms: [win64], packager: none }
+      commands:
+        #{release_yaml}
+    YAML
+
+    When
+    manifest = build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    manifest.release.names == ["cellbound-3d-win64-release", "cellbound-3d-linux64-release"]
+
+    Cleanup
+    tmp.close!
+
+    Where
+    form             | release_yaml
+    "`release: {}`"  | "release: {}"
+    "`release:`"     | "release:"
+  end
+
+  test "#load leaves the release nil when targets are declared but no release: is" do
+    Given
+    tmp = write_dev_yml(<<~YAML)
+      name: cellbound-3d
+      targets:
+        cellbound-3d: { platforms: [win64] }
+      commands:
+        test: { run: ./bin/t }
+    YAML
+
+    When
+    manifest = build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    manifest.release.nil?
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load surfaces the release's faults from the parser, the list and the grammar: #{fault}" do
+    Given
+    tmp = write_dev_yml(<<~YAML)
+      name: cellbound-3d
+      targets:
+        cellbound-3d: { platforms: [win64], configs: [dev, release] }
+        cellbound-3d-editor: { platforms: [win64], packager: none }
+      commands:
+        release: #{release_yaml}
+    YAML
+
+    When
+    build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    raises error_class
+
+    Cleanup
+    tmp.close!
+
+    Where
+    fault                          | release_yaml                                     | error_class
+    "a run: on release"            | "{ run: ./bin/release.rb }"                      | Dev::ReleaseParser::ReleaseBodyError
+    "children"                     | "{ commands: { gem: { run: r } } }"              | Dev::ReleaseParser::ReleaseChildrenError
+    "an unknown key"               | "{ targets: [cellbound-3d-release], env: host }" | Dev::ReleaseParser::UnknownReleaseKeyError
+    "targets: not a list"          | "{ targets: cellbound-3d-release }"              | Dev::ReleaseParser::ReleaseTargetsError
+    "a pattern naming two configs" | "{ targets: [cellbound-3d-win64] }"              | Dev::Lifecycle::ReleaseBuilds::ConfigNotNamedError
+    "a packager: none target"      | "{ targets: [cellbound-3d-editor] }"             | Dev::Lifecycle::ReleaseBuilds::NotPackageableError
+    "the empty form over configs"  | "{}"                                             | Dev::Lifecycle::ReleaseBuilds::ConfigNotNamedError
+    "a pattern naming no target"   | "{ targets: [snappy] }"                          | Dev::Lifecycle::BuildPattern::UnknownTargetError
+  end
+
+  test "#load keeps release a plain command in a project without targets, and the manifest has no release" do
+    Given
+    tmp = write_dev_yml(<<~YAML)
+      name: dev
+      commands:
+        release:
+          desc: Cut a release
+          run: ./bin/release.rb
+    YAML
+
+    When
+    manifest = build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    manifest.release.nil?
+    manifest.commands["release"].run == "./bin/release.rb"
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load refuses a release declaration in a project without targets: its patterns have nothing to name" do
+    Given
+    tmp = write_dev_yml(<<~YAML)
+      name: snappy
+      commands:
+        release:
+          targets: [snappy]
+    YAML
+
+    When
+    build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    error = raises(Dev::ProjectManifestLoader::ReleaseWithoutTargetsError)
+    error.message.include?("targets:")
+
+    Cleanup
+    tmp.close!
+  end
+
   test "#load surfaces a target's environment: faults from the parser and the target: #{fault}" do
     Given
     tmp = write_dev_yml(<<~YAML)
