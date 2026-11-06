@@ -25,14 +25,21 @@ module Dev
     # The stage: `before` resolves where the protocol runs (the channel's
     # `run:` environment under the host rule; the host for an integration's
     # publisher), reads the tree once (what staleness is read against),
-    # consumes the argv into the selection and resolves the publisher
-    # (Ports: the `run:` as a ScriptPublisher, or the one the lock
-    # contributed); the seam is the publisher over the selected archives,
-    # on the **testing** track — what the store's artifacts always ship on
-    # (a release's archives ship live, `--release`, dev#425) — with the
-    # channel's scratch in the store, skipped under `--dry-run`; `after`
-    # reports each artifact shipped (the receipt as a GitHub Deployment is
-    # dev#423).
+    # consumes the argv into the selection — which carries the track: the
+    # **testing** one, what the store's artifacts always ship on (a
+    # release's archives ship live, `--release`, dev#425) — and resolves
+    # the publisher (Ports: the `run:` as a ScriptPublisher, or the one the
+    # lock contributed); the seam is the publisher over the selected
+    # archives, on that track, with the channel's scratch in the store,
+    # skipped under `--dry-run`; `after` reports each artifact shipped and
+    # records the deploy as a GitHub Deployment (K6): the channel as its
+    # environment, the artifacts' commit as its ref, the builds and the
+    # track in its payload, the publisher's receipt in its `success`
+    # status. A seam that raises is recorded too, as a `failure` carrying
+    # the error — best-effort, since the protocol's own error is the one
+    # the operator must see — before the error bubbles. The receipt
+    # crosses from the seam to `after` through the env: the template's one
+    # channel between the stages.
     class DeployCommand < LifecycleCommand
       extend T::Sig
 
@@ -43,14 +50,63 @@ module Dev
       # stays reachable).
       class UnboundChannelError < RuntimeError; end
 
-      # What `before` resolves and the seam and `after` read.
-      class DeployEnv < T::Struct
-        const :channel, Lifecycle::Channel
-        const :selection, DeploySelector::Selection
-        const :publisher, Lifecycle::Publisher
-        const :track, Lifecycle::Track
-        const :scratch, Pathname
-        const :dry_run, T::Boolean
+      # `after` ran before the seam handed back a receipt — a wiring bug.
+      class NoReceiptError < StandardError; end
+
+      # The archives shipped, but the ledger refused the record (a ref the
+      # forge does not have, a token without `deployments: write`, an
+      # artifact packaged outside a checkout). The deploy happened; the
+      # message says so and carries the ledger's reason.
+      class NotRecordedError < RuntimeError; end
+
+      # What `before` resolves; the seam fills `receipt` for `after`.
+      class DeployEnv
+        extend T::Sig
+
+        sig { returns(Lifecycle::Channel) }
+        attr_reader :channel
+
+        sig { returns(DeploySelector::Selection) }
+        attr_reader :selection
+
+        sig { returns(Lifecycle::Publisher) }
+        attr_reader :publisher
+
+        # @return [Pathname] the channel's scratch directory in the store
+        sig { returns(Pathname) }
+        attr_reader :scratch
+
+        sig { returns(T::Boolean) }
+        attr_reader :dry_run
+
+        # @return [Lifecycle::Receipt, nil] what the publisher said
+        sig { returns(T.nilable(Lifecycle::Receipt)) }
+        attr_accessor :receipt
+
+        sig do
+          params(
+            channel: Lifecycle::Channel,
+            selection: DeploySelector::Selection,
+            publisher: Lifecycle::Publisher,
+            scratch: Pathname,
+            dry_run: T::Boolean,
+          ).void
+        end
+        def initialize(channel:, selection:, publisher:, scratch:, dry_run:)
+          @channel = channel
+          @selection = selection
+          @publisher = publisher
+          @scratch = scratch
+          @dry_run = dry_run
+          @receipt = T.let(nil, T.nilable(Lifecycle::Receipt))
+        end
+
+        # @return [Lifecycle::Receipt]
+        # @raise [NoReceiptError]
+        sig { returns(Lifecycle::Receipt) }
+        def receipt!
+          @receipt || raise(NoReceiptError, "deploy #{@channel}: `after` ran before the seam handed back a receipt")
+        end
       end
 
       Env = type_member { { fixed: DeployEnv } }
@@ -62,7 +118,9 @@ module Dev
       # @param resolver [DispatchResolver] where the protocol runs
       # @param placement [Placement, nil] the protocol's bound environment;
       #   nil when the lock could not place it at load
+      # @param deployments [Lifecycle::GithubDeployments] the ledger each deploy is recorded in
       # @param out [IO, StringIO]
+      # @param err [IO, StringIO] where a failure record that itself failed is reported
       sig do
         params(
           channel: Lifecycle::Channel,
@@ -71,10 +129,12 @@ module Dev
           store: Lifecycle::Store,
           resolver: DispatchResolver,
           placement: T.nilable(Placement),
+          deployments: Lifecycle::GithubDeployments,
           out: T.any(IO, StringIO),
+          err: T.any(IO, StringIO),
         ).void
       end
-      def initialize(channel:, selector:, ports:, store:, resolver:, placement:, out: $stdout)
+      def initialize(channel:, selector:, ports:, store:, resolver:, placement:, deployments:, out: $stdout, err: $stderr)
         super()
         @channel = channel
         @selector = selector
@@ -82,7 +142,9 @@ module Dev
         @store = store
         @resolver = resolver
         @placement = placement
+        @deployments = deployments
         @out = out
+        @err = err
       end
 
       sig { override.returns(String) }
@@ -90,7 +152,7 @@ module Dev
 
       sig { override.returns(T::Array[Cli::Flag]) }
       def flags
-        DeploySelector::FLAGS + [Cli::Flag.new(DRY_RUN_FLAG, desc: "select and report, ship nothing")]
+        DeploySelector::FLAGS + [Cli::Flag.new(DRY_RUN_FLAG, desc: "select and report, ship nothing, record nothing")]
       end
 
       sig { override.returns(T.nilable(Placement)) }
@@ -119,7 +181,6 @@ module Dev
           channel: @channel,
           selection: @selector.select(args, state:),
           publisher: @ports.publisher_for(@channel),
-          track: Lifecycle::Track::Testing,
           scratch: @store.scratch(@channel),
           dry_run: args.flag?(DRY_RUN_FLAG),
         )
@@ -131,7 +192,10 @@ module Dev
         _ = context
         return if env.dry_run
 
-        env.publisher.publish(env.selection.artifacts, channel: env.channel, track: env.track, scratch: env.scratch)
+        env.receipt = env.publisher.publish(env.selection.artifacts, channel: env.channel, track: env.selection.track, scratch: env.scratch)
+      rescue StandardError => e
+        record_failure(env, e)
+        raise
       end
 
       sig { override.params(env: DeployEnv, context: ExecutionContext).void }
@@ -139,10 +203,18 @@ module Dev
         _ = context
         verb = env.dry_run ? "would deploy" : "deployed"
         env.selection.artifacts.each do |artifact|
-          line = "#{verb} #{artifact.name} (#{artifact.manifest.build_id}) → #{env.channel} (#{env.track}): #{artifact.archive}"
+          line = "#{verb} #{artifact.name} (#{artifact.manifest.build_id}) → #{env.channel} (#{env.selection.track}): #{artifact.archive}"
           line += " — stale, shipped under #{DeploySelector::ALLOW_STALE_FLAG}" if env.selection.stale.include?(artifact)
           @out.puts line
         end
+        return if env.dry_run
+
+        deployments = records(env, state: Lifecycle::DeploymentState::Success, description: env.receipt!.summary)
+          .map { |record| @deployments.record(record) }
+        @out.puts "recorded as GitHub Deployment #{deployments.map { |deployment| "##{deployment.id}" }.join(", ")} " \
+                  "(#{env.selection.track} track) → #{T.must(deployments.first).url}"
+      rescue Lifecycle::GithubDeployments::Error, Lifecycle::DeploymentRecord::UnknownRefError => e
+        raise NotRecordedError, "deployed to #{env.channel}, but the deploy was not recorded: #{e.message}"
       end
 
       private
@@ -153,6 +225,33 @@ module Dev
       def placement!
         @placement || raise(UnboundChannelError,
           "`deploy #{@channel}` has no environment bound: the lock could not place it at load — re-lock it (dev deps update) and retry")
+      end
+
+      # The records this deploy makes, one per commit the artifacts came
+      # from.
+      #
+      # @param env [DeployEnv]
+      # @param state [Lifecycle::DeploymentState]
+      # @param description [String]
+      # @return [Array<Lifecycle::DeploymentRecord>]
+      # @raise [Lifecycle::DeploymentRecord::UnknownRefError]
+      sig { params(env: DeployEnv, state: Lifecycle::DeploymentState, description: String).returns(T::Array[Lifecycle::DeploymentRecord]) }
+      def records(env, state:, description:)
+        Lifecycle::DeploymentRecord.of(env.selection.artifacts, channel: env.channel.name, track: env.selection.track, state:, description:)
+      end
+
+      # Record a seam that raised as a failed deploy. Best-effort: the
+      # protocol's error is what the operator must see, so a ledger that
+      # cannot be written is reported on stderr and never replaces it.
+      #
+      # @param env [DeployEnv]
+      # @param error [StandardError] what the seam raised
+      # @return [void]
+      sig { params(env: DeployEnv, error: StandardError).void }
+      def record_failure(env, error)
+        records(env, state: Lifecycle::DeploymentState::Failure, description: error.message).each { |record| @deployments.record(record) }
+      rescue Lifecycle::GithubDeployments::Error, Lifecycle::DeploymentRecord::UnknownRefError => e
+        @err.puts "dev: the failed deploy #{env.channel} was not recorded: #{e.message}"
       end
     end
   end

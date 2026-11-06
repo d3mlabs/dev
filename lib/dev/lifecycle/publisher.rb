@@ -3,6 +3,7 @@
 
 require "pathname"
 require_relative "artifact"
+require_relative "receipt"
 require_relative "track"
 
 module Dev
@@ -24,13 +25,14 @@ module Dev
     # descriptors — and uploads. Two constraints keep the box honest, both
     # of which are what make "deployed" mean something: the archives are
     # **read-only input** — unpack and wrap, never rebuild or alter — and
-    # what dev records of the upload is its receipt (dev#423), not anything
-    # the port materialised on the way. What it materialises lives in its
-    # **scratch**, the channel's own directory under the project's store
-    # (`<data root>/artifacts/<project>/.<channel>/`, Store#scratch): the
-    # publisher's to create, lay out and reuse; nothing in dev.yml or the
-    # verbs names it. Partial sets are the publisher's call (Steam refuses
-    # a build missing a depot; an rsync does not care).
+    # the Receipt is the output: what dev records of the upload (as a
+    # GitHub Deployment, dev#423) is the receipt plus what dev knew going
+    # in, never anything the port materialised on the way. What it
+    # materialises lives in its **scratch**, the channel's own directory
+    # under the project's store (`<data root>/artifacts/<project>/.<channel>/`,
+    # Store#scratch): the publisher's to create, lay out and reuse; nothing
+    # in dev.yml or the verbs names it. Partial sets are the publisher's
+    # call (Steam refuses a build missing a depot; an rsync does not care).
     module Publisher
       extend T::Sig
       extend T::Helpers
@@ -43,8 +45,8 @@ module Dev
       # @param channel [Channel] the destination, for the env and the messages
       # @param track [Track] testing for artifacts from the store, live for a release's archives
       # @param scratch [Pathname] the channel's scratch directory in the store; may not exist yet
-      # @return [void]
-      sig { abstract.params(artifacts: T::Array[Artifact], channel: Channel, track: Track, scratch: Pathname).void }
+      # @return [Receipt] what the publisher says of the upload
+      sig { abstract.params(artifacts: T::Array[Artifact], channel: Channel, track: Track, scratch: Pathname).returns(Receipt) }
       def publish(artifacts, channel:, track:, scratch:); end
     end
   end

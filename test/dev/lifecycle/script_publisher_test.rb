@@ -66,9 +66,10 @@ class Dev::Lifecycle::ScriptPublisherTest < Minitest::Test
     scratch = @root / "store" / ".steam"
 
     When
-    publisher.publish([win64, linux64], channel: channel("sh ./stage.sh"), track: Dev::Lifecycle::Track::Live, scratch:)
+    receipt = publisher.publish([win64, linux64], channel: channel("sh ./stage.sh"), track: Dev::Lifecycle::Track::Live, scratch:)
 
-    Then "the scratch exists before the first run"
+    Then "the scratch exists before the first run, and the receipt is the line that shipped: a script has no way to say what landed"
+    receipt == Dev::Lifecycle::Receipt.new(summary: "run: sh ./stage.sh")
     (@root / "shipped").read.lines.map(&:chomp) == [
       "#{@project.realpath} steam live cellbound-3d-win64-dev dev 1.2.0+3f2a1c9d8e7b 3f2a1c9d8e7b false unset",
       win64.archive.to_s,

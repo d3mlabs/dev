@@ -5,6 +5,7 @@ require "pathname"
 require_relative "artifact"
 require_relative "channel"
 require_relative "publisher"
+require_relative "receipt"
 require_relative "script_env"
 require_relative "shell"
 require_relative "track"
@@ -22,7 +23,9 @@ module Dev
     # created before the first run so the script can use it as it is; the
     # first failing run ends the deploy, the archives before it shipped.
     # Spawn-and-wait, as every lifecycle seam is: the stage has work after
-    # the protocol returns.
+    # the protocol returns. A script has no way to say what landed, so its
+    # receipt is the line that shipped: the builds and their ids are dev's
+    # half of the record.
     #
     # The project root and the shell are fixed for a checkout and so are
     # constructor-owned; the artifacts are per call.
@@ -51,10 +54,10 @@ module Dev
       # @param channel [Channel]
       # @param track [Track] what `DEV_TRACK` carries
       # @param scratch [Pathname] what `DEV_SCRATCH` carries; created here
-      # @return [void]
+      # @return [Receipt] the `run:` line, as `dev help` renders it
       # @raise [DeployScriptFailedError] at the first archive the script fails on
       # @raise [Shell::SpawnError]
-      sig { override.params(artifacts: T::Array[Artifact], channel: Channel, track: Track, scratch: Pathname).void }
+      sig { override.params(artifacts: T::Array[Artifact], channel: Channel, track: Track, scratch: Pathname).returns(Receipt) }
       def publish(artifacts, channel:, track:, scratch:)
         scratch.mkpath
         artifacts.each do |artifact|
@@ -65,6 +68,7 @@ module Dev
           raise DeployScriptFailedError,
             "deploy script `#{@command}` for #{artifact.name} → #{channel} #{Shell.describe(status)}"
         end
+        Receipt.new(summary: "run: #{@command}")
       end
 
       # The declaration as `dev help` renders it: the line itself.

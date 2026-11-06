@@ -7,6 +7,7 @@ require "dev/deps/dependency"
 require "dev/deps/lockfile"
 require "dev/environment_image"
 require "dev/runner"
+require "support/fake_gh"
 require "support/recording_publisher"
 require "fileutils"
 require "open3"
@@ -433,6 +434,30 @@ class RunnerTest < Minitest::Test
     out.string == "built site-dev → #{data_root / "artifacts" / "testproject" / "site-dev" / "install"}\n"
   end
 
+  test "without an injected ledger the Runner builds the real one: GithubDeployments over a Gh at the project root" do
+    Given "a project with a channel, a Runner given no deployments_factory, and the Gh class watched"
+    root = Pathname.new(Dir.mktmpdir("runner-test-"))
+    (@tmp_roots ||= []).push(root)
+    Dev.stubs(:target_project_root).returns(root)
+    tmp = (@tmp_files ||= []).push(Tempfile.new(["dev", ".yml"])).fetch(-1)
+    tmp.write(YAML.dump({ "name" => "testproject",
+                          "targets" => { "site" => { "desc" => "The site", "build" => "true" } },
+                          "commands" => { "deploy" => { "commands" => {
+                            "staging" => { "desc" => "rsync", "targets" => ["site"], "run" => "./bin/stage", "environment" => "host" },
+                          } } } }))
+    tmp.flush
+    out = StringIO.new
+    # Built before the expectation: FakeGh is a Gh, so its `new` is the one being watched.
+    fake = FakeGh.new(root:)
+    Dev::Lifecycle::Gh.expects(:new).with(root: root).at_least_once.returns(fake)
+
+    When "we print deploy's usage"
+    Dev::Runner.new(dev_yaml_path: Pathname.new(tmp.path), ui: fake_ui, out: out).run(["help", "deploy"])
+
+    Then "the ledger was built over this checkout; usage never asked the forge anything"
+    out.string.include?("staging")
+  end
+
   test "deploy is registered in Lifecycle iff the project declares a channel; its usage lists each channel's accept set and protocol" do
     Given "a project with two channels, and one with targets but none"
     out = StringIO.new
@@ -459,17 +484,18 @@ class RunnerTest < Minitest::Test
     out.rewind
     with_channels.run(["help", "deploy", "staging"])
 
-    Then
+    Then "deploy's usage lists the channels and, beside them, dev's own `status`"
     root_usage.lines.any? { |l| l.strip.start_with?("deploy …") }
     without.string.lines.none? { |l| l.strip.start_with?("deploy") }
     deploy_usage.include?(<<~USAGE)
       Commands:
-        rubygems     gem push          host
+        rubygems     gem push                                                         host
                      Accepts: rspock
                      Protocol: run: gem push "$DEV_ARTIFACT"
-        staging      rsync to the box  host
+        staging      rsync to the box                                                 host
                      Accepts: site-dev, site-release
                      Protocol: run: ./bin/stage
+        status       What each channel carries and from where (status [--release V])
     USAGE
     out.string.include?("Runs on the host.\nAccepts: site-dev, site-release\nProtocol: run: ./bin/stage\n")
     out.string.include?("--allow-stale")
@@ -487,7 +513,10 @@ class RunnerTest < Minitest::Test
     data_root = outside / "data"
     Dev::DataRoot.stubs(:path).returns(data_root.to_s)
     out = StringIO.new
-    runner = build_runner(out: out, root: root, targets: {
+    gh = FakeGh.new.resolving("d3mlabs/testproject")
+      .answers(["api", "-X", "POST", "--input", "-", "repos/d3mlabs/testproject/deployments"], with: { "id" => 9, "created_at" => "2026-11-05T17:02:11Z" })
+      .answers(["api", "-X", "POST", "--input", "-", "repos/d3mlabs/testproject/deployments/9/statuses"], with: { "state" => "success" })
+    runner = build_runner(out: out, root: root, gh: gh, targets: {
       "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "echo site > \"$DEV_INSTALL/index.html\"" },
     }, commands: {
       "deploy" => { "commands" => {
@@ -501,11 +530,40 @@ class RunnerTest < Minitest::Test
     When
     runner.run(["deploy", "staging"])
 
-    Then "the one stored config shipped on the testing track; the script saw the channel, the build and the archive file"
+    Then "the one stored config shipped on the testing track; the script saw the channel, the build and the archive file; the deploy was recorded on the forge"
     archive = data_root / "artifacts" / "testproject" / "site-release" / "site-release.zip"
     (outside / "shipped").read == "staging site-release #{archive}\n"
     out.string.start_with?("deployed site-release (")
     out.string.include?("→ staging (testing): #{archive}")
+    out.string.end_with?("recorded as GitHub Deployment #9 (testing track) → https://github.com/d3mlabs/testproject/deployments/staging\n")
+    gh.posted.first.slice("environment", "auto_merge") == { "environment" => "staging", "auto_merge" => false }
+    gh.posted.first["payload"]["builds"].map { |b| b["build"] } == ["site-release"]
+    gh.posted.last["state"] == "success"
+  end
+
+  test "dev deploy status reads each channel's latest deployment from the forge" do
+    Given "a project with a channel, and a forge holding one deployment for it"
+    out = StringIO.new
+    gh = FakeGh.new.resolving("d3mlabs/testproject")
+      .answers(["api", "repos/d3mlabs/testproject/deployments?environment=staging&per_page=1"], with: [{
+        "id" => 9, "ref" => "0123456789ab", "created_at" => "2026-11-05T17:02:11Z",
+        "payload" => { "schema" => 1, "track" => "testing", "builds" => [{ "build" => "site-release", "build_id" => "0.0.0+0123456789ab" }] },
+      }])
+      .answers(["api", "repos/d3mlabs/testproject/deployments/9/statuses?per_page=1"], with: [{ "state" => "success", "description" => "run: ./bin/stage" }])
+    runner = build_runner(out: out, gh: gh, targets: {
+      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "true" },
+    }, commands: {
+      "deploy" => { "commands" => { "staging" => { "targets" => ["site"], "run" => "./bin/stage", "environment" => "host" } } },
+    })
+
+    When
+    runner.run(["deploy", "status"])
+
+    Then
+    out.string == <<~OUT
+      staging  ✓ testing from 0123456789ab at 2026-11-05 17:02 UTC — run: ./bin/stage
+               site-release (0.0.0+0123456789ab)
+    OUT
   end
 
   test "a channel the lock contributes is a deploy child without a run: line: declared, its targets: configure it; undeclared, it accepts every packageable build (dev#422)" do
@@ -529,19 +587,22 @@ class RunnerTest < Minitest::Test
     configured.run(["help", "deploy"])
     undeclared.run(["help", "deploy"])
 
-    Then "the declared one keeps its targets: and desc over the integration's protocol; the undeclared one appears as the lock's, over every build"
+    Then "the declared one keeps its targets: and desc over the integration's protocol; the undeclared one appears as the lock's, over every build; " \
+         "dev's own `status` sits among them either way"
     out.string.include?(<<~USAGE)
       Commands:
-        staging      rsync to the box  host
+        staging      rsync to the box                                                 host
                      Accepts: site-dev, site-release
                      Protocol: run: ./bin/stage
-        steam        Steam depots      host
+        status       What each channel carries and from where (status [--release V])
+        steam        Steam depots                                                     host
                      Accepts: site-release
                      Protocol: publisher: steam
     USAGE
     undeclared_out.string.include?(<<~USAGE)
       Commands:
-        steam        Ship through the lock's steam publisher  host
+        status       What each channel carries and from where (status [--release V])
+        steam        Ship through the lock's steam publisher                          host
                      Accepts: rspock
                      Protocol: publisher: steam
     USAGE
@@ -972,7 +1033,7 @@ class RunnerTest < Minitest::Test
   # Every run builds an ExecutionContext, so the helper always pins the
   # project root to a temp dir; tests needing their own pass a root.
   def build_runner(name: "testproject", commands: {}, targets: nil, runner: nil, command_service: nil,
-    ui: fake_ui, out: StringIO.new, root: nil)
+    ui: fake_ui, out: StringIO.new, root: nil, gh: FakeGh.new)
     root ||= (@tmp_roots ||= []).push(Pathname.new(Dir.mktmpdir("runner-test-"))).fetch(-1)
     Dev.stubs(:target_project_root).returns(root)
 
@@ -985,7 +1046,11 @@ class RunnerTest < Minitest::Test
     tmp.write(YAML.dump(yaml))
     tmp.flush
 
-    Dev::Runner.new(dev_yaml_path: Pathname.new(tmp.path), ui: ui, out: out, command_service: command_service)
+    # The deployment ledger is the forge: scripted, never reached.
+    Dev::Runner.new(
+      dev_yaml_path: Pathname.new(tmp.path), ui: ui, out: out, command_service: command_service,
+      deployments_factory: ->(_root) { Dev::Lifecycle::GithubDeployments.new(gh:) },
+    )
   end
 
   # A checkout whose lock pins these images (dev#277), removed in teardown.

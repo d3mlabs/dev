@@ -26,12 +26,19 @@ require_relative "lifecycle/script_packager"
 require_relative "lifecycle/as_is_packager"
 require_relative "lifecycle/none_packager"
 require_relative "lifecycle/track"
+require_relative "lifecycle/receipt"
 require_relative "lifecycle/publisher"
 require_relative "lifecycle/publisher_spec"
 require_relative "lifecycle/channel"
 require_relative "lifecycle/script_publisher"
 require_relative "lifecycle/ports"
 require_relative "lifecycle/store"
+require_relative "lifecycle/release_tag"
+require_relative "lifecycle/deployment_state"
+require_relative "lifecycle/deployment_record"
+require_relative "lifecycle/deployment"
+require_relative "lifecycle/gh"
+require_relative "lifecycle/github_deployments"
 require_relative "lifecycle/git"
 require_relative "lifecycle/snapshot_branch"
 require_relative "lifecycle/snapshot"
@@ -61,8 +68,13 @@ module Dev
   # once per archive, over the same env contract; an integration's
   # publisher, a black box over the read-only archives with the channel's
   # scratch in the Store), on the **Track** the source decides (testing
-  # from the store, live for a release). Ports resolves the declarations
-  # (BuilderSpec, PackagerSpec, PublisherSpec) into them for a checkout.
+  # from the store, live for a release), and hands back a Receipt. Ports
+  # resolves the declarations (BuilderSpec, PackagerSpec, PublisherSpec)
+  # into them for a checkout. What a deploy leaves behind is not in the
+  # store: GithubDeployments records each as a GitHub Deployment
+  # (DeploymentRecord — channel, ref, track, builds, state, the receipt —
+  # read back as a Deployment), through Gh, the lifecycle's one gh
+  # boundary; ReleaseTag is the ref a release's deploy is recorded against.
   #
   # The verbs that act on these (`build`, `package`, `deploy`, `release`)
   # are LifecycleCommands in the CLI core (src/dev: the before → seam →

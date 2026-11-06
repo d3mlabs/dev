@@ -38,11 +38,15 @@ module Dev
       T::Array[Cli::Flag],
     )
 
-    # What ships: the artifacts in accept order, and which of them are
-    # stale (allowed through by `--allow-stale`).
+    # What ships: the artifacts in accept order, which of them are stale
+    # (allowed through by `--allow-stale`), and the track they land on —
+    # decided by where they came from (K5): the store holds working
+    # artifacts, so a selection from it is always for the testing track;
+    # the live track is the release source's (`--release`, dev#425).
     class Selection < T::Struct
       const :artifacts, T::Array[Lifecycle::Artifact]
       const :stale, T::Array[Lifecycle::Artifact]
+      const :track, Lifecycle::Track
     end
 
     # More than one positional: a deploy names at most one build or pattern.
@@ -107,7 +111,7 @@ module Dev
             "or #{ALLOW_STALE_FLAG} to ship as is"
       end
 
-      Selection.new(artifacts:, stale:)
+      Selection.new(artifacts:, stale:, track: Lifecycle::Track::Testing)
     end
 
     private

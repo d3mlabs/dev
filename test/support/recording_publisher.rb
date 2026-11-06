@@ -26,9 +26,10 @@ class RecordingPublisher
   # @param channel [Dev::Lifecycle::Channel]
   # @param track [Dev::Lifecycle::Track]
   # @param scratch [Pathname]
-  # @return [void]
+  # @return [Dev::Lifecycle::Receipt] names the builds shipped, as an integration's would
   def publish(artifacts, channel:, track:, scratch:)
     @shipments << Shipment.new(artifacts:, channel:, track:, scratch:)
+    Dev::Lifecycle::Receipt.new(summary: "recorded #{artifacts.map(&:name).join(", ")}")
   end
 
   # @return [String]

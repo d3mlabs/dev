@@ -77,6 +77,10 @@ module Dev
       const :publishers, T::Hash[String, Lifecycle::Publisher]
     end
 
+    # Builds the deployment ledger over a checkout; injected for tests,
+    # since the ledger is the forge.
+    DeploymentsFactory = T.type_alias { T.proc.params(root: Pathname).returns(Lifecycle::GithubDeployments) }
+
     sig do
       params(
         ui: Dev::Cli::Ui,
@@ -86,6 +90,7 @@ module Dev
         command_service: T.nilable(CommandService),
         host_rule: HostRule,
         github_token: ContainerGithubToken,
+        deployments_factory: DeploymentsFactory,
       ).void
     end
     def initialize(
@@ -95,7 +100,8 @@ module Dev
       manifest_loader: ProjectManifestLoader.new,
       command_service: nil,
       host_rule: HostRule.new,
-      github_token: ContainerGithubToken.new
+      github_token: ContainerGithubToken.new,
+      deployments_factory: ->(root) { Lifecycle::GithubDeployments.new(gh: Lifecycle::Gh.new(root:)) }
     )
       @ui = ui
       @out = out
@@ -107,6 +113,7 @@ module Dev
       @host_rule = host_rule
       # The host's gh token, as every exec into a container carries it.
       @github_token = github_token
+      @deployments_factory = deployments_factory
     end
 
     # Runs the dev command specified by the given argv.
@@ -475,7 +482,9 @@ module Dev
     # channels — declared, or contributed by the lock: a group heading one
     # command per channel, each selecting from the same store and
     # dispatching its protocol by the channel's bound placement through
-    # the same resolver.
+    # the same resolver, and recording into one ledger on the forge (K6)
+    # — which `deploy status`, the group's last child, reads back per
+    # channel.
     #
     # @param manifest [ProjectManifest]
     # @param project [ProjectContext]
@@ -498,6 +507,7 @@ module Dev
       }, T::Hash[String, Command])
       return verbs if bindings.channels.empty?
 
+      deployments = @deployments_factory.call(project.root)
       channels = bindings.channels.to_h do |name, bound|
         command = Builtins::DeployCommand.new(
           channel: bound.channel,
@@ -506,14 +516,18 @@ module Dev
           store:,
           resolver:,
           placement: bound.placement,
+          deployments:,
           out: @out,
         )
         [name, T.let(command, Command)]
       end
+      channels[Builtins::DeployStatusCommand::NAME] =
+        Builtins::DeployStatusCommand.new(channels: bindings.channels.values.map(&:channel), deployments:, out: @out)
       verbs["deploy"] = CommandGroup.new(
         path: ["deploy"],
         desc: "Ship an artifact to a channel (deploy <channel> [BUILD] [--config C] [--allow-stale] [--force] [--dry-run])\n" \
-              "Selects from the store, never builds; each channel lists the builds it accepts and its protocol.",
+              "Selects from the store, never builds; each channel lists the builds it accepts and its protocol. " \
+              "`deploy status [--release V]` reads what each channel carries.",
         category: Command::Category::Lifecycle,
         children: channels,
       )

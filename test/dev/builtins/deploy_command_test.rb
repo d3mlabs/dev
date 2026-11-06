@@ -11,6 +11,7 @@ require "dev/host_rule"
 require "dev/lifecycle"
 require "dev/lifecycle_executor"
 require "dev/placement"
+require "support/fake_gh"
 require "support/recording_publisher"
 require "fileutils"
 require "open3"
@@ -22,7 +23,9 @@ require "tmpdir"
 # The verb end to end through the LifecycleExecutor: a real git repo as
 # the project (the staleness rule reads the tree), artifacts stamped into
 # a real store in a temp data root, a real `run:` script recording what
-# it was handed. The channel's protocol is placed on the host.
+# it was handed, and the deployment ledger over a scripted gh (FakeGh —
+# the forge is the one boundary not reproducible here). The channel's
+# protocol is placed on the host.
 transform!(RSpock::AST::Transformation)
 class Dev::Builtins::DeployCommandTest < Minitest::Test
   include SorbetHelper
@@ -30,6 +33,8 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
   PLATFORM = Dev::Lifecycle::Platform
   CONFIG = Dev::Lifecycle::Config
   NOON = Time.utc(2026, 11, 4, 12, 0, 0)
+  REPO = "d3mlabs/cellbound-3d"
+  DEPLOYMENTS = "repos/#{REPO}/deployments".freeze
 
   def setup
     @root = Pathname(Dir.mktmpdir("deploy-command-"))
@@ -45,6 +50,18 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     git("add", ".")
     commit("one")
     @out = StringIO.new
+    @err = StringIO.new
+    @gh = FakeGh.new(root: @project)
+  end
+
+  # Script the forge to accept one deployment and its status, as ids 41, 42, …
+  def forge_accepts(count = 1)
+    @gh.resolving(REPO)
+    count.times do |i|
+      id = 41 + i
+      @gh.answers(["api", "-X", "POST", "--input", "-", DEPLOYMENTS], with: { "id" => id, "ref" => "x", "created_at" => "2026-11-05T17:02:11Z" })
+      @gh.answers(["api", "-X", "POST", "--input", "-", "#{DEPLOYMENTS}/#{id}/statuses"], with: { "state" => "x" })
+    end
   end
 
   def teardown
@@ -106,7 +123,9 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
       store: store,
       resolver: Dev::DispatchResolver.new(host_rule: host_rule),
       placement: placement,
+      deployments: Dev::Lifecycle::GithubDeployments.new(gh: @gh),
       out: @out,
+      err: @err,
     )
   end
 
@@ -118,16 +137,19 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     Dev::LifecycleExecutor.new.execute(verb, args: parsed_args(verb, words), context: context)
   end
 
-  test "bare `dev deploy staging` ships one artifact per accepted platform through the run: line on the testing track, then reports each" do
-    Given "a current artifact of every accepted build"
+  test "bare `dev deploy staging` ships one artifact per accepted platform through the run: line on the testing track, reports each, and records the deploy on the forge" do
+    Given "a current artifact of every accepted build, and a forge that takes the record"
     win64 = stamp("cellbound-3d-win64-dev")
     linux64 = stamp("cellbound-3d-linux64-dev")
     gem = stamp("rspock")
+    forge_accepts
 
     When
     execute(command)
 
-    Then "the script ran once per archive with the channel, the track, the build and the manifest's keys, in the channel's scratch; the verb reported each"
+    Then "the script ran once per archive with the channel, the track, the build and the manifest's keys, in the channel's scratch; " \
+         "the verb reported each and the record; the record is one GitHub Deployment: the channel as environment, the commit as ref, " \
+         "the builds and the testing track as payload, a success status carrying the run: line as the receipt"
     shipped == [
       "staging testing cellbound-3d-win64-dev 1.2.3+#{head} #{head} false #{win64.archive}",
       "staging testing cellbound-3d-linux64-dev 1.2.3+#{head} #{head} false #{linux64.archive}",
@@ -138,19 +160,41 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
       deployed cellbound-3d-win64-dev (1.2.3+#{head}) → staging (testing): #{win64.archive}
       deployed cellbound-3d-linux64-dev (1.2.3+#{head}) → staging (testing): #{linux64.archive}
       deployed rspock (1.2.3+#{head}) → staging (testing): #{gem.archive}
+      recorded as GitHub Deployment #41 (testing track) → https://github.com/#{REPO}/deployments/staging
     OUT
+    @gh.posted == [
+      {
+        "ref" => head,
+        "environment" => "staging",
+        "description" => "dev deploy staging: cellbound-3d-win64-dev, cellbound-3d-linux64-dev, rspock",
+        "payload" => {
+          "schema" => 1,
+          "track" => "testing",
+          "builds" => [
+            { "build" => "cellbound-3d-win64-dev", "build_id" => "1.2.3+#{head}" },
+            { "build" => "cellbound-3d-linux64-dev", "build_id" => "1.2.3+#{head}" },
+            { "build" => "rspock", "build_id" => "1.2.3+#{head}" },
+          ],
+        },
+        "auto_merge" => false,
+        "required_contexts" => [],
+        "production_environment" => false,
+      },
+      { "state" => "success", "description" => "run: sh ./stage.sh" },
+    ]
   end
 
   test "a channel naming the lock's publisher hands it the selection, the testing track and its scratch — the protocol is the integration's (dev#422)" do
-    Given "a current release artifact and a lock contributing steam"
+    Given "a current release artifact, a lock contributing steam, and a forge that takes the record"
     steam = RecordingPublisher.new
     win64 = stamp("cellbound-3d-win64-release")
     linux64 = stamp("cellbound-3d-linux64-release")
+    forge_accepts
 
     When
     execute(command(steam_channel, publishers: { "steam" => steam }))
 
-    Then
+    Then "and the record's receipt is the integration's, not a run: line"
     steam.shipments.size == 1
     steam.shipments.first.artifacts == [win64, linux64]
     steam.shipments.first.channel == steam_channel
@@ -160,10 +204,13 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     @out.string == <<~OUT
       deployed cellbound-3d-win64-release (1.2.3+#{head}) → steam (testing): #{win64.archive}
       deployed cellbound-3d-linux64-release (1.2.3+#{head}) → steam (testing): #{linux64.archive}
+      recorded as GitHub Deployment #41 (testing track) → https://github.com/#{REPO}/deployments/steam
     OUT
+    @gh.posted.first["environment"] == "steam"
+    @gh.posted.last == { "state" => "success", "description" => "recorded cellbound-3d-win64-release, cellbound-3d-linux64-release" }
   end
 
-  test "--dry-run selects and reports, running no protocol" do
+  test "--dry-run selects and reports, running no protocol and recording nothing" do
     Given
     stamp("cellbound-3d-win64-dev")
     stamp("cellbound-3d-linux64-dev")
@@ -176,6 +223,80 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     shipped == []
     !(store.root / ".staging").exist?
     @out.string == "would deploy rspock (1.2.3+#{head}) → staging (testing): #{store.artifact(build("rspock")).archive}\n"
+    @gh.calls == []
+  end
+
+  test "a seam that raises is recorded as a failed deploy carrying the error, then the error bubbles" do
+    Given "a script that refuses, and a forge that takes the record"
+    (@project / "stage.sh").write("exit 7\n")
+    git("add", ".")
+    commit("two")
+    stamp("rspock")
+    forge_accepts
+
+    When
+    execute(command, "rspock")
+
+    Then
+    raises Dev::Lifecycle::ScriptPublisher::DeployScriptFailedError
+    @gh.posted.first.slice("ref", "environment", "payload") == {
+      "ref" => head, "environment" => "staging",
+      "payload" => { "schema" => 1, "track" => "testing", "builds" => [{ "build" => "rspock", "build_id" => "1.2.3+#{head}" }] },
+    }
+    @gh.posted.last == { "state" => "failure", "description" => "deploy script `sh ./stage.sh` for rspock → staging exited 7" }
+    @out.string == ""
+    @err.string == ""
+  end
+
+  test "a failure record the forge refuses is reported on stderr and never replaces the protocol's error" do
+    Given "a script that refuses, and no repo for the forge to record against"
+    (@project / "stage.sh").write("exit 7\n")
+    git("add", ".")
+    commit("two")
+    stamp("rspock")
+    @gh.refuses(["repo", "view"], with: "no git remotes found")
+
+    When
+    execute(command, "rspock")
+
+    Then
+    raises Dev::Lifecycle::ScriptPublisher::DeployScriptFailedError
+    @err.string.start_with?("dev: the failed deploy staging was not recorded: could not resolve the repo")
+  end
+
+  test "a deploy the forge will not record is reported as shipped but unrecorded, after the shipped lines" do
+    Given "a forge that has no such ref"
+    gem = stamp("rspock")
+    @gh.resolving(REPO).refuses(["api", "-X", "POST"], with: "HTTP 422: No ref found for: #{head}")
+
+    When
+    execute(command, "rspock")
+
+    Then
+    error = raises Dev::Builtins::DeployCommand::NotRecordedError
+    error.message.start_with?("deployed to staging, but the deploy was not recorded: the deployment ledger could not be written")
+    error.message.include?("No ref found")
+    shipped == ["staging testing rspock 1.2.3+#{head} #{head} false #{gem.archive}"]
+    @out.string == "deployed rspock (1.2.3+#{head}) → staging (testing): #{gem.archive}\n"
+  end
+
+  test "artifacts of two commits shipped together under --allow-stale are two records, one per ref" do
+    Given "a stale gem artifact beside a current client one"
+    stale = stamp("rspock")
+    commit("two")
+    stamp("cellbound-3d-win64-dev")
+    stamp("cellbound-3d-linux64-dev")
+    forge_accepts(2)
+
+    When
+    execute(command, "--allow-stale")
+
+    Then
+    @gh.posted.select { |body| body.key?("ref") }.map { |body| [body["ref"], body["payload"]["builds"].map { |b| b["build"] }] } == [
+      [head, ["cellbound-3d-win64-dev", "cellbound-3d-linux64-dev"]],
+      [stale.manifest.state.sha, ["rspock"]],
+    ]
+    @out.string.end_with?("recorded as GitHub Deployment #41, #42 (testing track) → https://github.com/#{REPO}/deployments/staging\n")
   end
 
   test "a stale artifact is refused before the protocol runs" do
@@ -196,13 +317,15 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     Given "an artifact packaged at the previous commit"
     stale = stamp("rspock")
     commit("two")
+    forge_accepts
 
     When
     execute(command, "rspock", "--allow-stale")
 
-    Then
+    Then "and the record's ref is the commit the artifact came from, not the tree's"
     shipped == ["staging testing rspock 1.2.3+#{stale.manifest.state.sha} #{stale.manifest.state.sha} false #{stale.archive}"]
-    @out.string == "deployed rspock (1.2.3+#{stale.manifest.state.sha}) → staging (testing): #{stale.archive} — stale, shipped under --allow-stale\n"
+    @out.string.start_with?("deployed rspock (1.2.3+#{stale.manifest.state.sha}) → staging (testing): #{stale.archive} — stale, shipped under --allow-stale\n")
+    @gh.posted.first["ref"] == stale.manifest.state.sha
   end
 
   test "a missing artifact is refused before the protocol runs: deploy never builds" do
@@ -224,6 +347,7 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     git("add", ".")
     commit("two")
     stamp("rspock")
+    forge_accepts
 
     When
     execute(command, "rspock")

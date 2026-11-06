@@ -3,6 +3,11 @@
 
 module Dev
   module Lifecycle
+    # A word outside Track's set, at a boundary (a deployment's payload
+    # read back from the forge). Beside the enum rather than inside it: a
+    # T::Enum body may hold only its own values.
+    class UnknownTrackError < ArgumentError; end
+
     # The track a deploy ships on (dev#192, K5): a channel's protocol takes
     # one — Steam's branch, SMR's unreleased/released, a staging rsync has
     # a single one — and the source decides it, never the operator: an
@@ -19,7 +24,28 @@ module Dev
         Live = new("live")
       end
 
-      # The id, for the env and the report.
+      class << self
+        extend T::Sig
+
+        # The track a word names — the deserialization every boundary goes
+        # through.
+        #
+        # @param word [String]
+        # @return [Track]
+        # @raise [UnknownTrackError]
+        sig { params(word: String).returns(Track) }
+        def parse(word)
+          try_deserialize(word) || raise(UnknownTrackError, "unknown track #{word.inspect} (expected #{values.map(&:serialize).join(", ")})")
+        end
+      end
+
+      # Whether this is the track a release ships to.
+      #
+      # @return [Boolean]
+      sig { returns(T::Boolean) }
+      def live? = self == Live
+
+      # The id, for the env, a payload and the report.
       #
       # @return [String]
       sig { returns(String) }
