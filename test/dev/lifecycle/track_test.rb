@@ -6,13 +6,24 @@ require "dev/lifecycle"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Lifecycle::TrackTest < Minitest::Test
-  test "the two tracks parse from their words and know which one a release ships to" do
+  test "the track set is closed — testing from the store, live from a release — and spelled one way: #{id}" do
     Expect
-    Dev::Lifecycle::Track.parse("testing") == Dev::Lifecycle::Track::Testing
-    Dev::Lifecycle::Track.parse("live") == Dev::Lifecycle::Track::Live
+    Dev::Lifecycle::Track.deserialize(id) == track
+    Dev::Lifecycle::Track.parse(id) == track
+    track.to_s == id
+    track.serialize == id
+
+    Where
+    id        | track
+    "testing" | Dev::Lifecycle::Track::Testing
+    "live"    | Dev::Lifecycle::Track::Live
+  end
+
+  test "there are exactly the two tracks, and only one is the track a release ships to" do
+    Expect
+    Dev::Lifecycle::Track.values == [Dev::Lifecycle::Track::Testing, Dev::Lifecycle::Track::Live]
     Dev::Lifecycle::Track::Testing.live? == false
     Dev::Lifecycle::Track::Live.live? == true
-    Dev::Lifecycle::Track::Testing.to_s == "testing"
   end
 
   test "a word outside the set is refused with the set listed" do

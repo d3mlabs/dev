@@ -8,6 +8,7 @@ require "dev/build_listing"
 require "dev/build_selector"
 require "dev/builtin_executor"
 require "dev/builtins"
+require "dev/channel_binder"
 require "dev/cli"
 require "dev/command"
 require "dev/command_executor"
@@ -34,6 +35,7 @@ require "dev/placement_binder"
 require "dev/project_executor"
 require "dev/project_manifest"
 require "dev/project_manifest_loader"
+require "dev/project_publishers"
 
 module Dev
   # The application service behind bin/dev, and the composition root of the
@@ -56,13 +58,23 @@ module Dev
     # …and outside one: the real gap is the missing dev.yml.
     PROJECTLESS_EPILOGUE = "Run dev inside a project that defines a dev.yml to see its commands."
 
+    # A channel with its protocol's placement — nil when the lock could not
+    # place it at load.
+    class BoundChannel < T::Struct
+      const :channel, Lifecycle::Channel
+      const :placement, T.nilable(Placement)
+    end
+
     # What binding the lock yields: the project commands with their
     # placements, the target placements the lifecycle verbs dispatch by,
-    # and each channel's protocol placement `deploy` dispatches by.
+    # the project's channels — the declared ones merged with the ones the
+    # lock contributes (ChannelBinder) — each with the placement `deploy`
+    # dispatches by, and the publishers the lock contributes, for Ports.
     class Bindings < T::Struct
       const :commands, T::Hash[String, ProjectNode]
       const :targets, T::Hash[String, TargetPlacement]
-      const :channels, T::Hash[String, Placement]
+      const :channels, T::Hash[String, BoundChannel]
+      const :publishers, T::Hash[String, Lifecycle::Publisher]
     end
 
     # Builds the deployment ledger over a checkout; injected for tests,
@@ -233,14 +245,18 @@ module Dev
       service
     end
 
-    # Bind every `environment:` against the lock before the tree is
-    # assembled (dev#409): each project command's, each target's per
-    # platform with the image capability check (dev#192, K8), and each
-    # channel's protocol (K5). An unknown or ambiguous name, or a build
-    # pointed at an image that does not produce its platform, fails here,
-    # at load, and the usage printer reads each command's placement; the
-    # target placements are what `build` and `package` dispatch by
-    # (dev#414), the channel placements what `deploy` does (dev#415).
+    # Bind every lock-referencing name in dev.yml before the tree is
+    # assembled (dev#409): each project command's `environment:`, each
+    # target's per platform with the image capability check (dev#192,
+    # K8), each channel's publisher against the publishers the lock
+    # contributes — the declared channels merged with the contributed ones
+    # (ChannelBinder, dev#422) — and each channel's protocol placement
+    # (K5). An unknown or ambiguous name, a build pointed at an image that
+    # does not produce its platform, a channel with neither `run:` nor a
+    # contributed publisher, fails here, at load, and the usage printer
+    # reads each command's placement; the target placements are what
+    # `build` and `package` dispatch by (dev#414), the channel placements
+    # what `deploy` does (dev#415).
     #
     # A lock out of step with the manifest — a pin locked by another dev's
     # template, a retired build-deps.lock, an image pinned before its block
@@ -249,8 +265,9 @@ module Dev
     # project builtin served by this very tree, so it must not make the
     # tree unbuildable. The commands stay in the tree unbound and no target
     # or channel is placed: the error's message goes to stderr once, help
-    # lists the commands, builds and channels without their environments,
-    # and a project command, build or deploy asked to run refuses
+    # lists the commands, builds and the declared channels (the lock's
+    # contribution is unknown) without their environments, and a project
+    # command, build or deploy asked to run refuses
     # (ProjectCommand#placement!, BuildDispatcher, DeployCommand) rather
     # than guess.
     #
@@ -258,16 +275,21 @@ module Dev
     # @param project [ProjectContext]
     # @return [Bindings]
     # @raise [ProjectImages::UnknownImageError, ProjectImages::AmbiguousEnvironmentImageError]
+    # @raise [ChannelBinder::ChannelProtocolError]
     sig { params(manifest: ProjectManifest, project: ProjectContext).returns(Bindings) }
     def bind_placements(manifest, project)
       binder = PlacementBinder.new(images: project.project_images)
       targets = binder.bind_targets(manifest.targets)
-      channels = binder.bind_channels(manifest.channels)
-      Bindings.new(commands: binder.bind(manifest.commands), targets:, channels:)
+      publishers = ProjectPublishers.new(root: project.root).contributed
+      channels = ChannelBinder.new(publishers:, targets: manifest.targets.values).bind(manifest.channels)
+      placements = binder.bind_channels(channels)
+      bound = channels.to_h { |name, channel| [name, BoundChannel.new(channel:, placement: placements.fetch(name))] }
+      Bindings.new(commands: binder.bind(manifest.commands), targets:, channels: bound, publishers:)
     rescue EnvironmentImage::StaleDigestError, Deps::Lockfile::RetiredBuildLockError,
            PlacementBinder::ImageDoesNotProduceError => e
       $stderr.puts "dev: #{e.message}"
-      Bindings.new(commands: manifest.commands, targets: {}, channels: {})
+      unbound = manifest.channels.transform_values { |channel| BoundChannel.new(channel:, placement: nil) }
+      Bindings.new(commands: manifest.commands, targets: {}, channels: unbound, publishers: {})
     end
 
     # The projectless tree: `up` (its host half is the fresh-box bootstrap
@@ -456,12 +478,13 @@ module Dev
     # build), one dispatcher (build → where it runs, under the host rule the
     # rest of the tree places by), one store under the data root, shared
     # by both verbs so they agree on every name. The project's `VERSION`
-    # file, when any, leads the build id. `deploy`, when the project
-    # declares channels: a group heading one command per channel, each
-    # selecting from the same store and dispatching its protocol by the
-    # channel's bound placement through the same resolver, and recording
-    # into one ledger on the forge (K6) — which `deploy status`, the
-    # group's last child, reads back per channel.
+    # file, when any, leads the build id. `deploy`, when the project has
+    # channels — declared, or contributed by the lock: a group heading one
+    # command per channel, each selecting from the same store and
+    # dispatching its protocol by the channel's bound placement through
+    # the same resolver, and recording into one ledger on the forge (K6)
+    # — which `deploy status`, the group's last child, reads back per
+    # channel.
     #
     # @param manifest [ProjectManifest]
     # @param project [ProjectContext]
@@ -474,7 +497,7 @@ module Dev
       resolver = DispatchResolver.new(host_rule: @host_rule)
       dispatcher = BuildDispatcher.new(placements: bindings.targets, resolver:)
       listing = BuildListing.new(targets:, dispatcher:)
-      ports = Lifecycle::Ports.new(project_root: project.root)
+      ports = Lifecycle::Ports.new(project_root: project.root, publishers: bindings.publishers)
       store = Lifecycle::Store.new(project_name: project.name, targets:)
       verbs = T.let({
         "build" => Builtins::BuildCommand.new(selector:, dispatcher:, listing:, ports:, store:, out: @out),
@@ -482,23 +505,24 @@ module Dev
           selector:, dispatcher:, listing:, ports:, store:, semver: Lifecycle::ProjectVersion.read(project.root), out: @out,
         ),
       }, T::Hash[String, Command])
-      return verbs if manifest.channels.empty?
+      return verbs if bindings.channels.empty?
 
       deployments = @deployments_factory.call(project.root)
-      channels = manifest.channels.to_h do |name, channel|
+      channels = bindings.channels.to_h do |name, bound|
         command = Builtins::DeployCommand.new(
-          channel:,
-          selector: DeploySelector.new(channel:, targets:, store:),
-          publisher: ports.publisher_for(channel),
+          channel: bound.channel,
+          selector: DeploySelector.new(channel: bound.channel, targets:, store:),
+          ports:,
+          store:,
           resolver:,
-          placement: bindings.channels[name],
+          placement: bound.placement,
           deployments:,
           out: @out,
         )
         [name, T.let(command, Command)]
       end
       channels[Builtins::DeployStatusCommand::NAME] =
-        Builtins::DeployStatusCommand.new(channels: manifest.channels.values, deployments:, out: @out)
+        Builtins::DeployStatusCommand.new(channels: bindings.channels.values.map(&:channel), deployments:, out: @out)
       verbs["deploy"] = CommandGroup.new(
         path: ["deploy"],
         desc: "Ship an artifact to a channel (deploy <channel> [BUILD] [--config C] [--allow-stale] [--force] [--dry-run])\n" \

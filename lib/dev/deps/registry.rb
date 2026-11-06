@@ -38,6 +38,7 @@ require_relative "rock_scheme"
 require_relative "semver_scheme"
 require_relative "steam_scheme"
 require_relative "version_scheme"
+require "dev/lifecycle/publisher"
 
 module Dev
   module Deps
@@ -52,11 +53,13 @@ module Dev
     # class or DSL verb is left unwired.
     #
     # Each Entry says which Repository resolves the type, which Integration (if
-    # any) installs it, and which extra constructor arguments each side needs
-    # (drawn from a context the runner assembles). There is one integration
-    # set, for whichever build host runs `dev deps install`: a build container
-    # is a host with its own data root (ADR-0008), so nothing here says where
-    # a type installs — the lock's `host:` filter does that per platform.
+    # any) installs it, which Publisher (if any) is its write side — the
+    # `deploy` channel a project pinning the type gets (dev#422) — and which
+    # extra constructor arguments each side needs (drawn from a context the
+    # runner assembles). There is one integration set, for whichever build
+    # host runs `dev deps install`: a build container is a host with its own
+    # data root (ADR-0008), so nothing here says where a type installs — the
+    # lock's `host:` filter does that per platform.
     module Registry
       # @param symbol [Symbol] the DSL/declaration integration symbol (e.g. :brew)
       # @param repository [Class] Repository subclass that reports this type's universes
@@ -81,9 +84,18 @@ module Dev
       #   integrations that generate batch artifacts (deps.cmake) must see
       #   both types' deps in one install_all call, and the Installer groups
       #   dispatch by instance. Mutually exclusive with integration.
+      # @param publisher [Class, nil] the integration's **write side**
+      #   (dev#192 K5, dev#422): a class implementing Lifecycle::Publisher
+      #   that ships artifacts to the destination the read side resolves
+      #   from — a built-in points it at its repository class when both
+      #   share one client and auth (steamcmd, `gh`, the tap clone). A
+      #   project whose lock pins a dependency of this type gets a `deploy`
+      #   channel of this entry's name with no dev.yml line. nil for a type
+      #   that is a source only.
+      # @param publisher_needs [Array<Symbol>] extra kwargs the publisher takes
       Entry = Data.define(
         :symbol, :repository, :repository_needs, :scheme, :scheme_args, :locker, :locker_needs,
-        :integration, :integration_needs, :install_alias,
+        :integration, :integration_needs, :install_alias, :publisher, :publisher_needs,
       ) do
         extend T::Sig
 
@@ -121,6 +133,12 @@ module Dev
         sig { returns(T.nilable(Symbol)) }
         def install_alias = to_h.fetch(:install_alias)
 
+        sig { returns(T.nilable(T::Class[Lifecycle::Publisher])) }
+        def publisher = to_h.fetch(:publisher)
+
+        sig { returns(T::Array[Symbol]) }
+        def publisher_needs = to_h.fetch(:publisher_needs)
+
         sig do
           params(
             symbol: Symbol,
@@ -133,11 +151,13 @@ module Dev
             locker_needs: T::Array[Symbol],
             integration_needs: T::Array[Symbol],
             install_alias: T.nilable(Symbol),
+            publisher: T.nilable(T::Class[Lifecycle::Publisher]),
+            publisher_needs: T::Array[Symbol],
           ).void
         end
         def initialize(symbol:, repository:, scheme:, integration:,
                        repository_needs: [], scheme_args: {}, locker: nil, locker_needs: [],
-                       integration_needs: [], install_alias: nil)
+                       integration_needs: [], install_alias: nil, publisher: nil, publisher_needs: [])
           super
         end
 
@@ -147,6 +167,21 @@ module Dev
         def host?
           !integration.nil?
         end
+
+        # @return [Boolean] whether this type has a write side: a project
+        #   pinning it gets a `deploy` channel of this entry's name
+        sig { returns(T::Boolean) }
+        def publishes?
+          !publisher.nil?
+        end
+
+        # The `deploy` channel this entry contributes, when it publishes:
+        # the entry's own name, since the channel *is* the integration's
+        # write side (`deploy steam` is the `steam` integration's).
+        #
+        # @return [String]
+        sig { returns(String) }
+        def channel_name = symbol.to_s
       end
 
       INTEGRATIONS = T.let(
@@ -383,6 +418,35 @@ module Dev
         end
         def host_integrations(project_root:, project_name:, store:, taps: [], pin_taps: false)
           integrations_for(INTEGRATIONS.select(&:host?), project_root:, project_name:, store:, taps:, pin_taps:)
+        end
+
+        # Build the channel-name -> Publisher hash of the write sides the
+        # lock **reaches** (dev#422): every publishing entry whose type the
+        # lock pins, directly or through an alias — a project pinning only
+        # `ruby` installs it through brew, so brew's publisher is its too.
+        # The channels `deploy` contributes with no dev.yml line
+        # (Dev::ProjectPublishers reads the pins; Dev::ChannelBinder merges
+        # the result with the declared channels). Built-in entries only, as
+        # every table here: an external publisher arrives through dev#300's
+        # SPI.
+        #
+        # @param project_root [Pathname] project root (threaded to publishers that need it)
+        # @param pinned [Array<Symbol>] the integration types the lock pins
+        # @param entries [Array<Entry>] the table to read (tests substitute one)
+        # @return [Hash{String => Lifecycle::Publisher}] in table order
+        sig do
+          params(project_root: Pathname, pinned: T::Array[Symbol], entries: T::Array[Entry])
+            .returns(T::Hash[String, Lifecycle::Publisher])
+        end
+        def publishers(project_root:, pinned:, entries: INTEGRATIONS)
+          context = { project_root: }
+          reached = entries.select { |entry| pinned.include?(entry.symbol) }.flat_map { |entry| [entry.symbol, entry.install_alias] }
+          entries.select { |entry| entry.publishes? && reached.include?(entry.symbol) }.to_h do |entry|
+            # T.unsafe: the keyword set is runtime-selected (publisher_needs);
+            # the publisher constructors' own sigs validate at runtime.
+            publisher = T.unsafe(T.must(entry.publisher)).new(**T.unsafe(context).slice(*entry.publisher_needs))
+            [entry.channel_name, T.let(publisher, Lifecycle::Publisher)]
+          end
         end
 
         private

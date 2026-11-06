@@ -7,6 +7,8 @@ require "dev/deps/integration"
 require "dev/deps/brew_integration"
 require "dev/deps/cmake_integration"
 require "dev/deps/xcode_integration"
+require "support/recording_publisher"
+require "pathname"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::RegistryTest < Minitest::Test
@@ -45,5 +47,52 @@ class Dev::Deps::RegistryTest < Minitest::Test
     entry.install_alias.nil?
     !entry.host?
     !Dev::Deps::Registry.host_integrations(project_root: Pathname("/tmp"), project_name: "proj", store: Dev::Deps::LocalStore.new).key?(:image)
+  end
+
+  test "an entry publishes exactly when it names a publisher class, and the channel it contributes is its own name (dev#422)" do
+    Given
+    silent = Dev::Deps::Registry::Entry.new(symbol: :cmake, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil)
+    steam = Dev::Deps::Registry::Entry.new(symbol: :steam, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil, publisher: RecordingPublisher)
+
+    Expect
+    !silent.publishes?
+    silent.publisher.nil?
+    silent.publisher_needs == []
+    steam.publishes?
+    steam.publisher == RecordingPublisher
+    steam.channel_name == "steam"
+  end
+
+  test "no built-in entry publishes yet: the first write sides arrive with dev#426–#429" do
+    Expect
+    Dev::Deps::Registry::INTEGRATIONS.none?(&:publishes?)
+    Dev::Deps::Registry.publishers(project_root: Pathname("/tmp"), pinned: Dev::Deps::Registry::INTEGRATIONS.map(&:symbol)) == {}
+  end
+
+  test "publishers builds one instance per publishing entry the lock reaches, directly or through an alias, with the kwargs it asks for" do
+    Given "a table where brew publishes and ruby installs through it; steam publishes but is not pinned; cmake is pinned but silent"
+    entries = [
+      Dev::Deps::Registry::Entry.new(symbol: :brew, repository: Dev::Deps::BrewRepository, scheme: nil, integration: nil,
+        publisher: RecordingPublisher, publisher_needs: %i[project_root]),
+      Dev::Deps::Registry::Entry.new(symbol: :ruby, repository: Dev::Deps::BrewRepository, scheme: nil, integration: nil, install_alias: :brew),
+      Dev::Deps::Registry::Entry.new(symbol: :steam, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil, publisher: RecordingPublisher),
+      Dev::Deps::Registry::Entry.new(symbol: :cmake, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil),
+    ]
+
+    When
+    publishers = Dev::Deps::Registry.publishers(project_root: Pathname("/project"), pinned: pinned, entries:)
+
+    Then
+    publishers.keys == channels
+    publishers.values.all? { |publisher| publisher.is_a?(RecordingPublisher) }
+    publishers.values.map(&:project_root).compact == (channels.include?("brew") ? [Pathname("/project")] : [])
+
+    Where
+    pinned           | channels
+    [:brew]          | ["brew"]
+    [:ruby]          | ["brew"]
+    [:ruby, :steam]  | ["brew", "steam"]
+    [:cmake]         | []
+    []               | []
   end
 end

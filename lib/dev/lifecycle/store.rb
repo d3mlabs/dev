@@ -5,6 +5,7 @@ require "pathname"
 require_relative "../data_root"
 require_relative "artifact"
 require_relative "build"
+require_relative "channel"
 require_relative "manifest"
 require_relative "target"
 
@@ -25,11 +26,19 @@ module Dev
     # an orphan this store does not see (`dev cache gc` reclaims it). A
     # directory whose manifest names another build is corrupt and an error,
     # because the name is only an index and the manifest is the truth.
+    #
+    # Beside the builds, one dot-directory per channel — `.<channel>/` —
+    # is a publisher's **scratch** (dev#192, K5): where a channel unpacks
+    # or wraps the read-only archives into the destination's form (a Steam
+    # depot tree, a tap clone). Dot-prefixed so it can never collide with
+    # a build's name (the target grammar admits no leading dot), and the
+    # publisher's own: the store hands out the path and reads nothing in it.
     class Store
       extend T::Sig
 
       ARTIFACTS_DIR = "artifacts"
       INSTALL_DIR = "install"
+      SCRATCH_PREFIX = "."
 
       # An artifact directory whose `build-id.json` is of a different build
       # than the directory is named for.
@@ -74,6 +83,14 @@ module Dev
       # @return [Pathname]
       sig { params(build: Build).returns(Pathname) }
       def archive_stem(build) = dir(build) / build.name
+
+      # A channel's scratch directory — handed to its publisher at deploy,
+      # which creates it when it needs it.
+      #
+      # @param channel [Channel]
+      # @return [Pathname]
+      sig { params(channel: Channel).returns(Pathname) }
+      def scratch(channel) = @root / "#{SCRATCH_PREFIX}#{channel.name}"
 
       # The stamped artifact of a build, or nil when none has been packaged
       # (or one was started and never stamped).

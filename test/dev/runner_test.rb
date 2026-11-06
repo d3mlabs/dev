@@ -8,6 +8,7 @@ require "dev/deps/lockfile"
 require "dev/environment_image"
 require "dev/runner"
 require "support/fake_gh"
+require "support/recording_publisher"
 require "fileutils"
 require "open3"
 require "stringio"
@@ -529,11 +530,11 @@ class RunnerTest < Minitest::Test
     When
     runner.run(["deploy", "staging"])
 
-    Then "the one stored config shipped; the script saw the channel, the build and the archive file; the deploy was recorded on the forge"
+    Then "the one stored config shipped on the testing track; the script saw the channel, the build and the archive file; the deploy was recorded on the forge"
     archive = data_root / "artifacts" / "testproject" / "site-release" / "site-release.zip"
     (outside / "shipped").read == "staging site-release #{archive}\n"
     out.string.start_with?("deployed site-release (")
-    out.string.include?("→ staging: #{archive}")
+    out.string.include?("→ staging (testing): #{archive}")
     out.string.end_with?("recorded as GitHub Deployment #9 (testing track) → https://github.com/d3mlabs/testproject/deployments/staging\n")
     gh.posted.first.slice("environment", "auto_merge") == { "environment" => "staging", "auto_merge" => false }
     gh.posted.first["payload"]["builds"].map { |b| b["build"] } == ["site-release"]
@@ -563,6 +564,69 @@ class RunnerTest < Minitest::Test
       staging  ✓ testing from 0123456789ab at 2026-11-05 17:02 UTC — run: ./bin/stage
                site-release (0.0.0+0123456789ab)
     OUT
+  end
+
+  test "a channel the lock contributes is a deploy child without a run: line: declared, its targets: configure it; undeclared, it accepts every packageable build (dev#422)" do
+    Given "a lock contributing a steam publisher, and a project declaring steam without run: beside a script channel"
+    steam = RecordingPublisher.new
+    Dev::Deps::Registry.stubs(:publishers).returns({ "steam" => steam })
+    out = StringIO.new
+    configured = build_runner(out: out, targets: {
+      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "true" },
+      "rspock" => { "desc" => "The gem" },
+    }, commands: {
+      "deploy" => { "commands" => {
+        "staging" => { "desc" => "rsync to the box", "targets" => ["site"], "run" => "./bin/stage", "environment" => "host" },
+        "steam" => { "desc" => "Steam depots", "targets" => ["site-release"] },
+      } },
+    })
+    undeclared_out = StringIO.new
+    undeclared = build_runner(out: undeclared_out, targets: { "rspock" => { "desc" => "The gem" } })
+
+    When "we print deploy's usage for each"
+    configured.run(["help", "deploy"])
+    undeclared.run(["help", "deploy"])
+
+    Then "the declared one keeps its targets: and desc over the integration's protocol; the undeclared one appears as the lock's, over every build; " \
+         "dev's own `status` sits among them either way"
+    out.string.include?(<<~USAGE)
+      Commands:
+        staging      rsync to the box                                                 host
+                     Accepts: site-dev, site-release
+                     Protocol: run: ./bin/stage
+        status       What each channel carries and from where (status [--release V])
+        steam        Steam depots                                                     host
+                     Accepts: site-release
+                     Protocol: publisher: steam
+    USAGE
+    undeclared_out.string.include?(<<~USAGE)
+      Commands:
+        status       What each channel carries and from where (status [--release V])
+        steam        Ship through the lock's steam publisher                          host
+                     Accepts: rspock
+                     Protocol: publisher: steam
+    USAGE
+  end
+
+  test "a deploy child with neither run: nor a publisher the lock contributes is refused at load, naming both fixes" do
+    Given "a project declaring steam without run: over a lock contributing nothing"
+    runner = build_runner(targets: { "rspock" => { "desc" => "The gem" } }, commands: {
+      "deploy" => { "commands" => { "steam" => { "targets" => ["rspock"] } } },
+    })
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(1).once
+
+    When "anything at all is run"
+    runner.run(["help"])
+
+    Then
+    $stderr.string.include?("dev: channel 'deploy steam' has no protocol")
+    $stderr.string.include?("the lock contributes no `steam` publisher (it contributes: none)")
+    $stderr.string.include?("declare `run:`")
+
+    Cleanup
+    $stderr = old_stderr
   end
 
   test "runner is ungated: every project catalog lists it" do

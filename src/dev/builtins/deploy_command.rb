@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "pathname"
 require "stringio"
 require "dev/command"
 require "dev/deploy_selector"
@@ -22,19 +23,23 @@ module Dev
     # accept set without `--force`.
     #
     # The stage: `before` resolves where the protocol runs (the channel's
-    # `run:` environment under the host rule), reads the tree once (what
-    # staleness is read against) and consumes the argv into the selection;
-    # the seam is the publisher — the `run:` once per archive with
-    # `DEV_ARTIFACT` and the manifest's keys in its env — skipped under
-    # `--dry-run`; `after` reports each artifact shipped and records the
-    # deploy as a GitHub Deployment (K6): the channel as its environment,
-    # the artifacts' commit as its ref, the builds and the track in its
-    # payload, the publisher's receipt in its `success` status. A seam
-    # that raises is recorded too, as a `failure` carrying the error —
-    # best-effort, since the protocol's own error is the one the operator
-    # must see — before the error bubbles. The receipt crosses from the
-    # seam to `after` through the env: the template's one channel between
-    # the stages.
+    # `run:` environment under the host rule; the host for an integration's
+    # publisher), reads the tree once (what staleness is read against),
+    # consumes the argv into the selection — which carries the track: the
+    # **testing** one, what the store's artifacts always ship on (a
+    # release's archives ship live, `--release`, dev#425) — and resolves
+    # the publisher (Ports: the `run:` as a ScriptPublisher, or the one the
+    # lock contributed); the seam is the publisher over the selected
+    # archives, on that track, with the channel's scratch in the store,
+    # skipped under `--dry-run`; `after` reports each artifact shipped and
+    # records the deploy as a GitHub Deployment (K6): the channel as its
+    # environment, the artifacts' commit as its ref, the builds and the
+    # track in its payload, the publisher's receipt in its `success`
+    # status. A seam that raises is recorded too, as a `failure` carrying
+    # the error — best-effort, since the protocol's own error is the one
+    # the operator must see — before the error bubbles. The receipt
+    # crosses from the seam to `after` through the env: the template's one
+    # channel between the stages.
     class DeployCommand < LifecycleCommand
       extend T::Sig
 
@@ -67,6 +72,10 @@ module Dev
         sig { returns(Lifecycle::Publisher) }
         attr_reader :publisher
 
+        # @return [Pathname] the channel's scratch directory in the store
+        sig { returns(Pathname) }
+        attr_reader :scratch
+
         sig { returns(T::Boolean) }
         attr_reader :dry_run
 
@@ -75,12 +84,19 @@ module Dev
         attr_accessor :receipt
 
         sig do
-          params(channel: Lifecycle::Channel, selection: DeploySelector::Selection, publisher: Lifecycle::Publisher, dry_run: T::Boolean).void
+          params(
+            channel: Lifecycle::Channel,
+            selection: DeploySelector::Selection,
+            publisher: Lifecycle::Publisher,
+            scratch: Pathname,
+            dry_run: T::Boolean,
+          ).void
         end
-        def initialize(channel:, selection:, publisher:, dry_run:)
+        def initialize(channel:, selection:, publisher:, scratch:, dry_run:)
           @channel = channel
           @selection = selection
           @publisher = publisher
+          @scratch = scratch
           @dry_run = dry_run
           @receipt = T.let(nil, T.nilable(Lifecycle::Receipt))
         end
@@ -97,7 +113,8 @@ module Dev
 
       # @param channel [Lifecycle::Channel] the destination this command ships to
       # @param selector [DeploySelector] argv → the artifacts
-      # @param publisher [Lifecycle::Publisher] the channel's protocol
+      # @param ports [Lifecycle::Ports] the channel's protocol, resolved when the verb runs
+      # @param store [Lifecycle::Store] where the channel's scratch is
       # @param resolver [DispatchResolver] where the protocol runs
       # @param placement [Placement, nil] the protocol's bound environment;
       #   nil when the lock could not place it at load
@@ -108,7 +125,8 @@ module Dev
         params(
           channel: Lifecycle::Channel,
           selector: DeploySelector,
-          publisher: Lifecycle::Publisher,
+          ports: Lifecycle::Ports,
+          store: Lifecycle::Store,
           resolver: DispatchResolver,
           placement: T.nilable(Placement),
           deployments: Lifecycle::GithubDeployments,
@@ -116,11 +134,12 @@ module Dev
           err: T.any(IO, StringIO),
         ).void
       end
-      def initialize(channel:, selector:, publisher:, resolver:, placement:, deployments:, out: $stdout, err: $stderr)
+      def initialize(channel:, selector:, ports:, store:, resolver:, placement:, deployments:, out: $stdout, err: $stderr)
         super()
         @channel = channel
         @selector = selector
-        @publisher = publisher
+        @ports = ports
+        @store = store
         @resolver = resolver
         @placement = placement
         @deployments = deployments
@@ -161,7 +180,8 @@ module Dev
         env = DeployEnv.new(
           channel: @channel,
           selection: @selector.select(args, state:),
-          publisher: @publisher,
+          publisher: @ports.publisher_for(@channel),
+          scratch: @store.scratch(@channel),
           dry_run: args.flag?(DRY_RUN_FLAG),
         )
         dispatch.dispatch(env)
@@ -172,7 +192,7 @@ module Dev
         _ = context
         return if env.dry_run
 
-        env.receipt = env.publisher.publish(env.selection.artifacts, channel: env.channel)
+        env.receipt = env.publisher.publish(env.selection.artifacts, channel: env.channel, track: env.selection.track, scratch: env.scratch)
       rescue StandardError => e
         record_failure(env, e)
         raise
@@ -183,7 +203,7 @@ module Dev
         _ = context
         verb = env.dry_run ? "would deploy" : "deployed"
         env.selection.artifacts.each do |artifact|
-          line = "#{verb} #{artifact.name} (#{artifact.manifest.build_id}) → #{env.channel}: #{artifact.archive}"
+          line = "#{verb} #{artifact.name} (#{artifact.manifest.build_id}) → #{env.channel} (#{env.selection.track}): #{artifact.archive}"
           line += " — stale, shipped under #{DeploySelector::ALLOW_STALE_FLAG}" if env.selection.stale.include?(artifact)
           @out.puts line
         end

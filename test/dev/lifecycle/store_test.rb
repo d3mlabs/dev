@@ -45,6 +45,28 @@ class Dev::Lifecycle::StoreTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "a channel's scratch is a dot-directory under the store root, so it never reads as a build (dev#422)" do
+    Given
+    root = Dir.mktmpdir("store-")
+    store = Dev::Lifecycle::Store.new(project_name: "cellbound-3d", targets: all_targets, data_root: root)
+    steam = Dev::Lifecycle::Channel.new(
+      name: "steam", accepts: [Dev::Lifecycle::BuildPattern.parse("cellbound-3d", all_targets)],
+      publisher: Dev::Lifecycle::PublisherSpec::Integration.new(name: "steam"),
+    )
+
+    When "the publisher has left things behind in it"
+    scratch = store.scratch(steam)
+    scratch.mkpath
+    (scratch / "build-id.json").write("{}")
+
+    Then
+    scratch == Pathname(root) / "artifacts/cellbound-3d/.steam"
+    store.artifacts == []
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
   test "an install directory without a manifest is not an artifact: a build in progress reads as unpackaged" do
     Given
     root = Dir.mktmpdir("store-")

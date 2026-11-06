@@ -62,17 +62,19 @@ module Dev
   # `build:` line over the ScriptEnv contract), the **Packager** makes the
   # archive (Archive — dev's own zip or split tar, the default;
   # AsIsPackager; NonePackager; ScriptPackager for a `package:` line).
-  # A **channel** (Channel — a `deploy` child: the builds it accepts and
-  # its protocol) ships artifacts through a third port, the **Publisher**
-  # (ScriptPublisher — the child's `run:` once per archive, over the same
-  # env contract), on the Track the source of the artifacts decides, and
-  # hands back a Receipt. Ports resolves the declarations (BuilderSpec,
-  # PackagerSpec, PublisherSpec) into them for a checkout. What a deploy
-  # leaves behind is not in the store: GithubDeployments records each as
-  # a GitHub Deployment (DeploymentRecord — channel, ref, track, builds,
-  # state, the receipt — read back as a Deployment), through Gh, the
-  # lifecycle's one gh boundary; ReleaseTag is the ref a release's deploy
-  # is recorded against.
+  # A **channel** (Channel — a `deploy` child, or one the lock contributes:
+  # the builds it accepts and its protocol) ships artifacts through a
+  # third port, the **Publisher** (ScriptPublisher — the child's `run:`
+  # once per archive, over the same env contract; an integration's
+  # publisher, a black box over the read-only archives with the channel's
+  # scratch in the Store), on the **Track** the source decides (testing
+  # from the store, live for a release), and hands back a Receipt. Ports
+  # resolves the declarations (BuilderSpec, PackagerSpec, PublisherSpec)
+  # into them for a checkout. What a deploy leaves behind is not in the
+  # store: GithubDeployments records each as a GitHub Deployment
+  # (DeploymentRecord — channel, ref, track, builds, state, the receipt —
+  # read back as a Deployment), through Gh, the lifecycle's one gh
+  # boundary; ReleaseTag is the ref a release's deploy is recorded against.
   #
   # The verbs that act on these (`build`, `package`, `deploy`, `release`)
   # are LifecycleCommands in the CLI core (src/dev: the before → seam →

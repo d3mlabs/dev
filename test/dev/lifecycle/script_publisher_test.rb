@@ -51,28 +51,32 @@ class Dev::Lifecycle::ScriptPublisherTest < Minitest::Test
     )
   end
 
-  test "the run: line runs at the project root once per artifact, in order, with each archive and its manifest in the env" do
-    Given "a script that appends what it was handed"
+  test "the run: line runs at the project root once per artifact, in order, with each archive, the track, the scratch and its manifest in the env" do
+    Given "a script that appends what it was handed, and a scratch not yet created"
     (@project / "stage.sh").write(<<~SH)
       #!/bin/sh
       set -eu
-      echo "$(pwd) $DEV_CHANNEL $DEV_BUILD $DEV_CONFIG $DEV_BUILD_ID $DEV_SHA $DEV_DIRTY ${DEV_INSTALL:-unset}" >> "#{@root}/shipped"
+      echo "$(pwd) $DEV_CHANNEL $DEV_TRACK $DEV_BUILD $DEV_CONFIG $DEV_BUILD_ID $DEV_SHA $DEV_DIRTY ${DEV_INSTALL:-unset}" >> "#{@root}/shipped"
       echo "$DEV_ARTIFACT" >> "#{@root}/shipped"
+      test -d "$DEV_SCRATCH" && echo "$DEV_SCRATCH" >> "#{@root}/shipped"
     SH
     publisher = Dev::Lifecycle::ScriptPublisher.new(command: "sh ./stage.sh", project_root: @project)
     win64 = artifact("cellbound-3d-win64-dev")
     linux64 = artifact("cellbound-3d-linux64-dev")
+    scratch = @root / "store" / ".steam"
 
     When
-    receipt = publisher.publish([win64, linux64], channel: channel("sh ./stage.sh"))
+    receipt = publisher.publish([win64, linux64], channel: channel("sh ./stage.sh"), track: Dev::Lifecycle::Track::Live, scratch:)
 
-    Then "the receipt is the line that shipped: a script has no way to say what landed"
+    Then "the scratch exists before the first run, and the receipt is the line that shipped: a script has no way to say what landed"
     receipt == Dev::Lifecycle::Receipt.new(summary: "run: sh ./stage.sh")
     (@root / "shipped").read.lines.map(&:chomp) == [
-      "#{@project.realpath} steam cellbound-3d-win64-dev dev 1.2.0+3f2a1c9d8e7b 3f2a1c9d8e7b false unset",
+      "#{@project.realpath} steam live cellbound-3d-win64-dev dev 1.2.0+3f2a1c9d8e7b 3f2a1c9d8e7b false unset",
       win64.archive.to_s,
-      "#{@project.realpath} steam cellbound-3d-linux64-dev dev 1.2.0+3f2a1c9d8e7b 3f2a1c9d8e7b false unset",
+      scratch.to_s,
+      "#{@project.realpath} steam live cellbound-3d-linux64-dev dev 1.2.0+3f2a1c9d8e7b 3f2a1c9d8e7b false unset",
       linux64.archive.to_s,
+      scratch.to_s,
     ]
     publisher.command == "sh ./stage.sh"
     publisher.to_s == "sh ./stage.sh"
@@ -91,7 +95,7 @@ class Dev::Lifecycle::ScriptPublisherTest < Minitest::Test
 
     When
     publisher.publish([artifact("cellbound-3d-win64-dev"), artifact("cellbound-3d-linux64-dev"), artifact("cellbound-3d-win64-release")],
-      channel: channel("sh ./stage.sh"))
+      channel: channel("sh ./stage.sh"), track: Dev::Lifecycle::Track::Testing, scratch: @root / "store" / ".steam")
 
     Then
     error = raises Dev::Lifecycle::ScriptPublisher::DeployScriptFailedError
@@ -102,7 +106,7 @@ class Dev::Lifecycle::ScriptPublisherTest < Minitest::Test
   test "a project root that does not exist is a spawn failure, not a script one" do
     When
     Dev::Lifecycle::ScriptPublisher.new(command: "true", project_root: @root / "missing")
-      .publish([artifact("rspock")], channel: channel("true"))
+      .publish([artifact("rspock")], channel: channel("true"), track: Dev::Lifecycle::Track::Testing, scratch: @root / "store" / ".steam")
 
     Then
     raises Dev::Lifecycle::Shell::SpawnError

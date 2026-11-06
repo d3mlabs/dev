@@ -13,15 +13,20 @@ module Dev
   # its children: every child is a **channel** — `targets:` the build
   # patterns it accepts (parsed in the one grammar against the project's
   # targets, so a pattern naming no build fails at load), `run:` its
-  # protocol, `desc` and `environment:` as any command's. The entry itself
-  # has no body and no other keys to give: a `run:` on `deploy`, a child
-  # without `targets:`, a child without a protocol, a child with children
-  # of its own are each refused with the fix named.
+  # protocol when it has a script one, `desc` and `environment:` as any
+  # command's. A child with no `run:` names the publisher the lock's
+  # integration of the same name contributes (dev#422): `targets:` then
+  # *configures* that channel, where a `run:` *replaces* its protocol
+  # (K1b). The entry itself has no body and no other keys to give: a
+  # `run:` on `deploy`, a child without `targets:`, a child with children
+  # of its own, an `environment:` with no `run:` to place are each refused
+  # with the fix named.
   #
   # The child's `run:`, `desc`, `environment:` and `hidden` are read by the
   # CommandParser (one reading of a command body), then recast as the
-  # channel's publisher; the parser stays lock-free, the reference is the
-  # composition root's to bind.
+  # channel's publisher; the parser stays lock-free — whether the lock
+  # contributes the publisher a child names is the composition root's to
+  # bind (ChannelBinder), as an `environment:` reference is.
   #
   # Stateless: reusable across manifests, inputs arrive as method arguments.
   class ChannelParser
@@ -45,15 +50,16 @@ module Dev
     # non-empty list of build patterns.
     class ChannelAcceptsError < ArgumentError; end
 
-    # A `deploy` child with neither a `run:` nor a publisher the lock
-    # contributes.
-    class ChannelProtocolError < ArgumentError; end
+    # A `deploy` child with `environment:` but no `run:`: an integration's
+    # publisher runs where dev runs, so the key has nothing to place.
+    class ChannelEnvironmentError < ArgumentError; end
 
     # A `deploy` child with `commands:` of its own: a channel is a leaf.
     class ChannelChildrenError < ArgumentError; end
 
     DEPLOY = "deploy"
     ACCEPTS_KEY = "targets"
+    RUN_KEY = "run"
     # Names no channel may take: `help` under every node, `status` for the
     # ledger's own child of `deploy`.
     RESERVED_NAMES = T.let([CommandParser::RESERVED_CHILD_NAME, Builtins::DeployStatusCommand::NAME].freeze, T::Array[String])
@@ -92,7 +98,7 @@ module Dev
     # @raise [InvalidChannelError]
     # @raise [ReservedChannelNameError]
     # @raise [ChannelAcceptsError]
-    # @raise [ChannelProtocolError]
+    # @raise [ChannelEnvironmentError]
     # @raise [ChannelChildrenError]
     # @raise [CommandParser::InvalidEnvironmentError]
     # @raise [Lifecycle::BuildPattern::UnknownTargetError] and the grammar's
@@ -104,7 +110,7 @@ module Dev
       # A non-mapping `deploy` body has no children to read and surfaces
       # as NoChannelsError under its own name.
       deploy = raw.is_a?(Hash) ? raw : {}
-      unless deploy["run"].to_s.empty?
+      unless deploy[RUN_KEY].to_s.empty?
         raise DeployBodyError,
           "command '#{DEPLOY}' declares `run:`, but #{DEPLOY} is derived from its channels — delete the `run:` " \
             "and declare each destination as a child with `targets:` and `run:` (d3mlabs/dev#192)"
@@ -137,7 +143,7 @@ module Dev
     # @param targets [Array<Lifecycle::Target>]
     # @return [Lifecycle::Channel]
     # @raise [ChannelAcceptsError]
-    # @raise [ChannelProtocolError]
+    # @raise [ChannelEnvironmentError]
     # @raise [ChannelChildrenError]
     # @raise [CommandParser::InvalidEnvironmentError]
     sig { params(name: String, entry: DeployHash, targets: T::Array[Lifecycle::Target]).returns(Lifecycle::Channel) }
@@ -147,22 +153,50 @@ module Dev
         raise ChannelChildrenError, "channel '#{path.join(" ")}' declares `commands:`, but a channel has no subcommands — " \
                                     "each destination is its own `deploy` child"
       end
-      if entry["run"].to_s.empty?
-        raise ChannelProtocolError,
-          "channel '#{path.join(" ")}' has no protocol: declare `run:` (a script shipping `$DEV_ARTIFACT`), or name an " \
-            "integration whose publisher knows the endpoint (d3mlabs/dev#422)"
-      end
 
-      command = T.cast(@command_parser.parse(path, entry), ProjectCommand)
-      Lifecycle::Channel.new(
-        name:,
-        desc: command.desc,
-        accepts: accept_patterns(path, entry[ACCEPTS_KEY], targets),
-        publisher: Lifecycle::PublisherSpec::Script.new(command: command.run, environment: command.environment),
-      )
+      accepts = accept_patterns(path, entry[ACCEPTS_KEY], targets)
+      if entry[RUN_KEY].to_s.empty?
+        integration_channel(name, path, entry, accepts)
+      else
+        command = T.cast(@command_parser.parse(path, entry), ProjectCommand)
+        publisher = Lifecycle::PublisherSpec::Script.new(command: command.run, environment: command.environment)
+        Lifecycle::Channel.new(name:, desc: command.desc, accepts:, publisher:)
+      end
     end
 
     private
+
+    # A child with no `run:`: the lock's publisher of the channel's name
+    # is its protocol, the child configures what reaches it. Read without
+    # the CommandParser — a command body needs a `run:` or children, and
+    # this child has neither by design — so `desc` is coerced here as the
+    # parser coerces it.
+    #
+    # @param name [String]
+    # @param path [Array<String>] the channel's command path, for messages
+    # @param entry [DeployHash]
+    # @param accepts [Array<Lifecycle::BuildPattern>]
+    # @return [Lifecycle::Channel]
+    # @raise [ChannelEnvironmentError]
+    sig do
+      params(name: String, path: T::Array[String], entry: DeployHash, accepts: T::Array[Lifecycle::BuildPattern])
+        .returns(Lifecycle::Channel)
+    end
+    def integration_channel(name, path, entry, accepts)
+      if entry.key?(CommandParser::ENVIRONMENT_KEY)
+        raise ChannelEnvironmentError,
+          "channel '#{path.join(" ")}' declares `environment:` without `run:` — an integration's publisher runs where " \
+            "dev runs; the key places a `run:` script, so add one or delete the key"
+      end
+
+      desc = entry["desc"].to_s
+      Lifecycle::Channel.new(
+        name:,
+        desc: desc.empty? ? Lifecycle::Channel::NO_DESCRIPTION : desc,
+        accepts:,
+        publisher: Lifecycle::PublisherSpec::Integration.new(name:),
+      )
+    end
 
     # The `targets:` list as patterns in the one grammar.
     #
