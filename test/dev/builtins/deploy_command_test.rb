@@ -6,13 +6,16 @@ require "dev/builtins/deploy_command"
 require "dev/deploy_selector"
 require "dev/dispatch"
 require "dev/dispatch_resolver"
+require "dev/enrolled_runner_lookup"
 require "dev/host_environment"
 require "dev/host_rule"
 require "dev/lifecycle"
 require "dev/lifecycle_executor"
 require "dev/placement"
+require "dev/settings"
 require "support/fake_gh"
 require "support/recording_publisher"
+require "support/scripted_remote"
 require "fileutils"
 require "open3"
 require "pathname"
@@ -25,10 +28,16 @@ require "tmpdir"
 # a real store in a temp data root, a real `run:` script recording what
 # it was handed, and the deployment ledger over a scripted gh (FakeGh —
 # the forge is the one boundary not reproducible here). The channel's
-# protocol is placed on the host.
+# protocol is placed on the host; the remote cases force the dispatch
+# with `--runner` over a scripted forge (ScriptedRemote).
 transform!(RSpock::AST::Transformation)
 class Dev::Builtins::DeployCommandTest < Minitest::Test
   include SorbetHelper
+
+  # The repo has no enrolled runner online.
+  class NoneEnrolled < Dev::EnrolledRunnerLookup
+    def available = nil
+  end
 
   PLATFORM = Dev::Lifecycle::Platform
   CONFIG = Dev::Lifecycle::Config
@@ -52,6 +61,8 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     @out = StringIO.new
     @err = StringIO.new
     @gh = FakeGh.new(root: @project)
+    @ui = typed_mock(Dev::Cli::Ui)
+    @remote = ScriptedRemote.new(root: @project, ui: @ui)
   end
 
   # Script the forge to accept one deployment and its status, as ids 41, 42, …
@@ -116,12 +127,16 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
 
   def command(channel = self.channel("cellbound-3d-dev", "rspock"), placement: Dev::Placement::Host.new, publishers: {})
     host_rule = Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: (@root / "no-marker").to_s), inside_container: false)
+    settings = Dev::Settings.new(config_path: (@root / "config.yml").to_s, system_config_path: (@root / "none.yml").to_s)
+    resolver = Dev::DispatchResolver.new(
+      host_rule: host_rule, remotes: @remote.remotes, enrolled: NoneEnrolled.new, settings: settings, inside_job: false,
+    )
     Dev::Builtins::DeployCommand.new(
       channel: channel,
       selector: Dev::DeploySelector.new(channel: channel, targets: targets, store: store),
       ports: Dev::Lifecycle::Ports.new(project_root: @project, publishers:),
       store: store,
-      resolver: Dev::DispatchResolver.new(host_rule: host_rule),
+      resolver: resolver,
       placement: placement,
       deployments: Dev::Lifecycle::GithubDeployments.new(gh: @gh),
       out: @out,
@@ -130,7 +145,7 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
   end
 
   def context
-    Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui), project: Dev::ProjectContext.new(name: "cellbound-3d", root: @project))
+    Dev::ExecutionContext.new(ui: @ui, project: Dev::ProjectContext.new(name: "cellbound-3d", root: @project))
   end
 
   def execute(verb, *words)
@@ -367,14 +382,39 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     error.message.include?("`deploy staging` has no environment bound")
   end
 
-  test "the verb's traits: the channel's desc, the selector's flags plus --dry-run, its placement, the accept set and protocol as details" do
+  test "`--runner` sends the verb to the label re-spelled as given — the channel, the build, the selection flags — and the host selects from its own store: nothing is read, shipped or recorded here" do
+    Given "no artifact in this store at all"
+    @remote.install_workflow
+    @ui.expects(:print_remote_crossing).with(runner: "gamebox", snapshot: ScriptedRemote::SHA[0, 12])
+
+    When
+    execute(command, "rspock", "--runner", "gamebox", "--allow-stale", "--dry-run", "--config", "release")
+
+    Then "the words in declared order, `--runner` left behind; no MissingArtifactError, since the host's store is the one that counts"
+    @remote.dispatched_verbs == "deploy staging rspock --config release --allow-stale --dry-run"
+    @remote.sync.synced == ["gamebox"]
+    shipped == []
+    @gh.calls == []
+    @out.string == ""
+  end
+
+  test "a channel whose protocol has no placement bound is refused even under `--runner`" do
+    When
+    execute(command(placement: nil), "rspock", "--runner", "gamebox")
+
+    Then
+    raises Dev::Builtins::DeployCommand::UnboundChannelError
+    @remote.dispatched_verbs.nil?
+  end
+
+  test "the verb's traits: the channel's desc, the selector's flags plus --dry-run and --runner, its placement, the accept set and protocol as details" do
     Given
     verb = command
 
     Expect
     verb.category == Dev::Command::Category::Lifecycle
     verb.desc == "rsync to the gamebox"
-    verb.flags.map(&:name) == ["--config", "--allow-stale", "--force", "--dry-run"]
+    verb.flags.map(&:name) == ["--config", "--allow-stale", "--force", "--dry-run", "--runner"]
     verb.placement == Dev::Placement::Host.new
     verb.listing.nil?
     verb.details == ["Accepts: cellbound-3d-win64-dev, cellbound-3d-linux64-dev, rspock", "Protocol: run: sh ./stage.sh"]

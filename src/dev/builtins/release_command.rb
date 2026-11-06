@@ -60,6 +60,7 @@ module Dev
       # `after` ran before the seam packaged the builds — a wiring bug.
       class NothingPackagedError < StandardError; end
 
+      NAME = "release"
       LISTING_HEADING = "Release builds"
 
       # What `before` resolves; the seam fills `artifacts` for `after`.
@@ -147,10 +148,13 @@ module Dev
       def before(args:, context:)
         _ = context
         tag = Lifecycle::ReleaseTag.new(version(args))
-        env = ReleaseEnv.new(tag:, plan: @cut.plan(tag), builds: @release.builds)
         # The verb orchestrates from here: the cut is this checkout's git,
-        # and each `package` it runs resolves its own dispatch (K10).
-        Dispatch::Native.new.dispatch(env)
+        # and each `package` it runs resolves its own dispatch (K10) — so
+        # the dispatch is native and the invocation it is handed is never
+        # spoken to a host.
+        Dispatch::Native.new.dispatch(Lifecycle::VerbInvocation.new(words: [NAME, tag.version])) do
+          ReleaseEnv.new(tag:, plan: @cut.plan(tag), builds: @release.builds)
+        end
       end
 
       sig { override.params(env: ReleaseEnv, context: ExecutionContext).void }

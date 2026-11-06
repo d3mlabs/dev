@@ -8,24 +8,28 @@ require "dev/build_selector"
 require "dev/builtins/package_command"
 require "dev/dispatch"
 require "dev/dispatch_resolver"
+require "dev/enrolled_runner_lookup"
 require "dev/host_environment"
 require "dev/host_rule"
 require "dev/lifecycle"
 require "dev/lifecycle_executor"
 require "dev/placement"
+require "dev/settings"
 require "dev/target_placement"
 require "digest"
 require "fileutils"
 require "open3"
 require "pathname"
 require "stringio"
+require "support/scripted_remote"
 require "time"
 require "tmpdir"
 
 # The verb end to end through the LifecycleExecutor: a real git repo as
 # the project (the staleness rule reads the tree), a real build script
 # counting its runs, a real store in a temp data root, dev's own zip
-# packager. Every target is placed on the host of a linux64 machine.
+# packager. Every target is placed on the host of a linux64 machine; the
+# remote cases force the dispatch with `--runner` over a scripted forge.
 transform!(RSpock::AST::Transformation)
 class Dev::Builtins::PackageCommandTest < Minitest::Test
   include SorbetHelper
@@ -33,6 +37,11 @@ class Dev::Builtins::PackageCommandTest < Minitest::Test
   PLATFORM = Dev::Lifecycle::Platform
   CONFIG = Dev::Lifecycle::Config
   NOW = Time.utc(2026, 11, 4, 12, 30, 0)
+
+  # The repo has no enrolled runner online.
+  class NoneEnrolled < Dev::EnrolledRunnerLookup
+    def available = nil
+  end
 
   def setup
     @root = Pathname(Dir.mktmpdir("package-command-"))
@@ -54,6 +63,8 @@ class Dev::Builtins::PackageCommandTest < Minitest::Test
     git("add", ".")
     commit("one")
     @out = StringIO.new
+    @ui = typed_mock(Dev::Cli::Ui)
+    @remote = ScriptedRemote.new(root: @project, ui: @ui, downloads: true)
   end
 
   def teardown
@@ -100,10 +111,14 @@ class Dev::Builtins::PackageCommandTest < Minitest::Test
       host = axis.to_h { |platform| [platform, Dev::Placement::Host.new] }
       [target.name, Dev::TargetPlacement.new(target: target, placements: host, host_platform: PLATFORM::Linux64)]
     end
-    Dev::BuildDispatcher.new(placements: placements, resolver: Dev::DispatchResolver.new(host_rule: host_rule))
+    settings = Dev::Settings.new(config_path: (@root / "config.yml").to_s, system_config_path: (@root / "none.yml").to_s)
+    resolver = Dev::DispatchResolver.new(
+      host_rule: host_rule, remotes: @remote.remotes, enrolled: NoneEnrolled.new, settings: settings, inside_job: false,
+    )
+    Dev::BuildDispatcher.new(placements: placements, resolver: resolver)
   end
 
-  def command(now: NOW)
+  def command(now: NOW, step_outputs: Dev::Lifecycle::StepOutputs.new(path: nil))
     dispatcher = self.dispatcher
     Dev::Builtins::PackageCommand.new(
       selector: Dev::BuildSelector.new(targets: targets),
@@ -112,12 +127,13 @@ class Dev::Builtins::PackageCommandTest < Minitest::Test
       ports: Dev::Lifecycle::Ports.new(project_root: @project),
       store: store,
       clock: -> { now },
+      step_outputs: step_outputs,
       out: @out,
     )
   end
 
   def context
-    Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui), project: Dev::ProjectContext.new(name: "cellbound-3d", root: @project))
+    Dev::ExecutionContext.new(ui: @ui, project: Dev::ProjectContext.new(name: "cellbound-3d", root: @project))
   end
 
   def execute(verb, *words)
@@ -301,13 +317,87 @@ class Dev::Builtins::PackageCommandTest < Minitest::Test
     raises Dev::Builtins::PackageCommand::NothingPackedError
   end
 
-  test "the verb's traits: the selector's flags plus --no-build; only packageable targets are listed and completed" do
+  test "inside an Actions job, a package names its artifact and files as step outputs for the workflow's upload" do
+    Given "a GITHUB_OUTPUT file"
+    outputs = @root / "github-output"
+    outputs.write("existing=1\n")
+
+    When
+    execute(command(step_outputs: Dev::Lifecycle::StepOutputs.new(path: outputs)), "cellbound-3d-release")
+
+    Then "the artifact's name, then its files — the archive and the manifest — fenced as GitHub reads a multi-line value"
+    artifact = store.artifact(build("cellbound-3d-linux64-release"))
+    lines = outputs.read.lines(chomp: true)
+    lines.fetch(0) == "existing=1"
+    lines.fetch(1) == "artifact=cellbound-3d-linux64-release"
+    lines.fetch(2).match?(/\Aartifact_files<<dev-\h{16}\z/)
+    lines.fetch(3) == artifact.archive.to_s
+    lines.fetch(4) == (artifact.dir / "build-id.json").to_s
+    lines.fetch(5) == lines.fetch(2).delete_prefix("artifact_files<<")
+    lines.size == 6
+  end
+
+  test "outside a job nothing is written anywhere: the step outputs are inert" do
+    Expect
+    !Dev::Lifecycle::StepOutputs.from_env({}).active?
+    !Dev::Lifecycle::StepOutputs.from_env({ "GITHUB_OUTPUT" => "" }).active?
+    Dev::Lifecycle::StepOutputs.from_env({ "GITHUB_OUTPUT" => "/tmp/x" }).active?
+  end
+
+  test "`--runner` sends `package <build>#{suffix}` to the label; nothing is built, packaged or reported here" do
+    Given
+    @remote.install_workflow
+    @ui.expects(:print_remote_crossing).with(runner: "linux-pool", snapshot: ScriptedRemote::SHA[0, 12])
+
+    When
+    execute(command, "cellbound-3d-release", *extra, "--runner", "linux-pool")
+
+    Then
+    @remote.dispatched_verbs == "package cellbound-3d-linux64-release#{suffix}"
+    @remote.dispatched_inputs.fetch("fetch") == "false"
+    @remote.download.nil?
+    build_runs == 0
+    store.artifact(build("cellbound-3d-linux64-release")).nil?
+    @out.string == ""
+
+    Where
+    extra          | suffix
+    []             | ""
+    ["--no-build"] | " --no-build"
+  end
+
+  test "`--fetch` asks the workflow to upload, then downloads the artifact by the build's name into the build's store directory" do
+    Given
+    @remote.install_workflow
+    @ui.stubs(:print_remote_crossing)
+    the_build = build("cellbound-3d-linux64-release")
+
+    When
+    execute(command, "cellbound-3d-release", "--runner", "linux-pool", "--fetch")
+
+    Then
+    @remote.dispatched_inputs == { "verbs" => "package cellbound-3d-linux64-release", "runner" => "linux-pool", "fetch" => "true" }
+    @remote.download == ["run", "download", "42", "--name", "cellbound-3d-linux64-release", "--dir", store.dir(the_build).to_s]
+    store.dir(the_build).directory?
+    @remote.out.string.lines.last == "fetched cellbound-3d-linux64-release → #{store.dir(the_build)}\n"
+  end
+
+  test "a target declaring packager: none is refused before any dispatch, remote included" do
+    When
+    execute(command, "tools", "--runner", "linux-pool")
+
+    Then
+    raises Dev::Builtins::PackageCommand::NotPackageableError
+    @remote.dispatched_verbs.nil?
+  end
+
+  test "the verb's traits: the selector's flags plus --no-build, --runner and --fetch; only packageable targets are listed and completed" do
     Given
     verb = command
 
     Expect
     verb.category == Dev::Command::Category::Lifecycle
-    verb.flags.map(&:name) == ["--target", "--platform", "--config", "--no-build"]
+    verb.flags.map(&:name) == ["--target", "--platform", "--config", "--no-build", "--runner", "--fetch"]
     verb.desc.lines.first.start_with?("Package a build into its artifact")
     verb.listing.heading == "Builds"
     verb.listing.subjects.map(&:name) == ["cellbound-3d-linux64-dev", "cellbound-3d-linux64-release", "rspock", "site"]

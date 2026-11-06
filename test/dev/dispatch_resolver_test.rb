@@ -2,22 +2,36 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/cli/ui"
 require "dev/deps/dependency"
 require "dev/dispatch"
 require "dev/dispatch_resolver"
+require "dev/enrolled_runner"
+require "dev/enrolled_runner_lookup"
 require "dev/environment_image"
 require "dev/host_environment"
 require "dev/host_rule"
 require "dev/placement"
+require "dev/remote_dispatches"
+require "dev/runner_registry"
+require "dev/settings"
 require "fileutils"
 require "pathname"
+require "stringio"
+require "support/fake_gh"
 require "tmpdir"
 
 # The one decision site of where a verb runs, against a real host marker
 # in a temp dir: `/etc/dev/environment` is what the host rule reads, so
-# each case writes (or leaves absent) the marker that makes it so.
+# each case writes (or leaves absent) the marker that makes it so. The
+# remote side is real too — a Settings over a temp config file, an
+# EnrolledRunnerLookup over a scripted registry — so the order native →
+# `--runner` → setting → enrolled → refusal is read off the actual
+# collaborators.
 transform!(RSpock::AST::Transformation)
 class Dev::DispatchResolverTest < Minitest::Test
+  include SorbetHelper
+
   # On the class: Where cells are evaluated there.
   class << self
     def image(name: "cellbound-3d-linux", apt: ["dos2unix"])
@@ -33,9 +47,22 @@ class Dev::DispatchResolverTest < Minitest::Test
     end
   end
 
+  # A registry that lists the enrolled runner online, or nothing.
+  class ScriptedRegistry < Dev::RunnerRegistry
+    def initialize(online:)
+      super()
+      @online = online
+    end
+
+    def available(scope:, label:)
+      @online ? Dev::RunnerRegistry::Runner.new(id: 7, custom_labels: [label], status: "online") : nil
+    end
+  end
+
   def setup
     @dir = Pathname(Dir.mktmpdir("dispatch-resolver"))
     @marker = (@dir / "environment").to_s
+    @config = (@dir / "config.yml").to_s
   end
 
   def teardown
@@ -48,11 +75,18 @@ class Dev::DispatchResolverTest < Minitest::Test
     self.class.image(name: name, apt: apt)
   end
 
-  def resolver(inside_container: false)
+  def resolver(inside_container: false, standing: nil, enrolled_online: false, inside_job: false)
     host_rule = Dev::HostRule.new(
       host_environment: Dev::HostEnvironment.new(path: @marker), inside_container: inside_container,
     )
-    Dev::DispatchResolver.new(host_rule: host_rule)
+    settings = Dev::Settings.new(config_path: @config, system_config_path: (@dir / "none.yml").to_s)
+    settings.set(Dev::Settings::LIFECYCLE_RUNNER_KEY, standing) if standing
+    enrolled = Dev::EnrolledRunnerLookup.new(registry: ScriptedRegistry.new(online: enrolled_online), repo_resolver: -> { "d3mlabs/Cellbound-3D" })
+    remotes = Dev::RemoteDispatches.new(
+      root: @dir, ui: typed_mock(Dev::Cli::Ui), out: StringIO.new,
+      runs: Dev::Lifecycle::WorkflowRuns.new(gh: FakeGh.new(root: @dir)),
+    )
+    Dev::DispatchResolver.new(host_rule: host_rule, remotes: remotes, enrolled: enrolled, settings: settings, inside_job: inside_job)
   end
 
   test "a build placed on the host is native wherever dev runs" do
@@ -74,8 +108,50 @@ class Dev::DispatchResolverTest < Minitest::Test
     "inside a container of the image"   | image.marker | true
   end
 
-  test "a host not provisioned from the image has no dispatch yet: refused, naming the build, the image and the fix" do
-    Given "a bare host (no marker)"
+  test "`--runner` forces the remote dispatch to that label, whatever the placement: #{what}" do
+    Given "a host that could run both natively"
+    File.write(@marker, image.marker)
+
+    When
+    dispatch = resolver(standing: "standing-pool", enrolled_online: true).resolve(placement, subject: "x", runner: "win64-pool")
+
+    Then
+    dispatch.is_a?(Dev::Dispatch::Remote)
+    dispatch.transport.is_a?(Dev::Transport::ActionsRunner)
+    dispatch.transport.runner == "win64-pool"
+
+    Where
+    what        | placement
+    "the host"  | Dev::Placement::Host.new
+    "the image" | Dev::Placement::Image.new(image: image)
+  end
+
+  test "a host not provisioned from the image leaves for the standing `lifecycle.runner` first, the enrolled runner only otherwise" do
+    Given "a bare host (no marker), a standing preference and an enrolled runner online"
+    placement = Dev::Placement::Image.new(image: image)
+
+    When
+    dispatch = resolver(standing: "ue-engine-hosted", enrolled_online: true).resolve(placement, subject: "cellbound-3d-win64-dev")
+
+    Then
+    dispatch.is_a?(Dev::Dispatch::Remote)
+    dispatch.transport.runner == "ue-engine-hosted"
+  end
+
+  test "with no standing preference, the repo's enrolled runner carries the verb when GitHub lists it online — under the repo's label" do
+    Given
+    placement = Dev::Placement::Image.new(image: image)
+
+    When
+    dispatch = resolver(enrolled_online: true).resolve(placement, subject: "cellbound-3d-win64-dev")
+
+    Then
+    dispatch.is_a?(Dev::Dispatch::Remote)
+    dispatch.transport.runner == "cellbound-3d"
+  end
+
+  test "a host not provisioned from the image, with no runner to go to, is refused naming the build, the image and the three ways to get one" do
+    Given "a bare host (no marker), nothing standing, nothing enrolled"
     placement = Dev::Placement::Image.new(image: image)
 
     When
@@ -85,7 +161,9 @@ class Dev::DispatchResolverTest < Minitest::Test
     error = raises(Dev::DispatchResolver::RemoteDispatchUnavailableError)
     error.message.include?("`cellbound-3d-win64-dev` builds in cellbound-3d-linux")
     error.message.include?("this host was not provisioned from it")
-    error.message.include?("provisioned from cellbound-3d-linux")
+    error.message.include?("`dev runner register` on a host provisioned from cellbound-3d-linux")
+    error.message.include?("`--runner <label>`")
+    error.message.include?("`dev config set lifecycle.runner <label>`")
   end
 
   test "a host provisioned from another image is not this image's host either" do
@@ -108,5 +186,31 @@ class Dev::DispatchResolverTest < Minitest::Test
 
     Then
     raises Dev::HostRule::ContainerDriftError
+  end
+
+  test "a verb inside an Actions job never leaves: #{what} is DispatchFromJobError naming the label and the misprovisioning" do
+    Given "a runner that is not the build's environment"
+    placement = Dev::Placement::Image.new(image: image)
+
+    When
+    resolver(standing: "ue-engine-hosted", inside_job: true).resolve(placement, subject: "cellbound-3d-win64-dev", runner: forced)
+
+    Then
+    error = raises(Dev::DispatchResolver::DispatchFromJobError)
+    error.message.include?("`cellbound-3d-win64-dev` would leave this Actions job for runner `#{label}`")
+    error.message.include?("a job never dispatches a job")
+
+    Where
+    what                   | forced       | label
+    "the resolved remote"  | nil          | "ue-engine-hosted"
+    "a forced `--runner`"  | "win64-pool" | "win64-pool"
+  end
+
+  test "inside an Actions job that is the build's environment, the verb is native as anywhere else" do
+    Given
+    File.write(@marker, image.marker)
+
+    Expect
+    resolver(inside_job: true).resolve(Dev::Placement::Image.new(image: image), subject: "x") == Dev::Dispatch::Native.new
   end
 end

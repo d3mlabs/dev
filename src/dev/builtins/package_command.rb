@@ -10,6 +10,7 @@ require "dev/build_listing"
 require "dev/build_selector"
 require "dev/command"
 require "dev/dispatch"
+require "dev/dispatch_resolver"
 require "dev/lifecycle"
 
 module Dev
@@ -25,19 +26,27 @@ module Dev
     # run and packages alone. A target with `packager: none` is built,
     # never packaged, and is refused here by name.
     #
-    # The stage: `before` consumes the argv into the build, reads the tree's
-    # state once (the same reading decides staleness and is what the stamp
-    # records), resolves the dispatch and hands over the env; the seam is
-    # the builder when needed, then the packager, writing `<build>.<ext>`
-    # beside the install; `after` hashes the archive, derives the build id
-    # and stamps the manifest — last, so a directory without one reads as
-    # unpackaged — and reports the artifact. The packed archive crosses
-    # from the seam to `after` through the env: the template's one channel
-    # between the stages.
+    # The stage: `before` consumes the argv into the build, resolves the
+    # dispatch (the target's `environment:` under the host rule, or the
+    # runner `--runner` names) and hands it the invocation a remote host
+    # would run (`package <build> [--no-build]`, with the artifact to
+    # bring back under `--fetch`) and, for a seam that runs here, the env
+    # — reading the tree's state once (the same reading decides staleness
+    # and is what the stamp records); the seam is the builder when needed,
+    # then the packager, writing `<build>.<ext>` beside the install;
+    # `after` hashes the archive, derives the build id and stamps the
+    # manifest — last, so a directory without one reads as unpackaged —
+    # reports the artifact, and names it to the enclosing Actions step
+    # when there is one, which is how the generic workflow knows what
+    # `--fetch` uploads. The packed archive crosses from the seam to
+    # `after` through the env: the template's one channel between the
+    # stages.
     class PackageCommand < LifecycleCommand
       extend T::Sig
 
+      NAME = "package"
       NO_BUILD_FLAG = "--no-build"
+      FETCH_FLAG = "--fetch"
 
       # `package` reached a target that declares `packager: none`.
       class NotPackageableError < ArgumentError; end
@@ -116,6 +125,7 @@ module Dev
       # @param ports [Lifecycle::Ports] the targets' builders and packagers
       # @param store [Lifecycle::Store] where the artifact goes
       # @param clock [Proc] the packaging instant (injectable for tests)
+      # @param step_outputs [Lifecycle::StepOutputs] the enclosing Actions step's, or none
       # @param out [IO, StringIO]
       sig do
         params(
@@ -125,10 +135,14 @@ module Dev
           ports: Lifecycle::Ports,
           store: Lifecycle::Store,
           clock: T.proc.returns(Time),
+          step_outputs: Lifecycle::StepOutputs,
           out: T.any(IO, StringIO),
         ).void
       end
-      def initialize(selector:, dispatcher:, listing:, ports:, store:, clock: -> { Time.now }, out: $stdout)
+      def initialize(
+        selector:, dispatcher:, listing:, ports:, store:,
+        clock: -> { Time.now }, step_outputs: Lifecycle::StepOutputs.from_env, out: $stdout
+      )
         super()
         @selector = selector
         @dispatcher = dispatcher
@@ -136,18 +150,22 @@ module Dev
         @ports = ports
         @store = store
         @clock = clock
+        @step_outputs = step_outputs
         @out = out
       end
 
       sig { override.returns(String) }
       def desc
-        "Package a build into its artifact (package [BUILD] | --target T [--platform P] [--config C] [--no-build])\n" \
-          "Builds first unless the artifact is current with the tree; the archive and build-id.json land in the store."
+        "Package a build into its artifact (package [BUILD] | --target T [--platform P] [--config C] [--no-build] [--runner L] [--fetch])\n" \
+          "Builds first unless the artifact is current with the tree; the archive and build-id.json land in the store " \
+          "of the host that packaged (--fetch brings them back from a remote one)."
       end
 
       sig { override.returns(T::Array[Cli::Flag]) }
       def flags
-        BuildSelector::FLAGS + [Cli::Flag.new(NO_BUILD_FLAG, desc: "package the install as it is, without building first")]
+        BuildSelector::FLAGS + [Cli::Flag.new(NO_BUILD_FLAG, desc: "package the install as it is, without building first")] +
+          DispatchResolver::FLAGS +
+          [Cli::Flag.new(FETCH_FLAG, desc: "after a remote package, download the artifact into this machine's store")]
       end
 
       sig { override.returns(T.nilable(Listing)) }
@@ -163,18 +181,21 @@ module Dev
       def before(args:, context:)
         build = @selector.select(args)
         assert_packageable!(build.target)
-        state = Lifecycle::GitState.read(context.project!.root)
-        builder = @ports.builder_for(build.target)
-        env = PackageEnv.new(
-          build:,
-          install: @store.install_dir(build),
-          archive_stem: @store.archive_stem(build),
-          builder:,
-          packager: @ports.packager_for(build.target),
-          state:,
-          build_skipped: build_skipped(build, builder, state, no_build: args.flag?(NO_BUILD_FLAG)),
-        )
-        @dispatcher.dispatch_for(build).dispatch(env)
+        no_build = args.flag?(NO_BUILD_FLAG)
+        dispatch = @dispatcher.dispatch_for(build, runner: args.value(DispatchResolver::RUNNER_FLAG))
+        dispatch.dispatch(invocation(build, no_build:, fetch: args.flag?(FETCH_FLAG))) do
+          state = Lifecycle::GitState.read(context.project!.root)
+          builder = @ports.builder_for(build.target)
+          PackageEnv.new(
+            build:,
+            install: @store.install_dir(build),
+            archive_stem: @store.archive_stem(build),
+            builder:,
+            packager: @ports.packager_for(build.target),
+            state:,
+            build_skipped: build_skipped(build, builder, state, no_build:),
+          )
+        end
       end
 
       sig { override.params(env: PackageEnv, context: ExecutionContext).void }
@@ -207,12 +228,30 @@ module Dev
         )
         @out.puts "build skipped: #{env.build_skipped}" if env.build_skipped
         @out.puts "packaged #{artifact.name} → #{artifact.archive} (#{artifact.manifest.build_id})"
+        @step_outputs.artifact(artifact.name, files: packed.files + [artifact.dir / Lifecycle::Manifest::Artifact::FILE_NAME])
       end
 
       private
 
       # What the manifest records when the target declares no `build:`.
       NO_BUILDER = "none"
+
+      # The verb as a remote host runs it: the build fully qualified, the
+      # one flag the seam reads kept, and the artifact to bring back when
+      # `--fetch` asked — into the store directory the build has here.
+      #
+      # @param build [Lifecycle::Build]
+      # @param no_build [Boolean]
+      # @param fetch [Boolean]
+      # @return [Lifecycle::VerbInvocation]
+      sig { params(build: Lifecycle::Build, no_build: T::Boolean, fetch: T::Boolean).returns(Lifecycle::VerbInvocation) }
+      def invocation(build, no_build:, fetch:)
+        words = [NAME, build.name]
+        words << NO_BUILD_FLAG if no_build
+        Lifecycle::VerbInvocation.new(
+          words:, fetch: fetch ? Lifecycle::ArtifactFetch.new(name: build.name, into: @store.dir(build)) : nil,
+        )
+      end
 
       # @return [Array<Lifecycle::Target>] the targets `package` acts on
       sig { returns(T::Array[Lifecycle::Target]) }

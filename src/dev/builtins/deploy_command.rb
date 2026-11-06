@@ -23,12 +23,16 @@ module Dev
     # accept set without `--force`.
     #
     # The stage: `before` resolves where the protocol runs (the channel's
-    # `run:` environment under the host rule; the host for an integration's
-    # publisher), reads the tree once (what staleness is read against),
-    # consumes the argv into the selection — which carries the track: the
-    # **testing** one, what the store's artifacts always ship on (a
-    # release's archives ship live, `--release`, dev#425) — and resolves
-    # the publisher (Ports: the `run:` as a ScriptPublisher, or the one the
+    # `run:` environment under the host rule, or the runner `--runner`
+    # names; the host for an integration's publisher) and hands that
+    # dispatch the invocation a remote host would run — the channel, the
+    # positional and the selection flags as given, so the host selects
+    # from *its* store (K10: deploy never fetches) — and, for a seam that
+    # runs here, the env: the tree read once (what staleness is read
+    # against), the argv consumed into the selection — which carries the
+    # track: the **testing** one, what the store's artifacts always ship
+    # on (a release's archives ship live, `--release`, dev#425) — and the
+    # publisher (Ports: the `run:` as a ScriptPublisher, or the one the
     # lock contributed); the seam is the publisher over the selected
     # archives, on that track, with the channel's scratch in the store,
     # skipped under `--dry-run`; `after` reports each artifact shipped and
@@ -43,7 +47,15 @@ module Dev
     class DeployCommand < LifecycleCommand
       extend T::Sig
 
+      NAME = "deploy"
       DRY_RUN_FLAG = "--dry-run"
+
+      # The flags a remote host receives again: the selection's and the
+      # dry run — never the dispatch's.
+      SELECTION_FLAGS = T.let(
+        (DeploySelector::FLAGS + [Cli::Flag.new(DRY_RUN_FLAG, desc: "select and report, ship nothing, record nothing")]).freeze,
+        T::Array[Cli::Flag],
+      )
 
       # The channel's protocol has no placement bound: the lock could not
       # be read at load (the root said so and kept the tree so the re-lock
@@ -151,9 +163,7 @@ module Dev
       def desc = @channel.desc
 
       sig { override.returns(T::Array[Cli::Flag]) }
-      def flags
-        DeploySelector::FLAGS + [Cli::Flag.new(DRY_RUN_FLAG, desc: "select and report, ship nothing, record nothing")]
-      end
+      def flags = SELECTION_FLAGS + DispatchResolver::FLAGS
 
       sig { override.returns(T.nilable(Placement)) }
       attr_reader :placement
@@ -175,16 +185,18 @@ module Dev
 
       sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).returns(Dispatch::Outcome[DeployEnv]) }
       def before(args:, context:)
-        dispatch = @resolver.resolve(placement!, subject: "deploy #{@channel}")
-        state = Lifecycle::GitState.read(context.project!.root)
-        env = DeployEnv.new(
-          channel: @channel,
-          selection: @selector.select(args, state:),
-          publisher: @ports.publisher_for(@channel),
-          scratch: @store.scratch(@channel),
-          dry_run: args.flag?(DRY_RUN_FLAG),
-        )
-        dispatch.dispatch(env)
+        dispatch = @resolver.resolve(placement!, subject: "#{NAME} #{@channel}", runner: args.value(DispatchResolver::RUNNER_FLAG))
+        invocation = Lifecycle::VerbInvocation.new(words: [NAME, @channel.name, *args.positionals, *args.spelling(SELECTION_FLAGS)])
+        dispatch.dispatch(invocation) do
+          state = Lifecycle::GitState.read(context.project!.root)
+          DeployEnv.new(
+            channel: @channel,
+            selection: @selector.select(args, state:),
+            publisher: @ports.publisher_for(@channel),
+            scratch: @store.scratch(@channel),
+            dry_run: args.flag?(DRY_RUN_FLAG),
+          )
+        end
       end
 
       sig { override.params(env: DeployEnv, context: ExecutionContext).void }

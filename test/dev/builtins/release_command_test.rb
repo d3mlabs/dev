@@ -9,11 +9,14 @@ require "dev/builtins/package_command"
 require "dev/builtins/release_command"
 require "dev/dispatch"
 require "dev/dispatch_resolver"
+require "dev/enrolled_runner_lookup"
 require "dev/host_environment"
 require "dev/host_rule"
 require "dev/lifecycle"
 require "dev/lifecycle_executor"
 require "dev/placement"
+require "dev/remote_dispatches"
+require "dev/settings"
 require "dev/target_placement"
 require "digest"
 require "fileutils"
@@ -39,6 +42,11 @@ class Dev::Builtins::ReleaseCommandTest < Minitest::Test
   CONFIG = Dev::Lifecycle::Config
   NOW = Time.utc(2026, 11, 6, 12, 30, 0)
   URL = "https://github.com/d3mlabs/cellbound-3d/releases/tag/v1.2.0"
+
+  # The repo has no enrolled runner online.
+  class NoneEnrolled < Dev::EnrolledRunnerLookup
+    def available = nil
+  end
 
   # A FakeGh that snapshots the files of a `release upload` into a kept
   # directory before the verb's temp dir goes away.
@@ -123,13 +131,23 @@ class Dev::Builtins::ReleaseCommandTest < Minitest::Test
   def release_builds = Dev::Lifecycle::ReleaseBuilds.new(builds: [build("cellbound-3d-linux64-release"), build("cellbound-3d-server-linux64")])
   def store = Dev::Lifecycle::Store.new(project_name: "cellbound-3d", targets: targets, data_root: (@root / "data").to_s)
 
+  # Every build is host-placed on a linux64 machine, so each `package`
+  # dispatches natively: the remote side is wired as the resolver needs
+  # it, over a forge nothing reaches.
   def dispatcher
     host_rule = Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: (@root / "no-marker").to_s), inside_container: false)
     placements = targets.to_h do |target|
       host = target.platforms.to_h { |platform| [platform, Dev::Placement::Host.new] }
       [target.name, Dev::TargetPlacement.new(target: target, placements: host, host_platform: PLATFORM::Linux64)]
     end
-    Dev::BuildDispatcher.new(placements: placements, resolver: Dev::DispatchResolver.new(host_rule: host_rule))
+    remotes = Dev::RemoteDispatches.new(
+      root: @project, ui: typed_mock(Dev::Cli::Ui), out: @out, runs: Dev::Lifecycle::WorkflowRuns.new(gh: @gh),
+    )
+    settings = Dev::Settings.new(config_path: (@root / "config.yml").to_s, system_config_path: (@root / "none.yml").to_s)
+    resolver = Dev::DispatchResolver.new(
+      host_rule: host_rule, remotes: remotes, enrolled: NoneEnrolled.new, settings: settings, inside_job: false,
+    )
+    Dev::BuildDispatcher.new(placements: placements, resolver: resolver)
   end
 
   def listing = Dev::BuildListing.new(targets: targets, dispatcher: dispatcher)

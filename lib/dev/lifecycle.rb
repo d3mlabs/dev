@@ -50,6 +50,12 @@ require_relative "lifecycle/snapshot_commit"
 require_relative "lifecycle/snapshot_branches"
 require_relative "lifecycle/workflow_triggers"
 require_relative "lifecycle/snapshot_sync"
+require_relative "lifecycle/artifact_fetch"
+require_relative "lifecycle/verb_invocation"
+require_relative "lifecycle/lifecycle_workflow"
+require_relative "lifecycle/workflow_run"
+require_relative "lifecycle/workflow_runs"
+require_relative "lifecycle/step_outputs"
 
 module Dev
   # The vocabulary and the store of the build lifecycle (dev#192): a project
@@ -100,6 +106,12 @@ module Dev
   # `origin` namespace SnapshotBranches owns — and prunes by age for
   # `dev cache gc` — after WorkflowTriggers has checked that no project
   # workflow would run on the push; Git is the one CLI boundary they share.
+  # What crosses to the remote host is a VerbInvocation (the verb's words,
+  # and the ArtifactFetch `--fetch` asks for); the host runs it through
+  # the generic workflow LifecycleWorkflow describes (dev#420), whose runs
+  # WorkflowRuns dispatches, finds by the snapshot branch, watches and
+  # downloads from (WorkflowRun is one as the forge lists it); StepOutputs
+  # is how `package` on the host names its artifact to that workflow.
   module Lifecycle
   end
 end

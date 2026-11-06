@@ -80,4 +80,40 @@ class Dev::Lifecycle::GhTest < Minitest::Test
     error = raises(Dev::Lifecycle::Gh::GhMissingError)
     error.message == "gh not found on PATH"
   end
+
+  test "stream runs gh in the checkout on this process's stdout and stderr, with nothing on its stdin: the argv and cwd are gh's, nothing is captured" do
+    Given
+    stub_gh(out: "✓ run 42 completed with 'success'\n")
+
+    When
+    Dev::Lifecycle::Gh.new(root: @root).stream(["run", "watch", "42"])
+
+    Then "the stub's `cat` of stdin read nothing and returned, rather than waiting on dev's own"
+    (@dir / "argv").read.lines(chomp: true) == ["run", "watch", "42"]
+    (@dir / "stdin").read == ""
+    Pathname((@dir / "cwd").read.strip).realpath == @root.realpath
+  end
+
+  test "a nonzero streamed gh is CommandFailedError naming the argv, the checkout and the exit" do
+    Given
+    stub_gh(status: 4)
+
+    When
+    Dev::Lifecycle::Gh.new(root: @root).stream(["run", "watch", "42"])
+
+    Then
+    error = raises(Dev::Lifecycle::Gh::CommandFailedError)
+    error.message == "gh run watch 42 failed in #{@root} (exited 4)"
+  end
+
+  test "no gh on PATH is GhMissingError for a stream too" do
+    Given
+    ENV["PATH"] = @bin.to_s
+
+    When
+    Dev::Lifecycle::Gh.new(root: @root).stream(["run", "watch", "42"])
+
+    Then
+    raises Dev::Lifecycle::Gh::GhMissingError
+  end
 end

@@ -1,0 +1,86 @@
+# The generic lifecycle workflow dev ships (dev#192, K7, milestone B).
+#
+# A project copies this file verbatim to `.github/workflows/dev-lifecycle.yml`
+# (a remote dispatch that finds it missing names the `cp`, source path
+# included). The remote dispatch of the lifecycle verbs (`dev build`,
+# `dev package`, `dev deploy <channel>` from a machine that is not the
+# build's environment) dispatches it on a snapshot branch of the
+# operator's working tree and watches the run.
+#
+# The vocabulary is dev's: `verbs` is one or several dev invocations,
+# comma-separated, exactly as typed after `dev`; `runner` is the label the
+# job demands beside `self-hosted` — the repo's enrolled runner (its name)
+# or a pool such as `ue-engine-hosted`; `fetch` uploads the packaged
+# artifact (the archive and its `build-id.json`) as a workflow artifact
+# named after the build, which `--fetch` downloads into the operator's
+# store. The job runs the verbs where it lands and leaves the artifact in
+# that host's data root (K10): the box deploys from its own store.
+#
+# Only `workflow_dispatch` triggers it: a snapshot branch push must run
+# nothing on its own (`Lifecycle::WorkflowTriggers` refuses the dispatch
+# otherwise), and the run is the one dev asked for.
+name: dev lifecycle
+run-name: "dev ${{ inputs.verbs }} on ${{ inputs.runner }} (${{ github.ref_name }})"
+
+on:
+  workflow_dispatch:
+    inputs:
+      verbs:
+        description: "dev verbs with their arguments, comma-separated (e.g. `package cellbound-3d-win64-dev, deploy staging`)"
+        required: true
+        type: string
+      runner:
+        description: "runner label the job demands beside self-hosted (the repo's enrolled runner, or a pool)"
+        required: true
+        type: string
+      fetch:
+        description: "upload the packaged artifact as a workflow artifact named after the build"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  lifecycle:
+    name: "${{ inputs.verbs }}"
+    runs-on: [self-hosted, "${{ inputs.runner }}"]
+    steps:
+      - uses: actions/checkout@v4
+
+      # A self-hosted service's PATH is the unit's, not a login shell's:
+      # put the brew prefix that holds dev on it when one does.
+      - name: Put dev on PATH
+        shell: bash
+        run: |
+          for prefix in /opt/homebrew /home/linuxbrew/.linuxbrew /usr/local; do
+            if [ -x "$prefix/bin/dev" ]; then echo "$prefix/bin" >> "$GITHUB_PATH"; fi
+          done
+
+      # Warm host: a probe over the data root. Cold host: the lock installs.
+      - name: dev up
+        run: dev up
+
+      # Each entry is one dev invocation, word-split on purpose. The input
+      # rides the environment, never the script text.
+      - name: Run the verbs
+        id: verbs
+        shell: bash
+        env:
+          DEV_LIFECYCLE_VERBS: ${{ inputs.verbs }}
+        run: |
+          set -euo pipefail
+          IFS=',' read -r -a verbs <<< "$DEV_LIFECYCLE_VERBS"
+          for verb in "${verbs[@]}"; do
+            # shellcheck disable=SC2086
+            dev $verb
+          done
+
+      # `dev package` names what it stamped on the step's outputs
+      # (Lifecycle::StepOutputs); `--fetch` downloads this artifact by the
+      # build's name into the operator's store directory for the build.
+      - name: Upload the artifact
+        if: ${{ inputs.fetch && steps.verbs.outputs.artifact != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.verbs.outputs.artifact }}
+          path: ${{ steps.verbs.outputs.artifact_files }}
+          if-no-files-found: error

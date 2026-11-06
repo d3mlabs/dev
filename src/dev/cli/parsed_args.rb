@@ -1,6 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "flag"
+
 module Dev
   module Cli
     # A command's argv after parsing against its flag vocabulary
@@ -63,6 +65,25 @@ module Dev
       sig { params(name: String).returns(T::Array[String]) }
       def values(name)
         @values.fetch(name, [])
+      end
+
+      # The flags among +flags+ this argv gave, spelled back as words in
+      # the declared order — `--config dev --allow-stale` — for a command
+      # that re-invokes itself elsewhere with a subset of what it was given
+      # (a lifecycle verb on a remote host, its dispatch flags left out).
+      # A value flag repeats once per value; a switch once.
+      #
+      # @param flags [Array<Flag>] the flags to carry over
+      # @return [Array<String>]
+      sig { params(flags: T::Array[Flag]).returns(T::Array[String]) }
+      def spelling(flags)
+        flags.flat_map do |flag|
+          if flag.takes_value?
+            values(flag.name).flat_map { |value| [flag.name, value] }
+          else
+            @switches.include?(flag.name) ? [flag.name] : []
+          end
+        end
       end
 
       sig { params(other: Object).returns(T::Boolean) }

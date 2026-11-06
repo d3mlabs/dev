@@ -236,6 +236,40 @@ class Dev::SettingsTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "lifecycle_runner is the standing runner label, set by `dev config set lifecycle.runner`, overridden by DEV_LIFECYCLE_RUNNER" do
+    Given "a user config written through set, then an ENV override"
+    dir = Dir.mktmpdir("dev-settings-test-")
+    saved_env = ENV.delete("DEV_LIFECYCLE_RUNNER")
+    settings = build_settings(dir)
+    settings.set(Dev::Settings::LIFECYCLE_RUNNER_KEY, "ue-engine-hosted")
+    from_file = settings.lifecycle_runner
+    ENV["DEV_LIFECYCLE_RUNNER"] = "win64-pool"
+    from_env = build_settings(dir).lifecycle_runner
+
+    Expect
+    Dev::Settings::LIFECYCLE_RUNNER_KEY == "lifecycle.runner"
+    from_file == "ue-engine-hosted"
+    from_env == "win64-pool"
+
+    Cleanup
+    saved_env ? ENV["DEV_LIFECYCLE_RUNNER"] = saved_env : ENV.delete("DEV_LIFECYCLE_RUNNER")
+    FileUtils.rm_rf(dir)
+  end
+
+  test "an unset lifecycle_runner is nil — the enrolled runner, or a refusal, decides the remote dispatch" do
+    Given "no config file"
+    dir = Dir.mktmpdir("dev-settings-test-")
+    saved_env = ENV.delete("DEV_LIFECYCLE_RUNNER")
+    settings = build_settings(dir)
+
+    Expect
+    settings.lifecycle_runner.nil?
+
+    Cleanup
+    ENV["DEV_LIFECYCLE_RUNNER"] = saved_env if saved_env
+    FileUtils.rm_rf(dir)
+  end
+
   test "engine_resources defaults to enforce and reads the layers like every other key" do
     Given "an engine_resources value in one layer"
     dir = Dir.mktmpdir("dev-settings-test-")

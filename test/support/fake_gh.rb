@@ -55,6 +55,14 @@ class FakeGh < Dev::Lifecycle::Gh
     out
   end
 
+  # A streamed gh (`run watch`) consumes its scripted answer the same way;
+  # what it would have printed goes nowhere, as the operator's terminal is
+  # not under test.
+  def stream(argv)
+    capture(argv)
+    nil
+  end
+
   # The bodies dev posted, parsed, in call order.
   def posted
     @calls.select { |call| call.stdin }.map { |call| JSON.parse(call.stdin) }

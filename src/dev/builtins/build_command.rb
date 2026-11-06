@@ -8,6 +8,7 @@ require "dev/build_listing"
 require "dev/build_selector"
 require "dev/command"
 require "dev/dispatch"
+require "dev/dispatch_resolver"
 require "dev/lifecycle"
 
 module Dev
@@ -22,13 +23,17 @@ module Dev
     #
     # The stage: `before` consumes the argv into the build (BuildSelector),
     # resolves where it runs (BuildDispatcher — the target's `environment:`
-    # under the host rule) and hands the env to that dispatch; the seam is
-    # the builder, writing the install into the store's directory for the
-    # build (`DEV_INSTALL`); `after` reports it. A target with no `build:`
-    # has nothing to compile — the verb says so and does nothing, so
-    # `package` can run alone over it.
+    # under the host rule, or the runner `--runner` names) and hands that
+    # dispatch the verb's invocation (`build <build>`, fully qualified,
+    # for a remote host) and the env for a seam that runs here; the seam
+    # is the builder, writing the install into the store's directory for
+    # the build (`DEV_INSTALL`); `after` reports it. A target with no
+    # `build:` has nothing to compile — the verb says so and does nothing,
+    # so `package` can run alone over it.
     class BuildCommand < LifecycleCommand
       extend T::Sig
+
+      NAME = "build"
 
       # What `before` resolves and the seam and `after` read.
       class BuildEnv < T::Struct
@@ -68,13 +73,13 @@ module Dev
 
       sig { override.returns(String) }
       def desc
-        "Build a target's install (build [BUILD] | --target T [--platform P] [--config C])\n" \
+        "Build a target's install (build [BUILD] | --target T [--platform P] [--config C] [--runner L])\n" \
           "BUILD is `<target>[-<platform>[-<config>]]`; an omitted axis takes the target's first. " \
           "Bare `dev build` is `#{default_build}`."
       end
 
       sig { override.returns(T::Array[Cli::Flag]) }
-      def flags = BuildSelector::FLAGS
+      def flags = BuildSelector::FLAGS + DispatchResolver::FLAGS
 
       sig { override.returns(T.nilable(Listing)) }
       def listing = @listing.listing
@@ -89,8 +94,10 @@ module Dev
       def before(args:, context:)
         _ = context
         build = @selector.select(args)
-        env = BuildEnv.new(build:, install: @store.install_dir(build), builder: @ports.builder_for(build.target))
-        @dispatcher.dispatch_for(build).dispatch(env)
+        dispatch = @dispatcher.dispatch_for(build, runner: args.value(DispatchResolver::RUNNER_FLAG))
+        dispatch.dispatch(Lifecycle::VerbInvocation.new(words: [NAME, build.name])) do
+          BuildEnv.new(build:, install: @store.install_dir(build), builder: @ports.builder_for(build.target))
+        end
       end
 
       sig { override.params(env: BuildEnv, context: ExecutionContext).void }
