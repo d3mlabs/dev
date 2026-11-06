@@ -53,6 +53,21 @@ class Dev::Lifecycle::GithubDeploymentsTest < Minitest::Test
     ]
   end
 
+  test "a created deployment the forge reports back malformed is a typed ledger error, not a parse exception" do
+    Given "the POST answered with an id but a created_at that is not a time"
+    gh = FakeGh.new.resolving("d3mlabs/cellbound-3d")
+      .answers(["api", "-X", "POST", "--input", "-", "repos/d3mlabs/cellbound-3d/deployments"], with: deployment_json.merge("created_at" => "yesterday"))
+      .answers(["api", "-X", "POST", "--input", "-", "repos/d3mlabs/cellbound-3d/deployments/41/statuses"], with: { "state" => "success" })
+
+    When
+    Dev::Lifecycle::GithubDeployments.new(gh:).record(record)
+
+    Then
+    error = raises(Dev::Lifecycle::GithubDeployments::MalformedDeploymentError)
+    error.is_a?(Dev::Lifecycle::GithubDeployments::Error)
+    error.message.include?("could not be read back")
+  end
+
   test "a live-track record marks the environment production, and a failure's description is cut to GitHub's 140 characters" do
     Given
     gh = FakeGh.new.resolving("d3mlabs/cellbound-3d")
