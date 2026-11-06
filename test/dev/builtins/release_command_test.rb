@@ -74,6 +74,10 @@ class Dev::Builtins::ReleaseCommandTest < Minitest::Test
     (@project / "VERSION").write("1.1.0\n")
     Open3.capture2e("git", "init", "-q", "--bare", @origin.to_s)
     git("init", "-q", "-b", "main")
+    # The cut's own bump commit runs through Dev::Lifecycle::Git, which carries no identity
+    # of its own — the repo must hold one, since CI runners have no global git identity.
+    git("config", "user.name", "t")
+    git("config", "user.email", "t@t")
     git("add", ".")
     commit("one")
     git("remote", "add", "origin", @origin.to_s)
