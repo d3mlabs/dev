@@ -21,11 +21,34 @@ module Dev
         # @return [String] the file's first line, or the default
         sig { params(root: Pathname).returns(String) }
         def read(root)
+          declared(root) || BuildId::DEFAULT_SEMVER
+        end
+
+        # The version the project keeps in source, or nil when it keeps
+        # none — the distinction `release` reads: a project with a
+        # `VERSION` file gets a bump commit, one without is tagged as is.
+        #
+        # @param root [Pathname] the project root
+        # @return [String, nil] the file's first line, trimmed; nil when
+        #   there is no file or it is blank
+        sig { params(root: Pathname).returns(T.nilable(String)) }
+        def declared(root)
           file = root / FILE_NAME
-          return BuildId::DEFAULT_SEMVER unless file.file?
+          return nil unless file.file?
 
           version = file.read.lines.first.to_s.strip
-          version.empty? ? BuildId::DEFAULT_SEMVER : version
+          version.empty? ? nil : version
+        end
+
+        # Write the version the project keeps in source — the bump of a
+        # release cut.
+        #
+        # @param root [Pathname] the project root
+        # @param version [String]
+        # @return [void]
+        sig { params(root: Pathname, version: String).void }
+        def write(root, version)
+          (root / FILE_NAME).write("#{version}\n")
         end
       end
     end

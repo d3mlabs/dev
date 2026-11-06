@@ -80,6 +80,8 @@ module Dev
     # Builds the deployment ledger over a checkout; injected for tests,
     # since the ledger is the forge.
     DeploymentsFactory = T.type_alias { T.proc.params(root: Pathname).returns(Lifecycle::GithubDeployments) }
+    # Builds the release archive over a checkout; injected for the same reason.
+    ReleasesFactory = T.type_alias { T.proc.params(root: Pathname).returns(Lifecycle::GithubReleases) }
 
     sig do
       params(
@@ -91,6 +93,7 @@ module Dev
         host_rule: HostRule,
         github_token: ContainerGithubToken,
         deployments_factory: DeploymentsFactory,
+        releases_factory: ReleasesFactory,
       ).void
     end
     def initialize(
@@ -101,7 +104,8 @@ module Dev
       command_service: nil,
       host_rule: HostRule.new,
       github_token: ContainerGithubToken.new,
-      deployments_factory: ->(root) { Lifecycle::GithubDeployments.new(gh: Lifecycle::Gh.new(root:)) }
+      deployments_factory: ->(root) { Lifecycle::GithubDeployments.new(gh: Lifecycle::Gh.new(root:)) },
+      releases_factory: ->(root) { Lifecycle::GithubReleases.new(gh: Lifecycle::Gh.new(root:)) }
     )
       @ui = ui
       @out = out
@@ -114,6 +118,7 @@ module Dev
       # The host's gh token, as every exec into a container carries it.
       @github_token = github_token
       @deployments_factory = deployments_factory
+      @releases_factory = releases_factory
     end
 
     # Runs the dev command specified by the given argv.
@@ -484,7 +489,10 @@ module Dev
     # dispatching its protocol by the channel's bound placement through
     # the same resolver, and recording into one ledger on the forge (K6)
     # — which `deploy status`, the group's last child, reads back per
-    # channel.
+    # channel. `release`, when the project declares what one contains
+    # (`commands: release:`, K4): the cut over this checkout's git, the
+    # same `package` instance run per release build, the release archive
+    # on the forge.
     #
     # @param manifest [ProjectManifest]
     # @param project [ProjectContext]
@@ -499,12 +507,23 @@ module Dev
       listing = BuildListing.new(targets:, dispatcher:)
       ports = Lifecycle::Ports.new(project_root: project.root, publishers: bindings.publishers)
       store = Lifecycle::Store.new(project_name: project.name, targets:)
+      package = Builtins::PackageCommand.new(selector:, dispatcher:, listing:, ports:, store:, out: @out)
       verbs = T.let({
         "build" => Builtins::BuildCommand.new(selector:, dispatcher:, listing:, ports:, store:, out: @out),
-        "package" => Builtins::PackageCommand.new(
-          selector:, dispatcher:, listing:, ports:, store:, semver: Lifecycle::ProjectVersion.read(project.root), out: @out,
-        ),
+        "package" => package,
       }, T::Hash[String, Command])
+      release = manifest.release
+      if release
+        verbs["release"] = Builtins::ReleaseCommand.new(
+          release:,
+          cut: Lifecycle::ReleaseCut.new(git: Lifecycle::Git.new(root: project.root)),
+          package:,
+          store:,
+          releases: @releases_factory.call(project.root),
+          listing:,
+          out: @out,
+        )
+      end
       return verbs if bindings.channels.empty?
 
       deployments = @deployments_factory.call(project.root)

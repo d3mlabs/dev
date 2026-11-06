@@ -9,6 +9,7 @@ require "dev/lifecycle"
 require_relative "channel_parser"
 require_relative "command_parser"
 require_relative "project_manifest"
+require_relative "release_parser"
 require_relative "target_parser"
 
 module Dev
@@ -26,11 +27,15 @@ module Dev
   # be named like a build, so a positional `dev build <build>` is never
   # ambiguous; and `commands: deploy:` is the project's channels — lifted
   # out of the command tree into the manifest's `channels` (ChannelParser),
-  # since `deploy` is derived from them. All are vacuous without targets —
-  # the derived verbs do not exist then, and a project's own `build:` or
-  # `deploy:` is a plain command — except that a `deploy` child shaped
-  # like a channel (`targets:`) without any target to accept is refused
-  # with the fix named, rather than silently kept as a command.
+  # since `deploy` is derived from them; and `commands: release:` is what a
+  # release contains — lifted the same way into the manifest's `release`
+  # (ReleaseParser), since `release <version>` is derived from it. All are
+  # vacuous without targets — the derived verbs do not exist then, and a
+  # project's own `build:`, `deploy:` or `release:` is a plain command —
+  # except that a `deploy` child shaped like a channel (`targets:`), or a
+  # `release` shaped like a declaration (`targets:`), without any target
+  # to name is refused with the fix named, rather than silently kept as a
+  # command.
   #
   # Stateless: reusable across manifests, inputs arrive as method arguments.
   class ProjectManifestLoader
@@ -65,6 +70,11 @@ module Dev
     # there is no build for it to accept (dev#192, K5).
     class ChannelWithoutTargetsError < RuntimeError; end
 
+    # Raised when `release` declares `targets:` — the shape of a release
+    # declaration — in a project that declares no `targets:` at the top
+    # level: there is no build for a release to contain (dev#192, K4).
+    class ReleaseWithoutTargetsError < RuntimeError; end
+
     # The verbs `targets:` derives; a project may not declare them.
     DERIVED_COMMANDS = T.let(["build", "package"].freeze, T::Array[String])
 
@@ -89,11 +99,20 @@ module Dev
     # The block's keys that fed the Dockerfile build and have no successor.
     GONE_WITH_THE_DOCKERFILE = "delete it — the Dockerfile path is gone (d3mlabs/dev#311)"
 
-    sig { params(command_parser: CommandParser, target_parser: TargetParser, channel_parser: ChannelParser).void }
-    def initialize(command_parser: CommandParser.new, target_parser: TargetParser.new, channel_parser: ChannelParser.new)
+    sig do
+      params(
+        command_parser: CommandParser,
+        target_parser: TargetParser,
+        channel_parser: ChannelParser,
+        release_parser: ReleaseParser,
+      ).void
+    end
+    def initialize(command_parser: CommandParser.new, target_parser: TargetParser.new, channel_parser: ChannelParser.new,
+                   release_parser: ReleaseParser.new)
       @command_parser = command_parser
       @target_parser = target_parser
       @channel_parser = channel_parser
+      @release_parser = release_parser
     end
 
     # Parse dev.yml into a manifest.
@@ -110,8 +129,12 @@ module Dev
     #   command is named like one of its builds
     # @raise [ChannelWithoutTargetsError] when a `deploy` child declares
     #   `targets:` and the project declares none
+    # @raise [ReleaseWithoutTargetsError] when `release` declares
+    #   `targets:` and the project declares none
     # @raise [ChannelParser::DeployBodyError] and the channel rules, when
     #   `targets:` is declared and `commands: deploy:` is not a tree of channels
+    # @raise [ReleaseParser::ReleaseBodyError] and the release rules, when
+    #   `targets:` is declared and `commands: release:` is not a declaration
     sig { params(dev_yml_path: Pathname).returns(ProjectManifest) }
     def load(dev_yml_path)
       yaml = YAML.load_file(dev_yml_path)
@@ -121,8 +144,10 @@ module Dev
       raw_commands = yaml["commands"] || {}
       targets = @target_parser.parse_all(yaml["targets"])
       channels = parse_channels(raw_commands, targets)
-      # Once targets exist, `deploy` is the channels' and not a command.
-      raw_commands = raw_commands.except(ChannelParser::DEPLOY) if targets.any?
+      release = parse_release(raw_commands, targets)
+      # Once targets exist, `deploy` is the channels' and `release` the
+      # declaration's — neither a command.
+      raw_commands = raw_commands.except(ChannelParser::DEPLOY, ReleaseParser::RELEASE) if targets.any?
       commands = T.let(
         raw_commands.to_h { |name, h| [name.to_s, @command_parser.parse([name.to_s], h)] },
         T::Hash[String, ProjectNode],
@@ -134,6 +159,7 @@ module Dev
         commands:,
         targets:,
         channels:,
+        release:,
         engine: parse_resources(yaml["engine"]),
       )
     end
@@ -155,6 +181,31 @@ module Dev
       raise ChannelWithoutTargetsError,
         "dev.yml declares a `deploy` channel (`#{ChannelParser::ACCEPTS_KEY}:` on a `deploy` child) but no `targets:` — " \
           "a channel accepts builds, so declare the targets they come from (d3mlabs/dev#192)"
+    end
+
+    # With targets declared, `commands: release:` is what a release contains
+    # and leaves the command tree (the caller drops the key); absent, there
+    # is no release and no `release` verb. Without targets, `release` stays
+    # a plain command — unless it already carries `targets:`, the one shape
+    # that cannot mean anything there.
+    #
+    # @param raw_commands [Hash] the `commands` mapping as YAML delivered it
+    # @param targets [Hash{String => Lifecycle::Target}]
+    # @return [Lifecycle::ReleaseBuilds, nil] nil without targets or without
+    #   a `release` entry
+    # @raise [ReleaseWithoutTargetsError]
+    sig { params(raw_commands: T::Hash[T.untyped, T.untyped], targets: T::Hash[String, Lifecycle::Target]).returns(T.nilable(Lifecycle::ReleaseBuilds)) }
+    def parse_release(raw_commands, targets)
+      if targets.any?
+        return nil unless raw_commands.key?(ReleaseParser::RELEASE)
+
+        return @release_parser.parse(raw_commands[ReleaseParser::RELEASE], targets.values)
+      end
+      return nil unless @release_parser.release_declared?(raw_commands)
+
+      raise ReleaseWithoutTargetsError,
+        "dev.yml declares what a release contains (`#{ReleaseParser::TARGETS_KEY}:` on `release`) but no `targets:` — " \
+          "a release packages builds, so declare the targets they come from (d3mlabs/dev#192)"
     end
 
     # With targets declared, `build` and `package` exist as derived verbs,

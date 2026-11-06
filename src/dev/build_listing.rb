@@ -36,7 +36,18 @@ module Dev
     # @return [LifecycleCommand::Listing]
     sig { params(targets: T::Array[Lifecycle::Target]).returns(LifecycleCommand::Listing) }
     def listing(targets: @targets)
-      LifecycleCommand::Listing.new(heading: HEADING, subjects: targets.flat_map(&:builds).map { |build| subject(build) })
+      listing_of(targets.flat_map(&:builds))
+    end
+
+    # The section for a verb acting on a fixed set of builds rather than
+    # on whole targets — the release's builds (`dev help release`).
+    #
+    # @param builds [Array<Lifecycle::Build>] in the order the verb acts on them
+    # @param heading [String]
+    # @return [LifecycleCommand::Listing]
+    sig { params(builds: T::Array[Lifecycle::Build], heading: String).returns(LifecycleCommand::Listing) }
+    def listing_of(builds, heading: HEADING)
+      LifecycleCommand::Listing.new(heading:, subjects: builds.map { |build| subject(build) })
     end
 
     # Every name a verb's positional admits: each target's patterns and
