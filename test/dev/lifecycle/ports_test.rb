@@ -3,6 +3,7 @@
 
 require "test_helper"
 require "dev/lifecycle"
+require "support/recording_publisher"
 require "fileutils"
 require "pathname"
 require "tmpdir"
@@ -54,6 +55,55 @@ class Dev::Lifecycle::PortsTest < Minitest::Test
     Expect
     ports.publisher_for(channel).is_a?(Dev::Lifecycle::ScriptPublisher)
     ports.publisher_for(channel).command == "./bin/stage"
+  end
+
+  test "a channel naming an integration gets the publisher the lock contributed under that name (dev#422)" do
+    Given
+    steam = RecordingPublisher.new
+    ports = Dev::Lifecycle::Ports.new(project_root: Pathname("/project"), publishers: { "steam" => steam, "brew" => RecordingPublisher.new })
+    channel = Dev::Lifecycle::Channel.new(
+      name: "steam",
+      accepts: [Dev::Lifecycle::BuildPattern.new(target: Dev::Lifecycle::Target.new(name: "rspock"))],
+      publisher: Dev::Lifecycle::PublisherSpec::Integration.new(name: "steam"),
+    )
+
+    Expect
+    ports.publisher_for(channel).equal?(steam)
+  end
+
+  test "a channel naming a publisher the lock did not contribute is a wiring error naming what it did" do
+    Given
+    ports = Dev::Lifecycle::Ports.new(project_root: Pathname("/project"), publishers: { "brew" => RecordingPublisher.new })
+    channel = Dev::Lifecycle::Channel.new(
+      name: "steam",
+      accepts: [Dev::Lifecycle::BuildPattern.new(target: Dev::Lifecycle::Target.new(name: "rspock"))],
+      publisher: Dev::Lifecycle::PublisherSpec::Integration.new(name: "steam"),
+    )
+
+    When
+    ports.publisher_for(channel)
+
+    Then
+    error = raises Dev::Lifecycle::Ports::UnknownPublisherError
+    error.message.include?("channel 'steam' names the steam publisher")
+    error.message.include?("it contributes: brew")
+  end
+
+  test "a lock contributing no publisher at all says so, rather than listing nothing" do
+    Given
+    ports = Dev::Lifecycle::Ports.new(project_root: Pathname("/project"))
+    channel = Dev::Lifecycle::Channel.new(
+      name: "steam",
+      accepts: [Dev::Lifecycle::BuildPattern.new(target: Dev::Lifecycle::Target.new(name: "rspock"))],
+      publisher: Dev::Lifecycle::PublisherSpec::Integration.new(name: "steam"),
+    )
+
+    When
+    ports.publisher_for(channel)
+
+    Then
+    error = raises Dev::Lifecycle::Ports::UnknownPublisherError
+    error.message.include?("(it contributes: none)")
   end
 
   test "the script ports run at the project root the Ports were built over, through its shell" do

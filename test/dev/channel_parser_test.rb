@@ -39,6 +39,28 @@ class Dev::ChannelParserTest < Minitest::Test
     channels["steam"].publisher == Dev::Lifecycle::PublisherSpec::Script.new(command: "./bin/steam-upload", environment: nil)
   end
 
+  test "a child without run: names the lock's publisher of its name: targets: configures it, desc as any command's (dev#422): #{what}" do
+    Given "a deploy entry whose child has no script"
+    raw = { "commands" => { "steam" => entry } }
+
+    When
+    channels = parser.parse_all(raw, all_targets)
+
+    Then "the channel's protocol is the integration reference, unbound here — the composition root binds it against the lock"
+    channels["steam"] == Dev::Lifecycle::Channel.new(
+      name: "steam", desc: desc,
+      accepts: [Dev::Lifecycle::BuildPattern.parse("cellbound-3d-steamworks", all_targets)],
+      publisher: Dev::Lifecycle::PublisherSpec::Integration.new(name: "steam"),
+    )
+    channels["steam"].publisher.to_s == "publisher: steam"
+
+    Where
+    what                | entry                                                                               | desc
+    "targets only"      | { "targets" => ["cellbound-3d-steamworks"] }                                        | "(no description)"
+    "with a desc"       | { "desc" => "Steam depots", "targets" => ["cellbound-3d-steamworks"] }              | "Steam depots"
+    "with an empty run" | { "desc" => "Steam depots", "targets" => ["cellbound-3d-steamworks"], "run" => "" } | "Steam depots"
+  end
+
   test "no deploy entry means no channel" do
     Expect
     parser.parse_all(nil, all_targets) == {}
@@ -74,9 +96,9 @@ class Dev::ChannelParserTest < Minitest::Test
     "a child named help"            | { "commands" => { "help" => { "targets" => ["rspock"], "run" => "r" } } }                           | Dev::ChannelParser::ReservedChannelNameError          | "'help' is reserved"
     "a child that is a string"      | { "commands" => { "staging" => "./bin/stage" } }                                                    | Dev::ChannelParser::InvalidChannelError               | "channel 'deploy staging': expected a mapping"
     "a child with children"         | { "commands" => { "staging" => { "targets" => ["rspock"], "run" => "r", "commands" => {} } } }      | Dev::ChannelParser::ChannelChildrenError              | "a channel has no subcommands"
-    "a child without run:"          | { "commands" => { "staging" => { "targets" => ["rspock"] } } }                                      | Dev::ChannelParser::ChannelProtocolError              | "has no protocol"
-    "a child with an empty run:"    | { "commands" => { "staging" => { "targets" => ["rspock"], "run" => "" } } }                         | Dev::ChannelParser::ChannelProtocolError              | "d3mlabs/dev#422"
+    "an environment: without run:"  | { "commands" => { "steam" => { "targets" => ["rspock"], "environment" => "host" } } }               | Dev::ChannelParser::ChannelEnvironmentError           | "declares `environment:` without `run:`"
     "a child without targets:"      | { "commands" => { "staging" => { "run" => "r" } } }                                                 | Dev::ChannelParser::ChannelAcceptsError               | "`targets:` must be a non-empty list"
+    "a child with neither"          | { "commands" => { "steam" => { "desc" => "Steam" } } }                                              | Dev::ChannelParser::ChannelAcceptsError               | "`targets:` must be a non-empty list"
     "an empty targets: list"        | { "commands" => { "staging" => { "targets" => [], "run" => "r" } } }                                | Dev::ChannelParser::ChannelAcceptsError               | "got []"
     "a targets: string"             | { "commands" => { "staging" => { "targets" => "rspock", "run" => "r" } } }                          | Dev::ChannelParser::ChannelAcceptsError               | "got \"rspock\""
     "a pattern naming no target"    | { "commands" => { "staging" => { "targets" => ["snappy"], "run" => "r" } } }                        | Dev::Lifecycle::BuildPattern::UnknownTargetError      | "snappy"

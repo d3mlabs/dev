@@ -5,6 +5,7 @@ require "pathname"
 require_relative "artifact"
 require_relative "build"
 require_relative "manifest"
+require_relative "track"
 
 module Dev
   module Lifecycle
@@ -21,10 +22,14 @@ module Dev
     #
     # A channel's `run:` reads the same axes for the artifact it ships,
     # with `DEV_ARTIFACT` now the archive file itself (the first part of a
-    # split set; the rest sit beside it), `DEV_CHANNEL`, and the manifest's
-    # keys — `DEV_BUILD`, `DEV_BUILD_ID`, `DEV_SHA`, `DEV_DIRTY`,
-    # `DEV_PACKAGED_AT`, `DEV_ARCHIVE_SHA256` — so the script can name
-    # what it shipped without reading `build-id.json` (dev#192, K5).
+    # split set; the rest sit beside it), `DEV_CHANNEL`, `DEV_TRACK` (the
+    # track the source decided: `testing` from the store, `live` for a
+    # release's archives), `DEV_SCRATCH` (the channel's own directory in
+    # the store, for whatever the script unpacks or wraps — the archive
+    # itself is read-only), and the manifest's keys — `DEV_BUILD`,
+    # `DEV_BUILD_ID`, `DEV_SHA`, `DEV_DIRTY`, `DEV_PACKAGED_AT`,
+    # `DEV_ARCHIVE_SHA256` — so the script can name what it shipped
+    # without reading `build-id.json` (dev#192, K5).
     module ScriptEnv
       TARGET = "DEV_TARGET"
       PLATFORM = "DEV_PLATFORM"
@@ -32,6 +37,8 @@ module Dev
       INSTALL = "DEV_INSTALL"
       ARTIFACT = "DEV_ARTIFACT"
       CHANNEL = "DEV_CHANNEL"
+      TRACK = "DEV_TRACK"
+      SCRATCH = "DEV_SCRATCH"
       BUILD = "DEV_BUILD"
       BUILD_ID = "DEV_BUILD_ID"
       SHA = "DEV_SHA"
@@ -72,13 +79,17 @@ module Dev
         #
         # @param artifact [Artifact] the one being shipped
         # @param channel [String] the channel's name
+        # @param track [Track] the track the source decided
+        # @param scratch [Pathname] the channel's scratch directory
         # @return [Hash{String => String}]
-        sig { params(artifact: Artifact, channel: String).returns(Env) }
-        def for_deploy(artifact, channel:)
+        sig { params(artifact: Artifact, channel: String, track: Track, scratch: Pathname).returns(Env) }
+        def for_deploy(artifact, channel:, track:, scratch:)
           manifest = artifact.manifest
           axes(artifact.build).merge(
             ARTIFACT => artifact.archive.to_s,
             CHANNEL => channel,
+            TRACK => track.to_s,
+            SCRATCH => scratch.to_s,
             BUILD => artifact.name,
             BUILD_ID => manifest.build_id.to_s,
             SHA => manifest.state.sha || UNKNOWN_SHA,

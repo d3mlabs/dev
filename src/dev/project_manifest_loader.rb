@@ -68,10 +68,9 @@ module Dev
     # The verbs `targets:` derives; a project may not declare them.
     DERIVED_COMMANDS = T.let(["build", "package"].freeze, T::Array[String])
 
-    # The key `runs_on:` became: the environment a command's body executes
-    # in — the domain's own noun, where `runs_on` is GitHub's word for a
-    # runner label (dev#409).
-    ENVIRONMENT_KEY = "environment"
+    # The key `runs_on:` became (dev#409) — the command parser's key, named
+    # here for the migration messages.
+    ENVIRONMENT_KEY = CommandParser::ENVIRONMENT_KEY
     # The retired spelling of ENVIRONMENT_KEY.
     RUNS_ON_KEY = "runs_on"
 

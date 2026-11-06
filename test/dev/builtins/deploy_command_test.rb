@@ -11,6 +11,7 @@ require "dev/host_rule"
 require "dev/lifecycle"
 require "dev/lifecycle_executor"
 require "dev/placement"
+require "support/recording_publisher"
 require "fileutils"
 require "open3"
 require "pathname"
@@ -37,7 +38,8 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     (@project / "stage.sh").write(<<~SH)
       #!/bin/sh
       set -eu
-      echo "$DEV_CHANNEL $DEV_BUILD $DEV_BUILD_ID $DEV_SHA $DEV_DIRTY $DEV_ARTIFACT" >> "#{@root}/shipped"
+      echo "$DEV_CHANNEL $DEV_TRACK $DEV_BUILD $DEV_BUILD_ID $DEV_SHA $DEV_DIRTY $DEV_ARTIFACT" >> "#{@root}/shipped"
+      touch "$DEV_SCRATCH/left-behind"
     SH
     git("init", "-q")
     git("add", ".")
@@ -87,13 +89,21 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     artifact
   end
 
-  def command(channel = self.channel("cellbound-3d-dev", "rspock"), placement: Dev::Placement::Host.new)
+  def steam_channel
+    Dev::Lifecycle::Channel.new(
+      name: "steam", desc: "Steam depots",
+      accepts: [Dev::Lifecycle::BuildPattern.parse("cellbound-3d-release", targets)],
+      publisher: Dev::Lifecycle::PublisherSpec::Integration.new(name: "steam"),
+    )
+  end
+
+  def command(channel = self.channel("cellbound-3d-dev", "rspock"), placement: Dev::Placement::Host.new, publishers: {})
     host_rule = Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: (@root / "no-marker").to_s), inside_container: false)
-    ports = Dev::Lifecycle::Ports.new(project_root: @project)
     Dev::Builtins::DeployCommand.new(
       channel: channel,
       selector: Dev::DeploySelector.new(channel: channel, targets: targets, store: store),
-      publisher: ports.publisher_for(channel),
+      ports: Dev::Lifecycle::Ports.new(project_root: @project, publishers:),
+      store: store,
       resolver: Dev::DispatchResolver.new(host_rule: host_rule),
       placement: placement,
       out: @out,
@@ -108,7 +118,7 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     Dev::LifecycleExecutor.new.execute(verb, args: parsed_args(verb, words), context: context)
   end
 
-  test "bare `dev deploy staging` ships one artifact per accepted platform through the run: line, then reports each" do
+  test "bare `dev deploy staging` ships one artifact per accepted platform through the run: line on the testing track, then reports each" do
     Given "a current artifact of every accepted build"
     win64 = stamp("cellbound-3d-win64-dev")
     linux64 = stamp("cellbound-3d-linux64-dev")
@@ -117,16 +127,39 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     When
     execute(command)
 
-    Then "the script ran once per archive with the channel, the build and the manifest's keys; the verb reported each"
+    Then "the script ran once per archive with the channel, the track, the build and the manifest's keys, in the channel's scratch; the verb reported each"
     shipped == [
-      "staging cellbound-3d-win64-dev 1.2.3+#{head} #{head} false #{win64.archive}",
-      "staging cellbound-3d-linux64-dev 1.2.3+#{head} #{head} false #{linux64.archive}",
-      "staging rspock 1.2.3+#{head} #{head} false #{gem.archive}",
+      "staging testing cellbound-3d-win64-dev 1.2.3+#{head} #{head} false #{win64.archive}",
+      "staging testing cellbound-3d-linux64-dev 1.2.3+#{head} #{head} false #{linux64.archive}",
+      "staging testing rspock 1.2.3+#{head} #{head} false #{gem.archive}",
     ]
+    (store.root / ".staging" / "left-behind").file?
     @out.string == <<~OUT
-      deployed cellbound-3d-win64-dev (1.2.3+#{head}) → staging: #{win64.archive}
-      deployed cellbound-3d-linux64-dev (1.2.3+#{head}) → staging: #{linux64.archive}
-      deployed rspock (1.2.3+#{head}) → staging: #{gem.archive}
+      deployed cellbound-3d-win64-dev (1.2.3+#{head}) → staging (testing): #{win64.archive}
+      deployed cellbound-3d-linux64-dev (1.2.3+#{head}) → staging (testing): #{linux64.archive}
+      deployed rspock (1.2.3+#{head}) → staging (testing): #{gem.archive}
+    OUT
+  end
+
+  test "a channel naming the lock's publisher hands it the selection, the testing track and its scratch — the protocol is the integration's (dev#422)" do
+    Given "a current release artifact and a lock contributing steam"
+    steam = RecordingPublisher.new
+    win64 = stamp("cellbound-3d-win64-release")
+    linux64 = stamp("cellbound-3d-linux64-release")
+
+    When
+    execute(command(steam_channel, publishers: { "steam" => steam }))
+
+    Then
+    steam.shipments.size == 1
+    steam.shipments.first.artifacts == [win64, linux64]
+    steam.shipments.first.channel == steam_channel
+    steam.shipments.first.track == Dev::Lifecycle::Track::Testing
+    steam.shipments.first.scratch == store.root / ".steam"
+    shipped == []
+    @out.string == <<~OUT
+      deployed cellbound-3d-win64-release (1.2.3+#{head}) → steam (testing): #{win64.archive}
+      deployed cellbound-3d-linux64-release (1.2.3+#{head}) → steam (testing): #{linux64.archive}
     OUT
   end
 
@@ -141,7 +174,8 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
 
     Then
     shipped == []
-    @out.string == "would deploy rspock (1.2.3+#{head}) → staging: #{store.artifact(build("rspock")).archive}\n"
+    !(store.root / ".staging").exist?
+    @out.string == "would deploy rspock (1.2.3+#{head}) → staging (testing): #{store.artifact(build("rspock")).archive}\n"
   end
 
   test "a stale artifact is refused before the protocol runs" do
@@ -167,8 +201,8 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     execute(command, "rspock", "--allow-stale")
 
     Then
-    shipped == ["staging rspock 1.2.3+#{stale.manifest.state.sha} #{stale.manifest.state.sha} false #{stale.archive}"]
-    @out.string == "deployed rspock (1.2.3+#{stale.manifest.state.sha}) → staging: #{stale.archive} — stale, shipped under --allow-stale\n"
+    shipped == ["staging testing rspock 1.2.3+#{stale.manifest.state.sha} #{stale.manifest.state.sha} false #{stale.archive}"]
+    @out.string == "deployed rspock (1.2.3+#{stale.manifest.state.sha}) → staging (testing): #{stale.archive} — stale, shipped under --allow-stale\n"
   end
 
   test "a missing artifact is refused before the protocol runs: deploy never builds" do
@@ -221,5 +255,7 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     verb.listing.nil?
     verb.details == ["Accepts: cellbound-3d-win64-dev, cellbound-3d-linux64-dev, rspock", "Protocol: run: sh ./stage.sh"]
     verb.completions([]) == ["cellbound-3d-dev", "cellbound-3d-win64-dev", "cellbound-3d-linux64-dev", "rspock"]
+    command(steam_channel, publishers: { "steam" => RecordingPublisher.new }).details ==
+      ["Accepts: cellbound-3d-win64-release, cellbound-3d-linux64-release", "Protocol: publisher: steam"]
   end
 end

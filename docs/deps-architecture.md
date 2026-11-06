@@ -60,7 +60,13 @@ The registry (`Registry::INTEGRATIONS`) is the single wiring table: one
 (nil for integrations with no constraint grammar — url, xcode, wwise), optional
 locker, optional integration, optional `install_alias` (url installs
 through cmake's integration *instance*, so their shared batch artifact
-`deps.cmake` is written once, whole), and scope. Consistency tests fail
+`deps.cmake` is written once, whole), optional `publisher` — the
+integration's write side, a `Lifecycle::Publisher` class the lifecycle's
+`deploy` gets as a channel of the entry's name in every project whose
+lock reaches the entry ([dev#422](https://github.com/d3mlabs/dev/issues/422);
+`Registry.publishers` builds the instances, `publisher_needs` names
+their constructor kwargs as `integration_needs` does) — and scope.
+Consistency tests fail
 the build if a `*_repository.rb`, `*_integration.rb`, `*_scheme.rb`, or
 `*_locker.rb` class exists without a registry entry.
 

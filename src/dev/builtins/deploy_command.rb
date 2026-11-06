@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "pathname"
 require "stringio"
 require "dev/command"
 require "dev/deploy_selector"
@@ -22,12 +23,16 @@ module Dev
     # accept set without `--force`.
     #
     # The stage: `before` resolves where the protocol runs (the channel's
-    # `run:` environment under the host rule), reads the tree once (what
-    # staleness is read against) and consumes the argv into the selection;
-    # the seam is the publisher — the `run:` once per archive with
-    # `DEV_ARTIFACT` and the manifest's keys in its env — skipped under
-    # `--dry-run`; `after` reports each artifact shipped (the receipt as a
-    # GitHub Deployment is dev#423).
+    # `run:` environment under the host rule; the host for an integration's
+    # publisher), reads the tree once (what staleness is read against),
+    # consumes the argv into the selection and resolves the publisher
+    # (Ports: the `run:` as a ScriptPublisher, or the one the lock
+    # contributed); the seam is the publisher over the selected archives,
+    # on the **testing** track — what the store's artifacts always ship on
+    # (a release's archives ship live, `--release`, dev#425) — with the
+    # channel's scratch in the store, skipped under `--dry-run`; `after`
+    # reports each artifact shipped (the receipt as a GitHub Deployment is
+    # dev#423).
     class DeployCommand < LifecycleCommand
       extend T::Sig
 
@@ -43,6 +48,8 @@ module Dev
         const :channel, Lifecycle::Channel
         const :selection, DeploySelector::Selection
         const :publisher, Lifecycle::Publisher
+        const :track, Lifecycle::Track
+        const :scratch, Pathname
         const :dry_run, T::Boolean
       end
 
@@ -50,7 +57,8 @@ module Dev
 
       # @param channel [Lifecycle::Channel] the destination this command ships to
       # @param selector [DeploySelector] argv → the artifacts
-      # @param publisher [Lifecycle::Publisher] the channel's protocol
+      # @param ports [Lifecycle::Ports] the channel's protocol, resolved when the verb runs
+      # @param store [Lifecycle::Store] where the channel's scratch is
       # @param resolver [DispatchResolver] where the protocol runs
       # @param placement [Placement, nil] the protocol's bound environment;
       #   nil when the lock could not place it at load
@@ -59,17 +67,19 @@ module Dev
         params(
           channel: Lifecycle::Channel,
           selector: DeploySelector,
-          publisher: Lifecycle::Publisher,
+          ports: Lifecycle::Ports,
+          store: Lifecycle::Store,
           resolver: DispatchResolver,
           placement: T.nilable(Placement),
           out: T.any(IO, StringIO),
         ).void
       end
-      def initialize(channel:, selector:, publisher:, resolver:, placement:, out: $stdout)
+      def initialize(channel:, selector:, ports:, store:, resolver:, placement:, out: $stdout)
         super()
         @channel = channel
         @selector = selector
-        @publisher = publisher
+        @ports = ports
+        @store = store
         @resolver = resolver
         @placement = placement
         @out = out
@@ -108,7 +118,9 @@ module Dev
         env = DeployEnv.new(
           channel: @channel,
           selection: @selector.select(args, state:),
-          publisher: @publisher,
+          publisher: @ports.publisher_for(@channel),
+          track: Lifecycle::Track::Testing,
+          scratch: @store.scratch(@channel),
           dry_run: args.flag?(DRY_RUN_FLAG),
         )
         dispatch.dispatch(env)
@@ -119,7 +131,7 @@ module Dev
         _ = context
         return if env.dry_run
 
-        env.publisher.publish(env.selection.artifacts, channel: env.channel)
+        env.publisher.publish(env.selection.artifacts, channel: env.channel, track: env.track, scratch: env.scratch)
       end
 
       sig { override.params(env: DeployEnv, context: ExecutionContext).void }
@@ -127,7 +139,7 @@ module Dev
         _ = context
         verb = env.dry_run ? "would deploy" : "deployed"
         env.selection.artifacts.each do |artifact|
-          line = "#{verb} #{artifact.name} (#{artifact.manifest.build_id}) → #{env.channel}: #{artifact.archive}"
+          line = "#{verb} #{artifact.name} (#{artifact.manifest.build_id}) → #{env.channel} (#{env.track}): #{artifact.archive}"
           line += " — stale, shipped under #{DeploySelector::ALLOW_STALE_FLAG}" if env.selection.stale.include?(artifact)
           @out.puts line
         end
