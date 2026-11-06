@@ -58,6 +58,7 @@ class Dev::Builtins::PackageCommandTest < Minitest::Test
       set -eu
       mkdir -p "$DEV_INSTALL" && echo gem > "$DEV_INSTALL/rspock-3.0.0.gem"
     SH
+    (@project / "VERSION").write("1.2.3\n")
     git("init", "-q")
     git("add", ".")
     commit("one")
@@ -117,7 +118,7 @@ class Dev::Builtins::PackageCommandTest < Minitest::Test
     Dev::BuildDispatcher.new(placements: placements, resolver: resolver)
   end
 
-  def command(semver: "1.2.3", now: NOW, step_outputs: Dev::Lifecycle::StepOutputs.new(path: nil))
+  def command(now: NOW, step_outputs: Dev::Lifecycle::StepOutputs.new(path: nil))
     dispatcher = self.dispatcher
     Dev::Builtins::PackageCommand.new(
       selector: Dev::BuildSelector.new(targets: targets),
@@ -125,7 +126,6 @@ class Dev::Builtins::PackageCommandTest < Minitest::Test
       listing: Dev::BuildListing.new(targets: targets, dispatcher: dispatcher),
       ports: Dev::Lifecycle::Ports.new(project_root: @project),
       store: store,
-      semver: semver,
       clock: -> { now },
       step_outputs: step_outputs,
       out: @out,
@@ -195,6 +195,33 @@ class Dev::Builtins::PackageCommandTest < Minitest::Test
     build_runs == 2
     !@out.string.include?("build skipped")
     store.artifact(build("cellbound-3d-linux64-dev")).manifest.state.sha == head
+  end
+
+  test "the build id's semver is read from VERSION as it is at package time, so a release's bump commit is what it stamps" do
+    Given "an artifact packaged at 1.2.3, then the version bumped and committed"
+    execute(command)
+    (@project / "VERSION").write("1.3.0\n")
+    git("add", "VERSION")
+    commit("Bump version to 1.3.0")
+
+    When
+    execute(command)
+
+    Then
+    store.artifact(build("cellbound-3d-linux64-dev")).manifest.build_id == Dev::Lifecycle::BuildId.new("1.3.0+#{head}")
+  end
+
+  test "a project without a VERSION file stamps the default semver" do
+    Given
+    git("rm", "-q", "VERSION")
+    commit("no version in source")
+
+    When
+    execute(command)
+
+    Then
+    store.artifact(build("cellbound-3d-linux64-dev")).manifest.build_id ==
+      Dev::Lifecycle::BuildId.new("#{Dev::Lifecycle::BuildId::DEFAULT_SEMVER}+#{head}")
   end
 
   test "a dirty tree is never current: the build runs each time and the id carries dirty and the instant" do

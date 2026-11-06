@@ -150,6 +150,24 @@ class Dev::Lifecycle::WorkflowRunsTest < Minitest::Test
     error.message == "gh answered with 42, not a run"
   end
 
+  test "a run object dev cannot read is MalformedRunError naming the record: #{what}" do
+    Given
+    @gh.answers(["run", "view"], with: record)
+
+    When
+    @runs.view(RUN)
+
+    Then
+    error = raises(Dev::Lifecycle::WorkflowRuns::MalformedRunError)
+    error.message.start_with?("gh answered with a run dev cannot read (")
+    error.message.end_with?(": #{record.inspect}")
+
+    Where
+    what                  | record
+    "a field missing"     | QUEUED.except("url")
+    "an id not a number"  | QUEUED.merge("databaseId" => "forty-two")
+  end
+
   test "a conclusion the forge leaves empty reads as none" do
     Given
     @gh.answers(["run", "view"], with: QUEUED.merge("conclusion" => ""))

@@ -15,6 +15,7 @@ require_relative "lifecycle/target_environment"
 require_relative "lifecycle/target"
 require_relative "lifecycle/build_pattern"
 require_relative "lifecycle/build"
+require_relative "lifecycle/release_builds"
 require_relative "lifecycle/git_state"
 require_relative "lifecycle/build_id"
 require_relative "lifecycle/project_version"
@@ -39,7 +40,10 @@ require_relative "lifecycle/deployment_record"
 require_relative "lifecycle/deployment"
 require_relative "lifecycle/gh"
 require_relative "lifecycle/github_deployments"
+require_relative "lifecycle/github_releases"
 require_relative "lifecycle/git"
+require_relative "lifecycle/release_cut"
+require_relative "lifecycle/release_assets"
 require_relative "lifecycle/snapshot_branch"
 require_relative "lifecycle/snapshot"
 require_relative "lifecycle/snapshot_commit"
@@ -82,11 +86,19 @@ module Dev
   # read back as a Deployment), through Gh, the lifecycle's one gh
   # boundary; ReleaseTag is the ref a release's deploy is recorded against.
   #
+  # A **release** (dev#424) is the cut and nothing more: ReleaseBuilds is
+  # what `release:` says one contains; ReleaseCut is its git half (clean
+  # tree, the bump commit, the tag, the push — resumable); ReleaseAssets
+  # names each artifact's archive `<build>-<version>.<ext>` for the
+  # upload; GithubReleases is the release archive on the forge, where the
+  # assets and `release.json` (Manifest::Release) land. Nothing is
+  # deployed by it — distribution is `deploy --release` per channel.
+  #
   # The verbs that act on these (`build`, `package`, `deploy`, `release`)
   # are LifecycleCommands in the CLI core (src/dev: the before → seam →
   # after template, Dispatch and DispatchResolver, dev#413), derived by the
-  # sibling milestones (dev#414, dev#415); this module is what they all
-  # speak.
+  # sibling milestones (dev#414, dev#415, dev#424); this module is what
+  # they all speak.
   #
   # The **sync step** of the remote dispatch (K7) is here too: SnapshotSync
   # commits the working tree through a temporary index (SnapshotCommit),

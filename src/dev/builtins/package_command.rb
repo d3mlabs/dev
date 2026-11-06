@@ -124,7 +124,6 @@ module Dev
       # @param listing [BuildListing] what the usage and completion list
       # @param ports [Lifecycle::Ports] the targets' builders and packagers
       # @param store [Lifecycle::Store] where the artifact goes
-      # @param semver [String] the project's version, the build id's leading half
       # @param clock [Proc] the packaging instant (injectable for tests)
       # @param step_outputs [Lifecycle::StepOutputs] the enclosing Actions step's, or none
       # @param out [IO, StringIO]
@@ -135,14 +134,13 @@ module Dev
           listing: BuildListing,
           ports: Lifecycle::Ports,
           store: Lifecycle::Store,
-          semver: String,
           clock: T.proc.returns(Time),
           step_outputs: Lifecycle::StepOutputs,
           out: T.any(IO, StringIO),
         ).void
       end
       def initialize(
-        selector:, dispatcher:, listing:, ports:, store:, semver:,
+        selector:, dispatcher:, listing:, ports:, store:,
         clock: -> { Time.now }, step_outputs: Lifecycle::StepOutputs.from_env, out: $stdout
       )
         super()
@@ -151,7 +149,6 @@ module Dev
         @listing = listing
         @ports = ports
         @store = store
-        @semver = semver
         @clock = clock
         @step_outputs = step_outputs
         @out = out
@@ -208,11 +205,14 @@ module Dev
         env.packed = env.packager.package(env.build, env.install, env.archive_stem)
       end
 
+      # The build id's semver is read from the tree now, not at wiring:
+      # `release` bumps `VERSION` and then packages, and the artifacts of
+      # the cut must carry the version they are released under.
       sig { override.params(env: PackageEnv, context: ExecutionContext).void }
       def after(env, context:)
-        _ = context
         packed = env.packed!
         now = @clock.call
+        semver = Lifecycle::ProjectVersion.read(context.project!.root)
         artifact = @store.stamp(
           Lifecycle::Manifest::Artifact.new(
             stamp: Lifecycle::Manifest::Stamp.now(now:),
@@ -221,7 +221,7 @@ module Dev
             packaged_at: now,
             builder: env.builder&.name || NO_BUILDER,
             builder_version: env.builder&.version,
-            build_id: Lifecycle::BuildId.derive(state: env.state, semver: @semver, now:),
+            build_id: Lifecycle::BuildId.derive(state: env.state, semver:, now:),
             archive: packed.name,
             archive_sha256: Digest::SHA256.file(packed.archive.to_s).hexdigest,
           ),
