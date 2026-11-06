@@ -397,6 +397,23 @@ has nothing to check.
 | image *I* | inside *I*'s container | **native** (a container of another image is `ContainerDriftError`) |
 | image *I* | neither (a Mac) | refused, `RemoteDispatchUnavailableError`, with the hosts that would do named — until milestone B's remote dispatch (a [snapshot branch](#the-sync-step) run on an enrolled runner, or in the project's container as the degenerate runner) |
 
+**The enrolled runner** is the first host the remote dispatch will
+resolve to (K8: native, else the enrolled runner, else the container).
+It is what bare `dev runner register` makes, declared nowhere: a runner
+at the **repo's scope** carrying the **repo's name as label** — both
+derived from the one `gh repo view` answer by `Dev::EnrolledRunner`
+(`d3mlabs/cellbound-3d` → scope `d3mlabs/cellbound-3d`, label
+`cellbound-3d`; lowercased, dashes kept; dev.yml `name:` never enters).
+Whether one is **available** is the Actions API's answer, read when the
+verb runs and recorded nowhere (`Dev::EnrolledRunnerLookup#available` →
+`RunnerRegistry#available(scope:, label:)`): an online runner at that
+scope carrying that label. Busy counts — GitHub queues the job; offline
+does not — a registration nothing runs is not a host to build on; a
+runner the org enrolled under the same label is a pool for `--runner
+<label>`, not the repo's; and GitHub unreachable raises
+(`RunnerRegistry::QueryError`) rather than reading as "no runner", since
+a remote dispatch needs GitHub for the snapshot push and the run anyway.
+
 The environment column of `dev help build` is the same resolution read
 for display: `host`; `cellbound-3d-linux` when this machine runs it
 natively; `cellbound-3d-linux (container)` when it would enter the
