@@ -487,6 +487,28 @@ class RunnerTest < Minitest::Test
     out.string.include?("staging")
   end
 
+  test "without an injected archive the Runner builds the real one: GithubReleases over a Gh at the project root" do
+    Given "a project with `release: {}`, a Runner given no releases_factory, and the Gh class watched"
+    root = Pathname.new(Dir.mktmpdir("runner-test-"))
+    (@tmp_roots ||= []).push(root)
+    Dev.stubs(:target_project_root).returns(root)
+    tmp = (@tmp_files ||= []).push(Tempfile.new(["dev", ".yml"])).fetch(-1)
+    tmp.write(YAML.dump({ "name" => "testproject",
+                          "targets" => { "site" => { "desc" => "The site", "configs" => ["release"], "build" => "true" } },
+                          "commands" => { "release" => {} } }))
+    tmp.flush
+    out = StringIO.new
+    # Built before the expectation: FakeGh is a Gh, so its `new` is the one being watched.
+    fake = FakeGh.new(root:)
+    Dev::Lifecycle::Gh.expects(:new).with(root: root).at_least_once.returns(fake)
+
+    When "we print release's usage"
+    Dev::Runner.new(dev_yaml_path: Pathname.new(tmp.path), ui: fake_ui, out: out).run(["help", "release"])
+
+    Then "the archive was built over this checkout; usage never asked the forge anything"
+    out.string.include?("site-release")
+  end
+
   test "deploy is registered in Lifecycle iff the project declares a channel; its usage lists each channel's accept set and protocol" do
     Given "a project with two channels, and one with targets but none"
     out = StringIO.new

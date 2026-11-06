@@ -82,6 +82,18 @@ class Dev::Lifecycle::GithubReleasesTest < Minitest::Test
     gh.calls.map(&:argv) == [["release", "upload", "v1.2.0", "/tmp/x/rspock-1.2.0.zip", "/tmp/x/release.json", "--clobber"]]
   end
 
+  test "a refused upload is the archive's error, carrying gh's words" do
+    Given
+    gh = FakeGh.new.refuses(["release", "upload"], with: "HTTP 403: Resource not accessible by integration")
+
+    When
+    releases(gh).upload(TAG, [Pathname("/tmp/x/rspock-1.2.0.zip")])
+
+    Then
+    error = raises(Dev::Lifecycle::GithubReleases::ApiError)
+    error.message.include?("Resource not accessible")
+  end
+
   test "upload with nothing to attach does not go to the forge" do
     Given
     gh = FakeGh.new
