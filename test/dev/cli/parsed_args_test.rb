@@ -27,6 +27,26 @@ class Dev::Cli::ParsedArgsTest < Minitest::Test
     args.words.first == "--org"
   end
 
+  test "spelling re-spells the flags asked for, in the declared order: a value flag once per value, a switch once, an absent flag not at all" do
+    Given
+    args = Dev::Cli::ParsedArgs.new(
+      words: ["--allow-stale", "--config", "release", "--group", "a", "--group", "b", "--runner", "box", "title"],
+      positionals: ["title"],
+      switches: ["--allow-stale"],
+      values: { "--config" => ["release"], "--group" => ["a", "b"], "--runner" => ["box"] },
+    )
+    flags = [
+      Dev::Cli::Flag.new("--config", takes_value: true, desc: "c"),
+      Dev::Cli::Flag.new("--group", takes_value: true, desc: "g"),
+      Dev::Cli::Flag.new("--allow-stale", desc: "s"),
+      Dev::Cli::Flag.new("--dry-run", desc: "d"),
+    ]
+
+    Expect "the runner flag, not asked for, stays behind"
+    args.spelling(flags) == ["--config", "release", "--group", "a", "--group", "b", "--allow-stale"]
+    args.spelling([]) == []
+  end
+
   test "the no-argument default is empty on every axis" do
     Expect
     Dev::Cli::ParsedArgs.new.positionals.empty?

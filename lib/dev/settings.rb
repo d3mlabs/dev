@@ -24,14 +24,18 @@ module Dev
   #   container_engine: colima
   #   engine_resources: enforce
   #   default_org: d3mlabs
+  #   lifecycle.runner: ue-engine-hosted
   #
   # `plans_repo` is the org-wide plans repo that `dev plan new --org` /
   # `dev plan link --org` target. `knowledge_repo` is the org knowledge repo
   # dev keeps a machine-local cache of. `deployment_formula` is the brew
   # formula `dev up`'s self-update upgrades — the deployment names itself
   # (see Dev::HostService). `default_org` is the GitHub org a bare
-  # `dev clone <repo>` expands under. Leaving a nilable key unset turns its
-  # feature off.
+  # `dev clone <repo>` expands under. `lifecycle.runner` is the runner
+  # label a lifecycle verb that must leave this machine goes to by
+  # default, ahead of the repo's enrolled runner (dev#192, K8: "build-check
+  # goes hosted" as user state, never a `dev.yml` key). Leaving a nilable
+  # key unset turns its feature off.
   class Settings
     extend T::Sig
 
@@ -46,6 +50,10 @@ module Dev
     # machine that simply cannot meet the hint.
     ENGINE_RESOURCES_MODES = T.let(%w[enforce warn].freeze, T::Array[String])
 
+    # The key as `dev config set` spells it; dotted after the verbs it
+    # steers, the way git spells `remote.origin.url`.
+    LIFECYCLE_RUNNER_KEY = "lifecycle.runner"
+
     # The settings registry: every known key and its ENV override. The one
     # list `dev config` reads (never a duplicated copy that can drift) —
     # a new setting joins here and the command picks it up for free.
@@ -57,6 +65,7 @@ module Dev
         "container_engine" => "DEV_CONTAINER_ENGINE",
         "engine_resources" => "DEV_ENGINE_RESOURCES",
         "default_org" => "DEV_DEFAULT_ORG",
+        LIFECYCLE_RUNNER_KEY => "DEV_LIFECYCLE_RUNNER",
       }.freeze,
       T::Hash[String, String],
     )
@@ -134,6 +143,16 @@ module Dev
     sig { returns(T.nilable(String)) }
     def default_org
       lookup("default_org").first
+    end
+
+    # The runner label a lifecycle verb leaving this machine goes to by
+    # default — a standing `--runner` (dev#192, K8). Unset is the normal
+    # state: the repo's enrolled runner.
+    #
+    # @return [String, nil] the label, or nil
+    sig { returns(T.nilable(String)) }
+    def lifecycle_runner
+      lookup(LIFECYCLE_RUNNER_KEY).first
     end
 
     # How an engine below a repo's `engine:` hint is treated

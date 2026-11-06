@@ -13,7 +13,7 @@ the plan is [dev#192](https://github.com/d3mlabs/dev/issues/192).
 
 ## Ontology
 
-Seven nouns, each one class, none playing two roles.
+One class per noun, none playing two roles.
 
 | Concept | Class | What it is |
 | --- | --- | --- |
@@ -30,6 +30,9 @@ Seven nouns, each one class, none playing two roles.
 | Deployment ledger | `Lifecycle::GithubDeployments` | The records as GitHub Deployments on the project's repo (environment = channel, ref = commit or tag, payload = track + builds, one status), written through `gh api`; `Lifecycle::Deployment` is a record as the forge holds it (id, when, page). |
 | Release tag | `Lifecycle::ReleaseTag` | `v<version>` — the ref a release's deployments are recorded against, and what `deploy status --release V` reads. |
 | Snapshot | `Lifecycle::Snapshot` | The working tree as a remote build host can reach it: a commit made through a temporary index, on its `Lifecycle::SnapshotBranch` (`dev/build/<runner>/<id>`) at `origin`, for as long as a remote dispatch needs it. See [The sync step](#the-sync-step). |
+| Verb invocation | `Lifecycle::VerbInvocation` | A verb as a remote host is told to run it: the words after `dev` (the build fully qualified, the dispatch flags consumed) and what to bring back (`Lifecycle::ArtifactFetch`: the workflow artifact's name — the build's — and the store directory it lands in). What every verb's `before` hands its dispatch beside the env. |
+| Workflow run | `Lifecycle::WorkflowRun` | One run of the generic workflow as the forge lists it: id, page, GitHub's `status` and `conclusion`. `Lifecycle::WorkflowRuns` is its client over `gh` (dispatch, locate, watch, view, download); `Lifecycle::LifecycleWorkflow` is the contract of the workflow itself — the file name, its inputs, dev's shipped copy. See [The remote dispatch](#the-remote-dispatch). |
+| Step outputs | `Lifecycle::StepOutputs` | What `package` tells the Actions job it runs in (`GITHUB_OUTPUT`): the artifact's name and files, so the workflow uploads exactly what `--fetch` downloads. Inert outside a job. |
 
 ## Declarations
 
@@ -476,7 +479,7 @@ missing step rather than performing it:
 
 | Verb | Needs | When missing |
 | --- | --- | --- |
-| `build <build>` | the build's environment, able to produce its platform | reported at load and left unbound (an image without the `target_platforms`: refuses until `dev deps update`), or refused at the verb (a host-placed build whose platform this machine is not; an environment this machine is not, until milestone B's remote dispatch — an enrolled runner or the project's container) |
+| `build <build>` | the build's environment, able to produce its platform — here, or on a host the [remote dispatch](#the-remote-dispatch) can reach | reported at load and left unbound (an image without the `target_platforms`: refuses until `dev deps update`), or refused at the verb: a host-placed build whose platform this machine is not (`--runner` sends it to one that is); an environment this machine is not with no runner to go to (`RemoteDispatchUnavailableError`, the three ways to get one named) |
 | `package <build>` | a current build | makes it (make-like): the builder runs when the artifact is not current, `--no-build` trusts the install |
 | `deploy <channel>` | an artifact per accepted (target, platform) in the store, a channel, the channel's environment, a protocol (`run:` or a publisher the lock contributes under the channel's name); to record, a repo `gh` can reach with `deployments: write` | "`dev package <build>` first" — never builds; a channel exists or `deploy` does not; an unbound environment (the lock unreadable) lists without a column and refuses until `dev deps update`; a channel with neither protocol is refused at load, both fixes named; a record the forge refuses fails after the shipped lines, naming the refusal |
 | `deploy status [--release V]` | a channel, a repo `gh` can reach | a channel exists or `deploy` does not; the forge's refusal is the command's error |
@@ -515,26 +518,33 @@ has nothing to check.
    `TargetPlacement#assert_buildable_here!`: a host-placed `linux64`
    build on a Mac is refused (`HostDoesNotProduceError`) and marked
    `(linux64 only)` in the listing; an image-placed build defers to the
-   image's declaration, already checked.
-3. `Dev::DispatchResolver#resolve(placement)` under the host rule
-   ([README: The host rule](../README.md#the-host-rule-native-when-provisioned-from-the-image-inside-it-otherwise)):
+   image's declaration, already checked. Skipped under `--runner`: the
+   runner produces the build, not this host.
+3. `Dev::DispatchResolver#resolve(placement, runner:)` under the host rule
+   ([README: The host rule](../README.md#the-host-rule-native-when-provisioned-from-the-image-inside-it-otherwise)),
+   then against the hosts the remote dispatch can reach, in this order:
 
 | Placement | This machine | Dispatch |
 | --- | --- | --- |
+| any | `--runner <label>` given | **remote** to that label, whatever the placement — a Win64 build-check on the hosted pool from a box that could build it natively |
 | `host` | any | **native** — the seam runs here |
 | image *I* | provisioned from *I* (the box, a hosted runner) | **native** |
 | image *I* | inside *I*'s container | **native** (a container of another image is `ContainerDriftError`) |
-| image *I* | neither (a Mac) | refused, `RemoteDispatchUnavailableError`, with the hosts that would do named — until milestone B's remote dispatch (a [snapshot branch](#the-sync-step) run on an enrolled runner, or in the project's container as the degenerate runner) |
+| image *I* | neither (a Mac), `lifecycle.runner` set | **remote** to that label (`dev config set lifecycle.runner <label>`, or `DEV_LIFECYCLE_RUNNER`) |
+| image *I* | neither, the repo's enrolled runner online | **remote** to the enrolled runner, under the repo's label |
+| image *I* | neither, nothing to go to | refused, `RemoteDispatchUnavailableError`, naming the three ways to get one: `dev runner register` on a host provisioned from *I*, `--runner <label>`, `dev config set lifecycle.runner <label>` — the project's container as the degenerate runner is [dev#421](https://github.com/d3mlabs/dev/issues/421) |
+| any | inside an Actions job, and the row above would be remote | refused, `DispatchFromJobError`: a job never dispatches a job (see [the loop guard](#the-remote-dispatch)) |
 
-**The enrolled runner** is the first host the remote dispatch will
-resolve to (K8: native, else the enrolled runner, else the container).
-It is what bare `dev runner register` makes, declared nowhere: a runner
-at the **repo's scope** carrying the **repo's name as label** — both
-derived from the one `gh repo view` answer by `Dev::EnrolledRunner`
-(`d3mlabs/cellbound-3d` → scope `d3mlabs/cellbound-3d`, label
-`cellbound-3d`; lowercased, dashes kept; dev.yml `name:` never enters).
-Whether one is **available** is the Actions API's answer, read when the
-verb runs and recorded nowhere (`Dev::EnrolledRunnerLookup#available` →
+**The enrolled runner** is the host the remote dispatch resolves to
+when nothing standing names another (K8: native, else the enrolled
+runner, else the container). It is what bare `dev runner register`
+makes, declared nowhere: a runner at the **repo's scope** carrying the
+**repo's name as label** — both derived from the one `gh repo view`
+answer by `Dev::EnrolledRunner` (`d3mlabs/cellbound-3d` → scope
+`d3mlabs/cellbound-3d`, label `cellbound-3d`; lowercased, dashes kept;
+dev.yml `name:` never enters). Whether one is **available** is the
+Actions API's answer, read when the verb runs and recorded nowhere
+(`Dev::EnrolledRunnerLookup#available` →
 `RunnerRegistry#available(scope:, label:)`): an online runner at that
 scope carrying that label. Busy counts — GitHub queues the job; offline
 does not — a registration nothing runs is not a host to build on; a
@@ -545,18 +555,110 @@ a remote dispatch needs GitHub for the snapshot push and the run anyway.
 
 The environment column of `dev help build` is the same resolution read
 for display: `host`; `cellbound-3d-linux` when this machine runs it
-natively; `cellbound-3d-linux (container)` when it would enter the
-container.
+natively; `cellbound-3d-linux (remote)` when the verb would leave for a
+host that is the image — a verb never enters a container, so the
+`(container)` a project command shows does not apply, and *which* host
+is decided when the verb runs, never asked of the forge by help.
 
 **The template.** A verb is a `Dev::LifecycleCommand`, run by
 `Dev::LifecycleExecutor` as *before → seam → after*: `before` consumes
-the argv into the build and the env, resolves the dispatch and hands the
-env to it (`Dispatch::Native` returns `Run(env)`; a remote dispatch will
-return `Done` once the same verb has run elsewhere); the seam runs over
-env only; `after` stamps and reports. Always spawn-and-wait — never an
-exec-replace, which would make `after` unreachable
-(`.cursor/skills/learnings/command-runner-exec`). A failure in the seam
-short-circuits `after`.
+the argv into the build, resolves the dispatch and hands it the
+**invocation** (`Lifecycle::VerbInvocation`: the verb as a remote host
+would run it) and a block that builds the env. `Dispatch::Native` runs
+the block and returns `Run(env)` for the seam; `Dispatch::Remote` never
+runs it — the env is the host's to resolve, over the host's tree and
+store — and returns `Done` once the verb has run there, so `deploy` from
+a Mac with an empty store does not refuse for an artifact that lives on
+the box. The seam runs over env only; `after` stamps and reports. Always
+spawn-and-wait — never an exec-replace, which would make `after`
+unreachable (`.cursor/skills/learnings/command-runner-exec`). A failure
+in the seam short-circuits `after`.
+
+## The remote dispatch
+
+`Dispatch::Remote` runs a verb on a host that has the build's
+environment ([dev#420](https://github.com/d3mlabs/dev/issues/420); K7,
+K8, K10): [the sync step](#the-sync-step) pushes the working tree as a
+snapshot branch, one dim line says where the verb went and from which
+commit, a **transport** runs the invocation there and returns with its
+verdict, the branch is deleted. The path is written once against the
+sealed `Dev::Transport` interface (`runner`, `assert_ready!`,
+`run(invocation, snapshot:)`); what differs per host is how the verb is
+invoked and watched:
+
+- `Transport::ActionsRunner` — a GitHub Actions runner carrying a label,
+  reached through dev's generic workflow. This milestone's transport.
+- `Transport::LocalContainer` — `docker exec` into the project's
+  container ([dev#421](https://github.com/d3mlabs/dev/issues/421)).
+
+**The crossing line.** `→ on <runner>, snapshot <sha>` (dim; `Cli::Ui#print_remote_crossing`),
+the counterpart of `→ in <image>` when a project command enters a
+container: one line, so the operator knows the next output is another
+host's. The transport then names the run's page — ``dispatched `dev build
+cellbound-3d-win64-dev` on ue-engine-hosted: https://…/actions/runs/42`` —
+and streams `gh run watch` to the terminal.
+
+**The generic workflow.** dev ships `share/workflows/dev-lifecycle.yml`;
+a project copies it verbatim to `.github/workflows/dev-lifecycle.yml` and
+commits it — a workflow is the project's to review, so dev never writes
+it, and a dispatch that finds it missing refuses before anything is
+pushed (`LifecycleWorkflow::WorkflowMissingError`) with the `cp` named,
+source path included. Its contract is `Lifecycle::LifecycleWorkflow`:
+
+| Input | What it carries |
+| --- | --- |
+| `verbs` | one or several dev invocations, comma-separated, exactly as typed after `dev` (`package cellbound-3d-win64-dev --no-build`); the job word-splits each and runs `dev <words>` in order. Hence `VerbInvocation` refuses a word carrying a comma or whitespace. |
+| `runner` | the label the job demands beside `self-hosted`: `runs-on: [self-hosted, <runner>]` |
+| `fetch` | whether to upload the packaged artifact as a workflow artifact named after the build (see `--fetch`) |
+
+The job: `actions/checkout` of the snapshot branch, dev put on PATH
+(the brew prefix that holds it), `dev up`, the verbs, the upload when
+asked. Only `workflow_dispatch` triggers it, so a snapshot push runs
+nothing on its own.
+
+**Finding the run.** `workflow_dispatch` answers 204 with no run id, so
+the run is **located by its branch**: the snapshot branch is unique to
+this dispatch, and `gh run list --workflow dev-lifecycle.yml --branch
+<branch> --event workflow_dispatch --limit 1` is the one run GitHub made
+of it — polled up to 30 × 2 s while the forge registers it
+(`WorkflowRuns::RunNotListedError` after). No diffing of run lists
+before and after, no guessing by time. `gh run watch` follows it;
+`gh run view` reads the verdict; a run that is not `completed` +
+`success` is `Transport::ActionsRunner::RemoteVerbFailedError` naming the
+verb, the label, GitHub's conclusion and the page.
+
+**`--runner <label>`** on `build`, `package` and `deploy <channel>`
+forces the remote dispatch to that label whatever the placement — a
+pool the org enrolled (`ue-engine-hosted`), another repo's runner, the
+repo's own. **`lifecycle.runner`** (`dev config set lifecycle.runner
+<label>`; `DEV_LIFECYCLE_RUNNER`) is the standing form, read before the
+enrolled runner when a verb must leave; neither is consulted while the
+verb can run natively.
+
+**The invocation re-spelled.** The host runs the verb as the operator
+typed it, with the build fully qualified (`build cellbound-3d-win64-dev`,
+never a default the host would resolve differently), the seam's flags
+kept (`--no-build`; `deploy`'s `--config`, `--allow-stale`, `--force`,
+`--dry-run`) and the dispatch's flags consumed (`--runner`, `--fetch`): a
+`--runner` that crossed would make the host dispatch again.
+
+**`--fetch`** (`package` only) brings the artifact back: the remote
+`dev package` names what it stamped on the step's outputs
+(`Lifecycle::StepOutputs`: `artifact=<build>`, `artifact_files=<archive,
+build-id.json>`), the workflow uploads those files as a workflow
+artifact named after the build, and the operator's side runs `gh run
+download <id> --name <build> --dir <store dir of the build>` — so the
+files land where `dev deploy` here reads them, as if packaged here.
+The default is the opposite (K10): a multi-GB archive over a Mac's
+uplink is wanted only when a deploy leaves from the Mac; the box deploys
+from its own store.
+
+**The loop guard.** A verb running inside an Actions job
+(`GITHUB_ACTIONS=true`, `Dev::ActionsJobContext`) never dispatches
+remotely: the runner was told to run the verb, and a runner that finds
+itself not to be the build's environment is misprovisioned — the answer
+is `DispatchFromJobError` saying so, not a job dispatching a job onto
+itself or between two runners forever.
 
 ## The sync step
 

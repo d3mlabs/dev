@@ -19,6 +19,8 @@ module Dev
 
       # What the crossing line says before the environment's name.
       CROSSING_PREFIX = "→ in "
+      # What the remote crossing line says before the runner's label.
+      REMOTE_CROSSING_PREFIX = "→ on "
 
       sig { abstract.params(command: String).void }
       def print_header(command); end
@@ -30,6 +32,16 @@ module Dev
       # @param environment [String] the image's name
       sig { abstract.params(environment: String).void }
       def print_crossing(environment); end
+
+      # The same line for a lifecycle verb leaving the machine (dev#420):
+      # which runner it went to and from which snapshot, `→ on
+      # ue-engine-hosted, snapshot 3f2a1c9d8e7b`. Native and host runs
+      # print nothing.
+      #
+      # @param runner [String] the runner label
+      # @param snapshot [String] the snapshot's short sha
+      sig { abstract.params(runner: String, snapshot: String).void }
+      def print_remote_crossing(runner:, snapshot:); end
 
       # Ask for a secret at the terminal, input hidden. nil when there is
       # no terminal to ask at (a pipe, CI): the caller falls back to its
@@ -66,6 +78,11 @@ module Dev
         @cli_ui.puts(@cli_ui.fmt("{{gray:#{CROSSING_PREFIX}#{environment}}}"))
       end
 
+      sig { override.params(runner: String, snapshot: String).void }
+      def print_remote_crossing(runner:, snapshot:)
+        @cli_ui.puts(@cli_ui.fmt("{{gray:#{REMOTE_CROSSING_PREFIX}#{runner}, snapshot #{snapshot}}}"))
+      end
+
       sig { override.params(question: String).returns(T.nilable(String)) }
       def ask_secret(question)
         return nil unless @input.tty?
@@ -86,6 +103,11 @@ module Dev
       sig { override.params(environment: String).void }
       def print_crossing(environment)
         $stdout.puts("#{CROSSING_PREFIX}#{environment}")
+      end
+
+      sig { override.params(runner: String, snapshot: String).void }
+      def print_remote_crossing(runner:, snapshot:)
+        $stdout.puts("#{REMOTE_CROSSING_PREFIX}#{runner}, snapshot #{snapshot}")
       end
 
       sig { override.params(question: String).returns(T.nilable(String)) }

@@ -36,6 +36,7 @@ require "dev/project_executor"
 require "dev/project_manifest"
 require "dev/project_manifest_loader"
 require "dev/project_publishers"
+require "dev/remote_dispatches"
 
 module Dev
   # The application service behind bin/dev, and the composition root of the
@@ -235,7 +236,7 @@ module Dev
         repository: CommandRepository.new(
           root: CommandGroup.root(
             desc: "Development commands for #{manifest.name}",
-            children: build_builtins(manifest, context.project!, dependency_service, help:, complete:, bindings:),
+            children: build_builtins(manifest, context.project!, dependency_service, help:, complete:, bindings:, ui: context.ui),
           ),
           project_commands: bindings.commands,
         ),
@@ -372,6 +373,7 @@ module Dev
     #   plumbing walks the same tree)
     # @param bindings [Bindings] where each target's builds and each
     #   channel's protocol run (both empty when the lock was unreadable)
+    # @param ui [Cli::Ui] the run's UI, where a remote dispatch prints its crossing
     # @return [Hash{String => Command}] the root's children
     sig do
       params(
@@ -381,9 +383,10 @@ module Dev
         help: Builtins::HelpCommand,
         complete: Builtins::CompleteCommand,
         bindings: Bindings,
+        ui: Cli::Ui,
       ).returns(T::Hash[String, Command])
     end
-    def build_builtins(manifest, project, dependency_service, help:, complete:, bindings:)
+    def build_builtins(manifest, project, dependency_service, help:, complete:, bindings:, ui:)
       install_deps = Builtins::InstallDepsCommand.new
 
       # The project's service dependencies — what `dev up` brings up after
@@ -444,7 +447,7 @@ module Dev
       # project that declares none has nothing to build, so they are absent
       # rather than present and refusing. `deploy` likewise from the
       # channels (K5), which need targets to accept builds from.
-      builtins.merge!(lifecycle_builtins(manifest, project, bindings)) if manifest.targets.any?
+      builtins.merge!(lifecycle_builtins(manifest, project, bindings, ui:)) if manifest.targets.any?
       builtins.merge!(runner_builtins)
       # The global builtins are dispatched before the Runner (bin/dev); they
       # join the project tree so help lists one complete tree.
@@ -476,25 +479,27 @@ module Dev
 
     # `build` and `package` over the project's targets: one selector (argv →
     # build), one dispatcher (build → where it runs, under the host rule the
-    # rest of the tree places by), one store under the data root, shared
-    # by both verbs so they agree on every name. The project's `VERSION`
-    # file, when any, leads the build id. `deploy`, when the project has
-    # channels — declared, or contributed by the lock: a group heading one
-    # command per channel, each selecting from the same store and
-    # dispatching its protocol by the channel's bound placement through
-    # the same resolver, and recording into one ledger on the forge (K6)
-    # — which `deploy status`, the group's last child, reads back per
-    # channel.
+    # rest of the tree places by, or on a remote host — the remote
+    # dispatches wired here over the checkout, dev#420), one store under
+    # the data root, shared by both verbs so they agree on every name. The
+    # project's `VERSION` file, when any, leads the build id. `deploy`,
+    # when the project has channels — declared, or contributed by the
+    # lock: a group heading one command per channel, each selecting from
+    # the same store and dispatching its protocol by the channel's bound
+    # placement through the same resolver, and recording into one ledger
+    # on the forge (K6) — which `deploy status`, the group's last child,
+    # reads back per channel.
     #
     # @param manifest [ProjectManifest]
     # @param project [ProjectContext]
     # @param bindings [Bindings]
+    # @param ui [Cli::Ui]
     # @return [Hash{String => Command}]
-    sig { params(manifest: ProjectManifest, project: ProjectContext, bindings: Bindings).returns(T::Hash[String, Command]) }
-    def lifecycle_builtins(manifest, project, bindings)
+    sig { params(manifest: ProjectManifest, project: ProjectContext, bindings: Bindings, ui: Cli::Ui).returns(T::Hash[String, Command]) }
+    def lifecycle_builtins(manifest, project, bindings, ui:)
       targets = manifest.targets.values
       selector = BuildSelector.new(targets:)
-      resolver = DispatchResolver.new(host_rule: @host_rule)
+      resolver = DispatchResolver.new(host_rule: @host_rule, remotes: RemoteDispatches.new(root: project.root, ui:, out: @out))
       dispatcher = BuildDispatcher.new(placements: bindings.targets, resolver:)
       listing = BuildListing.new(targets:, dispatcher:)
       ports = Lifecycle::Ports.new(project_root: project.root, publishers: bindings.publishers)
@@ -525,8 +530,8 @@ module Dev
         Builtins::DeployStatusCommand.new(channels: bindings.channels.values.map(&:channel), deployments:, out: @out)
       verbs["deploy"] = CommandGroup.new(
         path: ["deploy"],
-        desc: "Ship an artifact to a channel (deploy <channel> [BUILD] [--config C] [--allow-stale] [--force] [--dry-run])\n" \
-              "Selects from the store, never builds; each channel lists the builds it accepts and its protocol. " \
+        desc: "Ship an artifact to a channel (deploy <channel> [BUILD] [--config C] [--allow-stale] [--force] [--dry-run] [--runner L])\n" \
+              "Selects from the store of the host it runs on, never builds; each channel lists the builds it accepts and its protocol. " \
               "`deploy status [--release V]` reads what each channel carries.",
         category: Command::Category::Lifecycle,
         children: channels,

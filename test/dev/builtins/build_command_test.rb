@@ -8,27 +8,36 @@ require "dev/build_selector"
 require "dev/builtins/build_command"
 require "dev/dispatch"
 require "dev/dispatch_resolver"
+require "dev/enrolled_runner_lookup"
 require "dev/host_environment"
 require "dev/host_rule"
 require "dev/lifecycle"
 require "dev/lifecycle_executor"
 require "dev/placement"
+require "dev/settings"
 require "dev/target_placement"
 require "fileutils"
 require "pathname"
 require "stringio"
+require "support/scripted_remote"
 require "tmpdir"
 
 # The verb end to end through the LifecycleExecutor, over a real project
 # root with a real build script and a real store in a temp data root.
 # Every target is placed on the host and the machine is declared linux64,
-# so the dispatch is native wherever the suite runs.
+# so the dispatch is native wherever the suite runs; the remote cases
+# force it with `--runner` over a scripted forge (ScriptedRemote).
 transform!(RSpock::AST::Transformation)
 class Dev::Builtins::BuildCommandTest < Minitest::Test
   include SorbetHelper
 
   PLATFORM = Dev::Lifecycle::Platform
   CONFIG = Dev::Lifecycle::Config
+
+  # The repo has no enrolled runner online.
+  class NoneEnrolled < Dev::EnrolledRunnerLookup
+    def available = nil
+  end
 
   def setup
     @root = Pathname(Dir.mktmpdir("build-command-"))
@@ -41,6 +50,8 @@ class Dev::Builtins::BuildCommandTest < Minitest::Test
       echo "$DEV_INSTALL" >> "$DEV_INSTALL/built.txt"
     SH
     @out = StringIO.new
+    @ui = typed_mock(Dev::Cli::Ui)
+    @remote = ScriptedRemote.new(root: @project, ui: @ui)
   end
 
   def teardown
@@ -67,7 +78,11 @@ class Dev::Builtins::BuildCommandTest < Minitest::Test
 
   def dispatcher(placements: host_placements)
     host_rule = Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: (@root / "no-marker").to_s), inside_container: false)
-    Dev::BuildDispatcher.new(placements: placements, resolver: Dev::DispatchResolver.new(host_rule: host_rule))
+    settings = Dev::Settings.new(config_path: (@root / "config.yml").to_s, system_config_path: (@root / "none.yml").to_s)
+    resolver = Dev::DispatchResolver.new(
+      host_rule: host_rule, remotes: @remote.remotes, enrolled: NoneEnrolled.new, settings: settings, inside_job: false,
+    )
+    Dev::BuildDispatcher.new(placements: placements, resolver: resolver)
   end
 
   def host_placements
@@ -91,7 +106,7 @@ class Dev::Builtins::BuildCommandTest < Minitest::Test
   end
 
   def context
-    Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui), project: Dev::ProjectContext.new(name: "cellbound-3d", root: @project))
+    Dev::ExecutionContext.new(ui: @ui, project: Dev::ProjectContext.new(name: "cellbound-3d", root: @project))
   end
 
   def execute(verb, *words)
@@ -159,14 +174,58 @@ class Dev::Builtins::BuildCommandTest < Minitest::Test
     !store.install_dir(Dev::Lifecycle::Build.parse("cellbound-3d-linux64-dev", targets)).exist?
   end
 
-  test "the verb's traits: Lifecycle section, the selector's flags, the builds listed with their environment, completions over the patterns" do
+  test "`--runner` sends the verb to the label as `build <build>` over the snapshot, builds nothing here, and prints the crossing" do
+    Given
+    @remote.install_workflow
+    @ui.expects(:print_remote_crossing).with(runner: "linux-pool", snapshot: ScriptedRemote::SHA[0, 12])
+
+    When
+    execute(command, "cellbound-3d-release", "--runner", "linux-pool")
+
+    Then "the host runs the build by its full name, the runner flag left behind; nothing was built or reported here"
+    @remote.dispatched_verbs == "build cellbound-3d-linux64-release"
+    @remote.dispatched_inputs == { "verbs" => "build cellbound-3d-linux64-release", "runner" => "linux-pool", "fetch" => "false" }
+    @remote.sync.synced == ["linux-pool"]
+    !store.install_dir(Dev::Lifecycle::Build.parse("cellbound-3d-linux64-release", targets)).exist?
+    @out.string == ""
+    @remote.out.string.start_with?("dispatched `dev build cellbound-3d-linux64-release` on linux-pool: ")
+  end
+
+  test "`--runner` skips the question of whether this machine could produce the build: the runner does" do
+    Given "the client's linux64 build on the host of a Mac"
+    @remote.install_workflow
+    @ui.stubs(:print_remote_crossing)
+    placements = host_placements
+    placements["cellbound-3d"] = Dev::TargetPlacement.new(
+      target: client, placements: { PLATFORM::Linux64 => Dev::Placement::Host.new }, host_platform: PLATFORM::Macos,
+    )
+
+    When
+    execute(command(dispatcher: dispatcher(placements: placements)), "cellbound-3d", "--runner", "linux-pool")
+
+    Then
+    @remote.dispatched_verbs == "build cellbound-3d-linux64-dev"
+  end
+
+  test "a remote dispatch from a project without the workflow is refused before anything crosses, with the copy named" do
+    When
+    execute(command, "cellbound-3d", "--runner", "linux-pool")
+
+    Then
+    raises Dev::Lifecycle::LifecycleWorkflow::WorkflowMissingError
+    @remote.dispatched_verbs.nil?
+    @remote.sync.synced == []
+  end
+
+  test "the verb's traits: Lifecycle section, the selector's and the dispatch's flags, the builds listed with their environment, completions over the patterns" do
     Given
     verb = command
 
     Expect
     verb.category == Dev::Command::Category::Lifecycle
-    verb.flags == Dev::BuildSelector::FLAGS
-    verb.desc.lines.first.chomp == "Build a target's install (build [BUILD] | --target T [--platform P] [--config C])"
+    verb.flags == Dev::BuildSelector::FLAGS + Dev::DispatchResolver::FLAGS
+    verb.flags.map(&:name) == ["--target", "--platform", "--config", "--runner"]
+    verb.desc.lines.first.chomp == "Build a target's install (build [BUILD] | --target T [--platform P] [--config C] [--runner L])"
     verb.desc.include?("Bare `dev build` is `cellbound-3d-linux64-dev`.")
     verb.listing.heading == "Builds"
     verb.listing.subjects.map(&:name) == ["cellbound-3d-linux64-dev", "cellbound-3d-linux64-release", "opencell", "rspock"]

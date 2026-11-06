@@ -423,7 +423,7 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
     When
     Dev::Cli::UsagePrinter.new(host_rule: host_rule).print_node(path: ["build"], command: verb, out:)
 
-    Then "the section follows the flags; declaration order kept; the environment as a command's column, the note after it"
+    Then "the section follows the flags; declaration order kept; the environment as a command's column — (remote), since a verb leaves for the image's host rather than entering a container — the note after it"
     out.string == <<~USAGE
       Usage: dev build [args...]
 
@@ -433,7 +433,7 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
         --target <value>  the target
 
       Builds:
-        cellbound-3d-win64-dev      Client   cellbound-3d-linux (container)
+        cellbound-3d-win64-dev      Client   cellbound-3d-linux (remote)
         cellbound-3d-editor-macos   Editor   host
         cellbound-3d-editor-linux64 Editor   host (linux64 only)
         rspock                      The gem
@@ -480,7 +480,7 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
         staging      rsync to the gamebox  host
                      Accepts: cellbound-3d-win64-dev, cellbound-3d-linux64-dev
                      Protocol: run: ./bin/stage
-        steam        Steam depots          cellbound-3d-linux (container)
+        steam        Steam depots          cellbound-3d-linux (remote)
                      Accepts: cellbound-3d-steamworks-win64-release
                      Protocol: run: ./bin/steam-upload
     USAGE
@@ -509,6 +509,20 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
       Flags:
         --dry-run  select and report, ship nothing
     USAGE
+  end
+
+  test "a verb placed in an image this host is not says it runs on a remote host, where a project command would say a container" do
+    Given
+    linux = image("cellbound-3d-linux")
+    steam = FakeVerb.new(desc: "Steam depots")
+    steam.stubs(:placement).returns(Dev::Placement::Image.new(image: linux))
+    out = StringIO.new
+
+    When
+    Dev::Cli::UsagePrinter.new(host_rule: host_rule).print_node(path: ["deploy", "steam"], command: steam, out:)
+
+    Then
+    out.string.lines.map(&:chomp).fetch(3) == "Runs in cellbound-3d-linux, on a remote host (this machine was not provisioned from it)."
   end
 
   test "an overridden slot's own usage says the project body's environment" do

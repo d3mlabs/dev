@@ -3,17 +3,23 @@
 
 require "test_helper"
 require "dev/build_dispatcher"
+require "dev/cli/ui"
 require "dev/deps/dependency"
 require "dev/dispatch"
 require "dev/dispatch_resolver"
+require "dev/enrolled_runner_lookup"
 require "dev/environment_image"
 require "dev/host_environment"
 require "dev/host_rule"
 require "dev/lifecycle"
 require "dev/placement"
+require "dev/remote_dispatches"
+require "dev/settings"
 require "dev/target_placement"
 require "fileutils"
 require "pathname"
+require "stringio"
+require "support/fake_gh"
 require "support/lifecycle_fixtures"
 require "tmpdir"
 
@@ -22,6 +28,12 @@ require "tmpdir"
 transform!(RSpock::AST::Transformation)
 class Dev::BuildDispatcherTest < Minitest::Test
   include LifecycleFixtures
+  include SorbetHelper
+
+  # The repo has no enrolled runner online.
+  class NoneEnrolled < Dev::EnrolledRunnerLookup
+    def available = nil
+  end
 
   def setup
     @dir = Pathname(Dir.mktmpdir("build-dispatcher"))
@@ -59,7 +71,12 @@ class Dev::BuildDispatcherTest < Minitest::Test
 
   def dispatcher(placements: self.placements)
     host_rule = Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: @marker), inside_container: false)
-    Dev::BuildDispatcher.new(placements: placements, resolver: Dev::DispatchResolver.new(host_rule: host_rule))
+    remotes = Dev::RemoteDispatches.new(
+      root: @dir, ui: typed_mock(Dev::Cli::Ui), out: StringIO.new, runs: Dev::Lifecycle::WorkflowRuns.new(gh: FakeGh.new(root: @dir)),
+    )
+    settings = Dev::Settings.new(config_path: (@dir / "config.yml").to_s, system_config_path: (@dir / "none.yml").to_s)
+    resolver = Dev::DispatchResolver.new(host_rule: host_rule, remotes: remotes, enrolled: NoneEnrolled.new, settings: settings, inside_job: false)
+    Dev::BuildDispatcher.new(placements: placements, resolver: resolver)
   end
 
   test "placement_for and buildable_here? read the bound target placement" do
@@ -86,7 +103,7 @@ class Dev::BuildDispatcherTest < Minitest::Test
     dispatcher.dispatch_for(build("cellbound-3d-win64-dev")) == Dev::Dispatch::Native.new
   end
 
-  test "an image build on a bare host has no dispatch yet" do
+  test "an image build on a bare host with no runner to go to is refused" do
     When
     dispatcher.dispatch_for(build("cellbound-3d-win64-dev"))
 
@@ -101,6 +118,21 @@ class Dev::BuildDispatcherTest < Minitest::Test
     Then
     error = raises(Dev::TargetPlacement::HostDoesNotProduceError)
     error.message.include?("`cellbound-3d-linux64-dev` builds on the host, and this host is macos")
+  end
+
+  test "`--runner` sends #{what} to the label without asking whether this machine could produce it: the runner does" do
+    When
+    dispatch = dispatcher.dispatch_for(build(name), runner: "linux-pool")
+
+    Then
+    dispatch.is_a?(Dev::Dispatch::Remote)
+    dispatch.transport.runner == "linux-pool"
+
+    Where
+    what                                  | name
+    "an image build on a bare host"       | "cellbound-3d-win64-dev"
+    "a host build this machine cannot do" | "cellbound-3d-linux64-dev"
+    "a host build this machine can do"    | "rspock"
   end
 
   test "a target with no placement bound (the lock was unreadable at load) refuses with the re-lock" do

@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "stringio"
+require "dev/environment_image"
 require_relative "../command"
 require_relative "../host_rule"
 require_relative "../placement"
@@ -32,7 +33,11 @@ module Dev
     # not annotated. A lifecycle verb's own usage lists what it acts on
     # (LifecycleCommand#listing — the builds, for `build` and `package`)
     # in the same three columns, each with the environment its target
-    # declares for it.
+    # declares for it — with `(remote)` rather than `(container)` where
+    # this machine is not that environment, since a verb never enters a
+    # container: it leaves for a host that is (the remote dispatch,
+    # dev#420), and which one is decided when it runs, never asked of the
+    # forge by help.
     class UsagePrinter
       extend T::Sig
 
@@ -50,6 +55,8 @@ module Dev
       # What the environment column appends to an image's name when
       # running it from here enters a container of it.
       CONTAINER_SUFFIX = " (container)"
+      # …and when a lifecycle verb over it leaves for a host that is it.
+      REMOTE_SUFFIX = " (remote)"
 
       # The label column of a command section: wide enough for a command
       # name, so the summaries line up across sections.
@@ -182,7 +189,7 @@ module Dev
       sig { params(listing: LifecycleCommand::Listing, out: T.any(IO, StringIO)).void }
       def print_listing(listing, out)
         rows = listing.subjects.map do |subject|
-          environment = [placement_label(subject.placement), subject.note].compact.join(" ")
+          environment = [placement_label(subject.placement, lifecycle: true), subject.note].compact.join(" ")
           Row.new(label: subject.name, summary: subject.desc, environment: environment.empty? ? nil : environment)
         end
         # Build names run long (`cellbound-3d-steamworks-win64-release`), so
@@ -235,27 +242,32 @@ module Dev
 
       # The listing row's environment column: `host`, the image's name, or
       # the name with CONTAINER_SUFFIX when running it from here enters a
-      # container. Nothing for a command with no project body, and nothing
-      # for one the composition root could not bind (the lock was
-      # unreadable; it said so on stderr).
+      # container (REMOTE_SUFFIX for a verb, which leaves instead). Nothing
+      # for a command with no project body, and nothing for one the
+      # composition root could not bind (the lock was unreadable; it said
+      # so on stderr).
       #
       # @param command [Dev::Command]
       # @return [String, nil]
       sig { params(command: Command).returns(T.nilable(String)) }
-      def environment_label(command) = placement_label(placement_of(command))
+      def environment_label(command) = placement_label(placement_of(command), lifecycle: command.is_a?(LifecycleCommand))
 
       # A placement as the column spells it; nil for none.
       #
       # @param placement [Dev::Placement, nil]
+      # @param lifecycle [Boolean] whether the row is a verb's or a verb
+      #   subject's — what leaves rather than enters a container
       # @return [String, nil]
-      sig { params(placement: T.nilable(Placement)).returns(T.nilable(String)) }
-      def placement_label(placement)
+      sig { params(placement: T.nilable(Placement), lifecycle: T::Boolean).returns(T.nilable(String)) }
+      def placement_label(placement, lifecycle: false)
         return nil if placement.nil?
 
         case placement
         when Placement::Host then placement.name
         when Placement::Image
-          @host_rule.enters_container?(placement.image) ? "#{placement.name}#{CONTAINER_SUFFIX}" : placement.name
+          return placement.name unless @host_rule.enters_container?(placement.image)
+
+          "#{placement.name}#{lifecycle ? REMOTE_SUFFIX : CONTAINER_SUFFIX}"
         else
           # simplecov:disable — the sealed placement has no third shape;
           # T.absurd keeps the static proof.
@@ -276,13 +288,24 @@ module Dev
         case placement
         when Placement::Host then "Runs on the host."
         when Placement::Image
-          where = @host_rule.enters_container?(placement.image) ? "in a container on this machine" : "natively on this machine"
-          "Runs in #{placement.name}, #{where}."
+          "Runs in #{placement.name}, #{where(placement.image, lifecycle: command.is_a?(LifecycleCommand))}."
         else
           # simplecov:disable — see environment_label.
           T.absurd(placement)
           # simplecov:enable
         end
+      end
+
+      # Where an image's body runs from here, for the sentence.
+      #
+      # @param image [Dev::EnvironmentImage]
+      # @param lifecycle [Boolean] as for placement_label
+      # @return [String]
+      sig { params(image: EnvironmentImage, lifecycle: T::Boolean).returns(String) }
+      def where(image, lifecycle:)
+        return "natively on this machine" unless @host_rule.enters_container?(image)
+
+        lifecycle ? "on a remote host (this machine was not provisioned from it)" : "in a container on this machine"
       end
 
       # The bound placement of a command with a project body, or of a verb

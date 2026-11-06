@@ -33,6 +33,15 @@ class Dev::Cli::UiImplTest < Minitest::Test
     1 * @cli_ui.puts(anything)
   end
 
+  test "#print_remote_crossing prints the one dim line about leaving for a runner at a snapshot" do
+    When
+    @ui.print_remote_crossing(runner: "ue-engine-hosted", snapshot: "0123456789ab")
+
+    Then
+    1 * @cli_ui.fmt("{{gray:→ on ue-engine-hosted, snapshot 0123456789ab}}")
+    1 * @cli_ui.puts(anything)
+  end
+
   test "#ask_secret is CLI::UI's hidden-input prompt when a terminal is behind stdin, and nil (no question asked) when not" do
     Given "a prompt seam and two stdins"
     prompt = typed_mock(CLI::UI::Prompt, class_of: true)
@@ -63,6 +72,15 @@ class Dev::Cli::NoUiTest < Minitest::Test
 
     Expect
     assert_output("→ in snappy-linux\n") { ui.print_crossing("snappy-linux") }
+  end
+
+  test "#print_remote_crossing writes the remote crossing line plain to stdout" do
+    Given
+    ui = Dev::Cli::NoUi.new
+
+    Expect
+    Dev::Cli::Ui::REMOTE_CROSSING_PREFIX == "→ on "
+    assert_output("→ on ue-engine-hosted, snapshot 0123456789ab\n") { ui.print_remote_crossing(runner: "ue-engine-hosted", snapshot: "0123456789ab") }
   end
 
   test "#ask_secret never asks: nil, nothing written" do

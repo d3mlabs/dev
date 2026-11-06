@@ -68,18 +68,22 @@ module Dev
     # The dispatch a verb over +build+ hands its env to.
     #
     # @param build [Lifecycle::Build]
+    # @param runner [String, nil] a label `--runner` named; nil to resolve
     # @return [Dispatch]
     # @raise [UnboundTargetError]
     # @raise [TargetPlacement::HostDoesNotProduceError] a host build of a
-    #   platform this machine is not
+    #   platform this machine is not, asked to run here
     # @raise [DispatchResolver::RemoteDispatchUnavailableError] an image
-    #   this machine was not provisioned from
+    #   this machine was not provisioned from, with no runner to go to
+    # @raise [DispatchResolver::DispatchFromJobError]
     # @raise [HostRule::ContainerDriftError]
-    sig { params(build: Lifecycle::Build).returns(Dispatch) }
-    def dispatch_for(build)
+    sig { params(build: Lifecycle::Build, runner: T.nilable(String)).returns(Dispatch) }
+    def dispatch_for(build, runner: nil)
       placement = target_placement(build)
-      placement.assert_buildable_here!(build)
-      @resolver.resolve(placement.placement_for(build), subject: build.name)
+      # A build forced onto a runner is produced there, not here: the
+      # host's platform has no say.
+      placement.assert_buildable_here!(build) if runner.nil?
+      @resolver.resolve(placement.placement_for(build), subject: build.name, runner:)
     end
 
     private
