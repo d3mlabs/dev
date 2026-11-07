@@ -76,6 +76,68 @@ class Dev::RunnerTeardownTest < Minitest::Test
     "~-relative" | nil
   end
 
+  test "resolve_all by scope names a whole slot family in slot order, whatever order discovery found them in (dev#470)" do
+    Given "three slots of mac1 at the org and an unrelated repo enrollment"
+    home = Dir.mktmpdir
+    three = write_runner(home, "actions-runner-ai-ask-3", scope: "d3mlabs", name: "mac1-3")
+    one = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
+    two = write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
+    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+
+    When
+    enrollments = build_teardown(home: home).resolve_all("d3mlabs")
+
+    Then
+    enrollments.map(&:dir) == [one, two, three]
+  end
+
+  test "resolve_all by dir is one slot; by a scope one enrollment serves, that one" do
+    Given
+    home = Dir.mktmpdir
+    one = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
+    two = write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
+    snappy = write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    teardown = build_teardown(home: home)
+
+    Expect
+    teardown.resolve_all("~/actions-runner-ai-ask-2").map(&:dir) == [two]
+    teardown.resolve_all(one).map(&:dir) == [one]
+    teardown.resolve_all("JPDuchesne/snappy").map(&:dir) == [snappy]
+  end
+
+  test "resolve_all refuses a scope whose enrollments are not one family: #{why}" do
+    Given
+    home = Dir.mktmpdir
+    names.each_with_index { |name, i| write_runner(home, "actions-runner-#{i}", scope: "d3mlabs", name: name) }
+
+    When
+    build_teardown(home: home).resolve_all("d3mlabs")
+
+    Then
+    error = raises Dev::RunnerTeardown::AmbiguousEnrollmentError
+    error.message.include?("~/actions-runner-0, ~/actions-runner-1")
+
+    Where
+    names                | why
+    %w[mac1 mac1]        | "two dirs under one name (a --replace leftover)"
+    %w[mac1 old-box]     | "two different families"
+    %w[mac1-2 other-2]   | "two slot-2s of different bases"
+  end
+
+  test "resolve by scope refuses a family of several slots: it names one enrollment" do
+    Given
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
+    write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
+
+    When
+    build_teardown(home: home).resolve("d3mlabs")
+
+    Then
+    error = raises Dev::RunnerTeardown::AmbiguousEnrollmentError
+    error.message.include?("2 slots on this host serve d3mlabs — name the dir instead: ~/actions-runner-ai-ask, ~/actions-runner-ai-ask-2")
+  end
+
   test "resolve refuses an ambiguous scope, listing the dirs so the operator can name one" do
     Given "two enrollments for one scope"
     home = Dir.mktmpdir

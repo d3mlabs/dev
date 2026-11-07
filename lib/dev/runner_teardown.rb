@@ -5,6 +5,7 @@ require "etc"
 require "stringio"
 
 require "dev/runner_discovery"
+require "dev/runner_family"
 require "dev/runner_setup"
 
 module Dev
@@ -23,9 +24,10 @@ module Dev
   # as a failure (RunnerSetup.remove_registration, the shared seam).
   #
   # Enrollments are named the way an operator would: by scope when one
-  # local enrollment serves it, or by dir (absolute or `~`-relative), which
-  # is always unambiguous. Both come from RunnerDiscovery and nothing
-  # else, so resolution works offline (shell completion rides on it).
+  # local enrollment — or one family of slots (dev#470) — serves it, or by
+  # dir (absolute or `~`-relative), which is always one slot. Both come
+  # from RunnerDiscovery and nothing else, so resolution works offline
+  # (shell completion rides on it).
   #
   # Same CLI boundary as RunnerSetup (an injectable Executor over gh /
   # svc.sh / config.sh) and the same svc.sh OS split. An enrollment that
@@ -83,9 +85,39 @@ module Dev
       @current_user = current_user
     end
 
-    # The enrollment a command-line reference names. A reference starting
-    # with `/` or `~` is a dir; anything else is a scope ("owner/repo" or
-    # "owner").
+    # The enrollments a command-line reference names, in slot order. A
+    # reference starting with `/` or `~` is a dir — always exactly one
+    # enrollment. Anything else is a scope ("owner/repo" or "owner"): one
+    # enrollment, or one whole family (dev#470: the slots sharing a base
+    # name, each slot once) — a host serving a scope with three slots is
+    # unregistered from it as a whole, the way register enrolled it. Several
+    # enrollments at a scope that are *not* one family (two dirs under one
+    # name, say — what `--replace` leaves behind) name nothing by scope.
+    #
+    # @param reference [String]
+    # @return [Array<Dev::RunnerDiscovery::Enrollment>]
+    # @raise [AmbiguousEnrollmentError] when the scope's enrollments are not one family
+    # @raise [NoSuchEnrollmentError] when nothing matches
+    sig { params(reference: String).returns(T::Array[Dev::RunnerDiscovery::Enrollment]) }
+    def resolve_all(reference)
+      return [resolve_dir(reference)] if reference.start_with?("/", "~")
+
+      matches = @discovery.enrollments_for(reference)
+      raise NoSuchEnrollmentError, "no enrollment on this host serves #{reference}" if matches.empty?
+
+      family = RunnerFamily.new(base: RunnerFamily.base_of(T.must(matches.first).name), dir: T.must(matches.first).dir)
+      slots = matches.map { |enrollment| family.slot_of(enrollment.name) }
+      if slots.any?(&:nil?) || slots.uniq.length != slots.length
+        raise AmbiguousEnrollmentError,
+          "#{matches.length} enrollments on this host serve #{reference} — name the dir instead: " \
+            "#{matches.map(&:display_dir).join(", ")}"
+      end
+
+      matches.sort_by { |enrollment| T.must(family.slot_of(enrollment.name)) }
+    end
+
+    # The one enrollment a reference names: resolve_all for a reference
+    # that is a dir, or a scope one enrollment serves.
     #
     # @param reference [String]
     # @return [Dev::RunnerDiscovery::Enrollment]
@@ -93,16 +125,14 @@ module Dev
     # @raise [NoSuchEnrollmentError] when nothing matches
     sig { params(reference: String).returns(Dev::RunnerDiscovery::Enrollment) }
     def resolve(reference)
-      return resolve_dir(reference) if reference.start_with?("/", "~")
-
-      matches = @discovery.enrollments_for(reference)
+      matches = resolve_all(reference)
       if matches.length > 1
         raise AmbiguousEnrollmentError,
-          "#{matches.length} enrollments on this host serve #{reference} — name the dir instead: " \
+          "#{matches.length} slots on this host serve #{reference} — name the dir instead: " \
             "#{matches.map(&:display_dir).join(", ")}"
       end
 
-      matches.fetch(0) { raise NoSuchEnrollmentError, "no enrollment on this host serves #{reference}" }
+      T.must(matches.first)
     end
 
     # Remove the enrollment: stop and uninstall its service when one is
