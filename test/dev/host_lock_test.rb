@@ -71,6 +71,29 @@ class Dev::HostLockTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  # The locks dir is shared between the identities on the box; whoever
+  # made it first owns it, and chmod by anyone else is EPERM. The second
+  # identity must still get in — the dir is already group-writable — so
+  # the refusal is not an error. A foreign-owned dir cannot be made by an
+  # unprivileged test, so the chmod is the one thing stubbed here.
+  test "a locks dir another identity owns (EPERM on chmod) is still used" do
+    Given "a locks dir whose mode this identity cannot set"
+    root = Dir.mktmpdir("host-lock-test-")
+    FileUtils.mkdir_p(File.join(root, "locks"))
+    FileUtils.stubs(:chmod).raises(Errno::EPERM)
+    lock = Dev::HostLock.new(name: "brew", root: root)
+
+    When
+    value = lock.synchronize { :converged }
+
+    Then "the lock is taken in that dir regardless"
+    value == :converged
+    File.exist?(File.join(root, "locks", "brew.lock"))
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
   test "the block's exception releases the lock" do
     Given "a lock whose block raises"
     root = Dir.mktmpdir("host-lock-test-")
