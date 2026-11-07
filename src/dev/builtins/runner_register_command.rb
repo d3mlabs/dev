@@ -264,6 +264,20 @@ module Dev
           may also use the org's slots for the same labels, register asks whether this
           runner should be its only one, taking it out of the group on yes.
 
+          Two kinds of ai-flow host. An agent host (--ai-flow, or --labels over
+          #{LabelContracts::AI_FLOW_AGENT_LABELS.join(" ")}) runs the agent: one slot is one agent
+          run, sized for it, and the agent host bootstrap converges. An orchestrator
+          (--labels #{LabelContracts::ORCHESTRATOR_LABEL}) runs `/build --split`'s poll loop — API calls and
+          sleep for a plan's whole critical path — so it is for an always-on thin
+          box: nothing converges beyond the runner host rule, slots are cheap (a
+          listener each), and --ai-flow never includes it, so an agent host does not
+          lose a build slot to it. A host may carry both families at different
+          scopes (the box: its repo-scoped build runner, plus the org's
+          orchestrators); each scope's enrollments are discovered and sized on their
+          own. If the orchestrate job sits at "Waiting for a runner" GitHub says no
+          more than its requested labels: the org's Runners page must list an Idle
+          runner carrying #{LabelContracts::ORCHESTRATOR_LABEL} in the '#{LabelContracts::AI_FLOW_GROUP.name}' group.
+
           Three identities meet in a registration:
             you (gh auth)         mints the registration token — repo admin, or admin:org with --org
             the runner user       owns the enrollment: the dir, config.sh's record, and the gh login
@@ -298,6 +312,7 @@ module Dev
             dev runner register --org --ai-flow      # org agent host, the full ai-flow set
             dev runner register --org --labels ai-build
             dev runner register --org --ai-flow --slots 3    # three jobs at once; this repo may use them
+            dev runner register --org --labels #{LabelContracts::ORCHESTRATOR_LABEL} --slots 4   # the orchestrator pool, on an always-on thin box
             dev runner register --ai-flow                    # this repo's own agent runner; asks to leave the org's pool
             dev runner register --org --labels ue-engine --group ue-hosted   # a human's pool
         DESC
@@ -311,7 +326,7 @@ module Dev
         [
           Cli::Flag.new(ORG_FLAG, desc: "enroll at the org scope (needs admin:org); labels are required"),
           Cli::Flag.new(LABELS_FLAG, takes_value: true, desc: "comma-separated labels; default: the repo's name"),
-          Cli::Flag.new(AI_FLOW_FLAG, desc: "the full ai-flow label set (#{LabelContracts::AI_FLOW_LABELS.join(",")})"),
+          Cli::Flag.new(AI_FLOW_FLAG, desc: "the agent host's ai-flow label set (#{LabelContracts::AI_FLOW_AGENT_LABELS.join(",")}); the orchestrator pool is --labels #{LabelContracts::ORCHESTRATOR_LABEL}"),
           Cli::Flag.new(SLOTS_FLAG, takes_value: true, desc: "how many jobs this host runs at once at this scope: N runners, <name>, <name>-2 .. <name>-N; default: what is enrolled, else 1"),
           Cli::Flag.new(GROUP_FLAG, takes_value: true, desc: "--org: the runner group the slots join (made once in the org's settings); ai-flow labels imply '#{LabelContracts::AI_FLOW_GROUP.name}'; default: #{DEFAULT_GROUP}"),
           Cli::Flag.new(DIR_FLAG, takes_value: true, desc: "the runner directory (one slot); default: actions-runner-<first label> under the enrollment owner's home, -<n> per further slot"),
@@ -774,11 +789,11 @@ module Dev
         ai_flow = args.flag?(AI_FLOW_FLAG)
         if explicit && ai_flow
           raise ArgumentError,
-            "--ai-flow enrolls the full ai-flow set (#{LabelContracts::AI_FLOW_LABELS.join(",")}); " \
+            "--ai-flow enrolls the agent host's ai-flow set (#{LabelContracts::AI_FLOW_AGENT_LABELS.join(",")}); " \
               "pass --labels alone for a custom set"
         end
         return explicit if explicit
-        return LabelContracts::AI_FLOW_LABELS.join(",") if ai_flow
+        return LabelContracts::AI_FLOW_AGENT_LABELS.join(",") if ai_flow
 
         if org
           raise ArgumentError,

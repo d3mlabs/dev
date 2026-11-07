@@ -204,17 +204,38 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.wirings == []
   end
 
-  test "--org --ai-flow enrolls the full ai-flow label vocabulary" do
+  test "--org --ai-flow enrolls the agent host's full label set — never the orchestrator label" do
     Given "a harness"
     harness = build_harness
 
     When "registering the org agent host"
     harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: projectless_context)
 
-    Then "the labels are dev's documented mirror of ai-flow's vocabulary"
+    Then "the labels are dev's documented mirror of ai-flow's agent vocabulary"
     config, _repo, org = harness.wirings.fetch(0)
-    config.labels == Dev::LabelContracts::AI_FLOW_LABELS.join(",")
+    config.labels == Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(",")
+    !config.labels.include?("ai-orchestrator")
     org == true
+  end
+
+  test "--org --labels ai-orchestrator --slots 2 enrolls a thin pool: the ai-flow group, no agent host contract, two slots (plans#53)" do
+    Given "an org with the pinned ai-flow group and a factory recording what contracts are asked for"
+    registry = FakeRegistry.new(groups: { ["d3mlabs", "ai-flow"] => FakeRegistry.group(id: 7, name: "ai-flow", pinned: true) })
+    seen = []
+    recorder = ->(labels, agent_user) {
+      seen << [labels, agent_user]
+      Dev::LabelContracts.for(labels, agent_user: agent_user, bootstrap: typed_mock(Dev::AgentBootstrap))
+    }
+    harness = build_harness(registry: registry, scope: "d3mlabs", contracts_factory: recorder)
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-orchestrator", "--slots", "2"]), context: projectless_context)
+
+    Then "two slots carrying the label, in the ai-flow group; the label set carried no agent host contract"
+    harness.wirings.map { |config, _repo, _org| config.labels } == ["ai-orchestrator", "ai-orchestrator"]
+    harness.wirings.map { |config, _repo, _org| config.group } == ["ai-flow", "ai-flow"]
+    seen == [["ai-orchestrator", nil]]
+    Dev::LabelContracts.for("ai-orchestrator").empty?
   end
 
   test "--labels overrides any derivation" do
@@ -309,7 +330,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: projectless_context)
 
     Then "one label amend; the service and dir stay put; contracts still converge"
-    registry.amends == [["d3mlabs", 42, Dev::LabelContracts::AI_FLOW_LABELS]]
+    registry.amends == [["d3mlabs", 42, Dev::LabelContracts::AI_FLOW_AGENT_LABELS]]
     harness.events == [
       [:converge, false, nil, nil, nil],
       [:after_enroll, dir, 1],
@@ -483,7 +504,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
       [:run], [:after_enroll, "/tmp/runner-dir-2", 2],
       [:run], [:after_enroll, "/tmp/runner-dir-3", 3],
     ]
-    labels = Dev::LabelContracts::AI_FLOW_LABELS.join(",")
+    labels = Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(",")
     harness.wirings.map(&:first) == [
       Dev::RunnerSetupConfig.new(labels: labels, group: "ai-flow"),
       Dev::RunnerSetupConfig.new(labels: labels, dir: "/tmp/runner-dir-2", name: "mac1-2", group: "ai-flow"),
@@ -505,7 +526,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "3"]), context: projectless_context)
 
     Then "slot 1 is amended, not re-enrolled; the new slots take slot 1's base (the enrollment's name) and sit beside its dir"
-    registry.amends == [["d3mlabs", 42, Dev::LabelContracts::AI_FLOW_LABELS]]
+    registry.amends == [["d3mlabs", 42, Dev::LabelContracts::AI_FLOW_AGENT_LABELS]]
     harness.events == [
       [:converge, false, nil, nil, nil],
       [:after_enroll, dir, 1],
@@ -513,8 +534,8 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
       [:run], [:after_enroll, "#{dir}-3", 3],
     ]
     harness.wirings.drop(1).map(&:first) == [
-      Dev::RunnerSetupConfig.new(labels: Dev::LabelContracts::AI_FLOW_LABELS.join(","), dir: "#{dir}-2", name: "mac-box-2", group: "ai-flow"),
-      Dev::RunnerSetupConfig.new(labels: Dev::LabelContracts::AI_FLOW_LABELS.join(","), dir: "#{dir}-3", name: "mac-box-3", group: "ai-flow"),
+      Dev::RunnerSetupConfig.new(labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(","), dir: "#{dir}-2", name: "mac-box-2", group: "ai-flow"),
+      Dev::RunnerSetupConfig.new(labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(","), dir: "#{dir}-3", name: "mac-box-3", group: "ai-flow"),
     ]
     harness.torn_down == []
   end
@@ -549,7 +570,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     two = write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
     three = write_runner(home, "actions-runner-ai-ask-3", scope: "d3mlabs", name: "mac1-3")
     runners = %w[mac1 mac1-2 mac1-3].each_with_index.to_h do |name, i|
-      [["d3mlabs", name], Dev::RunnerRegistry::Runner.new(id: i + 1, custom_labels: Dev::LabelContracts::AI_FLOW_LABELS, status: "online")]
+      [["d3mlabs", name], Dev::RunnerRegistry::Runner.new(id: i + 1, custom_labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS, status: "online")]
     end
     registry = FakeRegistry.new(runners: runners)
     harness = build_harness(home: home, registry: registry, scope: "d3mlabs")
@@ -599,8 +620,8 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     write_runner(home, "actions-runner-ai-ask-3", scope: "d3mlabs", name: "mac1-3")
     registry = FakeRegistry.new(
       runners: {
-        ["d3mlabs", "mac1"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: Dev::LabelContracts::AI_FLOW_LABELS, status: "online"),
-        ["d3mlabs", "mac1-3"] => Dev::RunnerRegistry::Runner.new(id: 3, custom_labels: Dev::LabelContracts::AI_FLOW_LABELS, status: "online"),
+        ["d3mlabs", "mac1"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS, status: "online"),
+        ["d3mlabs", "mac1-3"] => Dev::RunnerRegistry::Runner.new(id: 3, custom_labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS, status: "online"),
       },
     )
     harness = build_harness(home: home, registry: registry, scope: "d3mlabs")
@@ -610,7 +631,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     Then
     harness.events == [[:run]]
-    harness.wirings.last.first == Dev::RunnerSetupConfig.new(labels: Dev::LabelContracts::AI_FLOW_LABELS.join(","), dir: "#{one}-2", name: "mac1-2", group: "ai-flow")
+    harness.wirings.last.first == Dev::RunnerSetupConfig.new(labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(","), dir: "#{one}-2", name: "mac1-2", group: "ai-flow")
   end
 
   test "a slot GitHub has lost re-enrolls into its own dir under its own name; the rest are amended" do
@@ -619,7 +640,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
     two = write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
     registry = FakeRegistry.new(
-      runners: { ["d3mlabs", "mac1"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: Dev::LabelContracts::AI_FLOW_LABELS, status: "online") },
+      runners: { ["d3mlabs", "mac1"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS, status: "online") },
     )
     harness = build_harness(home: home, registry: registry, scope: "d3mlabs")
     harness.confirmer.expects(:confirm?).never
@@ -629,7 +650,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     Then
     harness.events == [[:run]]
-    harness.wirings.last.first == Dev::RunnerSetupConfig.new(labels: Dev::LabelContracts::AI_FLOW_LABELS.join(","), dir: two, name: "mac1-2", group: "ai-flow")
+    harness.wirings.last.first == Dev::RunnerSetupConfig.new(labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(","), dir: two, name: "mac1-2", group: "ai-flow")
     harness.torn_down == []
   end
 
@@ -691,7 +712,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
   # --- runner groups: who may use the slots (dev#470) --------------------
 
-  AI_FLOW_SET = Dev::LabelContracts::AI_FLOW_LABELS.join(",")
+  AI_FLOW_SET = Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(",")
 
   test "ai-flow labels oblige the ai-flow group: a fresh org registration creates it — selected, pinned to ai-flow's workflows — hands it to config.sh, and admits the checkout's repo" do
     Given "an org with no ai-flow group yet, registering from the cellbound checkout"
@@ -749,7 +770,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     default = FakeRegistry.group(id: 1, name: "Default", visibility: "all")
     ai_flow = FakeRegistry.group(id: 7, name: "ai-flow", pinned: true)
     registry = FakeRegistry.new(
-      runners: { ["d3mlabs", "mac1"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: Dev::LabelContracts::AI_FLOW_LABELS, status: "online") },
+      runners: { ["d3mlabs", "mac1"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS, status: "online") },
       groups: { ["d3mlabs", "ai-flow"] => ai_flow },
       placements: { ["d3mlabs", 1] => default },
       selections: { ["d3mlabs", 7] => [Dev::RunnerRegistry::GroupRepository.new(id: 100, full_name: "d3mlabs/cellbound-3d")] },
@@ -1053,7 +1074,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.command.call(args: parsed_args(harness.command, words), context: projectless_context)
 
     Then
-    seen == [[Dev::LabelContracts::AI_FLOW_LABELS.join(","), "ci"]]
+    seen == [[Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(","), "ci"]]
   end
 
   # --- the host rule: a runner user on Linux (dev#310) -----------------
