@@ -431,10 +431,12 @@ class Dev::GlobalDispatchTest < Minitest::Test
 
   private
 
-  # A hook installer that never touches the real shell RC. Subclasses the
-  # real installer to satisfy the accessors' typed constructors.
+  # A hook installer that never touches (or reads) the real shell RC: the
+  # hook is always current. Subclasses the real installer to satisfy the
+  # accessors' typed constructors.
   class QuietHookInstaller < Dev::Cd::HookInstaller
-    def ensure_installed = :already_present
+    def ensure_installed = nil
+    def installed? = true
   end
 
   def quiet_hook_installer

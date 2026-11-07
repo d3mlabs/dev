@@ -125,15 +125,26 @@ module Dev
         @rc_hook = rc_hook
       end
 
-      # Ensure the wrapper function + completer are in the user's shell RC.
+      # Ensure the wrapper function + completer are in the user's shell RC
+      # (idempotent; a no-op off a tty — see ShellRcHook).
       #
-      # @return [Symbol, false] :added, :already_present, or false (unsupported shell)
-      sig { returns(T.any(Symbol, FalseClass)) }
+      # @return [void]
+      # @raise [Dev::ShellRcHook::UnsupportedShellError] when the user's shell has no hook
+      sig { void }
       def ensure_installed
         @rc_hook.ensure_snippet(
           marker: MARKER,
           snippets: { zsh: ZSH_SNIPPET.chomp, bash: BASH_SNIPPET.chomp, fish: FISH_SNIPPET.chomp },
         )
+      end
+
+      # Whether the user's shell RC carries the current generation of the hook.
+      #
+      # @return [Boolean]
+      # @raise [Dev::ShellRcHook::UnsupportedShellError] when the user's shell has no hook
+      sig { returns(T::Boolean) }
+      def installed?
+        @rc_hook.snippet_present?(marker: MARKER)
       end
     end
   end

@@ -15,10 +15,10 @@ class Dev::Cd::HookInstallerTest < Minitest::Test
     installer = build_installer(shell: "/bin/zsh", home: home)
 
     When "we ensure the hook"
-    result = installer.ensure_installed
+    installer.ensure_installed
 
     Then "the wrapper, completer and dev-scoped menu-select are installed"
-    result == :added
+    installer.installed?
     content = File.read(File.join(home, ".zshrc"))
     assert_includes content, "# dev cd + clone + completion (added by dev)"
     assert_includes content, 'command dev cd --resolve "$@"'
@@ -56,10 +56,9 @@ class Dev::Cd::HookInstallerTest < Minitest::Test
     before = File.read(File.join(home, ".zshrc"))
 
     When "we ensure the hook again"
-    result = installer.ensure_installed
+    installer.ensure_installed
 
     Then "nothing changes"
-    result == :already_present
     File.read(File.join(home, ".zshrc")) == before
 
     Cleanup
@@ -72,10 +71,9 @@ class Dev::Cd::HookInstallerTest < Minitest::Test
     installer = build_installer(shell: "/bin/bash", home: home)
 
     When "we ensure the hook"
-    result = installer.ensure_installed
+    installer.ensure_installed
 
     Then "the wrapper and completer land in .bash_profile"
-    result == :added
     content = File.read(File.join(home, ".bash_profile"))
     assert_includes content, 'command dev cd --resolve "$@"'
     assert_includes content, 'command dev clone --path "$@"'
@@ -93,10 +91,9 @@ class Dev::Cd::HookInstallerTest < Minitest::Test
     installer = build_installer(shell: "/usr/local/bin/fish", home: home)
 
     When "we ensure the hook"
-    result = installer.ensure_installed
+    installer.ensure_installed
 
     Then "the wrapper and completer land in config.fish"
-    result == :added
     content = File.read(File.join(home, ".config", "fish", "config.fish"))
     assert_includes content, "function dev"
     assert_includes content, "command dev cd --resolve $argv"
@@ -108,13 +105,33 @@ class Dev::Cd::HookInstallerTest < Minitest::Test
     FileUtils.rm_rf(home)
   end
 
-  test "an unsupported shell refuses the install" do
+  test "an unsupported shell refuses the install with UnsupportedShellError" do
     Given "a plain sh user"
     home = Dir.mktmpdir("cd-hook-test-")
     installer = build_installer(shell: "/bin/sh", home: home)
 
-    Expect "the install is refused"
-    installer.ensure_installed == false
+    When "we ensure the hook"
+    installer.ensure_installed
+
+    Then "the install is refused and no RC file is created"
+    raises Dev::ShellRcHook::UnsupportedShellError
+    Dir.children(home).empty?
+
+    Cleanup
+    FileUtils.rm_rf(home)
+  end
+
+  test "installed? is false until the hook is ensured, and false off a tty where the ensure writes nothing" do
+    Given "a zsh user with no .zshrc, headless"
+    home = Dir.mktmpdir("cd-hook-test-")
+    installer = Dev::Cd::HookInstaller.new(rc_hook: Dev::ShellRcHook.new(shell: "/bin/zsh", home: home, interactive: false))
+
+    When "we ensure the hook"
+    installer.ensure_installed
+
+    Then "nothing was installed"
+    !installer.installed?
+    Dir.children(home).empty?
 
     Cleanup
     FileUtils.rm_rf(home)
@@ -128,10 +145,9 @@ class Dev::Cd::HookInstallerTest < Minitest::Test
     installer = Dev::Cd::HookInstaller.new(rc_hook: rc_hook)
 
     When "we ensure the dev cd hook"
-    result = installer.ensure_installed
+    installer.ensure_installed
 
     Then "both snippets are present with their own markers"
-    result == :added
     content = File.read(File.join(home, ".zshrc"))
     assert_includes content, "# Shadowenv (added by dev)"
     assert_includes content, "# dev cd + clone + completion (added by dev)"
@@ -157,12 +173,14 @@ class Dev::Cd::HookInstallerTest < Minitest::Test
       }
     RC
     installer = build_installer(shell: "/bin/zsh", home: home)
+    stale = !installer.installed?
 
     When "we ensure the hook"
-    result = installer.ensure_installed
+    installer.ensure_installed
 
-    Then "the current wrapper is appended (its later definition wins in the shell)"
-    result == :added
+    Then "the old marker did not count as installed; the current wrapper is appended (its later definition wins in the shell)"
+    stale
+    installer.installed?
     content = File.read(File.join(home, ".zshrc"))
     assert_includes content, "# dev cd + clone + completion (added by dev)"
     assert_includes content, 'command dev clone --path "$@"'

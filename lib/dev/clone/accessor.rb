@@ -7,6 +7,7 @@ require "dev/clone/repo_spec"
 require "dev/clone/gh_cloner"
 require "dev/cd/hook_installer"
 require "dev/settings"
+require "dev/shell_rc_hook"
 
 module Dev
   module Clone
@@ -102,19 +103,27 @@ module Dev
       sig { params(spec: RepoSpec, destination: Pathname, err: T.any(IO, StringIO)).void }
       def announce(spec, destination, err:)
         err.puts "dev: cloned #{spec.full_name} to #{destination}"
-        case @hook_installer.ensure_installed
-        when :added
-          err.puts "dev: shell hook installed — open a new shell and `dev clone` will land you in the checkout. " \
-                   "For now: cd #{destination}"
-        when :already_present
-          err.puts "dev: the dev shell hook is installed but not active in this shell — open a new shell " \
-                   "(or source your shell RC). For now: cd #{destination}"
-        when :skipped
-          err.puts "dev: no shell hook installed (not an interactive terminal). Jump there with: cd #{destination}"
+        err.puts "dev: #{landing_hint(destination)}"
+      end
+
+      # How to land in checkouts next time, after ensuring there is a hook
+      # to activate. Off a tty the ensure writes nothing (ShellRcHook), so
+      # an RC still without the hook afterwards means no human terminal to
+      # hook.
+      #
+      # @param destination [Pathname]
+      # @return [String]
+      sig { params(destination: Pathname).returns(String) }
+      def landing_hint(destination)
+        @hook_installer.ensure_installed
+        if @hook_installer.installed?
+          "the dev shell hook is installed but not active in this shell — open a new shell (or source your shell RC) " \
+            "and `dev clone` will land you in the checkout. For now: cd #{destination}"
         else
-          err.puts "dev: your shell is unsupported for hooks (supported: zsh, bash, fish). " \
-                   "Jump there with: cd #{destination}"
+          "no shell hook installed (not an interactive terminal). Jump there with: cd #{destination}"
         end
+      rescue Dev::ShellRcHook::UnsupportedShellError => e
+        "#{e.message}. Jump there with: cd #{destination}"
       end
     end
   end
