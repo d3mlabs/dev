@@ -6,6 +6,7 @@ require "open3"
 require "pathname"
 require "uri"
 require "dev/brew_env"
+require "dev/host_lock"
 require "dev/shadowenv_path"
 require "dev/shadowenv_python"
 require "dev/shadowenv_ruby"
@@ -59,6 +60,13 @@ module Dev
     #
     # Env filtering (install vs skip based on ci/dev) is the caller's
     # responsibility — only pass deps that should be installed.
+    #
+    # Every brew write runs holding the host-wide brew lock (Dev::HostLock,
+    # ai-flow#116 / dev#483): two runner slots — or a human and the agent
+    # user — discovering the same missing keg at once would otherwise meet
+    # brew's own per-formula lock, which fails the loser. A keg found
+    # missing is converged under the lock, and the Cellar is asked again
+    # once the lock is ours: the holder before us usually installed it.
     class BrewIntegration < Integration
       extend T::Sig
 
@@ -215,6 +223,8 @@ module Dev
       #   `activate!(keg:, version:, project_root:, project_name:, store:)`
       #   and is called after the PATH activation with the locked keg
       #   (INTERPRETERS by default)
+      # @param lock [HostLock, nil] the host-wide lock brew writes hold;
+      #   nil for the data root's brew lock
       sig do
         params(
           repository: T.nilable(Repository),
@@ -227,11 +237,13 @@ module Dev
           tap_pinner: T.nilable(TapPinner),
           brew_env: T.nilable(BrewEnv),
           interpreters: T::Hash[Symbol, T::Module[T.anything]],
+          lock: T.nilable(HostLock),
         ).void
       end
       def initialize(repository:, store:, taps: [], project_dir: nil, project_name: nil, brew_prefix: nil, pin_taps: false,
-        tap_pinner: nil, brew_env: nil, interpreters: INTERPRETERS)
+        tap_pinner: nil, brew_env: nil, interpreters: INTERPRETERS, lock: nil)
         super(repository:, store:)
+        @lock = T.let(lock || HostLock.new(name: TOOL), HostLock)
         @taps = taps
         @project_dir = T.let(project_dir ? Pathname(project_dir) : nil, T.nilable(Pathname))
         @project_name = project_name
@@ -491,7 +503,7 @@ module Dev
       sig { params(dep: Dependency).void }
       def install_formula(dep)
         formula = formula_name(dep)
-        run_brew_install(dep.name, install_spec(dep)) unless brew_installed?(formula)
+        converge_missing!(formula) { run_brew_install(dep.name, install_spec(dep)) }
 
         locked = dep.version
         verify_installed!(dep, formula, locked) if locked
@@ -682,8 +694,26 @@ module Dev
       # @raise [InstallError] if brew install --cask fails
       sig { params(dep: Dependency).void }
       def install_cask(dep)
-        return if brew_installed?(dep.name)
-        run_brew_install(dep.name, "--cask #{dep.name}")
+        converge_missing!(dep.name) { run_brew_install(dep.name, "--cask #{dep.name}") }
+      end
+
+      # Install a formula or cask brew lacks, under the host lock, asking
+      # brew again once the lock is held: the previous holder — another
+      # slot's install of the same lock, a human's `dev up` — may have put
+      # it there, and a second `brew install` is what the lock exists to
+      # avoid. A name brew has costs no lock and no second question.
+      #
+      # @param name [String] formula (`llvm@18`) or cask name
+      # @yield installs it
+      # @return [void]
+      sig { params(name: String, blk: T.proc.void).void }
+      def converge_missing!(name, &blk)
+        return if brew_installed?(name)
+
+        @lock.synchronize do
+          @cellar = nil
+          yield unless brew_installed?(name)
+        end
       end
 
       # Whether brew has a formula or cask of the current batch at any version.
@@ -738,10 +768,12 @@ module Dev
       # @return [[String, Boolean]] brew's stderr and whether it succeeded
       sig { params(args: T::Array[String], pinned: T::Boolean).returns([String, T::Boolean]) }
       def brew_write(args, pinned: @pin_taps)
-        _out, err, status = T.unsafe(Open3).capture3(*brew_command(args, pinned:))
-        @cellar = nil
-        # success? is nil when the process did not exit normally — a failure.
-        [err, status.success? || false]
+        @lock.synchronize do
+          _out, err, status = T.unsafe(Open3).capture3(*brew_command(args, pinned:))
+          @cellar = nil
+          # success? is nil when the process did not exit normally — a failure.
+          [err, status.success? || false]
+        end
       end
 
       # The full argv of a brew write. Every write carries brew's download

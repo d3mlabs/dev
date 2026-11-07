@@ -141,6 +141,24 @@ class Dev::Clone::AccessorTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "a bare invocation off a tty says no hook was installed and gives the cd" do
+    Given "a hook installer that skipped (headless)"
+    root = Dir.mktmpdir("clone-accessor-")
+    accessor = build_accessor(root, hook_installer: FakeCloneHookInstaller.new(result: :skipped))
+    err = StringIO.new
+
+    When "we clone without the wrapper"
+    accessor.run("dev", plumbing: false, out: StringIO.new, err: err)
+
+    Then "the headless posture is named, with the cd, and the shell is not blamed"
+    assert_includes err.string, "not an interactive terminal"
+    assert_includes err.string, "cd #{File.join(root, "github.com", "d3mlabs", "dev")}"
+    !err.string.include?("unsupported")
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
   test "a bare invocation on an unsupported shell names the supported set" do
     Given "a hook installer that refuses"
     root = Dir.mktmpdir("clone-accessor-")

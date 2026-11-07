@@ -181,6 +181,21 @@ class Dev::Cd::AccessorTest < Minitest::Test
     assert_includes err.string, "not active in this shell"
   end
 
+  test "bare dev cd off a tty says no hook was installed, not that the shell is unsupported" do
+    Given "an accessor whose hook install was skipped (headless)"
+    installer = FakeCdHookInstaller.new(result: :skipped)
+    accessor = Dev::Cd::Accessor.new(root: Dir.tmpdir, hook_installer: installer)
+    err = StringIO.new
+
+    When "we explain the missing hook"
+    accessor.explain_missing_hook(err: err)
+
+    Then "the headless posture is named, the shell is not blamed"
+    raises Dev::Cd::Accessor::ShellHookInactiveError
+    assert_includes err.string, "not an interactive terminal"
+    !err.string.include?("unsupported")
+  end
+
   test "bare dev cd on an unsupported shell explains the supported set" do
     Given "an accessor whose hook install is refused"
     installer = FakeCdHookInstaller.new(result: false)

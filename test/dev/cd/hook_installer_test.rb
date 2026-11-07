@@ -123,7 +123,7 @@ class Dev::Cd::HookInstallerTest < Minitest::Test
   test "the dev cd hook coexists with the shadowenv hook in the same RC" do
     Given "a zsh user with the shadowenv hook already installed"
     home = Dir.mktmpdir("cd-hook-test-")
-    rc_hook = Dev::ShellRcHook.new(shell: "/bin/zsh", home: home)
+    rc_hook = Dev::ShellRcHook.new(shell: "/bin/zsh", home: home, interactive: true)
     rc_hook.ensure_snippet(marker: "# Shadowenv (added by dev)", snippets: { zsh: 'eval "$(shadowenv init zsh)"' })
     installer = Dev::Cd::HookInstaller.new(rc_hook: rc_hook)
 
@@ -174,6 +174,6 @@ class Dev::Cd::HookInstallerTest < Minitest::Test
   private
 
   def build_installer(shell:, home:)
-    Dev::Cd::HookInstaller.new(rc_hook: Dev::ShellRcHook.new(shell: shell, home: home))
+    Dev::Cd::HookInstaller.new(rc_hook: Dev::ShellRcHook.new(shell: shell, home: home, interactive: true))
   end
 end

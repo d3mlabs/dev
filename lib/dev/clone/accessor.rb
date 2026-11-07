@@ -109,6 +109,8 @@ module Dev
         when :already_present
           err.puts "dev: the dev shell hook is installed but not active in this shell — open a new shell " \
                    "(or source your shell RC). For now: cd #{destination}"
+        when :skipped
+          err.puts "dev: no shell hook installed (not an interactive terminal). Jump there with: cd #{destination}"
         else
           err.puts "dev: your shell is unsupported for hooks (supported: zsh, bash, fish). " \
                    "Jump there with: cd #{destination}"

@@ -8,10 +8,30 @@ require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
 class Dev::ShellRcHookTest < Minitest::Test
+  # ai-flow#116 / dev#483: the hook is a human-shell convenience, and an
+  # agent run (ai-agent, no terminal) has no business writing a shell
+  # profile — `shadowenv exec` is what a run uses. Off a tty the write is
+  # a no-op; the posture is injected, never read from the test's own stdin.
+  test "ensure_snippet off a tty is a no-op: :skipped, and no RC file is touched" do
+    Given "a zsh user with no .zshrc, headless"
+    home = Dir.mktmpdir("rc-hook-test-")
+    hook = Dev::ShellRcHook.new(shell: "/bin/zsh", home: home, interactive: false)
+
+    When "we ensure a snippet"
+    result = hook.ensure_snippet(marker: "# my hook (added by dev)", snippets: { zsh: "my_hook_line" })
+
+    Then "nothing is written"
+    result == :skipped
+    Dir.children(home).empty?
+
+    Cleanup
+    FileUtils.rm_rf(home)
+  end
+
   test "ensure_snippet appends the marker and snippet to a fresh zshrc" do
     Given "a zsh user with no .zshrc"
     home = Dir.mktmpdir("rc-hook-test-")
-    hook = Dev::ShellRcHook.new(shell: "/bin/zsh", home: home)
+    hook = Dev::ShellRcHook.new(shell: "/bin/zsh", home: home, interactive: true)
 
     When "we ensure a snippet"
     result = hook.ensure_snippet(marker: "# my hook (added by dev)", snippets: { zsh: "my_hook_line" })
@@ -29,7 +49,7 @@ class Dev::ShellRcHookTest < Minitest::Test
   test "ensure_snippet is idempotent: a second run reports already_present" do
     Given "a zsh user whose .zshrc already carries the marker"
     home = Dir.mktmpdir("rc-hook-test-")
-    hook = Dev::ShellRcHook.new(shell: "/bin/zsh", home: home)
+    hook = Dev::ShellRcHook.new(shell: "/bin/zsh", home: home, interactive: true)
     hook.ensure_snippet(marker: "# my hook (added by dev)", snippets: { zsh: "my_hook_line" })
     before = File.read(File.join(home, ".zshrc"))
 
@@ -48,7 +68,7 @@ class Dev::ShellRcHookTest < Minitest::Test
     Given "a zshrc with a hand-added hook line but no dev marker"
     home = Dir.mktmpdir("rc-hook-test-")
     File.write(File.join(home, ".zshrc"), 'eval "$(shadowenv init zsh)"')
-    hook = Dev::ShellRcHook.new(shell: "/bin/zsh", home: home)
+    hook = Dev::ShellRcHook.new(shell: "/bin/zsh", home: home, interactive: true)
 
     When "we ensure the snippet with the hook line as a present marker"
     result = hook.ensure_snippet(
@@ -67,7 +87,7 @@ class Dev::ShellRcHookTest < Minitest::Test
   test "ensure_snippet returns false for an unsupported shell" do
     Given "a user on plain sh"
     home = Dir.mktmpdir("rc-hook-test-")
-    hook = Dev::ShellRcHook.new(shell: "/bin/sh", home: home)
+    hook = Dev::ShellRcHook.new(shell: "/bin/sh", home: home, interactive: true)
 
     When "we ensure a snippet"
     result = hook.ensure_snippet(marker: "# my hook", snippets: { zsh: "line" })
@@ -83,7 +103,7 @@ class Dev::ShellRcHookTest < Minitest::Test
   test "bash resolves to .bash_profile by default" do
     Given "a bash user with neither RC file"
     home = Dir.mktmpdir("rc-hook-test-")
-    hook = Dev::ShellRcHook.new(shell: "/bin/bash", home: home)
+    hook = Dev::ShellRcHook.new(shell: "/bin/bash", home: home, interactive: true)
 
     When "we ensure a snippet"
     result = hook.ensure_snippet(marker: "# my hook", snippets: { bash: "bash_line" })
@@ -100,7 +120,7 @@ class Dev::ShellRcHookTest < Minitest::Test
     Given "a bash user with only a .bashrc"
     home = Dir.mktmpdir("rc-hook-test-")
     File.write(File.join(home, ".bashrc"), "# existing bashrc\n")
-    hook = Dev::ShellRcHook.new(shell: "/bin/bash", home: home)
+    hook = Dev::ShellRcHook.new(shell: "/bin/bash", home: home, interactive: true)
 
     When "we ensure a snippet"
     result = hook.ensure_snippet(marker: "# my hook", snippets: { bash: "bash_line" })
@@ -117,7 +137,7 @@ class Dev::ShellRcHookTest < Minitest::Test
   test "fish installs into ~/.config/fish/config.fish, creating the directory" do
     Given "a fish user with no config directory"
     home = Dir.mktmpdir("rc-hook-test-")
-    hook = Dev::ShellRcHook.new(shell: "/usr/local/bin/fish", home: home)
+    hook = Dev::ShellRcHook.new(shell: "/usr/local/bin/fish", home: home, interactive: true)
 
     When "we ensure a snippet"
     result = hook.ensure_snippet(marker: "# my hook", snippets: { fish: "fish_line" })
@@ -133,7 +153,7 @@ class Dev::ShellRcHookTest < Minitest::Test
   test "ensure_snippet returns false when the shell has no snippet" do
     Given "a fish user and a zsh-only snippet set"
     home = Dir.mktmpdir("rc-hook-test-")
-    hook = Dev::ShellRcHook.new(shell: "/usr/local/bin/fish", home: home)
+    hook = Dev::ShellRcHook.new(shell: "/usr/local/bin/fish", home: home, interactive: true)
 
     When "we ensure the snippet"
     result = hook.ensure_snippet(marker: "# my hook", snippets: { zsh: "line" })
