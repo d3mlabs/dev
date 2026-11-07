@@ -27,6 +27,16 @@ class Dev::LabelContractsTest < Minitest::Test
     ]
   end
 
+  test "ai-orchestrator is in the ai-flow vocabulary — same group — but is no agent host and is not in --ai-flow's set (plans#53)" do
+    Expect "it joins the ai-flow group like any ai-flow label; a thin host converges nothing (no agent bootstrap); an agent host does not become an orchestrator by default"
+    Dev::LabelContracts.group_for("ai-orchestrator") == Dev::LabelContracts::AI_FLOW_GROUP
+    Dev::LabelContracts::AI_FLOW_LABELS.include?("ai-orchestrator")
+    Dev::LabelContracts.for("ai-orchestrator").empty?
+    !Dev::LabelContracts.agent_host?("ai-orchestrator")
+    !Dev::LabelContracts::AI_FLOW_AGENT_LABELS.include?("ai-orchestrator")
+    Dev::LabelContracts::AI_FLOW_AGENT_LABELS == %w[ai-ask ai-edit ai-split ai-build ai-learn]
+  end
+
   test "agent capability labels carry the agent host contract" do
     Expect
     Dev::LabelContracts.for("ai-build", bootstrap: typed_mock(Dev::AgentBootstrap)).length == 1

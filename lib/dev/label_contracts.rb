@@ -16,21 +16,39 @@ module Dev
   # bootstrap (host-side); any ai-flow label obliges, at org scope, the
   # ai-flow runner group pinned to ai-flow's workflows (org-side, see
   # AI_FLOW_GROUP). A bare label (e.g. the gamebox's target-host label)
-  # requires nothing.
+  # requires nothing — and so does `ai-orchestrator` host-side: an ai-flow
+  # label (the group) that is no agent capability (no bootstrap), the
+  # thin pool `/build --split`'s orchestrator runs on (plans#53).
   class LabelContracts
     extend T::Sig
 
     # The capability labels whose contract is the agent host bootstrap.
     AGENT_CAPABILITY_LABELS = T.let(%w[ai-build ai-learn].freeze, T::Array[String])
 
-    # The full ai-flow label vocabulary — one label per slash command,
-    # routed by ai-flow's reusable workflow (`runner="ai-${word}"`). ai-flow
-    # defines the vocabulary (its README "Adoption checklist" names this
-    # list as the contract); this is dev's documented mirror — a cross-repo
-    # literal duplicated knowingly, like the agent user/group names —
-    # behind `dev runner register --org --ai-flow` (the agent host enrolls
-    # with the full set; a partitioned topology passes --labels instead).
-    AI_FLOW_LABELS = T.let(%w[ai-ask ai-edit ai-split ai-build ai-learn].freeze, T::Array[String])
+    # The agent host's label set — one label per slash command, routed by
+    # ai-flow's reusable workflow (`runner="ai-${word}"`). ai-flow defines
+    # the vocabulary (its README "Adoption checklist" names this list as
+    # the contract); this is dev's documented mirror — a cross-repo literal
+    # duplicated knowingly, like the agent user/group names — behind
+    # `dev runner register --org --ai-flow` (the agent host enrolls with
+    # this set; a partitioned topology passes --labels instead).
+    AI_FLOW_AGENT_LABELS = T.let(%w[ai-ask ai-edit ai-split ai-build ai-learn].freeze, T::Array[String])
+
+    # The orchestrator pool's label (plans#53): the one ai-flow label that
+    # is a host capability rather than a command. `/build --split`'s
+    # orchestrator posts child `/build`s and polls their outcome for the
+    # plan's whole critical path — API calls and sleep, hours long — so it
+    # runs on an always-on thin host with many cheap slots, never on an
+    # agent slot (one child of parallelism lost, dies with the laptop) nor
+    # on the hosted lane (bills build-shaped time). Deliberately outside
+    # AI_FLOW_AGENT_LABELS: `--ai-flow` must not make an agent host an
+    # orchestrator; `--labels ai-orchestrator --slots N` enrolls the pool.
+    ORCHESTRATOR_LABEL = T.let("ai-orchestrator", String)
+
+    # The full ai-flow vocabulary: every label ai-flow's workflow may
+    # demand, and so every label whose org enrollment belongs in the
+    # ai-flow runner group.
+    AI_FLOW_LABELS = T.let((AI_FLOW_AGENT_LABELS + [ORCHESTRATOR_LABEL]).freeze, T::Array[String])
 
     # The two ai-flow workflows that may land jobs on an ai-flow runner —
     # the reusable command workflow and the origin-firing check (both run

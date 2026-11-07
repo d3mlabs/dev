@@ -173,7 +173,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     out = StringIO.new
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
-    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: Dev::LabelContracts::AI_FLOW_LABELS, status: "online") }
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS, status: "online") }
     status = build_status(out: out, home: home, registry: CannedRegistry.new(group: group, &responder))
 
     When
