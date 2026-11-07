@@ -46,10 +46,14 @@ module Dev
     # (any ai-flow label → the `ai-flow` group dev owns and pins, see
     # LabelContracts::AI_FLOW_GROUP) or `--group` does (a human's), and
     # the repo this registration is for — the checkout's, the same
-    # derivation as the org and the label — is admitted to it, while
-    # `--hidden-from` takes repos out. So a repo's concurrency on a host
-    # is the runners it can see, nothing declared anywhere and nothing to
-    # remember; and a public repo only ever sees a pinned group.
+    # derivation as the org and the label — is admitted to it. The act
+    # that makes a repo exclusive is the repo-scoped registration itself:
+    # when one carries labels an org group serves and the repo is among
+    # that group's repos, register asks whether this runner should be its
+    # only one and takes it out of the group on yes. So a repo's
+    # concurrency on a host is the runners it can see, nothing declared
+    # anywhere and nothing to remember; and a public repo only ever sees
+    # a pinned group.
     #
     # register is idempotent and self-healing: when the enclosing checkout's
     # lock pins an image, it first brings the engine up for that
@@ -124,7 +128,6 @@ module Dev
       AI_FLOW_FLAG = "--ai-flow"
       SLOTS_FLAG = "--slots"
       GROUP_FLAG = "--group"
-      HIDDEN_FROM_FLAG = "--hidden-from"
 
       # Where config.sh puts a registration naming no group: GitHub's own
       # default runner group, present in every org.
@@ -251,12 +254,14 @@ module Dev
           same labels on all. Re-running keeps the size it finds; a smaller --slots
           retires the surplus (asked first). Which repos may use an org host's slots is
           their runner group, and the repo this registration is for — the checkout's,
-          or --repo's — is admitted to it; --hidden-from takes repos out. ai-flow labels
-          sit in the '#{LabelContracts::AI_FLOW_GROUP.name}' group, which dev owns: created when missing, pinned to
-          ai-flow's workflows (plans#5 H3), healed when the console drifted — nothing
-          to remember. --group names a human's group for other pools. A public repo may
-          only use a pinned group; register refuses otherwise. A repo-scoped enrollment
-          is that repo's alone (cellbound-3d's editor); its concurrency is its own --slots.
+          or --repo's — is admitted to it. ai-flow labels sit in the '#{LabelContracts::AI_FLOW_GROUP.name}' group,
+          which dev owns: created when missing, pinned to ai-flow's workflows (plans#5
+          H3), healed when the console drifted — nothing to remember. --group names a
+          human's group for other pools. A public repo may only use a pinned group;
+          register refuses otherwise. A repo-scoped enrollment is that repo's alone
+          (cellbound-3d's editor); its concurrency is its own --slots — and when the repo
+          may also use the org's slots for the same labels, register asks whether this
+          runner should be its only one, taking it out of the group on yes.
 
           Three identities meet in a registration:
             you (gh auth)         mints the registration token — repo admin, or admin:org with --org
@@ -292,8 +297,8 @@ module Dev
             dev runner register --org --ai-flow      # org agent host, the full ai-flow set
             dev runner register --org --labels ai-build
             dev runner register --org --ai-flow --slots 3    # three jobs at once; this repo may use them
-            dev runner register --org --ai-flow --hidden-from d3mlabs/cellbound-3d   # it has its own
-            dev runner register --org --labels ue-engine --group ue-hosted            # a human's pool
+            dev runner register --ai-flow                    # this repo's own agent runner; asks to leave the org's pool
+            dev runner register --org --labels ue-engine --group ue-hosted   # a human's pool
         DESC
       end
 
@@ -308,13 +313,12 @@ module Dev
           Cli::Flag.new(AI_FLOW_FLAG, desc: "the full ai-flow label set (#{LabelContracts::AI_FLOW_LABELS.join(",")})"),
           Cli::Flag.new(SLOTS_FLAG, takes_value: true, desc: "how many jobs this host runs at once at this scope: N runners, <name>, <name>-2 .. <name>-N; default: what is enrolled, else 1"),
           Cli::Flag.new(GROUP_FLAG, takes_value: true, desc: "--org: the runner group the slots join (made once in the org's settings); ai-flow labels imply '#{LabelContracts::AI_FLOW_GROUP.name}'; default: #{DEFAULT_GROUP}"),
-          Cli::Flag.new(HIDDEN_FROM_FLAG, takes_value: true, desc: "--org: comma-separated owner/repo that may not use the slots (taken out of the group's selected repositories)"),
           Cli::Flag.new(DIR_FLAG, takes_value: true, desc: "the runner directory (one slot); default: actions-runner-<first label> under the enrollment owner's home, -<n> per further slot"),
           Cli::Flag.new(NAME_FLAG, takes_value: true, desc: "the runner's name on GitHub (slot 1; further slots are <name>-<n>); default: the hostname"),
           Cli::Flag.new(REPO_FLAG, takes_value: true, desc: "enroll for owner/repo instead of the enclosing checkout"),
           Cli::Flag.new(AGENT_USER_FLAG, takes_value: true, desc: "the OS user agent labels run the agent as; default: #{AgentBootstrap::DEFAULT_AGENT_USER}"),
           Cli::Flag.new(AS_FLAG, takes_value: true, desc: "Linux: the OS user the runner service runs as; default: #{Dev::RunnerUser::DEFAULT_NAME}"),
-          Cli::Flag.new(YES_FLAG, desc: "unregister superseded enrollments without asking"),
+          Cli::Flag.new(YES_FLAG, desc: "answer yes without asking: unregister superseded enrollments and surplus slots, leave the org's pool"),
         ]
       end
 
@@ -326,7 +330,6 @@ module Dev
         labels = resolve_labels(args, context, org)
         slots = resolve_slots(args)
         contract = resolve_group(args, labels, org)
-        hidden = resolve_hidden(args, org)
         config = RunnerSetupConfig.new(
           labels: labels,
           dir: args.value(DIR_FLAG),
@@ -415,7 +418,11 @@ module Dev
           contracts.each { |contract| contract.after_enroll!(runner_dir: slot_setup.resolve_dir) }
         end
 
-        converge_access!(scope, group, args.value(REPO_FLAG), hidden) if org
+        if org
+          converge_access!(scope, group, args.value(REPO_FLAG))
+        else
+          offer_exclusivity!(scope, labels, yes: yes)
+        end
       end
 
       private
@@ -423,27 +430,51 @@ module Dev
       # Who may use the family (dev#470: a repo's concurrency on a host is
       # the runners it can see): the repo this registration is for — the
       # checkout's, or `--repo`'s, the same derivation as the org and the
-      # label — is admitted to the family's group, and `--hidden-from`
-      # repos are taken out of it. Slots naming no group sit in GitHub's
-      # Default, so that is the group converged for them.
+      # label — is admitted to the family's group. Slots naming no group
+      # sit in GitHub's Default, so that is the group converged for them.
       #
       # @param scope [String] the org
       # @param group [Dev::RunnerRegistry::Group, nil] the contract's group, when one was obliged
       # @param repo_override [String, nil] `--repo`
-      # @param hidden [Array<String>] `--hidden-from`
-      # @raise [ArgumentError] when the repo being registered for is also to be hidden
-      sig { params(scope: String, group: T.nilable(Dev::RunnerRegistry::Group), repo_override: T.nilable(String), hidden: T::Array[String]).void }
-      def converge_access!(scope, group, repo_override, hidden)
-        repo = @repo_resolver.call(repo_override)
-        if hidden.any? { |hidden_repo| hidden_repo.casecmp?(repo) }
-          raise ArgumentError, "this registration is for #{repo} — it cannot also be hidden from the slots"
-        end
-
+      sig { params(scope: String, group: T.nilable(Dev::RunnerRegistry::Group), repo_override: T.nilable(String)).void }
+      def converge_access!(scope, group, repo_override)
         access = group || @registry.group(org: scope, name: DEFAULT_GROUP)
         return if access.nil?
 
-        @groups.admit!(access, repo, org: scope)
-        hidden.each { |hidden_repo| @groups.exclude!(access, hidden_repo, org: scope) }
+        @groups.admit!(access, @repo_resolver.call(repo_override), org: scope)
+      end
+
+      # The exclusion, derived (dev#470): a repo-scoped runner is that
+      # repo's alone, so when its labels are ones an org group serves and
+      # the repo may use that group too, the two pool — its jobs land on
+      # either. That may be wanted (extra capacity) or not (cellbound-3d's
+      # one editor must not also run on the org's slots), so register asks,
+      # every run, and takes the repo out of the group on yes. Nothing
+      # without a contract, without the group, or when the org cannot be
+      # read with this login (a repo admin need not be an org admin).
+      #
+      # @param scope [String] the repo, "owner/repo"
+      # @param labels [String] comma-separated labels (config.sh shape)
+      # @param yes [Boolean] `--yes`
+      sig { params(scope: String, labels: String, yes: T::Boolean).void }
+      def offer_exclusivity!(scope, labels, yes:)
+        contract = LabelContracts.group_for(labels)
+        return unless contract
+
+        org = T.must(scope.split("/").first)
+        group = @registry.group(org: org, name: contract.name)
+        return unless group&.selected?
+        return unless @registry.group_repositories(org: org, group_id: group.id).any? { |selected| selected.full_name.casecmp?(scope) }
+
+        @out.puts ">>> #{scope} may also use the org's '#{group.name}' runners for these labels — its jobs would land on either."
+        unless yes || @confirmer.confirm?("Make this host's runner its only one?")
+          @out.puts ">>> Left as is: #{scope} keeps using the org's '#{group.name}' runners too."
+          return
+        end
+
+        @groups.exclude!(group, scope, org: org)
+      rescue RunnerRegistry::QueryError => e
+        @out.puts ">>> Could not read #{org}'s runner groups (#{e.message}) — whether #{scope} also uses the org's runners is unchecked."
       end
 
       # `--slots N`: the family's size, a positive integer; nil leaves it
@@ -494,30 +525,6 @@ module Dev
         end
 
         obliged || (named && RunnerGroupContract.new(name: named))
-      end
-
-      # `--hidden-from`: the repos to take out of the family's group.
-      #
-      # @param args [Cli::ParsedArgs]
-      # @param org [Boolean]
-      # @return [Array<String>]
-      # @raise [ArgumentError] off the org scope
-      sig { params(args: Cli::ParsedArgs, org: T::Boolean).returns(T::Array[String]) }
-      def resolve_hidden(args, org)
-        hidden = repo_list(args.value(HIDDEN_FROM_FLAG))
-        raise ArgumentError, "a repo-scoped runner is its repo's alone — #{HIDDEN_FROM_FLAG} goes with #{ORG_FLAG}" if !hidden.empty? && !org
-
-        hidden
-      end
-
-      # A comma-separated list of owner/repo, validated as such.
-      #
-      # @param raw [String, nil]
-      # @return [Array<String>]
-      # @raise [Dev::EnrolledRunner::MalformedRepoError]
-      sig { params(raw: T.nilable(String)).returns(T::Array[String]) }
-      def repo_list(raw)
-        raw.to_s.split(",").map(&:strip).reject(&:empty?).each { |repo| Dev::EnrolledRunner.for(repo) }
       end
 
       # The family this registration converges: named by `--name`, else by
