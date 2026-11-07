@@ -94,6 +94,9 @@ class Dev::RunnerStatusTest < Minitest::Test
   # `sudo -l` as the agent, in sudo 1.9's layout (tags in its order, not ours).
   AGENT_RULES_HEADER = "User ai-agent may run the following commands on mac:\n"
 
+  # The PATH the test's host identities run commands on.
+  HOST_PATH = "/opt/brew/bin:/usr/bin"
+
   test "reports a host with no enrollments" do
     Given "an empty home"
     out = StringIO.new
@@ -332,10 +335,10 @@ class Dev::RunnerStatusTest < Minitest::Test
     out = StringIO.new
     headers = expires_in.nil? ? "HTTP/2.0 200 OK\n\n{}" : expiring_in(expires_in)
     executor = CannedStatusExecutor.new(
-      probe_results: { ["id", "-u", "runner"] => exists, ["sudo", "-u", "runner", "-H", "env", "PATH=/opt/brew/bin:/usr/bin", "gh", "auth", "status"] => logged_in },
+      probe_results: { ["id", "-u", "runner"] => exists, as_runner("true") => true, as_runner("gh", "auth", "status") => logged_in },
       capture_results: {
-        ["sudo", "-u", "runner", "-H", "env", "PATH=/opt/brew/bin:/usr/bin", "gh", "api", "user", "--jq", ".login"] => "d3mlabs-buildhost\n",
-        ["sudo", "-u", "runner", "-H", "env", "PATH=/opt/brew/bin:/usr/bin", "gh", "api", "user", "-i"] => headers,
+        as_runner("gh", "api", "user", "--jq", ".login") => "d3mlabs-buildhost\n",
+        as_runner("gh", "api", "user", "-i") => headers,
       },
     )
     status = build_status(out: out, executor: executor, host_identity: host_identity("runner"))
@@ -356,14 +359,37 @@ class Dev::RunnerStatusTest < Minitest::Test
     "no such user"              | false  | false     | nil        | "[!!] user runner exists (run `dev runner register`)"
   end
 
+  # dev#348: a sudo the operator cannot pass without a prompt used to read
+  # as "no gh login" — a red line whose remedy would overwrite a working
+  # login. Status never prompts; what it cannot ask as the runner user it
+  # reports as unknown, with the command that can.
+  test "when the operator cannot run as the runner user without a prompt, the gh login is unknown — not absent — and nothing downstream is probed" do
+    Given "a runner user sudo -n refuses the operator for, and a lock to check reach over"
+    out = StringIO.new
+    pins = [Dev::Deps::Dependency.new(name: "ue", integration: :gh, group: "build", version: "1", hash: nil, metadata: { "repo" => "d3mlabs/unreal-engine" })]
+    reach = typed_mock(Dev::HostReach)
+    reach.expects(:check).never
+    executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "runner"] => true, as_runner("true") => false, as_runner("gh", "auth", "status") => false })
+    status = build_status(out: out, executor: executor, host_identity: host_identity("runner"), pins: pins, reach: reach)
+
+    When
+    status.report
+
+    Then "one [??] line naming who could not tell and how to find out; no [!!], no login remedy, no reach section"
+    out.string.include?("[??] gh login: cannot tell as human (sudo as runner needs a password here) — check with `sudo -iu runner gh auth status`")
+    !out.string.include?("no gh login")
+    !out.string.include?("[!!]")
+    !out.string.include?("Host reach")
+  end
+
   # dev#337: jobs upgrade dev through brew, so the prefix must be the
   # runner user's; status says whose it is.
   test "the host identity section reports who owns the toolchain: the runner user, or drift with the chown" do
     Given "a logged-in runner user, and a Linuxbrew prefix owned by #{owner}"
     out = StringIO.new
     executor = CannedStatusExecutor.new(
-      probe_results: { ["id", "-u", "runner"] => true, ["sudo", "-u", "runner", "-H", "env", "PATH=/opt/brew/bin:/usr/bin", "gh", "auth", "status"] => true },
-      capture_results: { ["sudo", "-u", "runner", "-H", "env", "PATH=/opt/brew/bin:/usr/bin", "gh", "api", "user", "--jq", ".login"] => "d3mlabs-buildhost\n" },
+      probe_results: { ["id", "-u", "runner"] => true, as_runner("true") => true, as_runner("gh", "auth", "status") => true },
+      capture_results: { as_runner("gh", "api", "user", "--jq", ".login") => "d3mlabs-buildhost\n" },
     )
     identity = host_identity("runner", brew: "/home/linuxbrew/.linuxbrew/bin/brew", owner_of: ->(_path) { owner })
     status = build_status(out: out, executor: executor, host_identity: identity)
@@ -404,8 +430,8 @@ class Dev::RunnerStatusTest < Minitest::Test
     reach = typed_mock(Dev::HostReach)
     target = Dev::HostReach.targets(pins).fetch(0)
     reach.stubs(:check).with(pins).returns([Dev::HostReach::Verdict.new(target: target, grant: "gh api -X PUT repos/d3mlabs/unreal-engine/collaborators/d3mlabs-buildhost -f permission=pull")])
-    executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "runner"] => true, ["sudo", "-u", "runner", "-H", "env", "PATH=/opt/brew/bin:/usr/bin", "gh", "auth", "status"] => true },
-      capture_results: { ["sudo", "-u", "runner", "-H", "env", "PATH=/opt/brew/bin:/usr/bin", "gh", "api", "user", "--jq", ".login"] => "d3mlabs-buildhost\n" })
+    executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "runner"] => true, as_runner("true") => true, as_runner("gh", "auth", "status") => true },
+      capture_results: { as_runner("gh", "api", "user", "--jq", ".login") => "d3mlabs-buildhost\n" })
     status = build_status(out: out, executor: executor, host_identity: host_identity("runner"), pins: pins, reach: reach)
 
     When
@@ -441,8 +467,10 @@ class Dev::RunnerStatusTest < Minitest::Test
     reach = typed_mock(Dev::HostReach)
     reach.expects(:check).once.with(pins).returns([])
     Dev::HostReach.expects(:new).once.with(identity: identity).returns(reach)
-    executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "svc-runner"] => true, ["sudo", "-u", "svc-runner", "-H", "env", "PATH=/opt/brew/bin:/usr/bin", "gh", "auth", "status"] => true },
-      capture_results: { ["sudo", "-u", "svc-runner", "-H", "env", "PATH=/opt/brew/bin:/usr/bin", "gh", "api", "user", "--jq", ".login"] => "d3mlabs-buildhost\n" })
+    executor = CannedStatusExecutor.new(
+      probe_results: { ["id", "-u", "svc-runner"] => true, as_runner("true", user: "svc-runner") => true, as_runner("gh", "auth", "status", user: "svc-runner") => true },
+      capture_results: { as_runner("gh", "api", "user", "--jq", ".login", user: "svc-runner") => "d3mlabs-buildhost\n" },
+    )
     status = build_status(out: out, executor: executor, host_identity: identity, pins: pins, reach_factory: :default)
 
     When
@@ -675,7 +703,13 @@ class Dev::RunnerStatusTest < Minitest::Test
 
   # The host rule's user as status sees it: a name and a home.
   def host_identity(name, home: Dir.mktmpdir, brew: nil, owner_of: ->(_path) { name })
-    Dev::RunnerUser.new(name: name, home_of: ->(_user) { home }, brew: brew, path: "/opt/brew/bin:/usr/bin", owner_of: owner_of)
+    Dev::RunnerUser.new(name: name, home_of: ->(_user) { home }, brew: brew, path: HOST_PATH, owner_of: owner_of)
+  end
+
+  # A probe as the runner user, the way status runs them: never prompting
+  # (`-n`), in the runner user's home, on the host's PATH.
+  def as_runner(*cmd, user: "runner")
+    ["sudo", "-n", "-u", user, "-H", "env", "PATH=#{HOST_PATH}", *cmd]
   end
 
   def build_status(out:, home: Dir.mktmpdir, registry: CannedRegistry.new,

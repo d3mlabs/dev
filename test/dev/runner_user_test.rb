@@ -298,6 +298,14 @@ class Dev::RunnerUserTest < Minitest::Test
     runner_user(homes: {}).path == "/opt/brew/bin:/usr/bin"
   end
 
+  # dev#348: an inspector must never prompt; `-n` makes a refusal a fact
+  # instead of a swallowed password prompt.
+  test "the non-interactive prefix refuses rather than prompts, and the one command that answers for the login by hand" do
+    Expect
+    runner_user(homes: {}).probe_argv("gh", "auth", "status") == %w[sudo -n -u runner -H env PATH=/opt/brew/bin:/usr/bin gh auth status]
+    runner_user(homes: {}).status_command == "sudo -iu runner gh auth status"
+  end
+
   test "the default runner user is runner, in docker and the data root's group" do
     Expect
     Dev::RunnerUser::DEFAULT_NAME == "runner"
