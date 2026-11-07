@@ -360,6 +360,15 @@ module Dev
       "sudo -iu #{@name} gh auth login --with-token"
     end
 
+    # The one command that reads the runner user's gh login by hand — what
+    # an inspector points at when it cannot ask as the runner user itself.
+    #
+    # @return [String]
+    sig { returns(String) }
+    def status_command
+      "sudo -iu #{@name} gh auth status"
+    end
+
     # What register says when it cannot ask: the command, and what to
     # paste into it.
     #
@@ -378,7 +387,30 @@ module Dev
     # @return [Array<String>]
     sig { params(cmd: String).returns(T::Array[String]) }
     def sudo_argv(*cmd)
-      ["sudo", "-u", @name, "-H", "env", "PATH=#{@path}", *cmd]
+      ["sudo", *run_as_options, *cmd]
+    end
+
+    # The same, never prompting (`-n`): sudo refuses instead of asking for
+    # a password. An inspector probes this way — a refusal is then a fact
+    # it reports, not a prompt swallowed into a false "absent" (dev#348);
+    # register, which holds a sudo session, runs #sudo_argv.
+    #
+    # @param cmd [Array<String>]
+    # @return [Array<String>]
+    sig { params(cmd: String).returns(T::Array[String]) }
+    def probe_argv(*cmd)
+      ["sudo", "-n", *run_as_options, *cmd]
+    end
+
+    private
+
+    # sudo's options that make a command the runner user's: its identity,
+    # its home, the host's PATH.
+    #
+    # @return [Array<String>]
+    sig { returns(T::Array[String]) }
+    def run_as_options
+      ["-u", @name, "-H", "env", "PATH=#{@path}"]
     end
   end
 end

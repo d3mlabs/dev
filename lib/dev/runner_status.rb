@@ -141,6 +141,16 @@ module Dev
       @out.puts "  #{ok ? "[ok]" : "[!!]"} #{description}"
     end
 
+    # A fact this account cannot inspect: neither ok nor a finding, so
+    # neither marker — a `[!!]` that is wrong once is ignored when it is
+    # right (dev#348). The description says how to find out.
+    #
+    # @param description [String]
+    sig { params(description: String).void }
+    def unknown(description)
+      @out.puts "  [??] #{description}"
+    end
+
     # Each discovered enrollment: scope from its own .runner record (works
     # offline), labels from GitHub. Returns the dirs of enrollments whose
     # labels carry the agent contract, so the agent host section can check
@@ -296,6 +306,15 @@ module Dev
 
     # The host identity: the runner user, its gh login, its token's expiry.
     #
+    # The login lives in the runner user's gh config, which the operator
+    # cannot read (its home is traversable, not listable — gh's own
+    # default), so every fact about it is asked *as* the runner user
+    # (RunnerUser#probe_argv). Status never prompts (`-n`, like the
+    # sudoers-edge probes): when sudo refuses the operator the login is
+    # unknown, not absent — a `[??]` with the command that can tell, never
+    # the login remedy, which would overwrite a working login if followed
+    # (dev#348).
+    #
     # @return [Boolean] whether the identity has a gh login to probe with
     sig { returns(T::Boolean) }
     def report_host_identity
@@ -309,12 +328,17 @@ module Dev
       end
       line(true, "user #{identity.name} exists")
       report_toolchain(identity)
-      unless @executor.quiet?(*identity.sudo_argv("gh", "auth", "status"))
+      unless @executor.quiet?(*identity.probe_argv("true"))
+        unknown("gh login: cannot tell as #{@runner_user} (sudo as #{identity.name} needs a password here) — " \
+                "check with `#{identity.status_command}`")
+        return false
+      end
+      unless @executor.quiet?(*identity.probe_argv("gh", "auth", "status"))
         line(false, "no gh login — `#{identity.login_command}`")
         return false
       end
 
-      login = @executor.capture(*identity.sudo_argv("gh", "api", "user", "--jq", ".login")).strip
+      login = @executor.capture(*identity.probe_argv("gh", "api", "user", "--jq", ".login")).strip
       expires = token_expiry(identity)
       if expires.nil?
         line(true, "gh login: #{login} (token does not expire)")
@@ -376,7 +400,7 @@ module Dev
     # @return [Date, nil]
     sig { params(identity: Dev::RunnerUser).returns(T.nilable(Date)) }
     def token_expiry(identity)
-      headers = @executor.capture(*identity.sudo_argv("gh", "api", "user", "-i"))
+      headers = @executor.capture(*identity.probe_argv("gh", "api", "user", "-i"))
       match = EXPIRATION_HEADER.match(headers)
       match && Date.parse(T.must(match[1]))
     end
