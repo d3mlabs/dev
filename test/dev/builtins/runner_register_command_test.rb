@@ -85,14 +85,13 @@ class FakeRegistry
       restricted_to_workflows: !selected_workflows.empty?, selected_workflows: selected_workflows)
   end
 
-  def update_group!(org:, group_id:, visibility: nil, allows_public_repositories: nil, selected_workflows: nil)
+  def update_group!(org:, group_id:, selected_workflows:, visibility: nil, allows_public_repositories: nil)
     @group_writes << [:update, org, group_id, visibility, allows_public_repositories, selected_workflows]
     before = @groups.values.find { |group| group.id == group_id }
     Dev::RunnerRegistry::Group.new(
       id: group_id, name: before.name, visibility: visibility || before.visibility,
       allows_public_repositories: allows_public_repositories.nil? ? before.allows_public_repositories : allows_public_repositories,
-      restricted_to_workflows: selected_workflows ? !selected_workflows.empty? : before.restricted_to_workflows,
-      selected_workflows: selected_workflows || before.selected_workflows,
+      restricted_to_workflows: !selected_workflows.empty?, selected_workflows: selected_workflows,
     )
   end
 
@@ -796,7 +795,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: projectless_context)
 
     Then
-    registry.group_writes == [[:update, "d3mlabs", 7, nil, true, nil], [:select, "d3mlabs", 7, [100]]]
+    registry.group_writes == [[:update, "d3mlabs", 7, nil, true, FakeRegistry::PINS], [:select, "d3mlabs", 7, [100]]]
   end
 
   test "the invariant holds for a human's group too: a public repo may not be admitted to an unpinned --group, and the slot was enrolled before the refusal" do
