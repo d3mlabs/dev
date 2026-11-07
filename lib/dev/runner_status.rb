@@ -11,7 +11,7 @@ require "dev/deps/dependency"
 require "dev/host_reach"
 require "dev/label_contracts"
 require "dev/runner_discovery"
-require "dev/runner_family"
+require "dev/runner_slots"
 require "dev/runner_registry"
 require "dev/runner_user"
 require "dev/settings"
@@ -19,9 +19,10 @@ require "dev/settings"
 module Dev
   # `dev runner status` — register's inspect-only counterpart: this
   # machine's discovered enrollments (every ~/actions-runner*/.runner),
-  # grouped into their families (dev#470: the slots sharing a base name at
-  # a scope — the host's concurrency there — with, at an org scope, the
-  # runner group and the repos it is visible to), each one's labels read
+  # grouped into the host's slots at each scope (dev#470: the enrollments
+  # sharing a base name — how many jobs the host runs at once there —
+  # with, at an org scope, the runner group and the repos it is visible
+  # to), each one's labels read
   # from GitHub (their single home — unknown when offline), and the
   # inspected reality of every agent-labeled enrollment's
   # contract. Nothing here mutates and nothing is recorded — every fact is
@@ -59,7 +60,7 @@ module Dev
     # @param host_identity [Dev::RunnerUser, nil] the Linux host rule's user; nil elsewhere
     # @param pins [Array<Dev::Deps::Dependency>] the enclosing checkout's lock, when run in one
     # @param repo [String, nil] the enclosing checkout's "owner/repo", when run in one — the
-    #   repo whose access to each org family is reported
+    #   repo whose access to each org scope's slots is reported
     # @param reach_factory [Proc] builds the reach check for an identity; injected for tests
     sig do
       params(
@@ -154,9 +155,9 @@ module Dev
         return []
       end
 
-      families = enrollments.group_by { |enrollment| [enrollment.scope, RunnerFamily.base_of(enrollment.name)] }
-      families.flat_map do |(scope, base), slots|
-        report_family(scope, base, slots) if slots.length > 1 || !scope.include?("/")
+      by_scope = enrollments.group_by { |enrollment| [enrollment.scope, RunnerSlots.base_of(enrollment.name)] }
+      by_scope.flat_map do |(scope, base), slots|
+        report_slots(scope, base, slots) if slots.length > 1 || !scope.include?("/")
         slots.filter_map do |enrollment|
           @out.puts "Runner '#{enrollment.name}' (#{enrollment.display_dir}):"
           line(true, "registered: #{enrollment.scope}")
@@ -167,25 +168,29 @@ module Dev
       end
     end
 
-    # A family's header (dev#470): its size — how many jobs this host runs
-    # at once at the scope — and, at an org scope, who may use it: the
-    # runner group its first slot sits in, held against the group the
-    # family's labels oblige (an ai-flow family belongs in the ai-flow
-    # group, pinned to ai-flow's workflows — plans#5 H3; a group the
-    # console drifted from that is a finding, register the remedy), the
-    # repos the group is visible to, and — in a checkout — whether that
-    # repo is among them. All read from GitHub. A lone repo-scoped
+    # The header for this host's slots at a scope (dev#470): the scope
+    # first, then how many jobs the host runs at once there and the
+    # runners' names (the hostname, `-<n>` beyond the first), and, at an
+    # org scope, who may use them: the runner group slot 1 sits in, held
+    # against the group the labels oblige (ai-flow slots belong in the
+    # ai-flow group, pinned to ai-flow's workflows — plans#5 H3; a group
+    # the console drifted from that is a finding, register the remedy),
+    # the repos the group is visible to, and — in a checkout — whether
+    # that repo is among them. All read from GitHub. A lone repo-scoped
     # enrollment needs none of it (one job at a time, that repo's alone).
     #
     # @param scope [String]
-    # @param base [String] the family's name
+    # @param base [String] slot 1's runner name
     # @param slots [Array<Dev::RunnerDiscovery::Enrollment>]
     sig { params(scope: String, base: String, slots: T::Array[Dev::RunnerDiscovery::Enrollment]).void }
-    def report_family(scope, base, slots)
-      @out.puts "Family '#{base}' at #{scope} — #{slots.length} slot#{"s" if slots.length > 1} (#{slots.length} job#{"s" if slots.length > 1} at once):"
+    def report_slots(scope, base, slots)
+      naming = RunnerSlots.new(base: base, dir: T.must(slots.first).dir)
+      ordered = slots.sort_by { |slot| naming.slot_of(slot.name) || 0 }
+      plural = slots.length > 1
+      @out.puts "#{scope} — #{slots.length} slot#{"s" if plural} (#{slots.length} job#{"s" if plural} at once), runner#{"s" if plural} #{ordered.map(&:name).join(", ")}:"
       return if scope.include?("/")
 
-      first = T.must(slots.first)
+      first = T.must(ordered.first)
       runner = @registry.find(scope: scope, name: first.name)
       return if runner.nil?
 
@@ -201,10 +206,10 @@ module Dev
       line(false, "group unknown (#{e.message})")
     end
 
-    # The group the family sits in against the one its labels oblige.
+    # The group the slots sit in against the one their labels oblige.
     #
     # @param group [Dev::RunnerRegistry::Group]
-    # @param runner [Dev::RunnerRegistry::Runner] the family's first slot
+    # @param runner [Dev::RunnerRegistry::Runner] slot 1
     sig { params(group: RunnerRegistry::Group, runner: RunnerRegistry::Runner).void }
     def report_group_contract(group, runner)
       contract = LabelContracts.group_for(runner.custom_labels.join(","))
@@ -231,7 +236,7 @@ module Dev
       repo = @repo
       if !group.selected?
         line(true, "visible to every repo at #{scope}")
-        line(true, "#{repo} may use this family") if repo
+        line(true, "#{repo} may use these slots") if repo
         return
       end
 
@@ -240,9 +245,9 @@ module Dev
       return unless repo
 
       if selected.any? { |name| name.casecmp?(repo) }
-        line(true, "#{repo} may use this family")
+        line(true, "#{repo} may use these slots")
       else
-        line(false, "#{repo} may not use this family — run `dev runner register --org ...` from this checkout to admit it")
+        line(false, "#{repo} may not use these slots — run `dev runner register --org ...` from this checkout to admit it")
       end
     end
 

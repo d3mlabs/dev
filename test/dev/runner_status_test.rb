@@ -124,7 +124,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     out.string.include?("labels: ai-ask, ai-edit")
   end
 
-  test "an org family: one header with its size and group (asked once, for its first slot), then each slot's own block (dev#470)" do
+  test "an org scope's slots: one header leading with the scope — count, then the runners' names — and the group (asked once, for slot 1), then each slot's own block (dev#470)" do
     Given "two slots of mac1 at the org, a custom pool in Default, which dev and plans may use"
     out = StringIO.new
     home = Dir.mktmpdir
@@ -139,7 +139,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    out.string.include?("Family 'mac1' at d3mlabs — 2 slots (2 jobs at once):")
+    out.string.include?("d3mlabs — 2 slots (2 jobs at once), runners mac1, mac1-2:")
     out.string.include?("[ok] group: Default\n")
     out.string.include?("[ok] visible to d3mlabs/dev, d3mlabs/plans")
     out.string.include?("Runner 'mac1' (~/actions-runner-ai-ask):")
@@ -147,7 +147,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     registry.group_asks == [["d3mlabs", 1]]
   end
 
-  test "a lone org enrollment still gets its family line: the group is who may use it" do
+  test "a lone org enrollment still gets its slots header: the group is who may use it" do
     Given
     out = StringIO.new
     home = Dir.mktmpdir
@@ -160,12 +160,12 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    out.string.include?("Family 'mac-box' at d3mlabs — 1 slot (1 job at once):")
+    out.string.include?("d3mlabs — 1 slot (1 job at once), runner mac-box:")
     out.string.include?("[ok] group: everyone\n")
     out.string.include?("[ok] visible to every repo at d3mlabs")
   end
 
-  test "an ai-flow family is held to its contract: #{expectation}" do
+  test "ai-flow slots are held to their contract: #{expectation}" do
     Given
     out = StringIO.new
     home = Dir.mktmpdir
@@ -187,7 +187,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     CannedRegistry.group(id: 1, name: "Default", pinned: true) | "[!!] group: Default — these labels belong in 'ai-flow' (re-run `dev runner register --org`)"
   end
 
-  test "in a checkout, each org family says whether this repo may use it: #{verdict}" do
+  test "in a checkout, each org scope's slots say whether this repo may use them: #{verdict}" do
     Given
     out = StringIO.new
     home = Dir.mktmpdir
@@ -204,9 +204,9 @@ class Dev::RunnerStatusTest < Minitest::Test
 
     Where
     visibility | repo                     | verdict
-    "selected" | "d3mlabs/dev"            | "[ok] d3mlabs/dev may use this family"
-    "selected" | "d3mlabs/cellbound-3d"   | "[!!] d3mlabs/cellbound-3d may not use this family — run `dev runner register --org ...` from this checkout to admit it"
-    "all"      | "d3mlabs/cellbound-3d"   | "[ok] d3mlabs/cellbound-3d may use this family"
+    "selected" | "d3mlabs/dev"            | "[ok] d3mlabs/dev may use these slots"
+    "selected" | "d3mlabs/cellbound-3d"   | "[!!] d3mlabs/cellbound-3d may not use these slots — run `dev runner register --org ...` from this checkout to admit it"
+    "all"      | "d3mlabs/cellbound-3d"   | "[ok] d3mlabs/cellbound-3d may use these slots"
   end
 
   test "outside a checkout no repo verdict is given" do
@@ -221,11 +221,11 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    !out.string.include?("may use this family")
-    !out.string.include?("may not use this family")
+    !out.string.include?("may use these slots")
+    !out.string.include?("may not use these slots")
   end
 
-  test "an org runner no group lists is flagged with register as the remedy; a lone repo enrollment has no family line at all" do
+  test "an org runner no group lists is flagged with register as the remedy; a lone repo enrollment has no slots header at all" do
     Given
     out = StringIO.new
     home = Dir.mktmpdir
@@ -239,10 +239,10 @@ class Dev::RunnerStatusTest < Minitest::Test
 
     Then
     out.string.include?("[!!] group: none lists 'mac1' — re-run `dev runner register --org`")
-    !out.string.include?("Family 'JPSFF'")
+    !out.string.include?("JPDuchesne/snappy — 1 slot")
   end
 
-  test "a repo-scoped family of two gets the size header but no group line: a repo's runners are its own" do
+  test "two repo-scoped slots get the header but no group line: a repo's runners are its own" do
     Given
     out = StringIO.new
     home = Dir.mktmpdir
@@ -256,7 +256,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    out.string.include?("Family 'JPSFF' at JPDuchesne/snappy — 2 slots (2 jobs at once):")
+    out.string.include?("JPDuchesne/snappy — 2 slots (2 jobs at once), runners JPSFF, JPSFF-2:")
     !out.string.include?("group:")
     registry.group_asks == []
   end

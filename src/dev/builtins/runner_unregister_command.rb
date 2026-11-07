@@ -16,16 +16,16 @@ module Dev
     # one of this host's runner enrollments (service, GitHub registration,
     # enrollment files; binaries stay — see Dev::RunnerTeardown).
     #
-    #   dev runner unregister JPDuchesne/snappy     # by scope: the enrollment — or the whole slot family — serving it
+    #   dev runner unregister d3mlabs               # by scope: the enrollment — or every slot this host has there
     #   dev runner unregister ~/actions-runner-2    # by dir — always one slot
     #   dev runner unregister                       # the checkout's scope, like register
     #   dev runner unregister --org                 # the checkout's owner
     #
     # Destructive, so it asks — naming scope, runner, dir and whether a
-    # service is installed, once for a family of several slots (dev#470) —
+    # service is installed, once for several slots (dev#470) —
     # unless `--yes`. Enrollments are resolved by discovery alone (every
     # `~/actions-runner*/.runner`), so a scope several dirs serve that are
-    # not one family is refused with the dirs to name instead. A leaf of
+    # not one set of slots is refused with the dirs to name instead. A leaf of
     # the `runner` group.
     class RunnerUnregisterCommand < BuiltinCommand
       extend T::Sig
@@ -67,7 +67,7 @@ module Dev
       end
 
       sig { override.returns(String) }
-      def desc = "Remove one of this host's runner enrollments — or a whole slot family — named by scope or dir (--yes skips the confirmation)"
+      def desc = "Remove one of this host's runner enrollments — or every slot it has at a scope — named by scope or dir (--yes skips the confirmation)"
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Environment
@@ -89,10 +89,10 @@ module Dev
       end
 
       # Resolve, ask once, tear down every slot resolved — slot order, so a
-      # refusal partway leaves the family's lower slots gone and the rest
+      # refusal partway leaves the lower slots gone and the rest
       # named by the error.
       #
-      # @raise [Dev::RunnerTeardown::AmbiguousEnrollmentError] a scope several dirs serve that are not one family
+      # @raise [Dev::RunnerTeardown::AmbiguousEnrollmentError] a scope several dirs serve that are not one set of slots
       # @raise [Dev::RunnerTeardown::NoSuchEnrollmentError] nothing matches
       # @raise [Dev::RunnerTeardown::TeardownFailedError] a step was refused
       sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
@@ -124,7 +124,7 @@ module Dev
       end
 
       # One question for everything resolved: a lone enrollment named in
-      # full; a family listed slot by slot, then asked about as a whole.
+      # full; several slots listed one by one, then asked about as a whole.
       #
       # @param enrollments [Array<Dev::RunnerDiscovery::Enrollment>] slot order, never empty
       # @return [String] the question, without the [y/N] cue

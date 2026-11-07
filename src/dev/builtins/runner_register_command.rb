@@ -11,7 +11,7 @@ require "dev/label_contracts"
 require "dev/linux_data_root_provisioner"
 require "dev/project_manifest"
 require "dev/runner_discovery"
-require "dev/runner_family"
+require "dev/runner_slots"
 require "dev/runner_group_contract"
 require "dev/runner_groups"
 require "dev/runner_registry"
@@ -35,13 +35,13 @@ module Dev
     #
     # A self-hosted runner runs one job at a time, so a host's concurrency
     # at a scope is how many runners it enrolls there (dev#470): `--slots
-    # N` makes the enrollment a **family** of N (Dev::RunnerFamily) —
-    # `<name>`, `<name>-2` .. `<name>-N`, each its own dir, `_work` and
-    # service, every one carrying the same labels. Slot 1 is exactly the
-    # enrollment register has always made, so a host from before slots is
-    # a family of one; re-running without `--slots` keeps the size it
-    # finds, a smaller `--slots` retires the surplus (asked first), a
-    # larger one adds. Which repos may use an org family is the runner
+    # N` enrolls N **slots** (Dev::RunnerSlots) — `<name>`, `<name>-2` ..
+    # `<name>-N`, the name being the hostname by default, each its own
+    # dir, `_work` and service, every one carrying the same labels. Slot
+    # 1 is exactly the enrollment register has always made, so a host from
+    # before slots has one; re-running without `--slots` keeps the count
+    # it finds, a smaller `--slots` retires the surplus (asked first), a
+    # larger one adds. Which repos may use an org host's slots is the runner
     # group it sits in (Dev::RunnerGroups): the labels' contract names it
     # (any ai-flow label → the `ai-flow` group dev owns and pins, see
     # LabelContracts::AI_FLOW_GROUP) or `--group` does (a human's), and
@@ -139,8 +139,9 @@ module Dev
       AS_FLAG = "--as"
       YES_FLAG = "--yes"
 
-      # A family's enrollments by slot: the dirs enrolled under each slot's
-      # name (one is the steady state; more are `--replace` leftovers).
+      # The host's enrollments at a scope by slot: the dirs enrolled under
+      # each slot's name (one is the steady state; more are `--replace`
+      # leftovers).
       SlotMap = T.type_alias { T::Hash[Integer, T::Array[Dev::RunnerDiscovery::Enrollment]] }
 
       # Builds the RunnerSetup for the resolved config and flags; injected
@@ -377,8 +378,8 @@ module Dev
         # operator's is where the ones from before it are.
         discovery = runner_user ? @discovery.also_under(runner_user.home) : @discovery
         enrollments = config.dir ? [] : discovery.enrollments_for(scope)
-        family = resolve_family(enrollments, config, setup, slots)
-        by_slot, runners = family_members(scope, enrollments, family, config)
+        naming = resolve_naming(enrollments, config, setup, slots)
+        by_slot, runners = enrolled_slots(scope, enrollments, naming, config)
 
         if superseded?(enrollments, by_slot, runners, runner_user)
           retire!(scope, enrollments, by_slot, runners, runner_user, yes: yes)
@@ -386,7 +387,7 @@ module Dev
           runners = {}
         end
 
-        # The family's size: what --slots says, else what is enrolled (its
+        # How many slots: what --slots says, else what is enrolled (the
         # highest slot — a gap is re-filled), else one.
         count = slots || by_slot.keys.max || 1
         retire_surplus!(scope, by_slot.select { |slot, _dirs| slot > count }.values.flatten, yes: yes)
@@ -405,11 +406,11 @@ module Dev
           if enrollment || slot > 1
             # GitHub has lost this enrollment (or --name renames it): the
             # re-enrollment reuses the discovered dir, never a second one.
-            # A slot beyond the first takes the family's name and dir.
+            # A slot beyond the first is named and placed from slot 1.
             slot_config = RunnerSetupConfig.new(
               labels: labels,
-              dir: enrollment&.dir || family.slot_dir(slot),
-              name: config.name || family.slot_name(slot),
+              dir: enrollment&.dir || naming.slot_dir(slot),
+              name: config.name || naming.slot_name(slot),
               group: config.group,
             )
             slot_setup = @runner_setup_factory.call(slot_config, args.value(REPO_FLAG), org, runner_user)
@@ -427,10 +428,10 @@ module Dev
 
       private
 
-      # Who may use the family (dev#470: a repo's concurrency on a host is
+      # Who may use the slots (dev#470: a repo's concurrency on a host is
       # the runners it can see): the repo this registration is for — the
       # checkout's, or `--repo`'s, the same derivation as the org and the
-      # label — is admitted to the family's group. Slots naming no group
+      # label — is admitted to their group. Slots naming no group
       # sit in GitHub's Default, so that is the group converged for them.
       #
       # @param scope [String] the org
@@ -477,7 +478,7 @@ module Dev
         @out.puts ">>> Could not read #{org}'s runner groups (#{e.message}) — whether #{scope} also uses the org's runners is unchecked."
       end
 
-      # `--slots N`: the family's size, a positive integer; nil leaves it
+      # `--slots N`: how many slots, a positive integer; nil leaves it
       # to what is enrolled. More than one slot in one `--dir` is a
       # contradiction — every slot is its own dir.
       #
@@ -527,37 +528,37 @@ module Dev
         obliged || (named && RunnerGroupContract.new(name: named))
       end
 
-      # The family this registration converges: named by `--name`, else by
-      # the one base the discovered enrollments share, else the hostname —
-      # the base being slot 1's name. Slot 1's dir is its enrollment's
-      # when one exists, else the setup's default (`--dir` included).
+      # How this host's slots at the scope are named: slot 1 by `--name`,
+      # else by the one base the discovered enrollments share, else the
+      # hostname. Slot 1's dir is its enrollment's when one exists, else
+      # the setup's default (`--dir` included).
       #
       # @param enrollments [Array<Dev::RunnerDiscovery::Enrollment>]
       # @param config [Dev::RunnerSetupConfig]
       # @param setup [Dev::RunnerSetup]
       # @param slots [Integer, nil]
-      # @return [Dev::RunnerFamily]
+      # @return [Dev::RunnerSlots]
       sig do
         params(
           enrollments: T::Array[Dev::RunnerDiscovery::Enrollment],
           config: RunnerSetupConfig,
           setup: Dev::RunnerSetup,
           slots: T.nilable(Integer),
-        ).returns(Dev::RunnerFamily)
+        ).returns(Dev::RunnerSlots)
       end
-      def resolve_family(enrollments, config, setup, slots)
-        bases = enrollments.map { |enrollment| Dev::RunnerFamily.base_of(enrollment.name) }.uniq
+      def resolve_naming(enrollments, config, setup, slots)
+        bases = enrollments.map { |enrollment| Dev::RunnerSlots.base_of(enrollment.name) }.uniq
         # The hostname is asked for only when a second slot has to be
         # named from it: a lone fresh enrollment keeps the setup's own
         # derivation, as it always has.
         base = config.name || (bases.length == 1 ? T.must(bases.first) : nil) || (slots.to_i > 1 ? setup.resolve_name : "")
-        provisional = Dev::RunnerFamily.new(base: base, dir: setup.resolve_dir)
+        provisional = Dev::RunnerSlots.new(base: base, dir: setup.resolve_dir)
         first = enrollments.find { |enrollment| provisional.slot_of(enrollment.name) == 1 }
         first ||= enrollments.first if config.name && enrollments.length == 1
-        Dev::RunnerFamily.new(base: base, dir: first ? first.dir : setup.resolve_dir)
+        Dev::RunnerSlots.new(base: base, dir: first ? first.dir : setup.resolve_dir)
       end
 
-      # The family's slots: by slot, the dirs enrolled under its name (one
+      # The enrolled slots: by slot, the dirs enrolled under its name (one
       # is the steady state), and GitHub's record of each by name (absent
       # when GitHub has lost it). One enrollment under another name with
       # `--name` is a rename: it is slot 1, looked up under its new name —
@@ -566,21 +567,21 @@ module Dev
       #
       # @param scope [String]
       # @param enrollments [Array<Dev::RunnerDiscovery::Enrollment>]
-      # @param family [Dev::RunnerFamily]
+      # @param naming [Dev::RunnerSlots]
       # @param config [Dev::RunnerSetupConfig]
       # @return [[Hash{Integer => Array<Enrollment>}, Hash{String => Runner}]]
       sig do
         params(
           scope: String,
           enrollments: T::Array[Dev::RunnerDiscovery::Enrollment],
-          family: Dev::RunnerFamily,
+          naming: Dev::RunnerSlots,
           config: RunnerSetupConfig,
         ).returns([SlotMap, T::Hash[String, Dev::RunnerRegistry::Runner]])
       end
-      def family_members(scope, enrollments, family, config)
+      def enrolled_slots(scope, enrollments, naming, config)
         by_slot = T.let({}, SlotMap)
         enrollments.each do |enrollment|
-          slot = family.slot_of(enrollment.name)
+          slot = naming.slot_of(enrollment.name)
           (by_slot[slot] ||= []) << enrollment if slot
         end
         renamed = config.name && by_slot.empty? && enrollments.length == 1
@@ -597,14 +598,14 @@ module Dev
       # Whether what is on disk is not what is serving GitHub: two dirs
       # enrolled under one slot's name (one name, one registration — the
       # rest are `--replace` leftovers), an enrollment at the scope
-      # outside the family (another host's name, or this one's before a
+      # outside this host's slots (another host's name, or this one's before a
       # rename nobody asked for), a slot GitHub lists offline (nothing
       # runs it), or — under the host rule — an enrollment running as
       # someone other than the runner user. A slot GitHub has lost is not
       # this case: the re-enrollment path reuses its dir.
       #
       # @param enrollments [Array<Dev::RunnerDiscovery::Enrollment>] every one at the scope
-      # @param by_slot [Hash{Integer => Array<Enrollment>}] the family's
+      # @param by_slot [Hash{Integer => Array<Enrollment>}] this host's slots
       # @param runners [Hash{String => Dev::RunnerRegistry::Runner}] GitHub's record per member
       # @param runner_user [Dev::RunnerUser, nil] the host rule's user
       # @return [Boolean]
@@ -630,7 +631,7 @@ module Dev
         by_slot.values.select { |dirs| dirs.length > 1 }
       end
 
-      # The enrollments at the scope outside the family.
+      # The enrollments at the scope that are none of this host's slots.
       #
       # @param enrollments [Array<Enrollment>]
       # @param by_slot [Hash{Integer => Array<Enrollment>}]
@@ -661,7 +662,7 @@ module Dev
       #
       # @param scope [String]
       # @param enrollments [Array<Dev::RunnerDiscovery::Enrollment>] every one at the scope
-      # @param by_slot [Hash{Integer => Array<Enrollment>}] the family's
+      # @param by_slot [Hash{Integer => Array<Enrollment>}] this host's slots
       # @param runners [Hash{String => Dev::RunnerRegistry::Runner}]
       # @param runner_user [Dev::RunnerUser, nil] the host rule's user
       # @param yes [Boolean] `--yes`: answer the question without asking
@@ -682,7 +683,7 @@ module Dev
           signs << "#{dirs.length} local enrollments named '#{T.must(dirs.first).name}'"
         end
         strangers(enrollments, by_slot).each do |enrollment|
-          signs << "an enrollment named '#{enrollment.name}' outside this host's family"
+          signs << "an enrollment named '#{enrollment.name}' that is none of this host's slots"
         end
         runners.each do |name, runner|
           signs << "GitHub lists '#{name}' offline" unless runner.online?

@@ -25,7 +25,7 @@ module Dev
       sig { params(runner_status_factory: StatusFactory).void }
       def initialize(runner_status_factory: ->(container_required, project_root) {
         # The lock is what the host identity's reach is checked over, and the
-        # checkout's repo is whose access to each org family is reported;
+        # checkout's repo is whose access to each org scope's slots is reported;
         # neither outside a checkout (an unresolvable checkout is no repo).
         pins = project_root ? Dev::Deps::Lockfile.new(dir: project_root).read : []
         repo = project_root ? self.class.current_repo : nil

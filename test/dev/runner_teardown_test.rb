@@ -76,7 +76,7 @@ class Dev::RunnerTeardownTest < Minitest::Test
     "~-relative" | nil
   end
 
-  test "resolve_all by scope names a whole slot family in slot order, whatever order discovery found them in (dev#470)" do
+  test "resolve_all by scope names every slot this host has there, in slot order, whatever order discovery found them in (dev#470)" do
     Given "three slots of mac1 at the org and an unrelated repo enrollment"
     home = Dir.mktmpdir
     three = write_runner(home, "actions-runner-ai-ask-3", scope: "d3mlabs", name: "mac1-3")
@@ -105,7 +105,7 @@ class Dev::RunnerTeardownTest < Minitest::Test
     teardown.resolve_all("JPDuchesne/snappy").map(&:dir) == [snappy]
   end
 
-  test "resolve_all refuses a scope whose enrollments are not one family: #{why}" do
+  test "resolve_all refuses a scope whose enrollments are not one set of slots: #{why}" do
     Given
     home = Dir.mktmpdir
     names.each_with_index { |name, i| write_runner(home, "actions-runner-#{i}", scope: "d3mlabs", name: name) }
@@ -120,11 +120,11 @@ class Dev::RunnerTeardownTest < Minitest::Test
     Where
     names                | why
     %w[mac1 mac1]        | "two dirs under one name (a --replace leftover)"
-    %w[mac1 old-box]     | "two different families"
+    %w[mac1 old-box]     | "two different bases"
     %w[mac1-2 other-2]   | "two slot-2s of different bases"
   end
 
-  test "resolve by scope refuses a family of several slots: it names one enrollment" do
+  test "resolve by scope refuses several slots: it names one enrollment" do
     Given
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")

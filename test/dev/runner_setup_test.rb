@@ -104,7 +104,7 @@ class Dev::RunnerSetupTest < Minitest::Test
   end
 
   test "config_argv names the runner group when the enrollment joins one (dev#470); unnamed, config.sh lands it in Default" do
-    Given "a config for an org family in a named group"
+    Given "a config for an org host in a named group"
     config = Dev::RunnerSetupConfig.new(labels: "ai-ask,ai-build", group: "agents")
     setup = Dev::RunnerSetup.new(config: config, org: true)
 

@@ -2,23 +2,24 @@
 # frozen_string_literal: true
 
 module Dev
-  # The slots of one enrollment on a host (dev#470): N identical runners at
-  # one scope with one label set, each its own dir, `_work` and service,
+  # How one host's slots at one scope are named (dev#470): N identical
+  # runners with one label set, each its own dir, `_work` and service,
   # because a self-hosted runner executes one job at a time and N jobs at
-  # once means N registrations. A family is derived from names, never
-  # recorded (plans#26): slot 1 is `<base>` — what one enrollment was
-  # called before slots existed, so it is a family of one by construction
-  # — and slot n is `<base>-<n>`. Dirs follow the same shape beside slot
-  # 1's: `<dir>` and `<dir>-<n>`, so every slot of a family sits next to
-  # the first wherever that one lives (RunnerDiscovery's `actions-runner-*`
-  # glob finds them all).
-  class RunnerFamily
+  # once means N registrations. Nothing records that the slots belong
+  # together — the names do (plans#26: inspected, never recorded): slot 1
+  # is `<base>` — the runner's name, the hostname by default, which is
+  # what one enrollment was called before slots existed, so an existing
+  # enrollment is one slot by construction — and slot n is `<base>-<n>`.
+  # Dirs follow the same shape beside slot 1's: `<dir>` and `<dir>-<n>`,
+  # so every slot sits next to the first wherever that one lives
+  # (RunnerDiscovery's `actions-runner-*` glob finds them all).
+  class RunnerSlots
     extend T::Sig
 
     # `<base>-<n>`: the slot suffix a name may carry.
     SLOT_NAME = T.let(/\A(?<base>.+)-(?<slot>[1-9]\d*)\z/, Regexp)
 
-    # The family's name: slot 1's, and the stem of the rest.
+    # Slot 1's runner name, and the stem of the rest.
     sig { returns(String) }
     attr_reader :base
 
@@ -29,7 +30,7 @@ module Dev
     class << self
       extend T::Sig
 
-      # The family a runner name belongs to: the name without its slot suffix.
+      # The base a runner name belongs to: the name without its slot suffix.
       #
       # @param name [String] a runner's GitHub-side name
       # @return [String]
@@ -40,7 +41,7 @@ module Dev
       end
     end
 
-    # @param base [String] the family's name
+    # @param base [String] slot 1's runner name
     # @param dir [String] slot 1's absolute install dir
     sig { params(base: String, dir: String).void }
     def initialize(base:, dir:)
@@ -48,7 +49,7 @@ module Dev
       @dir = dir
     end
 
-    # Whether a runner name is one of this family's slots.
+    # Whether a runner name is one of these slots.
     #
     # @param name [String]
     # @return [Boolean]
@@ -57,8 +58,8 @@ module Dev
       !slot_of(name).nil?
     end
 
-    # The slot a member's name denotes: 1 for `<base>`, n for `<base>-<n>`;
-    # nil for a name outside the family.
+    # The slot a name denotes: 1 for `<base>`, n for `<base>-<n>`; nil for
+    # a name that is none of these slots.
     #
     # @param name [String]
     # @return [Integer, nil]
