@@ -9,7 +9,7 @@ require "dev/runner_registry"
 module Dev
   # An org's runner groups, converged to their contracts (dev#470): the
   # group a contract names exists with the access it obliges, the slots
-  # of a family sit in it, and the repos whose checkouts register ran in
+  # of a host sit in it, and the repos whose checkouts register ran in
   # may use it. Every fact is read from GitHub and written back only when
   # it differs (plans#26: inspected, never recorded).
   #

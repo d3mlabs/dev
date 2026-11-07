@@ -87,8 +87,8 @@ class Dev::Builtins::RunnerUnregisterCommandTest < Minitest::Test
     harness.torn_down.map(&:dir) == [repo_dir, org_dir]
   end
 
-  test "a scope one slot family serves is unregistered whole: the slots listed, one question, every slot torn down in slot order (dev#470)" do
-    Given "a family of three at the org, discovered out of slot order, and an operator who says yes"
+  test "a scope this host serves with several slots is unregistered whole: the slots listed, one question, every slot torn down in slot order (dev#470)" do
+    Given "three slots at the org, discovered out of slot order, and an operator who says yes"
     home = Dir.mktmpdir
     three = write_runner(home, "actions-runner-ai-ask-3", scope: "d3mlabs", name: "mac1-3")
     one = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
@@ -108,8 +108,8 @@ class Dev::Builtins::RunnerUnregisterCommandTest < Minitest::Test
     harness.out.string.include?("  mac1-3 (~/actions-runner-ai-ask-3, no service)")
   end
 
-  test "declining a family's question tears nothing down; a dir still names exactly one slot" do
-    Given "a family of two"
+  test "declining the slots' question tears nothing down; a dir still names exactly one slot" do
+    Given "two slots"
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
     two = write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")

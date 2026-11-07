@@ -469,7 +469,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
   # --- slots: a host's concurrency at a scope (dev#470) ------------------
 
-  test "--slots 3 on a fresh scope enrolls a family of three: slot 1 as always, then <host>-2 and <host>-3 beside it" do
+  test "--slots 3 on a fresh scope enrolls three slots: slot 1 as always, then <host>-2 and <host>-3 beside it" do
     Given "no enrollment at the org, a host named mac1"
     harness = build_harness(contracts: 1, scope: "d3mlabs", hostname: "mac1")
 
@@ -504,7 +504,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     When "growing to three"
     harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "3"]), context: projectless_context)
 
-    Then "slot 1 is amended, not re-enrolled; the new slots take the family's base (the enrollment's name) and sit beside its dir"
+    Then "slot 1 is amended, not re-enrolled; the new slots take slot 1's base (the enrollment's name) and sit beside its dir"
     registry.amends == [["d3mlabs", 42, Dev::LabelContracts::AI_FLOW_LABELS]]
     harness.events == [
       [:converge, false, nil, nil, nil],
@@ -519,8 +519,8 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.torn_down == []
   end
 
-  test "re-running without --slots keeps the family's size: every slot amended, nothing added or retired" do
-    Given "a family of two, both online with stale labels"
+  test "re-running without --slots keeps the slot count: every slot amended, nothing added or retired" do
+    Given "two slots, both online with stale labels"
     home = Dir.mktmpdir
     one = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
     two = write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
@@ -543,7 +543,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
   end
 
   test "a smaller --slots lists the surplus slots, asks, and on yes unregisters them — the kept slots are amended as usual" do
-    Given "a family of three, asked down to one"
+    Given "three slots, asked down to one"
     home = Dir.mktmpdir
     one = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
     two = write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
@@ -568,7 +568,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
   end
 
   test "declining the shrink changes nothing and names the unregister commands" do
-    Given "a family of two, asked down to one, and an operator who says no"
+    Given "two slots, asked down to one, and an operator who says no"
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
     write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
@@ -592,7 +592,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.events == []
   end
 
-  test "a gap in the family is re-filled: slots 1 and 3 enrolled, bare register adds slot 2" do
+  test "a gap in the slots is re-filled: slots 1 and 3 enrolled, bare register adds slot 2" do
     Given
     home = Dir.mktmpdir
     one = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
@@ -614,7 +614,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
   end
 
   test "a slot GitHub has lost re-enrolls into its own dir under its own name; the rest are amended" do
-    Given "a family of two whose second runner is gone server-side"
+    Given "two slots whose second runner is gone server-side"
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
     two = write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
@@ -633,8 +633,8 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.torn_down == []
   end
 
-  test "an enrollment at the scope outside the family — another name — is superseded like a leftover: listed, asked about, retired, then the family enrolls fresh" do
-    Given "a slot of this host's family and an enrollment under a name that is nobody's slot"
+  test "an enrollment at the scope that is none of this host's slots — another name — is superseded like a leftover: listed, asked about, retired, then the slots enroll fresh" do
+    Given "one of this host's slots and an enrollment under a name that is nobody's slot"
     home = Dir.mktmpdir
     mine = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
     other = write_runner(home, "actions-runner-old", scope: "d3mlabs", name: "old-box")
@@ -652,7 +652,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     Then
     harness.torn_down.map(&:dir).sort == [mine, other].sort
-    harness.out.string.include?("an enrollment named 'old-box' outside this host's family")
+    harness.out.string.include?("an enrollment named 'old-box' that is none of this host's slots")
     harness.events == [[:run], [:run]]
   end
 
@@ -743,7 +743,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
   end
 
   test "an amended slot sitting in another group is moved into the ai-flow group; one already there is not touched" do
-    Given "a family of one in Default, growing to two; the ai-flow group already sees the checkout's repo"
+    Given "one slot in Default, growing to two; the ai-flow group already sees the checkout's repo"
     home = Dir.mktmpdir
     dir = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
     default = FakeRegistry.group(id: 1, name: "Default", visibility: "all")
