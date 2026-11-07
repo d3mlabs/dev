@@ -117,14 +117,32 @@ module Dev
 
     # One of an org's runner groups — GitHub's partition of *who may use*
     # a runner (plans#26: labels say what a host can do, groups say which
-    # repos see it). Selected repositories are read and converged, never
-    # recorded.
+    # repos see it): its repository access (visibility and, when
+    # "selected", the selected repositories; whether public repos may use
+    # it at all) and its workflow access (the workflows pinned as the only
+    # ones that may land jobs on it — plans#5 H3). Read and converged,
+    # never recorded.
     class Group < T::Struct
+      extend T::Sig
+
       const :id, Integer
       const :name, String
 
       # GitHub's word: "all", "selected" or "private".
       const :visibility, String
+
+      # Whether a public repository may use these runners at all.
+      const :allows_public_repositories, T::Boolean
+
+      # Whether only `selected_workflows` may land jobs here.
+      const :restricted_to_workflows, T::Boolean
+
+      # `owner/repo/.github/workflows/<file>.yml@<ref>`, when restricted.
+      const :selected_workflows, T::Array[String]
+
+      # Whether the group's repository access is a selection to converge.
+      sig { returns(T::Boolean) }
+      def selected? = visibility == "selected"
     end
 
     # A repository a group is visible to, as GitHub lists it.
@@ -135,8 +153,23 @@ module Dev
       const :full_name, String
     end
 
-    # The org's runner group of that name, or nil when none is — a group
-    # is created once by a human (`admin:org`), never by dev.
+    # A repository as GitHub records it: the id a group selection is
+    # written in, and its visibility (the fact the workflow-pin invariant
+    # turns on).
+    class Repository < T::Struct
+      extend T::Sig
+
+      const :id, Integer
+      const :full_name, String
+
+      # GitHub's word: "public", "private" or "internal".
+      const :visibility, String
+
+      sig { returns(T::Boolean) }
+      def public? = visibility == "public"
+    end
+
+    # The org's runner group of that name, or nil when none is.
     #
     # @param org [String]
     # @param name [String]
@@ -145,6 +178,61 @@ module Dev
     sig { params(org: String, name: String).returns(T.nilable(Group)) }
     def group(org:, name:)
       groups(org).find { |group| group.name == name }
+    end
+
+    # Create a runner group with the given access (GitHub's POST; the
+    # selected repositories start empty and are converged separately —
+    # setting visibility and repositories in one call is the order plans#5
+    # found to drop the list).
+    #
+    # @param org [String]
+    # @param name [String]
+    # @param visibility [String]
+    # @param allows_public_repositories [Boolean]
+    # @param selected_workflows [Array<String>] pins; empty = unrestricted
+    # @return [Group] as GitHub records it
+    # @raise [AmendError] when the POST is refused
+    sig do
+      params(org: String, name: String, visibility: String, allows_public_repositories: T::Boolean, selected_workflows: T::Array[String])
+        .returns(Group)
+    end
+    def create_group!(org:, name:, visibility:, allows_public_repositories:, selected_workflows:)
+      argv = ["gh", "api", "-X", "POST", "orgs/#{org}/actions/runner-groups", "-f", "name=#{name}", "-f", "visibility=#{visibility}",
+              "-F", "allows_public_repositories=#{allows_public_repositories}",
+              "-F", "restricted_to_workflows=#{!selected_workflows.empty?}"]
+      argv += selected_workflows.flat_map { |workflow| ["-f", "selected_workflows[]=#{workflow}"] }
+      out, err, ok = @exec.capture(*argv)
+      raise AmendError, "could not create runner group '#{name}' at #{org}: #{err.strip}" unless ok
+
+      parse_group(JSON.parse(out))
+    end
+
+    # Change a group's access fields (GitHub's PATCH; only the named
+    # fields change).
+    #
+    # @param org [String]
+    # @param group_id [Integer]
+    # @param visibility [String, nil]
+    # @param allows_public_repositories [Boolean, nil]
+    # @param selected_workflows [Array<String>, nil] pins; empty = unrestricted
+    # @return [Group] as GitHub records it after the change
+    # @raise [AmendError] when the PATCH is refused
+    sig do
+      params(org: String, group_id: Integer, visibility: T.nilable(String), allows_public_repositories: T.nilable(T::Boolean),
+        selected_workflows: T.nilable(T::Array[String])).returns(Group)
+    end
+    def update_group!(org:, group_id:, visibility: nil, allows_public_repositories: nil, selected_workflows: nil)
+      argv = ["gh", "api", "-X", "PATCH", "orgs/#{org}/actions/runner-groups/#{group_id}"]
+      argv += ["-f", "visibility=#{visibility}"] if visibility
+      argv += ["-F", "allows_public_repositories=#{allows_public_repositories}"] unless allows_public_repositories.nil?
+      if selected_workflows
+        argv += ["-F", "restricted_to_workflows=#{!selected_workflows.empty?}"]
+        argv += selected_workflows.flat_map { |workflow| ["-f", "selected_workflows[]=#{workflow}"] }
+      end
+      out, err, ok = @exec.capture(*argv)
+      raise AmendError, "could not update runner group #{group_id} at #{org}: #{err.strip}" unless ok
+
+      parse_group(JSON.parse(out))
     end
 
     # The group a runner sits in, found by asking each group for its
@@ -212,17 +300,18 @@ module Dev
       raise AmendError, "could not move runner #{runner_id} into group #{group_id} at #{org}: #{err.strip}" unless ok
     end
 
-    # A repository's id, the key the group selection is written in.
+    # A repository as GitHub records it.
     #
     # @param repo [String] "owner/repo"
-    # @return [Integer]
+    # @return [Repository]
     # @raise [QueryError] when the repo cannot be read (absent, or not reachable)
-    sig { params(repo: String).returns(Integer) }
-    def repository_id(repo)
-      out, err, ok = @exec.capture("gh", "api", "repos/#{repo}", "--jq", ".id")
+    sig { params(repo: String).returns(Repository) }
+    def repository(repo)
+      out, err, ok = @exec.capture("gh", "api", "repos/#{repo}")
       raise QueryError, "could not read #{repo}: #{err.strip}" if !ok || out.strip.empty?
 
-      Integer(out.strip)
+      record = JSON.parse(out)
+      Repository.new(id: Integer(record.fetch("id")), full_name: record.fetch("full_name").to_s, visibility: record.fetch("visibility").to_s)
     end
 
     private
@@ -237,10 +326,21 @@ module Dev
       out, err, ok = @exec.capture("gh", "api", "--paginate", "orgs/#{org}/actions/runner-groups", "--jq", ".runner_groups[]")
       raise QueryError, "could not list the runner groups at #{org}: #{err.strip}" unless ok
 
-      out.each_line.map do |line|
-        record = JSON.parse(line)
-        Group.new(id: Integer(record.fetch("id")), name: record.fetch("name").to_s, visibility: record.fetch("visibility").to_s)
-      end
+      out.each_line.map { |line| parse_group(JSON.parse(line)) }
+    end
+
+    # @param record [Hash] a runner group as the API returns it
+    # @return [Group]
+    sig { params(record: T::Hash[String, T.untyped]).returns(Group) }
+    def parse_group(record)
+      Group.new(
+        id: Integer(record.fetch("id")),
+        name: record.fetch("name").to_s,
+        visibility: record.fetch("visibility").to_s,
+        allows_public_repositories: record.fetch("allows_public_repositories", false) == true,
+        restricted_to_workflows: record.fetch("restricted_to_workflows", false) == true,
+        selected_workflows: Array(record.fetch("selected_workflows", [])).map(&:to_s),
+      )
     end
 
     # Every runner GitHub lists at a scope, one record per `--jq

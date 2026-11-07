@@ -12,6 +12,8 @@ require "dev/linux_data_root_provisioner"
 require "dev/project_manifest"
 require "dev/runner_discovery"
 require "dev/runner_family"
+require "dev/runner_group_contract"
+require "dev/runner_groups"
 require "dev/runner_registry"
 require "dev/runner_setup"
 require "dev/runner_setup_config"
@@ -40,10 +42,14 @@ module Dev
     # a family of one; re-running without `--slots` keeps the size it
     # finds, a smaller `--slots` retires the surplus (asked first), a
     # larger one adds. Which repos may use an org family is the runner
-    # group it sits in: `--group` names it (config.sh for fresh slots, a
-    # move for amended ones) and `--visible-to`/`--hidden-from` converge
-    # the group's selected repositories — so a repo's concurrency on a
-    # host is the runners it can see, nothing declared anywhere.
+    # group it sits in (Dev::RunnerGroups): the labels' contract names it
+    # (any ai-flow label → the `ai-flow` group dev owns and pins, see
+    # LabelContracts::AI_FLOW_GROUP) or `--group` does (a human's), and
+    # the repo this registration is for — the checkout's, the same
+    # derivation as the org and the label — is admitted to it, while
+    # `--hidden-from` takes repos out. So a repo's concurrency on a host
+    # is the runners it can see, nothing declared anywhere and nothing to
+    # remember; and a public repo only ever sees a pinned group.
     #
     # register is idempotent and self-healing: when the enclosing checkout's
     # lock pins an image, it first brings the engine up for that
@@ -118,8 +124,11 @@ module Dev
       AI_FLOW_FLAG = "--ai-flow"
       SLOTS_FLAG = "--slots"
       GROUP_FLAG = "--group"
-      VISIBLE_TO_FLAG = "--visible-to"
       HIDDEN_FROM_FLAG = "--hidden-from"
+
+      # Where config.sh puts a registration naming no group: GitHub's own
+      # default runner group, present in every org.
+      DEFAULT_GROUP = "Default"
       DIR_FLAG = "--dir"
       NAME_FLAG = "--name"
       REPO_FLAG = "--repo"
@@ -179,6 +188,7 @@ module Dev
           pins_reader: PinsReader,
           reach_factory: ReachFactory,
           out: T.any(IO, StringIO),
+          groups: T.nilable(Dev::RunnerGroups),
         ).void
       end
       def initialize(
@@ -202,9 +212,12 @@ module Dev
         data_root_provisioner: Dev::LinuxDataRootProvisioner.for_host,
         pins_reader: ->(root) { Dev::Deps::Lockfile.new(dir: root).read },
         reach_factory: ->(identity) { Dev::HostReach.new(identity: identity) },
-        out: $stdout
+        out: $stdout,
+        # The org's runner groups, converged over the same registry.
+        groups: nil
       )
         super()
+        @groups = T.let(groups || Dev::RunnerGroups.new(registry: registry, out: out), Dev::RunnerGroups)
         @runner_setup_factory = runner_setup_factory
         @contracts_factory = contracts_factory
         @repo_resolver = repo_resolver
@@ -237,9 +250,13 @@ module Dev
           (--slots N) — <name>, <name>-2 .. <name>-N, one dir and service each, the
           same labels on all. Re-running keeps the size it finds; a smaller --slots
           retires the surplus (asked first). Which repos may use an org host's slots is
-          their runner group: --group names it, --visible-to/--hidden-from add and
-          remove repos from the group's selection. A repo-scoped enrollment is that
-          repo's alone; its concurrency is its own --slots.
+          their runner group, and the repo this registration is for — the checkout's,
+          or --repo's — is admitted to it; --hidden-from takes repos out. ai-flow labels
+          sit in the '#{LabelContracts::AI_FLOW_GROUP.name}' group, which dev owns: created when missing, pinned to
+          ai-flow's workflows (plans#5 H3), healed when the console drifted — nothing
+          to remember. --group names a human's group for other pools. A public repo may
+          only use a pinned group; register refuses otherwise. A repo-scoped enrollment
+          is that repo's alone (cellbound-3d's editor); its concurrency is its own --slots.
 
           Three identities meet in a registration:
             you (gh auth)         mints the registration token — repo admin, or admin:org with --org
@@ -274,8 +291,9 @@ module Dev
             dev runner register --labels ue-engine   # repo scope, custom roles
             dev runner register --org --ai-flow      # org agent host, the full ai-flow set
             dev runner register --org --labels ai-build
-            dev runner register --org --ai-flow --slots 3                 # three jobs at once
-            dev runner register --org --ai-flow --group Default --visible-to d3mlabs/ai-flow
+            dev runner register --org --ai-flow --slots 3    # three jobs at once; this repo may use them
+            dev runner register --org --ai-flow --hidden-from d3mlabs/cellbound-3d   # it has its own
+            dev runner register --org --labels ue-engine --group ue-hosted            # a human's pool
         DESC
       end
 
@@ -289,9 +307,8 @@ module Dev
           Cli::Flag.new(LABELS_FLAG, takes_value: true, desc: "comma-separated labels; default: the repo's name"),
           Cli::Flag.new(AI_FLOW_FLAG, desc: "the full ai-flow label set (#{LabelContracts::AI_FLOW_LABELS.join(",")})"),
           Cli::Flag.new(SLOTS_FLAG, takes_value: true, desc: "how many jobs this host runs at once at this scope: N runners, <name>, <name>-2 .. <name>-N; default: what is enrolled, else 1"),
-          Cli::Flag.new(GROUP_FLAG, takes_value: true, desc: "--org: the runner group the slots join (made once in the org's settings); default: config.sh's Default"),
-          Cli::Flag.new(VISIBLE_TO_FLAG, takes_value: true, desc: "--org --group: comma-separated owner/repo to add to the group's selected repositories"),
-          Cli::Flag.new(HIDDEN_FROM_FLAG, takes_value: true, desc: "--org --group: comma-separated owner/repo to remove from the group's selected repositories"),
+          Cli::Flag.new(GROUP_FLAG, takes_value: true, desc: "--org: the runner group the slots join (made once in the org's settings); ai-flow labels imply '#{LabelContracts::AI_FLOW_GROUP.name}'; default: #{DEFAULT_GROUP}"),
+          Cli::Flag.new(HIDDEN_FROM_FLAG, takes_value: true, desc: "--org: comma-separated owner/repo that may not use the slots (taken out of the group's selected repositories)"),
           Cli::Flag.new(DIR_FLAG, takes_value: true, desc: "the runner directory (one slot); default: actions-runner-<first label> under the enrollment owner's home, -<n> per further slot"),
           Cli::Flag.new(NAME_FLAG, takes_value: true, desc: "the runner's name on GitHub (slot 1; further slots are <name>-<n>); default: the hostname"),
           Cli::Flag.new(REPO_FLAG, takes_value: true, desc: "enroll for owner/repo instead of the enclosing checkout"),
@@ -308,12 +325,13 @@ module Dev
         org = args.flag?(ORG_FLAG)
         labels = resolve_labels(args, context, org)
         slots = resolve_slots(args)
-        visibility = resolve_visibility(args, org)
+        contract = resolve_group(args, labels, org)
+        hidden = resolve_hidden(args, org)
         config = RunnerSetupConfig.new(
           labels: labels,
           dir: args.value(DIR_FLAG),
           name: args.value(NAME_FLAG),
-          group: visibility&.group,
+          group: contract&.name,
         )
 
         container = context.project&.project_images&.containerized? || false
@@ -348,7 +366,9 @@ module Dev
         setup = @runner_setup_factory.call(config, args.value(REPO_FLAG), org, runner_user)
         scope = setup.resolve_scope
         yes = args.flag?(YES_FLAG)
-        group = visibility && find_group(scope, visibility.group)
+        # The org-side contract first: the group the slots will join must
+        # exist, with its access, before config.sh names it.
+        group = contract && @groups.converge!(contract, org: scope)
         # --dir is the operator picking the dir: no discovery, no detection.
         # The runner user's home is where the rule puts enrollments; the
         # operator's is where the ones from before it are.
@@ -373,7 +393,7 @@ module Dev
           runner = enrollment && runners[enrollment.name]
           if enrollment && runner
             amend_enrollment(scope, enrollment, runner, config)
-            place_in_group!(scope, runner, group) if group
+            @groups.place!(group, runner, org: scope) if group
             contracts.each { |contract| contract.after_enroll!(runner_dir: enrollment.dir) }
             next
           end
@@ -395,25 +415,35 @@ module Dev
           contracts.each { |contract| contract.after_enroll!(runner_dir: slot_setup.resolve_dir) }
         end
 
-        converge_visibility!(scope, group, visibility) if group && visibility && visibility.changes?
+        converge_access!(scope, group, args.value(REPO_FLAG), hidden) if org
       end
 
       private
 
-      # The org runner group an enrollment joins and the repos it is to be
-      # shown to or hidden from (dev#470: a repo's concurrency on a host is
-      # the runners it can see). `changes?` is whether any repo is named.
-      class Visibility < T::Struct
-        extend T::Sig
-
-        const :group, String
-        const :visible_to, T::Array[String]
-        const :hidden_from, T::Array[String]
-
-        sig { returns(T::Boolean) }
-        def changes?
-          !(visible_to.empty? && hidden_from.empty?)
+      # Who may use the family (dev#470: a repo's concurrency on a host is
+      # the runners it can see): the repo this registration is for — the
+      # checkout's, or `--repo`'s, the same derivation as the org and the
+      # label — is admitted to the family's group, and `--hidden-from`
+      # repos are taken out of it. Slots naming no group sit in GitHub's
+      # Default, so that is the group converged for them.
+      #
+      # @param scope [String] the org
+      # @param group [Dev::RunnerRegistry::Group, nil] the contract's group, when one was obliged
+      # @param repo_override [String, nil] `--repo`
+      # @param hidden [Array<String>] `--hidden-from`
+      # @raise [ArgumentError] when the repo being registered for is also to be hidden
+      sig { params(scope: String, group: T.nilable(Dev::RunnerRegistry::Group), repo_override: T.nilable(String), hidden: T::Array[String]).void }
+      def converge_access!(scope, group, repo_override, hidden)
+        repo = @repo_resolver.call(repo_override)
+        if hidden.any? { |hidden_repo| hidden_repo.casecmp?(repo) }
+          raise ArgumentError, "this registration is for #{repo} — it cannot also be hidden from the slots"
         end
+
+        access = group || @registry.group(org: scope, name: DEFAULT_GROUP)
+        return if access.nil?
+
+        @groups.admit!(access, repo, org: scope)
+        hidden.each { |hidden_repo| @groups.exclude!(access, hidden_repo, org: scope) }
       end
 
       # `--slots N`: the family's size, a positive integer; nil leaves it
@@ -439,33 +469,45 @@ module Dev
         slots
       end
 
-      # `--group`, `--visible-to`, `--hidden-from`: who may use the
-      # enrollment, an org-scope matter (a repo-scoped runner is that
-      # repo's alone). The repos need the group named.
+      # The runner group the slots join, as a contract: what the labels
+      # oblige (any ai-flow label → the ai-flow group dev owns), else what
+      # `--group` names (a human's group; must exist), else none — the
+      # slots land in Default. An org-scope matter: a repo-scoped runner
+      # is that repo's alone. `--ai-flow --group x` is the contradiction
+      # `--ai-flow --labels x` is: the shortcut already names its group.
+      #
+      # @param args [Cli::ParsedArgs]
+      # @param labels [String] comma-separated labels (config.sh shape)
+      # @param org [Boolean]
+      # @return [Dev::RunnerGroupContract, nil]
+      # @raise [ArgumentError]
+      sig { params(args: Cli::ParsedArgs, labels: String, org: T::Boolean).returns(T.nilable(RunnerGroupContract)) }
+      def resolve_group(args, labels, org)
+        named = args.value(GROUP_FLAG)
+        raise ArgumentError, "runner groups partition an org's runners — #{GROUP_FLAG} goes with #{ORG_FLAG}" if named && !org
+        return nil unless org
+
+        obliged = LabelContracts.group_for(labels)
+        if named && obliged && named != obliged.name
+          raise ArgumentError,
+            "ai-flow labels sit in the '#{obliged.name}' runner group (pinned to ai-flow's workflows) — drop #{GROUP_FLAG} #{named}"
+        end
+
+        obliged || (named && RunnerGroupContract.new(name: named))
+      end
+
+      # `--hidden-from`: the repos to take out of the family's group.
       #
       # @param args [Cli::ParsedArgs]
       # @param org [Boolean]
-      # @return [Visibility, nil]
-      # @raise [ArgumentError]
-      sig { params(args: Cli::ParsedArgs, org: T::Boolean).returns(T.nilable(Visibility)) }
-      def resolve_visibility(args, org)
-        group = args.value(GROUP_FLAG)
-        visible_to = repo_list(args.value(VISIBLE_TO_FLAG))
-        hidden_from = repo_list(args.value(HIDDEN_FROM_FLAG))
-        return nil if group.nil? && visible_to.empty? && hidden_from.empty?
+      # @return [Array<String>]
+      # @raise [ArgumentError] off the org scope
+      sig { params(args: Cli::ParsedArgs, org: T::Boolean).returns(T::Array[String]) }
+      def resolve_hidden(args, org)
+        hidden = repo_list(args.value(HIDDEN_FROM_FLAG))
+        raise ArgumentError, "a repo-scoped runner is its repo's alone — #{HIDDEN_FROM_FLAG} goes with #{ORG_FLAG}" if !hidden.empty? && !org
 
-        unless org
-          raise ArgumentError,
-            "runner groups partition an org's runners — #{GROUP_FLAG}/#{VISIBLE_TO_FLAG}/#{HIDDEN_FROM_FLAG} go with #{ORG_FLAG}"
-        end
-        if group.nil?
-          raise ArgumentError, "#{VISIBLE_TO_FLAG}/#{HIDDEN_FROM_FLAG} select repos for a runner group — name it with #{GROUP_FLAG}"
-        end
-
-        both = visible_to & hidden_from
-        raise ArgumentError, "#{both.join(", ")} cannot be both visible and hidden" unless both.empty?
-
-        Visibility.new(group: group, visible_to: visible_to, hidden_from: hidden_from)
+        hidden
       end
 
       # A comma-separated list of owner/repo, validated as such.
@@ -476,22 +518,6 @@ module Dev
       sig { params(raw: T.nilable(String)).returns(T::Array[String]) }
       def repo_list(raw)
         raw.to_s.split(",").map(&:strip).reject(&:empty?).each { |repo| Dev::EnrolledRunner.for(repo) }
-      end
-
-      # The org's runner group of that name — made once, by a human, in
-      # the org's settings; register never creates one.
-      #
-      # @param scope [String] the org
-      # @param name [String]
-      # @return [Dev::RunnerRegistry::Group]
-      # @raise [ArgumentError] when the org has no such group
-      sig { params(scope: String, name: String).returns(Dev::RunnerRegistry::Group) }
-      def find_group(scope, name)
-        group = @registry.group(org: scope, name: name)
-        return group if group
-
-        raise ArgumentError,
-          "#{scope} has no runner group named '#{name}' — create it under the org's Actions settings (Runner groups), then re-run"
       end
 
       # The family this registration converges: named by `--name`, else by
@@ -690,51 +716,6 @@ module Dev
         end
 
         surplus.each { |enrollment| @teardown.teardown!(enrollment) }
-      end
-
-      # Move an amended slot into the asked group when it sits elsewhere
-      # (config.sh only places a fresh registration).
-      #
-      # @param scope [String] the org
-      # @param runner [Dev::RunnerRegistry::Runner]
-      # @param group [Dev::RunnerRegistry::Group]
-      sig { params(scope: String, runner: Dev::RunnerRegistry::Runner, group: Dev::RunnerRegistry::Group).void }
-      def place_in_group!(scope, runner, group)
-        current = @registry.group_of(org: scope, runner_id: runner.id)
-        return if current&.id == group.id
-
-        @out.puts ">>> Moving runner #{runner.id} into group '#{group.name}'#{current ? " from '#{current.name}'" : ""} ..."
-        @registry.place_in_group!(org: scope, group_id: group.id, runner_id: runner.id)
-      end
-
-      # Converge the group's selected repositories: the ones it has, plus
-      # `--visible-to`, minus `--hidden-from` — read, then written whole
-      # (GitHub's PUT). A group open to every repo has nothing to select.
-      #
-      # @param scope [String] the org
-      # @param group [Dev::RunnerRegistry::Group]
-      # @param visibility [Visibility]
-      # @raise [ArgumentError] when the group is visible to all repos
-      sig { params(scope: String, group: Dev::RunnerRegistry::Group, visibility: Visibility).void }
-      def converge_visibility!(scope, group, visibility)
-        if group.visibility == "all"
-          raise ArgumentError,
-            "group '#{group.name}' is visible to every repo at #{scope} — narrow it to selected repos in the org's settings before choosing them"
-        end
-
-        current = @registry.group_repositories(org: scope, group_id: group.id)
-        hidden = visibility.hidden_from.map(&:downcase)
-        kept = current.reject { |repo| hidden.include?(repo.full_name.downcase) }
-        known = current.map { |repo| repo.full_name.downcase }
-        added = visibility.visible_to.reject { |repo| known.include?(repo.downcase) }
-        if kept.length == current.length && added.empty?
-          @out.puts ">>> Group '#{group.name}' is already visible to #{current.map(&:full_name).join(", ")} — nothing to change."
-          return
-        end
-
-        ids = kept.map(&:id) + added.map { |repo| @registry.repository_id(repo) }
-        @out.puts ">>> Group '#{group.name}': visible to #{(kept.map(&:full_name) + added).join(", ")} ..."
-        @registry.select_group_repositories!(org: scope, group_id: group.id, repository_ids: ids)
       end
 
       # The amend path: the discovered enrollment still exists on GitHub
