@@ -11,6 +11,7 @@ require "dev/deps/dependency"
 require "dev/host_reach"
 require "dev/label_contracts"
 require "dev/runner_discovery"
+require "dev/runner_family"
 require "dev/runner_registry"
 require "dev/runner_user"
 require "dev/settings"
@@ -18,8 +19,11 @@ require "dev/settings"
 module Dev
   # `dev runner status` — register's inspect-only counterpart: this
   # machine's discovered enrollments (every ~/actions-runner*/.runner),
-  # each one's labels read from GitHub (their single home — unknown when
-  # offline), and the inspected reality of every agent-labeled enrollment's
+  # grouped into their families (dev#470: the slots sharing a base name at
+  # a scope — the host's concurrency there — with, at an org scope, the
+  # runner group and the repos it is visible to), each one's labels read
+  # from GitHub (their single home — unknown when offline), and the
+  # inspected reality of every agent-labeled enrollment's
   # contract. Nothing here mutates and nothing is recorded — every fact is
   # re-derived from the host or GitHub every time (plans#26: inspected,
   # never recorded). No dev.yml involved: status is the machine's view,
@@ -42,7 +46,7 @@ module Dev
     EXPIRATION_HEADER = T.let(/^github-authentication-token-expiration:\s*(\d{4}-\d{2}-\d{2})/i, Regexp)
 
     # @param discovery [Dev::RunnerDiscovery] this host's enrollments
-    # @param registry [#find] the GitHub-side label reader (never mutates here)
+    # @param registry [#find, #group_of, #group_repositories] the GitHub-side reader (never mutates here)
     # @param out [IO, StringIO] report stream
     # @param executor [#quiet?, #capture] probe seam (never mutates)
     # @param agent_user [String] expected run-as user
@@ -145,13 +149,51 @@ module Dev
         return []
       end
 
-      enrollments.filter_map do |enrollment|
-        @out.puts "Runner '#{enrollment.name}' (#{enrollment.display_dir}):"
-        line(true, "registered: #{enrollment.scope}")
-        report_owner(enrollment)
-        labels = report_labels(enrollment)
-        enrollment.dir if labels && LabelContracts.agent_host?(labels.join(","))
+      families = enrollments.group_by { |enrollment| [enrollment.scope, RunnerFamily.base_of(enrollment.name)] }
+      families.flat_map do |(scope, base), slots|
+        report_family(scope, base, slots) if slots.length > 1 || !scope.include?("/")
+        slots.filter_map do |enrollment|
+          @out.puts "Runner '#{enrollment.name}' (#{enrollment.display_dir}):"
+          line(true, "registered: #{enrollment.scope}")
+          report_owner(enrollment)
+          labels = report_labels(enrollment)
+          enrollment.dir if labels && LabelContracts.agent_host?(labels.join(","))
+        end
       end
+    end
+
+    # A family's header (dev#470): its size — how many jobs this host runs
+    # at once at the scope — and, at an org scope, who may use it: the
+    # runner group its first slot sits in and that group's selected
+    # repositories, both read from GitHub. A lone repo-scoped enrollment
+    # needs neither (one job at a time, that repo's alone) and gets none.
+    #
+    # @param scope [String]
+    # @param base [String] the family's name
+    # @param slots [Array<Dev::RunnerDiscovery::Enrollment>]
+    sig { params(scope: String, base: String, slots: T::Array[Dev::RunnerDiscovery::Enrollment]).void }
+    def report_family(scope, base, slots)
+      @out.puts "Family '#{base}' at #{scope} — #{slots.length} slot#{"s" if slots.length > 1} (#{slots.length} job#{"s" if slots.length > 1} at once):"
+      return if scope.include?("/")
+
+      first = T.must(slots.first)
+      runner = @registry.find(scope: scope, name: first.name)
+      return if runner.nil?
+
+      group = @registry.group_of(org: scope, runner_id: runner.id)
+      if group.nil?
+        line(false, "group: none lists '#{first.name}' — re-run `dev runner register --org --group <name>`")
+        return
+      end
+
+      visible = if group.visibility == "all"
+        "every repo at #{scope}"
+      else
+        @registry.group_repositories(org: scope, group_id: group.id).map(&:full_name).join(", ")
+      end
+      line(true, "group: #{group.name} — visible to #{visible.empty? ? "no repo" : visible}")
+    rescue RunnerRegistry::QueryError => e
+      line(false, "group unknown (#{e.message})")
     end
 
     # The enrollment's custom labels and health, read from their single

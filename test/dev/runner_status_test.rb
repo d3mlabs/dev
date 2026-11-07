@@ -36,12 +36,31 @@ end unless defined?(CannedStatusExecutor)
 # The GitHub-side seam for status: answers find from a responder, so tests
 # canned-answer labels, absence, or a QueryError (offline).
 class CannedRegistry
-  def initialize(&responder)
+  attr_reader :group_asks
+
+  DEFAULT_GROUP = Dev::RunnerRegistry::Group.new(id: 1, name: "Default", visibility: "selected")
+
+  # @param group [Dev::RunnerRegistry::Group, nil] the group every runner sits
+  #   in (every org runner is in one on GitHub; nil is the anomaly)
+  # @param repos [Array<String>] the full names the group is visible to
+  def initialize(group: DEFAULT_GROUP, repos: [], &responder)
     @responder = responder
+    @group = group
+    @repos = repos
+    @group_asks = []
   end
 
   def find(scope:, name:)
     @responder ? @responder.call(scope, name) : nil
+  end
+
+  def group_of(org:, runner_id:)
+    @group_asks << [org, runner_id]
+    @group
+  end
+
+  def group_repositories(org:, group_id:)
+    @repos.each_with_index.map { |name, i| Dev::RunnerRegistry::GroupRepository.new(id: i + 1, full_name: name) }
   end
 end unless defined?(CannedRegistry)
 
@@ -94,6 +113,82 @@ class Dev::RunnerStatusTest < Minitest::Test
     out.string.include?("Runner 'mac-box'")
     out.string.include?("registered: d3mlabs")
     out.string.include?("labels: ai-ask, ai-edit")
+  end
+
+  test "an org family: one header with its size and group (asked once, for its first slot), then each slot's own block (dev#470)" do
+    Given "two slots of mac1 at the org, in Default, which dev and plans may use"
+    out = StringIO.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
+    write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
+    ids = { "mac1" => 1, "mac1-2" => 2 }
+    responder = ->(_scope, name) { Dev::RunnerRegistry::Runner.new(id: ids.fetch(name), custom_labels: ["ai-ask"], status: "online") }
+    default = Dev::RunnerRegistry::Group.new(id: 1, name: "Default", visibility: "selected")
+    registry = CannedRegistry.new(group: default, repos: ["d3mlabs/dev", "d3mlabs/plans"], &responder)
+    status = build_status(out: out, home: home, registry: registry)
+
+    When "reporting"
+    status.report
+
+    Then
+    out.string.include?("Family 'mac1' at d3mlabs — 2 slots (2 jobs at once):")
+    out.string.include?("[ok] group: Default — visible to d3mlabs/dev, d3mlabs/plans")
+    out.string.include?("Runner 'mac1' (~/actions-runner-ai-ask):")
+    out.string.include?("Runner 'mac1-2' (~/actions-runner-ai-ask-2):")
+    registry.group_asks == [["d3mlabs", 1]]
+  end
+
+  test "a lone org enrollment still gets its family line: the group is who may use it" do
+    Given
+    out = StringIO.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs", name: "mac-box")
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: ["ai-ask"], status: "online") }
+    everyone = Dev::RunnerRegistry::Group.new(id: 2, name: "everyone", visibility: "all")
+    status = build_status(out: out, home: home, registry: CannedRegistry.new(group: everyone, &responder))
+
+    When
+    status.report
+
+    Then
+    out.string.include?("Family 'mac-box' at d3mlabs — 1 slot (1 job at once):")
+    out.string.include?("[ok] group: everyone — visible to every repo at d3mlabs")
+  end
+
+  test "an org runner no group lists is flagged with register as the remedy; a lone repo enrollment has no family line at all" do
+    Given
+    out = StringIO.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
+    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["x"], status: "online") }
+    status = build_status(out: out, home: home, registry: CannedRegistry.new(group: nil, &responder))
+
+    When
+    status.report
+
+    Then
+    out.string.include?("[!!] group: none lists 'mac1' — re-run `dev runner register --org --group <name>`")
+    !out.string.include?("Family 'JPSFF'")
+  end
+
+  test "a repo-scoped family of two gets the size header but no group line: a repo's runners are its own" do
+    Given
+    out = StringIO.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    write_runner(home, "actions-runner-snappy-2", scope: "JPDuchesne/snappy", name: "JPSFF-2")
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["snappy"], status: "online") }
+    registry = CannedRegistry.new(&responder)
+    status = build_status(out: out, home: home, registry: registry)
+
+    When
+    status.report
+
+    Then
+    out.string.include?("Family 'JPSFF' at JPDuchesne/snappy — 2 slots (2 jobs at once):")
+    !out.string.include?("group:")
+    registry.group_asks == []
   end
 
   test "flags an enrollment GitHub has lost" do
