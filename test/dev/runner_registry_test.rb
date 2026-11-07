@@ -192,6 +192,106 @@ class Dev::RunnerRegistryTest < Minitest::Test
     error.message.include?("HTTP 403")
   end
 
+  # --- runner groups: who may use a runner (dev#470) -----------------------
+
+  test "group finds an org's runner group by name, with GitHub's visibility word; nil when the org has none of that name" do
+    Given "an org with two groups"
+    lines = [
+      JSON.generate({ "id" => 1, "name" => "Default", "visibility" => "selected", "default" => true }),
+      JSON.generate({ "id" => 3, "name" => "ue-hosted", "visibility" => "selected", "default" => false }),
+    ].join("\n")
+    exec = RecordingExecutor.new { [lines, "", true] }
+    registry = Dev::RunnerRegistry.new(executor: exec)
+
+    When
+    default = registry.group(org: "d3mlabs", name: "Default")
+    missing = registry.group(org: "d3mlabs", name: "agents")
+
+    Then
+    exec.captures.first == ["gh", "api", "--paginate", "orgs/d3mlabs/actions/runner-groups", "--jq", ".runner_groups[]"]
+    [default&.id, default&.name, default&.visibility] == [1, "Default", "selected"]
+    missing.nil?
+  end
+
+  test "group_of answers the group listing the runner among its runners, asking group by group" do
+    Given "two groups, the runner in the second"
+    groups = [
+      JSON.generate({ "id" => 1, "name" => "Default", "visibility" => "selected" }),
+      JSON.generate({ "id" => 3, "name" => "ue-hosted", "visibility" => "selected" }),
+    ].join("\n")
+    responder = lambda do |argv|
+      next [groups, "", true] if argv.include?("orgs/d3mlabs/actions/runner-groups")
+      next ["7\n", "", true] if argv.include?("orgs/d3mlabs/actions/runner-groups/1/runners")
+      next ["42\n9\n", "", true] if argv.include?("orgs/d3mlabs/actions/runner-groups/3/runners")
+
+      ["", "", true]
+    end
+    registry = Dev::RunnerRegistry.new(executor: RecordingExecutor.new(&responder))
+
+    Expect
+    registry.group_of(org: "d3mlabs", runner_id: 42)&.name == "ue-hosted"
+    registry.group_of(org: "d3mlabs", runner_id: 99).nil?
+  end
+
+  test "group_repositories lists a group's selection as id + full name" do
+    Given
+    lines = [
+      JSON.generate({ "id" => 100, "name" => "dev", "full_name" => "d3mlabs/dev" }),
+      JSON.generate({ "id" => 200, "name" => "cellbound-3d", "full_name" => "d3mlabs/cellbound-3d" }),
+    ].join("\n")
+    exec = RecordingExecutor.new { [lines, "", true] }
+    registry = Dev::RunnerRegistry.new(executor: exec)
+
+    When
+    repos = registry.group_repositories(org: "d3mlabs", group_id: 1)
+
+    Then
+    exec.captures == [["gh", "api", "--paginate", "orgs/d3mlabs/actions/runner-groups/1/repositories", "--jq", ".repositories[]"]]
+    repos.map(&:full_name) == ["d3mlabs/dev", "d3mlabs/cellbound-3d"]
+    repos.map(&:id) == [100, 200]
+  end
+
+  test "select_group_repositories! PUTs the full selection as typed ids" do
+    Given
+    exec = RecordingExecutor.new { ["", "", true] }
+
+    When
+    Dev::RunnerRegistry.new(executor: exec).select_group_repositories!(org: "d3mlabs", group_id: 1, repository_ids: [100, 300])
+
+    Then
+    exec.captures == [[
+      "gh", "api", "-X", "PUT", "orgs/d3mlabs/actions/runner-groups/1/repositories",
+      "-F", "selected_repository_ids[]=100", "-F", "selected_repository_ids[]=300"
+    ]]
+  end
+
+  test "place_in_group! PUTs the runner into the group; repository_id reads a repo's id" do
+    Given
+    responder = ->(argv) { argv.include?("repos/d3mlabs/ai-flow") ? ["300\n", "", true] : ["", "", true] }
+    exec = RecordingExecutor.new(&responder)
+    registry = Dev::RunnerRegistry.new(executor: exec)
+
+    When
+    registry.place_in_group!(org: "d3mlabs", group_id: 1, runner_id: 42)
+    id = registry.repository_id("d3mlabs/ai-flow")
+
+    Then
+    exec.captures.first == ["gh", "api", "-X", "PUT", "orgs/d3mlabs/actions/runner-groups/1/runners/42"]
+    id == 300
+  end
+
+  test "group reads raise QueryError and group writes raise AmendError when gh refuses — never a silent nothing" do
+    Given
+    refusing = Dev::RunnerRegistry.new(executor: RecordingExecutor.new { ["", "HTTP 403", false] })
+
+    Expect
+    assert_raises(Dev::RunnerRegistry::QueryError) { refusing.group(org: "d3mlabs", name: "Default") }.message.include?("HTTP 403")
+    assert_raises(Dev::RunnerRegistry::QueryError) { refusing.group_repositories(org: "d3mlabs", group_id: 1) }.message.include?("HTTP 403")
+    assert_raises(Dev::RunnerRegistry::QueryError) { refusing.repository_id("d3mlabs/dev") }.message.include?("HTTP 403")
+    assert_raises(Dev::RunnerRegistry::AmendError) { refusing.select_group_repositories!(org: "d3mlabs", group_id: 1, repository_ids: []) }.message.include?("HTTP 403")
+    assert_raises(Dev::RunnerRegistry::AmendError) { refusing.place_in_group!(org: "d3mlabs", group_id: 1, runner_id: 1) }.message.include?("HTTP 403")
+  end
+
   private
 
   def runner_json(id:, name:, custom:, status: "online", busy: false)

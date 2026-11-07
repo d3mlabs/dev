@@ -115,7 +115,133 @@ module Dev
       raise AmendError, "could not amend the labels of runner #{runner_id} at #{scope}: #{err.strip}" unless ok
     end
 
+    # One of an org's runner groups — GitHub's partition of *who may use*
+    # a runner (plans#26: labels say what a host can do, groups say which
+    # repos see it). Selected repositories are read and converged, never
+    # recorded.
+    class Group < T::Struct
+      const :id, Integer
+      const :name, String
+
+      # GitHub's word: "all", "selected" or "private".
+      const :visibility, String
+    end
+
+    # A repository a group is visible to, as GitHub lists it.
+    class GroupRepository < T::Struct
+      const :id, Integer
+
+      # "owner/repo"
+      const :full_name, String
+    end
+
+    # The org's runner group of that name, or nil when none is — a group
+    # is created once by a human (`admin:org`), never by dev.
+    #
+    # @param org [String]
+    # @param name [String]
+    # @return [Group, nil]
+    # @raise [QueryError]
+    sig { params(org: String, name: String).returns(T.nilable(Group)) }
+    def group(org:, name:)
+      groups(org).find { |group| group.name == name }
+    end
+
+    # The group a runner sits in, found by asking each group for its
+    # runners (a runner's own record does not say). nil when no group
+    # lists it.
+    #
+    # @param org [String]
+    # @param runner_id [Integer]
+    # @return [Group, nil]
+    # @raise [QueryError]
+    sig { params(org: String, runner_id: Integer).returns(T.nilable(Group)) }
+    def group_of(org:, runner_id:)
+      groups(org).find do |group|
+        out, err, ok = @exec.capture("gh", "api", "--paginate", "orgs/#{org}/actions/runner-groups/#{group.id}/runners", "--jq", ".runners[].id")
+        raise QueryError, "could not list the runners of group #{group.name} at #{org}: #{err.strip}" unless ok
+
+        out.each_line.map { |line| Integer(line.strip) }.include?(runner_id)
+      end
+    end
+
+    # The repositories a group is visible to (its selection; empty when
+    # the group's visibility is not "selected").
+    #
+    # @param org [String]
+    # @param group_id [Integer]
+    # @return [Array<GroupRepository>]
+    # @raise [QueryError]
+    sig { params(org: String, group_id: Integer).returns(T::Array[GroupRepository]) }
+    def group_repositories(org:, group_id:)
+      out, err, ok = @exec.capture("gh", "api", "--paginate", "orgs/#{org}/actions/runner-groups/#{group_id}/repositories", "--jq", ".repositories[]")
+      raise QueryError, "could not list the repositories of group #{group_id} at #{org}: #{err.strip}" unless ok
+
+      out.each_line.map do |line|
+        record = JSON.parse(line)
+        GroupRepository.new(id: Integer(record.fetch("id")), full_name: record.fetch("full_name").to_s)
+      end
+    end
+
+    # Replace the group's selected repositories (GitHub's PUT semantics:
+    # the full set).
+    #
+    # @param org [String]
+    # @param group_id [Integer]
+    # @param repository_ids [Array<Integer>]
+    # @return [void]
+    # @raise [AmendError] when the PUT is refused
+    sig { params(org: String, group_id: Integer, repository_ids: T::Array[Integer]).void }
+    def select_group_repositories!(org:, group_id:, repository_ids:)
+      argv = ["gh", "api", "-X", "PUT", "orgs/#{org}/actions/runner-groups/#{group_id}/repositories"]
+      argv += repository_ids.flat_map { |id| ["-F", "selected_repository_ids[]=#{id}"] }
+      _out, err, ok = @exec.capture(*argv)
+      raise AmendError, "could not set the repositories of group #{group_id} at #{org}: #{err.strip}" unless ok
+    end
+
+    # Move a runner into a group (idempotent when it is there already).
+    #
+    # @param org [String]
+    # @param group_id [Integer]
+    # @param runner_id [Integer]
+    # @return [void]
+    # @raise [AmendError] when the PUT is refused
+    sig { params(org: String, group_id: Integer, runner_id: Integer).void }
+    def place_in_group!(org:, group_id:, runner_id:)
+      _out, err, ok = @exec.capture("gh", "api", "-X", "PUT", "orgs/#{org}/actions/runner-groups/#{group_id}/runners/#{runner_id}")
+      raise AmendError, "could not move runner #{runner_id} into group #{group_id} at #{org}: #{err.strip}" unless ok
+    end
+
+    # A repository's id, the key the group selection is written in.
+    #
+    # @param repo [String] "owner/repo"
+    # @return [Integer]
+    # @raise [QueryError] when the repo cannot be read (absent, or not reachable)
+    sig { params(repo: String).returns(Integer) }
+    def repository_id(repo)
+      out, err, ok = @exec.capture("gh", "api", "repos/#{repo}", "--jq", ".id")
+      raise QueryError, "could not read #{repo}: #{err.strip}" if !ok || out.strip.empty?
+
+      Integer(out.strip)
+    end
+
     private
+
+    # Every runner group of an org.
+    #
+    # @param org [String]
+    # @return [Array<Group>]
+    # @raise [QueryError]
+    sig { params(org: String).returns(T::Array[Group]) }
+    def groups(org)
+      out, err, ok = @exec.capture("gh", "api", "--paginate", "orgs/#{org}/actions/runner-groups", "--jq", ".runner_groups[]")
+      raise QueryError, "could not list the runner groups at #{org}: #{err.strip}" unless ok
+
+      out.each_line.map do |line|
+        record = JSON.parse(line)
+        Group.new(id: Integer(record.fetch("id")), name: record.fetch("name").to_s, visibility: record.fetch("visibility").to_s)
+      end
+    end
 
     # Every runner GitHub lists at a scope, one record per `--jq
     # .runners[]` line, paginated so a scope with many is read whole.
