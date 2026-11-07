@@ -48,6 +48,14 @@ module Dev
     # slash-free segments. A bare name (dev-core) has no tap to trust.
     QUALIFIED_FORMULA = T.let(%r{\A([^/]+)/([^/]+)/[^/]+\z}, Regexp)
 
+    # Environment the trust command runs under. `brew trust` writes a
+    # per-user file and needs no API data, but brew's implicit auto-update
+    # takes a download lock under the prefix — owned by the operator, not
+    # the identity trusting here — and fails the whole command on it
+    # (dev#475: "Already trusted tap", then a lock error, then dev's false
+    # warning). Same rule as every other brew read dev spawns (dev#372).
+    TRUST_ENV = T.let(%w[HOMEBREW_NO_AUTO_UPDATE=1].freeze, T::Array[String])
+
     class << self
       extend T::Sig
 
@@ -89,7 +97,9 @@ module Dev
 
     # Have the user trust the tap, announced; nothing without a tap or
     # without brew. The brew dev found is the one invoked, by path, so the
-    # trust lands for the brew the user's `dev deps` will run.
+    # trust lands for the brew the user's `dev deps` will run. The argv
+    # carries TRUST_ENV itself (via `env`) so both bootstraps' seams get it
+    # without each knowing why.
     #
     # @return [void]
     sig { void }
@@ -99,7 +109,7 @@ module Dev
       return unless tap && brew
 
       @out.puts ">>> Trusting the tap #{tap} for #{@user} (brew loads nothing from a tap its user has not trusted)"
-      return if @run_as_user.call([brew, "trust", "--tap", tap.to_s])
+      return if @run_as_user.call(["env", *TRUST_ENV, brew, "trust", "--tap", tap.to_s])
 
       @out.puts "dev: warning: could not trust the tap #{tap} for #{@user} (brew's refusal is above; a brew without " \
                 "`trust` has no gate to pass) — if brew as #{@user} is refused the tap's formulae: " \
