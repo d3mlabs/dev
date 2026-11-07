@@ -7,14 +7,50 @@ require "dev/deps/brew_repository"
 require "dev/deps/local_store"
 require "dev/deps/dependency"
 require "dev/deps/tap"
+require "dev/host_lock"
+require "fileutils"
 require "etc"
 require "pathname"
 require "tmpdir"
 require "uri"
 
+# A HostLock that answers whether it is currently held.
+class HoldingLock < Dev::HostLock
+  def initialize(name:, root:)
+    super
+    @holding = false
+  end
+
+  def holding? = @holding
+
+  def synchronize
+    super do
+      @holding = true
+      yield
+    ensure
+      @holding = false
+    end
+  end
+end
+
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::BrewIntegrationTest < Minitest::Test
   include SorbetHelper
+
+  # An integration built without a lock defaults to the data root's; the
+  # tests' data root is a tmpdir, never this machine's.
+  def setup
+    super
+    @data_root = Dir.mktmpdir("dev-brew-int-root-")
+    @original_data_root = ENV["DEV_DATA_ROOT"]
+    ENV["DEV_DATA_ROOT"] = @data_root
+  end
+
+  def teardown
+    ENV["DEV_DATA_ROOT"] = @original_data_root
+    FileUtils.rm_rf(@data_root)
+    super
+  end
 
   # The argv prefix every brew write carries: brew's download cache in the
   # store rooted at `dir`.
@@ -212,6 +248,69 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  # ai-flow#116 / dev#483: a keg found missing is converged under the
+  # host-wide brew lock (Dev::HostLock), and the Cellar is asked again once
+  # the lock is held — the other slot that held it may have installed the
+  # very same keg. Brew's own per-formula lock would have failed us instead.
+  test "a formula found missing is re-checked under the host lock: one another holder installed meanwhile is not installed again" do
+    Given "cmake absent on the first look, present once the lock is ours"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
+      lock: Dev::HostLock.new(name: "brew", root: dir),
+    )
+    deps = [
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: "3.31.4", hash: nil, metadata: {}),
+    ]
+    listing = Open3.stubs(:capture3).with("brew", "list", "--versions", "--formula", "cmake")
+    listing.returns(["", "", stub(success?: false)]).then
+      .returns(["cmake 3.31.4\n", "", stub(success?: true)])
+
+    When "installing all"
+    integration.install_all(deps)
+
+    Then "nothing is written, and the lockfile is the data root's"
+    0 * Open3.capture3(*cache_env(dir), "brew", "install", "cmake")
+    File.exist?(File.join(dir, "locks", "brew.lock"))
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "every brew write runs holding the host lock" do
+    Given "cmake absent, and a lock that records whether it is held"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    lock = HoldingLock.new(name: "brew", root: dir)
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
+      lock: lock,
+    )
+    deps = [
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: "3.31.4", hash: nil, metadata: {}),
+    ]
+    Open3.stubs(:capture3).with("brew", "list", "--versions", "--formula", "cmake")
+      .returns(["", "", stub(success?: false)]).then
+      .returns(["", "", stub(success?: false)]).then
+      .returns(["cmake 3.31.4\n", "", stub(success?: true)])
+    held_during_install = nil
+    Open3.stubs(:capture3).with do |*argv|
+      next false unless argv.include?("install")
+
+      held_during_install = lock.holding?
+      true
+    end.returns(["", "", stub(success?: true)])
+
+    When "installing all"
+    integration.install_all(deps)
+
+    Then "the install ran inside the hold, and the hold is over"
+    held_during_install == true
+    lock.holding? == false
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "a formula the listing lacks is installed, and the Cellar is re-read after the write; brew's exit 1 for a missing name is no error" do
     Given "cmake absent and llvm@18 installed, which brew lists with exit status 1"
     dir = Dir.mktmpdir("dev-brew-int-test-")
@@ -225,12 +324,13 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     ]
     listing = Open3.stubs(:capture3).with("brew", "list", "--versions", "--formula", "cmake", "llvm@18")
     listing.returns(["llvm@18 18.1.8\n", "", stub(success?: false)]).then
+      .returns(["llvm@18 18.1.8\n", "", stub(success?: false)]).then
       .returns(["cmake 3.31.4\nllvm@18 18.1.8\n", "", stub(success?: true)])
 
     When "installing all"
     integration.install_all(deps)
 
-    Then "only cmake is installed, and its verification reads the re-listed Cellar"
+    Then "only cmake is installed — the listing is re-read under the host lock before the write — and its verification reads the re-listed Cellar"
     1 * Open3.capture3(*cache_env(dir), "brew", "install", "cmake") >> ["", "", stub(success?: true)]
     0 * Open3.capture3(*cache_env(dir), "brew", "install", "llvm@18")
 

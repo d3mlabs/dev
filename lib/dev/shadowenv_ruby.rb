@@ -113,12 +113,15 @@ module Dev
     # Delegates the shell → RC-file mapping and the idempotent append to the
     # shared Dev::ShellRcHook installer; this module only declares its snippet
     # per shell. "shadowenv init" counts as already installed so hand-added
-    # hook lines (pre-dating the marker) are never duplicated.
+    # hook lines (pre-dating the marker) are never duplicated. Off a tty
+    # nothing is written (ShellRcHook — an agent run has no shell to hook).
     #
-    # @return [Symbol, false] :added, :already_present, or false (unsupported shell)
-    sig { returns(T.any(Symbol, FalseClass)) }
-    def ensure_shadowenv_shell_hook!
-      Dev::ShellRcHook.new.ensure_snippet(
+    # @param interactive [Boolean] whether a human is at a terminal
+    #   (default: stdin is a tty)
+    # @return [Symbol, false] :added, :already_present, :skipped, or false (unsupported shell)
+    sig { params(interactive: T::Boolean).returns(T.any(Symbol, FalseClass)) }
+    def ensure_shadowenv_shell_hook!(interactive: $stdin.tty?)
+      Dev::ShellRcHook.new(interactive: interactive).ensure_snippet(
         marker: "# Shadowenv (added by dev)",
         present_markers: ["shadowenv init"],
         snippets: {

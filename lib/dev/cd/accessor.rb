@@ -83,6 +83,8 @@ module Dev
           err.puts "dev: shell hook installed — open a new shell (or source your shell RC), then run `dev cd <repo>` again."
         when :already_present
           err.puts "dev: the dev cd shell hook is installed but not active in this shell — open a new shell (or source your shell RC)."
+        when :skipped
+          err.puts "dev: `dev cd` needs a shell hook, and none was installed (not an interactive terminal) — run `dev cd` from your own shell."
         else
           err.puts "dev: `dev cd` needs a shell hook, and your shell is unsupported (supported: zsh, bash, fish)."
         end

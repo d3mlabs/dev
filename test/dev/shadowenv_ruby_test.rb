@@ -113,6 +113,27 @@ class ShadowenvRubyTest < Minitest::Test
 
   # --- ensure_shadowenv_shell_hook! ---
 
+  test "ensure_shadowenv_shell_hook! off a tty writes nothing (ai-flow#116: an agent run has no shell to hook)" do
+    Given "a zsh shell with no .zshrc, headless"
+    tmpdir = Dir.mktmpdir("shadowenv-hook-test-")
+    original_shell = ENV["SHELL"]
+    original_home = ENV["HOME"]
+    ENV["SHELL"] = "/bin/zsh"
+    ENV["HOME"] = tmpdir
+
+    When "we ensure the shell hook"
+    result = Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!(interactive: false)
+
+    Then "skipped, and no RC file appears"
+    result == :skipped
+    Dir.children(tmpdir).empty?
+
+    Cleanup
+    ENV["SHELL"] = original_shell
+    ENV["HOME"] = original_home
+    FileUtils.rm_rf(tmpdir)
+  end
+
   test "ensure_shadowenv_shell_hook! adds hook to zshrc when not present" do
     Given "a zsh shell with no .zshrc"
     tmpdir = Dir.mktmpdir("shadowenv-hook-test-")
@@ -122,7 +143,7 @@ class ShadowenvRubyTest < Minitest::Test
     ENV["HOME"] = tmpdir
 
     When "we ensure the shell hook"
-    result = Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!
+    result = Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!(interactive: true)
 
     Then "the hook is added to .zshrc"
     result == :added
@@ -145,7 +166,7 @@ class ShadowenvRubyTest < Minitest::Test
     File.write(File.join(tmpdir, ".zshrc"), 'eval "$(shadowenv init zsh)"')
 
     When "we ensure the shell hook"
-    result = Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!
+    result = Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!(interactive: true)
 
     Then "it reports already present"
     result == :already_present
@@ -167,7 +188,7 @@ class ShadowenvRubyTest < Minitest::Test
     before = File.read(File.join(tmpdir, ".zshrc"))
 
     When "we ensure the shell hook"
-    result = Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!
+    result = Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!(interactive: true)
 
     Then "the old install is recognized, not re-appended"
     result == :already_present
@@ -188,7 +209,7 @@ class ShadowenvRubyTest < Minitest::Test
     ENV["HOME"] = tmpdir
 
     When "we ensure the shell hook"
-    result = Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!
+    result = Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!(interactive: true)
 
     Then "the hook is added to .bash_profile"
     result == :added
@@ -211,7 +232,7 @@ class ShadowenvRubyTest < Minitest::Test
     FileUtils.chmod(0o500, tmpdir)
 
     When "we ensure the shell hook"
-    result = Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!
+    result = Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!(interactive: true)
 
     Then "the failure is reported as false instead of raising"
     result == false
