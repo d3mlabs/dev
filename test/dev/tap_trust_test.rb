@@ -11,7 +11,7 @@ class Dev::TapTrustTest < Minitest::Test
   # is per user: the step is the one thing both host bootstraps need
   # (RunnerUser on Linux, AgentBootstrap on macOS — dev#310, dev#374), and
   # how to run as the user is the one thing they hand it.
-  test "trust! announces, then runs the brew dev found as the user with `trust --tap`" do
+  test "trust! announces, then runs the brew dev found as the user with `trust --tap` — without brew's implicit auto-update (dev#475: its lock is the prefix owner's, and trust is a per-user file needing no API data)" do
     Given "a tap and brew, and a run-as-user seam that records and succeeds"
     runs = []
     out = StringIO.new
@@ -23,8 +23,8 @@ class Dev::TapTrustTest < Minitest::Test
     When
     trust.trust!
 
-    Then "one invocation, by brew's path; the announcement, no warning"
-    runs == [%w[/opt/homebrew/bin/brew trust --tap d3mlabs/d3mlabs]]
+    Then "one invocation, by brew's path, auto-update off; the announcement, no warning"
+    runs == [%w[env HOMEBREW_NO_AUTO_UPDATE=1 /opt/homebrew/bin/brew trust --tap d3mlabs/d3mlabs]]
     out.string == ">>> Trusting the tap d3mlabs/d3mlabs for ai-agent (brew loads nothing from a tap its user has not trusted)\n"
   end
 

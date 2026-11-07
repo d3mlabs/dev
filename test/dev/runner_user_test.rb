@@ -141,7 +141,7 @@ class Dev::RunnerUserTest < Minitest::Test
 
     Expect "brew trust as the runner user, on the host PATH, the brew dev found; the refusal is one warning naming the by-hand command"
     trusting.calls.count(&trusts) == 1
-    trusting.calls.find(&trusts) == %w[sudo -u runner -H env PATH=/opt/brew/bin:/usr/bin /home/linuxbrew/.linuxbrew/bin/brew trust --tap d3mlabs/d3mlabs]
+    trusting.calls.find(&trusts) == %w[sudo -u runner -H env PATH=/opt/brew/bin:/usr/bin env HOMEBREW_NO_AUTO_UPDATE=1 /home/linuxbrew/.linuxbrew/bin/brew trust --tap d3mlabs/d3mlabs]
     first_out.include?(">>> Trusting the tap d3mlabs/d3mlabs for runner (brew loads nothing from a tap its user has not trusted)")
     !first_out.include?("warning")
     @out.string.include?("dev: warning: could not trust the tap d3mlabs/d3mlabs for runner")

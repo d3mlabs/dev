@@ -282,7 +282,7 @@ class Dev::AgentBootstrapTest < Minitest::Test
     bootstrap(executor, out: out, brew_executable: brew, tap: org_tap).converge!
 
     Then "the one step is brew trust as the agent, and it is announced"
-    executor.runs == [["sudo", "-H", "-u", "ai-agent", "--", brew, "trust", "--tap", "d3mlabs/d3mlabs"]]
+    executor.runs == [["sudo", "-H", "-u", "ai-agent", "--", "env", "HOMEBREW_NO_AUTO_UPDATE=1", brew, "trust", "--tap", "d3mlabs/d3mlabs"]]
     out.string.include?(">>> Trusting the tap d3mlabs/d3mlabs for ai-agent")
     !out.string.include?("warning")
   end
