@@ -61,14 +61,14 @@ class Dev::LabelContractsTest < Minitest::Test
     true
   end
 
-  test "after_enroll! passes the runner dir through" do
+  test "after_enroll! passes the runner dir and slot through" do
     Given "a contract over a mocked bootstrap"
     bootstrap = typed_mock(Dev::AgentBootstrap)
     contract = Dev::LabelContracts.for("ai-learn", bootstrap: bootstrap).fetch(0)
 
     When "converging the post-enrollment steps"
-    bootstrap.expects(:after_enroll!).with(runner_dir: "/tmp/runner").once
-    contract.after_enroll!(runner_dir: "/tmp/runner")
+    bootstrap.expects(:after_enroll!).with(runner_dir: "/tmp/runner", slot: 2).once
+    contract.after_enroll!(runner_dir: "/tmp/runner", slot: 2)
 
     Then
     true

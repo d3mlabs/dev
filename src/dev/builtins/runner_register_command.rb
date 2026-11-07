@@ -398,7 +398,7 @@ module Dev
           if enrollment && runner
             amend_enrollment(scope, enrollment, runner, config)
             @groups.place!(group, runner, org: scope) if group
-            contracts.each { |contract| contract.after_enroll!(runner_dir: enrollment.dir) }
+            contracts.each { |contract| contract.after_enroll!(runner_dir: enrollment.dir, slot: slot) }
             next
           end
 
@@ -416,7 +416,7 @@ module Dev
             slot_setup = @runner_setup_factory.call(slot_config, args.value(REPO_FLAG), org, runner_user)
           end
           slot_setup.run
-          contracts.each { |contract| contract.after_enroll!(runner_dir: slot_setup.resolve_dir) }
+          contracts.each { |contract| contract.after_enroll!(runner_dir: slot_setup.resolve_dir, slot: slot) }
         end
 
         if org
