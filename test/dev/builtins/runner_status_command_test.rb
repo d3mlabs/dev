@@ -60,14 +60,36 @@ class Dev::Builtins::RunnerStatusCommandTest < Minitest::Test
     Given "a command with its default wiring, the construction boundary intercepted"
     status = typed_mock(Dev::RunnerStatus)
     status.expects(:report).once
-    Dev::RunnerStatus.expects(:new).with(container_required: false, pins: []).returns(status)
+    Dev::RunnerStatus.expects(:new).with(container_required: false, pins: [], repo: nil).returns(status)
     command = Dev::Builtins::RunnerStatusCommand.new
 
-    When "running status"
+    When "running status outside a checkout"
     command.call(args: no_args, context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui)))
 
-    Then "the expectation on the construction boundary holds"
+    Then "the expectation on the construction boundary holds: no lock, no repo"
     true
+  end
+
+  test "in a checkout the default factory hands the inspector the checkout's repo — or nil when gh cannot name it" do
+    Given "a checkout with an empty lock, gh answering (or not)"
+    root = Pathname.new(Dir.mktmpdir)
+    status = typed_mock(Dev::RunnerStatus)
+    status.expects(:report).once
+    Dev::RunnerSetup.expects(:current_repo).then.raises(Dev::RunnerSetup::Error, "could not resolve the repo via gh: offline") if repo.nil?
+    Dev::RunnerSetup.expects(:current_repo).returns(repo) unless repo.nil?
+    Dev::RunnerStatus.expects(:new).with(container_required: false, pins: [], repo: repo).returns(status)
+    command = Dev::Builtins::RunnerStatusCommand.new
+
+    When
+    command.call(args: no_args, context: build_context(root: root.to_s))
+
+    Then
+    true
+
+    Where
+    repo
+    "d3mlabs/dev"
+    nil
   end
 
   private

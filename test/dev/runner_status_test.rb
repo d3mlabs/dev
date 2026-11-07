@@ -38,7 +38,16 @@ end unless defined?(CannedStatusExecutor)
 class CannedRegistry
   attr_reader :group_asks
 
-  DEFAULT_GROUP = Dev::RunnerRegistry::Group.new(id: 1, name: "Default", visibility: "selected")
+  PINS = Dev::LabelContracts::AI_FLOW_WORKFLOWS
+
+  class << self
+    def group(id:, name:, visibility: "selected", pinned: false)
+      Dev::RunnerRegistry::Group.new(id: id, name: name, visibility: visibility, allows_public_repositories: false,
+        restricted_to_workflows: pinned, selected_workflows: pinned ? PINS : [])
+    end
+  end
+
+  DEFAULT_GROUP = group(id: 1, name: "Default")
 
   # @param group [Dev::RunnerRegistry::Group, nil] the group every runner sits
   #   in (every org runner is in one on GitHub; nil is the anomaly)
@@ -116,15 +125,14 @@ class Dev::RunnerStatusTest < Minitest::Test
   end
 
   test "an org family: one header with its size and group (asked once, for its first slot), then each slot's own block (dev#470)" do
-    Given "two slots of mac1 at the org, in Default, which dev and plans may use"
+    Given "two slots of mac1 at the org, a custom pool in Default, which dev and plans may use"
     out = StringIO.new
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
     write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
     ids = { "mac1" => 1, "mac1-2" => 2 }
-    responder = ->(_scope, name) { Dev::RunnerRegistry::Runner.new(id: ids.fetch(name), custom_labels: ["ai-ask"], status: "online") }
-    default = Dev::RunnerRegistry::Group.new(id: 1, name: "Default", visibility: "selected")
-    registry = CannedRegistry.new(group: default, repos: ["d3mlabs/dev", "d3mlabs/plans"], &responder)
+    responder = ->(_scope, name) { Dev::RunnerRegistry::Runner.new(id: ids.fetch(name), custom_labels: ["ue-engine"], status: "online") }
+    registry = CannedRegistry.new(repos: ["d3mlabs/dev", "d3mlabs/plans"], &responder)
     status = build_status(out: out, home: home, registry: registry)
 
     When "reporting"
@@ -132,7 +140,8 @@ class Dev::RunnerStatusTest < Minitest::Test
 
     Then
     out.string.include?("Family 'mac1' at d3mlabs — 2 slots (2 jobs at once):")
-    out.string.include?("[ok] group: Default — visible to d3mlabs/dev, d3mlabs/plans")
+    out.string.include?("[ok] group: Default\n")
+    out.string.include?("[ok] visible to d3mlabs/dev, d3mlabs/plans")
     out.string.include?("Runner 'mac1' (~/actions-runner-ai-ask):")
     out.string.include?("Runner 'mac1-2' (~/actions-runner-ai-ask-2):")
     registry.group_asks == [["d3mlabs", 1]]
@@ -143,8 +152,8 @@ class Dev::RunnerStatusTest < Minitest::Test
     out = StringIO.new
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs", name: "mac-box")
-    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: ["ai-ask"], status: "online") }
-    everyone = Dev::RunnerRegistry::Group.new(id: 2, name: "everyone", visibility: "all")
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: ["ue-engine"], status: "online") }
+    everyone = CannedRegistry.group(id: 2, name: "everyone", visibility: "all")
     status = build_status(out: out, home: home, registry: CannedRegistry.new(group: everyone, &responder))
 
     When
@@ -152,7 +161,68 @@ class Dev::RunnerStatusTest < Minitest::Test
 
     Then
     out.string.include?("Family 'mac-box' at d3mlabs — 1 slot (1 job at once):")
-    out.string.include?("[ok] group: everyone — visible to every repo at d3mlabs")
+    out.string.include?("[ok] group: everyone\n")
+    out.string.include?("[ok] visible to every repo at d3mlabs")
+  end
+
+  test "an ai-flow family is held to its contract: #{expectation}" do
+    Given
+    out = StringIO.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: Dev::LabelContracts::AI_FLOW_LABELS, status: "online") }
+    status = build_status(out: out, home: home, registry: CannedRegistry.new(group: group, &responder))
+
+    When
+    status.report
+
+    Then
+    out.string.include?(expectation)
+
+    Where
+    group                                                                   | expectation
+    CannedRegistry.group(id: 7, name: "ai-flow", pinned: true)              | "[ok] group: ai-flow — pinned to #{Dev::LabelContracts::AI_FLOW_WORKFLOWS.join(", ")}"
+    CannedRegistry.group(id: 7, name: "ai-flow", pinned: false)             | "[!!] group: ai-flow drifted (not restricted to workflows) — re-run `dev runner register --org`"
+    CannedRegistry.group(id: 7, name: "ai-flow", pinned: true, visibility: "all") | "[!!] group: ai-flow drifted (visibility is 'all', not 'selected') — re-run `dev runner register --org`"
+    CannedRegistry.group(id: 1, name: "Default", pinned: true) | "[!!] group: Default — these labels belong in 'ai-flow' (re-run `dev runner register --org`)"
+  end
+
+  test "in a checkout, each org family says whether this repo may use it: #{verdict}" do
+    Given
+    out = StringIO.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ue-engine"], status: "online") }
+    registry = CannedRegistry.new(group: CannedRegistry.group(id: 1, name: "Default", visibility: visibility), repos: ["d3mlabs/Dev"], &responder)
+    status = build_status(out: out, home: home, registry: registry, repo: repo)
+
+    When
+    status.report
+
+    Then
+    out.string.include?(verdict)
+
+    Where
+    visibility | repo                     | verdict
+    "selected" | "d3mlabs/dev"            | "[ok] d3mlabs/dev may use this family"
+    "selected" | "d3mlabs/cellbound-3d"   | "[!!] d3mlabs/cellbound-3d may not use this family — run `dev runner register --org ...` from this checkout to admit it"
+    "all"      | "d3mlabs/cellbound-3d"   | "[ok] d3mlabs/cellbound-3d may use this family"
+  end
+
+  test "outside a checkout no repo verdict is given" do
+    Given
+    out = StringIO.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ue-engine"], status: "online") }
+    status = build_status(out: out, home: home, registry: CannedRegistry.new(repos: ["d3mlabs/dev"], &responder))
+
+    When
+    status.report
+
+    Then
+    !out.string.include?("may use this family")
+    !out.string.include?("may not use this family")
   end
 
   test "an org runner no group lists is flagged with register as the remedy; a lone repo enrollment has no family line at all" do
@@ -168,7 +238,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    out.string.include?("[!!] group: none lists 'mac1' — re-run `dev runner register --org --group <name>`")
+    out.string.include?("[!!] group: none lists 'mac1' — re-run `dev runner register --org`")
     !out.string.include?("Family 'JPSFF'")
   end
 
@@ -432,7 +502,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     )
     responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: ["ai-build"], status: "online") }
     status = build_status(
-      out: out, home: home, registry: CannedRegistry.new(&responder),
+      out: out, home: home, registry: CannedRegistry.new(group: CannedRegistry.group(id: 7, name: "ai-flow", pinned: true), &responder),
       executor: executor, shared_root: shared_root,
       brew_edge: HUMAN_BREW_EDGE, container_required: true,
     )
@@ -524,7 +594,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     write_runner(home, "actions-runner-x", scope: "d3mlabs", name: "box")
     responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-learn"], status: "online") }
     status = build_status(
-      out: out, home: home, registry: CannedRegistry.new(&responder),
+      out: out, home: home, registry: CannedRegistry.new(group: CannedRegistry.group(id: 7, name: "ai-flow", pinned: true), &responder),
       shared_root: File.join(Dir.mktmpdir, "absent"),
       container_required: true,
     )
@@ -611,11 +681,12 @@ class Dev::RunnerStatusTest < Minitest::Test
   def build_status(out:, home: Dir.mktmpdir, registry: CannedRegistry.new,
                    executor: CannedStatusExecutor.new, shared_root: Dir.mktmpdir,
                    brew_edge: Dev::AgentBootstrap::NoBrewEdge.new(reason: "no brew on this host"), brewfile_path: nil,
-                   container_required: false, host_identity: nil, pins: [], reach: nil, reach_factory: ->(_identity) { reach })
+                   container_required: false, host_identity: nil, pins: [], repo: nil, reach: nil, reach_factory: ->(_identity) { reach })
     # :default leaves RunnerStatus's own reach factory in place.
     reach_wiring = reach_factory == :default ? {} : { reach_factory: reach_factory }
     Dev::RunnerStatus.new(
       pins: pins,
+      repo: repo,
       **reach_wiring,
       discovery: Dev::RunnerDiscovery.new(home: home),
       registry: registry,
