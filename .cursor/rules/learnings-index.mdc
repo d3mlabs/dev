@@ -66,6 +66,11 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  tree holds a symlink or a lisp path, and path-bound artifacts run by
  their store path.
  → .cursor/skills/learnings/installed-state-in-the-store/
+- [architecture/status-probes-never-prompt] An inspect-only report
+ (`dev runner status`) probes across a user boundary with `sudo -n` behind
+ a sentinel; a refusal is `[??] cannot tell` with the by-hand command,
+ never a `[!!]` whose remedy would undo a working state.
+ → .cursor/skills/learnings/status-probes-never-prompt/
 
 ## toolchain
 
