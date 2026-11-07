@@ -4,6 +4,7 @@
 require "test_helper"
 require "dev/host_service"
 require "dev/settings"
+require "dev/shell_rc_hook"
 require "fileutils"
 require "pathname"
 require "rbconfig"
@@ -365,7 +366,24 @@ class Dev::HostServiceTest < Minitest::Test
     service.install_rc_hook
 
     Then "the installer received ensure_installed"
-    1 * hook_installer.ensure_installed >> :added
+    1 * hook_installer.ensure_installed
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_rc_hook warns about an unsupported shell instead of raising: dev up must not block on a convenience" do
+    Given "a service whose hook installer is over a plain sh user"
+    dir = Dir.mktmpdir("dev-host-service-test-")
+    rc_hook = Dev::ShellRcHook.new(shell: "/bin/sh", home: File.join(dir, "home"), interactive: true)
+    service = build_service(dir, hook_installer: Dev::Cd::HookInstaller.new(rc_hook: rc_hook))
+
+    When "ensuring the RC hook"
+    stderr = capture_stderr { service.install_rc_hook }
+
+    Then "the refusal is a warning naming the supported set"
+    stderr.include?("warning: the dev cd shell hook was not installed")
+    stderr.include?("zsh, bash, fish")
 
     Cleanup
     FileUtils.rm_rf(dir)

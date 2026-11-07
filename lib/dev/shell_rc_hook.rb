@@ -22,6 +22,10 @@ module Dev
   class ShellRcHook
     extend T::Sig
 
+    # The user's shell is none of the supported ones (or the snippet set
+    # declares nothing for it): there is no RC file to install into.
+    class UnsupportedShellError < RuntimeError; end
+
     SUPPORTED_SHELLS = T.let(%i[zsh bash fish].freeze, T::Array[Symbol])
 
     # @param shell [String] the user's login shell (default: $SHELL)
@@ -43,44 +47,59 @@ module Dev
       SUPPORTED_SHELLS.find { |kind| @shell.include?(kind.to_s) }
     end
 
-    # Append the snippet for the user's shell to their RC file, once.
+    # Ensure the snippet for the user's shell is in their RC file.
     #
-    # The marker line is written above the snippet and guards idempotence:
-    # when the RC already contains the marker (or any of the extra
-    # present_markers, e.g. a hand-installed hook line), nothing is appended.
+    # Idempotent: the marker line is written above the snippet, and when
+    # the RC already contains it (or any of the extra present_markers, e.g.
+    # a hand-installed hook line) nothing is appended. Success is returning;
+    # whether this call did the appending is not the caller's business —
+    # #snippet_present? answers whether the RC carries the snippet.
+    #
+    # Off a tty nothing is written and nothing is raised: the one case a
+    # returning ensure leaves the RC without the snippet.
     #
     # @param marker [String] comment line identifying the snippet (e.g. "# dev cd (added by dev)")
     # @param snippets [Hash{Symbol => String}] per-shell snippet bodies, keyed :zsh / :bash / :fish
     # @param present_markers [Array<String>] extra strings whose presence counts as installed
-    # @return [Symbol, false] :added, :already_present, :skipped (not
-    #   interactive — nothing touched), or false when the shell is
-    #   unsupported or has no snippet
+    # @return [void]
+    # @raise [UnsupportedShellError] when the shell is unsupported or the
+    #   snippet set has nothing for it
     sig do
       params(
         marker: String,
         snippets: T::Hash[Symbol, String],
         present_markers: T::Array[String],
-      ).returns(T.any(Symbol, FalseClass))
+      ).void
     end
     def ensure_snippet(marker:, snippets:, present_markers: [])
-      return :skipped unless @interactive
+      return unless @interactive
 
-      kind = shell_kind
-      snippet = kind && snippets[kind]
-      return false unless kind && snippet
+      kind = supported_shell_kind
+      snippet = snippets.fetch(kind) do
+        raise UnsupportedShellError, "no snippet for #{@shell} (supported: #{snippets.keys.join(", ")})"
+      end
 
       rc = rc_file(kind)
-      if rc.exist?
-        content = rc.read
-        return :already_present if ([marker] + present_markers).any? { |m| content.include?(m) }
-      end
+      return if rc.exist? && markers_present?(rc.read, marker, present_markers)
 
       rc.dirname.mkpath
       rc.open("a") do |f|
         f.puts("\n#{marker}")
         f.puts(snippet)
       end
-      :added
+    end
+
+    # Whether the user's RC file already carries the snippet (by its marker
+    # or any of the present_markers).
+    #
+    # @param marker [String] comment line identifying the snippet
+    # @param present_markers [Array<String>] extra strings whose presence counts as installed
+    # @return [Boolean]
+    # @raise [UnsupportedShellError] when the shell is unsupported (no RC file to read)
+    sig { params(marker: String, present_markers: T::Array[String]).returns(T::Boolean) }
+    def snippet_present?(marker:, present_markers: [])
+      rc = rc_file(supported_shell_kind)
+      rc.exist? && markers_present?(rc.read, marker, present_markers)
     end
 
     # The RC file dev hooks install into for a given shell.
@@ -99,6 +118,25 @@ module Dev
     end
 
     private
+
+    # The user's shell kind, which must be a supported one to have an RC
+    # file at all.
+    #
+    # @return [Symbol] :zsh, :bash, or :fish
+    # @raise [UnsupportedShellError] for any other shell
+    sig { returns(Symbol) }
+    def supported_shell_kind
+      shell_kind || raise(UnsupportedShellError, "#{@shell} is not a supported shell (supported: #{SUPPORTED_SHELLS.join(", ")})")
+    end
+
+    # @param content [String] the RC file's content
+    # @param marker [String]
+    # @param present_markers [Array<String>]
+    # @return [Boolean] whether any marker is in the content
+    sig { params(content: String, marker: String, present_markers: T::Array[String]).returns(T::Boolean) }
+    def markers_present?(content, marker, present_markers)
+      [marker, *present_markers].any? { |candidate| content.include?(candidate) }
+    end
 
     # `.bash_profile` by default; an existing `.bashrc` wins only when there
     # is no `.bash_profile` yet (matching the historical shadowenv behavior).

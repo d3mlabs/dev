@@ -7,6 +7,7 @@ require_relative "cd/hook_installer"
 require_relative "deps/gem_skills"
 require_relative "learnings/synchronizer"
 require_relative "settings"
+require_relative "shell_rc_hook"
 require_relative "skills/corpus_channel"
 require_relative "skills/legacy"
 require_relative "skills/materializer"
@@ -181,13 +182,15 @@ module Dev
 
     # Ensure the `dev cd` wrapper function + completer are in the user's
     # shell RC (idempotent) — provisioning is where dev's RC hooks land,
-    # next to the shadowenv one.
+    # next to the shadowenv one. An unsupported shell is warned about, not
+    # raised: `dev cd` is a convenience the rest of `dev up` does not need.
     #
-    # @return [Symbol, false] :added, :already_present, or false
-    #   (unsupported shell)
-    sig { returns(T.any(Symbol, FalseClass)) }
+    # @return [void]
+    sig { void }
     def install_rc_hook
       @hook_installer.ensure_installed
+    rescue Dev::ShellRcHook::UnsupportedShellError => e
+      $stderr.puts "dev: warning: the dev cd shell hook was not installed — #{e.message}."
     end
 
     # Materialize the skill channels the host hooks own: dev's own shipped

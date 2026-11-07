@@ -22,20 +22,40 @@ class FakeGhCloner < Dev::Clone::GhCloner
   end
 end unless defined?(FakeGhCloner)
 
-# A hook installer stand-in with a scripted ensure result, so accessor flows
-# are tested without touching the user's real shell RC. Subclasses the real
+# A hook installer stand-in with a scripted RC state, so accessor flows are
+# tested without touching the user's real shell RC. Subclasses the real
 # installer so the accessor's typed constructor accepts it.
+#
+# `installed_before:` is what the RC carries before the ensure; the ensure
+# installs unless the run is headless (off a tty the real installer writes
+# nothing). An unsupported shell refuses both the ensure and the query.
 class FakeCloneHookInstaller < Dev::Cd::HookInstaller
+  UNSUPPORTED_SHELL_MESSAGE = "/bin/sh is not a supported shell (supported: zsh, bash, fish)"
+
   attr_reader :ensure_count
 
-  def initialize(result: :already_present)
-    @result = result
+  def initialize(installed_before: true, interactive: true, shell_supported: true)
+    @installed = installed_before
+    @interactive = interactive
+    @shell_supported = shell_supported
     @ensure_count = 0
   end
 
   def ensure_installed
     @ensure_count += 1
-    @result
+    refuse_unsupported_shell
+    @installed = true if @interactive
+  end
+
+  def installed?
+    refuse_unsupported_shell
+    @installed
+  end
+
+  private
+
+  def refuse_unsupported_shell
+    raise Dev::ShellRcHook::UnsupportedShellError, UNSUPPORTED_SHELL_MESSAGE unless @shell_supported
   end
 end unless defined?(FakeCloneHookInstaller)
 
@@ -105,7 +125,7 @@ class Dev::Clone::AccessorTest < Minitest::Test
     Given "an empty checkout root and an installed-but-inactive hook"
     root = Dir.mktmpdir("clone-accessor-")
     cloner = FakeGhCloner.new
-    installer = FakeCloneHookInstaller.new(result: :already_present)
+    installer = FakeCloneHookInstaller.new(installed_before: true)
     accessor = build_accessor(root, cloner: cloner, hook_installer: installer)
     out = StringIO.new
     err = StringIO.new
@@ -124,27 +144,30 @@ class Dev::Clone::AccessorTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "a bare invocation that just installed the hook hints at a new shell" do
-    Given "a hook installer that reports :added"
+  test "a bare invocation that just installed the hook gives the same activation hint, with the cd" do
+    Given "a hook installer over an RC without the hook"
     root = Dir.mktmpdir("clone-accessor-")
-    accessor = build_accessor(root, hook_installer: FakeCloneHookInstaller.new(result: :added))
+    installer = FakeCloneHookInstaller.new(installed_before: false)
+    accessor = build_accessor(root, hook_installer: installer)
     err = StringIO.new
 
     When "we clone without the wrapper"
     accessor.run("dev", plumbing: false, out: StringIO.new, err: err)
 
-    Then "the fresh-install hint is printed"
-    assert_includes err.string, "shell hook installed"
+    Then "the hook is now installed and the one activation hint is printed"
+    installer.installed?
+    assert_includes err.string, "installed but not active in this shell"
     assert_includes err.string, "open a new shell"
+    assert_includes err.string, "For now: cd #{File.join(root, "github.com", "d3mlabs", "dev")}"
 
     Cleanup
     FileUtils.rm_rf(root)
   end
 
   test "a bare invocation off a tty says no hook was installed and gives the cd" do
-    Given "a hook installer that skipped (headless)"
+    Given "a hook installer whose ensure writes nothing (headless)"
     root = Dir.mktmpdir("clone-accessor-")
-    accessor = build_accessor(root, hook_installer: FakeCloneHookInstaller.new(result: :skipped))
+    accessor = build_accessor(root, hook_installer: FakeCloneHookInstaller.new(installed_before: false, interactive: false))
     err = StringIO.new
 
     When "we clone without the wrapper"
@@ -153,23 +176,24 @@ class Dev::Clone::AccessorTest < Minitest::Test
     Then "the headless posture is named, with the cd, and the shell is not blamed"
     assert_includes err.string, "not an interactive terminal"
     assert_includes err.string, "cd #{File.join(root, "github.com", "d3mlabs", "dev")}"
-    !err.string.include?("unsupported")
+    !err.string.include?("supported")
 
     Cleanup
     FileUtils.rm_rf(root)
   end
 
-  test "a bare invocation on an unsupported shell names the supported set" do
+  test "a bare invocation on an unsupported shell names the supported set and gives the cd" do
     Given "a hook installer that refuses"
     root = Dir.mktmpdir("clone-accessor-")
-    accessor = build_accessor(root, hook_installer: FakeCloneHookInstaller.new(result: false))
+    accessor = build_accessor(root, hook_installer: FakeCloneHookInstaller.new(shell_supported: false))
     err = StringIO.new
 
     When "we clone without the wrapper"
     accessor.run("dev", plumbing: false, out: StringIO.new, err: err)
 
-    Then "the supported shells are named"
+    Then "the supported shells are named and the clone is not lost"
     assert_includes err.string, "zsh, bash, fish"
+    assert_includes err.string, "cd #{File.join(root, "github.com", "d3mlabs", "dev")}"
 
     Cleanup
     FileUtils.rm_rf(root)

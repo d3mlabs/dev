@@ -6,6 +6,7 @@ require "stringio"
 require "dev/cd/repo_discovery"
 require "dev/cd/matcher"
 require "dev/cd/hook_installer"
+require "dev/shell_rc_hook"
 
 module Dev
   module Cd
@@ -52,9 +53,7 @@ module Dev
       # @raise [Matcher::AmbiguousRepoError] when several repos match
       sig { params(query: String, out: T.any(IO, StringIO), err: T.any(IO, StringIO)).void }
       def resolve(query, out:, err:)
-        if @hook_installer.ensure_installed == :added
-          err.puts "dev: shell hook updated — open a new shell to refresh it."
-        end
+        refresh_hook(err:)
         out.puts matcher.resolve(query).path
       end
 
@@ -78,20 +77,48 @@ module Dev
       # @raise [ShellHookInactiveError] always
       sig { params(err: T.any(IO, StringIO)).void }
       def explain_missing_hook(err:)
-        case @hook_installer.ensure_installed
-        when :added
-          err.puts "dev: shell hook installed — open a new shell (or source your shell RC), then run `dev cd <repo>` again."
-        when :already_present
-          err.puts "dev: the dev cd shell hook is installed but not active in this shell — open a new shell (or source your shell RC)."
-        when :skipped
-          err.puts "dev: `dev cd` needs a shell hook, and none was installed (not an interactive terminal) — run `dev cd` from your own shell."
-        else
-          err.puts "dev: `dev cd` needs a shell hook, and your shell is unsupported (supported: zsh, bash, fish)."
-        end
+        err.puts "dev: #{activation_hint}"
         raise ShellHookInactiveError, "the dev cd shell hook is not active"
       end
 
       private
+
+      # The wrapper is active (it called us), so some generation of the hook
+      # is sourced; an RC without the current marker gets the new generation
+      # appended, and the running shell keeps the old wrapper until it is
+      # re-sourced — worth a line on stderr. An unsupported $SHELL under an
+      # evidently working wrapper is a misconfiguration the self-heal can do
+      # nothing about, and the cd itself must still go through.
+      #
+      # @param err [IO, StringIO]
+      # @return [void]
+      sig { params(err: T.any(IO, StringIO)).void }
+      def refresh_hook(err:)
+        return if @hook_installer.installed?
+
+        @hook_installer.ensure_installed
+        err.puts "dev: shell hook updated — open a new shell to refresh it." if @hook_installer.installed?
+      rescue ShellRcHook::UnsupportedShellError
+        nil
+      end
+
+      # How to get the wrapper active, after ensuring there is a hook to
+      # activate. Off a tty the ensure writes nothing (ShellRcHook), so an
+      # RC still without the hook afterwards means no human terminal to hook.
+      #
+      # @return [String]
+      sig { returns(String) }
+      def activation_hint
+        @hook_installer.ensure_installed
+        if @hook_installer.installed?
+          "the dev cd shell hook is installed but not active in this shell — open a new shell (or source your shell RC), " \
+            "then run `dev cd <repo>` again."
+        else
+          "`dev cd` needs a shell hook, and none was installed (not an interactive terminal) — run `dev cd` from your own shell."
+        end
+      rescue ShellRcHook::UnsupportedShellError => e
+        "`dev cd` needs a shell hook, and #{e.message}."
+      end
 
       # A matcher over a fresh discovery walk. Rebuilt per command: discovery
       # is fast by construction (pruned, depth-bounded) and each invocation

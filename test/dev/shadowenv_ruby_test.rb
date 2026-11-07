@@ -5,6 +5,7 @@ require "test_helper"
 require "dev/deps/local_store"
 require "dev/shadowenv_ruby"
 require "fileutils"
+require "stringio"
 require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
@@ -24,7 +25,7 @@ class ShadowenvRubyTest < Minitest::Test
     )
 
     Then "the lisp names the keg as RUBY_ROOT, .ruby-version carries the locked version, the shell hook is ensured, the store is untouched"
-    _ * Dev::ShadowenvRuby.ensure_shadowenv_shell_hook! >> :added
+    _ * Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!
     lisp = File.read(File.join(tmpdir, ".shadowenv.d", "510_ruby.lisp"))
     lisp.include?('(provide "ruby" "4.0.9")')
     lisp.include?(%((env/set "RUBY_ROOT" "#{keg}")))
@@ -122,10 +123,9 @@ class ShadowenvRubyTest < Minitest::Test
     ENV["HOME"] = tmpdir
 
     When "we ensure the shell hook"
-    result = Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!(interactive: false)
+    Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!(interactive: false)
 
-    Then "skipped, and no RC file appears"
-    result == :skipped
+    Then "no RC file appears"
     Dir.children(tmpdir).empty?
 
     Cleanup
@@ -143,10 +143,9 @@ class ShadowenvRubyTest < Minitest::Test
     ENV["HOME"] = tmpdir
 
     When "we ensure the shell hook"
-    result = Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!(interactive: true)
+    Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!(interactive: true)
 
     Then "the hook is added to .zshrc"
-    result == :added
     zshrc = File.read(File.join(tmpdir, ".zshrc"))
     assert_includes zshrc, 'eval "$(shadowenv init zsh)"'
 
@@ -156,7 +155,7 @@ class ShadowenvRubyTest < Minitest::Test
     FileUtils.rm_rf(tmpdir)
   end
 
-  test "ensure_shadowenv_shell_hook! returns :already_present when hook exists" do
+  test "ensure_shadowenv_shell_hook! leaves a hand-installed hook alone" do
     Given "a zsh shell with existing shadowenv hook in .zshrc"
     tmpdir = Dir.mktmpdir("shadowenv-hook-test-")
     original_shell = ENV["SHELL"]
@@ -164,12 +163,13 @@ class ShadowenvRubyTest < Minitest::Test
     ENV["SHELL"] = "/bin/zsh"
     ENV["HOME"] = tmpdir
     File.write(File.join(tmpdir, ".zshrc"), 'eval "$(shadowenv init zsh)"')
+    before = File.read(File.join(tmpdir, ".zshrc"))
 
     When "we ensure the shell hook"
-    result = Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!(interactive: true)
+    Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!(interactive: true)
 
-    Then "it reports already present"
-    result == :already_present
+    Then "the RC is untouched"
+    File.read(File.join(tmpdir, ".zshrc")) == before
 
     Cleanup
     ENV["SHELL"] = original_shell
@@ -188,10 +188,9 @@ class ShadowenvRubyTest < Minitest::Test
     before = File.read(File.join(tmpdir, ".zshrc"))
 
     When "we ensure the shell hook"
-    result = Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!(interactive: true)
+    Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!(interactive: true)
 
     Then "the old install is recognized, not re-appended"
-    result == :already_present
     File.read(File.join(tmpdir, ".zshrc")) == before
 
     Cleanup
@@ -209,10 +208,9 @@ class ShadowenvRubyTest < Minitest::Test
     ENV["HOME"] = tmpdir
 
     When "we ensure the shell hook"
-    result = Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!(interactive: true)
+    Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!(interactive: true)
 
     Then "the hook is added to .bash_profile"
-    result == :added
     bash_profile = File.read(File.join(tmpdir, ".bash_profile"))
     assert_includes bash_profile, 'eval "$(shadowenv init bash)"'
 
@@ -222,7 +220,7 @@ class ShadowenvRubyTest < Minitest::Test
     FileUtils.rm_rf(tmpdir)
   end
 
-  test "ensure_shadowenv_shell_hook! reports false when the RC file cannot be written" do
+  test "ensure_shadowenv_shell_hook! warns when the RC file cannot be written instead of raising" do
     Given "a zsh shell whose home directory is not writable"
     tmpdir = Dir.mktmpdir("shadowenv-hook-test-")
     original_shell = ENV["SHELL"]
@@ -232,15 +230,48 @@ class ShadowenvRubyTest < Minitest::Test
     FileUtils.chmod(0o500, tmpdir)
 
     When "we ensure the shell hook"
-    result = Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!(interactive: true)
+    stderr = capture_stderr { Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!(interactive: true) }
 
-    Then "the failure is reported as false instead of raising"
-    result == false
+    Then "the failure is a warning"
+    stderr.include?("Could not add shadowenv hook")
 
     Cleanup
     ENV["SHELL"] = original_shell
     ENV["HOME"] = original_home
     FileUtils.chmod(0o700, tmpdir)
     FileUtils.rm_rf(tmpdir)
+  end
+
+  test "ensure_shadowenv_shell_hook! warns on an unsupported shell instead of raising: the Ruby activation goes on" do
+    Given "a plain sh user"
+    tmpdir = Dir.mktmpdir("shadowenv-hook-test-")
+    original_shell = ENV["SHELL"]
+    original_home = ENV["HOME"]
+    ENV["SHELL"] = "/bin/sh"
+    ENV["HOME"] = tmpdir
+
+    When "we ensure the shell hook"
+    stderr = capture_stderr { Dev::ShadowenvRuby.ensure_shadowenv_shell_hook!(interactive: true) }
+
+    Then "the refusal is a warning naming the supported set, and nothing is written"
+    stderr.include?("Could not add shadowenv hook")
+    stderr.include?("zsh, bash, fish")
+    Dir.children(tmpdir).empty?
+
+    Cleanup
+    ENV["SHELL"] = original_shell
+    ENV["HOME"] = original_home
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  private
+
+  def capture_stderr
+    original = $stderr
+    $stderr = StringIO.new
+    yield
+    $stderr.string
+  ensure
+    $stderr = original
   end
 end

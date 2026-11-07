@@ -12,17 +12,17 @@ class Dev::ShellRcHookTest < Minitest::Test
   # agent run (ai-agent, no terminal) has no business writing a shell
   # profile — `shadowenv exec` is what a run uses. Off a tty the write is
   # a no-op; the posture is injected, never read from the test's own stdin.
-  test "ensure_snippet off a tty is a no-op: :skipped, and no RC file is touched" do
+  test "ensure_snippet off a tty is a no-op: no RC file is touched and the snippet stays absent" do
     Given "a zsh user with no .zshrc, headless"
     home = Dir.mktmpdir("rc-hook-test-")
     hook = Dev::ShellRcHook.new(shell: "/bin/zsh", home: home, interactive: false)
 
     When "we ensure a snippet"
-    result = hook.ensure_snippet(marker: "# my hook (added by dev)", snippets: { zsh: "my_hook_line" })
+    hook.ensure_snippet(marker: "# my hook (added by dev)", snippets: { zsh: "my_hook_line" })
 
     Then "nothing is written"
-    result == :skipped
     Dir.children(home).empty?
+    !hook.snippet_present?(marker: "# my hook (added by dev)")
 
     Cleanup
     FileUtils.rm_rf(home)
@@ -34,19 +34,19 @@ class Dev::ShellRcHookTest < Minitest::Test
     hook = Dev::ShellRcHook.new(shell: "/bin/zsh", home: home, interactive: true)
 
     When "we ensure a snippet"
-    result = hook.ensure_snippet(marker: "# my hook (added by dev)", snippets: { zsh: "my_hook_line" })
+    hook.ensure_snippet(marker: "# my hook (added by dev)", snippets: { zsh: "my_hook_line" })
 
     Then "the snippet lands in .zshrc under its marker"
-    result == :added
     content = File.read(File.join(home, ".zshrc"))
     assert_includes content, "# my hook (added by dev)"
     assert_includes content, "my_hook_line"
+    hook.snippet_present?(marker: "# my hook (added by dev)")
 
     Cleanup
     FileUtils.rm_rf(home)
   end
 
-  test "ensure_snippet is idempotent: a second run reports already_present" do
+  test "ensure_snippet is idempotent: a second run leaves the RC untouched" do
     Given "a zsh user whose .zshrc already carries the marker"
     home = Dir.mktmpdir("rc-hook-test-")
     hook = Dev::ShellRcHook.new(shell: "/bin/zsh", home: home, interactive: true)
@@ -54,10 +54,9 @@ class Dev::ShellRcHookTest < Minitest::Test
     before = File.read(File.join(home, ".zshrc"))
 
     When "we ensure the same snippet again"
-    result = hook.ensure_snippet(marker: "# my hook (added by dev)", snippets: { zsh: "my_hook_line" })
+    hook.ensure_snippet(marker: "# my hook (added by dev)", snippets: { zsh: "my_hook_line" })
 
     Then "nothing is appended"
-    result == :already_present
     File.read(File.join(home, ".zshrc")) == before
 
     Cleanup
@@ -68,36 +67,79 @@ class Dev::ShellRcHookTest < Minitest::Test
     Given "a zshrc with a hand-added hook line but no dev marker"
     home = Dir.mktmpdir("rc-hook-test-")
     File.write(File.join(home, ".zshrc"), 'eval "$(shadowenv init zsh)"')
+    before = File.read(File.join(home, ".zshrc"))
     hook = Dev::ShellRcHook.new(shell: "/bin/zsh", home: home, interactive: true)
 
     When "we ensure the snippet with the hook line as a present marker"
-    result = hook.ensure_snippet(
+    hook.ensure_snippet(
       marker: "# Shadowenv (added by dev)",
       present_markers: ["shadowenv init"],
       snippets: { zsh: 'eval "$(shadowenv init zsh)"' },
     )
 
     Then "the hand install is recognized, not re-appended"
-    result == :already_present
+    File.read(File.join(home, ".zshrc")) == before
+    hook.snippet_present?(marker: "# Shadowenv (added by dev)", present_markers: ["shadowenv init"])
 
     Cleanup
     FileUtils.rm_rf(home)
   end
 
-  test "ensure_snippet returns false for an unsupported shell" do
+  test "snippet_present? is false before the ensure and does not create the RC" do
+    Given "a zsh user with no .zshrc"
+    home = Dir.mktmpdir("rc-hook-test-")
+    hook = Dev::ShellRcHook.new(shell: "/bin/zsh", home: home, interactive: true)
+
+    Expect "no snippet, no file"
+    !hook.snippet_present?(marker: "# my hook")
+    Dir.children(home).empty?
+
+    Cleanup
+    FileUtils.rm_rf(home)
+  end
+
+  test "ensure_snippet raises UnsupportedShellError for an unsupported shell" do
     Given "a user on plain sh"
     home = Dir.mktmpdir("rc-hook-test-")
     hook = Dev::ShellRcHook.new(shell: "/bin/sh", home: home, interactive: true)
 
     When "we ensure a snippet"
-    result = hook.ensure_snippet(marker: "# my hook", snippets: { zsh: "line" })
+    hook.ensure_snippet(marker: "# my hook", snippets: { zsh: "line" })
 
-    Then "the install is refused and no RC file is created"
-    result == false
+    Then "the install is refused, naming the supported set, and no RC file is created"
+    e = raises Dev::ShellRcHook::UnsupportedShellError
+    e.message.include?("/bin/sh")
+    e.message.include?("zsh, bash, fish")
     Dir.children(home).empty?
 
     Cleanup
     FileUtils.rm_rf(home)
+  end
+
+  test "ensure_snippet off a tty on an unsupported shell is still a silent no-op" do
+    Given "a headless run whose $SHELL is plain sh (a runner job)"
+    home = Dir.mktmpdir("rc-hook-test-")
+    hook = Dev::ShellRcHook.new(shell: "/bin/sh", home: home, interactive: false)
+
+    When "we ensure a snippet"
+    hook.ensure_snippet(marker: "# my hook", snippets: { zsh: "line" })
+
+    Then "nothing is raised and nothing is written"
+    Dir.children(home).empty?
+
+    Cleanup
+    FileUtils.rm_rf(home)
+  end
+
+  test "snippet_present? raises UnsupportedShellError for an unsupported shell" do
+    Given "a user on plain sh"
+    hook = Dev::ShellRcHook.new(shell: "/bin/sh", home: Dir.tmpdir, interactive: true)
+
+    When "we ask whether the snippet is present"
+    hook.snippet_present?(marker: "# my hook")
+
+    Then
+    raises Dev::ShellRcHook::UnsupportedShellError
   end
 
   test "bash resolves to .bash_profile by default" do
@@ -106,10 +148,9 @@ class Dev::ShellRcHookTest < Minitest::Test
     hook = Dev::ShellRcHook.new(shell: "/bin/bash", home: home, interactive: true)
 
     When "we ensure a snippet"
-    result = hook.ensure_snippet(marker: "# my hook", snippets: { bash: "bash_line" })
+    hook.ensure_snippet(marker: "# my hook", snippets: { bash: "bash_line" })
 
     Then "it lands in .bash_profile"
-    result == :added
     assert_includes File.read(File.join(home, ".bash_profile")), "bash_line"
 
     Cleanup
@@ -123,10 +164,9 @@ class Dev::ShellRcHookTest < Minitest::Test
     hook = Dev::ShellRcHook.new(shell: "/bin/bash", home: home, interactive: true)
 
     When "we ensure a snippet"
-    result = hook.ensure_snippet(marker: "# my hook", snippets: { bash: "bash_line" })
+    hook.ensure_snippet(marker: "# my hook", snippets: { bash: "bash_line" })
 
     Then "it appends to .bashrc"
-    result == :added
     assert_includes File.read(File.join(home, ".bashrc")), "bash_line"
     !File.exist?(File.join(home, ".bash_profile"))
 
@@ -140,26 +180,27 @@ class Dev::ShellRcHookTest < Minitest::Test
     hook = Dev::ShellRcHook.new(shell: "/usr/local/bin/fish", home: home, interactive: true)
 
     When "we ensure a snippet"
-    result = hook.ensure_snippet(marker: "# my hook", snippets: { fish: "fish_line" })
+    hook.ensure_snippet(marker: "# my hook", snippets: { fish: "fish_line" })
 
     Then "the config file is created with the snippet"
-    result == :added
     assert_includes File.read(File.join(home, ".config", "fish", "config.fish")), "fish_line"
 
     Cleanup
     FileUtils.rm_rf(home)
   end
 
-  test "ensure_snippet returns false when the shell has no snippet" do
+  test "ensure_snippet raises UnsupportedShellError when the snippet set has nothing for the shell" do
     Given "a fish user and a zsh-only snippet set"
     home = Dir.mktmpdir("rc-hook-test-")
     hook = Dev::ShellRcHook.new(shell: "/usr/local/bin/fish", home: home, interactive: true)
 
     When "we ensure the snippet"
-    result = hook.ensure_snippet(marker: "# my hook", snippets: { zsh: "line" })
+    hook.ensure_snippet(marker: "# my hook", snippets: { zsh: "line" })
 
-    Then "the install is refused"
-    result == false
+    Then "the install is refused, naming the shells the snippet set covers"
+    e = raises Dev::ShellRcHook::UnsupportedShellError
+    e.message.include?("supported: zsh")
+    Dir.children(home).empty?
 
     Cleanup
     FileUtils.rm_rf(home)

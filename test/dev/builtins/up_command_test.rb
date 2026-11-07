@@ -41,7 +41,7 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     Given "an up command with expectations on both collaborators"
     install_deps = install_deps_mock
     host_service = quiet_host_service
-    host_service.expects(:install_rc_hook).once.returns(:already_present)
+    host_service.expects(:install_rc_hook).once
     command = Dev::Builtins::UpCommand.new(install_deps_command: install_deps, host_service: host_service)
     context = build_context
 
@@ -110,7 +110,7 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     Given "a projectless context and a host service expecting only host work"
     host_service = typed_mock(Dev::HostService)
     host_service.expects(:converge_tooling).once
-    host_service.expects(:install_rc_hook).once.returns(:added)
+    host_service.expects(:install_rc_hook).once
     host_service.expects(:sync_skills).with(project_root: nil).once
     host_service.expects(:sync_learnings).with(project_root: nil).once
     install_deps = install_deps_mock
@@ -340,7 +340,7 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
   def quiet_host_service
     host_service = typed_mock(Dev::HostService)
     host_service.stubs(:converge_tooling)
-    host_service.stubs(:install_rc_hook).returns(:already_present)
+    host_service.stubs(:install_rc_hook)
     host_service.stubs(:sync_skills)
     host_service
   end
