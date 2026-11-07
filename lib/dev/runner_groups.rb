@@ -70,8 +70,11 @@ module Dev
       drift = contract.drift(group)
       return group if drift.empty?
 
+      # Visibility is named only when it must flip: a PATCH naming it
+      # clears the group's selected repositories (plans#5 H3), and a group
+      # that was open to all has none to lose.
       @out.puts ">>> Runner group '#{contract.name}' drifted (#{drift.join("; ")}) — re-converging ..."
-      @registry.update_group!(org: org, group_id: group.id, visibility: "selected", selected_workflows: contract.workflows)
+      @registry.update_group!(org: org, group_id: group.id, visibility: group.selected? ? nil : "selected", selected_workflows: contract.workflows)
     end
 
     # Put a runner in the group when it sits elsewhere (config.sh places
@@ -112,14 +115,15 @@ module Dev
 
       repository = @registry.repository(repo)
       if repository.public?
-        unless group.restricted_to_workflows
+        unless group.pinned?
           raise UnpinnedGroupError,
-            "#{repo} is public and group '#{group.name}' is not restricted to workflows — an approved fork PR's YAML could land " \
+            "#{repo} is public and group '#{group.name}' is not pinned to any workflow — an approved fork PR's YAML could land " \
               "on these runners (plans#5 H3). Pin the group to the workflows that may use it, or enroll for a private repo."
         end
         unless group.allows_public_repositories
+          # The pins ride along: GitHub's PATCH wipes what it does not name.
           @out.puts ">>> Group '#{group.name}' now allows public repositories (#{repo} is public; pinned to #{group.selected_workflows.join(", ")}) ..."
-          @registry.update_group!(org: org, group_id: group.id, allows_public_repositories: true)
+          @registry.update_group!(org: org, group_id: group.id, allows_public_repositories: true, selected_workflows: group.selected_workflows)
         end
       end
 

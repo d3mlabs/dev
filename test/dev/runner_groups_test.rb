@@ -28,14 +28,13 @@ class GroupsRegistry
       restricted_to_workflows: !selected_workflows.empty?, selected_workflows: selected_workflows)
   end
 
-  def update_group!(org:, group_id:, visibility: nil, allows_public_repositories: nil, selected_workflows: nil)
+  def update_group!(org:, group_id:, selected_workflows:, visibility: nil, allows_public_repositories: nil)
     @writes << [:update, org, group_id, visibility, allows_public_repositories, selected_workflows]
     before = @groups.values.find { |group| group.id == group_id }
     Dev::RunnerRegistry::Group.new(
       id: group_id, name: before.name, visibility: visibility || before.visibility,
       allows_public_repositories: allows_public_repositories.nil? ? before.allows_public_repositories : allows_public_repositories,
-      restricted_to_workflows: selected_workflows ? !selected_workflows.empty? : before.restricted_to_workflows,
-      selected_workflows: selected_workflows || before.selected_workflows,
+      restricted_to_workflows: !selected_workflows.empty?, selected_workflows: selected_workflows,
     )
   end
 
@@ -123,6 +122,20 @@ class Dev::RunnerGroupsTest < Minitest::Test
     out.string.include?("drifted (visibility is 'all', not 'selected'; not restricted to workflows)")
   end
 
+  test "re-pinning a group that is already selected does not name visibility: a PATCH naming it wipes the selected repositories (plans#5 H3)" do
+    Given "a selected group restricted to nothing (what an incomplete PATCH leaves) with repos it must keep"
+    registry = GroupsRegistry.new(groups: { ["d3mlabs", "ai-flow"] => group(restricted: true, workflows: []) })
+    out = StringIO.new
+
+    When
+    healed = Dev::RunnerGroups.new(registry: registry, out: out).converge!(AI_FLOW, org: "d3mlabs")
+
+    Then
+    registry.writes == [[:update, "d3mlabs", 7, nil, nil, PINS]]
+    healed.pinned?
+    out.string.include?("drifted (pinned to nothing")
+  end
+
   test "a named group must exist: dev never creates a human's group, and says where to" do
     Given
     registry = GroupsRegistry.new(groups: { ["d3mlabs", "ue-hosted"] => group(id: 3, name: "ue-hosted", restricted: false, workflows: []) })
@@ -199,24 +212,29 @@ class Dev::RunnerGroupsTest < Minitest::Test
     When
     Dev::RunnerGroups.new(registry: registry, out: out).admit!(group, "d3mlabs/dev", org: "d3mlabs")
 
-    Then
-    registry.writes == [[:update, "d3mlabs", 7, nil, true, nil], [:select, "d3mlabs", 7, [100]]]
+    Then "the flag flip carries the pins — an omitted selected_workflows would wipe them"
+    registry.writes == [[:update, "d3mlabs", 7, nil, true, PINS], [:select, "d3mlabs", 7, [100]]]
     out.string.include?("now allows public repositories (d3mlabs/dev is public; pinned to")
   end
 
-  test "the invariant: a public repo may only use a group restricted to workflows — admitting it to an unpinned group is refused, naming plans#5 H3, with nothing written" do
+  test "the invariant: a public repo may only use a group pinned to at least one workflow — #{why} is refused, naming plans#5 H3, with nothing written" do
     Given
     registry = GroupsRegistry.new(repositories: { "d3mlabs/dev" => repo(100, "d3mlabs/dev", "public") })
-    unpinned = group(id: 1, name: "Default", restricted: false, workflows: [])
+    unpinned = group(id: 1, name: "Default", restricted: restricted, workflows: [])
 
     When
     Dev::RunnerGroups.new(registry: registry, out: StringIO.new).admit!(unpinned, "d3mlabs/dev", org: "d3mlabs")
 
     Then
     error = raises Dev::RunnerGroups::UnpinnedGroupError
-    error.message.include?("d3mlabs/dev is public and group 'Default' is not restricted to workflows")
+    error.message.include?("d3mlabs/dev is public and group 'Default' is not pinned to any workflow")
     error.message.include?("plans#5 H3")
     registry.writes == []
+
+    Where
+    restricted | why
+    false      | "an unrestricted group"
+    true       | "a group restricted to no workflow at all"
   end
 
   # --- exclude! -----------------------------------------------------------------

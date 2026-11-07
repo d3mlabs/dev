@@ -54,7 +54,13 @@ module Dev
       drift = []
       drift << "visibility is '#{group.visibility}', not 'selected'" unless group.selected?
       unless group.restricted_to_workflows && group.selected_workflows.sort == @workflows.sort
-        drift << (group.restricted_to_workflows ? "pinned to #{group.selected_workflows.join(", ")}" : "not restricted to workflows")
+        drift << if !group.restricted_to_workflows
+          "not restricted to workflows"
+        elsif group.selected_workflows.empty?
+          "pinned to nothing — no workflow may use it"
+        else
+          "pinned to #{group.selected_workflows.join(", ")}"
+        end
       end
       drift
     end

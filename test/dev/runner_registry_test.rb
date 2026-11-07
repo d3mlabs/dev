@@ -7,6 +7,8 @@ require "json"
 
 transform!(RSpock::AST::Transformation)
 class Dev::RunnerRegistryTest < Minitest::Test
+  PINS = %w[d3mlabs/ai-flow/.github/workflows/ai-commands.yml@refs/heads/main d3mlabs/ai-flow/.github/workflows/origin-firing.yml@refs/heads/main].freeze
+
   # Answers capture calls from a responder and records each argv.
   class RecordingExecutor
     attr_reader :captures
@@ -240,23 +242,39 @@ class Dev::RunnerRegistryTest < Minitest::Test
     [group.id, group.name, group.restricted_to_workflows] == [7, "ai-flow", true]
   end
 
-  test "update_group! PATCHes only the fields named; an empty pin list unrestricts" do
+  test "update_group! always sends the whole pin set — GitHub's PATCH reads an omitted selected_workflows as none — and names visibility only when asked to, since naming it wipes the selected repositories (plans#5 H3)" do
     Given
     updated = JSON.generate({ "id" => 7, "name" => "ai-flow", "visibility" => "selected", "allows_public_repositories" => true,
-                              "restricted_to_workflows" => false, "selected_workflows" => [] })
+                              "restricted_to_workflows" => true, "selected_workflows" => PINS })
     exec = RecordingExecutor.new { [updated, "", true] }
     registry = Dev::RunnerRegistry.new(executor: exec)
 
-    When
-    registry.update_group!(org: "d3mlabs", group_id: 7, allows_public_repositories: true)
-    group = registry.update_group!(org: "d3mlabs", group_id: 7, visibility: "selected", selected_workflows: [])
+    When "flipping the public flag, re-pinning in place, flipping visibility, and unrestricting"
+    group = registry.update_group!(org: "d3mlabs", group_id: 7, allows_public_repositories: true, selected_workflows: PINS)
+    registry.update_group!(org: "d3mlabs", group_id: 7, selected_workflows: PINS)
+    registry.update_group!(org: "d3mlabs", group_id: 7, visibility: "selected", selected_workflows: PINS)
+    registry.update_group!(org: "d3mlabs", group_id: 7, selected_workflows: [])
 
     Then
+    pins = PINS.flat_map { |pin| ["-f", "selected_workflows[]=#{pin}"] }
     exec.captures == [
-      ["gh", "api", "-X", "PATCH", "orgs/d3mlabs/actions/runner-groups/7", "-F", "allows_public_repositories=true"],
-      ["gh", "api", "-X", "PATCH", "orgs/d3mlabs/actions/runner-groups/7", "-f", "visibility=selected", "-F", "restricted_to_workflows=false"],
+      ["gh", "api", "-X", "PATCH", "orgs/d3mlabs/actions/runner-groups/7", "-F", "allows_public_repositories=true", "-F", "restricted_to_workflows=true", *pins],
+      ["gh", "api", "-X", "PATCH", "orgs/d3mlabs/actions/runner-groups/7", "-F", "restricted_to_workflows=true", *pins],
+      ["gh", "api", "-X", "PATCH", "orgs/d3mlabs/actions/runner-groups/7", "-f", "visibility=selected", "-F", "restricted_to_workflows=true", *pins],
+      ["gh", "api", "-X", "PATCH", "orgs/d3mlabs/actions/runner-groups/7", "-F", "restricted_to_workflows=false"],
     ]
     group.allows_public_repositories == true
+  end
+
+  test "a group is pinned only when restricted to at least one workflow: restricted to none is a dead group, not a safe one" do
+    Expect
+    [restricted, workflows, pinned].then { |r, w, p| Dev::RunnerRegistry::Group.new(id: 1, name: "g", visibility: "selected", allows_public_repositories: false, restricted_to_workflows: r, selected_workflows: w).pinned? == p }
+
+    Where
+    restricted | workflows | pinned
+    true       | PINS      | true
+    true       | []        | false
+    false      | []        | false
   end
 
   test "group_of answers the group listing the runner among its runners, asking group by group" do
@@ -339,7 +357,7 @@ class Dev::RunnerRegistryTest < Minitest::Test
     assert_raises(Dev::RunnerRegistry::AmendError) { refusing.select_group_repositories!(org: "d3mlabs", group_id: 1, repository_ids: []) }.message.include?("HTTP 403")
     assert_raises(Dev::RunnerRegistry::AmendError) { refusing.place_in_group!(org: "d3mlabs", group_id: 1, runner_id: 1) }.message.include?("HTTP 403")
     assert_raises(Dev::RunnerRegistry::AmendError) { refusing.create_group!(org: "d3mlabs", name: "x", visibility: "selected", allows_public_repositories: false, selected_workflows: []) }.message.include?("HTTP 403")
-    assert_raises(Dev::RunnerRegistry::AmendError) { refusing.update_group!(org: "d3mlabs", group_id: 1, visibility: "all") }.message.include?("HTTP 403")
+    assert_raises(Dev::RunnerRegistry::AmendError) { refusing.update_group!(org: "d3mlabs", group_id: 1, visibility: "all", selected_workflows: []) }.message.include?("HTTP 403")
   end
 
   private

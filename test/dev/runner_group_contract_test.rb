@@ -40,7 +40,8 @@ class Dev::RunnerGroupContractTest < Minitest::Test
     what                        | drifted                                              | lines
     "an unrestricted group"     | group(restricted: false, workflows: [])              | ["not restricted to workflows"]
     "a group pinned elsewhere"  | group(workflows: [PINS.first])                       | ["pinned to #{PINS.first}"]
-    "a group open to all repos" | group(visibility: "all")                             | ["visibility is 'all', not 'selected'"]
+    "a group restricted to nothing (an incomplete PATCH's leftover)" | group(workflows: []) | ["pinned to nothing — no workflow may use it"]
+    "a group open to all repos" | group(visibility: "all") | ["visibility is 'all', not 'selected'"]
     "both"                      | group(visibility: "all", restricted: false, workflows: []) | ["visibility is 'all', not 'selected'", "not restricted to workflows"]
   end
 

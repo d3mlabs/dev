@@ -143,6 +143,12 @@ module Dev
       # Whether the group's repository access is a selection to converge.
       sig { returns(T::Boolean) }
       def selected? = visibility == "selected"
+
+      # Whether at least one workflow is pinned: the state the public-repo
+      # rule (plans#5 H3) wants. Restricted to *no* workflow is what an
+      # incomplete PATCH leaves — a group no job can reach, not a safe one.
+      sig { returns(T::Boolean) }
+      def pinned? = restricted_to_workflows && !selected_workflows.empty?
     end
 
     # A repository a group is visible to, as GitHub lists it.
@@ -207,28 +213,32 @@ module Dev
       parse_group(JSON.parse(out))
     end
 
-    # Change a group's access fields (GitHub's PATCH; only the named
-    # fields change).
+    # Change a group's access fields. GitHub's PATCH is not the partial
+    # update its verb suggests (dev#473, probed live): an omitted
+    # `selected_workflows` is read as none — the pins are wiped — and a
+    # PATCH naming `visibility`, even to its current value, clears the
+    # selected repositories (plans#5 H3). So the pins are always sent in
+    # full (the caller passes the current ones when changing something
+    # else), and visibility is named only when the caller means to flip
+    # it — after which the selection must be written again.
     #
     # @param org [String]
     # @param group_id [Integer]
-    # @param visibility [String, nil]
+    # @param selected_workflows [Array<String>] the whole pin set; empty = unrestricted
+    # @param visibility [String, nil] only when flipping it
     # @param allows_public_repositories [Boolean, nil]
-    # @param selected_workflows [Array<String>, nil] pins; empty = unrestricted
     # @return [Group] as GitHub records it after the change
     # @raise [AmendError] when the PATCH is refused
     sig do
-      params(org: String, group_id: Integer, visibility: T.nilable(String), allows_public_repositories: T.nilable(T::Boolean),
-        selected_workflows: T.nilable(T::Array[String])).returns(Group)
+      params(org: String, group_id: Integer, selected_workflows: T::Array[String], visibility: T.nilable(String),
+        allows_public_repositories: T.nilable(T::Boolean)).returns(Group)
     end
-    def update_group!(org:, group_id:, visibility: nil, allows_public_repositories: nil, selected_workflows: nil)
+    def update_group!(org:, group_id:, selected_workflows:, visibility: nil, allows_public_repositories: nil)
       argv = ["gh", "api", "-X", "PATCH", "orgs/#{org}/actions/runner-groups/#{group_id}"]
       argv += ["-f", "visibility=#{visibility}"] if visibility
       argv += ["-F", "allows_public_repositories=#{allows_public_repositories}"] unless allows_public_repositories.nil?
-      if selected_workflows
-        argv += ["-F", "restricted_to_workflows=#{!selected_workflows.empty?}"]
-        argv += selected_workflows.flat_map { |workflow| ["-f", "selected_workflows[]=#{workflow}"] }
-      end
+      argv += ["-F", "restricted_to_workflows=#{!selected_workflows.empty?}"]
+      argv += selected_workflows.flat_map { |workflow| ["-f", "selected_workflows[]=#{workflow}"] }
       out, err, ok = @exec.capture(*argv)
       raise AmendError, "could not update runner group #{group_id} at #{org}: #{err.strip}" unless ok
 
