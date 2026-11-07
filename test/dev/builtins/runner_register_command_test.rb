@@ -34,8 +34,8 @@ class RecordedContract
     @events << [:converge, container, cpus, memory_gib, disk_gib]
   end
 
-  def after_enroll!(runner_dir:)
-    @events << [:after_enroll, runner_dir]
+  def after_enroll!(runner_dir:, slot:)
+    @events << [:after_enroll, runner_dir, slot]
   end
 end unless defined?(RecordedContract)
 
@@ -292,7 +292,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.events == [
       [:converge, false, nil, nil, nil],
       [:run],
-      [:after_enroll, "/tmp/runner-dir"],
+      [:after_enroll, "/tmp/runner-dir", 1],
     ]
   end
 
@@ -312,7 +312,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     registry.amends == [["d3mlabs", 42, Dev::LabelContracts::AI_FLOW_LABELS]]
     harness.events == [
       [:converge, false, nil, nil, nil],
-      [:after_enroll, dir],
+      [:after_enroll, dir, 1],
     ]
   end
 
@@ -367,7 +367,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     Then "both are torn down, then the fresh ceremony runs into the default (label-derived) dir"
     harness.torn_down.map(&:dir) == [legacy, newer]
-    harness.events == [[:converge, false, nil, nil, nil], [:run], [:after_enroll, "/tmp/runner-dir"]]
+    harness.events == [[:converge, false, nil, nil, nil], [:run], [:after_enroll, "/tmp/runner-dir", 1]]
     harness.wirings.last.fetch(0) == Dev::RunnerSetupConfig.new(labels: "snappy")
     registry.amends == []
     harness.out.string.include?("2 local enrollments")
@@ -479,9 +479,9 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     Then "one converge, then three enrollments, each followed by its after_enroll; slot 1 is the plain config (today's enrollment), the others name and place themselves from it"
     harness.events == [
       [:converge, false, nil, nil, nil],
-      [:run], [:after_enroll, "/tmp/runner-dir"],
-      [:run], [:after_enroll, "/tmp/runner-dir-2"],
-      [:run], [:after_enroll, "/tmp/runner-dir-3"],
+      [:run], [:after_enroll, "/tmp/runner-dir", 1],
+      [:run], [:after_enroll, "/tmp/runner-dir-2", 2],
+      [:run], [:after_enroll, "/tmp/runner-dir-3", 3],
     ]
     labels = Dev::LabelContracts::AI_FLOW_LABELS.join(",")
     harness.wirings.map(&:first) == [
@@ -508,9 +508,9 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     registry.amends == [["d3mlabs", 42, Dev::LabelContracts::AI_FLOW_LABELS]]
     harness.events == [
       [:converge, false, nil, nil, nil],
-      [:after_enroll, dir],
-      [:run], [:after_enroll, "#{dir}-2"],
-      [:run], [:after_enroll, "#{dir}-3"],
+      [:after_enroll, dir, 1],
+      [:run], [:after_enroll, "#{dir}-2", 2],
+      [:run], [:after_enroll, "#{dir}-3", 3],
     ]
     harness.wirings.drop(1).map(&:first) == [
       Dev::RunnerSetupConfig.new(labels: Dev::LabelContracts::AI_FLOW_LABELS.join(","), dir: "#{dir}-2", name: "mac-box-2", group: "ai-flow"),
@@ -538,7 +538,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     Then
     registry.amends.map { |_scope, id, _labels| id } == [1, 2]
-    harness.events == [[:converge, false, nil, nil, nil], [:after_enroll, one], [:after_enroll, two]]
+    harness.events == [[:converge, false, nil, nil, nil], [:after_enroll, one, 1], [:after_enroll, two, 2]]
     harness.torn_down == []
   end
 
@@ -1077,7 +1077,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.command.call(args: no_args, context: build_context(name: "cellbound3d", ui: ui))
 
     Then "the identity work precedes the contracts and the enrollment; the setup is wired for the runner user; no --as was named"
-    harness.events == [[:converge, false, nil, nil, nil], [:run], [:after_enroll, "/tmp/runner-dir"]]
+    harness.events == [[:converge, false, nil, nil, nil], [:run], [:after_enroll, "/tmp/runner-dir", 1]]
     harness.wirings.fetch(0).fetch(3) == runner_user
     harness.as_names == [nil]
   end

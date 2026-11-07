@@ -81,13 +81,15 @@ module Dev
         @bootstrap.ensure_agent_engine!(cpus: cpus, memory_gib: memory_gib, disk_gib: disk_gib) if container
       end
 
-      # Converge the post-enrollment requirements (needs the enrolled runner dir).
+      # Converge the post-enrollment requirements (needs the enrolled runner
+      # dir and which of the host's slots it is).
       #
       # @param runner_dir [String]
+      # @param slot [Integer] 1-based
       # @return [void]
-      sig { params(runner_dir: String).void }
-      def after_enroll!(runner_dir:)
-        @bootstrap.after_enroll!(runner_dir: runner_dir)
+      sig { params(runner_dir: String, slot: Integer).void }
+      def after_enroll!(runner_dir:, slot:)
+        @bootstrap.after_enroll!(runner_dir: runner_dir, slot: slot)
       end
     end
 

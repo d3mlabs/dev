@@ -281,21 +281,24 @@ module Dev
     # config.sh/svc.sh just created): the `_work` job-checkout tree becomes a
     # cooperative read-write space (the @workdir that /ask, /split, and
     # PR-mode /build edit in place), and the runner service gets its
-    # env — Umask 002 so re-checkouts stay group-accessible, and
+    # env — Umask 002 so re-checkouts stay group-accessible,
     # AI_FLOW_AGENT_USER as the single record of "jobs landing here execute
-    # as X" (no manual env step). The agent CLI resolution check is
-    # warn-only: the cursor-cli cask arrives via the ai-flow checkout's
-    # `dev up`, which may legitimately not have run yet.
+    # as X" (no manual env step), and AI_FLOW_RUNNER_SLOT as the record of
+    # which of the host's slots this is (dev#485: ai-flow keys per-slot
+    # state by it, and only dev knows the naming). The agent CLI resolution
+    # check is warn-only: the cursor-cli cask arrives via the ai-flow
+    # checkout's `dev up`, which may legitimately not have run yet.
     #
     # @param runner_dir [String] the enrolled runner's install dir
+    # @param slot [Integer] which of the host's slots this runner is, 1-based
     # @return [void]
     # @raise [UnsupportedPlatformError] off macOS
     # @raise [StepFailedError] when a converge step fails
-    sig { params(runner_dir: String).void }
-    def after_enroll!(runner_dir:)
+    sig { params(runner_dir: String, slot: Integer).void }
+    def after_enroll!(runner_dir:, slot:)
       assert_darwin!
       grant_work_tree!(runner_dir)
-      configure_service!(runner_dir)
+      configure_service!(runner_dir, slot)
       verify_agent_cli!
     end
 
@@ -503,16 +506,18 @@ module Dev
       step!("sudo", "find", work, "-type", "d", "-exec", "chmod", "g+s", "{}", "+")
     end
 
-    # Step 7: the runner service plist carries the service env — Umask 002 and
-    # AI_FLOW_AGENT_USER — applied between a service stop/start so launchd
-    # rereads it. The plist location comes from the `.service` record svc.sh
-    # wrote at install: on macOS that record is the full plist path; on Linux
-    # it is the bare service name, which we resolve under launch_agents_dir.
+    # Step 7: the runner service plist carries the service env — Umask 002,
+    # AI_FLOW_AGENT_USER and AI_FLOW_RUNNER_SLOT — applied between a service
+    # stop/start so launchd rereads it. The plist location comes from the
+    # `.service` record svc.sh wrote at install: on macOS that record is the
+    # full plist path; on Linux it is the bare service name, which we
+    # resolve under launch_agents_dir.
     #
     # @param runner_dir [String]
+    # @param slot [Integer] which of the host's slots this runner is
     # @raise [StepFailedError] when no service was installed in runner_dir
-    sig { params(runner_dir: String).void }
-    def configure_service!(runner_dir)
+    sig { params(runner_dir: String, slot: Integer).void }
+    def configure_service!(runner_dir, slot)
       service_file = File.join(runner_dir, ".service")
       unless File.exist?(service_file)
         raise StepFailedError,
@@ -521,13 +526,14 @@ module Dev
 
       service = File.read(service_file).strip
       plist = service.end_with?(".plist") ? service : File.join(@launch_agents_dir, "#{service}.plist")
-      @out.puts ">>> Writing Umask 002 + AI_FLOW_AGENT_USER=#{@agent_user} into #{plist} ..."
+      @out.puts ">>> Writing Umask 002 + AI_FLOW_AGENT_USER=#{@agent_user} + AI_FLOW_RUNNER_SLOT=#{slot} into #{plist} ..."
       step!("./svc.sh", "stop", chdir: runner_dir)
       plist_set!(plist, "Umask", "integer", "2")
       # The EnvironmentVariables dict may not exist yet; a failed Add just
       # means it already does.
       @executor.run("/usr/libexec/PlistBuddy", "-c", "Add :EnvironmentVariables dict", plist)
       plist_set!(plist, "EnvironmentVariables:AI_FLOW_AGENT_USER", "string", @agent_user)
+      plist_set!(plist, "EnvironmentVariables:AI_FLOW_RUNNER_SLOT", "string", slot.to_s)
       step!("./svc.sh", "start", chdir: runner_dir)
     end
 

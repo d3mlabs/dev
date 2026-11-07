@@ -435,7 +435,7 @@ class Dev::AgentBootstrapTest < Minitest::Test
     work = File.join(runner_dir, "_work")
 
     When "converging the post-enrollment steps"
-    bootstrap(executor, launch_agents_dir: agents_dir).after_enroll!(runner_dir: runner_dir)
+    bootstrap(executor, launch_agents_dir: agents_dir).after_enroll!(runner_dir: runner_dir, slot: 1)
 
     Then "the _work tree gets the cooperative grant; the plist gets the service env; the service restarts"
     File.directory?(work)
@@ -447,7 +447,33 @@ class Dev::AgentBootstrapTest < Minitest::Test
     executor.runs.include?(
       ["/usr/libexec/PlistBuddy", "-c", "Set :EnvironmentVariables:AI_FLOW_AGENT_USER ai-agent", plist],
     )
+    executor.runs.include?(
+      ["/usr/libexec/PlistBuddy", "-c", "Set :EnvironmentVariables:AI_FLOW_RUNNER_SLOT 1", plist],
+    )
     executor.runs.last == ["./svc.sh", "start", { chdir: runner_dir }]
+  end
+
+  # ai-flow#116 / dev#485: ai-flow keys per-slot state (the agent's gem
+  # home, a persistent workspace) by the slot number; only dev knows which
+  # enrollment is which slot, so dev records it where it records the agent
+  # user — this slot's service env.
+  test "after_enroll! writes the slot number into that slot's service env" do
+    Given "slot 3's freshly enrolled runner dir"
+    executor = RecordedBootstrapExecutor.new
+    runner_dir = Dir.mktmpdir
+    File.write(File.join(runner_dir, ".service"), "actions.runner.d3mlabs-x.mac-3\n")
+    agents_dir = Dir.mktmpdir
+    plist = File.join(agents_dir, "actions.runner.d3mlabs-x.mac-3.plist")
+
+    When "converging the post-enrollment steps for slot 3"
+    bootstrap(executor, launch_agents_dir: agents_dir).after_enroll!(runner_dir: runner_dir, slot: 3)
+
+    Then "the plist carries AI_FLOW_RUNNER_SLOT=3, between the service stop and start"
+    stop = executor.runs.index(["./svc.sh", "stop", { chdir: runner_dir }])
+    slot = executor.runs.index(["/usr/libexec/PlistBuddy", "-c", "Set :EnvironmentVariables:AI_FLOW_RUNNER_SLOT 3", plist])
+    start = executor.runs.index(["./svc.sh", "start", { chdir: runner_dir }])
+    !stop.nil? && !slot.nil? && !start.nil?
+    stop < slot && slot < start
   end
 
   test "after_enroll! uses the .service record verbatim when it is a plist path (macOS svc.sh shape)" do
@@ -459,7 +485,7 @@ class Dev::AgentBootstrapTest < Minitest::Test
     File.write(File.join(runner_dir, ".service"), "#{plist}\n")
 
     When "converging the post-enrollment steps"
-    bootstrap(executor, launch_agents_dir: agents_dir).after_enroll!(runner_dir: runner_dir)
+    bootstrap(executor, launch_agents_dir: agents_dir).after_enroll!(runner_dir: runner_dir, slot: 1)
 
     Then "PlistBuddy targets the recorded path, not a re-joined one"
     executor.runs.include?(["/usr/libexec/PlistBuddy", "-c", "Set :Umask 2", plist])
@@ -477,13 +503,16 @@ class Dev::AgentBootstrapTest < Minitest::Test
     plist = File.join(agents_dir, "actions.runner.d3mlabs-x.mac.plist")
 
     When "converging the post-enrollment steps"
-    bootstrap(executor, launch_agents_dir: agents_dir).after_enroll!(runner_dir: runner_dir)
+    bootstrap(executor, launch_agents_dir: agents_dir).after_enroll!(runner_dir: runner_dir, slot: 1)
 
     Then "Add fallbacks ran"
     executor.runs.include?(["/usr/libexec/PlistBuddy", "-c", "Add :Umask integer 2", plist])
     executor.runs.include?(
       ["/usr/libexec/PlistBuddy", "-c",
        "Add :EnvironmentVariables:AI_FLOW_AGENT_USER string ai-agent", plist],
+    )
+    executor.runs.include?(
+      ["/usr/libexec/PlistBuddy", "-c", "Add :EnvironmentVariables:AI_FLOW_RUNNER_SLOT string 1", plist],
     )
   end
 
@@ -493,7 +522,7 @@ class Dev::AgentBootstrapTest < Minitest::Test
     runner_dir = Dir.mktmpdir
 
     When "converging the post-enrollment steps"
-    bootstrap(executor).after_enroll!(runner_dir: runner_dir)
+    bootstrap(executor).after_enroll!(runner_dir: runner_dir, slot: 1)
 
     Then
     raises Dev::AgentBootstrap::StepFailedError
@@ -512,7 +541,7 @@ class Dev::AgentBootstrapTest < Minitest::Test
     )
 
     When "converging the post-enrollment steps"
-    bs.after_enroll!(runner_dir: runner_dir)
+    bs.after_enroll!(runner_dir: runner_dir, slot: 1)
 
     Then "a warning names the missing CLI"
     out.string.include?("cursor-agent")
