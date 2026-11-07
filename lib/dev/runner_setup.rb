@@ -330,15 +330,18 @@ module Dev
     # @return [Array<String>]
     sig { params(url: String, token: String, name: String).returns(T::Array[String]) }
     def config_argv(url:, token:, name:)
-      [
+      argv = [
         "./config.sh",
         "--url", url,
         "--token", token,
         "--labels", @config.labels,
         "--name", name,
-        "--unattended",
-        "--replace",
       ]
+      # The runner group is an org's partition of who may use a runner;
+      # config.sh lands an unnamed one in Default.
+      group = @config.group
+      argv += ["--runnergroup", group] if group
+      argv + ["--unattended", "--replace"]
     end
 
     private

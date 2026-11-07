@@ -103,6 +103,27 @@ class Dev::RunnerSetupTest < Minitest::Test
     ]
   end
 
+  test "config_argv names the runner group when the enrollment joins one (dev#470); unnamed, config.sh lands it in Default" do
+    Given "a config for an org family in a named group"
+    config = Dev::RunnerSetupConfig.new(labels: "ai-ask,ai-build", group: "agents")
+    setup = Dev::RunnerSetup.new(config: config, org: true)
+
+    When "building the config argv"
+    argv = setup.config_argv(url: "https://github.com/d3mlabs", token: "T", name: "mac1-2")
+
+    Then "--runnergroup rides between the identity and the modes"
+    argv == [
+      "./config.sh",
+      "--url", "https://github.com/d3mlabs",
+      "--token", "T",
+      "--labels", "ai-ask,ai-build",
+      "--name", "mac1-2",
+      "--runnergroup", "agents",
+      "--unattended",
+      "--replace",
+    ]
+  end
+
   test "resolve_dir defaults to a label-suffixed path under HOME" do
     Given "a config without an explicit dir"
     config = Dev::RunnerSetupConfig.new(labels: "ue-engine,x64")
