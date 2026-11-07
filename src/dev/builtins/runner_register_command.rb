@@ -11,6 +11,9 @@ require "dev/label_contracts"
 require "dev/linux_data_root_provisioner"
 require "dev/project_manifest"
 require "dev/runner_discovery"
+require "dev/runner_family"
+require "dev/runner_group_contract"
+require "dev/runner_groups"
 require "dev/runner_registry"
 require "dev/runner_setup"
 require "dev/runner_setup_config"
@@ -28,6 +31,29 @@ module Dev
     #   dev runner register --labels ue-engine # repo scope, custom roles
     #   dev runner register --org --ai-flow    # org agent host, the full ai-flow set
     #   dev runner register --org --labels ai-build  # org custom pool
+    #   dev runner register --org --ai-flow --slots 3  # three jobs at once
+    #
+    # A self-hosted runner runs one job at a time, so a host's concurrency
+    # at a scope is how many runners it enrolls there (dev#470): `--slots
+    # N` makes the enrollment a **family** of N (Dev::RunnerFamily) —
+    # `<name>`, `<name>-2` .. `<name>-N`, each its own dir, `_work` and
+    # service, every one carrying the same labels. Slot 1 is exactly the
+    # enrollment register has always made, so a host from before slots is
+    # a family of one; re-running without `--slots` keeps the size it
+    # finds, a smaller `--slots` retires the surplus (asked first), a
+    # larger one adds. Which repos may use an org family is the runner
+    # group it sits in (Dev::RunnerGroups): the labels' contract names it
+    # (any ai-flow label → the `ai-flow` group dev owns and pins, see
+    # LabelContracts::AI_FLOW_GROUP) or `--group` does (a human's), and
+    # the repo this registration is for — the checkout's, the same
+    # derivation as the org and the label — is admitted to it. The act
+    # that makes a repo exclusive is the repo-scoped registration itself:
+    # when one carries labels an org group serves and the repo is among
+    # that group's repos, register asks whether this runner should be its
+    # only one and takes it out of the group on yes. So a repo's
+    # concurrency on a host is the runners it can see, nothing declared
+    # anywhere and nothing to remember; and a public repo only ever sees
+    # a pinned group.
     #
     # register is idempotent and self-healing: when the enclosing checkout's
     # lock pins an image, it first brings the engine up for that
@@ -93,15 +119,29 @@ module Dev
       # A RuntimeError so the CLI boundary prints it and exits 1.
       class SupersededEnrollmentsError < RuntimeError; end
 
+      # The operator declined to unregister the slots past `--slots N`, so
+      # register changed nothing: the message carries the by-hand remedy.
+      class SurplusSlotsError < RuntimeError; end
+
       ORG_FLAG = "--org"
       LABELS_FLAG = "--labels"
       AI_FLOW_FLAG = "--ai-flow"
+      SLOTS_FLAG = "--slots"
+      GROUP_FLAG = "--group"
+
+      # Where config.sh puts a registration naming no group: GitHub's own
+      # default runner group, present in every org.
+      DEFAULT_GROUP = "Default"
       DIR_FLAG = "--dir"
       NAME_FLAG = "--name"
       REPO_FLAG = "--repo"
       AGENT_USER_FLAG = "--agent-user"
       AS_FLAG = "--as"
       YES_FLAG = "--yes"
+
+      # A family's enrollments by slot: the dirs enrolled under each slot's
+      # name (one is the steady state; more are `--replace` leftovers).
+      SlotMap = T.type_alias { T::Hash[Integer, T::Array[Dev::RunnerDiscovery::Enrollment]] }
 
       # Builds the RunnerSetup for the resolved config and flags; injected
       # so tests can observe the wiring without touching gh or the host.
@@ -151,6 +191,7 @@ module Dev
           pins_reader: PinsReader,
           reach_factory: ReachFactory,
           out: T.any(IO, StringIO),
+          groups: T.nilable(Dev::RunnerGroups),
         ).void
       end
       def initialize(
@@ -174,9 +215,12 @@ module Dev
         data_root_provisioner: Dev::LinuxDataRootProvisioner.for_host,
         pins_reader: ->(root) { Dev::Deps::Lockfile.new(dir: root).read },
         reach_factory: ->(identity) { Dev::HostReach.new(identity: identity) },
-        out: $stdout
+        out: $stdout,
+        # The org's runner groups, converged over the same registry.
+        groups: nil
       )
         super()
+        @groups = T.let(groups || Dev::RunnerGroups.new(registry: registry, out: out), Dev::RunnerGroups)
         @runner_setup_factory = runner_setup_factory
         @contracts_factory = contracts_factory
         @repo_resolver = repo_resolver
@@ -203,6 +247,21 @@ module Dev
           Converges (engine, label contracts), then enrolls — or amends an existing
           enrollment's labels in place. Re-running is the idempotent no-op and the
           drift repair.
+
+          Concurrency is the runner layer's: a self-hosted runner runs one job at a
+          time, so a host that should run N jobs at once at a scope enrolls N slots
+          (--slots N) — <name>, <name>-2 .. <name>-N, one dir and service each, the
+          same labels on all. Re-running keeps the size it finds; a smaller --slots
+          retires the surplus (asked first). Which repos may use an org host's slots is
+          their runner group, and the repo this registration is for — the checkout's,
+          or --repo's — is admitted to it. ai-flow labels sit in the '#{LabelContracts::AI_FLOW_GROUP.name}' group,
+          which dev owns: created when missing, pinned to ai-flow's workflows (plans#5
+          H3), healed when the console drifted — nothing to remember. --group names a
+          human's group for other pools. A public repo may only use a pinned group;
+          register refuses otherwise. A repo-scoped enrollment is that repo's alone
+          (cellbound-3d's editor); its concurrency is its own --slots — and when the repo
+          may also use the org's slots for the same labels, register asks whether this
+          runner should be its only one, taking it out of the group on yes.
 
           Three identities meet in a registration:
             you (gh auth)         mints the registration token — repo admin, or admin:org with --org
@@ -237,6 +296,9 @@ module Dev
             dev runner register --labels ue-engine   # repo scope, custom roles
             dev runner register --org --ai-flow      # org agent host, the full ai-flow set
             dev runner register --org --labels ai-build
+            dev runner register --org --ai-flow --slots 3    # three jobs at once; this repo may use them
+            dev runner register --ai-flow                    # this repo's own agent runner; asks to leave the org's pool
+            dev runner register --org --labels ue-engine --group ue-hosted   # a human's pool
         DESC
       end
 
@@ -249,25 +311,30 @@ module Dev
           Cli::Flag.new(ORG_FLAG, desc: "enroll at the org scope (needs admin:org); labels are required"),
           Cli::Flag.new(LABELS_FLAG, takes_value: true, desc: "comma-separated labels; default: the repo's name"),
           Cli::Flag.new(AI_FLOW_FLAG, desc: "the full ai-flow label set (#{LabelContracts::AI_FLOW_LABELS.join(",")})"),
-          Cli::Flag.new(DIR_FLAG, takes_value: true, desc: "the runner directory; default: actions-runner-<first label> under the enrollment owner's home"),
-          Cli::Flag.new(NAME_FLAG, takes_value: true, desc: "the runner's name on GitHub; default: the hostname"),
+          Cli::Flag.new(SLOTS_FLAG, takes_value: true, desc: "how many jobs this host runs at once at this scope: N runners, <name>, <name>-2 .. <name>-N; default: what is enrolled, else 1"),
+          Cli::Flag.new(GROUP_FLAG, takes_value: true, desc: "--org: the runner group the slots join (made once in the org's settings); ai-flow labels imply '#{LabelContracts::AI_FLOW_GROUP.name}'; default: #{DEFAULT_GROUP}"),
+          Cli::Flag.new(DIR_FLAG, takes_value: true, desc: "the runner directory (one slot); default: actions-runner-<first label> under the enrollment owner's home, -<n> per further slot"),
+          Cli::Flag.new(NAME_FLAG, takes_value: true, desc: "the runner's name on GitHub (slot 1; further slots are <name>-<n>); default: the hostname"),
           Cli::Flag.new(REPO_FLAG, takes_value: true, desc: "enroll for owner/repo instead of the enclosing checkout"),
           Cli::Flag.new(AGENT_USER_FLAG, takes_value: true, desc: "the OS user agent labels run the agent as; default: #{AgentBootstrap::DEFAULT_AGENT_USER}"),
           Cli::Flag.new(AS_FLAG, takes_value: true, desc: "Linux: the OS user the runner service runs as; default: #{Dev::RunnerUser::DEFAULT_NAME}"),
-          Cli::Flag.new(YES_FLAG, desc: "unregister superseded enrollments without asking"),
+          Cli::Flag.new(YES_FLAG, desc: "answer yes without asking: unregister superseded enrollments and surplus slots, leave the org's pool"),
         ]
       end
 
-      # Converge, then enroll (or amend), then the steps the enrollment
-      # enables.
+      # Converge, then enroll (or amend) every slot, then the steps the
+      # enrollment enables.
       sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
         org = args.flag?(ORG_FLAG)
         labels = resolve_labels(args, context, org)
+        slots = resolve_slots(args)
+        contract = resolve_group(args, labels, org)
         config = RunnerSetupConfig.new(
           labels: labels,
           dir: args.value(DIR_FLAG),
           name: args.value(NAME_FLAG),
+          group: contract&.name,
         )
 
         container = context.project&.project_images&.containerized? || false
@@ -301,59 +368,276 @@ module Dev
 
         setup = @runner_setup_factory.call(config, args.value(REPO_FLAG), org, runner_user)
         scope = setup.resolve_scope
+        yes = args.flag?(YES_FLAG)
+        # The org-side contract first: the group the slots will join must
+        # exist, with its access, before config.sh names it.
+        group = contract && @groups.converge!(contract, org: scope)
         # --dir is the operator picking the dir: no discovery, no detection.
         # The runner user's home is where the rule puts enrollments; the
         # operator's is where the ones from before it are.
         discovery = runner_user ? @discovery.also_under(runner_user.home) : @discovery
         enrollments = config.dir ? [] : discovery.enrollments_for(scope)
-        runner = enrollments.empty? ? nil : @registry.find(scope: scope, name: config.name || T.must(enrollments.first).name)
+        family = resolve_family(enrollments, config, setup, slots)
+        by_slot, runners = family_members(scope, enrollments, family, config)
 
-        if superseded?(enrollments, runner, runner_user)
-          retire!(scope, enrollments, runner, runner_user, yes: args.flag?(YES_FLAG))
-          enrollments = []
-          runner = nil
+        if superseded?(enrollments, by_slot, runners, runner_user)
+          retire!(scope, enrollments, by_slot, runners, runner_user, yes: yes)
+          by_slot = {}
+          runners = {}
         end
 
-        enrollment = enrollments.first
-        if enrollment && runner
-          amend_enrollment(scope, enrollment, runner, config)
-          contracts.each { |contract| contract.after_enroll!(runner_dir: enrollment.dir) }
-          return
+        # The family's size: what --slots says, else what is enrolled (its
+        # highest slot — a gap is re-filled), else one.
+        count = slots || by_slot.keys.max || 1
+        retire_surplus!(scope, by_slot.select { |slot, _dirs| slot > count }.values.flatten, yes: yes)
+
+        (1..count).each do |slot|
+          enrollment = by_slot[slot]&.first
+          runner = enrollment && runners[enrollment.name]
+          if enrollment && runner
+            amend_enrollment(scope, enrollment, runner, config)
+            @groups.place!(group, runner, org: scope) if group
+            contracts.each { |contract| contract.after_enroll!(runner_dir: enrollment.dir) }
+            next
+          end
+
+          slot_setup = setup
+          if enrollment || slot > 1
+            # GitHub has lost this enrollment (or --name renames it): the
+            # re-enrollment reuses the discovered dir, never a second one.
+            # A slot beyond the first takes the family's name and dir.
+            slot_config = RunnerSetupConfig.new(
+              labels: labels,
+              dir: enrollment&.dir || family.slot_dir(slot),
+              name: config.name || family.slot_name(slot),
+              group: config.group,
+            )
+            slot_setup = @runner_setup_factory.call(slot_config, args.value(REPO_FLAG), org, runner_user)
+          end
+          slot_setup.run
+          contracts.each { |contract| contract.after_enroll!(runner_dir: slot_setup.resolve_dir) }
         end
 
-        if enrollment
-          # GitHub has lost this enrollment (or --name renames it): the
-          # re-enrollment reuses the discovered dir, never a second one.
-          config = RunnerSetupConfig.new(labels: labels, dir: enrollment.dir, name: config.name)
-          setup = @runner_setup_factory.call(config, args.value(REPO_FLAG), org, runner_user)
+        if org
+          converge_access!(scope, group, args.value(REPO_FLAG))
+        else
+          offer_exclusivity!(scope, labels, yes: yes)
         end
-        setup.run
-        contracts.each { |contract| contract.after_enroll!(runner_dir: setup.resolve_dir) }
       end
 
       private
 
-      # Whether the enrollment on disk is not what is serving GitHub: more
-      # than one local enrollment for the scope (one name, one registration
-      # — the rest are `--replace` leftovers), or the runner GitHub holds
-      # is offline (nothing runs it), or — under the host rule — an
-      # enrollment runs as someone other than the runner user. One
-      # enrollment that GitHub has lost is not this case: the re-enrollment
-      # path reuses its dir.
+      # Who may use the family (dev#470: a repo's concurrency on a host is
+      # the runners it can see): the repo this registration is for — the
+      # checkout's, or `--repo`'s, the same derivation as the org and the
+      # label — is admitted to the family's group. Slots naming no group
+      # sit in GitHub's Default, so that is the group converged for them.
+      #
+      # @param scope [String] the org
+      # @param group [Dev::RunnerRegistry::Group, nil] the contract's group, when one was obliged
+      # @param repo_override [String, nil] `--repo`
+      sig { params(scope: String, group: T.nilable(Dev::RunnerRegistry::Group), repo_override: T.nilable(String)).void }
+      def converge_access!(scope, group, repo_override)
+        access = group || @registry.group(org: scope, name: DEFAULT_GROUP)
+        return if access.nil?
+
+        @groups.admit!(access, @repo_resolver.call(repo_override), org: scope)
+      end
+
+      # The exclusion, derived (dev#470): a repo-scoped runner is that
+      # repo's alone, so when its labels are ones an org group serves and
+      # the repo may use that group too, the two pool — its jobs land on
+      # either. That may be wanted (extra capacity) or not (cellbound-3d's
+      # one editor must not also run on the org's slots), so register asks,
+      # every run, and takes the repo out of the group on yes. Nothing
+      # without a contract, without the group, or when the org cannot be
+      # read with this login (a repo admin need not be an org admin).
+      #
+      # @param scope [String] the repo, "owner/repo"
+      # @param labels [String] comma-separated labels (config.sh shape)
+      # @param yes [Boolean] `--yes`
+      sig { params(scope: String, labels: String, yes: T::Boolean).void }
+      def offer_exclusivity!(scope, labels, yes:)
+        contract = LabelContracts.group_for(labels)
+        return unless contract
+
+        org = T.must(scope.split("/").first)
+        group = @registry.group(org: org, name: contract.name)
+        return unless group&.selected?
+        return unless @registry.group_repositories(org: org, group_id: group.id).any? { |selected| selected.full_name.casecmp?(scope) }
+
+        @out.puts ">>> #{scope} may also use the org's '#{group.name}' runners for these labels — its jobs would land on either."
+        unless yes || @confirmer.confirm?("Make this host's runner its only one?")
+          @out.puts ">>> Left as is: #{scope} keeps using the org's '#{group.name}' runners too."
+          return
+        end
+
+        @groups.exclude!(group, scope, org: org)
+      rescue RunnerRegistry::QueryError => e
+        @out.puts ">>> Could not read #{org}'s runner groups (#{e.message}) — whether #{scope} also uses the org's runners is unchecked."
+      end
+
+      # `--slots N`: the family's size, a positive integer; nil leaves it
+      # to what is enrolled. More than one slot in one `--dir` is a
+      # contradiction — every slot is its own dir.
+      #
+      # @param args [Cli::ParsedArgs]
+      # @return [Integer, nil]
+      # @raise [ArgumentError]
+      sig { params(args: Cli::ParsedArgs).returns(T.nilable(Integer)) }
+      def resolve_slots(args)
+        raw = args.value(SLOTS_FLAG)
+        return nil if raw.nil?
+
+        slots = begin
+          Integer(raw)
+        rescue ArgumentError
+          raise ArgumentError, "--slots takes a positive integer, not #{raw.inspect}"
+        end
+        raise ArgumentError, "--slots takes a positive integer, not #{raw.inspect}" if slots < 1
+        raise ArgumentError, "--dir names one slot's dir — drop it to enroll #{slots} slots (each gets its own)" if slots > 1 && args.value(DIR_FLAG)
+
+        slots
+      end
+
+      # The runner group the slots join, as a contract: what the labels
+      # oblige (any ai-flow label → the ai-flow group dev owns), else what
+      # `--group` names (a human's group; must exist), else none — the
+      # slots land in Default. An org-scope matter: a repo-scoped runner
+      # is that repo's alone. `--ai-flow --group x` is the contradiction
+      # `--ai-flow --labels x` is: the shortcut already names its group.
+      #
+      # @param args [Cli::ParsedArgs]
+      # @param labels [String] comma-separated labels (config.sh shape)
+      # @param org [Boolean]
+      # @return [Dev::RunnerGroupContract, nil]
+      # @raise [ArgumentError]
+      sig { params(args: Cli::ParsedArgs, labels: String, org: T::Boolean).returns(T.nilable(RunnerGroupContract)) }
+      def resolve_group(args, labels, org)
+        named = args.value(GROUP_FLAG)
+        raise ArgumentError, "runner groups partition an org's runners — #{GROUP_FLAG} goes with #{ORG_FLAG}" if named && !org
+        return nil unless org
+
+        obliged = LabelContracts.group_for(labels)
+        if named && obliged && named != obliged.name
+          raise ArgumentError,
+            "ai-flow labels sit in the '#{obliged.name}' runner group (pinned to ai-flow's workflows) — drop #{GROUP_FLAG} #{named}"
+        end
+
+        obliged || (named && RunnerGroupContract.new(name: named))
+      end
+
+      # The family this registration converges: named by `--name`, else by
+      # the one base the discovered enrollments share, else the hostname —
+      # the base being slot 1's name. Slot 1's dir is its enrollment's
+      # when one exists, else the setup's default (`--dir` included).
       #
       # @param enrollments [Array<Dev::RunnerDiscovery::Enrollment>]
-      # @param runner [Dev::RunnerRegistry::Runner, nil]
+      # @param config [Dev::RunnerSetupConfig]
+      # @param setup [Dev::RunnerSetup]
+      # @param slots [Integer, nil]
+      # @return [Dev::RunnerFamily]
+      sig do
+        params(
+          enrollments: T::Array[Dev::RunnerDiscovery::Enrollment],
+          config: RunnerSetupConfig,
+          setup: Dev::RunnerSetup,
+          slots: T.nilable(Integer),
+        ).returns(Dev::RunnerFamily)
+      end
+      def resolve_family(enrollments, config, setup, slots)
+        bases = enrollments.map { |enrollment| Dev::RunnerFamily.base_of(enrollment.name) }.uniq
+        # The hostname is asked for only when a second slot has to be
+        # named from it: a lone fresh enrollment keeps the setup's own
+        # derivation, as it always has.
+        base = config.name || (bases.length == 1 ? T.must(bases.first) : nil) || (slots.to_i > 1 ? setup.resolve_name : "")
+        provisional = Dev::RunnerFamily.new(base: base, dir: setup.resolve_dir)
+        first = enrollments.find { |enrollment| provisional.slot_of(enrollment.name) == 1 }
+        first ||= enrollments.first if config.name && enrollments.length == 1
+        Dev::RunnerFamily.new(base: base, dir: first ? first.dir : setup.resolve_dir)
+      end
+
+      # The family's slots: by slot, the dirs enrolled under its name (one
+      # is the steady state), and GitHub's record of each by name (absent
+      # when GitHub has lost it). One enrollment under another name with
+      # `--name` is a rename: it is slot 1, looked up under its new name —
+      # the registry's answer says whether GitHub already knows the new
+      # name (amend) or the re-enrollment renames.
+      #
+      # @param scope [String]
+      # @param enrollments [Array<Dev::RunnerDiscovery::Enrollment>]
+      # @param family [Dev::RunnerFamily]
+      # @param config [Dev::RunnerSetupConfig]
+      # @return [[Hash{Integer => Array<Enrollment>}, Hash{String => Runner}]]
+      sig do
+        params(
+          scope: String,
+          enrollments: T::Array[Dev::RunnerDiscovery::Enrollment],
+          family: Dev::RunnerFamily,
+          config: RunnerSetupConfig,
+        ).returns([SlotMap, T::Hash[String, Dev::RunnerRegistry::Runner]])
+      end
+      def family_members(scope, enrollments, family, config)
+        by_slot = T.let({}, SlotMap)
+        enrollments.each do |enrollment|
+          slot = family.slot_of(enrollment.name)
+          (by_slot[slot] ||= []) << enrollment if slot
+        end
+        renamed = config.name && by_slot.empty? && enrollments.length == 1
+        by_slot = { 1 => enrollments } if renamed
+
+        runners = {}
+        by_slot.values.flatten.each do |member|
+          runner = @registry.find(scope: scope, name: renamed ? T.must(config.name) : member.name)
+          runners[member.name] = runner if runner
+        end
+        [by_slot, runners]
+      end
+
+      # Whether what is on disk is not what is serving GitHub: two dirs
+      # enrolled under one slot's name (one name, one registration — the
+      # rest are `--replace` leftovers), an enrollment at the scope
+      # outside the family (another host's name, or this one's before a
+      # rename nobody asked for), a slot GitHub lists offline (nothing
+      # runs it), or — under the host rule — an enrollment running as
+      # someone other than the runner user. A slot GitHub has lost is not
+      # this case: the re-enrollment path reuses its dir.
+      #
+      # @param enrollments [Array<Dev::RunnerDiscovery::Enrollment>] every one at the scope
+      # @param by_slot [Hash{Integer => Array<Enrollment>}] the family's
+      # @param runners [Hash{String => Dev::RunnerRegistry::Runner}] GitHub's record per member
       # @param runner_user [Dev::RunnerUser, nil] the host rule's user
       # @return [Boolean]
       sig do
         params(
           enrollments: T::Array[Dev::RunnerDiscovery::Enrollment],
-          runner: T.nilable(Dev::RunnerRegistry::Runner),
+          by_slot: SlotMap,
+          runners: T::Hash[String, Dev::RunnerRegistry::Runner],
           runner_user: T.nilable(Dev::RunnerUser),
         ).returns(T::Boolean)
       end
-      def superseded?(enrollments, runner, runner_user)
-        enrollments.length > 1 || (!runner.nil? && !runner.online?) || !drifted(enrollments, runner_user).empty?
+      def superseded?(enrollments, by_slot, runners, runner_user)
+        !duplicated(by_slot).empty? || !strangers(enrollments, by_slot).empty? ||
+          runners.values.any? { |runner| !runner.online? } || !drifted(enrollments, runner_user).empty?
+      end
+
+      # The slots more than one dir is enrolled under.
+      #
+      # @param by_slot [Hash{Integer => Array<Enrollment>}]
+      # @return [Array<Array<Enrollment>>]
+      sig { params(by_slot: SlotMap).returns(T::Array[T::Array[Dev::RunnerDiscovery::Enrollment]]) }
+      def duplicated(by_slot)
+        by_slot.values.select { |dirs| dirs.length > 1 }
+      end
+
+      # The enrollments at the scope outside the family.
+      #
+      # @param enrollments [Array<Enrollment>]
+      # @param by_slot [Hash{Integer => Array<Enrollment>}]
+      # @return [Array<Enrollment>]
+      sig { params(enrollments: T::Array[Dev::RunnerDiscovery::Enrollment], by_slot: SlotMap).returns(T::Array[Dev::RunnerDiscovery::Enrollment]) }
+      def strangers(enrollments, by_slot)
+        enrollments - by_slot.values.flatten
       end
 
       # The enrollments owned by someone other than the runner user; none
@@ -376,8 +660,9 @@ module Dev
       # or, declined, raise with the by-hand remedy having changed nothing.
       #
       # @param scope [String]
-      # @param enrollments [Array<Dev::RunnerDiscovery::Enrollment>]
-      # @param runner [Dev::RunnerRegistry::Runner, nil]
+      # @param enrollments [Array<Dev::RunnerDiscovery::Enrollment>] every one at the scope
+      # @param by_slot [Hash{Integer => Array<Enrollment>}] the family's
+      # @param runners [Hash{String => Dev::RunnerRegistry::Runner}]
       # @param runner_user [Dev::RunnerUser, nil] the host rule's user
       # @param yes [Boolean] `--yes`: answer the question without asking
       # @raise [SupersededEnrollmentsError] when the operator declines
@@ -385,15 +670,23 @@ module Dev
         params(
           scope: String,
           enrollments: T::Array[Dev::RunnerDiscovery::Enrollment],
-          runner: T.nilable(Dev::RunnerRegistry::Runner),
+          by_slot: SlotMap,
+          runners: T::Hash[String, Dev::RunnerRegistry::Runner],
           runner_user: T.nilable(Dev::RunnerUser),
           yes: T::Boolean,
         ).void
       end
-      def retire!(scope, enrollments, runner, runner_user, yes:)
+      def retire!(scope, enrollments, by_slot, runners, runner_user, yes:)
         signs = []
-        signs << "#{enrollments.length} local enrollments" if enrollments.length > 1
-        signs << "GitHub lists '#{T.must(enrollments.first).name}' offline" if runner && !runner.online?
+        duplicated(by_slot).each do |dirs|
+          signs << "#{dirs.length} local enrollments named '#{T.must(dirs.first).name}'"
+        end
+        strangers(enrollments, by_slot).each do |enrollment|
+          signs << "an enrollment named '#{enrollment.name}' outside this host's family"
+        end
+        runners.each do |name, runner|
+          signs << "GitHub lists '#{name}' offline" unless runner.online?
+        end
         drifted(enrollments, runner_user).each do |enrollment|
           signs << "an enrollment that runs as #{enrollment.owner}, not #{T.must(runner_user).name}"
         end
@@ -409,6 +702,27 @@ module Dev
         end
 
         enrollments.each { |enrollment| @teardown.teardown!(enrollment) }
+      end
+
+      # `--slots N` under what is enrolled: list the slots past N, ask, and
+      # unregister them — or, declined, raise having changed nothing.
+      #
+      # @param scope [String]
+      # @param surplus [Array<Dev::RunnerDiscovery::Enrollment>] the slots past the asked count
+      # @param yes [Boolean]
+      # @raise [SurplusSlotsError] when the operator declines
+      sig { params(scope: String, surplus: T::Array[Dev::RunnerDiscovery::Enrollment], yes: T::Boolean).void }
+      def retire_surplus!(scope, surplus, yes:)
+        return if surplus.empty?
+
+        @out.puts ">>> #{scope} has #{surplus.length} more slot#{"s" if surplus.length > 1} than asked for:"
+        surplus.each { |enrollment| @out.puts "    #{enrollment.name} (#{enrollment.display_dir})" }
+        unless yes || @confirmer.confirm?("Unregister #{surplus.length == 1 ? "it" : "them"}?")
+          remedy = surplus.map { |enrollment| "  dev runner unregister #{enrollment.display_dir}" }.join("\n")
+          raise SurplusSlotsError, "nothing changed. Unregister them yourself, or re-run with the slots you have:\n#{remedy}"
+        end
+
+        surplus.each { |enrollment| @teardown.teardown!(enrollment) }
       end
 
       # The amend path: the discovered enrollment still exists on GitHub

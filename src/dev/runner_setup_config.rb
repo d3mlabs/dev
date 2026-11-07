@@ -7,7 +7,8 @@ module Dev
   # `runner:` block is retired): the comma-separated labels config.sh
   # expects, plus optional dir/name/version overrides (see Dev::RunnerSetup
   # for their defaults: ~/actions-runner-<first label>, the hostname, and
-  # the pinned runner version).
+  # the pinned runner version) and, at an org scope, the runner group the
+  # registration joins (config.sh's `--runnergroup`; unnamed = Default).
   class RunnerSetupConfig
     extend T::Sig
 
@@ -23,19 +24,24 @@ module Dev
     sig { returns(T.nilable(String)) }
     attr_reader :version
 
+    sig { returns(T.nilable(String)) }
+    attr_reader :group
+
     sig do
       params(
         labels: String,
         dir: T.nilable(String),
         name: T.nilable(String),
         version: T.nilable(String),
+        group: T.nilable(String),
       ).void
     end
-    def initialize(labels:, dir: nil, name: nil, version: nil)
+    def initialize(labels:, dir: nil, name: nil, version: nil, group: nil)
       @labels = labels
       @dir = dir
       @name = name
       @version = version
+      @group = group
     end
 
     sig { params(other: Object).returns(T::Boolean) }
@@ -43,7 +49,7 @@ module Dev
       return false unless other.is_a?(RunnerSetupConfig)
 
       @labels == other.labels && @dir == other.dir &&
-        @name == other.name && @version == other.version
+        @name == other.name && @version == other.version && @group == other.group
     end
 
     sig { params(other: Object).returns(T::Boolean) }
@@ -53,7 +59,7 @@ module Dev
 
     sig { returns(Integer) }
     def hash
-      [@labels, @dir, @name, @version].hash
+      [@labels, @dir, @name, @version, @group].hash
     end
   end
 end

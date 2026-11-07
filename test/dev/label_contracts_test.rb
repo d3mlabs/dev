@@ -14,6 +14,19 @@ class Dev::LabelContractsTest < Minitest::Test
     Dev::LabelContracts.for("ue-engine,x64").empty?
   end
 
+  test "any ai-flow label obliges the ai-flow runner group, owned by dev and pinned to ai-flow's two workflows; a bare set obliges none (dev#470)" do
+    Expect
+    Dev::LabelContracts.group_for(Dev::LabelContracts::AI_FLOW_LABELS.join(",")) == Dev::LabelContracts::AI_FLOW_GROUP
+    Dev::LabelContracts.group_for("macos,ai-build") == Dev::LabelContracts::AI_FLOW_GROUP
+    Dev::LabelContracts.group_for("ue-engine,x64").nil?
+    Dev::LabelContracts::AI_FLOW_GROUP.name == "ai-flow"
+    Dev::LabelContracts::AI_FLOW_GROUP.owned?
+    Dev::LabelContracts::AI_FLOW_GROUP.workflows == [
+      "d3mlabs/ai-flow/.github/workflows/ai-commands.yml@refs/heads/main",
+      "d3mlabs/ai-flow/.github/workflows/origin-firing.yml@refs/heads/main",
+    ]
+  end
+
   test "agent capability labels carry the agent host contract" do
     Expect
     Dev::LabelContracts.for("ai-build", bootstrap: typed_mock(Dev::AgentBootstrap)).length == 1

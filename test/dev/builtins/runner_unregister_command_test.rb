@@ -87,6 +87,44 @@ class Dev::Builtins::RunnerUnregisterCommandTest < Minitest::Test
     harness.torn_down.map(&:dir) == [repo_dir, org_dir]
   end
 
+  test "a scope one slot family serves is unregistered whole: the slots listed, one question, every slot torn down in slot order (dev#470)" do
+    Given "a family of three at the org, discovered out of slot order, and an operator who says yes"
+    home = Dir.mktmpdir
+    three = write_runner(home, "actions-runner-ai-ask-3", scope: "d3mlabs", name: "mac1-3")
+    one = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
+    two = write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
+    File.write(File.join(two, ".service"), "unit\n")
+    harness = build_harness(home: home)
+    harness.confirmer.expects(:confirm?).once.with("Unregister all 3?").returns(true)
+
+    When "unregistering by scope"
+    harness.command.call(args: parsed_args(harness.command, ["d3mlabs"]), context: projectless_context)
+
+    Then
+    harness.torn_down.map(&:dir) == [one, two, three]
+    harness.out.string.include?("3 slots on this host serve d3mlabs:")
+    harness.out.string.include?("  mac1 (~/actions-runner-ai-ask, no service)")
+    harness.out.string.include?("  mac1-2 (~/actions-runner-ai-ask-2, service installed)")
+    harness.out.string.include?("  mac1-3 (~/actions-runner-ai-ask-3, no service)")
+  end
+
+  test "declining a family's question tears nothing down; a dir still names exactly one slot" do
+    Given "a family of two"
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
+    two = write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
+    harness = build_harness(home: home)
+    harness.confirmer.expects(:confirm?).once.with("Unregister all 2?").returns(false)
+
+    When "declining by scope, then naming slot 2's dir with --yes"
+    harness.command.call(args: parsed_args(harness.command, ["d3mlabs"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--yes", "~/actions-runner-ai-ask-2"]), context: projectless_context)
+
+    Then
+    harness.torn_down.map(&:dir) == [two]
+    harness.out.string.include?("nothing changed")
+  end
+
   test "the teardown's resolution errors surface as they are — the shell shows the dirs to name" do
     Given "an ambiguous scope"
     home = Dir.mktmpdir

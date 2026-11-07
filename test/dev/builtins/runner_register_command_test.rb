@@ -40,13 +40,31 @@ class RecordedContract
 end unless defined?(RecordedContract)
 
 # The GitHub-side registry seam: answers find from a canned map and
-# records amends.
+# records amends; knows an org's runner groups ([org, name] => Group;
+# every org has an unpinned Default open to all repos unless a test says
+# otherwise), which group each runner id sits in, each group's selected
+# repos, and the repos themselves (private, with a derived id, unless
+# named) — and records every group write.
 class FakeRegistry
-  attr_reader :amends
+  attr_reader :amends, :group_writes
 
-  def initialize(runners: {})
+  PINS = Dev::LabelContracts::AI_FLOW_WORKFLOWS
+
+  class << self
+    def group(id:, name:, visibility: "selected", pinned: false, allows_public: false)
+      Dev::RunnerRegistry::Group.new(id: id, name: name, visibility: visibility, allows_public_repositories: allows_public,
+        restricted_to_workflows: pinned, selected_workflows: pinned ? PINS : [])
+    end
+  end
+
+  def initialize(runners: {}, groups: {}, placements: {}, selections: {}, repositories: {})
     @runners = runners
+    @groups = groups
+    @placements = placements
+    @selections = selections
+    @repositories = repositories
     @amends = []
+    @group_writes = []
   end
 
   def find(scope:, name:)
@@ -55,6 +73,47 @@ class FakeRegistry
 
   def amend!(scope:, runner_id:, labels:)
     @amends << [scope, runner_id, labels]
+  end
+
+  def group(org:, name:)
+    @groups[[org, name]] || (name == "Default" ? self.class.group(id: 1, name: "Default", visibility: "all") : nil)
+  end
+
+  def create_group!(org:, name:, visibility:, allows_public_repositories:, selected_workflows:)
+    @group_writes << [:create, org, name, visibility, allows_public_repositories, selected_workflows]
+    @groups[[org, name]] = Dev::RunnerRegistry::Group.new(id: 99, name: name, visibility: visibility, allows_public_repositories: allows_public_repositories,
+      restricted_to_workflows: !selected_workflows.empty?, selected_workflows: selected_workflows)
+  end
+
+  def update_group!(org:, group_id:, visibility: nil, allows_public_repositories: nil, selected_workflows: nil)
+    @group_writes << [:update, org, group_id, visibility, allows_public_repositories, selected_workflows]
+    before = @groups.values.find { |group| group.id == group_id }
+    Dev::RunnerRegistry::Group.new(
+      id: group_id, name: before.name, visibility: visibility || before.visibility,
+      allows_public_repositories: allows_public_repositories.nil? ? before.allows_public_repositories : allows_public_repositories,
+      restricted_to_workflows: selected_workflows ? !selected_workflows.empty? : before.restricted_to_workflows,
+      selected_workflows: selected_workflows || before.selected_workflows,
+    )
+  end
+
+  def group_of(org:, runner_id:)
+    @placements[[org, runner_id]]
+  end
+
+  def group_repositories(org:, group_id:)
+    @selections.fetch([org, group_id], [])
+  end
+
+  def select_group_repositories!(org:, group_id:, repository_ids:)
+    @group_writes << [:select, org, group_id, repository_ids]
+  end
+
+  def place_in_group!(org:, group_id:, runner_id:)
+    @group_writes << [:place, org, group_id, runner_id]
+  end
+
+  def repository(repo)
+    @repositories[repo] || Dev::RunnerRegistry::Repository.new(id: repo.sum, full_name: repo, visibility: "private")
   end
 end unless defined?(FakeRegistry)
 
@@ -70,7 +129,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     Expect "no flag lists by name alone"
     command.flags.all? { |flag| !flag.desc.empty? }
-    command.flags.map(&:name) == ["--org", "--labels", "--ai-flow", "--dir", "--name", "--repo", "--agent-user", "--as", "--yes"]
+    command.flags.map(&:name) == [
+      "--org", "--labels", "--ai-flow", "--slots", "--group",
+      "--dir", "--name", "--repo", "--agent-user", "--as", "--yes"
+    ]
   end
 
   # --- label + scope resolution ---------------------------------------
@@ -406,6 +468,522 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     registry.amends == []
   end
 
+  # --- slots: a host's concurrency at a scope (dev#470) ------------------
+
+  test "--slots 3 on a fresh scope enrolls a family of three: slot 1 as always, then <host>-2 and <host>-3 beside it" do
+    Given "no enrollment at the org, a host named mac1"
+    harness = build_harness(contracts: 1, scope: "d3mlabs", hostname: "mac1")
+
+    When "registering the agent host with three slots"
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "3"]), context: projectless_context)
+
+    Then "one converge, then three enrollments, each followed by its after_enroll; slot 1 is the plain config (today's enrollment), the others name and place themselves from it"
+    harness.events == [
+      [:converge, false, nil, nil, nil],
+      [:run], [:after_enroll, "/tmp/runner-dir"],
+      [:run], [:after_enroll, "/tmp/runner-dir-2"],
+      [:run], [:after_enroll, "/tmp/runner-dir-3"],
+    ]
+    labels = Dev::LabelContracts::AI_FLOW_LABELS.join(",")
+    harness.wirings.map(&:first) == [
+      Dev::RunnerSetupConfig.new(labels: labels, group: "ai-flow"),
+      Dev::RunnerSetupConfig.new(labels: labels, dir: "/tmp/runner-dir-2", name: "mac1-2", group: "ai-flow"),
+      Dev::RunnerSetupConfig.new(labels: labels, dir: "/tmp/runner-dir-3", name: "mac1-3", group: "ai-flow"),
+    ]
+  end
+
+  test "--slots 3 over a one-slot enrollment amends slot 1 in place and adds slots 2 and 3 beside its dir" do
+    Given "a host already serving the org with one online runner, in a dir of its own naming"
+    home = Dir.mktmpdir
+    dir = write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs", name: "mac-box")
+    registry = FakeRegistry.new(
+      runners: { ["d3mlabs", "mac-box"] => Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: ["cellbound3d"], status: "online") },
+    )
+    harness = build_harness(contracts: 1, home: home, registry: registry, scope: "d3mlabs")
+    harness.confirmer.expects(:confirm?).never
+
+    When "growing to three"
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "3"]), context: projectless_context)
+
+    Then "slot 1 is amended, not re-enrolled; the new slots take the family's base (the enrollment's name) and sit beside its dir"
+    registry.amends == [["d3mlabs", 42, Dev::LabelContracts::AI_FLOW_LABELS]]
+    harness.events == [
+      [:converge, false, nil, nil, nil],
+      [:after_enroll, dir],
+      [:run], [:after_enroll, "#{dir}-2"],
+      [:run], [:after_enroll, "#{dir}-3"],
+    ]
+    harness.wirings.drop(1).map(&:first) == [
+      Dev::RunnerSetupConfig.new(labels: Dev::LabelContracts::AI_FLOW_LABELS.join(","), dir: "#{dir}-2", name: "mac-box-2", group: "ai-flow"),
+      Dev::RunnerSetupConfig.new(labels: Dev::LabelContracts::AI_FLOW_LABELS.join(","), dir: "#{dir}-3", name: "mac-box-3", group: "ai-flow"),
+    ]
+    harness.torn_down == []
+  end
+
+  test "re-running without --slots keeps the family's size: every slot amended, nothing added or retired" do
+    Given "a family of two, both online with stale labels"
+    home = Dir.mktmpdir
+    one = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
+    two = write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
+    registry = FakeRegistry.new(
+      runners: {
+        ["d3mlabs", "mac1"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-ask"], status: "online"),
+        ["d3mlabs", "mac1-2"] => Dev::RunnerRegistry::Runner.new(id: 2, custom_labels: ["ai-ask"], status: "online"),
+      },
+    )
+    harness = build_harness(contracts: 1, home: home, registry: registry, scope: "d3mlabs")
+    harness.confirmer.expects(:confirm?).never
+
+    When "re-running register"
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: projectless_context)
+
+    Then
+    registry.amends.map { |_scope, id, _labels| id } == [1, 2]
+    harness.events == [[:converge, false, nil, nil, nil], [:after_enroll, one], [:after_enroll, two]]
+    harness.torn_down == []
+  end
+
+  test "a smaller --slots lists the surplus slots, asks, and on yes unregisters them — the kept slots are amended as usual" do
+    Given "a family of three, asked down to one"
+    home = Dir.mktmpdir
+    one = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
+    two = write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
+    three = write_runner(home, "actions-runner-ai-ask-3", scope: "d3mlabs", name: "mac1-3")
+    runners = %w[mac1 mac1-2 mac1-3].each_with_index.to_h do |name, i|
+      [["d3mlabs", name], Dev::RunnerRegistry::Runner.new(id: i + 1, custom_labels: Dev::LabelContracts::AI_FLOW_LABELS, status: "online")]
+    end
+    registry = FakeRegistry.new(runners: runners)
+    harness = build_harness(home: home, registry: registry, scope: "d3mlabs")
+    harness.confirmer.expects(:confirm?).once.with("Unregister them?").returns(true)
+
+    When "shrinking"
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "1"]), context: projectless_context)
+
+    Then "slots 2 and 3 are torn down; slot 1 stays, labels current"
+    harness.torn_down.map(&:dir) == [two, three]
+    harness.events == []
+    registry.amends == []
+    harness.out.string.include?("2 more slots than asked for")
+    harness.out.string.include?("mac1-2 (~/actions-runner-ai-ask-2)")
+    File.directory?(one)
+  end
+
+  test "declining the shrink changes nothing and names the unregister commands" do
+    Given "a family of two, asked down to one, and an operator who says no"
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
+    write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
+    registry = FakeRegistry.new(
+      runners: {
+        ["d3mlabs", "mac1"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-ask"], status: "online"),
+        ["d3mlabs", "mac1-2"] => Dev::RunnerRegistry::Runner.new(id: 2, custom_labels: ["ai-ask"], status: "online"),
+      },
+    )
+    harness = build_harness(home: home, registry: registry, scope: "d3mlabs")
+    harness.confirmer.expects(:confirm?).once.with("Unregister it?").returns(false)
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "1"]), context: projectless_context)
+
+    Then
+    error = raises Dev::Builtins::RunnerRegisterCommand::SurplusSlotsError
+    error.message.include?("dev runner unregister ~/actions-runner-ai-ask-2")
+    harness.torn_down == []
+    registry.amends == []
+    harness.events == []
+  end
+
+  test "a gap in the family is re-filled: slots 1 and 3 enrolled, bare register adds slot 2" do
+    Given
+    home = Dir.mktmpdir
+    one = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
+    write_runner(home, "actions-runner-ai-ask-3", scope: "d3mlabs", name: "mac1-3")
+    registry = FakeRegistry.new(
+      runners: {
+        ["d3mlabs", "mac1"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: Dev::LabelContracts::AI_FLOW_LABELS, status: "online"),
+        ["d3mlabs", "mac1-3"] => Dev::RunnerRegistry::Runner.new(id: 3, custom_labels: Dev::LabelContracts::AI_FLOW_LABELS, status: "online"),
+      },
+    )
+    harness = build_harness(home: home, registry: registry, scope: "d3mlabs")
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: projectless_context)
+
+    Then
+    harness.events == [[:run]]
+    harness.wirings.last.first == Dev::RunnerSetupConfig.new(labels: Dev::LabelContracts::AI_FLOW_LABELS.join(","), dir: "#{one}-2", name: "mac1-2", group: "ai-flow")
+  end
+
+  test "a slot GitHub has lost re-enrolls into its own dir under its own name; the rest are amended" do
+    Given "a family of two whose second runner is gone server-side"
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
+    two = write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
+    registry = FakeRegistry.new(
+      runners: { ["d3mlabs", "mac1"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: Dev::LabelContracts::AI_FLOW_LABELS, status: "online") },
+    )
+    harness = build_harness(home: home, registry: registry, scope: "d3mlabs")
+    harness.confirmer.expects(:confirm?).never
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: projectless_context)
+
+    Then
+    harness.events == [[:run]]
+    harness.wirings.last.first == Dev::RunnerSetupConfig.new(labels: Dev::LabelContracts::AI_FLOW_LABELS.join(","), dir: two, name: "mac1-2", group: "ai-flow")
+    harness.torn_down == []
+  end
+
+  test "an enrollment at the scope outside the family — another name — is superseded like a leftover: listed, asked about, retired, then the family enrolls fresh" do
+    Given "a slot of this host's family and an enrollment under a name that is nobody's slot"
+    home = Dir.mktmpdir
+    mine = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
+    other = write_runner(home, "actions-runner-old", scope: "d3mlabs", name: "old-box")
+    registry = FakeRegistry.new(
+      runners: {
+        ["d3mlabs", "mac1"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-ask"], status: "online"),
+        ["d3mlabs", "old-box"] => Dev::RunnerRegistry::Runner.new(id: 9, custom_labels: ["ai-ask"], status: "online"),
+      },
+    )
+    harness = build_harness(home: home, registry: registry, scope: "d3mlabs", hostname: "mac1")
+    harness.confirmer.expects(:confirm?).once.with("Unregister these and enroll fresh?").returns(true)
+
+    When "registering as mac1 with two slots"
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--name", "mac1", "--slots", "2"]), context: projectless_context)
+
+    Then
+    harness.torn_down.map(&:dir).sort == [mine, other].sort
+    harness.out.string.include?("an enrollment named 'old-box' outside this host's family")
+    harness.events == [[:run], [:run]]
+  end
+
+  test "--slots #{raw.inspect} is refused before anything converges" do
+    Given
+    harness = build_harness(contracts: 1)
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", raw]), context: projectless_context)
+
+    Then
+    error = raises ArgumentError
+    error.message.include?("--slots")
+    harness.events == []
+
+    Where
+    raw
+    "0"
+    "-1"
+    "two"
+    "1.5"
+  end
+
+  test "--dir with more than one slot is a contradiction: every slot is its own dir" do
+    Given
+    harness = build_harness
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "2", "--dir", "~/x"]), context: projectless_context)
+
+    Then
+    error = raises ArgumentError
+    error.message.include?("--dir")
+    harness.wirings == []
+  end
+
+  # --- runner groups: who may use the slots (dev#470) --------------------
+
+  AI_FLOW_SET = Dev::LabelContracts::AI_FLOW_LABELS.join(",")
+
+  test "ai-flow labels oblige the ai-flow group: a fresh org registration creates it — selected, pinned to ai-flow's workflows — hands it to config.sh, and admits the checkout's repo" do
+    Given "an org with no ai-flow group yet, registering from the cellbound checkout"
+    registry = FakeRegistry.new
+    harness = build_harness(registry: registry, scope: "d3mlabs", repo: "d3mlabs/cellbound")
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: projectless_context)
+
+    Then "created before the enrollment, the slot's config names it, the repo is selected into it (private: no public flag)"
+    registry.group_writes == [
+      [:create, "d3mlabs", "ai-flow", "selected", false, Dev::LabelContracts::AI_FLOW_WORKFLOWS],
+      [:select, "d3mlabs", 99, ["d3mlabs/cellbound".sum]],
+    ]
+    harness.wirings.first.first == Dev::RunnerSetupConfig.new(labels: AI_FLOW_SET, group: "ai-flow")
+    harness.out.string.include?("Creating runner group 'ai-flow' at d3mlabs")
+    harness.out.string.include?("d3mlabs/cellbound may use group 'ai-flow'")
+  end
+
+  test "a --labels subset of the ai-flow vocabulary is an ai-flow runner too: same group, no --ai-flow needed" do
+    Given
+    registry = FakeRegistry.new(groups: { ["d3mlabs", "ai-flow"] => FakeRegistry.group(id: 7, name: "ai-flow", pinned: true) })
+    harness = build_harness(registry: registry, scope: "d3mlabs")
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-build"]), context: projectless_context)
+
+    Then
+    harness.wirings.first.first.group == "ai-flow"
+  end
+
+  test "an existing ai-flow group that satisfies its contract is left alone; one the console unpinned is healed before anything enrolls" do
+    Given "two orgs' worth of state: a sound group already seeing the checkout's repo, and one the console opened to every repo and unpinned"
+    already = [Dev::RunnerRegistry::GroupRepository.new(id: 100, full_name: "d3mlabs/cellbound-3d")]
+    sound = FakeRegistry.new(groups: { ["d3mlabs", "ai-flow"] => FakeRegistry.group(id: 7, name: "ai-flow", pinned: true) }, selections: { ["d3mlabs", 7] => already })
+    drifted = FakeRegistry.new(groups: { ["d3mlabs", "ai-flow"] => FakeRegistry.group(id: 7, name: "ai-flow", pinned: false, visibility: "all") })
+    sound_harness = build_harness(registry: sound, scope: "d3mlabs")
+    drifted_harness = build_harness(registry: drifted, scope: "d3mlabs")
+
+    When
+    sound_harness.command.call(args: parsed_args(sound_harness.command, ["--org", "--ai-flow"]), context: projectless_context)
+    drifted_harness.command.call(args: parsed_args(drifted_harness.command, ["--org", "--ai-flow"]), context: projectless_context)
+
+    Then "the sound group needs no write at all; the drifted one is re-pinned and re-selected, then the repo admitted"
+    sound.group_writes == []
+    drifted.group_writes.first == [:update, "d3mlabs", 7, "selected", nil, Dev::LabelContracts::AI_FLOW_WORKFLOWS]
+    drifted.group_writes.last.first == :select
+    drifted_harness.out.string.include?("drifted (visibility is 'all', not 'selected'; not restricted to workflows)")
+  end
+
+  test "an amended slot sitting in another group is moved into the ai-flow group; one already there is not touched" do
+    Given "a family of one in Default, growing to two; the ai-flow group already sees the checkout's repo"
+    home = Dir.mktmpdir
+    dir = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
+    default = FakeRegistry.group(id: 1, name: "Default", visibility: "all")
+    ai_flow = FakeRegistry.group(id: 7, name: "ai-flow", pinned: true)
+    registry = FakeRegistry.new(
+      runners: { ["d3mlabs", "mac1"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: Dev::LabelContracts::AI_FLOW_LABELS, status: "online") },
+      groups: { ["d3mlabs", "ai-flow"] => ai_flow },
+      placements: { ["d3mlabs", 1] => default },
+      selections: { ["d3mlabs", 7] => [Dev::RunnerRegistry::GroupRepository.new(id: 100, full_name: "d3mlabs/cellbound-3d")] },
+    )
+    harness = build_harness(home: home, registry: registry, scope: "d3mlabs")
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "2"]), context: projectless_context)
+
+    Then "slot 1 moved; slot 2's config carries the group for config.sh --runnergroup"
+    registry.group_writes == [[:place, "d3mlabs", 7, 1]]
+    harness.wirings.last.first == Dev::RunnerSetupConfig.new(labels: AI_FLOW_SET, dir: "#{dir}-2", name: "mac1-2", group: "ai-flow")
+    harness.out.string.include?("Moving runner 1 into group 'ai-flow' from 'Default'")
+  end
+
+  test "the repo this registration is for is derived like the org and the label: --repo carries it, and a repo already selected is a no-op" do
+    Given
+    ai_flow = FakeRegistry.group(id: 7, name: "ai-flow", pinned: true)
+    registry = FakeRegistry.new(
+      groups: { ["d3mlabs", "ai-flow"] => ai_flow },
+      selections: { ["d3mlabs", 7] => [Dev::RunnerRegistry::GroupRepository.new(id: 100, full_name: "d3mlabs/Dev")] },
+    )
+    harness = build_harness(registry: registry, scope: "d3mlabs", repo: "d3mlabs/cellbound")
+
+    When "registering for dev from the cellbound checkout, via --repo"
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--repo", "d3mlabs/dev"]), context: projectless_context)
+
+    Then
+    registry.group_writes == []
+    harness.out.string.include?("d3mlabs/dev may use group 'ai-flow'.")
+  end
+
+  test "a public repo admitted to the pinned ai-flow group turns on allows_public_repositories first — the pin is what makes that safe" do
+    Given
+    ai_flow = FakeRegistry.group(id: 7, name: "ai-flow", pinned: true)
+    registry = FakeRegistry.new(
+      groups: { ["d3mlabs", "ai-flow"] => ai_flow },
+      repositories: { "d3mlabs/dev" => Dev::RunnerRegistry::Repository.new(id: 100, full_name: "d3mlabs/dev", visibility: "public") },
+    )
+    harness = build_harness(registry: registry, scope: "d3mlabs", repo: "d3mlabs/dev")
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: projectless_context)
+
+    Then
+    registry.group_writes == [[:update, "d3mlabs", 7, nil, true, nil], [:select, "d3mlabs", 7, [100]]]
+  end
+
+  test "the invariant holds for a human's group too: a public repo may not be admitted to an unpinned --group, and the slot was enrolled before the refusal" do
+    Given "ue-hosted, unpinned and selected, registered for from the public dev checkout"
+    registry = FakeRegistry.new(
+      groups: { ["d3mlabs", "ue-hosted"] => FakeRegistry.group(id: 3, name: "ue-hosted", pinned: false) },
+      repositories: { "d3mlabs/dev" => Dev::RunnerRegistry::Repository.new(id: 100, full_name: "d3mlabs/dev", visibility: "public") },
+    )
+    harness = build_harness(registry: registry, scope: "d3mlabs", repo: "d3mlabs/dev")
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ue-engine", "--group", "ue-hosted"]), context: projectless_context)
+
+    Then
+    error = raises Dev::RunnerGroups::UnpinnedGroupError
+    error.message.include?("plans#5 H3")
+    registry.group_writes == []
+    harness.events == [[:run]]
+  end
+
+  test "--group names a human's group for a custom pool: it must exist, and the checkout's repo is admitted to it" do
+    Given
+    registry = FakeRegistry.new(groups: { ["d3mlabs", "ue-hosted"] => FakeRegistry.group(id: 3, name: "ue-hosted") })
+    harness = build_harness(registry: registry, scope: "d3mlabs", repo: "d3mlabs/unreal-engine")
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ue-engine", "--group", "ue-hosted"]), context: projectless_context)
+
+    Then
+    harness.wirings.first.first == Dev::RunnerSetupConfig.new(labels: "ue-engine", group: "ue-hosted")
+    registry.group_writes == [[:select, "d3mlabs", 3, ["d3mlabs/unreal-engine".sum]]]
+  end
+
+  test "a --group the org does not have is refused by name before anything enrolls: a human's group is made in the org's settings" do
+    Given
+    harness = build_harness(scope: "d3mlabs")
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ue-engine", "--group", "agents"]), context: projectless_context)
+
+    Then
+    error = raises Dev::RunnerGroups::NoSuchGroupError
+    error.message.include?("no runner group named 'agents'")
+    harness.events == []
+  end
+
+  test "a custom pool naming no group sits in Default, so Default is what the checkout's repo is admitted to" do
+    Given "a Default narrowed to selected repos"
+    registry = FakeRegistry.new(groups: { ["d3mlabs", "Default"] => FakeRegistry.group(id: 1, name: "Default") })
+    harness = build_harness(registry: registry, scope: "d3mlabs", repo: "d3mlabs/unreal-engine")
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ue-engine"]), context: projectless_context)
+
+    Then
+    harness.wirings.first.first.group.nil?
+    registry.group_writes == [[:select, "d3mlabs", 1, ["d3mlabs/unreal-engine".sum]]]
+  end
+
+  test "#{words.join(" ")} is a usage error: #{why}" do
+    Given
+    harness = build_harness
+
+    When
+    context = words.include?("--org") ? projectless_context : build_context(name: "Cellbound3D")
+    harness.command.call(args: parsed_args(harness.command, words), context: context)
+
+    Then
+    raises ArgumentError
+    harness.wirings == []
+
+    Where
+    words                                                                  | why
+    ["--labels", "x", "--group", "Default"]                                | "groups partition an org's runners"
+    ["--org", "--ai-flow", "--group", "agents"]                            | "the ai-flow shortcut names its group"
+    ["--org", "--labels", "ai-build", "--group", "agents"]                 | "an ai-flow label names its group"
+  end
+
+  test "--ai-flow --group ai-flow is the shortcut spelled out, not a contradiction" do
+    Given
+    registry = FakeRegistry.new(groups: { ["d3mlabs", "ai-flow"] => FakeRegistry.group(id: 7, name: "ai-flow", pinned: true) })
+    harness = build_harness(registry: registry, scope: "d3mlabs")
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--group", "ai-flow"]), context: projectless_context)
+
+    Then
+    harness.wirings.first.first.group == "ai-flow"
+  end
+
+  test "a repo-scoped registration under its own label touches no group at all" do
+    Given
+    registry = FakeRegistry.new
+    harness = build_harness(registry: registry)
+
+    When
+    harness.command.call(args: no_args, context: build_context(name: "Cellbound3D"))
+
+    Then
+    registry.group_writes == []
+    harness.wirings.first.first.group.nil?
+  end
+
+  # --- the exclusion, derived: a repo-scoped runner for labels an org group serves ---
+
+  test "a repo-scoped ai-flow runner whose repo may also use the org's ai-flow group: register says so, asks, and takes the repo out of the group on yes" do
+    Given "cellbound-3d among the ai-flow group's repos, registering its own runner, an operator who says yes"
+    registry = FakeRegistry.new(
+      groups: { ["d3mlabs", "ai-flow"] => FakeRegistry.group(id: 7, name: "ai-flow", pinned: true) },
+      selections: { ["d3mlabs", 7] => [
+        Dev::RunnerRegistry::GroupRepository.new(id: 100, full_name: "d3mlabs/dev"),
+        Dev::RunnerRegistry::GroupRepository.new(id: 200, full_name: "d3mlabs/Cellbound-3D"),
+      ] },
+    )
+    harness = build_harness(registry: registry)
+    harness.confirmer.expects(:confirm?).once.with("Make this host's runner its only one?").returns(true)
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--ai-flow"]), context: build_context(name: "Cellbound3D"))
+
+    Then "the slot was enrolled at repo scope with no group, then the repo left the org group — the list written whole"
+    harness.wirings.first.first == Dev::RunnerSetupConfig.new(labels: AI_FLOW_SET)
+    registry.group_writes == [[:select, "d3mlabs", 7, [100]]]
+    harness.out.string.include?("d3mlabs/cellbound-3d may also use the org's 'ai-flow' runners for these labels — its jobs would land on either.")
+    harness.out.string.include?("d3mlabs/cellbound-3d may no longer use group 'ai-flow'")
+  end
+
+  test "declining keeps the repo in the org's group — pooling is a legitimate answer — and says so; --yes answers yes" do
+    Given
+    make = lambda do
+      FakeRegistry.new(
+        groups: { ["d3mlabs", "ai-flow"] => FakeRegistry.group(id: 7, name: "ai-flow", pinned: true) },
+        selections: { ["d3mlabs", 7] => [Dev::RunnerRegistry::GroupRepository.new(id: 200, full_name: "d3mlabs/cellbound-3d")] },
+      )
+    end
+    declined = make.call
+    declining = build_harness(registry: declined)
+    declining.confirmer.expects(:confirm?).once.returns(false)
+    headless = make.call
+    yes = build_harness(registry: headless)
+    yes.confirmer.expects(:confirm?).never
+
+    When
+    declining.command.call(args: parsed_args(declining.command, ["--ai-flow"]), context: build_context(name: "Cellbound3D"))
+    yes.command.call(args: parsed_args(yes.command, ["--ai-flow", "--yes"]), context: build_context(name: "Cellbound3D"))
+
+    Then
+    declined.group_writes == []
+    declining.out.string.include?("Left as is: d3mlabs/cellbound-3d keeps using the org's 'ai-flow' runners too.")
+    headless.group_writes == [[:select, "d3mlabs", 7, []]]
+  end
+
+  test "nothing to ask when #{why}" do
+    Given
+    harness = build_harness(registry: registry)
+    harness.confirmer.expects(:confirm?).never
+
+    When
+    harness.command.call(args: parsed_args(harness.command, words), context: build_context(name: "Cellbound3D"))
+
+    Then
+    registry.group_writes == []
+    !harness.out.string.include?("may also use")
+
+    Where
+    words         | registry                                                                                                                                                                                                   | why
+    ["--ai-flow"] | FakeRegistry.new                                                                                                                                                                                           | "the org has no ai-flow group"
+    ["--ai-flow"] | FakeRegistry.new(groups: { ["d3mlabs", "ai-flow"] => FakeRegistry.group(id: 7, name: "ai-flow", pinned: true) })                                                                                           | "the repo is not among the group's repos"
+    ["--ai-flow"] | FakeRegistry.new(groups: { ["d3mlabs", "ai-flow"] => FakeRegistry.group(id: 7, name: "ai-flow", pinned: true, visibility: "all") })                                                                        | "the group is open to every repo (not dev's list to edit)"
+    []            | FakeRegistry.new(groups: { ["d3mlabs", "ai-flow"] => FakeRegistry.group(id: 7, name: "ai-flow", pinned: true) }, selections: { ["d3mlabs", 7] => [Dev::RunnerRegistry::GroupRepository.new(id: 200, full_name: "d3mlabs/cellbound-3d")] }) | "the labels oblige no group"
+  end
+
+  test "an org this login cannot read leaves the question unasked and unanswered, out loud — a repo admin need not be an org admin" do
+    Given
+    registry = FakeRegistry.new
+    registry.define_singleton_method(:group) { |org:, name:| raise Dev::RunnerRegistry::QueryError, "could not list the runner groups at #{org}: HTTP 403" }
+    harness = build_harness(registry: registry)
+    harness.confirmer.expects(:confirm?).never
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--ai-flow"]), context: build_context(name: "Cellbound3D"))
+
+    Then
+    harness.wirings.first.first == Dev::RunnerSetupConfig.new(labels: AI_FLOW_SET)
+    harness.out.string.include?("Could not read d3mlabs's runner groups (could not list the runner groups at d3mlabs: HTTP 403) — whether d3mlabs/cellbound-3d also uses the org's runners is unchecked.")
+  end
+
   # --- contracts --------------------------------------------------------
 
   test "register hands the contract the container fact and sizing hint" do
@@ -739,17 +1317,25 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
   # test scripts (tests that say nothing tolerate no question).
   def build_harness(contracts: 0, home: Dir.mktmpdir, registry: FakeRegistry.new,
                     scope: "d3mlabs/cellbound-3d", repo: "d3mlabs/cellbound-3d", contracts_factory: nil,
-                    repo_resolver: nil, runner_user: nil, data_root_provisioner: nil, reach: nil, pins: [])
+                    repo_resolver: nil, runner_user: nil, data_root_provisioner: nil, reach: nil, pins: [],
+                    hostname: "mac1")
     wirings = []
     events = []
     torn_down = []
     as_names = []
     reach_roots = []
     out = StringIO.new
-    setup = typed_mock(Dev::RunnerSetup)
-    setup.stubs(:run).with { events << [:run] || true }
-    setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
-    setup.stubs(:resolve_scope).returns(scope)
+    # A setup double per dir: the default one for a config naming none,
+    # one resolving to the config's dir otherwise (a further slot's, or a
+    # re-enrollment's).
+    setups = Hash.new do |cache, dir|
+      double = typed_mock(Dev::RunnerSetup)
+      double.stubs(:run).with { events << [:run] || true }
+      double.stubs(:resolve_dir).returns(dir || "/tmp/runner-dir")
+      double.stubs(:resolve_name).returns(hostname)
+      double.stubs(:resolve_scope).returns(scope)
+      cache[dir] = double
+    end
     # The engine step is a mocha mock so each test states whether it expects
     # a provision; tests that say nothing tolerate any call.
     engine = typed_mock(Dev::EngineProvisioner)
@@ -761,7 +1347,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     command = Dev::Builtins::RunnerRegisterCommand.new(
       runner_setup_factory: ->(config, repo_override, org, as_user) {
         wirings << [config, repo_override, org, as_user]
-        setup
+        setups[config.dir]
       },
       # The host rule's seam: nil is a Mac (no runner user); a test on the
       # Linux rule injects one and sees what --as named.

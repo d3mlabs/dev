@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "dev/agent_bootstrap"
+require "dev/runner_group_contract"
 
 module Dev
   # The label doctrine's enforcement half (plans#26): a capability label is
@@ -10,10 +11,12 @@ module Dev
   # every label being advertised before it enrolls; the registry lives here
   # so future labels slot in without touching register itself.
   #
-  # Today one contract exists: the agent capability labels (`ai-build`,
+  # Two contracts exist: the agent capability labels (`ai-build`,
   # `ai-learn`) make the box an agent host and require the agent host
-  # bootstrap. A bare label (e.g. the gamebox's target-host label) requires
-  # nothing.
+  # bootstrap (host-side); any ai-flow label obliges, at org scope, the
+  # ai-flow runner group pinned to ai-flow's workflows (org-side, see
+  # AI_FLOW_GROUP). A bare label (e.g. the gamebox's target-host label)
+  # requires nothing.
   class LabelContracts
     extend T::Sig
 
@@ -28,6 +31,30 @@ module Dev
     # behind `dev runner register --org --ai-flow` (the agent host enrolls
     # with the full set; a partitioned topology passes --labels instead).
     AI_FLOW_LABELS = T.let(%w[ai-ask ai-edit ai-split ai-build ai-learn].freeze, T::Array[String])
+
+    # The two ai-flow workflows that may land jobs on an ai-flow runner —
+    # the reusable command workflow and the origin-firing check (both run
+    # on these labels; a single pin starved the checks, plans#5 H3). Jobs
+    # defined in a reusable workflow are checked against the reusable
+    # workflow's path and ref, so this pins the runners to exactly these
+    # files at ai-flow's main, whoever calls them. Another cross-repo
+    # literal duplicated knowingly: the paths are ai-flow's, the ref is
+    # where every caller workflow points (`@main`).
+    AI_FLOW_WORKFLOWS = T.let(
+      %w[
+        d3mlabs/ai-flow/.github/workflows/ai-commands.yml@refs/heads/main
+        d3mlabs/ai-flow/.github/workflows/origin-firing.yml@refs/heads/main
+      ].freeze,
+      T::Array[String],
+    )
+
+    # The org-side half of the ai-flow contract (dev#470): every runner
+    # carrying an ai-flow label sits in the `ai-flow` runner group, which
+    # dev owns — created when missing, pinned to AI_FLOW_WORKFLOWS, its
+    # selected repositories the checkouts register ran in. Nothing about
+    # it is typed by a human, so nothing about it can be forgotten; the
+    # console can drift it, and the next register heals it.
+    AI_FLOW_GROUP = T.let(RunnerGroupContract.new(name: "ai-flow", workflows: AI_FLOW_WORKFLOWS), RunnerGroupContract)
 
     # The agent host obligation: the host-singular bootstrap, the agent's
     # own container engine when the served repo builds in one, and the
@@ -95,6 +122,19 @@ module Dev
       sig { params(labels: String).returns(T::Boolean) }
       def agent_host?(labels)
         labels.split(",").map(&:strip).intersect?(AGENT_CAPABILITY_LABELS)
+      end
+
+      # The runner group an advertised label set obliges at org scope:
+      # the ai-flow group for any ai-flow label (`--ai-flow` or a
+      # `--labels` subset of the vocabulary); nil for a bare label set,
+      # whose group is the operator's to name (`--group`) or config.sh's
+      # Default.
+      #
+      # @param labels [String] comma-separated labels (config.sh shape)
+      # @return [Dev::RunnerGroupContract, nil]
+      sig { params(labels: String).returns(T.nilable(RunnerGroupContract)) }
+      def group_for(labels)
+        labels.split(",").map(&:strip).intersect?(AI_FLOW_LABELS) ? AI_FLOW_GROUP : nil
       end
     end
   end

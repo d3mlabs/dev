@@ -11,6 +11,7 @@ require "dev/deps/dependency"
 require "dev/host_reach"
 require "dev/label_contracts"
 require "dev/runner_discovery"
+require "dev/runner_family"
 require "dev/runner_registry"
 require "dev/runner_user"
 require "dev/settings"
@@ -18,8 +19,11 @@ require "dev/settings"
 module Dev
   # `dev runner status` — register's inspect-only counterpart: this
   # machine's discovered enrollments (every ~/actions-runner*/.runner),
-  # each one's labels read from GitHub (their single home — unknown when
-  # offline), and the inspected reality of every agent-labeled enrollment's
+  # grouped into their families (dev#470: the slots sharing a base name at
+  # a scope — the host's concurrency there — with, at an org scope, the
+  # runner group and the repos it is visible to), each one's labels read
+  # from GitHub (their single home — unknown when offline), and the
+  # inspected reality of every agent-labeled enrollment's
   # contract. Nothing here mutates and nothing is recorded — every fact is
   # re-derived from the host or GitHub every time (plans#26: inspected,
   # never recorded). No dev.yml involved: status is the machine's view,
@@ -42,7 +46,7 @@ module Dev
     EXPIRATION_HEADER = T.let(/^github-authentication-token-expiration:\s*(\d{4}-\d{2}-\d{2})/i, Regexp)
 
     # @param discovery [Dev::RunnerDiscovery] this host's enrollments
-    # @param registry [#find] the GitHub-side label reader (never mutates here)
+    # @param registry [#find, #group_of, #group_repositories] the GitHub-side reader (never mutates here)
     # @param out [IO, StringIO] report stream
     # @param executor [#quiet?, #capture] probe seam (never mutates)
     # @param agent_user [String] expected run-as user
@@ -54,6 +58,8 @@ module Dev
     # @param container_required [Boolean] whether the served repo's lock pins an image
     # @param host_identity [Dev::RunnerUser, nil] the Linux host rule's user; nil elsewhere
     # @param pins [Array<Dev::Deps::Dependency>] the enclosing checkout's lock, when run in one
+    # @param repo [String, nil] the enclosing checkout's "owner/repo", when run in one — the
+    #   repo whose access to each org family is reported
     # @param reach_factory [Proc] builds the reach check for an identity; injected for tests
     sig do
       params(
@@ -69,6 +75,7 @@ module Dev
         container_required: T::Boolean,
         host_identity: T.nilable(Dev::RunnerUser),
         pins: T::Array[Deps::Dependency],
+        repo: T.nilable(String),
         reach_factory: T.proc.params(identity: Dev::RunnerUser).returns(T.nilable(HostReach)),
       ).void
     end
@@ -82,9 +89,11 @@ module Dev
                    container_required: false,
                    host_identity: Dev::RunnerUser.for_host,
                    pins: [],
+                   repo: nil,
                    reach_factory: ->(identity) { HostReach.new(identity: identity) })
       @host_identity = host_identity
       @pins = pins
+      @repo = repo
       @reach_factory = reach_factory
       @discovery = T.let(host_identity ? discovery.also_under(host_identity.home) : discovery, Dev::RunnerDiscovery)
       @registry = registry
@@ -145,12 +154,95 @@ module Dev
         return []
       end
 
-      enrollments.filter_map do |enrollment|
-        @out.puts "Runner '#{enrollment.name}' (#{enrollment.display_dir}):"
-        line(true, "registered: #{enrollment.scope}")
-        report_owner(enrollment)
-        labels = report_labels(enrollment)
-        enrollment.dir if labels && LabelContracts.agent_host?(labels.join(","))
+      families = enrollments.group_by { |enrollment| [enrollment.scope, RunnerFamily.base_of(enrollment.name)] }
+      families.flat_map do |(scope, base), slots|
+        report_family(scope, base, slots) if slots.length > 1 || !scope.include?("/")
+        slots.filter_map do |enrollment|
+          @out.puts "Runner '#{enrollment.name}' (#{enrollment.display_dir}):"
+          line(true, "registered: #{enrollment.scope}")
+          report_owner(enrollment)
+          labels = report_labels(enrollment)
+          enrollment.dir if labels && LabelContracts.agent_host?(labels.join(","))
+        end
+      end
+    end
+
+    # A family's header (dev#470): its size — how many jobs this host runs
+    # at once at the scope — and, at an org scope, who may use it: the
+    # runner group its first slot sits in, held against the group the
+    # family's labels oblige (an ai-flow family belongs in the ai-flow
+    # group, pinned to ai-flow's workflows — plans#5 H3; a group the
+    # console drifted from that is a finding, register the remedy), the
+    # repos the group is visible to, and — in a checkout — whether that
+    # repo is among them. All read from GitHub. A lone repo-scoped
+    # enrollment needs none of it (one job at a time, that repo's alone).
+    #
+    # @param scope [String]
+    # @param base [String] the family's name
+    # @param slots [Array<Dev::RunnerDiscovery::Enrollment>]
+    sig { params(scope: String, base: String, slots: T::Array[Dev::RunnerDiscovery::Enrollment]).void }
+    def report_family(scope, base, slots)
+      @out.puts "Family '#{base}' at #{scope} — #{slots.length} slot#{"s" if slots.length > 1} (#{slots.length} job#{"s" if slots.length > 1} at once):"
+      return if scope.include?("/")
+
+      first = T.must(slots.first)
+      runner = @registry.find(scope: scope, name: first.name)
+      return if runner.nil?
+
+      group = @registry.group_of(org: scope, runner_id: runner.id)
+      if group.nil?
+        line(false, "group: none lists '#{first.name}' — re-run `dev runner register --org`")
+        return
+      end
+
+      report_group_contract(group, runner)
+      report_group_access(scope, group)
+    rescue RunnerRegistry::QueryError => e
+      line(false, "group unknown (#{e.message})")
+    end
+
+    # The group the family sits in against the one its labels oblige.
+    #
+    # @param group [Dev::RunnerRegistry::Group]
+    # @param runner [Dev::RunnerRegistry::Runner] the family's first slot
+    sig { params(group: RunnerRegistry::Group, runner: RunnerRegistry::Runner).void }
+    def report_group_contract(group, runner)
+      contract = LabelContracts.group_for(runner.custom_labels.join(","))
+      if contract.nil?
+        line(true, "group: #{group.name}")
+      elsif group.name != contract.name
+        line(false, "group: #{group.name} — these labels belong in '#{contract.name}' (re-run `dev runner register --org`)")
+      else
+        drift = contract.drift(group)
+        if drift.empty?
+          line(true, "group: #{group.name} — pinned to #{contract.workflows.join(", ")}")
+        else
+          line(false, "group: #{group.name} drifted (#{drift.join("; ")}) — re-run `dev runner register --org`")
+        end
+      end
+    end
+
+    # Who may use the group, and whether this checkout's repo is among them.
+    #
+    # @param scope [String] the org
+    # @param group [Dev::RunnerRegistry::Group]
+    sig { params(scope: String, group: RunnerRegistry::Group).void }
+    def report_group_access(scope, group)
+      repo = @repo
+      if !group.selected?
+        line(true, "visible to every repo at #{scope}")
+        line(true, "#{repo} may use this family") if repo
+        return
+      end
+
+      selected = @registry.group_repositories(org: scope, group_id: group.id).map(&:full_name)
+      line(true, "visible to #{selected.empty? ? "no repo" : selected.join(", ")}")
+      return unless repo
+
+      if selected.any? { |name| name.casecmp?(repo) }
+        line(true, "#{repo} may use this family")
+      else
+        line(false, "#{repo} may not use this family — run `dev runner register --org ...` from this checkout to admit it")
       end
     end
 

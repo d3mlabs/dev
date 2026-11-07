@@ -16,16 +16,17 @@ module Dev
     # one of this host's runner enrollments (service, GitHub registration,
     # enrollment files; binaries stay — see Dev::RunnerTeardown).
     #
-    #   dev runner unregister JPDuchesne/snappy     # by scope, when one enrollment serves it
-    #   dev runner unregister ~/actions-runner      # by dir — always unambiguous
+    #   dev runner unregister JPDuchesne/snappy     # by scope: the enrollment — or the whole slot family — serving it
+    #   dev runner unregister ~/actions-runner-2    # by dir — always one slot
     #   dev runner unregister                       # the checkout's scope, like register
     #   dev runner unregister --org                 # the checkout's owner
     #
     # Destructive, so it asks — naming scope, runner, dir and whether a
-    # service is installed — unless `--yes`. The enrollment is resolved by
-    # discovery alone (every `~/actions-runner*/.runner`), so a scope
-    # several dirs serve is refused with the dirs to name instead. A leaf
-    # of the `runner` group.
+    # service is installed, once for a family of several slots (dev#470) —
+    # unless `--yes`. Enrollments are resolved by discovery alone (every
+    # `~/actions-runner*/.runner`), so a scope several dirs serve that are
+    # not one family is refused with the dirs to name instead. A leaf of
+    # the `runner` group.
     class RunnerUnregisterCommand < BuiltinCommand
       extend T::Sig
 
@@ -66,7 +67,7 @@ module Dev
       end
 
       sig { override.returns(String) }
-      def desc = "Remove one of this host's runner enrollments, named by scope or dir (--yes skips the confirmation)"
+      def desc = "Remove one of this host's runner enrollments — or a whole slot family — named by scope or dir (--yes skips the confirmation)"
 
       sig { override.returns(Command::Category) }
       def category = Command::Category::Environment
@@ -87,21 +88,23 @@ module Dev
         enrollments.map(&:scope).uniq + enrollments.map(&:display_dir)
       end
 
-      # Resolve, ask, tear down.
+      # Resolve, ask once, tear down every slot resolved — slot order, so a
+      # refusal partway leaves the family's lower slots gone and the rest
+      # named by the error.
       #
-      # @raise [Dev::RunnerTeardown::AmbiguousEnrollmentError] a scope several dirs serve
+      # @raise [Dev::RunnerTeardown::AmbiguousEnrollmentError] a scope several dirs serve that are not one family
       # @raise [Dev::RunnerTeardown::NoSuchEnrollmentError] nothing matches
       # @raise [Dev::RunnerTeardown::TeardownFailedError] a step was refused
       sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
         _ = context
-        enrollment = @teardown.resolve(reference(args))
-        unless args.flag?(YES_FLAG) || @confirmer.confirm?(question(enrollment))
+        enrollments = @teardown.resolve_all(reference(args))
+        unless args.flag?(YES_FLAG) || @confirmer.confirm?(question(enrollments))
           @out.puts "dev: nothing changed."
           return
         end
 
-        @teardown.teardown!(enrollment)
+        enrollments.each { |enrollment| @teardown.teardown!(enrollment) }
       end
 
       private
@@ -120,12 +123,26 @@ module Dev
         args.flag?(ORG_FLAG) ? repo.split("/").fetch(0) : repo
       end
 
-      # @param enrollment [Dev::RunnerDiscovery::Enrollment]
+      # One question for everything resolved: a lone enrollment named in
+      # full; a family listed slot by slot, then asked about as a whole.
+      #
+      # @param enrollments [Array<Dev::RunnerDiscovery::Enrollment>] slot order, never empty
       # @return [String] the question, without the [y/N] cue
+      sig { params(enrollments: T::Array[Dev::RunnerDiscovery::Enrollment]).returns(String) }
+      def question(enrollments)
+        first = T.must(enrollments.first)
+        return "Unregister #{first.name} from #{first.scope} (#{describe(first)})?" if enrollments.length == 1
+
+        @out.puts "#{enrollments.length} slots on this host serve #{first.scope}:"
+        enrollments.each { |enrollment| @out.puts "  #{enrollment.name} (#{describe(enrollment)})" }
+        "Unregister all #{enrollments.length}?"
+      end
+
+      # @param enrollment [Dev::RunnerDiscovery::Enrollment]
+      # @return [String] its dir and whether a service is installed
       sig { params(enrollment: Dev::RunnerDiscovery::Enrollment).returns(String) }
-      def question(enrollment)
-        service = enrollment.service_installed ? "service installed" : "no service"
-        "Unregister #{enrollment.name} from #{enrollment.scope} (#{enrollment.display_dir}, #{service})?"
+      def describe(enrollment)
+        "#{enrollment.display_dir}, #{enrollment.service_installed ? "service installed" : "no service"}"
       end
     end
   end

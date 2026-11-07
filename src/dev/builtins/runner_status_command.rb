@@ -3,6 +3,7 @@
 
 require "dev/command"
 require "dev/deps/lockfile"
+require "dev/runner_setup"
 require "dev/runner_status"
 
 module Dev
@@ -23,13 +24,30 @@ module Dev
 
       sig { params(runner_status_factory: StatusFactory).void }
       def initialize(runner_status_factory: ->(container_required, project_root) {
-        # The lock is what the host identity's reach is checked over; none
-        # outside a checkout.
+        # The lock is what the host identity's reach is checked over, and the
+        # checkout's repo is whose access to each org family is reported;
+        # neither outside a checkout (an unresolvable checkout is no repo).
         pins = project_root ? Dev::Deps::Lockfile.new(dir: project_root).read : []
-        Dev::RunnerStatus.new(container_required:, pins:)
+        repo = project_root ? self.class.current_repo : nil
+        Dev::RunnerStatus.new(container_required:, pins:, repo:)
       })
         super()
         @runner_status_factory = runner_status_factory
+      end
+
+      class << self
+        extend T::Sig
+
+        # The checkout's repo as GitHub spells it, or nil when gh cannot say
+        # (status is inspect-only: an unresolvable checkout is not an error).
+        #
+        # @return [String, nil]
+        sig { returns(T.nilable(String)) }
+        def current_repo
+          Dev::RunnerSetup.current_repo
+        rescue Dev::RunnerSetup::Error
+          nil
+        end
       end
 
       sig { override.returns(String) }
