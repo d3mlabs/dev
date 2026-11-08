@@ -66,6 +66,11 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  tree holds a symlink or a lisp path, and path-bound artifacts run by
  their store path.
  → .cursor/skills/learnings/installed-state-in-the-store/
+- [architecture/publisher-only-integration] A store the project never
+ reads from (egs) gets its lock-contributed channel by pinning its upload
+ tool as a url universe under the integration's own symbol; the publisher
+ is the repository class only when read and write share one client.
+ → .cursor/skills/learnings/publisher-only-integration/
 
 ## toolchain
 
