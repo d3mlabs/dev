@@ -50,6 +50,55 @@ class Dev::Cli::UiImplTest < Minitest::Test
     Dev::Cli::UiImpl.new(cli_ui: @cli_ui, prompt: prompt, input: tty).ask_secret("Token") == "ghp_x"
     Dev::Cli::UiImpl.new(cli_ui: @cli_ui, prompt: prompt, input: pipe).ask_secret("Token").nil?
   end
+
+  test "#frame is a timed CLI::UI frame around the block, answering what the block answered (dev#514)" do
+    Given
+    frame = typed_mock(CLI::UI::Frame, class_of: true)
+    frame.expects(:open).with("Releasing v1.2.0", timing: true).yields.returns(42)
+    ui = Dev::Cli::UiImpl.new(cli_ui: @cli_ui, frame: frame)
+    ran = []
+
+    Expect
+    ui.frame("Releasing v1.2.0") { ran << 42 } == 42
+    ran == [42]
+  end
+
+  test "#step runs the block under a CLI::UI spinner with no debrief; a raise marks the step failed and comes back out as itself (dev#514)" do
+    Given "a spinner that runs the block, answering as CLI::UI does: true when it returned, false when it raised"
+    spinner = typed_mock(CLI::UI::Spinner, class_of: true)
+    spinner.stubs(:spin).with("Pushing main + tag v1.2.0", auto_debrief: false).returns(true).yields
+    spinner.stubs(:spin).with("Creating GitHub release v1.2.0", auto_debrief: false).yields.returns(false)
+    ui = Dev::Cli::UiImpl.new(cli_ui: @cli_ui, spinner: spinner)
+
+    When
+    pushed = ui.step("Pushing main + tag v1.2.0") { :pushed }
+    error = assert_raises(RuntimeError) { ui.step("Creating GitHub release v1.2.0") { raise "HTTP 502" } }
+
+    Then
+    pushed == :pushed
+    error.message == "HTTP 502"
+  end
+
+  test "#confirm asks CLI::UI's yes/no at a terminal, and is nil (nobody to ask) without one (dev#514)" do
+    Given
+    prompt = typed_mock(CLI::UI::Prompt, class_of: true)
+    prompt.stubs(:confirm).with("Proceed?").returns(false)
+    tty = StringIO.new
+    tty.define_singleton_method(:tty?) { true }
+
+    Expect
+    Dev::Cli::UiImpl.new(cli_ui: @cli_ui, prompt: prompt, input: tty).confirm("Proceed?") == false
+    Dev::Cli::UiImpl.new(cli_ui: @cli_ui, prompt: prompt, input: StringIO.new).confirm("Proceed?").nil?
+  end
+
+  test "#say prints the text through CLI::UI's formatting (dev#514)" do
+    When
+    @ui.say("{{v}} {{bold:v1.2.0 released!}}")
+
+    Then
+    1 * @cli_ui.fmt("{{v}} {{bold:v1.2.0 released!}}")
+    1 * @cli_ui.puts(anything)
+  end
 end
 
 transform!(RSpock::AST::Transformation)
@@ -79,5 +128,36 @@ class Dev::Cli::NoUiTest < Minitest::Test
 
     Expect
     assert_output("") { assert_nil(ui.ask_secret("Token")) }
+  end
+
+  test "#frame, #step and #say are plain lines on the given stream: the title, a ✓ per step that returned, the text with its markup stripped (dev#514)" do
+    Given
+    out = StringIO.new
+    ui = Dev::Cli::NoUi.new(out:)
+
+    When
+    answer = ui.frame("Releasing v1.2.0") do
+      ui.say("{{bold:Base:}} main @ 6c8f60e")
+      ui.step("Pushing main + tag v1.2.0") { :pushed }
+    end
+    ui.say("{{v}} {{bold:v1.2.0 released!}}")
+
+    Then
+    answer == :pushed
+    out.string == "Releasing v1.2.0\nBase: main @ 6c8f60e\n✓ Pushing main + tag v1.2.0\n✓ v1.2.0 released!\n"
+  end
+
+  test "#step that raises writes ✗ and the raise comes back out as itself; #confirm is nil — nobody to ask (dev#514)" do
+    Given
+    out = StringIO.new
+    ui = Dev::Cli::NoUi.new(out:)
+
+    When
+    error = assert_raises(RuntimeError) { ui.step("Creating GitHub release v1.2.0") { raise "HTTP 502" } }
+
+    Then
+    error.message == "HTTP 502"
+    out.string == "✗ Creating GitHub release v1.2.0\n"
+    ui.confirm("Proceed?").nil?
   end
 end
