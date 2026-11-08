@@ -69,6 +69,10 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
 
 ## toolchain
 
+- [toolchain/enum-join-serialize] `Array#join` over `T::Enum`s raises
+ (`to_str` refuses implicit conversion) and `Style/MapJoin` autocorrects
+ the `map(&:to_s)` fix back into the crash: join enums with
+ `map(&:serialize)`. → .cursor/skills/learnings/enum-join-serialize/
 
 ## org tier
 
