@@ -742,6 +742,22 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     )
   end
 
+  test "the default snapshot sync is the lifecycle's, rooted at the project" do
+    Given "a project root, and the lifecycle's sync constructor watched"
+    root = Pathname("/proj")
+    sync = typed_mock(Dev::Lifecycle::SnapshotSync)
+    Dev::Lifecycle::SnapshotSync.expects(:new).with(root: root).once.returns(sync)
+
+    When "building the default sync for it"
+    built = Dev::Builtins::ContainerUpCommand::DEFAULT_SYNC_FOR.call(root)
+
+    Then "it is the SnapshotSync constructed over that root"
+    built.equal?(sync)
+
+    Cleanup
+    nil
+  end
+
   # `dev container status` over a pinned `myapp-linux` whose client answers
   # +status+; the image's own lines (floor, platform) dropped, so callers
   # see the image line then the container lines.

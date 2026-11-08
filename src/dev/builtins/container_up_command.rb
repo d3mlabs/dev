@@ -65,6 +65,13 @@ module Dev
         T::Hash[Symbol, String],
       )
 
+      # The sync step a caller gets by default: the lifecycle's snapshot
+      # sync over the checkout.
+      DEFAULT_SYNC_FOR = T.let(
+        ->(root) { Dev::Lifecycle::SnapshotSync.new(root:) },
+        T.proc.params(root: Pathname).returns(Dev::Lifecycle::SnapshotSync),
+      )
+
       # @param container_client [Dev::BuildContainer, nil]
       # @param engine_provisioner [Dev::EngineProvisioner] the sizing step
       # @param user_aligner [Dev::ContainerUserAligner, nil] makes the
@@ -94,7 +101,7 @@ module Dev
       end
       def initialize(container_client: nil, engine_provisioner: Dev::EngineProvisioner.new,
                      user_aligner: nil, dev_provisioner: nil, deps_installer: nil, out: $stdout,
-                     host_rule: Dev::HostRule.new, sync_for: ->(root) { Dev::Lifecycle::SnapshotSync.new(root:) })
+                     host_rule: Dev::HostRule.new, sync_for: DEFAULT_SYNC_FOR)
         super(container_client:, out:)
         @engine_provisioner = engine_provisioner
         @user_aligner = user_aligner

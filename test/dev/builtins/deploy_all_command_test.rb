@@ -210,14 +210,14 @@ class Dev::Builtins::DeployAllCommandTest < Minitest::Test
     raises Dev::Lifecycle::ReleaseTag::InvalidVersionError
   end
 
-  test "the node's traits: the channels then status as children, the shared flags plus --runner, the lifecycle category" do
+  test "the node's traits: the channels then status as children, the shared flags plus --runner and --container, the lifecycle category" do
     Given
     verb = command
 
     Expect
     verb.children.keys == ["steam", "rubygems", "status"]
     verb.children.values.map(&:class) == [Dev::Builtins::DeployCommand, Dev::Builtins::DeployCommand, Dev::Builtins::DeployStatusCommand]
-    verb.flags.map(&:name) == ["--release", "--dry-run", "--runner"]
+    verb.flags.map(&:name) == ["--release", "--dry-run", "--runner", "--container"]
     verb.category == Dev::Command::Category::Lifecycle
     verb.desc.include?("`deploy --release V` with no channel ships the release to every channel in turn")
     verb.listing.nil?

@@ -52,6 +52,21 @@ module Dev
     # The gh query for the checkout's `owner/repo`.
     REPO_QUERY = T.let(%w[repo view --json nameWithOwner -q .nameWithOwner].freeze, T::Array[String])
 
+    class << self
+      extend T::Sig
+
+      # The repo resolver a caller gets by default: gh in the checkout,
+      # asked when called — never at construction, so `dev help` pays no
+      # gh call.
+      #
+      # @param project_root [Pathname]
+      # @return [Proc] `-> { "owner/repo\n" }`
+      sig { params(project_root: Pathname).returns(T.proc.returns(String)) }
+      def default_repo_resolver(project_root)
+        -> { Lifecycle::Gh.new(root: project_root).capture(REPO_QUERY) }
+      end
+    end
+
     # @param project_root [Pathname] the checkout the container works for
     # @param client [BuildContainer, nil] the engine-injected docker
     #   operations; resolved lazily for the invoking user when not injected,
@@ -74,7 +89,7 @@ module Dev
     end
     def initialize(project_root:, client: nil, engine_hint: nil, resources_check: EngineResourcesCheck.new,
                    github_token: ContainerGithubToken.new,
-                   repo_resolver: -> { Lifecycle::Gh.new(root: project_root).capture(REPO_QUERY) })
+                   repo_resolver: ProjectContainer.default_repo_resolver(project_root))
       @project_root = project_root
       @client = client
       @engine_hint = engine_hint

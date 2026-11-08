@@ -234,6 +234,23 @@ class Dev::ProjectContainerTest < Minitest::Test
     )
   end
 
+  test "the default repo resolver asks gh in the checkout, once called — never at construction" do
+    Given "a checkout whose gh names a repo"
+    root = Pathname("/proj")
+    gh = typed_mock(Dev::Lifecycle::Gh)
+    Dev::Lifecycle::Gh.expects(:new).with(root: root).once.returns(gh)
+    gh.expects(:capture).with(Dev::ProjectContainer::REPO_QUERY).once.returns("d3mlabs/demo\n")
+
+    When "resolving the default"
+    resolved = Dev::ProjectContainer.default_repo_resolver(root).call
+
+    Then "gh's answer comes back, as captured"
+    resolved == "d3mlabs/demo\n"
+
+    Cleanup
+    nil
+  end
+
   def snapshot
     @snapshot ||= Dev::Lifecycle::Snapshot.new(sha: SHA, branch: Dev::Lifecycle::SnapshotBranch.mint(runner: Dev::ContainerWorkspace::RUNNER))
   end
