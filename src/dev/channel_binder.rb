@@ -16,8 +16,10 @@ module Dev
   # - a declared channel without `run:` **configures** the lock's
   #   publisher of its name — its `targets:` is the accept set, the
   #   protocol is the integration's — and when the lock contributes none
-  #   it binds with a **fault** naming both fixes (#faults): it lists,
-  #   and `deploy <channel>` refuses with the fault; nothing else does
+  #   it binds with a **Fault** saying why — this dev ships no such
+  #   publisher, or the lock pins no type reaching it — and what to do
+  #   (#faults): it lists, and `deploy <channel>` refuses with the
+  #   fault; nothing else does
   #   (dev#509 — a manifest ahead of the installed dev must not take
   #   `dev deps install` down with it);
   # - a contributed channel the project does not declare appears as it is,
@@ -36,17 +38,31 @@ module Dev
   class ChannelBinder
     extend T::Sig
 
-    # A declared channel with neither `run:` nor a publisher the lock
-    # contributes under its name: no protocol. Raised by `deploy` of that
-    # channel (through the fault), never at load.
-    class ChannelProtocolError < ArgumentError; end
+    # Why a declared channel has no protocol, and what to do (dev#509).
+    # `summary` is the cause alone, for `dev help deploy`'s Protocol line;
+    # `message` is the refusal `deploy <channel>` raises, cause and fixes.
+    class Fault < T::Struct
+      const :summary, String
+      const :message, String
+    end
 
     # @param publishers [Hash{String => Lifecycle::Publisher}] the publishers
     #   the lock contributes, by channel name (ProjectPublishers#contributed)
+    # @param reach [Hash{String => Array<Symbol>}] every channel this dev
+    #   could contribute, with the types whose pin reaches it
+    #   (ProjectPublishers#reach) — tells a publisher this dev lacks from
+    #   one the lock does not pin
     # @param targets [Array<Lifecycle::Target>] the project's declared targets
-    sig { params(publishers: T::Hash[String, Lifecycle::Publisher], targets: T::Array[Lifecycle::Target]).void }
-    def initialize(publishers:, targets:)
+    sig do
+      params(
+        publishers: T::Hash[String, Lifecycle::Publisher],
+        reach: T::Hash[String, T::Array[Symbol]],
+        targets: T::Array[Lifecycle::Target],
+      ).void
+    end
+    def initialize(publishers:, reach:, targets:)
       @publishers = publishers
+      @reach = reach
       @targets = targets
     end
 
@@ -63,13 +79,15 @@ module Dev
       declared.merge(contributed.to_h { |channel| [channel.name, channel] })
     end
 
-    # The declared channels without a protocol, each with the message
-    # `deploy <channel>` refuses with: it declares no `run:` and the lock
-    # contributes no publisher of its name.
+    # The declared channels without a protocol, each with its Fault: it
+    # declares no `run:` and the lock contributes no publisher of its
+    # name — because this dev ships none (a release ahead of the
+    # installed dev: `dev up` once one does), or because deps.lock pins
+    # no type that reaches it (depend on one, `dev deps update`).
     #
     # @param declared [Hash{String => Lifecycle::Channel}] the manifest's channels
-    # @return [Hash{String => String}] channel name => fault
-    sig { params(declared: T::Hash[String, Lifecycle::Channel]).returns(T::Hash[String, String]) }
+    # @return [Hash{String => Fault}] channel name => fault
+    sig { params(declared: T::Hash[String, Lifecycle::Channel]).returns(T::Hash[String, Fault]) }
     def faults(declared)
       declared.filter_map do |name, channel|
         spec = channel.publisher
@@ -83,13 +101,22 @@ module Dev
 
     # @param channel [Lifecycle::Channel] a declared channel without a protocol
     # @param spec [Lifecycle::PublisherSpec::Integration] the publisher it names
-    # @return [String] the refusal, naming both fixes
-    sig { params(channel: Lifecycle::Channel, spec: Lifecycle::PublisherSpec::Integration).returns(String) }
+    # @return [Fault] the cause, and the refusal naming it with both fixes
+    sig { params(channel: Lifecycle::Channel, spec: Lifecycle::PublisherSpec::Integration).returns(Fault) }
     def protocol_fault(channel, spec)
-      contributes = @publishers.empty? ? "none" : @publishers.keys.join(", ")
-      "channel 'deploy #{channel}' has no protocol: it declares no `run:` and the lock contributes no `#{spec.name}` " \
-        "publisher (it contributes: #{contributes}) — declare `run:` (a script shipping `$DEV_ARTIFACT`), or depend on " \
-        "an integration whose publisher knows the endpoint in dependencies.rb (d3mlabs/dev#192)"
+      types = @reach[spec.name]
+      summary, fix =
+        if types.nil?
+          ["this dev ships no `#{spec.name}` publisher", "`dev up` once a release ships it"]
+        else
+          pins = types.size == 1 ? "no `#{spec.name}`" : "none of #{types.map { |type| "`#{type}`" }.join(", ")}"
+          ["deps.lock pins #{pins}", "depend on one in dependencies.rb and `dev deps update`"]
+        end
+      Fault.new(
+        summary:,
+        message: "channel 'deploy #{channel}' has no protocol: it declares no `run:` and #{summary} — #{fix}, " \
+                 "or declare `run:` (a script shipping `$DEV_ARTIFACT`) (d3mlabs/dev#192)",
+      )
     end
 
     # A contributed channel as it stands undeclared: the integration's

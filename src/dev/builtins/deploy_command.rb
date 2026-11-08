@@ -3,6 +3,7 @@
 
 require "pathname"
 require "stringio"
+require "dev/channel_binder"
 require "dev/command"
 require "dev/deploy_selector"
 require "dev/dispatch"
@@ -138,9 +139,10 @@ module Dev
       # @param deployments [Lifecycle::GithubDeployments] the ledger each deploy is recorded in
       # @param out [IO, StringIO]
       # @param err [IO, StringIO] where a failure record that itself failed is reported
-      # @param fault [String, nil] why the channel cannot ship — a declared
-      #   channel with no protocol (ChannelBinder#faults); the refusal
-      #   `deploy <channel>` raises, and a note in its details (dev#509)
+      # @param fault [ChannelBinder::Fault, nil] why the channel cannot
+      #   ship — a declared channel with no protocol (ChannelBinder#faults):
+      #   its summary joins the Protocol detail, its message is the
+      #   refusal `deploy <channel>` raises (dev#509)
       sig do
         params(
           channel: Lifecycle::Channel,
@@ -152,7 +154,7 @@ module Dev
           deployments: Lifecycle::GithubDeployments,
           out: T.any(IO, StringIO),
           err: T.any(IO, StringIO),
-          fault: T.nilable(String),
+          fault: T.nilable(ChannelBinder::Fault),
         ).void
       end
       def initialize(channel:, selector:, ports:, store:, resolver:, placement:, deployments:, out: $stdout, err: $stderr, fault: nil)
@@ -182,7 +184,7 @@ module Dev
       # `dev help deploy` says of each channel.
       sig { override.returns(T::Array[String]) }
       def details
-        protocol = ["Protocol: #{@channel.publisher}", fault_summary].compact.join(" — unbound: ")
+        protocol = ["Protocol: #{@channel.publisher}", @fault&.summary].compact.join(" — ")
         ["Accepts: #{@channel.builds.map(&:name).join(", ")}", protocol]
       end
 
@@ -252,17 +254,10 @@ module Dev
       def placement!
         return @placement if @placement
 
-        raise UnboundChannelError, @fault if @fault
+        raise UnboundChannelError, @fault.message if @fault
 
         raise UnboundChannelError,
           "`deploy #{@channel}` has no environment bound: the lock could not place it at load — re-lock it (dev deps update) and retry"
-      end
-
-      # @return [String, nil] the fault's cause clause — what the lock
-      #   lacks — for `dev help deploy`; the fixes stay with the refusal
-      sig { returns(T.nilable(String)) }
-      def fault_summary
-        @fault&.[](/the lock contributes no [^—]*\)/)
       end
 
       # The records this deploy makes, one per ref the shipments came from

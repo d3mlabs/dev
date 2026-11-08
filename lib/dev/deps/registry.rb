@@ -482,6 +482,21 @@ module Dev
           end
         end
 
+        # Every channel a table can ship to, with the types whose pin
+        # reaches its publisher — the entry's own, and each entry that
+        # installs through it (`ruby` → brew). What a project must pin for
+        # a channel it declares without `run:`; a name absent here is one
+        # this dev ships no publisher for at all (dev#509).
+        #
+        # @param entries [Array<Entry>] the table to read (tests substitute one)
+        # @return [Hash{String => Array<Symbol>}] channel name => types, in table order
+        sig { params(entries: T::Array[Entry]).returns(T::Hash[String, T::Array[Symbol]]) }
+        def publisher_reach(entries: INTEGRATIONS)
+          entries.select(&:publishes?).to_h do |entry|
+            [entry.channel_name, [entry.symbol] + entries.select { |other| other.install_alias == entry.symbol }.map(&:symbol)]
+          end
+        end
+
         private
 
         # Instantiate the given entries' integrations, then alias the types

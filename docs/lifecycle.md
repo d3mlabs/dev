@@ -147,7 +147,7 @@ channels since `deploy`'s children never land on the builtin's slot:
 | --- | --- | --- |
 | with `run:` | any | the script **replaces** the publisher; dev's stage still selects, checks and records |
 | without `run:` | a publisher of that name | the declaration **configures** it: `targets:` is the accept set, `desc` is the row, the protocol is the integration's |
-| without `run:` | none | bound **unbound** ([dev#509](https://github.com/d3mlabs/dev/issues/509)): it lists in `dev help deploy` with its fault, and `deploy <channel>` refuses (`DeployCommand::UnboundChannelError`) naming both fixes — declare `run:`, or depend on an integration whose publisher knows the endpoint. Every other verb runs: a manifest ahead of the installed dev (dev's own, adopting a publisher the release lacks) must not take `dev deps install` down with it |
+| without `run:` | none | binds with a **fault** ([dev#509](https://github.com/d3mlabs/dev/issues/509)) that says why — *this dev ships no `x` publisher* (a release ahead of the installed dev: `dev up` once one ships it) or *deps.lock pins no `x`* (depend on it in `dependencies.rb`, `dev deps update`) — or declare `run:`. It lists in `dev help deploy` with the cause on its Protocol line; `deploy <channel>` refuses with the full message (`DeployCommand::UnboundChannelError`). Every other verb runs: a manifest ahead of the installed dev must not take `dev deps install` down with it |
 | — | a publisher | the channel appears as the lock's: every packageable build accepted, a stock `desc`; a project with nothing packageable gets no row |
 
 ### The release

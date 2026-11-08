@@ -69,7 +69,7 @@ module Dev
       # Why the channel cannot ship — a declared channel with no protocol
       # (ChannelBinder#faults). It lists; `deploy <channel>` refuses with
       # this; nothing else is affected (dev#509).
-      const :fault, T.nilable(String), default: nil
+      const :fault, T.nilable(ChannelBinder::Fault), default: nil
     end
 
     # What binding the lock yields: the project commands with their
@@ -315,8 +315,9 @@ module Dev
     def bind_placements(manifest, project)
       binder = PlacementBinder.new(images: project.project_images)
       targets = binder.bind_targets(manifest.targets)
-      publishers = ProjectPublishers.new(root: project.root).contributed
-      channel_binder = ChannelBinder.new(publishers:, targets: manifest.targets.values)
+      project_publishers = ProjectPublishers.new(root: project.root)
+      publishers = project_publishers.contributed
+      channel_binder = ChannelBinder.new(publishers:, reach: project_publishers.reach, targets: manifest.targets.values)
       channels = channel_binder.bind(manifest.channels)
       faults = channel_binder.faults(manifest.channels)
       placements = binder.bind_channels(channels)
