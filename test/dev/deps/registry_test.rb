@@ -5,7 +5,10 @@ require "test_helper"
 require "dev/deps/registry"
 require "dev/deps/integration"
 require "dev/deps/brew_integration"
+require "dev/deps/bundler_repository"
 require "dev/deps/cmake_integration"
+require "dev/deps/ghcr_publisher"
+require "dev/deps/rubygems_publisher"
 require "dev/deps/xcode_integration"
 require "support/recording_publisher"
 require "pathname"
@@ -63,12 +66,11 @@ class Dev::Deps::RegistryTest < Minitest::Test
     steam.channel_name == "steam"
   end
 
-  test "the built-in publishers are steam's repository and egs's own class (dev#426); every other entry is silent" do
+  test "the built-in store publishers are steam's repository and egs's own class (dev#426)" do
     Given
     by_symbol = Dev::Deps::Registry::INTEGRATIONS.to_h { |entry| [entry.symbol, entry] }
 
     Expect
-    Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:symbol) == %i[steam egs]
     by_symbol[:steam].publisher == Dev::Deps::SteamRepository
     by_symbol[:steam].publisher_needs == []
     by_symbol[:egs].publisher == Dev::Deps::EgsPublisher
@@ -77,7 +79,37 @@ class Dev::Deps::RegistryTest < Minitest::Test
     by_symbol[:egs].integration == Dev::Deps::EgsIntegration
   end
 
-  test "publishers over the built-in table yields a steam and an egs publisher exactly when the lock pins them" do
+  test "an entry's channel is the destination's name when that differs from the type's, and only a publishing entry may name one" do
+    Given
+    gems = Dev::Deps::Registry::Entry.new(symbol: :bundler, repository: Dev::Deps::BundlerRepository, scheme: nil, integration: nil,
+      publisher: RecordingPublisher, channel: "rubygems")
+
+    When "a silent entry names a channel"
+    Dev::Deps::Registry::Entry.new(symbol: :cmake, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil, channel: "nowhere")
+
+    Then
+    raises Dev::Deps::Registry::ChannelWithoutPublisherError
+    gems.channel == "rubygems"
+    gems.channel_name == "rubygems"
+  end
+
+  test "the built-in write sides (dev#428): gems push to rubygems, an image to ghcr, each reached by its own pin and no other" do
+    Given
+    gems = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :bundler }
+    image = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :image }
+
+    Expect "the two entries publish under the store's name; with steam and egs (dev#426), the rest are silent"
+    gems.publisher == Dev::Deps::RubygemsPublisher
+    gems.publisher_needs == %i[project_root]
+    gems.channel_name == "rubygems"
+    image.publisher == Dev::Deps::GhcrPublisher
+    image.publisher_needs == []
+    image.channel_name == "ghcr"
+    Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:symbol) == %i[bundler steam egs image]
+    Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:channel_name).uniq.size == Dev::Deps::Registry::INTEGRATIONS.count(&:publishes?)
+  end
+
+  test "publishers over the built-in table: #{pinned.inspect} contributes #{channels.inspect}" do
     When
     publishers = Dev::Deps::Registry.publishers(project_root: Pathname("/project"), pinned:)
 
@@ -86,11 +118,16 @@ class Dev::Deps::RegistryTest < Minitest::Test
     publishers.values.map(&:class) == classes
 
     Where
-    pinned          | channels          | classes
-    [:steam]        | ["steam"]         | [Dev::Deps::SteamRepository]
-    [:egs]          | ["egs"]           | [Dev::Deps::EgsPublisher]
-    [:steam, :egs]  | ["steam", "egs"]  | [Dev::Deps::SteamRepository, Dev::Deps::EgsPublisher]
-    [:cmake, :url]  | []                | []
+    pinned             | channels              | classes
+    [:bundler]         | ["rubygems"]          | [Dev::Deps::RubygemsPublisher]
+    [:image]           | ["ghcr"]              | [Dev::Deps::GhcrPublisher]
+    [:bundler, :image] | ["rubygems", "ghcr"]  | [Dev::Deps::RubygemsPublisher, Dev::Deps::GhcrPublisher]
+    [:steam]           | ["steam"]             | [Dev::Deps::SteamRepository]
+    [:egs]             | ["egs"]               | [Dev::Deps::EgsPublisher]
+    [:steam, :egs]     | ["steam", "egs"]      | [Dev::Deps::SteamRepository, Dev::Deps::EgsPublisher]
+    [:ruby]            | []                    | []
+    [:cmake, :url]     | []                    | []
+    []                 | []                    | []
   end
 
   test "publishers builds one instance per publishing entry the lock reaches, directly or through an alias, with the kwargs it asks for" do

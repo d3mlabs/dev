@@ -68,6 +68,28 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
     assert_empty unwired, "integration classes missing from Registry::INTEGRATIONS: #{unwired.join(", ")}"
   end
 
+  test "every publisher class is wired into the registry" do
+    Given "the publisher files on disk and the registry's referenced publishers"
+    referenced = Dev::Deps::Registry::INTEGRATIONS.filter_map(&:publisher).uniq.map { |k| source_file(k) }
+
+    When "checking each *_publisher.rb file"
+    unwired = deps_files("_publisher").reject do |basename|
+      referenced.include?(File.realpath(File.join(DEPS_DIR, basename)))
+    end
+
+    Then "none are left unwired — a write side nothing contributes is a channel no project gets"
+    assert_empty unwired, "publisher classes missing from Registry::INTEGRATIONS: #{unwired.join(", ")}"
+  end
+
+  test "contributed channel names are unique: two entries on one channel would overwrite each other's publisher" do
+    Given
+    channels = Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:channel_name)
+
+    Expect
+    channels.uniq == channels
+    (channels & Dev::Deps::Registry::INTEGRATIONS.reject(&:publishes?).map(&:channel_name)).empty?
+  end
+
   test "every version scheme class is wired into the registry or allowlisted" do
     Given "the scheme files on disk and the registry's referenced schemes"
     referenced = Dev::Deps::Registry::INTEGRATIONS.filter_map(&:scheme).uniq.map { |k| source_file(k) }
@@ -165,17 +187,6 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
 
     Then "no manifest sits beside a class the registry does not install — it would never be read"
     assert_empty orphaned, "integration manifests nothing reads: #{orphaned.join(", ")}"
-  end
-
-  test "every publisher class is wired into the registry" do
-    Given "the publisher files on disk and the registry's referenced publishers"
-    referenced = Dev::Deps::Registry::INTEGRATIONS.map(&:publisher).compact.uniq.map { |k| source_file(k) }
-
-    When "checking each *_publisher.rb file"
-    unwired = deps_files("_publisher").reject { |basename| referenced.include?(File.realpath(File.join(DEPS_DIR, basename))) }
-
-    Then "none are left unwired — an unwired publisher would contribute no channel"
-    assert_empty unwired, "publisher classes missing from Registry::INTEGRATIONS: #{unwired.join(", ")}"
   end
 
   test "every declaration DSL verb has a registry entry" do
