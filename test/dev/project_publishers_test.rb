@@ -17,20 +17,21 @@ transform!(RSpock::AST::Transformation)
 class Dev::ProjectPublishersTest < Minitest::Test
   ENTRIES = [
     Dev::Deps::Registry::Entry.new(symbol: :brew, repository: Dev::Deps::BrewRepository, scheme: nil, integration: nil,
-      publisher: RecordingPublisher, publisher_needs: %i[project_root]),
+      publisher: RecordingPublisher, publisher_needs: %i[project_root taps]),
     Dev::Deps::Registry::Entry.new(symbol: :ruby, repository: Dev::Deps::BrewRepository, scheme: nil, integration: nil, install_alias: :brew),
     Dev::Deps::Registry::Entry.new(symbol: :steam, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil, publisher: RecordingPublisher),
     Dev::Deps::Registry::Entry.new(symbol: :cmake, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil),
   ].freeze
 
-  def pin(name, integration)
-    Dev::Deps::Dependency.new(name:, integration:, group: :app, version: "1.0", hash: nil, metadata: {})
+  def pin(name, integration, tap: nil)
+    metadata = tap.nil? ? {} : { "tap" => tap }
+    Dev::Deps::Dependency.new(name:, integration:, group: :app, version: "1.0", hash: nil, metadata:)
   end
 
   test "the publishers are the write sides of what deps.lock pins, read once, over the checkout: #{what}" do
     Given "a checkout with that lock"
     root = Pathname(Dir.mktmpdir("project-publishers-"))
-    Dev::Deps::Lockfile.new(dir: root).lock(pins.map { |name, integration| pin(name, integration) })
+    Dev::Deps::Lockfile.new(dir: root).lock(pins.map { |name, integration, tap| pin(name, integration, tap:) })
     publishers = Dev::ProjectPublishers.new(root:, entries: ENTRIES)
 
     When
@@ -40,18 +41,21 @@ class Dev::ProjectPublishersTest < Minitest::Test
     contributed.keys == channels
     contributed.values.all? { |publisher| publisher.is_a?(RecordingPublisher) }
     contributed.values.map(&:project_root).compact == (channels.include?("brew") ? [root] : [])
+    contributed.values.map(&:taps).compact.flatten.map(&:name) == taps
     publishers.contributed.equal?(contributed)
 
     Cleanup
     FileUtils.rm_rf(root)
 
     Where
-    what                          | pins                                              | channels
-    "no lock at all"              | []                                                | []
-    "a pin reaching no publisher" | [["boost", :cmake]]                               | []
-    "a pin through an alias"      | [["ruby", :ruby]]                                 | ["brew"]
-    "two pins of one type"        | [["ruby", :ruby], ["brew-thing", :brew]]          | ["brew"]
-    "pins of two publishers"      | [["steamworks", :steam], ["ruby", :ruby]]         | ["brew", "steam"]
+    what                                  | pins                                                                   | channels          | taps
+    "no lock at all"                      | []                                                                     | []                | []
+    "a pin reaching no publisher"         | [["boost", :cmake]]                                                    | []                | []
+    "a pin through an alias, from a tap"  | [["ruby", :ruby, "d3mlabs/d3mlabs"]]                                   | ["brew"]          | ["d3mlabs/d3mlabs"]
+    "two pins of one type, one tap"       | [["ruby", :ruby, "d3mlabs/d3mlabs"], ["brew-thing", :brew, "d3mlabs/d3mlabs"]] | ["brew"]  | ["d3mlabs/d3mlabs"]
+    "pins from core and from a tap"       | [["jq", :brew], ["ruby", :ruby, "d3mlabs/d3mlabs"]]                    | ["brew"]          | ["d3mlabs/d3mlabs"]
+    "pins from two taps"                  | [["ruby", :ruby, "d3mlabs/d3mlabs"], ["tool", :brew, "acme/tools"]]    | ["brew"]          | ["d3mlabs/d3mlabs", "acme/tools"]
+    "pins of two publishers"              | [["steamworks", :steam], ["ruby", :ruby, "d3mlabs/d3mlabs"]]           | ["brew", "steam"] | ["d3mlabs/d3mlabs"]
   end
 
   test "reach is the table's map of channel to the pins that contribute it, independent of the lock (dev#509)" do

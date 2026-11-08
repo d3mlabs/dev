@@ -5,6 +5,7 @@ require_relative "artifact_store"
 require_relative "tap"
 require_relative "brew_repository"
 require_relative "brew_integration"
+require_relative "brew_publisher"
 require "dev/brew_env"
 require_relative "git_repository"
 require_relative "cmake_integration"
@@ -226,12 +227,17 @@ module Dev
             publisher_needs: %i[project_root],
             channel: "rubygems",
           ),
+          # The write side (dev#429): a project pinning a formula from a tap
+          # gets `deploy brew`, which points the tap's formula of each
+          # target's name at that target's release asset.
           Entry.new(
             symbol: :brew,
             repository: BrewRepository,
             scheme: BrewScheme,
             integration: BrewIntegration,
             integration_needs: %i[taps project_dir project_name pin_taps brew_env],
+            publisher: BrewPublisher,
+            publisher_needs: %i[project_root taps],
           ),
           # Casks are declared with the brew DSL verb (cask: true) but are a
           # separate universe: Homebrew publishes no versions or bottle
@@ -490,14 +496,16 @@ module Dev
         #
         # @param project_root [Pathname] project root (threaded to publishers that need it)
         # @param pinned [Array<Symbol>] the integration types the lock pins
+        # @param taps [Array<Tap>] the taps the lock pins formulae from (the
+        #   brew publisher's destination)
         # @param entries [Array<Entry>] the table to read (tests substitute one)
         # @return [Hash{String => Lifecycle::Publisher}] in table order
         sig do
-          params(project_root: Pathname, pinned: T::Array[Symbol], entries: T::Array[Entry])
+          params(project_root: Pathname, pinned: T::Array[Symbol], taps: T::Array[Tap], entries: T::Array[Entry])
             .returns(T::Hash[String, Lifecycle::Publisher])
         end
-        def publishers(project_root:, pinned:, entries: INTEGRATIONS)
-          context = { project_root: }
+        def publishers(project_root:, pinned:, taps: [], entries: INTEGRATIONS)
+          context = { project_root:, taps: }
           reached = entries.select { |entry| pinned.include?(entry.symbol) }.flat_map { |entry| [entry.symbol, entry.install_alias] }
           entries.select { |entry| entry.publishes? && reached.include?(entry.symbol) }.to_h do |entry|
             # T.unsafe: the keyword set is runtime-selected (publisher_needs);

@@ -1,0 +1,16 @@
+# The d3mlabs org identity: the system layer of dev's layered settings
+# (ENV > ~/.config/dev/config.yml > this file), installed by the d3mlabs
+# deployment formula (Formula/dev.rb in d3mlabs/homebrew-d3mlabs) into
+# $(brew --prefix)/etc/dev/config.yml. etc files are brew-protected: a
+# locally-modified copy survives upgrades untouched (the fresh one lands
+# beside it as .default).
+#
+# deployment_formula is the formula's own name: it is how `dev up` knows
+# which formula to self-upgrade (the deployment names itself).
+#
+# Shipped by the `dev` target (bin/install-deployment); dev-core carries
+# nothing of it. README: "Org configuration & deployment".
+plans_repo: d3mlabs/plans
+knowledge_repo: d3mlabs/knowledge
+deployment_formula: d3mlabs/d3mlabs/dev
+default_org: d3mlabs

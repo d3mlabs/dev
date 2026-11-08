@@ -2,8 +2,10 @@
 # frozen_string_literal: true
 
 require "pathname"
+require "dev/deps/dependency"
 require "dev/deps/lockfile"
 require "dev/deps/registry"
+require "dev/deps/tap"
 require "dev/lifecycle"
 
 module Dev
@@ -19,9 +21,16 @@ module Dev
   # it (ChannelBinder).
   #
   # Reads deps.lock once, on first use; the Registry decides which entries
-  # the pins reach.
+  # the pins reach. The lock also says which **taps** the project pins
+  # formulae from (each brew-family pin's `tap:`) — the brew publisher's
+  # destination (dev#429), handed to the Registry's context beside the
+  # root so the lock stays the one declaration.
   class ProjectPublishers
     extend T::Sig
+
+    # The lock's key for the tap a brew-family pin comes from (absent for
+    # a core formula).
+    TAP_KEY = "tap"
 
     # @param root [Pathname] the checkout (its deps.lock is read, once)
     # @param entries [Array<Deps::Registry::Entry>] the registry table to
@@ -39,7 +48,10 @@ module Dev
     # @raise [Deps::Lockfile::RetiredBuildLockError] the checkout still carries build-deps.lock
     sig { returns(T::Hash[String, Lifecycle::Publisher]) }
     def contributed
-      @contributed ||= Deps::Registry.publishers(project_root: @root, pinned: pinned_types, entries: @entries)
+      @contributed ||= begin
+        pins = Deps::Lockfile.new(dir: @root).read
+        Deps::Registry.publishers(project_root: @root, pinned: pinned_types(pins), taps: pinned_taps(pins), entries: @entries)
+      end
     end
 
     # What this dev could contribute: each channel the table can ship to,
@@ -57,10 +69,18 @@ module Dev
 
     # The integration types the lock pins, each once.
     #
+    # @param pins [Array<Deps::Dependency>]
     # @return [Array<Symbol>]
-    sig { returns(T::Array[Symbol]) }
-    def pinned_types
-      Deps::Lockfile.new(dir: @root).read.map(&:integration).uniq
+    sig { params(pins: T::Array[Deps::Dependency]).returns(T::Array[Symbol]) }
+    def pinned_types(pins) = pins.map(&:integration).uniq
+
+    # The taps the lock pins formulae from, each once, in lock order.
+    #
+    # @param pins [Array<Deps::Dependency>]
+    # @return [Array<Deps::Tap>]
+    sig { params(pins: T::Array[Deps::Dependency]).returns(T::Array[Deps::Tap]) }
+    def pinned_taps(pins)
+      pins.filter_map { |pin| pin.metadata[TAP_KEY] }.uniq.map { |name| Deps::Tap.new(name: name.to_s) }
     end
   end
 end

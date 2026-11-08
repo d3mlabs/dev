@@ -1,0 +1,18 @@
+#!/bin/sh
+# The `dev-core` target's builder (dev.yml `targets:`, dev#429): the
+# org-blank tool as its formula installs it — bin, src, lib, share and
+# VERSION (what `dev version` reads), with the license and the README —
+# laid out into $DEV_INSTALL. Nothing compiles: the install is the file
+# set, and dev's archive packager zips it into the release asset that
+# Formula/dev-core.rb in the d3mlabs tap points at. The org payload is the
+# sibling `dev` target's (bin/install-deployment); nothing of it is here.
+#
+# Runs at the repo root with dev's build env (DEV_TARGET, DEV_INSTALL).
+set -eu
+
+cd "$(dirname "$0")/.."
+
+# A previous install of the same build is replaced whole, so a file this
+# tree no longer has is not shipped again.
+find "${DEV_INSTALL:?}" -mindepth 1 -delete
+cp -R bin src lib share VERSION LICENSE README.md "$DEV_INSTALL"/

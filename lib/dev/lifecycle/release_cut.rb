@@ -10,8 +10,9 @@ module Dev
   module Lifecycle
     # The git half of `release <version>` (dev#192, K4), lifted from dev's
     # `bin/release.rb`: a **cut** is a clean tree, a bump commit when the
-    # project keeps its version in source (`VERSION`, ProjectVersion), the
-    # tag, and the push of the branch and the tag to `origin`. Resumable:
+    # project keeps its version in source (`VERSION` and its `Gemfile.lock`
+    # mirror when a gemspec reads it, ProjectVersion), the tag, and the
+    # push of the branch and the tag to `origin`. Resumable:
     # a run whose cut landed (HEAD already carries the tag) resumes at the
     # push instead of bumping again — a retry finishes the release, it
     # never cuts a second one, which is how a failed tap push once turned
@@ -189,8 +190,10 @@ module Dev
       end
 
       # The bump commit, when the plan has a bump: the version written
-      # into source, committed. Nothing when resuming or when the
-      # project keeps no version to bump.
+      # into source — `VERSION` and its `Gemfile.lock` mirror when the
+      # lock has one (ProjectVersion.files), so the tree is clean after
+      # the cut — committed. Nothing when resuming or when the project
+      # keeps no version to bump.
       #
       # @param plan [Plan]
       # @return [void]
@@ -200,8 +203,9 @@ module Dev
         bump = plan.bump
         return if plan.resuming || bump.nil?
 
+        files = ProjectVersion.files(@git.root, current: bump.from)
         ProjectVersion.write(@git.root, bump.to)
-        @git.capture(["add", ProjectVersion::FILE_NAME])
+        @git.capture(["add", "--", *files])
         @git.capture(["commit", "-q", "-m", format(BUMP_MESSAGE, version: bump.to)])
       end
 

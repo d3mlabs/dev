@@ -10,6 +10,8 @@ require "dev/deps/cmake_integration"
 require "dev/deps/ghcr_publisher"
 require "dev/deps/rubygems_publisher"
 require "dev/deps/xcode_integration"
+require "dev/deps/brew_publisher"
+require "dev/deps/tap"
 require "support/recording_publisher"
 require "pathname"
 
@@ -106,7 +108,7 @@ class Dev::Deps::RegistryTest < Minitest::Test
     gems.channel_name == "rubygems"
   end
 
-  test "the built-in write sides (dev#428): gems push to rubygems, an image to ghcr, each reached by its own pin and no other" do
+  test "the built-in write sides (dev#428, #429): gems push to rubygems, an image to ghcr, formulae to the tap, each reached by its own pin and no other" do
     Given
     gems = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :bundler }
     image = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :image }
@@ -118,13 +120,17 @@ class Dev::Deps::RegistryTest < Minitest::Test
     image.publisher == Dev::Deps::GhcrPublisher
     image.publisher_needs == []
     image.channel_name == "ghcr"
-    Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:symbol) == %i[bundler ficsit steam egs image]
+    brew = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :brew }
+    brew.publisher == Dev::Deps::BrewPublisher
+    brew.publisher_needs == %i[project_root taps]
+    brew.channel_name == "brew"
+    Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:symbol) == %i[bundler brew ficsit steam egs image]
     Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:channel_name).uniq.size == Dev::Deps::Registry::INTEGRATIONS.count(&:publishes?)
   end
 
   test "publishers over the built-in table: #{pinned.inspect} contributes #{channels.inspect}" do
     When
-    publishers = Dev::Deps::Registry.publishers(project_root: Pathname("/project"), pinned:)
+    publishers = Dev::Deps::Registry.publishers(project_root: Pathname("/project"), pinned:, taps: [Dev::Deps::Tap.new(name: "d3mlabs/d3mlabs")])
 
     Then
     publishers.keys == channels
@@ -139,9 +145,23 @@ class Dev::Deps::RegistryTest < Minitest::Test
     [:steam]           | ["steam"]             | [Dev::Deps::SteamRepository]
     [:egs]             | ["egs"]               | [Dev::Deps::EgsPublisher]
     [:steam, :egs]     | ["steam", "egs"]      | [Dev::Deps::SteamRepository, Dev::Deps::EgsPublisher]
-    [:ruby]            | []                    | []
+    [:ruby]            | ["brew"]              | [Dev::Deps::BrewPublisher]
+    [:brew]            | ["brew"]              | [Dev::Deps::BrewPublisher]
     [:cmake, :url]     | []                    | []
     []                 | []                    | []
+  end
+
+  test "brew (dev#429): a lock reaching it, directly or through ruby, gets the tap publisher; a lock reaching none of the three gets nothing" do
+    Given
+    taps = [Dev::Deps::Tap.new(name: "d3mlabs/d3mlabs")]
+
+    When
+    publishers = Dev::Deps::Registry.publishers(project_root: Pathname("/tmp"), pinned: [:ruby], taps:)
+
+    Then
+    publishers.keys == ["brew"]
+    publishers["brew"].is_a?(Dev::Deps::BrewPublisher)
+    Dev::Deps::Registry.publishers(project_root: Pathname("/tmp"), pinned: [:cmake, :git], taps:) == {}
   end
 
   test "publisher_reach maps each channel a table can ship to onto the types whose pin reaches it, directly or through an alias (dev#509)" do
@@ -156,26 +176,28 @@ class Dev::Deps::RegistryTest < Minitest::Test
 
     Expect
     Dev::Deps::Registry.publisher_reach(entries:) == { "brew" => %i[brew ruby], "steam" => %i[steam] }
-    Dev::Deps::Registry.publisher_reach == { "rubygems" => %i[bundler], "ficsit" => %i[ficsit], "steam" => %i[steam], "egs" => %i[egs], "ghcr" => %i[image] }
+    Dev::Deps::Registry.publisher_reach == { "rubygems" => %i[bundler], "brew" => %i[brew ruby python], "ficsit" => %i[ficsit], "steam" => %i[steam], "egs" => %i[egs], "ghcr" => %i[image] }
   end
 
   test "publishers builds one instance per publishing entry the lock reaches, directly or through an alias, with the kwargs it asks for" do
     Given "a table where brew publishes and ruby installs through it; steam publishes but is not pinned; cmake is pinned but silent"
+    taps = [Dev::Deps::Tap.new(name: "d3mlabs/d3mlabs")]
     entries = [
       Dev::Deps::Registry::Entry.new(symbol: :brew, repository: Dev::Deps::BrewRepository, scheme: nil, integration: nil,
-        publisher: RecordingPublisher, publisher_needs: %i[project_root]),
+        publisher: RecordingPublisher, publisher_needs: %i[project_root taps]),
       Dev::Deps::Registry::Entry.new(symbol: :ruby, repository: Dev::Deps::BrewRepository, scheme: nil, integration: nil, install_alias: :brew),
       Dev::Deps::Registry::Entry.new(symbol: :steam, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil, publisher: RecordingPublisher),
       Dev::Deps::Registry::Entry.new(symbol: :cmake, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil),
     ]
 
     When
-    publishers = Dev::Deps::Registry.publishers(project_root: Pathname("/project"), pinned: pinned, entries:)
+    publishers = Dev::Deps::Registry.publishers(project_root: Pathname("/project"), pinned: pinned, taps:, entries:)
 
     Then
     publishers.keys == channels
     publishers.values.all? { |publisher| publisher.is_a?(RecordingPublisher) }
     publishers.values.map(&:project_root).compact == (channels.include?("brew") ? [Pathname("/project")] : [])
+    publishers.values.map(&:taps).compact == (channels.include?("brew") ? [taps] : [])
 
     Where
     pinned           | channels

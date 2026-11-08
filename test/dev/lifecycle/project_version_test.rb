@@ -89,4 +89,65 @@ class Dev::Lifecycle::ProjectVersionTest < Minitest::Test
     Cleanup
     FileUtils.rm_rf(root)
   end
+
+  # dev's own Gemfile.lock shape: the gem under `remote: .` with
+  # dependencies six spaces in, and a sibling gem at the same number that
+  # must not move.
+  GEMFILE_LOCK = <<~LOCK
+    PATH
+      remote: .
+      specs:
+        dev (1.1.0)
+          cli-ui (~> 2.0)
+          sorbet-runtime (~> 0.6)
+
+    GEM
+      remote: https://rubygems.org/
+      specs:
+        other (1.1.0)
+        cli-ui (2.7.0)
+  LOCK
+
+  test "a gem's Gemfile.lock mirrors VERSION: the bump rewrites the PATH spec's version and nothing else" do
+    Given
+    root = Pathname(Dir.mktmpdir("project-version-"))
+    (root / "VERSION").write("1.1.0\n")
+    (root / "Gemfile.lock").write(GEMFILE_LOCK)
+
+    When
+    files = Dev::Lifecycle::ProjectVersion.files(root, current: "1.1.0")
+    Dev::Lifecycle::ProjectVersion.write(root, "1.2.0")
+
+    Then
+    files == ["VERSION", "Gemfile.lock"]
+    (root / "Gemfile.lock").read == GEMFILE_LOCK.sub("dev (1.1.0)", "dev (1.2.0)")
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "a project whose #{what} keeps the bump to VERSION alone" do
+    Given
+    root = Pathname(Dir.mktmpdir("project-version-"))
+    (root / "VERSION").write("1.1.0\n")
+    (root / "Gemfile.lock").write(lock) if lock
+
+    When
+    files = Dev::Lifecycle::ProjectVersion.files(root, current: "1.1.0")
+    Dev::Lifecycle::ProjectVersion.write(root, "1.2.0")
+
+    Then
+    files == ["VERSION"]
+    (root / "VERSION").read == "1.2.0\n"
+    lock.nil? || (root / "Gemfile.lock").read == lock
+
+    Cleanup
+    FileUtils.rm_rf(root)
+
+    Where
+    what                                            | lock
+    "Gemfile.lock is absent"                        | nil
+    "Gemfile.lock has no PATH section"              | GEMFILE_LOCK.sub(/\APATH.*?\n\n/m, "")
+    "Gemfile.lock's PATH gem is at another version" | GEMFILE_LOCK.sub("dev (1.1.0)", "dev (1.0.0)")
+  end
 end

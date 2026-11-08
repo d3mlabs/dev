@@ -1,0 +1,17 @@
+#!/bin/sh
+# The `dev` target's builder (dev.yml `targets:`, dev#429): the d3mlabs
+# deployment's payload — deploy/d3mlabs/config.yml, the system layer of
+# dev's layered settings, and deploy/d3mlabs/Brewfile, the org's host
+# tooling `dev up` converges — laid out into $DEV_INSTALL. Dev's archive
+# packager zips it into the release asset Formula/dev.rb in the d3mlabs
+# tap points at; the formula installs the two files into etc/dev/
+# (pkgetc). Until dev#429 the payload was authored as heredocs inside the
+# formula, because it had no artifact of its own.
+#
+# Runs at the repo root with dev's build env (DEV_TARGET, DEV_INSTALL).
+set -eu
+
+cd "$(dirname "$0")/.."
+
+find "${DEV_INSTALL:?}" -mindepth 1 -delete
+cp deploy/d3mlabs/config.yml deploy/d3mlabs/Brewfile "$DEV_INSTALL"/
