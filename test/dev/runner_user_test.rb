@@ -141,7 +141,7 @@ class Dev::RunnerUserTest < Minitest::Test
 
     Expect "brew trust as the runner user, on the host PATH, the brew dev found; the refusal is one warning naming the by-hand command"
     trusting.calls.count(&trusts) == 1
-    trusting.calls.find(&trusts) == %w[sudo -u runner -H env PATH=/opt/brew/bin:/usr/bin env HOMEBREW_NO_AUTO_UPDATE=1 /home/linuxbrew/.linuxbrew/bin/brew trust --tap d3mlabs/d3mlabs]
+    trusting.calls.find(&trusts) == %w[sudo -u runner -H env -C / PATH=/opt/brew/bin:/usr/bin env HOMEBREW_NO_AUTO_UPDATE=1 /home/linuxbrew/.linuxbrew/bin/brew trust --tap d3mlabs/d3mlabs]
     first_out.include?(">>> Trusting the tap d3mlabs/d3mlabs for runner (brew loads nothing from a tap its user has not trusted)")
     !first_out.include?("warning")
     @out.string.include?("dev: warning: could not trust the tap d3mlabs/d3mlabs for runner")
@@ -230,7 +230,7 @@ class Dev::RunnerUserTest < Minitest::Test
     user.ensure_gh_authenticated!
 
     Then
-    gh.calls == [%w[sudo -u runner -H env PATH=/opt/brew/bin:/usr/bin gh auth status]]
+    gh.calls == [%w[sudo -u runner -H env -C / PATH=/opt/brew/bin:/usr/bin gh auth status]]
   end
 
   test "a runner user with no gh login, and nothing to ask with (headless), stops register with the one command that logs it in — the token on stdin, never argv" do
@@ -268,7 +268,7 @@ class Dev::RunnerUserTest < Minitest::Test
     questions.fetch(0).include?("machine user's token")
     questions.fetch(0).include?("repo, read:org, read:packages")
     gh.calls.map(&last_three) == ["gh auth status", "auth login --with-token", "gh auth status"]
-    gh.calls.fetch(1) == %w[sudo -u runner -H env PATH=/opt/brew/bin:/usr/bin gh auth login --with-token]
+    gh.calls.fetch(1) == %w[sudo -u runner -H env -C / PATH=/opt/brew/bin:/usr/bin gh auth login --with-token]
     gh.stdins == [nil, "ghp_good", nil]
     gh.calls.flatten.grep(/ghp_/).empty?
   end
@@ -292,9 +292,9 @@ class Dev::RunnerUserTest < Minitest::Test
     refused.calls.count(&logs_in) == 1
   end
 
-  test "the sudo prefix that runs a command as the runner user, in its own home, on the host's PATH — not sudo's, not the operator's" do
+  test "the sudo prefix that runs a command as the runner user, in its own home, on the host's PATH — not sudo's, not the operator's — and from a cwd it can read, never the operator's (dev#493)" do
     Expect
-    runner_user(homes: {}).sudo_argv("mkdir", "-p", "/home/runner/x") == %w[sudo -u runner -H env PATH=/opt/brew/bin:/usr/bin mkdir -p /home/runner/x]
+    runner_user(homes: {}).sudo_argv("mkdir", "-p", "/home/runner/x") == %w[sudo -u runner -H env -C / PATH=/opt/brew/bin:/usr/bin mkdir -p /home/runner/x]
     runner_user(homes: {}).path == "/opt/brew/bin:/usr/bin"
   end
 
@@ -302,7 +302,7 @@ class Dev::RunnerUserTest < Minitest::Test
   # instead of a swallowed password prompt.
   test "the non-interactive prefix refuses rather than prompts, and the one command that answers for the login by hand" do
     Expect
-    runner_user(homes: {}).probe_argv("gh", "auth", "status") == %w[sudo -n -u runner -H env PATH=/opt/brew/bin:/usr/bin gh auth status]
+    runner_user(homes: {}).probe_argv("gh", "auth", "status") == %w[sudo -n -u runner -H env -C / PATH=/opt/brew/bin:/usr/bin gh auth status]
     runner_user(homes: {}).status_command == "sudo -iu runner gh auth status"
   end
 

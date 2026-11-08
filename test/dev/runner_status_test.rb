@@ -709,7 +709,7 @@ class Dev::RunnerStatusTest < Minitest::Test
   # A probe as the runner user, the way status runs them: never prompting
   # (`-n`), in the runner user's home, on the host's PATH.
   def as_runner(*cmd, user: "runner")
-    ["sudo", "-n", "-u", user, "-H", "env", "PATH=#{HOST_PATH}", *cmd]
+    ["sudo", "-n", "-u", user, "-H", "env", "-C", "/", "PATH=#{HOST_PATH}", *cmd]
   end
 
   def build_status(out:, home: Dir.mktmpdir, registry: CannedRegistry.new,
