@@ -66,6 +66,19 @@ class Dev::Deps::RegistryTest < Minitest::Test
     steam.channel_name == "steam"
   end
 
+  test "ficsit publishes through its own repository class; a lock pinning a mod gets `deploy ficsit` (dev#427)" do
+    Given
+    ficsit = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :ficsit }
+
+    Expect "the write side is the read side's class, built with no kwargs"
+    ficsit.publisher == Dev::Deps::FicsitRepository
+    ficsit.publisher_needs == []
+    ficsit.channel_name == "ficsit"
+    publishers = Dev::Deps::Registry.publishers(project_root: Pathname("/tmp"), pinned: [:ficsit])
+    publishers.keys == ["ficsit"]
+    publishers.fetch("ficsit").is_a?(Dev::Deps::FicsitRepository)
+  end
+
   test "the built-in store publishers are steam's repository and egs's own class (dev#426)" do
     Given
     by_symbol = Dev::Deps::Registry::INTEGRATIONS.to_h { |entry| [entry.symbol, entry] }
@@ -98,14 +111,14 @@ class Dev::Deps::RegistryTest < Minitest::Test
     gems = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :bundler }
     image = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :image }
 
-    Expect "the two entries publish under the store's name; with steam and egs (dev#426), the rest are silent"
+    Expect "the two entries publish under the store's name; with steam, egs and ficsit (dev#426, #427), the rest are silent"
     gems.publisher == Dev::Deps::RubygemsPublisher
     gems.publisher_needs == %i[project_root]
     gems.channel_name == "rubygems"
     image.publisher == Dev::Deps::GhcrPublisher
     image.publisher_needs == []
     image.channel_name == "ghcr"
-    Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:symbol) == %i[bundler steam egs image]
+    Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:symbol) == %i[bundler ficsit steam egs image]
     Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:channel_name).uniq.size == Dev::Deps::Registry::INTEGRATIONS.count(&:publishes?)
   end
 
@@ -122,6 +135,7 @@ class Dev::Deps::RegistryTest < Minitest::Test
     [:bundler]         | ["rubygems"]          | [Dev::Deps::RubygemsPublisher]
     [:image]           | ["ghcr"]              | [Dev::Deps::GhcrPublisher]
     [:bundler, :image] | ["rubygems", "ghcr"]  | [Dev::Deps::RubygemsPublisher, Dev::Deps::GhcrPublisher]
+    [:ficsit]          | ["ficsit"]            | [Dev::Deps::FicsitRepository]
     [:steam]           | ["steam"]             | [Dev::Deps::SteamRepository]
     [:egs]             | ["egs"]               | [Dev::Deps::EgsPublisher]
     [:steam, :egs]     | ["steam", "egs"]      | [Dev::Deps::SteamRepository, Dev::Deps::EgsPublisher]
@@ -142,7 +156,7 @@ class Dev::Deps::RegistryTest < Minitest::Test
 
     Expect
     Dev::Deps::Registry.publisher_reach(entries:) == { "brew" => %i[brew ruby], "steam" => %i[steam] }
-    Dev::Deps::Registry.publisher_reach == { "rubygems" => %i[bundler], "ghcr" => %i[image] }
+    Dev::Deps::Registry.publisher_reach == { "rubygems" => %i[bundler], "ficsit" => %i[ficsit], "steam" => %i[steam], "egs" => %i[egs], "ghcr" => %i[image] }
   end
 
   test "publishers builds one instance per publishing entry the lock reaches, directly or through an alias, with the kwargs it asks for" do
