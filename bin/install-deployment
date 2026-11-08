@@ -8,10 +8,14 @@
 # (pkgetc). Until dev#429 the payload was authored as heredocs inside the
 # formula, because it had no artifact of its own.
 #
+# README and LICENSE ride along as the keg's payload (dev#517): the two
+# etc files land outside the keg, and brew refuses an empty one
+# ("Empty installation") — the formula installs them under doc.
+#
 # Runs at the repo root with dev's build env (DEV_TARGET, DEV_INSTALL).
 set -eu
 
 cd "$(dirname "$0")/.."
 
 find "${DEV_INSTALL:?}" -mindepth 1 -delete
-cp deploy/d3mlabs/config.yml deploy/d3mlabs/Brewfile "$DEV_INSTALL"/
+cp deploy/d3mlabs/config.yml deploy/d3mlabs/Brewfile README.md LICENSE "$DEV_INSTALL"/

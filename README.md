@@ -939,7 +939,7 @@ Nothing is kept: the run is a pass/fail on "can this project provision on a fres
 
 ## Releasing a new version
 
-dev releases itself through its own lifecycle ([dev#429](https://github.com/d3mlabs/dev/issues/429)): two targets in [`dev.yml`](dev.yml) — `dev-core` (the org-blank tool, [`bin/install-core`](bin/install-core)) and `dev` (the d3mlabs deployment payload, [`bin/install-deployment`](bin/install-deployment)) — one `release:` that packages both, and one channel, `deploy brew`, whose publisher is the built-in `brew` integration's write side. Releases are distributed via the Homebrew tap at [d3mlabs/homebrew-d3mlabs](https://github.com/d3mlabs/homebrew-d3mlabs), one formula per target named as the target.
+dev releases itself through its own lifecycle ([dev#429](https://github.com/d3mlabs/dev/issues/429)): two targets in [`dev.yml`](dev.yml) — `dev-core` (the org-blank tool, [`bin/install-core`](bin/install-core)) and `dev` (the d3mlabs deployment payload — `config.yml` and `Brewfile`, with `README.md` and `LICENSE` beside them as the keg's payload, since the two etc files land outside the keg and brew refuses an empty one ([dev#517](https://github.com/d3mlabs/dev/issues/517)); [`bin/install-deployment`](bin/install-deployment)) — one `release:` that packages both, and one channel, `deploy brew`, whose publisher is the built-in `brew` integration's write side. Releases are distributed via the Homebrew tap at [d3mlabs/homebrew-d3mlabs](https://github.com/d3mlabs/homebrew-d3mlabs), one formula per target named as the target.
 
 ```bash
 dev release 0.8.0                  # bump VERSION (and its Gemfile.lock mirror), tag v0.8.0, push, package both targets at the tag, attach them to the GitHub release
