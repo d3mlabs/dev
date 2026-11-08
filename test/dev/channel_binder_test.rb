@@ -75,23 +75,34 @@ class Dev::ChannelBinderTest < Minitest::Test
     binder.bind({}) == {}
   end
 
-  test "a declared channel with neither run: nor a contributed publisher of its name is refused at load, naming both fixes: #{what}" do
+  test "a declared channel with neither run: nor a contributed publisher of its name binds with a fault naming both fixes, and nothing else is refused (dev#509): #{what}" do
     Given
     steam = channel("steam", INTEGRATION.new(name: "steam"))
 
     When
-    binder(*contributed).bind({ "steam" => steam })
+    bound = binder(*contributed).bind({ "steam" => steam })
+    faults = binder(*contributed).faults({ "steam" => steam })
 
-    Then
-    error = raises Dev::ChannelBinder::ChannelProtocolError
-    error.message.include?("channel 'deploy steam' has no protocol")
-    error.message.include?("the lock contributes no `steam` publisher (it contributes: #{listed})")
-    error.message.include?("declare `run:`")
-    error.message.include?("dependencies.rb (d3mlabs/dev#192)")
+    Then "the channel is in the set as declared; the fault is its reason"
+    bound.fetch("steam").equal?(steam)
+    faults.keys == ["steam"]
+    faults.fetch("steam").include?("channel 'deploy steam' has no protocol")
+    faults.fetch("steam").include?("the lock contributes no `steam` publisher (it contributes: #{listed})")
+    faults.fetch("steam").include?("declare `run:`")
+    faults.fetch("steam").include?("dependencies.rb (d3mlabs/dev#192)")
 
     Where
     what                        | contributed | listed
     "an empty lock"             | []          | "none"
     "a lock contributing other" | ["brew"]    | "brew"
+  end
+
+  test "channels with a protocol have no fault" do
+    Given
+    steam = channel("steam", INTEGRATION.new(name: "steam"))
+    staging = channel("staging", SCRIPT.new(command: "./bin/stage"))
+
+    Expect
+    binder("steam").faults({ "steam" => steam, "staging" => staging }) == {}
   end
 end

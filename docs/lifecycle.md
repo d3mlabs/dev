@@ -147,7 +147,7 @@ channels since `deploy`'s children never land on the builtin's slot:
 | --- | --- | --- |
 | with `run:` | any | the script **replaces** the publisher; dev's stage still selects, checks and records |
 | without `run:` | a publisher of that name | the declaration **configures** it: `targets:` is the accept set, `desc` is the row, the protocol is the integration's |
-| without `run:` | none | refused at load (`ChannelBinder::ChannelProtocolError`), naming both fixes: declare `run:`, or depend on an integration whose publisher knows the endpoint |
+| without `run:` | none | bound **unbound** ([dev#509](https://github.com/d3mlabs/dev/issues/509)): it lists in `dev help deploy` with its fault, and `deploy <channel>` refuses (`DeployCommand::UnboundChannelError`) naming both fixes — declare `run:`, or depend on an integration whose publisher knows the endpoint. Every other verb runs: a manifest ahead of the installed dev (dev's own, adopting a publisher the release lacks) must not take `dev deps install` down with it |
 | — | a publisher | the channel appears as the lock's: every packageable build accepted, a stock `desc`; a project with nothing packageable gets no row |
 
 ### The release

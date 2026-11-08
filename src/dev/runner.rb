@@ -66,6 +66,10 @@ module Dev
     class BoundChannel < T::Struct
       const :channel, Lifecycle::Channel
       const :placement, T.nilable(Placement)
+      # Why the channel cannot ship — a declared channel with no protocol
+      # (ChannelBinder#faults). It lists; `deploy <channel>` refuses with
+      # this; nothing else is affected (dev#509).
+      const :fault, T.nilable(String), default: nil
     end
 
     # What binding the lock yields: the project commands with their
@@ -307,15 +311,19 @@ module Dev
     # @param project [ProjectContext]
     # @return [Bindings]
     # @raise [ProjectImages::UnknownImageError, ProjectImages::AmbiguousEnvironmentImageError]
-    # @raise [ChannelBinder::ChannelProtocolError]
     sig { params(manifest: ProjectManifest, project: ProjectContext).returns(Bindings) }
     def bind_placements(manifest, project)
       binder = PlacementBinder.new(images: project.project_images)
       targets = binder.bind_targets(manifest.targets)
       publishers = ProjectPublishers.new(root: project.root).contributed
-      channels = ChannelBinder.new(publishers:, targets: manifest.targets.values).bind(manifest.channels)
+      channel_binder = ChannelBinder.new(publishers:, targets: manifest.targets.values)
+      channels = channel_binder.bind(manifest.channels)
+      faults = channel_binder.faults(manifest.channels)
       placements = binder.bind_channels(channels)
-      bound = channels.to_h { |name, channel| [name, BoundChannel.new(channel:, placement: placements.fetch(name))] }
+      bound = channels.to_h do |name, channel|
+        fault = faults[name]
+        [name, BoundChannel.new(channel:, placement: fault ? nil : placements.fetch(name), fault:)]
+      end
       Bindings.new(commands: binder.bind(manifest.commands), targets:, channels: bound, publishers:)
     rescue EnvironmentImage::StaleDigestError, Deps::Lockfile::RetiredBuildLockError,
            PlacementBinder::ImageDoesNotProduceError => e
@@ -580,6 +588,7 @@ module Dev
           store:,
           resolver:,
           placement: bound.placement,
+          fault: bound.fault,
           deployments:,
           out: @out,
         )
