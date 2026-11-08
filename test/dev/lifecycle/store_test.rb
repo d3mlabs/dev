@@ -67,6 +67,24 @@ class Dev::Lifecycle::StoreTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "a release's downloads live under .releases/<tag>/, a dot-directory like a scratch, so they never read as a build either (dev#425)" do
+    Given
+    root = Dir.mktmpdir("store-")
+    store = Dev::Lifecycle::Store.new(project_name: "cellbound-3d", targets: all_targets, data_root: root)
+
+    When "a release has been downloaded"
+    dir = store.release_dir(Dev::Lifecycle::ReleaseTag.new("1.2.0"))
+    dir.mkpath
+    (dir / "release.json").write("{}")
+
+    Then
+    dir == Pathname(root) / "artifacts/cellbound-3d/.releases/v1.2.0"
+    store.artifacts == []
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
   test "an install directory without a manifest is not an artifact: a build in progress reads as unpackaged" do
     Given
     root = Dir.mktmpdir("store-")

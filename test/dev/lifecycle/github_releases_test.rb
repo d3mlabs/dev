@@ -3,8 +3,10 @@
 
 require "test_helper"
 require "dev/lifecycle"
+require "fileutils"
 require "pathname"
 require "support/fake_gh"
+require "tmpdir"
 require "uri"
 
 transform!(RSpock::AST::Transformation)
@@ -103,6 +105,51 @@ class Dev::Lifecycle::GithubReleasesTest < Minitest::Test
 
     Then
     gh.calls.empty?
+  end
+
+  test "download fetches the named assets into the directory, creating it, each name escaped to match only itself" do
+    Given
+    dir = Pathname(Dir.mktmpdir("github-releases-")) / "v1.2.0"
+    gh = FakeGh.new.serves("v1.2.0", "rspock-1.2.0.gem" => "gem bytes", "release.json" => "{}", "odd[1].zip" => "zip")
+
+    When
+    releases(gh).download(TAG, ["rspock-1.2.0.gem", "odd[1].zip"], into: dir)
+
+    Then
+    (dir / "rspock-1.2.0.gem").read == "gem bytes"
+    (dir / "odd[1].zip").read == "zip"
+    !(dir / "release.json").exist?
+    gh.calls.map(&:argv) == [["release", "download", "v1.2.0", "--dir", dir.to_s, "--clobber", "--pattern", "rspock-1.2.0.gem", "--pattern", "odd\\[1].zip"]]
+
+    Cleanup
+    FileUtils.rm_rf(dir.dirname)
+  end
+
+  test "download with nothing to fetch does not go to the forge" do
+    Given
+    gh = FakeGh.new
+
+    When
+    releases(gh).download(TAG, [], into: Pathname("/nonexistent/releases/v1.2.0"))
+
+    Then
+    gh.calls.empty?
+  end
+
+  test "a refused download is the archive's error, carrying gh's words" do
+    Given
+    dir = Pathname(Dir.mktmpdir("github-releases-"))
+    gh = FakeGh.new.serves("v1.2.0", "rspock-1.2.0.gem" => "gem bytes")
+
+    When
+    releases(gh).download(TAG, ["rspock-9.9.9.gem"], into: dir)
+
+    Then
+    error = raises(Dev::Lifecycle::GithubReleases::ApiError)
+    error.message.include?("no assets match the file pattern")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
   test "a page that is #{what} is refused: the forge did not answer a release" do

@@ -6,6 +6,7 @@ require "pathname"
 require_relative "archive"
 require_relative "artifact"
 require_relative "manifest"
+require_relative "part_list"
 require_relative "release_tag"
 
 module Dev
@@ -30,9 +31,6 @@ module Dev
       # a packager that broke the `<build>.<ext>` contract.
       class UnnamedArchiveError < RuntimeError; end
 
-      # A split archive's MANIFEST with a line that is not `<sha>  <part>`.
-      class MalformedPartListError < RuntimeError; end
-
       # What one artifact contributes to a release: its `release.json`
       # entry and the files to upload, the archive first.
       class Gathered < T::Struct
@@ -52,7 +50,7 @@ module Dev
       # @param tag [ReleaseTag] the release the assets are named for
       # @return [Gathered]
       # @raise [UnnamedArchiveError]
-      # @raise [MalformedPartListError]
+      # @raise [PartList::MalformedPartListError]
       sig { params(artifact: Artifact, tag: ReleaseTag).returns(Gathered) }
       def gather(artifact, tag:)
         @dir.mkpath
@@ -92,22 +90,14 @@ module Dev
       # @param tag [ReleaseTag]
       # @return [Array(Array<Pathname>, String)] the files (the MANIFEST
       #   first) and the written MANIFEST's digest
-      # @raise [MalformedPartListError]
+      # @raise [PartList::MalformedPartListError]
       sig { params(artifact: Artifact, manifest_name: String, tag: ReleaseTag).returns([T::Array[Pathname], String]) }
       def gather_split(artifact, manifest_name, tag:)
-        parts = artifact.archive.read.lines.map do |line|
-          sha, part = line.strip.split(/\s+/, 2)
-          raise MalformedPartListError, "#{artifact.archive}: '#{line.strip}' is not `<sha256>  <part>`" if sha.nil? || part.nil?
-
-          [sha, part]
-        end
-        lines = parts.map do |sha, part|
-          asset = link(artifact.dir / part, asset_name(part, artifact:, tag:))
-          [asset, "#{sha}  #{asset.basename}\n"]
-        end
+        listed = PartList.read(artifact.archive)
+        assets = listed.parts.map { |part| link(artifact.dir / part.name, asset_name(part.name, artifact:, tag:)) }
         manifest = @dir / manifest_name
-        manifest.write(lines.map(&:last).join)
-        [[manifest, *lines.map(&:first)], Digest::SHA256.file(manifest.to_s).hexdigest]
+        listed.renamed { |name| asset_name(name, artifact:, tag:) }.write(manifest)
+        [[manifest, *assets], Digest::SHA256.file(manifest.to_s).hexdigest]
       end
 
       # @param source [Pathname] a file in the store

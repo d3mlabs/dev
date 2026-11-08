@@ -17,10 +17,25 @@ class FakeGh < Dev::Lifecycle::Gh
 
   attr_reader :calls
 
+  DOWNLOAD = ["release", "download"].freeze
+
   def initialize(root: Pathname("/nonexistent/checkout"))
     super(root:)
     @answers = []
+    @assets = Hash.new { |hash, tag| hash[tag] = {} }
     @calls = []
+  end
+
+  # The assets a tag's release serves to `gh release download`: each
+  # `--pattern` asked for is written under `--dir` with these bytes, as gh
+  # would; a pattern naming none is gh's refusal.
+  #
+  # @param tag [String] the tag's name (`v1.2.0`)
+  # @param assets [Hash{String => String}] asset name → bytes
+  # @return [FakeGh] self
+  def serves(tag, assets)
+    @assets[tag].merge!(assets)
+    self
   end
 
   # @param prefix [Array<String>] the leading words of an argv this answers
@@ -46,6 +61,8 @@ class FakeGh < Dev::Lifecycle::Gh
 
   def capture(argv, stdin: nil)
     @calls << Call.new(argv:, stdin:)
+    return download(argv) if argv.first(DOWNLOAD.size) == DOWNLOAD
+
     index = @answers.index { |prefix, _out, _err| argv.first(prefix.size) == prefix }
     raise "FakeGh: nothing answers gh #{argv.join(" ")}" if index.nil?
 
@@ -53,6 +70,15 @@ class FakeGh < Dev::Lifecycle::Gh
     raise Dev::Lifecycle::Gh::CommandFailedError, "gh #{argv.join(" ")} failed in #{root}: #{err}" if err
 
     out
+  end
+
+  # The downloads asked of each tag so far, as asset names in argv order.
+  #
+  # @param tag [String]
+  # @return [Array<Array<String>>] one entry per `gh release download` call
+  def downloaded(tag)
+    @calls.select { |call| call.argv.first(DOWNLOAD.size + 1) == DOWNLOAD + [tag] }
+      .map { |call| call.argv.each_cons(2).filter_map { |flag, value| value if flag == "--pattern" } }
   end
 
   # A streamed gh (`run watch`) consumes its scripted answer the same way;
@@ -71,5 +97,31 @@ class FakeGh < Dev::Lifecycle::Gh
   # The API paths dev called, in order (the `repo view` excluded).
   def paths
     @calls.select { |call| call.argv.first == "api" }.map { |call| call.argv.last }
+  end
+
+  private
+
+  # `gh release download <tag> --dir D --clobber --pattern P…`: write each
+  # served asset the patterns name into D, or refuse as gh does for a tag
+  # with no release or a pattern matching no asset.
+  #
+  # @param argv [Array<String>]
+  # @return [String] what gh prints: nothing
+  def download(argv)
+    tag = argv.fetch(2)
+    raise Dev::Lifecycle::Gh::CommandFailedError, "gh #{argv.join(" ")} failed in #{root}: release not found" unless @assets.key?(tag)
+
+    dir = Pathname(argv.fetch(argv.index("--dir") + 1))
+    patterns = argv.each_cons(2).filter_map { |flag, value| value if flag == "--pattern" }
+    patterns.each do |pattern|
+      # The real gh matches a glob; dev escapes each name to match itself,
+      # so the escape is undone to find the asset.
+      name = pattern.gsub(/\\(.)/, '\1')
+      bytes = @assets[tag][name]
+      raise Dev::Lifecycle::Gh::CommandFailedError, "gh #{argv.join(" ")} failed in #{root}: no assets match the file pattern" if bytes.nil?
+
+      (dir / name).binwrite(bytes)
+    end
+    ""
   end
 end

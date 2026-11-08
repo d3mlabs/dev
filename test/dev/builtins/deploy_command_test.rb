@@ -15,6 +15,7 @@ require "dev/placement"
 require "dev/settings"
 require "support/fake_gh"
 require "support/recording_publisher"
+require "support/release_fixtures"
 require "support/scripted_remote"
 require "fileutils"
 require "open3"
@@ -33,6 +34,7 @@ require "tmpdir"
 transform!(RSpock::AST::Transformation)
 class Dev::Builtins::DeployCommandTest < Minitest::Test
   include SorbetHelper
+  include ReleaseFixtures
 
   # The repo has no enrolled runner online.
   class NoneEnrolled < Dev::EnrolledRunnerLookup
@@ -91,10 +93,13 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     )
   end
 
-  def gem_target = Dev::Lifecycle::Target.new(name: "rspock", desc: "The gem")
   def targets = [client, gem_target]
   def store = Dev::Lifecycle::Store.new(project_name: "cellbound-3d", targets: targets, data_root: (@root / "data").to_s)
   def build(name) = Dev::Lifecycle::Build.parse(name, targets)
+
+  def release_archives
+    Dev::Lifecycle::ReleaseArchives.new(releases: Dev::Lifecycle::GithubReleases.new(gh: @gh), store:, targets:)
+  end
 
   def channel(*patterns)
     Dev::Lifecycle::Channel.new(
@@ -133,7 +138,7 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     )
     Dev::Builtins::DeployCommand.new(
       channel: channel,
-      selector: Dev::DeploySelector.new(channel: channel, targets: targets, store: store),
+      selector: Dev::DeploySelector.new(channel: channel, targets: targets, store: store, release_archives:),
       ports: Dev::Lifecycle::Ports.new(project_root: @project, publishers:),
       store: store,
       resolver: resolver,
@@ -210,11 +215,11 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     execute(command(steam_channel, publishers: { "steam" => steam }))
 
     Then "and the record's receipt is the integration's, not a run: line"
-    steam.shipments.size == 1
-    steam.shipments.first.artifacts == [win64, linux64]
-    steam.shipments.first.channel == steam_channel
-    steam.shipments.first.track == Dev::Lifecycle::Track::Testing
-    steam.shipments.first.scratch == store.root / ".steam"
+    steam.calls.size == 1
+    steam.calls.first.shipments == [win64, linux64].map { |artifact| Dev::Lifecycle::Shipment.of_artifact(artifact) }
+    steam.calls.first.channel == steam_channel
+    steam.calls.first.track == Dev::Lifecycle::Track::Testing
+    steam.calls.first.scratch == store.root / ".steam"
     shipped == []
     @out.string == <<~OUT
       deployed cellbound-3d-win64-release (1.2.3+#{head}) → steam (testing): #{win64.archive}
@@ -388,10 +393,10 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     @ui.expects(:print_remote_crossing).with(runner: "gamebox", snapshot: ScriptedRemote::SHA[0, 12])
 
     When
-    execute(command, "rspock", "--runner", "gamebox", "--allow-stale", "--dry-run", "--config", "release")
+    execute(command, "rspock", "--runner", "gamebox", "--allow-stale", "--dry-run", "--config", "release", "--release", "1.2.0")
 
     Then "the words in declared order, `--runner` left behind; no MissingArtifactError, since the host's store is the one that counts"
-    @remote.dispatched_verbs == "deploy staging rspock --config release --allow-stale --dry-run"
+    @remote.dispatched_verbs == "deploy staging rspock --config release --release 1.2.0 --allow-stale --dry-run"
     @remote.sync.synced == ["gamebox"]
     shipped == []
     @gh.calls == []
@@ -407,6 +412,95 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     @remote.dispatched_verbs.nil?
   end
 
+  # The release half: a cut release on the scripted forge, the script
+  # recording what a release deploy tells it instead of the store's keys.
+  def release_script
+    (@project / "stage.sh").write(<<~SH)
+      #!/bin/sh
+      set -eu
+      echo "$DEV_CHANNEL $DEV_TRACK $DEV_BUILD $DEV_BUILD_ID $DEV_RELEASE_VERSION $DEV_SHA ${DEV_DIRTY:-unset} ${DEV_PACKAGED_AT:-unset} $DEV_ARTIFACT" >> "#{@root}/shipped"
+    SH
+  end
+
+  test "`--release V` ships the release's archives — downloaded into the store's .releases/<tag>/, verified — on the live track, telling the script the version, and records the deploy against the tag as a production deployment" do
+    Given "a release of the dev client and the gem, and a store holding nothing"
+    release_script
+    release_on(@gh, { "cellbound-3d-win64-dev" => "win", "cellbound-3d-linux64-dev" => "linux", "rspock" => "gem" })
+    forge_accepts
+    dir = store.release_dir(Dev::Lifecycle::ReleaseTag.new("1.2.0"))
+
+    When
+    execute(command, "--release", "1.2.0")
+
+    Then "the script saw the live track, the release's version and the tag's short sha, and none of the store's keys"
+    shipped == [
+      "staging live cellbound-3d-win64-dev 1.2.0+3f2a1c9d8e7b 1.2.0 3f2a1c9d8e7b unset unset #{dir / "cellbound-3d-win64-dev-1.2.0.zip"}",
+      "staging live cellbound-3d-linux64-dev 1.2.0+3f2a1c9d8e7b 1.2.0 3f2a1c9d8e7b unset unset #{dir / "cellbound-3d-linux64-dev-1.2.0.zip"}",
+      "staging live rspock 1.2.0+3f2a1c9d8e7b 1.2.0 3f2a1c9d8e7b unset unset #{dir / "rspock-1.2.0.zip"}",
+    ]
+    (dir / "rspock-1.2.0.zip").read == "gem"
+    @out.string == <<~OUT
+      deployed cellbound-3d-win64-dev (1.2.0+3f2a1c9d8e7b) → staging (live): #{dir / "cellbound-3d-win64-dev-1.2.0.zip"}
+      deployed cellbound-3d-linux64-dev (1.2.0+3f2a1c9d8e7b) → staging (live): #{dir / "cellbound-3d-linux64-dev-1.2.0.zip"}
+      deployed rspock (1.2.0+3f2a1c9d8e7b) → staging (live): #{dir / "rspock-1.2.0.zip"}
+      recorded as GitHub Deployment #41 (live track) → https://github.com/#{REPO}/deployments/staging
+    OUT
+    @gh.posted.first.slice("ref", "environment", "production_environment") == { "ref" => "v1.2.0", "environment" => "staging", "production_environment" => true }
+    @gh.posted.first["payload"] == {
+      "schema" => 1, "track" => "live",
+      "builds" => [
+        { "build" => "cellbound-3d-win64-dev", "build_id" => "1.2.0+3f2a1c9d8e7b" },
+        { "build" => "cellbound-3d-linux64-dev", "build_id" => "1.2.0+3f2a1c9d8e7b" },
+        { "build" => "rspock", "build_id" => "1.2.0+3f2a1c9d8e7b" },
+      ],
+    }
+  end
+
+  test "`--release V` hands an integration's publisher the release's shipments on the live track" do
+    Given
+    steam = RecordingPublisher.new
+    release_on(@gh, { "cellbound-3d-win64-release" => "win", "cellbound-3d-linux64-release" => "linux" })
+    forge_accepts
+
+    When
+    execute(command(steam_channel, publishers: { "steam" => steam }), "--release", "1.2.0")
+
+    Then
+    steam.calls.first.track == Dev::Lifecycle::Track::Live
+    steam.calls.first.shipments.map(&:provenance).uniq == [Dev::Lifecycle::Provenance::Release.new(tag: Dev::Lifecycle::ReleaseTag.new("1.2.0"), sha: RELEASE_SHA)]
+    steam.calls.first.shipments.map(&:name) == ["cellbound-3d-win64-release", "cellbound-3d-linux64-release"]
+    @gh.posted.first["ref"] == "v1.2.0"
+  end
+
+  test "`--release V` with a corrupted asset ships nothing and records nothing" do
+    Given "a forge serving other bytes than release.json digests"
+    release_on(@gh, { "rspock" => "gem" }, manifest: release_manifest({ "rspock" => "what the cut digested" }))
+
+    When
+    execute(command, "rspock", "--release", "1.2.0")
+
+    Then
+    raises Dev::Lifecycle::ReleaseArchives::ChecksumMismatchError
+    shipped == []
+    @gh.posted == []
+    @out.string == ""
+  end
+
+  test "`--release V --dry-run` downloads and verifies, reports what would ship on the live track, and runs no protocol" do
+    Given
+    release_on(@gh, { "rspock" => "gem" })
+    dir = store.release_dir(Dev::Lifecycle::ReleaseTag.new("1.2.0"))
+
+    When
+    execute(command, "rspock", "--release", "1.2.0", "--dry-run")
+
+    Then
+    shipped == []
+    @out.string == "would deploy rspock (1.2.0+3f2a1c9d8e7b) → staging (live): #{dir / "rspock-1.2.0.zip"}\n"
+    (dir / "rspock-1.2.0.zip").file?
+    @gh.posted == []
+  end
+
   test "the verb's traits: the channel's desc, the selector's flags plus --dry-run and --runner, its placement, the accept set and protocol as details" do
     Given
     verb = command
@@ -414,7 +508,7 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     Expect
     verb.category == Dev::Command::Category::Lifecycle
     verb.desc == "rsync to the gamebox"
-    verb.flags.map(&:name) == ["--config", "--allow-stale", "--force", "--dry-run", "--runner"]
+    verb.flags.map(&:name) == ["--config", "--release", "--allow-stale", "--force", "--dry-run", "--runner"]
     verb.placement == Dev::Placement::Host.new
     verb.listing.nil?
     verb.details == ["Accepts: cellbound-3d-win64-dev, cellbound-3d-linux64-dev, rspock", "Protocol: run: sh ./stage.sh"]

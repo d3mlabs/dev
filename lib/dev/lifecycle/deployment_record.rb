@@ -1,22 +1,23 @@
 # typed: strict
 # frozen_string_literal: true
 
-require_relative "artifact"
 require_relative "build_id"
 require_relative "deployment_state"
+require_relative "shipment"
 require_relative "track"
 
 module Dev
   module Lifecycle
     # What dev records of one deploy (dev#192, K6): the **channel** it went
     # to (the GitHub Deployment's environment), the **ref** it was made
-    # from (the artifacts' snapshot sha, or the release's tag), the
-    # **track**, the **builds** that shipped with the ids they were
-    # packaged under, and how it ended — the state and, in the status's
-    # description, the publisher's Receipt on success or the failure's
-    # message. A deploy produces no node of the store (K0): this record on
-    # the forge is its only trace, shared by the operator's Mac and the
-    # box's CI and keyed the way people think, channel × ref.
+    # from (the archives' Provenance: the commit a store artifact was
+    # packaged from, or the release's tag — dev#425), the **track**, the
+    # **builds** that shipped with the ids they were packaged under, and
+    # how it ended — the state and, in the status's description, the
+    # publisher's Receipt on success or the failure's message. A deploy
+    # produces no node of the store (K0): this record on the forge is its
+    # only trace, shared by the operator's Mac and the box's CI and keyed
+    # the way people think, channel × ref.
     #
     # A build is carried by name, not as a Build: the ledger outlives the
     # declarations (a target renamed last month still shipped), so reading
@@ -75,12 +76,13 @@ module Dev
       class << self
         extend T::Sig
 
-        # The records one deploy of these artifacts makes: one per commit
-        # the artifacts were packaged from — one in the common case, more
-        # only when `--allow-stale` shipped artifacts of different commits
-        # together, since a GitHub Deployment is one (environment, ref).
+        # The records one deploy of these archives makes: one per ref they
+        # came from — one in the common case (a release's archives all
+        # carry its tag), more only when `--allow-stale` shipped artifacts
+        # of different commits together, since a GitHub Deployment is one
+        # (environment, ref).
         #
-        # @param artifacts [Array<Artifact>] what shipped, in accept order
+        # @param shipments [Array<Shipment>] what shipped, in accept order
         # @param channel [String] the channel's name
         # @param track [Track]
         # @param state [DeploymentState]
@@ -89,20 +91,20 @@ module Dev
         # @raise [UnknownRefError]
         sig do
           params(
-            artifacts: T::Array[Artifact],
+            shipments: T::Array[Shipment],
             channel: String,
             track: Track,
             state: DeploymentState,
             description: T.nilable(String),
           ).returns(T::Array[DeploymentRecord])
         end
-        def of(artifacts, channel:, track:, state:, description:)
-          artifacts.group_by { |artifact| ref_of(artifact) }.map do |ref, shipped|
+        def of(shipments, channel:, track:, state:, description:)
+          shipments.group_by { |shipment| ref_of(shipment) }.map do |ref, shipped|
             new(
               channel:,
               ref:,
               track:,
-              builds: shipped.map { |artifact| DeployedBuild.new(name: artifact.name, build_id: artifact.manifest.build_id) },
+              builds: shipped.map { |shipment| DeployedBuild.new(name: shipment.name, build_id: shipment.build_id) },
               state:,
               description:,
             )
@@ -152,13 +154,13 @@ module Dev
 
         private
 
-        # @param artifact [Artifact]
-        # @return [String] the commit it was packaged from
+        # @param shipment [Shipment]
+        # @return [String] the commit it was packaged from, or its release's tag
         # @raise [UnknownRefError]
-        sig { params(artifact: Artifact).returns(String) }
-        def ref_of(artifact)
-          artifact.manifest.state.sha ||
-            raise(UnknownRefError, "#{artifact.name} (#{artifact.manifest.build_id}) was packaged outside a checkout: no commit to record its deploy against")
+        sig { params(shipment: Shipment).returns(String) }
+        def ref_of(shipment)
+          shipment.ref ||
+            raise(UnknownRefError, "#{shipment} was packaged outside a checkout: no commit to record its deploy against")
         end
       end
 

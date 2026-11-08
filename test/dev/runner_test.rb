@@ -9,7 +9,9 @@ require "dev/environment_image"
 require "dev/runner"
 require "support/fake_gh"
 require "support/recording_publisher"
+require "digest"
 require "fileutils"
+require "json"
 require "open3"
 require "stringio"
 require "tempfile"
@@ -590,6 +592,55 @@ class RunnerTest < Minitest::Test
     gh.posted.first.slice("environment", "auto_merge") == { "environment" => "staging", "auto_merge" => false }
     gh.posted.first["payload"]["builds"].map { |b| b["build"] } == ["site-release"]
     gh.posted.last["state"] == "success"
+  end
+
+  test "dev deploy --release V with no channel fans out over every channel from the release's verified archives, on the live track, recorded against the tag (dev#425)" do
+    Given "a project with two channels, a release of both builds on the forge, and a forge that takes two records"
+    root = Pathname.new(Dir.mktmpdir("runner-test-"))
+    (@tmp_roots ||= []).push(root)
+    Open3.capture2e("git", "-C", root.to_s, "init", "-q")
+    outside = Pathname.new(Dir.mktmpdir("runner-test-"))
+    @tmp_roots.push(outside)
+    data_root = outside / "data"
+    Dev::DataRoot.stubs(:path).returns(data_root.to_s)
+    out = StringIO.new
+    release_json = JSON.generate({
+      "stamp" => Dev::Lifecycle::Manifest::Stamp.now(dev_version: "0.7.2", now: Time.utc(2026, 11, 6, 12)).to_json_hash,
+      "tag" => "v1.2.0", "sha" => "3f2a1c9d8e7b4455",
+      "archives" => [
+        { "build" => "site-release", "name" => "site-release-1.2.0.zip", "sha256" => Digest::SHA256.hexdigest("site"), "build_id" => "1.2.0+3f2a1c9d8e7b" },
+        { "build" => "rspock", "name" => "rspock-1.2.0.gem", "sha256" => Digest::SHA256.hexdigest("gem"), "build_id" => "1.2.0+3f2a1c9d8e7b" },
+      ],
+    })
+    gh = FakeGh.new.resolving("d3mlabs/testproject")
+      .answers(["release", "view", "v1.2.0"], with: "https://github.com/d3mlabs/testproject/releases/tag/v1.2.0\n")
+      .answers(["release", "view", "v1.2.0"], with: "https://github.com/d3mlabs/testproject/releases/tag/v1.2.0\n")
+      .serves("v1.2.0", "release.json" => release_json, "site-release-1.2.0.zip" => "site", "rspock-1.2.0.gem" => "gem")
+    [9, 10].each do |id|
+      gh.answers(["api", "-X", "POST", "--input", "-", "repos/d3mlabs/testproject/deployments"], with: { "id" => id, "created_at" => "2026-11-05T17:02:11Z" })
+      gh.answers(["api", "-X", "POST", "--input", "-", "repos/d3mlabs/testproject/deployments/#{id}/statuses"], with: { "state" => "success" })
+    end
+    runner = build_runner(out: out, root: root, gh: gh, targets: {
+      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "true" },
+      "rspock" => { "desc" => "The gem" },
+    }, commands: {
+      "deploy" => { "commands" => {
+        "staging" => { "targets" => ["site-release"], "run" => "echo \"$DEV_CHANNEL $DEV_TRACK $DEV_RELEASE_VERSION $DEV_ARTIFACT\" >> \"#{outside}/shipped\"", "environment" => "host" },
+        "rubygems" => { "targets" => ["rspock"], "run" => "echo \"$DEV_CHANNEL $DEV_TRACK $DEV_RELEASE_VERSION $DEV_ARTIFACT\" >> \"#{outside}/shipped\"", "environment" => "host" },
+      } },
+    })
+
+    When
+    runner.run(["deploy", "--release", "1.2.0"])
+
+    Then "nothing was packaged here; each channel shipped its archive from .releases/v1.2.0/ live; both records name the tag"
+    releases = data_root / "artifacts" / "testproject" / ".releases" / "v1.2.0"
+    (outside / "shipped").read == "staging live 1.2.0 #{releases / "site-release-1.2.0.zip"}\nrubygems live 1.2.0 #{releases / "rspock-1.2.0.gem"}\n"
+    !(data_root / "artifacts" / "testproject" / "site-release").exist?
+    out.string.lines.first == "deploy staging --release 1.2.0\n"
+    out.string.lines.last == "v1.2.0 shipped to 2 channels: staging, rubygems\n"
+    gh.posted.select { |body| body.key?("ref") }.map { |body| [body["environment"], body["ref"], body["payload"]["track"], body["production_environment"]] } ==
+      [["staging", "v1.2.0", "live", true], ["rubygems", "v1.2.0", "live", true]]
   end
 
   test "dev deploy status reads each channel's latest deployment from the forge" do

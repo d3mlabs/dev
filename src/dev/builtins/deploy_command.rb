@@ -12,33 +12,37 @@ require "dev/placement"
 
 module Dev
   module Builtins
-    # `dev deploy <channel> [BUILD] [--config C] [--allow-stale] [--force]
-    # [--dry-run]`: ship artifacts from the store to one channel (dev#192,
-    # K4, K5). One instance per channel, each a child of the `deploy`
-    # group, so a channel is a subcommand with its own help, flags and
-    # completion. `deploy` never builds: what ships is selected from the
-    # store (DeploySelector — the accept set narrowed by BUILD, one
-    # artifact per accepted platform, `--config` choosing among configs),
-    # refused when missing, stale without `--allow-stale`, or outside the
-    # accept set without `--force`.
+    # `dev deploy <channel> [BUILD] [--config C] [--release V]
+    # [--allow-stale] [--force] [--dry-run]`: ship archives to one channel
+    # (dev#192, K4, K5). One instance per channel, each a child of `deploy`
+    # (DeployAllCommand), so a channel is a subcommand with its own help,
+    # flags and completion. `deploy` never builds: what ships is selected
+    # (DeploySelector — the accept set narrowed by BUILD, one archive per
+    # accepted platform, `--config` choosing among configs) from the store
+    # — refused when missing, stale without `--allow-stale`, or outside the
+    # accept set without `--force` — or, under `--release <version>`, from
+    # the release of that version on the forge (dev#425): its archives
+    # downloaded and verified against `release.json`, refused when the
+    # release carries none of a build.
     #
     # The stage: `before` resolves where the protocol runs (the channel's
     # `run:` environment under the host rule, or the runner `--runner`
     # names; the host for an integration's publisher) and hands that
     # dispatch the invocation a remote host would run — the channel, the
     # positional and the selection flags as given, so the host selects
-    # from *its* store (K10: deploy never fetches) — and, for a seam that
-    # runs here, the env: the tree read once (what staleness is read
-    # against), the argv consumed into the selection — which carries the
-    # track: the **testing** one, what the store's artifacts always ship
-    # on (a release's archives ship live, `--release`, dev#425) — and the
-    # publisher (Ports: the `run:` as a ScriptPublisher, or the one the
-    # lock contributed); the seam is the publisher over the selected
-    # archives, on that track, with the channel's scratch in the store,
-    # skipped under `--dry-run`; `after` reports each artifact shipped and
-    # records the deploy as a GitHub Deployment (K6): the channel as its
-    # environment, the artifacts' commit as its ref, the builds and the
-    # track in its payload, the publisher's receipt in its `success`
+    # from *its* store, or downloads the release itself (K10: deploy never
+    # fetches an artifact across the dispatch) — and, for a seam that runs
+    # here, the env: the tree read once (what staleness is read against),
+    # the argv consumed into the selection — which carries the track: the
+    # **testing** one for the store's working artifacts, the **live** one
+    # for a release's archives — and the publisher (Ports: the `run:` as a
+    # ScriptPublisher, or the one the lock contributed); the seam is the
+    # publisher over the selected shipments, on that track, with the
+    # channel's scratch in the store, skipped under `--dry-run`; `after`
+    # reports each shipped and records the deploy as a GitHub Deployment
+    # (K6): the channel as its environment, the shipments' ref — the
+    # artifacts' commit, or the release's tag — as its ref, the builds and
+    # the track in its payload, the publisher's receipt in its `success`
     # status. A seam that raises is recorded too, as a `failure` carrying
     # the error — best-effort, since the protocol's own error is the one
     # the operator must see — before the error bubbles. The receipt
@@ -204,7 +208,7 @@ module Dev
         _ = context
         return if env.dry_run
 
-        env.receipt = env.publisher.publish(env.selection.artifacts, channel: env.channel, track: env.selection.track, scratch: env.scratch)
+        env.receipt = env.publisher.publish(env.selection.shipments, channel: env.channel, track: env.selection.track, scratch: env.scratch)
       rescue StandardError => e
         record_failure(env, e)
         raise
@@ -214,9 +218,9 @@ module Dev
       def after(env, context:)
         _ = context
         verb = env.dry_run ? "would deploy" : "deployed"
-        env.selection.artifacts.each do |artifact|
-          line = "#{verb} #{artifact.name} (#{artifact.manifest.build_id}) → #{env.channel} (#{env.selection.track}): #{artifact.archive}"
-          line += " — stale, shipped under #{DeploySelector::ALLOW_STALE_FLAG}" if env.selection.stale.include?(artifact)
+        env.selection.shipments.each do |shipment|
+          line = "#{verb} #{shipment} → #{env.channel} (#{env.selection.track}): #{shipment.archive}"
+          line += " — stale, shipped under #{DeploySelector::ALLOW_STALE_FLAG}" if env.selection.stale.include?(shipment)
           @out.puts line
         end
         return if env.dry_run
@@ -239,8 +243,8 @@ module Dev
           "`deploy #{@channel}` has no environment bound: the lock could not place it at load — re-lock it (dev deps update) and retry")
       end
 
-      # The records this deploy makes, one per commit the artifacts came
-      # from.
+      # The records this deploy makes, one per ref the shipments came from
+      # (a commit each for the store's, the one tag for a release's).
       #
       # @param env [DeployEnv]
       # @param state [Lifecycle::DeploymentState]
@@ -249,7 +253,7 @@ module Dev
       # @raise [Lifecycle::DeploymentRecord::UnknownRefError]
       sig { params(env: DeployEnv, state: Lifecycle::DeploymentState, description: String).returns(T::Array[Lifecycle::DeploymentRecord]) }
       def records(env, state:, description:)
-        Lifecycle::DeploymentRecord.of(env.selection.artifacts, channel: env.channel.name, track: env.selection.track, state:, description:)
+        Lifecycle::DeploymentRecord.of(env.selection.shipments, channel: env.channel.name, track: env.selection.track, state:, description:)
       end
 
       # Record a seam that raised as a failed deploy. Best-effort: the

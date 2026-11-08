@@ -494,14 +494,15 @@ module Dev
     # the data root, shared by both verbs so they agree on every name. The
     # project's `VERSION` file, when any, leads the build id. `deploy`,
     # when the project has channels — declared, or contributed by the
-    # lock: a group heading one command per channel, each selecting from
-    # the same store and dispatching its protocol by the channel's bound
-    # placement through the same resolver, and recording into one ledger
-    # on the forge (K6) — which `deploy status`, the group's last child,
-    # reads back per channel. `release`, when the project declares what
-    # one contains (`commands: release:`, K4): the cut over this
+    # lock: the fan-out heading one command per channel, each selecting
+    # from the same store or, under `--release`, from the same download of
+    # the release's archives (dev#425), dispatching its protocol by the
+    # channel's bound placement through the same resolver, and recording
+    # into one ledger on the forge (K6) — which `deploy status`, the last
+    # child, reads back per channel. `release`, when the project declares
+    # what one contains (`commands: release:`, K4): the cut over this
     # checkout's git, the same `package` instance run per release build,
-    # the release archive on the forge.
+    # the release archive on the forge — the one `deploy --release` reads.
     #
     # @param manifest [ProjectManifest]
     # @param project [ProjectContext]
@@ -522,14 +523,18 @@ module Dev
         "build" => Builtins::BuildCommand.new(selector:, dispatcher:, listing:, ports:, store:, out: @out),
         "package" => package,
       }, T::Hash[String, Command])
+      # The forge's release archive is built lazily: a project with neither
+      # `release:` nor channels never asks for a Gh.
+      releases = T.let(nil, T.nilable(Lifecycle::GithubReleases))
       release = manifest.release
       if release
+        releases = @releases_factory.call(project.root)
         verbs["release"] = Builtins::ReleaseCommand.new(
           release:,
           cut: Lifecycle::ReleaseCut.new(git: Lifecycle::Git.new(root: project.root)),
           package:,
           store:,
-          releases: @releases_factory.call(project.root),
+          releases:,
           listing:,
           out: @out,
         )
@@ -537,10 +542,11 @@ module Dev
       return verbs if bindings.channels.empty?
 
       deployments = @deployments_factory.call(project.root)
+      release_archives = Lifecycle::ReleaseArchives.new(releases: releases || @releases_factory.call(project.root), store:, targets:)
       channels = bindings.channels.to_h do |name, bound|
         command = Builtins::DeployCommand.new(
           channel: bound.channel,
-          selector: DeploySelector.new(channel: bound.channel, targets:, store:),
+          selector: DeploySelector.new(channel: bound.channel, targets:, store:, release_archives:),
           ports:,
           store:,
           resolver:,
@@ -548,17 +554,12 @@ module Dev
           deployments:,
           out: @out,
         )
-        [name, T.let(command, Command)]
+        [name, command]
       end
-      channels[Builtins::DeployStatusCommand::NAME] =
-        Builtins::DeployStatusCommand.new(channels: bindings.channels.values.map(&:channel), deployments:, out: @out)
-      verbs["deploy"] = CommandGroup.new(
-        path: ["deploy"],
-        desc: "Ship an artifact to a channel (deploy <channel> [BUILD] [--config C] [--allow-stale] [--force] [--dry-run] [--runner L])\n" \
-              "Selects from the store of the host it runs on, never builds; each channel lists the builds it accepts and its protocol. " \
-              "`deploy status [--release V]` reads what each channel carries.",
-        category: Command::Category::Lifecycle,
-        children: channels,
+      verbs["deploy"] = Builtins::DeployAllCommand.new(
+        channels:,
+        status: Builtins::DeployStatusCommand.new(channels: bindings.channels.values.map(&:channel), deployments:, out: @out),
+        out: @out,
       )
       verbs
     end

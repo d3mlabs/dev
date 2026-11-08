@@ -93,7 +93,7 @@ class Dev::Lifecycle::ReleaseAssetsTest < Minitest::Test
     Dev::Lifecycle::ReleaseAssets.new(dir: @gather).gather(split, tag: TAG)
 
     Then
-    error = raises(Dev::Lifecycle::ReleaseAssets::MalformedPartListError)
+    error = raises(Dev::Lifecycle::PartList::MalformedPartListError)
     error.message.include?("'garbage'")
   end
 
