@@ -23,8 +23,8 @@ module Dev
   # OS's default engine.
   #
   # The load-bearing capability predicate is #local_mounts?: bind-mounting
-  # local paths (`-v project_root:/project`) is the single remote-poisoned
-  # assumption in dev's container code. Both shipped engines answer true; a
+  # local paths (a Linux host's data root, an engine volume) is the single
+  # remote-poisoned assumption in dev's container code. Both shipped engines answer true; a
   # remote engine answers false and brings its sync strategy with it.
   class ContainerEngine
     extend T::Sig
@@ -67,6 +67,11 @@ module Dev
         "#{File.basename(root)} (#{shown})"
       end
     end
+
+    # The shell's statuses for a child that left none (#status): command
+    # not found, and 128 + the signal that killed it.
+    UNSPAWNABLE_STATUS = 127
+    SIGNAL_STATUS_BASE = 128
 
     # @return [Symbol] :colima (the user's own VM), :docker (bare dockerd —
     #   whatever daemon the CLI's own context reaches), or :explicit (DOCKER_HOST)
@@ -152,7 +157,26 @@ module Dev
     # @return [Boolean] whether the invocation succeeded (nil collapses to false)
     sig { params(args: T::Array[String], env: T::Hash[String, String], opts: T.untyped).returns(T::Boolean) }
     def run(args, env: {}, **opts)
-      !!T.unsafe(Kernel).system(@env.merge(env), *@argv_prefix, *args, **opts)
+      status(args, env:, **opts).zero?
+    end
+
+    # Execute a docker invocation and answer with the child's exit status,
+    # for the callers whose own verdict is the child's — a command run
+    # inside a container (dev#421): dev exits as the container's process
+    # did. The shell's conventions where no status exists: 128 + the
+    # signal that killed the child, 127 when it could not be spawned.
+    #
+    # @param args [Array<String>] docker args after the prefix
+    # @param env [Hash{String => String}] per-call env merged over the engine's
+    # @param opts [Hash] spawn options passed through
+    # @return [Integer] the exit status
+    sig { params(args: T::Array[String], env: T::Hash[String, String], opts: T.untyped).returns(Integer) }
+    def status(args, env: {}, **opts)
+      spawned = T.unsafe(Kernel).system(@env.merge(env), *@argv_prefix, *args, **opts)
+      return UNSPAWNABLE_STATUS if spawned.nil?
+
+      child = T.let($?, Process::Status)
+      child.signaled? ? SIGNAL_STATUS_BASE + T.must(child.termsig) : T.must(child.exitstatus)
     end
 
     # Capture a docker invocation's stdout through this engine, discarding

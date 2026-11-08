@@ -23,7 +23,8 @@ module Dev
     #
     # The stage: `before` consumes the argv into the build (BuildSelector),
     # resolves where it runs (BuildDispatcher — the target's `environment:`
-    # under the host rule, or the runner `--runner` names) and hands that
+    # under the host rule, the runner `--runner` names, or the container
+    # `--container` forces) and hands that
     # dispatch the verb's invocation (`build <build>`, fully qualified,
     # for a remote host) and the env for a seam that runs here; the seam
     # is the builder, writing the install into the store's directory for
@@ -73,7 +74,7 @@ module Dev
 
       sig { override.returns(String) }
       def desc
-        "Build a target's install (build [BUILD] | --target T [--platform P] [--config C] [--runner L])\n" \
+        "Build a target's install (build [BUILD] | --target T [--platform P] [--config C] [--runner L | --container])\n" \
           "BUILD is `<target>[-<platform>[-<config>]]`; an omitted axis takes the target's first. " \
           "Bare `dev build` is `#{default_build}`."
       end
@@ -94,7 +95,9 @@ module Dev
       def before(args:, context:)
         _ = context
         build = @selector.select(args)
-        dispatch = @dispatcher.dispatch_for(build, runner: args.value(DispatchResolver::RUNNER_FLAG))
+        dispatch = @dispatcher.dispatch_for(
+          build, runner: args.value(DispatchResolver::RUNNER_FLAG), container: args.flag?(DispatchResolver::CONTAINER_FLAG),
+        )
         dispatch.dispatch(Lifecycle::VerbInvocation.new(words: [NAME, build.name])) do
           BuildEnv.new(build:, install: @store.install_dir(build), builder: @ports.builder_for(build.target))
         end

@@ -177,7 +177,7 @@ class Dev::Builtins::BuildCommandTest < Minitest::Test
   test "`--runner` sends the verb to the label as `build <build>` over the snapshot, builds nothing here, and prints the crossing" do
     Given
     @remote.install_workflow
-    @ui.expects(:print_remote_crossing).with(runner: "linux-pool", snapshot: ScriptedRemote::SHA[0, 12])
+    @ui.expects(:print_remote_crossing).with(destination: "on linux-pool", snapshot: ScriptedRemote::SHA[0, 12])
 
     When
     execute(command, "cellbound-3d-release", "--runner", "linux-pool")
@@ -224,8 +224,8 @@ class Dev::Builtins::BuildCommandTest < Minitest::Test
     Expect
     verb.category == Dev::Command::Category::Lifecycle
     verb.flags == Dev::BuildSelector::FLAGS + Dev::DispatchResolver::FLAGS
-    verb.flags.map(&:name) == ["--target", "--platform", "--config", "--runner"]
-    verb.desc.lines.first.chomp == "Build a target's install (build [BUILD] | --target T [--platform P] [--config C] [--runner L])"
+    verb.flags.map(&:name) == ["--target", "--platform", "--config", "--runner", "--container"]
+    verb.desc.lines.first.chomp == "Build a target's install (build [BUILD] | --target T [--platform P] [--config C] [--runner L | --container])"
     verb.desc.include?("Bare `dev build` is `cellbound-3d-linux64-dev`.")
     verb.listing.heading == "Builds"
     verb.listing.subjects.map(&:name) == ["cellbound-3d-linux64-dev", "cellbound-3d-linux64-release", "opencell", "rspock"]

@@ -1,16 +1,19 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "pathname"
 require "stringio"
 require "dev/builtins/container_command"
 require "dev/builtins/service_up"
 require "dev/container_deps_installer"
 require "dev/container_dev_provisioner"
 require "dev/container_user_aligner"
-require "dev/credentials"
+require "dev/container_workspace"
 require "dev/engine_provisioner"
 require "dev/environment_image"
 require "dev/host_rule"
+require "dev/lifecycle/snapshot_sync"
+require "dev/project_container"
 require "dev/project_images"
 
 module Dev
@@ -41,6 +44,12 @@ module Dev
     # the publisher designation (DEV_PUBLISH_IMAGE=1): a native host still
     # resolves the image so the registry has it for the hosts that do need
     # it, and still starts no container.
+    #
+    # The container works on its own checkout, not the host's (ADR-0008 as
+    # closed by dev#421): its dependency install reads the lock from a
+    # snapshot of this tree, pushed for the install's duration
+    # (Lifecycle::SnapshotSync) and fetched into the container's workspace
+    # by the container itself (ProjectContainer).
     class ContainerUpCommand < ContainerCommand
       extend T::Sig
       include ServiceUp
@@ -56,6 +65,13 @@ module Dev
         T::Hash[Symbol, String],
       )
 
+      # The sync step a caller gets by default: the lifecycle's snapshot
+      # sync over the checkout.
+      DEFAULT_SYNC_FOR = T.let(
+        ->(root) { Dev::Lifecycle::SnapshotSync.new(root:) },
+        T.proc.params(root: Pathname).returns(Dev::Lifecycle::SnapshotSync),
+      )
+
       # @param container_client [Dev::BuildContainer, nil]
       # @param engine_provisioner [Dev::EngineProvisioner] the sizing step
       # @param user_aligner [Dev::ContainerUserAligner, nil] makes the
@@ -65,9 +81,12 @@ module Dev
       #   the persistent container's dev to this host's version; resolved
       #   lazily the same way
       # @param deps_installer [Dev::ContainerDepsInstaller, nil] runs the
-      #   container-side dependency install; resolved lazily the same way
+      #   container-side dependency install; built over the project's
+      #   containers (ProjectContainer over the client) when not injected
       # @param out [IO, StringIO]
       # @param host_rule [Dev::HostRule] whether an image's work runs here
+      # @param sync_for [Proc] the sync step over a checkout — the project
+      #   is known at `up`, not here, so a factory stands in for the instance
       sig do
         params(
           container_client: T.nilable(Dev::BuildContainer),
@@ -77,17 +96,19 @@ module Dev
           deps_installer: T.nilable(Dev::ContainerDepsInstaller),
           out: T.any(IO, StringIO),
           host_rule: Dev::HostRule,
+          sync_for: T.proc.params(root: Pathname).returns(Dev::Lifecycle::SnapshotSync),
         ).void
       end
       def initialize(container_client: nil, engine_provisioner: Dev::EngineProvisioner.new,
                      user_aligner: nil, dev_provisioner: nil, deps_installer: nil, out: $stdout,
-                     host_rule: Dev::HostRule.new)
+                     host_rule: Dev::HostRule.new, sync_for: DEFAULT_SYNC_FOR)
         super(container_client:, out:)
         @engine_provisioner = engine_provisioner
         @user_aligner = user_aligner
         @dev_provisioner = dev_provisioner
         @deps_installer = deps_installer
         @host_rule = host_rule
+        @sync_for = sync_for
       end
 
       sig { override.returns(String) }
@@ -122,7 +143,7 @@ module Dev
 
           name = client.ensure_service!(image_tag, project_root: project.root, volumes: image.volumes)
           @out.puts "dev: build container up: #{name}"
-          provision_inside!(name, image)
+          provision_inside!(name, image, project:)
         end
       end
 
@@ -149,7 +170,7 @@ module Dev
           image_tag = ensure_image!(image)
           client.with_one_shot_container(image_tag, project_root: project.root, volumes: image.volumes) do |name|
             @out.puts "dev: cold container up: #{name}"
-            provision_inside!(name, image)
+            provision_inside!(name, image, project:)
           end
         end
       end
@@ -181,7 +202,7 @@ module Dev
 
       # The publisher designation: the provisioning step that volunteers to
       # make sure the registry has the content-addressed image (see
-      # CommandRunner#publish_image? for why an env var, not a command name).
+      # ProjectContainer#publish_image? for why an env var, not a command name).
       #
       # @return [Boolean]
       sig { returns(T::Boolean) }
@@ -223,13 +244,15 @@ module Dev
 
       # What a running container needs before a command runs in it: a user
       # that can write its data root, the host's dev, then its own install
-      # of the lock (the container is a build host, ADR-0008).
+      # of the lock (the container is a build host, ADR-0008) — read from a
+      # snapshot of this checkout it fetches for itself.
       #
       # @param name [String] the running container
       # @param image [EnvironmentImage] whose `run_env` the install carries
+      # @param project [ProjectContext] the checkout the snapshot is of
       # @return [void]
-      sig { params(name: String, image: EnvironmentImage).void }
-      def provision_inside!(name, image)
+      sig { params(name: String, image: EnvironmentImage, project: ProjectContext).void }
+      def provision_inside!(name, image, project:)
         # Everything below writes the mounted data root as the container's
         # user, so that user becomes the mount's owner first — a no-op where
         # the ids already agree, reported only when it did something.
@@ -242,9 +265,12 @@ module Dev
         @out.puts "dev: container dev #{result} at #{dev_provisioner.host_version}"
         # Dependencies install where they are consumed: with the container's
         # dev current, its side of the install runs there (gems against the
-        # store Ruby, container-scoped brew deps), carrying the run_env the
-        # install-time integrations may need.
-        deps_installer.install!(name, env: Dev::Credentials.resolve_run_env(image.run_env))
+        # store Ruby, container-scoped brew deps), over the lock as this
+        # tree has it — a snapshot pushed for the install's duration, the
+        # branch named for the container (ContainerWorkspace::RUNNER).
+        @sync_for.call(project.root).sync(runner: Dev::ContainerWorkspace::RUNNER) do |snapshot|
+          deps_installer(project).install!(name, image:, snapshot:)
+        end
         @out.puts "dev: container deps installed"
       end
 
@@ -260,10 +286,13 @@ module Dev
         @dev_provisioner ||= Dev::ContainerDevProvisioner.new(engine: client.engine)
       end
 
+      # @param project [ProjectContext] whose containers the install enters
       # @return [Dev::ContainerDepsInstaller]
-      sig { returns(Dev::ContainerDepsInstaller) }
-      def deps_installer
-        @deps_installer ||= Dev::ContainerDepsInstaller.new(engine: client.engine)
+      sig { params(project: ProjectContext).returns(Dev::ContainerDepsInstaller) }
+      def deps_installer(project)
+        @deps_installer ||= Dev::ContainerDepsInstaller.new(
+          containers: Dev::ProjectContainer.new(project_root: project.root, client:, engine_hint: project.engine),
+        )
       end
     end
   end

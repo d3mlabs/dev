@@ -26,8 +26,9 @@ module Dev
     # release carries none of a build.
     #
     # The stage: `before` resolves where the protocol runs (the channel's
-    # `run:` environment under the host rule, or the runner `--runner`
-    # names; the host for an integration's publisher) and hands that
+    # `run:` environment under the host rule, the runner `--runner`
+    # names, or the container `--container` forces; the host for an
+    # integration's publisher) and hands that
     # dispatch the invocation a remote host would run — the channel, the
     # positional and the selection flags as given, so the host selects
     # from *its* store, or downloads the release itself (K10: deploy never
@@ -189,7 +190,10 @@ module Dev
 
       sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).returns(Dispatch::Outcome[DeployEnv]) }
       def before(args:, context:)
-        dispatch = @resolver.resolve(placement!, subject: "#{NAME} #{@channel}", runner: args.value(DispatchResolver::RUNNER_FLAG))
+        dispatch = @resolver.resolve(
+          placement!, subject: "#{NAME} #{@channel}",
+          runner: args.value(DispatchResolver::RUNNER_FLAG), container: args.flag?(DispatchResolver::CONTAINER_FLAG),
+        )
         invocation = Lifecycle::VerbInvocation.new(words: [NAME, @channel.name, *args.positionals, *args.spelling(SELECTION_FLAGS)])
         dispatch.dispatch(invocation) do
           state = Lifecycle::GitState.read(context.project!.root)

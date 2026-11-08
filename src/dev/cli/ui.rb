@@ -17,31 +17,24 @@ module Dev
 
       interface!
 
-      # What the crossing line says before the environment's name.
-      CROSSING_PREFIX = "→ in "
-      # What the remote crossing line says before the runner's label.
-      REMOTE_CROSSING_PREFIX = "→ on "
+      # What the crossing line says before the destination.
+      CROSSING_PREFIX = "→ "
 
       sig { abstract.params(command: String).void }
       def print_header(command); end
 
-      # The one line about where a command runs, printed only at a
-      # crossing — when the command's body enters a container of its
-      # image (dev#409). Dim: a note under the header, not a header.
+      # The one line about where a command or verb runs, printed only at
+      # a crossing — when it leaves this machine for a build host over a
+      # snapshot of the tree (dev#409, dev#420, dev#421): where it went
+      # and from which commit, `→ on ue-engine-hosted, snapshot
+      # 3f2a1c9d8e7b`, `→ in snappy-linux (container), snapshot …`. Dim: a
+      # note under the header, not a header. Native and host runs print
+      # nothing.
       #
-      # @param environment [String] the image's name
-      sig { abstract.params(environment: String).void }
-      def print_crossing(environment); end
-
-      # The same line for a lifecycle verb leaving the machine (dev#420):
-      # which runner it went to and from which snapshot, `→ on
-      # ue-engine-hosted, snapshot 3f2a1c9d8e7b`. Native and host runs
-      # print nothing.
-      #
-      # @param runner [String] the runner label
+      # @param destination [String] the transport's name for where (Transport#destination)
       # @param snapshot [String] the snapshot's short sha
-      sig { abstract.params(runner: String, snapshot: String).void }
-      def print_remote_crossing(runner:, snapshot:); end
+      sig { abstract.params(destination: String, snapshot: String).void }
+      def print_remote_crossing(destination:, snapshot:); end
 
       # Ask for a secret at the terminal, input hidden. nil when there is
       # no terminal to ask at (a pipe, CI): the caller falls back to its
@@ -73,14 +66,9 @@ module Dev
         @cli_ui.puts(@cli_ui.fmt("{{bold:#{command}}}"))
       end
 
-      sig { override.params(environment: String).void }
-      def print_crossing(environment)
-        @cli_ui.puts(@cli_ui.fmt("{{gray:#{CROSSING_PREFIX}#{environment}}}"))
-      end
-
-      sig { override.params(runner: String, snapshot: String).void }
-      def print_remote_crossing(runner:, snapshot:)
-        @cli_ui.puts(@cli_ui.fmt("{{gray:#{REMOTE_CROSSING_PREFIX}#{runner}, snapshot #{snapshot}}}"))
+      sig { override.params(destination: String, snapshot: String).void }
+      def print_remote_crossing(destination:, snapshot:)
+        @cli_ui.puts(@cli_ui.fmt("{{gray:#{CROSSING_PREFIX}#{destination}, snapshot #{snapshot}}}"))
       end
 
       sig { override.params(question: String).returns(T.nilable(String)) }
@@ -100,14 +88,9 @@ module Dev
         $stdout.puts(command)
       end
 
-      sig { override.params(environment: String).void }
-      def print_crossing(environment)
-        $stdout.puts("#{CROSSING_PREFIX}#{environment}")
-      end
-
-      sig { override.params(runner: String, snapshot: String).void }
-      def print_remote_crossing(runner:, snapshot:)
-        $stdout.puts("#{REMOTE_CROSSING_PREFIX}#{runner}, snapshot #{snapshot}")
+      sig { override.params(destination: String, snapshot: String).void }
+      def print_remote_crossing(destination:, snapshot:)
+        $stdout.puts("#{CROSSING_PREFIX}#{destination}, snapshot #{snapshot}")
       end
 
       sig { override.params(question: String).returns(T.nilable(String)) }

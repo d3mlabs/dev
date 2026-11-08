@@ -2,9 +2,10 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/container_github_token"
 require "dev"
+require "dev/build_container"
 require "dev/container_engine"
+require "dev/container_github_token"
 require "dev/deps"
 require "dev/deps/dependency"
 require "dev/deps/lockfile"
@@ -12,9 +13,11 @@ require "dev/environment_image"
 require "dev/host_environment"
 require "dev/host_rule"
 require "dev/platform"
+require "dev/project_container"
 require "dev/runner"
 require "dev/shadowenv_llvm"
 require "support/fake_container_engine"
+require "support/scripted_remote"
 require "fileutils"
 require "pathname"
 require "stringio"
@@ -74,6 +77,7 @@ class EnvironmentIntegrationTest < Minitest::Test
     )
     runner = runner(COMMANDS)
     execs = record_execs
+    Kernel.stubs(:exit)
 
     When "each command is run"
     exec!(runner, ["build"])
@@ -81,13 +85,18 @@ class EnvironmentIntegrationTest < Minitest::Test
     created = @engine.runs.find(&method(:service_create?))
     mounts = created.each_cons(2).select { |flag, _| flag == "-v" }.map(&:last)
 
-    Then "build is a one-shot run of the linux image; test-server an exec into the server image's persistent container, created with its volume"
-    execs.size == 2
-    execs[0].first(3) == ["docker", "run", "--rm"]
-    execs[0].last(6) == ["-w", "/project", linux.ref, "sh", "-c", "./bin/build.sh"]
-    execs[1] == ["docker", "exec", "-w", "/project", Dev::BuildContainer.service_container_name(server.ref, @root), "sh", "-c", "./bin/test-server.sh"]
+    Then "build is a one-shot run of the linux image; test-server an exec into the server image's persistent container, created with its volume — both through the engine, each the workspace program ending in the command, nothing exec'd"
+    execs.empty?
+    run = @engine.runs.find { |verb, *_rest| verb == "run" }
+    run.first(2) == ["run", "--rm"]
+    run[-4, 3] == [linux.ref, "sh", "-c"]
+    run.last.end_with?("exec sh -c ./bin/build.sh\n")
+    exec = @engine.runs.find { |verb, *_rest| verb == "exec" }
+    exec[0, 4] == ["exec", Dev::BuildContainer.service_container_name(server.ref, @root), "sh", "-c"]
+    exec.last.end_with?("exec sh -c ./bin/test-server.sh\n")
     created.include?(server.ref)
     mounts.include?("/e:/ue")
+    mounts.none? { |spec| spec.start_with?(@root.to_s) }
   end
 
   test "environment: host runs the command here, whatever the lock pins" do
@@ -108,14 +117,15 @@ class EnvironmentIntegrationTest < Minitest::Test
     ui = fake_ui
     runner = runner(COMMANDS, ui:)
     record_execs
+    Kernel.stubs(:exit)
 
     When
     exec!(runner, ["build"])
     exec!(runner, ["editor"])
 
     Then
-    1 * ui.print_crossing("snappy-linux")
-    0 * ui.print_crossing("host")
+    1 * ui.print_remote_crossing(destination: "in snappy-linux (container)", snapshot: ScriptedRemote::SHA[0, 12])
+    0 * ui.print_remote_crossing(destination: includes("host"), snapshot: anything)
   end
 
   test "dev help shows each project command's environment on this machine; builtins are not annotated" do
@@ -331,10 +341,20 @@ class EnvironmentIntegrationTest < Minitest::Test
     yaml["targets"] = targets if targets
     (@root / "dev.yml").write(YAML.dump(yaml))
     host_rule = Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: (@root / "no-marker").to_s))
-    # A host whose gh holds no login, so the developer's own token never
-    # enters an expected argv.
-    Dev::Runner.new(dev_yaml_path: @root / "dev.yml", ui:, out:, host_rule:,
-      github_token: Dev::ContainerGithubToken.new(source: -> { nil }))
+    Dev::Runner.new(dev_yaml_path: @root / "dev.yml", ui:, out:, host_rule:, hosts_factory: method(:remote_hosts).to_proc)
+  end
+
+  # The project's container over the fake engine — a host whose gh holds
+  # no login, so the developer's own token never enters an expected argv;
+  # the repo named without gh — and a sync step that pushes nothing.
+  def remote_hosts(project)
+    Dev::Runner::RemoteHosts.new(
+      containers: Dev::ProjectContainer.new(
+        project_root: project.root, engine_hint: project.engine, client: Dev::BuildContainer.new(engine: @engine),
+        github_token: Dev::ContainerGithubToken.new(source: -> { nil }), repo_resolver: -> { "o/r" },
+      ),
+      sync: ScriptedRemote::CannedSync.new,
+    )
   end
 
   # Lock the pins and return their images.
@@ -357,7 +377,7 @@ class EnvironmentIntegrationTest < Minitest::Test
   def fake_ui
     ui = typed_mock(Dev::Cli::Ui)
     ui.stubs(:print_header)
-    ui.stubs(:print_crossing)
+    ui.stubs(:print_remote_crossing)
     ui
   end
 end

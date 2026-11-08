@@ -2,102 +2,85 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/build_container"
 require "dev/container_deps_installer"
-require "fileutils"
+require "dev/container_github_token"
+require "dev/environment_image"
+require "dev/project_container"
+require "pathname"
 require "support/fake_container_engine"
-require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
 class ContainerDepsInstallerTest < Minitest::Test
-  test "install! runs dev deps install in the container at the project mount, with the run_env injected" do
-    Given "an engine that succeeds and a host with no gh login"
+  ROOT = Pathname("/src/myapp")
+  SHA = "0123456789abcdef0123456789abcdef01234567"
+
+  test "install! runs dev deps install in the container's workspace at the snapshot, with the run_env injected" do
+    Given "an engine that succeeds, a host with no gh login, and an image with a resolvable run_env"
     engine = FakeContainerEngine.new
-    installer = Dev::ContainerDepsInstaller.new(engine: engine, github_token: -> { nil })
+    ENV["WWISE_TOKEN"] = "t0k"
 
     When "installing"
-    installer.install!("dev-myapp-abc", env: { "WWISE_TOKEN" => "t0k" })
+    installer(engine, token: nil).install!("dev-myapp-abc", image: image(run_env: { "WWISE_TOKEN" => "wwise/token" }), snapshot: snapshot)
 
-    Then "one docker exec, the env named first (bare -e, the value in the spawn env — dev#317), in /project, running the builtin"
-    engine.runs == [["exec", "-e", "WWISE_TOKEN", "-w", "/project", "dev-myapp-abc", "dev", "deps", "install"]]
+    Then "one docker exec, the env named (bare -e, the value in the spawn env — dev#317), the workspace program fetching the snapshot then exec'ing the builtin"
+    engine.runs.size == 1
+    engine.runs.first[0, 4] == ["exec", "-e", "WWISE_TOKEN", "dev-myapp-abc"]
+    engine.runs.first[4, 2] == ["sh", "-c"]
+    engine.runs.first.last.include?("fetch -q --no-tags https://github.com/o/r.git #{snapshot.branch.ref}")
+    engine.runs.first.last.include?("git reset -q --hard #{SHA}")
+    engine.runs.first.last.end_with?("exec dev deps install\n")
     engine.run_envs == [{ "WWISE_TOKEN" => "t0k" }]
-  end
-
-  test "install! hands the host's gh token to the container as GH_TOKEN: the container fetches its own private releases (ADR-0008)" do
-    Given "an engine that succeeds and a host whose gh is logged in"
-    engine = FakeContainerEngine.new
-    installer = Dev::ContainerDepsInstaller.new(engine: engine, github_token: -> { "gho_secret" })
-
-    When "installing"
-    installer.install!("dev-myapp-abc", env: {})
-
-    Then "the exec names GH_TOKEN; the value rides the spawn env and appears on no argv"
-    engine.runs == [["exec", "-e", "GH_TOKEN", "-w", "/project", "dev-myapp-abc", "dev", "deps", "install"]]
-    engine.run_envs == [{ "GH_TOKEN" => "gho_secret" }]
-  end
-
-  test "install! leaves a GH_TOKEN the run_env already names alone" do
-    Given "a run_env carrying its own token and a host with a different one"
-    engine = FakeContainerEngine.new
-    installer = Dev::ContainerDepsInstaller.new(engine: engine, github_token: -> { "gho_host" })
-
-    When "installing"
-    installer.install!("dev-myapp-abc", env: { "GH_TOKEN" => "gho_project" })
-
-    Then "the project's wins"
-    engine.runs == [["exec", "-e", "GH_TOKEN", "-w", "/project", "dev-myapp-abc", "dev", "deps", "install"]]
-    engine.run_envs == [{ "GH_TOKEN" => "gho_project" }]
-  end
-
-  test "an empty token from the host (gh auth token printed nothing) injects nothing" do
-    Given "a host whose gh answers with a blank line"
-    engine = FakeContainerEngine.new
-    installer = Dev::ContainerDepsInstaller.new(engine: engine, github_token: -> { "" })
-
-    When "installing"
-    installer.install!("dev-myapp-abc", env: {})
-
-    Then "no -e at all, and nothing in the spawn env"
-    engine.runs == [["exec", "-w", "/project", "dev-myapp-abc", "dev", "deps", "install"]]
-    engine.run_envs == [{}]
-  end
-
-  test "HOST_GH_TOKEN asks gh on the PATH and answers #{expected.inspect} when gh #{behaviour}" do
-    Given "a PATH holding only a gh that #{behaviour}"
-    dir = Dir.mktmpdir("gh-on-path-")
-    if script
-      File.write(File.join(dir, "gh"), "#!/bin/sh\n#{script}\n")
-      File.chmod(0o755, File.join(dir, "gh"))
-    end
-    original_path = ENV["PATH"]
-    ENV["PATH"] = dir
-
-    When "asking for the host's token"
-    token = Dev::ContainerDepsInstaller::HOST_GH_TOKEN.call
-
-    Then
-    token == expected
 
     Cleanup
-    ENV["PATH"] = original_path
-    FileUtils.rm_rf(dir)
+    ENV.delete("WWISE_TOKEN")
+  end
 
-    Where
-    behaviour              | script                                  | expected
-    "prints a token"       | 'echo "gho_fromhost"'                   | "gho_fromhost"
-    "is not logged in"     | "echo 'not logged in' >&2; exit 1"      | nil
-    "is not installed"     | nil                                     | nil
+  test "install! hands the host's gh token to the container as GH_TOKEN: the container fetches the snapshot and its own private releases (ADR-0008)" do
+    Given "an engine that succeeds and a host whose gh is logged in"
+    engine = FakeContainerEngine.new
+
+    When "installing"
+    installer(engine, token: "gho_secret").install!("dev-myapp-abc", image: image, snapshot: snapshot)
+
+    Then "the exec names GH_TOKEN; the value rides the spawn env and appears on no argv"
+    engine.runs.first[0, 4] == ["exec", "-e", "GH_TOKEN", "dev-myapp-abc"]
+    engine.runs.first.none? { |part| part.include?("gho_secret") }
+    engine.run_envs == [{ "GH_TOKEN" => "gho_secret" }]
   end
 
   test "install! raises InstallFailedError naming the container when the install exits nonzero" do
     Given "an engine whose exec fails"
-    engine = FakeContainerEngine.new { |_args| false }
-    installer = Dev::ContainerDepsInstaller.new(engine: engine, github_token: -> { nil })
+    engine = FakeContainerEngine.new { |_args| 2 }
 
     When "installing"
-    installer.install!("dev-myapp-abc", env: {})
+    installer(engine, token: nil).install!("dev-myapp-abc", image: image, snapshot: snapshot)
 
     Then "the failure is typed and names the container"
     error = raises Dev::ContainerDepsInstaller::InstallFailedError
     error.message.include?("dev-myapp-abc")
+  end
+
+  private
+
+  def installer(engine, token:)
+    containers = Dev::ProjectContainer.new(
+      project_root: ROOT,
+      client: Dev::BuildContainer.new(engine:, host_os: "darwin"),
+      github_token: Dev::ContainerGithubToken.new(source: -> { token }),
+      repo_resolver: -> { "o/r\n" },
+    )
+    Dev::ContainerDepsInstaller.new(containers:)
+  end
+
+  def image(run_env: {})
+    Dev::EnvironmentImage.new(
+      name: "myapp-linux", from: "ghcr.io/d3mlabs/unreal-engine-build-base", from_digest: "a" * 64,
+      platform: "linux/amd64", apt: [], registry: "ghcr.io/d3mlabs", run_env:,
+    )
+  end
+
+  def snapshot
+    @snapshot ||= Dev::Lifecycle::Snapshot.new(sha: SHA, branch: Dev::Lifecycle::SnapshotBranch.mint(runner: Dev::ContainerWorkspace::RUNNER))
   end
 end

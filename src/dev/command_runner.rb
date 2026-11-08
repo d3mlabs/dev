@@ -1,19 +1,17 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "pathname"
 require "shellwords"
 
 require "dev/cli/ui"
 require "dev/command"
-require "dev/credentials"
-require "dev/build_container"
-require "dev/container_engine"
-require "dev/container_github_token"
-require "dev/engine_resources"
-require "dev/engine_resources_check"
+require "dev/container_workspace"
 require "dev/environment_image"
 require "dev/host_rule"
+require "dev/lifecycle/snapshot_sync"
 require "dev/placement"
+require "dev/project_container"
 require "dev/shadowenv_llvm"
 
 module Dev
@@ -43,19 +41,18 @@ module Dev
   #
   # Where a command runs is `placement`: the command's environment — its
   # `environment:` bound against the lock at load (ProjectCommand#placement,
-  # dev#409) — is an image or the host. An image means `docker run` /
-  # `docker exec` in a container of it, announced by one dim crossing line
-  # (`→ in <image>`); the host means `shadowenv exec` here, silently. A
-  # command run inside carries the image's resolved `run_env` and the
-  # host's gh token as GH_TOKEN (ContainerGithubToken) — the same `-e` the
-  # container's own deps install gets, so a command that calls `gh` inside
-  # (a publisher's `gh release create`) has the auth the host holds.
-  #
-  # No engine provisioner runs on this path, so the runner is the one owner
-  # of the engine-floor gate here (EngineResourcesCheck, dev#400): the
-  # project's `engine:` hint is measured against the engine once, before
-  # the image is reached for. `dev up` has its own owner (EngineProvisioner)
-  # and measures after sizing; neither path reads `docker info` twice.
+  # dev#409) — is an image or the host. The host means `shadowenv exec`
+  # here, silently. An image means the project's container of it, reached
+  # as a remote that happens to be local (ADR-0008, dev#421): the tree
+  # crosses as a snapshot branch for the command's duration
+  # (Lifecycle::SnapshotSync), one dim line says so (`→ in <image>
+  # (container), snapshot <sha>`), and the container fetches the snapshot
+  # into its own workspace and runs the command there (ProjectContainer),
+  # with the image's resolved `run_env` and the host's gh token as
+  # GH_TOKEN. The container path always waits — the snapshot branch is
+  # deleted after — and the container's exit status becomes dev's own:
+  # exec_into exits with it, run_waiting raises CommandFailedError over
+  # it.
   #
   # Inside a dev-managed container (HostRule#inside_container?) there is no
   # further container to reach for: every command runs directly at the
@@ -124,36 +121,35 @@ module Dev
       end
     end
 
-    # @param engine_hint [Dev::EngineResources::Hint, nil] the project's
-    #   engine floor, measured before a container is reached for
-    # @param resources_check [Dev::EngineResourcesCheck] the engine-vs-hint gate
+    # @param ui [Dev::Cli::Ui] the header and the crossing line
+    # @param project_root [Pathname] the checkout
     # @param host_rule [Dev::HostRule] whether an image's work runs here —
     #   and whether this dev already runs inside a container
+    # @param containers [Dev::ProjectContainer] the way into the project's
+    #   containers (the one instance the lifecycle verbs share)
+    # @param sync [Dev::Lifecycle::SnapshotSync] the sync step over the checkout
     sig do
       params(
         ui: Dev::Cli::Ui,
         project_root: Pathname,
-        engine_hint: T.nilable(Dev::EngineResources::Hint),
-        resources_check: Dev::EngineResourcesCheck,
-        container_client: T.nilable(Dev::BuildContainer),
         host_rule: Dev::HostRule,
-        github_token: Dev::ContainerGithubToken,
+        containers: Dev::ProjectContainer,
+        sync: Dev::Lifecycle::SnapshotSync,
       ).void
     end
-    def initialize(ui:, project_root:, engine_hint: nil, resources_check: Dev::EngineResourcesCheck.new,
-                   container_client: nil, host_rule: Dev::HostRule.new, github_token: Dev::ContainerGithubToken.new)
+    def initialize(ui:, project_root:, host_rule: Dev::HostRule.new,
+                   containers: Dev::ProjectContainer.new(project_root:), sync: Dev::Lifecycle::SnapshotSync.new(root: project_root))
       @ui = ui
-      @engine_hint = engine_hint
-      @resources_check = resources_check
       @project_root = project_root
-      @container_client = container_client
       @host_rule = host_rule
-      @github_token = github_token
+      @containers = containers
+      @sync = sync
     end
 
     # Hand the process over to the command: exec-replace, the right shape
     # for a leaf command (TTY and signal passthrough, no double process
-    # tree). Never returns in production.
+    # tree); a command in the container is waited for and its status
+    # exited with. Never returns in production.
     #
     # @param cmd [ProjectCommand]
     # @param args [Array<String>] argv after the command name
@@ -228,97 +224,31 @@ module Dev
       @host_rule.enters_container?(image) ? placement : Placement::Host.new
     end
 
-    # Whether the resolved image should be published to the shared registry.
-    # Off by default — a normal local build/run must never push. The
-    # provisioning step (e.g. CI's `dev up`) opts in by setting
-    # DEV_PUBLISH_IMAGE, so it populates the registry that every other machine
-    # — and a from-scratch CI runner — pulls from. Gated by an env var rather
-    # than the command name so any project's provisioning can enable it without
-    # dev hard-coding which command is the publisher.
-    sig { returns(T::Boolean) }
-    def publish_image?
-      ENV["DEV_PUBLISH_IMAGE"] == "1"
-    end
-
     # The crossing: the one moment the mental model can be wrong, so the
     # one line dev prints about where a command runs (a native or host run
-    # prints nothing beyond the footer).
+    # prints nothing beyond the footer). The tree crosses as a snapshot for
+    # the command's duration; the container fetches it and runs the
+    # command in its workspace; its exit status is the verdict here.
     #
     # @param image [EnvironmentImage] the command's environment
     # @param shell_command [String]
-    # @param wait [Boolean]
+    # @param wait [Boolean] raise on failure (run_waiting) or exit with the status (exec_into)
     # @return [void]
+    # @raise [CommandFailedError] when waited for and the container's command exits nonzero
     # @raise [EngineResourcesCheck::UndersizedEngineError] when the engine falls short of the project's floor
     sig { params(image: EnvironmentImage, shell_command: String, wait: T::Boolean).void }
     def run_in_container(image, shell_command, wait:)
-      @ui.print_crossing(image.name)
-      client = container_client
-      @resources_check.check!(engine: client.engine, hint: @engine_hint)
-      image_tag = client.ensure_environment_image!(image, publish: publish_image?)
-      invocation = container_command(image, image_tag, shell_command)
-
-      Dir.chdir(@project_root)
-      # The child argv carries the engine's argv prefix and names the
-      # injected variables; their values and the engine's env (e.g. the
-      # colima DOCKER_HOST) ride the spawn env, same as child_env locally —
-      # nothing secret on an argv (dev#317).
-      run_child([client.engine.env.merge(invocation.env), *invocation.argv], wait:)
-    end
-
-    # The engine-injected docker operations, constructed at this seam (the
-    # composition point plans#26 names): the engine resolves per invoking
-    # user, lazily, so commands that never touch a container never read the
-    # engine record.
-    #
-    # @return [Dev::BuildContainer]
-    sig { returns(Dev::BuildContainer) }
-    def container_client
-      @container_client ||= Dev::BuildContainer.new(engine: Dev::ContainerEngine.resolve)
-    end
-
-    # docker argv for a containerized command: a `docker exec` into the reused
-    # long-lived container when the image persists (its writable layer keeps
-    # the build tool's incremental state across commands), else a one-shot
-    # `docker run --rm`. One persistent container per (image, workspace).
-    #
-    # @param image         [EnvironmentImage] the command's environment
-    # @param image_tag     [String]
-    # @param shell_command [String]
-    # @return [Dev::BuildContainer::Invocation]
-    sig { params(image: EnvironmentImage, image_tag: String, shell_command: String).returns(Dev::BuildContainer::Invocation) }
-    def container_command(image, image_tag, shell_command)
-      # Volumes mount as declared. Nothing of the host's data root is
-      # resolved into them: the container owns its own (ADR-0008).
-      volumes = image.volumes
-
-      if image.persist
-        container = container_client.ensure_service!(
-          image_tag, project_root: @project_root, volumes: volumes,
-        )
-        container_client.docker_exec_command(
-          container, shell_cmd: shell_command, env: resolve_run_env(image),
-        )
-      else
-        container_client.docker_run_command(
-          image_tag,
-          project_root: @project_root,
-          shell_cmd: shell_command,
-          volumes: volumes,
-          env: resolve_run_env(image),
-        )
+      status = @sync.sync(runner: ContainerWorkspace::RUNNER) do |snapshot|
+        @ui.print_remote_crossing(destination: @containers.destination(image), snapshot: snapshot.short_sha)
+        @containers.run(image, argv: ["sh", "-c", shell_command], snapshot:)
       end
-    end
-
-    # Resolve the image's `run_env` for `docker run -e`: best-effort and
-    # non-interactive (Dev::Credentials.resolve_run_env), so a missing
-    # runtime secret never blocks a command that doesn't need it; then the
-    # host's gh token as GH_TOKEN unless the run_env named one.
-    #
-    # @param image [EnvironmentImage]
-    # @return [Hash{String => String}]
-    sig { params(image: EnvironmentImage).returns(T::Hash[String, String]) }
-    def resolve_run_env(image)
-      @github_token.merge_into(Dev::Credentials.resolve_run_env(image.run_env))
+      if wait
+        raise CommandFailedError.new(exit_status: status) unless status.zero?
+      else
+        # The exec shape has no caller to return to: the container's status
+        # is the process's own, as an exec-replaced child's would be.
+        Kernel.exit(status)
+      end
     end
 
     sig { params(run_str: String, args: T::Array[String]).returns(String) }

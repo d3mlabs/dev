@@ -26,12 +26,11 @@ module Dev
   # between the operator and the runner user through the `dev` group
   # (`<user>:dev 2775`, dev#310). Here the owner's ids are the wrong
   # target — the runner user's container would write the root as the
-  # operator, and could not write its own checkout at /project — and
-  # writability is the wrong gate: the mount is writable by the image's uid
+  # operator — and writability is the wrong gate: the mount is writable by the image's uid
   # whenever that happens to be the owner's. The container's user is the
   # **host caller** (its uid) in the **root's group** (the mount's gid), so
-  # what it writes under /project is the caller's and what it writes under
-  # the root is the group's, like the host's own writes. A root-owned mount
+  # what it writes under the root is the group's, like the host's own
+  # writes. A root-owned mount
   # is adopted as on a volume.
   #
   # The Linuxbrew prefix mount comes with the ids. It is a volume docker

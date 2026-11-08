@@ -13,6 +13,7 @@ require "dev/host_environment"
 require "dev/host_rule"
 require "dev/lifecycle"
 require "dev/placement"
+require "dev/project_container"
 require "dev/remote_dispatches"
 require "dev/settings"
 require "dev/target_placement"
@@ -73,6 +74,7 @@ class Dev::BuildDispatcherTest < Minitest::Test
     host_rule = Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: @marker), inside_container: false)
     remotes = Dev::RemoteDispatches.new(
       root: @dir, ui: typed_mock(Dev::Cli::Ui), out: StringIO.new, runs: Dev::Lifecycle::WorkflowRuns.new(gh: FakeGh.new(root: @dir)),
+      containers: Dev::ProjectContainer.new(project_root: @dir),
     )
     settings = Dev::Settings.new(config_path: (@dir / "config.yml").to_s, system_config_path: (@dir / "none.yml").to_s)
     resolver = Dev::DispatchResolver.new(host_rule: host_rule, remotes: remotes, enrolled: NoneEnrolled.new, settings: settings, inside_job: false)
@@ -103,12 +105,33 @@ class Dev::BuildDispatcherTest < Minitest::Test
     dispatcher.dispatch_for(build("cellbound-3d-win64-dev")) == Dev::Dispatch::Native.new
   end
 
-  test "an image build on a bare host with no runner to go to is refused" do
+  test "an image build on a bare host with no runner to go to goes to the project's container of the image" do
     When
-    dispatcher.dispatch_for(build("cellbound-3d-win64-dev"))
+    dispatch = dispatcher.dispatch_for(build("cellbound-3d-win64-dev"))
 
     Then
-    raises Dev::DispatchResolver::RemoteDispatchUnavailableError
+    dispatch.is_a?(Dev::Dispatch::Remote)
+    dispatch.transport.is_a?(Dev::Transport::LocalContainer)
+  end
+
+  test "`--container` sends an image build the host could do natively to the container, no questions asked" do
+    Given "a host provisioned from the image"
+    File.write(@marker, image.marker)
+
+    When
+    dispatch = dispatcher.dispatch_for(build("cellbound-3d-win64-dev"), container: true)
+
+    Then
+    dispatch.is_a?(Dev::Dispatch::Remote)
+    dispatch.transport.is_a?(Dev::Transport::LocalContainer)
+  end
+
+  test "`--container` for a host build this machine cannot do is refused for the lack of an image, not the platform" do
+    When
+    dispatcher.dispatch_for(build("cellbound-3d-linux64-dev"), container: true)
+
+    Then
+    raises Dev::DispatchResolver::NoContainerForHostError
   end
 
   test "a host build of a platform this machine is not is refused before any dispatch" do
