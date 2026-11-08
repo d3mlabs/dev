@@ -25,6 +25,10 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
   class they silently assert nothing.
   → skill: rspock (ships in the rspock gem; linked by `dev up` /
   `dev deps install`)
+- [testing/rspock-block-arg-splat] In rspock `transform!`-ed files a
+  single-param block is re-emitted as `|a,|` and destructures an Array
+  argument to its first element; hand callbacks a lambda or `&method`.
+  → .cursor/skills/learnings/rspock-block-arg-splat/
 
 ## process
 
