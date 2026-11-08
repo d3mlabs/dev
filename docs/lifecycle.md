@@ -31,7 +31,7 @@ One class per noun, none playing two roles.
 | Deployment ledger | `Lifecycle::GithubDeployments` | The records as GitHub Deployments on the project's repo (environment = channel, ref = commit or tag, payload = track + builds, one status), written through `gh api`; `Lifecycle::Deployment` is a record as the forge holds it (id, when, page). |
 | Release tag | `Lifecycle::ReleaseTag` | `v<version>` — the tag `release` cuts, the ref a release's deployments are recorded against, and what `deploy status --release V` reads. |
 | Release builds | `Lifecycle::ReleaseBuilds` | What a release contains: the fully-qualified, packageable builds `release.targets` names, or every build of every packageable target under `release: {}`. Owns the list's rules. |
-| Release cut | `Lifecycle::ReleaseCut` | The git half of `release`, lifted from dev's `bin/release.rb`: a clean tree on a branch, the `VERSION` bump when the project keeps one, the tag, the push — read into a `Plan` first, resumable when HEAD is already tagged. |
+| Release cut | `Lifecycle::ReleaseCut` | The git half of `release`, lifted from what was dev's `bin/release.rb`: a clean tree on a branch, the `VERSION` bump when the project keeps one (with the `Gemfile.lock` line mirroring it when the project is a gem — `ProjectVersion.files`), the tag, the push — read into a `Plan` first, resumable when HEAD is already tagged. |
 | Release assets | `Lifecycle::ReleaseAssets` | An artifact's archive under its release name, `<build>-<version>.<ext>` (a split set's parts and a rewritten `MANIFEST`), with the entry `release.json` records for it. |
 | Part list | `Lifecycle::PartList` | A split archive's `MANIFEST`: `<sha256>  <part>` per line, the shape `sha256sum -c` reads. Written by the archive, renamed by the release assets, read back by the release download to know which parts to fetch and what each must hash to. |
 | Release archive | `Lifecycle::GithubReleases` | The release on the forge: one GitHub release per tag, created once, its assets uploaded with `--clobber` so a retry replaces what a failed run half-attached, downloaded back by name. Through `gh`, like the ledger. |
@@ -190,8 +190,11 @@ takes a version) and no key but `targets` and `desc`
 (`InvalidReleaseError`); `targets:` a non-empty list of strings
 (`ReleaseTargetsError`). A `release` carrying `targets:` in a project
 without targets is refused (`ReleaseWithoutTargetsError`); without
-targets, `release` stays a plain project command — dev's own
-`bin/release.rb` until [dev#429](https://github.com/d3mlabs/dev/issues/429).
+targets, `release` stays a plain project command — what dev's own
+`bin/release.rb` was until [dev#429](https://github.com/d3mlabs/dev/issues/429)
+made dev a lifecycle project of its own (two targets, `dev-core` and
+`dev`; `release: {}`; a `deploy brew` channel — see [The brew
+publisher](#the-brew-publisher)).
 
 ## Ports and the env contract
 
@@ -532,8 +535,8 @@ forge is a typed `GithubDeployments::Error` (`RepoUnresolvedError`,
 stop** (K4): the tag and the archives on the forge, nothing deployed —
 distribution is `dev deploy <channel> --release <version>` per channel
 ([dev#425](https://github.com/d3mlabs/dev/issues/425)), a week later
-from the same bytes if need be. The cut is lifted from dev's own
-`bin/release.rb`; the verb orchestrates from wherever it was invoked
+from the same bytes if need be. The cut is lifted from what was dev's
+own `bin/release.rb`; the verb orchestrates from wherever it was invoked
 (K10), its own dispatch native, and runs `package` **as itself** per
 release build so each dispatches by its target's `environment:`. In
 order:
@@ -657,9 +660,11 @@ Registry builds one instance per publishing entry the lock reaches
 (`Registry.publishers`), with the kwargs the entry's `publisher_needs`
 asks for; `Dev::ProjectPublishers` reads the lock once and asks; the
 Runner hands the table to `ChannelBinder` (the merge) and to `Ports` (the
-lookup). The built-in write sides are below; the stores' (`steam`, `egs`,
-`ficsit`, `brew`) are
-[dev#426](https://github.com/d3mlabs/dev/issues/426)–[#429](https://github.com/d3mlabs/dev/issues/429);
+lookup). The built-in write sides are below — `rubygems`, `ghcr`
+([dev#428](https://github.com/d3mlabs/dev/issues/428)) and `brew`
+([dev#429](https://github.com/d3mlabs/dev/issues/429)); the stores'
+(`steam`, `egs`, `ficsit`) are
+[dev#426](https://github.com/d3mlabs/dev/issues/426)–[#427](https://github.com/d3mlabs/dev/issues/427);
 an external integration's publisher arrives through
 [dev#300](https://github.com/d3mlabs/dev/issues/300)'s integration gems.
 
@@ -684,6 +689,49 @@ A contributed channel the project does not declare accepts every
 packageable build, so a project with a gem target *and* a zip target
 declares `rubygems: { targets: [<gem>] }` to keep the zip out of it; the
 publisher's own check is the backstop, not the selection.
+
+### The brew publisher
+
+`Deps::BrewPublisher` is the `brew` entry's write side, the third built-in and the first over a store that is a git remote: a project whose
+lock pins anything from a tap through brew (dev's own `ruby` from
+`d3mlabs/d3mlabs`) gets a `deploy brew` channel, and declaring it in
+`dev.yml` with an accept set and no `run:` configures it. It ships
+**releases only**: a Homebrew formula points at a release asset, never
+at a store file, so a shipment of store provenance is refused
+(`WorkingArtifactError`) and the testing track has no meaning for it —
+`dev deploy brew --release <version>` is the only form.
+
+One formula per shipment, named as the build (`Formula/<name>.rb`):
+dev's `dev-core` and `dev` builds land in `Formula/dev-core.rb` and
+`Formula/dev.rb`. The publisher rewrites only the formula's **stable
+spec** — the first `url`/`sha256` pair (`Deps::FormulaFile`), never a
+`resource`'s or a bottle's — with the asset's download url as the forge
+reports it (`GithubReleases#asset_url`, from `gh release view --json
+assets`; dev spells no url layout of GitHub's) and the digest
+`release.json` carries for that archive (the shipment's; nothing is
+downloaded twice). A formula already at that pair is left alone; when
+none moved the receipt says `<tap> already points at <tag>: <names>` and
+no commit is made. Otherwise one commit, `<names>: <version>`, pushed to
+the tap's default branch, and the receipt is `<tap>@<sha>: <names> →
+<tag>`.
+
+The **destination** is the lock's: the taps of the brew-family pins
+(their `tap:` metadata), which must be exactly one (`NoTapError`,
+`AmbiguousTapError`) — a channel has no options yet, and the lock is
+where dev already records which tap the project trusts. The tap is
+cloned into the channel's **scratch** (K5: `<data root>/artifacts/
+<project>/.brew/<user>/homebrew-<repo>`, brew's own layout), fetched
+and hard-reset to the remote's default branch on every run
+(`Deps::TapClone`), so there is no sibling checkout to keep
+fast-forwarded and a half-done run leaves nothing to clean. The
+formula's body — `depends_on`, `install`, `caveats` — stays
+hand-authored in the tap; the publisher never reads it.
+
+Why its own class rather than `publish` on `BrewRepository`: K5 merges
+read and write sides when they share a client and its auth. Brew's read
+side is `brew info` over the local brew; the write side is git and `gh`
+over a clone — nothing shared, so a shared class would be two classes
+in one file.
 
 ## The dependency graph
 
@@ -1006,7 +1054,7 @@ variant, and nowhere else. An integration's publisher needs no new spec:
 it is set as `publisher:` on the integration's `Deps::Registry::Entry`
 (with `publisher_needs:` naming the kwargs its constructor takes from
 the composition context — `project_root` today — and `channel:` when the
-destination is not called as the type is: `rubygems`, `ghcr`), and every
+destination is not called as the type is: `rubygems`, `ghcr`; `taps` for `brew`), and every
 project whose lock reaches the entry gets the channel; the registry's
 consistency test fails on a `*_publisher.rb` no entry wires, and on two
 entries claiming one channel. `PublisherSpec::Integration` is

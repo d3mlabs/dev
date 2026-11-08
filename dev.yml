@@ -1,4 +1,14 @@
 name: dev
+# dev's own two targets (dev#192 K3, dev#429): what the d3mlabs tap ships as two
+# formulas. Neither compiles — the install is a file set — and dev's archive
+# packager zips each into the release asset its formula points at.
+targets:
+  dev-core:
+    desc: The org-blank tool (bin, src, lib, share, VERSION)
+    build: ./bin/install-core
+  dev:
+    desc: The d3mlabs deployment of dev (config.yml + Brewfile)
+    build: ./bin/install-deployment
 commands:
   up:
     desc: Setup dev environment (install bundler from dependencies.rb, bundle install)
@@ -15,9 +25,19 @@ commands:
   style:
     desc: Run RuboCop
     run: bundle exec rubocop
+  deploy:
+    commands:
+      # The lock's brew publisher (dependencies.rb pins ruby from the d3mlabs tap):
+      # one formula per target, named as the target — Formula/dev-core.rb and
+      # Formula/dev.rb — each pointed at its own release asset. Releases only:
+      # `dev deploy brew --release <version>`.
+      brew:
+        desc: Point the d3mlabs tap's dev-core and dev formulas at a release
+        targets: [dev-core, dev]
+  # Every build of both targets: `dev release <version>` bumps VERSION, tags,
+  # pushes, and attaches dev-core-<version>.zip and dev-<version>.zip.
   release:
-    desc: Release a new version (bump, tag, push, Homebrew formula)
-    run: ./bin/release.rb
+    desc: Cut a release (bump, tag, push, both archives on the GitHub release)
   console:
     desc: Start Ruby console
     run: ./bin/console

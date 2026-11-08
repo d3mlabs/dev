@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "json"
 require "pathname"
 require "uri"
 require_relative "gh"
@@ -15,7 +16,9 @@ module Dev
     # once per tag, its assets uploaded with `--clobber` so a resumed run
     # replaces what a failed one half-attached — and the one place it is
     # read back from: `deploy --release` downloads the assets by name
-    # (dev#425). Reads and writes go through Gh over the checkout, so the
+    # (dev#425), and a publisher that points at an asset rather than
+    # fetching it asks for its url (the brew formulas, dev#429). Reads and
+    # writes go through Gh over the checkout, so the
     # repo is the one `origin` names and the credential the one gh holds.
     class GithubReleases
       extend T::Sig
@@ -29,6 +32,9 @@ module Dev
 
       # gh answered with something that is not a release's url.
       class MalformedReleaseError < Error; end
+
+      # The release carries no asset of the name asked for.
+      class AssetMissingError < Error; end
 
       # What gh says when a tag has no release.
       NOT_FOUND = /release not found/i
@@ -110,6 +116,36 @@ module Dev
         @gh.capture(["release", "download", tag.name, "--dir", into.to_s, "--clobber", *names.flat_map { |name| ["--pattern", literal(name)] }])
       rescue Gh::CommandFailedError => e
         raise ApiError, e.message
+      end
+
+      # The public download url of one of a tag's release assets — what a
+      # formula points at (dev#429): the forge's own statement of where
+      # the asset is served, asked rather than spelled from the repo's
+      # name, so dev carries no knowledge of GitHub's url layout.
+      #
+      # @param tag [ReleaseTag]
+      # @param name [String] the asset's name, exactly
+      # @return [URI]
+      # @raise [AssetMissingError] a tag with no release, or one without the asset
+      # @raise [ApiError]
+      # @raise [MalformedReleaseError] gh answered without the asset's url
+      # @raise [Gh::GhMissingError]
+      sig { params(tag: ReleaseTag, name: String).returns(URI::Generic) }
+      def asset_url(tag, name)
+        assets = JSON.parse(@gh.capture(["release", "view", tag.name, "--json", "assets", "--jq", ".assets"]))
+        asset = assets.find { |entry| entry["name"] == name }
+        if asset.nil?
+          raise AssetMissingError,
+            "#{tag}'s release carries no asset #{name} (it carries: #{assets.map { |entry| entry["name"] }.join(", ")})"
+        end
+
+        url(asset["url"].to_s)
+      rescue Gh::CommandFailedError => e
+        raise AssetMissingError, "#{tag} has no release on the forge" if NOT_FOUND.match?(e.message)
+
+        raise ApiError, e.message
+      rescue JSON::ParserError => e
+        raise MalformedReleaseError, "gh answered with something other than #{tag}'s assets: #{e.message}"
       end
 
       private

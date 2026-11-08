@@ -82,6 +82,24 @@ class Dev::Lifecycle::ReleaseCutTest < Minitest::Test
     remote_refs == { "refs/heads/main" => head, "refs/tags/v1.2.0" => head, "refs/tags/v1.1.0" => previous }
   end
 
+  test "a gem whose Gemfile.lock mirrors VERSION gets both in the bump commit, so the tree is clean after the cut" do
+    Given "a lock recording the gem at the version in source"
+    (@root / "Gemfile.lock").write("PATH\n  remote: .\n  specs:\n    dev (1.1.0)\n      cli-ui (~> 2.0)\n\nGEM\n  specs:\n    cli-ui (2.7.0)\n")
+    @git.capture(["add", "Gemfile.lock"])
+    commit_version("1.1.0")
+
+    When
+    plan = cut.plan(TAG.new("1.2.0"))
+    cut.cut!(plan)
+    lock = (@root / "Gemfile.lock").read
+
+    Then
+    lock.include?("    dev (1.2.0)\n")
+    !lock.include?("1.1.0")
+    @git.capture(["show", "--name-only", "--format=", "HEAD"]).split == ["Gemfile.lock", "VERSION"]
+    @git.capture(["status", "--porcelain"]).empty?
+  end
+
   test "a project without a VERSION file is tagged as it is: no bump, no commit, stock notes for a first release" do
     Given
     before = head

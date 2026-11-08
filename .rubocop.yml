@@ -15,6 +15,9 @@ AllCops:
     # `ruby -x`); not parseable as plain Ruby.
     - bin/**/*
     - tmp/**/*
+    # Deployment payloads: a Brewfile is Homebrew's DSL, read by `brew
+    # bundle`, not Ruby of dev's own.
+    - deploy/**/Brewfile
 
 # Every Ruby file must declare a `typed:` sigil (bin/ and tmp/ stay excluded
 # via AllCops above).

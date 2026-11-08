@@ -152,6 +152,63 @@ class Dev::Lifecycle::GithubReleasesTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "asset_url asks gh for the tag's assets and answers the named one's download url — the forge's statement, not a spelled layout" do
+    Given
+    assets = [
+      { "name" => "rspock-1.2.0.gem", "url" => "https://github.com/d3mlabs/rspock/releases/download/v1.2.0/rspock-1.2.0.gem" },
+      { "name" => "release.json", "url" => "https://github.com/d3mlabs/rspock/releases/download/v1.2.0/release.json" },
+    ]
+    gh = FakeGh.new.answers(["release", "view"], with: assets)
+
+    When
+    url = releases(gh).asset_url(TAG, "rspock-1.2.0.gem")
+
+    Then
+    url == URI.parse("https://github.com/d3mlabs/rspock/releases/download/v1.2.0/rspock-1.2.0.gem")
+    gh.calls.map(&:argv) == [["release", "view", "v1.2.0", "--json", "assets", "--jq", ".assets"]]
+  end
+
+  test "asset_url refuses when the release carries no asset of that name, listing what it carries" do
+    Given
+    gh = FakeGh.new.answers(["release", "view"], with: [{ "name" => "release.json", "url" => "https://x/release.json" }])
+
+    When
+    releases(gh).asset_url(TAG, "rspock-1.2.0.gem")
+
+    Then
+    error = raises(Dev::Lifecycle::GithubReleases::AssetMissingError)
+    error.message.include?("no asset rspock-1.2.0.gem")
+    error.message.include?("release.json")
+  end
+
+  test "asset_url for a tag with no release is the same refusal: nothing is served" do
+    Given
+    gh = FakeGh.new.refuses(["release", "view"], with: "release not found")
+
+    When
+    releases(gh).asset_url(TAG, "rspock-1.2.0.gem")
+
+    Then
+    error = raises(Dev::Lifecycle::GithubReleases::AssetMissingError)
+    error.message.include?("v1.2.0 has no release")
+  end
+
+  test "asset_url maps #{what} to the archive's own error" do
+    Given
+    gh = refusal ? FakeGh.new.refuses(["release", "view"], with: refusal) : FakeGh.new.answers(["release", "view"], with: printed)
+
+    When
+    releases(gh).asset_url(TAG, "rspock-1.2.0.gem")
+
+    Then
+    raises(error)
+
+    Where
+    what                   | refusal                       | printed      | error
+    "a refused read"       | "HTTP 401: Bad credentials"   | nil          | Dev::Lifecycle::GithubReleases::ApiError
+    "an answer not JSON"   | nil                           | "not json\n" | Dev::Lifecycle::GithubReleases::MalformedReleaseError
+  end
+
   test "a page that is #{what} is refused: the forge did not answer a release" do
     Given
     gh = FakeGh.new.answers(["release", "view"], with: printed)

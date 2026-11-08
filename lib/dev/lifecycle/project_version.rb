@@ -11,11 +11,34 @@ module Dev
     # what `release` bumps — dev#424), BuildId::DEFAULT_SEMVER otherwise. A
     # project without a version still gets build ids that sort and compare;
     # only the leading number is uninformative.
+    #
+    # A gem whose gemspec reads `VERSION` has a **mirror** of it: bundler
+    # records the gem's own version in `Gemfile.lock`'s `PATH` section
+    # (`dev (0.7.13)` under `remote: .`), and a bump that moves one file
+    # and not the other leaves a lock the next `bundle` rewrites — a dirty
+    # tree right after the release commit (dev's `bin/release.rb` bumped
+    # both for that reason; dev#429 keeps it so). The bump therefore
+    # writes `VERSION` and, when the lock mirrors it, that one line.
     module ProjectVersion
       FILE_NAME = "VERSION"
+      GEMFILE_LOCK = "Gemfile.lock"
 
       class << self
         extend T::Sig
+
+        # The files a bump of the version from +current+ rewrites, relative
+        # to the root: `VERSION`, and `Gemfile.lock` when its `PATH` section
+        # records a gem at that version.
+        #
+        # @param root [Pathname] the project root
+        # @param current [String] the version in source now
+        # @return [Array<String>]
+        sig { params(root: Pathname, current: String).returns(T::Array[String]) }
+        def files(root, current:)
+          lock = root / GEMFILE_LOCK
+          mirrored = lock.file? && path_spec(current).match?(lock.read)
+          mirrored ? [FILE_NAME, GEMFILE_LOCK] : [FILE_NAME]
+        end
 
         # @param root [Pathname] the project root
         # @return [String] the file's first line, or the default
@@ -41,14 +64,34 @@ module Dev
         end
 
         # Write the version the project keeps in source — the bump of a
-        # release cut.
+        # release cut — into `VERSION` and its `Gemfile.lock` mirror when
+        # the lock has one (ProjectVersion.files).
         #
         # @param root [Pathname] the project root
         # @param version [String]
         # @return [void]
         sig { params(root: Pathname, version: String).void }
         def write(root, version)
+          current = declared(root)
           (root / FILE_NAME).write("#{version}\n")
+          return if current.nil? || !files(root, current:).include?(GEMFILE_LOCK)
+
+          lock = root / GEMFILE_LOCK
+          lock.write(lock.read.sub(path_spec(current)) { "#{$~[:spec]}#{version}#{$~[:close]}" })
+        end
+
+        private
+
+        # The line of `Gemfile.lock`'s `PATH` section recording a gem of
+        # the project's own gemspec (`remote: .`) at a version: bundler's
+        # layout, the gem line four spaces in under `specs:`, its
+        # dependencies six.
+        #
+        # @param version [String]
+        # @return [Regexp] with `spec` (up to the version) and `close` groups
+        sig { params(version: String).returns(Regexp) }
+        def path_spec(version)
+          /^(?<spec>PATH\n  remote: \.\n  specs:\n(?:    .+\n)*?    \S+ \()#{Regexp.escape(version)}(?<close>\))$/
         end
       end
     end
