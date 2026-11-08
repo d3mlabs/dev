@@ -261,11 +261,16 @@ module Dev
             integration: LuaRocksIntegration,
             integration_needs: %i[project_root],
           ),
+          # The write side is the read side's class: one API, one client,
+          # one credential story (dev#427). A project pinning a mod (SML)
+          # gets `deploy ficsit`, which merges its per-target Alpakit zips
+          # into SMR's multi-target zip and uploads a version.
           Entry.new(
             symbol: :ficsit,
             repository: FicsitRepository,
             scheme: SemverScheme,
             integration: FicsitIntegration,
+            publisher: FicsitRepository,
           ),
           Entry.new(
             symbol: :gh,

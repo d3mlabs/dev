@@ -632,7 +632,7 @@ or the script's environment — never `dev.yml`'s.
 
 **Tracks.** A channel has two, `Lifecycle::Track`, and the publisher
 maps them onto its own (Steam's beta branch and default branch, SMR's
-unreleased and released states, a staging rsync's one); which one a
+`beta` and `release` stabilities, a staging rsync's one); which one a
 deploy ships on is the **source's** decision, never the operator's: an
 artifact from the store goes to `testing`, an archive of a release
 (`deploy --release`, [dev#425](https://github.com/d3mlabs/dev/issues/425))
@@ -654,10 +654,35 @@ Registry builds one instance per publishing entry the lock reaches
 (`Registry.publishers`), with the kwargs the entry's `publisher_needs`
 asks for; `Dev::ProjectPublishers` reads the lock once and asks; the
 Runner hands the table to `ChannelBinder` (the merge) and to `Ports` (the
-lookup). No built-in entry publishes yet — the first are
-[dev#426](https://github.com/d3mlabs/dev/issues/426)–[#429](https://github.com/d3mlabs/dev/issues/429);
-an external integration's publisher arrives through
+lookup). A built-in publisher is its integration's **repository class**
+when the write side shares the read side's API and credential story —
+`FicsitRepository` resolves mods from ficsit.app and publishes to it. The
+built-ins that exist are below; `steam`/`egs`
+([dev#426](https://github.com/d3mlabs/dev/issues/426)), `rubygems`/`ghcr`
+([dev#428](https://github.com/d3mlabs/dev/issues/428)) and `brew`
+([dev#429](https://github.com/d3mlabs/dev/issues/429)) follow; an
+external integration's publisher arrives through
 [dev#300](https://github.com/d3mlabs/dev/issues/300)'s integration gems.
+
+### Built-in publishers
+
+**`ficsit`** — the Satisfactory Mod Repository (SMR, ficsit.app),
+contributed to every project whose lock pins a mod (`ficsit "SML"`;
+[dev#427](https://github.com/d3mlabs/dev/issues/427)). What it takes and
+what it does, in SMR's own terms:
+
+| | |
+| --- | --- |
+| Shipments | one per build, each an **Alpakit per-target zip** — the mod's staged plugin for one target, `<ModRef>.uplugin` at the zip's root and its cooked content under `Content/Paks/<target>/` — which is what a mod target's `packager: as-is` leaves in the store (snappy's `snappy-steam-win64`, `snappy-egs-win64`, `snappy-server-linux64`). The publisher reads two facts from each (`Deps::AlpakitPlugin`): the **mod reference** from the `.uplugin`'s name, the **target** from the paks directory — `Windows`, `WindowsServer` or `LinuxServer` (`Deps::FicsitTarget`, SMR's `AllowedTargets`, which are Unreal's cooked-platform names). Nothing in `dev.yml` names the mod. |
+| The merge | the per-target zips become SMR's **multi-target plugin zip** (`Deps::MultiTargetPluginMerger` → `Deps::MultiTargetPlugin`): every entry under its target's directory (`Windows/…`, `LinuxServer/…`), each holding that target's plugin with its `.uplugin`, nothing at the zip's root — the layout SMR's `validateMultiTargetPlugin` accepts and splits back into per-target downloads. Two builds of one target (the Steam and Epic clients are two `Windows` plugins) are **unioned**: their binaries differ and sit side by side; a file both carry must be byte-identical, else the deploy is refused naming the file and both archives (`ConflictingFileError`) — picking one would alter the other build's bytes, which a publisher never does. The archives must be one mod's (`MixedModReferencesError`) staged from one descriptor — SMR reads one version from the zip, so the `.uplugin` must be byte-identical across targets (`DifferingUpluginError`) — and the result under SMR's 1 GB (`PluginTooLargeError`). All of it happens under the channel's scratch (`.ficsit/merge/`, wiped per deploy; the zip is `.ficsit/<ModRef>.zip`); the shipments are never touched. |
+| The upload | SMR's chunked upload over its GraphQL API (`Deps::FicsitClient`, `api.ficsit.app/v2/query`): `getModByReference` for the mod's id (a mod SMR does not have is `ModNotFoundError`, before anything is sent), `createVersion`, `uploadVersionPart` in 10 MB parts numbered from 1, `finalizeCreateVersion` with the **stability** the track decides and a changelog naming the builds and their ids, then `checkVersionUploadState` every 10 s for up to 10 minutes until SMR has processed the zip (`ProcessingTimedOutError` past that). SMR's own refusals — a mod not yet approved, a missing AI or network disclosure, a `.uplugin` whose `SemVersion` the mod already has — come back as `FicsitClient::ApiError` in SMR's words. |
+| Tracks | `testing` → `beta`, `live` → `release` (`Deps::FicsitStability`, SMR's `VersionStabilities`): an artifact from the store is a version players opt into in the Mod Manager; a release's archive is what everyone gets. `alpha` is never emitted. |
+| Credential | the user's **API key** from ficsit.app's settings page: `dev cred get ficsit api_key`, or `FICSIT_API_KEY` in the environment (the key is SMR's raw `Authorization` header value). Prompted once on a terminal and stored; a non-interactive miss names the env var. |
+| Receipt | `ficsit: <ModRef> (<targets>) → <stability>, version <version> (<id>), auto-approved` — or `awaiting approval`, when SMR holds the version for a moderator. |
+
+The version string is the `.uplugin`'s `SemVersion`, read by SMR, not
+dev: a working-tree build deployed twice without bumping it is refused by
+SMR on the second upload, in its words.
 
 ## The dependency graph
 

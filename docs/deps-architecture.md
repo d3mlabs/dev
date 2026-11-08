@@ -65,7 +65,10 @@ integration's write side, a `Lifecycle::Publisher` class the lifecycle's
 `deploy` gets as a channel of the entry's name in every project whose
 lock reaches the entry ([dev#422](https://github.com/d3mlabs/dev/issues/422);
 `Registry.publishers` builds the instances, `publisher_needs` names
-their constructor kwargs as `integration_needs` does) — and scope.
+their constructor kwargs as `integration_needs` does; `ficsit`'s is its
+own `FicsitRepository`, which both resolves and publishes over one
+`FicsitClient` — [dev#427](https://github.com/d3mlabs/dev/issues/427)) —
+and scope.
 Consistency tests fail
 the build if a `*_repository.rb`, `*_integration.rb`, `*_scheme.rb`, or
 `*_locker.rb` class exists without a registry entry.

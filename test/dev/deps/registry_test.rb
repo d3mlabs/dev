@@ -63,10 +63,19 @@ class Dev::Deps::RegistryTest < Minitest::Test
     steam.channel_name == "steam"
   end
 
-  test "no built-in entry publishes yet: the first write sides arrive with dev#426–#429" do
-    Expect
-    Dev::Deps::Registry::INTEGRATIONS.none?(&:publishes?)
-    Dev::Deps::Registry.publishers(project_root: Pathname("/tmp"), pinned: Dev::Deps::Registry::INTEGRATIONS.map(&:symbol)) == {}
+  test "ficsit is the first built-in entry that publishes, through its own repository class; a lock pinning a mod gets `deploy ficsit` (dev#427)" do
+    Given
+    ficsit = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :ficsit }
+
+    Expect "the write side is the read side's class, built with no kwargs; the other built-ins stay silent until their own issues land"
+    ficsit.publisher == Dev::Deps::FicsitRepository
+    ficsit.publisher_needs == []
+    ficsit.channel_name == "ficsit"
+    Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:symbol) == [:ficsit]
+    publishers = Dev::Deps::Registry.publishers(project_root: Pathname("/tmp"), pinned: [:ficsit])
+    publishers.keys == ["ficsit"]
+    publishers.fetch("ficsit").is_a?(Dev::Deps::FicsitRepository)
+    Dev::Deps::Registry.publishers(project_root: Pathname("/tmp"), pinned: [:steam, :brew, :gh]) == {}
   end
 
   test "publishers builds one instance per publishing entry the lock reaches, directly or through an alias, with the kwargs it asks for" do
