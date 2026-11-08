@@ -5,6 +5,7 @@ require "sorbet-runtime"
 require_relative "../data_root"
 require_relative "../environment_image"
 require_relative "../lifecycle/platform"
+require_relative "build_patch_tool"
 require_relative "declaration"
 require_relative "scope"
 require_relative "scoped_declaration"
@@ -38,7 +39,7 @@ module Dev
       # them dynamically. `apt` is here only to refuse at the top level with
       # the same message it refuses with in a group (see GroupDSL#apt).
       UNGROUPED_VERBS = T.let(
-        %i[apt brew cmake custom ficsit gem gh luarocks pip steam wwise xcode].freeze,
+        %i[apt brew cmake custom egs ficsit gem gh luarocks pip steam wwise xcode].freeze,
         T::Array[Symbol],
       )
 
@@ -801,6 +802,27 @@ module Dev
         materialization = {}
         materialization["platform"] = @platform if @platform
         add_declaration(name, :steam, spec.merge(branch:), source: app.to_s, materialization: materialization)
+      end
+
+      # Declare the Epic Games Store's BuildPatchTool, provisioned from the
+      # zip Epic serves into the store (~/.dev/egs/<name>/<digest>). Pinning
+      # it is what gives the project its `deploy egs` channel (dev#426): the
+      # tool is the one thing the store needs from a machine that publishes
+      # to it.
+      #
+      # The universe is url-shaped — the zip is the whole address, hashed
+      # on first use at `dev deps update` and verified at install — so the
+      # declaration takes no version; a project behind a mirror names it
+      # with url:.
+      #
+      # @param name [String, Symbol] dependency name (BuildPatchTool::NAME by convention)
+      # @param url [String] where the zip is served from
+      # @param spec [Hash] host: to scope the pin to one host
+      # @return [void]
+      sig { params(name: T.any(String, Symbol), url: String, spec: T.untyped).void }
+      def egs(name = BuildPatchTool::NAME, url: BuildPatchTool::DOWNLOAD_URL, **spec)
+        reject_install_dir!("egs", name.to_s, spec, place: "egs/#{name}")
+        add_declaration(name, :egs, spec, source: url)
       end
 
       # Declare a dependency using any registered integration by name.

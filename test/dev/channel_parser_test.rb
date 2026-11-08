@@ -61,6 +61,40 @@ class Dev::ChannelParserTest < Minitest::Test
     "with an empty run" | { "desc" => "Steam depots", "targets" => ["cellbound-3d-steamworks"], "run" => "" } | "Steam depots"
   end
 
+  test "a lock-published channel's options ride under its own name, keys stringified, and reach the channel verbatim (dev#426)" do
+    Given "a steam child configuring its publisher"
+    raw = {
+      "commands" => {
+        "steam" => {
+          "targets" => ["cellbound-3d-steamworks"],
+          "steam" => { "app" => 480, "depots" => { "cellbound-3d-steamworks" => 481 }, :branches => { "testing" => "beta" } },
+        },
+      },
+    }
+
+    When
+    channels = parser.parse_all(raw, all_targets)
+
+    Then "the mapping is carried as declared — the publisher reads it in its own vocabulary"
+    channels["steam"].options == { "app" => 480, "depots" => { "cellbound-3d-steamworks" => 481 }, "branches" => { "testing" => "beta" } }
+    channels["steam"].publisher == Dev::Lifecycle::PublisherSpec::Integration.new(name: "steam")
+  end
+
+  test "publisher options are refused beside a run:, and when they are not a mapping: #{fault}" do
+    When
+    parser.parse_all({ "commands" => { "steam" => entry } }, all_targets)
+
+    Then
+    error = raises Dev::ChannelParser::ChannelOptionsError
+    error.message.include?(mention)
+
+    Where
+    fault                 | entry | mention
+    "options with a run:" | { "targets" => ["rspock"], "run" => "./bin/steam", "steam" => { "app" => 480 } } | "declares `steam:` options beside `run:`"
+    "a scalar"            | { "targets" => ["rspock"], "steam" => 480 }                                        | "`steam:` must be a mapping of the steam publisher's options, got 480"
+    "a list"              | { "targets" => ["rspock"], "steam" => [480] }                                      | "`steam:` must be a mapping of the steam publisher's options, got [480]"
+  end
+
   test "no deploy entry means no channel" do
     Expect
     parser.parse_all(nil, all_targets) == {}

@@ -28,6 +28,14 @@ module Dev
   # contributes the publisher a child names is the composition root's to
   # bind (ChannelBinder), as an `environment:` reference is.
   #
+  # A child without `run:` may carry the publisher's **options** under a
+  # key of its own name (`steam: { app: 480, depots: … }`, dev#426) — the
+  # namespacing an integration builder's target options use (K1). The
+  # mapping is handed to the channel as YAML delivered it: its vocabulary
+  # is the publisher's, which validates it. Beside a `run:` the key is
+  # refused — the script replaced the publisher the options would
+  # configure.
+  #
   # Stateless: reusable across manifests, inputs arrive as method arguments.
   class ChannelParser
     extend T::Sig
@@ -58,6 +66,11 @@ module Dev
 
     # A `deploy` child with `commands:` of its own: a channel is a leaf.
     class ChannelChildrenError < ArgumentError; end
+
+    # A `deploy` child whose publisher options (the mapping under its own
+    # name) are not a mapping, or sit beside a `run:` that replaces the
+    # publisher they would configure.
+    class ChannelOptionsError < ArgumentError; end
 
     DEPLOY = "deploy"
     ACCEPTS_KEY = "targets"
@@ -151,6 +164,7 @@ module Dev
     # @raise [ChannelAcceptsError]
     # @raise [ChannelEnvironmentError]
     # @raise [ChannelChildrenError]
+    # @raise [ChannelOptionsError]
     # @raise [CommandParser::InvalidEnvironmentError]
     sig { params(name: String, entry: DeployHash, targets: T::Array[Lifecycle::Target]).returns(Lifecycle::Channel) }
     def parse(name, entry, targets)
@@ -164,6 +178,12 @@ module Dev
       if entry[RUN_KEY].to_s.empty?
         integration_channel(name, path, entry, accepts)
       else
+        if entry.key?(name)
+          raise ChannelOptionsError,
+            "channel '#{path.join(" ")}' declares `#{name}:` options beside `run:` — the options configure the #{name} " \
+              "publisher, which the `run:` replaces; delete one of the two"
+        end
+
         command = T.cast(@command_parser.parse(path, entry), ProjectCommand)
         publisher = Lifecycle::PublisherSpec::Script.new(command: command.run, environment: command.environment)
         Lifecycle::Channel.new(name:, desc: command.desc, accepts:, publisher:)
@@ -173,10 +193,11 @@ module Dev
     private
 
     # A child with no `run:`: the lock's publisher of the channel's name
-    # is its protocol, the child configures what reaches it. Read without
-    # the CommandParser — a command body needs a `run:` or children, and
-    # this child has neither by design — so `desc` is coerced here as the
-    # parser coerces it.
+    # is its protocol, the child configures what reaches it — its accept
+    # set, and the publisher's options under the channel's own name. Read
+    # without the CommandParser — a command body needs a `run:` or
+    # children, and this child has neither by design — so `desc` is
+    # coerced here as the parser coerces it.
     #
     # @param name [String]
     # @param path [Array<String>] the channel's command path, for messages
@@ -184,6 +205,7 @@ module Dev
     # @param accepts [Array<Lifecycle::BuildPattern>]
     # @return [Lifecycle::Channel]
     # @raise [ChannelEnvironmentError]
+    # @raise [ChannelOptionsError]
     sig do
       params(name: String, path: T::Array[String], entry: DeployHash, accepts: T::Array[Lifecycle::BuildPattern])
         .returns(Lifecycle::Channel)
@@ -201,7 +223,27 @@ module Dev
         desc: desc.empty? ? Lifecycle::Channel::NO_DESCRIPTION : desc,
         accepts:,
         publisher: Lifecycle::PublisherSpec::Integration.new(name:),
+        options: publisher_options(name, path, entry[name]),
       )
+    end
+
+    # The publisher's options as declared under the channel's own name: a
+    # mapping with string keys, or nothing.
+    #
+    # @param name [String]
+    # @param path [Array<String>] the channel's command path, for messages
+    # @param raw [Object] the value under the channel's name, as YAML delivered it
+    # @return [Hash{String => Object}]
+    # @raise [ChannelOptionsError]
+    sig { params(name: String, path: T::Array[String], raw: T.untyped).returns(Lifecycle::Channel::Options) }
+    def publisher_options(name, path, raw)
+      return {} if raw.nil?
+      unless raw.is_a?(Hash)
+        raise ChannelOptionsError,
+          "channel '#{path.join(" ")}': `#{name}:` must be a mapping of the #{name} publisher's options, got #{raw.inspect}"
+      end
+
+      raw.transform_keys(&:to_s)
     end
 
     # The `targets:` list as patterns in the one grammar.

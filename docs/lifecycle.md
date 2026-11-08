@@ -101,10 +101,14 @@ commands:
         targets: [cellbound-3d-server]
         run: ./bin/stage
         environment: host
-      steam:
+      steam:                              # no run: — the lock's steam dependency publishes
         desc: Steam depots
         targets: [cellbound-3d-steamworks-win64-release, cellbound-3d-server-linux64-release]
-        run: ./bin/steam-upload
+        steam:                            # the publisher's options, under the channel's name
+          app: 480
+          depots:
+            cellbound-3d-steamworks-win64: 481
+            cellbound-3d-server-linux64: 482
       ficsit:                             # no run: — the lock's SML dependency publishes
         targets: [snappy-steam]
 ```
@@ -115,11 +119,13 @@ commands:
 | `targets` | The **accept set**: a non-empty list of builds or patterns in the build grammar, parsed at load (`BuildPattern.parse`), so a name no target spells is refused before anything runs. |
 | `run` | The protocol's script form: a shell command run at the repo root once per archive, with the env contract below. Omitted, the protocol is the publisher the lock contributes under the channel's name (`PublisherSpec::Integration`). |
 | `environment` | Where the script runs — a command's key, values and binding (`Dev::PlacementBinder#bind_channels`). Needs `run:`; an integration publisher is dev's own code and is placed on the host. |
+| `<channel>` | The lock publisher's **options** ([dev#426](https://github.com/d3mlabs/dev/issues/426)): a mapping under the channel's own name (`steam:` on `steam`, `egs:` on `egs`), carried verbatim as `Lifecycle::Channel#options` and read by the publisher at the start of a deploy in its own vocabulary — see [the channel contract](#the-channel-contract) for each. Refused beside `run:` (`ChannelOptionsError`): the script replaced the publisher it would configure. Refused when not a mapping. |
 
 Load-time rules: `deploy` itself may carry no `run:` (`DeployBodyError`)
 and must have a child (`NoChannelsError`); a child must be a mapping
 (`InvalidChannelError`) with `targets:` (`ChannelAcceptsError`), may not
 carry `environment:` without `run:` (`ChannelEnvironmentError`), may not
+carry its publisher's options beside `run:` (`ChannelOptionsError`), may not
 have `commands:` of its own (`ChannelChildrenError`) and may not be named
 `help` or `status` (`ReservedChannelNameError` — both are `deploy`'s own
 children). A `deploy` child carrying `targets:` in a project without
@@ -657,9 +663,11 @@ Registry builds one instance per publishing entry the lock reaches
 (`Registry.publishers`), with the kwargs the entry's `publisher_needs`
 asks for; `Dev::ProjectPublishers` reads the lock once and asks; the
 Runner hands the table to `ChannelBinder` (the merge) and to `Ports` (the
-lookup). The built-in write sides are below; the stores' (`steam`, `egs`,
-`ficsit`, `brew`) are
-[dev#426](https://github.com/d3mlabs/dev/issues/426)–[#429](https://github.com/d3mlabs/dev/issues/429);
+lookup). The built-in write sides are below — the registries'
+([dev#428](https://github.com/d3mlabs/dev/issues/428)) and the first two
+stores' ([dev#426](https://github.com/d3mlabs/dev/issues/426)); `ficsit`
+and `brew` are [dev#427](https://github.com/d3mlabs/dev/issues/427) and
+[#429](https://github.com/d3mlabs/dev/issues/429), and
 an external integration's publisher arrives through
 [dev#300](https://github.com/d3mlabs/dev/issues/300)'s integration gems.
 
@@ -684,6 +692,118 @@ A contributed channel the project does not declare accepts every
 packageable build, so a project with a gem target *and* a zip target
 declares `rubygems: { targets: [<gem>] }` to keep the zip out of it; the
 publisher's own check is the backstop, not the selection.
+
+**Options.** What a publisher cannot know from a build or from its
+declaration — the destination's identifiers on the store's side — the
+channel declares under its own name (`steam:` on the `steam` channel),
+carried verbatim as `Lifecycle::Channel#options` and parsed by the
+publisher at the start of `publish`, into a typed value of its own
+(`SteamChannelOptions`, `EgsChannelOptions`): a missing or malformed key
+is refused there, naming the key and the fix, before any archive is
+unpacked or any tool run. The options are the publisher's vocabulary, so
+`ChannelParser` only checks the shape — a mapping, and never beside a
+`run:` — and the publisher documents the keys. Credentials are never
+options.
+
+**Unpacking.** A store that takes a directory rather than a file gets it
+from `Lifecycle::Unpacker`, the inverse of `Archive`: every form
+`package` writes (a zip, a `.tar.zst`, a split set through its
+`MANIFEST`) is extracted into a directory of the scratch, which is
+**replaced** each time so a file from the previous deploy never rides
+along, and the archive itself is never touched.
+
+### The `steam` publisher
+
+The `steam` integration's repository is its publisher
+(`Deps::SteamRepository`, `publisher:` on the `steam` entry): the same
+client, `steamcmd`, reads a depot (`app_info_print`) and uploads a build
+(`run_app_build`), and the same build account is behind both. A project
+pinning a Steam app (`steam "SatisfactoryServer", app: 1690800`) has a
+`deploy steam` channel, which it configures with:
+
+```yaml
+steam:
+  desc: Steam depots
+  targets: [cellbound-3d-steamworks-win64-release, cellbound-3d-server-linux64-release]
+  steam:
+    app: 480                                   # the AppID
+    depots:                                    # one DepotID per build pattern
+      cellbound-3d-steamworks-win64: 481
+      cellbound-3d-server-linux64: 482
+    branches: { testing: beta, live: default } # optional; these are the defaults
+```
+
+Each accepted build must match exactly one `depots:` pattern
+(`NoDepotError`, `AmbiguousDepotError`). A deploy unpacks each archive
+into `.steam/depots/<DepotID>/`, writes the content builder's scripts
+into `.steam/scripts/` (`app_build_<app>.vdf` over one
+`depot_build_<id>.vdf` per depot, `Deps::SteamAppBuild` through
+`Deps::Vdf`; `BuildOutput` is `.steam/output/`, where steamcmd keeps the
+chunk cache the next upload's delta is computed against) and runs
+`steamcmd +runscript` on a `0600` script — login, `run_app_build`,
+`quit` — so the credentials are on no command line. The **testing**
+track sets the build live on the testing branch (`beta` unless
+`branches:` says otherwise); the **live** track targets `default`, which
+Steam refuses to set live from a script, so the build is uploaded and
+the receipt names the Steamworks page where the operator sets it live
+(a `branches: { live: <beta branch> }` sets that branch live instead).
+The receipt: `steam build <BuildID> of app <app> (depots …) set live on
+<branch>`, or `… uploaded — set it live on the default branch in
+Steamworks: <url>`. The build account is `dev cred` `steam/username`
+(`STEAM_USERNAME`); its password `steam/password` (`STEAM_PASSWORD`),
+or, absent, steamcmd's cached login for that account (a CI runner logs
+in once interactively, Steam Guard included). A failing steamcmd is
+`UploadFailedError` with its last lines; a successful one that reports no
+BuildID is `BuildIdNotReportedError`.
+
+### The `egs` publisher
+
+The Epic Games Store has one tool, Epic's **BuildPatchTool**, and no read
+side a project would otherwise depend on, so the `egs` integration *is*
+the tool: `egs "BuildPatchTool"` in `dependencies.rb` pins the zip Epic
+serves (`UrlRepository` — the URL is the universe, TOFU-hashed at `dev
+deps update`, verified at install; `url:` names a mirror), and
+`EgsIntegration` unpacks it into `~/.dev/egs/BuildPatchTool/<digest>/`
+(`dev deps path egs BuildPatchTool`). Pinning the tool is what
+contributes the `deploy egs` channel; `Deps::EgsPublisher` is its own
+class, since the read side's client (curl) and the write side's (the
+tool, under the product's credentials) share nothing. The channel
+configures it with:
+
+```yaml
+egs:
+  targets: [cellbound-3d-win64-release]
+  egs:
+    organization: o-abc123                   # the Organization ID
+    product: p-def456                        # the Product ID
+    artifacts:                               # one Artifact per build pattern
+      cellbound-3d-win64:
+        id: a-789xyz                         # the Artifact ID
+        launch: Cellbound3D.exe              # relative to the build root
+        args: ""                             # optional
+    labels: { testing: Testing, live: Live } # optional; these are the defaults
+```
+
+Each accepted build must match exactly one `artifacts:` pattern
+(`NoArtifactError`, `AmbiguousArtifactError`) and be for a platform the
+store serves — win64 (`Windows`) or macos (`Mac`); a linux64 build is
+refused before anything runs (`UnsupportedPlatformError`). Per shipment
+the publisher unpacks the archive into `.egs/builds/<build>/`, runs
+`BuildPatchTool -mode=UploadBinary` with the build root, `BuildVersion`
+the build id, `AppLaunch`/`AppArgs` from the artifact and a `CloudDir`
+of `.egs/cloud/<artifact id>/` (kept, so the tool diffs against the
+previous upload), then `-mode=LabelBinary` with the track's label —
+`Live` is the one players see, so a release's archive takes it and a
+working artifact `Testing`, labelled rather than left unlabelled since
+Epic deletes unlabelled binaries after a week. The receipt: `egs
+<version> → artifact <id>, … labelled <label>`. The product's client is
+`dev cred` `egs/client_id` (`EGS_CLIENT_ID`) and `egs/client_secret`
+(`EGS_CLIENT_SECRET`); the secret reaches the tool through the
+environment variable `-ClientSecretEnvVar` names, never argv. A lock
+pinning no `egs` dependency is `NoToolPinnedError` (the channel was
+wired by mistake), a pinned tool not yet installed is
+`ToolNotInstalledError` ("run dev up"), and a failing tool is
+`UploadFailedError` naming the step and carrying its last lines.
 
 ## The dependency graph
 

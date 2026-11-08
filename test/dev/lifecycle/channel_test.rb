@@ -67,4 +67,18 @@ class Dev::Lifecycle::ChannelTest < Minitest::Test
     script.to_s == "run: ./bin/stage"
     script.environment.nil?
   end
+
+  test "a channel carries its publisher's options verbatim, empty unless declared, and they take part in equality (dev#426)" do
+    Given
+    integration = Dev::Lifecycle::PublisherSpec::Integration.new(name: "steam")
+    plain = Dev::Lifecycle::Channel.new(name: "steam", accepts: [pattern("cellbound-3d-win64")], publisher: integration)
+    configured = Dev::Lifecycle::Channel.new(name: "steam", accepts: [pattern("cellbound-3d-win64")], publisher: integration, options: { "app" => 480 })
+
+    Expect
+    plain.options == {}
+    configured.options == { "app" => 480 }
+    configured == Dev::Lifecycle::Channel.new(name: "steam", accepts: [pattern("cellbound-3d-win64")], publisher: integration, options: { "app" => 480 })
+    configured.hash == Dev::Lifecycle::Channel.new(name: "steam", accepts: [pattern("cellbound-3d-win64")], publisher: integration, options: { "app" => 480 }).hash
+    plain != configured
+  end
 end

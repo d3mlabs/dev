@@ -66,6 +66,19 @@ class Dev::Deps::RegistryTest < Minitest::Test
     steam.channel_name == "steam"
   end
 
+  test "the built-in store publishers are steam's repository and egs's own class (dev#426)" do
+    Given
+    by_symbol = Dev::Deps::Registry::INTEGRATIONS.to_h { |entry| [entry.symbol, entry] }
+
+    Expect
+    by_symbol[:steam].publisher == Dev::Deps::SteamRepository
+    by_symbol[:steam].publisher_needs == []
+    by_symbol[:egs].publisher == Dev::Deps::EgsPublisher
+    by_symbol[:egs].publisher_needs == %i[project_root]
+    by_symbol[:egs].repository == Dev::Deps::UrlRepository
+    by_symbol[:egs].integration == Dev::Deps::EgsIntegration
+  end
+
   test "an entry's channel is the destination's name when that differs from the type's, and only a publishing entry may name one" do
     Given
     gems = Dev::Deps::Registry::Entry.new(symbol: :bundler, repository: Dev::Deps::BundlerRepository, scheme: nil, integration: nil,
@@ -85,15 +98,15 @@ class Dev::Deps::RegistryTest < Minitest::Test
     gems = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :bundler }
     image = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :image }
 
-    Expect "the two entries publish under the store's name; the rest are silent"
+    Expect "the two entries publish under the store's name; with steam and egs (dev#426), the rest are silent"
     gems.publisher == Dev::Deps::RubygemsPublisher
     gems.publisher_needs == %i[project_root]
     gems.channel_name == "rubygems"
     image.publisher == Dev::Deps::GhcrPublisher
     image.publisher_needs == []
     image.channel_name == "ghcr"
-    Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:symbol) == %i[bundler image]
-    Dev::Deps::Registry::INTEGRATIONS.filter_map(&:channel).uniq.size == Dev::Deps::Registry::INTEGRATIONS.count(&:publishes?)
+    Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:symbol) == %i[bundler steam egs image]
+    Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:channel_name).uniq.size == Dev::Deps::Registry::INTEGRATIONS.count(&:publishes?)
   end
 
   test "publishers over the built-in table: #{pinned.inspect} contributes #{channels.inspect}" do
@@ -109,8 +122,11 @@ class Dev::Deps::RegistryTest < Minitest::Test
     [:bundler]         | ["rubygems"]          | [Dev::Deps::RubygemsPublisher]
     [:image]           | ["ghcr"]              | [Dev::Deps::GhcrPublisher]
     [:bundler, :image] | ["rubygems", "ghcr"]  | [Dev::Deps::RubygemsPublisher, Dev::Deps::GhcrPublisher]
+    [:steam]           | ["steam"]             | [Dev::Deps::SteamRepository]
+    [:egs]             | ["egs"]               | [Dev::Deps::EgsPublisher]
+    [:steam, :egs]     | ["steam", "egs"]      | [Dev::Deps::SteamRepository, Dev::Deps::EgsPublisher]
     [:ruby]            | []                    | []
-    [:gh, :steam]      | []                    | []
+    [:cmake, :url]     | []                    | []
     []                 | []                    | []
   end
 
