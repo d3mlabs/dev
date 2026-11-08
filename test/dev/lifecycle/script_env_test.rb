@@ -24,11 +24,11 @@ class Dev::Lifecycle::ScriptEnvTest < Minitest::Test
       archive: "cellbound-3d-win64-dev.zip",
       archive_sha256: "ab" * 32,
     )
-    artifact = Dev::Lifecycle::Artifact.new(dir: Pathname("/data/artifacts/cellbound-3d/cellbound-3d-win64-dev"), manifest:)
+    shipment = Dev::Lifecycle::Shipment.of_artifact(Dev::Lifecycle::Artifact.new(dir: Pathname("/data/artifacts/cellbound-3d/cellbound-3d-win64-dev"), manifest:))
 
     Expect
     Dev::Lifecycle::ScriptEnv.for_deploy(
-      artifact, channel: "staging", track: Dev::Lifecycle::Track::Testing, scratch: Pathname("/data/artifacts/cellbound-3d/.staging"),
+      shipment, channel: "staging", track: Dev::Lifecycle::Track::Testing, scratch: Pathname("/data/artifacts/cellbound-3d/.staging"),
     ) == {
       "DEV_TARGET" => "cellbound-3d",
       "DEV_PLATFORM" => "win64",
@@ -60,15 +60,44 @@ class Dev::Lifecycle::ScriptEnvTest < Minitest::Test
       archive_sha256: "cd" * 32,
     )
     env = Dev::Lifecycle::ScriptEnv.for_deploy(
-      Dev::Lifecycle::Artifact.new(dir: Pathname("/store/rspock"), manifest:),
-      channel: "rubygems", track: Dev::Lifecycle::Track::Live, scratch: Pathname("/store/.rubygems"),
+      Dev::Lifecycle::Shipment.of_artifact(Dev::Lifecycle::Artifact.new(dir: Pathname("/store/rspock"), manifest:)),
+      channel: "rubygems", track: Dev::Lifecycle::Track::Testing, scratch: Pathname("/store/.rubygems"),
     )
 
     Expect
     env.slice("DEV_SHA", "DEV_DIRTY", "DEV_ARTIFACT", "DEV_TRACK") ==
-      { "DEV_SHA" => "unknown", "DEV_DIRTY" => "true", "DEV_ARTIFACT" => "/store/rspock/rspock.gem", "DEV_TRACK" => "live" }
+      { "DEV_SHA" => "unknown", "DEV_DIRTY" => "true", "DEV_ARTIFACT" => "/store/rspock/rspock.gem", "DEV_TRACK" => "testing" }
     !env.key?("DEV_PLATFORM")
     !env.key?("DEV_INSTALL")
+    !env.key?("DEV_RELEASE_VERSION")
+  end
+
+  test "a release's archive ships with DEV_RELEASE_VERSION and the tag's commit as DEV_SHA, and none of the store's keys (dev#425)" do
+    Given
+    entry = Dev::Lifecycle::Manifest::Release::Archive.new(
+      build: build("cellbound-3d-win64-release"), name: "cellbound-3d-win64-release-1.2.0.zip", sha256: "cd" * 32,
+      build_id: Dev::Lifecycle::BuildId.new("1.2.0+3f2a1c9d8e7b"),
+    )
+    shipment = Dev::Lifecycle::Shipment.of_release(
+      entry, archive: Pathname("/store/.releases/v1.2.0/cellbound-3d-win64-release-1.2.0.zip"),
+      tag: Dev::Lifecycle::ReleaseTag.new("1.2.0"), sha: "3f2a1c9d8e7b4455aaaa",
+    )
+
+    Expect
+    Dev::Lifecycle::ScriptEnv.for_deploy(shipment, channel: "steam", track: Dev::Lifecycle::Track::Live, scratch: Pathname("/store/.steam")) == {
+      "DEV_TARGET" => "cellbound-3d",
+      "DEV_PLATFORM" => "win64",
+      "DEV_CONFIG" => "release",
+      "DEV_ARTIFACT" => "/store/.releases/v1.2.0/cellbound-3d-win64-release-1.2.0.zip",
+      "DEV_CHANNEL" => "steam",
+      "DEV_TRACK" => "live",
+      "DEV_SCRATCH" => "/store/.steam",
+      "DEV_BUILD" => "cellbound-3d-win64-release",
+      "DEV_BUILD_ID" => "1.2.0+3f2a1c9d8e7b",
+      "DEV_ARCHIVE_SHA256" => "cd" * 32,
+      "DEV_RELEASE_VERSION" => "1.2.0",
+      "DEV_SHA" => "3f2a1c9d8e7b",
+    }
   end
 
   test "a build: script sees the build's declared axes and the install directory" do

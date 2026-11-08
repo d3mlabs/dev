@@ -5,6 +5,7 @@ require_relative "lifecycle/platform"
 require_relative "lifecycle/config"
 require_relative "lifecycle/shell"
 require_relative "lifecycle/byte_size"
+require_relative "lifecycle/part_list"
 require_relative "lifecycle/packed_archive"
 require_relative "lifecycle/builder"
 require_relative "lifecycle/packager"
@@ -21,6 +22,8 @@ require_relative "lifecycle/build_id"
 require_relative "lifecycle/project_version"
 require_relative "lifecycle/manifest"
 require_relative "lifecycle/artifact"
+require_relative "lifecycle/release_tag"
+require_relative "lifecycle/shipment"
 require_relative "lifecycle/script_env"
 require_relative "lifecycle/script_builder"
 require_relative "lifecycle/script_packager"
@@ -34,7 +37,6 @@ require_relative "lifecycle/channel"
 require_relative "lifecycle/script_publisher"
 require_relative "lifecycle/ports"
 require_relative "lifecycle/store"
-require_relative "lifecycle/release_tag"
 require_relative "lifecycle/deployment_state"
 require_relative "lifecycle/deployment_record"
 require_relative "lifecycle/deployment"
@@ -44,6 +46,7 @@ require_relative "lifecycle/github_releases"
 require_relative "lifecycle/git"
 require_relative "lifecycle/release_cut"
 require_relative "lifecycle/release_assets"
+require_relative "lifecycle/release_archives"
 require_relative "lifecycle/snapshot_branch"
 require_relative "lifecycle/snapshot"
 require_relative "lifecycle/snapshot_commit"
@@ -73,7 +76,9 @@ module Dev
   # archive (Archive — dev's own zip or split tar, the default;
   # AsIsPackager; NonePackager; ScriptPackager for a `package:` line).
   # A **channel** (Channel — a `deploy` child, or one the lock contributes:
-  # the builds it accepts and its protocol) ships artifacts through a
+  # the builds it accepts and its protocol) ships **shipments** (Shipment —
+  # one read-only archive per build, with its Provenance: the store's
+  # artifact and its commit, or a release's archive and its tag) through a
   # third port, the **Publisher** (ScriptPublisher — the child's `run:`
   # once per archive, over the same env contract; an integration's
   # publisher, a black box over the read-only archives with the channel's
@@ -90,9 +95,13 @@ module Dev
   # what `release:` says one contains; ReleaseCut is its git half (clean
   # tree, the bump commit, the tag, the push — resumable); ReleaseAssets
   # names each artifact's archive `<build>-<version>.<ext>` for the
-  # upload; GithubReleases is the release archive on the forge, where the
-  # assets and `release.json` (Manifest::Release) land. Nothing is
-  # deployed by it — distribution is `deploy --release` per channel.
+  # upload (PartList is a split set's MANIFEST, shared with Archive);
+  # GithubReleases is the release archive on the forge, where the assets
+  # and `release.json` (Manifest::Release) land. Nothing is deployed by
+  # it — distribution is `deploy --release` per channel (dev#425), which
+  # reads the cut back through ReleaseArchives: `release.json`, then the
+  # selected archives downloaded into the store's `.releases/<tag>/` and
+  # verified against the digests it records, on the live track.
   #
   # The verbs that act on these (`build`, `package`, `deploy`, `release`)
   # are LifecycleCommands in the CLI core (src/dev: the before → seam →

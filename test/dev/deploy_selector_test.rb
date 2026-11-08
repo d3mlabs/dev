@@ -6,7 +6,8 @@ require "dev/cli/flag_vocabulary"
 require "dev/command"
 require "dev/deploy_selector"
 require "dev/lifecycle"
-require "support/lifecycle_fixtures"
+require "support/fake_gh"
+require "support/release_fixtures"
 require "fileutils"
 require "pathname"
 require "time"
@@ -14,11 +15,12 @@ require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
 class Dev::DeploySelectorTest < Minitest::Test
-  include LifecycleFixtures
+  include ReleaseFixtures
 
   NOON = Time.utc(2026, 11, 4, 12, 0, 0)
   CLEAN = Dev::Lifecycle::GitState.new(sha: "3f2a1c9d8e7b", dirty: false)
   MOVED_ON = Dev::Lifecycle::GitState.new(sha: "0000aaaa1111", dirty: false)
+  TAG = Dev::Lifecycle::ReleaseTag.new("1.2.0")
 
   # A node declaring exactly the selector's flags, so the words parse the
   # way the verb's argv does.
@@ -38,6 +40,7 @@ class Dev::DeploySelectorTest < Minitest::Test
 
   def setup
     @root = Pathname(Dir.mktmpdir("deploy-selector-"))
+    @gh = FakeGh.new
   end
 
   def teardown
@@ -46,6 +49,10 @@ class Dev::DeploySelectorTest < Minitest::Test
   end
 
   def store = Dev::Lifecycle::Store.new(project_name: "cellbound-3d", targets: all_targets, data_root: @root.to_s)
+
+  def release_archives
+    Dev::Lifecycle::ReleaseArchives.new(releases: Dev::Lifecycle::GithubReleases.new(gh: @gh), store:, targets: all_targets)
+  end
 
   def channel(*patterns)
     Dev::Lifecycle::Channel.new(
@@ -65,7 +72,7 @@ class Dev::DeploySelectorTest < Minitest::Test
   end
 
   def select(channel, *words, state: CLEAN)
-    Dev::DeploySelector.new(channel:, targets: all_targets, store:).select(parsed_args(SelectingVerb.new, words), state:)
+    Dev::DeploySelector.new(channel:, targets: all_targets, store:, release_archives:).select(parsed_args(SelectingVerb.new, words), state:)
   end
 
   test "bare: one artifact per accepted (target, platform), in accept order, the config decided by what the store holds" do
@@ -78,9 +85,93 @@ class Dev::DeploySelectorTest < Minitest::Test
     selection = select(channel("cellbound-3d", "rspock"))
 
     Then "and a selection from the store is for the testing track: working artifacts never touch live"
-    selection.artifacts.map(&:name) == ["cellbound-3d-win64-dev", "cellbound-3d-linux64-release", "rspock"]
+    selection.shipments.map(&:name) == ["cellbound-3d-win64-dev", "cellbound-3d-linux64-release", "rspock"]
+    selection.shipments.first.archive == store.root / "cellbound-3d-win64-dev" / "cellbound-3d-win64-dev.zip"
+    selection.shipments.first.provenance == Dev::Lifecycle::Provenance::Store.new(state: CLEAN, packaged_at: NOON)
     selection.stale == []
     selection.track == Dev::Lifecycle::Track::Testing
+    @gh.calls.empty?
+  end
+
+  test "--release selects from the release's archives instead: downloaded, verified, the live track, the tag as provenance" do
+    Given "a release carrying one config of each client platform and the gem; the store empty"
+    release_on(@gh, { "cellbound-3d-win64-release" => "win", "cellbound-3d-linux64-release" => "linux", "rspock" => "gem" })
+
+    When
+    selection = select(channel("cellbound-3d", "rspock"), "--release", "1.2.0")
+
+    Then
+    selection.shipments.map(&:name) == ["cellbound-3d-win64-release", "cellbound-3d-linux64-release", "rspock"]
+    selection.shipments.map(&:archive) == ["cellbound-3d-win64-release", "cellbound-3d-linux64-release", "rspock"].map { |name| store.release_dir(TAG) / "#{name}-1.2.0.zip" }
+    selection.shipments.map(&:provenance).uniq == [Dev::Lifecycle::Provenance::Release.new(tag: TAG, sha: RELEASE_SHA)]
+    selection.stale == []
+    selection.track == Dev::Lifecycle::Track::Live
+  end
+
+  test "--release narrows by the positional and --config like the store does: #{words.inspect}" do
+    Given "a release carrying both configs of win64 and the server"
+    release_on(@gh, { "cellbound-3d-win64-dev" => "wd", "cellbound-3d-win64-release" => "wr", "cellbound-3d-server-linux64-release" => "s" })
+
+    Expect
+    select(channel("cellbound-3d-win64", "cellbound-3d-server"), *words, "--release", "1.2.0").shipments.map(&:name) == selected
+
+    Where
+    words                                       | selected
+    ["--config", "release"]                     | ["cellbound-3d-win64-release", "cellbound-3d-server-linux64-release"]
+    ["cellbound-3d-win64-dev"]                  | ["cellbound-3d-win64-dev"]
+    ["cellbound-3d-server"]                     | ["cellbound-3d-server-linux64-release"]
+  end
+
+  test "a release carrying two configs of an accepted build is a refusal naming both — --config chooses" do
+    Given
+    release_on(@gh, { "cellbound-3d-win64-dev" => "wd", "cellbound-3d-win64-release" => "wr" })
+
+    When
+    select(channel("cellbound-3d-win64"), "--release", "1.2.0")
+
+    Then
+    error = raises(Dev::DeploySelector::AmbiguousReleaseArchiveError)
+    error.message == "v1.2.0 carries 2 archives of 'cellbound-3d-win64': cellbound-3d-win64-dev-1.2.0.zip, cellbound-3d-win64-release-1.2.0.zip — --config chooses"
+  end
+
+  test "a build the release carries no archive of is refused: deploy adds nothing to a release" do
+    Given "a release of the gem only; the store holds the client, which must not substitute"
+    stamp("cellbound-3d-win64-release")
+    release_on(@gh, { "rspock" => "gem" })
+
+    When
+    select(channel("cellbound-3d-release"), "--release", "1.2.0")
+
+    Then
+    error = raises(Dev::DeploySelector::NotInReleaseError)
+    error.message == "v1.2.0 carries no archive of 'cellbound-3d-win64-release' (cellbound-3d-win64-release); it carries rspock — " \
+                     "a release ships what `release:` cut into it; deploy adds nothing"
+    @gh.downloaded("v1.2.0") == [["release.json"]]
+  end
+
+  test "--allow-stale beside --release is refused: a release is at its tag" do
+    When
+    select(channel("rspock"), "--release", "1.2.0", "--allow-stale")
+
+    Then
+    raises(Dev::DeploySelector::AllowStaleWithReleaseError)
+    @gh.calls.empty?
+  end
+
+  test "a --release that names no release, or no tag, is the source's own refusal: #{what}" do
+    Given
+    @gh.refuses(["release", "view"], with: "release not found")
+
+    When
+    select(channel("rspock"), "--release", version)
+
+    Then
+    raises(error_class)
+
+    Where
+    what                | version   | error_class
+    "an uncut version"  | "9.9.9"   | Dev::Lifecycle::ReleaseArchives::NoReleaseError
+    "not a version"     | "a b"     | Dev::Lifecycle::ReleaseTag::InvalidVersionError
   end
 
   test "--config picks among several artifacts of an accepted build; without it two candidates are a refusal naming both" do
@@ -93,7 +184,7 @@ class Dev::DeploySelectorTest < Minitest::Test
     select(channel("cellbound-3d-win64"))
 
     Then
-    chosen.artifacts.map(&:name) == ["cellbound-3d-win64-release"]
+    chosen.shipments.map(&:name) == ["cellbound-3d-win64-release"]
     error = raises(Dev::DeploySelector::AmbiguousArtifactError)
     error.message == "'cellbound-3d-win64' has 2 artifacts in the store: cellbound-3d-win64-dev (1.2.0+3f2a1c9d8e7b), " \
                      "cellbound-3d-win64-release (1.2.0+3f2a1c9d8e7b) — --config chooses"
@@ -108,7 +199,7 @@ class Dev::DeploySelectorTest < Minitest::Test
     stamp("cellbound-3d-server-linux64-dev")
 
     Expect
-    select(channel("cellbound-3d-release", "cellbound-3d-server-dev"), *words).artifacts.map(&:name) == selected
+    select(channel("cellbound-3d-release", "cellbound-3d-server-dev"), *words).shipments.map(&:name) == selected
 
     Where
     words                                        | selected
@@ -129,7 +220,7 @@ class Dev::DeploySelectorTest < Minitest::Test
     select(channel("cellbound-3d-release"), "cellbound-3d-win64-dev")
 
     Then
-    forced.artifacts.map(&:name) == ["cellbound-3d-win64-dev"]
+    forced.shipments.map(&:name) == ["cellbound-3d-win64-dev"]
     error = raises(Dev::DeploySelector::OutsideAcceptSetError)
     error.message == "'cellbound-3d-win64-dev' names no build channel 'staging' accepts " \
                      "(it accepts cellbound-3d-win64-release, cellbound-3d-linux64-release); --force ships it anyway"
@@ -141,7 +232,7 @@ class Dev::DeploySelectorTest < Minitest::Test
     stamp("cellbound-3d-linux64-dev")
 
     Expect
-    select(channel("cellbound-3d-release"), "cellbound-3d", "--force").artifacts.map(&:name) == ["cellbound-3d-win64-dev", "cellbound-3d-linux64-dev"]
+    select(channel("cellbound-3d-release"), "cellbound-3d", "--force").shipments.map(&:name) == ["cellbound-3d-win64-dev", "cellbound-3d-linux64-dev"]
   end
 
   test "a missing artifact is refused with the package command that makes it: deploy never builds" do
@@ -164,7 +255,7 @@ class Dev::DeploySelectorTest < Minitest::Test
     select(channel("cellbound-3d-dev"))
 
     Then
-    allowed.artifacts.map(&:name) == ["cellbound-3d-win64-dev", "cellbound-3d-linux64-dev"]
+    allowed.shipments.map(&:name) == ["cellbound-3d-win64-dev", "cellbound-3d-linux64-dev"]
     allowed.stale.map(&:name) == ["cellbound-3d-win64-dev"]
     error = raises(Dev::DeploySelector::StaleArtifactError)
     error.message == "cellbound-3d-win64-dev (1.2.0+0000aaaa1111) was not packaged from a clean tree at this commit — " \

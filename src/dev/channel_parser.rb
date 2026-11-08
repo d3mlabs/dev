@@ -42,8 +42,10 @@ module Dev
     # A `deploy` child that is not a mapping (a bare string, a list).
     class InvalidChannelError < ArgumentError; end
 
-    # A channel named `help` (the tree reserves the word under every node)
-    # or `status` (`dev deploy status` is dev's, beside the channels).
+    # A channel named `help` (the tree reserves the word under every node),
+    # `status` (`dev deploy status` is dev's, beside the channels) or
+    # `releases` (the store's `.releases/` is where `deploy --release`
+    # keeps its downloads, beside the channels' `.<channel>/` scratches).
     class ReservedChannelNameError < ArgumentError; end
 
     # A `deploy` child without `targets:`, or with one that is not a
@@ -61,8 +63,12 @@ module Dev
     ACCEPTS_KEY = "targets"
     RUN_KEY = "run"
     # Names no channel may take: `help` under every node, `status` for the
-    # ledger's own child of `deploy`.
-    RESERVED_NAMES = T.let([CommandParser::RESERVED_CHILD_NAME, Builtins::DeployStatusCommand::NAME].freeze, T::Array[String])
+    # ledger's own child of `deploy`, `releases` for the store's directory
+    # of downloaded releases.
+    RESERVED_NAMES = T.let(
+      [CommandParser::RESERVED_CHILD_NAME, Builtins::DeployStatusCommand::NAME, Lifecycle::Store::RELEASES_DIR].freeze,
+      T::Array[String],
+    )
 
     DeployHash = T.type_alias { T::Hash[String, T.untyped] }
 

@@ -2,9 +2,10 @@
 # frozen_string_literal: true
 
 require "pathname"
-require_relative "artifact"
 require_relative "build"
+require_relative "git_state"
 require_relative "manifest"
+require_relative "shipment"
 require_relative "track"
 
 module Dev
@@ -20,16 +21,24 @@ module Dev
     # from dev's ids to the toolchain's switches is the script's `case`,
     # and a declared name it does not handle must fail (`*) exit 2`).
     #
-    # A channel's `run:` reads the same axes for the artifact it ships,
-    # with `DEV_ARTIFACT` now the archive file itself (the first part of a
-    # split set; the rest sit beside it), `DEV_CHANNEL`, `DEV_TRACK` (the
+    # A channel's `run:` reads the same axes for the archive it ships,
+    # with `DEV_ARTIFACT` now the archive file itself (a split set's
+    # `MANIFEST`; the parts sit beside it), `DEV_CHANNEL`, `DEV_TRACK` (the
     # track the source decided: `testing` from the store, `live` for a
     # release's archives), `DEV_SCRATCH` (the channel's own directory in
     # the store, for whatever the script unpacks or wraps — the archive
-    # itself is read-only), and the manifest's keys — `DEV_BUILD`,
-    # `DEV_BUILD_ID`, `DEV_SHA`, `DEV_DIRTY`, `DEV_PACKAGED_AT`,
-    # `DEV_ARCHIVE_SHA256` — so the script can name what it shipped
-    # without reading `build-id.json` (dev#192, K5).
+    # itself is read-only), `DEV_BUILD`, `DEV_BUILD_ID`,
+    # `DEV_ARCHIVE_SHA256`, and what the source says of it (dev#192, K5;
+    # dev#425): a **store** artifact brings its manifest's `DEV_SHA`,
+    # `DEV_DIRTY` and `DEV_PACKAGED_AT`, so the script can name what it
+    # shipped and refuse a dirty one without reading `build-id.json`; a
+    # **release**'s archive brings `DEV_RELEASE_VERSION` (the version as
+    # given to `--release`) and `DEV_SHA` (the tag's commit, as
+    # `release.json` records it) — and nothing of a working tree, since a
+    # release is cut from a clean one. Each key is set exactly when it
+    # applies, so a script's `${DEV_RELEASE_VERSION}` under `set -u`
+    # fails loudly on a testing deploy rather than reading an empty
+    # version.
     module ScriptEnv
       TARGET = "DEV_TARGET"
       PLATFORM = "DEV_PLATFORM"
@@ -45,6 +54,7 @@ module Dev
       DIRTY = "DEV_DIRTY"
       PACKAGED_AT = "DEV_PACKAGED_AT"
       ARCHIVE_SHA256 = "DEV_ARCHIVE_SHA256"
+      RELEASE_VERSION = "DEV_RELEASE_VERSION"
 
       # What `DEV_SHA` carries for an artifact packaged outside a checkout.
       UNKNOWN_SHA = "unknown"
@@ -75,31 +85,53 @@ module Dev
           for_build(build, install:).merge(ARTIFACT => archive.to_s)
         end
 
-        # The env a channel's `run:` ships one artifact with.
+        # The env a channel's `run:` ships one archive with.
         #
-        # @param artifact [Artifact] the one being shipped
+        # @param shipment [Shipment] the one being shipped
         # @param channel [String] the channel's name
         # @param track [Track] the track the source decided
         # @param scratch [Pathname] the channel's scratch directory
         # @return [Hash{String => String}]
-        sig { params(artifact: Artifact, channel: String, track: Track, scratch: Pathname).returns(Env) }
-        def for_deploy(artifact, channel:, track:, scratch:)
-          manifest = artifact.manifest
-          axes(artifact.build).merge(
-            ARTIFACT => artifact.archive.to_s,
+        sig { params(shipment: Shipment, channel: String, track: Track, scratch: Pathname).returns(Env) }
+        def for_deploy(shipment, channel:, track:, scratch:)
+          axes(shipment.build).merge(
+            ARTIFACT => shipment.archive.to_s,
             CHANNEL => channel,
             TRACK => track.to_s,
             SCRATCH => scratch.to_s,
-            BUILD => artifact.name,
-            BUILD_ID => manifest.build_id.to_s,
-            SHA => manifest.state.sha || UNKNOWN_SHA,
-            DIRTY => manifest.state.dirty.to_s,
-            PACKAGED_AT => manifest.packaged_at.strftime(Manifest::INSTANT_FORMAT),
-            ARCHIVE_SHA256 => manifest.archive_sha256,
-          )
+            BUILD => shipment.name,
+            BUILD_ID => shipment.build_id.to_s,
+            ARCHIVE_SHA256 => shipment.archive_sha256,
+          ).merge(provenance(shipment.provenance))
         end
 
         private
+
+        # What the source says of the archive: the manifest's keys for a
+        # store artifact, the release's version and commit for a release's.
+        #
+        # @param provenance [Provenance]
+        # @return [Hash{String => String}]
+        sig { params(provenance: Provenance).returns(Env) }
+        def provenance(provenance)
+          case provenance
+          when Provenance::Store
+            {
+              SHA => provenance.state.sha || UNKNOWN_SHA,
+              DIRTY => provenance.state.dirty.to_s,
+              PACKAGED_AT => provenance.packaged_at.strftime(Manifest::INSTANT_FORMAT),
+            }
+          when Provenance::Release
+            # The short form, as a store artifact's `DEV_SHA` and every build
+            # id spell a commit; `release.json` records the full one.
+            { RELEASE_VERSION => provenance.tag.version, SHA => T.must(provenance.sha[0, GitState::SHORT_SHA_LENGTH]) }
+          else
+            # simplecov:disable — the sealed provenance has no third variant;
+            # T.absurd keeps the static proof.
+            T.absurd(provenance)
+            # simplecov:enable
+          end
+        end
 
         # @param build [Build]
         # @return [Hash{String => String}] the declared axes only

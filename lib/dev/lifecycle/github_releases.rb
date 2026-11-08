@@ -13,9 +13,10 @@ module Dev
     # The release *is* the archive of the cut — not a store (stores are
     # channels, K5) — so this is the one place dev writes one: created
     # once per tag, its assets uploaded with `--clobber` so a resumed run
-    # replaces what a failed one half-attached. Reads and writes go
-    # through Gh over the checkout, so the repo is the one `origin` names
-    # and the credential the one gh holds.
+    # replaces what a failed one half-attached — and the one place it is
+    # read back from: `deploy --release` downloads the assets by name
+    # (dev#425). Reads and writes go through Gh over the checkout, so the
+    # repo is the one `origin` names and the credential the one gh holds.
     class GithubReleases
       extend T::Sig
 
@@ -31,6 +32,10 @@ module Dev
 
       # What gh says when a tag has no release.
       NOT_FOUND = /release not found/i
+
+      # gh matches `--pattern` as a glob (Go's `filepath.Match`), so an
+      # asset name is escaped to match itself and nothing else.
+      GLOB_METACHARACTERS = /[*?\[\\]/
 
       # @param gh [Gh] over the project's checkout
       sig { params(gh: Gh).void }
@@ -86,7 +91,33 @@ module Dev
         raise ApiError, e.message
       end
 
+      # Download assets of a tag's release by name into a directory, each
+      # under its asset name, replacing a file of the same name — the
+      # caller decides what is already there and worth keeping (a verified
+      # download) and asks only for the rest.
+      #
+      # @param tag [ReleaseTag]
+      # @param names [Array<String>] the assets' names, exactly
+      # @param into [Pathname] the directory; created when missing
+      # @return [void]
+      # @raise [ApiError] a tag with no release, an asset not among the release's, a refused read
+      # @raise [Gh::GhMissingError]
+      sig { params(tag: ReleaseTag, names: T::Array[String], into: Pathname).void }
+      def download(tag, names, into:)
+        return if names.empty?
+
+        into.mkpath
+        @gh.capture(["release", "download", tag.name, "--dir", into.to_s, "--clobber", *names.flat_map { |name| ["--pattern", literal(name)] }])
+      rescue Gh::CommandFailedError => e
+        raise ApiError, e.message
+      end
+
       private
+
+      # @param name [String] an asset's name
+      # @return [String] the glob that matches exactly that name
+      sig { params(name: String).returns(String) }
+      def literal(name) = name.gsub(GLOB_METACHARACTERS) { |char| "\\#{char}" }
 
       # @param printed [String] what gh printed: the release's url
       # @return [URI]

@@ -1,11 +1,11 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "digest"
 require "pathname"
 require_relative "byte_size"
 require_relative "packager"
 require_relative "packed_archive"
+require_relative "part_list"
 require_relative "shell"
 # Build appears in a signature only; see packager.rb for why build.rb is
 # not required here.
@@ -305,7 +305,7 @@ module Dev
         )
         parts = parts_of(archive)
         manifest = with(archive, Form::Tar::MANIFEST_EXTENSION)
-        manifest.write(parts.map { |part| "#{Digest::SHA256.file(part).hexdigest}  #{part.basename}\n" }.join)
+        PartList.of(parts).write(manifest)
         PackedArchive.new(archive: manifest, parts:)
       end
 

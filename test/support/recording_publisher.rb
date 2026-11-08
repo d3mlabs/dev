@@ -12,24 +12,25 @@ require "pathname"
 class RecordingPublisher
   include Dev::Lifecycle::Publisher
 
-  Shipment = Data.define(:artifacts, :channel, :track, :scratch)
+  # One `publish` call as it was made.
+  Call = Data.define(:shipments, :channel, :track, :scratch)
 
-  attr_reader :project_root, :shipments
+  attr_reader :project_root, :calls
 
   # @param project_root [Pathname, nil] what the Registry hands a publisher that asks for it
   def initialize(project_root: nil)
     @project_root = project_root
-    @shipments = []
+    @calls = []
   end
 
-  # @param artifacts [Array<Dev::Lifecycle::Artifact>]
+  # @param shipments [Array<Dev::Lifecycle::Shipment>]
   # @param channel [Dev::Lifecycle::Channel]
   # @param track [Dev::Lifecycle::Track]
   # @param scratch [Pathname]
   # @return [Dev::Lifecycle::Receipt] names the builds shipped, as an integration's would
-  def publish(artifacts, channel:, track:, scratch:)
-    @shipments << Shipment.new(artifacts:, channel:, track:, scratch:)
-    Dev::Lifecycle::Receipt.new(summary: "recorded #{artifacts.map(&:name).join(", ")}")
+  def publish(shipments, channel:, track:, scratch:)
+    @calls << Call.new(shipments:, channel:, track:, scratch:)
+    Dev::Lifecycle::Receipt.new(summary: "recorded #{shipments.map(&:name).join(", ")}")
   end
 
   # @return [String]

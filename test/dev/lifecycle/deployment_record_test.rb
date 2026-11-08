@@ -24,7 +24,14 @@ class Dev::Lifecycle::DeploymentRecordTest < Minitest::Test
       build_id: Dev::Lifecycle::BuildId.derive(state:, semver: "1.2.0", now: NOON),
       archive: "#{build_name}.zip", archive_sha256: "ab" * 32,
     )
-    Dev::Lifecycle::Artifact.new(dir: Pathname("/store") / build_name, manifest:)
+    Dev::Lifecycle::Shipment.of_artifact(Dev::Lifecycle::Artifact.new(dir: Pathname("/store") / build_name, manifest:))
+  end
+
+  def released(build_name, version: "1.2.0")
+    entry = Dev::Lifecycle::Manifest::Release::Archive.new(
+      build: build(build_name), name: "#{build_name}-#{version}.zip", sha256: "cd" * 32, build_id: Dev::Lifecycle::BuildId.new("#{version}+3f2a1c9d8e7b"),
+    )
+    Dev::Lifecycle::Shipment.of_release(entry, archive: Pathname("/store/.releases/v#{version}") / entry.name, tag: Dev::Lifecycle::ReleaseTag.new(version), sha: "3f2a1c9d8e7b4455")
   end
 
   def shipped(name, build_id) = RECORD::DeployedBuild.new(name:, build_id: Dev::Lifecycle::BuildId.new(build_id))
@@ -75,6 +82,19 @@ class Dev::Lifecycle::DeploymentRecordTest < Minitest::Test
     Then
     error = raises RECORD::UnknownRefError
     error.message.include?("rspock (1.2.0+unknown.20261105T120000Z) was packaged outside a checkout")
+  end
+
+  test "a release's shipments are one record against the tag, whatever their build: the live deploy `deploy status --release` finds" do
+    Given
+    shipments = [released("cellbound-3d-win64-release"), released("rspock")]
+
+    When
+    records = RECORD.of(shipments, channel: "steam", track: TRACK::Live, state: STATE::Success, description: "pushed")
+
+    Then
+    records.map(&:ref) == ["v1.2.0"]
+    records.first.builds == [shipped("cellbound-3d-win64-release", "1.2.0+3f2a1c9d8e7b"), shipped("rspock", "1.2.0+3f2a1c9d8e7b")]
+    records.first.track == TRACK::Live
   end
 
   test "a payload dev wrote reads back as the record it came from, with the status the forge holds" do

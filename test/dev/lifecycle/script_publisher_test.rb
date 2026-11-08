@@ -41,7 +41,7 @@ class Dev::Lifecycle::ScriptPublisherTest < Minitest::Test
       archive: "#{build_name}.zip",
       archive_sha256: "ab" * 32,
     )
-    Dev::Lifecycle::Artifact.new(dir:, manifest:)
+    Dev::Lifecycle::Shipment.of_artifact(Dev::Lifecycle::Artifact.new(dir:, manifest:))
   end
 
   def channel(command)

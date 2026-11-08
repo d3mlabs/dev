@@ -7,6 +7,7 @@ require_relative "artifact"
 require_relative "build"
 require_relative "channel"
 require_relative "manifest"
+require_relative "release_tag"
 require_relative "target"
 
 module Dev
@@ -33,12 +34,19 @@ module Dev
     # depot tree, a tap clone). Dot-prefixed so it can never collide with
     # a build's name (the target grammar admits no leading dot), and the
     # publisher's own: the store hands out the path and reads nothing in it.
+    # One more dot-directory, `.releases/<tag>/`, is dev's own: where
+    # `deploy --release` keeps a release's `release.json` and the archives
+    # it downloaded and verified (dev#425), so a second channel shipping
+    # the same release reads them from here instead of the forge. No
+    # channel may be named `releases` (ChannelParser), which is what keeps
+    # the two apart.
     class Store
       extend T::Sig
 
       ARTIFACTS_DIR = "artifacts"
       INSTALL_DIR = "install"
       SCRATCH_PREFIX = "."
+      RELEASES_DIR = "releases"
 
       # An artifact directory whose `build-id.json` is of a different build
       # than the directory is named for.
@@ -91,6 +99,14 @@ module Dev
       # @return [Pathname]
       sig { params(channel: Channel).returns(Pathname) }
       def scratch(channel) = @root / "#{SCRATCH_PREFIX}#{channel.name}"
+
+      # Where a release's downloaded archives and `release.json` are kept
+      # for `deploy --release` — or would be.
+      #
+      # @param tag [ReleaseTag]
+      # @return [Pathname]
+      sig { params(tag: ReleaseTag).returns(Pathname) }
+      def release_dir(tag) = @root / "#{SCRATCH_PREFIX}#{RELEASES_DIR}" / tag.name
 
       # The stamped artifact of a build, or nil when none has been packaged
       # (or one was started and never stamped).

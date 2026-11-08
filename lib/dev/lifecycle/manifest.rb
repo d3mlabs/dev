@@ -410,6 +410,15 @@ module Dev
           true
         end
 
+        # The release's archive of a build, or nil when the release carries
+        # none — what `deploy --release` selects by, as it reads the store
+        # by Store#artifact.
+        #
+        # @param build [Build]
+        # @return [Archive, nil]
+        sig(:final) { params(build: Build).returns(T.nilable(Archive)) }
+        def archive(build) = @archives.find { |entry| entry.build == build }
+
         sig(:final) { override.returns(JsonHash) }
         def to_json_hash
           { "stamp" => @stamp.to_json_hash, "tag" => @tag, "sha" => @sha, "archives" => @archives.map(&:to_json_hash) }
