@@ -356,7 +356,7 @@ that needs the absolute path rather than PATH.
 | ruby | `GemScheme` | the `ruby` verb's version is a rubygems requirement over the d3mlabs tap's `ruby@X.Y.Z` family — one immutable formula per patch, enumerated from the tap's own formula list (`brew tap-info`), each member's `version_suffix` being its exact version: `"4.0.6"` pins, `"~> 4.0"` ranges, a bare minor `"4.0"` is `"~> 4.0.0"`. Resolves, locks (`ruby:`) and installs as a brew pin (`install_alias: :brew`). |
 | python | `BrewScheme` | the `python` verb's version is the minor, a formula suffix selecting homebrew/core's `python@<minor>` exactly as `brew "llvm", version: "18"` selects `llvm@18`; locks under `python:` and installs as a brew pin. |
 | brew, cask | `BrewScheme` | `version:` is a formula *suffix* (`"18"` selects the `llvm@18` sibling out of the enumerated spec family), matched against the `version_suffix` fact; the reported stable version is brew's record, not the coordinate. Casks have no suffix fact — versioned casks are distinct cask names (`temurin@21`), so `version:` on a cask is unsatisfiable by construction. |
-| url, xcode, wwise | — (no scheme) | no constraint grammar exists: url's universe is an observable-now singleton, xcode and wwise are revision-addressed (Apple publishes no registry; Audiokinetic's sits behind a login resolution never holds). Only the empty constraint is legal; anything else raises. A url `tag:` is a display label riding materialization, naming, never selection; a wwise `integration:` is the companion package's version, an install instruction riding materialization alongside `ue:`. |
+| url, egs, xcode, wwise | — (no scheme) | no constraint grammar exists: url's universe is an observable-now singleton (egs, Epic's BuildPatchTool zip, is a url universe under its own symbol so pinning it contributes the `deploy egs` channel — [dev#426](https://github.com/d3mlabs/dev/issues/426)), xcode and wwise are revision-addressed (Apple publishes no registry; Audiokinetic's sits behind a login resolution never holds). Only the empty constraint is legal; anything else raises. A url `tag:` is a display label riding materialization, naming, never selection; a wwise `integration:` is the companion package's version, an install instruction riding materialization alongside `ue:`. |
 
 **The constraint standard is a shape plus an interpreter, never a
 grammar.** Every constraint in the system is a dev-shaped hash whose keys
@@ -381,8 +381,8 @@ Who guarantees the bytes you install are the bytes that were resolved:
 
 - **dev-enforced** — the repository reports a digest fact, the pin carries
   it, and the integration verifies downloaded bytes against it before
-  handing them to the artifact store. ficsit (per-target SHA256 from the API), url (trust-on-first-use:
-  download at resolve time, hash, pin), pip (sdist SHA256 from PyPI's
+  handing them to the artifact store. ficsit (per-target SHA256 from the API), url and egs (trust-on-first-use:
+  download at resolve time, hash, pin; the digest also keys the egs tree), pip (sdist SHA256 from PyPI's
   JSON API), bundler (`Gemfile.lock` CHECKSUMS, verified by
   `bundle install --frozen`).
 - **tool-enforced** — the ecosystem tool verifies integrity itself at
@@ -409,7 +409,7 @@ attribute, repository enum, or resolver guard to drift out of sync.
 | dev-resolved | ficsit | `Resolved(declarations)` | The resolver walks the declarations, inheriting the parent's `Scope`; every transitive becomes its own pin. |
 | tool-locked | bundler | `ToolOwned` | `BundlerLocker` makes the tool solve the whole set up front (`bundle lock`); the repository reads pinned versions back. |
 | tool-at-install | pip, luarocks, brew | `ToolOwned` | The tool resolves the closure when it installs; dev pins top-level packages only. |
-| self-contained | steam, git, xcode, wwise, url — and gh | `Resolved([])` | Nothing to resolve: the artifact carries everything it needs. steam/git/xcode/wwise/url guarantee it by construction; gh's is a usage contract (prebuilt assets are baked; a source build's needs are declared by the consuming project) until subproject resolution lands. |
+| self-contained | steam, git, xcode, wwise, url, egs — and gh | `Resolved([])` | Nothing to resolve: the artifact carries everything it needs. steam/git/xcode/wwise/url/egs guarantee it by construction; gh's is a usage contract (prebuilt assets are baked; a source build's needs are declared by the consuming project) until subproject resolution lands. |
 
 Two standing decisions:
 

@@ -484,6 +484,30 @@ class Dev::Deps::DSLTest < Minitest::Test
     error.message.include?("dev#271")
   end
 
+  test "egs() declares Epic's BuildPatchTool by its public zip unless a url: names a mirror (dev#426)" do
+    When "declaring the tool, once bare and once from a mirror"
+    config = Dev::Deps.define do
+      egs
+      egs "BuildPatchToolMirror", url: "https://mirror.example.com/BuildPatchTool.zip", host: :darwin
+    end
+
+    Then "the url is the source, nothing is a constraint, and host: scopes the pin as for any verb"
+    bare, mirrored = config.declarations
+    [bare.name, bare.integration, bare.source, bare.constraint, bare.materialization] ==
+      ["BuildPatchTool", :egs, Dev::Deps::BuildPatchTool::DOWNLOAD_URL, {}, {}]
+    [mirrored.name, mirrored.source, mirrored.scope.host] == ["BuildPatchToolMirror", "https://mirror.example.com/BuildPatchTool.zip", :darwin]
+  end
+
+  test "install_dir: is refused on egs, naming its place" do
+    When
+    error = assert_raises(Dev::Deps::GroupDSL::InstallDirRemovedError) do
+      Dev::Deps.define { egs "BuildPatchTool", install_dir: "~/.dev/bpt" }
+    end
+
+    Then
+    error.message.include?("~/.dev/egs/BuildPatchTool/")
+  end
+
   test "install_dir: is refused on steam and wwise too, each naming its own place" do
     When "declaring each with the retired option"
     steam_error = assert_raises(Dev::Deps::GroupDSL::InstallDirRemovedError) do

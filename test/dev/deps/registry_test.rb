@@ -79,6 +79,19 @@ class Dev::Deps::RegistryTest < Minitest::Test
     publishers.fetch("ficsit").is_a?(Dev::Deps::FicsitRepository)
   end
 
+  test "the built-in store publishers are steam's repository and egs's own class (dev#426)" do
+    Given
+    by_symbol = Dev::Deps::Registry::INTEGRATIONS.to_h { |entry| [entry.symbol, entry] }
+
+    Expect
+    by_symbol[:steam].publisher == Dev::Deps::SteamRepository
+    by_symbol[:steam].publisher_needs == []
+    by_symbol[:egs].publisher == Dev::Deps::EgsPublisher
+    by_symbol[:egs].publisher_needs == %i[project_root]
+    by_symbol[:egs].repository == Dev::Deps::UrlRepository
+    by_symbol[:egs].integration == Dev::Deps::EgsIntegration
+  end
+
   test "an entry's channel is the destination's name when that differs from the type's, and only a publishing entry may name one" do
     Given
     gems = Dev::Deps::Registry::Entry.new(symbol: :bundler, repository: Dev::Deps::BundlerRepository, scheme: nil, integration: nil,
@@ -98,14 +111,14 @@ class Dev::Deps::RegistryTest < Minitest::Test
     gems = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :bundler }
     image = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :image }
 
-    Expect "the two entries publish under the store's name; with ficsit (dev#427), the rest are silent"
+    Expect "the two entries publish under the store's name; with steam, egs and ficsit (dev#426, #427), the rest are silent"
     gems.publisher == Dev::Deps::RubygemsPublisher
     gems.publisher_needs == %i[project_root]
     gems.channel_name == "rubygems"
     image.publisher == Dev::Deps::GhcrPublisher
     image.publisher_needs == []
     image.channel_name == "ghcr"
-    Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:symbol) == %i[bundler ficsit image]
+    Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:symbol) == %i[bundler ficsit steam egs image]
     Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:channel_name).uniq.size == Dev::Deps::Registry::INTEGRATIONS.count(&:publishes?)
   end
 
@@ -123,8 +136,11 @@ class Dev::Deps::RegistryTest < Minitest::Test
     [:image]           | ["ghcr"]              | [Dev::Deps::GhcrPublisher]
     [:bundler, :image] | ["rubygems", "ghcr"]  | [Dev::Deps::RubygemsPublisher, Dev::Deps::GhcrPublisher]
     [:ficsit]          | ["ficsit"]            | [Dev::Deps::FicsitRepository]
+    [:steam]           | ["steam"]             | [Dev::Deps::SteamRepository]
+    [:egs]             | ["egs"]               | [Dev::Deps::EgsPublisher]
+    [:steam, :egs]     | ["steam", "egs"]      | [Dev::Deps::SteamRepository, Dev::Deps::EgsPublisher]
     [:ruby]            | []                    | []
-    [:gh, :steam]      | []                    | []
+    [:cmake, :url]     | []                    | []
     []                 | []                    | []
   end
 
@@ -140,7 +156,7 @@ class Dev::Deps::RegistryTest < Minitest::Test
 
     Expect
     Dev::Deps::Registry.publisher_reach(entries:) == { "brew" => %i[brew ruby], "steam" => %i[steam] }
-    Dev::Deps::Registry.publisher_reach == { "rubygems" => %i[bundler], "ficsit" => %i[ficsit], "ghcr" => %i[image] }
+    Dev::Deps::Registry.publisher_reach == { "rubygems" => %i[bundler], "ficsit" => %i[ficsit], "steam" => %i[steam], "egs" => %i[egs], "ghcr" => %i[image] }
   end
 
   test "publishers builds one instance per publishing entry the lock reaches, directly or through an alias, with the kwargs it asks for" do

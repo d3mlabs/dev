@@ -158,24 +158,6 @@ module ASTTransform::InstructionSequence::Mixin
   def load_iseq(source_path); end
 end
 
-# The framework's parser builder: the stock builder with the parser gem's `emit_kwargs` opt-in, which
-# distinguishes keyword arguments from hash literals in the AST.
-#
-# With the flag off (the gem's compatibility default) both `foo(bar: 1)` and `foo({ bar: 1 })` emit :hash nodes.
-# Unparser uses the node type to decide whether to emit braces: :hash gets `{}`, :kwargs does not. Since Ruby 3.0+
-# treats these as semantically different (strict keyword/positional separation), the AST must preserve the
-# distinction. `emit_kwargs` rewrites at the call sites where kwargs semantics live (method calls, index,
-# super/yield); the flag is a class-level ivar, so setting it here opts in this builder only — the global
-# Parser::Builders::Default stays untouched.
-#
-# NOTE: parsed nodes deliberately stay plain Parser::AST::Node. Custom node classes exist only for registered
-# custom types (see ASTTransform::Node), which are IR and never reach Unparser: AST::Node#eql? compares class, and
-# Unparser verifies dynamic-string emission by re-parsing and comparing eql? against the freshly parsed
-# (plain-class) node — custom-class nodes of standard types would fail that verification.
-#
-# source://ast_transform//lib/ast_transform/kwargs_builder.rb#20
-class ASTTransform::KwargsBuilder < ::Prism::Translation::Parser::Builder; end
-
 # Line-addressed output: text is placed at absolute line numbers, top to bottom, and the cursor never rewinds.
 # When a placement's target line is already behind the cursor, the text is packed (`; `) onto the current line
 # instead — Ruby lets statements share a physical line, so alignment degrades locally and the next placement
@@ -378,6 +360,29 @@ module ASTTransform::MixinUtils
   end
 end
 
+# The framework's parser builder: the stock builder with the parser gem's `modernize` opt-ins, which produce the
+# modern AST (`:procarg0`, `:index`/`:indexasgn`, `:lambda`, `:forward_args`, `:kwargs`, `:match_pattern`, ...).
+#
+# Unparser is written against the modern AST, so parsing in the gem's legacy compatibility shapes changes meaning
+# at emission. Two examples that matter to any transformed source:
+#
+# - Block parameters: in the modern AST `{ |a| }` is `s(:args, s(:procarg0, s(:arg, :a)))`, and a lone bare
+#   `s(:arg)` means the trailing-comma form `{ |a,| }`. The legacy shape for `{ |a| }` is that lone `s(:arg)`, so
+#   Unparser emitted `|a,|` and every one-parameter block auto-splatted its argument (#21).
+# - Keyword arguments: with `emit_kwargs` off, `foo(bar: 1)` and `foo({ bar: 1 })` both parse as :hash; Unparser
+#   braces :hash and not :kwargs, and Ruby 3+ treats the two as different calls.
+#
+# The flags are class-level ivars, so modernizing here opts in this builder only — the global
+# Parser::Builders::Default stays untouched.
+#
+# NOTE: parsed nodes deliberately stay plain Parser::AST::Node. Custom node classes exist only for registered
+# custom types (see ASTTransform::Node), which are IR and never reach Unparser: AST::Node#eql? compares class, and
+# Unparser verifies dynamic-string emission by re-parsing and comparing eql? against the freshly parsed
+# (plain-class) node — custom-class nodes of standard types would fail that verification.
+#
+# source://ast_transform//lib/ast_transform/modern_builder.rb#25
+class ASTTransform::ModernBuilder < ::Prism::Translation::Parser::Builder; end
+
 # Base class for custom IR nodes. Transform authors subclass it and register a custom node type to get type-routed
 # construction from +s+ with domain accessors:
 #
@@ -429,8 +434,8 @@ end
 class ASTTransform::SourceParser
   # Constructs a new SourceParser instance.
   #
-  # KwargsBuilder is a required implementation detail, not an injection seam: the framework's emission depends
-  # on the kwargs/hash distinction it preserves, so every parse goes through it.
+  # ModernBuilder is a required implementation detail, not an injection seam: the framework's emission depends
+  # on the modern AST shapes it produces, so every parse goes through it.
   #
   # @return [SourceParser] a new instance of SourceParser
   #
