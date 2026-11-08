@@ -710,22 +710,26 @@ class RunnerTest < Minitest::Test
     USAGE
   end
 
-  test "a deploy child with neither run: nor a publisher the lock contributes is refused at load, naming both fixes" do
-    Given "a project declaring steam without run: over a lock contributing nothing"
-    runner = build_runner(targets: { "rspock" => { "desc" => "The gem" } }, commands: {
-      "deploy" => { "commands" => { "steam" => { "targets" => ["rspock"] } } },
+  test "a deploy child with neither run: nor a publisher the lock contributes binds with its fault: every other verb runs, help names the fault, and only `deploy <channel>` refuses (dev#509)" do
+    Given "a project declaring steam without run: over a dev whose table ships no steam publisher — a manifest ahead of the installed dev"
+    out = StringIO.new
+    runner = build_runner(out: out, targets: { "rspock" => { "desc" => "The gem" } }, commands: {
+      "deploy" => { "commands" => { "steam" => { "desc" => "Steam depots", "targets" => ["rspock"] } } },
     })
     old_stderr = $stderr
     $stderr = StringIO.new
+
+    When "help runs, then the channel is asked to ship"
+    runner.run(["help", "deploy"])
     Kernel.expects(:exit).with(1).once
+    runner.run(["deploy", "steam"])
 
-    When "anything at all is run"
-    runner.run(["help"])
-
-    Then
-    $stderr.string.include?("dev: channel 'deploy steam' has no protocol")
-    $stderr.string.include?("the lock contributes no `steam` publisher (it contributes: none)")
-    $stderr.string.include?("declare `run:`")
+    Then "help listed it, protocol-less, and the deploy was refused with the protocol message — load itself said nothing"
+    out.string.include?("steam        Steam depots")
+    out.string.include?("Protocol: publisher: steam — this dev ships no `steam` publisher")
+    $stderr.string.include?("dev: channel 'deploy steam' has no protocol: it declares no `run:` and this dev ships no `steam` publisher")
+    $stderr.string.include?("`dev up` once a release ships it, or declare `run:`")
+    $stderr.string.lines.count { |line| line.include?("has no protocol") } == 1
 
     Cleanup
     $stderr = old_stderr

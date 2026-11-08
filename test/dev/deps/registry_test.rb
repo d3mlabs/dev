@@ -114,6 +114,21 @@ class Dev::Deps::RegistryTest < Minitest::Test
     []                 | []                    | []
   end
 
+  test "publisher_reach maps each channel a table can ship to onto the types whose pin reaches it, directly or through an alias (dev#509)" do
+    Given "the same table: brew publishes and ruby installs through it; steam publishes; cmake is silent"
+    entries = [
+      Dev::Deps::Registry::Entry.new(symbol: :brew, repository: Dev::Deps::BrewRepository, scheme: nil, integration: nil,
+        publisher: RecordingPublisher, publisher_needs: %i[project_root]),
+      Dev::Deps::Registry::Entry.new(symbol: :ruby, repository: Dev::Deps::BrewRepository, scheme: nil, integration: nil, install_alias: :brew),
+      Dev::Deps::Registry::Entry.new(symbol: :steam, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil, publisher: RecordingPublisher),
+      Dev::Deps::Registry::Entry.new(symbol: :cmake, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil),
+    ]
+
+    Expect
+    Dev::Deps::Registry.publisher_reach(entries:) == { "brew" => %i[brew ruby], "steam" => %i[steam] }
+    Dev::Deps::Registry.publisher_reach == { "rubygems" => %i[bundler], "ghcr" => %i[image] }
+  end
+
   test "publishers builds one instance per publishing entry the lock reaches, directly or through an alias, with the kwargs it asks for" do
     Given "a table where brew publishes and ruby installs through it; steam publishes but is not pinned; cmake is pinned but silent"
     entries = [
