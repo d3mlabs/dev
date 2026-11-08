@@ -35,10 +35,19 @@ class FakeContainerEngine < Dev::ContainerEngine
   # Consumes `in:` as a child process would, so a caller that pipes a
   # secret on stdin can be checked without the secret ever touching argv.
   def run(args, env: {}, **opts)
+    status(args, env:, **opts).zero?
+  end
+
+  # The handler's verdict as an exit status: a boolean reads as 0 / 1, an
+  # Integer is the status itself (a test scripting the container's exit).
+  def status(args, env: {}, **opts)
     @runs << args
     @run_envs << env
     @run_stdins << opts[:in]&.read
-    !!@run_handler.call(args)
+    verdict = @run_handler.call(args)
+    return verdict if verdict.is_a?(Integer)
+
+    verdict ? 0 : 1
   end
 
   def capture(args, env: {})

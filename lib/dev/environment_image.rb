@@ -55,9 +55,6 @@ module Dev
     FLOOR_USER = "builder"
     LINUXBREW_PREFIX = "/home/linuxbrew/.linuxbrew"
 
-    # Where the checkout is bind-mounted in every container dev creates.
-    PROJECT_MOUNT = "/project"
-
     # The file a host or container carries to say which environment it is
     # (dev#308 compares it to the lock): `name=…\ndigest=…\n`.
     MARKER_PATH = "/etc/dev/environment"
@@ -267,7 +264,6 @@ module Dev
       lines << "RUN install -d #{File.dirname(MARKER_PATH)} \\"
       lines << "    && printf 'name=%s\\ndigest=%s\\n' #{Shellwords.escape(@name)} \"$#{DIGEST_BUILD_ARG}\" > #{MARKER_PATH}"
       lines << "USER #{FLOOR_USER}"
-      lines << "WORKDIR #{PROJECT_MOUNT}"
       "#{lines.join("\n")}\n"
     end
 

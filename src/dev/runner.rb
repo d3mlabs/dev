@@ -26,12 +26,12 @@ require "dev/execution_context"
 require "dev/global_catalog"
 require "dev/group_executor"
 require "dev/host_rule"
-require "dev/container_github_token"
 require "dev/lifecycle"
 require "dev/lifecycle_executor"
 require "dev/overridden_executor"
 require "dev/placement"
 require "dev/placement_binder"
+require "dev/project_container"
 require "dev/project_executor"
 require "dev/project_manifest"
 require "dev/project_manifest_loader"
@@ -86,6 +86,19 @@ module Dev
     # Builds the release archive over a checkout; injected for the same reason.
     ReleasesFactory = T.type_alias { T.proc.params(root: Pathname).returns(Lifecycle::GithubReleases) }
 
+    # The build hosts a run can leave this machine for, made once per run
+    # and shared by the command runner and the lifecycle verbs: the
+    # project's container (ProjectContainer) and the sync step that carries
+    # the tree to any remote (Lifecycle::SnapshotSync).
+    class RemoteHosts < T::Struct
+      const :containers, ProjectContainer
+      const :sync, Lifecycle::SnapshotSync
+    end
+
+    # Builds the remote hosts over a project; injected so tests hand in a
+    # container over a fake engine and a sync step that touches no git.
+    HostsFactory = T.type_alias { T.proc.params(project: ProjectContext).returns(RemoteHosts) }
+
     sig do
       params(
         ui: Dev::Cli::Ui,
@@ -94,7 +107,7 @@ module Dev
         manifest_loader: ProjectManifestLoader,
         command_service: T.nilable(CommandService),
         host_rule: HostRule,
-        github_token: ContainerGithubToken,
+        hosts_factory: HostsFactory,
         deployments_factory: DeploymentsFactory,
         releases_factory: ReleasesFactory,
       ).void
@@ -106,7 +119,12 @@ module Dev
       manifest_loader: ProjectManifestLoader.new,
       command_service: nil,
       host_rule: HostRule.new,
-      github_token: ContainerGithubToken.new,
+      hosts_factory: lambda { |project|
+        RemoteHosts.new(
+          containers: ProjectContainer.new(project_root: project.root, engine_hint: project.engine),
+          sync: Lifecycle::SnapshotSync.new(root: project.root),
+        )
+      },
       deployments_factory: ->(root) { Lifecycle::GithubDeployments.new(gh: Lifecycle::Gh.new(root:)) },
       releases_factory: ->(root) { Lifecycle::GithubReleases.new(gh: Lifecycle::Gh.new(root:)) }
     )
@@ -118,8 +136,7 @@ module Dev
       # One answer to "does this image's work run here?" for the command
       # runner, the container bring-up and `dev up`'s inside check alike.
       @host_rule = host_rule
-      # The host's gh token, as every exec into a container carries it.
-      @github_token = github_token
+      @hosts_factory = hosts_factory
       @deployments_factory = deployments_factory
       @releases_factory = releases_factory
     end
@@ -242,15 +259,19 @@ module Dev
       help = Builtins::HelpCommand.new(usage_printer:, out: @out, root_provider:)
       complete = Builtins::CompleteCommand.new(out: @out, root_provider:)
       bindings = bind_placements(manifest, context.project!)
+      # The project's container as a build host (ADR-0008, dev#421), one
+      # instance for the command runner and the lifecycle verbs alike, with
+      # the sync step that carries the tree to it.
+      hosts = @hosts_factory.call(context.project!)
       service = CommandService.new(
         repository: CommandRepository.new(
           root: CommandGroup.root(
             desc: "Development commands for #{manifest.name}",
-            children: build_builtins(manifest, context.project!, dependency_service, help:, complete:, bindings:, ui: context.ui),
+            children: build_builtins(manifest, context.project!, dependency_service, help:, complete:, bindings:, ui: context.ui, hosts:),
           ),
           project_commands: bindings.commands,
         ),
-        executor: build_executor(context, usage_printer),
+        executor: build_executor(context, usage_printer, hosts:),
         dependency_service: dependency_service,
       )
       service
@@ -352,16 +373,17 @@ module Dev
     #
     # @param context [ExecutionContext]
     # @param usage_printer [Cli::UsagePrinter]
+    # @param hosts [RemoteHosts] the project's container and the sync step to it
     # @return [CommandExecutor]
-    sig { params(context: ExecutionContext, usage_printer: Cli::UsagePrinter).returns(CommandExecutor) }
-    def build_executor(context, usage_printer)
+    sig { params(context: ExecutionContext, usage_printer: Cli::UsagePrinter, hosts: RemoteHosts).returns(CommandExecutor) }
+    def build_executor(context, usage_printer, hosts:)
       project = context.project!
       command_runner = CommandRunner.new(
         ui: context.ui,
-        engine_hint: project.engine,
         project_root: project.root,
         host_rule: @host_rule,
-        github_token: @github_token,
+        containers: hosts.containers,
+        sync: hosts.sync,
       )
       builtin_executor = BuiltinExecutor.new
       project_executor = ProjectExecutor.new(command_runner:)
@@ -384,6 +406,7 @@ module Dev
     # @param bindings [Bindings] where each target's builds and each
     #   channel's protocol run (both empty when the lock was unreadable)
     # @param ui [Cli::Ui] the run's UI, where a remote dispatch prints its crossing
+    # @param hosts [RemoteHosts] the project's container and the sync step to it
     # @return [Hash{String => Command}] the root's children
     sig do
       params(
@@ -394,9 +417,10 @@ module Dev
         complete: Builtins::CompleteCommand,
         bindings: Bindings,
         ui: Cli::Ui,
+        hosts: RemoteHosts,
       ).returns(T::Hash[String, Command])
     end
-    def build_builtins(manifest, project, dependency_service, help:, complete:, bindings:, ui:)
+    def build_builtins(manifest, project, dependency_service, help:, complete:, bindings:, ui:, hosts:)
       install_deps = Builtins::InstallDepsCommand.new
 
       # The project's service dependencies — what `dev up` brings up after
@@ -457,7 +481,7 @@ module Dev
       # project that declares none has nothing to build, so they are absent
       # rather than present and refusing. `deploy` likewise from the
       # channels (K5), which need targets to accept builds from.
-      builtins.merge!(lifecycle_builtins(manifest, project, bindings, ui:)) if manifest.targets.any?
+      builtins.merge!(lifecycle_builtins(manifest, project, bindings, ui:, hosts:)) if manifest.targets.any?
       builtins.merge!(runner_builtins)
       # The global builtins are dispatched before the Runner (bin/dev); they
       # join the project tree so help lists one complete tree.
@@ -508,12 +532,17 @@ module Dev
     # @param project [ProjectContext]
     # @param bindings [Bindings]
     # @param ui [Cli::Ui]
+    # @param hosts [RemoteHosts] the project's container and the sync step to it
     # @return [Hash{String => Command}]
-    sig { params(manifest: ProjectManifest, project: ProjectContext, bindings: Bindings, ui: Cli::Ui).returns(T::Hash[String, Command]) }
-    def lifecycle_builtins(manifest, project, bindings, ui:)
+    sig do
+      params(manifest: ProjectManifest, project: ProjectContext, bindings: Bindings, ui: Cli::Ui, hosts: RemoteHosts)
+        .returns(T::Hash[String, Command])
+    end
+    def lifecycle_builtins(manifest, project, bindings, ui:, hosts:)
       targets = manifest.targets.values
       selector = BuildSelector.new(targets:)
-      resolver = DispatchResolver.new(host_rule: @host_rule, remotes: RemoteDispatches.new(root: project.root, ui:, out: @out))
+      remotes = RemoteDispatches.new(root: project.root, ui:, out: @out, sync: hosts.sync, containers: hosts.containers)
+      resolver = DispatchResolver.new(host_rule: @host_rule, remotes:)
       dispatcher = BuildDispatcher.new(placements: bindings.targets, resolver:)
       listing = BuildListing.new(targets:, dispatcher:)
       ports = Lifecycle::Ports.new(project_root: project.root, publishers: bindings.publishers)

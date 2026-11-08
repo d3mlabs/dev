@@ -209,7 +209,6 @@ class Dev::EnvironmentImageTest < Minitest::Test
       'RUN install -d /etc/dev \\',
       %q(    && printf 'name=%s\ndigest=%s\n' snappy-linux "$DEV_ENVIRONMENT_DIGEST" > /etc/dev/environment),
       "USER builder",
-      "WORKDIR /project",
     ].join("\n") + "\n"
   end
 

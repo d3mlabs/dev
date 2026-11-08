@@ -24,22 +24,18 @@ class Dev::Cli::UiImplTest < Minitest::Test
     1 * @cli_ui.puts(anything)
   end
 
-  test "#print_crossing prints the one dim line about entering a container of the image" do
+  test "#print_remote_crossing prints the one dim line about leaving for a build host at a snapshot: #{destination}" do
     When
-    @ui.print_crossing("snappy-linux")
+    @ui.print_remote_crossing(destination: destination, snapshot: "0123456789ab")
 
     Then
-    1 * @cli_ui.fmt("{{gray:→ in snappy-linux}}")
+    1 * @cli_ui.fmt("{{gray:→ #{destination}, snapshot 0123456789ab}}")
     1 * @cli_ui.puts(anything)
-  end
 
-  test "#print_remote_crossing prints the one dim line about leaving for a runner at a snapshot" do
-    When
-    @ui.print_remote_crossing(runner: "ue-engine-hosted", snapshot: "0123456789ab")
-
-    Then
-    1 * @cli_ui.fmt("{{gray:→ on ue-engine-hosted, snapshot 0123456789ab}}")
-    1 * @cli_ui.puts(anything)
+    Where
+    destination                   | _
+    "on ue-engine-hosted"         | nil
+    "in snappy-linux (container)" | nil
   end
 
   test "#ask_secret is CLI::UI's hidden-input prompt when a terminal is behind stdin, and nil (no question asked) when not" do
@@ -66,21 +62,15 @@ class Dev::Cli::NoUiTest < Minitest::Test
     assert_output("./bin/setup.rb\n") { ui.print_header("./bin/setup.rb") }
   end
 
-  test "#print_crossing writes the crossing line plain to stdout" do
+  test "#print_remote_crossing writes the crossing line plain to stdout" do
     Given
     ui = Dev::Cli::NoUi.new
 
     Expect
-    assert_output("→ in snappy-linux\n") { ui.print_crossing("snappy-linux") }
-  end
-
-  test "#print_remote_crossing writes the remote crossing line plain to stdout" do
-    Given
-    ui = Dev::Cli::NoUi.new
-
-    Expect
-    Dev::Cli::Ui::REMOTE_CROSSING_PREFIX == "→ on "
-    assert_output("→ on ue-engine-hosted, snapshot 0123456789ab\n") { ui.print_remote_crossing(runner: "ue-engine-hosted", snapshot: "0123456789ab") }
+    Dev::Cli::Ui::CROSSING_PREFIX == "→ "
+    assert_output("→ on ue-engine-hosted, snapshot 0123456789ab\n") do
+      ui.print_remote_crossing(destination: "on ue-engine-hosted", snapshot: "0123456789ab")
+    end
   end
 
   test "#ask_secret never asks: nil, nothing written" do

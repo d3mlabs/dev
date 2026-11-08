@@ -3,6 +3,8 @@
 
 require "test_helper"
 require "dev/build_container"
+require "fileutils"
+require "pathname"
 require "support/fake_container_engine"
 require "support/fake_registry_login"
 require "tmpdir"
@@ -46,12 +48,10 @@ class BuildContainerTest < Minitest::Test
       shell_cmd: "./bin/build.sh",
     ).argv
 
-    Then
-    cmd[0] == "docker"
-    cmd[1] == "run"
-    cmd.include?("--rm")
-    cmd.include?("-v")
-    cmd.include?("/project:/project")
+    Then "the argv is the engine's verb onward (the engine's own prefix is the engine's to add), the checkout mounted nowhere (ADR-0008: the container works on a snapshot it fetched), no workdir imposed"
+    cmd[0, 2] == ["run", "--rm"]
+    cmd.each_cons(2).none? { |flag, value| flag == "-v" && value.start_with?("/project") }
+    !cmd.include?("-w")
     cmd.last(3) == ["sh", "-c", "./bin/build.sh"]
   end
 
@@ -82,7 +82,7 @@ class BuildContainerTest < Minitest::Test
     cmd.include?("/var/cache/wwise:/wwise")
     cmd[cmd.index("/opt/engines/ue:/ue") - 1] == "-v"
     cmd[cmd.index("/var/cache/wwise:/wwise") - 1] == "-v"
-    cmd.index("-w") > cmd.index("/var/cache/wwise:/wwise")
+    cmd.index("jpduchesne89/snappy:content-abc123") > cmd.index("/var/cache/wwise:/wwise")
   end
 
   test "docker_run_command names env vars with bare -e flags and carries their values in the invocation's env, never on argv (dev#317)" do
@@ -95,9 +95,9 @@ class BuildContainerTest < Minitest::Test
     )
     cmd = invocation.argv
 
-    Then "argv says -e WWISE_TOKEN (docker reads the value from the client's env) before -w; the value is in env only"
+    Then "argv says -e WWISE_TOKEN (docker reads the value from the client's env) before the image; the value is in env only"
     cmd.each_cons(2).include?(["-e", "WWISE_TOKEN"])
-    cmd.index("-w") > cmd.index("WWISE_TOKEN")
+    cmd.index("jpduchesne89/snappy:content-abc123") > cmd.index("WWISE_TOKEN")
     cmd.none? { |part| part.include?("tok-123") }
     invocation.env["WWISE_TOKEN"] == "tok-123"
   end
@@ -176,7 +176,7 @@ class BuildContainerTest < Minitest::Test
     cmd.none? { |part| part.include?("dev-data-root") }
     !engine.runs.include?(["volume", "create", "dev-data-root"])
     engine.runs.include?(["volume", "create", "dev-linuxbrew-jp"])
-    cmd.count { |part| part == "-v" } == 3
+    cmd.count { |part| part == "-v" } == 2
 
     Cleanup
     ENV["DEV_DATA_ROOT"] = original
@@ -231,26 +231,98 @@ class BuildContainerTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "docker_run_command carries the engine's argv prefix" do
-    Given "an engine whose docker rides a custom prefix"
+  test "execute spawns the invocation through the engine, its env alongside, and answers the child's status" do
+    Given "an engine whose exec verb exits 3 and a composed invocation"
+    engine = FakeContainerEngine.new(&->(args) { args.fetch(0) == "run" ? 3 : true })
+    bc = build_container(engine: engine)
+    invocation = bc.docker_run_command("img:tag", project_root: Pathname("/project"), shell_cmd: "true", env: { "WWISE_TOKEN" => "tok" })
+
+    When
+    status = bc.execute(invocation)
+
+    Then "the argv went to the engine as composed (its prefix is the engine's own), the env rode beside it, the status came back"
+    status == 3
+    engine.runs.last == invocation.argv
+    engine.run_envs.last == invocation.env
+  end
+
+  test "copy_out fills the host directory from a directory of the container, creating it first" do
+    Given "a recording engine and a host directory that does not exist yet"
     engine = FakeContainerEngine.new
-    engine.instance_variable_set(:@argv_prefix, ["docker", "--context", "remote"])
+    workspace = Pathname(Dir.mktmpdir("copy-out-"))
+    into = workspace / "artifacts" / "win64"
 
-    When "building a docker run command"
-    cmd = build_container(engine: engine).docker_run_command(
-      "img:tag", project_root: Pathname("/project"), shell_cmd: "true",
-    ).argv
+    When
+    build_container(engine: engine).copy_out("dev-x-cold-1", from: Pathname("/var/lib/dev/artifacts/win64"), into:)
 
-    Then "the prefix leads the argv"
-    cmd[0, 3] == ["docker", "--context", "remote"]
-    cmd[3] == "run"
+    Then "`docker cp <container>:<from>/. <into>` — the contents, not the directory itself"
+    into.directory?
+    engine.runs.last == ["cp", "dev-x-cold-1:/var/lib/dev/artifacts/win64/.", into.to_s]
+
+    Cleanup
+    FileUtils.rm_rf(workspace)
+  end
+
+  test "copy_out that the engine refuses is CopyOutFailedError" do
+    Given
+    engine = FakeContainerEngine.new(&->(args) { args.fetch(0) != "cp" })
+    workspace = Pathname(Dir.mktmpdir("copy-out-"))
+
+    When
+    build_container(engine: engine).copy_out("dev-x", from: Pathname("/var/lib/dev/a"), into: workspace / "a")
+
+    Then
+    raises Dev::BuildContainer::CopyOutFailedError
+
+    Cleanup
+    FileUtils.rm_rf(workspace)
+  end
+
+  test "the data root is shared with the container on Linux (the bind mount) and the container's own on a Mac (the volume)" do
+    Expect
+    build_container(host_os: "linux").data_root_shared? == true
+    build_container(host_os: "darwin").data_root_shared? == false
+  end
+
+  test "inside_path maps a host store path to the container's store: same layout under the container's data root" do
+    Given "a host data root"
+    root = Dir.mktmpdir("inside-path-")
+    original = ENV["DEV_DATA_ROOT"]
+    ENV["DEV_DATA_ROOT"] = root
+
+    When
+    inside = build_container.inside_path(Pathname(root) / "artifacts" / "snappy" / "win64")
+
+    Then
+    inside == Pathname("/var/lib/dev/artifacts/snappy/win64")
+
+    Cleanup
+    ENV["DEV_DATA_ROOT"] = original
+    FileUtils.rm_rf(root)
+  end
+
+  test "inside_path refuses a path outside the host's data root: the container has no path for it" do
+    Given "a host data root and a path beside it"
+    root = Dir.mktmpdir("inside-path-")
+    original = ENV["DEV_DATA_ROOT"]
+    ENV["DEV_DATA_ROOT"] = root
+
+    When
+    build_container.inside_path(Pathname(root).dirname / "elsewhere")
+
+    Then
+    raises Dev::BuildContainer::OutsideDataRootError
+
+    Cleanup
+    ENV["DEV_DATA_ROOT"] = original
+    FileUtils.rm_rf(root)
   end
 
   test "mount composition refuses an engine without local mounts (the remote-poisoned assumption, named)" do
     Given "an engine whose daemon cannot see local paths"
     bc = build_container(engine: FakeContainerEngine.new(local_mounts: false))
 
-    When "composing a run command (which always mounts the project)"
+    When "composing a run command (every -v funnels through the same check)"
     bc.docker_run_command("img:tag", project_root: Pathname("/project"), shell_cmd: "true")
 
     Then
@@ -320,17 +392,16 @@ class BuildContainerTest < Minitest::Test
     runner != manual
   end
 
-  test "docker_exec_command targets the container with /project workdir" do
+  test "docker_exec_command targets the container, imposing no workdir: the command names its own (the workspace it fetched)" do
     When "building a docker exec command"
     cmd = build_container.docker_exec_command(
       "dev-snappy-linux-content-abc", shell_cmd: "./bin/build.sh",
     ).argv
 
     Then
-    cmd[0] == "docker"
-    cmd[1] == "exec"
-    cmd.include?("-w")
-    cmd.include?("/project")
+    cmd[0] == "exec"
+    !cmd.include?("-w")
+    cmd.none? { |part| part.include?("/project") }
     cmd.include?("dev-snappy-linux-content-abc")
     cmd.last(3) == ["sh", "-c", "./bin/build.sh"]
   end
@@ -612,7 +683,7 @@ class BuildContainerTest < Minitest::Test
     Dev::RegistryLogin::LoginFailedError    | nil
   end
 
-  test "create_service_container runs detached, mounts project + volumes, idles, and carries the label contract" do
+  test "create_service_container runs detached, mounts the data root + volumes (never the checkout), idles, and carries the label contract" do
     Given "a recording engine and the checkout's labels"
     engine = FakeContainerEngine.new
     root = Pathname("/project")
@@ -624,9 +695,10 @@ class BuildContainerTest < Minitest::Test
       project_root: root, volumes: ["/engines/ue:/ue"],
     )
 
-    Then "it is a detached, named run under an init that reaps orphans, bind-mounting the project + engine, sleeping"
+    Then "it is a detached, named run under an init that reaps orphans, mounting the data root + engine but no checkout, sleeping"
     engine.runs.last[0, 5] == ["run", "-d", "--init", "--name", "dev-x"]
-    engine.runs.last.include?("/project:/project")
+    engine.runs.last.each_cons(2).include?(["-v", "dev-data-root:/var/lib/dev"])
+    engine.runs.last.none? { |part| part.include?("/project:") }
     engine.runs.last.include?("/engines/ue:/ue")
     engine.runs.last.include?("img:tag")
     engine.runs.last.last(2) == ["sleep", "infinity"]
@@ -746,7 +818,7 @@ class BuildContainerTest < Minitest::Test
     create[0, 2] == ["run", "-d"]
     create.include?("--rm")
     create.each_cons(2).include?(["--name", seen[:name]])
-    create.include?("/project:/project")
+    create.none? { |part| part.include?("/project:") }
     create.include?("/e:/ue")
     create.each_cons(2).include?(["-e", "DEV_INSIDE_CONTAINER"])
     engine.run_envs.fetch(2)["DEV_INSIDE_CONTAINER"] == "1"

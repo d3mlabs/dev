@@ -2,9 +2,10 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/container_github_token"
 require "dev"
+require "dev/build_container"
 require "dev/container_engine"
+require "dev/container_github_token"
 require "dev/deps"
 require "dev/deps/dependency"
 require "dev/deps/lockfile"
@@ -12,9 +13,11 @@ require "dev/environment_image"
 require "dev/host_environment"
 require "dev/host_rule"
 require "dev/platform"
+require "dev/project_container"
 require "dev/runner"
 require "dev/shadowenv_llvm"
 require "support/fake_container_engine"
+require "support/scripted_remote"
 require "fileutils"
 require "pathname"
 require "stringio"
@@ -24,8 +27,9 @@ require "yaml"
 # dev#308's done-when, through the composition root: a Linux host and a
 # checkout pinning one image. What decides where a command runs is the
 # host's /etc/dev/environment marker against the lock — not the platform.
-# The process boundaries are faked (engine, exec, the marker's path);
-# everything between dev.yml and the argv dev would exec is real.
+# The process boundaries are faked (engine, exec, the marker's path, the
+# snapshot push and the repo gh would name); everything between dev.yml
+# and the argv dev would exec — or hand the engine — is real.
 transform!(RSpock::AST::Transformation)
 class HostRuleIntegrationTest < Minitest::Test
   include SorbetHelper
@@ -75,26 +79,26 @@ class HostRuleIntegrationTest < Minitest::Test
     @engine.runs.empty?
   end
 
-  test "a Linux host on the image's platform but provisioned from nothing runs the command inside — with its own data root bind-mounted" do
+  test "a Linux host on the image's platform but provisioned from nothing runs the command inside — the host's data root bind-mounted, the checkout not: the container fetches the snapshot" do
     Given "no marker"
     image = lock
-    execs = []
-    envs = []
-    Kernel.stubs(:exec).with do |env, *argv|
-      execs << argv
-      envs << env
-    end
+    execs = record_execs
+    Kernel.expects(:exit).with(0).once
 
     When
     exec!(runner, ["build"])
 
-    Then "docker run of the lock's image; the host's data root at its own path, the checkout: the two bind mounts; DEV_DATA_ROOT named on argv, valued in the spawn env"
-    execs.size == 1
-    execs[0].first(3) == ["docker", "run", "--rm"]
-    execs[0].last(6) == ["-w", "/project", image.ref, "sh", "-c", "./bin/build.sh"]
-    bind_mounts(execs[0]) == ["#{@root}:/project", "#{@data_root}:#{@data_root}"]
-    execs[0].each_cons(2).include?(["-e", "DEV_DATA_ROOT"])
-    envs[0]["DEV_DATA_ROOT"] == @data_root
+    Then "one docker run of the lock's image through the engine; the host's data root at its own path is the one bind mount; DEV_DATA_ROOT named on argv, valued in the spawn env; the command at the end of the workspace program"
+    execs.empty?
+    run = @engine.runs.find { |verb, *_rest| verb == "run" }
+    run.first(2) == ["run", "--rm"]
+    run.include?(image.ref)
+    run[-3, 2] == ["sh", "-c"]
+    run.last.include?("fetch -q --no-tags https://github.com/o/r.git refs/heads/dev/build/container/")
+    run.last.end_with?("exec sh -c ./bin/build.sh\n")
+    bind_mounts(run) == ["#{@data_root}:#{@data_root}"]
+    run.each_cons(2).include?(["-e", "DEV_DATA_ROOT"])
+    @engine.run_envs.fetch(@engine.runs.index(run))["DEV_DATA_ROOT"] == @data_root
   end
 
   test "a Linux host provisioned from an older recipe has drifted: the command runs inside the lock's image" do
@@ -102,14 +106,16 @@ class HostRuleIntegrationTest < Minitest::Test
     image = lock
     @marker.write(older_recipe_of(image).marker)
     execs = record_execs
+    Kernel.stubs(:exit)
 
     When
     exec!(runner, ["build"])
 
     Then
-    execs.size == 1
-    execs[0].first(3) == ["docker", "run", "--rm"]
-    execs[0].include?(image.ref)
+    execs.empty?
+    run = @engine.runs.find { |verb, *_rest| verb == "run" }
+    run.first(2) == ["run", "--rm"]
+    run.include?(image.ref)
   end
 
   test "inside a container made from an older recipe, the command is refused with the way out" do
@@ -169,12 +175,23 @@ class HostRuleIntegrationTest < Minitest::Test
     (@root / "dev.yml").write(YAML.dump({ "name" => "snappy", "commands" => COMMANDS }))
     ui = typed_mock(Dev::Cli::Ui)
     ui.stubs(:print_header)
-    ui.stubs(:print_crossing)
+    ui.stubs(:print_remote_crossing)
     host_rule = Dev::HostRule.new(
       host_environment: Dev::HostEnvironment.new(path: @marker.to_s),
     )
-    Dev::Runner.new(dev_yaml_path: @root / "dev.yml", ui: ui, out: StringIO.new, host_rule: host_rule,
-      github_token: Dev::ContainerGithubToken.new(source: -> { nil }))
+    Dev::Runner.new(dev_yaml_path: @root / "dev.yml", ui: ui, out: StringIO.new, host_rule: host_rule, hosts_factory: method(:remote_hosts).to_proc)
+  end
+
+  # The project's container over the fake engine (a host whose gh holds no
+  # login, the repo named without gh) and a sync step that pushes nothing.
+  def remote_hosts(project)
+    Dev::Runner::RemoteHosts.new(
+      containers: Dev::ProjectContainer.new(
+        project_root: project.root, engine_hint: project.engine, client: Dev::BuildContainer.new(engine: @engine),
+        github_token: Dev::ContainerGithubToken.new(source: -> { nil }), repo_resolver: -> { "o/r" },
+      ),
+      sync: ScriptedRemote::CannedSync.new,
+    )
   end
 
   # Lock one image and return it.

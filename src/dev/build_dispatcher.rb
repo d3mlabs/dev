@@ -69,21 +69,22 @@ module Dev
     #
     # @param build [Lifecycle::Build]
     # @param runner [String, nil] a label `--runner` named; nil to resolve
+    # @param container [Boolean] whether `--container` forces the local container
     # @return [Dispatch]
     # @raise [UnboundTargetError]
     # @raise [TargetPlacement::HostDoesNotProduceError] a host build of a
     #   platform this machine is not, asked to run here
-    # @raise [DispatchResolver::RemoteDispatchUnavailableError] an image
-    #   this machine was not provisioned from, with no runner to go to
+    # @raise [DispatchResolver::ConflictingDispatchFlagsError]
+    # @raise [DispatchResolver::NoContainerForHostError]
     # @raise [DispatchResolver::DispatchFromJobError]
     # @raise [HostRule::ContainerDriftError]
-    sig { params(build: Lifecycle::Build, runner: T.nilable(String)).returns(Dispatch) }
-    def dispatch_for(build, runner: nil)
+    sig { params(build: Lifecycle::Build, runner: T.nilable(String), container: T::Boolean).returns(Dispatch) }
+    def dispatch_for(build, runner: nil, container: false)
       placement = target_placement(build)
-      # A build forced onto a runner is produced there, not here: the
-      # host's platform has no say.
-      placement.assert_buildable_here!(build) if runner.nil?
-      @resolver.resolve(placement.placement_for(build), subject: build.name, runner:)
+      # A build forced onto a runner or into the container is produced
+      # there, not here: the host's platform has no say.
+      placement.assert_buildable_here!(build) unless runner || container
+      @resolver.resolve(placement.placement_for(build), subject: build.name, runner:, container:)
     end
 
     private

@@ -54,6 +54,13 @@ module Dev
     # `docker build` returned nonzero.
     class BuildFailedError < RuntimeError; end
 
+    # `docker cp` out of a container returned nonzero.
+    class CopyOutFailedError < RuntimeError; end
+
+    # A host path the container was asked for is not under the host's
+    # data root, so it has no counterpart in the container's.
+    class OutsideDataRootError < ArgumentError; end
+
     # The label contract, read back by `dev container …` here and by
     # `dev engine down/status` through ContainerEngine#running_containers.
     # ContainerEngine owns the two labels it decodes (managed, project_root);
@@ -83,13 +90,14 @@ module Dev
       const :containers, T::Array[ServiceContainer]
     end
 
-    # A docker command dev spawns, in two halves: the argv, where every
-    # injected variable is a bare `-e NAME`, and the env those names
-    # resolve in (docker reads a valueless `-e` from the client's own
-    # environment). argv is world-readable — `ps`, /proc — and the env is
-    # the process's own, so a credential appears in the second half and
-    # never in the first (dev#317). The caller spawns argv with env merged
-    # over the engine's.
+    # A docker command dev spawns, in two halves: the argv (the docker
+    # args after the engine's prefix), where every injected variable is a
+    # bare `-e NAME`, and the env those names resolve in (docker reads a
+    # valueless `-e` from the client's own environment). argv is
+    # world-readable — `ps`, /proc — and the env is the process's own, so
+    # a credential appears in the second half and never in the first
+    # (dev#317). `#execute` spawns it through the engine, env merged over
+    # the engine's.
     class Invocation < T::Struct
       const :argv, T::Array[String]
       const :env, T::Hash[String, String]
@@ -252,7 +260,7 @@ module Dev
       # the set operation; a name match never is.
       #
       # @param image_tag    [String]   full image:tag the container runs
-      # @param project_root [Pathname] the checkout it is bind-mounted to
+      # @param project_root [Pathname] the checkout the container works for
       # @return [Hash{String => String}] label => value
       sig { params(image_tag: String, project_root: Pathname).returns(T::Hash[String, String]) }
       def service_labels(image_tag, project_root)
@@ -352,16 +360,22 @@ module Dev
       end
     end
 
-    # Build a docker run command for executing a shell command inside the container.
+    # Build a docker run command for executing a shell command in a one-shot
+    # container of the image. The container mounts its own data root and
+    # the declared volumes, and nothing of the checkout (ADR-0008 as closed
+    # by dev#421): the project it works on is the snapshot it fetches into
+    # its workspace under that data root (ContainerWorkspace), so the
+    # shell command is what reaches it, from the working directory the
+    # image declares.
     #
     # @param image_tag    [String]   full image:tag reference
-    # @param project_root [Pathname] project root to mount
+    # @param project_root [Pathname] the checkout, for the label contract
     # @param shell_cmd    [String]   command to run inside the container
     # @param volumes      [Array<String>] extra "host:container" mounts; host
     #   paths may use ~ (e.g. "~/.dev/engines/unreal-engine-css:/ue")
     # @param env          [Hash{String => String}] env vars to inject (named
     #   on argv, valued in the invocation's env)
-    # @return [Invocation] the docker run argv and the env it needs
+    # @return [Invocation] the docker run args and the env they need
     sig do
       params(
         image_tag: String,
@@ -374,18 +388,66 @@ module Dev
     def docker_run_command(image_tag, project_root:, shell_cmd:, volumes: [], env: {})
       container_env = container_env(env)
       argv = [
-        *@engine.argv_prefix, "run", "--rm",
+        "run", "--rm",
         *SIGPENDING_ULIMIT,
         *self.class.label_flags(image_tag, project_root),
-        "-v", "#{project_root}:/project",
         *data_root_flags,
         *volume_flags(volumes),
         *env_flags(container_env),
-        "-w", "/project",
         image_tag,
         "sh", "-c", shell_cmd,
       ]
       Invocation.new(argv: argv, env: container_env)
+    end
+
+    # Spawn an invocation through the engine and wait for it.
+    #
+    # @param invocation [Invocation]
+    # @return [Integer] the child's exit status (ContainerEngine#status)
+    sig { params(invocation: Invocation).returns(Integer) }
+    def execute(invocation)
+      @engine.status(invocation.argv, env: invocation.env)
+    end
+
+    # Copy a directory out of the container's data root into the host's:
+    # what `--fetch` does when the two data roots are not one (a Mac's
+    # named volume behind the VM boundary). `from` names the directory
+    # inside; its contents land in `into`, created if needed.
+    #
+    # @param container [String] a running container of the image
+    # @param from [Pathname] the directory inside the container
+    # @param into [Pathname] the host directory to fill
+    # @return [void]
+    # @raise [CopyOutFailedError]
+    sig { params(container: String, from: Pathname, into: Pathname).void }
+    def copy_out(container, from:, into:)
+      into.mkpath
+      copied = @engine.run(["cp", "#{container}:#{from}/.", into.to_s])
+      raise CopyOutFailedError, "could not copy #{from} out of #{container} into #{into}" unless copied
+    end
+
+    # Whether the container's data root is the host's own directory (the
+    # Linux bind mount, dev#308) rather than a volume of its own: when it
+    # is, what the container writes to its store is already in the host's.
+    #
+    # @return [Boolean]
+    sig { returns(T::Boolean) }
+    def data_root_shared? = @host_os == "linux"
+
+    # Where the container sees a path under the host's data root: the same
+    # relative path under its own (one store layout on both sides).
+    #
+    # @param host_path [Pathname] a path under the host's data root
+    # @return [Pathname] the container's path for it
+    # @raise [OutsideDataRootError] when the path is not under the host's data root
+    sig { params(host_path: Pathname).returns(Pathname) }
+    def inside_path(host_path)
+      relative = host_path.expand_path.relative_path_from(Pathname(Dev::DataRoot.path))
+      if relative.each_filename.first == ".."
+        raise OutsideDataRootError, "#{host_path} is not under the data root #{Dev::DataRoot.path}; the container has no path for it"
+      end
+
+      Pathname(data_root_mount) / relative
     end
 
     # The container's data root and Linuxbrew prefix (ADR-0008).
@@ -481,7 +543,7 @@ module Dev
     # between commands, which a fresh `docker run --rm` would discard.
     #
     # @param image_tag    [String]   full image:tag the container runs
-    # @param project_root [Pathname] bind-mounted at /project
+    # @param project_root [Pathname] the checkout, for the container's name and labels
     # @param volumes      [Array<String>] extra "host:container" mounts (e.g. engine)
     # @return [String] the running container's name
     sig { params(image_tag: String, project_root: Pathname, volumes: T::Array[String]).returns(String) }
@@ -532,7 +594,7 @@ module Dev
     # block installs into the container's writable layer goes with it.
     #
     # @param image_tag    [String]   full image:tag the container runs
-    # @param project_root [Pathname] bind-mounted at /project
+    # @param project_root [Pathname] the checkout, for the container's name and labels
     # @param volumes      [Array<String>] extra "host:container" mounts (e.g. engine)
     # @yieldparam name [String] the running container's name
     # @return [void]
@@ -554,16 +616,18 @@ module Dev
       end
     end
 
-    # Build a `docker exec` command running shell_cmd inside the service container,
-    # mirroring docker_run_command's working dir (/project) and `-e` env handling.
-    # The marker and data root are the container's since its creation, so
-    # only the per-command env is named here.
+    # Build a `docker exec` command running shell_cmd inside the service
+    # container, with docker_run_command's `-e` env handling. The marker and
+    # data root are the container's since its creation, so only the
+    # per-command env is named here; the working directory is the
+    # container's own (the image's), the command moving into its workspace
+    # itself (ContainerWorkspace).
     #
     # @param container [String] running container name
     # @param shell_cmd [String]
     # @param env       [Hash{String => String}] env vars to inject (named
     #   on argv, valued in the invocation's env)
-    # @return [Invocation] the docker exec argv and the env it needs
+    # @return [Invocation] the docker exec args and the env they need
     sig do
       params(
         container: String,
@@ -572,7 +636,7 @@ module Dev
       ).returns(Invocation)
     end
     def docker_exec_command(container, shell_cmd:, env: {})
-      argv = [*@engine.argv_prefix, "exec", *env_flags(env), "-w", "/project", container, "sh", "-c", shell_cmd]
+      argv = ["exec", *env_flags(env), container, "sh", "-c", shell_cmd]
       Invocation.new(argv: argv, env: env)
     end
 
@@ -718,9 +782,11 @@ module Dev
       @engine.run(["start", name], out: File::NULL, err: File::NULL)
     end
 
-    # Create the detached, idle service container: the project at /project, any
-    # extra volumes (e.g. the engine), the label contract, the inside marker
-    # (inherited by every `docker exec`), and `sleep infinity` so it stays up.
+    # Create the detached, idle service container: its own data root and any
+    # extra volumes (e.g. the engine) — nothing of the checkout, which it
+    # fetches as snapshots into its workspace (ADR-0008, dev#421) — the
+    # label contract, the inside marker (inherited by every `docker exec`),
+    # and `sleep infinity` so it stays up.
     #
     # `--init`: docker's init (tini) is PID 1 and `sleep` its child. Every
     # `docker exec` runs under PID 1, and a process whose parent exits is
@@ -740,11 +806,9 @@ module Dev
       args = [
         "run", "-d", "--init", *(one_shot ? ["--rm"] : []), "--name", name,
         *self.class.label_flags(image_tag, project_root),
-        "-v", "#{project_root}:/project",
         *data_root_flags,
         *volume_flags(volumes),
         *env_flags(env),
-        "-w", "/project",
         image_tag,
         "sleep", "infinity",
       ]

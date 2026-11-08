@@ -264,6 +264,31 @@ class Dev::ContainerEngineTest < Minitest::Test
     engine.run(["anything"]) == false
   end
 
+  test "status answers the child's exit status itself: #{status} from `exit #{status}`" do
+    Given "an engine whose prefix is a shell"
+    engine = Dev::ContainerEngine.new(kind: :test, argv_prefix: ["sh", "-c"])
+
+    Expect "the status, with the engine's env and the per-call env both in the child's"
+    engine.status(["exit #{status}"]) == status
+    engine.status(['test "$DEV_ENGINE_MARKER" = on'], env: { "DEV_ENGINE_MARKER" => "on" }) == 0
+
+    Where
+    status | _
+    0      | nil
+    3      | nil
+    127    | nil
+  end
+
+  test "status reads a signal-killed child as 128 + the signal, and a child that never spawned as 127 (the shell's conventions)" do
+    Given "a shell engine and one whose binary does not exist"
+    shell = Dev::ContainerEngine.new(kind: :test, argv_prefix: ["sh", "-c"])
+    missing = Dev::ContainerEngine.new(kind: :test, argv_prefix: ["dev-test-missing-binary-xyz"])
+
+    Expect
+    shell.status(["kill -TERM $$"]) == Dev::ContainerEngine::SIGNAL_STATUS_BASE + Signal.list.fetch("TERM")
+    missing.status(["anything"]) == Dev::ContainerEngine::UNSPAWNABLE_STATUS
+  end
+
   test "DEV_CONTAINER_ENGINE env layer overrides the user file, like every settings key" do
     Given "a docker record in the file and a colima override in dev's env layer"
     dir = Dir.mktmpdir("dev-engine-test-")

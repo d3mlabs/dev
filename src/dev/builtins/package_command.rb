@@ -27,8 +27,8 @@ module Dev
     # never packaged, and is refused here by name.
     #
     # The stage: `before` consumes the argv into the build, resolves the
-    # dispatch (the target's `environment:` under the host rule, or the
-    # runner `--runner` names) and hands it the invocation a remote host
+    # dispatch (the target's `environment:` under the host rule, the runner
+    # `--runner` names, or the container `--container` forces) and hands it the invocation a remote host
     # would run (`package <build> [--no-build]`, with the artifact to
     # bring back under `--fetch`) and, for a seam that runs here, the env
     # — reading the tree's state once (the same reading decides staleness
@@ -156,7 +156,7 @@ module Dev
 
       sig { override.returns(String) }
       def desc
-        "Package a build into its artifact (package [BUILD] | --target T [--platform P] [--config C] [--no-build] [--runner L] [--fetch])\n" \
+        "Package a build into its artifact (package [BUILD] | --target T [--platform P] [--config C] [--no-build] [--runner L | --container] [--fetch])\n" \
           "Builds first unless the artifact is current with the tree; the archive and build-id.json land in the store " \
           "of the host that packaged (--fetch brings them back from a remote one)."
       end
@@ -182,7 +182,9 @@ module Dev
         build = @selector.select(args)
         assert_packageable!(build.target)
         no_build = args.flag?(NO_BUILD_FLAG)
-        dispatch = @dispatcher.dispatch_for(build, runner: args.value(DispatchResolver::RUNNER_FLAG))
+        dispatch = @dispatcher.dispatch_for(
+          build, runner: args.value(DispatchResolver::RUNNER_FLAG), container: args.flag?(DispatchResolver::CONTAINER_FLAG),
+        )
         dispatch.dispatch(invocation(build, no_build:, fetch: args.flag?(FETCH_FLAG))) do
           state = Lifecycle::GitState.read(context.project!.root)
           builder = @ports.builder_for(build.target)

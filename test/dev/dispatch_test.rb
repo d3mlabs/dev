@@ -2,20 +2,29 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/build_container"
 require "dev/cli/ui"
+require "dev/container_github_token"
+require "dev/deps/dependency"
 require "dev/dispatch"
+require "dev/environment_image"
 require "dev/lifecycle"
+require "dev/project_container"
 require "dev/transport"
 require "fileutils"
 require "pathname"
+require "shellwords"
 require "stringio"
+require "support/fake_container_engine"
 require "support/fake_gh"
 require "tmpdir"
 
 # The sealed dispatch: Native yields for the env and hands it back as
 # Run(env); Remote carries the verb over a real snapshot branch (a temp
-# bare origin) through a transport whose forge is scripted (FakeGh), and
-# never asks for the env — the seam runs on the host.
+# bare origin) through a transport whose far side is scripted — the forge
+# (FakeGh) for the Actions runner, the engine (FakeContainerEngine) for
+# the local container — and never asks for the env: the seam runs on the
+# host.
 transform!(RSpock::AST::Transformation)
 class Dev::DispatchTest < Minitest::Test
   include SorbetHelper
@@ -79,7 +88,7 @@ class Dev::DispatchTest < Minitest::Test
     FileUtils.rm_rf(workspace)
   end
 
-  test "the crossing line names the runner and the snapshot's short sha" do
+  test "the crossing line names the transport's destination and the snapshot's short sha" do
     Given
     workspace = Pathname(Dir.mktmpdir("dispatch-"))
     root, _origin = checkout_with_origin(workspace)
@@ -92,13 +101,13 @@ class Dev::DispatchTest < Minitest::Test
     ui = typed_mock(Dev::Cli::Ui)
     remote = Dev::Dispatch::Remote.new(transport: transport(gh, root:), sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui:)
     crossing = nil
-    ui.expects(:print_remote_crossing).with { |runner:, snapshot:| crossing = [runner, snapshot] }
+    ui.expects(:print_remote_crossing).with { |destination:, snapshot:| crossing = [destination, snapshot] }
 
     When
     remote.dispatch(Dev::Lifecycle::VerbInvocation.new(words: ["build", "x"])) { flunk("the env was resolved") }
 
     Then
-    crossing.fetch(0) == "ue-engine-hosted"
+    crossing.fetch(0) == "on ue-engine-hosted"
     crossing.fetch(1).match?(/\A\h{12}\z/)
 
     Cleanup
@@ -144,6 +153,160 @@ class Dev::DispatchTest < Minitest::Test
     Then
     error = raises(Dev::Transport::ActionsRunner::RemoteVerbFailedError)
     error.message == "`dev package x` on ue-engine-hosted ended with failure: https://github.com/o/r/actions/runs/42"
+    remote_heads(origin).keys == ["refs/heads/main"]
+
+    Cleanup
+    FileUtils.rm_rf(workspace)
+  end
+
+  test "the local container runs the verb by docker exec over the snapshot: the container fetches the branch into its own workspace with gh's auth, resets to the sha, and the branch is deleted after" do
+    Given "a checkout with an origin, a persisted image, and an engine recording what runs in the service container"
+    workspace = Pathname(Dir.mktmpdir("dispatch-"))
+    root, origin = checkout_with_origin(workspace)
+    engine = recording_engine
+    heads_at_exec = nil
+    heads = -> { remote_heads(origin) }
+    engine.define_singleton_method(:status) do |args, env: {}, **opts|
+      heads_at_exec = heads.call if args.fetch(0) == "exec"
+      super(args, env:, **opts)
+    end
+    ui = typed_mock(Dev::Cli::Ui)
+    crossing = nil
+    ui.expects(:print_remote_crossing).with { |destination:, snapshot:| crossing = [destination, snapshot] }
+    remote = Dev::Dispatch::Remote.new(
+      transport: local_container(engine, root:, image: image(persist: true), token: "gho_host"),
+      sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui:,
+    )
+
+    When
+    outcome = remote.dispatch(Dev::Lifecycle::VerbInvocation.new(words: ["build", "cellbound-3d-win64-dev"])) { flunk("the env was resolved") }
+
+    Then "Done; the service container was brought up (no checkout mounted), then one exec with GH_TOKEN named, running the workspace program ending in the verb"
+    outcome == Dev::Dispatch::Outcome::Done.new
+    crossing.fetch(0) == "in cellbound-3d-linux (container)"
+    exec = engine.runs.find { |verb, *_rest| verb == "exec" }
+    exec[0, 3] == ["exec", "-e", "GH_TOKEN"]
+    exec[4, 2] == ["sh", "-c"]
+    engine.run_envs.fetch(engine.runs.index(exec)) == { "GH_TOKEN" => "gho_host" }
+    engine.runs.none? { |*run| run.flatten.include?("#{root}:/project") }
+    script = exec.last
+    branch = heads_at_exec.keys.find { |ref| ref.start_with?("refs/heads/dev/build/container/") }
+    !branch.nil?
+    script.include?("cd #{Dev::BuildContainer::DATA_ROOT_MOUNT}/workspaces/checkout-#{Dev::BuildContainer.workspace_id(root)}")
+    script.include?("git -c credential.helper= -c #{Shellwords.escape("credential.helper=!gh auth git-credential")}")
+    script.include?("fetch -q --no-tags https://github.com/o/r.git #{branch}")
+    script.include?("git reset -q --hard #{heads_at_exec.fetch(branch)}")
+    script.end_with?("exec dev build cellbound-3d-win64-dev\n")
+    crossing.fetch(1) == heads_at_exec.fetch(branch)[0, 12]
+    remote_heads(origin).keys == ["refs/heads/main"]
+
+    Cleanup
+    FileUtils.rm_rf(workspace)
+  end
+
+  test "a non-persisted image runs the verb in a one-shot `docker run --rm` of the image, the container's data root mounted and no checkout" do
+    Given
+    workspace = Pathname(Dir.mktmpdir("dispatch-"))
+    root, _origin = checkout_with_origin(workspace)
+    engine = recording_engine
+    remote = Dev::Dispatch::Remote.new(
+      transport: local_container(engine, root:, image: image(persist: false), token: nil),
+      sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui: Dev::Cli::NoUi.new,
+    )
+
+    When
+    capture_stdout { remote.dispatch(Dev::Lifecycle::VerbInvocation.new(words: ["build", "x"])) { nil } }
+
+    Then
+    run = engine.runs.find { |verb, *_rest| verb == "run" }
+    run[0, 2] == ["run", "--rm"]
+    run.each_cons(2).include?(["-v", "dev-data-root:/var/lib/dev"])
+    run.each_cons(2).none? { |flag, value| flag == "-v" && value.start_with?(root.to_s) }
+    run.include?(image(persist: false).ref)
+    run.last.end_with?("exec dev build x\n")
+    engine.runs.none? { |verb, *_rest| verb == "exec" }
+
+    Cleanup
+    FileUtils.rm_rf(workspace)
+  end
+
+  test "a verb that exits nonzero inside is ContainerVerbFailedError carrying the status; the branch is still deleted" do
+    Given
+    workspace = Pathname(Dir.mktmpdir("dispatch-"))
+    root, origin = checkout_with_origin(workspace)
+    engine = recording_engine(&->(args) { args.fetch(0) == "exec" ? 3 : true })
+    remote = Dev::Dispatch::Remote.new(
+      transport: local_container(engine, root:, image: image(persist: true), token: nil),
+      sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui: Dev::Cli::NoUi.new,
+    )
+
+    When
+    capture_stdout { remote.dispatch(Dev::Lifecycle::VerbInvocation.new(words: ["package", "x"])) { nil } }
+
+    Then
+    error = raises(Dev::Transport::LocalContainer::ContainerVerbFailedError)
+    error.message == "`dev package x` in cellbound-3d-linux (container) exited 3"
+    error.exit_status == 3
+    remote_heads(origin).keys == ["refs/heads/main"]
+
+    Cleanup
+    FileUtils.rm_rf(workspace)
+  end
+
+  test "`--fetch` copies the artifact out of the container's data root into the host's store through a one-shot container — unless the two are one (Linux)" do
+    Given "a data root for this test, and an engine on #{host_os}"
+    workspace = Pathname(Dir.mktmpdir("dispatch-"))
+    root, _origin = checkout_with_origin(workspace)
+    original = ENV["DEV_DATA_ROOT"]
+    ENV["DEV_DATA_ROOT"] = (workspace / "data").to_s
+    into = workspace / "data" / "artifacts" / "cellbound-3d" / "cellbound-3d-win64-dev"
+    engine = recording_engine
+    out = StringIO.new
+    remote = Dev::Dispatch::Remote.new(
+      transport: local_container(engine, root:, image: image(persist: true), token: nil, host_os:, out:),
+      sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui: Dev::Cli::NoUi.new,
+    )
+    invocation = Dev::Lifecycle::VerbInvocation.new(
+      words: ["package", "cellbound-3d-win64-dev"], fetch: Dev::Lifecycle::ArtifactFetch.new(name: "cellbound-3d-win64-dev", into:),
+    )
+
+    When
+    capture_stdout { remote.dispatch(invocation) { nil } }
+
+    Then
+    copies = engine.runs.select { |verb, *_rest| verb == "cp" }
+    copies.size == copies_expected
+    copies.all? { |_verb, from, to| from.end_with?(":/var/lib/dev/artifacts/cellbound-3d/cellbound-3d-win64-dev/.") && to == into.to_s }
+    copies.all? { |_verb, from, _to| from.start_with?(Dev::BuildContainer.service_container_name(image(persist: true).ref, root) + "-cold-") }
+    out.string == "fetched cellbound-3d-win64-dev → #{into}\n"
+
+    Cleanup
+    ENV["DEV_DATA_ROOT"] = original
+    FileUtils.rm_rf(workspace)
+
+    Where
+    host_os  | copies_expected
+    "darwin" | 1
+    "linux"  | 0
+  end
+
+  test "the local container refuses before anything is pushed when the engine does not answer" do
+    Given
+    workspace = Pathname(Dir.mktmpdir("dispatch-"))
+    root, origin = checkout_with_origin(workspace)
+    engine = FakeContainerEngine.new(capture_result: "")
+    remote = Dev::Dispatch::Remote.new(
+      transport: local_container(engine, root:, image: image(persist: true), token: nil),
+      sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui: typed_mock(Dev::Cli::Ui),
+    )
+
+    When
+    remote.dispatch(Dev::Lifecycle::VerbInvocation.new(words: ["build", "x"])) { nil }
+
+    Then
+    error = raises(Dev::ProjectContainer::EngineUnavailableError)
+    error.message.include?("`dev up` brings it up")
+    engine.runs.empty?
     remote_heads(origin).keys == ["refs/heads/main"]
 
     Cleanup
@@ -204,6 +367,7 @@ class Dev::DispatchTest < Minitest::Test
     Dev::Dispatch::Outcome::Run
     Dev::Dispatch::Outcome::Done
     Dev::Transport::ActionsRunner
+    Dev::Transport::LocalContainer
   end
 
   private
@@ -214,6 +378,36 @@ class Dev::DispatchTest < Minitest::Test
       runs: Dev::Lifecycle::WorkflowRuns.new(gh:, sleeper: ->(_seconds) { nil }),
       workflow: Dev::Lifecycle::LifecycleWorkflow.new(root:),
       out:,
+    )
+  end
+
+  # An engine whose daemon answers `docker info` (12 cpus, 24 GiB) and
+  # knows no container; every run succeeds unless the handler says.
+  def recording_engine(&handler)
+    FakeContainerEngine.new(capture_result: ->(args) { args.first == "info" ? "12 #{24 * 1_073_741_824}" : "" }, &handler)
+  end
+
+  # The container transport over a recording engine: the client on the
+  # given host OS, the repo resolved without gh, the floor passing.
+  def local_container(engine, root:, image:, token:, host_os: "darwin", out: StringIO.new)
+    containers = Dev::ProjectContainer.new(
+      project_root: root,
+      client: Dev::BuildContainer.new(engine:, host_os:),
+      github_token: Dev::ContainerGithubToken.new(source: -> { token }),
+      repo_resolver: -> { "o/r" },
+    )
+    Dev::Transport::LocalContainer.new(image:, containers:, out:)
+  end
+
+  def image(persist:)
+    Dev::EnvironmentImage.from_pin(
+      Dev::Deps::Dependency.new(
+        name: "cellbound-3d-linux", integration: :image, group: :app, version: "ue5.8-3", hash: "SHA256=#{"a" * 64}",
+        metadata: {
+          "from" => "ghcr.io/d3mlabs/unreal-engine-build-base", "platform" => "linux/amd64", "platforms" => ["linux/amd64"],
+          "registry" => "ghcr.io/d3mlabs", "apt" => [], "persist" => persist,
+        },
+      ),
     )
   end
 

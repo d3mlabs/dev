@@ -390,7 +390,7 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
   test "`--runner` sends the verb to the label re-spelled as given — the channel, the build, the selection flags — and the host selects from its own store: nothing is read, shipped or recorded here" do
     Given "no artifact in this store at all"
     @remote.install_workflow
-    @ui.expects(:print_remote_crossing).with(runner: "gamebox", snapshot: ScriptedRemote::SHA[0, 12])
+    @ui.expects(:print_remote_crossing).with(destination: "on gamebox", snapshot: ScriptedRemote::SHA[0, 12])
 
     When
     execute(command, "rspock", "--runner", "gamebox", "--allow-stale", "--dry-run", "--config", "release", "--release", "1.2.0")
@@ -501,14 +501,14 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     @gh.posted == []
   end
 
-  test "the verb's traits: the channel's desc, the selector's flags plus --dry-run and --runner, its placement, the accept set and protocol as details" do
+  test "the verb's traits: the channel's desc, the selector's flags plus --dry-run, --runner and --container, its placement, the accept set and protocol as details" do
     Given
     verb = command
 
     Expect
     verb.category == Dev::Command::Category::Lifecycle
     verb.desc == "rsync to the gamebox"
-    verb.flags.map(&:name) == ["--config", "--release", "--allow-stale", "--force", "--dry-run", "--runner"]
+    verb.flags.map(&:name) == ["--config", "--release", "--allow-stale", "--force", "--dry-run", "--runner", "--container"]
     verb.placement == Dev::Placement::Host.new
     verb.listing.nil?
     verb.details == ["Accepts: cellbound-3d-win64-dev, cellbound-3d-linux64-dev, rspock", "Protocol: run: sh ./stage.sh"]

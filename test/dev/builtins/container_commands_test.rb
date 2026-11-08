@@ -16,6 +16,7 @@ require "dev/container_user_aligner"
 require "dev/engine_provisioner"
 require "support/fake_container_engine"
 require "support/fake_registry_login"
+require "support/scripted_remote"
 require "fileutils"
 require "pathname"
 require "stringio"
@@ -98,13 +99,13 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     dev_provisioner.stubs(:host_version).returns("0.2.98")
     dev_provisioner.expects(:provision!).with(CURRENT).once.in_sequence(order).returns(:installed)
     deps_installer = typed_mock(Dev::ContainerDepsInstaller)
-    deps_installer.expects(:install!).with(CURRENT, env: {}).once.in_sequence(order)
+    deps_installer.expects(:install!).with(CURRENT, image: named("myapp-linux"), snapshot: canned_snapshot).once.in_sequence(order)
     out = StringIO.new
 
     When "bringing the container up"
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: user_aligner,
-      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out,
+      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out, sync_for: canned_sync_for,
     ).call(args: no_args, context: context)
 
     Then "every step is reported: the container's dev, then the deps it installs — an already-aligned user says nothing"
@@ -181,7 +182,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     client.expects(:ensure_service!).with("ghcr.io/d3mlabs/snappy-linux:aaaa", project_root: root, volumes: ["/e:/ue"])
       .once.in_sequence(order).returns("dev-snappy-linux-ws-aaaa")
     deps_installer = typed_mock(Dev::ContainerDepsInstaller)
-    deps_installer.expects(:install!).with("dev-snappy-linux-ws-aaaa", env: { "WWISE_TOKEN" => "t0k" }).once.in_sequence(order)
+    deps_installer.expects(:install!).with("dev-snappy-linux-ws-aaaa", image: named("snappy-linux"), snapshot: canned_snapshot).once.in_sequence(order)
     client.expects(:ensure_environment_image!).with { |image, **| image.name == "snappy-server" }
       .once.in_sequence(order).returns("ghcr.io/d3mlabs/snappy-server:bbbb")
     dev_provisioner = typed_mock(Dev::ContainerDevProvisioner)
@@ -192,7 +193,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     When
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: aligned_user,
-      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out, host_rule: rule,
+      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out, host_rule: rule, sync_for: canned_sync_for,
     ).call(args: no_args, context: project(root: root, engine: engine))
 
     Then "one service — the persisted image's; the plain one stops at its image"
@@ -279,7 +280,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     When "bringing the container up"
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: user_aligner,
-      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out,
+      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out, sync_for: canned_sync_for,
     ).call(args: no_args, context: context)
 
     Then "the alignment is reported before the container's dev"
@@ -292,11 +293,10 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     :prefix_adopted | "dev: container user took over its Linuxbrew prefix volume"
   end
 
-  test "container up injects the resolvable run_env into the in-container install" do
-    Given "a persisted pin declaring run_env, one entry resolvable"
-    context = pinned_project(persist: true, run_env: { "WWISE_TOKEN" => "wwise/token", "MISSING" => "x/y" })
-    Dev::Credentials.stubs(:load).returns(nil)
-    Dev::Credentials.stubs(:load).with("wwise", "token").returns("t0k")
+  test "container up installs deps over a snapshot of the checkout synced for the container, the image riding along for its run_env" do
+    Given "a persisted pin and a canned sync that records who it synced for"
+    context = pinned_project(persist: true, run_env: { "WWISE_TOKEN" => "wwise/token" })
+    sync = ScriptedRemote::CannedSync.new
     provisioner = typed_mock(Dev::EngineProvisioner)
     provisioner.stubs(:provision!)
     client = client()
@@ -310,11 +310,12 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     When "bringing the container up"
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: aligned_user,
-      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: StringIO.new,
+      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: StringIO.new, sync_for: ->(_root) { sync },
     ).call(args: no_args, context: context)
 
-    Then "the install sees the resolved entry only"
-    1 * deps_installer.install!(CURRENT, env: { "WWISE_TOKEN" => "t0k" })
+    Then "one snapshot, synced for the container, is what the install is handed with the image"
+    sync.synced == ["container"]
+    1 * deps_installer.install!(CURRENT, image: named("myapp-linux"), snapshot: canned_snapshot)
   end
 
   # --- cold_up ----------------------------------------------------------------
@@ -337,13 +338,13 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     dev_provisioner.stubs(:host_version).returns("0.2.98")
     dev_provisioner.expects(:provision!).with("dev-myapp-cold-1234").once.in_sequence(order).returns(:installed)
     deps_installer = typed_mock(Dev::ContainerDepsInstaller)
-    deps_installer.expects(:install!).with("dev-myapp-cold-1234", env: {}).once.in_sequence(order)
+    deps_installer.expects(:install!).with("dev-myapp-cold-1234", image: named("myapp-linux"), snapshot: canned_snapshot).once.in_sequence(order)
     out = StringIO.new
 
     When "cold-upping"
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: user_aligner,
-      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out,
+      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out, sync_for: canned_sync_for,
     ).cold_up(project: context.project!)
 
     Then "the steps are reported against the one-shot container"
@@ -369,11 +370,11 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     When "cold-upping"
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: aligned_user,
-      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: StringIO.new,
+      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: StringIO.new, sync_for: canned_sync_for,
     ).cold_up(project: context.project!)
 
     Then "the install ran inside the one-shot container"
-    1 * deps_installer.install!("dev-myapp-cold-1", env: {})
+    1 * deps_installer.install!("dev-myapp-cold-1", image: named("myapp-linux"), snapshot: canned_snapshot)
   end
 
   test "container up reports the container's dev as current when the provisioner found nothing to do" do
@@ -387,12 +388,14 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
     dev_provisioner = typed_mock(Dev::ContainerDevProvisioner)
     dev_provisioner.stubs(:host_version).returns("0.2.98")
     dev_provisioner.stubs(:provision!).returns(:current)
+    deps_installer = typed_mock(Dev::ContainerDepsInstaller)
+    deps_installer.stubs(:install!)
     out = StringIO.new
 
     When "bringing the container up"
     Dev::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: aligned_user,
-      dev_provisioner: dev_provisioner, out: out,
+      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out, sync_for: canned_sync_for,
     ).call(args: no_args, context: context)
 
     Then
@@ -678,6 +681,15 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
 
   # A project over a real checkout whose lock pins one `myapp-linux` in the
   # given shape; the checkout is removed in teardown.
+  # The snapshot step canned (one snapshot, no git): what `dev up` syncs
+  # the checkout as before installing inside.
+  def canned_sync_for = ->(_root) { ScriptedRemote::CannedSync.new }
+
+  def canned_snapshot = responds_with(:sha, ScriptedRemote::SHA)
+
+  # The pinned image an install is handed, matched by name.
+  def named(image_name) = responds_with(:name, image_name)
+
   def pinned_project(persist:, volumes: [], run_env: {}, engine: nil)
     metadata = { "persist" => persist }
     metadata["volumes"] = volumes unless volumes.empty?

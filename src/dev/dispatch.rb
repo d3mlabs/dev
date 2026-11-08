@@ -184,7 +184,8 @@ module Dev
 
       # @raise [Lifecycle::WorkflowTriggers::UnfilteredPushTriggerError] and
       #   the sync step's other refusals, before anything is pushed
-      # @raise [Transport::ActionsRunner::RemoteVerbFailedError] and the
+      # @raise [Transport::ActionsRunner::RemoteVerbFailedError],
+      #   [Transport::LocalContainer::ContainerVerbFailedError] and the
       #   transport's other errors, after the run
       sig(:final) do
         override.type_parameters(:Env)
@@ -195,7 +196,7 @@ module Dev
         _ = blk
         @transport.assert_ready!
         @sync.sync(runner: @transport.runner) do |snapshot|
-          @ui.print_remote_crossing(runner: @transport.runner, snapshot: snapshot.short_sha)
+          @ui.print_remote_crossing(destination: @transport.destination, snapshot: snapshot.short_sha)
           @transport.run(invocation, snapshot:)
         end
         Outcome::Done[T.type_parameter(:Env)].new

@@ -347,7 +347,7 @@ class Dev::Builtins::PackageCommandTest < Minitest::Test
   test "`--runner` sends `package <build>#{suffix}` to the label; nothing is built, packaged or reported here" do
     Given
     @remote.install_workflow
-    @ui.expects(:print_remote_crossing).with(runner: "linux-pool", snapshot: ScriptedRemote::SHA[0, 12])
+    @ui.expects(:print_remote_crossing).with(destination: "on linux-pool", snapshot: ScriptedRemote::SHA[0, 12])
 
     When
     execute(command, "cellbound-3d-release", *extra, "--runner", "linux-pool")
@@ -391,13 +391,13 @@ class Dev::Builtins::PackageCommandTest < Minitest::Test
     @remote.dispatched_verbs.nil?
   end
 
-  test "the verb's traits: the selector's flags plus --no-build, --runner and --fetch; only packageable targets are listed and completed" do
+  test "the verb's traits: the selector's flags plus --no-build, --runner, --container and --fetch; only packageable targets are listed and completed" do
     Given
     verb = command
 
     Expect
     verb.category == Dev::Command::Category::Lifecycle
-    verb.flags.map(&:name) == ["--target", "--platform", "--config", "--no-build", "--runner", "--fetch"]
+    verb.flags.map(&:name) == ["--target", "--platform", "--config", "--no-build", "--runner", "--container", "--fetch"]
     verb.desc.lines.first.start_with?("Package a build into its artifact")
     verb.listing.heading == "Builds"
     verb.listing.subjects.map(&:name) == ["cellbound-3d-linux64-dev", "cellbound-3d-linux64-release", "rspock", "site"]

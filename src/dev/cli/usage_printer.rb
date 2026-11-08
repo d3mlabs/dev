@@ -35,9 +35,9 @@ module Dev
     # in the same three columns, each with the environment its target
     # declares for it — with `(remote)` rather than `(container)` where
     # this machine is not that environment, since a verb never enters a
-    # container: it leaves for a host that is (the remote dispatch,
-    # dev#420), and which one is decided when it runs, never asked of the
-    # forge by help.
+    # container: it leaves for a host that is (the remote dispatch — a
+    # runner, dev#420, or the project's own container, dev#421), and which
+    # one is decided when it runs, never asked of the forge by help.
     class UsagePrinter
       extend T::Sig
 

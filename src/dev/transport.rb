@@ -1,8 +1,12 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "pathname"
 require "stringio"
+require "dev/container_workspace"
+require "dev/environment_image"
 require "dev/lifecycle"
+require "dev/project_container"
 
 module Dev
   # How a remote dispatch reaches the host that runs the verb (dev#192,
@@ -13,8 +17,8 @@ module Dev
   # and *watched* and how the host gets the snapshot: `ActionsRunner`
   # dispatches dev's generic workflow on the snapshot branch and watches
   # the run (the job's checkout fetches the snapshot); `LocalContainer`
-  # (dev#421) will `docker exec` into the project's container, which
-  # fetches the branch itself.
+  # (dev#421) `docker exec`s into the project's container, which fetches
+  # the branch itself into its own workspace and is watched by waiting.
   #
   # Neither a build host (ADR-0008's (machine, platform) pair — the
   # result) nor a placement (the host rule's input): a transport is the
@@ -35,8 +39,16 @@ module Dev
     sig { abstract.returns(String) }
     def runner; end
 
+    # Where the verb goes, as the crossing line says it: `on <label>` for
+    # a runner, `in <image> (container)` for the container.
+    #
+    # @return [String]
+    sig { abstract.returns(String) }
+    def destination; end
+
     # Refuse before anything leaves the machine when the transport cannot
-    # carry a verb (the project carries no copy of the workflow).
+    # carry a verb (the project carries no copy of the workflow; the
+    # engine is down).
     #
     # @return [void]
     sig { abstract.void }
@@ -70,6 +82,9 @@ module Dev
 
       sig(:final) { override.returns(String) }
       attr_reader :runner
+
+      sig(:final) { override.returns(String) }
+      def destination = "on #{@runner}"
 
       # @param runner [String] the label the job demands beside `self-hosted`
       # @param runs [Lifecycle::WorkflowRuns] the forge's side of the dispatch
@@ -108,6 +123,78 @@ module Dev
         return if fetch.nil?
 
         @runs.download(finished, name: fetch.name, into: fetch.into)
+        @out.puts "fetched #{fetch.name} → #{fetch.into}"
+      end
+    end
+
+    # The project's own build container as the degenerate runner (K9):
+    # reached by `docker exec` (ProjectContainer), the verb's words run by
+    # the dev inside — `dev build <build>` — in the container's workspace
+    # at the snapshot, which the container fetches from the forge with its
+    # own gh auth. Watching is waiting: the exec's exit status is the
+    # verdict. The artifact lands in the container's data root; when the
+    # invocation asks (`--fetch`) it is copied out into the host's store —
+    # unless the two are one (a Linux host's bind mount), where it already
+    # is. Last in the resolution order and forced by `--container`
+    # (DispatchResolver).
+    class LocalContainer
+      extend T::Sig
+      extend T::Helpers
+      include Transport
+      final!
+
+      # The verb exited nonzero inside; the message carries the verb, the
+      # image and the status.
+      class ContainerVerbFailedError < RuntimeError
+        extend T::Sig
+
+        sig { returns(Integer) }
+        attr_reader :exit_status
+
+        # @param message [String]
+        # @param exit_status [Integer] the container process's
+        sig { params(message: String, exit_status: Integer).void }
+        def initialize(message, exit_status:)
+          @exit_status = exit_status
+          super(message)
+        end
+      end
+
+      # @param image [EnvironmentImage] the build's environment, run as a container
+      # @param containers [ProjectContainer] the way into the project's containers
+      # @param out [IO, StringIO] where the fetch is reported
+      sig(:final) { params(image: EnvironmentImage, containers: ProjectContainer, out: T.any(IO, StringIO)).void }
+      def initialize(image:, containers:, out: $stdout)
+        @image = image
+        @containers = containers
+        @out = out
+      end
+
+      sig(:final) { override.returns(String) }
+      def runner = ContainerWorkspace::RUNNER
+
+      sig(:final) { override.returns(String) }
+      def destination = @containers.destination(@image)
+
+      # @raise [ProjectContainer::EngineUnavailableError]
+      sig(:final) { override.void }
+      def assert_ready! = @containers.assert_engine_up!
+
+      # @raise [ContainerVerbFailedError]
+      # @raise [EngineResourcesCheck::UndersizedEngineError]
+      # @raise [ProjectContainer::RepoUnresolvedError]
+      # @raise [BuildContainer::CopyOutFailedError] the fetch refused
+      sig(:final) { override.params(invocation: Lifecycle::VerbInvocation, snapshot: Lifecycle::Snapshot).void }
+      def run(invocation, snapshot:)
+        status = @containers.run(@image, argv: ["dev", *invocation.words], snapshot:)
+        unless status.zero?
+          raise ContainerVerbFailedError.new("`dev #{invocation}` #{destination} exited #{status}", exit_status: status)
+        end
+
+        fetch = invocation.fetch
+        return if fetch.nil?
+
+        @containers.fetch(@image, into: fetch.into)
         @out.puts "fetched #{fetch.name} → #{fetch.into}"
       end
     end
