@@ -139,6 +139,7 @@ class Dev::Builtins::DeployAllCommandTest < Minitest::Test
         cellbound-3d-win64-release (1.2.0+3f2a1c9d8e7b): #{dir / "cellbound-3d-win64-release-1.2.0.zip"}
         cellbound-3d-linux64-release (1.2.0+3f2a1c9d8e7b): #{dir / "cellbound-3d-linux64-release-1.2.0.zip"}
       Shipping via publisher: steam
+      ✓ Shipping via publisher: steam
       ✓ Recording as GitHub Deployment
       ✓ steam deployed! 2 archives (live track), GitHub Deployment #41 → https://github.com/#{REPO}/deployments/steam
         recorded cellbound-3d-win64-release, cellbound-3d-linux64-release
@@ -146,6 +147,7 @@ class Dev::Builtins::DeployAllCommandTest < Minitest::Test
       Deploying rubygems (live track, release v1.2.0)
         rspock (1.2.0+3f2a1c9d8e7b): #{dir / "rspock-1.2.0.zip"}
       Shipping via run: sh ./stage.sh
+      ✓ Shipping via run: sh ./stage.sh
       ✓ Recording as GitHub Deployment
       ✓ rubygems deployed! 1 archive (live track), GitHub Deployment #42 → https://github.com/#{REPO}/deployments/rubygems
         run: sh ./stage.sh

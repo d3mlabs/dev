@@ -252,8 +252,9 @@ class Dev::Builtins::ReleaseCommandTest < Minitest::Test
         5. Create GitHub release v1.2.0 and attach 2 archives + release.json
     OUT
     @out.string.include?("Cutting v1.2.0\n✓ Bumping VERSION 1.1.0 → 1.2.0\n✓ Tagging v1.2.0\n✓ Pushing main + tag v1.2.0 to origin\n")
-    @out.string.include?("Packaging cellbound-3d-linux64-release\n")
-    @out.string.include?("Packaging cellbound-3d-server-linux64\n")
+    @out.string.include?("Packaging cellbound-3d-linux64-release\npackaged cellbound-3d-linux64-release → ")
+    @out.string.include?("✓ Packaging cellbound-3d-linux64-release\nPackaging cellbound-3d-server-linux64\npackaged cellbound-3d-server-linux64 → ")
+    @out.string.include?("✓ Packaging cellbound-3d-server-linux64\nPublishing v1.2.0\n")
     @out.string.include?("Publishing v1.2.0\n✓ Writing release.json\n✓ Creating GitHub release v1.2.0\n" \
       "✓ Attaching cellbound-3d-linux64-release-1.2.0.zip, cellbound-3d-server-linux64-1.2.0.zip, release.json\n")
     @out.string.lines.last(4).join == <<~OUT

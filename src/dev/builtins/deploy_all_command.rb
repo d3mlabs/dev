@@ -123,7 +123,7 @@ module Dev
       sig { override.params(env: FanOutEnv, context: ExecutionContext).void }
       def seam(env, context:)
         @channels.each do |name, channel|
-          context.ui.say("{{bold:#{NAME} #{name} #{env.words.join(" ")}}}")
+          context.ui.note("{{bold:#{NAME} #{name} #{env.words.join(" ")}}}")
           @executor.execute(channel, args: @vocabulary.parse(channel, path: [NAME, name], args: env.words), context:)
         end
       end
@@ -132,7 +132,7 @@ module Dev
       def after(env, context:)
         count = @channels.size == 1 ? "1 channel" : "#{@channels.size} channels"
         head = env.dry_run ? "#{env.tag} would ship" : "{{v}} {{bold:#{env.tag} shipped}}"
-        context.ui.say("#{head} to #{count}: #{@channels.keys.join(", ")}")
+        context.ui.note("#{head} to #{count}: #{@channels.keys.join(", ")}")
       end
     end
   end

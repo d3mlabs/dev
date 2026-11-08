@@ -106,6 +106,20 @@ class Dev::Lifecycle::GhTest < Minitest::Test
     error.message == "gh run watch 42 failed in #{@root} (exited 4)"
   end
 
+  test "a streamed gh has the terminal, so under a spinner it is refused by the terminal's owner before it spawns (plans#52)" do
+    Given
+    stub_gh
+
+    When
+    error = assert_raises(Dev::TerminalOwner::UnderSpinnerError) do
+      Dev::TerminalOwner.spinning { Dev::Lifecycle::Gh.new(root: @root).stream(["run", "watch", "42"]) }
+    end
+
+    Then
+    error.message.start_with?("`gh run watch 42` would take the terminal under a spinner")
+    !(@dir / "argv").exist?
+  end
+
   test "no gh on PATH is GhMissingError for a stream too" do
     Given
     ENV["PATH"] = @bin.to_s

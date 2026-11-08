@@ -185,11 +185,13 @@ module Dev
         plan = env.plan
         ui.frame(plan.resuming ? "Resuming #{plan.tag}" : "Cutting #{plan.tag}") do
           bump = plan.bump
-          ui.step("Bumping #{Lifecycle::ProjectVersion::FILE_NAME} #{bump.from} → #{bump.to}") { @cut.bump!(plan) } if bump
-          ui.step("Tagging #{plan.tag}") { @cut.tag!(plan) } unless plan.resuming
-          ui.step("Pushing #{plan.branch} + tag #{plan.tag} to #{Lifecycle::ReleaseCut::REMOTE}") { @cut.push!(plan) }
+          ui.spin("Bumping #{Lifecycle::ProjectVersion::FILE_NAME} #{bump.from} → #{bump.to}") { @cut.bump!(plan) } if bump
+          ui.spin("Tagging #{plan.tag}") { @cut.tag!(plan) } unless plan.resuming
+          ui.spin("Pushing #{plan.branch} + tag #{plan.tag} to #{Lifecycle::ReleaseCut::REMOTE}") { @cut.push!(plan) }
           at_tag = Lifecycle::GitState.read(context.project!.root)
-          env.artifacts = env.builds.map { |build| ui.frame("Packaging #{build}") { package(build, at_tag:, context:) } }
+          # `package` spawns the builder with the terminal (its output,
+          # its progress bars): a step, never a spin.
+          env.artifacts = env.builds.map { |build| ui.step("Packaging #{build}") { package(build, at_tag:, context:) } }
         end
       end
 
@@ -205,10 +207,10 @@ module Dev
             stamp: Lifecycle::Manifest::Stamp.now(now: @clock.call), tag: env.tag.name, sha:, archives: gathered.map(&:archive),
           )
           url = ui.frame("Publishing #{env.tag}") do
-            ui.step("Writing #{manifest.file_name}") { manifest.write(dir) }
+            ui.spin("Writing #{manifest.file_name}") { manifest.write(dir) }
             page = find_or_create(env, ui:)
             files = gathered.flat_map(&:files) + [dir / manifest.file_name]
-            ui.step("Attaching #{files.map { |file| file.basename.to_s }.join(", ")}") { @releases.upload(env.tag, files) }
+            ui.spin("Attaching #{files.map { |file| file.basename.to_s }.join(", ")}") { @releases.upload(env.tag, files) }
             page
           end
           report(env, sha, url, manifest, ui:)
@@ -238,11 +240,11 @@ module Dev
       def show_plan(env, ui:)
         plan = env.plan
         ui.frame(plan_title(plan)) do
-          ui.say("{{bold:Base:}} #{base_line(plan)}")
-          ui.say("{{bold:Notes:}}")
-          plan.notes.lines(chomp: true).each { |line| ui.say("  #{line}") }
-          ui.say("{{bold:Steps:}}")
-          steps(env).each_with_index { |step, index| ui.say("  #{index + 1}. #{step}") }
+          ui.note("{{bold:Base:}} #{base_line(plan)}")
+          ui.note("{{bold:Notes:}}")
+          plan.notes.lines(chomp: true).each { |line| ui.note("  #{line}") }
+          ui.note("{{bold:Steps:}}")
+          steps(env).each_with_index { |step, index| ui.note("  #{index + 1}. #{step}") }
         end
       end
 
@@ -299,11 +301,11 @@ module Dev
       def find_or_create(env, ui:)
         found = @releases.find(env.tag)
         if found
-          ui.say("{{v}} GitHub release #{env.tag} exists — attaching to it")
+          ui.note("{{v}} GitHub release #{env.tag} exists — attaching to it")
           return found
         end
 
-        ui.step("Creating GitHub release #{env.tag}") { @releases.create(env.tag, title: env.tag.name, notes: env.plan.notes) }
+        ui.spin("Creating GitHub release #{env.tag}") { @releases.create(env.tag, title: env.tag.name, notes: env.plan.notes) }
       end
 
       # `--yes`, or the terminal's answer. No terminal is a refusal: a
@@ -356,9 +358,9 @@ module Dev
       # @return [void]
       sig { params(env: ReleaseEnv, sha: String, url: URI::Generic, manifest: Lifecycle::Manifest::Release, ui: Cli::Ui).void }
       def report(env, sha, url, manifest, ui:)
-        ui.say("{{v}} {{bold:#{env.tag} released!}} (#{sha[0, Lifecycle::GitState::SHORT_SHA_LENGTH]}, from #{env.plan.branch}) → #{url}")
-        manifest.archives.each { |archive| ui.say("  #{archive.name} (#{archive.build_id})") }
-        ui.say("Nothing deployed — ship it: dev deploy <channel> --release #{env.tag.version}")
+        ui.note("{{v}} {{bold:#{env.tag} released!}} (#{sha[0, Lifecycle::GitState::SHORT_SHA_LENGTH]}, from #{env.plan.branch}) → #{url}")
+        manifest.archives.each { |archive| ui.note("  #{archive.name} (#{archive.build_id})") }
+        ui.note("Nothing deployed — ship it: dev deploy <channel> --release #{env.tag.version}")
       end
     end
   end

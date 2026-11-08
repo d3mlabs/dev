@@ -3,6 +3,7 @@
 
 require "open3"
 require "pathname"
+require "dev/terminal_owner"
 
 module Dev
   module Lifecycle
@@ -16,6 +17,12 @@ module Dev
     #
     # Injectable so a test can hand back a status it minted from a real
     # child; the methods themselves are the one place `spawn` is called.
+    #
+    # Every child here inherits dev's stdio — the terminal is the
+    # script's while it runs (its colors, its progress bars, its
+    # prompts). Which is why none may run under a spinner: the terminal's
+    # owner (TerminalOwner) refuses the spawn there, so the caller reaches
+    # for `ui.step` instead.
     class Shell
       extend T::Sig
 
@@ -48,6 +55,7 @@ module Dev
       # @raise [SpawnError]
       sig { params(argv: Argv, chdir: Pathname, env: T::Hash[String, String]).returns(Process::Status) }
       def run(argv, chdir:, env: {})
+        TerminalOwner.claim!("`#{argv.join(" ")}`")
         pid = T.unsafe(Process).spawn(env, *argv, chdir: chdir.to_s)
         _pid, status = Process.wait2(pid)
         T.must(status)
@@ -64,6 +72,7 @@ module Dev
       # @raise [SpawnError]
       sig { params(commands: T::Array[Argv], chdir: Pathname).returns(T::Array[Process::Status]) }
       def pipeline(commands, chdir:)
+        TerminalOwner.claim!("`#{commands.map { |argv| argv.first.to_s }.join(" | ")}`")
         T.unsafe(Open3).pipeline(*commands, chdir: chdir.to_s)
       rescue SystemCallError => e
         raise SpawnError, "could not run #{commands.map { |argv| argv.first.inspect }.join(" | ")} in #{chdir}: #{e.message}"

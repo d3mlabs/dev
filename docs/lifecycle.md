@@ -453,11 +453,12 @@ it shipped); an integration publisher ships its own way — skipped under
 UI](#the-verbs-ui)): `Deploying staging (testing track)` — `(live track,
 release v1.2.0)` for a release's, `— dry run` under the flag — listing
 each shipment (`<build> (<build id>): <archive>`, `— stale, shipped under
---allow-stale` when it was), then a nested `Shipping via run: sh
-./stage.sh` (or `via publisher: steam`) the publisher's own output
-streams inside. `after` records the deploy ([The deploy
-receipt](#the-deploy-receipt)); under `--dry-run` it says `Nothing
-shipped, nothing recorded (--dry-run)`.
+--allow-stale` when it was), then a `Shipping via run: sh ./stage.sh`
+(or `via publisher: steam`) **step**: the publisher has the terminal —
+a `run:` script's lines, `gem push`'s OTP prompt land as written — so
+never a spinner ([The verbs' UI](#the-verbs-ui)). `after` records the
+deploy ([The deploy receipt](#the-deploy-receipt)); under `--dry-run`
+it says `Nothing shipped, nothing recorded (--dry-run)`.
 
 Under a remote dispatch (`--runner`, or the channel's `environment:`
 placing the protocol elsewhere) the words carried to the host include
@@ -502,11 +503,11 @@ The receipt crosses from the seam to `after` on the verb's env
 `DeploySelector::Selection#track`, `testing` for the store, `live` for a
 release — never the publisher's. Recording is best-effort around the protocol and never
 masks it: a deploy that shipped but could not be recorded
-(`NotRecordedError`) fails *after* the shipping frame, its step shown
+(`NotRecordedError`) fails *after* the shipping step, its spin shown
 failed (`✗ Recording as GitHub Deployment`), so the upload is never
 mistaken for undone; a failed deploy whose failure record the forge
 refuses says so on stderr beside the protocol's own error. `--dry-run`
-records nothing. The record is a step, and the epilogue names what it
+records nothing. The record is a spin, and the epilogue names what it
 wrote, then the receipt in the publisher's words, then the receipt's
 **hint** when the publisher left one (`Receipt#hint` — what to do now
 that it landed; the brew publisher's `To update locally: brew update &&
@@ -601,13 +602,14 @@ order:
    — a release is never cut on an assumed yes, and never hangs on a
    prompt nobody sees.
 2. **The seam — cut, push, package.** A frame, `Cutting v1.2.0`
-   (`Resuming v1.2.0`), one step each: `cut!` writes `VERSION`,
+   (`Resuming v1.2.0`), one spin each: `cut!` writes `VERSION`,
    commits `Bump version to 1.2.0` and tags HEAD — a no-op when
    resuming; `push!` pushes the branch and the tag to `origin`
    (idempotent). Then, for each release build in declaration order,
    `package` runs through the `LifecycleExecutor` with the build as its
-   positional, in a nested `Packaging <build>` frame its output streams
-   inside — the builder when stale, the packager, the stamp — and
+   positional, under a `Packaging <build>` step — the builder has the terminal,
+   its output lands as written — the builder when stale, the packager,
+   the stamp — and
    the artifact is read back from the store, which must be **current at
    the tag's commit** (`ArtifactNotAtTagError` otherwise: packaged
    elsewhere, or the tree moved). The bump commit makes every earlier
@@ -619,7 +621,7 @@ order:
    a split set's parts as `<build>-<version>.tar.zst.00`, … with a
    rewritten `<build>-<version>.MANIFEST`), as links in a temporary
    directory, and `release.json` (`Manifest::Release`) is written beside
-   them. In a `Publishing v1.2.0` frame, `GithubReleases` finds the
+   them. In a `Publishing v1.2.0` frame, one spin each, `GithubReleases` finds the
    tag's release (`GitHub release v1.2.0 exists — attaching to it`) or
    creates it (`gh release create v1.2.0 --verify-tag`, title the tag,
    notes from the plan) and uploads every asset with `--clobber`, so a
@@ -654,22 +656,54 @@ each surfaces as the command's.
 
 ### The verbs' UI
 
-The lifecycle verbs share one vocabulary ([dev#514](https://github.com/d3mlabs/dev/issues/514)),
-`Dev::Cli::Ui`'s — the UI `bin/release.rb` had, standardized with the
-verb: a titled, timed **frame** around a stage (`CLI::UI::Frame`; its
-bar runs down the left of everything written inside it, the spawned
-builders' and publishers' output included, which is why a stage whose
-child streams is a frame and not a spinner), a **step** per action
-(`CLI::UI::Spinner`, `✓`/`✗` as it ends; a step that raises shows `✗`
-and the error bubbles as before), a **confirm** at the terminal, and
-**say** for a line. `before` shows a plan, `seam` and `after` run in
-frames, and an epilogue closes with the `✓ … released!` /
-`✓ … deployed!` line and the hint of what comes next. Where no terminal
-is attached (a pipe, ai-flow, the runner — `bin/dev` picks `NoUi`
-unless stdout is a TTY, `CI` or `CLICOLOR_FORCE` is set) the same
-output is plain lines: the frame's title, `✓ step`, and the
-confirm answers "no terminal" rather than assuming. `build` and
-`package` run bare for now; their frames are the tracked follow-up.
+The lifecycle verbs share one vocabulary ([dev#514](https://github.com/d3mlabs/dev/issues/514),
+[plans#52](https://github.com/d3mlabs/plans/issues/52)), `Dev::Cli::Ui`'s
+— the UI `bin/release.rb` had, standardized with the verb. Each name is
+a stdio contract:
+
+| Verb | Spinner | Child stdio | StdoutRouter | Used for |
+|---|---|---|---|---|
+| `frame(title) { }` | — | — | on inside the outermost frame, off on its way out (a raise included) | a stage: `Cutting v1.2.0`, `Publishing v1.2.0`, `Deploying staging (testing track)` |
+| `spin(name) { }` | yes | none, or captured (`Open3.capture3`, stdin supplied) | capturing | bump, tag, push (`Lifecycle::Git`), `gh release create` / `upload`, the `gh api` record |
+| `step(name) { }` | **no** | **inherited** — the child has the terminal | **off across the block**, on again after | `Packaging <build>` (the builder), `Shipping via …` (the publisher), anything that may prompt |
+| `note(text)` | — | — | — | the plan's lines, the epilogue |
+| `confirm(question)` | — | — | — | `Proceed?` — `true` / `false` / `nil` for no terminal |
+
+**Why the split.** A spinner captures every Ruby-level write and masks
+stdin while it animates. A child spawned with inherited stdio writes to
+fd 1 and reads fd 0 directly, past both: its lines garble the
+animation, and if it prompts (`sudo`, `gem push`'s OTP, a `run:` script
+asking anything) it waits on input nobody can see it asking for — the
+shape of every "dev hung" we have had. So a child that owns the
+terminal runs under a `step` and never a `spin`. **Enforced, not
+reviewed:** a `spin` owns the thread's terminal (`Dev::TerminalOwner`)
+and the places dev spawns with inherited stdio — `Lifecycle::Shell#run`
+/ `#pipeline` (every `build:` / `package:` / `run:` script, `gem push`),
+`Lifecycle::Gh#stream` — claim the terminal first and are refused under
+one (`TerminalOwner::UnderSpinnerError`, naming the command and the
+fix); so are a prompt, a frame, a step or another spin under a spin.
+The plain tier enforces it too, which is where tests catch it.
+
+**What a frame does and does not do.** The StdoutRouter is CLI::UI's
+Ruby-level replacement of `$stdout`'s writer; it prefixes dev's own
+lines with the open frame's bar. It is Ruby-level: a child's lines are
+never prefixed, in any tier — a `Packaging <build>` step's builder
+output sits between the step's name and its `✓` exactly as the builder
+wrote it, colors and progress bars intact. A frame groups dev's lines;
+it promises nothing about a child's, and dev does not put a pipe or a
+PTY between the child and the terminal to change that. The router is on
+only inside the outermost frame and off before anything else runs — an
+exec, a waited child outside a frame — so nothing downstream sees a
+swapped `$stdout`.
+
+**Tiers.** `bin/dev` picks `UiImpl` (CLI::UI) when stdout is a TTY or
+`CI` / `CLICOLOR_FORCE` is set, `NoUi` otherwise (a pipe, ai-flow, the
+runner). `NoUi` prints the same facts as plain lines, no escape codes:
+the frame's title, `✓ name` / `✗ name` per spin, a step's name before
+and its glyph after; `confirm` answers `nil` rather than assuming. The
+plain tier is the contract — a failed action's reason is in the error
+that bubbles, not in a rendering. `build` and `package` run bare for
+now; their frames and steps are [dev#516](https://github.com/d3mlabs/dev/issues/516).
 
 ## The channel contract
 

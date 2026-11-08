@@ -52,10 +52,10 @@ module Dev
     # channel between the stages.
     #
     # The UI (dev#514) is the lifecycle verbs' shared one: a frame naming
-    # the channel and the track that lists what ships, a frame around the
-    # publisher (its output streams inside it), a step for the record, and
-    # an epilogue — the deployment and its page, the receipt, the
-    # receipt's hint.
+    # the channel and the track that lists what ships, a step around the
+    # publisher (it has the terminal), a spin for the record, and an
+    # epilogue — the deployment and its page, the receipt, the receipt's
+    # hint.
     class DeployCommand < LifecycleCommand
       extend T::Sig
 
@@ -222,10 +222,12 @@ module Dev
       def seam(env, context:)
         ui = context.ui
         ui.frame("Deploying #{env.channel} (#{source(env.selection)})#{" — dry run" if env.dry_run}") do
-          env.selection.shipments.each { |shipment| ui.say("  #{shipment_line(env, shipment)}") }
+          env.selection.shipments.each { |shipment| ui.note("  #{shipment_line(env, shipment)}") }
           next if env.dry_run
 
-          ui.frame("Shipping via #{env.channel.publisher}") do
+          # The publisher has the terminal — a `run:` script's lines, `gem
+          # push`'s OTP prompt — so a step, never a spin.
+          ui.step("Shipping via #{env.channel.publisher}") do
             env.receipt = env.publisher.publish(env.selection.shipments, channel: env.channel, track: env.selection.track, scratch: env.scratch)
           end
         end
@@ -238,12 +240,12 @@ module Dev
       def after(env, context:)
         ui = context.ui
         if env.dry_run
-          ui.say("Nothing shipped, nothing recorded (#{DRY_RUN_FLAG})")
+          ui.note("Nothing shipped, nothing recorded (#{DRY_RUN_FLAG})")
           return
         end
 
         receipt = env.receipt!
-        deployments = ui.step("Recording as GitHub Deployment") do
+        deployments = ui.spin("Recording as GitHub Deployment") do
           records(env, state: Lifecycle::DeploymentState::Success, description: receipt.summary).map { |record| @deployments.record(record) }
         end
         report(env, deployments, receipt, ui:)
@@ -299,13 +301,13 @@ module Dev
       def report(env, deployments, receipt, ui:)
         count = env.selection.shipments.size
         ids = deployments.map { |deployment| "##{deployment.id}" }.join(", ")
-        ui.say(
+        ui.note(
           "{{v}} {{bold:#{env.channel} deployed!}} #{count} archive#{"s" unless count == 1} (#{env.selection.track} track), " \
             "GitHub Deployment#{"s" unless deployments.one?} #{ids} → #{T.must(deployments.first).url}",
         )
-        ui.say("  #{receipt.summary}")
+        ui.note("  #{receipt.summary}")
         hint = receipt.hint
-        ui.say(hint) if hint
+        ui.note(hint) if hint
       end
 
       # The records this deploy makes, one per ref the shipments came from

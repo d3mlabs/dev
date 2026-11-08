@@ -169,7 +169,7 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     execute(command)
 
     Then "the script ran once per archive with the channel, the track, the build and the manifest's keys, in the channel's scratch; " \
-         "the UI (dev#514): the deploy frame listing what ships, the shipping frame, the record step and the epilogue with the receipt; " \
+         "the UI (dev#514): the deploy frame listing what ships, the shipping step (the script has the terminal), the record spin and the epilogue with the receipt; " \
          "the record is one GitHub Deployment: the channel as environment, the commit as ref, " \
          "the builds and the testing track as payload, a success status carrying the run: line as the receipt"
     shipped == [
@@ -184,6 +184,7 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
         cellbound-3d-linux64-dev (1.2.3+#{head}): #{linux64.archive}
         rspock (1.2.3+#{head}): #{gem.archive}
       Shipping via run: sh ./stage.sh
+      ✓ Shipping via run: sh ./stage.sh
       ✓ Recording as GitHub Deployment
       ✓ staging deployed! 3 archives (testing track), GitHub Deployment #41 → https://github.com/#{REPO}/deployments/staging
         run: sh ./stage.sh
@@ -232,6 +233,7 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
         cellbound-3d-win64-release (1.2.3+#{head}): #{win64.archive}
         cellbound-3d-linux64-release (1.2.3+#{head}): #{linux64.archive}
       Shipping via publisher: steam
+      ✓ Shipping via publisher: steam
       ✓ Recording as GitHub Deployment
       ✓ steam deployed! 2 archives (testing track), GitHub Deployment #41 → https://github.com/#{REPO}/deployments/steam
         recorded cellbound-3d-win64-release, cellbound-3d-linux64-release
@@ -298,7 +300,8 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
       "payload" => { "schema" => 1, "track" => "testing", "builds" => [{ "build" => "rspock", "build_id" => "1.2.3+#{head}" }] },
     }
     @gh.posted.last == { "state" => "failure", "description" => "deploy script `sh ./stage.sh` for rspock → staging exited 7" }
-    @out.string == "Deploying staging (testing track)\n  rspock (1.2.3+#{head}): #{store.artifact(build("rspock")).archive}\nShipping via run: sh ./stage.sh\n"
+    @out.string == "Deploying staging (testing track)\n  rspock (1.2.3+#{head}): #{store.artifact(build("rspock")).archive}\n" \
+      "Shipping via run: sh ./stage.sh\n✗ Shipping via run: sh ./stage.sh\n"
     @err.string == ""
   end
 
@@ -331,7 +334,7 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     error.message.start_with?("deployed to staging, but the deploy was not recorded: the deployment ledger could not be written")
     error.message.include?("No ref found")
     shipped == ["staging testing rspock 1.2.3+#{head} #{head} false #{gem.archive}"]
-    @out.string.end_with?("Shipping via run: sh ./stage.sh\n✗ Recording as GitHub Deployment\n")
+    @out.string.end_with?("✓ Shipping via run: sh ./stage.sh\n✗ Recording as GitHub Deployment\n")
   end
 
   test "artifacts of two commits shipped together under --allow-stale are two records, one per ref" do
@@ -409,7 +412,7 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     Then
     error = raises Dev::Lifecycle::ScriptPublisher::DeployScriptFailedError
     error.message == "deploy script `sh ./stage.sh` for rspock → staging exited 7"
-    @out.string.end_with?("Shipping via run: sh ./stage.sh\n")
+    @out.string.end_with?("Shipping via run: sh ./stage.sh\n✗ Shipping via run: sh ./stage.sh\n")
   end
 
   test "a channel whose protocol has no placement bound is refused by name before the store is read" do
@@ -492,6 +495,7 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
         cellbound-3d-linux64-dev (1.2.0+3f2a1c9d8e7b): #{dir / "cellbound-3d-linux64-dev-1.2.0.zip"}
         rspock (1.2.0+3f2a1c9d8e7b): #{dir / "rspock-1.2.0.zip"}
       Shipping via run: sh ./stage.sh
+      ✓ Shipping via run: sh ./stage.sh
       ✓ Recording as GitHub Deployment
       ✓ staging deployed! 3 archives (live track), GitHub Deployment #41 → https://github.com/#{REPO}/deployments/staging
         run: sh ./stage.sh
