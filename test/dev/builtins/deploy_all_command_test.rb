@@ -54,7 +54,7 @@ class Dev::Builtins::DeployAllCommandTest < Minitest::Test
     Open3.capture2e("git", "-C", @project.to_s, "init", "-q")
     @out = StringIO.new
     @gh = FakeGh.new(root: @project)
-    @ui = typed_mock(Dev::Cli::Ui)
+    @ui = Dev::Cli::NoUi.new(out: @out)
     @steam = RecordingPublisher.new
   end
 
@@ -102,12 +102,12 @@ class Dev::Builtins::DeployAllCommandTest < Minitest::Test
     verbs = channels.to_h do |name, channel|
       verb = Dev::Builtins::DeployCommand.new(
         channel:, selector: Dev::DeploySelector.new(channel:, targets:, store:, release_archives:),
-        ports:, store:, resolver:, placement: Dev::Placement::Host.new, deployments:, out: @out, err: StringIO.new,
+        ports:, store:, resolver:, placement: Dev::Placement::Host.new, deployments:, err: StringIO.new,
       )
       [name, verb]
     end
     status = Dev::Builtins::DeployStatusCommand.new(channels: channels.values, deployments:, out: @out)
-    Dev::Builtins::DeployAllCommand.new(channels: verbs, status:, out: @out)
+    Dev::Builtins::DeployAllCommand.new(channels: verbs, status:)
   end
 
   def context
@@ -135,13 +135,23 @@ class Dev::Builtins::DeployAllCommandTest < Minitest::Test
     @gh.downloaded("v1.2.0") == [["release.json"], ["cellbound-3d-win64-release-1.2.0.zip", "cellbound-3d-linux64-release-1.2.0.zip"], ["release.json"], ["rspock-1.2.0.zip"]]
     @out.string == <<~OUT
       deploy steam --release 1.2.0
-      deployed cellbound-3d-win64-release (1.2.0+3f2a1c9d8e7b) → steam (live): #{dir / "cellbound-3d-win64-release-1.2.0.zip"}
-      deployed cellbound-3d-linux64-release (1.2.0+3f2a1c9d8e7b) → steam (live): #{dir / "cellbound-3d-linux64-release-1.2.0.zip"}
-      recorded as GitHub Deployment #41 (live track) → https://github.com/#{REPO}/deployments/steam
+      Deploying steam (live track, release v1.2.0)
+        cellbound-3d-win64-release (1.2.0+3f2a1c9d8e7b): #{dir / "cellbound-3d-win64-release-1.2.0.zip"}
+        cellbound-3d-linux64-release (1.2.0+3f2a1c9d8e7b): #{dir / "cellbound-3d-linux64-release-1.2.0.zip"}
+      Shipping via publisher: steam
+      ✓ Shipping via publisher: steam
+      ✓ Recording as GitHub Deployment
+      ✓ steam deployed! 2 archives (live track), GitHub Deployment #41 → https://github.com/#{REPO}/deployments/steam
+        recorded cellbound-3d-win64-release, cellbound-3d-linux64-release
       deploy rubygems --release 1.2.0
-      deployed rspock (1.2.0+3f2a1c9d8e7b) → rubygems (live): #{dir / "rspock-1.2.0.zip"}
-      recorded as GitHub Deployment #42 (live track) → https://github.com/#{REPO}/deployments/rubygems
-      v1.2.0 shipped to 2 channels: steam, rubygems
+      Deploying rubygems (live track, release v1.2.0)
+        rspock (1.2.0+3f2a1c9d8e7b): #{dir / "rspock-1.2.0.zip"}
+      Shipping via run: sh ./stage.sh
+      ✓ Shipping via run: sh ./stage.sh
+      ✓ Recording as GitHub Deployment
+      ✓ rubygems deployed! 1 archive (live track), GitHub Deployment #42 → https://github.com/#{REPO}/deployments/rubygems
+        run: sh ./stage.sh
+      ✓ v1.2.0 shipped to 2 channels: steam, rubygems
     OUT
   end
 
@@ -158,7 +168,7 @@ class Dev::Builtins::DeployAllCommandTest < Minitest::Test
     @gh.posted == []
     @out.string.lines.first == "deploy steam --release 1.2.0 --dry-run\n"
     @out.string.lines.last == "v1.2.0 would ship to 2 channels: steam, rubygems\n"
-    @out.string.include?("would deploy rspock (1.2.0+3f2a1c9d8e7b) → rubygems (live)")
+    @out.string.include?("Deploying rubygems (live track, release v1.2.0) — dry run\n  rspock (1.2.0+3f2a1c9d8e7b): ")
   end
 
   test "the first channel that refuses ends the fan-out there: the earlier ones shipped, the later ones were not reached" do

@@ -316,7 +316,7 @@ something for it to act on:
 | `deploy <channel> [BUILD] [--config C] [--release V] [--allow-stale] [--force] [--dry-run]` | a channel exists — declared under `commands: deploy:` or contributed by the lock | the channel's accepted archives: from the store, or from release `V`'s assets | the channel's publisher, over the selection, on the testing track from the store and the live track from a release; `after` records the deploy on the forge |
 | `deploy --release V [--dry-run]` | a channel exists | every channel, in declaration order | `deploy <channel> --release V` per channel, through the same template; stops at the first that refuses |
 | `deploy status [--release V]` | a channel exists — declared or contributed | every channel's latest recorded deploy; the release's tag only under `--release` | — (reads the ledger; a builtin child of `deploy`, which reserves the name `status`) |
-| `release <version>` | `commands: release:` declared (`targets:` or the empty form) and at least one packageable target | the release builds, each packaged at the tag | the cut and the push, then `package` per release build, each dispatched by its own environment; `after` creates the GitHub release and attaches the archives |
+| `release <version> [--yes]` | `commands: release:` declared (`targets:` or the empty form) and at least one packageable target | the release builds, each packaged at the tag | the plan shown and confirmed, the cut and the push, then `package` per release build, each dispatched by its own environment; `after` creates the GitHub release and attaches the archives |
 
 A project without targets lists neither `build` nor `package`, and
 `dev build` there is "command not found", not "no targets declared";
@@ -449,10 +449,16 @@ env (`DEV_RELEASE_VERSION` set for a release's archive, `DEV_DIRTY` and
 `DEV_PACKAGED_AT` for the store's), and stops at the first nonzero exit
 (`DeployScriptFailedError`, the archive and code named; the ones before
 it shipped); an integration publisher ships its own way — skipped under
-`--dry-run`; `after` prints one line per shipment (`deployed <build>
-(<build id>) → <channel> (<track>): <archive>`, `would deploy …` under
-`--dry-run`, `— stale, shipped under --allow-stale` when it was), then
-records the deploy ([The deploy receipt](#the-deploy-receipt)).
+`--dry-run`. The seam is the verb's **frame** ([The verbs'
+UI](#the-verbs-ui)): `Deploying staging (testing track)` — `(live track,
+release v1.2.0)` for a release's, `— dry run` under the flag — listing
+each shipment (`<build> (<build id>): <archive>`, `— stale, shipped under
+--allow-stale` when it was), then a `Shipping via run: sh ./stage.sh`
+(or `via publisher: steam`) **step**: the publisher has the terminal —
+a `run:` script's lines, `gem push`'s OTP prompt land as written — so
+never a spinner ([The verbs' UI](#the-verbs-ui)). `after` records the
+deploy ([The deploy receipt](#the-deploy-receipt)); under `--dry-run`
+it says `Nothing shipped, nothing recorded (--dry-run)`.
 
 Under a remote dispatch (`--runner`, or the channel's `environment:`
 placing the protocol elsewhere) the words carried to the host include
@@ -497,14 +503,25 @@ The receipt crosses from the seam to `after` on the verb's env
 `DeploySelector::Selection#track`, `testing` for the store, `live` for a
 release — never the publisher's. Recording is best-effort around the protocol and never
 masks it: a deploy that shipped but could not be recorded
-(`NotRecordedError`) fails *after* the `deployed …` lines, so the upload
-is never mistaken for undone; a failed deploy whose failure record the
-forge refuses says so on stderr beside the protocol's own error.
-`--dry-run` records nothing. `after` names what it wrote: `recorded as
-GitHub Deployment #41 (testing track) →
-https://github.com/<owner>/<repo>/deployments/staging`. The write goes
-through `gh api`, so the token `gh` holds needs `deployments: write`
-(the `repo` scope has it; a fine-grained token names it).
+(`NotRecordedError`) fails *after* the shipping step, its spin shown
+failed (`✗ Recording as GitHub Deployment`), so the upload is never
+mistaken for undone; a failed deploy whose failure record the forge
+refuses says so on stderr beside the protocol's own error. `--dry-run`
+records nothing. The record is a spin, and the epilogue names what it
+wrote, then the receipt in the publisher's words, then the receipt's
+**hint** when the publisher left one (`Receipt#hint` — what to do now
+that it landed; the brew publisher's `To update locally: brew update &&
+brew upgrade …`; `deploy` itself knows nothing of the channel behind it):
+
+```
+✓ Recording as GitHub Deployment
+✓ staging deployed! 3 archives (testing track), GitHub Deployment #41 → https://github.com/<owner>/<repo>/deployments/staging
+  run: sh ./stage.sh
+```
+
+The write goes through `gh api`, so the token `gh` holds needs
+`deployments: write` (the `repo` scope has it; a fine-grained token
+names it).
 
 ### What `deploy status` does
 
@@ -544,23 +561,55 @@ from the same bytes if need be. The cut is lifted from dev's own
 release build so each dispatches by its target's `environment:`. In
 order:
 
-1. **`before` — the plan.** The version becomes the tag (`ReleaseTag`,
-   `v1.2.0`). `ReleaseCut#plan` reads the checkout and moves nothing: the
-   tree must be clean (`DirtyTreeError`, with `git status`) and HEAD on
-   a branch (`DetachedHeadError`); a tag of that name elsewhere than HEAD
-   is a version already cut (`TagElsewhereError`); a tag already **on**
-   HEAD means a previous run's cut landed and this one **resumes**. The
-   bump: when the project keeps a `VERSION` file whose version is not
-   the release's, `from → to`; none otherwise. The notes: the one-line
-   log since the previous tag, `Release v1.2.0.` for a first release.
-2. **The seam — cut, push, package.** The plan is announced (`cutting
-   v1.2.0 on main: bump VERSION 1.1.0 → 1.2.0, tag, push`, or `resuming
-   v1.2.0: HEAD is already tagged — …`). `cut!` writes `VERSION`,
+1. **`before` — the plan, shown, confirmed.** The version becomes the
+   tag (`ReleaseTag`, `v1.2.0`). `ReleaseCut#plan` reads the checkout
+   and moves nothing — never fetches, never pulls: the release is cut
+   from **this checkout** as it stands, so no change lands in it that
+   the operator did not see. The tree must be clean (`DirtyTreeError`,
+   with `git status`) and HEAD on a branch (`DetachedHeadError`) — any
+   branch: a `1.x` kept for patches releases as `main` does; a tag of
+   that name elsewhere than HEAD is a version already cut
+   (`TagElsewhereError`); a tag already **on** HEAD means a previous
+   run's cut landed and this one **resumes**. The bump: when the project
+   keeps a `VERSION` file whose version is not the release's, `from →
+   to`; none otherwise. The notes: the one-line log since the previous
+   tag (`git describe`'s nearest, HEAD's own excluded when resuming),
+   `Release v1.2.0.` for a first release. The plan is a frame ([The
+   verbs' UI](#the-verbs-ui)) — the **base** line says which checkout is
+   being released, and its drift from `origin/<branch>` *as last
+   fetched* (`git rev-list --left-right --count`; `never fetched` when
+   the remote branch is unknown), a warning to weigh, not a refusal:
+
+   ```
+   ┏━━ Release: 1.1.0 → 1.2.0 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   ┃ Base: main @ 437d12253339 — 3 commits since v1.1.0 (2 ahead of origin/main, unpushed)
+   ┃ Notes:
+   ┃   437d122 Fix the server's shutdown
+   ┃   …
+   ┃ Steps:
+   ┃   1. Bump VERSION 1.1.0 → 1.2.0
+   ┃   2. Tag v1.2.0
+   ┃   3. Push main + tag v1.2.0 to origin
+   ┃   4. Package cellbound-3d-linux64-release, cellbound-3d-server-linux64 at the tag
+   ┃   5. Create GitHub release v1.2.0 and attach 2 archives + release.json
+   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   ? Proceed? (y/N)
+   ```
+
+   Then the confirm: `--yes` skips it; at a terminal, `n` aborts with
+   nothing cut (`DeclinedError`); with no terminal to ask at (ai-flow,
+   a runner, a pipe) and no `--yes`, the verb refuses (`NoTerminalError`)
+   — a release is never cut on an assumed yes, and never hangs on a
+   prompt nobody sees.
+2. **The seam — cut, push, package.** A frame, `Cutting v1.2.0`
+   (`Resuming v1.2.0`), one spin each: `cut!` writes `VERSION`,
    commits `Bump version to 1.2.0` and tags HEAD — a no-op when
    resuming; `push!` pushes the branch and the tag to `origin`
    (idempotent). Then, for each release build in declaration order,
    `package` runs through the `LifecycleExecutor` with the build as its
-   positional — the builder when stale, the packager, the stamp — and
+   positional, under a `Packaging <build>` step — the builder has the terminal,
+   its output lands as written — the builder when stale, the packager,
+   the stamp — and
    the artifact is read back from the store, which must be **current at
    the tag's commit** (`ArtifactNotAtTagError` otherwise: packaged
    elsewhere, or the tree moved). The bump commit makes every earlier
@@ -572,17 +621,17 @@ order:
    a split set's parts as `<build>-<version>.tar.zst.00`, … with a
    rewritten `<build>-<version>.MANIFEST`), as links in a temporary
    directory, and `release.json` (`Manifest::Release`) is written beside
-   them. `GithubReleases` finds the tag's release or creates it
-   (`gh release create v1.2.0 --verify-tag`, title the tag, notes from
-   the plan) and uploads every asset with `--clobber`, so a run that died
-   mid-upload is healed by the next. The report:
+   them. In a `Publishing v1.2.0` frame, one spin each, `GithubReleases` finds the
+   tag's release (`GitHub release v1.2.0 exists — attaching to it`) or
+   creates it (`gh release create v1.2.0 --verify-tag`, title the tag,
+   notes from the plan) and uploads every asset with `--clobber`, so a
+   run that died mid-upload is healed by the next. The epilogue:
 
 ```
-released v1.2.0 (0123456789ab) → https://github.com/d3mlabs/cellbound-3d/releases/tag/v1.2.0
+✓ v1.2.0 released! (0123456789ab, from main) → https://github.com/d3mlabs/cellbound-3d/releases/tag/v1.2.0
   cellbound-3d-win64-release-1.2.0.zip (1.2.0+0123456789ab)
   cellbound-3d-server-linux64-release-1.2.0.zip (1.2.0+0123456789ab)
-  release.json
-nothing deployed — `dev deploy <channel> --release 1.2.0` ships it
+Nothing deployed — ship it: dev deploy <channel> --release 1.2.0
 ```
 
 `release.json` is what `deploy --release` reads to pick a channel's
@@ -604,6 +653,57 @@ A `release` without a version, or with two, is refused before the plan
 refusal. Every failure of the forge is a typed `GithubReleases::Error`
 (`ApiError`, `MalformedReleaseError`), a refused push is git's own, and
 each surfaces as the command's.
+
+### The verbs' UI
+
+The lifecycle verbs share one vocabulary ([dev#514](https://github.com/d3mlabs/dev/issues/514),
+[plans#52](https://github.com/d3mlabs/plans/issues/52)), `Dev::Cli::Ui`'s
+— the UI `bin/release.rb` had, standardized with the verb. Each name is
+a stdio contract:
+
+| Verb | Spinner | Child stdio | StdoutRouter | Used for |
+|---|---|---|---|---|
+| `frame(title) { }` | — | — | on inside the outermost frame, off on its way out (a raise included) | a stage: `Cutting v1.2.0`, `Publishing v1.2.0`, `Deploying staging (testing track)` |
+| `spin(name) { }` | yes | none, or captured (`Open3.capture3`, stdin supplied) | capturing | bump, tag, push (`Lifecycle::Git`), `gh release create` / `upload`, the `gh api` record |
+| `step(name) { }` | **no** | **inherited** — the child has the terminal | **off across the block**, on again after | `Packaging <build>` (the builder), `Shipping via …` (the publisher), anything that may prompt |
+| `note(text)` | — | — | — | the plan's lines, the epilogue |
+| `confirm(question)` | — | — | — | `Proceed?` — `true` / `false` / `nil` for no terminal |
+
+**Why the split.** A spinner captures every Ruby-level write and masks
+stdin while it animates. A child spawned with inherited stdio writes to
+fd 1 and reads fd 0 directly, past both: its lines garble the
+animation, and if it prompts (`sudo`, `gem push`'s OTP, a `run:` script
+asking anything) it waits on input nobody can see it asking for — the
+shape of every "dev hung" we have had. So a child that owns the
+terminal runs under a `step` and never a `spin`. **Enforced, not
+reviewed:** a `spin` owns the thread's terminal (`Dev::TerminalOwner`)
+and the places dev spawns with inherited stdio — `Lifecycle::Shell#run`
+/ `#pipeline` (every `build:` / `package:` / `run:` script, `gem push`),
+`Lifecycle::Gh#stream` — claim the terminal first and are refused under
+one (`TerminalOwner::UnderSpinnerError`, naming the command and the
+fix); so are a prompt, a frame, a step or another spin under a spin.
+The plain tier enforces it too, which is where tests catch it.
+
+**What a frame does and does not do.** The StdoutRouter is CLI::UI's
+Ruby-level replacement of `$stdout`'s writer; it prefixes dev's own
+lines with the open frame's bar. It is Ruby-level: a child's lines are
+never prefixed, in any tier — a `Packaging <build>` step's builder
+output sits between the step's name and its `✓` exactly as the builder
+wrote it, colors and progress bars intact. A frame groups dev's lines;
+it promises nothing about a child's, and dev does not put a pipe or a
+PTY between the child and the terminal to change that. The router is on
+only inside the outermost frame and off before anything else runs — an
+exec, a waited child outside a frame — so nothing downstream sees a
+swapped `$stdout`.
+
+**Tiers.** `bin/dev` picks `UiImpl` (CLI::UI) when stdout is a TTY or
+`CI` / `CLICOLOR_FORCE` is set, `NoUi` otherwise (a pipe, ai-flow, the
+runner). `NoUi` prints the same facts as plain lines, no escape codes:
+the frame's title, `✓ name` / `✗ name` per spin, a step's name before
+and its glyph after; `confirm` answers `nil` rather than assuming. The
+plain tier is the contract — a failed action's reason is in the error
+that bubbles, not in a rendering. `build` and `package` run bare for
+now; their frames and steps are [dev#516](https://github.com/d3mlabs/dev/issues/516).
 
 ## The channel contract
 
@@ -841,7 +941,7 @@ missing step rather than performing it:
 | `deploy <channel> --release V` | a release `dev release V` cut, carrying an archive of each accepted (target, platform); a repo `gh` can reach with `contents: read` for the download | "`dev release V` cuts it" for a tag with no release; a build the release has no archive of is refused — the store never substitutes, deploy adds nothing to a release; a download whose digest is not `release.json`'s is removed and refused, nothing shipped |
 | `deploy --release V` | the above for every channel | stops at the first channel that refuses, the earlier ones deployed and recorded; name the channels to ship the rest |
 | `deploy status [--release V]` | a channel, a repo `gh` can reach | a channel exists or `deploy` does not; the forge's refusal is the command's error |
-| `release <version>` | a clean checkout on a branch with `origin`, the version not yet cut (or cut on HEAD: a resume), `release:` naming packageable builds; a repo `gh` can reach with `contents: write` | refuses before anything moves (dirty, detached, the tag elsewhere); packages each release build **at the tag** itself, so staleness cannot arise; a tag pushed with no release yet is what the retry resumes; the forge's refusal is the command's error |
+| `release <version> [--yes]` | a clean checkout on a branch with `origin`, the version not yet cut (or cut on HEAD: a resume), `release:` naming packageable builds; a repo `gh` can reach with `contents: write`; a terminal to confirm at, or `--yes` | refuses before anything moves (dirty, detached, the tag elsewhere, declined, no terminal without `--yes`); the base line says which checkout and how far from `origin` as last fetched — a warning, never a fetch; packages each release build **at the tag** itself, so staleness cannot arise; a tag pushed with no release yet is what the retry resumes; the forge's refusal is the command's error |
 
 ## Dispatch resolution
 

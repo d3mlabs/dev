@@ -3,6 +3,7 @@
 
 require "test_helper"
 require "dev/lifecycle"
+require "dev/terminal_owner"
 require "fileutils"
 require "pathname"
 require "tmpdir"
@@ -36,6 +37,27 @@ class Dev::Lifecycle::ShellTest < Minitest::Test
     Then
     statuses.map(&:success?) == [true, true, false]
     (root / "sorted.txt").read == "a\nb\n"
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "a child inherits the terminal, so under a spinner neither run nor pipeline spawns: refused by the terminal's owner, nothing run (plans#52)" do
+    Given
+    root = Pathname(Dir.mktmpdir("shell-"))
+
+    When
+    run = assert_raises(Dev::TerminalOwner::UnderSpinnerError) do
+      Dev::TerminalOwner.spinning { Dev::Lifecycle::Shell.new.run(["sh", "-c", "touch ran"], chdir: root) }
+    end
+    pipeline = assert_raises(Dev::TerminalOwner::UnderSpinnerError) do
+      Dev::TerminalOwner.spinning { Dev::Lifecycle::Shell.new.pipeline([["printf", "x"], ["sh", "-c", "cat > piped"]], chdir: root) }
+    end
+
+    Then
+    run.message.start_with?("`sh -c touch ran` would take the terminal under a spinner")
+    pipeline.message.start_with?("`printf | sh` would take the terminal under a spinner")
+    root.children.empty?
 
     Cleanup
     FileUtils.rm_rf(root)

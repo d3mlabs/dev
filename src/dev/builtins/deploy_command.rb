@@ -41,7 +41,7 @@ module Dev
     # ScriptPublisher, or the one the lock contributed); the seam is the
     # publisher over the selected shipments, on that track, with the
     # channel's scratch in the store, skipped under `--dry-run`; `after`
-    # reports each shipped and records the deploy as a GitHub Deployment
+    # records the deploy as a GitHub Deployment
     # (K6): the channel as its environment, the shipments' ref — the
     # artifacts' commit, or the release's tag — as its ref, the builds and
     # the track in its payload, the publisher's receipt in its `success`
@@ -50,6 +50,12 @@ module Dev
     # the operator must see — before the error bubbles. The receipt
     # crosses from the seam to `after` through the env: the template's one
     # channel between the stages.
+    #
+    # The UI (dev#514) is the lifecycle verbs' shared one: a frame naming
+    # the channel and the track that lists what ships, a step around the
+    # publisher (it has the terminal), a spin for the record, and an
+    # epilogue — the deployment and its page, the receipt, the receipt's
+    # hint.
     class DeployCommand < LifecycleCommand
       extend T::Sig
 
@@ -137,7 +143,6 @@ module Dev
       # @param placement [Placement, nil] the protocol's bound environment;
       #   nil when the lock could not place it at load
       # @param deployments [Lifecycle::GithubDeployments] the ledger each deploy is recorded in
-      # @param out [IO, StringIO]
       # @param err [IO, StringIO] where a failure record that itself failed is reported
       # @param fault [ChannelBinder::Fault, nil] why the channel cannot
       #   ship — a declared channel with no protocol (ChannelBinder#faults):
@@ -152,12 +157,11 @@ module Dev
           resolver: DispatchResolver,
           placement: T.nilable(Placement),
           deployments: Lifecycle::GithubDeployments,
-          out: T.any(IO, StringIO),
           err: T.any(IO, StringIO),
           fault: T.nilable(ChannelBinder::Fault),
         ).void
       end
-      def initialize(channel:, selector:, ports:, store:, resolver:, placement:, deployments:, out: $stdout, err: $stderr, fault: nil)
+      def initialize(channel:, selector:, ports:, store:, resolver:, placement:, deployments:, err: $stderr, fault: nil)
         super()
         @channel = channel
         @selector = selector
@@ -167,7 +171,6 @@ module Dev
         @placement = placement
         @fault = fault
         @deployments = deployments
-        @out = out
         @err = err
       end
 
@@ -217,10 +220,17 @@ module Dev
 
       sig { override.params(env: DeployEnv, context: ExecutionContext).void }
       def seam(env, context:)
-        _ = context
-        return if env.dry_run
+        ui = context.ui
+        ui.frame("Deploying #{env.channel} (#{source(env.selection)})#{" — dry run" if env.dry_run}") do
+          env.selection.shipments.each { |shipment| ui.note("  #{shipment_line(env, shipment)}") }
+          next if env.dry_run
 
-        env.receipt = env.publisher.publish(env.selection.shipments, channel: env.channel, track: env.selection.track, scratch: env.scratch)
+          # The publisher has the terminal — a `run:` script's lines, `gem
+          # push`'s OTP prompt — so a step, never a spin.
+          ui.step("Shipping via #{env.channel.publisher}") do
+            env.receipt = env.publisher.publish(env.selection.shipments, channel: env.channel, track: env.selection.track, scratch: env.scratch)
+          end
+        end
       rescue StandardError => e
         record_failure(env, e)
         raise
@@ -228,19 +238,17 @@ module Dev
 
       sig { override.params(env: DeployEnv, context: ExecutionContext).void }
       def after(env, context:)
-        _ = context
-        verb = env.dry_run ? "would deploy" : "deployed"
-        env.selection.shipments.each do |shipment|
-          line = "#{verb} #{shipment} → #{env.channel} (#{env.selection.track}): #{shipment.archive}"
-          line += " — stale, shipped under #{DeploySelector::ALLOW_STALE_FLAG}" if env.selection.stale.include?(shipment)
-          @out.puts line
+        ui = context.ui
+        if env.dry_run
+          ui.note("Nothing shipped, nothing recorded (#{DRY_RUN_FLAG})")
+          return
         end
-        return if env.dry_run
 
-        deployments = records(env, state: Lifecycle::DeploymentState::Success, description: env.receipt!.summary)
-          .map { |record| @deployments.record(record) }
-        @out.puts "recorded as GitHub Deployment #{deployments.map { |deployment| "##{deployment.id}" }.join(", ")} " \
-                  "(#{env.selection.track} track) → #{T.must(deployments.first).url}"
+        receipt = env.receipt!
+        deployments = ui.spin("Recording as GitHub Deployment") do
+          records(env, state: Lifecycle::DeploymentState::Success, description: receipt.summary).map { |record| @deployments.record(record) }
+        end
+        report(env, deployments, receipt, ui:)
       rescue Lifecycle::GithubDeployments::Error, Lifecycle::DeploymentRecord::UnknownRefError => e
         raise NotRecordedError, "deployed to #{env.channel}, but the deploy was not recorded: #{e.message}"
       end
@@ -258,6 +266,48 @@ module Dev
 
         raise UnboundChannelError,
           "`deploy #{@channel}` has no environment bound: the lock could not place it at load — re-lock it (dev deps update) and retry"
+      end
+
+      # Where the shipments come from, for the frame's title: the store's
+      # testing track, or the live track of a release.
+      #
+      # @param selection [DeploySelector::Selection]
+      # @return [String]
+      sig { params(selection: DeploySelector::Selection).returns(String) }
+      def source(selection)
+        release = selection.shipments.map(&:provenance).grep(Lifecycle::Provenance::Release).first
+        release ? "#{selection.track} track, release #{release.tag}" : "#{selection.track} track"
+      end
+
+      # @param env [DeployEnv]
+      # @param shipment [Lifecycle::Shipment]
+      # @return [String] the shipment, its archive, and the staleness it ships under
+      sig { params(env: DeployEnv, shipment: Lifecycle::Shipment).returns(String) }
+      def shipment_line(env, shipment)
+        line = "#{shipment}: #{shipment.archive}"
+        line += " — stale, shipped under #{DeploySelector::ALLOW_STALE_FLAG}" if env.selection.stale.include?(shipment)
+        line
+      end
+
+      # The epilogue: the channel deployed, the records and their page,
+      # the receipt, and the receipt's hint when the publisher left one.
+      #
+      # @param env [DeployEnv]
+      # @param deployments [Array<Lifecycle::Deployment>] the records made, in ref order
+      # @param receipt [Lifecycle::Receipt]
+      # @param ui [Cli::Ui]
+      # @return [void]
+      sig { params(env: DeployEnv, deployments: T::Array[Lifecycle::Deployment], receipt: Lifecycle::Receipt, ui: Cli::Ui).void }
+      def report(env, deployments, receipt, ui:)
+        count = env.selection.shipments.size
+        ids = deployments.map { |deployment| "##{deployment.id}" }.join(", ")
+        ui.note(
+          "{{v}} {{bold:#{env.channel} deployed!}} #{count} archive#{"s" unless count == 1} (#{env.selection.track} track), " \
+            "GitHub Deployment#{"s" unless deployments.one?} #{ids} → #{T.must(deployments.first).url}",
+        )
+        ui.note("  #{receipt.summary}")
+        hint = receipt.hint
+        ui.note(hint) if hint
       end
 
       # The records this deploy makes, one per ref the shipments came from
