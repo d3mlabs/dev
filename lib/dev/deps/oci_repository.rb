@@ -88,6 +88,10 @@ module Dev
         sig { returns(String) }
         def name = "#{host}/#{repository}"
 
+        # The reference as it was written: `<host>/<repository>:<tag>`.
+        sig { returns(String) }
+        def to_s = "#{name}:#{tag}"
+
         sig { returns(String) }
         def manifest_url = "https://#{host}/v2/#{repository}/manifests/#{tag}"
 

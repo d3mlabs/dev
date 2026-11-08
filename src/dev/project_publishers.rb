@@ -42,6 +42,17 @@ module Dev
       @contributed ||= Deps::Registry.publishers(project_root: @root, pinned: pinned_types, entries: @entries)
     end
 
+    # What this dev could contribute: each channel the table can ship to,
+    # with the types a pin of which reaches it (Registry.publisher_reach) —
+    # the lock plays no part. The ChannelBinder's diagnosis of a declared
+    # channel the lock leaves protocol-less (dev#509).
+    #
+    # @return [Hash{String => Array<Symbol>}]
+    sig { returns(T::Hash[String, T::Array[Symbol]]) }
+    def reach
+      Deps::Registry.publisher_reach(entries: @entries)
+    end
+
     private
 
     # The integration types the lock pins, each once.

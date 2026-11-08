@@ -134,7 +134,10 @@ install is the read side, the publisher the write side, both the same
 dependency, [ADR-0010](DECISIONS.md#adr-0010--the-verb-follows-the-channel)),
 and every project whose lock reaches that entry — directly or through an
 `install_alias`, as `ruby:` pins reach brew — gets a `deploy` channel of
-the entry's name (`Dev::ProjectPublishers`). Nothing in `dev.yml` names a
+the entry's name (`Dev::ProjectPublishers`) — or of the **destination's**
+name where the two differ (`Entry#channel`): gems pinned through the
+`bundler` type ship to `rubygems`, an `image` pin reaches `ghcr`
+([Built-in publishers](#built-in-publishers)). Nothing in `dev.yml` names a
 publisher. The declared and the contributed sets merge by name in
 `Dev::ChannelBinder`, at the composition root, before the command tree
 exists — the "third merge case" of `CommandRepository#merge`, applied to
@@ -144,7 +147,7 @@ channels since `deploy`'s children never land on the builtin's slot:
 | --- | --- | --- |
 | with `run:` | any | the script **replaces** the publisher; dev's stage still selects, checks and records |
 | without `run:` | a publisher of that name | the declaration **configures** it: `targets:` is the accept set, `desc` is the row, the protocol is the integration's |
-| without `run:` | none | refused at load (`ChannelBinder::ChannelProtocolError`), naming both fixes: declare `run:`, or depend on an integration whose publisher knows the endpoint |
+| without `run:` | none | binds with a **fault** ([dev#509](https://github.com/d3mlabs/dev/issues/509)) that says why — *this dev ships no `x` publisher* (a release ahead of the installed dev: `dev up` once one ships it) or *deps.lock pins no `x`* (depend on it in `dependencies.rb`, `dev deps update`) — or declare `run:`. It lists in `dev help deploy` with the cause on its Protocol line; `deploy <channel>` refuses with the full message (`DeployCommand::UnboundChannelError`). Every other verb runs: a manifest ahead of the installed dev must not take `dev deps install` down with it |
 | — | a publisher | the channel appears as the lock's: every packageable build accepted, a stock `desc`; a project with nothing packageable gets no row |
 
 ### The release
@@ -605,7 +608,7 @@ reaches it. Two kinds share one interface,
 | Publisher | Declared as | Knows |
 | --- | --- | --- |
 | `ScriptPublisher` | the channel's `run:` | nothing but its env: the script owns the endpoint, the credentials, the tool |
-| an integration publisher | the integration's registry entry (`publisher:`), reached by the project's lock; the channel is the entry's name | the endpoint, the app id and depots, the release asset layout — from the integration's declaration, not from `dev.yml` |
+| an integration publisher | the integration's registry entry (`publisher:`), reached by the project's lock; the channel is the entry's name, or its `channel:` when the destination is called otherwise | the endpoint, the app id and depots, the release asset layout — from the integration's declaration, not from `dev.yml` |
 
 Both obey two constraints, which is what makes the verb the same over
 either:
@@ -656,15 +659,36 @@ asks for; `Dev::ProjectPublishers` reads the lock once and asks; the
 Runner hands the table to `ChannelBinder` (the merge) and to `Ports` (the
 lookup). A built-in publisher is its integration's **repository class**
 when the write side shares the read side's API and credential story —
-`FicsitRepository` resolves mods from ficsit.app and publishes to it. The
-built-ins that exist are below; `steam`/`egs`
-([dev#426](https://github.com/d3mlabs/dev/issues/426)), `rubygems`/`ghcr`
-([dev#428](https://github.com/d3mlabs/dev/issues/428)) and `brew`
+`FicsitRepository` resolves mods from ficsit.app and publishes to it — and
+its own class otherwise. The built-in write sides are below — the
+registries' ([dev#428](https://github.com/d3mlabs/dev/issues/428)) and
+`ficsit` ([dev#427](https://github.com/d3mlabs/dev/issues/427)); `steam`/`egs`
+([dev#426](https://github.com/d3mlabs/dev/issues/426)) and `brew`
 ([dev#429](https://github.com/d3mlabs/dev/issues/429)) follow; an
 external integration's publisher arrives through
 [dev#300](https://github.com/d3mlabs/dev/issues/300)'s integration gems.
 
 ### Built-in publishers
+
+Each is the write side of a dependency type dev already resolves from the
+same store, so a project gets the channel by depending on the store
+([ADR-0010](DECISIONS.md#adr-0010--the-verb-follows-the-channel)), and
+each maps the two tracks onto what its destination has
+([dev#428](https://github.com/d3mlabs/dev/issues/428)):
+
+| Channel | Reached by | Publisher | Archive | `testing` | `live` | Credentials | Receipt |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `rubygems` | a `gem` declaration (the `bundler` type) | `Deps::RubygemsPublisher` — `gem push --host https://rubygems.org <archive>`, once per gem, at the repo root | a `.gem` (the target's `packager: as-is` over `gem build`; [dev#434](https://github.com/d3mlabs/dev/issues/434)'s `rubygem` packager) — anything else is refused before the first push | **refused** (`TestingTrackUnsupportedError`): rubygems.org has no track that is not live — a pushed version can never be reused, so a working artifact has nowhere to go; the message names `dev deploy rubygems --release <v>` | pushed | `dev cred` under `rubygems api_key` (`GEM_HOST_API_KEY` in the environment overrides it, the variable `gem` reads), handed to `gem push` through its env, never on argv | `pushed to https://rubygems.org: <file>, …` |
+| `ghcr` | an `image` block | `Deps::GhcrPublisher` — `docker load` of every archive first (a tarball that is not an image, carries no tag, or is tagged under another registry refuses the deploy with nothing pushed), then `docker tag` + `docker push` per image inside one `RegistryLogin` session with the write scope | a `docker save` tarball of one image tagged `ghcr.io/<org>/<name>:<anything>` — the archive decides the repository, the track decides the tag | pushed as `ghcr.io/<org>/<name>:testing-<build id>` (the id's `+` spelled `-`: a tag no floor ever names) | pushed as `ghcr.io/<org>/<name>:<version>` — what consumers pin | the registry login's: gh's token with `write:packages`, or the one `DEV_REGISTRY_TOKEN` names | `pushed <ref>, …` |
+
+Both leave the scratch untouched: `gem push` uploads the file as it is,
+and the engine's image store is the image publisher's own. The image
+publisher resolves the engine on first use, not at construction — the
+Registry builds every contributed publisher at load, for every command.
+A contributed channel the project does not declare accepts every
+packageable build, so a project with a gem target *and* a zip target
+declares `rubygems: { targets: [<gem>] }` to keep the zip out of it; the
+publisher's own check is the backstop, not the selection.
 
 **`ficsit`** — the Satisfactory Mod Repository (SMR, ficsit.app),
 contributed to every project whose lock pins a mod (`ficsit "SML"`;
@@ -1004,8 +1028,11 @@ wired in `Lifecycle::Ports` from a new `BuilderSpec` / `PackagerSpec`
 variant, and nowhere else. An integration's publisher needs no new spec:
 it is set as `publisher:` on the integration's `Deps::Registry::Entry`
 (with `publisher_needs:` naming the kwargs its constructor takes from
-the composition context — `project_root` today), and every project whose
-lock reaches the entry gets the channel; `PublisherSpec::Integration` is
+the composition context — `project_root` today — and `channel:` when the
+destination is not called as the type is: `rubygems`, `ghcr`), and every
+project whose lock reaches the entry gets the channel; the registry's
+consistency test fails on a `*_publisher.rb` no entry wires, and on two
+entries claiming one channel. `PublisherSpec::Integration` is
 the one reference the parser emits for "the lock's publisher of this
 name". The verbs, the selectors, the dispatcher and the store do not
 change: they see ports, builds and channels, never scripts, formats or

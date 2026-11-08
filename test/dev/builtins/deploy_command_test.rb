@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/channel_binder"
 require "dev/builtins/deploy_command"
 require "dev/deploy_selector"
 require "dev/dispatch"
@@ -130,7 +131,7 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     )
   end
 
-  def command(channel = self.channel("cellbound-3d-dev", "rspock"), placement: Dev::Placement::Host.new, publishers: {})
+  def command(channel = self.channel("cellbound-3d-dev", "rspock"), placement: Dev::Placement::Host.new, publishers: {}, fault: nil)
     host_rule = Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: (@root / "no-marker").to_s), inside_container: false)
     settings = Dev::Settings.new(config_path: (@root / "config.yml").to_s, system_config_path: (@root / "none.yml").to_s)
     resolver = Dev::DispatchResolver.new(
@@ -143,6 +144,7 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
       store: store,
       resolver: resolver,
       placement: placement,
+      fault: fault,
       deployments: Dev::Lifecycle::GithubDeployments.new(gh: @gh),
       out: @out,
       err: @err,
@@ -385,6 +387,20 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     Then
     error = raises Dev::Builtins::DeployCommand::UnboundChannelError
     error.message.include?("`deploy staging` has no environment bound")
+  end
+
+  test "a channel bound with a fault refuses with that fault, and says so in its details (dev#509)" do
+    Given
+    fault = Dev::ChannelBinder::Fault.new(summary: "deps.lock pins no `steam`", message: "channel 'deploy staging' has no protocol: it declares no `run:` and deps.lock pins no `steam` — depend on one in dependencies.rb")
+    verb = command(placement: nil, fault:)
+
+    When
+    execute(verb, "rspock")
+
+    Then
+    error = raises Dev::Builtins::DeployCommand::UnboundChannelError
+    error.message == fault.message
+    verb.details.fetch(1) == "Protocol: run: sh ./stage.sh — deps.lock pins no `steam`"
   end
 
   test "`--runner` sends the verb to the label re-spelled as given — the channel, the build, the selection flags — and the host selects from its own store: nothing is read, shipped or recorded here" do

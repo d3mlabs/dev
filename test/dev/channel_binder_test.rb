@@ -18,8 +18,10 @@ class Dev::ChannelBinderTest < Minitest::Test
     Dev::Lifecycle::Channel.new(name:, desc: name, accepts: [Dev::Lifecycle::BuildPattern.parse(pattern, all_targets)], publisher:)
   end
 
-  def binder(*contributed, targets: all_targets)
-    Dev::ChannelBinder.new(publishers: contributed.to_h { |name| [name, RecordingPublisher.new] }, targets:)
+  REACH = { "steam" => %i[steam], "brew" => %i[brew ruby] }.freeze
+
+  def binder(*contributed, targets: all_targets, reach: REACH)
+    Dev::ChannelBinder.new(publishers: contributed.to_h { |name| [name, RecordingPublisher.new] }, reach:, targets:)
   end
 
   test "a declared channel without run: configures the lock's publisher of its name: its targets: stay, the protocol is the integration's" do
@@ -75,23 +77,34 @@ class Dev::ChannelBinderTest < Minitest::Test
     binder.bind({}) == {}
   end
 
-  test "a declared channel with neither run: nor a contributed publisher of its name is refused at load, naming both fixes: #{what}" do
+  test "a declared channel with neither run: nor a contributed publisher of its name binds with a fault that says why and what to do, and nothing else is refused (dev#509): #{what}" do
     Given
-    steam = channel("steam", INTEGRATION.new(name: "steam"))
+    channel = channel(name, INTEGRATION.new(name: name))
 
     When
-    binder(*contributed).bind({ "steam" => steam })
+    bound = binder(*contributed, reach:).bind({ name => channel })
+    faults = binder(*contributed, reach:).faults({ name => channel })
 
-    Then
-    error = raises Dev::ChannelBinder::ChannelProtocolError
-    error.message.include?("channel 'deploy steam' has no protocol")
-    error.message.include?("the lock contributes no `steam` publisher (it contributes: #{listed})")
-    error.message.include?("declare `run:`")
-    error.message.include?("dependencies.rb (d3mlabs/dev#192)")
+    Then "the channel is in the set as declared; the fault is its reason, the summary its cause"
+    bound.fetch(name).equal?(channel)
+    faults.keys == [name]
+    faults.fetch(name).summary == summary
+    faults.fetch(name).message == "channel 'deploy #{name}' has no protocol: it declares no `run:` and #{summary} — #{fix}, " \
+      "or declare `run:` (a script shipping `$DEV_ARTIFACT`) (d3mlabs/dev#192)"
 
     Where
-    what                        | contributed | listed
-    "an empty lock"             | []          | "none"
-    "a lock contributing other" | ["brew"]    | "brew"
+    what                                        | name    | contributed | reach  | summary                                   | fix
+    "this dev ships no such publisher"          | "brew"  | []          | {}     | "this dev ships no `brew` publisher"      | "`dev up` once a release ships it"
+    "this dev ships it, the lock pins no type"  | "brew"  | []          | REACH  | "deps.lock pins none of `brew`, `ruby`"   | "depend on one in dependencies.rb and `dev deps update`"
+    "same, other publishers contributed"        | "steam" | ["brew"]    | REACH  | "deps.lock pins no `steam`"               | "depend on one in dependencies.rb and `dev deps update`"
+  end
+
+  test "channels with a protocol have no fault" do
+    Given
+    steam = channel("steam", INTEGRATION.new(name: "steam"))
+    staging = channel("staging", SCRIPT.new(command: "./bin/stage"))
+
+    Expect
+    binder("steam").faults({ "steam" => steam, "staging" => staging }) == {}
   end
 end
