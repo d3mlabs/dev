@@ -38,3 +38,10 @@ The seams:
 - Project commands live in dev.yml, never in dev's core; `commands:` parse
   to the node's `children` (`CommandGroup` when no `run:`) and merge child
   by child with a same-named builtin in the repository.
+- A node that heads children **and** runs something bare is not a group:
+  it is a `LifecycleCommand`/`BuiltinCommand` built with `children:`
+  (`deploy` → `DeployAllCommand`: the channels and `status` beneath, the
+  `--release` fan-out as its own body). Resolution still descends into
+  its children; a leftover positional reaches the node's `before`/`call`,
+  so the node refuses it by name itself (the group's not-found no longer
+  applies).
