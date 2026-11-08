@@ -69,22 +69,19 @@ module Dev
       # @param status [DeployStatusCommand] the ledger's reader, the last child
       # @param executor [LifecycleExecutor] runs each channel as itself
       # @param vocabulary [Cli::FlagVocabulary] parses the carried words against each channel's flags
-      # @param out [IO, StringIO]
       sig do
         params(
           channels: T::Hash[String, DeployCommand],
           status: DeployStatusCommand,
           executor: LifecycleExecutor,
           vocabulary: Cli::FlagVocabulary,
-          out: T.any(IO, StringIO),
         ).void
       end
-      def initialize(channels:, status:, executor: LifecycleExecutor.new, vocabulary: Cli::FlagVocabulary.new, out: $stdout)
+      def initialize(channels:, status:, executor: LifecycleExecutor.new, vocabulary: Cli::FlagVocabulary.new)
         super(children: T.let(channels.merge(DeployStatusCommand::NAME => status), T::Hash[String, Command]))
         @channels = channels
         @executor = executor
         @vocabulary = vocabulary
-        @out = out
       end
 
       sig { override.returns(String) }
@@ -126,16 +123,16 @@ module Dev
       sig { override.params(env: FanOutEnv, context: ExecutionContext).void }
       def seam(env, context:)
         @channels.each do |name, channel|
-          @out.puts "#{NAME} #{name} #{env.words.join(" ")}"
+          context.ui.say("{{bold:#{NAME} #{name} #{env.words.join(" ")}}}")
           @executor.execute(channel, args: @vocabulary.parse(channel, path: [NAME, name], args: env.words), context:)
         end
       end
 
       sig { override.params(env: FanOutEnv, context: ExecutionContext).void }
       def after(env, context:)
-        _ = context
-        verb = env.dry_run ? "would ship" : "shipped"
-        @out.puts "#{env.tag} #{verb} to #{@channels.size == 1 ? "1 channel" : "#{@channels.size} channels"}: #{@channels.keys.join(", ")}"
+        count = @channels.size == 1 ? "1 channel" : "#{@channels.size} channels"
+        head = env.dry_run ? "#{env.tag} would ship" : "{{v}} {{bold:#{env.tag} shipped}}"
+        context.ui.say("#{head} to #{count}: #{@channels.keys.join(", ")}")
       end
     end
   end

@@ -130,7 +130,6 @@ module Dev
       # @param listing [BuildListing] what the usage lists
       # @param executor [LifecycleExecutor] runs `package` as itself
       # @param clock [Proc] the manifest's instant (injectable for tests)
-      # @param out [IO, StringIO]
       sig do
         params(
           release: Lifecycle::ReleaseBuilds,
@@ -141,10 +140,9 @@ module Dev
           listing: BuildListing,
           executor: LifecycleExecutor,
           clock: T.proc.returns(Time),
-          out: T.any(IO, StringIO),
         ).void
       end
-      def initialize(release:, cut:, package:, store:, releases:, listing:, executor: LifecycleExecutor.new, clock: -> { Time.now }, out: $stdout)
+      def initialize(release:, cut:, package:, store:, releases:, listing:, executor: LifecycleExecutor.new, clock: -> { Time.now })
         super()
         @release = release
         @cut = cut
@@ -154,7 +152,6 @@ module Dev
         @listing = listing
         @executor = executor
         @clock = clock
-        @out = out
       end
 
       sig { override.returns(String) }

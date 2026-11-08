@@ -64,7 +64,7 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     @out = StringIO.new
     @err = StringIO.new
     @gh = FakeGh.new(root: @project)
-    @ui = typed_mock(Dev::Cli::Ui)
+    @ui = Dev::Cli::NoUi.new(out: @out)
     @remote = ScriptedRemote.new(root: @project, ui: @ui)
   end
 
@@ -146,7 +146,6 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
       placement: placement,
       fault: fault,
       deployments: Dev::Lifecycle::GithubDeployments.new(gh: @gh),
-      out: @out,
       err: @err,
     )
   end
@@ -170,7 +169,8 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     execute(command)
 
     Then "the script ran once per archive with the channel, the track, the build and the manifest's keys, in the channel's scratch; " \
-         "the verb reported each and the record; the record is one GitHub Deployment: the channel as environment, the commit as ref, " \
+         "the UI (dev#514): the deploy frame listing what ships, the shipping frame, the record step and the epilogue with the receipt; " \
+         "the record is one GitHub Deployment: the channel as environment, the commit as ref, " \
          "the builds and the testing track as payload, a success status carrying the run: line as the receipt"
     shipped == [
       "staging testing cellbound-3d-win64-dev 1.2.3+#{head} #{head} false #{win64.archive}",
@@ -179,10 +179,14 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     ]
     (store.root / ".staging" / "left-behind").file?
     @out.string == <<~OUT
-      deployed cellbound-3d-win64-dev (1.2.3+#{head}) → staging (testing): #{win64.archive}
-      deployed cellbound-3d-linux64-dev (1.2.3+#{head}) → staging (testing): #{linux64.archive}
-      deployed rspock (1.2.3+#{head}) → staging (testing): #{gem.archive}
-      recorded as GitHub Deployment #41 (testing track) → https://github.com/#{REPO}/deployments/staging
+      Deploying staging (testing track)
+        cellbound-3d-win64-dev (1.2.3+#{head}): #{win64.archive}
+        cellbound-3d-linux64-dev (1.2.3+#{head}): #{linux64.archive}
+        rspock (1.2.3+#{head}): #{gem.archive}
+      Shipping via run: sh ./stage.sh
+      ✓ Recording as GitHub Deployment
+      ✓ staging deployed! 3 archives (testing track), GitHub Deployment #41 → https://github.com/#{REPO}/deployments/staging
+        run: sh ./stage.sh
     OUT
     @gh.posted == [
       {
@@ -224,12 +228,36 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     steam.calls.first.scratch == store.root / ".steam"
     shipped == []
     @out.string == <<~OUT
-      deployed cellbound-3d-win64-release (1.2.3+#{head}) → steam (testing): #{win64.archive}
-      deployed cellbound-3d-linux64-release (1.2.3+#{head}) → steam (testing): #{linux64.archive}
-      recorded as GitHub Deployment #41 (testing track) → https://github.com/#{REPO}/deployments/steam
+      Deploying steam (testing track)
+        cellbound-3d-win64-release (1.2.3+#{head}): #{win64.archive}
+        cellbound-3d-linux64-release (1.2.3+#{head}): #{linux64.archive}
+      Shipping via publisher: steam
+      ✓ Recording as GitHub Deployment
+      ✓ steam deployed! 2 archives (testing track), GitHub Deployment #41 → https://github.com/#{REPO}/deployments/steam
+        recorded cellbound-3d-win64-release, cellbound-3d-linux64-release
     OUT
     @gh.posted.first["environment"] == "steam"
     @gh.posted.last == { "state" => "success", "description" => "recorded cellbound-3d-win64-release, cellbound-3d-linux64-release" }
+  end
+
+  # A publisher whose receipt says what to do now (brew's upgrade line).
+  class HintingPublisher < RecordingPublisher
+    def publish(shipments, channel:, track:, scratch:)
+      Dev::Lifecycle::Receipt.new(summary: super.summary, hint: "To update locally: brew upgrade dev")
+    end
+  end
+
+  test "a receipt's hint closes the epilogue — the publisher's word on what to do now (dev#514)" do
+    Given
+    stamp("cellbound-3d-win64-release")
+    stamp("cellbound-3d-linux64-release")
+    forge_accepts
+
+    When
+    execute(command(steam_channel, publishers: { "steam" => HintingPublisher.new }))
+
+    Then
+    @out.string.end_with?("  recorded cellbound-3d-win64-release, cellbound-3d-linux64-release\nTo update locally: brew upgrade dev\n")
   end
 
   test "--dry-run selects and reports, running no protocol and recording nothing" do
@@ -244,7 +272,11 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     Then
     shipped == []
     !(store.root / ".staging").exist?
-    @out.string == "would deploy rspock (1.2.3+#{head}) → staging (testing): #{store.artifact(build("rspock")).archive}\n"
+    @out.string == <<~OUT
+      Deploying staging (testing track) — dry run
+        rspock (1.2.3+#{head}): #{store.artifact(build("rspock")).archive}
+      Nothing shipped, nothing recorded (--dry-run)
+    OUT
     @gh.calls == []
   end
 
@@ -266,7 +298,7 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
       "payload" => { "schema" => 1, "track" => "testing", "builds" => [{ "build" => "rspock", "build_id" => "1.2.3+#{head}" }] },
     }
     @gh.posted.last == { "state" => "failure", "description" => "deploy script `sh ./stage.sh` for rspock → staging exited 7" }
-    @out.string == ""
+    @out.string == "Deploying staging (testing track)\n  rspock (1.2.3+#{head}): #{store.artifact(build("rspock")).archive}\nShipping via run: sh ./stage.sh\n"
     @err.string == ""
   end
 
@@ -299,7 +331,7 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     error.message.start_with?("deployed to staging, but the deploy was not recorded: the deployment ledger could not be written")
     error.message.include?("No ref found")
     shipped == ["staging testing rspock 1.2.3+#{head} #{head} false #{gem.archive}"]
-    @out.string == "deployed rspock (1.2.3+#{head}) → staging (testing): #{gem.archive}\n"
+    @out.string.end_with?("Shipping via run: sh ./stage.sh\n✗ Recording as GitHub Deployment\n")
   end
 
   test "artifacts of two commits shipped together under --allow-stale are two records, one per ref" do
@@ -318,7 +350,7 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
       [head, ["cellbound-3d-win64-dev", "cellbound-3d-linux64-dev"]],
       [stale.manifest.state.sha, ["rspock"]],
     ]
-    @out.string.end_with?("recorded as GitHub Deployment #41, #42 (testing track) → https://github.com/#{REPO}/deployments/staging\n")
+    @out.string.include?("✓ staging deployed! 3 archives (testing track), GitHub Deployments #41, #42 → https://github.com/#{REPO}/deployments/staging\n")
   end
 
   test "a stale artifact is refused before the protocol runs" do
@@ -346,7 +378,7 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
 
     Then "and the record's ref is the commit the artifact came from, not the tree's"
     shipped == ["staging testing rspock 1.2.3+#{stale.manifest.state.sha} #{stale.manifest.state.sha} false #{stale.archive}"]
-    @out.string.start_with?("deployed rspock (1.2.3+#{stale.manifest.state.sha}) → staging (testing): #{stale.archive} — stale, shipped under --allow-stale\n")
+    @out.string.include?("  rspock (1.2.3+#{stale.manifest.state.sha}): #{stale.archive} — stale, shipped under --allow-stale\n")
     @gh.posted.first["ref"] == stale.manifest.state.sha
   end
 
@@ -377,7 +409,7 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     Then
     error = raises Dev::Lifecycle::ScriptPublisher::DeployScriptFailedError
     error.message == "deploy script `sh ./stage.sh` for rspock → staging exited 7"
-    @out.string == ""
+    @out.string.end_with?("Shipping via run: sh ./stage.sh\n")
   end
 
   test "a channel whose protocol has no placement bound is refused by name before the store is read" do
@@ -406,7 +438,6 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
   test "`--runner` sends the verb to the label re-spelled as given — the channel, the build, the selection flags — and the host selects from its own store: nothing is read, shipped or recorded here" do
     Given "no artifact in this store at all"
     @remote.install_workflow
-    @ui.expects(:print_remote_crossing).with(destination: "on gamebox", snapshot: ScriptedRemote::SHA[0, 12])
 
     When
     execute(command, "rspock", "--runner", "gamebox", "--allow-stale", "--dry-run", "--config", "release", "--release", "1.2.0")
@@ -416,7 +447,7 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     @remote.sync.synced == ["gamebox"]
     shipped == []
     @gh.calls == []
-    @out.string == ""
+    @out.string == "→ on gamebox, snapshot #{ScriptedRemote::SHA[0, 12]}\n"
   end
 
   test "a channel whose protocol has no placement bound is refused even under `--runner`" do
@@ -456,10 +487,14 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     ]
     (dir / "rspock-1.2.0.zip").read == "gem"
     @out.string == <<~OUT
-      deployed cellbound-3d-win64-dev (1.2.0+3f2a1c9d8e7b) → staging (live): #{dir / "cellbound-3d-win64-dev-1.2.0.zip"}
-      deployed cellbound-3d-linux64-dev (1.2.0+3f2a1c9d8e7b) → staging (live): #{dir / "cellbound-3d-linux64-dev-1.2.0.zip"}
-      deployed rspock (1.2.0+3f2a1c9d8e7b) → staging (live): #{dir / "rspock-1.2.0.zip"}
-      recorded as GitHub Deployment #41 (live track) → https://github.com/#{REPO}/deployments/staging
+      Deploying staging (live track, release v1.2.0)
+        cellbound-3d-win64-dev (1.2.0+3f2a1c9d8e7b): #{dir / "cellbound-3d-win64-dev-1.2.0.zip"}
+        cellbound-3d-linux64-dev (1.2.0+3f2a1c9d8e7b): #{dir / "cellbound-3d-linux64-dev-1.2.0.zip"}
+        rspock (1.2.0+3f2a1c9d8e7b): #{dir / "rspock-1.2.0.zip"}
+      Shipping via run: sh ./stage.sh
+      ✓ Recording as GitHub Deployment
+      ✓ staging deployed! 3 archives (live track), GitHub Deployment #41 → https://github.com/#{REPO}/deployments/staging
+        run: sh ./stage.sh
     OUT
     @gh.posted.first.slice("ref", "environment", "production_environment") == { "ref" => "v1.2.0", "environment" => "staging", "production_environment" => true }
     @gh.posted.first["payload"] == {
@@ -512,7 +547,11 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
 
     Then
     shipped == []
-    @out.string == "would deploy rspock (1.2.0+3f2a1c9d8e7b) → staging (live): #{dir / "rspock-1.2.0.zip"}\n"
+    @out.string == <<~OUT
+      Deploying staging (live track, release v1.2.0) — dry run
+        rspock (1.2.0+3f2a1c9d8e7b): #{dir / "rspock-1.2.0.zip"}
+      Nothing shipped, nothing recorded (--dry-run)
+    OUT
     (dir / "rspock-1.2.0.zip").file?
     @gh.posted == []
   end

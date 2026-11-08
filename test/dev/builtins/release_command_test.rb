@@ -162,7 +162,7 @@ class Dev::Builtins::ReleaseCommandTest < Minitest::Test
   def command(release: release_builds, store: self.store)
     Dev::Builtins::ReleaseCommand.new(
       release:, cut: Dev::Lifecycle::ReleaseCut.new(git: Dev::Lifecycle::Git.new(root: @project)), package:, store:,
-      releases: Dev::Lifecycle::GithubReleases.new(gh: @gh), listing:, clock: -> { NOW }, out: @out,
+      releases: Dev::Lifecycle::GithubReleases.new(gh: @gh), listing:, clock: -> { NOW },
     )
   end
 

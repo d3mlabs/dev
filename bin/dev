@@ -96,6 +96,9 @@ if global_dispatch.global_command?(ARGV)
 end
 
 ui = if $stdout.tty? || ENV["CI"] || ENV["CLICOLOR_FORCE"]
+  # The router draws the frame's bar down the left of everything written
+  # inside it — the lifecycle verbs' steps and the builders they spawn.
+  CLI::UI::StdoutRouter.enable
   Dev::Cli::UiImpl.new(cli_ui: CLI::UI)
 else
   Dev::Cli::NoUi.new

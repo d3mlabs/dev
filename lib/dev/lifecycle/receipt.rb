@@ -12,6 +12,10 @@ module Dev
     # as a GitHub Deployment (DeploymentRecord); the receipt is the part
     # only the publisher could say.
     #
+    # A receipt may add a **hint**: what the operator can do now that it
+    # landed (brew's upgrade line), said by the one party that knows —
+    # `deploy` prints it last and knows nothing of the channel behind it.
+    #
     # Owns the invariant that a receipt says something: an empty summary
     # would record a deploy nobody can read back.
     class Receipt < T::Struct
@@ -23,10 +27,14 @@ module Dev
       # @return [String] one line, in the publisher's words
       const :summary, String
 
+      # @return [String, nil] what to do now, in the publisher's words
+      const :hint, T.nilable(String)
+
       # @param summary [String] non-empty
+      # @param hint [String, nil]
       # @raise [EmptyReceiptError]
-      sig { params(summary: String).void }
-      def initialize(summary:)
+      sig { params(summary: String, hint: T.nilable(String)).void }
+      def initialize(summary:, hint: nil)
         super
         raise EmptyReceiptError, "a receipt must say what the publisher did" if summary.strip.empty?
       end
@@ -35,13 +43,13 @@ module Dev
       def to_s = summary
 
       sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(Receipt) && summary == other.summary
+      def ==(other) = other.is_a?(Receipt) && summary == other.summary && hint == other.hint
 
       sig { params(other: Object).returns(T::Boolean) }
       def eql?(other) = self == other
 
       sig { returns(Integer) }
-      def hash = [Receipt, summary].hash
+      def hash = [Receipt, summary, hint].hash
     end
   end
 end
