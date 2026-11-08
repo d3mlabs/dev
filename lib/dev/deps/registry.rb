@@ -27,6 +27,8 @@ require_relative "pip_repository"
 require_relative "pip_integration"
 require_relative "url_repository"
 require_relative "oci_repository"
+require_relative "ghcr_publisher"
+require_relative "rubygems_publisher"
 require_relative "brew_cask_repository"
 require_relative "brew_scheme"
 require_relative "exact_scheme"
@@ -61,6 +63,11 @@ module Dev
     # data root (ADR-0008), so nothing here says where a type installs — the
     # lock's `host:` filter does that per platform.
     module Registry
+      # An Entry names a channel but has no publisher to contribute it.
+      # Beside Entry rather than inside it: a class body in Data.define's
+      # block is lexically the module's.
+      class ChannelWithoutPublisherError < ArgumentError; end
+
       # @param symbol [Symbol] the DSL/declaration integration symbol (e.g. :brew)
       # @param repository [Class] Repository subclass that reports this type's universes
       # @param repository_needs [Array<Symbol>] extra kwargs the repository takes
@@ -93,9 +100,15 @@ module Dev
       #   channel of this entry's name with no dev.yml line. nil for a type
       #   that is a source only.
       # @param publisher_needs [Array<Symbol>] extra kwargs the publisher takes
+      # @param channel [String, nil] the name of the `deploy` channel the
+      #   publisher contributes, when the **destination** is not called as
+      #   the dependency type is: gems (`bundler`) ship to `rubygems`, an
+      #   `image` is pushed to `ghcr`. nil names the channel after the
+      #   entry (`steam`, `brew`), the common case where the integration
+      #   and the store share a name. Meaningless without a publisher.
       Entry = Data.define(
         :symbol, :repository, :repository_needs, :scheme, :scheme_args, :locker, :locker_needs,
-        :integration, :integration_needs, :install_alias, :publisher, :publisher_needs,
+        :integration, :integration_needs, :install_alias, :publisher, :publisher_needs, :channel,
       ) do
         extend T::Sig
 
@@ -139,6 +152,9 @@ module Dev
         sig { returns(T::Array[Symbol]) }
         def publisher_needs = to_h.fetch(:publisher_needs)
 
+        sig { returns(T.nilable(String)) }
+        def channel = to_h.fetch(:channel)
+
         sig do
           params(
             symbol: Symbol,
@@ -153,12 +169,16 @@ module Dev
             install_alias: T.nilable(Symbol),
             publisher: T.nilable(T::Class[Lifecycle::Publisher]),
             publisher_needs: T::Array[Symbol],
+            channel: T.nilable(String),
           ).void
         end
         def initialize(symbol:, repository:, scheme:, integration:,
                        repository_needs: [], scheme_args: {}, locker: nil, locker_needs: [],
-                       integration_needs: [], install_alias: nil, publisher: nil, publisher_needs: [])
+                       integration_needs: [], install_alias: nil, publisher: nil, publisher_needs: [], channel: nil)
           super
+          return if channel.nil? || publisher
+
+          raise ChannelWithoutPublisherError, "entry #{symbol} names channel #{channel.inspect} but has no publisher to contribute it"
         end
 
         # @return [Boolean] whether this type installs on a build host (an
@@ -176,16 +196,21 @@ module Dev
         end
 
         # The `deploy` channel this entry contributes, when it publishes:
-        # the entry's own name, since the channel *is* the integration's
-        # write side (`deploy steam` is the `steam` integration's).
+        # the destination's name — the entry's own when the integration and
+        # the store share it (`deploy steam` is the `steam` integration's
+        # write side), the `channel:` override when they do not (`deploy
+        # rubygems` is where the `bundler` type's gems go).
         #
         # @return [String]
         sig { returns(String) }
-        def channel_name = symbol.to_s
+        def channel_name = channel || symbol.to_s
       end
 
       INTEGRATIONS = T.let(
         [
+          # Gems come from rubygems.org, so a project pinning gems can push
+          # one there (dev#428): the write side is the `rubygems` channel,
+          # named for the store rather than for bundler, the tool.
           Entry.new(
             symbol: :bundler,
             repository: BundlerRepository,
@@ -195,6 +220,9 @@ module Dev
             locker_needs: %i[project_root ruby_version],
             integration: BundlerIntegration,
             integration_needs: %i[project_root],
+            publisher: RubygemsPublisher,
+            publisher_needs: %i[project_root],
+            channel: "rubygems",
           ),
           Entry.new(
             symbol: :brew,
@@ -310,11 +338,16 @@ module Dev
           # registry serves. Nothing installs it — an image is not a store
           # tree (ADR-0009) — the container layer reads the pin
           # (Dev::EnvironmentImage) and builds or pulls the image from it.
+          # The write side (dev#428) is the registry the floor is pulled
+          # from: a project pinning an image can push one to GHCR, the
+          # `ghcr` channel.
           Entry.new(
             symbol: :image,
             repository: OciRepository,
             scheme: nil,
             integration: nil,
+            publisher: GhcrPublisher,
+            channel: "ghcr",
           ),
         ].freeze,
         T::Array[Entry],

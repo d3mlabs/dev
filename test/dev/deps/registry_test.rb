@@ -5,7 +5,10 @@ require "test_helper"
 require "dev/deps/registry"
 require "dev/deps/integration"
 require "dev/deps/brew_integration"
+require "dev/deps/bundler_repository"
 require "dev/deps/cmake_integration"
+require "dev/deps/ghcr_publisher"
+require "dev/deps/rubygems_publisher"
 require "dev/deps/xcode_integration"
 require "support/recording_publisher"
 require "pathname"
@@ -63,10 +66,52 @@ class Dev::Deps::RegistryTest < Minitest::Test
     steam.channel_name == "steam"
   end
 
-  test "no built-in entry publishes yet: the first write sides arrive with dev#426–#429" do
-    Expect
-    Dev::Deps::Registry::INTEGRATIONS.none?(&:publishes?)
-    Dev::Deps::Registry.publishers(project_root: Pathname("/tmp"), pinned: Dev::Deps::Registry::INTEGRATIONS.map(&:symbol)) == {}
+  test "an entry's channel is the destination's name when that differs from the type's, and only a publishing entry may name one" do
+    Given
+    gems = Dev::Deps::Registry::Entry.new(symbol: :bundler, repository: Dev::Deps::BundlerRepository, scheme: nil, integration: nil,
+      publisher: RecordingPublisher, channel: "rubygems")
+
+    When "a silent entry names a channel"
+    Dev::Deps::Registry::Entry.new(symbol: :cmake, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil, channel: "nowhere")
+
+    Then
+    raises Dev::Deps::Registry::ChannelWithoutPublisherError
+    gems.channel == "rubygems"
+    gems.channel_name == "rubygems"
+  end
+
+  test "the built-in write sides (dev#428): gems push to rubygems, an image to ghcr, each reached by its own pin and no other" do
+    Given
+    gems = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :bundler }
+    image = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :image }
+
+    Expect "the two entries publish under the store's name; the rest are silent"
+    gems.publisher == Dev::Deps::RubygemsPublisher
+    gems.publisher_needs == %i[project_root]
+    gems.channel_name == "rubygems"
+    image.publisher == Dev::Deps::GhcrPublisher
+    image.publisher_needs == []
+    image.channel_name == "ghcr"
+    Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:symbol) == %i[bundler image]
+    Dev::Deps::Registry::INTEGRATIONS.filter_map(&:channel).uniq.size == Dev::Deps::Registry::INTEGRATIONS.count(&:publishes?)
+  end
+
+  test "publishers over the built-in table: #{pinned.inspect} contributes #{channels.inspect}" do
+    When
+    publishers = Dev::Deps::Registry.publishers(project_root: Pathname("/project"), pinned:)
+
+    Then
+    publishers.keys == channels
+    publishers.values.map(&:class) == classes
+
+    Where
+    pinned             | channels              | classes
+    [:bundler]         | ["rubygems"]          | [Dev::Deps::RubygemsPublisher]
+    [:image]           | ["ghcr"]              | [Dev::Deps::GhcrPublisher]
+    [:bundler, :image] | ["rubygems", "ghcr"]  | [Dev::Deps::RubygemsPublisher, Dev::Deps::GhcrPublisher]
+    [:ruby]            | []                    | []
+    [:gh, :steam]      | []                    | []
+    []                 | []                    | []
   end
 
   test "publishers builds one instance per publishing entry the lock reaches, directly or through an alias, with the kwargs it asks for" do
