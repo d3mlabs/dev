@@ -9,6 +9,7 @@ require "dev/enrolled_runner"
 require "dev/host_reach"
 require "dev/label_contracts"
 require "dev/linux_data_root_provisioner"
+require "dev/operator_access"
 require "dev/project_manifest"
 require "dev/runner_discovery"
 require "dev/runner_slots"
@@ -193,6 +194,7 @@ module Dev
           reach_factory: ReachFactory,
           out: T.any(IO, StringIO),
           groups: T.nilable(Dev::RunnerGroups),
+          refresher: Dev::OperatorAccess::Refresher,
         ).void
       end
       def initialize(
@@ -218,10 +220,17 @@ module Dev
         reach_factory: ->(identity) { Dev::HostReach.new(identity: identity) },
         out: $stdout,
         # The org's runner groups, converged over the same registry.
-        groups: nil
+        groups: nil,
+        # How the operator's login is widened when the pre-flight offers it.
+        refresher: Dev::OperatorAccess::DEFAULT_REFRESHER
       )
         super()
         @groups = T.let(groups || Dev::RunnerGroups.new(registry: registry, out: out), Dev::RunnerGroups)
+        # The operator's own preconditions, probed first (dev#493).
+        @operator_access = T.let(
+          Dev::OperatorAccess.new(registry: registry, confirmer: confirmer, out: out, refresher: refresher),
+          Dev::OperatorAccess,
+        )
         @runner_setup_factory = runner_setup_factory
         @contracts_factory = contracts_factory
         @repo_resolver = repo_resolver
@@ -284,6 +293,11 @@ module Dev
                                   every job on this host fetches private dependencies with
             root (sudo)           installs the service unit
           and a job writes to its own repo with its GITHUB_TOKEN, never with a host login.
+          Your login is probed first — the call the registration will make (the org's
+          runner groups with --org; the repo's runners otherwise) — before sudo or brew
+          run: refused, register names what it needs that for and the classic-scope
+          fix, offers `gh auth refresh -h github.com -s admin:org` (or -s repo) at a
+          terminal, and stops otherwise.
 
           On Linux the runner user is `#{Dev::RunnerUser::DEFAULT_NAME}` by rule (--as renames it): created if absent, in
           docker and #{LinuxDataRootProvisioner::GROUP}, no password, no sudo; its commands and every job run on the
@@ -343,7 +357,13 @@ module Dev
       sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
         org = args.flag?(ORG_FLAG)
-        labels = resolve_labels(args, context, org)
+        # The one repo derivation (`--repo`, else the checkout's): the
+        # label, the operator pre-flight and the group's access all read
+        # it — after the usage checks, so a bare --org is told what it is
+        # missing rather than what gh could not resolve.
+        resolve_repo = memoized { @repo_resolver.call(args.value(REPO_FLAG)) }
+        labels = resolve_labels(args, context, org, resolve_repo)
+        repo = resolve_repo.call
         slots = resolve_slots(args)
         contract = resolve_group(args, labels, org)
         config = RunnerSetupConfig.new(
@@ -352,6 +372,11 @@ module Dev
           name: args.value(NAME_FLAG),
           group: contract&.name,
         )
+
+        # The operator's login first, before sudo, brew or the engine: can
+        # it do what this registration asks of it (mint tokens; with --org,
+        # read and converge runner groups)? Refused, this is where it stops.
+        @operator_access.check!(scope: org ? T.must(repo.split("/").first) : repo, org: org)
 
         container = context.project&.project_images&.containerized? || false
         engine = context.project&.engine
@@ -435,7 +460,7 @@ module Dev
         end
 
         if org
-          converge_access!(scope, group, args.value(REPO_FLAG))
+          converge_access!(scope, group, repo)
         else
           offer_exclusivity!(scope, labels, yes: yes)
         end
@@ -451,13 +476,13 @@ module Dev
       #
       # @param scope [String] the org
       # @param group [Dev::RunnerRegistry::Group, nil] the contract's group, when one was obliged
-      # @param repo_override [String, nil] `--repo`
-      sig { params(scope: String, group: T.nilable(Dev::RunnerRegistry::Group), repo_override: T.nilable(String)).void }
-      def converge_access!(scope, group, repo_override)
+      # @param repo [String] the repo this registration is for
+      sig { params(scope: String, group: T.nilable(Dev::RunnerRegistry::Group), repo: String).void }
+      def converge_access!(scope, group, repo)
         access = group || @registry.group(org: scope, name: DEFAULT_GROUP)
         return if access.nil?
 
-        @groups.admit!(access, @repo_resolver.call(repo_override), org: scope)
+        @groups.admit!(access, repo, org: scope)
       end
 
       # The exclusion, derived (dev#470): a repo-scoped runner is that
@@ -779,12 +804,13 @@ module Dev
       # @param args [Array<String>]
       # @param context [Dev::ExecutionContext]
       # @param org [Boolean]
+      # @param resolve_repo [Proc] derives the repo this registration is for, asked only when the label derives from it
       # @return [String] comma-separated labels (config.sh shape)
       # @raise [ArgumentError] on an underivable or contradictory request
       # @raise [Dev::EnrolledRunner::MalformedRepoError] when the repo (`--repo`) is not an owner/repo
       # @raise [Dev::RunnerSetup::Error] when gh cannot resolve the checkout
-      sig { params(args: Cli::ParsedArgs, context: ExecutionContext, org: T::Boolean).returns(String) }
-      def resolve_labels(args, context, org)
+      sig { params(args: Cli::ParsedArgs, context: ExecutionContext, org: T::Boolean, resolve_repo: T.proc.returns(String)).returns(String) }
+      def resolve_labels(args, context, org, resolve_repo)
         explicit = args.value(LABELS_FLAG)
         ai_flow = args.flag?(AI_FLOW_FLAG)
         if explicit && ai_flow
@@ -807,7 +833,17 @@ module Dev
         end
         # The one derivation (EnrolledRunner): what this enrolls is what
         # the remote dispatch's lookup asks GitHub for.
-        Dev::EnrolledRunner.for(@repo_resolver.call(args.value(REPO_FLAG))).label
+        Dev::EnrolledRunner.for(resolve_repo.call).label
+      end
+
+      # A thunk that computes once and answers the same thereafter.
+      #
+      # @yieldreturn [String]
+      # @return [Proc]
+      sig { params(blk: T.proc.returns(String)).returns(T.proc.returns(String)) }
+      def memoized(&blk)
+        value = T.let(nil, T.nilable(String))
+        -> { value ||= blk.call }
       end
     end
   end

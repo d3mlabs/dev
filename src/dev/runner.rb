@@ -37,6 +37,8 @@ require "dev/project_manifest"
 require "dev/project_manifest_loader"
 require "dev/project_publishers"
 require "dev/remote_dispatches"
+require "dev/runner_registry"
+require "dev/runner_setup"
 
 module Dev
   # The application service behind bin/dev, and the composition root of the
@@ -201,7 +203,10 @@ module Dev
         # Exit 2: the getopt/cobra convention for a malformed command line.
         Cli::UsagePrinter.new.print_usage_error(error, out: $stderr)
         Kernel.exit(2)
-      when ArgumentError, RuntimeError
+      when ArgumentError, RuntimeError, RunnerRegistry::QueryError, RunnerRegistry::AmendError, RunnerSetup::Error
+        # The last three are GitHub's (or gh's) answer at the runner
+        # boundary — a refusal, a failed query, an unresolvable checkout —
+        # reported in GitHub's words, not re-raised as a dev bug (dev#493).
         $stderr.puts "dev: #{error}"
         Kernel.exit(1)
       else

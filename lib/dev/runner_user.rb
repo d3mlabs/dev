@@ -405,12 +405,17 @@ module Dev
     private
 
     # sudo's options that make a command the runner user's: its identity,
-    # its home, the host's PATH.
+    # its home, the host's PATH — and a cwd it can read. sudo keeps the
+    # caller's cwd, which is the operator's checkout under a home the
+    # runner user cannot enter (dev#310), and brew refuses to run from a
+    # directory it cannot stat ("The current working directory must
+    # exist", dev#493); GNU env's -C moves to `/` first. Linux-only, as
+    # the runner user is (`for_host`), so GNU env is a given.
     #
     # @return [Array<String>]
     sig { returns(T::Array[String]) }
     def run_as_options
-      ["-u", @name, "-H", "env", "PATH=#{@path}"]
+      ["-u", @name, "-H", "env", "-C", "/", "PATH=#{@path}"]
     end
   end
 end

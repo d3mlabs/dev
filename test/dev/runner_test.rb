@@ -1066,6 +1066,25 @@ class RunnerTest < Minitest::Test
     $stderr = old_stderr
   end
 
+  test "GitHub refusing a runner query is a clean dev error with exit 1, not a backtrace (dev#493)" do
+    Given "a Runner whose service surfaces the registry's refusal"
+    command_service = typed_mock(Dev::CommandService)
+    command_service.stubs(:execute).raises(Dev::RunnerRegistry::QueryError.new("gh api orgs/d3mlabs/actions/runner-groups failed (HTTP 403)"))
+    runner = build_runner(commands: {}, command_service: command_service)
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(1).once
+
+    When "we run the command"
+    runner.run(["runner", "register"])
+
+    Then "GitHub's words reach stderr under the dev: prefix"
+    $stderr.string.include?("dev: gh api orgs/d3mlabs/actions/runner-groups failed (HTTP 403)")
+
+    Cleanup
+    $stderr = old_stderr
+  end
+
   test "an unmapped error is a dev bug and re-raises with its backtrace" do
     Given "a Runner whose service raises an unmapped error class"
     command_service = typed_mock(Dev::CommandService)
