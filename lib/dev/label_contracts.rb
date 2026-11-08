@@ -11,14 +11,18 @@ module Dev
   # every label being advertised before it enrolls; the registry lives here
   # so future labels slot in without touching register itself.
   #
-  # Two contracts exist: the agent capability labels (`ai-build`,
-  # `ai-learn`) make the box an agent host and require the agent host
-  # bootstrap (host-side); any ai-flow label obliges, at org scope, the
-  # ai-flow runner group pinned to ai-flow's workflows (org-side, see
-  # AI_FLOW_GROUP). A bare label (e.g. the gamebox's target-host label)
-  # requires nothing — and so does `ai-orchestrator` host-side: an ai-flow
-  # label (the group) that is no agent capability (no bootstrap), the
-  # thin pool `/build --split`'s orchestrator runs on (plans#53).
+  # Two kinds of contract exist. Host-side, the agent capability labels
+  # (`ai-build`, `ai-learn`) make the box an agent host and require the
+  # agent host bootstrap. Org-side, an ai-flow label obliges a runner
+  # group pinned to ai-flow's workflows — which group depends on what the
+  # slots are for (dev#495): the agent labels oblige the `ai-flow` group,
+  # whose selected repos are each repo's build concurrency on the host
+  # (AI_FLOW_GROUP, dev#470); `ai-orchestrator` obliges its own group,
+  # open to every repo (ORCHESTRATOR_GROUP) — the thin pool `/build
+  # --split`'s orchestrator runs on has nothing to gate, and a plan in any
+  # adopter may need one. A set carrying both is refused: one enrollment,
+  # one group. A bare label (e.g. the gamebox's target-host label) requires
+  # nothing — and so does `ai-orchestrator` host-side (no bootstrap).
   class LabelContracts
     extend T::Sig
 
@@ -73,6 +77,18 @@ module Dev
     # it is typed by a human, so nothing about it can be forgotten; the
     # console can drift it, and the next register heals it.
     AI_FLOW_GROUP = T.let(RunnerGroupContract.new(name: "ai-flow", workflows: AI_FLOW_WORKFLOWS), RunnerGroupContract)
+
+    # The orchestrator pool's group (dev#495): dev's, pinned to the same
+    # workflows, open to every repo in the org. Not the `ai-flow` group:
+    # that group's selection is a repo's *build* concurrency on the host
+    # (dev#470 keeps cellbound-3d out of it on purpose), and the pool's
+    # visibility must be the opposite — any adopter's `/build --split`
+    # lands its orchestrator here, so a selection would only be a list to
+    # forget a new adopter from. The pin keeps a fork's YAML off the box.
+    ORCHESTRATOR_GROUP = T.let(
+      RunnerGroupContract.new(name: "ai-orchestrator", workflows: AI_FLOW_WORKFLOWS, visibility: "all"),
+      RunnerGroupContract,
+    )
 
     # The agent host obligation: the host-singular bootstrap, the agent's
     # own container engine when the served repo builds in one, and the
@@ -145,16 +161,28 @@ module Dev
       end
 
       # The runner group an advertised label set obliges at org scope:
-      # the ai-flow group for any ai-flow label (`--ai-flow` or a
-      # `--labels` subset of the vocabulary); nil for a bare label set,
-      # whose group is the operator's to name (`--group`) or config.sh's
-      # Default.
+      # the ai-flow group for an agent label (`--ai-flow` or a `--labels`
+      # subset of the agent vocabulary), the orchestrator group for
+      # `ai-orchestrator`; nil for a bare label set, whose group is the
+      # operator's to name (`--group`) or config.sh's Default.
       #
       # @param labels [String] comma-separated labels (config.sh shape)
       # @return [Dev::RunnerGroupContract, nil]
+      # @raise [ArgumentError] a set carrying both an agent label and the orchestrator label
       sig { params(labels: String).returns(T.nilable(RunnerGroupContract)) }
       def group_for(labels)
-        labels.split(",").map(&:strip).intersect?(AI_FLOW_LABELS) ? AI_FLOW_GROUP : nil
+        advertised = labels.split(",").map(&:strip)
+        agent = advertised & AI_FLOW_AGENT_LABELS
+        orchestrator = advertised.include?(ORCHESTRATOR_LABEL)
+        if orchestrator && !agent.empty?
+          raise ArgumentError,
+            "#{ORCHESTRATOR_LABEL} sits in its own runner group ('#{ORCHESTRATOR_GROUP.name}', open to every repo) and #{agent.join(",")} " \
+              "in '#{AI_FLOW_GROUP.name}' — one enrollment, one group: enroll the orchestrator pool separately " \
+              "(--org --labels #{ORCHESTRATOR_LABEL} --slots N)"
+        end
+        return ORCHESTRATOR_GROUP if orchestrator
+
+        agent.empty? ? nil : AI_FLOW_GROUP
       end
     end
   end

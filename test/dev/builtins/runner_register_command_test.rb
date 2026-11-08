@@ -267,8 +267,8 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     org == true
   end
 
-  test "--org --labels ai-orchestrator --slots 2 enrolls a thin pool: the ai-flow group, no agent host contract, two slots (plans#53)" do
-    Given "an org with the pinned ai-flow group and a factory recording what contracts are asked for"
+  test "--org --labels ai-orchestrator --slots 2 enrolls a thin pool in its own open group — created when missing, nothing admitted — with no agent host contract (plans#53, dev#495)" do
+    Given "an org with the pinned ai-flow group and no orchestrator group yet; a factory recording what contracts are asked for"
     registry = FakeRegistry.new(groups: { ["d3mlabs", "ai-flow"] => FakeRegistry.group(id: 7, name: "ai-flow", pinned: true) })
     seen = []
     recorder = ->(labels, agent_user) {
@@ -280,11 +280,27 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     When
     harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-orchestrator", "--slots", "2"]), context: projectless_context)
 
-    Then "two slots carrying the label, in the ai-flow group; the label set carried no agent host contract"
+    Then "two slots carrying the label, in the ai-orchestrator group, which was created open to every repo and pinned; no selection written; the label set carried no agent host contract"
     harness.wirings.map { |config, _repo, _org| config.labels } == ["ai-orchestrator", "ai-orchestrator"]
-    harness.wirings.map { |config, _repo, _org| config.group } == ["ai-flow", "ai-flow"]
+    harness.wirings.map { |config, _repo, _org| config.group } == ["ai-orchestrator", "ai-orchestrator"]
+    registry.group_writes == [[:create, "d3mlabs", "ai-orchestrator", "all", true, Dev::LabelContracts::AI_FLOW_WORKFLOWS]]
+    harness.out.string.include?("may use group 'ai-orchestrator' (open to every repo at d3mlabs)")
     seen == [["ai-orchestrator", nil]]
     Dev::LabelContracts.for("ai-orchestrator").empty?
+  end
+
+  test "--labels mixing an agent label with ai-orchestrator is refused before anything converges: one enrollment, one group" do
+    Given
+    harness = build_harness(scope: "d3mlabs")
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-build,ai-orchestrator"]), context: projectless_context)
+
+    Then
+    error = raises ArgumentError
+    error.message.include?("one enrollment, one group")
+    harness.wirings == []
+    harness.events == []
   end
 
   test "--labels overrides any derivation" do

@@ -264,9 +264,13 @@ module Dev
           same labels on all. Re-running keeps the size it finds; a smaller --slots
           retires the surplus (asked first). Which repos may use an org host's slots is
           their runner group, and the repo this registration is for — the checkout's,
-          or --repo's — is admitted to it. ai-flow labels sit in the '#{LabelContracts::AI_FLOW_GROUP.name}' group,
+          or --repo's — is admitted to it. Agent labels sit in the '#{LabelContracts::AI_FLOW_GROUP.name}' group,
           which dev owns: created when missing, pinned to ai-flow's workflows (plans#5
-          H3), healed when the console drifted — nothing to remember. --group names a
+          H3), healed when the console drifted — nothing to remember; its selection is
+          each repo's build concurrency on the host, so admission is deliberate.
+          #{LabelContracts::ORCHESTRATOR_LABEL} sits in its own '#{LabelContracts::ORCHESTRATOR_GROUP.name}' group, same pin, open to
+          every repo (nothing to gate; nothing admitted); mixing the two in --labels is
+          refused — one enrollment, one group. --group names a
           human's group for other pools. A public repo may only use a pinned group;
           register refuses otherwise. A repo-scoped enrollment is that repo's alone
           (cellbound-3d's editor); its concurrency is its own --slots — and when the repo
@@ -285,7 +289,7 @@ module Dev
           orchestrators); each scope's enrollments are discovered and sized on their
           own. If the orchestrate job sits at "Waiting for a runner" GitHub says no
           more than its requested labels: the org's Runners page must list an Idle
-          runner carrying #{LabelContracts::ORCHESTRATOR_LABEL} in the '#{LabelContracts::AI_FLOW_GROUP.name}' group.
+          runner carrying #{LabelContracts::ORCHESTRATOR_LABEL} in the '#{LabelContracts::ORCHESTRATOR_GROUP.name}' group.
 
           Three identities meet in a registration:
             you (gh auth)         mints the registration token — repo admin, or admin:org with --org
@@ -342,7 +346,7 @@ module Dev
           Cli::Flag.new(LABELS_FLAG, takes_value: true, desc: "comma-separated labels; default: the repo's name"),
           Cli::Flag.new(AI_FLOW_FLAG, desc: "the agent host's ai-flow label set (#{LabelContracts::AI_FLOW_AGENT_LABELS.join(",")}); the orchestrator pool is --labels #{LabelContracts::ORCHESTRATOR_LABEL}"),
           Cli::Flag.new(SLOTS_FLAG, takes_value: true, desc: "how many jobs this host runs at once at this scope: N runners, <name>, <name>-2 .. <name>-N; default: what is enrolled, else 1"),
-          Cli::Flag.new(GROUP_FLAG, takes_value: true, desc: "--org: the runner group the slots join (made once in the org's settings); ai-flow labels imply '#{LabelContracts::AI_FLOW_GROUP.name}'; default: #{DEFAULT_GROUP}"),
+          Cli::Flag.new(GROUP_FLAG, takes_value: true, desc: "--org: the runner group the slots join (made once in the org's settings); agent labels imply '#{LabelContracts::AI_FLOW_GROUP.name}', #{LabelContracts::ORCHESTRATOR_LABEL} implies '#{LabelContracts::ORCHESTRATOR_GROUP.name}'; default: #{DEFAULT_GROUP}"),
           Cli::Flag.new(DIR_FLAG, takes_value: true, desc: "the runner directory (one slot); default: actions-runner-<first label> under the enrollment owner's home, -<n> per further slot"),
           Cli::Flag.new(NAME_FLAG, takes_value: true, desc: "the runner's name on GitHub (slot 1; further slots are <name>-<n>); default: the hostname"),
           Cli::Flag.new(REPO_FLAG, takes_value: true, desc: "enroll for owner/repo instead of the enclosing checkout"),
@@ -562,7 +566,7 @@ module Dev
         obliged = LabelContracts.group_for(labels)
         if named && obliged && named != obliged.name
           raise ArgumentError,
-            "ai-flow labels sit in the '#{obliged.name}' runner group (pinned to ai-flow's workflows) — drop #{GROUP_FLAG} #{named}"
+            "these labels sit in the '#{obliged.name}' runner group (pinned to ai-flow's workflows) — drop #{GROUP_FLAG} #{named}"
         end
 
         obliged || (named && RunnerGroupContract.new(name: named))
