@@ -1311,6 +1311,12 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     empty_discovery = Dev::RunnerDiscovery.new(home: Dir.mktmpdir)
     Dev::RunnerDiscovery.expects(:new).returns(empty_discovery)
     Dev::RunnerUser.expects(:for_host).once.with(name: "ci").returns(nil)
+    # The two gh seams the default wiring reaches before anything converges:
+    # the checkout's repo, and the operator pre-flight's probe of its runners.
+    Dev::RunnerSetup.expects(:current_repo).once.returns("owner/repo")
+    registry = typed_mock(Dev::RunnerRegistry)
+    registry.expects(:find).once.with(scope: "owner/repo", name: "").returns(nil)
+    Dev::RunnerRegistry.expects(:new).returns(registry)
     setup = typed_mock(Dev::RunnerSetup)
     setup.expects(:run).once
     setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
@@ -1339,6 +1345,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     the_lock = ->(pins) { pins.map(&:name) == ["UnrealEngine"] && pins.fetch(0).metadata.fetch("repo") == "satisfactorymodding/UnrealEngine" }
     reach.expects(:check!).once.with(&the_lock)
     Dev::HostReach.expects(:new).once.with(identity: runner_user).returns(reach)
+    Dev::RunnerSetup.expects(:current_repo).once.returns("owner/repo")
+    registry = typed_mock(Dev::RunnerRegistry)
+    registry.expects(:find).once.with(scope: "owner/repo", name: "").returns(nil)
+    Dev::RunnerRegistry.expects(:new).returns(registry)
     setup = typed_mock(Dev::RunnerSetup)
     setup.expects(:run).once
     setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
@@ -1359,6 +1369,9 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     empty_discovery = Dev::RunnerDiscovery.new(home: Dir.mktmpdir)
     Dev::RunnerDiscovery.expects(:new).returns(empty_discovery)
     Dev::RunnerSetup.expects(:current_repo).once.returns("d3mlabs/Cellbound-3D")
+    registry = typed_mock(Dev::RunnerRegistry)
+    registry.expects(:find).once.with(scope: "d3mlabs/Cellbound-3D", name: "").returns(nil)
+    Dev::RunnerRegistry.expects(:new).returns(registry)
     setup = typed_mock(Dev::RunnerSetup)
     setup.expects(:run).once
     setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
