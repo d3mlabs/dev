@@ -9,32 +9,32 @@ description: >-
 
 # Project-tree state is per side of the build container
 
-The checkout is bind-mounted into the build container, so one path in the
-project tree is seen by two build hosts whose prefixes, interpreters and
-OS/arch differ. Anything dev generates there that binds one of those — a
-lisp with absolute paths, a venv, a native module tree — gets one path per
-side, decided from `Dev::ContainerContext.inside?` in exactly one place
-that the writer and every reader resolve through.
+The container works on its own checkout — a snapshot it fetched into a
+workspace under its data root (dev#421), never a bind mount of the host's
+tree — so the two sides share a tree only through what the snapshot
+carries: every file `.gitignore` does not exclude. Anything dev generates
+in the tree that binds one side's prefix, interpreter or OS/arch stays per
+side exactly when it is ignored (it survives each snapshot's `git reset
+--hard` + `git clean -fd`); anything else travels in the next snapshot and
+lands on the other side, bound to the wrong machine.
 
-Wrong — one path for both sides behind an honest freshness check, so each
-side's `dev up` finds the other's venv and rebuilds, every pass:
+Wrong — a venv at an un-ignored path rides the snapshot, so the container's
+`dev up` finds a Mac venv and rebuilds, every pass:
 
-    venv = project_root / ".venv"
+    venv = project_root / "venv"   # not in .gitignore
     FileUtils.rm_rf(venv) unless venv_built_on?(venv, keg, version)
 
-Right — the side decides the path, in one function; the lisp follows:
+Right — installed state lives in the store under the project's key with
+the side in the key (`~/.dev/venv/<name>/<side>/<keg>`, dev#399), and
+only an ignored link or lisp stays in the tree:
 
     def venv_path(project_root, inside: ContainerContext.inside?)
-      project_root / (inside ? CONTAINER_VENV_DIR : HOST_VENV_DIR)
+      project_root / (inside ? CONTAINER_VENV_DIR : HOST_VENV_DIR)   # both ignored
     end
 
-`ShadowenvFile` is the same rule for lisps. A new project-tree artifact
-asks two questions. Is it installed state? Then it lives in the store under
-the project's key with the side in the key (`ShadowenvPython.venv_key`:
-`~/.dev/venv/<name>/<side>/<keg>`, dev#399) and only a link or the lisp
-stays in the tree — a checkout clean wipes the tree, not the store. Does
-what stays depend on the side? Then split it and name both paths in
-docs/deps-channels.md ("What the checkout carries").
+A new project-tree artifact asks: is it installed state? Then the store.
+Does what stays in the tree depend on the side? Then it must be ignored,
+and docs/deps-channels.md ("What the checkout carries") names it.
 
-learned-from: dev#379 (the venv flip-flop dev#376 exposed); dev#399 (venv in the store).
-date: 2026-11-02
+learned-from: dev#379 (the venv flip-flop dev#376 exposed); dev#399 (venv in the store); dev#421 (bind mount removed: the snapshot is the only shared path).
+date: 2026-11-07

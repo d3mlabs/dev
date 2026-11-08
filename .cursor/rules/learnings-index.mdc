@@ -25,6 +25,11 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
   class they silently assert nothing.
   → skill: rspock (ships in the rspock gem; linked by `dev up` /
   `dev deps install`)
+- [testing/rspock-block-param-splat] In rspock `transform!`-ed test
+  classes a one-parameter block `{ |args| … }` is re-emitted as
+  `{ |args,| … }`, which splats an Array argument to its first element;
+  destructure (`|verb, *rest|`) or pass a lambda.
+  → .cursor/skills/learnings/rspock-block-param-splat/
 
 ## process
 
@@ -55,10 +60,10 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  normalization gate: it must recognize every layout Cursor writes, since
  render re-serializes its output and any mis-split compounds on the next
  pull. → .cursor/skills/learnings/plan-parse-normalizes/
-- [architecture/per-side-project-state] Anything dev generates into the
- bind-mounted project tree that binds an interpreter or OS/arch (lisps,
- the venv) gets one path per side of the build container, decided from
- `ContainerContext.inside?` in one place.
+- [architecture/per-side-project-state] The container works on a fetched
+ snapshot, not a bind mount: anything dev generates into the project tree
+ that binds an interpreter or OS/arch (lisps, the venv) must be
+ gitignored to stay per side; what the snapshot carries lands on both.
  → .cursor/skills/learnings/per-side-project-state/
 - [architecture/installed-state-in-the-store] Anything dev installs lives
  in the store under an identity key (per-project state under dev.yml
