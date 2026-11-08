@@ -45,6 +45,15 @@ class Dev::RunnerGroupContractTest < Minitest::Test
     "both"                      | group(visibility: "all", restricted: false, workflows: []) | ["visibility is 'all', not 'selected'", "not restricted to workflows"]
   end
 
+  test "an open contract (visibility all) is satisfied by an open, pinned group and reports a selected one as drift" do
+    Expect
+    Dev::RunnerGroupContract.new(name: "ai-orchestrator", workflows: PINS, visibility: "all").drift(group(visibility: "all", allows_public: true)) == []
+    Dev::RunnerGroupContract.new(name: "ai-orchestrator", workflows: PINS, visibility: "all").drift(group) == ["visibility is 'selected', not 'all'"]
+    Dev::RunnerGroupContract.new(name: "ai-flow", workflows: PINS).visibility == "selected"
+    Dev::RunnerGroupContract.new(name: "ai-orchestrator", workflows: PINS, visibility: "all").open?
+    !Dev::RunnerGroupContract.new(name: "ai-flow", workflows: PINS).open?
+  end
+
   test "a named contract never drifts: what a human's group pins is theirs" do
     Expect
     Dev::RunnerGroupContract.new(name: "ue-hosted").drift(group(visibility: "all", restricted: false, workflows: [])) == []

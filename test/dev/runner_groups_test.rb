@@ -122,6 +122,36 @@ class Dev::RunnerGroupsTest < Minitest::Test
     out.string.include?("drifted (visibility is 'all', not 'selected'; not restricted to workflows)")
   end
 
+  test "an open contract's group is created open to every repo, public ones included — the pin is the defense (dev#495)" do
+    Given
+    registry = GroupsRegistry.new
+    out = StringIO.new
+    orchestrator = Dev::RunnerGroupContract.new(name: "ai-orchestrator", workflows: PINS, visibility: "all")
+
+    When
+    created = Dev::RunnerGroups.new(registry: registry, out: out).converge!(orchestrator, org: "d3mlabs")
+
+    Then
+    registry.writes == [[:create, "d3mlabs", "ai-orchestrator", "all", true, PINS]]
+    created.name == "ai-orchestrator"
+    !created.selected?
+  end
+
+  test "an open contract's group the console narrowed to selected repos is re-opened, naming the drift" do
+    Given
+    registry = GroupsRegistry.new(groups: { ["d3mlabs", "ai-orchestrator"] => group(name: "ai-orchestrator") })
+    out = StringIO.new
+    orchestrator = Dev::RunnerGroupContract.new(name: "ai-orchestrator", workflows: PINS, visibility: "all")
+
+    When
+    healed = Dev::RunnerGroups.new(registry: registry, out: out).converge!(orchestrator, org: "d3mlabs")
+
+    Then
+    registry.writes == [[:update, "d3mlabs", 7, "all", nil, PINS]]
+    !healed.selected?
+    out.string.include?("drifted (visibility is 'selected', not 'all')")
+  end
+
   test "re-pinning a group that is already selected does not name visibility: a PATCH naming it wipes the selected repositories (plans#5 H3)" do
     Given "a selected group restricted to nothing (what an incomplete PATCH leaves) with repos it must keep"
     registry = GroupsRegistry.new(groups: { ["d3mlabs", "ai-flow"] => group(restricted: true, workflows: []) })

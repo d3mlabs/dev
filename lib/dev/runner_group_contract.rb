@@ -7,8 +7,18 @@ module Dev
   # What an org runner group should be, as a label contract obliges it
   # (plans#5 H3, dev#470): its name and the workflows pinned as the only
   # ones that may land jobs on it. Labels say what a host can do; the
-  # group says who may use it — which repos (its selected repositories,
-  # converged from the checkouts register runs in) and which workflows.
+  # group says who may use it — which repos and which workflows.
+  #
+  # Which repos is the contract's **visibility** (dev#495). `selected`
+  # — the default — means the repos register was run for, and that
+  # selection is load-bearing: a repo's concurrency on a host is the
+  # runners it can see (dev#470), so the build slots' group admits a
+  # repo deliberately or not at all. `all` means every repo in the org:
+  # the shape for a pool with nothing to gate (the orchestrator's — API
+  # calls and sleep — which a plan in any adopter may need), where a
+  # selection would only be a list to forget a new adopter from. The
+  # workflow pin, not the selection, is what keeps a fork's YAML off the
+  # host either way.
   #
   # A contract with pins is **owned**: dev creates the group when it is
   # missing and re-converges its workflow access and visibility when the
@@ -27,12 +37,24 @@ module Dev
     sig { returns(T::Array[String]) }
     attr_reader :workflows
 
+    # GitHub's spelling: "selected" (the repos register admits) or "all".
+    sig { returns(String) }
+    attr_reader :visibility
+
     # @param name [String]
     # @param workflows [Array<String>] the pins; empty = not dev's to pin
-    sig { params(name: String, workflows: T::Array[String]).void }
-    def initialize(name:, workflows: [])
+    # @param visibility [String] "selected" (default) or "all"
+    sig { params(name: String, workflows: T::Array[String], visibility: String).void }
+    def initialize(name:, workflows: [], visibility: "selected")
       @name = name
       @workflows = workflows
+      @visibility = visibility
+    end
+
+    # Whether every repo in the org may use the group (no selection to converge).
+    sig { returns(T::Boolean) }
+    def open?
+      @visibility == "all"
     end
 
     # Whether dev owns the group's access (creates it, re-pins it).
@@ -52,7 +74,7 @@ module Dev
       return [] unless owned?
 
       drift = []
-      drift << "visibility is '#{group.visibility}', not 'selected'" unless group.selected?
+      drift << "visibility is '#{group.visibility}', not '#{@visibility}'" unless group.visibility == @visibility
       unless group.restricted_to_workflows && group.selected_workflows.sort == @workflows.sort
         drift << if !group.restricted_to_workflows
           "not restricted to workflows"
@@ -67,13 +89,13 @@ module Dev
 
     sig { params(other: Object).returns(T::Boolean) }
     def ==(other)
-      other.is_a?(RunnerGroupContract) && @name == other.name && @workflows == other.workflows
+      other.is_a?(RunnerGroupContract) && @name == other.name && @workflows == other.workflows && @visibility == other.visibility
     end
     alias eql? ==
 
     sig { returns(Integer) }
     def hash
-      [@name, @workflows].hash
+      [@name, @workflows, @visibility].hash
     end
   end
 end
