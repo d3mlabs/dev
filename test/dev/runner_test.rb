@@ -569,7 +569,7 @@ class RunnerTest < Minitest::Test
     gh = FakeGh.new.resolving("d3mlabs/testproject")
       .answers(["api", "-X", "POST", "--input", "-", "repos/d3mlabs/testproject/deployments"], with: { "id" => 9, "created_at" => "2026-11-05T17:02:11Z" })
       .answers(["api", "-X", "POST", "--input", "-", "repos/d3mlabs/testproject/deployments/9/statuses"], with: { "state" => "success" })
-    runner = build_runner(out: out, root: root, gh: gh, targets: {
+    runner = build_runner(out: out, ui: Dev::Cli::NoUi.new(out: out), root: root, gh: gh, targets: {
       "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "echo site > \"$DEV_INSTALL/index.html\"" },
     }, commands: {
       "deploy" => { "commands" => {
@@ -586,9 +586,9 @@ class RunnerTest < Minitest::Test
     Then "the one stored config shipped on the testing track; the script saw the channel, the build and the archive file; the deploy was recorded on the forge"
     archive = data_root / "artifacts" / "testproject" / "site-release" / "site-release.zip"
     (outside / "shipped").read == "staging site-release #{archive}\n"
-    out.string.start_with?("deployed site-release (")
-    out.string.include?("→ staging (testing): #{archive}")
-    out.string.end_with?("recorded as GitHub Deployment #9 (testing track) → https://github.com/d3mlabs/testproject/deployments/staging\n")
+    out.string.start_with?("Deploying staging (testing track)\n  site-release (")
+    out.string.include?(": #{archive}\nShipping via run: echo")
+    out.string.include?("✓ staging deployed! 1 archive (testing track), GitHub Deployment #9 → https://github.com/d3mlabs/testproject/deployments/staging\n")
     gh.posted.first.slice("environment", "auto_merge") == { "environment" => "staging", "auto_merge" => false }
     gh.posted.first["payload"]["builds"].map { |b| b["build"] } == ["site-release"]
     gh.posted.last["state"] == "success"
@@ -620,7 +620,7 @@ class RunnerTest < Minitest::Test
       gh.answers(["api", "-X", "POST", "--input", "-", "repos/d3mlabs/testproject/deployments"], with: { "id" => id, "created_at" => "2026-11-05T17:02:11Z" })
       gh.answers(["api", "-X", "POST", "--input", "-", "repos/d3mlabs/testproject/deployments/#{id}/statuses"], with: { "state" => "success" })
     end
-    runner = build_runner(out: out, root: root, gh: gh, targets: {
+    runner = build_runner(out: out, ui: Dev::Cli::NoUi.new(out: out), root: root, gh: gh, targets: {
       "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "true" },
       "rspock" => { "desc" => "The gem" },
     }, commands: {
@@ -638,7 +638,7 @@ class RunnerTest < Minitest::Test
     (outside / "shipped").read == "staging live 1.2.0 #{releases / "site-release-1.2.0.zip"}\nrubygems live 1.2.0 #{releases / "rspock-1.2.0.gem"}\n"
     !(data_root / "artifacts" / "testproject" / "site-release").exist?
     out.string.lines.first == "deploy staging --release 1.2.0\n"
-    out.string.lines.last == "v1.2.0 shipped to 2 channels: staging, rubygems\n"
+    out.string.lines.last == "✓ v1.2.0 shipped to 2 channels: staging, rubygems\n"
     gh.posted.select { |body| body.key?("ref") }.map { |body| [body["environment"], body["ref"], body["payload"]["track"], body["production_environment"]] } ==
       [["staging", "v1.2.0", "live", true], ["rubygems", "v1.2.0", "live", true]]
   end

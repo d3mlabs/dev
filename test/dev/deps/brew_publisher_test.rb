@@ -155,12 +155,16 @@ class Dev::Deps::BrewPublisherTest < Minitest::Test
     When
     receipt = publisher(gh).publish([core, deployment], channel:, track: Dev::Lifecycle::Track::Live, scratch: @scratch)
 
-    Then "both formulas moved from the shared source tarball to their own asset, the resource untouched; the receipt is the tap's commit, the urls the forge's answers"
+    Then "both formulas moved from the shared source tarball to their own asset, the resource untouched; the receipt is the tap's commit " \
+         "with the upgrade line as its hint (what bin/release.rb closed on, dev#514), the urls the forge's answers"
     origin_formula("dev-core") == DEV_CORE_FORMULA.sub(SOURCE_TARBALL, "#{DOWNLOADS}/dev-core-0.8.0.zip").sub(OLD_SHA, core.archive_sha256)
     origin_formula("dev") == DEV_FORMULA.sub(SOURCE_TARBALL, "#{DOWNLOADS}/dev-0.8.0.zip").sub(OLD_SHA, deployment.archive_sha256)
     origin_formula("dev-core").include?(RESOURCE_SHA)
     origin_git.capture(["log", "--format=%s", "main"]).lines.map(&:strip) == ["dev-core, dev: 0.8.0", "dev: 0.7.13"]
-    receipt == Dev::Lifecycle::Receipt.new(summary: "d3mlabs/d3mlabs@#{origin_git.capture(["rev-parse", "main"]).strip[0, 12]}: dev-core, dev → v0.8.0")
+    receipt == Dev::Lifecycle::Receipt.new(
+      summary: "d3mlabs/d3mlabs@#{origin_git.capture(["rev-parse", "main"]).strip[0, 12]}: dev-core, dev → v0.8.0",
+      hint: "To update locally: brew update && brew upgrade d3mlabs/d3mlabs/dev-core d3mlabs/d3mlabs/dev",
+    )
     gh.calls.map(&:argv).uniq == [["release", "view", "v0.8.0", "--json", "assets", "--jq", ".assets"]]
   end
 
@@ -174,7 +178,10 @@ class Dev::Deps::BrewPublisherTest < Minitest::Test
     receipt = publisher(forge).publish([release_shipment("dev-core"), release_shipment("dev")], channel:, track: Dev::Lifecycle::Track::Live, scratch: @scratch)
 
     Then
-    receipt == Dev::Lifecycle::Receipt.new(summary: "d3mlabs/d3mlabs already points at v0.8.0: dev-core, dev")
+    receipt == Dev::Lifecycle::Receipt.new(
+      summary: "d3mlabs/d3mlabs already points at v0.8.0: dev-core, dev",
+      hint: "To update locally: brew update && brew upgrade d3mlabs/d3mlabs/dev-core d3mlabs/d3mlabs/dev",
+    )
     origin_git.capture(["rev-parse", "main"]).strip == published
   end
 

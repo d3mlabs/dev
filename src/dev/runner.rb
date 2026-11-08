@@ -574,7 +574,6 @@ module Dev
           store:,
           releases:,
           listing:,
-          out: @out,
         )
       end
       return verbs if bindings.channels.empty?
@@ -591,14 +590,12 @@ module Dev
           placement: bound.placement,
           fault: bound.fault,
           deployments:,
-          out: @out,
         )
         [name, command]
       end
       verbs["deploy"] = Builtins::DeployAllCommand.new(
         channels:,
         status: Builtins::DeployStatusCommand.new(channels: bindings.channels.values.map(&:channel), deployments:, out: @out),
-        out: @out,
       )
       verbs
     end

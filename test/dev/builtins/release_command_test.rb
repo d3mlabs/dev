@@ -162,16 +162,34 @@ class Dev::Builtins::ReleaseCommandTest < Minitest::Test
   def command(release: release_builds, store: self.store)
     Dev::Builtins::ReleaseCommand.new(
       release:, cut: Dev::Lifecycle::ReleaseCut.new(git: Dev::Lifecycle::Git.new(root: @project)), package:, store:,
-      releases: Dev::Lifecycle::GithubReleases.new(gh: @gh), listing:, clock: -> { NOW }, out: @out,
+      releases: Dev::Lifecycle::GithubReleases.new(gh: @gh), listing:, clock: -> { NOW },
     )
   end
 
-  def context
-    Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui), project: Dev::ProjectContext.new(name: "cellbound-3d", root: @project))
+  # A terminal that answers the confirm as told, remembering the question.
+  class AnsweringUi < Dev::Cli::NoUi
+    attr_reader :asked
+
+    def initialize(out:, answer:)
+      super(out:)
+      @answer = answer
+      @asked = []
+    end
+
+    def confirm(question)
+      @asked << question
+      @answer
+    end
   end
 
-  def execute(verb, *words)
-    Dev::LifecycleExecutor.new.execute(verb, args: parsed_args(verb, words), context: context)
+  def context(ui: Dev::Cli::NoUi.new(out: @out))
+    Dev::ExecutionContext.new(ui:, project: Dev::ProjectContext.new(name: "cellbound-3d", root: @project))
+  end
+
+  # `--yes` unless the test is about the confirm: NoUi has no terminal.
+  def execute(verb, *words, ui: Dev::Cli::NoUi.new(out: @out), confirm: true)
+    words = [*words, "--yes"] if confirm
+    Dev::LifecycleExecutor.new.execute(verb, args: parsed_args(verb, words), context: context(ui:))
   end
 
   def forge_has_no_release = @gh.refuses(["release", "view"], with: "release not found")
@@ -183,6 +201,8 @@ class Dev::Builtins::ReleaseCommandTest < Minitest::Test
     forge_has_no_release
     forge_creates
     forge_accepts_upload
+
+    base = head
 
     When
     execute(command, "1.2.0")
@@ -218,12 +238,31 @@ class Dev::Builtins::ReleaseCommandTest < Minitest::Test
         "sha256" => Digest::SHA256.file((@uploads / "cellbound-3d-server-linux64-1.2.0.zip").to_s).hexdigest, "build_id" => "1.2.0+#{short_head}" },
     ]
 
-    # the report: the cut announced, then what was released, and that nothing was deployed
-    @out.string.lines.first == "cutting v1.2.0 on main: bump VERSION 1.1.0 → 1.2.0, tag, push\n"
-    @out.string.include?("released v1.2.0 (#{short_head}) → #{URL}\n")
-    @out.string.include?("  cellbound-3d-linux64-release-1.2.0.zip (1.2.0+#{short_head})\n")
-    @out.string.include?("  release.json\n")
-    @out.string.lines.last == "nothing deployed — `dev deploy <channel> --release 1.2.0` ships it\n"
+    # the UI (dev#514): the plan frame with the base line, then the cut's steps, the publish's, the epilogue
+    @out.string.lines.first(10).join == <<~OUT
+      Release: 1.1.0 → 1.2.0
+      Base: main @ #{base[0, 12]} — first release, no previous tag (in sync with origin/main)
+      Notes:
+        Release v1.2.0.
+      Steps:
+        1. Bump VERSION 1.1.0 → 1.2.0
+        2. Tag v1.2.0
+        3. Push main + tag v1.2.0 to origin
+        4. Package cellbound-3d-linux64-release, cellbound-3d-server-linux64 at the tag
+        5. Create GitHub release v1.2.0 and attach 2 archives + release.json
+    OUT
+    @out.string.include?("Cutting v1.2.0\n✓ Bumping VERSION 1.1.0 → 1.2.0\n✓ Tagging v1.2.0\n✓ Pushing main + tag v1.2.0 to origin\n")
+    @out.string.include?("Packaging cellbound-3d-linux64-release\npackaged cellbound-3d-linux64-release → ")
+    @out.string.include?("✓ Packaging cellbound-3d-linux64-release\nPackaging cellbound-3d-server-linux64\npackaged cellbound-3d-server-linux64 → ")
+    @out.string.include?("✓ Packaging cellbound-3d-server-linux64\nPublishing v1.2.0\n")
+    @out.string.include?("Publishing v1.2.0\n✓ Writing release.json\n✓ Creating GitHub release v1.2.0\n" \
+      "✓ Attaching cellbound-3d-linux64-release-1.2.0.zip, cellbound-3d-server-linux64-1.2.0.zip, release.json\n")
+    @out.string.lines.last(4).join == <<~OUT
+      ✓ v1.2.0 released! (#{short_head}, from main) → #{URL}
+        cellbound-3d-linux64-release-1.2.0.zip (1.2.0+#{short_head})
+        cellbound-3d-server-linux64-1.2.0.zip (1.2.0+#{short_head})
+      Nothing deployed — ship it: dev deploy <channel> --release 1.2.0
+    OUT
   end
 
   test "a retry after the forge refused resumes the cut: nothing re-cut, the artifacts current, the existing release's assets replaced" do
@@ -251,8 +290,12 @@ class Dev::Builtins::ReleaseCommandTest < Minitest::Test
     build_runs == ["cellbound-3d", "cellbound-3d-server"]
     @gh.calls.map { |call| call.argv.first(2) } == [["release", "view"], ["release", "upload"]]
     @gh.calls.last.argv.last == "--clobber"
-    @out.string.lines.first == "resuming v1.2.0: HEAD is already tagged — pushing, then packaging at the tag\n"
-    @out.string.include?("released v1.2.0 (#{tagged[0, 12]}) → #{URL}\n")
+    @out.string.lines.first(2).join == "Resuming v1.2.0\nBase: main @ #{tagged[0, 12]} — HEAD already tagged, nothing to cut (in sync with origin/main)\n"
+    @out.string.include?("  1. Push main + tag v1.2.0 to origin\n  2. Package cellbound-3d-linux64-release, cellbound-3d-server-linux64 at the tag\n")
+    !@out.string.include?("Bumping")
+    @out.string.include?("✓ Creating GitHub release v1.2.0\n") == false
+    @out.string.include?("✓ GitHub release v1.2.0 exists — attaching to it\n")
+    @out.string.include?("✓ v1.2.0 released! (#{tagged[0, 12]}, from main) → #{URL}\n")
   end
 
   test "a project without a VERSION file is tagged as it is, no bump" do
@@ -270,9 +313,90 @@ class Dev::Builtins::ReleaseCommandTest < Minitest::Test
     Then
     head == before
     git("rev-parse", "v0.1.0^{commit}").strip == before
-    @out.string.lines.first == "cutting v0.1.0 on main: tag, push\n"
+    @out.string.lines.first == "Release: v0.1.0\n"
+    @out.string.include?("  1. Tag v0.1.0\n  2. Push main + tag v0.1.0 to origin\n")
+    !@out.string.include?("Bump")
     store.artifact(build("cellbound-3d-server-linux64")).manifest.build_id ==
       Dev::Lifecycle::BuildId.new("#{Dev::Lifecycle::BuildId::DEFAULT_SEMVER}+#{before[0, 12]}")
+  end
+
+  test "the base line names the previous tag and the commits since, and the checkout's drift from origin as last fetched (dev#514)" do
+    Given "a tagged previous release, two commits since, one of them unpushed"
+    git("tag", "v1.1.0")
+    git("push", "-q", "origin", "refs/tags/v1.1.0")
+    commit("fix a")
+    git("push", "-q", "origin", "main")
+    commit("fix b")
+    forge_has_no_release
+    forge_creates
+    forge_accepts_upload
+    base = head
+
+    When
+    execute(command, "1.2.0")
+
+    Then
+    @out.string.lines[1] == "Base: main @ #{base[0, 12]} — 2 commits since v1.1.0 (1 ahead of origin/main, unpushed)\n"
+    @out.string.lines[2..4].join == "Notes:\n  #{base[0, 7]} fix b\n  #{git("rev-parse", "HEAD~2").strip[0, 7]} fix a\n"
+    @gh.calls[1].stdin == "#{base[0, 7]} fix b\n#{git("rev-parse", "HEAD~2").strip[0, 7]} fix a"
+  end
+
+  test "the confirm: without --yes the terminal is asked after the plan and a no cuts nothing; without a terminal the verb refuses and says how (dev#514): #{what}" do
+    Given
+    ui = AnsweringUi.new(out: @out, answer:)
+
+    When
+    execute(command, "1.2.0", ui:, confirm: false)
+
+    Then "nothing moved; the plan was shown first"
+    raises(error)
+    ui.asked == ["Proceed?"]
+    origin_refs == ["refs/heads/main"]
+    (@project / "VERSION").read == "1.1.0\n"
+    build_runs.empty?
+    @out.string.lines.first == "Release: 1.1.0 → 1.2.0\n"
+
+    Where
+    what                    | answer | error
+    "declined"              | false  | Dev::Builtins::ReleaseCommand::DeclinedError
+    "no terminal to ask at" | nil    | Dev::Builtins::ReleaseCommand::NoTerminalError
+  end
+
+  test "a yes at the terminal is the same release as --yes" do
+    Given
+    forge_has_no_release
+    forge_creates
+    forge_accepts_upload
+    ui = AnsweringUi.new(out: @out, answer: true)
+
+    When
+    execute(command, "1.2.0", ui:, confirm: false)
+
+    Then
+    ui.asked == ["Proceed?"]
+    origin_refs == ["refs/heads/main", "refs/tags/v1.2.0"]
+  end
+
+  test "a step that fails closes the frame as failed and the verb stops there, the failure its own: a refused push leaves the local cut for the retry" do
+    Given "an origin that refuses pushes"
+    (@origin / "hooks").mkpath
+    (@origin / "hooks" / "pre-receive").write("#!/bin/sh\necho no >&2\nexit 1\n")
+    (@origin / "hooks" / "pre-receive").chmod(0o755)
+
+    When
+    execute(command, "1.2.0")
+
+    Then
+    raises(Dev::Lifecycle::Git::CommandFailedError)
+    @out.string.include?("✓ Tagging v1.2.0\n✗ Pushing main + tag v1.2.0 to origin\n")
+    git("rev-parse", "v1.2.0^{commit}").strip == head
+    build_runs.empty?
+    @gh.calls.empty?
+  end
+
+  test "the flags: --yes skips the confirm" do
+    Expect
+    command.flags.map(&:name) == ["--yes"]
   end
 
   test "release takes exactly one version: #{what}" do

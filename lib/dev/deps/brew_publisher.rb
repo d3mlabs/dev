@@ -41,7 +41,9 @@ module Dev
     # of it in the channel's scratch (TapClone), never to the brew
     # prefix's tap or a clone beside the checkout. The asset urls are the
     # forge's own answer (GithubReleases#asset_url). The receipt is the
-    # tap's commit.
+    # tap's commit, and its hint the upgrade line the operator runs next
+    # — what `bin/release.rb` closed on — so `deploy`'s epilogue ends on
+    # it without knowing brew (Receipt#hint, dev#514).
     #
     # Separate from BrewRepository, the read side, although the plan's
     # built-ins are "their repository objects when the write side shares
@@ -80,7 +82,7 @@ module Dev
       # @param channel [Lifecycle::Channel]
       # @param track [Lifecycle::Track] what the refusal of a working artifact names
       # @param scratch [Pathname] where the tap's clone lives
-      # @return [Lifecycle::Receipt] the tap's commit and the formulas it moved, or that nothing moved
+      # @return [Lifecycle::Receipt] the tap's commit and the formulas it moved, or that nothing moved; the upgrade line as its hint
       # @raise [WorkingArtifactError]
       # @raise [NoTapError]
       # @raise [AmbiguousTapError]
@@ -100,11 +102,12 @@ module Dev
 
         rewritten = shipments.filter_map { |shipment| point(clone.formula(shipment.name), shipment, tag) }
         names = shipments.map(&:name).join(", ")
-        return Lifecycle::Receipt.new(summary: "#{tap.name} already points at #{tag}: #{names}") if rewritten.empty?
+        hint = upgrade_hint(tap, shipments)
+        return Lifecycle::Receipt.new(summary: "#{tap.name} already points at #{tag}: #{names}", hint:) if rewritten.empty?
 
         clone.commit!(message: "#{rewritten.map(&:name).join(", ")}: #{tag.version}", files: rewritten)
         clone.push!
-        Lifecycle::Receipt.new(summary: "#{tap.name}@#{clone.head[0, Lifecycle::GitState::SHORT_SHA_LENGTH]}: #{rewritten.map(&:name).join(", ")} → #{tag}")
+        Lifecycle::Receipt.new(summary: "#{tap.name}@#{clone.head[0, Lifecycle::GitState::SHORT_SHA_LENGTH]}: #{rewritten.map(&:name).join(", ")} → #{tag}", hint:)
       end
 
       # The declaration as `dev help` renders it.
@@ -112,6 +115,17 @@ module Dev
       def to_s = CHANNEL
 
       private
+
+      # What the operator runs next: the tap's formulas of the shipments,
+      # fully qualified, after a `brew update` that fetches the push.
+      #
+      # @param tap [Tap]
+      # @param shipments [Array<Lifecycle::Shipment>]
+      # @return [String]
+      sig { params(tap: Tap, shipments: T::Array[Lifecycle::Shipment]).returns(String) }
+      def upgrade_hint(tap, shipments)
+        "To update locally: brew update && brew upgrade #{shipments.map { |shipment| "#{tap.name}/#{shipment.name}" }.join(" ")}"
+      end
 
       # The tag the shipments are a release of.
       #

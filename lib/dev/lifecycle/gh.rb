@@ -3,6 +3,7 @@
 
 require "open3"
 require "pathname"
+require "dev/terminal_owner"
 require_relative "shell"
 
 module Dev
@@ -53,7 +54,9 @@ module Dev
       sig { params(argv: Argv).void }
       def stream(argv)
         # The terminal is gh's for output only: a watch never asks anything,
-        # and a child left reading dev's stdin would wait on it.
+        # and a child left reading dev's stdin would wait on it. Gh's
+        # all the same, so never under a spinner (TerminalOwner).
+        TerminalOwner.claim!("`gh #{argv.join(" ")}`")
         pid = T.unsafe(Process).spawn("gh", *argv, chdir: @root.to_s, in: File::NULL)
         _pid, status = Process.wait2(pid)
         return if T.must(status).success?

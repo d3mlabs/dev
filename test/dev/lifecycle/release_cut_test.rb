@@ -46,6 +46,30 @@ class Dev::Lifecycle::ReleaseCutTest < Minitest::Test
       .lines.to_h { |line| line.strip.split(" ", 2) }
   end
 
+  def commit(message) = @git.capture(["commit", "-q", "--allow-empty", "-m", message])
+  def push = @git.capture(["push", "-q", "origin", "main"])
+  def rewind(count) = @git.capture(["reset", "-q", "--hard", "HEAD~#{count}"])
+  def remote_main = remote_refs["refs/heads/main"]
+
+  # The four relations to origin/main, arranged without a fetch: origin
+  # moves through this checkout's own pushes, then HEAD rewinds.
+  def stay_in_sync = nil
+  def commit_locally = commit("local")
+
+  def fall_behind
+    commit("a")
+    commit("b")
+    push
+    rewind(2)
+  end
+
+  def diverge
+    commit("a")
+    push
+    rewind(1)
+    commit("mine")
+  end
+
   def commit_version(version)
     (@root / "VERSION").write("#{version}\n")
     @git.capture(["add", "VERSION"])
@@ -71,9 +95,11 @@ class Dev::Lifecycle::ReleaseCutTest < Minitest::Test
     Then "the plan read the branch, the bump and the notes before anything moved; " \
          "one bump commit on top of the branch, tagged, both on origin; the tag's commit is what sha answers"
     plan == CUT::Plan.new(
-      tag: TAG.new("1.2.0"), branch: "main", resuming: false,
-      bump: CUT::VersionBump.new(from: "1.1.0", to: "1.2.0"), notes: "#{before[0, 7]} add b",
+      tag: TAG.new("1.2.0"), branch: "main", sha: before, resuming: false,
+      bump: CUT::VersionBump.new(from: "1.1.0", to: "1.2.0"),
+      previous: "v1.1.0", commits: ["#{before[0, 7]} add b"], drift: CUT::Drift.new(upstream: "origin/main", ahead: 1, behind: 0),
     )
+    plan.notes == "#{before[0, 7]} add b"
     (@root / "VERSION").read == "1.2.0\n"
     last_message == "Bump version to 1.2.0"
     head != before
@@ -112,6 +138,8 @@ class Dev::Lifecycle::ReleaseCutTest < Minitest::Test
     Then
     plan.bump.nil?
     !plan.resuming
+    plan.previous.nil?
+    plan.commits == []
     plan.notes == "Release v0.1.0."
     head == before
     tag_sha("v0.1.0") == before
@@ -153,6 +181,58 @@ class Dev::Lifecycle::ReleaseCutTest < Minitest::Test
     (@root / "VERSION").read == "1.2.0\n"
     @git.capture(["log", "--oneline"]).lines.size == 3
     remote_refs == { "refs/heads/main" => tagged, "refs/tags/v1.2.0" => tagged }
+  end
+
+  test "the plan's base is the checkout as it stands, with its drift from the remote-tracking ref as last fetched — never a fetch (dev#514): #{what}" do
+    Given "a checkout whose relation to origin/main is #{what}"
+    send(arrange)
+    origin_main_before = remote_main
+
+    When
+    plan = cut.plan(TAG.new("1.2.0"))
+
+    Then "the base reads what the checkout has, nothing was fetched or pulled"
+    plan.sha == head
+    plan.drift == CUT::Drift.new(upstream: "origin/main", ahead:, behind:)
+    plan.drift.to_s == described
+    remote_main == origin_main_before
+
+    Where
+    what                                | arrange          | ahead | behind | described
+    "in sync"                           | :stay_in_sync    | 0     | 0      | "in sync with origin/main"
+    "one commit unpushed"               | :commit_locally  | 1     | 0      | "1 ahead of origin/main, unpushed"
+    "two commits behind the last fetch" | :fall_behind     | 0     | 2      | "2 behind origin/main as last fetched"
+    "diverged"                          | :diverge         | 1     | 1      | "1 ahead, 1 behind origin/main as last fetched"
+  end
+
+  test "a branch origin was never fetched for has no drift to read: the base says so (dev#514)" do
+    Given
+    @git.capture(["checkout", "-q", "-b", "1.x"])
+
+    When
+    plan = cut.plan(TAG.new("1.2.1"))
+
+    Then
+    plan.branch == "1.x"
+    plan.drift == CUT::Drift.new(upstream: "origin/1.x", ahead: nil, behind: nil)
+    plan.drift.to_s == "origin/1.x never fetched"
+  end
+
+  test "the cut is two steps the verb names one by one: bump! commits the version, tag! tags it; cut! is both" do
+    Given
+    commit_version("1.1.0")
+    plan = cut.plan(TAG.new("1.2.0"))
+
+    When
+    cut.bump!(plan)
+    bumped = head
+    tagged_after_bump = @git.succeeds?(["rev-parse", "--verify", "--quiet", "refs/tags/v1.2.0"])
+    cut.tag!(plan)
+
+    Then "the bump was committed with nothing tagged yet; the tag then names the bump"
+    last_message == "Bump version to 1.2.0"
+    !tagged_after_bump
+    tag_sha("v1.2.0") == bumped
   end
 
   test "a tag that exists on another commit is refused: that version is cut" do

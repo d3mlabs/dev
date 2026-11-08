@@ -33,19 +33,28 @@ module Dev
     #
     # The stage: `before` consumes the version into the tag and reads the
     # checkout into the cut's plan (ReleaseCut#plan — clean, on a branch,
-    # the tag absent or already on HEAD, the bump if any); the verb
-    # orchestrates from wherever it was invoked (K10), so its own dispatch
-    # is native and each `package` resolves its own. The seam is the cut
-    # and the push, then `package` per release build, each artifact read
-    # back from the store and checked current at the tag's commit — the
-    # project's builders and packagers run inside it, so a failure there
-    # leaves the tag pushed and the release uncreated for the retry to
-    # resume. `after` gathers the assets under their release names
-    # (ReleaseAssets), writes `release.json` (Manifest::Release: the tag,
-    # its commit, the archives with their build ids), creates the GitHub
-    # release when missing and uploads, replacing any asset a failed run
-    # half-attached. The artifacts cross from the seam to `after` through
-    # the env: the template's one channel between the stages.
+    # the tag absent or already on HEAD, the bump if any, the base and
+    # its drift), shows the plan in a frame — the **base line** first:
+    # which branch and commit is being released, how far from the
+    # previous tag, and whether the checkout is behind or ahead of
+    # origin as last fetched, since the cut never pulls — and asks
+    # `Proceed?` unless `--yes`; with no terminal to ask at it refuses,
+    # never proceeds silently or hangs (dev#514). The verb orchestrates
+    # from wherever it was invoked (K10), so its own dispatch is native
+    # and each `package` resolves its own. The seam is the cut and the
+    # push, one step each under a `Cutting` frame, then `package` per
+    # release build in its own frame, each artifact read back from the
+    # store and checked current at the tag's commit — the project's
+    # builders and packagers run inside it, so a failure there leaves the
+    # tag pushed and the release uncreated for the retry to resume.
+    # `after`, under a `Publishing` frame, gathers the assets under their
+    # release names (ReleaseAssets), writes `release.json`
+    # (Manifest::Release: the tag, its commit, the archives with their
+    # build ids), creates the GitHub release when missing and uploads,
+    # replacing any asset a failed run half-attached; then the epilogue
+    # and the split's hint — nothing deployed, `deploy <channel>
+    # --release` ships it. The artifacts cross from the seam to `after`
+    # through the env: the template's one channel between the stages.
     class ReleaseCommand < LifecycleCommand
       extend T::Sig
 
@@ -60,8 +69,21 @@ module Dev
       # `after` ran before the seam packaged the builds — a wiring bug.
       class NothingPackagedError < StandardError; end
 
+      # The operator answered no at the confirm: nothing was cut.
+      class DeclinedError < RuntimeError; end
+
+      # No terminal to confirm at and no `--yes`: a release is never cut
+      # on an assumed yes.
+      class NoTerminalError < RuntimeError; end
+
       NAME = "release"
       LISTING_HEADING = "Release builds"
+      YES_FLAG = "--yes"
+      FLAGS = T.let(
+        [Cli::Flag.new(YES_FLAG, desc: "skip the confirmation (required where there is no terminal to ask at)")].freeze,
+        T::Array[Cli::Flag],
+      )
+      CONFIRM = "Proceed?"
 
       # What `before` resolves; the seam fills `artifacts` for `after`.
       class ReleaseEnv
@@ -108,7 +130,6 @@ module Dev
       # @param listing [BuildListing] what the usage lists
       # @param executor [LifecycleExecutor] runs `package` as itself
       # @param clock [Proc] the manifest's instant (injectable for tests)
-      # @param out [IO, StringIO]
       sig do
         params(
           release: Lifecycle::ReleaseBuilds,
@@ -119,10 +140,9 @@ module Dev
           listing: BuildListing,
           executor: LifecycleExecutor,
           clock: T.proc.returns(Time),
-          out: T.any(IO, StringIO),
         ).void
       end
-      def initialize(release:, cut:, package:, store:, releases:, listing:, executor: LifecycleExecutor.new, clock: -> { Time.now }, out: $stdout)
+      def initialize(release:, cut:, package:, store:, releases:, listing:, executor: LifecycleExecutor.new, clock: -> { Time.now })
         super()
         @release = release
         @cut = cut
@@ -132,7 +152,6 @@ module Dev
         @listing = listing
         @executor = executor
         @clock = clock
-        @out = out
       end
 
       sig { override.returns(String) }
@@ -144,31 +163,41 @@ module Dev
       sig { override.returns(T.nilable(Listing)) }
       def listing = @listing.listing_of(@release.builds, heading: LISTING_HEADING)
 
+      sig { override.returns(T::Array[Cli::Flag]) }
+      def flags = FLAGS
+
       sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).returns(Dispatch::Outcome[ReleaseEnv]) }
       def before(args:, context:)
-        _ = context
         tag = Lifecycle::ReleaseTag.new(version(args))
+        env = ReleaseEnv.new(tag:, plan: @cut.plan(tag), builds: @release.builds)
+        show_plan(env, ui: context.ui)
+        confirm!(args, ui: context.ui)
         # The verb orchestrates from here: the cut is this checkout's git,
         # and each `package` it runs resolves its own dispatch (K10) — so
         # the dispatch is native and the invocation it is handed is never
         # spoken to a host.
-        Dispatch::Native.new.dispatch(Lifecycle::VerbInvocation.new(words: [NAME, tag.version])) do
-          ReleaseEnv.new(tag:, plan: @cut.plan(tag), builds: @release.builds)
-        end
+        Dispatch::Native.new.dispatch(Lifecycle::VerbInvocation.new(words: [NAME, tag.version])) { env }
       end
 
       sig { override.params(env: ReleaseEnv, context: ExecutionContext).void }
       def seam(env, context:)
-        @out.puts announce(env.plan)
-        @cut.cut!(env.plan)
-        @cut.push!(env.plan)
-        at_tag = Lifecycle::GitState.read(context.project!.root)
-        env.artifacts = env.builds.map { |build| package(build, at_tag:, context:) }
+        ui = context.ui
+        plan = env.plan
+        ui.frame(plan.resuming ? "Resuming #{plan.tag}" : "Cutting #{plan.tag}") do
+          bump = plan.bump
+          ui.spin("Bumping #{Lifecycle::ProjectVersion::FILE_NAME} #{bump.from} → #{bump.to}") { @cut.bump!(plan) } if bump
+          ui.spin("Tagging #{plan.tag}") { @cut.tag!(plan) } unless plan.resuming
+          ui.spin("Pushing #{plan.branch} + tag #{plan.tag} to #{Lifecycle::ReleaseCut::REMOTE}") { @cut.push!(plan) }
+          at_tag = Lifecycle::GitState.read(context.project!.root)
+          # `package` spawns the builder with the terminal (its output,
+          # its progress bars): a step, never a spin.
+          env.artifacts = env.builds.map { |build| ui.step("Packaging #{build}") { package(build, at_tag:, context:) } }
+        end
       end
 
       sig { override.params(env: ReleaseEnv, context: ExecutionContext).void }
       def after(env, context:)
-        _ = context
+        ui = context.ui
         artifacts = env.artifacts!
         sha = @cut.sha(env.tag)
         Dir.mktmpdir("dev-release-") do |tmp|
@@ -177,10 +206,14 @@ module Dev
           manifest = Lifecycle::Manifest::Release.new(
             stamp: Lifecycle::Manifest::Stamp.now(now: @clock.call), tag: env.tag.name, sha:, archives: gathered.map(&:archive),
           )
-          manifest.write(dir)
-          url = @releases.find(env.tag) || @releases.create(env.tag, title: env.tag.name, notes: env.plan.notes)
-          @releases.upload(env.tag, gathered.flat_map(&:files) + [dir / manifest.file_name])
-          report(env, sha, url, manifest)
+          url = ui.frame("Publishing #{env.tag}") do
+            ui.spin("Writing #{manifest.file_name}") { manifest.write(dir) }
+            page = find_or_create(env, ui:)
+            files = gathered.flat_map(&:files) + [dir / manifest.file_name]
+            ui.spin("Attaching #{files.map { |file| file.basename.to_s }.join(", ")}") { @releases.upload(env.tag, files) }
+            page
+          end
+          report(env, sha, url, manifest, ui:)
         end
       end
 
@@ -197,15 +230,102 @@ module Dev
           "release takes one version (`dev release 1.2.0`), got #{args.positionals.empty? ? "none" : args.positionals.map(&:inspect).join(", ")}"
       end
 
+      # The plan frame: what is being released from where, the notes,
+      # and the numbered steps the verb is about to take.
+      #
+      # @param env [ReleaseEnv]
+      # @param ui [Cli::Ui]
+      # @return [void]
+      sig { params(env: ReleaseEnv, ui: Cli::Ui).void }
+      def show_plan(env, ui:)
+        plan = env.plan
+        ui.frame(plan_title(plan)) do
+          ui.note("{{bold:Base:}} #{base_line(plan)}")
+          ui.note("{{bold:Notes:}}")
+          plan.notes.lines(chomp: true).each { |line| ui.note("  #{line}") }
+          ui.note("{{bold:Steps:}}")
+          steps(env).each_with_index { |step, index| ui.note("  #{index + 1}. #{step}") }
+        end
+      end
+
       # @param plan [Lifecycle::ReleaseCut::Plan]
-      # @return [String] what the cut is about to do
+      # @return [String]
       sig { params(plan: Lifecycle::ReleaseCut::Plan).returns(String) }
-      def announce(plan)
-        return "resuming #{plan.tag}: HEAD is already tagged — pushing, then packaging at the tag" if plan.resuming
+      def plan_title(plan)
+        return "Resuming #{plan.tag}" if plan.resuming
 
         bump = plan.bump
-        steps = [bump ? "bump #{Lifecycle::ProjectVersion::FILE_NAME} #{bump.from} → #{bump.to}" : nil, "tag", "push"].compact
-        "cutting #{plan.tag} on #{plan.branch}: #{steps.join(", ")}"
+        bump ? "Release: #{bump.from} → #{bump.to}" : "Release: #{plan.tag}"
+      end
+
+      # Which checkout is being released: branch, commit, distance from
+      # the previous tag, and the drift from origin as last fetched — the
+      # cut never pulls, so a stale checkout is reported here, for the
+      # operator to weigh at the confirm.
+      #
+      # @param plan [Lifecycle::ReleaseCut::Plan]
+      # @return [String]
+      sig { params(plan: Lifecycle::ReleaseCut::Plan).returns(String) }
+      def base_line(plan)
+        since =
+          if plan.resuming then "HEAD already tagged, nothing to cut"
+          elsif plan.previous.nil? then "first release, no previous tag"
+          else "#{plan.commits.size} commit#{"s" unless plan.commits.one?} since #{plan.previous}"
+          end
+        "#{plan.branch} @ #{plan.sha[0, Lifecycle::GitState::SHORT_SHA_LENGTH]} — #{since} (#{plan.drift})"
+      end
+
+      # @param env [ReleaseEnv]
+      # @return [Array<String>] the steps, in the imperative
+      sig { params(env: ReleaseEnv).returns(T::Array[String]) }
+      def steps(env)
+        plan = env.plan
+        bump = plan.bump
+        archives = env.builds.size
+        [
+          plan.resuming || bump.nil? ? nil : "Bump #{Lifecycle::ProjectVersion::FILE_NAME} #{bump.from} → #{bump.to}",
+          plan.resuming ? nil : "Tag #{plan.tag}",
+          "Push #{plan.branch} + tag #{plan.tag} to #{Lifecycle::ReleaseCut::REMOTE}",
+          "Package #{env.builds.map(&:name).join(", ")} at the tag",
+          "Create GitHub release #{plan.tag} and attach #{archives} archive#{"s" unless archives == 1} + #{Lifecycle::Manifest::Release::FILE_NAME}",
+        ].compact
+      end
+
+      # The GitHub release: the one a failed run already created (a
+      # resume attaches to it), else a new one with the plan's notes.
+      #
+      # @param env [ReleaseEnv]
+      # @param ui [Cli::Ui]
+      # @return [URI] the release's page
+      sig { params(env: ReleaseEnv, ui: Cli::Ui).returns(URI::Generic) }
+      def find_or_create(env, ui:)
+        found = @releases.find(env.tag)
+        if found
+          ui.note("{{v}} GitHub release #{env.tag} exists — attaching to it")
+          return found
+        end
+
+        ui.spin("Creating GitHub release #{env.tag}") { @releases.create(env.tag, title: env.tag.name, notes: env.plan.notes) }
+      end
+
+      # `--yes`, or the terminal's answer. No terminal is a refusal: a
+      # release is never cut on an assumed yes, and never hangs on a
+      # prompt nobody will see (ai-flow, the runner).
+      #
+      # @param args [Cli::ParsedArgs]
+      # @param ui [Cli::Ui]
+      # @return [void]
+      # @raise [DeclinedError]
+      # @raise [NoTerminalError]
+      sig { params(args: Cli::ParsedArgs, ui: Cli::Ui).void }
+      def confirm!(args, ui:)
+        return if args.flag?(YES_FLAG)
+
+        case ui.confirm(CONFIRM)
+        when true then nil
+        when false then raise DeclinedError, "aborted — nothing cut"
+        else raise NoTerminalError, "no terminal to confirm at — pass #{YES_FLAG}"
+        end
       end
 
       # `package` as itself for one release build, then its artifact from
@@ -227,17 +347,20 @@ module Dev
             "#{artifact ? "the store holds #{artifact.manifest.build_id}" : "it was packaged elsewhere"}; a release attaches what was packaged here"
       end
 
+      # The epilogue: what was released from where, each archive, and the
+      # split's hint — `release` deploys nothing (ADR-0010).
+      #
       # @param env [ReleaseEnv]
       # @param sha [String] the tag's commit
       # @param url [URI] the release's page
       # @param manifest [Lifecycle::Manifest::Release]
+      # @param ui [Cli::Ui]
       # @return [void]
-      sig { params(env: ReleaseEnv, sha: String, url: URI::Generic, manifest: Lifecycle::Manifest::Release).void }
-      def report(env, sha, url, manifest)
-        @out.puts "released #{env.tag} (#{sha[0, Lifecycle::GitState::SHORT_SHA_LENGTH]}) → #{url}"
-        manifest.archives.each { |archive| @out.puts "  #{archive.name} (#{archive.build_id})" }
-        @out.puts "  #{manifest.file_name}"
-        @out.puts "nothing deployed — `dev deploy <channel> --release #{env.tag.version}` ships it"
+      sig { params(env: ReleaseEnv, sha: String, url: URI::Generic, manifest: Lifecycle::Manifest::Release, ui: Cli::Ui).void }
+      def report(env, sha, url, manifest, ui:)
+        ui.note("{{v}} {{bold:#{env.tag} released!}} (#{sha[0, Lifecycle::GitState::SHORT_SHA_LENGTH]}, from #{env.plan.branch}) → #{url}")
+        manifest.archives.each { |archive| ui.note("  #{archive.name} (#{archive.build_id})") }
+        ui.note("Nothing deployed — ship it: dev deploy <channel> --release #{env.tag.version}")
       end
     end
   end
