@@ -156,4 +156,18 @@ class Dev::OperatorAccessTest < Minitest::Test
     error.message.include?("repo admin")
     error.message.include?("gh auth refresh -h github.com -s repo")
   end
+
+  test "the default refresher is gh's own refresh for the scope, and its exit status is the answer" do
+    Given "gh answering the refresh with #{outcome}"
+    Kernel.expects(:system).once.with("gh", "auth", "refresh", "-h", "github.com", "-s", "admin:org").returns(outcome)
+
+    Expect
+    Dev::OperatorAccess::DEFAULT_REFRESHER.call("admin:org") == answer
+
+    Where
+    outcome | answer
+    true    | true
+    false   | false
+    nil     | false
+  end
 end

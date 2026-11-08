@@ -222,7 +222,7 @@ module Dev
         # The org's runner groups, converged over the same registry.
         groups: nil,
         # How the operator's login is widened when the pre-flight offers it.
-        refresher: ->(scope) { Kernel.system("gh", "auth", "refresh", "-h", "github.com", "-s", scope) == true }
+        refresher: Dev::OperatorAccess::DEFAULT_REFRESHER
       )
         super()
         @groups = T.let(groups || Dev::RunnerGroups.new(registry: registry, out: out), Dev::RunnerGroups)

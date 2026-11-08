@@ -55,6 +55,13 @@ module Dev
     # the browser round-trip itself.
     Refresher = T.type_alias { T.proc.params(scope: String).returns(T::Boolean) }
 
+    # The one way a login is widened by default: gh's own refresh, which
+    # prompts and opens the browser itself; its exit status is the answer.
+    DEFAULT_REFRESHER = T.let(
+      ->(scope) { Kernel.system("gh", "auth", "refresh", "-h", "github.com", "-s", scope) == true },
+      Refresher,
+    )
+
     # @param registry [#group, #find] the GitHub boundary the probes go through
     # @param confirmer [Dev::Confirmer, #confirm?] asks whether to refresh; no off a terminal
     # @param out [IO, StringIO]
@@ -67,8 +74,7 @@ module Dev
         refresher: Refresher,
       ).void
     end
-    def initialize(registry:, confirmer: Confirmer.new, out: $stdout,
-                   refresher: ->(scope) { Kernel.system("gh", "auth", "refresh", "-h", "github.com", "-s", scope) == true })
+    def initialize(registry:, confirmer: Confirmer.new, out: $stdout, refresher: DEFAULT_REFRESHER)
       @registry = registry
       @confirmer = confirmer
       @out = out
