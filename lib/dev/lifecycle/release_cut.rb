@@ -18,12 +18,22 @@ module Dev
     # 0.2.99 into an empty 0.2.100. A tag that exists on another commit is
     # refused: that version was cut from somewhere else.
     #
-    # Two steps, each reading one plan: `cut!` moves the local tree
-    # (nothing when resuming), `push!` publishes it — split so the verb
-    # can report what the cut will do before it does it, and so a push
-    # that fails leaves the local cut for the retry to resume. Every git
-    # call goes through Git over the checkout; the commit is the
-    # operator's own (their identity, their branch), unlike a snapshot's.
+    # Three steps, each reading one plan: `bump!` commits the version,
+    # `tag!` tags it (`cut!` is both; nothing when resuming), `push!`
+    # publishes them — split so the verb can report what the cut will do
+    # before it does it, name each step as it runs (dev#514), and so a
+    # push that fails leaves the local cut for the retry to resume.
+    # Every git call goes through Git over the checkout; the commit is
+    # the operator's own (their identity, their branch), unlike a
+    # snapshot's.
+    #
+    # The plan also reads the **base** the release is cut from (dev#514):
+    # HEAD's sha, the previous tag the notes span from, and the **drift**
+    # from the branch's remote-tracking ref *as last fetched* — the cut
+    # never fetches or pulls (a pull could ride unreviewed changes into
+    # the release), so a checkout behind its origin is reported for the
+    # operator to weigh at the confirm, not refused: behind is sometimes
+    # deliberate on a patch branch.
     class ReleaseCut
       extend T::Sig
 
@@ -59,35 +69,83 @@ module Dev
         def hash = [VersionBump, from, to].hash
       end
 
-      # What one run of the cut will do, read from the checkout before
-      # anything moves.
+      # Where the checkout stands against its branch's remote-tracking
+      # ref as last fetched: how many commits it is ahead (unpushed) and
+      # behind (merged elsewhere since the last fetch). Both nil when the
+      # ref does not exist — origin was never fetched for this branch.
+      class Drift < T::Struct
+        extend T::Sig
+
+        # @return [String] the remote-tracking ref, `origin/main`
+        const :upstream, String
+        const :ahead, T.nilable(Integer)
+        const :behind, T.nilable(Integer)
+
+        # @return [String] the base line's clause
+        sig { returns(String) }
+        def to_s
+          ahead = self.ahead
+          behind = self.behind
+          return "#{upstream} never fetched" if ahead.nil? || behind.nil?
+          return "in sync with #{upstream}" if ahead.zero? && behind.zero?
+          return "#{ahead} ahead of #{upstream}, unpushed" if behind.zero?
+
+          "#{ahead.positive? ? "#{ahead} ahead, " : ""}#{behind} behind #{upstream} as last fetched"
+        end
+
+        sig { params(other: Object).returns(T::Boolean) }
+        def ==(other) = other.is_a?(Drift) && upstream == other.upstream && ahead == other.ahead && behind == other.behind
+
+        sig { params(other: Object).returns(T::Boolean) }
+        def eql?(other) = self == other
+
+        sig { returns(Integer) }
+        def hash = [Drift, upstream, ahead, behind].hash
+      end
+
+      # What one run of the cut will do, and from where, read from the
+      # checkout before anything moves.
       class Plan < T::Struct
         extend T::Sig
 
         const :tag, ReleaseTag
         # @return [String] the branch HEAD is on — what the push publishes
         const :branch, String
+        # @return [String] HEAD's commit — the base the release is cut from
+        const :sha, String
         # @return [Boolean] the tag already points at HEAD: nothing to cut,
         #   the run resumes at the push
         const :resuming, T::Boolean
         # @return [VersionBump, nil] nil when the project keeps no version
         #   in source, or already carries this one
         const :bump, T.nilable(VersionBump)
-        # @return [String] the release notes: the commits since the previous
-        #   tag, read before the bump adds its own
-        const :notes, String
+        # @return [String, nil] the previous tag in HEAD's ancestry — what
+        #   the notes span from; nil for a first release
+        const :previous, T.nilable(String)
+        # @return [Array<String>] the commits since the previous tag, one
+        #   line each (`git log --oneline`), read before the bump adds its own
+        const :commits, T::Array[String]
+        # @return [Drift] the checkout against its origin as last fetched
+        const :drift, Drift
+
+        # The release notes: the commits, or the stock line for a first
+        # release or a tag with nothing since the previous.
+        #
+        # @return [String]
+        sig { returns(String) }
+        def notes = commits.empty? ? "Release #{tag}." : commits.join("\n")
 
         sig { params(other: Object).returns(T::Boolean) }
         def ==(other)
-          other.is_a?(Plan) && tag == other.tag && branch == other.branch && resuming == other.resuming &&
-            bump == other.bump && notes == other.notes
+          other.is_a?(Plan) && tag == other.tag && branch == other.branch && sha == other.sha && resuming == other.resuming &&
+            bump == other.bump && previous == other.previous && commits == other.commits && drift == other.drift
         end
 
         sig { params(other: Object).returns(T::Boolean) }
         def eql?(other) = self == other
 
         sig { returns(Integer) }
-        def hash = [Plan, tag, branch, resuming, bump, notes].hash
+        def hash = [Plan, tag, branch, sha, resuming, bump, previous, commits, drift].hash
       end
 
       # @param git [Git] over the project's checkout
@@ -111,25 +169,51 @@ module Dev
         raise DetachedHeadError, "HEAD is not on a branch — check one out; a release is cut from a branch its push can publish" if branch.empty?
 
         resuming = tagged_at_head?(tag)
-        Plan.new(tag:, branch:, resuming:, bump: resuming ? nil : bump_for(tag), notes: notes_since_previous_tag(tag))
+        previous = previous_tag(tag)
+        Plan.new(
+          tag:, branch:, sha: head, resuming:, bump: resuming ? nil : bump_for(tag),
+          previous:, commits: commits_since(previous), drift: drift(branch),
+        )
       end
 
       # The local cut: the bump commit, then the tag. Nothing when the
-      # plan resumes.
+      # plan resumes a cut that landed.
       #
       # @param plan [Plan]
       # @return [void]
       # @raise [Git::CommandFailedError]
       sig { params(plan: Plan).void }
       def cut!(plan)
+        bump!(plan)
+        tag!(plan)
+      end
+
+      # The bump commit, when the plan has a bump: the version written
+      # into source, committed. Nothing when resuming or when the
+      # project keeps no version to bump.
+      #
+      # @param plan [Plan]
+      # @return [void]
+      # @raise [Git::CommandFailedError]
+      sig { params(plan: Plan).void }
+      def bump!(plan)
+        bump = plan.bump
+        return if plan.resuming || bump.nil?
+
+        ProjectVersion.write(@git.root, bump.to)
+        @git.capture(["add", ProjectVersion::FILE_NAME])
+        @git.capture(["commit", "-q", "-m", format(BUMP_MESSAGE, version: bump.to)])
+      end
+
+      # The tag on HEAD. Nothing when resuming: it is already there.
+      #
+      # @param plan [Plan]
+      # @return [void]
+      # @raise [Git::CommandFailedError]
+      sig { params(plan: Plan).void }
+      def tag!(plan)
         return if plan.resuming
 
-        bump = plan.bump
-        if bump
-          ProjectVersion.write(@git.root, bump.to)
-          @git.capture(["add", ProjectVersion::FILE_NAME])
-          @git.capture(["commit", "-q", "-m", format(BUMP_MESSAGE, version: bump.to)])
-        end
         @git.capture(["tag", plan.tag.name])
       end
 
@@ -196,19 +280,47 @@ module Dev
         VersionBump.new(from: declared, to: tag.version)
       end
 
-      # The one-line log since the previous tag — the release's own tag
-      # excluded, so a resumed run reads the same span — or a stock line
-      # for a first release.
+      # @return [String] HEAD's commit
+      sig { returns(String) }
+      def head = @git.capture(["rev-parse", "HEAD"]).strip
+
+      # The nearest tag in HEAD's ancestry other than the release's own
+      # (the resume case: it already tags HEAD), or nil for a first release.
       #
       # @param tag [ReleaseTag]
-      # @return [String]
-      sig { params(tag: ReleaseTag).returns(String) }
-      def notes_since_previous_tag(tag)
-        return "Release #{tag}." unless @git.succeeds?(["describe", "--tags", "--abbrev=0", "--exclude", tag.name, "HEAD"])
+      # @return [String, nil]
+      sig { params(tag: ReleaseTag).returns(T.nilable(String)) }
+      def previous_tag(tag)
+        argv = ["describe", "--tags", "--abbrev=0", "--exclude", tag.name, "HEAD"]
+        return nil unless @git.succeeds?(argv)
 
-        previous = @git.capture(["describe", "--tags", "--abbrev=0", "--exclude", tag.name, "HEAD"]).strip
-        log = @git.capture(["log", "--oneline", "#{previous}..HEAD"]).strip
-        log.empty? ? "Release #{tag}." : log
+        @git.capture(argv).strip
+      end
+
+      # @param previous [String, nil] the tag the log starts after
+      # @return [Array<String>] `git log --oneline` since it; empty for a
+      #   first release (its whole history is not release notes)
+      sig { params(previous: T.nilable(String)).returns(T::Array[String]) }
+      def commits_since(previous)
+        return [] if previous.nil?
+
+        @git.capture(["log", "--oneline", "#{previous}..HEAD"]).lines(chomp: true).reject(&:empty?)
+      end
+
+      # The branch against `origin/<branch>` as the checkout last saw it:
+      # `rev-list --left-right --count` over the symmetric difference,
+      # left the remote's commits HEAD lacks (behind), right HEAD's the
+      # remote lacks (ahead). No fetch.
+      #
+      # @param branch [String]
+      # @return [Drift]
+      sig { params(branch: String).returns(Drift) }
+      def drift(branch)
+        upstream = "#{REMOTE}/#{branch}"
+        return Drift.new(upstream:, ahead: nil, behind: nil) unless @git.succeeds?(["rev-parse", "--verify", "--quiet", "refs/remotes/#{upstream}"])
+
+        behind, ahead = @git.capture(["rev-list", "--left-right", "--count", "#{upstream}...HEAD"]).split.map(&:to_i)
+        Drift.new(upstream:, ahead:, behind:)
       end
     end
   end
