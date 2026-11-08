@@ -58,6 +58,17 @@ class Dev::ProjectPublishersTest < Minitest::Test
     "pins of two publishers"              | [["steamworks", :steam], ["ruby", :ruby, "d3mlabs/d3mlabs"]]           | ["brew", "steam"] | ["d3mlabs/d3mlabs"]
   end
 
+  test "reach is the table's map of channel to the pins that contribute it, independent of the lock (dev#509)" do
+    Given "a checkout with no lock"
+    root = Pathname(Dir.mktmpdir("project-publishers-"))
+
+    Expect
+    Dev::ProjectPublishers.new(root:, entries: ENTRIES).reach == { "brew" => %i[brew ruby], "steam" => %i[steam] }
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
   test "a checkout still carrying the retired build-deps.lock is refused, as every lock read is" do
     Given
     root = Pathname(Dir.mktmpdir("project-publishers-"))

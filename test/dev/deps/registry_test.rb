@@ -68,6 +68,32 @@ class Dev::Deps::RegistryTest < Minitest::Test
     steam.channel_name == "steam"
   end
 
+  test "ficsit publishes through its own repository class; a lock pinning a mod gets `deploy ficsit` (dev#427)" do
+    Given
+    ficsit = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :ficsit }
+
+    Expect "the write side is the read side's class, built with no kwargs"
+    ficsit.publisher == Dev::Deps::FicsitRepository
+    ficsit.publisher_needs == []
+    ficsit.channel_name == "ficsit"
+    publishers = Dev::Deps::Registry.publishers(project_root: Pathname("/tmp"), pinned: [:ficsit])
+    publishers.keys == ["ficsit"]
+    publishers.fetch("ficsit").is_a?(Dev::Deps::FicsitRepository)
+  end
+
+  test "the built-in store publishers are steam's repository and egs's own class (dev#426)" do
+    Given
+    by_symbol = Dev::Deps::Registry::INTEGRATIONS.to_h { |entry| [entry.symbol, entry] }
+
+    Expect
+    by_symbol[:steam].publisher == Dev::Deps::SteamRepository
+    by_symbol[:steam].publisher_needs == []
+    by_symbol[:egs].publisher == Dev::Deps::EgsPublisher
+    by_symbol[:egs].publisher_needs == %i[project_root]
+    by_symbol[:egs].repository == Dev::Deps::UrlRepository
+    by_symbol[:egs].integration == Dev::Deps::EgsIntegration
+  end
+
   test "an entry's channel is the destination's name when that differs from the type's, and only a publishing entry may name one" do
     Given
     gems = Dev::Deps::Registry::Entry.new(symbol: :bundler, repository: Dev::Deps::BundlerRepository, scheme: nil, integration: nil,
@@ -87,7 +113,7 @@ class Dev::Deps::RegistryTest < Minitest::Test
     gems = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :bundler }
     image = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :image }
 
-    Expect "the two entries publish under the store's name; the rest are silent"
+    Expect "the two entries publish under the store's name; with steam, egs and ficsit (dev#426, #427), the rest are silent"
     gems.publisher == Dev::Deps::RubygemsPublisher
     gems.publisher_needs == %i[project_root]
     gems.channel_name == "rubygems"
@@ -98,7 +124,7 @@ class Dev::Deps::RegistryTest < Minitest::Test
     brew.publisher == Dev::Deps::BrewPublisher
     brew.publisher_needs == %i[project_root taps]
     brew.channel_name == "brew"
-    Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:symbol) == %i[bundler brew image]
+    Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:symbol) == %i[bundler brew ficsit steam egs image]
     Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:channel_name).uniq.size == Dev::Deps::Registry::INTEGRATIONS.count(&:publishes?)
   end
 
@@ -115,9 +141,13 @@ class Dev::Deps::RegistryTest < Minitest::Test
     [:bundler]         | ["rubygems"]          | [Dev::Deps::RubygemsPublisher]
     [:image]           | ["ghcr"]              | [Dev::Deps::GhcrPublisher]
     [:bundler, :image] | ["rubygems", "ghcr"]  | [Dev::Deps::RubygemsPublisher, Dev::Deps::GhcrPublisher]
+    [:ficsit]          | ["ficsit"]            | [Dev::Deps::FicsitRepository]
+    [:steam]           | ["steam"]             | [Dev::Deps::SteamRepository]
+    [:egs]             | ["egs"]               | [Dev::Deps::EgsPublisher]
+    [:steam, :egs]     | ["steam", "egs"]      | [Dev::Deps::SteamRepository, Dev::Deps::EgsPublisher]
     [:ruby]            | ["brew"]              | [Dev::Deps::BrewPublisher]
     [:brew]            | ["brew"]              | [Dev::Deps::BrewPublisher]
-    [:gh, :steam]      | []                    | []
+    [:cmake, :url]     | []                    | []
     []                 | []                    | []
   end
 
@@ -132,6 +162,21 @@ class Dev::Deps::RegistryTest < Minitest::Test
     publishers.keys == ["brew"]
     publishers["brew"].is_a?(Dev::Deps::BrewPublisher)
     Dev::Deps::Registry.publishers(project_root: Pathname("/tmp"), pinned: [:cmake, :git], taps:) == {}
+  end
+
+  test "publisher_reach maps each channel a table can ship to onto the types whose pin reaches it, directly or through an alias (dev#509)" do
+    Given "the same table: brew publishes and ruby installs through it; steam publishes; cmake is silent"
+    entries = [
+      Dev::Deps::Registry::Entry.new(symbol: :brew, repository: Dev::Deps::BrewRepository, scheme: nil, integration: nil,
+        publisher: RecordingPublisher, publisher_needs: %i[project_root]),
+      Dev::Deps::Registry::Entry.new(symbol: :ruby, repository: Dev::Deps::BrewRepository, scheme: nil, integration: nil, install_alias: :brew),
+      Dev::Deps::Registry::Entry.new(symbol: :steam, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil, publisher: RecordingPublisher),
+      Dev::Deps::Registry::Entry.new(symbol: :cmake, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil),
+    ]
+
+    Expect
+    Dev::Deps::Registry.publisher_reach(entries:) == { "brew" => %i[brew ruby], "steam" => %i[steam] }
+    Dev::Deps::Registry.publisher_reach == { "rubygems" => %i[bundler], "brew" => %i[brew ruby python], "ficsit" => %i[ficsit], "steam" => %i[steam], "egs" => %i[egs], "ghcr" => %i[image] }
   end
 
   test "publishers builds one instance per publishing entry the lock reaches, directly or through an alias, with the kwargs it asks for" do

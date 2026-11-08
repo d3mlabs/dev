@@ -10,6 +10,7 @@ require_relative "xcode_integration"
 require_relative "gh_integration"
 require_relative "wwise_integration"
 require_relative "steam_integration"
+require_relative "egs_integration"
 
 module Dev
   module Deps
@@ -34,7 +35,7 @@ module Dev
       class NotInstalledError < RuntimeError; end
 
       USAGE = "usage: dev deps path ficsit <mod> <platform> | dev deps path xcode | " \
-        "dev deps path gh <name> | dev deps path steam <name> | dev deps path wwise <name>"
+        "dev deps path gh <name> | dev deps path steam <name> | dev deps path egs <name> | dev deps path wwise <name>"
 
       # @param lockfile [Lockfile]
       # @param store [ArtifactStore] where published trees and cached blobs live
@@ -65,7 +66,7 @@ module Dev
 
       # Resolve the artifact path for a locked dependency.
       #
-      # @param integration [String] integration name ("ficsit", "xcode", "gh" or "wwise")
+      # @param integration [String] integration name ("ficsit", "xcode", "gh", "steam", "egs" or "wwise")
       # @param name [String, nil] dependency name (e.g. "SML", "UnrealEngineMac", "Wwise"; unused for xcode)
       # @param platform [String, nil] ficsit target name (e.g. "LinuxServer")
       # @return [Pathname] absolute path to the artifact
@@ -87,6 +88,7 @@ module Dev
         when "xcode" then xcode_developer_dir
         when "gh" then published_tree(:gh, name, placed_by: GhIntegration)
         when "steam" then published_tree(:steam, name, placed_by: SteamIntegration)
+        when "egs" then published_tree(:egs, name, placed_by: EgsIntegration)
         when "wwise" then published_tree(:wwise, name, placed_by: WwiseIntegration)
         else raise UsageError, USAGE
         end

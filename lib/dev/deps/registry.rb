@@ -17,6 +17,8 @@ require_relative "gh_repository"
 require_relative "gh_integration"
 require_relative "steam_repository"
 require_relative "steam_integration"
+require_relative "egs_integration"
+require_relative "egs_publisher"
 require_relative "bundler_locker"
 require_relative "bundler_repository"
 require_relative "bundler_integration"
@@ -295,11 +297,16 @@ module Dev
             integration: LuaRocksIntegration,
             integration_needs: %i[project_root],
           ),
+          # The write side is the read side's class: one API, one client,
+          # one credential story (dev#427). A project pinning a mod (SML)
+          # gets `deploy ficsit`, which merges its per-target Alpakit zips
+          # into SMR's multi-target zip and uploads a version.
           Entry.new(
             symbol: :ficsit,
             repository: FicsitRepository,
             scheme: SemverScheme,
             integration: FicsitIntegration,
+            publisher: FicsitRepository,
           ),
           Entry.new(
             symbol: :gh,
@@ -309,11 +316,29 @@ module Dev
             integration: GhIntegration,
             integration_needs: %i[project_root],
           ),
+          # The write side is the repository class: one client (steamcmd)
+          # reads a depot and uploads a build (dev#426).
           Entry.new(
             symbol: :steam,
             repository: SteamRepository,
             scheme: SteamScheme,
             integration: SteamIntegration,
+            publisher: SteamRepository,
+          ),
+          # The Epic Games Store's tooling (dev#426): BuildPatchTool is the
+          # one declarable dependency — a url-shaped universe (the zip Epic
+          # serves, TOFU-hashed, no scheme) installed as a store tree — and
+          # pinning it is what gives a project its `deploy egs` channel.
+          # The write side is its own class: the read side's client is
+          # curl, the write side's is the tool under the product's
+          # credentials, so the two share nothing.
+          Entry.new(
+            symbol: :egs,
+            repository: UrlRepository,
+            scheme: nil,
+            integration: EgsIntegration,
+            publisher: EgsPublisher,
+            publisher_needs: %i[project_root],
           ),
           Entry.new(
             symbol: :xcode,
@@ -487,6 +512,21 @@ module Dev
             # the publisher constructors' own sigs validate at runtime.
             publisher = T.unsafe(T.must(entry.publisher)).new(**T.unsafe(context).slice(*entry.publisher_needs))
             [entry.channel_name, T.let(publisher, Lifecycle::Publisher)]
+          end
+        end
+
+        # Every channel a table can ship to, with the types whose pin
+        # reaches its publisher — the entry's own, and each entry that
+        # installs through it (`ruby` → brew). What a project must pin for
+        # a channel it declares without `run:`; a name absent here is one
+        # this dev ships no publisher for at all (dev#509).
+        #
+        # @param entries [Array<Entry>] the table to read (tests substitute one)
+        # @return [Hash{String => Array<Symbol>}] channel name => types, in table order
+        sig { params(entries: T::Array[Entry]).returns(T::Hash[String, T::Array[Symbol]]) }
+        def publisher_reach(entries: INTEGRATIONS)
+          entries.select(&:publishes?).to_h do |entry|
+            [entry.channel_name, [entry.symbol] + entries.select { |other| other.install_alias == entry.symbol }.map(&:symbol)]
           end
         end
 

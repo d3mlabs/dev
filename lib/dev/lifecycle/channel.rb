@@ -18,6 +18,14 @@ module Dev
     # build outside the set is shipped only under `--force`; a config is
     # never implied by the channel.
     #
+    # An integration channel may carry **options** — the mapping under the
+    # channel's own name on the `deploy` child (`steam: { app: 480, depots:
+    # … }`), namespaced the way an integration builder's target options
+    # are (dev#192, K1) — which are the publisher's vocabulary, not dev's:
+    # the channel carries them as the YAML delivered them and the
+    # publisher parses and validates them (dev#426). A script channel has
+    # none: its `run:` owns whatever it needs.
+    #
     # Owns the invariant that a channel accepts something: a channel with
     # an empty accept set could ship nothing and would be a typo kept.
     class Channel < T::Struct
@@ -29,19 +37,26 @@ module Dev
       # What `dev help deploy` shows beside a channel declared without `desc`.
       NO_DESCRIPTION = "(no description)"
 
+      Options = T.type_alias { T::Hash[String, T.untyped] }
+
       const :name, String
       const :desc, String, default: NO_DESCRIPTION
       # In declaration order; the order the artifacts ship in.
       const :accepts, T::Array[BuildPattern]
       const :publisher, PublisherSpec
+      # The publisher's options as dev.yml delivered them; empty for a
+      # script channel and for an integration channel configured by its
+      # accept set alone.
+      const :options, Options, default: {}
 
       # @param name [String] the `deploy` child's key
       # @param accepts [Array<BuildPattern>] the `targets:` patterns, non-empty
       # @param publisher [PublisherSpec] the protocol as declared
       # @param desc [String]
+      # @param options [Hash{String => Object}] the publisher's options
       # @raise [EmptyAcceptSetError]
-      sig { params(name: String, accepts: T::Array[BuildPattern], publisher: PublisherSpec, desc: String).void }
-      def initialize(name:, accepts:, publisher:, desc: NO_DESCRIPTION)
+      sig { params(name: String, accepts: T::Array[BuildPattern], publisher: PublisherSpec, desc: String, options: Options).void }
+      def initialize(name:, accepts:, publisher:, desc: NO_DESCRIPTION, options: {})
         super
         raise EmptyAcceptSetError, "channel '#{name}': `targets:` lists no build — name the builds it accepts" if accepts.empty?
       end
@@ -74,14 +89,15 @@ module Dev
 
       sig { params(other: Object).returns(T::Boolean) }
       def ==(other)
-        other.is_a?(Channel) && name == other.name && desc == other.desc && accepts == other.accepts && publisher == other.publisher
+        other.is_a?(Channel) && name == other.name && desc == other.desc && accepts == other.accepts &&
+          publisher == other.publisher && options == other.options
       end
 
       sig { params(other: Object).returns(T::Boolean) }
       def eql?(other) = self == other
 
       sig { returns(Integer) }
-      def hash = [Channel, name, desc, accepts, publisher].hash
+      def hash = [Channel, name, desc, accepts, publisher, options].hash
     end
   end
 end

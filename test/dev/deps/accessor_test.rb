@@ -226,6 +226,58 @@ class Dev::Deps::AccessorTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  EGS_DIGEST = "SHA256=#{"cd" * 32}".freeze
+
+  # Lock the egs tool; the store places it by identity and digest (egs/<name>/<digest>).
+  def setup_locked_egs(dir, installed: true)
+    lockfile = Dev::Deps::Lockfile.new(dir: dir)
+    lockfile.lock([
+      Dev::Deps::Dependency.new(
+        name: "BuildPatchTool", integration: :egs, group: :default, version: nil, hash: EGS_DIGEST,
+        metadata: { "url" => Dev::Deps::BuildPatchTool::DOWNLOAD_URL },
+      ),
+    ])
+    version_dir = File.join(dir, "egs", "BuildPatchTool", EGS_DIGEST)
+    if installed
+      FileUtils.mkdir_p(version_dir)
+      File.write(File.join(version_dir, Dev::Deps::EgsIntegration::MARKER_FILE), EGS_DIGEST)
+    end
+
+    accessor = Dev::Deps::Accessor.new(lockfile: lockfile, store: Dev::Deps::LocalStore.new(data_root: dir))
+    [accessor, version_dir]
+  end
+
+  test "path egs returns the locked tool's digest-keyed tree under the data root (dev#426)" do
+    Given "a locked and installed BuildPatchTool"
+    dir = Dir.mktmpdir("dev-accessor-test-")
+    accessor, version_dir = setup_locked_egs(dir)
+
+    When
+    result = accessor.path("egs", "BuildPatchTool")
+
+    Then
+    result == Pathname(version_dir)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "path egs raises NotInstalledError when the tool's tree is absent" do
+    Given "a locked but uninstalled BuildPatchTool"
+    dir = Dir.mktmpdir("dev-accessor-test-")
+    accessor, = setup_locked_egs(dir, installed: false)
+
+    When
+    err = assert_raises(Dev::Deps::Accessor::NotInstalledError) { accessor.path("egs", "BuildPatchTool") }
+
+    Then
+    err.message.include?("BuildPatchTool")
+    err.message.include?("dev up")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "path gh returns the locked version dir under the data root" do
     Given "a locked and installed gh engine"
     dir = Dir.mktmpdir("dev-accessor-test-")

@@ -101,10 +101,14 @@ commands:
         targets: [cellbound-3d-server]
         run: ./bin/stage
         environment: host
-      steam:
+      steam:                              # no run: — the lock's steam dependency publishes
         desc: Steam depots
         targets: [cellbound-3d-steamworks-win64-release, cellbound-3d-server-linux64-release]
-        run: ./bin/steam-upload
+        steam:                            # the publisher's options, under the channel's name
+          app: 480
+          depots:
+            cellbound-3d-steamworks-win64: 481
+            cellbound-3d-server-linux64: 482
       ficsit:                             # no run: — the lock's SML dependency publishes
         targets: [snappy-steam]
 ```
@@ -115,11 +119,13 @@ commands:
 | `targets` | The **accept set**: a non-empty list of builds or patterns in the build grammar, parsed at load (`BuildPattern.parse`), so a name no target spells is refused before anything runs. |
 | `run` | The protocol's script form: a shell command run at the repo root once per archive, with the env contract below. Omitted, the protocol is the publisher the lock contributes under the channel's name (`PublisherSpec::Integration`). |
 | `environment` | Where the script runs — a command's key, values and binding (`Dev::PlacementBinder#bind_channels`). Needs `run:`; an integration publisher is dev's own code and is placed on the host. |
+| `<channel>` | The lock publisher's **options** ([dev#426](https://github.com/d3mlabs/dev/issues/426)): a mapping under the channel's own name (`steam:` on `steam`, `egs:` on `egs`), carried verbatim as `Lifecycle::Channel#options` and read by the publisher at the start of a deploy in its own vocabulary — see [the channel contract](#the-channel-contract) for each. Refused beside `run:` (`ChannelOptionsError`): the script replaced the publisher it would configure. Refused when not a mapping. |
 
 Load-time rules: `deploy` itself may carry no `run:` (`DeployBodyError`)
 and must have a child (`NoChannelsError`); a child must be a mapping
 (`InvalidChannelError`) with `targets:` (`ChannelAcceptsError`), may not
 carry `environment:` without `run:` (`ChannelEnvironmentError`), may not
+carry its publisher's options beside `run:` (`ChannelOptionsError`), may not
 have `commands:` of its own (`ChannelChildrenError`) and may not be named
 `help` or `status` (`ReservedChannelNameError` — both are `deploy`'s own
 children). A `deploy` child carrying `targets:` in a project without
@@ -147,7 +153,7 @@ channels since `deploy`'s children never land on the builtin's slot:
 | --- | --- | --- |
 | with `run:` | any | the script **replaces** the publisher; dev's stage still selects, checks and records |
 | without `run:` | a publisher of that name | the declaration **configures** it: `targets:` is the accept set, `desc` is the row, the protocol is the integration's |
-| without `run:` | none | refused at load (`ChannelBinder::ChannelProtocolError`), naming both fixes: declare `run:`, or depend on an integration whose publisher knows the endpoint |
+| without `run:` | none | binds with a **fault** ([dev#509](https://github.com/d3mlabs/dev/issues/509)) that says why — *this dev ships no `x` publisher* (a release ahead of the installed dev: `dev up` once one ships it) or *deps.lock pins no `x`* (depend on it in `dependencies.rb`, `dev deps update`) — or declare `run:`. It lists in `dev help deploy` with the cause on its Protocol line; `deploy <channel>` refuses with the full message (`DeployCommand::UnboundChannelError`). Every other verb runs: a manifest ahead of the installed dev must not take `dev deps install` down with it |
 | — | a publisher | the channel appears as the lock's: every packageable build accepted, a stock `desc`; a project with nothing packageable gets no row |
 
 ### The release
@@ -638,7 +644,7 @@ or the script's environment — never `dev.yml`'s.
 
 **Tracks.** A channel has two, `Lifecycle::Track`, and the publisher
 maps them onto its own (Steam's beta branch and default branch, SMR's
-unreleased and released states, a staging rsync's one); which one a
+`beta` and `release` stabilities, a staging rsync's one); which one a
 deploy ships on is the **source's** decision, never the operator's: an
 artifact from the store goes to `testing`, an archive of a release
 (`deploy --release`, [dev#425](https://github.com/d3mlabs/dev/issues/425))
@@ -660,11 +666,14 @@ Registry builds one instance per publishing entry the lock reaches
 (`Registry.publishers`), with the kwargs the entry's `publisher_needs`
 asks for; `Dev::ProjectPublishers` reads the lock once and asks; the
 Runner hands the table to `ChannelBinder` (the merge) and to `Ports` (the
-lookup). The built-in write sides are below — `rubygems`, `ghcr`
-([dev#428](https://github.com/d3mlabs/dev/issues/428)) and `brew`
-([dev#429](https://github.com/d3mlabs/dev/issues/429)); the stores'
-(`steam`, `egs`, `ficsit`) are
-[dev#426](https://github.com/d3mlabs/dev/issues/426)–[#427](https://github.com/d3mlabs/dev/issues/427);
+lookup). A built-in publisher is its integration's **repository class**
+when the write side shares the read side's API and credential story —
+`FicsitRepository` resolves mods from ficsit.app and publishes to it — and
+its own class otherwise. The built-in write sides are below — the
+registries' ([dev#428](https://github.com/d3mlabs/dev/issues/428)),
+`steam`/`egs` ([dev#426](https://github.com/d3mlabs/dev/issues/426)) and
+`ficsit` ([dev#427](https://github.com/d3mlabs/dev/issues/427)) and `brew`
+([dev#429](https://github.com/d3mlabs/dev/issues/429)); and
 an external integration's publisher arrives through
 [dev#300](https://github.com/d3mlabs/dev/issues/300)'s integration gems.
 
@@ -690,9 +699,141 @@ packageable build, so a project with a gem target *and* a zip target
 declares `rubygems: { targets: [<gem>] }` to keep the zip out of it; the
 publisher's own check is the backstop, not the selection.
 
-### The brew publisher
+**Options.** What a publisher cannot know from a build or from its
+declaration — the destination's identifiers on the store's side — the
+channel declares under its own name (`steam:` on the `steam` channel),
+carried verbatim as `Lifecycle::Channel#options` and parsed by the
+publisher at the start of `publish`, into a typed value of its own
+(`SteamChannelOptions`, `EgsChannelOptions`): a missing or malformed key
+is refused there, naming the key and the fix, before any archive is
+unpacked or any tool run. The options are the publisher's vocabulary, so
+`ChannelParser` only checks the shape — a mapping, and never beside a
+`run:` — and the publisher documents the keys. Credentials are never
+options.
 
-`Deps::BrewPublisher` is the `brew` entry's write side, the third built-in and the first over a store that is a git remote: a project whose
+**Unpacking.** A store that takes a directory rather than a file gets it
+from `Lifecycle::Unpacker`, the inverse of `Archive`: every form
+`package` writes (a zip, a `.tar.zst`, a split set through its
+`MANIFEST`) is extracted into a directory of the scratch, which is
+**replaced** each time so a file from the previous deploy never rides
+along, and the archive itself is never touched.
+
+### The `steam` publisher
+
+The `steam` integration's repository is its publisher
+(`Deps::SteamRepository`, `publisher:` on the `steam` entry): the same
+client, `steamcmd`, reads a depot (`app_info_print`) and uploads a build
+(`run_app_build`), and the same build account is behind both. A project
+pinning a Steam app (`steam "SatisfactoryServer", app: 1690800`) has a
+`deploy steam` channel, which it configures with:
+
+```yaml
+steam:
+  desc: Steam depots
+  targets: [cellbound-3d-steamworks-win64-release, cellbound-3d-server-linux64-release]
+  steam:
+    app: 480                                   # the AppID
+    depots:                                    # one DepotID per build pattern
+      cellbound-3d-steamworks-win64: 481
+      cellbound-3d-server-linux64: 482
+    branches: { testing: beta, live: default } # optional; these are the defaults
+```
+
+Each accepted build must match exactly one `depots:` pattern
+(`NoDepotError`, `AmbiguousDepotError`). A deploy unpacks each archive
+into `.steam/depots/<DepotID>/`, writes the content builder's scripts
+into `.steam/scripts/` (`app_build_<app>.vdf` over one
+`depot_build_<id>.vdf` per depot, `Deps::SteamAppBuild` through
+`Deps::Vdf`; `BuildOutput` is `.steam/output/`, where steamcmd keeps the
+chunk cache the next upload's delta is computed against) and runs
+`steamcmd +runscript` on a `0600` script — login, `run_app_build`,
+`quit` — so the credentials are on no command line. The **testing**
+track sets the build live on the testing branch (`beta` unless
+`branches:` says otherwise); the **live** track targets `default`, which
+Steam refuses to set live from a script, so the build is uploaded and
+the receipt names the Steamworks page where the operator sets it live
+(a `branches: { live: <beta branch> }` sets that branch live instead).
+The receipt: `steam build <BuildID> of app <app> (depots …) set live on
+<branch>`, or `… uploaded — set it live on the default branch in
+Steamworks: <url>`. The build account is `dev cred` `steam/username`
+(`STEAM_USERNAME`); its password `steam/password` (`STEAM_PASSWORD`),
+or, absent, steamcmd's cached login for that account (a CI runner logs
+in once interactively, Steam Guard included). A failing steamcmd is
+`UploadFailedError` with its last lines; a successful one that reports no
+BuildID is `BuildIdNotReportedError`.
+
+### The `egs` publisher
+
+The Epic Games Store has one tool, Epic's **BuildPatchTool**, and no read
+side a project would otherwise depend on, so the `egs` integration *is*
+the tool: `egs "BuildPatchTool"` in `dependencies.rb` pins the zip Epic
+serves (`UrlRepository` — the URL is the universe, TOFU-hashed at `dev
+deps update`, verified at install; `url:` names a mirror), and
+`EgsIntegration` unpacks it into `~/.dev/egs/BuildPatchTool/<digest>/`
+(`dev deps path egs BuildPatchTool`). Pinning the tool is what
+contributes the `deploy egs` channel; `Deps::EgsPublisher` is its own
+class, since the read side's client (curl) and the write side's (the
+tool, under the product's credentials) share nothing. The channel
+configures it with:
+
+```yaml
+egs:
+  targets: [cellbound-3d-win64-release]
+  egs:
+    organization: o-abc123                   # the Organization ID
+    product: p-def456                        # the Product ID
+    artifacts:                               # one Artifact per build pattern
+      cellbound-3d-win64:
+        id: a-789xyz                         # the Artifact ID
+        launch: Cellbound3D.exe              # relative to the build root
+        args: ""                             # optional
+    labels: { testing: Testing, live: Live } # optional; these are the defaults
+```
+
+Each accepted build must match exactly one `artifacts:` pattern
+(`NoArtifactError`, `AmbiguousArtifactError`) and be for a platform the
+store serves — win64 (`Windows`) or macos (`Mac`); a linux64 build is
+refused before anything runs (`UnsupportedPlatformError`). Per shipment
+the publisher unpacks the archive into `.egs/builds/<build>/`, runs
+`BuildPatchTool -mode=UploadBinary` with the build root, `BuildVersion`
+the build id, `AppLaunch`/`AppArgs` from the artifact and a `CloudDir`
+of `.egs/cloud/<artifact id>/` (kept, so the tool diffs against the
+previous upload), then `-mode=LabelBinary` with the track's label —
+`Live` is the one players see, so a release's archive takes it and a
+working artifact `Testing`, labelled rather than left unlabelled since
+Epic deletes unlabelled binaries after a week. The receipt: `egs
+<version> → artifact <id>, … labelled <label>`. The product's client is
+`dev cred` `egs/client_id` (`EGS_CLIENT_ID`) and `egs/client_secret`
+(`EGS_CLIENT_SECRET`); the secret reaches the tool through the
+environment variable `-ClientSecretEnvVar` names, never argv. A lock
+pinning no `egs` dependency is `NoToolPinnedError` (the channel was
+wired by mistake), a pinned tool not yet installed is
+`ToolNotInstalledError` ("run dev up"), and a failing tool is
+`UploadFailedError` naming the step and carrying its last lines.
+
+### The `ficsit` publisher
+
+**`ficsit`** — the Satisfactory Mod Repository (SMR, ficsit.app),
+contributed to every project whose lock pins a mod (`ficsit "SML"`;
+[dev#427](https://github.com/d3mlabs/dev/issues/427)). What it takes and
+what it does, in SMR's own terms:
+
+| | |
+| --- | --- |
+| Shipments | one per build, each an **Alpakit per-target zip** — the mod's staged plugin for one target, `<ModRef>.uplugin` at the zip's root and its cooked content under `Content/Paks/<target>/` — which is what a mod target's `packager: as-is` leaves in the store (snappy's `snappy-steam-win64`, `snappy-egs-win64`, `snappy-server-linux64`). The publisher reads two facts from each (`Deps::AlpakitPlugin`): the **mod reference** from the `.uplugin`'s name, the **target** from the paks directory — `Windows`, `WindowsServer` or `LinuxServer` (`Deps::FicsitTarget`, SMR's `AllowedTargets`, which are Unreal's cooked-platform names). Nothing in `dev.yml` names the mod. |
+| The merge | the per-target zips become SMR's **multi-target plugin zip** (`Deps::MultiTargetPluginMerger` → `Deps::MultiTargetPlugin`): every entry under its target's directory (`Windows/…`, `LinuxServer/…`), each holding that target's plugin with its `.uplugin`, nothing at the zip's root — the layout SMR's `validateMultiTargetPlugin` accepts and splits back into per-target downloads. Two builds of one target (the Steam and Epic clients are two `Windows` plugins) are **unioned**: their binaries differ and sit side by side; a file both carry must be byte-identical, else the deploy is refused naming the file and both archives (`ConflictingFileError`) — picking one would alter the other build's bytes, which a publisher never does. The archives must be one mod's (`MixedModReferencesError`) staged from one descriptor — SMR reads one version from the zip, so the `.uplugin` must be byte-identical across targets (`DifferingUpluginError`) — and the result under SMR's 1 GB (`PluginTooLargeError`). All of it happens under the channel's scratch (`.ficsit/merge/`, wiped per deploy; the zip is `.ficsit/<ModRef>.zip`); the shipments are never touched. |
+| The upload | SMR's chunked upload over its GraphQL API (`Deps::FicsitClient`, `api.ficsit.app/v2/query`): `getModByReference` for the mod's id (a mod SMR does not have is `ModNotFoundError`, before anything is sent), `createVersion`, `uploadVersionPart` in 10 MB parts numbered from 1, `finalizeCreateVersion` with the **stability** the track decides and a changelog naming the builds and their ids, then `checkVersionUploadState` every 10 s for up to 10 minutes until SMR has processed the zip (`ProcessingTimedOutError` past that). SMR's own refusals — a mod not yet approved, a missing AI or network disclosure, a `.uplugin` whose `SemVersion` the mod already has — come back as `FicsitClient::ApiError` in SMR's words. |
+| Tracks | `testing` → `beta`, `live` → `release` (`Deps::FicsitStability`, SMR's `VersionStabilities`): an artifact from the store is a version players opt into in the Mod Manager; a release's archive is what everyone gets. `alpha` is never emitted. |
+| Credential | the user's **API key** from ficsit.app's settings page: `dev cred get ficsit api_key`, or `FICSIT_API_KEY` in the environment (the key is SMR's raw `Authorization` header value). Prompted once on a terminal and stored; a non-interactive miss names the env var. |
+| Receipt | `ficsit: <ModRef> (<targets>) → <stability>, version <version> (<id>), auto-approved` — or `awaiting approval`, when SMR holds the version for a moderator. |
+
+The version string is the `.uplugin`'s `SemVersion`, read by SMR, not
+dev: a working-tree build deployed twice without bumping it is refused by
+SMR on the second upload, in its words.
+
+### The `brew` publisher
+
+`Deps::BrewPublisher` is the `brew` entry's write side, the one built-in over a store that is a git remote: a project whose
 lock pins anything from a tap through brew (dev's own `ruby` from
 `d3mlabs/d3mlabs`) gets a `deploy brew` channel, and declaring it in
 `dev.yml` with an accept set and no `run:` configures it. It ships
