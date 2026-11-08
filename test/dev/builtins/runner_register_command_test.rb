@@ -57,17 +57,22 @@ class FakeRegistry
     end
   end
 
-  def initialize(runners: {}, groups: {}, placements: {}, selections: {}, repositories: {})
+  def initialize(runners: {}, groups: {}, placements: {}, selections: {}, repositories: {}, refused: [])
     @runners = runners
     @groups = groups
     @placements = placements
     @selections = selections
     @repositories = repositories
+    @refused = refused
     @amends = []
     @group_writes = []
   end
 
+  # Scopes GitHub refuses this login at (403), lifted by a refresh.
+  def grant_all! = @refused.clear
+
   def find(scope:, name:)
+    refuse!(scope)
     @runners[[scope, name]]
   end
 
@@ -76,7 +81,14 @@ class FakeRegistry
   end
 
   def group(org:, name:)
+    refuse!(org)
     @groups[[org, name]] || (name == "Default" ? self.class.group(id: 1, name: "Default", visibility: "all") : nil)
+  end
+
+  def refuse!(scope)
+    return unless @refused.include?(scope)
+
+    raise Dev::RunnerRegistry::QueryError, "could not list at #{scope}: gh: You must be an org admin (HTTP 403)"
   end
 
   def create_group!(org:, name:, visibility:, allows_public_repositories:, selected_workflows:)
@@ -202,6 +214,43 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     error.message.include?("cellbound-3d")
     harness.events == []
     harness.wirings == []
+  end
+
+  test "the operator's gh login is probed before anything converges: an org it cannot read runner groups at is a refusal with the fix, not a backtrace after sudo and brew ran (dev#493)" do
+    Given "an org this login cannot administer, and no terminal to answer with"
+    registry = FakeRegistry.new(refused: ["d3mlabs"])
+    harness = build_harness(registry: registry, scope: "d3mlabs", contracts: 1, runner_user: runner_user_mock(name: "runner", home: "/home/runner"))
+    harness.confirmer.stubs(:confirm?).returns(false)
+    harness.engine.expects(:provision!).never
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-orchestrator"]), context: projectless_context)
+
+    Then "refused, naming the fix; no contract converged, no runner user touched, nothing enrolled"
+    error = raises Dev::OperatorAccess::RefusedError
+    error.message.include?("gh auth refresh -h github.com -s admin:org")
+    harness.events == []
+    harness.wirings == []
+    harness.as_names == []
+  end
+
+  test "at a terminal the refusal offers the refresh; granted, the registration goes on as if nothing happened" do
+    Given
+    registry = FakeRegistry.new(refused: ["d3mlabs"], groups: { ["d3mlabs", "ai-flow"] => FakeRegistry.group(id: 7, name: "ai-flow", pinned: true) })
+    refreshed = []
+    harness = build_harness(registry: registry, scope: "d3mlabs", refresher: ->(scope) {
+      refreshed << scope
+      registry.grant_all!
+      true
+    })
+    harness.confirmer.stubs(:confirm?).returns(true)
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-orchestrator"]), context: projectless_context)
+
+    Then
+    refreshed == ["admin:org"]
+    harness.wirings.map { |config, _repo, _org| config.labels } == ["ai-orchestrator"]
   end
 
   test "--org --ai-flow enrolls the agent host's full label set — never the orchestrator label" do
@@ -1338,7 +1387,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
   def build_harness(contracts: 0, home: Dir.mktmpdir, registry: FakeRegistry.new,
                     scope: "d3mlabs/cellbound-3d", repo: "d3mlabs/cellbound-3d", contracts_factory: nil,
                     repo_resolver: nil, runner_user: nil, data_root_provisioner: nil, reach: nil, pins: [],
-                    hostname: "mac1")
+                    hostname: "mac1", refresher: ->(_scope) { raise "no refresh expected" })
     wirings = []
     events = []
     torn_down = []
@@ -1393,6 +1442,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
       confirmer: confirmer,
       engine_provisioner: engine,
       out: out,
+      refresher: refresher,
     )
     Harness.new(command: command, wirings: wirings, events: events, out: out, engine: engine,
       torn_down: torn_down, confirmer: confirmer, as_names: as_names, reach_roots: reach_roots)
