@@ -16,6 +16,8 @@ require_relative "gh_repository"
 require_relative "gh_integration"
 require_relative "steam_repository"
 require_relative "steam_integration"
+require_relative "egs_integration"
+require_relative "egs_publisher"
 require_relative "bundler_locker"
 require_relative "bundler_repository"
 require_relative "bundler_integration"
@@ -275,11 +277,29 @@ module Dev
             integration: GhIntegration,
             integration_needs: %i[project_root],
           ),
+          # The write side is the repository class: one client (steamcmd)
+          # reads a depot and uploads a build (dev#426).
           Entry.new(
             symbol: :steam,
             repository: SteamRepository,
             scheme: SteamScheme,
             integration: SteamIntegration,
+            publisher: SteamRepository,
+          ),
+          # The Epic Games Store's tooling (dev#426): BuildPatchTool is the
+          # one declarable dependency — a url-shaped universe (the zip Epic
+          # serves, TOFU-hashed, no scheme) installed as a store tree — and
+          # pinning it is what gives a project its `deploy egs` channel.
+          # The write side is its own class: the read side's client is
+          # curl, the write side's is the tool under the product's
+          # credentials, so the two share nothing.
+          Entry.new(
+            symbol: :egs,
+            repository: UrlRepository,
+            scheme: nil,
+            integration: EgsIntegration,
+            publisher: EgsPublisher,
+            publisher_needs: %i[project_root],
           ),
           Entry.new(
             symbol: :xcode,

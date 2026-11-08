@@ -10,6 +10,7 @@ require_relative "lifecycle/packed_archive"
 require_relative "lifecycle/builder"
 require_relative "lifecycle/packager"
 require_relative "lifecycle/archive"
+require_relative "lifecycle/unpacker"
 require_relative "lifecycle/builder_spec"
 require_relative "lifecycle/packager_spec"
 require_relative "lifecycle/target_environment"
@@ -82,7 +83,9 @@ module Dev
   # third port, the **Publisher** (ScriptPublisher — the child's `run:`
   # once per archive, over the same env contract; an integration's
   # publisher, a black box over the read-only archives with the channel's
-  # scratch in the Store), on the **Track** the source decides (testing
+  # scratch in the Store, reading its options off the Channel and
+  # unpacking an archive into a directory through the Unpacker, Archive's
+  # inverse — dev#426), on the **Track** the source decides (testing
   # from the store, live for a release), and hands back a Receipt. Ports
   # resolves the declarations (BuilderSpec, PackagerSpec, PublisherSpec)
   # into them for a checkout. What a deploy leaves behind is not in the

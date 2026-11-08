@@ -30,7 +30,7 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
 
   # Every GroupDSL verb that creates a declaration, mapped to its integration
   # symbol. Adding a new declaration verb must add a Registry entry too.
-  DECLARATION_INTEGRATIONS = %i[bundler brew cmake luarocks ficsit gh steam xcode wwise pip ruby python image].freeze
+  DECLARATION_INTEGRATIONS = %i[bundler brew cmake luarocks ficsit gh steam egs xcode wwise pip ruby python image].freeze
 
   def source_file(klass)
     File.realpath(Object.const_source_location(klass.name).first)
@@ -165,6 +165,17 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
 
     Then "no manifest sits beside a class the registry does not install — it would never be read"
     assert_empty orphaned, "integration manifests nothing reads: #{orphaned.join(", ")}"
+  end
+
+  test "every publisher class is wired into the registry" do
+    Given "the publisher files on disk and the registry's referenced publishers"
+    referenced = Dev::Deps::Registry::INTEGRATIONS.map(&:publisher).compact.uniq.map { |k| source_file(k) }
+
+    When "checking each *_publisher.rb file"
+    unwired = deps_files("_publisher").reject { |basename| referenced.include?(File.realpath(File.join(DEPS_DIR, basename))) }
+
+    Then "none are left unwired — an unwired publisher would contribute no channel"
+    assert_empty unwired, "publisher classes missing from Registry::INTEGRATIONS: #{unwired.join(", ")}"
   end
 
   test "every declaration DSL verb has a registry entry" do

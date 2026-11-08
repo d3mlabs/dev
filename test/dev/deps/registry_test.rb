@@ -63,10 +63,34 @@ class Dev::Deps::RegistryTest < Minitest::Test
     steam.channel_name == "steam"
   end
 
-  test "no built-in entry publishes yet: the first write sides arrive with dev#426–#429" do
+  test "the built-in publishers are steam's repository and egs's own class (dev#426); every other entry is silent" do
+    Given
+    by_symbol = Dev::Deps::Registry::INTEGRATIONS.to_h { |entry| [entry.symbol, entry] }
+
     Expect
-    Dev::Deps::Registry::INTEGRATIONS.none?(&:publishes?)
-    Dev::Deps::Registry.publishers(project_root: Pathname("/tmp"), pinned: Dev::Deps::Registry::INTEGRATIONS.map(&:symbol)) == {}
+    Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:symbol) == %i[steam egs]
+    by_symbol[:steam].publisher == Dev::Deps::SteamRepository
+    by_symbol[:steam].publisher_needs == []
+    by_symbol[:egs].publisher == Dev::Deps::EgsPublisher
+    by_symbol[:egs].publisher_needs == %i[project_root]
+    by_symbol[:egs].repository == Dev::Deps::UrlRepository
+    by_symbol[:egs].integration == Dev::Deps::EgsIntegration
+  end
+
+  test "publishers over the built-in table yields a steam and an egs publisher exactly when the lock pins them" do
+    When
+    publishers = Dev::Deps::Registry.publishers(project_root: Pathname("/project"), pinned:)
+
+    Then
+    publishers.keys == channels
+    publishers.values.map(&:class) == classes
+
+    Where
+    pinned          | channels          | classes
+    [:steam]        | ["steam"]         | [Dev::Deps::SteamRepository]
+    [:egs]          | ["egs"]           | [Dev::Deps::EgsPublisher]
+    [:steam, :egs]  | ["steam", "egs"]  | [Dev::Deps::SteamRepository, Dev::Deps::EgsPublisher]
+    [:cmake, :url]  | []                | []
   end
 
   test "publishers builds one instance per publishing entry the lock reaches, directly or through an alias, with the kwargs it asks for" do
