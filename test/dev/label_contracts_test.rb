@@ -14,9 +14,9 @@ class Dev::LabelContractsTest < Minitest::Test
     Dev::LabelContracts.for("ue-engine,x64").empty?
   end
 
-  test "any ai-flow label obliges the ai-flow runner group, owned by dev and pinned to ai-flow's two workflows; a bare set obliges none (dev#470)" do
+  test "any agent label obliges the ai-flow runner group, owned by dev and pinned to ai-flow's two workflows; a bare set obliges none (dev#470)" do
     Expect
-    Dev::LabelContracts.group_for(Dev::LabelContracts::AI_FLOW_LABELS.join(",")) == Dev::LabelContracts::AI_FLOW_GROUP
+    Dev::LabelContracts.group_for(Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(",")) == Dev::LabelContracts::AI_FLOW_GROUP
     Dev::LabelContracts.group_for("macos,ai-build") == Dev::LabelContracts::AI_FLOW_GROUP
     Dev::LabelContracts.group_for("ue-engine,x64").nil?
     Dev::LabelContracts::AI_FLOW_GROUP.name == "ai-flow"
@@ -27,14 +27,31 @@ class Dev::LabelContractsTest < Minitest::Test
     ]
   end
 
-  test "ai-orchestrator is in the ai-flow vocabulary — same group — but is no agent host and is not in --ai-flow's set (plans#53)" do
-    Expect "it joins the ai-flow group like any ai-flow label; a thin host converges nothing (no agent bootstrap); an agent host does not become an orchestrator by default"
-    Dev::LabelContracts.group_for("ai-orchestrator") == Dev::LabelContracts::AI_FLOW_GROUP
+  test "ai-orchestrator is in the ai-flow vocabulary but obliges its own group, open to every repo; no agent host, not in --ai-flow's set (plans#53, dev#495)" do
+    Expect "the pool's group is dev's, pinned to the same workflows, visibility all — nothing to gate on a thin host; the build slots' group selection stays a repo's concurrency"
+    Dev::LabelContracts.group_for("ai-orchestrator") == Dev::LabelContracts::ORCHESTRATOR_GROUP
+    Dev::LabelContracts.group_for("linux,ai-orchestrator") == Dev::LabelContracts::ORCHESTRATOR_GROUP
+    Dev::LabelContracts::ORCHESTRATOR_GROUP.name == "ai-orchestrator"
+    Dev::LabelContracts::ORCHESTRATOR_GROUP.owned?
+    Dev::LabelContracts::ORCHESTRATOR_GROUP.visibility == "all"
+    Dev::LabelContracts::ORCHESTRATOR_GROUP.workflows == Dev::LabelContracts::AI_FLOW_GROUP.workflows
+    Dev::LabelContracts::AI_FLOW_GROUP.visibility == "selected"
     Dev::LabelContracts::AI_FLOW_LABELS.include?("ai-orchestrator")
     Dev::LabelContracts.for("ai-orchestrator").empty?
     !Dev::LabelContracts.agent_host?("ai-orchestrator")
     !Dev::LabelContracts::AI_FLOW_AGENT_LABELS.include?("ai-orchestrator")
     Dev::LabelContracts::AI_FLOW_AGENT_LABELS == %w[ai-ask ai-edit ai-split ai-build ai-learn]
+  end
+
+  test "a set carrying an agent label and the orchestrator label is refused: one enrollment, one group" do
+    When
+    Dev::LabelContracts.group_for("ai-build,ai-orchestrator")
+
+    Then
+    error = raises ArgumentError
+    error.message.include?("ai-orchestrator")
+    error.message.include?("ai-build")
+    error.message.include?("one enrollment, one group")
   end
 
   test "agent capability labels carry the agent host contract" do

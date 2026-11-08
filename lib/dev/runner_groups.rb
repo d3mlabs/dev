@@ -43,9 +43,12 @@ module Dev
     end
 
     # The group a contract names, as GitHub records it once converged: an
-    # owned group is created when missing (selected, pinned, closed to
-    # public repos until one is admitted) and re-pinned or re-selected
-    # when the console drifted; a named group must exist.
+    # owned group is created when missing — at the contract's visibility,
+    # pinned; a selected group closed to public repos until one is
+    # admitted, an open one allowing them from the start (there is no
+    # admit step to turn it on, and the pin is the defense) — and
+    # re-pinned or re-opened/re-selected when the console drifted; a named
+    # group must exist.
     #
     # @param contract [Dev::RunnerGroupContract]
     # @param org [String]
@@ -62,8 +65,8 @@ module Dev
       end
 
       if group.nil?
-        @out.puts ">>> Creating runner group '#{contract.name}' at #{org}, pinned to #{contract.workflows.join(", ")} ..."
-        return @registry.create_group!(org: org, name: contract.name, visibility: "selected", allows_public_repositories: false,
+        @out.puts ">>> Creating runner group '#{contract.name}' at #{org}#{contract.open? ? " (open to every repo)" : ""}, pinned to #{contract.workflows.join(", ")} ..."
+        return @registry.create_group!(org: org, name: contract.name, visibility: contract.visibility, allows_public_repositories: contract.open?,
           selected_workflows: contract.workflows)
       end
 
@@ -74,7 +77,8 @@ module Dev
       # clears the group's selected repositories (plans#5 H3), and a group
       # that was open to all has none to lose.
       @out.puts ">>> Runner group '#{contract.name}' drifted (#{drift.join("; ")}) — re-converging ..."
-      @registry.update_group!(org: org, group_id: group.id, visibility: group.selected? ? nil : "selected", selected_workflows: contract.workflows)
+      flip = group.visibility == contract.visibility ? nil : contract.visibility
+      @registry.update_group!(org: org, group_id: group.id, visibility: flip, selected_workflows: contract.workflows)
     end
 
     # Put a runner in the group when it sits elsewhere (config.sh places
