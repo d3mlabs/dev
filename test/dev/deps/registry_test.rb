@@ -98,8 +98,8 @@ class Dev::Deps::RegistryTest < Minitest::Test
     brew.publisher == Dev::Deps::BrewPublisher
     brew.publisher_needs == %i[project_root taps]
     brew.channel_name == "brew"
-    Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:symbol) == %i[bundler image brew]
-    Dev::Deps::Registry::INTEGRATIONS.filter_map(&:channel).uniq.size == Dev::Deps::Registry::INTEGRATIONS.count(&:publishes?)
+    Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:symbol) == %i[bundler brew image]
+    Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:channel_name).uniq.size == Dev::Deps::Registry::INTEGRATIONS.count(&:publishes?)
   end
 
   test "publishers over the built-in table: #{pinned.inspect} contributes #{channels.inspect}" do
@@ -119,6 +119,7 @@ class Dev::Deps::RegistryTest < Minitest::Test
     [:brew]            | ["brew"]              | [Dev::Deps::BrewPublisher]
     [:gh, :steam]      | []                    | []
     []                 | []                    | []
+  end
 
   test "brew (dev#429): a lock reaching it, directly or through ruby, gets the tap publisher; a lock reaching none of the three gets nothing" do
     Given
