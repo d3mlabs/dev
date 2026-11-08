@@ -379,4 +379,12 @@ class Dev::Deps::FicsitRepositoryTest < Minitest::Test
     Dev::Deps::FicsitRepository.new.to_s == "ficsit"
     Dev::Deps::FicsitRepository.new.is_a?(Dev::Lifecycle::Publisher)
   end
+
+  test "the default sleeper is Kernel.sleep: the processing wait really waits outside tests" do
+    Given
+    Kernel.expects(:sleep).with(3).once
+
+    Expect
+    Dev::Deps::FicsitRepository::DEFAULT_SLEEPER.call(3).nil?
+  end
 end

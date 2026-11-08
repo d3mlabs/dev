@@ -152,6 +152,9 @@ module Dev
         def to_s = "version #{version} (#{id}), #{auto_approved ? "auto-approved" : "awaiting approval"}"
       end
 
+      # How the processing wait sleeps when nothing substitutes it: really.
+      DEFAULT_SLEEPER = T.let(->(seconds) { Kernel.sleep(seconds) }, Sleeper)
+
       # @param client [FicsitClient] the API boundary
       # @param merger [MultiTargetPluginMerger] makes the multi-target zip
       # @param api_key [Proc] resolves the API key when a publish needs it
@@ -161,7 +164,7 @@ module Dev
         params(client: FicsitClient, merger: MultiTargetPluginMerger, api_key: ApiKeySource, sleeper: Sleeper, part_size: Integer).void
       end
       def initialize(client: FicsitClient.new, merger: MultiTargetPluginMerger.new, api_key: DEFAULT_API_KEY,
-                     sleeper: ->(seconds) { Kernel.sleep(seconds) }, part_size: PART_SIZE)
+                     sleeper: DEFAULT_SLEEPER, part_size: PART_SIZE)
         super()
         @client = client
         @merger = merger
