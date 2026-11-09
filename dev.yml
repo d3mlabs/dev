@@ -4,7 +4,7 @@ name: dev
 # packager zips each into the release asset its formula points at.
 targets:
   dev-core:
-    desc: The org-blank tool (bin, src, lib, share, VERSION)
+    desc: The org-blank tool (bin, lib, share, VERSION)
     build: ./bin/install-core
   dev:
     desc: The d3mlabs deployment of dev (config.yml + Brewfile)
