@@ -49,6 +49,36 @@ class Dev::Deps::FormulaFileTest < Minitest::Test
     Dev::Deps::FormulaFile.new(path:)
   end
 
+  test "dependencies are the formula's depends_on names as brew resolves them — the last segment of a tap-qualified name — in file order, blocks included (dev#531)" do
+    Given
+    file = formula(<<~RUBY, name: "dev")
+      class Dev < Formula
+        url "https://example.com/dev-0.8.0.zip"
+        sha256 "#{SHA}"
+
+        depends_on "d3mlabs/d3mlabs/dev-core"
+        depends_on "gh" => :build
+        depends_on "ruby"
+
+        on_macos do
+          depends_on "colima"
+        end
+
+        resource "cli-ui" do
+          url "https://rubygems.org/downloads/cli-ui-2.7.0.gem"
+        end
+      end
+    RUBY
+
+    Expect
+    file.dependencies == %w[dev-core gh ruby colima]
+  end
+
+  test "a formula with no depends_on has no dependencies" do
+    Expect
+    formula(FORMULA.sub("  depends_on \"gh\"\n", "")).dependencies == []
+  end
+
   test "the stable spec is the first url and the sha256 that follows it; the name is the file's" do
     Given
     file = formula

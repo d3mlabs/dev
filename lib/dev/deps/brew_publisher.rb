@@ -42,8 +42,9 @@ module Dev
     # prefix's tap or a clone beside the checkout. The asset urls are the
     # forge's own answer (GithubReleases#asset_url). The receipt is the
     # tap's commit, and its hint the upgrade line the operator runs next
-    # — what `bin/release.rb` closed on — so `deploy`'s epilogue ends on
-    # it without knowing brew (Receipt#hint, dev#514).
+    # — what `bin/release.rb` closed on, naming only the formulas brew
+    # would not upgrade as another's dependency — so `deploy`'s epilogue
+    # ends on it without knowing brew (Receipt#hint, dev#514).
     #
     # Separate from BrewRepository, the read side, although the plan's
     # built-ins are "their repository objects when the write side shares
@@ -100,9 +101,10 @@ module Dev
         clone = TapClone.new(tap:, dir: clone_dir(scratch, tap))
         clone.sync!
 
-        rewritten = shipments.filter_map { |shipment| point(clone.formula(shipment.name), shipment, tag) }
+        formulas = shipments.map { |shipment| clone.formula(shipment.name) }
+        rewritten = shipments.zip(formulas).filter_map { |shipment, formula| point(T.must(formula), shipment, tag) }
         names = shipments.map(&:name).join(", ")
-        hint = upgrade_hint(tap, shipments)
+        hint = upgrade_hint(tap, formulas)
         return Lifecycle::Receipt.new(summary: "#{tap.name} already points at #{tag}: #{names}", hint:) if rewritten.empty?
 
         clone.commit!(message: "#{rewritten.map(&:name).join(", ")}: #{tag.version}", files: rewritten)
@@ -116,15 +118,20 @@ module Dev
 
       private
 
-      # What the operator runs next: the tap's formulas of the shipments,
-      # fully qualified, after a `brew update` that fetches the push.
+      # What the operator runs next: the shipments' formulas, fully
+      # qualified, after a `brew update` that fetches the push — the roots
+      # only, since brew upgrades an outdated dependency along with its
+      # dependent: a formula another shipment's formula `depends_on` is
+      # left out (dev#531; the d3mlabs deployment `dev` names `dev-core`).
       #
       # @param tap [Tap]
-      # @param shipments [Array<Lifecycle::Shipment>]
+      # @param formulas [Array<FormulaFile>] the shipments' formulas, in the channel's order
       # @return [String]
-      sig { params(tap: Tap, shipments: T::Array[Lifecycle::Shipment]).returns(String) }
-      def upgrade_hint(tap, shipments)
-        "To update locally: brew update && brew upgrade #{shipments.map { |shipment| "#{tap.name}/#{shipment.name}" }.join(" ")}"
+      sig { params(tap: Tap, formulas: T::Array[FormulaFile]).returns(String) }
+      def upgrade_hint(tap, formulas)
+        depended_on = formulas.flat_map(&:dependencies)
+        roots = formulas.reject { |formula| depended_on.include?(formula.name) }
+        "To update locally: brew update && brew upgrade #{roots.map { |formula| "#{tap.name}/#{formula.name}" }.join(" ")}"
       end
 
       # The tag the shipments are a release of.
