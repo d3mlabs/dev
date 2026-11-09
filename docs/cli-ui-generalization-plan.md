@@ -1,6 +1,6 @@
 # Plan: generalize dev's CLI UI
 
-Status: proposal for review. No code beyond the bugfix noted in §0.
+Status: superseded by [plans#52](https://github.com/d3mlabs/plans/issues/52) (the `Dev::Cli::Ui` seam, [dev#514](https://github.com/d3mlabs/dev/issues/514)); kept as the record of the survey. `Dev::Deps::CliUI` below no longer exists ([dev#535](https://github.com/d3mlabs/dev/issues/535)).
 
 ## 0. Shipped alongside this plan (not part of the proposal)
 
