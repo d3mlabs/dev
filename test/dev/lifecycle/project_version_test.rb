@@ -91,8 +91,9 @@ class Dev::Lifecycle::ProjectVersionTest < Minitest::Test
   end
 
   # dev's own Gemfile.lock shape: the gem under `remote: .` with
-  # dependencies six spaces in, and a sibling gem at the same number that
-  # must not move.
+  # dependencies six spaces in, a sibling gem at the same number that must
+  # not move, and bundler's (≥ 2.6) CHECKSUMS section recording every gem
+  # a second time — the path gem without a digest (dev#521).
   GEMFILE_LOCK = <<~LOCK
     PATH
       remote: .
@@ -106,9 +107,17 @@ class Dev::Lifecycle::ProjectVersionTest < Minitest::Test
       specs:
         other (1.1.0)
         cli-ui (2.7.0)
+
+    CHECKSUMS
+      cli-ui (2.7.0) sha256=e36147f2e8088796b996f0560f577bd1599f2b6aa3c374fe09fff59af5589c35
+      dev (1.1.0)
+      other (1.1.0) sha256=0000000000000000000000000000000000000000000000000000000000000000
   LOCK
 
-  test "a gem's Gemfile.lock mirrors VERSION: the bump rewrites the PATH spec's version and nothing else" do
+  # The same lock as an older bundler writes it: no CHECKSUMS section.
+  GEMFILE_LOCK_WITHOUT_CHECKSUMS = GEMFILE_LOCK.sub(/\n\nCHECKSUMS\n.*\z/m, "\n")
+
+  test "a gem's Gemfile.lock mirrors VERSION: the bump rewrites the gem's PATH spec and its CHECKSUMS entry, and nothing else" do
     Given
     root = Pathname(Dir.mktmpdir("project-version-"))
     (root / "VERSION").write("1.1.0\n")
@@ -118,9 +127,27 @@ class Dev::Lifecycle::ProjectVersionTest < Minitest::Test
     files = Dev::Lifecycle::ProjectVersion.files(root, current: "1.1.0")
     Dev::Lifecycle::ProjectVersion.write(root, "1.2.0")
 
+    Then "both `dev (1.1.0)` lines moved; `other (1.1.0)` twice did not"
+    files == ["VERSION", "Gemfile.lock"]
+    (root / "Gemfile.lock").read == GEMFILE_LOCK.gsub("dev (1.1.0)", "dev (1.2.0)")
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "a lock without a CHECKSUMS section (an older bundler) mirrors through its PATH spec alone" do
+    Given
+    root = Pathname(Dir.mktmpdir("project-version-"))
+    (root / "VERSION").write("1.1.0\n")
+    (root / "Gemfile.lock").write(GEMFILE_LOCK_WITHOUT_CHECKSUMS)
+
+    When
+    files = Dev::Lifecycle::ProjectVersion.files(root, current: "1.1.0")
+    Dev::Lifecycle::ProjectVersion.write(root, "1.2.0")
+
     Then
     files == ["VERSION", "Gemfile.lock"]
-    (root / "Gemfile.lock").read == GEMFILE_LOCK.sub("dev (1.1.0)", "dev (1.2.0)")
+    (root / "Gemfile.lock").read == GEMFILE_LOCK_WITHOUT_CHECKSUMS.sub("dev (1.1.0)", "dev (1.2.0)")
 
     Cleanup
     FileUtils.rm_rf(root)
