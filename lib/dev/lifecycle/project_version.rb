@@ -14,11 +14,13 @@ module Dev
     #
     # A gem whose gemspec reads `VERSION` has a **mirror** of it: bundler
     # records the gem's own version in `Gemfile.lock`'s `PATH` section
-    # (`dev (0.7.13)` under `remote: .`), and a bump that moves one file
-    # and not the other leaves a lock the next `bundle` rewrites — a dirty
-    # tree right after the release commit (dev's `bin/release.rb` bumped
-    # both for that reason; dev#429 keeps it so). The bump therefore
-    # writes `VERSION` and, when the lock mirrors it, that one line.
+    # (`dev (0.7.13)` under `remote: .`) and, since bundler 2.6, a second
+    # time in its `CHECKSUMS` section (`dev (0.7.13)`, no digest for a
+    # path gem). A bump that moves one and not the others leaves a lock
+    # the next `bundle` rewrites — a dirty tree right after the release
+    # commit (dev's `bin/release.rb` bumped both files for that reason;
+    # dev#429 keeps it so, dev#521 the checksum line). The bump therefore
+    # writes `VERSION` and, when the lock mirrors it, the gem's lines.
     module ProjectVersion
       FILE_NAME = "VERSION"
       GEMFILE_LOCK = "Gemfile.lock"
@@ -77,7 +79,12 @@ module Dev
           return if current.nil? || !files(root, current:).include?(GEMFILE_LOCK)
 
           lock = root / GEMFILE_LOCK
-          lock.write(lock.read.sub(path_spec(current)) { "#{$~[:spec]}#{version}#{$~[:close]}" })
+          text = lock.read
+          match = T.must(path_spec(current).match(text))
+          gem = T.must(match[:gem])
+          text = text.sub(path_spec(current)) { "#{$~[:spec]}#{version}#{$~[:close]}" }
+          text = text.sub(checksum_entry(gem, current)) { "#{$~[:entry]}#{version}#{$~[:close]}" }
+          lock.write(text)
         end
 
         private
@@ -88,10 +95,23 @@ module Dev
         # dependencies six.
         #
         # @param version [String]
-        # @return [Regexp] with `spec` (up to the version) and `close` groups
+        # @return [Regexp] with `spec` (up to the version, `gem` inside it) and `close` groups
         sig { params(version: String).returns(Regexp) }
         def path_spec(version)
-          /^(?<spec>PATH\n  remote: \.\n  specs:\n(?:    .+\n)*?    \S+ \()#{Regexp.escape(version)}(?<close>\))$/
+          /^(?<spec>PATH\n  remote: \.\n  specs:\n(?:    .+\n)*?    (?<gem>\S+) \()#{Regexp.escape(version)}(?<close>\))$/
+        end
+
+        # The line of `Gemfile.lock`'s `CHECKSUMS` section (bundler ≥ 2.6)
+        # recording the same gem at a version: two spaces in, and for a
+        # path gem no digest after it. Absent from an older bundler's lock,
+        # where the substitution is a no-op.
+        #
+        # @param gem [String] the gem's name, as the PATH spec has it
+        # @param version [String]
+        # @return [Regexp] with `entry` (up to the version) and `close` groups
+        sig { params(gem: String, version: String).returns(Regexp) }
+        def checksum_entry(gem, version)
+          /^(?<entry>CHECKSUMS\n(?:  .+\n)*?  #{Regexp.escape(gem)} \()#{Regexp.escape(version)}(?<close>\))$/
         end
       end
     end
