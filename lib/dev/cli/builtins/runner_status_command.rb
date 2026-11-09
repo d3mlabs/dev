@@ -5,6 +5,7 @@ require "dev/cli/command"
 require "dev/deps/lockfile"
 require "dev/runner_setup"
 require "dev/runner_status"
+require "dev/ui"
 
 module Dev
   module Cli
@@ -18,19 +19,19 @@ module Dev
       class RunnerStatusCommand < BuiltinCommand
         extend T::Sig
 
-        # Builds the status inspector; injected for tests.
+        # Builds the status inspector over the context's Ui; injected for tests.
         StatusFactory = T.type_alias do
-          T.proc.params(container_required: T::Boolean, project_root: T.nilable(Pathname)).returns(Dev::RunnerStatus)
+          T.proc.params(container_required: T::Boolean, project_root: T.nilable(Pathname), ui: Dev::Ui).returns(Dev::RunnerStatus)
         end
 
         sig { params(runner_status_factory: StatusFactory).void }
-        def initialize(runner_status_factory: ->(container_required, project_root) {
+        def initialize(runner_status_factory: ->(container_required, project_root, ui) {
           # The lock is what the host identity's reach is checked over, and the
           # checkout's repo is whose access to each org scope's slots is reported;
           # neither outside a checkout (an unresolvable checkout is no repo).
           pins = project_root ? Dev::Deps::Lockfile.new(dir: project_root).read : []
           repo = project_root ? self.class.current_repo : nil
-          Dev::RunnerStatus.new(container_required:, pins:, repo:)
+          Dev::RunnerStatus.new(container_required:, pins:, repo:, ui:)
         })
           super()
           @runner_status_factory = runner_status_factory
@@ -60,7 +61,7 @@ module Dev
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)
           _ = args
-          @runner_status_factory.call(context.project&.project_images&.containerized? || false, context.project&.root).report
+          @runner_status_factory.call(context.project&.project_images&.containerized? || false, context.project&.root, context.ui).report
         end
       end
     end

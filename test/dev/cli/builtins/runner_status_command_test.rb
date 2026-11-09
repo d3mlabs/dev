@@ -23,31 +23,32 @@ class Dev::Cli::Builtins::RunnerStatusCommandTest < Minitest::Test
     command.stamps? == false
   end
 
-  test "status wires the inspector with the container fact" do
+  test "status wires the inspector with the container fact and the context's Ui (plans#52)" do
     Given "a status factory recording its wiring"
     seen = []
     status = typed_mock(Dev::RunnerStatus)
     status.expects(:report).once
     command = Dev::Cli::Builtins::RunnerStatusCommand.new(
-      runner_status_factory: ->(container_required, project_root) {
-        seen << [container_required, project_root]
+      runner_status_factory: ->(container_required, project_root, ui) {
+        seen << [container_required, project_root, ui]
         status
       },
     )
     root = image_checkout
+    ui = typed_mock(Dev::Ui)
 
     When "running status inside a container repo (its lock pins an image)"
-    command.call(args: no_args, context: build_context(root: root))
+    command.call(args: no_args, context: build_context(root: root, ui: ui))
 
-    Then "the container fact and the checkout reach the inspector"
-    seen == [[true, Pathname.new(root)]]
+    Then "the container fact, the checkout and the Ui reach the inspector"
+    seen == [[true, Pathname.new(root), ui]]
   end
 
   test "status works projectless (the machine view needs no checkout)" do
     Given "a status factory"
     status = typed_mock(Dev::RunnerStatus)
     status.expects(:report).once
-    command = Dev::Cli::Builtins::RunnerStatusCommand.new(runner_status_factory: ->(_container, _root) { status })
+    command = Dev::Cli::Builtins::RunnerStatusCommand.new(runner_status_factory: ->(_container, _root, _ui) { status })
 
     When "running status with no project"
     command.call(args: no_args, context: Dev::Cli::ExecutionContext.new(ui: typed_mock(Dev::Ui)))
@@ -60,11 +61,12 @@ class Dev::Cli::Builtins::RunnerStatusCommandTest < Minitest::Test
     Given "a command with its default wiring, the construction boundary intercepted"
     status = typed_mock(Dev::RunnerStatus)
     status.expects(:report).once
-    Dev::RunnerStatus.expects(:new).with(container_required: false, pins: [], repo: nil).returns(status)
+    ui = typed_mock(Dev::Ui)
+    Dev::RunnerStatus.expects(:new).with(container_required: false, pins: [], repo: nil, ui: ui).returns(status)
     command = Dev::Cli::Builtins::RunnerStatusCommand.new
 
     When "running status outside a checkout"
-    command.call(args: no_args, context: Dev::Cli::ExecutionContext.new(ui: typed_mock(Dev::Ui)))
+    command.call(args: no_args, context: Dev::Cli::ExecutionContext.new(ui: ui))
 
     Then "the expectation on the construction boundary holds: no lock, no repo"
     true
@@ -77,11 +79,12 @@ class Dev::Cli::Builtins::RunnerStatusCommandTest < Minitest::Test
     status.expects(:report).once
     Dev::RunnerSetup.expects(:current_repo).then.raises(Dev::RunnerSetup::Error, "could not resolve the repo via gh: offline") if repo.nil?
     Dev::RunnerSetup.expects(:current_repo).returns(repo) unless repo.nil?
-    Dev::RunnerStatus.expects(:new).with(container_required: false, pins: [], repo: repo).returns(status)
+    ui = typed_mock(Dev::Ui)
+    Dev::RunnerStatus.expects(:new).with(container_required: false, pins: [], repo: repo, ui: ui).returns(status)
     command = Dev::Cli::Builtins::RunnerStatusCommand.new
 
     When
-    command.call(args: no_args, context: build_context(root: root.to_s))
+    command.call(args: no_args, context: build_context(root: root.to_s, ui: ui))
 
     Then
     true
@@ -94,9 +97,9 @@ class Dev::Cli::Builtins::RunnerStatusCommandTest < Minitest::Test
 
   private
 
-  def build_context(root: "/tmp/runner-status-test")
+  def build_context(root: "/tmp/runner-status-test", ui: typed_mock(Dev::Ui))
     Dev::Cli::ExecutionContext.new(
-      ui: typed_mock(Dev::Ui),
+      ui: ui,
       project: Dev::Cli::ProjectContext.new(name: "Cellbound3D", root: Pathname.new(root)),
     )
   end

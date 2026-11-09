@@ -9,6 +9,8 @@ require "dev/deps/dependency"
 require "dev/host_reach"
 require "dev/runner_status"
 require "dev/runner_user"
+require "dev/ui"
+require "support/recording_ui"
 require "etc"
 require "fileutils"
 require "date"
@@ -142,12 +144,40 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    out.string.include?("d3mlabs — 2 slots (2 jobs at once), runners mac1, mac1-2:")
-    out.string.include?("[ok] group: Default\n")
-    out.string.include?("[ok] visible to d3mlabs/dev, d3mlabs/plans")
-    out.string.include?("Runner 'mac1' (~/actions-runner-ai-ask):")
-    out.string.include?("Runner 'mac1-2' (~/actions-runner-ai-ask-2):")
+    out.string.include?("d3mlabs — 2 slots (2 jobs at once), runners mac1, mac1-2")
+    out.string.include?("✓ group: Default\n")
+    out.string.include?("✓ visible to d3mlabs/dev, d3mlabs/plans")
+    out.string.include?("Runner 'mac1' (~/actions-runner-ai-ask)")
+    out.string.include?("Runner 'mac1-2' (~/actions-runner-ai-ask-2)")
     registry.group_asks == [["d3mlabs", 1]]
+  end
+
+  test "the report is sections as frames and facts as notes (plans#52): a scope's slots frame holds the group facts and nests its runners' frames; a fact is a note carrying its glyph — {{v}} for ok, {{x}} for a finding — so the terminal frames it and a pipe reads it plain" do
+    Given "two slots at d3mlabs, one of them gone server-side, and no org Brewfile"
+    ui = RecordingUi.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
+    write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
+    responder = ->(_scope, name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ue-engine"], status: "online") if name == "mac1" }
+    status = build_status(ui: ui, home: home, registry: CannedRegistry.new(repos: ["d3mlabs/dev"], &responder))
+
+    When "reporting"
+    status.report
+
+    Then
+    ui.rows == [
+      [:frame, "d3mlabs — 2 slots (2 jobs at once), runners mac1, mac1-2", 0],
+      [:note, "{{v}} group: Default", 1],
+      [:note, "{{v}} visible to d3mlabs/dev", 1],
+      [:frame, "Runner 'mac1' (~/actions-runner-ai-ask)", 1],
+      [:note, "{{v}} registered: d3mlabs", 2],
+      [:note, "{{v}} labels: ue-engine", 2],
+      [:frame, "Runner 'mac1-2' (~/actions-runner-ai-ask-2)", 1],
+      [:note, "{{v}} registered: d3mlabs", 2],
+      [:note, "{{x}} gone on GitHub — stale enrollment (re-run `dev runner register`)", 2],
+      [:frame, "Host tooling", 0],
+      [:note, "{{v}} no org Brewfile shipped (nothing to check)", 1],
+    ]
   end
 
   test "a lone org enrollment still gets its slots header: the group is who may use it" do
@@ -163,9 +193,9 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    out.string.include?("d3mlabs — 1 slot (1 job at once), runner mac-box:")
-    out.string.include?("[ok] group: everyone\n")
-    out.string.include?("[ok] visible to every repo at d3mlabs")
+    out.string.include?("d3mlabs — 1 slot (1 job at once), runner mac-box")
+    out.string.include?("✓ group: everyone\n")
+    out.string.include?("✓ visible to every repo at d3mlabs")
   end
 
   test "ai-flow slots are held to their contract: #{expectation}" do
@@ -184,10 +214,10 @@ class Dev::RunnerStatusTest < Minitest::Test
 
     Where
     group                                                                   | expectation
-    CannedRegistry.group(id: 7, name: "ai-flow", pinned: true)              | "[ok] group: ai-flow — pinned to #{Dev::LabelContracts::AI_FLOW_WORKFLOWS.join(", ")}"
-    CannedRegistry.group(id: 7, name: "ai-flow", pinned: false)             | "[!!] group: ai-flow drifted (not restricted to workflows) — re-run `dev runner register --org`"
-    CannedRegistry.group(id: 7, name: "ai-flow", pinned: true, visibility: "all") | "[!!] group: ai-flow drifted (visibility is 'all', not 'selected') — re-run `dev runner register --org`"
-    CannedRegistry.group(id: 1, name: "Default", pinned: true) | "[!!] group: Default — these labels belong in 'ai-flow' (re-run `dev runner register --org`)"
+    CannedRegistry.group(id: 7, name: "ai-flow", pinned: true)              | "✓ group: ai-flow — pinned to #{Dev::LabelContracts::AI_FLOW_WORKFLOWS.join(", ")}"
+    CannedRegistry.group(id: 7, name: "ai-flow", pinned: false)             | "✗ group: ai-flow drifted (not restricted to workflows) — re-run `dev runner register --org`"
+    CannedRegistry.group(id: 7, name: "ai-flow", pinned: true, visibility: "all") | "✗ group: ai-flow drifted (visibility is 'all', not 'selected') — re-run `dev runner register --org`"
+    CannedRegistry.group(id: 1, name: "Default", pinned: true) | "✗ group: Default — these labels belong in 'ai-flow' (re-run `dev runner register --org`)"
   end
 
   test "in a checkout, each org scope's slots say whether this repo may use them: #{verdict}" do
@@ -207,9 +237,9 @@ class Dev::RunnerStatusTest < Minitest::Test
 
     Where
     visibility | repo                     | verdict
-    "selected" | "d3mlabs/dev"            | "[ok] d3mlabs/dev may use these slots"
-    "selected" | "d3mlabs/cellbound-3d"   | "[!!] d3mlabs/cellbound-3d may not use these slots — run `dev runner register --org ...` from this checkout to admit it"
-    "all"      | "d3mlabs/cellbound-3d"   | "[ok] d3mlabs/cellbound-3d may use these slots"
+    "selected" | "d3mlabs/dev"            | "✓ d3mlabs/dev may use these slots"
+    "selected" | "d3mlabs/cellbound-3d"   | "✗ d3mlabs/cellbound-3d may not use these slots — run `dev runner register --org ...` from this checkout to admit it"
+    "all"      | "d3mlabs/cellbound-3d"   | "✓ d3mlabs/cellbound-3d may use these slots"
   end
 
   test "outside a checkout no repo verdict is given" do
@@ -241,7 +271,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    out.string.include?("[!!] group: none lists 'mac1' — re-run `dev runner register --org`")
+    out.string.include?("✗ group: none lists 'mac1' — re-run `dev runner register --org`")
     !out.string.include?("JPDuchesne/snappy — 1 slot")
   end
 
@@ -259,7 +289,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    out.string.include?("JPDuchesne/snappy — 2 slots (2 jobs at once), runners JPSFF, JPSFF-2:")
+    out.string.include?("JPDuchesne/snappy — 2 slots (2 jobs at once), runners JPSFF, JPSFF-2")
     !out.string.include?("group:")
     registry.group_asks == []
   end
@@ -275,7 +305,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    out.string.include?("[!!] gone on GitHub")
+    out.string.include?("✗ gone on GitHub")
   end
 
   test "flags a runner GitHub lists offline while a local enrollment exists, and shows the ~-dir (#238)" do
@@ -290,9 +320,9 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then "the enrollment is listed by its ~-dir, its labels shown, and the offline verdict named with the remedy"
-    out.string.include?("Runner 'JPSFF' (~/actions-runner):")
-    out.string.include?("[ok] labels: snappy")
-    out.string.include?("[!!] offline on GitHub — the registration is not being run (re-run `dev runner register`)")
+    out.string.include?("Runner 'JPSFF' (~/actions-runner)")
+    out.string.include?("✓ labels: snappy")
+    out.string.include?("✗ offline on GitHub — the registration is not being run (re-run `dev runner register`)")
   end
 
   # --- the host identity (dev#310) --------------------------------------
@@ -309,7 +339,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    out.string.include?("[!!] runs as #{Etc.getpwuid(Process.uid).name}, not svc-runner — drift (re-run `dev runner register`)")
+    out.string.include?("✗ runs as #{Etc.getpwuid(Process.uid).name}, not svc-runner — drift (re-run `dev runner register`)")
   end
 
   test "an enrollment under the runner user's home, owned by it, reads ok — and is found there" do
@@ -326,8 +356,8 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    out.string.include?("Runner 'JPSFF' (#{File.join(runner_home, "actions-runner-snappy")}):")
-    out.string.include?("[ok] runs as #{me}")
+    out.string.include?("Runner 'JPSFF' (#{File.join(runner_home, "actions-runner-snappy")})")
+    out.string.include?("✓ runs as #{me}")
   end
 
   test "the host identity section: the runner user exists, is logged in to GitHub as someone, and its token's expiry is read — #{what}" do
@@ -347,16 +377,16 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    out.string.include?("Host identity (runner):")
+    out.string.include?("Host identity (runner)")
     out.string.include?(expected)
 
     Where
     what                        | exists | logged_in | expires_in | expected
-    "all good, token expires"   | true   | true      | 365        | "[ok] gh login: d3mlabs-buildhost (token expires #{(Date.today + 365).iso8601})"
-    "a token with no expiry"    | true   | true      | nil        | "[ok] gh login: d3mlabs-buildhost (token does not expire)"
-    "a token about to expire"   | true   | true      | 10         | "[!!] gh login: d3mlabs-buildhost (token expires #{(Date.today + 10).iso8601} — within 30 days; renew it, then `sudo -iu runner gh auth login --with-token`)"
-    "no gh login"               | true   | false     | nil        | "[!!] no gh login — `sudo -iu runner gh auth login --with-token`"
-    "no such user"              | false  | false     | nil        | "[!!] user runner exists (run `dev runner register`)"
+    "all good, token expires"   | true   | true      | 365        | "✓ gh login: d3mlabs-buildhost (token expires #{(Date.today + 365).iso8601})"
+    "a token with no expiry"    | true   | true      | nil        | "✓ gh login: d3mlabs-buildhost (token does not expire)"
+    "a token about to expire"   | true   | true      | 10         | "✗ gh login: d3mlabs-buildhost (token expires #{(Date.today + 10).iso8601} — within 30 days; renew it, then `sudo -iu runner gh auth login --with-token`)"
+    "no gh login"               | true   | false     | nil        | "✗ no gh login — `sudo -iu runner gh auth login --with-token`"
+    "no such user"              | false  | false     | nil        | "✗ user runner exists (run `dev runner register`)"
   end
 
   # dev#348: a sudo the operator cannot pass without a prompt used to read
@@ -375,10 +405,10 @@ class Dev::RunnerStatusTest < Minitest::Test
     When
     status.report
 
-    Then "one [??] line naming who could not tell and how to find out; no [!!], no login remedy, no reach section"
-    out.string.include?("[??] gh login: cannot tell as human (sudo as runner needs a password here) — check with `sudo -iu runner gh auth status`")
+    Then "one ? line naming who could not tell and how to find out; no ✗, no login remedy, no reach section"
+    out.string.include?("? gh login: cannot tell as human (sudo as runner needs a password here) — check with `sudo -iu runner gh auth status`")
     !out.string.include?("no gh login")
-    !out.string.include?("[!!]")
+    !out.string.include?("✗ ")
     !out.string.include?("Host reach")
   end
 
@@ -402,8 +432,8 @@ class Dev::RunnerStatusTest < Minitest::Test
 
     Where
     owner        | expected
-    "runner"     | "[ok] toolchain: /home/linuxbrew/.linuxbrew owned by runner"
-    "jpduchesne" | "[!!] toolchain: /home/linuxbrew/.linuxbrew owned by jpduchesne, not runner — jobs cannot upgrade dev (re-run `dev runner register`)"
+    "runner"     | "✓ toolchain: /home/linuxbrew/.linuxbrew owned by runner"
+    "jpduchesne" | "✗ toolchain: /home/linuxbrew/.linuxbrew owned by jpduchesne, not runner — jobs cannot upgrade dev (re-run `dev runner register`)"
   end
 
   test "a host without brew has no toolchain line" do
@@ -438,9 +468,9 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    out.string.include?("Host reach (runner, this checkout's lock):")
-    out.string.include?("[!!] cannot read d3mlabs/unreal-engine — gh api -X PUT repos/d3mlabs/unreal-engine/collaborators/d3mlabs-buildhost -f permission=pull")
-    out.string.include?("[ok] can read package ghcr.io/d3mlabs/unreal-engine-build-base")
+    out.string.include?("Host reach (runner, this checkout's lock)")
+    out.string.include?("✗ cannot read d3mlabs/unreal-engine — gh api -X PUT repos/d3mlabs/unreal-engine/collaborators/d3mlabs-buildhost -f permission=pull")
+    out.string.include?("✓ can read package ghcr.io/d3mlabs/unreal-engine-build-base")
   end
 
   test "no reach section without a lock to read (projectless) or without a gh login to probe with" do
@@ -477,7 +507,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    out.string.include?("[ok] can read d3mlabs/unreal-engine")
+    out.string.include?("✓ can read d3mlabs/unreal-engine")
   end
 
   test "without a host identity (a Mac) no identity section and no runs-as line" do
@@ -540,10 +570,10 @@ class Dev::RunnerStatusTest < Minitest::Test
 
     Then "every agent host fact reads ok"
     out.string.include?("Agent host")
-    !out.string.include?("[!!]")
+    !out.string.include?("✗ ")
     out.string.include?("agent user ai-agent")
-    out.string.include?("[ok] runner → agent sudoers edge (human → ai-agent, NOPASSWD:SETENV)")
-    out.string.include?("[ok] brew edge: ai-agent may run /opt/homebrew/bin/brew as human (NOPASSWD, SETENV)")
+    out.string.include?("✓ runner → agent sudoers edge (human → ai-agent, NOPASSWD:SETENV)")
+    out.string.include?("✓ brew edge: ai-agent may run /opt/homebrew/bin/brew as human (NOPASSWD, SETENV)")
     out.string.include?("_work tree")
     out.string.include?("shared root")
     out.string.include?("colima")
@@ -568,15 +598,15 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then "the runner → agent edge reads ok, and the brew edge line names the shape found"
-    out.string.include?("[ok] runner → agent sudoers edge (human → ai-agent, NOPASSWD:SETENV)")
+    out.string.include?("✓ runner → agent sudoers edge (human → ai-agent, NOPASSWD:SETENV)")
     out.string.include?(expected)
 
     Where
     what                                    | rules                                                                         | expected
-    "the edge, tags in sudo's own order"    | "#{AGENT_RULES_HEADER}    (human) SETENV: NOPASSWD: /opt/homebrew/bin/brew\n" | "[ok] brew edge: ai-agent may run /opt/homebrew/bin/brew as human (NOPASSWD, SETENV)"
-    "the edge without SETENV (pre-dev#361)" | "#{AGENT_RULES_HEADER}    (human) NOPASSWD: /opt/homebrew/bin/brew\n"         | "[!!] brew edge without SETENV: ai-agent may run /opt/homebrew/bin/brew as human, but not as dev's escalation runs it (run `dev runner register`)"
-    "another path as the owner, not brew"   | "#{AGENT_RULES_HEADER}    (human) SETENV: NOPASSWD: /usr/local/bin/brew\n"    | "[!!] brew edge missing: ai-agent may run /opt/homebrew/bin/brew as human is not granted (run `dev runner register`)"
-    "no rules at all (sudo -l refused)"     | ""                                                                            | "[!!] brew edge missing: ai-agent may run /opt/homebrew/bin/brew as human is not granted (run `dev runner register`)"
+    "the edge, tags in sudo's own order"    | "#{AGENT_RULES_HEADER}    (human) SETENV: NOPASSWD: /opt/homebrew/bin/brew\n" | "✓ brew edge: ai-agent may run /opt/homebrew/bin/brew as human (NOPASSWD, SETENV)"
+    "the edge without SETENV (pre-dev#361)" | "#{AGENT_RULES_HEADER}    (human) NOPASSWD: /opt/homebrew/bin/brew\n"         | "✗ brew edge without SETENV: ai-agent may run /opt/homebrew/bin/brew as human, but not as dev's escalation runs it (run `dev runner register`)"
+    "another path as the owner, not brew"   | "#{AGENT_RULES_HEADER}    (human) SETENV: NOPASSWD: /usr/local/bin/brew\n"    | "✗ brew edge missing: ai-agent may run /opt/homebrew/bin/brew as human is not granted (run `dev runner register`)"
+    "no rules at all (sudo -l refused)"     | ""                                                                            | "✗ brew edge missing: ai-agent may run /opt/homebrew/bin/brew as human is not granted (run `dev runner register`)"
   end
 
   test "a refused runner → agent probe is the finding: one red line, no prompt, and the brew edge is not read" do
@@ -592,7 +622,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    out.string.include?("[!!] runner → agent sudoers edge missing (human → ai-agent, NOPASSWD:SETENV) — the brew edge cannot be read without it (run `dev runner register`)")
+    out.string.include?("✗ runner → agent sudoers edge missing (human → ai-agent, NOPASSWD:SETENV) — the brew edge cannot be read without it (run `dev runner register`)")
     !out.string.include?("brew edge:")
   end
 
@@ -612,7 +642,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    out.string.include?("[ok] no brew edge needed (no brew on this host)")
+    out.string.include?("✓ no brew edge needed (no brew on this host)")
   end
 
   test "flags every missing agent host fact" do
@@ -631,7 +661,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then "the report carries failure markers for each fact (user, two memberships, the edge, _work, shared root, engine)"
-    out.string.scan("[!!]").length == 7
+    out.string.scan("✗ ").length == 7
   end
 
   test "the engine line appears only when the served repo builds in a container" do
@@ -667,7 +697,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     status_none.report
 
     Then
-    out.string.include?("[ok] host tooling")
+    out.string.include?("✓ host tooling")
     out_none.string.include?("no org Brewfile")
   end
 
@@ -712,7 +742,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     ["sudo", "-n", "-u", user, "-H", "env", "-C", "/", "PATH=#{HOST_PATH}", *cmd]
   end
 
-  def build_status(out:, home: Dir.mktmpdir, registry: CannedRegistry.new,
+  def build_status(out: StringIO.new, ui: Dev::NoUi.new(out: out), home: Dir.mktmpdir, registry: CannedRegistry.new,
                    executor: CannedStatusExecutor.new, shared_root: Dir.mktmpdir,
                    brew_edge: Dev::AgentBootstrap::NoBrewEdge.new(reason: "no brew on this host"), brewfile_path: nil,
                    container_required: false, host_identity: nil, pins: [], repo: nil, reach: nil, reach_factory: ->(_identity) { reach })
@@ -724,7 +754,7 @@ class Dev::RunnerStatusTest < Minitest::Test
       **reach_wiring,
       discovery: Dev::RunnerDiscovery.new(home: home),
       registry: registry,
-      out: out,
+      ui: ui,
       executor: executor,
       runner_user: "human",
       host_identity: host_identity,
