@@ -38,9 +38,10 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
   learnings) dispatch before the dev.yml gate; project commands are
   yaml-declared and run through Runner.
   → .cursor/skills/architecture/command-dispatch/
-- [architecture/module-map] What owns what: src/dev is the typed CLI core;
-  each `lib/dev/<module>` is one feature whose Accessor is its only CLI
-  surface. → .cursor/skills/architecture/module-map/
+- [architecture/module-map] What owns what: `lib/dev/cli` (`Dev::Cli`) is the
+  shell; each other `lib/dev/<module>` is one feature whose Accessor is its
+  only CLI surface; nothing outside the shell references `Dev::Cli::*`.
+  → .cursor/skills/architecture/module-map/
 - [architecture/hook-points] `dev up` / `dev deps install` / `dev plan` double
   as the idempotent hygiene hooks (skill links, learnings sync): never
   raise, network only as a bounded pull before distribution.
