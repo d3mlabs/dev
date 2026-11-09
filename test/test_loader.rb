@@ -24,7 +24,6 @@ end
 require "simplecov/sorbet"
 
 DEV_ROOT = File.expand_path("..", __dir__)
-$LOAD_PATH.unshift(File.join(DEV_ROOT, "src")) unless $LOAD_PATH.include?(File.join(DEV_ROOT, "src"))
 $LOAD_PATH.unshift(File.join(DEV_ROOT, "lib")) unless $LOAD_PATH.include?(File.join(DEV_ROOT, "lib"))
 
 require "rspock"

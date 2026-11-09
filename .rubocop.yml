@@ -30,7 +30,6 @@ Sorbet/ValidSigil:
 Sorbet/StrictSigil:
   Enabled: true
   Include:
-    - src/**/*
     - lib/**/*
   Exclude:
     # `typed: false` holdouts. Data.define with a keyword-args initialize

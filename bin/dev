@@ -48,12 +48,10 @@ exit 1
 #!ruby
 # frozen_string_literal: true
 
-# Resolve symlink so Homebrew's bin/dev finds libexec/dev/{src,lib}. When this file is in bin/, both are at repo root.
+# Resolve symlink so Homebrew's bin/dev finds libexec/dev/lib. When this file is in bin/, it is at repo root.
 script_dir = File.dirname(File.realpath(__FILE__))
 root = (File.basename(script_dir) == "bin") ? File.dirname(script_dir) : script_dir
-src = File.join(root, "src")
 lib = File.join(root, "lib")
-$LOAD_PATH.unshift(src) unless $LOAD_PATH.include?(src)
 $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 
 # An installed dev's runtime gems (sorbet-runtime, cli-ui) are vendored by
@@ -79,17 +77,17 @@ vendored = File.dirname(root)
 Gem.use_paths(vendored, [vendored, *Gem.path]) if File.directory?(File.join(vendored, "specifications"))
 
 require "dev"
-require "dev/global_dispatch"
+require "dev/cli/global_dispatch"
 require "dev/shared_umask"
 
 # On Linux the data root is one tree shared by two OS users through a
 # group (dev#310); dev and everything it spawns write it group-writable.
 Dev::SharedUmask.apply!
 
-# Global builtins (see Dev::GlobalCatalog) dispatch before any dev.yml
+# Global builtins (see Dev::Cli::GlobalCatalog) dispatch before any dev.yml
 # lookup — they are host- or workspace-global, not project commands. Help
 # flags are the Runner's.
-global_dispatch = Dev::GlobalDispatch.new
+global_dispatch = Dev::Cli::GlobalDispatch.new
 if global_dispatch.global_command?(ARGV)
   global_dispatch.run(ARGV)
   exit 0
@@ -105,4 +103,4 @@ end
 
 # The Runner is project-optional and owns the rescue-to-exit mapping of the
 # CLI boundary; nothing to handle here.
-Dev::Runner.new(ui: ui).run(ARGV)
+Dev::Cli::Runner.new(ui: ui).run(ARGV)

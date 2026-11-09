@@ -1,0 +1,445 @@
+# typed: false
+# frozen_string_literal: true
+
+require "test_helper"
+require "dev"
+require "dev/cli/global_dispatch"
+require "fileutils"
+require "stringio"
+require "tmpdir"
+
+# A credential accessor stand-in recording the verb it received, so dispatch
+# is tested without hitting the real provider chain. Subclasses the real
+# accessor to satisfy the catalog's typed constructor.
+class RecordingCredAccessor < Dev::CredentialAccessor
+  attr_reader :last_call
+
+  def get(args, out: $stdout)
+    @last_call = [:get, args]
+  end
+end unless defined?(RecordingCredAccessor)
+
+# A config accessor stand-in recording the verb it received, so dispatch is
+# tested without touching the real config files. Subclasses the real
+# accessor to satisfy the catalog's typed constructor.
+class RecordingConfigAccessor < Dev::ConfigAccessor
+  attr_reader :last_call
+
+  def get(args, out: $stdout)
+    @last_call = [:get, args]
+  end
+end unless defined?(RecordingConfigAccessor)
+
+# A clone accessor stand-in recording the target and mode it received, so
+# dispatch is tested without gh or shell RC writes. Subclasses the real
+# accessor to satisfy the dispatcher's typed constructor.
+class RecordingCloneAccessor < Dev::Clone::Accessor
+  attr_reader :last_call
+
+  def initialize
+    super(root: Dir.tmpdir)
+  end
+
+  def run(target, plumbing:, out: $stdout, err: $stderr)
+    @last_call = [target, plumbing]
+  end
+end unless defined?(RecordingCloneAccessor)
+
+transform!(RSpock::AST::Transformation)
+class Dev::Cli::GlobalDispatchTest < Minitest::Test
+  # A dispatcher over a catalog whose accessors never touch the real
+  # providers unless a test passes real ones in; usage goes to `out`.
+  def build_dispatch(out: StringIO.new, **accessors)
+    accessors = { cred_accessor: RecordingCredAccessor.new }.merge(accessors)
+    Dev::Cli::GlobalDispatch.new(catalog: Dev::Cli::GlobalCatalog.new(out: out, **accessors), out: out)
+  end
+
+  test "#{name} is a global command: #{expected}" do
+    Given "a dispatcher"
+    dispatch = build_dispatch
+
+    Expect "the command is classified"
+    dispatch.global_command?([name]) == expected
+
+    Where
+    name          | expected
+    "cd"          | true
+    "clone"       | true
+    "config"      | true
+    "plan"        | true
+    "cred"        | true
+    "learnings"   | true
+    "skills"      | true
+    "engine"      | true
+    "version"     | true
+    "--version"   | true
+    "up"          | false
+    "test"        | false
+    "update-deps" | false
+  end
+
+  test "dev #{spelling} prints the installed version and nothing else" do
+    Given "a dispatcher capturing stdout"
+    out = StringIO.new
+    dispatch = build_dispatch(out: out)
+
+    When "asking for the version"
+    dispatch.run([spelling])
+
+    Then "the VERSION file's content, one line"
+    out.string == "#{Dev::Version.current}\n"
+
+    Where
+    spelling    | _
+    "version"   | nil
+    "--version" | nil
+  end
+
+  test "dev clone dispatches globally without a dev.yml lookup" do
+    Given "a recording clone accessor and a cwd with no dev.yml"
+    clone = RecordingCloneAccessor.new
+    dispatch = build_dispatch(clone_accessor: clone)
+    cwd = Dir.mktmpdir("dispatch-cwd-")
+
+    When "we dispatch dev clone"
+    Dir.chdir(cwd) { dispatch.run(["clone", "--path", "d3mlabs/dev"]) }
+
+    Then "the accessor received the target in plumbing mode"
+    clone.last_call == ["d3mlabs/dev", true]
+
+    Cleanup
+    FileUtils.rm_rf(cwd)
+  end
+
+  test "dev clone against an existing checkout prints a clean error and exits non-zero" do
+    Given "the canonical destination already on disk, and a configured default org"
+    root = Dir.mktmpdir("dispatch-clone-")
+    FileUtils.mkdir_p(File.join(root, "github.com", "d3mlabs", "dev"))
+    config_path = File.join(root, "config.yml")
+    File.write(config_path, "default_org: d3mlabs\n")
+    clone_accessor = Dev::Clone::Accessor.new(
+      root: root, hook_installer: quiet_hook_installer,
+      settings: Dev::Settings.new(config_path: config_path, system_config_path: File.join(root, "system.yml")),
+    )
+    dispatch = build_dispatch(clone_accessor: clone_accessor)
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(1).once
+
+    When "we dispatch the duplicate clone"
+    dispatch.run(["clone", "dev"])
+
+    Then "the error names the existing path and hints at dev cd"
+    $stderr.string.include?("already exists")
+    $stderr.string.include?("dev cd dev")
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.rm_rf(root)
+  end
+
+  test "dev learnings status dispatches globally without a dev.yml lookup" do
+    Given "a knowledge repo via ENV and tmpdir-scoped XDG homes"
+    dir = Dir.mktmpdir("dispatch-learnings-")
+    saved = {
+      "DEV_KNOWLEDGE_REPO" => ENV["DEV_KNOWLEDGE_REPO"],
+      "XDG_DATA_HOME" => ENV["XDG_DATA_HOME"],
+      "XDG_CONFIG_HOME" => ENV["XDG_CONFIG_HOME"],
+    }
+    ENV["DEV_KNOWLEDGE_REPO"] = File.join(dir, "knowledge")
+    ENV["XDG_DATA_HOME"] = File.join(dir, "data")
+    ENV["XDG_CONFIG_HOME"] = File.join(dir, "config")
+    out = StringIO.new
+    dispatch = build_dispatch(out: out)
+
+    When "we dispatch dev learnings status from a cwd with no dev.yml"
+    Dir.chdir(dir) { dispatch.run(["learnings", "status"]) }
+
+    Then "the status reports the configured repo and the empty cache"
+    out.string.include?(File.join(dir, "knowledge"))
+    out.string.include?("not cloned yet")
+
+    Cleanup
+    saved.each { |key, value| value ? ENV[key] = value : ENV.delete(key) }
+    FileUtils.rm_rf(dir)
+  end
+
+  test "dev cd resolves through the dispatcher from a directory with no dev.yml" do
+    Given "a src tree and a cwd far from any dev.yml"
+    root = Dir.mktmpdir("dispatch-cd-")
+    repo = File.join(root, "github.com", "d3mlabs", "dev")
+    FileUtils.mkdir_p(File.join(repo, ".git"))
+    cwd = Dir.mktmpdir("dispatch-cwd-")
+    dispatch = build_dispatch(cd_accessor: Dev::Cd::Accessor.new(root: root, hook_installer: quiet_hook_installer))
+    out = StringIO.new
+    old_stdout = $stdout
+    $stdout = out
+
+    When "we dispatch dev cd --resolve from that cwd"
+    Dir.chdir(cwd) { dispatch.run(["cd", "--resolve", "dev"]) }
+
+    Then "the repo path is printed without any dev.yml lookup"
+    out.string == "#{File.expand_path(repo)}\n"
+
+    Cleanup
+    $stdout = old_stdout
+    FileUtils.rm_rf(root)
+    FileUtils.rm_rf(cwd)
+  end
+
+  test "an ambiguous dev cd lists capped candidates and exits non-zero" do
+    Given "twelve repos sharing a leaf prefix"
+    root = Dir.mktmpdir("dispatch-cd-")
+    12.times do |i|
+      FileUtils.mkdir_p(File.join(root, "github.com", "org#{i}", "dev", ".git"))
+    end
+    dispatch = build_dispatch(cd_accessor: Dev::Cd::Accessor.new(root: root, hook_installer: quiet_hook_installer))
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(1).once
+
+    When "we dispatch the ambiguous query"
+    dispatch.run(["cd", "--resolve", "dev"])
+
+    Then "ten candidates are shown, the rest summarized, with the Tab hint"
+    $stderr.string.include?("ambiguous")
+    $stderr.string.scan(%r{^  org\d+/dev$}).size == 10
+    $stderr.string.include?("… and 2 more")
+    $stderr.string.include?("press Tab")
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.rm_rf(root)
+  end
+
+  test "dev cd with no match prints a clear error and exits non-zero" do
+    Given "an empty src tree"
+    root = Dir.mktmpdir("dispatch-cd-")
+    dispatch = build_dispatch(cd_accessor: Dev::Cd::Accessor.new(root: root, hook_installer: quiet_hook_installer))
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(1).once
+
+    When "we dispatch an unmatched query"
+    dispatch.run(["cd", "--resolve", "nonexistent"])
+
+    Then "the error names the query"
+    $stderr.string.include?("no repo matching 'nonexistent'")
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.rm_rf(root)
+  end
+
+  test "dev cred get resolves down the cred group without a dev.yml lookup" do
+    Given "a recording cred accessor and a cwd with no dev.yml"
+    creds = RecordingCredAccessor.new
+    dispatch = build_dispatch(cred_accessor: creds)
+    cwd = Dir.mktmpdir("dispatch-cwd-")
+
+    When "we dispatch dev cred get"
+    Dir.chdir(cwd) { dispatch.run(["cred", "get", "ns", "key"]) }
+
+    Then "the get verb received the leaf's argv"
+    creds.last_call == [:get, ["ns", "key"]]
+
+    Cleanup
+    FileUtils.rm_rf(cwd)
+  end
+
+  test "dev config get resolves down the config group without a dev.yml lookup" do
+    Given "a recording config accessor and a cwd with no dev.yml"
+    config = RecordingConfigAccessor.new
+    dispatch = build_dispatch(config_accessor: config)
+    cwd = Dir.mktmpdir("dispatch-cwd-")
+
+    When "we dispatch dev config get"
+    Dir.chdir(cwd) { dispatch.run(["config", "get", "plans_repo"]) }
+
+    Then "the get verb received the leaf's argv"
+    config.last_call == [:get, ["plans_repo"]]
+
+    Cleanup
+    FileUtils.rm_rf(cwd)
+  end
+
+  test "an unknown child of a global group prints the tree's not-found error and exits non-zero" do
+    Given "a dispatcher and a cwd with no dev.yml"
+    dispatch = build_dispatch(config_accessor: RecordingConfigAccessor.new)
+    cwd = Dir.mktmpdir("dispatch-cwd-")
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(1).once
+
+    When "we dispatch a verb the config group lacks"
+    Dir.chdir(cwd) { dispatch.run(["config", "frobnicate"]) }
+
+    Then "the full path is named, with the hint to list the group"
+    $stderr.string.include?("Command 'config frobnicate' not found")
+    $stderr.string.include?("Run 'dev config' to see its commands.")
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.rm_rf(cwd)
+  end
+
+  test "a bare global group prints its usage and exits cleanly" do
+    Given "a dispatcher printing to a buffer"
+    out = StringIO.new
+    dispatch = build_dispatch(out: out, config_accessor: RecordingConfigAccessor.new)
+    cwd = Dir.mktmpdir("dispatch-cwd-")
+
+    When "we dispatch the bare group"
+    Dir.chdir(cwd) { dispatch.run(["config"]) }
+
+    Then "the group usage lists its verbs"
+    out.string.include?("Usage: dev config <command> [args...]")
+    out.string.include?("  list")
+    out.string.include?("  get")
+    out.string.include?("  set")
+
+    Cleanup
+    FileUtils.rm_rf(cwd)
+  end
+
+  test "dev plan usage errors surface cleanly from a directory with no dev.yml" do
+    Given "a cwd with no dev.yml anywhere above it"
+    dispatch = build_dispatch
+    cwd = Dir.mktmpdir("dispatch-cwd-")
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(1).once
+
+    When "we dispatch an unknown plan subcommand"
+    Dir.chdir(cwd) { dispatch.run(["plan", "bogus"]) }
+
+    Then "the tree's not-found error is printed (no DevYamlNotFoundError)"
+    $stderr.string.include?("Command 'plan bogus' not found")
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.rm_rf(cwd)
+  end
+
+  test "help spelling #{argv.inspect} never dispatches globally: the Runner's tree lists the global commands too" do
+    Given "a cwd with no dev.yml anywhere above it (where help used to be global)"
+    cwd = Dir.mktmpdir("dispatch-help-")
+    dispatch = build_dispatch
+
+    When "classifying the spelling from that cwd"
+    classified = Dir.chdir(cwd) { dispatch.global_command?(argv) }
+
+    Then "it is the Runner's"
+    classified == false
+
+    Cleanup
+    FileUtils.rm_rf(cwd)
+
+    Where
+    argv
+    []
+    ["--help"]
+    ["-h"]
+    ["help"]
+    ["help", "plan"]
+    ["plan", "--help"]
+    ["plan", "new", "-h"]
+    ["plan", "new", "Carve system", "--help"]
+    ["config", "get", "plans_repo", "--help"]
+  end
+
+  test "a help flag after a literal -- is data, so #{argv.inspect} still dispatches globally" do
+    Given "a dispatcher"
+    dispatch = build_dispatch
+
+    Expect "the terminator ends option parsing"
+    dispatch.global_command?(argv) == true
+
+    Where
+    argv
+    ["plan", "new", "--", "--help"]
+    ["config", "get", "--", "-h"]
+  end
+
+  test "an unknown flag at a global node is a usage error: the node's usage on stderr, exit 2, nothing runs" do
+    Given "a dispatcher over a recording config accessor and a cwd with no dev.yml"
+    config = RecordingConfigAccessor.new
+    dispatch = build_dispatch(config_accessor: config)
+    cwd = Dir.mktmpdir("dispatch-cwd-")
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(2).once
+
+    When "we dispatch a leaf with a flag it does not declare"
+    Dir.chdir(cwd) { dispatch.run(["config", "get", "plans_repo", "--hlep"]) }
+
+    Then "the flag and the node are named, the usage follows, and the verb never ran"
+    $stderr.string.lines.first == "dev: unknown flag '--hlep' for 'dev config get'\n"
+    $stderr.string.include?("Usage: dev config get [args...]")
+    config.last_call.nil?
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.rm_rf(cwd)
+  end
+
+  test "a declared flag is admitted at a global node" do
+    Given "a recording clone accessor (its plumbing flag is --path)"
+    clone = RecordingCloneAccessor.new
+    dispatch = build_dispatch(clone_accessor: clone)
+
+    When "we dispatch with the declared flag"
+    dispatch.run(["clone", "--path", "d3mlabs/dev"])
+
+    Then "the accessor received it as the plumbing mode"
+    clone.last_call == ["d3mlabs/dev", true]
+  end
+
+  test "an unknown flag on a global group is refused as a flag, not as an unknown subcommand" do
+    Given "a dispatcher"
+    dispatch = build_dispatch(config_accessor: RecordingConfigAccessor.new)
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(2).once
+
+    When "we dispatch the group with a typo'd flag"
+    dispatch.run(["config", "--hlep"])
+
+    Then "the group's usage follows the flag message"
+    $stderr.string.lines.first == "dev: unknown flag '--hlep' for 'dev config'\n"
+    $stderr.string.include?("Usage: dev config <command> [args...]")
+
+    Cleanup
+    $stderr = old_stderr
+  end
+
+  test "project commands still require a nearby dev.yml" do
+    Given "a cwd with no dev.yml anywhere above it"
+    cwd = Dir.mktmpdir("dispatch-cwd-")
+    Dev.instance_variable_set(:@dev_yaml_file, nil)
+
+    When "we look up the dev.yml the Runner path needs"
+    Dir.chdir(cwd) { Dev.dev_yaml_file }
+
+    Then
+    raises Dev::DevYamlNotFoundError
+
+    Cleanup
+    Dev.instance_variable_set(:@dev_yaml_file, nil)
+    FileUtils.rm_rf(cwd)
+  end
+
+  private
+
+  # A hook installer that never touches (or reads) the real shell RC: the
+  # hook is always current. Subclasses the real installer to satisfy the
+  # accessors' typed constructors.
+  class QuietHookInstaller < Dev::Cd::HookInstaller
+    def ensure_installed = nil
+    def installed? = true
+  end
+
+  def quiet_hook_installer
+    QuietHookInstaller.new
+  end
+end

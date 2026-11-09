@@ -34,14 +34,14 @@ class Dev::BinInstallTest < Minitest::Test
 
   def installed = @install.children.map { |child| child.basename.to_s }.sort
 
-  test "install-core lays out the org-blank tool: bin, src, lib, share, VERSION, LICENSE, README — replacing whatever the install held" do
+  test "install-core lays out the org-blank tool: bin, lib, share, VERSION, LICENSE, README — replacing whatever the install held" do
     When
     out, status = run_builder("core")
 
     Then
     status.success?
     out == ""
-    installed == %w[LICENSE README.md VERSION bin lib share src]
+    installed == %w[LICENSE README.md VERSION bin lib share]
     (@install / "VERSION").read == (DEV_ROOT / "VERSION").read
     (@install / "bin" / "dev").executable?
   end

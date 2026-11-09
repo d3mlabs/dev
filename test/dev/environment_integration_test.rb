@@ -11,10 +11,10 @@ require "dev/deps/dependency"
 require "dev/deps/lockfile"
 require "dev/environment_image"
 require "dev/host_environment"
-require "dev/host_rule"
+require "dev/cli/host_rule"
 require "dev/platform"
 require "dev/project_container"
-require "dev/runner"
+require "dev/cli/runner"
 require "dev/shadowenv_llvm"
 require "support/fake_container_engine"
 require "support/scripted_remote"
@@ -322,7 +322,7 @@ class EnvironmentIntegrationTest < Minitest::Test
   # the executor's never-returns contract reports — expected here.
   def exec!(runner, argv)
     runner.run(argv)
-  rescue Dev::ProjectExecutor::ExecReturnedError
+  rescue Dev::Cli::ProjectExecutor::ExecReturnedError
     nil
   end
 
@@ -340,15 +340,15 @@ class EnvironmentIntegrationTest < Minitest::Test
     yaml["build"] = build if build
     yaml["targets"] = targets if targets
     (@root / "dev.yml").write(YAML.dump(yaml))
-    host_rule = Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: (@root / "no-marker").to_s))
-    Dev::Runner.new(dev_yaml_path: @root / "dev.yml", ui:, out:, host_rule:, hosts_factory: method(:remote_hosts).to_proc)
+    host_rule = Dev::Cli::HostRule.new(host_environment: Dev::HostEnvironment.new(path: (@root / "no-marker").to_s))
+    Dev::Cli::Runner.new(dev_yaml_path: @root / "dev.yml", ui:, out:, host_rule:, hosts_factory: method(:remote_hosts).to_proc)
   end
 
   # The project's container over the fake engine — a host whose gh holds
   # no login, so the developer's own token never enters an expected argv;
   # the repo named without gh — and a sync step that pushes nothing.
   def remote_hosts(project)
-    Dev::Runner::RemoteHosts.new(
+    Dev::Cli::Runner::RemoteHosts.new(
       containers: Dev::ProjectContainer.new(
         project_root: project.root, engine_hint: project.engine, client: Dev::BuildContainer.new(engine: @engine),
         github_token: Dev::ContainerGithubToken.new(source: -> { nil }), repo_resolver: -> { "o/r" },

@@ -11,7 +11,7 @@ require "dev/cli/parsed_args"
 #   command.call(args: parsed_args(command, ["--keep", "3"]), context:)
 #   command.call(args: no_args, context:)
 module ParsedArgsHelper
-  # @param command [Dev::Command] the builtin whose vocabulary applies
+  # @param command [Dev::Cli::Command] the builtin whose vocabulary applies
   # @param words [Array<String>] the argv after the command's path
   # @return [Dev::Cli::ParsedArgs]
   def parsed_args(command, words)

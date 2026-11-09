@@ -489,7 +489,7 @@ module Dev
         # lock pins, directly or through an alias — a project pinning only
         # `ruby` installs it through brew, so brew's publisher is its too.
         # The channels `deploy` contributes with no dev.yml line
-        # (Dev::ProjectPublishers reads the pins; Dev::ChannelBinder merges
+        # (Dev::Cli::ProjectPublishers reads the pins; Dev::Cli::ChannelBinder merges
         # the result with the declared channels). Built-in entries only, as
         # every table here: an external publisher arrives through dev#300's
         # SPI.

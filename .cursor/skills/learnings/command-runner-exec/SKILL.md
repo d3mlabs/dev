@@ -2,15 +2,15 @@
 name: command-runner-exec
 description: >-
   MUST be used when adding a dev command, sequencing work after
-  cmd.execute in Dev::Runner#run, or diagnosing a post-command step (like
+  cmd.execute in Dev::Cli::Runner#run, or diagnosing a post-command step (like
   the installed stamp) that silently never happens.
 ---
 
 # CommandRunner exec ends the dev process
 
-`Dev::CommandRunner` runs project `run:` commands with `Kernel.exec` by
+`Dev::Cli::CommandRunner` runs project `run:` commands with `Kernel.exec` by
 default — the dev process is replaced, so nothing after `cmd.execute` in
-`Dev::Runner#run` executes for a yaml-declared command, nor for an
+`Dev::Cli::Runner#run` executes for a yaml-declared command, nor for an
 `OverriddenCommand` whose body is one. Must-happen work cannot sit after
 a maybe-exec point: it lives in a fully in-process builtin, or the
 command must run in CommandRunner's wait mode.

@@ -18,10 +18,10 @@ class Dev::SpawnSeamsTest < Minitest::Test
   DEV_ROOT = File.expand_path("../..", __dir__)
 
   # The two seams. A line spawning `shadowenv exec` anywhere else under
-  # lib/ or src/ fails the suite.
+  # lib/ fails the suite.
   SHADOWENV_EXEC_SEAMS = %w[
     lib/dev/deps/shadowenv_exec.rb
-    src/dev/command_runner.rb
+    lib/dev/cli/command_runner.rb
   ].freeze
 
   # An argv that starts `shadowenv exec`, in any of Ruby's spellings:
@@ -31,8 +31,8 @@ class Dev::SpawnSeamsTest < Minitest::Test
   SPAWN_PATTERN = /(?:["']shadowenv["']\s*,\s*["']exec["']|%w\[\s*shadowenv\s+exec|["']shadowenv exec)/
 
   test "shadowenv exec is spawned from exactly the two known seams" do
-    Given "every Ruby source under lib/ and src/"
-    sources = Dir.glob(%w[lib/**/*.rb src/**/*.rb], base: DEV_ROOT)
+    Given "every Ruby source under lib/"
+    sources = Dir.glob("lib/**/*.rb", base: DEV_ROOT)
 
     When "looking for lines that build a shadowenv exec argv"
     spawning = sources.select do |relative|

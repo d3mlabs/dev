@@ -40,7 +40,7 @@ module Dev
     #
     # The engine and the login are resolved on first use, not at
     # construction: the Registry builds every contributed publisher at
-    # load for every command (Dev::ProjectPublishers), and the operator's
+    # load for every command (Dev::Cli::ProjectPublishers), and the operator's
     # engine record is read — and failed on — only when a deploy pushes.
     class GhcrPublisher
       extend T::Sig
