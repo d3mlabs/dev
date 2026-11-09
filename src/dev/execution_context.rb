@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require "pathname"
-require_relative "cli/ui"
+require "dev/ui"
 require "dev/engine_resources"
 require_relative "project_images"
 
@@ -43,7 +43,7 @@ module Dev
     # the raise makes the registration invariant explicit.
     class ProjectRequiredError < StandardError; end
 
-    const :ui, Dev::Cli::Ui
+    const :ui, Dev::Ui
     const :project, T.nilable(Dev::ProjectContext), default: nil
 
     # The project half, for commands that require a project.

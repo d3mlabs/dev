@@ -34,7 +34,7 @@ class Dev::Builtins::DeployStatusCommandTest < Minitest::Test
 
   def command = Dev::Builtins::DeployStatusCommand.new(channels:, deployments: Dev::Lifecycle::GithubDeployments.new(gh: @gh), out: @out)
 
-  def context = Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui))
+  def context = Dev::ExecutionContext.new(ui: typed_mock(Dev::Ui))
 
   def deployment(id, ref:, track:, builds:)
     {

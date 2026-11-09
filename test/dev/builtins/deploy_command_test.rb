@@ -64,7 +64,7 @@ class Dev::Builtins::DeployCommandTest < Minitest::Test
     @out = StringIO.new
     @err = StringIO.new
     @gh = FakeGh.new(root: @project)
-    @ui = Dev::Cli::NoUi.new(out: @out)
+    @ui = Dev::NoUi.new(out: @out)
     @remote = ScriptedRemote.new(root: @project, ui: @ui)
   end
 

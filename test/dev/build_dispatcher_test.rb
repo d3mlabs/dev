@@ -3,7 +3,7 @@
 
 require "test_helper"
 require "dev/build_dispatcher"
-require "dev/cli/ui"
+require "dev/ui"
 require "dev/deps/dependency"
 require "dev/dispatch"
 require "dev/dispatch_resolver"
@@ -73,7 +73,7 @@ class Dev::BuildDispatcherTest < Minitest::Test
   def dispatcher(placements: self.placements)
     host_rule = Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: @marker), inside_container: false)
     remotes = Dev::RemoteDispatches.new(
-      root: @dir, ui: typed_mock(Dev::Cli::Ui), out: StringIO.new, runs: Dev::Lifecycle::WorkflowRuns.new(gh: FakeGh.new(root: @dir)),
+      root: @dir, ui: typed_mock(Dev::Ui), out: StringIO.new, runs: Dev::Lifecycle::WorkflowRuns.new(gh: FakeGh.new(root: @dir)),
       containers: Dev::ProjectContainer.new(project_root: @dir),
     )
     settings = Dev::Settings.new(config_path: (@dir / "config.yml").to_s, system_config_path: (@dir / "none.yml").to_s)

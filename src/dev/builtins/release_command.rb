@@ -254,9 +254,9 @@ module Dev
       # and the numbered steps the verb is about to take.
       #
       # @param env [ReleaseEnv]
-      # @param ui [Cli::Ui]
+      # @param ui [Ui]
       # @return [void]
-      sig { params(env: ReleaseEnv, ui: Cli::Ui).void }
+      sig { params(env: ReleaseEnv, ui: Ui).void }
       def show_plan(env, ui:)
         plan = env.plan
         ui.frame(plan_title(plan)) do
@@ -315,9 +315,9 @@ module Dev
       # resume attaches to it), else a new one with the plan's notes.
       #
       # @param env [ReleaseEnv]
-      # @param ui [Cli::Ui]
+      # @param ui [Ui]
       # @return [URI] the release's page
-      sig { params(env: ReleaseEnv, ui: Cli::Ui).returns(URI::Generic) }
+      sig { params(env: ReleaseEnv, ui: Ui).returns(URI::Generic) }
       def find_or_create(env, ui:)
         found = @releases.find(env.tag)
         if found
@@ -333,11 +333,11 @@ module Dev
       # prompt nobody will see (ai-flow, the runner).
       #
       # @param args [Cli::ParsedArgs]
-      # @param ui [Cli::Ui]
+      # @param ui [Ui]
       # @return [void]
       # @raise [DeclinedError]
       # @raise [NoTerminalError]
-      sig { params(args: Cli::ParsedArgs, ui: Cli::Ui).void }
+      sig { params(args: Cli::ParsedArgs, ui: Ui).void }
       def confirm!(args, ui:)
         return if args.flag?(YES_FLAG)
 
@@ -374,9 +374,9 @@ module Dev
       # @param sha [String] the tag's commit
       # @param url [URI] the release's page
       # @param manifest [Lifecycle::Manifest::Release]
-      # @param ui [Cli::Ui]
+      # @param ui [Ui]
       # @return [void]
-      sig { params(env: ReleaseEnv, sha: String, url: URI::Generic, manifest: Lifecycle::Manifest::Release, ui: Cli::Ui).void }
+      sig { params(env: ReleaseEnv, sha: String, url: URI::Generic, manifest: Lifecycle::Manifest::Release, ui: Ui).void }
       def report(env, sha, url, manifest, ui:)
         ui.note("{{v}} {{bold:#{env.tag} released!}} (#{sha[0, Lifecycle::GitState::SHORT_SHA_LENGTH]}, from #{env.plan.branch}) → #{url}")
         manifest.archives.each { |archive| ui.note("  #{archive.name} (#{archive.build_id})") }

@@ -63,7 +63,7 @@ class Dev::Builtins::PackageCommandTest < Minitest::Test
     git("add", ".")
     commit("one")
     @out = StringIO.new
-    @ui = typed_mock(Dev::Cli::Ui)
+    @ui = typed_mock(Dev::Ui)
     @remote = ScriptedRemote.new(root: @project, ui: @ui, downloads: true)
   end
 

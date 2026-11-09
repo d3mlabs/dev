@@ -50,7 +50,7 @@ class Dev::Builtins::BuildCommandTest < Minitest::Test
       echo "$DEV_INSTALL" >> "$DEV_INSTALL/built.txt"
     SH
     @out = StringIO.new
-    @ui = typed_mock(Dev::Cli::Ui)
+    @ui = typed_mock(Dev::Ui)
     @remote = ScriptedRemote.new(root: @project, ui: @ui)
   end
 

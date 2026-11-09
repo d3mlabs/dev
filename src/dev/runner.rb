@@ -105,7 +105,7 @@ module Dev
 
     sig do
       params(
-        ui: Dev::Cli::Ui,
+        ui: Dev::Ui,
         out: T.any(IO, StringIO),
         dev_yaml_path: T.nilable(Pathname),
         manifest_loader: ProjectManifestLoader,
@@ -414,7 +414,7 @@ module Dev
     #   plumbing walks the same tree)
     # @param bindings [Bindings] where each target's builds and each
     #   channel's protocol run (both empty when the lock was unreadable)
-    # @param ui [Cli::Ui] the run's UI, where a remote dispatch prints its crossing
+    # @param ui [Ui] the run's UI, where a remote dispatch prints its crossing
     # @param hosts [RemoteHosts] the project's container and the sync step to it
     # @return [Hash{String => Command}] the root's children
     sig do
@@ -425,7 +425,7 @@ module Dev
         help: Builtins::HelpCommand,
         complete: Builtins::CompleteCommand,
         bindings: Bindings,
-        ui: Cli::Ui,
+        ui: Ui,
         hosts: RemoteHosts,
       ).returns(T::Hash[String, Command])
     end
@@ -540,11 +540,11 @@ module Dev
     # @param manifest [ProjectManifest]
     # @param project [ProjectContext]
     # @param bindings [Bindings]
-    # @param ui [Cli::Ui]
+    # @param ui [Ui]
     # @param hosts [RemoteHosts] the project's container and the sync step to it
     # @return [Hash{String => Command}]
     sig do
-      params(manifest: ProjectManifest, project: ProjectContext, bindings: Bindings, ui: Cli::Ui, hosts: RemoteHosts)
+      params(manifest: ProjectManifest, project: ProjectContext, bindings: Bindings, ui: Ui, hosts: RemoteHosts)
         .returns(T::Hash[String, Command])
     end
     def lifecycle_builtins(manifest, project, bindings, ui:, hosts:)

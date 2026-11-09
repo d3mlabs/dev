@@ -345,7 +345,7 @@ class Dev::Builtins::InstallDepsCommandTest < Minitest::Test
 
   def build_context(project_root)
     Dev::ExecutionContext.new(
-      ui: typed_mock(Dev::Cli::Ui),
+      ui: typed_mock(Dev::Ui),
       project: Dev::ProjectContext.new(name: "TestProject", root: project_root),
     )
   end

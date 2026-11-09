@@ -3,7 +3,7 @@
 
 require "test_helper"
 require "dev/build_container"
-require "dev/cli/ui"
+require "dev/ui"
 require "dev/container_github_token"
 require "dev/deps/dependency"
 require "dev/dispatch"
@@ -57,7 +57,7 @@ class Dev::DispatchTest < Minitest::Test
       .answers(["run", "watch"], with: "")
       .answers(["run", "view"], with: GREEN)
     out = StringIO.new
-    ui = Dev::Cli::NoUi.new
+    ui = Dev::NoUi.new
     remote = Dev::Dispatch::Remote.new(transport: transport(gh, root:, out:), sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui:)
     resolved = false
     heads_at_dispatch = nil
@@ -98,7 +98,7 @@ class Dev::DispatchTest < Minitest::Test
       .answers(["run", "list"], with: [RUN])
       .answers(["run", "watch"], with: "")
       .answers(["run", "view"], with: GREEN)
-    ui = typed_mock(Dev::Cli::Ui)
+    ui = typed_mock(Dev::Ui)
     remote = Dev::Dispatch::Remote.new(transport: transport(gh, root:), sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui:)
     crossing = nil
     ui.expects(:print_remote_crossing).with { |destination:, snapshot:| crossing = [destination, snapshot] }
@@ -119,7 +119,7 @@ class Dev::DispatchTest < Minitest::Test
     workspace = Pathname(Dir.mktmpdir("dispatch-"))
     root, origin = checkout_with_origin(workspace)
     gh = FakeGh.new(root:)
-    remote = Dev::Dispatch::Remote.new(transport: transport(gh, root:), sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui: typed_mock(Dev::Cli::Ui))
+    remote = Dev::Dispatch::Remote.new(transport: transport(gh, root:), sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui: typed_mock(Dev::Ui))
 
     When
     remote.dispatch(Dev::Lifecycle::VerbInvocation.new(words: ["build", "x"])) { nil }
@@ -145,7 +145,7 @@ class Dev::DispatchTest < Minitest::Test
       .answers(["run", "list"], with: [RUN])
       .answers(["run", "watch"], with: "")
       .answers(["run", "view"], with: RUN.merge("status" => "completed", "conclusion" => "failure"))
-    remote = Dev::Dispatch::Remote.new(transport: transport(gh, root:, out: StringIO.new), sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui: Dev::Cli::NoUi.new)
+    remote = Dev::Dispatch::Remote.new(transport: transport(gh, root:, out: StringIO.new), sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui: Dev::NoUi.new)
 
     When
     capture_stdout { remote.dispatch(Dev::Lifecycle::VerbInvocation.new(words: ["package", "x"])) { nil } }
@@ -170,7 +170,7 @@ class Dev::DispatchTest < Minitest::Test
       heads_at_exec = heads.call if args.fetch(0) == "exec"
       super(args, env:, **opts)
     end
-    ui = typed_mock(Dev::Cli::Ui)
+    ui = typed_mock(Dev::Ui)
     crossing = nil
     ui.expects(:print_remote_crossing).with { |destination:, snapshot:| crossing = [destination, snapshot] }
     remote = Dev::Dispatch::Remote.new(
@@ -211,7 +211,7 @@ class Dev::DispatchTest < Minitest::Test
     engine = recording_engine
     remote = Dev::Dispatch::Remote.new(
       transport: local_container(engine, root:, image: image(persist: false), token: nil),
-      sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui: Dev::Cli::NoUi.new,
+      sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui: Dev::NoUi.new,
     )
 
     When
@@ -237,7 +237,7 @@ class Dev::DispatchTest < Minitest::Test
     engine = recording_engine(&->(args) { args.fetch(0) == "exec" ? 3 : true })
     remote = Dev::Dispatch::Remote.new(
       transport: local_container(engine, root:, image: image(persist: true), token: nil),
-      sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui: Dev::Cli::NoUi.new,
+      sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui: Dev::NoUi.new,
     )
 
     When
@@ -264,7 +264,7 @@ class Dev::DispatchTest < Minitest::Test
     out = StringIO.new
     remote = Dev::Dispatch::Remote.new(
       transport: local_container(engine, root:, image: image(persist: true), token: nil, host_os:, out:),
-      sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui: Dev::Cli::NoUi.new,
+      sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui: Dev::NoUi.new,
     )
     invocation = Dev::Lifecycle::VerbInvocation.new(
       words: ["package", "cellbound-3d-win64-dev"], fetch: Dev::Lifecycle::ArtifactFetch.new(name: "cellbound-3d-win64-dev", into:),
@@ -297,7 +297,7 @@ class Dev::DispatchTest < Minitest::Test
     engine = FakeContainerEngine.new(capture_result: "")
     remote = Dev::Dispatch::Remote.new(
       transport: local_container(engine, root:, image: image(persist: true), token: nil),
-      sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui: typed_mock(Dev::Cli::Ui),
+      sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui: typed_mock(Dev::Ui),
     )
 
     When

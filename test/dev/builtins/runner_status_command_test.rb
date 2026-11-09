@@ -50,7 +50,7 @@ class Dev::Builtins::RunnerStatusCommandTest < Minitest::Test
     command = Dev::Builtins::RunnerStatusCommand.new(runner_status_factory: ->(_container, _root) { status })
 
     When "running status with no project"
-    command.call(args: no_args, context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui)))
+    command.call(args: no_args, context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Ui)))
 
     Then
     true
@@ -64,7 +64,7 @@ class Dev::Builtins::RunnerStatusCommandTest < Minitest::Test
     command = Dev::Builtins::RunnerStatusCommand.new
 
     When "running status outside a checkout"
-    command.call(args: no_args, context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui)))
+    command.call(args: no_args, context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Ui)))
 
     Then "the expectation on the construction boundary holds: no lock, no repo"
     true
@@ -96,7 +96,7 @@ class Dev::Builtins::RunnerStatusCommandTest < Minitest::Test
 
   def build_context(root: "/tmp/runner-status-test")
     Dev::ExecutionContext.new(
-      ui: typed_mock(Dev::Cli::Ui),
+      ui: typed_mock(Dev::Ui),
       project: Dev::ProjectContext.new(name: "Cellbound3D", root: Pathname.new(root)),
     )
   end

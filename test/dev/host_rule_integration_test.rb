@@ -173,7 +173,7 @@ class HostRuleIntegrationTest < Minitest::Test
 
   def runner
     (@root / "dev.yml").write(YAML.dump({ "name" => "snappy", "commands" => COMMANDS }))
-    ui = typed_mock(Dev::Cli::Ui)
+    ui = typed_mock(Dev::Ui)
     ui.stubs(:print_header)
     ui.stubs(:print_remote_crossing)
     host_rule = Dev::HostRule.new(

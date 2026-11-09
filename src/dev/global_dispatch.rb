@@ -5,7 +5,7 @@ require "stringio"
 require "dev/builtin_executor"
 require "dev/cd"
 require "dev/cli/flag_vocabulary"
-require "dev/cli/ui"
+require "dev/ui"
 require "dev/cli/usage_printer"
 require "dev/command"
 require "dev/command_executor"
@@ -43,7 +43,7 @@ module Dev
     FLAG_SPELLINGS = T.let({ "--version" => "version" }.freeze, T::Hash[String, String])
 
     # @param catalog [Dev::GlobalCatalog] the global command tree
-    # @param ui [Dev::Cli::Ui] the host half of the execution context (the
+    # @param ui [Dev::Ui] the host half of the execution context (the
     #   global leaves print plainly, so the silent UI is the default)
     # @param out [IO, StringIO] where group usage prints
     # @param flag_vocabulary [Dev::Cli::FlagVocabulary] recognizes a help
@@ -51,12 +51,12 @@ module Dev
     sig do
       params(
         catalog: Dev::GlobalCatalog,
-        ui: Dev::Cli::Ui,
+        ui: Dev::Ui,
         out: T.any(IO, StringIO),
         flag_vocabulary: Dev::Cli::FlagVocabulary,
       ).void
     end
-    def initialize(catalog: Dev::GlobalCatalog.new, ui: Dev::Cli::NoUi.new, out: $stdout,
+    def initialize(catalog: Dev::GlobalCatalog.new, ui: Dev::NoUi.new, out: $stdout,
                    flag_vocabulary: Dev::Cli::FlagVocabulary.new)
       @catalog = catalog
       @ui = ui

@@ -295,9 +295,9 @@ module Dev
       # @param env [DeployEnv]
       # @param deployments [Array<Lifecycle::Deployment>] the records made, in ref order
       # @param receipt [Lifecycle::Receipt]
-      # @param ui [Cli::Ui]
+      # @param ui [Ui]
       # @return [void]
-      sig { params(env: DeployEnv, deployments: T::Array[Lifecycle::Deployment], receipt: Lifecycle::Receipt, ui: Cli::Ui).void }
+      sig { params(env: DeployEnv, deployments: T::Array[Lifecycle::Deployment], receipt: Lifecycle::Receipt, ui: Ui).void }
       def report(env, deployments, receipt, ui:)
         count = env.selection.shipments.size
         ids = deployments.map { |deployment| "##{deployment.id}" }.join(", ")
