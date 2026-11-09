@@ -3,7 +3,6 @@
 
 require "test_helper"
 require "dev/builtins/runner_register_command"
-require "dev/confirmer"
 require "dev/deps/dependency"
 require "dev/deps/lockfile"
 require "dev/enrolled_runner"
@@ -151,7 +150,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "bare register derives the repo label from the repo name — lowercased, dashes kept, never from dev.yml name:" do
     Given "a checkout gh resolves to #{repo}, whose dev.yml name: differs"
     harness = build_harness(repo: repo)
-    context = build_context(name: "Cellbound3D")
+    context = harness.build_context(name: "Cellbound3D")
 
     When "running register with no flags"
     harness.command.call(args: no_args, context: context)
@@ -182,7 +181,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     })
 
     When "running register with --repo and no --labels"
-    harness.command.call(args: parsed_args(harness.command, ["--repo", "d3mlabs/unreal-engine"]), context: build_context(name: "Cellbound3D"))
+    harness.command.call(args: parsed_args(harness.command, ["--repo", "d3mlabs/unreal-engine"]), context: harness.build_context(name: "Cellbound3D"))
 
     Then "the label follows the override, which is also what the setup is wired with"
     config, repo_override, _org = harness.wirings.fetch(0)
@@ -196,7 +195,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(repo: "d3mlabs/cellbound-3d")
 
     When "running register with no flags"
-    harness.command.call(args: no_args, context: build_context(name: "Cellbound3D"))
+    harness.command.call(args: no_args, context: harness.build_context(name: "Cellbound3D"))
 
     Then "the label is EnrolledRunner's, so what register enrolls is what the remote dispatch will find"
     harness.wirings.fetch(0).fetch(0).labels == Dev::EnrolledRunner.for("d3mlabs/cellbound-3d").label
@@ -207,7 +206,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(contracts: 1)
 
     When "registering for a repo spelled without its owner"
-    harness.command.call(args: parsed_args(harness.command, ["--repo", "cellbound-3d"]), context: build_context(name: "Cellbound3D"))
+    harness.command.call(args: parsed_args(harness.command, ["--repo", "cellbound-3d"]), context: harness.build_context(name: "Cellbound3D"))
 
     Then
     error = raises Dev::EnrolledRunner::MalformedRepoError
@@ -220,11 +219,11 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     Given "an org this login cannot administer, and no terminal to answer with"
     registry = FakeRegistry.new(refused: ["d3mlabs"])
     harness = build_harness(registry: registry, scope: "d3mlabs", contracts: 1, runner_user: runner_user_mock(name: "runner", home: "/home/runner"))
-    harness.confirmer.stubs(:confirm?).returns(false)
+    harness.ui.stubs(:confirm).returns(false)
     harness.engine.expects(:provision!).never
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-orchestrator"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-orchestrator"]), context: harness.projectless_context)
 
     Then "refused, naming the fix; no contract converged, no runner user touched, nothing enrolled"
     error = raises Dev::OperatorAccess::RefusedError
@@ -243,10 +242,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
       registry.grant_all!
       true
     })
-    harness.confirmer.stubs(:confirm?).returns(true)
+    harness.ui.stubs(:confirm).returns(true)
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-orchestrator"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-orchestrator"]), context: harness.projectless_context)
 
     Then
     refreshed == ["admin:org"]
@@ -258,7 +257,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness
 
     When "registering the org agent host"
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: harness.projectless_context)
 
     Then "the labels are dev's documented mirror of ai-flow's agent vocabulary"
     config, _repo, org = harness.wirings.fetch(0)
@@ -278,7 +277,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(registry: registry, scope: "d3mlabs", contracts_factory: recorder)
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-orchestrator", "--slots", "2"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-orchestrator", "--slots", "2"]), context: harness.projectless_context)
 
     Then "two slots carrying the label, in the ai-orchestrator group, which was created open to every repo and pinned; no selection written; the label set carried no agent host contract"
     harness.wirings.map { |config, _repo, _org| config.labels } == ["ai-orchestrator", "ai-orchestrator"]
@@ -294,7 +293,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(scope: "d3mlabs")
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-build,ai-orchestrator"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-build,ai-orchestrator"]), context: harness.projectless_context)
 
     Then
     error = raises ArgumentError
@@ -306,7 +305,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "--labels overrides any derivation" do
     Given "a checkout whose derived label would differ"
     harness = build_harness
-    context = build_context(name: "UnrealEngine")
+    context = harness.build_context(name: "UnrealEngine")
 
     When "registering with an explicit custom set"
     harness.command.call(args: parsed_args(harness.command, ["--labels", "macos,ue-editor"]), context: context)
@@ -320,7 +319,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness
 
     When "passing both"
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--labels", "ai-ask"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--labels", "ai-ask"]), context: harness.projectless_context)
 
     Then
     raises ArgumentError
@@ -331,7 +330,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness
 
     When "registering org-scoped with no label source"
-    harness.command.call(args: parsed_args(harness.command, ["--org"]), context: build_context(name: "Cellbound3D"))
+    harness.command.call(args: parsed_args(harness.command, ["--org"]), context: harness.build_context(name: "Cellbound3D"))
 
     Then
     raises ArgumentError
@@ -342,7 +341,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness
 
     When "registering with no checkout and no labels"
-    harness.command.call(args: no_args, context: projectless_context)
+    harness.command.call(args: no_args, context: harness.projectless_context)
 
     Then
     raises ArgumentError
@@ -355,7 +354,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     When "running with identity overrides"
     words = ["--labels", "ue-engine", "--dir", "~/actions-runner-ue",
              "--name", "gaming-box", "--repo", "d3mlabs/unreal-engine", "--org"]
-    harness.command.call(args: parsed_args(harness.command, words), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, words), context: harness.projectless_context)
 
     Then
     config, repo, org = harness.wirings.fetch(0)
@@ -369,7 +368,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "a fresh scope runs the full enrollment: converge -> enroll -> after_enroll" do
     Given "no local enrollment serves the scope"
     harness = build_harness(contracts: 1)
-    context = build_context(name: "Cellbound3D")
+    context = harness.build_context(name: "Cellbound3D")
 
     When "registering"
     harness.command.call(args: no_args, context: context)
@@ -392,7 +391,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(contracts: 1, home: home, registry: registry, scope: "d3mlabs")
 
     When "registering the agent host"
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: harness.projectless_context)
 
     Then "one label amend; the service and dir stay put; contracts still converge"
     registry.amends == [["d3mlabs", 42, Dev::LabelContracts::AI_FLOW_AGENT_LABELS]]
@@ -412,7 +411,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(home: home, registry: registry, scope: "d3mlabs/cellbound-3d")
 
     When "re-running register"
-    harness.command.call(args: no_args, context: build_context(name: "Cellbound3D"))
+    harness.command.call(args: no_args, context: harness.build_context(name: "Cellbound3D"))
 
     Then "nothing is amended and nothing re-enrolls"
     registry.amends == []
@@ -427,7 +426,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(home: home, registry: FakeRegistry.new, scope: "d3mlabs")
 
     When "registering"
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-build"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-build"]), context: harness.projectless_context)
 
     Then "the re-enrollment reuses the discovered dir, not a label-derived one"
     harness.events == [[:run]]
@@ -446,10 +445,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
       runners: { ["JPDuchesne/snappy", "JPSFF"] => Dev::RunnerRegistry::Runner.new(id: 9, custom_labels: ["snappy"], status: "online") },
     )
     harness = build_harness(contracts: 1, home: home, registry: registry, scope: "JPDuchesne/snappy", repo: "JPDuchesne/snappy")
-    harness.confirmer.expects(:confirm?).once.with("Unregister these and enroll fresh?").returns(true)
+    harness.ui.expects(:confirm).once.with("Unregister these and enroll fresh?").returns(true)
 
     When "registering in the snappy checkout"
-    harness.command.call(args: no_args, context: build_context(name: "snappy"))
+    harness.command.call(args: no_args, context: harness.build_context(name: "snappy"))
 
     Then "both are torn down, then the fresh ceremony runs into the default (label-derived) dir"
     harness.torn_down.map(&:dir) == [legacy, newer]
@@ -469,10 +468,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
       runners: { ["JPDuchesne/snappy", "JPSFF"] => Dev::RunnerRegistry::Runner.new(id: 9, custom_labels: ["snappy"], status: "offline") },
     )
     harness = build_harness(home: home, registry: registry, scope: "JPDuchesne/snappy", repo: "JPDuchesne/snappy")
-    harness.confirmer.expects(:confirm?).never
+    harness.ui.expects(:confirm).never
 
     When "registering with --yes"
-    harness.command.call(args: parsed_args(harness.command, ["--yes"]), context: build_context(name: "snappy"))
+    harness.command.call(args: parsed_args(harness.command, ["--yes"]), context: harness.build_context(name: "snappy"))
 
     Then "no prompt; torn down and enrolled fresh; nothing amended"
     harness.torn_down.map(&:dir) == [dir]
@@ -487,10 +486,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     write_runner(home, "actions-runner", scope: "JPDuchesne/snappy", name: "JPSFF")
     write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
     harness = build_harness(home: home, scope: "JPDuchesne/snappy", repo: "JPDuchesne/snappy")
-    harness.confirmer.expects(:confirm?).once.returns(false)
+    harness.ui.expects(:confirm).once.returns(false)
 
     When "registering"
-    harness.command.call(args: no_args, context: build_context(name: "snappy"))
+    harness.command.call(args: no_args, context: harness.build_context(name: "snappy"))
 
     Then "the refusal is the error the CLI maps to exit 1, carrying the remedy; nothing ran"
     error = raises Dev::Builtins::RunnerRegisterCommand::SupersededEnrollmentsError
@@ -508,10 +507,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
       runners: { ["JPDuchesne/snappy", "JPSFF"] => Dev::RunnerRegistry::Runner.new(id: 9, custom_labels: ["snappy"], status: "online") },
     )
     harness = build_harness(home: home, registry: registry, scope: "JPDuchesne/snappy", repo: "JPDuchesne/snappy")
-    harness.confirmer.expects(:confirm?).never
+    harness.ui.expects(:confirm).never
 
     When "registering"
-    harness.command.call(args: no_args, context: build_context(name: "snappy"))
+    harness.command.call(args: no_args, context: harness.build_context(name: "snappy"))
 
     Then
     harness.torn_down == []
@@ -525,10 +524,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     write_runner(home, "actions-runner", scope: "JPDuchesne/snappy", name: "JPSFF")
     write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
     harness = build_harness(home: home, scope: "JPDuchesne/snappy", repo: "JPDuchesne/snappy")
-    harness.confirmer.expects(:confirm?).never
+    harness.ui.expects(:confirm).never
 
     When "registering with an explicit dir"
-    harness.command.call(args: parsed_args(harness.command, ["--dir", "~/actions-runner-other"]), context: build_context(name: "snappy"))
+    harness.command.call(args: parsed_args(harness.command, ["--dir", "~/actions-runner-other"]), context: harness.build_context(name: "snappy"))
 
     Then
     harness.torn_down == []
@@ -546,7 +545,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     When "registering with an explicit dir"
     words = ["--org", "--labels", "ai-build", "--dir", "~/actions-runner-heavy"]
-    harness.command.call(args: parsed_args(harness.command, words), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, words), context: harness.projectless_context)
 
     Then "the full enrollment runs there; no amend"
     harness.events == [[:run]]
@@ -560,7 +559,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(contracts: 1, scope: "d3mlabs", hostname: "mac1")
 
     When "registering the agent host with three slots"
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "3"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "3"]), context: harness.projectless_context)
 
     Then "one converge, then three enrollments, each followed by its after_enroll; slot 1 is the plain config (today's enrollment), the others name and place themselves from it"
     harness.events == [
@@ -585,10 +584,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
       runners: { ["d3mlabs", "mac-box"] => Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: ["cellbound3d"], status: "online") },
     )
     harness = build_harness(contracts: 1, home: home, registry: registry, scope: "d3mlabs")
-    harness.confirmer.expects(:confirm?).never
+    harness.ui.expects(:confirm).never
 
     When "growing to three"
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "3"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "3"]), context: harness.projectless_context)
 
     Then "slot 1 is amended, not re-enrolled; the new slots take slot 1's base (the enrollment's name) and sit beside its dir"
     registry.amends == [["d3mlabs", 42, Dev::LabelContracts::AI_FLOW_AGENT_LABELS]]
@@ -617,10 +616,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
       },
     )
     harness = build_harness(contracts: 1, home: home, registry: registry, scope: "d3mlabs")
-    harness.confirmer.expects(:confirm?).never
+    harness.ui.expects(:confirm).never
 
     When "re-running register"
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: harness.projectless_context)
 
     Then
     registry.amends.map { |_scope, id, _labels| id } == [1, 2]
@@ -639,10 +638,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     end
     registry = FakeRegistry.new(runners: runners)
     harness = build_harness(home: home, registry: registry, scope: "d3mlabs")
-    harness.confirmer.expects(:confirm?).once.with("Unregister them?").returns(true)
+    harness.ui.expects(:confirm).once.with("Unregister them?").returns(true)
 
     When "shrinking"
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "1"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "1"]), context: harness.projectless_context)
 
     Then "slots 2 and 3 are torn down; slot 1 stays, labels current"
     harness.torn_down.map(&:dir) == [two, three]
@@ -665,10 +664,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
       },
     )
     harness = build_harness(home: home, registry: registry, scope: "d3mlabs")
-    harness.confirmer.expects(:confirm?).once.with("Unregister it?").returns(false)
+    harness.ui.expects(:confirm).once.with("Unregister it?").returns(false)
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "1"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "1"]), context: harness.projectless_context)
 
     Then
     error = raises Dev::Builtins::RunnerRegisterCommand::SurplusSlotsError
@@ -692,7 +691,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(home: home, registry: registry, scope: "d3mlabs")
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: harness.projectless_context)
 
     Then
     harness.events == [[:run]]
@@ -708,10 +707,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
       runners: { ["d3mlabs", "mac1"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS, status: "online") },
     )
     harness = build_harness(home: home, registry: registry, scope: "d3mlabs")
-    harness.confirmer.expects(:confirm?).never
+    harness.ui.expects(:confirm).never
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: harness.projectless_context)
 
     Then
     harness.events == [[:run]]
@@ -731,10 +730,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
       },
     )
     harness = build_harness(home: home, registry: registry, scope: "d3mlabs", hostname: "mac1")
-    harness.confirmer.expects(:confirm?).once.with("Unregister these and enroll fresh?").returns(true)
+    harness.ui.expects(:confirm).once.with("Unregister these and enroll fresh?").returns(true)
 
     When "registering as mac1 with two slots"
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--name", "mac1", "--slots", "2"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--name", "mac1", "--slots", "2"]), context: harness.projectless_context)
 
     Then
     harness.torn_down.map(&:dir).sort == [mine, other].sort
@@ -747,7 +746,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(contracts: 1)
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", raw]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", raw]), context: harness.projectless_context)
 
     Then
     error = raises ArgumentError
@@ -767,7 +766,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "2", "--dir", "~/x"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "2", "--dir", "~/x"]), context: harness.projectless_context)
 
     Then
     error = raises ArgumentError
@@ -785,7 +784,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(registry: registry, scope: "d3mlabs", repo: "d3mlabs/cellbound")
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: harness.projectless_context)
 
     Then "created before the enrollment, the slot's config names it, the repo is selected into it (private: no public flag)"
     registry.group_writes == [
@@ -803,7 +802,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(registry: registry, scope: "d3mlabs")
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-build"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-build"]), context: harness.projectless_context)
 
     Then
     harness.wirings.first.first.group == "ai-flow"
@@ -818,8 +817,8 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     drifted_harness = build_harness(registry: drifted, scope: "d3mlabs")
 
     When
-    sound_harness.command.call(args: parsed_args(sound_harness.command, ["--org", "--ai-flow"]), context: projectless_context)
-    drifted_harness.command.call(args: parsed_args(drifted_harness.command, ["--org", "--ai-flow"]), context: projectless_context)
+    sound_harness.command.call(args: parsed_args(sound_harness.command, ["--org", "--ai-flow"]), context: sound_harness.projectless_context)
+    drifted_harness.command.call(args: parsed_args(drifted_harness.command, ["--org", "--ai-flow"]), context: drifted_harness.projectless_context)
 
     Then "the sound group needs no write at all; the drifted one is re-pinned and re-selected, then the repo admitted"
     sound.group_writes == []
@@ -843,7 +842,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(home: home, registry: registry, scope: "d3mlabs")
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "2"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "2"]), context: harness.projectless_context)
 
     Then "slot 1 moved; slot 2's config carries the group for config.sh --runnergroup"
     registry.group_writes == [[:place, "d3mlabs", 7, 1]]
@@ -861,7 +860,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(registry: registry, scope: "d3mlabs", repo: "d3mlabs/cellbound")
 
     When "registering for dev from the cellbound checkout, via --repo"
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--repo", "d3mlabs/dev"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--repo", "d3mlabs/dev"]), context: harness.projectless_context)
 
     Then
     registry.group_writes == []
@@ -878,7 +877,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(registry: registry, scope: "d3mlabs", repo: "d3mlabs/dev")
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: harness.projectless_context)
 
     Then
     registry.group_writes == [[:update, "d3mlabs", 7, nil, true, FakeRegistry::PINS], [:select, "d3mlabs", 7, [100]]]
@@ -893,7 +892,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(registry: registry, scope: "d3mlabs", repo: "d3mlabs/dev")
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ue-engine", "--group", "ue-hosted"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ue-engine", "--group", "ue-hosted"]), context: harness.projectless_context)
 
     Then
     error = raises Dev::RunnerGroups::UnpinnedGroupError
@@ -908,7 +907,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(registry: registry, scope: "d3mlabs", repo: "d3mlabs/unreal-engine")
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ue-engine", "--group", "ue-hosted"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ue-engine", "--group", "ue-hosted"]), context: harness.projectless_context)
 
     Then
     harness.wirings.first.first == Dev::RunnerSetupConfig.new(labels: "ue-engine", group: "ue-hosted")
@@ -920,7 +919,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(scope: "d3mlabs")
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ue-engine", "--group", "agents"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ue-engine", "--group", "agents"]), context: harness.projectless_context)
 
     Then
     error = raises Dev::RunnerGroups::NoSuchGroupError
@@ -934,7 +933,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(registry: registry, scope: "d3mlabs", repo: "d3mlabs/unreal-engine")
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ue-engine"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ue-engine"]), context: harness.projectless_context)
 
     Then
     harness.wirings.first.first.group.nil?
@@ -946,7 +945,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness
 
     When
-    context = words.include?("--org") ? projectless_context : build_context(name: "Cellbound3D")
+    context = words.include?("--org") ? harness.projectless_context : harness.build_context(name: "Cellbound3D")
     harness.command.call(args: parsed_args(harness.command, words), context: context)
 
     Then
@@ -966,7 +965,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(registry: registry, scope: "d3mlabs")
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--group", "ai-flow"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--group", "ai-flow"]), context: harness.projectless_context)
 
     Then
     harness.wirings.first.first.group == "ai-flow"
@@ -978,7 +977,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(registry: registry)
 
     When
-    harness.command.call(args: no_args, context: build_context(name: "Cellbound3D"))
+    harness.command.call(args: no_args, context: harness.build_context(name: "Cellbound3D"))
 
     Then
     registry.group_writes == []
@@ -997,10 +996,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
       ] },
     )
     harness = build_harness(registry: registry)
-    harness.confirmer.expects(:confirm?).once.with("Make this host's runner its only one?").returns(true)
+    harness.ui.expects(:confirm).once.with("Make this host's runner its only one?").returns(true)
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--ai-flow"]), context: build_context(name: "Cellbound3D"))
+    harness.command.call(args: parsed_args(harness.command, ["--ai-flow"]), context: harness.build_context(name: "Cellbound3D"))
 
     Then "the slot was enrolled at repo scope with no group, then the repo left the org group — the list written whole"
     harness.wirings.first.first == Dev::RunnerSetupConfig.new(labels: AI_FLOW_SET)
@@ -1019,14 +1018,14 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     end
     declined = make.call
     declining = build_harness(registry: declined)
-    declining.confirmer.expects(:confirm?).once.returns(false)
+    declining.ui.expects(:confirm).once.returns(false)
     headless = make.call
     yes = build_harness(registry: headless)
-    yes.confirmer.expects(:confirm?).never
+    yes.ui.expects(:confirm).never
 
     When
-    declining.command.call(args: parsed_args(declining.command, ["--ai-flow"]), context: build_context(name: "Cellbound3D"))
-    yes.command.call(args: parsed_args(yes.command, ["--ai-flow", "--yes"]), context: build_context(name: "Cellbound3D"))
+    declining.command.call(args: parsed_args(declining.command, ["--ai-flow"]), context: declining.build_context(name: "Cellbound3D"))
+    yes.command.call(args: parsed_args(yes.command, ["--ai-flow", "--yes"]), context: yes.build_context(name: "Cellbound3D"))
 
     Then
     declined.group_writes == []
@@ -1037,10 +1036,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "nothing to ask when #{why}" do
     Given
     harness = build_harness(registry: registry)
-    harness.confirmer.expects(:confirm?).never
+    harness.ui.expects(:confirm).never
 
     When
-    harness.command.call(args: parsed_args(harness.command, words), context: build_context(name: "Cellbound3D"))
+    harness.command.call(args: parsed_args(harness.command, words), context: harness.build_context(name: "Cellbound3D"))
 
     Then
     registry.group_writes == []
@@ -1059,10 +1058,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     registry = FakeRegistry.new
     registry.define_singleton_method(:group) { |org:, name:| raise Dev::RunnerRegistry::QueryError, "could not list the runner groups at #{org}: HTTP 403" }
     harness = build_harness(registry: registry)
-    harness.confirmer.expects(:confirm?).never
+    harness.ui.expects(:confirm).never
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--ai-flow"]), context: build_context(name: "Cellbound3D"))
+    harness.command.call(args: parsed_args(harness.command, ["--ai-flow"]), context: harness.build_context(name: "Cellbound3D"))
 
     Then
     harness.wirings.first.first == Dev::RunnerSetupConfig.new(labels: AI_FLOW_SET)
@@ -1075,7 +1074,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     Given "a container repo (its lock pins an image) with an `engine:` block"
     harness = build_harness(contracts: 1)
     engine = Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 24)
-    context = build_context(name: "Cellbound3D", root: image_checkout, engine: engine)
+    context = harness.build_context(name: "Cellbound3D", root: image_checkout, engine: engine)
 
     When "registering"
     harness.command.call(args: no_args, context: context)
@@ -1092,7 +1091,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
       harness.events << [:engine, resources.cpus, resources.memory_gib]
       true
     end
-    context = build_context(name: "Cellbound3D", root: image_checkout, engine: resources)
+    context = harness.build_context(name: "Cellbound3D", root: image_checkout, engine: resources)
 
     When "registering"
     harness.command.call(args: no_args, context: context)
@@ -1107,7 +1106,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.engine.expects(:provision!).never
 
     When "registering"
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-build"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-build"]), context: harness.projectless_context)
 
     Then
     true
@@ -1119,7 +1118,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.engine.expects(:provision!).never
 
     When "registering"
-    harness.command.call(args: no_args, context: build_context(name: "Plain"))
+    harness.command.call(args: no_args, context: harness.build_context(name: "Plain"))
 
     Then
     true
@@ -1136,7 +1135,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     When "registering with the override"
     words = ["--org", "--ai-flow", "--agent-user", "ci"]
-    harness.command.call(args: parsed_args(harness.command, words), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, words), context: harness.projectless_context)
 
     Then
     seen == [[Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(","), "ci"]]
@@ -1153,14 +1152,13 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     sequence = sequence("host rule")
     provisioner.expects(:provision!).once.in_sequence(sequence)
     runner_user.expects(:converge!).once.in_sequence(sequence)
-    ui = typed_mock(Dev::Cli::Ui)
-    ui.expects(:ask_secret).once.with("Token?").returns("ghp_x")
+    harness.ui.expects(:ask_secret).once.with("Token?").returns("ghp_x")
     # The login gate is handed the terminal to ask at: its asker is the context UI's hidden prompt.
     asks_the_ui = ->(**kw) { kw.fetch(:ask).call("Token?") == "ghp_x" }
     runner_user.expects(:ensure_gh_authenticated!).once.with(&asks_the_ui).in_sequence(sequence)
 
     When "registering in the checkout"
-    harness.command.call(args: no_args, context: build_context(name: "cellbound3d", ui: ui))
+    harness.command.call(args: no_args, context: harness.build_context(name: "cellbound3d"))
 
     Then "the identity work precedes the contracts and the enrollment; the setup is wired for the runner user; no --as was named"
     harness.events == [[:converge, false, nil, nil, nil], [:run], [:after_enroll, "/tmp/runner-dir", 1]]
@@ -1177,7 +1175,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(contracts: 1, runner_user: runner_user, reach: reach, pins: pins)
 
     When
-    harness.command.call(args: no_args, context: build_context(name: "cellbound3d"))
+    harness.command.call(args: no_args, context: harness.build_context(name: "cellbound3d"))
 
     Then "the lock was read from the checkout; nothing converged or enrolled"
     error = raises Dev::HostReach::UnreachableError
@@ -1195,8 +1193,8 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     mac = build_harness(runner_user: nil, reach: reach)
 
     When
-    org.command.call(args: parsed_args(org.command, ["--org", "--ai-flow"]), context: projectless_context)
-    mac.command.call(args: no_args, context: build_context(name: "cellbound3d"))
+    org.command.call(args: parsed_args(org.command, ["--org", "--ai-flow"]), context: org.projectless_context)
+    mac.command.call(args: no_args, context: mac.build_context(name: "cellbound3d"))
 
     Then
     org.reach_roots == []
@@ -1209,7 +1207,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(runner_user: runner_user)
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--as", "ci"]), context: build_context(name: "cellbound3d"))
+    harness.command.call(args: parsed_args(harness.command, ["--as", "ci"]), context: harness.build_context(name: "cellbound3d"))
 
     Then
     harness.as_names == ["ci"]
@@ -1223,7 +1221,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(contracts: 1, runner_user: runner_user)
 
     When
-    harness.command.call(args: no_args, context: build_context(name: "cellbound3d"))
+    harness.command.call(args: no_args, context: harness.build_context(name: "cellbound3d"))
 
     Then
     error = raises Dev::RunnerUser::GhLoginRequiredError
@@ -1241,10 +1239,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     )
     runner_user = runner_user_mock(name: "svc-runner", home: Dir.mktmpdir)
     harness = build_harness(home: home, registry: registry, scope: "JPDuchesne/snappy", repo: "JPDuchesne/snappy", runner_user: runner_user)
-    harness.confirmer.expects(:confirm?).once.with("Unregister these and enroll fresh?").returns(true)
+    harness.ui.expects(:confirm).once.with("Unregister these and enroll fresh?").returns(true)
 
     When "registering in the snappy checkout"
-    harness.command.call(args: no_args, context: build_context(name: "snappy"))
+    harness.command.call(args: no_args, context: harness.build_context(name: "snappy"))
 
     Then "torn down (as its owner — the teardown's business), then the fresh ceremony as the runner user; nothing amended"
     harness.torn_down.map(&:dir) == [dir]
@@ -1264,10 +1262,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     )
     runner_user = runner_user_mock(name: Etc.getpwuid(Process.uid).name, home: runner_home)
     harness = build_harness(home: Dir.mktmpdir, registry: registry, scope: "JPDuchesne/snappy", repo: "JPDuchesne/snappy", runner_user: runner_user)
-    harness.confirmer.expects(:confirm?).never
+    harness.ui.expects(:confirm).never
 
     When "registering"
-    harness.command.call(args: no_args, context: build_context(name: "snappy"))
+    harness.command.call(args: no_args, context: harness.build_context(name: "snappy"))
 
     Then
     harness.torn_down == []
@@ -1282,7 +1280,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness = build_harness(runner_user: nil, data_root_provisioner: provisioner)
 
     When
-    harness.command.call(args: no_args, context: build_context(name: "cellbound3d"))
+    harness.command.call(args: no_args, context: harness.build_context(name: "cellbound3d"))
 
     Then
     harness.wirings.fetch(0).fetch(3).nil?
@@ -1405,14 +1403,22 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
   private
 
-  Harness = Struct.new(:command, :wirings, :events, :out, :engine, :torn_down, :confirmer, :as_names, :reach_roots, keyword_init: true)
+  Harness = Struct.new(:command, :wirings, :events, :out, :engine, :torn_down, :ui, :as_names, :reach_roots, keyword_init: true) do
+    # A project context carrying this harness's Ui — the terminal the command asks at.
+    def build_context(name:, engine: nil, root: "/tmp/runner-test")
+      Dev::ExecutionContext.new(ui: ui, project: Dev::ProjectContext.new(name: name, root: Pathname.new(root), engine: engine))
+    end
+
+    # The same, with no project (`--org`).
+    def projectless_context = Dev::ExecutionContext.new(ui: ui)
+  end
 
   # A command over recording seams: the setup factory records each
   # (config, repo, org) wiring and answers with a no-op setup; contracts
   # record their lifecycle; discovery reads a real (tmp) home; the registry
   # is the injected fake; the teardown resolves for real over that home
-  # but only records what it would remove; the confirmer is a mock each
-  # test scripts (tests that say nothing tolerate no question).
+  # but only records what it would remove; the Ui is a mock each test
+  # scripts (tests that say nothing tolerate no question).
   def build_harness(contracts: 0, home: Dir.mktmpdir, registry: FakeRegistry.new,
                     scope: "d3mlabs/cellbound-3d", repo: "d3mlabs/cellbound-3d", contracts_factory: nil,
                     repo_resolver: nil, runner_user: nil, data_root_provisioner: nil, reach: nil, pins: [],
@@ -1441,7 +1447,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     discovery = Dev::RunnerDiscovery.new(home: home)
     teardown = Dev::RunnerTeardown.new(discovery: discovery, executor: nil, out: StringIO.new, home: home)
     teardown.define_singleton_method(:teardown!) { |enrollment| torn_down << enrollment }
-    confirmer = typed_mock(Dev::Confirmer)
+    ui = typed_mock(Dev::Cli::Ui)
     command = Dev::Builtins::RunnerRegisterCommand.new(
       runner_setup_factory: ->(config, repo_override, org, as_user) {
         wirings << [config, repo_override, org, as_user]
@@ -1468,13 +1474,12 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
       discovery: discovery,
       registry: registry,
       teardown: teardown,
-      confirmer: confirmer,
       engine_provisioner: engine,
       out: out,
       refresher: refresher,
     )
     Harness.new(command: command, wirings: wirings, events: events, out: out, engine: engine,
-      torn_down: torn_down, confirmer: confirmer, as_names: as_names, reach_roots: reach_roots)
+      torn_down: torn_down, ui: ui, as_names: as_names, reach_roots: reach_roots)
   end
 
   # A .runner record the way config.sh writes it (UTF-8 BOM + JSON).
@@ -1499,9 +1504,10 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     runner_user
   end
 
-  def build_context(name:, engine: nil, root: "/tmp/runner-test", ui: typed_mock(Dev::Cli::Ui))
+  # For a command built without a harness: a context whose Ui is never asked.
+  def build_context(name:, engine: nil, root: "/tmp/runner-test")
     Dev::ExecutionContext.new(
-      ui: ui,
+      ui: typed_mock(Dev::Cli::Ui),
       project: Dev::ProjectContext.new(name: name, root: Pathname.new(root), engine: engine),
     )
   end

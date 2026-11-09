@@ -4,7 +4,6 @@
 require "stringio"
 
 require "dev/command"
-require "dev/confirmer"
 require "dev/runner_discovery"
 require "dev/runner_setup"
 require "dev/runner_teardown"
@@ -40,14 +39,12 @@ module Dev
       # @param teardown [Dev::RunnerTeardown] resolves and removes enrollments
       # @param discovery [Dev::RunnerDiscovery] this host's enrollments
       # @param repo_resolver [RepoResolver] the checkout's repo (default: gh)
-      # @param confirmer [Dev::Confirmer] asks before removing
       # @param out [IO, StringIO]
       sig do
         params(
           teardown: Dev::RunnerTeardown,
           discovery: Dev::RunnerDiscovery,
           repo_resolver: RepoResolver,
-          confirmer: Dev::Confirmer,
           out: T.any(IO, StringIO),
         ).void
       end
@@ -55,14 +52,12 @@ module Dev
         teardown: Dev::RunnerTeardown.new,
         discovery: Dev::RunnerDiscovery.new,
         repo_resolver: -> { Dev::RunnerSetup.current_repo },
-        confirmer: Dev::Confirmer.new,
         out: $stdout
       )
         super()
         @teardown = teardown
         @discovery = discovery
         @repo_resolver = repo_resolver
-        @confirmer = confirmer
         @out = out
       end
 
@@ -88,8 +83,9 @@ module Dev
         enrollments.map(&:scope).uniq + enrollments.map(&:display_dir)
       end
 
-      # Resolve, ask once, tear down every slot resolved — slot order, so a
-      # refusal partway leaves the lower slots gone and the rest
+      # Resolve, ask once through the context's Ui (no terminal is a no;
+      # `--yes` answers for it), tear down every slot resolved — slot order,
+      # so a refusal partway leaves the lower slots gone and the rest
       # named by the error.
       #
       # @raise [Dev::RunnerTeardown::AmbiguousEnrollmentError] a scope several dirs serve that are not one set of slots
@@ -97,9 +93,8 @@ module Dev
       # @raise [Dev::RunnerTeardown::TeardownFailedError] a step was refused
       sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
-        _ = context
         enrollments = @teardown.resolve_all(reference(args))
-        unless args.flag?(YES_FLAG) || @confirmer.confirm?(question(enrollments))
+        unless args.flag?(YES_FLAG) || context.ui.confirm(question(enrollments))
           @out.puts "dev: nothing changed."
           return
         end

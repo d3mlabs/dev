@@ -4,6 +4,7 @@
 require "test_helper"
 require "dev/operator_access"
 require "stringio"
+require "support/answering_ui"
 
 # The registry as the probe sees it: scopes GitHub refuses the operator's
 # login at (403), lifted when a refresh "grants" them.
@@ -39,32 +40,24 @@ class ProbedRegistry
   end
 end
 
-class AnsweringConfirmer
-  attr_reader :questions
-
-  def initialize(answer)
-    @answer = answer
-    @questions = []
-  end
-
-  def confirm?(question)
-    @questions << question
-    @answer
-  end
-end
-
 transform!(RSpock::AST::Transformation)
 class Dev::OperatorAccessTest < Minitest::Test
   REFRESH = "gh auth refresh -h github.com -s admin:org"
+
+  # The seam's one method as register hands it over: a terminal answering `answer`.
+  def answering(answer)
+    ui = AnsweringUi.new(answer: answer)
+    ->(question) { ui.confirm(question) }
+  end
 
   test "an org registration probes the org's runner groups — the capability itself, not the token's scope list — and a login that can read them passes silently" do
     Given
     registry = ProbedRegistry.new
     out = StringIO.new
-    access = Dev::OperatorAccess.new(registry: registry, confirmer: AnsweringConfirmer.new(false), out: out, refresher: ->(_scope) { raise "never" })
+    access = Dev::OperatorAccess.new(registry: registry, out: out, refresher: ->(_scope) { raise "never" })
 
     When
-    access.check!(scope: "d3mlabs", org: true)
+    access.check!(scope: "d3mlabs", org: true, confirm: answering(false))
 
     Then
     registry.probes == [[:groups, "d3mlabs"]]
@@ -74,25 +67,25 @@ class Dev::OperatorAccessTest < Minitest::Test
   test "a repo registration probes the repo's runners the same way" do
     Given
     registry = ProbedRegistry.new
-    access = Dev::OperatorAccess.new(registry: registry, confirmer: AnsweringConfirmer.new(false), out: StringIO.new, refresher: ->(_scope) { raise "never" })
+    access = Dev::OperatorAccess.new(registry: registry, out: StringIO.new, refresher: ->(_scope) { raise "never" })
 
     When
-    access.check!(scope: "d3mlabs/cellbound-3d", org: false)
+    access.check!(scope: "d3mlabs/cellbound-3d", org: false, confirm: answering(false))
 
     Then
     registry.probes == [[:runners, "d3mlabs/cellbound-3d"]]
   end
 
-  test "refused and headless (the confirmer says no): one refusal naming the purpose, GitHub's words and the classic-scope fix — and nothing else happens" do
+  test "refused and headless (no terminal to answer at — a no, dev#533): one refusal naming the purpose, GitHub's words and the classic-scope fix — and nothing else happens" do
     Given
     registry = ProbedRegistry.new(refused: ["d3mlabs"])
-    confirmer = AnsweringConfirmer.new(false)
+    ui = AnsweringUi.new(answer: nil)
     refreshed = []
     out = StringIO.new
-    access = Dev::OperatorAccess.new(registry: registry, confirmer: confirmer, out: out, refresher: ->(scope) { refreshed << scope })
+    access = Dev::OperatorAccess.new(registry: registry, out: out, refresher: ->(scope) { refreshed << scope })
 
     When
-    access.check!(scope: "d3mlabs", org: true)
+    access.check!(scope: "d3mlabs", org: true, confirm: ->(question) { ui.confirm(question) })
 
     Then "the refusal carries what the login could not do, why register needs it, GitHub's reason, and the fix"
     error = raises Dev::OperatorAccess::RefusedError
@@ -101,8 +94,8 @@ class Dev::OperatorAccessTest < Minitest::Test
     error.message.include?("HTTP 403")
     error.message.include?(REFRESH)
     error.message.include?("then re-run")
-    # It asked whether to run the refresh, was told no, refreshed nothing, probed once.
-    confirmer.questions == ["Run `#{REFRESH}` now?"]
+    # It asked whether to run the refresh (defaulting to no), had no terminal to be answered at, refreshed nothing, probed once.
+    ui.questions == [AnsweringUi::Question.new(text: "Run `#{REFRESH}` now?", default: false)]
     refreshed == []
     registry.probes == [[:groups, "d3mlabs"]]
   end
@@ -112,7 +105,7 @@ class Dev::OperatorAccessTest < Minitest::Test
     registry = ProbedRegistry.new(refused: ["d3mlabs"])
     refreshed = []
     out = StringIO.new
-    access = Dev::OperatorAccess.new(registry: registry, confirmer: AnsweringConfirmer.new(true), out: out,
+    access = Dev::OperatorAccess.new(registry: registry, out: out,
       refresher: ->(scope) {
         refreshed << scope
         registry.grant_all!
@@ -120,7 +113,7 @@ class Dev::OperatorAccessTest < Minitest::Test
       })
 
     When
-    access.check!(scope: "d3mlabs", org: true)
+    access.check!(scope: "d3mlabs", org: true, confirm: answering(true))
 
     Then
     refreshed == ["admin:org"]
@@ -131,10 +124,10 @@ class Dev::OperatorAccessTest < Minitest::Test
   test "a refresh that does not help (declined in the browser, wrong account) is the same refusal, after one retry" do
     Given
     registry = ProbedRegistry.new(refused: ["d3mlabs"])
-    access = Dev::OperatorAccess.new(registry: registry, confirmer: AnsweringConfirmer.new(true), out: StringIO.new, refresher: ->(_scope) { true })
+    access = Dev::OperatorAccess.new(registry: registry, out: StringIO.new, refresher: ->(_scope) { true })
 
     When
-    access.check!(scope: "d3mlabs", org: true)
+    access.check!(scope: "d3mlabs", org: true, confirm: answering(true))
 
     Then
     error = raises Dev::OperatorAccess::RefusedError
@@ -145,10 +138,10 @@ class Dev::OperatorAccessTest < Minitest::Test
   test "the repo-scoped refusal names repo admin and the repo scope" do
     Given
     registry = ProbedRegistry.new(refused: ["d3mlabs/cellbound-3d"])
-    access = Dev::OperatorAccess.new(registry: registry, confirmer: AnsweringConfirmer.new(false), out: StringIO.new, refresher: ->(_scope) { true })
+    access = Dev::OperatorAccess.new(registry: registry, out: StringIO.new, refresher: ->(_scope) { true })
 
     When
-    access.check!(scope: "d3mlabs/cellbound-3d", org: false)
+    access.check!(scope: "d3mlabs/cellbound-3d", org: false, confirm: answering(false))
 
     Then
     error = raises Dev::OperatorAccess::RefusedError
