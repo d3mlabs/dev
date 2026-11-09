@@ -159,6 +159,66 @@ class Dev::Deps::StalenessTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "the stamp records the checkout it is for, so an orphan can be told from a live one (dev#529)" do
+    Given
+    dir = Dir.mktmpdir("dev-staleness-test-")
+    project = build_synced_project(dir)
+    staleness = build_staleness(dir, project)
+
+    When
+    staleness.stamp_installed!
+
+    Then
+    (staleness.stamp_path.dirname + "checkout").read == File.expand_path(project)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "prune_orphans! removes the stamps of checkouts that are gone and legacy stamps that name none; a live stamp and a non-stamp entry stay (dev#529)" do
+    Given "four entries in the state dir"
+    dir = Dir.mktmpdir("dev-staleness-test-")
+    state = File.join(dir, "state")
+    live = build_synced_project(dir)
+    live_staleness = build_staleness(dir, live)
+    live_staleness.stamp_installed!
+    gone = File.join(dir, "gone")
+    FileUtils.mkdir_p(gone)
+    File.write(File.join(gone, "Gemfile.lock"), "GEM\n  specs:\n")
+    gone_staleness = build_staleness(dir, gone)
+    gone_staleness.stamp_installed!
+    FileUtils.rm_rf(gone)
+    legacy = File.join(state, "old-checkout-0badf00d")
+    FileUtils.mkdir_p(legacy)
+    File.write(File.join(legacy, "installed-digest"), "a" * 64)
+    other = File.join(state, "not-a-stamp")
+    FileUtils.mkdir_p(other)
+    File.write(File.join(other, "something.md"), "x")
+
+    When
+    pruned = live_staleness.prune_orphans!
+
+    Then
+    pruned.sort == [gone_staleness.stamp_path.dirname, Pathname(legacy)].sort
+    Dir.children(state).sort == [live_staleness.stamp_path.dirname.basename.to_s, "not-a-stamp"].sort
+    live_staleness.messages == []
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "prune_orphans! with no state dir yet is nothing pruned" do
+    Given
+    dir = Dir.mktmpdir("dev-staleness-test-")
+    project = build_synced_project(dir)
+
+    Expect
+    build_staleness(dir, project).prune_orphans! == []
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "two checkouts of one project keep independent stamps" do
     Given "the same project content at two paths"
     dir = Dir.mktmpdir("dev-staleness-test-")

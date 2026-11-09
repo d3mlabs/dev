@@ -20,12 +20,20 @@ module Dev
     #      "lock changed since last install — run dev up".
     #
     # The stamp lives per-machine, outside the repo (never committed), at
-    # ~/.dev/state/<project-key>/installed-digest. It is content-addressed
-    # (no mtimes — git rewrites them) and written only on success, so a
+    # ~/.dev/state/<project-key>/installed-digest, with the checkout's
+    # absolute path beside it in `checkout`. It is content-addressed (no
+    # mtimes — git rewrites them) and written only on success, so a
     # crashed install keeps nagging. A missing stamp means never installed —
     # the same nag. Checks warn on workstations and error in CI (frozen
     # semantics — CI environments install fresh, so a mismatch there is a
     # pipeline bug, not a reminder).
+    #
+    # A checkout that goes away — a removed clone, a merged worktree —
+    # leaves its stamp behind, and the key is a one-way hash of the path,
+    # so `checkout` is what makes an orphan recognisable: every stamp
+    # write sweeps the state dir of stamps whose checkout is gone, and of
+    # legacy stamps naming none (dev#529). A wrong sweep costs one "run
+    # dev up" nag on a checkout that still exists, which dev up heals.
     #
     # Stamps catch sequence drift (edit without dev deps update, lock bump without
     # dev up), not out-of-band mutation of installed artifacts — that's a
@@ -34,6 +42,7 @@ module Dev
       extend T::Sig
 
       STAMP_FILE = "installed-digest"
+      CHECKOUT_FILE = "checkout"
 
       # Lockfiles whose contents constitute "what an install consumed", in
       # fixed order for a deterministic digest. Gemfile.lock is included
@@ -108,9 +117,9 @@ module Dev
         end
       end
 
-      # Record the just-installed lockfile state. Called only after a fully
-      # successful install, so a crashed run leaves the previous stamp (or
-      # none) and the nag persists.
+      # Record the just-installed lockfile state, and the checkout it is
+      # the state of. Called only after a fully successful install, so a
+      # crashed run leaves the previous stamp (or none) and the nag persists.
       #
       # @return [void]
       sig { void }
@@ -120,6 +129,21 @@ module Dev
 
         FileUtils.mkdir_p(stamp_path.dirname)
         stamp_path.write(digest)
+        (stamp_path.dirname / CHECKOUT_FILE).write(File.expand_path(@project_root.to_s))
+      end
+
+      # Remove every stamp in the state dir whose checkout is gone — or
+      # which names none (a stamp from before `checkout` was written).
+      # Entries without an `installed-digest` are not stamps and stay.
+      #
+      # @return [Array<Pathname>] the stamp directories removed
+      sig { returns(T::Array[Pathname]) }
+      def prune_orphans!
+        return [] unless @state_dir.directory?
+
+        orphans = @state_dir.children.select { |entry| (entry / STAMP_FILE).file? && !checkout_present?(entry) }
+        orphans.each { |entry| FileUtils.rm_rf(entry) }
+        orphans
       end
 
       # SHA-256 over the concatenated lockfile contents (fixed order, missing
@@ -145,6 +169,14 @@ module Dev
       end
 
       private
+
+      # @param stamp_dir [Pathname] a directory holding an `installed-digest`
+      # @return [Boolean] the checkout it records still exists
+      sig { params(stamp_dir: Pathname).returns(T::Boolean) }
+      def checkout_present?(stamp_dir)
+        checkout = stamp_dir / CHECKOUT_FILE
+        checkout.file? && File.directory?(checkout.read.strip)
+      end
 
       # Per-checkout state key: readable basename + a short path digest so two
       # checkouts of the same project on one machine get independent stamps.

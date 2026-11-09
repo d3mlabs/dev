@@ -81,10 +81,12 @@ class Dev::DependencyServiceTest < Minitest::Test
     raises Dev::DependencyService::StaleDependencyStateError
   end
 
-  test "lock! records the installed stamp" do
-    Given "a staleness expecting its stamp write"
+  test "lock! records the installed stamp, then sweeps the stamps of checkouts that are gone (dev#529)" do
+    Given "a staleness expecting its stamp write, then its prune"
     staleness = typed_mock(Dev::Deps::Staleness)
-    staleness.expects(:stamp_installed!).once
+    order = sequence("stamp then prune")
+    staleness.expects(:stamp_installed!).once.in_sequence(order)
+    staleness.expects(:prune_orphans!).once.in_sequence(order).returns([])
     service = Dev::DependencyService.new(staleness: staleness)
 
     When "locking"

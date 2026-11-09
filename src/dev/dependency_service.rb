@@ -49,13 +49,15 @@ module Dev
     end
 
     # Record the installed stamp after a fully-successful provisioning
-    # command. Callers reach this only when execution didn't raise, so a
+    # command, and sweep the stamps of checkouts that are gone while at it
+    # (dev#529). Callers reach this only when execution didn't raise, so a
     # failed install keeps nagging.
     #
     # @return [void]
     sig { void }
     def lock!
       @staleness.stamp_installed!
+      @staleness.prune_orphans!
     end
   end
 
