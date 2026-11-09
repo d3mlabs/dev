@@ -1,6 +1,6 @@
 #!/bin/sh
 # The `dev-core` target's builder (dev.yml `targets:`, dev#429): the
-# org-blank tool as its formula installs it — bin, src, lib, share and
+# org-blank tool as its formula installs it — bin, lib, share and
 # VERSION (what `dev version` reads), with the license and the README —
 # laid out into $DEV_INSTALL. Nothing compiles: the install is the file
 # set, and dev's archive packager zips it into the release asset that
@@ -15,4 +15,4 @@ cd "$(dirname "$0")/.."
 # A previous install of the same build is replaced whole, so a file this
 # tree no longer has is not shipped again.
 find "${DEV_INSTALL:?}" -mindepth 1 -delete
-cp -R bin src lib share VERSION LICENSE README.md "$DEV_INSTALL"/
+cp -R bin lib share VERSION LICENSE README.md "$DEV_INSTALL"/

@@ -1,0 +1,53 @@
+# typed: false
+# frozen_string_literal: true
+
+require "test_helper"
+require "dev/cli/builtin_executor"
+require "dev/cli/command"
+require "pathname"
+
+transform!(RSpock::AST::Transformation)
+class Dev::Cli::BuiltinExecutorTest < Minitest::Test
+  include SorbetHelper
+
+  # Builtin fake whose body records its invocations, so the test can assert
+  # the in-process delegation passed args and context through untouched.
+  class FakeBuiltin < Dev::Cli::BuiltinCommand
+    attr_reader :calls
+
+    def initialize
+      @calls = []
+      super()
+    end
+
+    def desc = "a builtin"
+
+    def category = Dev::Cli::Command::Category::Workflow
+
+    def call(args:, context:)
+      @calls << [args, context]
+    end
+  end
+
+  def build_context
+    ui = typed_mock(Dev::Ui)
+    Dev::Cli::ExecutionContext.new(
+      ui: ui,
+      project: Dev::Cli::ProjectContext.new(name: "TestProject", root: Pathname.new("/tmp/builtin-executor")),
+    )
+  end
+
+  test "execute runs the builtin's Ruby body in-process with args and context" do
+    Given "a builtin fake and the executor"
+    builtin = FakeBuiltin.new
+    executor = Dev::Cli::BuiltinExecutor.new
+    context = build_context
+
+    When "executing"
+    args = Dev::Cli::ParsedArgs.new(words: ["--verbose"], switches: ["--verbose"])
+    executor.execute(builtin, args: args, context: context)
+
+    Then "the body received args and context; no child process was involved"
+    builtin.calls == [[args, context]]
+  end
+end

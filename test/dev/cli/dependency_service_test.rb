@@ -1,0 +1,106 @@
+# typed: false
+# frozen_string_literal: true
+
+require "test_helper"
+require "dev/cli/dependency_service"
+require "stringio"
+
+transform!(RSpock::AST::Transformation)
+class Dev::Cli::DependencyServiceTest < Minitest::Test
+  include SorbetHelper
+
+  test "messages serves the staleness view" do
+    Given "a staleness with one drifted layer"
+    service = build_service(messages: ["lockfiles are stale"])
+
+    Expect "the messages pass through"
+    service.messages == ["lockfiles are stale"]
+  end
+
+  test "the no-project service has nothing to guard, report, or stamp" do
+    Given "the null service for runs outside any project"
+    service = Dev::Cli::NoProjectDependencyService.new
+    old_stderr = $stderr
+    $stderr = StringIO.new
+
+    When "running both lifecycle calls"
+    service.guard!
+    service.lock!
+
+    Then "no messages, no warnings, no raise"
+    service.messages == []
+    $stderr.string.empty?
+
+    Cleanup
+    $stderr = old_stderr
+  end
+
+  test "guard! is silent when everything is in sync" do
+    Given "an in-sync staleness"
+    service = build_service(messages: [])
+    old_stderr = $stderr
+    $stderr = StringIO.new
+
+    When "guarding"
+    service.guard!
+
+    Then "nothing is reported"
+    $stderr.string.empty?
+
+    Cleanup
+    $stderr = old_stderr
+  end
+
+  test "guard! warns on a workstation and lets the command run" do
+    Given "a stale state outside CI"
+    service = build_service(messages: ["lockfiles are stale", "install is stale"])
+    Dev::Deps.stubs(:detect_env).returns("dev")
+    old_stderr = $stderr
+    $stderr = StringIO.new
+
+    When "guarding"
+    service.guard!
+
+    Then "each message is a warning, not an error"
+    $stderr.string.include?("warning: lockfiles are stale")
+    $stderr.string.include?("warning: install is stale")
+
+    Cleanup
+    $stderr = old_stderr
+  end
+
+  test "guard! raises StaleDependencyStateError in CI" do
+    Given "a stale state in CI, where drift is a pipeline bug"
+    service = build_service(messages: ["lockfiles are stale"])
+    Dev::Deps.stubs(:detect_env).returns("ci")
+
+    When "guarding"
+    service.guard!
+
+    Then
+    raises Dev::Cli::DependencyService::StaleDependencyStateError
+  end
+
+  test "lock! records the installed stamp, then sweeps the stamps of checkouts that are gone (dev#529)" do
+    Given "a staleness expecting its stamp write, then its prune"
+    staleness = typed_mock(Dev::Deps::Staleness)
+    order = sequence("stamp then prune")
+    staleness.expects(:stamp_installed!).once.in_sequence(order)
+    staleness.expects(:prune_orphans!).once.in_sequence(order).returns([])
+    service = Dev::Cli::DependencyService.new(staleness: staleness)
+
+    When "locking"
+    service.lock!
+
+    Then "the expectation on the staleness holds"
+    true
+  end
+
+  private
+
+  def build_service(messages:)
+    staleness = typed_mock(Dev::Deps::Staleness)
+    staleness.stubs(:messages).returns(messages)
+    Dev::Cli::DependencyService.new(staleness: staleness)
+  end
+end

@@ -10,17 +10,17 @@ description: >-
 `bin/dev` (sh shim → Ruby) routes argv through two composition roots
 over the same tree machinery:
 
-1. **Global builtins** — `Dev::GlobalDispatch` runs first when argv's
-   first token names a `Dev::GlobalCatalog` command (`cd`, `clone`,
+1. **Global builtins** — `Dev::Cli::GlobalDispatch` runs first when argv's
+   first token names a `Dev::Cli::GlobalCatalog` command (`cd`, `clone`,
    `config`, `cred`, `learnings`, `plan`), before any dev.yml lookup. Each
-   owns host- or workspace-global state (anchored via `Dev::WorkspaceRoot`).
-2. **Everything else** — `Dev::Runner`, the project-optional root. With a
+   owns host- or workspace-global state (anchored via `Dev::Cli::WorkspaceRoot`).
+2. **Everything else** — `Dev::Cli::Runner`, the project-optional root. With a
    dev.yml: yaml commands + project builtins + the global catalog. Without
    one: `help`, `up`, `runner`, the global catalog; other lookups map to
    the no-dev.yml refusal in `Runner#exit_for`. `bin/dev` rescues nothing.
 
 Commands form a **tree** (dev#188) and `dev` is its root node. Sealed
-`Dev::Command` (`src/dev/command.rb`): every shape has `children`;
+`Dev::Cli::Command` (`lib/dev/cli/command.rb`): every shape has `children`;
 `BuiltinCommand`, `ProjectCommand`, `OverriddenCommand` run something,
 `CommandGroup` is "children and nothing to run" (`CommandGroup.root` for
 the root). `CommandRepository#resolve` walks argv from the root; a group

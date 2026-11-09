@@ -5,7 +5,7 @@ require "pathname"
 require "stringio"
 require "dev/ui"
 require "dev/lifecycle"
-require "dev/remote_dispatches"
+require "dev/cli/remote_dispatches"
 require "support/fake_gh"
 
 # The remote side of a lifecycle verb under test, with its two true
@@ -55,9 +55,9 @@ class ScriptedRemote
     @ui = ui
   end
 
-  # @return [Dev::RemoteDispatches] what the resolver builds dispatches from
+  # @return [Dev::Cli::RemoteDispatches] what the resolver builds dispatches from
   def remotes
-    Dev::RemoteDispatches.new(
+    Dev::Cli::RemoteDispatches.new(
       root: @root, ui: @ui, out: @out, sync: @sync,
       runs: Dev::Lifecycle::WorkflowRuns.new(gh: @gh, sleeper: ->(_seconds) { nil }),
     )

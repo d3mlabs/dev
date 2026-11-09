@@ -8,6 +8,11 @@ inherit_mode:
 plugins:
   - rubocop-sorbet
 
+# dev's own cop: the one layering rule (ADR-0014). Not shipped — the
+# gate's, not the tool's.
+require:
+  - ./rubocop/cop/dev/shell_reference
+
 AllCops:
   SuggestExtensions: false
   Exclude:
@@ -30,7 +35,6 @@ Sorbet/ValidSigil:
 Sorbet/StrictSigil:
   Enabled: true
   Include:
-    - src/**/*
     - lib/**/*
   Exclude:
     # `typed: false` holdouts. Data.define with a keyword-args initialize
@@ -54,3 +58,9 @@ Lint/Void:
 Lint/BinaryOperatorWithIdenticalOperands:
   Exclude:
     - test/**/*
+
+# Nothing under lib/dev outside the shell (lib/dev/cli/) references a
+# `Dev::Cli::*` constant — features and the vocabulary never depend on the
+# shell (ADR-0014, dev#537).
+Dev/ShellReference:
+  Enabled: true

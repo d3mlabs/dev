@@ -2,7 +2,6 @@
 # frozen_string_literal: true
 
 DEV_ROOT = File.expand_path("..", __dir__) unless defined?(DEV_ROOT)
-$LOAD_PATH.unshift(File.join(DEV_ROOT, "src")) unless $LOAD_PATH.include?(File.join(DEV_ROOT, "src"))
 $LOAD_PATH.unshift(File.join(DEV_ROOT, "lib")) unless $LOAD_PATH.include?(File.join(DEV_ROOT, "lib"))
 
 require "sorbet-runtime"

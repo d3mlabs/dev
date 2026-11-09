@@ -3,7 +3,7 @@
 How `dev` turns a project's `targets:` into builds, artifacts and the
 verbs over them, and its `deploy` channels into the places they ship
 to. This is the reference the `lib/dev/lifecycle` and
-`src/dev/builtins/{build,package,deploy}_command.rb` comments point at:
+`lib/dev/cli/builtins/{build,package,deploy}_command.rb` comments point at:
 the declarations, the ports and their env contract, the build grammar,
 which verbs exist when, the channel contract, the dependency graph, and
 how a verb decides where it runs. The
@@ -74,7 +74,7 @@ targets:
 | `build` | The builder's script form. Omitted: nothing to compile. |
 | `package` / `packager` | The packager: a script, or a built-in by name — `archive` (default; zip, or `{ archive: { format: tar, split: 2GiB } }`), `as-is`, `none`. |
 
-Load-time rules (`Dev::ProjectManifestLoader`): a target name is lower-case
+Load-time rules (`Dev::Cli::ProjectManifestLoader`): a target name is lower-case
 alphanumeric segments joined by single dashes and may not end in a
 platform or config id; an id outside the sets is refused with the set
 listed; `commands: build:` and `commands: package:` are refused once
@@ -89,7 +89,7 @@ fast-loop target first.
 ### Channels
 
 With targets declared, `commands: deploy:` is not a command: each child
-is a **channel**, parsed by `Dev::ChannelParser` against the targets and
+is a **channel**, parsed by `Dev::Cli::ChannelParser` against the targets and
 lifted out of the command tree into `ProjectManifest#channels`.
 
 ```yaml
@@ -118,7 +118,7 @@ commands:
 | `desc` | One line; what `dev help deploy` shows beside the channel. |
 | `targets` | The **accept set**: a non-empty list of builds or patterns in the build grammar, parsed at load (`BuildPattern.parse`), so a name no target spells is refused before anything runs. |
 | `run` | The protocol's script form: a shell command run at the repo root once per archive, with the env contract below. Omitted, the protocol is the publisher the lock contributes under the channel's name (`PublisherSpec::Integration`). |
-| `environment` | Where the script runs — a command's key, values and binding (`Dev::PlacementBinder#bind_channels`). Needs `run:`; an integration publisher is dev's own code and is placed on the host. |
+| `environment` | Where the script runs — a command's key, values and binding (`Dev::Cli::PlacementBinder#bind_channels`). Needs `run:`; an integration publisher is dev's own code and is placed on the host. |
 | `<channel>` | The lock publisher's **options** ([dev#426](https://github.com/d3mlabs/dev/issues/426)): a mapping under the channel's own name (`steam:` on `steam`, `egs:` on `egs`), carried verbatim as `Lifecycle::Channel#options` and read by the publisher at the start of a deploy in its own vocabulary — see [the channel contract](#the-channel-contract) for each. Refused beside `run:` (`ChannelOptionsError`): the script replaced the publisher it would configure. Refused when not a mapping. |
 
 Load-time rules: `deploy` itself may carry no `run:` (`DeployBodyError`)
@@ -140,12 +140,12 @@ install is the read side, the publisher the write side, both the same
 dependency, [ADR-0010](DECISIONS.md#adr-0010--the-verb-follows-the-channel)),
 and every project whose lock reaches that entry — directly or through an
 `install_alias`, as `ruby:` pins reach brew — gets a `deploy` channel of
-the entry's name (`Dev::ProjectPublishers`) — or of the **destination's**
+the entry's name (`Dev::Cli::ProjectPublishers`) — or of the **destination's**
 name where the two differ (`Entry#channel`): gems pinned through the
 `bundler` type ship to `rubygems`, an `image` pin reaches `ghcr`
 ([Built-in publishers](#built-in-publishers)). Nothing in `dev.yml` names a
 publisher. The declared and the contributed sets merge by name in
-`Dev::ChannelBinder`, at the composition root, before the command tree
+`Dev::Cli::ChannelBinder`, at the composition root, before the command tree
 exists — the "third merge case" of `CommandRepository#merge`, applied to
 channels since `deploy`'s children never land on the builtin's slot:
 
@@ -160,7 +160,7 @@ channels since `deploy`'s children never land on the builtin's slot:
 
 With targets declared, `commands: release:` is not a command either
 ([dev#424](https://github.com/d3mlabs/dev/issues/424)): it says what a
-release **contains**, parsed by `Dev::ReleaseParser` against the targets
+release **contains**, parsed by `Dev::Cli::ReleaseParser` against the targets
 into `Lifecycle::ReleaseBuilds` and lifted out of the command tree into
 `ProjectManifest#release`. The verb's body is dev's own (below).
 
@@ -289,7 +289,7 @@ target name may not end in a platform or config id.
 | `cellbound-3d-win64-release-x` | `TrailingSegmentError` | — |
 | `opencell` | `UnknownTargetError` | `UnknownTargetError` |
 
-Every verb acts on **one** build. `Dev::BuildSelector` resolves it from
+Every verb acts on **one** build. `Dev::Cli::BuildSelector` resolves it from
 the argv in this order, and refuses anything that names an axis twice:
 
 1. The base: the positional (a name or a pattern), else `--target T`, else
@@ -329,9 +329,9 @@ under `Release builds:`. `dev help build` lists every
 build with its target's `desc` and its environment; `dev help package`
 lists the shippable ones. Both verbs complete every pattern
 (`cellbound-3d`, `cellbound-3d-dev`, …) and every build. `deploy` is a
-verb heading children (`Dev::Builtins::DeployAllCommand`): the channels
-(`Dev::Builtins::DeployCommand`, one per channel) plus `status`
-(`Dev::Builtins::DeployStatusCommand`, which reads the ledger). `dev help
+verb heading children (`Dev::Cli::Builtins::DeployAllCommand`): the channels
+(`Dev::Cli::Builtins::DeployCommand`, one per channel) plus `status`
+(`Dev::Cli::Builtins::DeployStatusCommand`, which reads the ledger). `dev help
 deploy` lists each with its environment column, its accept set expanded
 to builds (`Accepts: …`) and its protocol's source (`Protocol: run:
 ./bin/stage`, `Protocol: publisher: steam`), and a channel completes its
@@ -390,7 +390,7 @@ moves with it.
 `deploy` never builds (K4): it ships what `package` left in the store —
 or, under `--release <version>`, what `release` attached to the GitHub
 release — and refuses, naming the fix, when that is not enough. For
-`dev deploy <channel> [BUILD]`, `Dev::DeploySelector` decides what
+`dev deploy <channel> [BUILD]`, `Dev::Cli::DeploySelector` decides what
 ships, in order:
 
 1. The candidates: the channel's accept set spelled out **per platform**
@@ -470,7 +470,7 @@ verifies it there, as it selects from its own store without one (K10 —
 deploy never fetches an artifact across the dispatch).
 
 `dev deploy --release <version>` with **no channel** is the fan-out
-(`Dev::Builtins::DeployAllCommand`): every channel in declaration order,
+(`Dev::Cli::Builtins::DeployAllCommand`): every channel in declaration order,
 each run as `dev deploy <channel> --release <version>` through the same
 template — the invocation printed as a header before each, the summary
 `v1.2.0 shipped to 2 channels: steam, rubygems` after the last. The
@@ -528,7 +528,7 @@ names it).
 
 ### What `deploy status` does
 
-`dev deploy status [--release V]` (`Dev::Builtins::DeployStatusCommand`)
+`dev deploy status [--release V]` (`Dev::Cli::Builtins::DeployStatusCommand`)
 reads the ledger back, per channel in declaration order: the latest
 deployment — `GithubDeployments#latest`, the first of
 `?environment=<channel>&per_page=1`, its first status — as one headline
@@ -554,7 +554,7 @@ forge is a typed `GithubDeployments::Error` (`RepoUnresolvedError`,
 
 ### What `release` does
 
-`dev release [<version>|major|minor|patch]` (`Dev::Builtins::ReleaseCommand`)
+`dev release [<version>|major|minor|patch]` (`Dev::Cli::Builtins::ReleaseCommand`)
 is **cut and stop** (K4): the tag and the archives on the forge, nothing
 deployed — distribution is `dev deploy <channel> --release <version>` per
 channel ([dev#425](https://github.com/d3mlabs/dev/issues/425)), a week
@@ -781,7 +781,7 @@ GitHub Deployment status ([The deploy receipt](#the-deploy-receipt));
 ([ADR-0010](DECISIONS.md#adr-0010--the-verb-follows-the-channel)). The
 Registry builds one instance per publishing entry the lock reaches
 (`Registry.publishers`), with the kwargs the entry's `publisher_needs`
-asks for; `Dev::ProjectPublishers` reads the lock once and asks; the
+asks for; `Dev::Cli::ProjectPublishers` reads the lock once and asks; the
 Runner hands the table to `ChannelBinder` (the merge) and to `Ports` (the
 lookup). A built-in publisher is its integration's **repository class**
 when the write side shares the read side's API and credential story —
@@ -1010,7 +1010,7 @@ missing step rather than performing it:
 
 Where a verb's seam runs is decided per build, before anything runs, from
 the target's `environment:` bound against the lock at load
-(`Dev::PlacementBinder#bind_targets` → one `Dev::TargetPlacement` per
+(`Dev::Cli::PlacementBinder#bind_targets` → one `Dev::Cli::TargetPlacement` per
 target, a `Placement::Host` or `Placement::Image` per declared platform).
 A channel's protocol is placed the same way from the channel's
 `environment:` (`#bind_channels` → one `Placement` per channel), resolved
@@ -1025,7 +1025,7 @@ this machine is, which cannot be a load-time refusal because the same
 `dev.yml` loads on a Mac and on the Linux box. A build with no platform
 has nothing to check.
 
-**At the verb**, `Dev::BuildDispatcher` answers for the selected build:
+**At the verb**, `Dev::Cli::BuildDispatcher` answers for the selected build:
 
 1. Is the target bound at all? When the lock could not place the builds
    at load (a pin locked by another dev's template, a retired
@@ -1041,7 +1041,7 @@ has nothing to check.
    `(linux64 only)` in the listing; an image-placed build defers to the
    image's declaration, already checked. Skipped under `--runner` and
    `--container`: that host produces the build, not this one.
-3. `Dev::DispatchResolver#resolve(placement, runner:, container:)` under
+3. `Dev::Cli::DispatchResolver#resolve(placement, runner:, container:)` under
    the host rule
    ([README: The host rule](../README.md#the-host-rule-native-when-provisioned-from-the-image-inside-it-otherwise)),
    then against the hosts the remote dispatch can reach, in this order:
@@ -1086,8 +1086,8 @@ host that is the image — a verb never enters a container, so the
 `(container)` a project command shows does not apply, and *which* host
 is decided when the verb runs, never asked of the forge by help.
 
-**The template.** A verb is a `Dev::LifecycleCommand`, run by
-`Dev::LifecycleExecutor` as *before → seam → after*: `before` consumes
+**The template.** A verb is a `Dev::Cli::LifecycleCommand`, run by
+`Dev::Cli::LifecycleExecutor` as *before → seam → after*: `before` consumes
 the argv into the build, resolves the dispatch and hands it the
 **invocation** (`Lifecycle::VerbInvocation`: the verb as a remote host
 would run it) and a block that builds the env. `Dispatch::Native` runs
@@ -1108,7 +1108,7 @@ K8, K10): [the sync step](#the-sync-step) pushes the working tree as a
 snapshot branch, one dim line says where the verb went and from which
 commit, a **transport** runs the invocation there and returns with its
 verdict, the branch is deleted. The path is written once against the
-sealed `Dev::Transport` interface (`runner`, `destination`,
+sealed `Dev::Cli::Transport` interface (`runner`, `destination`,
 `assert_ready!`, `run(invocation, snapshot:)`); what differs per host is
 how the verb is invoked and watched:
 

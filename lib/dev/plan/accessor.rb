@@ -17,7 +17,7 @@ module Dev
     class Accessor
       extend T::Sig
 
-      # RuntimeError so Dev::Runner's clean-error rescue prints the usage
+      # RuntimeError so Dev::Cli::Runner's clean-error rescue prints the usage
       # instead of a backtrace (same for the other plan error classes).
       class UsageError < RuntimeError; end
 

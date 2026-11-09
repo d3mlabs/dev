@@ -2,9 +2,9 @@
 # frozen_string_literal: true
 
 require "pathname"
-# Required here (not just in src/dev.rb) because consumer dependencies.rb
+# Required here (not just in lib/dev.rb) because consumer dependencies.rb
 # files reach this hook through `require "dev/deps"` alone — the lib half
-# loads without the Dev module root in src/dev.rb.
+# loads without the Dev module root in lib/dev.rb.
 require "sorbet-runtime"
 require_relative "../dependency"
 

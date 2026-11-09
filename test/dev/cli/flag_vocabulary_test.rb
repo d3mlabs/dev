@@ -3,10 +3,10 @@
 
 require "test_helper"
 require "dev/cli/flag_vocabulary"
-require "dev/command"
+require "dev/cli/command"
 
 # A builtin declaring a vocabulary, or opaque, for the gate to read.
-class VocabularyFakeBuiltin < Dev::BuiltinCommand
+class VocabularyFakeBuiltin < Dev::Cli::BuiltinCommand
   def initialize(flags: [], opaque_args: false)
     super()
     @flags = flags
@@ -17,7 +17,7 @@ class VocabularyFakeBuiltin < Dev::BuiltinCommand
 
   def desc = "a builtin"
 
-  def category = Dev::Command::Category::Workflow
+  def category = Dev::Cli::Command::Category::Workflow
 
   def opaque_args? = @opaque_args
 
@@ -112,8 +112,8 @@ class Dev::Cli::FlagVocabularyTest < Minitest::Test
   test "parse accepts the help flags at every node as switches: they are in every vocabulary" do
     Given "a builtin declaring nothing and a group"
     vocabulary = Dev::Cli::FlagVocabulary.new
-    group = Dev::CommandGroup.new(
-      path: ["deps"], desc: "deps", category: Dev::Command::Category::Environment,
+    group = Dev::Cli::CommandGroup.new(
+      path: ["deps"], desc: "deps", category: Dev::Cli::Command::Category::Environment,
       children: { "path" => VocabularyFakeBuiltin.new },
     )
 
@@ -185,7 +185,7 @@ class Dev::Cli::FlagVocabularyTest < Minitest::Test
   test "parse refuses at the root too: the message names bare dev" do
     Given "a root group"
     vocabulary = Dev::Cli::FlagVocabulary.new
-    root = Dev::CommandGroup.root(desc: "commands", children: { "up" => VocabularyFakeBuiltin.new })
+    root = Dev::Cli::CommandGroup.root(desc: "commands", children: { "up" => VocabularyFakeBuiltin.new })
 
     When "parsing a flag the root does not know"
     error = assert_raises(Dev::Cli::FlagVocabulary::UnknownFlagError) { vocabulary.parse(root, path: [], args: ["--bogus"]) }
@@ -197,7 +197,7 @@ class Dev::Cli::FlagVocabularyTest < Minitest::Test
   test "parse forwards an opaque node's words verbatim: foreign flags, help flags, terminator and all" do
     Given "a project command and an opaque builtin"
     vocabulary = Dev::Cli::FlagVocabulary.new
-    project = Dev::ProjectCommand.new(run: "./bin/test.sh")
+    project = Dev::Cli::ProjectCommand.new(run: "./bin/test.sh")
     opaque = VocabularyFakeBuiltin.new(opaque_args: true)
     words = ["--fast", "--help", "--", "-h"]
 
@@ -209,8 +209,8 @@ class Dev::Cli::FlagVocabularyTest < Minitest::Test
   test "parse treats the override of a builtin as the project's: opaque" do
     Given "a project run on a builtin's slot, the builtin declaring nothing"
     vocabulary = Dev::Cli::FlagVocabulary.new
-    overridden = Dev::OverriddenCommand.new(
-      builtin: VocabularyFakeBuiltin.new, project: Dev::ProjectCommand.new(run: "./bin/up.sh"),
+    overridden = Dev::Cli::OverriddenCommand.new(
+      builtin: VocabularyFakeBuiltin.new, project: Dev::Cli::ProjectCommand.new(run: "./bin/up.sh"),
     )
 
     Expect

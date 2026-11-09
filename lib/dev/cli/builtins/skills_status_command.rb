@@ -1,0 +1,32 @@
+# typed: strict
+# frozen_string_literal: true
+
+require "dev/cli/builtins/skills_verb_command"
+
+module Dev
+  module Cli
+    module Builtins
+      # `dev skills status [--json]`: every channel's root and materialized
+      # links, with package/version provenance where the channel knows it.
+      class SkillsStatusCommand < SkillsVerbCommand
+        extend T::Sig
+
+        USAGE = "usage: dev skills status [--json]"
+        JSON_FLAG = "--json"
+
+        sig { override.returns(String) }
+        def desc = "Show every skill channel: where its links land, what is linked, and from which package/version"
+
+        sig { override.returns(T::Array[Cli::Flag]) }
+        def flags = [Cli::Flag.new(JSON_FLAG)]
+
+        sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
+        def call(args:, context:)
+          raise Dev::Skills::Accessor::UsageError, USAGE if args.positionals.any?
+
+          @accessor_factory.call.status(out: @out, json: args.flag?(JSON_FLAG))
+        end
+      end
+    end
+  end
+end

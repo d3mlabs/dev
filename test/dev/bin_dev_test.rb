@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/global_catalog"
+require "dev/cli/global_catalog"
 require "open3"
 require "tmpdir"
 
@@ -57,7 +57,7 @@ class Dev::BinDevTest < Minitest::Test
   end
 
   # The formula vendors dev's runtime gems into libexec and installs the
-  # tree as libexec/dev/{bin,src,lib}. The Ruby half finds them by
+  # tree as libexec/dev/{bin,lib}. The Ruby half finds them by
   # position (libexec/specifications beside its root), never by env — so
   # the env dev was started in, hostile or not, neither helps nor hurts,
   # and nothing is exported for children to inherit.
@@ -135,7 +135,7 @@ class Dev::BinDevTest < Minitest::Test
     help_status.success?
     bare_out.include?("Commands available outside a project")
     bare_out.include?("Run dev inside a project that defines a dev.yml to see its commands.")
-    Dev::GlobalCatalog.new.commands.keys.all? { |name| bare_out.include?(name) }
+    Dev::Cli::GlobalCatalog.new.commands.keys.all? { |name| bare_out.include?(name) }
     help_out == bare_out
 
     Cleanup
@@ -275,7 +275,7 @@ class Dev::BinDevTest < Minitest::Test
   # the two runtime gems the formula vendors (linked from wherever this
   # suite's Ruby has them — RubyGems follows links), and libexec/dev with a
   # copy of the shim (a copy, as brew installs: realpath must resolve
-  # inside the layout) beside links to the repo's src, lib and VERSION.
+  # inside the layout) beside links to the repo's lib and VERSION.
   # Returns the libexec path.
   def build_libexec(dir)
     libexec = File.join(dir, "libexec")
@@ -286,7 +286,7 @@ class Dev::BinDevTest < Minitest::Test
       File.symlink(spec.gem_dir, File.join(libexec, "gems", File.basename(spec.gem_dir)))
     end
     FileUtils.cp(BIN_DEV, File.join(libexec, "dev", "bin", "dev"))
-    %w[src lib VERSION].each { |entry| File.symlink(File.join(DEV_ROOT, entry), File.join(libexec, "dev", entry)) }
+    %w[lib VERSION].each { |entry| File.symlink(File.join(DEV_ROOT, entry), File.join(libexec, "dev", entry)) }
     libexec
   end
 

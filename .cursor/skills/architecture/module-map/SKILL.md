@@ -2,34 +2,35 @@
 name: module-map
 description: >-
   MUST be used when deciding where new dev code lives or which module owns
-  a concern — the ownership map of src/ and lib/.
+  a concern — the ownership map of lib/ and the one layering rule.
 ---
 
 # dev module map
 
-- **`src/dev/`** — the typed (Sorbet) CLI core: Runner, command
-  parser/registry, dev.yml config parsing, CLI UI, GlobalDispatch. Owns
-  dispatch and execution, no feature logic.
+One `lib/`; layers are namespaces pointing one way (ADR-0014): the shell
+depends on features and vocabulary, never the reverse — no `Dev::Cli::*`
+reference outside `lib/dev/cli/` (the `Dev/ShellReference` cop).
+
+- **`lib/dev/cli/`** (`Dev::Cli`) — the shell: Runner, parsing, dev.yml
+  loading and binding against the lock, dispatch, executors,
+  `ExecutionContext`, `CommandRunner`, builtins, flags/usage, `UiImpl`.
+  Owns parsing, dispatch and execution; no feature logic.
+- **`lib/dev/ui.rb`** — `Dev::Ui`, the UI vocabulary features take as
+  `ui:` (frame, spin, step, note, confirm), and `Dev::NoUi`, the plain tier.
 - **`lib/dev/cd/`** — checkout jumping: RepoDiscovery walks the workspace
-  root, Matcher ranks, ShellHook owns the RC function (a child process
-  cannot cd its parent shell).
+  root, Matcher ranks, ShellHook owns the RC function.
 - **`lib/dev/plan/`** — Cursor plans ⇄ GitHub issues sync (the issue is
   canonical; a stored merge base guards against clobbering remote edits).
-- **`lib/dev/deps/`** — dependency management. Layering is canonical in
-  `.cursor/rules/separation-of-concerns.mdc`: Repository resolves,
-  Integration installs, Lockfile serializes, the orchestrator
-  coordinates — one class, one layer.
+- **`lib/dev/deps/`** — dependency management; layering is canonical in
+  `.cursor/rules/separation-of-concerns.mdc` (Repository resolves,
+  Integration installs, Lockfile serializes, the orchestrator coordinates).
 - **`lib/dev/learnings/`** — the learnings read path plus its scaffold:
-  Cache (bounded clone/pull of the knowledge repo), Synchronizer
-  (orchestration), InvariantsRenderer (machine-side render + per-project
-  symlink + the `dev learnings invariants` prompt seam), Layout (canonical
-  owner of both tiers' paths and index templates; ai-flow mirrors them),
-  Scaffolder (`dev learnings init`'s write-once materialization).
+  Cache (bounded clone/pull), Synchronizer, InvariantsRenderer (render +
+  per-project symlink + the `dev learnings invariants` seam), Layout (both
+  tiers' paths and templates; ai-flow mirrors them), Scaffolder (`init`).
 - **`lib/dev/skill_installer.rb`** — the one symlink mechanism behind all
-  three skill channels (shipped, org, gem); the gem channel's lockfile
-  scan is `lib/dev/deps/gem_skill_linker.rb`.
-- **`lib/dev/credentials.rb`** (+ `credential_accessor.rb`) — XDG-scoped
-  credential storage behind `dev cred`.
+  three skill channels (shipped, org, gem; `deps/gem_skill_linker.rb`).
+- **`lib/dev/credentials.rb`** (+ accessor) — XDG-scoped storage, `dev cred`.
 - **`lib/shadowenv_*.rb`** — per-toolchain env provisioning written into
   `.shadowenv.d/` by project setup.
 - **`share/cursor-skills/`** — skills dev ships user-globally (ai-flow,

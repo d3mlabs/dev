@@ -4,12 +4,12 @@
 require "test_helper"
 require "dev/cli/flag_vocabulary"
 require "dev/cli/usage_printer"
-require "dev/command"
+require "dev/cli/command"
 require "dev/deps/dependency"
 require "dev/environment_image"
 require "dev/host_environment"
-require "dev/host_rule"
-require "dev/placement"
+require "dev/cli/host_rule"
+require "dev/cli/placement"
 require "fileutils"
 require "pathname"
 require "stringio"
@@ -19,7 +19,7 @@ transform!(RSpock::AST::Transformation)
 class Dev::Cli::UsagePrinterTest < Minitest::Test
   # Minimal builtin fake: the printer only reads desc and category, so the
   # fake carries just those traits.
-  class FakeBuiltin < Dev::BuiltinCommand
+  class FakeBuiltin < Dev::Cli::BuiltinCommand
     def initialize(desc:, category:)
       super()
       @desc = desc
@@ -32,7 +32,7 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
   end
 
   # Minimal lifecycle verb fake: its section is the shape's own.
-  class FakeVerb < Dev::LifecycleCommand
+  class FakeVerb < Dev::Cli::LifecycleCommand
     Env = type_member { { fixed: String } }
 
     def initialize(desc:)
@@ -42,7 +42,7 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
 
     attr_reader :desc
 
-    def before(args:, context:) = Dev::Dispatch::Outcome::Done.new
+    def before(args:, context:) = Dev::Cli::Dispatch::Outcome::Done.new
 
     def seam(env, context:); end
 
@@ -59,18 +59,18 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
   end
 
   def environment_builtin(desc: "an environment builtin")
-    FakeBuiltin.new(desc: desc, category: Dev::Command::Category::Environment)
+    FakeBuiltin.new(desc: desc, category: Dev::Cli::Command::Category::Environment)
   end
 
   def workflow_builtin(desc: "a workflow builtin")
-    FakeBuiltin.new(desc: desc, category: Dev::Command::Category::Workflow)
+    FakeBuiltin.new(desc: desc, category: Dev::Cli::Command::Category::Workflow)
   end
 
   # Print the root over the given children the way bare `dev` does.
   def print_root(children, epilogue: "Examples: dev up    dev test", desc: "Development commands for myproject")
     out = StringIO.new
     Dev::Cli::UsagePrinter.new(epilogue: epilogue).print_node(
-      path: [], command: Dev::CommandGroup.root(desc: desc, children: children), out: out,
+      path: [], command: Dev::Cli::CommandGroup.root(desc: desc, children: children), out: out,
     )
     out.string
   end
@@ -96,7 +96,7 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
     children = {
       "up" => environment_builtin(desc: "Provision"),
       "help" => workflow_builtin(desc: "Show this usage"),
-      "test" => Dev::ProjectCommand.new(run: "rspec", desc: "Run tests"),
+      "test" => Dev::Cli::ProjectCommand.new(run: "rspec", desc: "Run tests"),
       "package" => FakeVerb.new(desc: "Package a build"),
     }
 
@@ -133,7 +133,7 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
     group_out = StringIO.new
 
     When "printing both"
-    printer.print_node(path: [], command: Dev::CommandGroup.root(desc: "d", children: { "deps" => group }), out: root_out)
+    printer.print_node(path: [], command: Dev::Cli::CommandGroup.root(desc: "d", children: { "deps" => group }), out: root_out)
     printer.print_node(path: ["deps"], command: group, out: group_out)
 
     Then "the epilogue is the root's last line, absent from the group's usage"
@@ -169,7 +169,7 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
 
   test "children of one category list under a plain Commands heading, whatever the category" do
     Given "roots whose children share a category"
-    project_only = print_root({ "test" => Dev::ProjectCommand.new(run: "rspec", desc: "Run tests") })
+    project_only = print_root({ "test" => Dev::Cli::ProjectCommand.new(run: "rspec", desc: "Run tests") })
     environment_only = print_root({ "up" => environment_builtin })
 
     Expect "no section headings"
@@ -181,7 +181,7 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
 
   test "sections without commands are omitted" do
     Given "children spanning two of the four categories"
-    output = print_root({ "test" => Dev::ProjectCommand.new(run: "rspec", desc: "Run tests"), "help" => workflow_builtin })
+    output = print_root({ "test" => Dev::Cli::ProjectCommand.new(run: "rspec", desc: "Run tests"), "help" => workflow_builtin })
 
     Expect "no empty section header renders"
     output.include?("Project commands:")
@@ -191,13 +191,13 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
 
   test "an overridden slot lists under the builtin's section with the project's desc" do
     Given "an environment slot overridden by a project command, beside a project command"
-    overridden = Dev::OverriddenCommand.new(
+    overridden = Dev::Cli::OverriddenCommand.new(
       builtin: environment_builtin(desc: "builtin up"),
-      project: Dev::ProjectCommand.new(run: "./bin/up.rb", desc: "Project setup"),
+      project: Dev::Cli::ProjectCommand.new(run: "./bin/up.rb", desc: "Project setup"),
     )
 
     When "printing the root"
-    output = print_root({ "up" => overridden, "test" => Dev::ProjectCommand.new(run: "rspec", desc: "Run tests") })
+    output = print_root({ "up" => overridden, "test" => Dev::Cli::ProjectCommand.new(run: "rspec", desc: "Run tests") })
 
     Then "the slot renders under Environment with the override's description"
     lines = output.lines.map(&:chomp)
@@ -207,8 +207,8 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
 
   test "nodes with children list with a trailing ellipsis, groups and runnable commands alike" do
     Given "a group and a runnable command heading a child"
-    group = build_group(["deps"], category: Dev::Command::Category::Environment, desc: "Dependency lookups")
-    test = Dev::ProjectCommand.new(run: "./bin/test.sh", desc: "All tests", children: { "unit" => workflow_builtin })
+    group = build_group(["deps"], category: Dev::Cli::Command::Category::Environment, desc: "Dependency lookups")
+    test = Dev::Cli::ProjectCommand.new(run: "./bin/test.sh", desc: "All tests", children: { "unit" => workflow_builtin })
 
     When "printing the root"
     output = print_root({ "deps" => group, "test" => test })
@@ -226,8 +226,8 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
       desc: "Dependency lookups",
       children: {
         "path" => environment_builtin(desc: "Print a locked artifact's path"),
-        "plumbing" => Dev::ProjectCommand.new(run: "x", desc: "internal", hidden: true),
-        "check" => build_group(["deps", "check"], desc: "Checks", category: Dev::Command::Category::Environment),
+        "plumbing" => Dev::Cli::ProjectCommand.new(run: "x", desc: "internal", hidden: true),
+        "check" => build_group(["deps", "check"], desc: "Checks", category: Dev::Cli::Command::Category::Environment),
       },
     )
     out = StringIO.new
@@ -248,12 +248,12 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
   test "a multi-line desc lists by its first line and prints in full on the node's own usage" do
     Given "a group whose desc carries a summary line and a detail line"
     printer = Dev::Cli::UsagePrinter.new
-    group = build_group(["learnings"], desc: "The read path\nCapture is agent-driven.", category: Dev::Command::Category::Workflow)
+    group = build_group(["learnings"], desc: "The read path\nCapture is agent-driven.", category: Dev::Cli::Command::Category::Workflow)
     root_out = StringIO.new
     group_out = StringIO.new
 
     When "printing the root listing and the group's own usage"
-    printer.print_node(path: [], command: Dev::CommandGroup.root(desc: "d", children: { "learnings" => group }), out: root_out)
+    printer.print_node(path: [], command: Dev::Cli::CommandGroup.root(desc: "d", children: { "learnings" => group }), out: root_out)
     printer.print_node(path: ["learnings"], command: group, out: group_out)
 
     Then "the listing shows only the summary; the group's usage shows both lines"
@@ -266,9 +266,9 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
   test "print_node renders both invocations of a runnable command with children" do
     Given "a project command heading a child"
     printer = Dev::Cli::UsagePrinter.new
-    test = Dev::ProjectCommand.new(
+    test = Dev::Cli::ProjectCommand.new(
       run: "./bin/test.sh", desc: "Run every suite",
-      children: { "unit" => Dev::ProjectCommand.new(run: "rspec", desc: "Unit") },
+      children: { "unit" => Dev::Cli::ProjectCommand.new(run: "rspec", desc: "Unit") },
     )
     out = StringIO.new
 
@@ -286,7 +286,7 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
   test "print_node lists a command's flags after its description: switches by name, value-taking ones with a placeholder, each with its description" do
     Given "a builtin declaring three flags, one undescribed"
     printer = Dev::Cli::UsagePrinter.new
-    command = FakeBuiltin.new(desc: "Enroll this host", category: Dev::Command::Category::Environment)
+    command = FakeBuiltin.new(desc: "Enroll this host", category: Dev::Cli::Command::Category::Environment)
     command.stubs(:flags).returns([
       Dev::Cli::Flag.new("--org", desc: "enroll at the org scope"),
       Dev::Cli::Flag.new("--labels", takes_value: true, desc: "comma-separated runner labels"),
@@ -316,7 +316,7 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
     out = StringIO.new
 
     When "printing the node"
-    printer.print_node(path: ["test", "unit"], command: Dev::ProjectCommand.new(run: "rspec", desc: "Unit tests"), out: out)
+    printer.print_node(path: ["test", "unit"], command: Dev::Cli::ProjectCommand.new(run: "rspec", desc: "Unit tests"), out: out)
 
     Then "no Commands section"
     out.string == "Usage: dev test unit [args...]\n\nUnit tests\n"
@@ -330,20 +330,20 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
     server = image("cellbound-3d-server")
     host_rule = host_rule(provisioned_from: server)
     children = {
-      "build" => bound(Dev::ProjectCommand.new(run: "./bin/build", desc: "Build"), Dev::Placement::Image.new(image: linux)),
-      "serve" => bound(Dev::ProjectCommand.new(run: "./bin/serve", desc: "Run the dedicated server"), Dev::Placement::Image.new(image: server)),
-      "s" => bound(Dev::ProjectCommand.new(run: "./bin/dev-s", desc: "Inner loop"), Dev::Placement::Host.new),
+      "build" => bound(Dev::Cli::ProjectCommand.new(run: "./bin/build", desc: "Build"), Dev::Cli::Placement::Image.new(image: linux)),
+      "serve" => bound(Dev::Cli::ProjectCommand.new(run: "./bin/serve", desc: "Run the dedicated server"), Dev::Cli::Placement::Image.new(image: server)),
+      "s" => bound(Dev::Cli::ProjectCommand.new(run: "./bin/dev-s", desc: "Inner loop"), Dev::Cli::Placement::Host.new),
       "db" => build_group(["db"], desc: "Database chores"),
-      "up" => Dev::OverriddenCommand.new(
+      "up" => Dev::Cli::OverriddenCommand.new(
         builtin: environment_builtin(desc: "builtin up"),
-        project: bound(Dev::ProjectCommand.new(run: "./bin/setup", desc: "Setup"), Dev::Placement::Host.new),
+        project: bound(Dev::Cli::ProjectCommand.new(run: "./bin/setup", desc: "Setup"), Dev::Cli::Placement::Host.new),
       ),
       "deps" => environment_builtin(desc: "Manage dependencies"),
     }
 
     When "printing the root to a non-terminal"
     out = StringIO.new
-    Dev::Cli::UsagePrinter.new(host_rule:).print_node(path: [], command: Dev::CommandGroup.root(desc: "d", children:), out:)
+    Dev::Cli::UsagePrinter.new(host_rule:).print_node(path: [], command: Dev::Cli::CommandGroup.root(desc: "d", children:), out:)
     lines = out.string.lines.map(&:chomp)
 
     Then "one column per section, padded to its longest summary: the image (container) when entered from here, the image when native, host; nothing on a group or a plain builtin"
@@ -358,8 +358,8 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
 
   test "the environment column is dim on a terminal and plain anywhere else" do
     Given
-    command = bound(Dev::ProjectCommand.new(run: "./bin/dev-s", desc: "Inner loop"), Dev::Placement::Host.new)
-    root = Dev::CommandGroup.root(desc: "d", children: { "s" => command })
+    command = bound(Dev::Cli::ProjectCommand.new(run: "./bin/dev-s", desc: "Inner loop"), Dev::Cli::Placement::Host.new)
+    root = Dev::Cli::CommandGroup.root(desc: "d", children: { "s" => command })
     tty = StringIO.new
     tty.define_singleton_method(:tty?) { true }
     pipe = StringIO.new
@@ -375,14 +375,14 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
 
   test "a command the composition root could not bind lists without a column: the lock said why on stderr" do
     Expect
-    print_root({ "test" => Dev::ProjectCommand.new(run: "rspec", desc: "Run tests") }).include?("  test         Run tests\n")
+    print_root({ "test" => Dev::Cli::ProjectCommand.new(run: "rspec", desc: "Run tests") }).include?("  test         Run tests\n")
   end
 
   test "a node's own usage says its environment in a sentence: #{what}" do
     Given
     linux = image("cellbound-3d-linux")
     host_rule = host_rule(provisioned_from: native ? linux : nil)
-    command = bound(Dev::ProjectCommand.new(run: "./bin/build", desc: "Build"), placement_for(placement, linux))
+    command = bound(Dev::Cli::ProjectCommand.new(run: "./bin/build", desc: "Build"), placement_for(placement, linux))
     out = StringIO.new
 
     When
@@ -406,15 +406,15 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
     verb = FakeVerb.new(desc: "Build a target")
     verb.stubs(:flags).returns([Dev::Cli::Flag.new("--target", takes_value: true, desc: "the target")])
     verb.stubs(:listing).returns(
-      Dev::LifecycleCommand::Listing.new(
+      Dev::Cli::LifecycleCommand::Listing.new(
         heading: "Builds",
         subjects: [
-          Dev::LifecycleCommand::Subject.new(name: "cellbound-3d-win64-dev", desc: "Client", placement: Dev::Placement::Image.new(image: linux)),
-          Dev::LifecycleCommand::Subject.new(name: "cellbound-3d-editor-macos", desc: "Editor", placement: Dev::Placement::Host.new),
-          Dev::LifecycleCommand::Subject.new(
-            name: "cellbound-3d-editor-linux64", desc: "Editor", placement: Dev::Placement::Host.new, note: "(linux64 only)",
+          Dev::Cli::LifecycleCommand::Subject.new(name: "cellbound-3d-win64-dev", desc: "Client", placement: Dev::Cli::Placement::Image.new(image: linux)),
+          Dev::Cli::LifecycleCommand::Subject.new(name: "cellbound-3d-editor-macos", desc: "Editor", placement: Dev::Cli::Placement::Host.new),
+          Dev::Cli::LifecycleCommand::Subject.new(
+            name: "cellbound-3d-editor-linux64", desc: "Editor", placement: Dev::Cli::Placement::Host.new, note: "(linux64 only)",
           ),
-          Dev::LifecycleCommand::Subject.new(name: "rspock", desc: "The gem"),
+          Dev::Cli::LifecycleCommand::Subject.new(name: "rspock", desc: "The gem"),
         ],
       ),
     )
@@ -457,12 +457,12 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
     Given "a deploy group of two channels, one placed in an image this host is not, one on the host, beside an unplaced verb"
     linux = image("cellbound-3d-linux")
     staging = FakeVerb.new(desc: "rsync to the gamebox")
-    staging.stubs(:placement).returns(Dev::Placement::Host.new)
+    staging.stubs(:placement).returns(Dev::Cli::Placement::Host.new)
     staging.stubs(:details).returns(["Accepts: cellbound-3d-win64-dev, cellbound-3d-linux64-dev", "Protocol: run: ./bin/stage"])
     steam = FakeVerb.new(desc: "Steam depots")
-    steam.stubs(:placement).returns(Dev::Placement::Image.new(image: linux))
+    steam.stubs(:placement).returns(Dev::Cli::Placement::Image.new(image: linux))
     steam.stubs(:details).returns(["Accepts: cellbound-3d-steamworks-win64-release", "Protocol: run: ./bin/steam-upload"])
-    group = build_group(["deploy"], desc: "Ship an artifact to a channel", category: Dev::Command::Category::Lifecycle,
+    group = build_group(["deploy"], desc: "Ship an artifact to a channel", category: Dev::Cli::Command::Category::Lifecycle,
       children: { "staging" => staging, "steam" => steam, "mirror" => FakeVerb.new(desc: "A bare verb") })
     out = StringIO.new
 
@@ -489,7 +489,7 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
   test "a placed verb's own usage says its environment in a sentence, then its details, before its flags" do
     Given
     staging = FakeVerb.new(desc: "rsync to the gamebox")
-    staging.stubs(:placement).returns(Dev::Placement::Host.new)
+    staging.stubs(:placement).returns(Dev::Cli::Placement::Host.new)
     staging.stubs(:details).returns(["Accepts: rspock", "Protocol: run: ./bin/stage"])
     staging.stubs(:flags).returns([Dev::Cli::Flag.new("--dry-run", desc: "select and report, ship nothing")])
     out = StringIO.new
@@ -515,7 +515,7 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
     Given
     linux = image("cellbound-3d-linux")
     steam = FakeVerb.new(desc: "Steam depots")
-    steam.stubs(:placement).returns(Dev::Placement::Image.new(image: linux))
+    steam.stubs(:placement).returns(Dev::Cli::Placement::Image.new(image: linux))
     out = StringIO.new
 
     When
@@ -527,9 +527,9 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
 
   test "an overridden slot's own usage says the project body's environment" do
     Given
-    overridden = Dev::OverriddenCommand.new(
+    overridden = Dev::Cli::OverriddenCommand.new(
       builtin: environment_builtin(desc: "builtin up"),
-      project: bound(Dev::ProjectCommand.new(run: "./bin/setup", desc: "Setup"), Dev::Placement::Host.new),
+      project: bound(Dev::Cli::ProjectCommand.new(run: "./bin/setup", desc: "Setup"), Dev::Cli::Placement::Host.new),
     )
     out = StringIO.new
 
@@ -540,8 +540,8 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
     out.string.lines.map(&:chomp).fetch(3) == "Runs on the host."
   end
 
-  def build_group(path, desc: "a group", category: Dev::Command::Category::Project, children: nil)
-    Dev::CommandGroup.new(
+  def build_group(path, desc: "a group", category: Dev::Cli::Command::Category::Project, children: nil)
+    Dev::Cli::CommandGroup.new(
       path: path, desc: desc, category: category, children: children || { "child" => workflow_builtin },
     )
   end
@@ -551,7 +551,7 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
   end
 
   def placement_for(kind, image)
-    kind == :host ? Dev::Placement::Host.new : Dev::Placement::Image.new(image:)
+    kind == :host ? Dev::Cli::Placement::Host.new : Dev::Cli::Placement::Image.new(image:)
   end
 
   def image(name)
@@ -571,6 +571,6 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
   def host_rule(provisioned_from: nil)
     marker = @marker_dir / "environment-#{provisioned_from&.name || "none"}"
     marker.write(provisioned_from.marker) if provisioned_from
-    Dev::HostRule.new(host_environment: Dev::HostEnvironment.new(path: marker.to_s), inside_container: false)
+    Dev::Cli::HostRule.new(host_environment: Dev::HostEnvironment.new(path: marker.to_s), inside_container: false)
   end
 end
