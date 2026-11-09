@@ -34,6 +34,14 @@ module Dev
 
       Argv = T.type_alias { T::Array[String] }
 
+      # What `capture` spawns gh under: colour off, whatever the operator
+      # forced. gh honours CLICOLOR_FORCE and GH_FORCE_TTY on a pipe too
+      # and colourises `gh api`'s JSON — unparseable to the reader — and
+      # bin/dev's UI tier is picked by CLICOLOR_FORCE off a TTY, so a
+      # forced run would break every answer dev reads (dev#519). `stream`
+      # is the operator's terminal and leaves their preference alone.
+      CAPTURE_ENV = T.let({ "CLICOLOR_FORCE" => nil, "GH_FORCE_TTY" => nil, "NO_COLOR" => "1" }.freeze, T::Hash[String, T.nilable(String)])
+
       # @return [Pathname] the checkout every call runs in
       sig { returns(Pathname) }
       attr_reader :root
@@ -66,7 +74,8 @@ module Dev
         raise GhMissingError, "gh not found on PATH"
       end
 
-      # Run one gh command and return what it printed.
+      # Run one gh command and return what it printed — a machine answer,
+      # so gh runs with colour off (CAPTURE_ENV).
       #
       # @param argv [Array<String>] gh's arguments
       # @param stdin [String, nil] a body piped to gh's stdin
@@ -75,7 +84,7 @@ module Dev
       # @raise [GhMissingError]
       sig { params(argv: Argv, stdin: T.nilable(String)).returns(String) }
       def capture(argv, stdin: nil)
-        out, err, status = T.unsafe(Open3).capture3("gh", *argv, stdin_data: stdin, chdir: @root.to_s)
+        out, err, status = T.unsafe(Open3).capture3(CAPTURE_ENV, "gh", *argv, stdin_data: stdin, chdir: @root.to_s)
         raise CommandFailedError, "gh #{argv.join(" ")} failed in #{@root}: #{err.strip}" unless status.success?
 
         out

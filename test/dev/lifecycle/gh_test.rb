@@ -36,11 +36,21 @@ class Dev::Lifecycle::GhTest < Minitest::Test
       printf '%s\\n' "$@" > "#{@dir}/argv"
       cat > "#{@dir}/stdin"
       pwd > "#{@dir}/cwd"
+      printf '%s\\n' "CLICOLOR_FORCE=${CLICOLOR_FORCE-unset}" "GH_FORCE_TTY=${GH_FORCE_TTY-unset}" "NO_COLOR=${NO_COLOR-unset}" > "#{@dir}/env"
       printf '%s' '#{err}' >&2
       printf '%s' '#{out}'
       exit #{status}
     SH
     (@bin / "gh").chmod(0o755)
+  end
+
+  # Run the block with these variables set (nil: unset), restoring after.
+  def with_env(vars)
+    saved = vars.keys.to_h { |key| [key, ENV.fetch(key, nil)] }
+    vars.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
+    yield
+  ensure
+    saved.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
   end
 
   test "capture runs gh in the checkout with the argv and body given, and returns what it printed" do
@@ -81,6 +91,18 @@ class Dev::Lifecycle::GhTest < Minitest::Test
     error.message == "gh not found on PATH"
   end
 
+  test "capture reads a machine answer, so gh is spawned with colour off whatever the operator forced: CLICOLOR_FORCE and GH_FORCE_TTY unset, NO_COLOR set (dev#519)" do
+    Given "the operator's environment forces colour, as bin/dev's UI tier does off a TTY"
+    stub_gh(out: "{}")
+    forced = { "CLICOLOR_FORCE" => "1", "GH_FORCE_TTY" => "1", "NO_COLOR" => nil }
+
+    When
+    with_env(forced) { Dev::Lifecycle::Gh.new(root: @root).capture(["api", "repos/o/r/deployments"]) }
+
+    Then
+    (@dir / "env").read.lines(chomp: true) == ["CLICOLOR_FORCE=unset", "GH_FORCE_TTY=unset", "NO_COLOR=1"]
+  end
+
   test "stream runs gh in the checkout on this process's stdout and stderr, with nothing on its stdin: the argv and cwd are gh's, nothing is captured" do
     Given
     stub_gh(out: "✓ run 42 completed with 'success'\n")
@@ -92,6 +114,18 @@ class Dev::Lifecycle::GhTest < Minitest::Test
     (@dir / "argv").read.lines(chomp: true) == ["run", "watch", "42"]
     (@dir / "stdin").read == ""
     Pathname((@dir / "cwd").read.strip).realpath == @root.realpath
+  end
+
+  test "stream is the operator's terminal, so their colour forcing reaches gh untouched" do
+    Given
+    stub_gh
+    forced = { "CLICOLOR_FORCE" => "1", "GH_FORCE_TTY" => nil, "NO_COLOR" => nil }
+
+    When
+    with_env(forced) { Dev::Lifecycle::Gh.new(root: @root).stream(["run", "watch", "42"]) }
+
+    Then
+    (@dir / "env").read.lines(chomp: true) == ["CLICOLOR_FORCE=1", "GH_FORCE_TTY=unset", "NO_COLOR=unset"]
   end
 
   test "a nonzero streamed gh is CommandFailedError naming the argv, the checkout and the exit" do
