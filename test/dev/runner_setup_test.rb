@@ -49,6 +49,15 @@ class Dev::RunnerSetupTest < Minitest::Test
   end
 
   # An authed executor that also appends each capture call (as a joined command
+  # Run the block with these variables set (nil: unset), restoring after.
+  def with_env(vars)
+    saved = vars.keys.to_h { |key| [key, ENV.fetch(key, nil)] }
+    vars.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
+    yield
+  ensure
+    saved.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
+  end
+
   # line) to `captured`. A lambda (like authed_responder) because plain blocks
   # auto-splat their single array argument under RSpock's transformation.
   def capturing_executor(captured)
@@ -519,6 +528,22 @@ class Dev::RunnerSetupTest < Minitest::Test
     out == ""
     err.empty? == false
     ok == false
+  end
+
+  test "Executor#capture runs its child with colour off whatever the operator forced — gh colourises JSON on a pipe under CLICOLOR_FORCE / GH_FORCE_TTY, and every capture here is parsed (dev#544); #system is the operator's terminal and keeps their preference" do
+    Given "an operator forcing colour, as bin/dev's UI tier is picked by"
+    forced = { "CLICOLOR_FORCE" => "1", "GH_FORCE_TTY" => "1", "NO_COLOR" => nil }
+    probe = ["sh", "-c", 'echo "${CLICOLOR_FORCE:-unset} ${GH_FORCE_TTY:-unset} ${NO_COLOR:-unset}"']
+
+    When "capturing, and running, a child that reports those variables"
+    captured, streamed = with_env(forced) do
+      out, _err, _ok = Dev::RunnerSetup::Executor.new.capture(*probe)
+      [out.strip, `#{probe.map { |word| "'#{word.gsub("'", "'\\\\''")}'" }.join(" ")}`.strip]
+    end
+
+    Then "the capture saw none of the forcing and NO_COLOR; a plain child saw what the operator set"
+    captured == "unset unset 1"
+    streamed == "1 1 unset"
   end
 
   test "Executor#system runs a real process, honoring chdir" do
