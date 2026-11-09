@@ -95,6 +95,57 @@ class Dev::Deps::StalenessTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  # dev's own Gemfile.lock shape: the project's gem under `remote: .`, its
+  # version `VERSION`'s mirror, and a locked gem beside it.
+  GEMFILE_LOCK = <<~LOCK
+    PATH
+      remote: .
+      specs:
+        dev (0.8.0)
+          cli-ui (~> 2.0)
+
+    GEM
+      remote: https://rubygems.org/
+      specs:
+        cli-ui (2.7.0)
+
+    CHECKSUMS
+      cli-ui (2.7.0) sha256=e36147f2e8088796b996f0560f577bd1599f2b6aa3c374fe09fff59af5589c35
+      dev (0.8.0)
+  LOCK
+
+  test "a release bump of the project's own gem in Gemfile.lock is not an install change: a path gem is pointed at, never installed from the lock (dev#527)" do
+    Given "a stamped project that is a gem of itself, then released"
+    dir = Dir.mktmpdir("dev-staleness-test-")
+    project = build_synced_project(dir)
+    File.write(File.join(project, "Gemfile.lock"), GEMFILE_LOCK)
+    staleness = build_staleness(dir, project)
+    staleness.stamp_installed!
+    File.write(File.join(project, "Gemfile.lock"), GEMFILE_LOCK.gsub("dev (0.8.0)", "dev (0.8.1)"))
+
+    Expect
+    staleness.messages == []
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a change to any other line of Gemfile.lock after the last install is an install change, as before" do
+    Given "a stamped project whose lock then moves a gem it installs"
+    dir = Dir.mktmpdir("dev-staleness-test-")
+    project = build_synced_project(dir)
+    File.write(File.join(project, "Gemfile.lock"), GEMFILE_LOCK)
+    staleness = build_staleness(dir, project)
+    staleness.stamp_installed!
+    File.write(File.join(project, "Gemfile.lock"), GEMFILE_LOCK.gsub("cli-ui (2.7.0)", "cli-ui (2.8.0)"))
+
+    Expect
+    staleness.messages == ["lockfiles changed since the last install — run dev up"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "a never-installed project reports the never-installed message" do
     Given "lockfiles but no stamp on this machine"
     dir = Dir.mktmpdir("dev-staleness-test-")

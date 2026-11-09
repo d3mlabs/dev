@@ -4,6 +4,7 @@
 require "digest"
 require "fileutils"
 require "pathname"
+require "dev/gemfile_lock"
 require_relative "lockfile"
 
 module Dev
@@ -47,11 +48,14 @@ module Dev
       # Lockfiles whose contents constitute "what an install consumed", in
       # fixed order for a deterministic digest. Gemfile.lock is included
       # because dev generates it from the gem declarations — it is a lockfile
-      # of this system in everything but name.
+      # of this system in everything but name — read without the project's
+      # own gem's version (GemfileLock#without_own_version): a path gem is
+      # pointed at, never installed from the lock, so a release bump of it
+      # is not an install change (dev#527).
       LOCK_FILES = T.let(
         [
           Lockfile::DEPS_LOCK_FILE,
-          "Gemfile.lock",
+          GemfileLock::FILE_NAME,
         ].freeze,
         T::Array[String],
       )
@@ -157,9 +161,19 @@ module Dev
 
         digest = Digest::SHA256.new
         paths.each do |path|
-          digest << (path.exist? ? path.read : "<absent:#{path.basename}>")
+          digest << (path.exist? ? consumed(path) : "<absent:#{path.basename}>")
         end
         digest.hexdigest
+      end
+
+      # A lockfile's contents as an install consumed them.
+      #
+      # @param path [Pathname] an existing lockfile
+      # @return [String]
+      sig { params(path: Pathname).returns(String) }
+      def consumed(path)
+        text = path.read
+        path.basename.to_s == GemfileLock::FILE_NAME ? GemfileLock.new(text).without_own_version : text
       end
 
       # @return [Pathname]
