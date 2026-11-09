@@ -156,14 +156,15 @@ class Dev::Deps::BrewPublisherTest < Minitest::Test
     receipt = publisher(gh).publish([core, deployment], channel:, track: Dev::Lifecycle::Track::Live, scratch: @scratch)
 
     Then "both formulas moved from the shared source tarball to their own asset, the resource untouched; the receipt is the tap's commit " \
-         "with the upgrade line as its hint (what bin/release.rb closed on, dev#514), the urls the forge's answers"
+         "with the upgrade line as its hint (what bin/release.rb closed on, dev#514) — the deployment alone, since it depends on " \
+         "dev-core and brew upgrades a dependency with its dependent (dev#531); the urls the forge's answers"
     origin_formula("dev-core") == DEV_CORE_FORMULA.sub(SOURCE_TARBALL, "#{DOWNLOADS}/dev-core-0.8.0.zip").sub(OLD_SHA, core.archive_sha256)
     origin_formula("dev") == DEV_FORMULA.sub(SOURCE_TARBALL, "#{DOWNLOADS}/dev-0.8.0.zip").sub(OLD_SHA, deployment.archive_sha256)
     origin_formula("dev-core").include?(RESOURCE_SHA)
     origin_git.capture(["log", "--format=%s", "main"]).lines.map(&:strip) == ["dev-core, dev: 0.8.0", "dev: 0.7.13"]
     receipt == Dev::Lifecycle::Receipt.new(
       summary: "d3mlabs/d3mlabs@#{origin_git.capture(["rev-parse", "main"]).strip[0, 12]}: dev-core, dev → v0.8.0",
-      hint: "To update locally: brew update && brew upgrade d3mlabs/d3mlabs/dev-core d3mlabs/d3mlabs/dev",
+      hint: "To update locally: brew update && brew upgrade d3mlabs/d3mlabs/dev",
     )
     gh.calls.map(&:argv).uniq == [["release", "view", "v0.8.0", "--json", "assets", "--jq", ".assets"]]
   end
@@ -180,9 +181,23 @@ class Dev::Deps::BrewPublisherTest < Minitest::Test
     Then
     receipt == Dev::Lifecycle::Receipt.new(
       summary: "d3mlabs/d3mlabs already points at v0.8.0: dev-core, dev",
-      hint: "To update locally: brew update && brew upgrade d3mlabs/d3mlabs/dev-core d3mlabs/d3mlabs/dev",
+      hint: "To update locally: brew update && brew upgrade d3mlabs/d3mlabs/dev",
     )
     origin_git.capture(["rev-parse", "main"]).strip == published
+  end
+
+  test "two formulas with no depends_on between them are both in the upgrade line: brew upgrades neither for the other" do
+    Given "a tap whose dev.rb does not depend on dev-core"
+    dir = prepare_clone
+    (dir / "Formula" / "dev.rb").write(DEV_FORMULA.sub("  depends_on \"d3mlabs/d3mlabs/dev-core\"\n", ""))
+    GIT.new(root: dir).capture(["commit", "-q", "-am", "dev: no edge"])
+    GIT.new(root: dir).capture(["push", "-q", "origin", "main"])
+
+    When
+    receipt = publisher(forge).publish([release_shipment("dev-core"), release_shipment("dev")], channel:, track: Dev::Lifecycle::Track::Live, scratch: @scratch)
+
+    Then
+    receipt.hint == "To update locally: brew update && brew upgrade d3mlabs/d3mlabs/dev-core d3mlabs/d3mlabs/dev"
   end
 
   test "only the formulas that moved are committed: one already at the release, the other not" do

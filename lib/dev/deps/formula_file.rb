@@ -56,6 +56,9 @@ module Dev
       EXTENSION = ".rb"
       URL_LINE = /\A(?<lead>\s*url\s+")(?<url>[^"]+)(?<tail>".*)\z/
       SHA256_LINE = /\A(?<lead>\s*sha256\s+")(?<sha256>[0-9a-f]+)(?<tail>".*)\z/
+      # `depends_on "name"` / `depends_on "tap/name" => :build`: the name
+      # is the quoted word, tap-qualified or not.
+      DEPENDS_ON_LINE = /\A\s*depends_on\s+"(?<name>[^"]+)"/
 
       # @return [Pathname]
       sig { returns(Pathname) }
@@ -72,6 +75,17 @@ module Dev
       # @return [String]
       sig { returns(String) }
       def name = @path.basename(EXTENSION).to_s
+
+      # The formulas this one depends on, as brew resolves a `depends_on`:
+      # the formula's own name, the tap prefix dropped — in file order,
+      # `on_macos` and other blocks included. What the publisher reads to
+      # name only the roots in its upgrade line (dev#531).
+      #
+      # @return [Array<String>]
+      sig { returns(T::Array[String]) }
+      def dependencies
+        read_lines.filter_map { |line| DEPENDS_ON_LINE.match(line)&.[](:name)&.split("/")&.last }
+      end
 
       # The stable spec as the file carries it now.
       #
