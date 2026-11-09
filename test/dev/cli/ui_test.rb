@@ -54,13 +54,17 @@ class Dev::Cli::UiImplTest < Minitest::Test
     Dev::Cli::UiImpl.new(cli_ui: @cli_ui, prompt: prompt, input: pipe).ask_secret("Token").nil?
   end
 
-  # A StdoutRouter double that remembers whether it is on (and passes
-  # for the module at the sig, as typed_mock does).
+  # A StdoutRouter double faithful to cli-ui 2.7.0 (and passing for the
+  # module at the sig, as typed_mock does): `disable` is one-way — it
+  # stops routing but leaves the `write_without_cli_ui` alias behind, so
+  # `enabled?` keeps answering true and the next `enable` refuses (dev#523).
+  # `routing?` is the truth a test reads.
   class FakeRouter
     attr_reader :log
 
     def initialize
-      @on = false
+      @activated = false
+      @routing = false
       @log = []
     end
 
@@ -69,20 +73,22 @@ class Dev::Cli::UiImplTest < Minitest::Test
 
     def enable
       @log << :enable
-      return false if @on
+      return false if @activated
 
-      @on = true
+      @activated = true
+      @routing = true
     end
 
     def disable
       @log << :disable
-      return false unless @on
+      return false unless @activated
 
-      @on = false
+      @routing = false
       true
     end
 
-    def enabled?(_stream = nil) = @on
+    def enabled?(_stream = nil) = @activated
+    def routing? = @routing
   end
 
   # A CLI::UI that formats nothing and remembers what it printed.
@@ -102,31 +108,32 @@ class Dev::Cli::UiImplTest < Minitest::Test
     Dev::Cli::UiImpl.new(cli_ui:, frame:, spinner:, router:, prompt:, input:)
   end
 
-  test "#frame is a timed CLI::UI frame around the block, answering what the block answered; the outermost frame turns the StdoutRouter on and off again — never left on across an exec or a waited child (plans#52)" do
+  test "#frame is a timed CLI::UI frame around the block, answering what the block answered; the first frame turns the StdoutRouter on and it stays on — cli-ui cannot turn it on twice, and every frame's lines need it (plans#52, dev#523)" do
     Given
     frame = typed_mock(CLI::UI::Frame, class_of: true)
-    frame.stubs(:open).with("Releasing v1.2.0", timing: true).yields.returns(42)
-    frame.stubs(:open).with("Packaging site", timing: true).yields.returns(7)
+    frame.stubs(:open).with("Release: 1.1.0 → 1.2.0", timing: true).yields.returns(42)
+    frame.stubs(:open).with("Cutting v1.2.0", timing: true).yields.returns(7)
+    frame.stubs(:open).with("Publishing v1.2.0", timing: true).yields.returns(9)
     router = FakeRouter.new
     ui = ui(frame:, router:)
     seen = []
 
-    When
-    answer = ui.frame("Releasing v1.2.0") do
-      seen << router.enabled?
-      ui.frame("Packaging site") { seen << router.enabled? }
-      seen << router.enabled?
+    When "a verb's three frames in a row, one nested"
+    answer = ui.frame("Release: 1.1.0 → 1.2.0") do
+      seen << router.routing?
+      ui.frame("Cutting v1.2.0") { seen << router.routing? }
+      seen << router.routing?
       42
     end
+    ui.frame("Publishing v1.2.0") { seen << router.routing? }
 
-    Then
+    Then "routed in every frame, the last included; never turned off"
     answer == 42
-    seen == [true, true, true]
-    !router.enabled?
-    router.log == [:enable, :disable]
+    seen == [true, true, true, true]
+    router.log.none?(:disable)
   end
 
-  test "#frame turns the router off on the way out of a raise too" do
+  test "#frame leaves the router on through a raise too: the verb's error report after it is still a frame's line" do
     Given
     frame = typed_mock(CLI::UI::Frame, class_of: true)
     frame.stubs(:open).yields
@@ -136,7 +143,7 @@ class Dev::Cli::UiImplTest < Minitest::Test
     assert_raises(RuntimeError) { ui(frame:, router:).frame("Cutting v1.2.0") { raise "refused" } }
 
     Then
-    !router.enabled?
+    router.routing?
   end
 
   test "#spin runs the block under a CLI::UI spinner with no debrief; a raise marks it failed and comes back out as itself (dev#514)" do
@@ -182,7 +189,7 @@ class Dev::Cli::UiImplTest < Minitest::Test
     "a spinner"                | ->(ui) { ui.spin("Tagging") { :never } }
   end
 
-  test "#step gives the block the terminal: no spinner, the router off across it (the child's lines land as written) and on again after, the name before and ✓ after (plans#52)" do
+  test "#step gives the block the terminal: no spinner, the name before and ✓ after; the router is not touched — a child's fd 1 never was the routed $stdout, and turning it off would lose the bar for good (plans#52, dev#523)" do
     Given
     router = FakeRouter.new
     frame = typed_mock(CLI::UI::Frame, class_of: true)
@@ -195,20 +202,21 @@ class Dev::Cli::UiImplTest < Minitest::Test
     When
     ui.frame("Cutting v1.2.0") do
       answer = ui.step("Packaging site") do
-        seen << router.enabled?
+        seen << router.routing?
         seen << Dev::TerminalOwner.spinning?
         :packaged
       end
-      seen << router.enabled?
+      seen << router.routing?
     end
 
     Then
     answer == :packaged
-    seen == [false, false, true]
+    seen == [true, false, true]
+    router.log == [:enable]
     cli_ui.printed == ["Packaging site", "{{v}} Packaging site"]
   end
 
-  test "#step that raises prints ✗, puts the router back, and the raise comes back out as itself" do
+  test "#step that raises prints ✗ and the raise comes back out as itself" do
     Given
     router = FakeRouter.new
     frame = typed_mock(CLI::UI::Frame, class_of: true)
@@ -222,7 +230,7 @@ class Dev::Cli::UiImplTest < Minitest::Test
       ui.frame("Deploying staging") do
         ui.step("Shipping via run: sh ./stage.sh") { raise "exited 7" }
       ensure
-        inside << router.enabled?
+        inside << router.routing?
       end
     end
 
