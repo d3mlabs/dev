@@ -95,8 +95,8 @@ if global_dispatch.global_command?(ARGV)
   exit 0
 end
 
-# The StdoutRouter is the Ui's to turn on, inside a frame, and off again
-# before anything execs or waits on a child (plans#52) — never here.
+# The StdoutRouter is the Ui's to turn on, with its first frame (plans#52,
+# dev#523) — never here.
 ui = if $stdout.tty? || ENV["CI"] || ENV["CLICOLOR_FORCE"]
   Dev::Cli::UiImpl.new(cli_ui: CLI::UI)
 else

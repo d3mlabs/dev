@@ -666,9 +666,9 @@ a stdio contract:
 
 | Verb | Spinner | Child stdio | StdoutRouter | Used for |
 |---|---|---|---|---|
-| `frame(title) { }` | — | — | on inside the outermost frame, off on its way out (a raise included) | a stage: `Cutting v1.2.0`, `Publishing v1.2.0`, `Deploying staging (testing track)` |
+| `frame(title) { }` | — | — | turned on by the first frame, on from then on | a stage: `Cutting v1.2.0`, `Publishing v1.2.0`, `Deploying staging (testing track)` |
 | `spin(name) { }` | yes | none, or captured (`Open3.capture3`, stdin supplied) | capturing | bump, tag, push (`Lifecycle::Git`), `gh release create` / `upload`, the `gh api` record |
-| `step(name) { }` | **no** | **inherited** — the child has the terminal | **off across the block**, on again after | `Packaging <build>` (the builder), `Shipping via …` (the publisher), anything that may prompt |
+| `step(name) { }` | **no** | **inherited** — the child has the terminal | untouched — the child's fd 1 never was `$stdout` | `Packaging <build>` (the builder), `Shipping via …` (the publisher), anything that may prompt |
 | `note(text)` | — | — | — | the plan's lines, the epilogue |
 | `confirm(question)` | — | — | — | `Proceed?` — `true` / `false` / `nil` for no terminal |
 
@@ -694,10 +694,13 @@ never prefixed, in any tier — a `Packaging <build>` step's builder
 output sits between the step's name and its `✓` exactly as the builder
 wrote it, colors and progress bars intact. A frame groups dev's lines;
 it promises nothing about a child's, and dev does not put a pipe or a
-PTY between the child and the terminal to change that. The router is on
-only inside the outermost frame and off before anything else runs — an
-exec, a waited child outside a frame — so nothing downstream sees a
-swapped `$stdout`.
+PTY between the child and the terminal to change that. The first frame
+turns the router on and it stays on for the process: cli-ui's `disable`
+is one-way (the alias `enabled?` reads survives it, so a second
+`enable` refuses — [dev#523](https://github.com/d3mlabs/dev/issues/523),
+which cost every line after the first `step` its bar), and nothing
+needs it off — a child's fd 1 is never the Ruby-level `$stdout`, and
+with no frame open the router prefixes nothing.
 
 **Tiers.** `bin/dev` picks `UiImpl` (CLI::UI) when stdout is a TTY or
 `CI` / `CLICOLOR_FORCE` is set, `NoUi` otherwise (a pipe, ai-flow, the

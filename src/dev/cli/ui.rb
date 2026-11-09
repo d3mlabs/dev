@@ -21,16 +21,17 @@ module Dev
     # captured subprocess (`Open3.capture3`, stdin supplied) may run
     # under one. A child that inherits the terminal — a `build:` script,
     # a publisher, anything that may prompt — runs under a step: no
-    # spinner, the StdoutRouter off across it, its lines and prompts
-    # landing as written. The rule is enforced, not reviewed: a spin owns
+    # spinner, nothing captured, its lines and prompts landing as
+    # written. The rule is enforced, not reviewed: a spin owns
     # the thread's terminal (TerminalOwner), and the places dev spawns
     # with inherited stdio refuse to run under it.
     #
     # The StdoutRouter — CLI::UI's Ruby-level `$stdout` writer, which
-    # prefixes each line with the open frame's bar — is on only inside
-    # the outermost frame, never across an exec or a waited child outside
-    # one. It is Ruby-level: a child's own lines are never prefixed, by
-    # any tier, and nothing here pretends otherwise.
+    # prefixes each line with the open frame's bar — is turned on by the
+    # first frame and stays on: cli-ui cannot turn it on twice (dev#523),
+    # and with no frame open it prefixes nothing. It is Ruby-level: a
+    # child's own lines are never prefixed, by any tier, and nothing
+    # here pretends otherwise.
     #
     # Two tiers: UiImpl (TTY/CI — CLI::UI) and NoUi (pipe/file/tests —
     # the same facts as plain lines, no escape codes, nobody to ask).
@@ -148,7 +149,6 @@ module Dev
         @spinner = spinner
         @router = router
         @input = input
-        @depth = T.let(0, Integer)
         @cli_ui.enable_color = true
       end
 
@@ -170,21 +170,16 @@ module Dev
         @prompt.ask_password(question)
       end
 
-      # The outermost frame turns the router on, and off again on the way
-      # out — a raise included — so nothing after it (an exec, a waited
-      # child) runs with `$stdout` swapped.
+      # The first frame turns the StdoutRouter on and it stays on for the
+      # process: cli-ui's `disable` is one-way (it leaves the alias
+      # `enabled?` reads, so a second `enable` refuses — dev#523), and
+      # nothing needs it off — a child's fd 1 is never the Ruby-level
+      # `$stdout`, and with no frame open the router prefixes nothing.
       sig { override.type_parameters(:T).params(title: String, block: T.proc.returns(T.type_parameter(:T))).returns(T.type_parameter(:T)) }
       def frame(title, &block)
         TerminalOwner.claim!("a frame")
-        outermost = @depth.zero?
-        @router.enable if outermost
-        @depth += 1
-        begin
-          @frame.open(title, timing: true, &block)
-        ensure
-          @depth -= 1
-          @router.disable if outermost
-        end
+        @router.enable
+        @frame.open(title, timing: true, &block)
       end
 
       # The spinner swallows the block's raise and answers false
@@ -208,23 +203,20 @@ module Dev
       end
 
       # The name and the glyph line are dev's (prefixed, inside a frame);
-      # between them the router is off, so the child's own output reaches
-      # the terminal untouched — and a prompt of its lands where the
-      # operator sees it.
+      # between them the child writes to its inherited fd 1 — never the
+      # routed `$stdout` — so its lines reach the terminal untouched and a
+      # prompt of its lands where the operator sees it. No spinner, nothing
+      # captured (TerminalOwner).
       sig { override.type_parameters(:T).params(name: String, block: T.proc.returns(T.type_parameter(:T))).returns(T.type_parameter(:T)) }
       def step(name, &block)
         TerminalOwner.claim!("a step")
         @cli_ui.puts(@cli_ui.fmt(name))
-        routed = @router.enabled?
-        @router.disable if routed
         begin
           result = block.call
         rescue StandardError
-          @router.enable if routed
           @cli_ui.puts(@cli_ui.fmt("{{x}} #{name}"))
           raise
         end
-        @router.enable if routed
         @cli_ui.puts(@cli_ui.fmt("{{v}} #{name}"))
         result
       end
