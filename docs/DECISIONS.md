@@ -283,8 +283,6 @@ Consequences, all in dev so that adding a runner stays "check out, `dev runner r
 
 ---
 
----
-
 ## ADR-0014 — One `lib/`; the shell is a namespace; a cop holds the boundary
 
 **Status:** Accepted. [dev#537](https://github.com/d3mlabs/dev/issues/537), the prerequisite of [plans#52](https://github.com/d3mlabs/plans/issues/52) step 2.
