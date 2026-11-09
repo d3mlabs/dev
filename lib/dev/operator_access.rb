@@ -3,7 +3,6 @@
 
 require "stringio"
 
-require "dev/confirmer"
 require "dev/runner_registry"
 
 module Dev
@@ -55,6 +54,11 @@ module Dev
     # the browser round-trip itself.
     Refresher = T.type_alias { T.proc.params(scope: String).returns(T::Boolean) }
 
+    # A yes/no at the terminal — nil when there is none to ask at, which
+    # is a no here (Dev::Cli::Ui#confirm; `lib` does not reach into `src`,
+    # so the seam arrives as its one method, as RunnerUser's `Ask` does).
+    Confirm = T.type_alias { T.proc.params(question: String).returns(T.nilable(T::Boolean)) }
+
     # The one way a login is widened by default: gh's own refresh, which
     # prompts and opens the browser itself; its exit status is the answer.
     DEFAULT_REFRESHER = T.let(
@@ -63,40 +67,39 @@ module Dev
     )
 
     # @param registry [#group, #find] the GitHub boundary the probes go through
-    # @param confirmer [Dev::Confirmer, #confirm?] asks whether to refresh; no off a terminal
     # @param out [IO, StringIO]
     # @param refresher [Proc] how a refresh is run (injectable for tests)
     sig do
       params(
         registry: T.untyped,
-        confirmer: T.untyped,
         out: T.any(IO, StringIO),
         refresher: Refresher,
       ).void
     end
-    def initialize(registry:, confirmer: Confirmer.new, out: $stdout, refresher: DEFAULT_REFRESHER)
+    def initialize(registry:, out: $stdout, refresher: DEFAULT_REFRESHER)
       @registry = registry
-      @confirmer = confirmer
       @out = out
       @refresher = refresher
     end
 
     # Probe what a registration at `scope` needs of the operator's login;
     # refused, say so with the fix, offer the refresh at a terminal and
-    # probe once more.
+    # probe once more. The offer is a yes/no, no by default; with no
+    # terminal to ask at it is not taken.
     #
     # @param scope [String] "owner" (org) or "owner/repo"
     # @param org [Boolean] whether the registration is org-scoped
+    # @param confirm [Proc] asks the yes/no (Confirm)
     # @return [void]
     # @raise [RefusedError] when the login cannot, and a refresh did not or could not help
-    sig { params(scope: String, org: T::Boolean).void }
-    def check!(scope:, org:)
+    sig { params(scope: String, org: T::Boolean, confirm: Confirm).void }
+    def check!(scope:, org:, confirm:)
       precondition = org ? org_precondition(scope) : repo_precondition(scope)
       refusal = refusal_of(precondition)
       return if refusal.nil?
 
       @out.puts ">>> #{headline(precondition, refusal)}"
-      if @confirmer.confirm?("Run `#{precondition.fix}` now?") && @refresher.call(precondition.scope)
+      if confirm.call("Run `#{precondition.fix}` now?") && @refresher.call(precondition.scope)
         refusal = refusal_of(precondition)
         return if refusal.nil?
       end

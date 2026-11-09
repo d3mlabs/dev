@@ -3,12 +3,12 @@
 
 require "test_helper"
 require "dev/builtins/runner_unregister_command"
-require "dev/confirmer"
 require "dev/runner_discovery"
 require "dev/runner_teardown"
 require "fileutils"
 require "json"
 require "stringio"
+require "support/answering_ui"
 require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
@@ -31,14 +31,13 @@ class Dev::Builtins::RunnerUnregisterCommandTest < Minitest::Test
     home = Dir.mktmpdir
     dir = write_runner(home, "actions-runner", scope: "JPDuchesne/snappy", name: "JPSFF")
     File.write(File.join(dir, ".service"), "unit\n")
-    harness = build_harness(home: home)
-    harness.confirmer.expects(:confirm?).once
-      .with("Unregister JPSFF from JPDuchesne/snappy (~/actions-runner, service installed)?").returns(true)
+    harness = build_harness(home: home, answer: true)
 
     When "unregistering by scope"
-    harness.command.call(args: parsed_args(harness.command, ["JPDuchesne/snappy"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["JPDuchesne/snappy"]), context: harness.context)
 
-    Then "the one enrollment was torn down"
+    Then "the one question, defaulting to no, then the one enrollment torn down"
+    harness.ui.questions == [AnsweringUi::Question.new(text: "Unregister JPSFF from JPDuchesne/snappy (~/actions-runner, service installed)?", default: false)]
     harness.torn_down.map(&:dir) == [dir]
   end
 
@@ -46,14 +45,13 @@ class Dev::Builtins::RunnerUnregisterCommandTest < Minitest::Test
     Given "an enrollment and an operator who says no"
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
-    harness = build_harness(home: home)
-    harness.confirmer.expects(:confirm?).once
-      .with("Unregister JPSFF from JPDuchesne/snappy (~/actions-runner-snappy, no service)?").returns(false)
+    harness = build_harness(home: home, answer: false)
 
     When "unregistering"
-    harness.command.call(args: parsed_args(harness.command, ["JPDuchesne/snappy"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["JPDuchesne/snappy"]), context: harness.context)
 
     Then
+    harness.ui.asked == ["Unregister JPSFF from JPDuchesne/snappy (~/actions-runner-snappy, no service)?"]
     harness.torn_down == []
     harness.out.string.include?("nothing changed")
   end
@@ -62,13 +60,13 @@ class Dev::Builtins::RunnerUnregisterCommandTest < Minitest::Test
     Given "an enrollment and no terminal"
     home = Dir.mktmpdir
     dir = write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
-    harness = build_harness(home: home)
-    harness.confirmer.expects(:confirm?).never
+    harness = build_harness(home: home, answer: nil)
 
     When "unregistering by ~-dir with --yes"
-    harness.command.call(args: parsed_args(harness.command, ["--yes", "~/actions-runner-snappy"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--yes", "~/actions-runner-snappy"]), context: harness.context)
 
     Then
+    harness.ui.asked.empty?
     harness.torn_down.map(&:dir) == [dir]
   end
 
@@ -94,13 +92,13 @@ class Dev::Builtins::RunnerUnregisterCommandTest < Minitest::Test
     one = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
     two = write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
     File.write(File.join(two, ".service"), "unit\n")
-    harness = build_harness(home: home)
-    harness.confirmer.expects(:confirm?).once.with("Unregister all 3?").returns(true)
+    harness = build_harness(home: home, answer: true)
 
     When "unregistering by scope"
-    harness.command.call(args: parsed_args(harness.command, ["d3mlabs"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["d3mlabs"]), context: harness.context)
 
     Then
+    harness.ui.asked == ["Unregister all 3?"]
     harness.torn_down.map(&:dir) == [one, two, three]
     harness.out.string.include?("3 slots on this host serve d3mlabs:")
     harness.out.string.include?("  mac1 (~/actions-runner-ai-ask, no service)")
@@ -113,14 +111,14 @@ class Dev::Builtins::RunnerUnregisterCommandTest < Minitest::Test
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
     two = write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
-    harness = build_harness(home: home)
-    harness.confirmer.expects(:confirm?).once.with("Unregister all 2?").returns(false)
+    harness = build_harness(home: home, answer: false)
 
     When "declining by scope, then naming slot 2's dir with --yes"
-    harness.command.call(args: parsed_args(harness.command, ["d3mlabs"]), context: projectless_context)
-    harness.command.call(args: parsed_args(harness.command, ["--yes", "~/actions-runner-ai-ask-2"]), context: projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["d3mlabs"]), context: harness.context)
+    harness.command.call(args: parsed_args(harness.command, ["--yes", "~/actions-runner-ai-ask-2"]), context: harness.context)
 
     Then
+    harness.ui.asked == ["Unregister all 2?"]
     harness.torn_down.map(&:dir) == [two]
     harness.out.string.include?("nothing changed")
   end
@@ -197,25 +195,27 @@ class Dev::Builtins::RunnerUnregisterCommandTest < Minitest::Test
 
   private
 
-  Harness = Struct.new(:command, :torn_down, :confirmer, :out, keyword_init: true)
+  Harness = Struct.new(:command, :torn_down, :ui, :out, keyword_init: true) do
+    # The projectless context the command runs in, carrying the answering Ui.
+    def context = Dev::ExecutionContext.new(ui: ui)
+  end
 
   # A teardown whose resolution is real (tempdir discovery) and whose
-  # teardown! only records — the CLI steps have their own tests.
-  def build_harness(home:, repo: "JPDuchesne/snappy", repo_resolver: nil)
+  # teardown! only records — the CLI steps have their own tests. The Ui
+  # answers every question as `answer` says (nil: no terminal).
+  def build_harness(home:, repo: "JPDuchesne/snappy", repo_resolver: nil, answer: nil)
     torn_down = []
     discovery = Dev::RunnerDiscovery.new(home: home)
     teardown = Dev::RunnerTeardown.new(discovery: discovery, executor: nil, out: StringIO.new, home: home)
     teardown.define_singleton_method(:teardown!) { |enrollment| torn_down << enrollment }
-    confirmer = typed_mock(Dev::Confirmer)
     out = StringIO.new
     command = Dev::Builtins::RunnerUnregisterCommand.new(
       teardown: teardown,
       discovery: discovery,
       repo_resolver: repo_resolver || -> { repo },
-      confirmer: confirmer,
       out: out,
     )
-    Harness.new(command: command, torn_down: torn_down, confirmer: confirmer, out: out)
+    Harness.new(command: command, torn_down: torn_down, ui: AnsweringUi.new(out: out, answer: answer), out: out)
   end
 
   # A .runner record the way config.sh writes it (UTF-8 BOM + JSON).

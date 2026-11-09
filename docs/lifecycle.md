@@ -674,7 +674,7 @@ a stdio contract:
 | `spin(name) { }` | yes | none, or captured (`Open3.capture3`, stdin supplied) | capturing | bump, tag, push (`Lifecycle::Git`), `gh release create` / `upload`, the `gh api` record |
 | `step(name) { }` | **no** | **inherited** — the child has the terminal | untouched — the child's fd 1 never was `$stdout` | `Packaging <build>` (the builder), `Shipping via …` (the publisher), anything that may prompt |
 | `note(text)` | — | — | — | the plan's lines, the epilogue |
-| `confirm(question)` | — | — | — | `Proceed?` — `true` / `false` / `nil` for no terminal |
+| `confirm(question, default: false)` | — | — | — | `Proceed?` — `true` / `false` / `nil` for no terminal; the default is the answer offered first, no unless the caller says so, since every question dev asks unprompted is about something it would not do unasked (`engine down`'s *stop them too?*, register's *Unregister these and enroll fresh?*, [dev#533](https://github.com/d3mlabs/dev/issues/533)) |
 
 **Why the split.** A spinner captures every Ruby-level write and masks
 stdin while it animates. A child spawned with inherited stdio writes to
@@ -710,7 +710,8 @@ with no frame open the router prefixes nothing.
 `CI` / `CLICOLOR_FORCE` is set, `NoUi` otherwise (a pipe, ai-flow, the
 runner). `NoUi` prints the same facts as plain lines, no escape codes:
 the frame's title, `✓ name` / `✗ name` per spin, a step's name before
-and its glyph after; `confirm` answers `nil` rather than assuming. The
+and its glyph after; `confirm` answers `nil` rather than assuming — the
+caller treats it as a no, so `--yes` / `--force` is how a script consents. The
 plain tier is the contract — a failed action's reason is in the error
 that bubbles, not in a rendering. `build` and `package` run bare for
 now; their frames and steps are [dev#516](https://github.com/d3mlabs/dev/issues/516).

@@ -5,12 +5,12 @@ require "test_helper"
 require "dev/builtins/engine_up_command"
 require "dev/builtins/engine_down_command"
 require "dev/builtins/engine_status_command"
-require "dev/confirmer"
 require "dev/container_engine"
 require "dev/engine_provisioner"
 require "dev/engine_resources"
 require "pathname"
 require "stringio"
+require "support/answering_ui"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Builtins::EngineCommandsTest < Minitest::Test
@@ -82,9 +82,9 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
     engine
   end
 
-  def down_command(engine:, provisioner:, confirmer: typed_mock(Dev::Confirmer), out: StringIO.new)
+  def down_command(engine:, provisioner:, out: StringIO.new)
     provisioner.stubs(:engine).returns(engine)
-    Dev::Builtins::EngineDownCommand.new(provisioner: provisioner, confirmer: confirmer, out: out, home: "/Users/jp")
+    Dev::Builtins::EngineDownCommand.new(provisioner: provisioner, out: out, home: "/Users/jp")
   end
 
   test "engine down on an idle engine just stops it" do
@@ -112,15 +112,15 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
     provisioner = typed_mock(Dev::EngineProvisioner)
     provisioner.stubs(:assert_stoppable!)
     provisioner.expects(:stop!).once.in_sequence(order)
-    confirmer = typed_mock(Dev::Confirmer)
-    confirmer.expects(:confirm?).never
+    ui = AnsweringUi.new
     out = StringIO.new
 
     When "bringing the engine down"
-    down_command(engine: engine, provisioner: provisioner, confirmer: confirmer, out: out).call(args: no_args, context: no_project)
+    down_command(engine: engine, provisioner: provisioner, out: out).call(args: no_args, context: no_project(ui:))
 
-    Then "the checkout is named, not the container"
+    Then "the checkout is named, not the container; nothing was asked"
     out.string == "dev: stopped build container: snappy (~/src/snappy)\ndev: engine stopped.\n"
+    ui.asked.empty?
   end
 
   test "engine down fails loudly when a container will not stop, leaving the engine up" do
@@ -140,15 +140,14 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
     error.message == "could not stop container #{MANAGED.name}."
   end
 
-  test "engine down asks before stopping containers dev does not manage: #{description}" do
-    Given "a foreign container running and a user who answers #{answer}"
+  test "engine down asks through the Ui seam before stopping containers dev does not manage, no being the default: #{description} (dev#533)" do
+    Given "a foreign container running and a terminal that answers #{answer.inspect}"
     engine = engine_with([FOREIGN])
     stop = engine.expects(:run).with(["stop", "-t", "0", FOREIGN.name], out: File::NULL, err: File::NULL).returns(true)
     provisioner = typed_mock(Dev::EngineProvisioner)
     provisioner.stubs(:assert_stoppable!)
-    confirmer = typed_mock(Dev::Confirmer)
-    confirmer.expects(:confirm?).with { |question| question.include?("stop") }.once.returns(answer)
-    if answer
+    ui = AnsweringUi.new(answer:)
+    if stopped
       stop.once
       provisioner.expects(:stop!).once
     else
@@ -159,21 +158,23 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
 
     When "bringing the engine down"
     error = begin
-      down_command(engine: engine, provisioner: provisioner, confirmer: confirmer, out: out).call(args: no_args, context: no_project)
+      down_command(engine: engine, provisioner: provisioner, out: out).call(args: no_args, context: no_project(ui:))
       nil
     rescue Dev::Builtins::EngineDownCommand::EngineBusyError => e
       e
     end
 
-    Then "the foreign container is listed first; a no is a refusal naming it"
+    Then "the foreign container is listed first; the question defaults to no; anything but yes is a refusal naming it"
     out.string.include?("my-postgres (not managed by dev)")
-    error.nil? == answer
+    ui.questions == [AnsweringUi::Question.new(text: "dev: stop them too?", default: false)]
+    error.nil? == stopped
     error.nil? || error.message.include?("my-postgres")
 
     Where
-    description | answer
-    "yes"       | true
-    "no"        | false
+    description      | answer | stopped
+    "yes"            | true   | true
+    "no"             | false  | false
+    "no terminal"    | nil    | false
   end
 
   test "engine down --force stops everything without asking" do
@@ -184,15 +185,14 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
     provisioner = typed_mock(Dev::EngineProvisioner)
     provisioner.stubs(:assert_stoppable!)
     provisioner.expects(:stop!).once
-    confirmer = typed_mock(Dev::Confirmer)
-    confirmer.expects(:confirm?).never
+    ui = AnsweringUi.new
 
     When "forcing the engine down"
-    command = down_command(engine: engine, provisioner: provisioner, confirmer: confirmer)
-    command.call(args: parsed_args(command, ["--force"]), context: no_project)
+    command = down_command(engine: engine, provisioner: provisioner)
+    command.call(args: parsed_args(command, ["--force"]), context: no_project(ui:))
 
     Then
-    true
+    ui.asked.empty?
   end
 
   test "engine down on an engine dev does not own refuses before touching any container" do
@@ -355,8 +355,8 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
 
   private
 
-  def no_project
-    Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui))
+  def no_project(ui: typed_mock(Dev::Cli::Ui))
+    Dev::ExecutionContext.new(ui:)
   end
 
   def project_context(engine:)

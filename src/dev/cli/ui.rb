@@ -108,12 +108,16 @@ module Dev
       # Ask yes or no at the terminal. nil when there is no terminal to
       # ask at (a pipe, CI): the caller decides what that means — a verb
       # about to do something irreversible refuses rather than assume.
+      # The default is the answer offered first — no, unless the caller
+      # says otherwise: every question dev asks unprompted is about
+      # something it would not do unasked (dev#533).
       #
       # @param question [String]
+      # @param default [Boolean] the answer Enter gives
       # @return [Boolean, nil]
       # @raise [TerminalOwner::UnderSpinnerError] under a spin
-      sig { abstract.params(question: String).returns(T.nilable(T::Boolean)) }
-      def confirm(question); end
+      sig { abstract.params(question: String, default: T::Boolean).returns(T.nilable(T::Boolean)) }
+      def confirm(question, default: false); end
 
       # One formatted line, CLI::UI's markup (`{{bold:…}}`, `{{v}}`).
       #
@@ -221,12 +225,12 @@ module Dev
         result
       end
 
-      sig { override.params(question: String).returns(T.nilable(T::Boolean)) }
-      def confirm(question)
+      sig { override.params(question: String, default: T::Boolean).returns(T.nilable(T::Boolean)) }
+      def confirm(question, default: false)
         TerminalOwner.claim!("a prompt")
         return nil unless @input.tty?
 
-        @prompt.confirm(question)
+        @prompt.confirm(question, default: default)
       end
 
       sig { override.params(text: String).void }
@@ -293,8 +297,8 @@ module Dev
         raise
       end
 
-      sig { override.params(question: String).returns(T.nilable(T::Boolean)) }
-      def confirm(question)
+      sig { override.params(question: String, default: T::Boolean).returns(T.nilable(T::Boolean)) }
+      def confirm(question, default: false)
         TerminalOwner.claim!("a prompt")
         nil
       end

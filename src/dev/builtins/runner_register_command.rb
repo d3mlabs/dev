@@ -2,7 +2,6 @@
 # frozen_string_literal: true
 
 require "dev/command"
-require "dev/confirmer"
 require "dev/deps/lockfile"
 require "dev/engine_provisioner"
 require "dev/enrolled_runner"
@@ -186,7 +185,6 @@ module Dev
           discovery: Dev::RunnerDiscovery,
           registry: T.untyped,
           teardown: Dev::RunnerTeardown,
-          confirmer: Dev::Confirmer,
           engine_provisioner: Dev::EngineProvisioner,
           runner_user_factory: RunnerUserFactory,
           data_root_provisioner: T.nilable(Dev::LinuxDataRootProvisioner),
@@ -208,8 +206,6 @@ module Dev
         registry: Dev::RunnerRegistry.new,
         # `dev runner unregister`'s implementation, for superseded enrollments.
         teardown: Dev::RunnerTeardown.new(discovery: discovery),
-        # Asks before unregistering anything.
-        confirmer: Dev::Confirmer.new,
         # `dev up`'s engine step, run here for the checked-out repo's hint.
         engine_provisioner: Dev::EngineProvisioner.new,
         # The host rule (Linux: a runner user; elsewhere nil).
@@ -228,7 +224,7 @@ module Dev
         @groups = T.let(groups || Dev::RunnerGroups.new(registry: registry, out: out), Dev::RunnerGroups)
         # The operator's own preconditions, probed first (dev#493).
         @operator_access = T.let(
-          Dev::OperatorAccess.new(registry: registry, confirmer: confirmer, out: out, refresher: refresher),
+          Dev::OperatorAccess.new(registry: registry, out: out, refresher: refresher),
           Dev::OperatorAccess,
         )
         @runner_setup_factory = runner_setup_factory
@@ -237,7 +233,6 @@ module Dev
         @discovery = discovery
         @registry = registry
         @teardown = teardown
-        @confirmer = confirmer
         @engine_provisioner = engine_provisioner
         @runner_user_factory = runner_user_factory
         @data_root_provisioner = data_root_provisioner
@@ -380,7 +375,7 @@ module Dev
         # The operator's login first, before sudo, brew or the engine: can
         # it do what this registration asks of it (mint tokens; with --org,
         # read and converge runner groups)? Refused, this is where it stops.
-        @operator_access.check!(scope: org ? T.must(repo.split("/").first) : repo, org: org)
+        @operator_access.check!(scope: org ? T.must(repo.split("/").first) : repo, org: org, confirm: ->(question) { context.ui.confirm(question) })
 
         container = context.project&.project_images&.containerized? || false
         engine = context.project&.engine
@@ -426,7 +421,7 @@ module Dev
         by_slot, runners = enrolled_slots(scope, enrollments, naming, config)
 
         if superseded?(enrollments, by_slot, runners, runner_user)
-          retire!(scope, enrollments, by_slot, runners, runner_user, yes: yes)
+          retire!(scope, enrollments, by_slot, runners, runner_user, yes: yes, ui: context.ui)
           by_slot = {}
           runners = {}
         end
@@ -434,7 +429,7 @@ module Dev
         # How many slots: what --slots says, else what is enrolled (the
         # highest slot — a gap is re-filled), else one.
         count = slots || by_slot.keys.max || 1
-        retire_surplus!(scope, by_slot.select { |slot, _dirs| slot > count }.values.flatten, yes: yes)
+        retire_surplus!(scope, by_slot.select { |slot, _dirs| slot > count }.values.flatten, yes: yes, ui: context.ui)
 
         (1..count).each do |slot|
           enrollment = by_slot[slot]&.first
@@ -466,7 +461,7 @@ module Dev
         if org
           converge_access!(scope, group, repo)
         else
-          offer_exclusivity!(scope, labels, yes: yes)
+          offer_exclusivity!(scope, labels, yes: yes, ui: context.ui)
         end
       end
 
@@ -501,8 +496,9 @@ module Dev
       # @param scope [String] the repo, "owner/repo"
       # @param labels [String] comma-separated labels (config.sh shape)
       # @param yes [Boolean] `--yes`
-      sig { params(scope: String, labels: String, yes: T::Boolean).void }
-      def offer_exclusivity!(scope, labels, yes:)
+      # @param ui [Cli::Ui] asks; no terminal is a no
+      sig { params(scope: String, labels: String, yes: T::Boolean, ui: Cli::Ui).void }
+      def offer_exclusivity!(scope, labels, yes:, ui:)
         contract = LabelContracts.group_for(labels)
         return unless contract
 
@@ -512,7 +508,7 @@ module Dev
         return unless @registry.group_repositories(org: org, group_id: group.id).any? { |selected| selected.full_name.casecmp?(scope) }
 
         @out.puts ">>> #{scope} may also use the org's '#{group.name}' runners for these labels — its jobs would land on either."
-        unless yes || @confirmer.confirm?("Make this host's runner its only one?")
+        unless yes || ui.confirm("Make this host's runner its only one?")
           @out.puts ">>> Left as is: #{scope} keeps using the org's '#{group.name}' runners too."
           return
         end
@@ -710,6 +706,7 @@ module Dev
       # @param runners [Hash{String => Dev::RunnerRegistry::Runner}]
       # @param runner_user [Dev::RunnerUser, nil] the host rule's user
       # @param yes [Boolean] `--yes`: answer the question without asking
+      # @param ui [Cli::Ui] asks; no terminal is a no
       # @raise [SupersededEnrollmentsError] when the operator declines
       sig do
         params(
@@ -719,9 +716,10 @@ module Dev
           runners: T::Hash[String, Dev::RunnerRegistry::Runner],
           runner_user: T.nilable(Dev::RunnerUser),
           yes: T::Boolean,
+          ui: Cli::Ui,
         ).void
       end
-      def retire!(scope, enrollments, by_slot, runners, runner_user, yes:)
+      def retire!(scope, enrollments, by_slot, runners, runner_user, yes:, ui:)
         signs = []
         duplicated(by_slot).each do |dirs|
           signs << "#{dirs.length} local enrollments named '#{T.must(dirs.first).name}'"
@@ -740,7 +738,7 @@ module Dev
           @out.puts "    #{enrollment.display_dir} (#{enrollment.service_installed ? "service installed" : "no service"})"
         end
 
-        unless yes || @confirmer.confirm?("Unregister these and enroll fresh?")
+        unless yes || ui.confirm("Unregister these and enroll fresh?")
           remedy = enrollments.map { |enrollment| "  dev runner unregister #{enrollment.display_dir}" }.join("\n")
           raise SupersededEnrollmentsError,
             "nothing changed. Unregister them yourself, then re-run register:\n#{remedy}"
@@ -755,14 +753,15 @@ module Dev
       # @param scope [String]
       # @param surplus [Array<Dev::RunnerDiscovery::Enrollment>] the slots past the asked count
       # @param yes [Boolean]
+      # @param ui [Cli::Ui] asks; no terminal is a no
       # @raise [SurplusSlotsError] when the operator declines
-      sig { params(scope: String, surplus: T::Array[Dev::RunnerDiscovery::Enrollment], yes: T::Boolean).void }
-      def retire_surplus!(scope, surplus, yes:)
+      sig { params(scope: String, surplus: T::Array[Dev::RunnerDiscovery::Enrollment], yes: T::Boolean, ui: Cli::Ui).void }
+      def retire_surplus!(scope, surplus, yes:, ui:)
         return if surplus.empty?
 
         @out.puts ">>> #{scope} has #{surplus.length} more slot#{"s" if surplus.length > 1} than asked for:"
         surplus.each { |enrollment| @out.puts "    #{enrollment.name} (#{enrollment.display_dir})" }
-        unless yes || @confirmer.confirm?("Unregister #{surplus.length == 1 ? "it" : "them"}?")
+        unless yes || ui.confirm("Unregister #{surplus.length == 1 ? "it" : "them"}?")
           remedy = surplus.map { |enrollment| "  dev runner unregister #{enrollment.display_dir}" }.join("\n")
           raise SurplusSlotsError, "nothing changed. Unregister them yourself, or re-run with the slots you have:\n#{remedy}"
         end

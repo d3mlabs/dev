@@ -24,6 +24,7 @@ require "json"
 require "open3"
 require "pathname"
 require "stringio"
+require "support/answering_ui"
 require "support/fake_gh"
 require "time"
 require "tmpdir"
@@ -164,22 +165,6 @@ class Dev::Builtins::ReleaseCommandTest < Minitest::Test
       release:, cut: Dev::Lifecycle::ReleaseCut.new(git: Dev::Lifecycle::Git.new(root: @project)), package:, store:,
       releases: Dev::Lifecycle::GithubReleases.new(gh: @gh), listing:, clock: -> { NOW },
     )
-  end
-
-  # A terminal that answers the confirm as told, remembering the question.
-  class AnsweringUi < Dev::Cli::NoUi
-    attr_reader :asked
-
-    def initialize(out:, answer:)
-      super(out:)
-      @answer = answer
-      @asked = []
-    end
-
-    def confirm(question)
-      @asked << question
-      @answer
-    end
   end
 
   def context(ui: Dev::Cli::NoUi.new(out: @out))

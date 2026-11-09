@@ -3,7 +3,6 @@
 
 require "stringio"
 require "dev/command"
-require "dev/confirmer"
 require "dev/container_engine"
 require "dev/engine_provisioner"
 
@@ -32,22 +31,18 @@ module Dev
       FORCE_FLAG = "--force"
 
       # @param provisioner [Dev::EngineProvisioner] owns the engine and its stop
-      # @param confirmer [Dev::Confirmer] asks about the user's own containers
       # @param out [IO, StringIO]
       # @param home [String] abbreviated as `~` when naming checkouts
       sig do
         params(
           provisioner: Dev::EngineProvisioner,
-          confirmer: Dev::Confirmer,
           out: T.any(IO, StringIO),
           home: String,
         ).void
       end
-      def initialize(provisioner: Dev::EngineProvisioner.new, confirmer: Dev::Confirmer.new, out: $stdout,
-        home: Dir.home)
+      def initialize(provisioner: Dev::EngineProvisioner.new, out: $stdout, home: Dir.home)
         super()
         @provisioner = provisioner
-        @confirmer = confirmer
         @out = out
         @home = home
       end
@@ -65,10 +60,11 @@ module Dev
       def staleness_exempt? = true
 
       # @param args [Array<String>] `--force` stops unmanaged containers unasked
-      # @param context [ExecutionContext] unused: the engine is machine state
+      # @param context [ExecutionContext] its Ui asks about the user's own containers
       # @return [void]
       # @raise [Dev::EngineProvisioner::UnmanagedEngineError] on an engine dev did not provision
-      # @raise [EngineBusyError] when the user declines to stop their own containers
+      # @raise [EngineBusyError] when the user declines to stop their own containers — or
+      #   there is no terminal to ask at (a script says yes with `--force`)
       # @raise [StopFailedError] when a container will not stop
       sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
       def call(args:, context:)
@@ -84,7 +80,7 @@ module Dev
         unless foreign.empty?
           @out.puts "dev: containers running that dev does not manage:"
           foreign.each { |container| @out.puts "  #{container.describe(home: @home)}" }
-          unless args.flag?(FORCE_FLAG) || @confirmer.confirm?("dev: stop them too?")
+          unless args.flag?(FORCE_FLAG) || context.ui.confirm("dev: stop them too?")
             raise EngineBusyError,
               "engine left running — not stopping #{foreign.map(&:name).join(", ")} (pass #{FORCE_FLAG} to)."
           end

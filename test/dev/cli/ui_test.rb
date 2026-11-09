@@ -243,13 +243,26 @@ class Dev::Cli::UiImplTest < Minitest::Test
   test "#confirm asks CLI::UI's yes/no at a terminal, and is nil (nobody to ask) without one (dev#514)" do
     Given
     prompt = typed_mock(CLI::UI::Prompt, class_of: true)
-    prompt.stubs(:confirm).with("Proceed?").returns(false)
+    prompt.stubs(:confirm).with("Proceed?", default: false).returns(false)
     tty = StringIO.new
     tty.define_singleton_method(:tty?) { true }
 
     Expect
     ui(prompt:, input: tty).confirm("Proceed?") == false
     ui(prompt:, input: StringIO.new).confirm("Proceed?").nil?
+  end
+
+  test "#confirm's default is the answer CLI::UI offers first — no unless the caller says yes (dev#533)" do
+    Given
+    prompt = typed_mock(CLI::UI::Prompt, class_of: true)
+    prompt.expects(:confirm).with("Stop them too?", default: false).returns(true)
+    prompt.expects(:confirm).with("Proceed?", default: true).returns(true)
+    tty = StringIO.new
+    tty.define_singleton_method(:tty?) { true }
+
+    Expect
+    ui(prompt:, input: tty).confirm("Stop them too?") == true
+    ui(prompt:, input: tty).confirm("Proceed?", default: true) == true
   end
 
   test "#note prints the text through CLI::UI's formatting (dev#514)" do
