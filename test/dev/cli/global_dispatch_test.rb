@@ -231,6 +231,25 @@ class Dev::Cli::GlobalDispatchTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "bare dev cd — the shell hook did not catch it — exits non-zero after the accessor's hint, with nothing more said" do
+    Given "a cd accessor whose hook is installed but not active in this shell"
+    root = Dir.mktmpdir("dispatch-cd-")
+    dispatch = build_dispatch(cd_accessor: Dev::Cd::Accessor.new(root: root, hook_installer: quiet_hook_installer))
+    old_stderr = $stderr
+    $stderr = StringIO.new
+    Kernel.expects(:exit).with(1).once
+
+    When "the Ruby process is reached by a bare dev cd"
+    dispatch.run(["cd"])
+
+    Then "stderr carries the accessor's one hint and no second explanation"
+    $stderr.string.lines == ["dev: the dev cd shell hook is installed but not active in this shell — open a new shell (or source your shell RC), then run `dev cd <repo>` again.\n"]
+
+    Cleanup
+    $stderr = old_stderr
+    FileUtils.rm_rf(root)
+  end
+
   test "dev cred get resolves down the cred group without a dev.yml lookup" do
     Given "a recording cred accessor and a cwd with no dev.yml"
     creds = RecordingCredAccessor.new
