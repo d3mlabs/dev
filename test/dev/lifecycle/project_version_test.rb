@@ -27,6 +27,46 @@ class Dev::Lifecycle::ProjectVersionTest < Minitest::Test
     "3.0.0-rc.1\n# note"  | "3.0.0-rc.1"
   end
 
+  test "next bumps one part of a semver and zeroes the ones after it: #{current} #{part.serialize} → #{expected} (dev#525)" do
+    Expect
+    Dev::Lifecycle::ProjectVersion.next(current, part) == expected
+
+    Where
+    current  | part                                        | expected
+    "1.1.0"  | Dev::Lifecycle::ProjectVersion::Part::Patch | "1.1.1"
+    "1.1.9"  | Dev::Lifecycle::ProjectVersion::Part::Minor | "1.2.0"
+    "1.1.9"  | Dev::Lifecycle::ProjectVersion::Part::Major | "2.0.0"
+    "0.8.0"  | Dev::Lifecycle::ProjectVersion::Part::Patch | "0.8.1"
+  end
+
+  test "next refuses a version that is not three numbers — there is no patch of #{current.inspect} to bump" do
+    When
+    Dev::Lifecycle::ProjectVersion.next(current, Dev::Lifecycle::ProjectVersion::Part::Patch)
+
+    Then
+    error = raises(Dev::Lifecycle::ProjectVersion::NotSemverError)
+    error.message == "#{current.inspect} is not major.minor.patch — give the version to release"
+
+    Where
+    current      | _
+    "1.1"        | nil
+    "3.0.0-rc.1" | nil
+    "v1.1.0"     | nil
+  end
+
+  test "Part reads the bump words of `dev release`: #{word.inspect} → #{part.inspect}" do
+    Expect
+    Dev::Lifecycle::ProjectVersion::Part.try_deserialize(word) == part
+
+    Where
+    word    | part
+    "major" | Dev::Lifecycle::ProjectVersion::Part::Major
+    "minor" | Dev::Lifecycle::ProjectVersion::Part::Minor
+    "patch" | Dev::Lifecycle::ProjectVersion::Part::Patch
+    "1.2.0" | nil
+    "Minor" | nil
+  end
+
   test "a project with #{what} stamps the default semver" do
     Given
     root = Pathname(Dir.mktmpdir("project-version-"))

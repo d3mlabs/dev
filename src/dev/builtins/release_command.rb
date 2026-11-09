@@ -15,7 +15,9 @@ require_relative "package_command"
 
 module Dev
   module Builtins
-    # `dev release <version>`: cut a release and stop (dev#192, K4). The
+    # `dev release [<version>|major|minor|patch]`: cut a release and stop
+    # (dev#192, K4) — no word is the patch bump of the version in source
+    # (dev#525). The
     # cut is lifted from dev's `bin/release.rb`: a clean tree, a bump
     # commit when the project keeps its version in source, the tag, the
     # push — resumable, so a retry whose cut already landed (HEAD tagged)
@@ -31,7 +33,8 @@ module Dev
     # <version>` per channel (dev#425), a week later from the same bytes
     # if need be.
     #
-    # The stage: `before` consumes the version into the tag and reads the
+    # The stage: `before` resolves the version (given, or the next of the
+    # one in source — ProjectVersion.next) into the tag and reads the
     # checkout into the cut's plan (ReleaseCut#plan — clean, on a branch,
     # the tag absent or already on HEAD, the bump if any, the base and
     # its drift), shows the plan in a frame — the **base line** first:
@@ -58,7 +61,8 @@ module Dev
     class ReleaseCommand < LifecycleCommand
       extend T::Sig
 
-      # `release` takes exactly one version.
+      # `release` takes one word — a version or a bump — or none; a bump
+      # needs a `VERSION` to bump from.
       class VersionArgumentError < ArgumentError; end
 
       # A release build's artifact is not in this machine's store at the
@@ -156,8 +160,8 @@ module Dev
 
       sig { override.returns(String) }
       def desc
-        "Cut a release: tag, package the release builds at the tag, attach them to the GitHub release (release <version>)\n" \
-          "Bumps VERSION when the project keeps one; a retry resumes a cut that landed. Deploys nothing."
+        "Cut a release: tag, package the release builds at the tag, attach them to the GitHub release (release [<version>|major|minor|patch])\n" \
+          "Bumps VERSION when the project keeps one — the patch when no version is given; a retry resumes a cut that landed. Deploys nothing."
       end
 
       sig { override.returns(T.nilable(Listing)) }
@@ -168,7 +172,7 @@ module Dev
 
       sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).returns(Dispatch::Outcome[ReleaseEnv]) }
       def before(args:, context:)
-        tag = Lifecycle::ReleaseTag.new(version(args))
+        tag = Lifecycle::ReleaseTag.new(version(args, root: context.project!.root))
         env = ReleaseEnv.new(tag:, plan: @cut.plan(tag), builds: @release.builds)
         show_plan(env, ui: context.ui)
         confirm!(args, ui: context.ui)
@@ -219,15 +223,31 @@ module Dev
 
       private
 
+      # The version to release: the one word given when it is a version;
+      # the next of the version in source when it is a bump word, or when
+      # nothing is given (the patch — a routine release, dev#525).
+      #
       # @param args [Cli::ParsedArgs]
-      # @return [String] the one positional
-      # @raise [VersionArgumentError]
-      sig { params(args: Cli::ParsedArgs).returns(String) }
-      def version(args)
-        return T.must(args.positionals.first) if args.positionals.one?
+      # @param root [Pathname] the project root, where `VERSION` is read
+      # @return [String]
+      # @raise [VersionArgumentError] more than one word; a bump with no `VERSION` to bump from
+      # @raise [Lifecycle::ProjectVersion::NotSemverError] a bump of a version that is not three numbers
+      sig { params(args: Cli::ParsedArgs, root: Pathname).returns(String) }
+      def version(args, root:)
+        words = args.positionals
+        if words.length > 1
+          raise VersionArgumentError,
+            "release takes one version or bump (`dev release`, `dev release 1.2.0`, `dev release minor`), got #{words.map(&:inspect).join(", ")}"
+        end
 
-        raise VersionArgumentError,
-          "release takes one version (`dev release 1.2.0`), got #{args.positionals.empty? ? "none" : args.positionals.map(&:inspect).join(", ")}"
+        word = words.first
+        part = word.nil? ? Lifecycle::ProjectVersion::Part::Patch : Lifecycle::ProjectVersion::Part.try_deserialize(word)
+        return T.must(word) if part.nil?
+
+        current = Lifecycle::ProjectVersion.declared(root)
+        raise VersionArgumentError, "release has no #{Lifecycle::ProjectVersion::FILE_NAME} to bump from — give the version (`dev release 1.2.0`)" if current.nil?
+
+        Lifecycle::ProjectVersion.next(current, part)
       end
 
       # The plan frame: what is being released from where, the notes,

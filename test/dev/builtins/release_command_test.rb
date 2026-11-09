@@ -399,20 +399,67 @@ class Dev::Builtins::ReleaseCommandTest < Minitest::Test
     command.flags.map(&:name) == ["--yes"]
   end
 
-  test "release takes exactly one version: #{what}" do
+  test "no version, or a bump word, releases the next version of the one in source — #{what}: 1.1.0 → #{expected} (dev#525)" do
+    Given
+    forge_has_no_release
+    forge_creates
+    forge_accepts_upload
+
     When
     execute(command, *words)
 
-    Then
-    error = raises(Dev::Builtins::ReleaseCommand::VersionArgumentError)
-    error.message.include?("release takes one version")
-    build_runs.empty?
-    origin_refs == ["refs/heads/main"]
+    Then "the plan said which version the bump picked, before the confirm; the cut is that version"
+    @out.string.lines.first == "Release: 1.1.0 → #{expected}\n"
+    (@project / "VERSION").read == "#{expected}\n"
+    origin_refs == ["refs/heads/main", "refs/tags/v#{expected}"]
+    @gh.calls[1].argv.first(3) == ["release", "create", "v#{expected}"]
 
     Where
-    what          | words
-    "none"        | []
-    "two"         | ["1.2.0", "1.3.0"]
+    what                 | words     | expected
+    "nothing: the patch" | []        | "1.1.1"
+    "patch"              | ["patch"] | "1.1.1"
+    "minor"              | ["minor"] | "1.2.0"
+    "major"              | ["major"] | "2.0.0"
+  end
+
+  test "a bump of a project that keeps no version in source is refused, naming the fix, before anything moves" do
+    Given
+    git("rm", "-q", "VERSION")
+    commit("no version in source")
+
+    When
+    execute(command, "minor")
+
+    Then
+    error = raises(Dev::Builtins::ReleaseCommand::VersionArgumentError)
+    error.message == "release has no VERSION to bump from — give the version (`dev release 1.2.0`)"
+    origin_refs == ["refs/heads/main"]
+    build_runs.empty?
+  end
+
+  test "a bump of a VERSION that is not major.minor.patch is the version's refusal, before anything moves" do
+    Given
+    (@project / "VERSION").write("3.0.0-rc.1\n")
+    git("add", "VERSION")
+    commit("rc")
+
+    When
+    execute(command)
+
+    Then
+    raises(Dev::Lifecycle::ProjectVersion::NotSemverError)
+    origin_refs == ["refs/heads/main"]
+  end
+
+  test "release takes at most one word — a version or a bump — got two" do
+    When
+    execute(command, "1.2.0", "1.3.0")
+
+    Then
+    error = raises(Dev::Builtins::ReleaseCommand::VersionArgumentError)
+    error.message == "release takes one version or bump (`dev release`, `dev release 1.2.0`, `dev release minor`), got \"1.2.0\", \"1.3.0\""
+    build_runs.empty?
+    origin_refs == ["refs/heads/main"]
   end
 
   test "a version that cannot name a tag is the tag's refusal, before anything moves" do

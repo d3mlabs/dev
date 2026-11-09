@@ -319,7 +319,7 @@ something for it to act on:
 | `deploy <channel> [BUILD] [--config C] [--release V] [--allow-stale] [--force] [--dry-run]` | a channel exists — declared under `commands: deploy:` or contributed by the lock | the channel's accepted archives: from the store, or from release `V`'s assets | the channel's publisher, over the selection, on the testing track from the store and the live track from a release; `after` records the deploy on the forge |
 | `deploy --release V [--dry-run]` | a channel exists | every channel, in declaration order | `deploy <channel> --release V` per channel, through the same template; stops at the first that refuses |
 | `deploy status [--release V]` | a channel exists — declared or contributed | every channel's latest recorded deploy; the release's tag only under `--release` | — (reads the ledger; a builtin child of `deploy`, which reserves the name `status`) |
-| `release <version> [--yes]` | `commands: release:` declared (`targets:` or the empty form) and at least one packageable target | the release builds, each packaged at the tag | the plan shown and confirmed, the cut and the push, then `package` per release build, each dispatched by its own environment; `after` creates the GitHub release and attaches the archives |
+| `release [<version>\|major\|minor\|patch] [--yes]` | `commands: release:` declared (`targets:` or the empty form) and at least one packageable target | the release builds, each packaged at the tag | the plan shown and confirmed, the cut and the push, then `package` per release build, each dispatched by its own environment; `after` creates the GitHub release and attaches the archives |
 
 A project without targets lists neither `build` nor `package`, and
 `dev build` there is "command not found", not "no targets declared";
@@ -554,11 +554,15 @@ forge is a typed `GithubDeployments::Error` (`RepoUnresolvedError`,
 
 ### What `release` does
 
-`dev release <version>` (`Dev::Builtins::ReleaseCommand`) is **cut and
-stop** (K4): the tag and the archives on the forge, nothing deployed —
-distribution is `dev deploy <channel> --release <version>` per channel
-([dev#425](https://github.com/d3mlabs/dev/issues/425)), a week later
-from the same bytes if need be. The cut is lifted from what was dev's
+`dev release [<version>|major|minor|patch]` (`Dev::Builtins::ReleaseCommand`)
+is **cut and stop** (K4): the tag and the archives on the forge, nothing
+deployed — distribution is `dev deploy <channel> --release <version>` per
+channel ([dev#425](https://github.com/d3mlabs/dev/issues/425)), a week
+later from the same bytes if need be. The version is the word given, or
+the next of the one in `VERSION` (`ProjectVersion.next`) — no word is
+the patch bump, the routine release ([dev#525](https://github.com/d3mlabs/dev/issues/525));
+a project without a `VERSION`, or with one that is not three numbers, is
+released by name only. The cut is lifted from what was dev's
 own `bin/release.rb`; the verb orchestrates from wherever it was invoked
 (K10), its own dispatch native, and runs `package` **as itself** per
 release build so each dispatches by its target's `environment:`. In
@@ -995,7 +999,7 @@ missing step rather than performing it:
 | `deploy <channel> --release V` | a release `dev release V` cut, carrying an archive of each accepted (target, platform); a repo `gh` can reach with `contents: read` for the download | "`dev release V` cuts it" for a tag with no release; a build the release has no archive of is refused — the store never substitutes, deploy adds nothing to a release; a download whose digest is not `release.json`'s is removed and refused, nothing shipped |
 | `deploy --release V` | the above for every channel | stops at the first channel that refuses, the earlier ones deployed and recorded; name the channels to ship the rest |
 | `deploy status [--release V]` | a channel, a repo `gh` can reach | a channel exists or `deploy` does not; the forge's refusal is the command's error |
-| `release <version> [--yes]` | a clean checkout on a branch with `origin`, the version not yet cut (or cut on HEAD: a resume), `release:` naming packageable builds; a repo `gh` can reach with `contents: write`; a terminal to confirm at, or `--yes` | refuses before anything moves (dirty, detached, the tag elsewhere, declined, no terminal without `--yes`); the base line says which checkout and how far from `origin` as last fetched — a warning, never a fetch; packages each release build **at the tag** itself, so staleness cannot arise; a tag pushed with no release yet is what the retry resumes; the forge's refusal is the command's error |
+| `release [<version>\|major\|minor\|patch] [--yes]` | a clean checkout on a branch with `origin`, the version not yet cut (or cut on HEAD: a resume), `release:` naming packageable builds; a repo `gh` can reach with `contents: write`; a terminal to confirm at, or `--yes` | refuses before anything moves (dirty, detached, the tag elsewhere, declined, no terminal without `--yes`); the base line says which checkout and how far from `origin` as last fetched — a warning, never a fetch; packages each release build **at the tag** itself, so staleness cannot arise; a tag pushed with no release yet is what the retry resumes; the forge's refusal is the command's error |
 
 ## Dispatch resolution
 
