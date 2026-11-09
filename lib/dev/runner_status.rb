@@ -15,6 +15,7 @@ require "dev/runner_slots"
 require "dev/runner_registry"
 require "dev/runner_user"
 require "dev/settings"
+require "dev/ui"
 
 module Dev
   # `dev runner status` — register's inspect-only counterpart: this
@@ -48,7 +49,7 @@ module Dev
 
     # @param discovery [Dev::RunnerDiscovery] this host's enrollments
     # @param registry [#find, #group_of, #group_repositories] the GitHub-side reader (never mutates here)
-    # @param out [IO, StringIO] report stream
+    # @param ui [Dev::Ui] where the report is rendered: a frame per section, a note per fact
     # @param executor [#quiet?, #capture] probe seam (never mutates)
     # @param agent_user [String] expected run-as user
     # @param runner_user [String] the enrolling user
@@ -66,7 +67,7 @@ module Dev
       params(
         discovery: Dev::RunnerDiscovery,
         registry: T.untyped,
-        out: T.any(IO, StringIO),
+        ui: Dev::Ui,
         executor: T.untyped,
         agent_user: String,
         runner_user: String,
@@ -81,7 +82,7 @@ module Dev
       ).void
     end
     def initialize(discovery: Dev::RunnerDiscovery.new, registry: Dev::RunnerRegistry.new,
-                   out: $stdout, executor: AgentBootstrap::Executor.new,
+                   ui: Dev::NoUi.new, executor: AgentBootstrap::Executor.new,
                    agent_user: AgentBootstrap::DEFAULT_AGENT_USER,
                    runner_user: T.must(Etc.getpwuid(Process.uid)).name,
                    shared_root: DataRoot::SHARED_ROOT,
@@ -98,7 +99,7 @@ module Dev
       @reach_factory = reach_factory
       @discovery = T.let(host_identity ? discovery.also_under(host_identity.home) : discovery, Dev::RunnerDiscovery)
       @registry = registry
-      @out = out
+      @ui = ui
       @executor = executor
       @agent_user = agent_user
       @runner_user = runner_user
@@ -121,7 +122,11 @@ module Dev
       end
     end
 
-    # Print the report: every enrollment, per-label facts, host tooling.
+    # Render the report: a frame per section — each scope's slots with its
+    # runners nested, the host identity, its reach, the agent host, the
+    # host tooling — and a note per fact, carrying its glyph: `{{v}}` ok,
+    # `{{x}}` a finding, `{{?}}` unknown. The terminal frames and colours
+    # them; a pipe reads the same facts plain (plans#52).
     #
     # @return [void]
     sig { void }
@@ -138,17 +143,17 @@ module Dev
     # @param description [String]
     sig { params(ok: T::Boolean, description: String).void }
     def line(ok, description)
-      @out.puts "  #{ok ? "[ok]" : "[!!]"} #{description}"
+      @ui.note("#{ok ? "{{v}}" : "{{x}}"} #{description}")
     end
 
     # A fact this account cannot inspect: neither ok nor a finding, so
-    # neither marker — a `[!!]` that is wrong once is ignored when it is
+    # neither glyph — a `{{x}}` that is wrong once is ignored when it is
     # right (dev#348). The description says how to find out.
     #
     # @param description [String]
     sig { params(description: String).void }
     def unknown(description)
-      @out.puts "  [??] #{description}"
+      @ui.note("{{?}} #{description}")
     end
 
     # Each discovered enrollment: scope from its own .runner record (works
@@ -161,24 +166,37 @@ module Dev
     def report_enrollments
       enrollments = @discovery.enrollments
       if enrollments.empty?
-        @out.puts "No runners enrolled on this host (run `dev runner register`)."
+        @ui.note("No runners enrolled on this host (run `dev runner register`).")
         return []
       end
 
       by_scope = enrollments.group_by { |enrollment| [enrollment.scope, RunnerSlots.base_of(enrollment.name)] }
       by_scope.flat_map do |(scope, base), slots|
-        report_slots(scope, base, slots) if slots.length > 1 || !scope.include?("/")
-        slots.filter_map do |enrollment|
-          @out.puts "Runner '#{enrollment.name}' (#{enrollment.display_dir}):"
-          line(true, "registered: #{enrollment.scope}")
-          report_owner(enrollment)
-          labels = report_labels(enrollment)
-          enrollment.dir if labels && LabelContracts.agent_host?(labels.join(","))
+        if slots.length > 1 || !scope.include?("/")
+          report_slots(scope, base, slots) { slots.filter_map { |enrollment| report_enrollment(enrollment) } }
+        else
+          slots.filter_map { |enrollment| report_enrollment(enrollment) }
         end
       end
     end
 
-    # The header for this host's slots at a scope (dev#470): the scope
+    # One enrollment's frame: where it is registered, who runs it, its
+    # labels. Its dir when the labels carry the agent contract.
+    #
+    # @param enrollment [Dev::RunnerDiscovery::Enrollment]
+    # @return [String, nil]
+    sig { params(enrollment: Dev::RunnerDiscovery::Enrollment).returns(T.nilable(String)) }
+    def report_enrollment(enrollment)
+      @ui.frame("Runner '#{enrollment.name}' (#{enrollment.display_dir})") do
+        line(true, "registered: #{enrollment.scope}")
+        report_owner(enrollment)
+        labels = report_labels(enrollment)
+        enrollment.dir if labels && LabelContracts.agent_host?(labels.join(","))
+      end
+    end
+
+    # The frame for this host's slots at a scope (dev#470), the runners'
+    # frames nested in it by the block: the scope
     # first, then how many jobs the host runs at once there and the
     # runners' names (the hostname, `-<n>` beyond the first), and, at an
     # org scope, who may use them: the runner group slot 1 sits in, held
@@ -192,15 +210,33 @@ module Dev
     # @param scope [String]
     # @param base [String] slot 1's runner name
     # @param slots [Array<Dev::RunnerDiscovery::Enrollment>]
-    sig { params(scope: String, base: String, slots: T::Array[Dev::RunnerDiscovery::Enrollment]).void }
-    def report_slots(scope, base, slots)
+    # @param runners [Proc] reports the slots' runners inside the frame; its value is the frame's
+    # @return [Array<String>] what `runners` answered
+    sig do
+      params(
+        scope: String, base: String, slots: T::Array[Dev::RunnerDiscovery::Enrollment],
+        runners: T.proc.returns(T::Array[String]),
+      ).returns(T::Array[String])
+    end
+    def report_slots(scope, base, slots, &runners)
       naming = RunnerSlots.new(base: base, dir: T.must(slots.first).dir)
       ordered = slots.sort_by { |slot| naming.slot_of(slot.name) || 0 }
       plural = slots.length > 1
-      @out.puts "#{scope} — #{slots.length} slot#{"s" if plural} (#{slots.length} job#{"s" if plural} at once), runner#{"s" if plural} #{ordered.map(&:name).join(", ")}:"
-      return if scope.include?("/")
+      title = "#{scope} — #{slots.length} slot#{"s" if plural} (#{slots.length} job#{"s" if plural} at once), " \
+        "runner#{"s" if plural} #{ordered.map(&:name).join(", ")}"
+      @ui.frame(title) do
+        report_group(scope, T.must(ordered.first)) unless scope.include?("/")
+        runners.call
+      end
+    end
 
-      first = T.must(ordered.first)
+    # The org scope's group facts for slot 1: which group lists it, held
+    # against the contract, and who may use it.
+    #
+    # @param scope [String] the org
+    # @param first [Dev::RunnerDiscovery::Enrollment] slot 1
+    sig { params(scope: String, first: Dev::RunnerDiscovery::Enrollment).void }
+    def report_group(scope, first)
       runner = @registry.find(scope: scope, name: first.name)
       return if runner.nil?
 
@@ -311,7 +347,7 @@ module Dev
     # default), so every fact about it is asked *as* the runner user
     # (RunnerUser#probe_argv). Status never prompts (`-n`, like the
     # sudoers-edge probes): when sudo refuses the operator the login is
-    # unknown, not absent — a `[??]` with the command that can tell, never
+    # unknown, not absent — a `{{?}}` with the command that can tell, never
     # the login remedy, which would overwrite a working login if followed
     # (dev#348).
     #
@@ -321,7 +357,16 @@ module Dev
       identity = @host_identity
       return false unless identity
 
-      @out.puts "Host identity (#{identity.name}):"
+      @ui.frame("Host identity (#{identity.name})") { host_identity_facts(identity) }
+    end
+
+    # The identity's facts, in order, stopping at the first that makes the
+    # rest unanswerable; true when the login is usable.
+    #
+    # @param identity [Dev::RunnerUser]
+    # @return [Boolean]
+    sig { params(identity: Dev::RunnerUser).returns(T::Boolean) }
+    def host_identity_facts(identity)
       unless @executor.quiet?("id", "-u", identity.name)
         line(false, "user #{identity.name} exists (run `dev runner register`)")
         return false
@@ -381,14 +426,15 @@ module Dev
       reach = @reach_factory.call(identity)
       return unless reach
 
-      @out.puts "Host reach (#{identity.name}, this checkout's lock):"
-      misses = reach.check(@pins).to_h { |verdict| [verdict.target.to_s, verdict.grant] }
-      HostReach.targets(@pins).each do |target|
-        grant = misses[target.to_s]
-        if grant
-          line(false, "cannot read #{target} — #{grant}")
-        else
-          line(true, "can read #{target}")
+      @ui.frame("Host reach (#{identity.name}, this checkout's lock)") do
+        misses = reach.check(@pins).to_h { |verdict| [verdict.target.to_s, verdict.grant] }
+        HostReach.targets(@pins).each do |target|
+          grant = misses[target.to_s]
+          if grant
+            line(false, "cannot read #{target} — #{grant}")
+          else
+            line(true, "can read #{target}")
+          end
         end
       end
     end
@@ -410,7 +456,15 @@ module Dev
     # @param runner_dirs [Array<String>] the agent-labeled enrollment dirs
     sig { params(runner_dirs: T::Array[String]).void }
     def report_agent_host(runner_dirs)
-      @out.puts "Agent host (#{@agent_user}):"
+      @ui.frame("Agent host (#{@agent_user})") { agent_host_facts(runner_dirs) }
+    end
+
+    # The agent contract's facts: the user, the group, the sudoers edges,
+    # each work tree, the shared root, and the engine where required.
+    #
+    # @param runner_dirs [Array<String>] agent-labeled enrollment dirs
+    sig { params(runner_dirs: T::Array[String]).void }
+    def agent_host_facts(runner_dirs)
       line(@executor.quiet?("id", "-u", @agent_user), "agent user #{@agent_user} exists")
       [@runner_user, @agent_user].each do |member|
         member_ok = @executor.quiet?(
@@ -506,7 +560,12 @@ module Dev
     # converges; a deploymentless host has nothing to check.
     sig { void }
     def report_host_tooling
-      @out.puts "Host tooling:"
+      @ui.frame("Host tooling") { host_tooling_fact }
+    end
+
+    # Converged against the org Brewfile, or nothing to check.
+    sig { void }
+    def host_tooling_fact
       brewfile = @brewfile_path
       if brewfile.nil? || !File.exist?(brewfile)
         line(true, "no org Brewfile shipped (nothing to check)")

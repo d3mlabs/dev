@@ -7,6 +7,8 @@ require "open3"
 require "socket"
 require "stringio"
 
+require "dev/lifecycle/gh"
+
 module Dev
   # Registers the current host as a self-hosted GitHub Actions runner — scoped
   # to a repo by default, or to the whole org (`org: true`) so one runner
@@ -54,10 +56,19 @@ module Dev
     # first three, svc.sh the fourth. Without them the dir is a download.
     ENROLLMENT_FILES = T.let(%w[.runner .credentials .credentials_rsaparams .service].freeze, T::Array[String])
 
-    # Thin wrapper over the external CLIs RunnerSetup drives. Tests inject a fake.
+    # Thin wrapper over the external CLIs RunnerSetup drives — and every
+    # runner-side gh read dev parses (RunnerRegistry, HostReach,
+    # RunnerUser, this class). Tests inject a fake.
     class Executor
       extend T::Sig
 
+      # A capture is parsed, never shown, so its child runs with colour
+      # off whatever the operator forced: gh honours CLICOLOR_FORCE and
+      # GH_FORCE_TTY on a pipe and colourises `gh api`'s JSON (dev#544) —
+      # the same env Lifecycle::Gh#capture spawns under, the one rule for
+      # every gh answer dev reads. `system` is the operator's terminal and
+      # leaves their preference alone.
+      #
       # @param chdir [String, nil] the directory to run in (the runner
       #   scripts are invoked relative to their install dir)
       # @param stdin [String, nil] what the command reads on stdin (a
@@ -68,7 +79,7 @@ module Dev
         opts = {}
         opts[:chdir] = chdir if chdir
         opts[:stdin_data] = stdin if stdin
-        out, err, status = Open3.capture3(*T.unsafe(argv), **opts)
+        out, err, status = T.unsafe(Open3).capture3(Lifecycle::Gh::CAPTURE_ENV, *argv, **opts)
         [out, err, status.success?]
       rescue Errno::ENOENT => e
         ["", e.message, false]
