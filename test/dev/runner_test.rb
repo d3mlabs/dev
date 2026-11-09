@@ -384,7 +384,7 @@ class RunnerTest < Minitest::Test
     build_runner(out: without, targets: { "rspock" => { "desc" => "The gem" } }).run([])
 
     Expect "the verb takes a version and lists what a release contains; the other project has no release"
-    every_build.string.include?("release <version>")
+    every_build.string.include?("release [<version>|major|minor|patch]")
     every_build.string.include?(<<~LISTING)
       Release builds:
         rspock       The gem   host
