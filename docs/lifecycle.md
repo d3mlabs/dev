@@ -707,6 +707,11 @@ and its glyph after; `confirm` answers `nil` rather than assuming. The
 plain tier is the contract — a failed action's reason is in the error
 that bubbles, not in a rendering. `build` and `package` run bare for
 now; their frames and steps are [dev#516](https://github.com/d3mlabs/dev/issues/516).
+The forcing variables are the terminal's, never a reader's: `gh`
+honours `CLICOLOR_FORCE` on a pipe too and would colourise the JSON
+dev reads, so `Lifecycle::Gh#capture` spawns gh with colour off
+(`CLICOLOR_FORCE`/`GH_FORCE_TTY` unset, `NO_COLOR=1`) while `stream`
+leaves the operator's preference alone ([dev#519](https://github.com/d3mlabs/dev/issues/519)).
 
 ## The channel contract
 
