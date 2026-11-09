@@ -65,11 +65,11 @@ class Dev::Builtins::CompleteCommandTest < Minitest::Test
     command = Dev::Builtins::CompleteCommand.new(root_provider: -> { root }, out: out)
 
     When "completing at the leaf, then one argument in"
-    command.call(args: parsed_args(command, %w[runner unregister]), context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui)))
+    command.call(args: parsed_args(command, %w[runner unregister]), context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Ui)))
     first = out.string.lines.map(&:chomp)
     out.truncate(0)
     out.rewind
-    command.call(args: parsed_args(command, %w[runner unregister --yes]), context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui)))
+    command.call(args: parsed_args(command, %w[runner unregister --yes]), context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Ui)))
     second = out.string.lines.map(&:chomp)
 
     Then "the leaf's order is the printed order; the leaf sees only the words after its own name"
@@ -92,7 +92,7 @@ class Dev::Builtins::CompleteCommandTest < Minitest::Test
     command = Dev::Builtins::CompleteCommand.new(root_provider: -> { root }, out: out)
 
     When "completing at the group"
-    command.call(args: parsed_args(command, ["runner"]), context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui)))
+    command.call(args: parsed_args(command, ["runner"]), context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Ui)))
 
     Then
     out.string.lines.map(&:chomp) == %w[status unregister]
@@ -132,7 +132,7 @@ class Dev::Builtins::CompleteCommandTest < Minitest::Test
     command = Dev::Builtins::CompleteCommand.new(root_provider: -> { root }, out: out)
 
     When "completing after the words typed so far"
-    command.call(args: parsed_args(command, words), context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui)))
+    command.call(args: parsed_args(command, words), context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Ui)))
 
     Then "one visible child name per line, sorted"
     out.string.lines.map(&:chomp) == expected

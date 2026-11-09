@@ -414,7 +414,7 @@ end
 
 The StdoutRouter is Ruby-level: a child's lines inside a `CLI::UI::Frame` are never prefixed with the frame's bar, whatever the script does. A frame groups dev's own lines; it promises nothing about a child's.
 
-Dev's own verbs (`release`, `deploy`) follow the same rule through `Dev::Cli::Ui`, as **spin** (spinner, captured work) versus **step** (no spinner, the child has the terminal) — and enforce it: a child spawned with inherited stdio under a `spin` is refused before it starts ([plans#52](https://github.com/d3mlabs/plans/issues/52), [docs/lifecycle.md](docs/lifecycle.md#the-verbs-ui)).
+Dev's own verbs (`release`, `deploy`) follow the same rule through `Dev::Ui`, as **spin** (spinner, captured work) versus **step** (no spinner, the child has the terminal) — and enforce it: a child spawned with inherited stdio under a `spin` is refused before it starts ([plans#52](https://github.com/d3mlabs/plans/issues/52), [docs/lifecycle.md](docs/lifecycle.md#the-verbs-ui)).
 
 ### Environment behavior
 

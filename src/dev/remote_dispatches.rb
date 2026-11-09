@@ -6,7 +6,7 @@ require "stringio"
 require "dev/environment_image"
 require "dev/lifecycle"
 require "dev/project_container"
-require_relative "cli/ui"
+require "dev/ui"
 require_relative "dispatch"
 require_relative "transport"
 
@@ -22,7 +22,7 @@ module Dev
     extend T::Sig
 
     # @param root [Pathname] the project root
-    # @param ui [Cli::Ui] where the crossing line prints
+    # @param ui [Ui] where the crossing line prints
     # @param out [IO, StringIO] where the transport names the run
     # @param sync [Lifecycle::SnapshotSync] the sync step over the checkout
     # @param runs [Lifecycle::WorkflowRuns] the forge's side of a dispatch
@@ -31,7 +31,7 @@ module Dev
     sig do
       params(
         root: Pathname,
-        ui: Cli::Ui,
+        ui: Ui,
         out: T.any(IO, StringIO),
         sync: Lifecycle::SnapshotSync,
         runs: Lifecycle::WorkflowRuns,

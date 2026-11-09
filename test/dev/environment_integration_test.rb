@@ -375,7 +375,7 @@ class EnvironmentIntegrationTest < Minitest::Test
   end
 
   def fake_ui
-    ui = typed_mock(Dev::Cli::Ui)
+    ui = typed_mock(Dev::Ui)
     ui.stubs(:print_header)
     ui.stubs(:print_remote_crossing)
     ui

@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require "dev/lifecycle"
-require_relative "cli/ui"
+require "dev/ui"
 require_relative "transport"
 
 module Dev
@@ -174,8 +174,8 @@ module Dev
 
       # @param transport [Transport] how the host is reached
       # @param sync [Lifecycle::SnapshotSync] the sync step over the project's checkout
-      # @param ui [Cli::Ui] where the crossing line prints
-      sig(:final) { params(transport: Transport, sync: Lifecycle::SnapshotSync, ui: Cli::Ui).void }
+      # @param ui [Ui] where the crossing line prints
+      sig(:final) { params(transport: Transport, sync: Lifecycle::SnapshotSync, ui: Ui).void }
       def initialize(transport:, sync:, ui:)
         @transport = transport
         @sync = sync

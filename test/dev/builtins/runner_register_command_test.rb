@@ -1447,7 +1447,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
     discovery = Dev::RunnerDiscovery.new(home: home)
     teardown = Dev::RunnerTeardown.new(discovery: discovery, executor: nil, out: StringIO.new, home: home)
     teardown.define_singleton_method(:teardown!) { |enrollment| torn_down << enrollment }
-    ui = typed_mock(Dev::Cli::Ui)
+    ui = typed_mock(Dev::Ui)
     command = Dev::Builtins::RunnerRegisterCommand.new(
       runner_setup_factory: ->(config, repo_override, org, as_user) {
         wirings << [config, repo_override, org, as_user]
@@ -1507,7 +1507,7 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
   # For a command built without a harness: a context whose Ui is never asked.
   def build_context(name:, engine: nil, root: "/tmp/runner-test")
     Dev::ExecutionContext.new(
-      ui: typed_mock(Dev::Cli::Ui),
+      ui: typed_mock(Dev::Ui),
       project: Dev::ProjectContext.new(name: name, root: Pathname.new(root), engine: engine),
     )
   end
@@ -1528,6 +1528,6 @@ class Dev::Builtins::RunnerRegisterCommandTest < Minitest::Test
   end
 
   def projectless_context
-    Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui))
+    Dev::ExecutionContext.new(ui: typed_mock(Dev::Ui))
   end
 end

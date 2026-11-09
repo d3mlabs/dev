@@ -375,7 +375,7 @@ module Dev
         # The operator's login first, before sudo, brew or the engine: can
         # it do what this registration asks of it (mint tokens; with --org,
         # read and converge runner groups)? Refused, this is where it stops.
-        @operator_access.check!(scope: org ? T.must(repo.split("/").first) : repo, org: org, confirm: ->(question) { context.ui.confirm(question) })
+        @operator_access.check!(scope: org ? T.must(repo.split("/").first) : repo, org: org, ui: context.ui)
 
         container = context.project&.project_images&.containerized? || false
         engine = context.project&.engine
@@ -496,8 +496,8 @@ module Dev
       # @param scope [String] the repo, "owner/repo"
       # @param labels [String] comma-separated labels (config.sh shape)
       # @param yes [Boolean] `--yes`
-      # @param ui [Cli::Ui] asks; no terminal is a no
-      sig { params(scope: String, labels: String, yes: T::Boolean, ui: Cli::Ui).void }
+      # @param ui [Ui] asks; no terminal is a no
+      sig { params(scope: String, labels: String, yes: T::Boolean, ui: Ui).void }
       def offer_exclusivity!(scope, labels, yes:, ui:)
         contract = LabelContracts.group_for(labels)
         return unless contract
@@ -706,7 +706,7 @@ module Dev
       # @param runners [Hash{String => Dev::RunnerRegistry::Runner}]
       # @param runner_user [Dev::RunnerUser, nil] the host rule's user
       # @param yes [Boolean] `--yes`: answer the question without asking
-      # @param ui [Cli::Ui] asks; no terminal is a no
+      # @param ui [Ui] asks; no terminal is a no
       # @raise [SupersededEnrollmentsError] when the operator declines
       sig do
         params(
@@ -716,7 +716,7 @@ module Dev
           runners: T::Hash[String, Dev::RunnerRegistry::Runner],
           runner_user: T.nilable(Dev::RunnerUser),
           yes: T::Boolean,
-          ui: Cli::Ui,
+          ui: Ui,
         ).void
       end
       def retire!(scope, enrollments, by_slot, runners, runner_user, yes:, ui:)
@@ -753,9 +753,9 @@ module Dev
       # @param scope [String]
       # @param surplus [Array<Dev::RunnerDiscovery::Enrollment>] the slots past the asked count
       # @param yes [Boolean]
-      # @param ui [Cli::Ui] asks; no terminal is a no
+      # @param ui [Ui] asks; no terminal is a no
       # @raise [SurplusSlotsError] when the operator declines
-      sig { params(scope: String, surplus: T::Array[Dev::RunnerDiscovery::Enrollment], yes: T::Boolean, ui: Cli::Ui).void }
+      sig { params(scope: String, surplus: T::Array[Dev::RunnerDiscovery::Enrollment], yes: T::Boolean, ui: Ui).void }
       def retire_surplus!(scope, surplus, yes:, ui:)
         return if surplus.empty?
 

@@ -35,7 +35,7 @@ class Dev::GlobalCatalogTest < Minitest::Test
     command = catalog.commands.fetch("cd")
 
     When "calling the cd leaf"
-    command.call(args: parsed_args(command, ["--resolve", "dev"]), context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui)))
+    command.call(args: parsed_args(command, ["--resolve", "dev"]), context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Ui)))
 
     Then "the accessor was used"
     true

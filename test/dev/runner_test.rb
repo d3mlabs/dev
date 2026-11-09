@@ -569,7 +569,7 @@ class RunnerTest < Minitest::Test
     gh = FakeGh.new.resolving("d3mlabs/testproject")
       .answers(["api", "-X", "POST", "--input", "-", "repos/d3mlabs/testproject/deployments"], with: { "id" => 9, "created_at" => "2026-11-05T17:02:11Z" })
       .answers(["api", "-X", "POST", "--input", "-", "repos/d3mlabs/testproject/deployments/9/statuses"], with: { "state" => "success" })
-    runner = build_runner(out: out, ui: Dev::Cli::NoUi.new(out: out), root: root, gh: gh, targets: {
+    runner = build_runner(out: out, ui: Dev::NoUi.new(out: out), root: root, gh: gh, targets: {
       "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "echo site > \"$DEV_INSTALL/index.html\"" },
     }, commands: {
       "deploy" => { "commands" => {
@@ -620,7 +620,7 @@ class RunnerTest < Minitest::Test
       gh.answers(["api", "-X", "POST", "--input", "-", "repos/d3mlabs/testproject/deployments"], with: { "id" => id, "created_at" => "2026-11-05T17:02:11Z" })
       gh.answers(["api", "-X", "POST", "--input", "-", "repos/d3mlabs/testproject/deployments/#{id}/statuses"], with: { "state" => "success" })
     end
-    runner = build_runner(out: out, ui: Dev::Cli::NoUi.new(out: out), root: root, gh: gh, targets: {
+    runner = build_runner(out: out, ui: Dev::NoUi.new(out: out), root: root, gh: gh, targets: {
       "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "true" },
       "rspock" => { "desc" => "The gem" },
     }, commands: {
@@ -1203,7 +1203,7 @@ class RunnerTest < Minitest::Test
   end
 
   def fake_ui
-    ui = typed_mock(Dev::Cli::Ui)
+    ui = typed_mock(Dev::Ui)
     ui.stubs(:print_header)
     ui
   end

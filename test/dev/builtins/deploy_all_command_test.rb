@@ -54,7 +54,7 @@ class Dev::Builtins::DeployAllCommandTest < Minitest::Test
     Open3.capture2e("git", "-C", @project.to_s, "init", "-q")
     @out = StringIO.new
     @gh = FakeGh.new(root: @project)
-    @ui = Dev::Cli::NoUi.new(out: @out)
+    @ui = Dev::NoUi.new(out: @out)
     @steam = RecordingPublisher.new
   end
 

@@ -664,7 +664,7 @@ each surfaces as the command's.
 ### The verbs' UI
 
 The lifecycle verbs share one vocabulary ([dev#514](https://github.com/d3mlabs/dev/issues/514),
-[plans#52](https://github.com/d3mlabs/plans/issues/52)), `Dev::Cli::Ui`'s
+[plans#52](https://github.com/d3mlabs/plans/issues/52)), `Dev::Ui`'s
 — the UI `bin/release.rb` had, standardized with the verb. Each name is
 a stdio contract:
 
@@ -706,9 +706,13 @@ which cost every line after the first `step` its bar), and nothing
 needs it off — a child's fd 1 is never the Ruby-level `$stdout`, and
 with no frame open the router prefixes nothing.
 
-**Tiers.** `bin/dev` picks `UiImpl` (CLI::UI) when stdout is a TTY or
-`CI` / `CLICOLOR_FORCE` is set, `NoUi` otherwise (a pipe, ai-flow, the
-runner). `NoUi` prints the same facts as plain lines, no escape codes:
+**Tiers.** `bin/dev` picks `Dev::Cli::UiImpl` (CLI::UI) when stdout is
+a TTY or `CI` / `CLICOLOR_FORCE` is set, `Dev::NoUi` otherwise (a pipe,
+ai-flow, the runner). The vocabulary (`Dev::Ui`) and the plain tier live
+in `lib/dev/ui.rb` so a feature may take `ui:` — `OperatorAccess#check!`
+does — while the cli-ui tier and the choice between them are the
+shell's ([ADR-0014](DECISIONS.md), [dev#537](https://github.com/d3mlabs/dev/issues/537)).
+`NoUi` prints the same facts as plain lines, no escape codes:
 the frame's title, `✓ name` / `✗ name` per spin, a step's name before
 and its glyph after; `confirm` answers `nil` rather than assuming — the
 caller treats it as a no, so `--yes` / `--force` is how a script consents. The
@@ -1136,7 +1140,7 @@ how the verb is invoked and watched:
 
 **The crossing line.** `→ on <runner>, snapshot <sha>` for a runner,
 `→ in <image> (container), snapshot <sha>` for the container (dim;
-`Cli::Ui#print_remote_crossing(destination:, snapshot:)`, the destination
+`Ui#print_remote_crossing(destination:, snapshot:)`, the destination
 the transport's own), the counterpart of `→ in <image>` when a project
 command enters a container: one line, so the operator knows the next
 output is another host's. The Actions transport then names the run's

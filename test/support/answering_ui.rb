@@ -1,7 +1,7 @@
 # typed: false
 # frozen_string_literal: true
 
-require "dev/cli/ui"
+require "dev/ui"
 require "stringio"
 
 # A terminal that answers every `confirm` as told, remembering each
@@ -9,7 +9,7 @@ require "stringio"
 # command whose test is about the question (dev#533). Everything else is
 # `NoUi`: plain lines on `out`, no spinner, no router. Each instance keeps
 # only its own questions, so tests share no state through it.
-class AnsweringUi < Dev::Cli::NoUi
+class AnsweringUi < Dev::NoUi
   # One `confirm` as it was asked.
   Question = Data.define(:text, :default)
 

@@ -4,6 +4,7 @@
 require "stringio"
 
 require "dev/runner_registry"
+require "dev/ui"
 
 module Dev
   # What the operator's own gh login must be able to do before `dev runner
@@ -54,11 +55,6 @@ module Dev
     # the browser round-trip itself.
     Refresher = T.type_alias { T.proc.params(scope: String).returns(T::Boolean) }
 
-    # A yes/no at the terminal — nil when there is none to ask at, which
-    # is a no here (Dev::Cli::Ui#confirm; `lib` does not reach into `src`,
-    # so the seam arrives as its one method, as RunnerUser's `Ask` does).
-    Confirm = T.type_alias { T.proc.params(question: String).returns(T.nilable(T::Boolean)) }
-
     # The one way a login is widened by default: gh's own refresh, which
     # prompts and opens the browser itself; its exit status is the answer.
     DEFAULT_REFRESHER = T.let(
@@ -89,17 +85,17 @@ module Dev
     #
     # @param scope [String] "owner" (org) or "owner/repo"
     # @param org [Boolean] whether the registration is org-scoped
-    # @param confirm [Proc] asks the yes/no (Confirm)
+    # @param ui [Dev::Ui] where the yes/no is asked — nil (no terminal) is a no
     # @return [void]
     # @raise [RefusedError] when the login cannot, and a refresh did not or could not help
-    sig { params(scope: String, org: T::Boolean, confirm: Confirm).void }
-    def check!(scope:, org:, confirm:)
+    sig { params(scope: String, org: T::Boolean, ui: Dev::Ui).void }
+    def check!(scope:, org:, ui:)
       precondition = org ? org_precondition(scope) : repo_precondition(scope)
       refusal = refusal_of(precondition)
       return if refusal.nil?
 
       @out.puts ">>> #{headline(precondition, refusal)}"
-      if confirm.call("Run `#{precondition.fix}` now?") && @refresher.call(precondition.scope)
+      if ui.confirm("Run `#{precondition.fix}` now?") && @refresher.call(precondition.scope)
         refusal = refusal_of(precondition)
         return if refusal.nil?
       end

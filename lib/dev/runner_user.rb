@@ -313,7 +313,7 @@ module Dev
     end
 
     # An asker: a question, answered with the secret — or nil/"" when
-    # there is no terminal, or the user declined (Dev::Cli::Ui#ask_secret).
+    # there is no terminal, or the user declined (Dev::Ui#ask_secret).
     Ask = T.type_alias { T.proc.params(question: String).returns(T.nilable(String)) }
 
     # The runner user's gh must be logged in before anything enrolls: it

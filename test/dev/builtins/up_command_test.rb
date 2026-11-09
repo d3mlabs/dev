@@ -100,7 +100,7 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     )
 
     When
-    capture_stdout { command.call(args: no_args, context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui))) }
+    capture_stdout { command.call(args: no_args, context: Dev::ExecutionContext.new(ui: typed_mock(Dev::Ui))) }
 
     Then
     true
@@ -115,7 +115,7 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     host_service.expects(:sync_learnings).with(project_root: nil).once
     install_deps = install_deps_mock
     command = Dev::Builtins::UpCommand.new(install_deps_command: install_deps, host_service: host_service)
-    context = Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui))
+    context = Dev::ExecutionContext.new(ui: typed_mock(Dev::Ui))
 
     When "running up outside any project"
     stdout = capture_stdout { command.call(args: no_args, context: context) }
@@ -212,7 +212,7 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     command = Dev::Builtins::UpCommand.new(
       install_deps_command: install_deps, host_service: host_service, inside_container: true,
     )
-    context = Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui))
+    context = Dev::ExecutionContext.new(ui: typed_mock(Dev::Ui))
 
     When "running up"
     stdout = capture_stdout { command.call(args: no_args, context: context) }
@@ -274,7 +274,7 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
     install_deps = install_deps_mock
     host_service = typed_mock(Dev::HostService)
     command = Dev::Builtins::UpCommand.new(install_deps_command: install_deps, host_service: host_service)
-    context = Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui))
+    context = Dev::ExecutionContext.new(ui: typed_mock(Dev::Ui))
 
     When "running dev up --no-cache"
     stdout = capture_stdout { command.call(args: parsed_args(command, ["--no-cache"]), context: context) }
@@ -383,12 +383,12 @@ class Dev::Builtins::UpCommandTest < Minitest::Test
   end
 
   def inside_context(root)
-    Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui), project: Dev::ProjectContext.new(name: "snappy", root: root))
+    Dev::ExecutionContext.new(ui: typed_mock(Dev::Ui), project: Dev::ProjectContext.new(name: "snappy", root: root))
   end
 
   def build_context
     Dev::ExecutionContext.new(
-      ui: typed_mock(Dev::Cli::Ui),
+      ui: typed_mock(Dev::Ui),
       project: Dev::ProjectContext.new(name: "TestProject", root: Pathname.new("/tmp/up-test")),
     )
   end

@@ -355,13 +355,13 @@ class Dev::Builtins::EngineCommandsTest < Minitest::Test
 
   private
 
-  def no_project(ui: typed_mock(Dev::Cli::Ui))
+  def no_project(ui: typed_mock(Dev::Ui))
     Dev::ExecutionContext.new(ui:)
   end
 
   def project_context(engine:)
     Dev::ExecutionContext.new(
-      ui: typed_mock(Dev::Cli::Ui),
+      ui: typed_mock(Dev::Ui),
       project: Dev::ProjectContext.new(
         name: "TestProject", root: Pathname.new("/tmp/engine-test"), engine: engine,
       ),

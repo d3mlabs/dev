@@ -11,7 +11,7 @@ class Dev::ExecutionContextTest < Minitest::Test
   test "project! unwraps the project half when one exists" do
     Given "a context with a project half"
     project = Dev::ProjectContext.new(name: "TestProject", root: Pathname.new("/tmp/ctx-test"))
-    context = Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui), project: project)
+    context = Dev::ExecutionContext.new(ui: typed_mock(Dev::Ui), project: project)
 
     Expect "the non-nil project"
     context.project!.equal?(project)
@@ -28,7 +28,7 @@ class Dev::ExecutionContextTest < Minitest::Test
 
   test "project! raises ProjectRequiredError outside a project" do
     Given "a context with no project half"
-    context = Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui))
+    context = Dev::ExecutionContext.new(ui: typed_mock(Dev::Ui))
 
     When "unwrapping the project"
     context.project!

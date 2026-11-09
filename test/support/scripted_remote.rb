@@ -3,7 +3,7 @@
 
 require "pathname"
 require "stringio"
-require "dev/cli/ui"
+require "dev/ui"
 require "dev/lifecycle"
 require "dev/remote_dispatches"
 require "support/fake_gh"
@@ -40,7 +40,7 @@ class ScriptedRemote
   attr_reader :gh, :sync, :out
 
   # @param root [Pathname] the project root the workflow is looked up under
-  # @param ui [Dev::Cli::Ui] where the crossing line prints
+  # @param ui [Dev::Ui] where the crossing line prints
   # @param downloads [Boolean] whether the forge also answers `run download`
   def initialize(root:, ui:, downloads: false)
     @root = root

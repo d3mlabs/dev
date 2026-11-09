@@ -1,6 +1,6 @@
 # Plan: generalize dev's CLI UI
 
-Status: superseded by [plans#52](https://github.com/d3mlabs/plans/issues/52) (the `Dev::Cli::Ui` seam, [dev#514](https://github.com/d3mlabs/dev/issues/514)); kept as the record of the survey. `Dev::Deps::CliUI` below no longer exists ([dev#535](https://github.com/d3mlabs/dev/issues/535)).
+Status: superseded by [plans#52](https://github.com/d3mlabs/plans/issues/52) (the `Dev::Ui` seam, [dev#514](https://github.com/d3mlabs/dev/issues/514)); kept as the record of the survey. `Dev::Deps::CliUI` below no longer exists ([dev#535](https://github.com/d3mlabs/dev/issues/535)).
 
 ## 0. Shipped alongside this plan (not part of the proposal)
 
@@ -21,7 +21,7 @@ dev has **four** disjoint ways to talk to the terminal, with no shared rules:
 
 | Surface | Today | Issue |
 |---|---|---|
-| Core (`Dev::Cli::Ui`) | prints a bold header, then `exec`s | minimal; no shared vocab |
+| Core (`Dev::Ui`) | prints a bold header, then `exec`s | minimal; no shared vocab |
 | Deps (`Dev::Deps::CliUI`) | `with_spinner`/`step_ok`/`step_fail` + plain fallback | **swallows failures** (see §3) |
 | `bin/*.rb` (setup, release, …) | call `CLI::UI` directly (`frame`, `spinner`) | each re-derives router setup |
 | Integrations (`BuildWatcher`, since deleted — dev#311) | raw `puts ">>> …"` | no spinner, no progress, no glyphs |

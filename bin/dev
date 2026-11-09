@@ -100,7 +100,7 @@ end
 ui = if $stdout.tty? || ENV["CI"] || ENV["CLICOLOR_FORCE"]
   Dev::Cli::UiImpl.new(cli_ui: CLI::UI)
 else
-  Dev::Cli::NoUi.new
+  Dev::NoUi.new
 end
 
 # The Runner is project-optional and owns the rescue-to-exit mapping of the

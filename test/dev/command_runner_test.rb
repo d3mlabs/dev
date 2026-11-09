@@ -30,7 +30,7 @@ class CommandRunnerTest < Minitest::Test
   include SorbetHelper
 
   def setup
-    @ui = typed_mock(Dev::Cli::Ui)
+    @ui = typed_mock(Dev::Ui)
     @ui.stubs(:print_header)
     @ui.stubs(:print_remote_crossing)
     # CommandRunner#run chdirs into @project_root, which teardown deletes.

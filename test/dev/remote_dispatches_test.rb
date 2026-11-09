@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/cli/ui"
+require "dev/ui"
 require "dev/build_container"
 require "dev/dispatch"
 require "dev/environment_image"
@@ -23,7 +23,7 @@ class Dev::RemoteDispatchesTest < Minitest::Test
     Given
     root = Pathname("/nonexistent/checkout")
     remotes = Dev::RemoteDispatches.new(
-      root:, ui: typed_mock(Dev::Cli::Ui), out: StringIO.new, runs: Dev::Lifecycle::WorkflowRuns.new(gh: FakeGh.new(root:)),
+      root:, ui: typed_mock(Dev::Ui), out: StringIO.new, runs: Dev::Lifecycle::WorkflowRuns.new(gh: FakeGh.new(root:)),
     )
 
     When
@@ -40,7 +40,7 @@ class Dev::RemoteDispatchesTest < Minitest::Test
     Given
     root = Pathname("/nonexistent/checkout")
     containers = Dev::ProjectContainer.new(project_root: root, client: Dev::BuildContainer.new(engine: FakeContainerEngine.new))
-    remotes = Dev::RemoteDispatches.new(root:, ui: typed_mock(Dev::Cli::Ui), out: StringIO.new, containers:)
+    remotes = Dev::RemoteDispatches.new(root:, ui: typed_mock(Dev::Ui), out: StringIO.new, containers:)
     image = Dev::EnvironmentImage.new(
       name: "snappy-linux", from: "ghcr.io/d3mlabs/unreal-engine-build-base", from_digest: "a" * 64,
       platform: "linux/amd64", apt: [], registry: "ghcr.io/d3mlabs",
@@ -60,7 +60,7 @@ class Dev::RemoteDispatchesTest < Minitest::Test
     Given
     root = Pathname("/nonexistent/checkout")
 
-    dispatch = Dev::RemoteDispatches.new(root:, ui: typed_mock(Dev::Cli::Ui)).actions_runner("box")
+    dispatch = Dev::RemoteDispatches.new(root:, ui: typed_mock(Dev::Ui)).actions_runner("box")
 
     When "dispatching from a root without the workflow"
     dispatch.dispatch(Dev::Lifecycle::VerbInvocation.new(words: ["build", "x"])) { flunk("the env was resolved") }

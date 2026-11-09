@@ -228,6 +228,6 @@ class Dev::Builtins::RunnerUnregisterCommandTest < Minitest::Test
   end
 
   def projectless_context
-    Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui))
+    Dev::ExecutionContext.new(ui: typed_mock(Dev::Ui))
   end
 end

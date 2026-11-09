@@ -44,11 +44,8 @@ transform!(RSpock::AST::Transformation)
 class Dev::OperatorAccessTest < Minitest::Test
   REFRESH = "gh auth refresh -h github.com -s admin:org"
 
-  # The seam's one method as register hands it over: a terminal answering `answer`.
-  def answering(answer)
-    ui = AnsweringUi.new(answer: answer)
-    ->(question) { ui.confirm(question) }
-  end
+  # The terminal register hands over (Dev::Ui), answering `answer`.
+  def answering(answer) = AnsweringUi.new(answer: answer)
 
   test "an org registration probes the org's runner groups — the capability itself, not the token's scope list — and a login that can read them passes silently" do
     Given
@@ -57,7 +54,7 @@ class Dev::OperatorAccessTest < Minitest::Test
     access = Dev::OperatorAccess.new(registry: registry, out: out, refresher: ->(_scope) { raise "never" })
 
     When
-    access.check!(scope: "d3mlabs", org: true, confirm: answering(false))
+    access.check!(scope: "d3mlabs", org: true, ui: answering(false))
 
     Then
     registry.probes == [[:groups, "d3mlabs"]]
@@ -70,7 +67,7 @@ class Dev::OperatorAccessTest < Minitest::Test
     access = Dev::OperatorAccess.new(registry: registry, out: StringIO.new, refresher: ->(_scope) { raise "never" })
 
     When
-    access.check!(scope: "d3mlabs/cellbound-3d", org: false, confirm: answering(false))
+    access.check!(scope: "d3mlabs/cellbound-3d", org: false, ui: answering(false))
 
     Then
     registry.probes == [[:runners, "d3mlabs/cellbound-3d"]]
@@ -85,7 +82,7 @@ class Dev::OperatorAccessTest < Minitest::Test
     access = Dev::OperatorAccess.new(registry: registry, out: out, refresher: ->(scope) { refreshed << scope })
 
     When
-    access.check!(scope: "d3mlabs", org: true, confirm: ->(question) { ui.confirm(question) })
+    access.check!(scope: "d3mlabs", org: true, ui: ui)
 
     Then "the refusal carries what the login could not do, why register needs it, GitHub's reason, and the fix"
     error = raises Dev::OperatorAccess::RefusedError
@@ -113,7 +110,7 @@ class Dev::OperatorAccessTest < Minitest::Test
       })
 
     When
-    access.check!(scope: "d3mlabs", org: true, confirm: answering(true))
+    access.check!(scope: "d3mlabs", org: true, ui: answering(true))
 
     Then
     refreshed == ["admin:org"]
@@ -127,7 +124,7 @@ class Dev::OperatorAccessTest < Minitest::Test
     access = Dev::OperatorAccess.new(registry: registry, out: StringIO.new, refresher: ->(_scope) { true })
 
     When
-    access.check!(scope: "d3mlabs", org: true, confirm: answering(true))
+    access.check!(scope: "d3mlabs", org: true, ui: answering(true))
 
     Then
     error = raises Dev::OperatorAccess::RefusedError
@@ -141,7 +138,7 @@ class Dev::OperatorAccessTest < Minitest::Test
     access = Dev::OperatorAccess.new(registry: registry, out: StringIO.new, refresher: ->(_scope) { true })
 
     When
-    access.check!(scope: "d3mlabs/cellbound-3d", org: false, confirm: answering(false))
+    access.check!(scope: "d3mlabs/cellbound-3d", org: false, ui: answering(false))
 
     Then
     error = raises Dev::OperatorAccess::RefusedError

@@ -142,7 +142,7 @@ class Dev::Builtins::ReleaseCommandTest < Minitest::Test
       [target.name, Dev::TargetPlacement.new(target: target, placements: host, host_platform: PLATFORM::Linux64)]
     end
     remotes = Dev::RemoteDispatches.new(
-      root: @project, ui: typed_mock(Dev::Cli::Ui), out: @out, runs: Dev::Lifecycle::WorkflowRuns.new(gh: @gh),
+      root: @project, ui: typed_mock(Dev::Ui), out: @out, runs: Dev::Lifecycle::WorkflowRuns.new(gh: @gh),
     )
     settings = Dev::Settings.new(config_path: (@root / "config.yml").to_s, system_config_path: (@root / "none.yml").to_s)
     resolver = Dev::DispatchResolver.new(
@@ -167,12 +167,12 @@ class Dev::Builtins::ReleaseCommandTest < Minitest::Test
     )
   end
 
-  def context(ui: Dev::Cli::NoUi.new(out: @out))
+  def context(ui: Dev::NoUi.new(out: @out))
     Dev::ExecutionContext.new(ui:, project: Dev::ProjectContext.new(name: "cellbound-3d", root: @project))
   end
 
   # `--yes` unless the test is about the confirm: NoUi has no terminal.
-  def execute(verb, *words, ui: Dev::Cli::NoUi.new(out: @out), confirm: true)
+  def execute(verb, *words, ui: Dev::NoUi.new(out: @out), confirm: true)
     words = [*words, "--yes"] if confirm
     Dev::LifecycleExecutor.new.execute(verb, args: parsed_args(verb, words), context: context(ui:))
   end

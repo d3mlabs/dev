@@ -98,6 +98,6 @@ class Dev::Builtins::SkillsCommandsTest < Minitest::Test
   private
 
   def build_context
-    Dev::ExecutionContext.new(ui: typed_mock(Dev::Cli::Ui))
+    Dev::ExecutionContext.new(ui: typed_mock(Dev::Ui))
   end
 end

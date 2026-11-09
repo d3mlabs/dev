@@ -4,7 +4,7 @@
 require "pathname"
 require "shellwords"
 
-require "dev/cli/ui"
+require "dev/ui"
 require "dev/command"
 require "dev/container_workspace"
 require "dev/environment_image"
@@ -121,7 +121,7 @@ module Dev
       end
     end
 
-    # @param ui [Dev::Cli::Ui] the header and the crossing line
+    # @param ui [Dev::Ui] the header and the crossing line
     # @param project_root [Pathname] the checkout
     # @param host_rule [Dev::HostRule] whether an image's work runs here —
     #   and whether this dev already runs inside a container
@@ -130,7 +130,7 @@ module Dev
     # @param sync [Dev::Lifecycle::SnapshotSync] the sync step over the checkout
     sig do
       params(
-        ui: Dev::Cli::Ui,
+        ui: Dev::Ui,
         project_root: Pathname,
         host_rule: Dev::HostRule,
         containers: Dev::ProjectContainer,

@@ -674,7 +674,7 @@ class Dev::Builtins::ContainerCommandsTest < Minitest::Test
   # A project context over +root+ (a checkout, or a path nothing reads).
   def project(root: ROOT, engine: nil)
     Dev::ExecutionContext.new(
-      ui: typed_mock(Dev::Cli::Ui),
+      ui: typed_mock(Dev::Ui),
       project: Dev::ProjectContext.new(name: "TestProject", root: root, engine: engine),
     )
   end

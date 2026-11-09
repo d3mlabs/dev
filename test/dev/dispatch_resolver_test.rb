@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/cli/ui"
+require "dev/ui"
 require "dev/deps/dependency"
 require "dev/dispatch"
 require "dev/dispatch_resolver"
@@ -84,7 +84,7 @@ class Dev::DispatchResolverTest < Minitest::Test
     settings.set(Dev::Settings::LIFECYCLE_RUNNER_KEY, standing) if standing
     enrolled = Dev::EnrolledRunnerLookup.new(registry: ScriptedRegistry.new(online: enrolled_online), repo_resolver: -> { "d3mlabs/Cellbound-3D" })
     remotes = Dev::RemoteDispatches.new(
-      root: @dir, ui: typed_mock(Dev::Cli::Ui), out: StringIO.new,
+      root: @dir, ui: typed_mock(Dev::Ui), out: StringIO.new,
       runs: Dev::Lifecycle::WorkflowRuns.new(gh: FakeGh.new(root: @dir)),
       containers: Dev::ProjectContainer.new(project_root: @dir),
     )
