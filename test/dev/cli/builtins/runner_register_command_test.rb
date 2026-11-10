@@ -19,6 +19,7 @@ require "fileutils"
 require "json"
 require "pathname"
 require "stringio"
+require "support/recording_ui"
 require "tmpdir"
 
 # Records the contract lifecycle a register run drives.
@@ -793,7 +794,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     ]
     harness.wirings.first.first == Dev::RunnerSetupConfig.new(labels: AI_FLOW_SET, group: "ai-flow")
     harness.out.string.include?("Creating runner group 'ai-flow' at d3mlabs")
-    harness.out.string.include?("d3mlabs/cellbound may use group 'ai-flow'")
+    harness.out.string.include?("Admitting d3mlabs/cellbound to group 'ai-flow'")
   end
 
   test "a --labels subset of the ai-flow vocabulary is an ai-flow runner too: same group, no --ai-flow needed" do
@@ -824,7 +825,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     sound.group_writes == []
     drifted.group_writes.first == [:update, "d3mlabs", 7, "selected", nil, Dev::LabelContracts::AI_FLOW_WORKFLOWS]
     drifted.group_writes.last.first == :select
-    drifted_harness.out.string.include?("drifted (visibility is 'all', not 'selected'; not restricted to workflows)")
+    drifted_harness.out.string.include?("drifted: visibility is 'all', not 'selected'; not restricted to workflows")
   end
 
   test "an amended slot sitting in another group is moved into the ai-flow group; one already there is not touched" do
@@ -864,7 +865,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     Then
     registry.group_writes == []
-    harness.out.string.include?("d3mlabs/dev may use group 'ai-flow'.")
+    harness.out.string.include?("✓ d3mlabs/dev may use group 'ai-flow'")
   end
 
   test "a public repo admitted to the pinned ai-flow group turns on allows_public_repositories first — the pin is what makes that safe" do
@@ -1005,7 +1006,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.wirings.first.first == Dev::RunnerSetupConfig.new(labels: AI_FLOW_SET)
     registry.group_writes == [[:select, "d3mlabs", 7, [100]]]
     harness.out.string.include?("d3mlabs/cellbound-3d may also use the org's 'ai-flow' runners for these labels — its jobs would land on either.")
-    harness.out.string.include?("d3mlabs/cellbound-3d may no longer use group 'ai-flow'")
+    harness.out.string.include?("Excluding d3mlabs/cellbound-3d from group 'ai-flow'")
   end
 
   test "declining keeps the repo in the org's group — pooling is a legitimate answer — and says so; --yes answers yes" do
@@ -1435,7 +1436,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   # (config, repo, org) wiring and answers with a no-op setup; contracts
   # record their lifecycle; discovery reads a real (tmp) home; the registry
   # is the injected fake; the teardown resolves for real over that home
-  # but only records what it would remove; the Ui is a mock each test
+  # but only records what it would remove; the Ui is a RecordingUi over
+  # the same `out` (plain tier, so `out.string` reads every line) each test
   # scripts (tests that say nothing tolerate no question).
   def build_harness(contracts: 0, home: Dir.mktmpdir, registry: FakeRegistry.new,
                     scope: "d3mlabs/cellbound-3d", repo: "d3mlabs/cellbound-3d", contracts_factory: nil,
@@ -1465,7 +1467,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     discovery = Dev::RunnerDiscovery.new(home: home)
     teardown = Dev::RunnerTeardown.new(discovery: discovery, executor: nil, out: StringIO.new, home: home)
     teardown.define_singleton_method(:teardown!) { |enrollment| torn_down << enrollment }
-    ui = typed_mock(Dev::Ui)
+    ui = RecordingUi.new(out: out)
     command = Dev::Cli::Builtins::RunnerRegisterCommand.new(
       runner_setup_factory: ->(config, repo_override, org, as_user) {
         wirings << [config, repo_override, org, as_user]
@@ -1525,7 +1527,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   # For a command built without a harness: a context whose Ui is never asked.
   def build_context(name:, engine: nil, root: "/tmp/runner-test")
     Dev::Cli::ExecutionContext.new(
-      ui: typed_mock(Dev::Ui),
+      ui: RecordingUi.new,
       project: Dev::Cli::ProjectContext.new(name: name, root: Pathname.new(root), engine: engine),
     )
   end
@@ -1546,6 +1548,6 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   end
 
   def projectless_context
-    Dev::Cli::ExecutionContext.new(ui: typed_mock(Dev::Ui))
+    Dev::Cli::ExecutionContext.new(ui: RecordingUi.new)
   end
 end

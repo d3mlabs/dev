@@ -229,7 +229,7 @@ module Dev
           refresher: Dev::OperatorAccess::DEFAULT_REFRESHER
         )
           super()
-          @groups = T.let(groups || Dev::RunnerGroups.new(registry: registry, out: out), Dev::RunnerGroups)
+          @groups = T.let(groups || Dev::RunnerGroups.new(registry: registry), Dev::RunnerGroups)
           # The operator's own preconditions, probed first (dev#493).
           @operator_access = T.let(
             Dev::OperatorAccess.new(registry: registry, out: out, refresher: refresher),
@@ -437,7 +437,7 @@ module Dev
           yes = args.flag?(YES_FLAG)
           # The org-side contract first: the group the slots will join must
           # exist, with its access, before config.sh names it.
-          group = contract && @groups.converge!(contract, org: scope)
+          group = contract && @groups.converge!(contract, org: scope, ui: context.ui)
           # --dir is the operator picking the dir: no discovery, no detection.
           # The runner user's home is where the rule puts enrollments; the
           # operator's is where the ones from before it are.
@@ -462,7 +462,7 @@ module Dev
             runner = enrollment && runners[enrollment.name]
             if enrollment && runner
               amend_enrollment(scope, enrollment, runner, config)
-              @groups.place!(group, runner, org: scope) if group
+              @groups.place!(group, runner, org: scope, ui: context.ui) if group
               contracts.each { |contract| contract.after_enroll!(runner_dir: enrollment.dir, slot: slot) }
               next
             end
@@ -485,7 +485,7 @@ module Dev
           end
 
           if org
-            converge_access!(scope, group, repo)
+            converge_access!(scope, group, repo, ui: context.ui)
           else
             offer_exclusivity!(scope, labels, yes: yes, ui: context.ui)
           end
@@ -502,12 +502,13 @@ module Dev
         # @param scope [String] the org
         # @param group [Dev::RunnerRegistry::Group, nil] the contract's group, when one was obliged
         # @param repo [String] the repo this registration is for
-        sig { params(scope: String, group: T.nilable(Dev::RunnerRegistry::Group), repo: String).void }
-        def converge_access!(scope, group, repo)
+        # @param ui [Ui]
+        sig { params(scope: String, group: T.nilable(Dev::RunnerRegistry::Group), repo: String, ui: Ui).void }
+        def converge_access!(scope, group, repo, ui:)
           access = group || @registry.group(org: scope, name: DEFAULT_GROUP)
           return if access.nil?
 
-          @groups.admit!(access, repo, org: scope)
+          @groups.admit!(access, repo, org: scope, ui: ui)
         end
 
         # The exclusion, derived (dev#470): a repo-scoped runner is that
@@ -539,7 +540,7 @@ module Dev
             return
           end
 
-          @groups.exclude!(group, scope, org: org)
+          @groups.exclude!(group, scope, org: org, ui: ui)
         rescue RunnerRegistry::QueryError => e
           @out.puts ">>> Could not read #{org}'s runner groups (#{e.message}) — whether #{scope} also uses the org's runners is unchecked."
         end
