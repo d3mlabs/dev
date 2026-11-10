@@ -6,7 +6,7 @@ require "dev/agent_bootstrap/darwin"
 require "support/recorded_bootstrap_executor"
 require "etc"
 require "fileutils"
-require "stringio"
+require "support/recording_ui"
 require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
@@ -23,14 +23,15 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
   # Filesystem-facing params always point at tmp paths: an already-provisioned
   # shared root (DDC dir included) and no ~/.dev to migrate; and no
   # deployment tap (the host's Settings never decide a test), so
-  # identity-step tests stay focused.
+  # identity-step tests stay focused. The Ui is a recorder: pass one to
+  # read what the bootstrap said.
   def bootstrap(executor, **kwargs)
     provisioned_root = Dir.mktmpdir.tap { |root| FileUtils.mkdir_p(File.join(root, "ddc")) }
     defaults = {
       data_root: provisioned_root, home_dev: File.join(Dir.mktmpdir, "absent-home-dev"),
       launch_agents_dir: Dir.mktmpdir, brew_executable: nil, tap: nil,
     }
-    Dev::AgentBootstrap::Darwin.new(runner_user: "human", executor: executor, out: StringIO.new, **defaults.merge(kwargs))
+    Dev::AgentBootstrap::Darwin.new(runner_user: "human", executor: executor, ui: RecordingUi.new, **defaults.merge(kwargs))
   end
 
   test "converge! is a no-op when the host is already converged" do
@@ -55,15 +56,18 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
       capture_results: { SUDOERS_PROBE => sudoers_content },
     )
 
-    When "converging"
-    bootstrap(executor).converge!
+    ui = RecordingUi.new
 
-    Then "sysadminctl creates, dscl hides, createhomedir materializes"
+    When "converging"
+    bootstrap(executor, ui: ui).converge!
+
+    Then "sysadminctl creates, dscl hides, createhomedir materializes — one step on the terminal"
     executor.runs == [
       ["sudo", "sysadminctl", "-addUser", "ai-agent", "-fullName", "AI Agent", "-shell", "/bin/zsh"],
       ["sudo", "dscl", ".", "create", "/Users/ai-agent", "IsHidden", "1"],
       ["sudo", "createhomedir", "-c", "-u", "ai-agent"],
     ]
+    ui.rows == [[:step, "Creating the ai-agent user (non-admin)", 0]]
   end
 
   # plans#59: the group is the data root's (`dev`), the one name every
@@ -75,8 +79,10 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
       capture_results: { SUDOERS_PROBE => sudoers_content },
     )
 
+    ui = RecordingUi.new
+
     When "converging"
-    bootstrap(executor).converge!
+    bootstrap(executor, ui: ui).converge!
 
     Then
     executor.runs == [
@@ -84,16 +90,24 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
       ["sudo", "dseditgroup", "-o", "edit", "-a", "human", "-t", "user", "dev"],
       ["sudo", "dseditgroup", "-o", "edit", "-a", "ai-agent", "-t", "user", "dev"],
     ]
+    ui.rows == [
+      [:step, "Creating the dev group", 0],
+      [:step, "Adding human to the dev group", 0],
+      [:step, "Adding ai-agent to the dev group", 0],
+    ]
   end
 
   test "converge! writes the sudoers drop-in only after visudo validates it" do
     Given "a host missing only the sudoers drop-in"
     executor = RecordedBootstrapExecutor.new(probe_results: identity_probes)
 
-    When "converging"
-    bootstrap(executor).converge!
+    ui = RecordingUi.new
 
-    Then "validate on a staging file, then install root-owned 0440"
+    When "converging"
+    bootstrap(executor, ui: ui).converge!
+
+    Then "validate on a staging file, then install root-owned 0440, as one step"
+    ui.rows == [[:step, "Installing the sudoers edge (/etc/sudoers.d/ai-flow-agent)", 0]]
     executor.runs.length == 2
     executor.runs.fetch(0).first(4) == ["sudo", "visudo", "-c", "-f"]
     executor.runs.fetch(1).first(6) == ["sudo", "install", "-m", "0440", "-o", "root"]
@@ -116,10 +130,16 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     executor = converged_identity_executor
     shared_root = File.join(Dir.mktmpdir, "dev")
 
+    ui = RecordingUi.new
+
     When "converging"
-    bootstrap(executor, data_root: shared_root).converge!
+    bootstrap(executor, data_root: shared_root, ui: ui).converge!
 
     Then "root and DDC dir exist, human-owned, group dev, setgid group-writable — and nothing is re-grouped"
+    ui.rows == [
+      [:step, "Provisioning the shared root at #{shared_root}", 0],
+      [:step, "Provisioning the shared DDC at #{File.join(shared_root, "ddc")}", 0],
+    ]
     File.directory?(shared_root)
     File.directory?(File.join(shared_root, "ddc"))
     executor.runs == [
@@ -157,14 +177,14 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     shared_root = Dir.mktmpdir
     FileUtils.mkdir_p(File.join(shared_root, "ddc"))
     executor = converged_identity_executor(capture_results: { ["stat", "-f", "%Sg %Sp", shared_root] => "ai drwxrwsr-x\n" })
-    out = StringIO.new
+    ui = RecordingUi.new
 
     When "converging"
-    bootstrap(executor, data_root: shared_root, out: out).converge!
+    bootstrap(executor, data_root: shared_root, ui: ui).converge!
 
-    Then "one recursive chgrp, announced; modes untouched"
+    Then "one recursive chgrp, a step; modes untouched"
     executor.runs == [["sudo", "chgrp", "-Rh", "dev", shared_root]]
-    out.string.include?("Re-grouping #{shared_root} from ai to dev")
+    ui.rows == [[:step, "Re-grouping #{shared_root} from ai to dev (one group across hosts)", 0]]
   end
 
   test "converge! leaves a shared root in any other group alone (drift is status's to report)" do
@@ -238,15 +258,14 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     Given "a converged host with brew (its lock dir cooperative) and the org tap"
     brew = brew_in(Dir.mktmpdir)
     executor = converged_identity_executor(brew_executable: brew, capture_results: cooperative_locks(brew))
-    out = StringIO.new
+    ui = RecordingUi.new
 
     When "converging"
-    bootstrap(executor, out: out, brew_executable: brew, tap: org_tap).converge!
+    bootstrap(executor, ui: ui, brew_executable: brew, tap: org_tap).converge!
 
-    Then "the one step is brew trust as the agent, and it is announced"
+    Then "the one step is brew trust as the agent, and it is the one thing said"
     executor.runs == [["sudo", "-H", "-u", "ai-agent", "--", "env", "HOMEBREW_NO_AUTO_UPDATE=1", brew, "trust", "--tap", "d3mlabs/d3mlabs"]]
-    out.string.include?(">>> Trusting the tap d3mlabs/d3mlabs for ai-agent")
-    !out.string.include?("warning")
+    ui.rows == [[:step, "Trusting the tap d3mlabs/d3mlabs for ai-agent (brew loads nothing from a tap its user has not trusted)", 0]]
   end
 
   # dev#558: brew takes its locks in <prefix>/var/homebrew/locks (HOMEBREW_LOCKS,
@@ -258,12 +277,12 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     prefix = Dir.mktmpdir
     brew = brew_in(prefix)
     executor = converged_identity_executor(brew_executable: brew)
-    out = StringIO.new
+    ui = RecordingUi.new
 
     When "converging"
-    bootstrap(executor, out: out, brew_executable: brew, tap: org_tap).converge!
+    bootstrap(executor, ui: ui, brew_executable: brew, tap: org_tap).converge!
 
-    Then "mkdir, regroup, group-writable throughout, setgid — then the trust"
+    Then "mkdir, regroup, group-writable throughout, setgid — then the trust; a step each"
     locks = File.join(prefix, "var", "homebrew", "locks")
     executor.runs == [
       ["sudo", "mkdir", "-p", locks],
@@ -272,7 +291,10 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
       ["sudo", "chmod", "g+s", locks],
       ["sudo", "-H", "-u", "ai-agent", "--", "env", "HOMEBREW_NO_AUTO_UPDATE=1", brew, "trust", "--tap", "d3mlabs/d3mlabs"],
     ]
-    out.string.include?(">>> Granting the dev group cooperative access to brew's lock dir #{locks}")
+    ui.rows.map { |row| row.first(2) } == [
+      [:step, "Granting the dev group cooperative access to brew's lock dir #{locks}"],
+      [:step, "Trusting the tap d3mlabs/d3mlabs for ai-agent (brew loads nothing from a tap its user has not trusted)"],
+    ]
   end
 
   test "a cooperative lock dir still holding a lock the owner left 0644 is re-granted: the agent opens every lock read-write" do
@@ -342,15 +364,17 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     Given "a converged host whose brew predates `brew trust`"
     brew = brew_in(Dir.mktmpdir)
     executor = converged_identity_executor(fail_matching: "trust", brew_executable: brew)
-    out = StringIO.new
+    ui = RecordingUi.new
 
     When "converging"
-    bootstrap(executor, out: out, brew_executable: brew, tap: org_tap).converge!
+    bootstrap(executor, ui: ui, brew_executable: brew, tap: org_tap).converge!
 
-    Then "it ran, it was refused, and register went on"
+    Then "it ran, it was refused — the step failed, a note after it names the by-hand command — and register went on"
     executor.runs.count(&trusts) == 1
-    out.string.include?("dev: warning: could not trust the tap d3mlabs/d3mlabs for ai-agent")
-    out.string.include?("`sudo -iu ai-agent brew trust --tap d3mlabs/d3mlabs`")
+    ui.rows.fetch(-2) == [:step, "Trusting the tap d3mlabs/d3mlabs for ai-agent (brew loads nothing from a tap its user has not trusted)", 0]
+    ui.rows.fetch(-1).fetch(0) == :note
+    ui.rows.fetch(-1).fetch(1).start_with?("{{x}} could not trust the tap d3mlabs/d3mlabs for ai-agent")
+    ui.rows.fetch(-1).fetch(1).include?("`sudo -iu ai-agent brew trust --tap d3mlabs/d3mlabs`")
   end
 
   # A lambda, not a block: a one-parameter block is emitted as |argv,| by
@@ -604,14 +628,17 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     executor = RecordedBootstrapExecutor.new
     runner_dir = Dir.mktmpdir
     File.write(File.join(runner_dir, ".service"), "actions.runner.d3mlabs-x.mac\n")
-    out = StringIO.new
+    ui = RecordingUi.new
 
     When "converging the post-enrollment steps"
-    bootstrap(executor, out: out).after_enroll!(runner_dir: runner_dir, slot: 1)
+    bootstrap(executor, ui: ui).after_enroll!(runner_dir: runner_dir, slot: 1)
 
-    Then "a warning names the missing CLI"
-    out.string.include?("cursor-agent")
-    out.string.include?("WARNING")
+    Then "the grant and the service are steps; a failed-state note names the missing CLI"
+    ui.rows.fetch(0) == [:step, "Granting the dev group cooperative access to #{File.join(runner_dir, "_work")}", 0]
+    ui.rows.fetch(1).fetch(0) == :step
+    ui.rows.fetch(1).fetch(1).start_with?("Writing Umask 002 + AI_FLOW_AGENT_USER=ai-agent + AI_FLOW_AGENT_GROUP=dev + AI_FLOW_RUNNER_SLOT=1 into ")
+    ui.rows.fetch(2) == [:note, "{{x}} no brew on this host, so the agent CLI (cursor-agent) has no channel to arrive through — install Homebrew, then run `dev up`", 0]
+    ui.rows.length == 3
   end
 
   # dev#547: the same probe as Linux's — the cask's link beside brew in the
@@ -629,16 +656,17 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     end
     runner_dir = Dir.mktmpdir
     File.write(File.join(runner_dir, ".service"), "actions.runner.d3mlabs-x.mac\n")
-    out = StringIO.new
-    bs = bootstrap(RecordedBootstrapExecutor.new, out: out, brew_executable: brew, owner_of: ->(_path) { "human" })
+    ui = RecordingUi.new
+    bs = bootstrap(RecordedBootstrapExecutor.new, ui: ui, brew_executable: brew, owner_of: ->(_path) { "human" })
 
     When "converging the post-enrollment steps"
     bs.after_enroll!(runner_dir: runner_dir, slot: 1)
 
-    Then "the path is the channel's, and the warning (if any) names the human's dev up"
+    Then "the path is the channel's, and the failed-state note (if any) names the human's dev up"
     bs.agent_cli_path == cli
-    out.string.include?("WARNING") == !present
-    out.string.include?("`dev up` as human, who owns #{prefix}") == !present
+    warnings = ui.rows.select { |row| row.fetch(0) == :note && row.fetch(1).start_with?("{{x}}") }
+    warnings.length == (present ? 0 : 1)
+    warnings.all? { |row| row.fetch(1).include?("`dev up` as human, who owns #{prefix}") }
 
     Where
     what                  | present

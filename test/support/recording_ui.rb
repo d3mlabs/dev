@@ -21,8 +21,16 @@ class RecordingUi < Dev::NoUi
 
   def initialize(out: StringIO.new)
     super(out:)
+    @out_io = out
     @events = []
     @depth = 0
+  end
+
+  # What the plain tier printed, when `out` is a StringIO (the default).
+  #
+  # @return [String]
+  def out_text
+    @out_io.string
   end
 
   def frame(title, &block)

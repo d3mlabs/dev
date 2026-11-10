@@ -2,12 +2,12 @@
 # frozen_string_literal: true
 
 require "etc"
-require "stringio"
 
 require "dev/data_root"
 require "dev/data_root_migration"
 require "dev/platform"
 require "dev/privileged_steps"
+require "dev/ui"
 
 module Dev
   # Brings a Linux host's data root into being: `/var/lib/dev`
@@ -97,7 +97,6 @@ module Dev
     # @param user [String] the owner the root is handed to
     # @param group [String] the group it is shared with (DataRoot::GROUP;
     #   injectable so tests stat a group this process is in)
-    # @param out [IO, StringIO]
     sig do
       params(
         steps: PrivilegedSteps,
@@ -105,19 +104,16 @@ module Dev
         home_dev: String,
         user: String,
         group: String,
-        out: T.any(IO, StringIO),
       ).void
     end
     def initialize(steps: PrivilegedSteps.new(purpose: "create the data root #{DataRoot::LINUX_ROOT}"),
                    root: DataRoot::LINUX_ROOT, home_dev: File.expand_path(DataRoot::HOME_ROOT),
-                   user: T.must(Etc.getpwuid(Process.uid)).name, group: DataRoot::GROUP,
-                   out: $stdout)
+                   user: T.must(Etc.getpwuid(Process.uid)).name, group: DataRoot::GROUP)
       @steps = steps
       @root = root
       @home_dev = home_dev
       @user = user
       @group = group
-      @out = out
     end
 
     # Probe without root.
@@ -138,11 +134,13 @@ module Dev
     # present, writable root not yet shared is converged in place and
     # nothing is migrated (it is already the data root in use).
     #
+    # @param ui [Ui] the sudo sequence is one step on it (sudo owns the
+    #   terminal); the migration's moves and the group caveat follow
     # @return [void]
     # @raise [NotWritableError] the root exists and is another identity's
     # @raise [PrivilegedSteps::StepFailedError, PrivilegedSteps::SudoRequiredError]
-    sig { void }
-    def provision!
+    sig { params(ui: Ui).void }
+    def provision!(ui: NoUi.new)
       current = status
       return if current.writable && current.shared
 
@@ -153,8 +151,8 @@ module Dev
           "if the root is not shared with the group yet, its owner's `dev up` shares it."
       end
 
-      current.present ? share! : create!
-      @out.puts "    #{@user} is in group #{@group} from the next login (the owner writes regardless)."
+      current.present ? share!(ui) : create!(ui)
+      ui.note("#{@user} is in group #{@group} from the next login (the owner writes regardless)")
     end
 
     private
@@ -173,28 +171,32 @@ module Dev
 
     # Create the root as root, hand it to the user and the group, migrate.
     #
+    # @param ui [Ui]
     # @return [void]
-    sig { void }
-    def create!
-      @out.puts ">>> Creating the data root #{@root}, shared with group #{@group} (one sudo prompt) ..."
-      @steps.session!
-      group_steps!
-      @steps.step!("sudo", "install", "-d", "-o", @user, "-g", @group, "-m", "2775", @root)
-      DataRootMigration.new(from: @home_dev, to: @root, out: @out).run!
+    sig { params(ui: Ui).void }
+    def create!(ui)
+      ui.step("Creating the data root #{@root}, shared with group #{@group} (one sudo prompt)") do
+        @steps.session!
+        group_steps!
+        @steps.step!("sudo", "install", "-d", "-o", @user, "-g", @group, "-m", "2775", @root)
+      end
+      DataRootMigration.new(from: @home_dev, to: @root, ui: ui).run!
     end
 
     # Converge a root that predates the group: group and mode, down the
     # tree (share_tree_argv), no owner touched.
     #
+    # @param ui [Ui]
     # @return [void]
-    sig { void }
-    def share!
-      @out.puts ">>> Sharing the data root #{@root} with group #{@group} (one sudo prompt) ..."
-      @steps.session!
-      group_steps!
-      @steps.step!("sudo", "chgrp", "-Rh", @group, @root)
-      walk = ["sudo"] + self.class.share_tree_argv(@root)
-      @steps.step!(*T.unsafe(walk))
+    sig { params(ui: Ui).void }
+    def share!(ui)
+      ui.step("Sharing the data root #{@root} with group #{@group} (one sudo prompt)") do
+        @steps.session!
+        group_steps!
+        @steps.step!("sudo", "chgrp", "-Rh", @group, @root)
+        walk = ["sudo"] + self.class.share_tree_argv(@root)
+        @steps.step!(*T.unsafe(walk))
+      end
     end
 
     # The group exists and this user is in it; both idempotent.

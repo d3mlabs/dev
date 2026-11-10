@@ -4,12 +4,12 @@
 require "etc"
 require "fileutils"
 require "open3"
-require "stringio"
 require "tempfile"
 
 require "dev/data_root"
 require "dev/runner_user"
 require "dev/tap_trust"
+require "dev/ui"
 
 module Dev
   # The agent host contract (plans#26 layer 3), converged by `dev runner
@@ -214,7 +214,8 @@ module Dev
     # @param agent_user [String] the run-as user to provision
     # @param runner_user [String] the enrolling user (the sudoers grantor)
     # @param executor [#run, #quiet?, #capture] admin CLI seam
-    # @param out [IO, StringIO] progress stream
+    # @param ui [Ui] where the convergence is told: a step per admin
+    #   sequence (sudo owns the terminal), a note per fact
     # @param data_root [String] the data root the agent joins
     # @param brew_executable [String, nil] the host's brew binary (nil = no
     #   brew edge, no tap to trust)
@@ -230,7 +231,7 @@ module Dev
         agent_user: String,
         runner_user: String,
         executor: T.untyped,
-        out: T.any(IO, StringIO),
+        ui: Ui,
         data_root: String,
         brew_executable: T.nilable(String),
         owner_of: RunnerUser::OwnerOf,
@@ -238,12 +239,12 @@ module Dev
         as_agent_prelude: T::Array[String],
       ).void
     end
-    def initialize(agent_user:, runner_user:, executor:, out:, data_root:, brew_executable:, owner_of:, tap:,
+    def initialize(agent_user:, runner_user:, executor:, ui:, data_root:, brew_executable:, owner_of:, tap:,
                    as_agent_prelude: [])
       @agent_user = agent_user
       @runner_user = runner_user
       @executor = executor
-      @out = out
+      @ui = ui
       @data_root = data_root
       @brew_executable = brew_executable
       @owner_of = owner_of
@@ -254,7 +255,7 @@ module Dev
       # `run` streams: the trust step may be the first sudo of a converged
       # host's re-run, and its password prompt has to reach the terminal.
       @tap_trust = T.let(
-        TapTrust.new(user: agent_user, brew: brew_executable, tap: tap, out: out,
+        TapTrust.new(user: agent_user, brew: brew_executable, tap: tap, ui: ui,
           run_as_user: ->(argv) { @as_agent.run(*argv) }),
         TapTrust,
       )
@@ -466,23 +467,18 @@ module Dev
     def ensure_agent_user!
       return if @executor.quiet?("id", "-u", @agent_user)
 
-      @out.puts ">>> Creating the #{@agent_user} user (non-admin) ..."
-      create_agent_user!
+      @ui.step("Creating the #{@agent_user} user (non-admin)") { create_agent_user! }
     end
 
     # Step 2: the cooperative group with both identities enrolled.
     sig { void }
     def ensure_group!
-      unless group_exists?
-        @out.puts ">>> Creating the #{DataRoot::GROUP} group ..."
-        create_group!
-      end
+      @ui.step("Creating the #{DataRoot::GROUP} group") { create_group! } unless group_exists?
 
       [@runner_user, @agent_user].each do |member|
         next if group_member?(member)
 
-        @out.puts ">>> Adding #{member} to the #{DataRoot::GROUP} group ..."
-        add_group_member!(member)
+        @ui.step("Adding #{member} to the #{DataRoot::GROUP} group") { add_group_member!(member) }
       end
     end
 
@@ -494,13 +490,14 @@ module Dev
       desired = sudoers_content
       return if @executor.capture("sudo", "cat", SUDOERS_PATH) == desired
 
-      @out.puts ">>> Installing the sudoers edge (#{SUDOERS_PATH}) ..."
-      Tempfile.create("ai-flow-agent-sudoers") do |staging|
-        staging.write(desired)
-        staging.flush
-        File.chmod(0o644, staging.path)
-        step!("sudo", "visudo", "-c", "-f", staging.path)
-        step!("sudo", "install", "-m", "0440", "-o", "root", staging.path, SUDOERS_PATH)
+      @ui.step("Installing the sudoers edge (#{SUDOERS_PATH})") do
+        Tempfile.create("ai-flow-agent-sudoers") do |staging|
+          staging.write(desired)
+          staging.flush
+          File.chmod(0o644, staging.path)
+          step!("sudo", "visudo", "-c", "-f", staging.path)
+          step!("sudo", "install", "-m", "0440", "-o", "root", staging.path, SUDOERS_PATH)
+        end
       end
     end
 
@@ -519,11 +516,12 @@ module Dev
       dir = brew_locks_dir
       return if dir.nil? || brew_locks_cooperative?
 
-      @out.puts ">>> Granting the #{DataRoot::GROUP} group cooperative access to brew's lock dir #{dir} ..."
-      step!("sudo", "mkdir", "-p", dir)
-      step!("sudo", "chgrp", "-R", DataRoot::GROUP, dir)
-      step!("sudo", "chmod", "-R", "g+rwX", dir)
-      step!("sudo", "chmod", "g+s", dir)
+      @ui.step("Granting the #{DataRoot::GROUP} group cooperative access to brew's lock dir #{dir}") do
+        step!("sudo", "mkdir", "-p", dir)
+        step!("sudo", "chgrp", "-R", DataRoot::GROUP, dir)
+        step!("sudo", "chmod", "-R", "g+rwX", dir)
+        step!("sudo", "chmod", "g+s", dir)
+      end
     end
 
     # Step 4: the `_work` tree as a cooperative read-write space — the
@@ -538,16 +536,18 @@ module Dev
     sig { params(runner_dir: String).void }
     def grant_work_tree!(runner_dir)
       work = File.join(runner_dir, "_work")
-      @out.puts ">>> Granting the #{DataRoot::GROUP} group cooperative access to #{work} ..."
-      step!("sudo", "install", "-d", "-o", @runner_user, "-g", DataRoot::GROUP, "-m", "2775", work)
-      step!("sudo", "chgrp", "-R", DataRoot::GROUP, work)
-      step!("sudo", "chmod", "-R", "g+rwX", work)
-      step!("sudo", "find", work, "-type", "d", "-exec", "chmod", "g+s", "{}", "+")
+      @ui.step("Granting the #{DataRoot::GROUP} group cooperative access to #{work}") do
+        step!("sudo", "install", "-d", "-o", @runner_user, "-g", DataRoot::GROUP, "-m", "2775", work)
+        step!("sudo", "chgrp", "-R", DataRoot::GROUP, work)
+        step!("sudo", "chmod", "-R", "g+rwX", work)
+        step!("sudo", "find", work, "-type", "d", "-exec", "chmod", "g+s", "{}", "+")
+      end
     end
 
-    # Warn when the agent CLI has not landed at #agent_cli_path — the
-    # cursor-cli cask arrives via the deployment Brewfile on `dev up`, so
-    # absence is an ordering fact, not a bootstrap failure. brew is
+    # Note, as a failed state, when the agent CLI has not landed at
+    # #agent_cli_path — the cursor-cli cask arrives via the deployment
+    # Brewfile on `dev up`, so absence is an ordering fact, not a
+    # bootstrap failure. brew is
     # single-owner, so only the prefix owner's `dev up` converges the
     # Brewfile (HostService skips the layer for anyone else): the remedy
     # names that owner, who on a Linux box is the runner user, not the
@@ -556,14 +556,14 @@ module Dev
     def verify_agent_cli!
       path = agent_cli_path
       if path.nil?
-        @out.puts ">>> WARNING: no brew on this host, so the agent CLI (#{AGENT_CLI}) has no channel to arrive " \
-                  "through — install Homebrew, then run `dev up`."
+        @ui.note("{{x}} no brew on this host, so the agent CLI (#{AGENT_CLI}) has no channel to arrive " \
+                 "through — install Homebrew, then run `dev up`")
         return
       end
       return if File.executable?(path)
 
-      @out.puts ">>> WARNING: the agent CLI is not at #{path}. The cursor-cli cask lands there through the " \
-                "deployment Brewfile on #{tooling_converge_remedy(prefix_of(path))}; jobs cannot run until it does."
+      @ui.note("{{x}} the agent CLI is not at #{path} — the cursor-cli cask lands there through the " \
+               "deployment Brewfile on #{tooling_converge_remedy(prefix_of(path))}; jobs cannot run until it does")
     end
 
     # The `dev up` that converges the Brewfile into a prefix: the owner's,

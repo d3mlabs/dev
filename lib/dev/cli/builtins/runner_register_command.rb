@@ -175,7 +175,7 @@ module Dev
 
         # The host rule: the runner user for this host (nil off Linux), given
         # what `--as` named; injected for tests.
-        RunnerUserFactory = T.type_alias { T.proc.params(name: T.nilable(String)).returns(T.nilable(Dev::RunnerUser)) }
+        RunnerUserFactory = T.type_alias { T.proc.params(name: T.nilable(String), ui: Ui).returns(T.nilable(Dev::RunnerUser)) }
 
         # The checkout's lock, as the reach check reads it; injected for tests.
         PinsReader = T.type_alias { T.proc.params(root: Pathname).returns(T::Array[Dev::Deps::Dependency]) }
@@ -184,12 +184,14 @@ module Dev
         ReachFactory = T.type_alias { T.proc.params(identity: Dev::RunnerUser).returns(Dev::HostReach) }
 
         # Resolves the advertised labels' contracts for the agent user and
-        # the host rule's runner user (nil on a Mac); injected for tests.
+        # the host rule's runner user (nil on a Mac), speaking on the Ui;
+        # injected for tests.
         ContractsFactory = T.type_alias do
           T.proc.params(
             labels: String,
             agent_user: T.nilable(String),
             runner_user: T.nilable(String),
+            ui: Ui,
           ).returns(T::Array[Dev::LabelContracts::AgentHostContract])
         end
 
@@ -219,8 +221,8 @@ module Dev
           runner_setup_factory: ->(config, repo, org, runner_user, ui) {
             Dev::RunnerSetup.new(config:, repo:, org:, as_user: runner_user&.name, home: runner_user&.home, path: runner_user&.path, ui:)
           },
-          contracts_factory: ->(labels, agent_user, runner_user) {
-            Dev::LabelContracts.for(labels, agent_user: agent_user, runner_user: runner_user)
+          contracts_factory: ->(labels, agent_user, runner_user, ui) {
+            Dev::LabelContracts.for(labels, agent_user: agent_user, runner_user: runner_user, ui: ui)
           },
           repo_resolver: ->(override) { override || Dev::RunnerSetup.current_repo },
           discovery: Dev::RunnerDiscovery.new,
@@ -231,7 +233,7 @@ module Dev
           # `dev up`'s engine step, run here for the checked-out repo's hint.
           engine_provisioner: Dev::EngineProvisioner.new,
           # The host rule (Linux: a runner user; elsewhere nil).
-          runner_user_factory: ->(name) { Dev::RunnerUser.for_host(name: name) },
+          runner_user_factory: ->(name, ui) { Dev::RunnerUser.for_host(name: name, ui: ui) },
           # The shared data root the runner user joins; nil off Linux.
           data_root_provisioner: Dev::LinuxDataRootProvisioner.for_host,
           # The Windows side a WSL runner needs (dev#261); nil off WSL.
@@ -440,13 +442,15 @@ module Dev
           # the engine step's session; its gh login gates everything after;
           # and with a checkout, what that login can read of its lock is
           # checked now rather than discovered by a red run (HostReach).
-          runner_user = @runner_user_factory.call(args.value(AS_FLAG))
+          runner_user = @runner_user_factory.call(args.value(AS_FLAG), context.ui)
           if runner_user
-            @data_root_provisioner&.provision!
-            runner_user.converge!
-            runner_user.ensure_gh_authenticated!(ask: ->(question) { context.ui.ask_secret(question) })
-            root = context.project&.root
-            @reach_factory.call(runner_user).check!(@pins_reader.call(root)) if root
+            context.ui.frame("Host rule (#{runner_user.name})") do
+              @data_root_provisioner&.provision!(ui: context.ui)
+              runner_user.converge!
+              runner_user.ensure_gh_authenticated!
+              root = context.project&.root
+              @reach_factory.call(runner_user).check!(@pins_reader.call(root)) if root
+            end
           end
 
           # The WSL runner host (dev#261): the logon keepalive, systemd and
@@ -458,14 +462,20 @@ module Dev
 
           # The agent host contract spawns the agent from the enrolling
           # user's service: the runner user on Linux, the operator on a Mac.
-          contracts = @contracts_factory.call(labels, args.value(AGENT_USER_FLAG), runner_user&.name)
-          contracts.each do |contract|
-            contract.converge!(
-              container: container,
-              cpus: engine&.cpus,
-              memory_gib: engine&.memory_gib,
-              disk_gib: engine&.disk_gib,
-            )
+          # Its frame is named for the agent user, and opens only when there
+          # is a contract to converge in it.
+          contracts = @contracts_factory.call(labels, args.value(AGENT_USER_FLAG), runner_user&.name, context.ui)
+          unless contracts.empty?
+            context.ui.frame("Agent host (#{args.value(AGENT_USER_FLAG) || Dev::AgentBootstrap::DEFAULT_AGENT_USER})") do
+              contracts.each do |contract|
+                contract.converge!(
+                  container: container,
+                  cpus: engine&.cpus,
+                  memory_gib: engine&.memory_gib,
+                  disk_gib: engine&.disk_gib,
+                )
+              end
+            end
           end
 
           setup = @runner_setup_factory.call(config, args.value(REPO_FLAG), org, runner_user, context.ui)

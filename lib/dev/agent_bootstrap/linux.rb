@@ -68,7 +68,7 @@ module Dev
       # @param runner_user [String] the host rule's runner user (RunnerUser),
       #   whose service spawns the agent
       # @param executor [#run, #quiet?, #capture] admin CLI seam
-      # @param out [IO, StringIO] progress stream
+      # @param ui [Ui] where the convergence is told (AgentBootstrap)
       # @param data_root [String] the host's data root (DataRoot::LINUX_ROOT)
       # @param systemd_dir [String] where unit drop-ins land
       # @param brew_executable [String, nil] the host's brew binary (discovered
@@ -80,7 +80,7 @@ module Dev
           agent_user: String,
           runner_user: String,
           executor: T.untyped,
-          out: T.any(IO, StringIO),
+          ui: Ui,
           data_root: String,
           systemd_dir: String,
           brew_executable: T.nilable(String),
@@ -89,12 +89,12 @@ module Dev
         ).void
       end
       def initialize(agent_user: DEFAULT_AGENT_USER, runner_user: RunnerUser::DEFAULT_NAME,
-                     executor: Executor.new, out: $stdout,
+                     executor: Executor.new, ui: NoUi.new,
                      data_root: DataRoot::LINUX_ROOT, systemd_dir: SYSTEMD_DIR,
                      brew_executable: BREW_LOCATIONS.find { |path| File.exist?(path) },
                      owner_of: ->(path) { RunnerUser.owner_of(path) },
                      tap: TapTrust.deployment_tap)
-        super(agent_user: agent_user, runner_user: runner_user, executor: executor, out: out, data_root: data_root,
+        super(agent_user: agent_user, runner_user: runner_user, executor: executor, ui: ui, data_root: data_root,
           brew_executable: brew_executable, owner_of: owner_of, tap: tap, as_agent_prelude: AS_AGENT_PRELUDE)
         @systemd_dir = systemd_dir
       end
@@ -208,17 +208,18 @@ module Dev
         return if File.exist?(drop_in) && File.read(drop_in) == desired
 
         env = service_env(slot)
-        @out.puts ">>> Writing UMask 0002 + #{env.map { |key, value| "#{key}=#{value}" }.join(" + ")} into #{drop_in} ..."
-        step!("sudo", "./svc.sh", "stop", chdir: runner_dir)
-        step!("sudo", "install", "-d", "-m", "0755", File.dirname(drop_in))
-        Tempfile.create("ai-flow-agent-dropin") do |staging|
-          staging.write(desired)
-          staging.flush
-          File.chmod(0o644, staging.path)
-          step!("sudo", "install", "-m", "0644", staging.path, drop_in)
+        @ui.step("Writing UMask 0002 + #{env.map { |key, value| "#{key}=#{value}" }.join(" + ")} into #{drop_in}") do
+          step!("sudo", "./svc.sh", "stop", chdir: runner_dir)
+          step!("sudo", "install", "-d", "-m", "0755", File.dirname(drop_in))
+          Tempfile.create("ai-flow-agent-dropin") do |staging|
+            staging.write(desired)
+            staging.flush
+            File.chmod(0o644, staging.path)
+            step!("sudo", "install", "-m", "0644", staging.path, drop_in)
+          end
+          step!("sudo", "systemctl", "daemon-reload")
+          step!("sudo", "./svc.sh", "start", chdir: runner_dir)
         end
-        step!("sudo", "systemctl", "daemon-reload")
-        step!("sudo", "./svc.sh", "start", chdir: runner_dir)
       end
 
       # GNU stat: the group name and the symbolic mode.

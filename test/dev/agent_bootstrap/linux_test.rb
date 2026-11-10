@@ -6,7 +6,7 @@ require "dev/agent_bootstrap/linux"
 require "support/recorded_bootstrap_executor"
 require "etc"
 require "fileutils"
-require "stringio"
+require "support/recording_ui"
 require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
@@ -23,7 +23,7 @@ class Dev::AgentBootstrap::LinuxTest < Minitest::Test
   # canned by the executor), a tmp systemd dir, no brew, no tap.
   def bootstrap(executor, data_root: Dir.mktmpdir, **kwargs)
     defaults = { data_root: data_root, systemd_dir: Dir.mktmpdir, brew_executable: nil, owner_of: RUNNER_OWNS_LINUXBREW, tap: nil }
-    Dev::AgentBootstrap::Linux.new(executor: executor, out: StringIO.new, **defaults.merge(kwargs))
+    Dev::AgentBootstrap::Linux.new(executor: executor, ui: RecordingUi.new, **defaults.merge(kwargs))
   end
 
   test "converge! is a no-op when the host is already converged" do
@@ -43,11 +43,14 @@ class Dev::AgentBootstrap::LinuxTest < Minitest::Test
     data_root = Dir.mktmpdir
     executor = converged_executor(data_root, except_probes: [["id", "-u", "ai-agent"]])
 
+    ui = RecordingUi.new
+
     When "converging"
-    bootstrap(executor, data_root: data_root).converge!
+    bootstrap(executor, data_root: data_root, ui: ui).converge!
 
     Then
     executor.runs == [["sudo", "useradd", "-m", "-s", "/bin/bash", "ai-agent"]]
+    ui.rows == [[:step, "Creating the ai-agent user (non-admin)", 0]]
   end
 
   # plans#59: the group is the data root's (`dev`), made by the provisioner
@@ -151,17 +154,17 @@ class Dev::AgentBootstrap::LinuxTest < Minitest::Test
     Given "a converged host with Linuxbrew (its lock dir cooperative) and the org tap"
     data_root = Dir.mktmpdir
     executor = converged_executor(data_root, brew_executable: LINUXBREW)
-    out = StringIO.new
+    ui = RecordingUi.new
 
     When "converging"
-    bootstrap(executor, data_root: data_root, out: out, brew_executable: LINUXBREW, tap: org_tap).converge!
+    bootstrap(executor, data_root: data_root, ui: ui, brew_executable: LINUXBREW, tap: org_tap).converge!
 
     Then
     executor.runs == [[
       "sudo", "-H", "-u", "ai-agent", "--", "env", "-C", "/",
       "env", "HOMEBREW_NO_AUTO_UPDATE=1", LINUXBREW, "trust", "--tap", "d3mlabs/d3mlabs",
     ]]
-    out.string.include?(">>> Trusting the tap d3mlabs/d3mlabs for ai-agent")
+    ui.rows == [[:step, "Trusting the tap d3mlabs/d3mlabs for ai-agent (brew loads nothing from a tap its user has not trusted)", 0]]
   end
 
   # dev#558: the box's first register — `brew trust` as ai-agent died on
@@ -198,7 +201,7 @@ class Dev::AgentBootstrap::LinuxTest < Minitest::Test
     # does), and an agent owning the prefix waives the edge — the point
     # here is the stat, so the agent is someone else.
     bs = Dev::AgentBootstrap::Linux.new(
-      agent_user: "ci", executor: RecordedBootstrapExecutor.new, out: StringIO.new, tap: nil,
+      agent_user: "ci", executor: RecordedBootstrapExecutor.new, tap: nil,
       data_root: Dir.mktmpdir, systemd_dir: Dir.mktmpdir, brew_executable: brew,
     )
 
@@ -253,11 +256,17 @@ class Dev::AgentBootstrap::LinuxTest < Minitest::Test
     systemd_dir = Dir.mktmpdir
     work = File.join(runner_dir, "_work")
     drop_in = File.join(systemd_dir, "actions.runner.d3mlabs-x.box-1.service.d", "ai-flow-agent.conf")
+    ui = RecordingUi.new
 
     When "converging the post-enrollment steps"
-    bootstrap(executor, systemd_dir: systemd_dir).after_enroll!(runner_dir: runner_dir, slot: 1)
+    bootstrap(executor, systemd_dir: systemd_dir, ui: ui).after_enroll!(runner_dir: runner_dir, slot: 1)
 
-    Then "the _work tree made under root as the runner's own (its dir is the runner's, not the operator's), then the grant, then the drop-in sequence"
+    Then "the _work tree made under root as the runner's own (its dir is the runner's, not the operator's), then the grant, then the drop-in sequence — a step each, then the CLI note (no brew)"
+    ui.rows == [
+      [:step, "Granting the dev group cooperative access to #{work}", 0],
+      [:step, "Writing UMask 0002 + AI_FLOW_AGENT_USER=ai-agent + AI_FLOW_AGENT_GROUP=dev + AI_FLOW_RUNNER_SLOT=1 into #{drop_in}", 0],
+      [:note, "{{x}} no brew on this host, so the agent CLI (cursor-agent) has no channel to arrive through — install Homebrew, then run `dev up`", 0],
+    ]
     !File.directory?(work)
     executor.runs.first(4) == [
       ["sudo", "install", "-d", "-o", "runner", "-g", "dev", "-m", "2775", work],
@@ -347,8 +356,8 @@ class Dev::AgentBootstrap::LinuxTest < Minitest::Test
     brew = executable_in(prefix, "brew")
     cli = executable_in(prefix, "cursor-agent")
     executor = RecordedBootstrapExecutor.new
-    out = StringIO.new
-    bs = bootstrap(executor, out: out, brew_executable: brew)
+    ui = RecordingUi.new
+    bs = bootstrap(executor, ui: ui, brew_executable: brew)
 
     When "converging the post-enrollment steps"
     bs.after_enroll!(runner_dir: enrolled_runner_dir, slot: 1)
@@ -356,7 +365,7 @@ class Dev::AgentBootstrap::LinuxTest < Minitest::Test
     Then "the path is the channel's landing spot, nothing was looked up, nothing warned"
     bs.agent_cli_path == cli
     executor.probes.none? { |argv| argv.first == "which" }
-    !out.string.include?("WARNING")
+    ui.rows.none? { |row| row.fetch(0) == :note }
   end
 
   test "after_enroll! warns (never raises) when the agent CLI has not landed, naming the path and the prefix owner's dev up" do
@@ -364,31 +373,34 @@ class Dev::AgentBootstrap::LinuxTest < Minitest::Test
     prefix = Dir.mktmpdir
     brew = executable_in(prefix, "brew")
     executor = RecordedBootstrapExecutor.new
-    out = StringIO.new
+    ui = RecordingUi.new
 
     When "converging the post-enrollment steps"
-    bootstrap(executor, out: out, brew_executable: brew, owner_of: ->(_path) { "runner" })
+    bootstrap(executor, ui: ui, brew_executable: brew, owner_of: ->(_path) { "runner" })
       .after_enroll!(runner_dir: enrolled_runner_dir, slot: 1)
 
-    Then "the warning says where the cask lands and whose dev up puts it there"
-    out.string.include?("WARNING: the agent CLI is not at #{File.join(prefix, "bin", "cursor-agent")}")
-    out.string.include?("`dev up` as runner, who owns #{prefix}")
-    out.string.include?("sudo -iu runner dev up")
+    Then "the failed-state note says where the cask lands and whose dev up puts it there"
+    ui.rows.last == [
+      :note,
+      "{{x}} the agent CLI is not at #{File.join(prefix, "bin", "cursor-agent")} — the cursor-cli cask lands there " \
+        "through the deployment Brewfile on `dev up` as runner, who owns #{prefix} " \
+        "(from another account: `sudo -iu runner dev up`); jobs cannot run until it does",
+      0,
+    ]
   end
 
   test "without brew the agent CLI has no channel: no path, a warning naming the gap" do
     Given "a brewless host"
     executor = RecordedBootstrapExecutor.new
-    out = StringIO.new
-    bs = bootstrap(executor, out: out, brew_executable: nil)
+    ui = RecordingUi.new
+    bs = bootstrap(executor, ui: ui, brew_executable: nil)
 
     When "converging the post-enrollment steps"
     bs.after_enroll!(runner_dir: enrolled_runner_dir, slot: 1)
 
     Then
     bs.agent_cli_path.nil?
-    out.string.include?("WARNING: no brew on this host")
-    out.string.include?("cursor-agent")
+    ui.rows.last == [:note, "{{x}} no brew on this host, so the agent CLI (cursor-agent) has no channel to arrive through — install Homebrew, then run `dev up`", 0]
   end
 
   def org_tap

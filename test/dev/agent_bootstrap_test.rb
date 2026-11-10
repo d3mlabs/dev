@@ -24,14 +24,14 @@ class Dev::AgentBootstrapTest < Minitest::Test
   class << self
     def darwin(**kwargs)
       Dev::AgentBootstrap::Darwin.new(
-        runner_user: "human", executor: RecordedBootstrapExecutor.new, out: StringIO.new, tap: nil,
+        runner_user: "human", executor: RecordedBootstrapExecutor.new, tap: nil,
         data_root: Dir.mktmpdir, home_dev: File.join(Dir.mktmpdir, "absent"), brew_executable: nil, **kwargs
       )
     end
 
     def linux(**kwargs)
       Dev::AgentBootstrap::Linux.new(
-        executor: RecordedBootstrapExecutor.new, out: StringIO.new, tap: nil,
+        executor: RecordedBootstrapExecutor.new, tap: nil,
         data_root: Dir.mktmpdir, systemd_dir: Dir.mktmpdir, brew_executable: nil, **kwargs
       )
     end

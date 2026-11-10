@@ -276,7 +276,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     Given "an org with the pinned ai-flow group and no orchestrator group yet; a factory recording what contracts are asked for"
     registry = FakeRegistry.new(groups: { ["d3mlabs", "ai-flow"] => FakeRegistry.group(id: 7, name: "ai-flow", pinned: true) })
     seen = []
-    recorder = ->(labels, agent_user, _runner_user) {
+    recorder = ->(labels, agent_user, _runner_user, _ui) {
       seen << [labels, agent_user]
       Dev::LabelContracts.for(labels, agent_user: agent_user, bootstrap: typed_mock(Dev::AgentBootstrap))
     }
@@ -461,7 +461,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.events == [[:converge, false, nil, nil, nil], [:run], [:after_enroll, "/tmp/runner-dir", 1]]
     harness.wirings.last.fetch(0) == Dev::RunnerSetupConfig.new(labels: "snappy")
     registry.amends == []
-    harness.ui.rows.first(3) == [
+    harness.ui.rows.reject { |row| row.fetch(0) == :frame }.first(3) == [
       [:note, "{{x}} JPDuchesne/snappy has 2 local enrollments named 'JPSFF' — the enrollment on disk is not what should be serving GitHub:", 0],
       [:note, "    ~/actions-runner (service installed)", 0],
       [:note, "    ~/actions-runner-snappy (no service)", 0],
@@ -1186,6 +1186,25 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.events.fetch(0) == [:converge, true, 8, 24, nil]
   end
 
+  test "the agent host frame is named for the agent user — #{what}" do
+    Given "a Mac (no host rule) with #{contracts} agent host contract(s)"
+    harness = build_harness(contracts: contracts)
+
+    When "registering"
+    harness.command.call(args: parsed_args(harness.command, words), context: harness.build_context(name: "Cellbound3D"))
+
+    Then "no host rule frame on a Mac; the agent host frame only when there is a contract to converge in it"
+    frames = harness.ui.rows.select { |row| row.fetch(0) == :frame }.map { |row| row.fetch(1) }
+    frames.none? { |title| title.start_with?("Host rule") }
+    frames.first(agent_frames.length) == agent_frames
+
+    Where
+    what                              | contracts | words                   | agent_frames
+    "the default agent user"          | 1         | []                      | ["Agent host (ai-agent)"]
+    "--agent-user ci"                 | 1         | ["--agent-user", "ci"]  | ["Agent host (ci)"]
+    "no contract: no empty frame"     | 0         | []                      | []
+  end
+
   test "register brings the engine up for the checked-out repo's hint before converging contracts (#197)" do
     Given "a container repo with an `engine:` block and an engine provisioner that records its call"
     harness = build_harness(contracts: 1)
@@ -1230,8 +1249,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "the --agent-user flag reaches the contracts factory; without a host rule (a Mac) no runner user does" do
     Given "a factory recording its arguments"
     seen = []
-    recorder = ->(labels, agent_user, runner_user) {
-      seen << [labels, agent_user, runner_user]
+    recorder = ->(labels, agent_user, runner_user, ui) {
+      seen << [labels, agent_user, runner_user, ui]
       []
     }
     harness = build_harness(contracts_factory: recorder)
@@ -1240,8 +1259,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     words = ["--org", "--ai-flow", "--agent-user", "ci"]
     harness.command.call(args: parsed_args(harness.command, words), context: harness.projectless_context)
 
-    Then
-    seen == [[Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(","), "ci", nil]]
+    Then "and the context's Ui goes with them, for the bootstrap to speak on"
+    seen == [[Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(","), "ci", nil, harness.ui]]
   end
 
   # plans#59: on Linux the sudoers edge is runner → agent, so the contracts
@@ -1249,7 +1268,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "under the host rule, the runner user's name reaches the contracts factory" do
     Given "a Linux host (a runner user) and a factory recording its arguments"
     seen = []
-    recorder = ->(labels, agent_user, runner_user) {
+    recorder = ->(labels, agent_user, runner_user, _ui) {
       seen << [labels, agent_user, runner_user]
       []
     }
@@ -1271,20 +1290,21 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     provisioner = typed_mock(Dev::LinuxDataRootProvisioner)
     harness = build_harness(contracts: 1, runner_user: runner_user, data_root_provisioner: provisioner)
     sequence = sequence("host rule")
-    provisioner.expects(:provision!).once.in_sequence(sequence)
+    provisioner.expects(:provision!).once.with(ui: harness.ui).in_sequence(sequence)
     runner_user.expects(:converge!).once.in_sequence(sequence)
-    harness.ui.expects(:ask_secret).once.with("Token?").returns("ghp_x")
-    # The login gate is handed the terminal to ask at: its asker is the context UI's hidden prompt.
-    asks_the_ui = ->(**kw) { kw.fetch(:ask).call("Token?") == "ghp_x" }
-    runner_user.expects(:ensure_gh_authenticated!).once.with(&asks_the_ui).in_sequence(sequence)
+    # The login gate asks at the terminal through the runner user's own Ui (the factory handed it the context's).
+    runner_user.expects(:ensure_gh_authenticated!).once.with.in_sequence(sequence)
 
     When "registering in the checkout"
     harness.command.call(args: no_args, context: harness.build_context(name: "cellbound3d"))
 
-    Then "the identity work precedes the contracts and the enrollment; the setup is wired for the runner user; no --as was named"
+    Then "the identity work precedes the contracts and the enrollment; the setup is wired for the runner user; no --as was named; the user speaks on the context's Ui"
     harness.events == [[:converge, false, nil, nil, nil], [:run], [:after_enroll, "/tmp/runner-dir", 1]]
     harness.wirings.fetch(0).fetch(3) == runner_user
     harness.as_names == [nil]
+    harness.factory_uis == [harness.ui]
+    # The identity work is framed as the host rule, the contract as the agent host — in that order, before the enrollment's.
+    harness.ui.rows.select { |row| row.fetch(0) == :frame }.first(2) == [[:frame, "Host rule (runner)", 0], [:frame, "Agent host (ai-agent)", 0]]
   end
 
   test "with a checkout, register checks the runner user's reach over the lock after the gh login and before any contract: unreachable refuses with the grants" do
@@ -1491,7 +1511,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     # at its platform seam so the run never converges a user on this one.
     empty_discovery = Dev::RunnerDiscovery.new(home: Dir.mktmpdir)
     Dev::RunnerDiscovery.expects(:new).returns(empty_discovery)
-    Dev::RunnerUser.expects(:for_host).once.with(name: "ci").returns(nil)
+    context = projectless_context
+    Dev::RunnerUser.expects(:for_host).once.with(name: "ci", ui: context.ui).returns(nil)
     # The two gh seams the default wiring reaches before anything converges:
     # the checkout's repo, and the operator pre-flight's probe of its runners.
     Dev::RunnerSetup.expects(:current_repo).once.returns("owner/repo")
@@ -1502,7 +1523,6 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     setup.expects(:run).once
     setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
     setup.stubs(:resolve_scope).returns("owner/repo")
-    context = projectless_context
     Dev::RunnerSetup.expects(:new)
       .with(config: Dev::RunnerSetupConfig.new(labels: "ue-engine"), repo: nil, org: false, as_user: nil, home: nil, path: nil, ui: context.ui).returns(setup)
     command = Dev::Cli::Builtins::RunnerRegisterCommand.new(data_root_provisioner: nil)
@@ -1522,7 +1542,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     # Once for the default wiring, once when it widens to the runner user's home.
     Dev::RunnerDiscovery.expects(:new).twice.returns(empty_discovery)
     runner_user = runner_user_mock(name: "svc-runner", home: Dir.mktmpdir)
-    Dev::RunnerUser.expects(:for_host).once.with(name: nil).returns(runner_user)
+    context = build_context(name: "snappy", root: root)
+    Dev::RunnerUser.expects(:for_host).once.with(name: nil, ui: context.ui).returns(runner_user)
     reach = typed_mock(Dev::HostReach)
     the_lock = ->(pins) { pins.map(&:name) == ["UnrealEngine"] && pins.fetch(0).metadata.fetch("repo") == "satisfactorymodding/UnrealEngine" }
     reach.expects(:check!).once.with(&the_lock)
@@ -1535,7 +1556,6 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     setup.expects(:run).once
     setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
     setup.stubs(:resolve_scope).returns("owner/repo")
-    context = build_context(name: "snappy", root: root)
     Dev::RunnerSetup.expects(:new)
       .with(config: Dev::RunnerSetupConfig.new(labels: "ue-engine"), repo: nil, org: false, as_user: "svc-runner", home: runner_user.home, path: "/opt/brew/bin:/usr/bin", ui: context.ui).returns(setup)
     command = Dev::Cli::Builtins::RunnerRegisterCommand.new(data_root_provisioner: nil)
@@ -1562,7 +1582,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     context = build_context(name: "Cellbound3D")
     Dev::RunnerSetup.expects(:new)
       .with(config: Dev::RunnerSetupConfig.new(labels: "cellbound-3d"), repo: nil, org: false, as_user: nil, home: nil, path: nil, ui: context.ui).returns(setup)
-    command = Dev::Cli::Builtins::RunnerRegisterCommand.new(runner_user_factory: ->(_name) { nil }, data_root_provisioner: nil)
+    command = Dev::Cli::Builtins::RunnerRegisterCommand.new(runner_user_factory: ->(_name, _ui) { nil }, data_root_provisioner: nil)
 
     When "running bare register inside a checkout whose dev.yml name differs"
     command.call(args: no_args, context: context)
@@ -1573,7 +1593,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
   private
 
-  Harness = Struct.new(:command, :wirings, :events, :out, :engine, :torn_down, :ui, :as_names, :reach_roots, keyword_init: true) do
+  Harness = Struct.new(:command, :wirings, :events, :out, :engine, :torn_down, :ui, :as_names, :factory_uis, :reach_roots, keyword_init: true) do
     # A project context carrying this harness's Ui — the terminal the command asks at.
     def build_context(name:, engine: nil, root: "/tmp/runner-test")
       Dev::Cli::ExecutionContext.new(ui: ui, project: Dev::Cli::ProjectContext.new(name: name, root: Pathname.new(root), engine: engine))
@@ -1600,6 +1620,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     events = []
     torn_down = []
     as_names = []
+    factory_uis = []
     reach_roots = []
     out = StringIO.new
     # A setup double per dir: the default one for a config naming none,
@@ -1627,9 +1648,11 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
         setups[config.dir]
       },
       # The host rule's seam: nil is a Mac (no runner user); a test on the
-      # Linux rule injects one and sees what --as named.
-      runner_user_factory: ->(name) {
+      # Linux rule injects one and sees what --as named and which Ui the
+      # user was handed to speak on.
+      runner_user_factory: ->(name, ui) {
         as_names << name
+        factory_uis << ui
         runner_user
       },
       data_root_provisioner: data_root_provisioner,
@@ -1643,7 +1666,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
       reach_factory: ->(_identity) { reach || Dev::HostReach.new(identity: runner_user, executor: nil) },
       # What `gh repo view` would answer for the enclosing checkout, unless overridden.
       repo_resolver: repo_resolver || ->(override) { override || repo },
-      contracts_factory: contracts_factory || ->(_labels, _agent_user, _runner_user) {
+      contracts_factory: contracts_factory || ->(_labels, _agent_user, _runner_user, _ui) {
         Array.new(contracts) { RecordedContract.new(events) }
       },
       discovery: discovery,
@@ -1653,7 +1676,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
       refresher: refresher,
     )
     Harness.new(command: command, wirings: wirings, events: events, out: out, engine: engine,
-      torn_down: torn_down, ui: ui, as_names: as_names, reach_roots: reach_roots)
+      torn_down: torn_down, ui: ui, as_names: as_names, factory_uis: factory_uis, reach_roots: reach_roots)
   end
 
   # A .runner record the way config.sh writes it (UTF-8 BOM + JSON).

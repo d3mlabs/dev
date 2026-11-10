@@ -5,6 +5,7 @@ require "test_helper"
 require "dev/privileged_steps"
 require "dev/runner_user"
 require "stringio"
+require "support/recording_ui"
 
 transform!(RSpock::AST::Transformation)
 class Dev::RunnerUserTest < Minitest::Test
@@ -56,7 +57,7 @@ class Dev::RunnerUserTest < Minitest::Test
 
   def setup
     @executor = RecordingSteps.new
-    @out = StringIO.new
+    @ui = RecordingUi.new
   end
 
   test "for_host is the host rule: a runner user on Linux (runner by default, --as overrides the name), none elsewhere" do
@@ -82,7 +83,7 @@ class Dev::RunnerUserTest < Minitest::Test
       %w[sudo useradd -m -s /bin/bash -G docker,dev runner],
       %w[sudo chmod 0755 /home/runner],
     ]
-    @out.string.include?(">>> Creating the runner user runner (one sudo prompt) ...")
+    @ui.rows == [[:step, "Creating the runner user runner (one sudo prompt)", 0]]
   end
 
   test "with Homebrew on the host, converge! gives every login shell its shellenv — so `sudo -iu runner gh` finds the gh brew installed" do
@@ -108,19 +109,19 @@ class Dev::RunnerUserTest < Minitest::Test
     drifted = runner_user(homes: { "runner" => "/home/runner" }, brew: linuxbrew, owner_of: ->(_path) { "jpduchesne" })
     drifted.converge!
     drifted_runs = @executor.runs.dup
-    drifted_out = @out.string.dup
+    drifted_rows = @ui.rows.dup
     @executor.runs.clear
-    @out.truncate(0)
+    @ui.events.clear
     owned = runner_user(homes: { "runner" => "/home/runner" }, brew: linuxbrew, owner_of: ->(_path) { "runner" })
     owned.converge!
 
     Expect "the chown after the profile.d file, both roots, announced; nothing of the kind when nothing drifted"
     drifted_runs.last == %w[sudo chown -R runner:runner /home/linuxbrew/.linuxbrew /home/linuxbrew]
     drifted_runs.count(&chowns) == 1
-    drifted_out.include?(">>> Handing the toolchain /home/linuxbrew/.linuxbrew (owned by jpduchesne) to runner: jobs upgrade dev through it; " \
-                         "brew as jpduchesne becomes `sudo -iu runner brew ...`")
+    drifted_rows.include?([:step, "Handing the toolchain /home/linuxbrew/.linuxbrew (owned by jpduchesne) to runner: jobs upgrade dev through it; " \
+                                  "brew as jpduchesne becomes `sudo -iu runner brew ...`", 0])
     @executor.runs.none?(&chowns)
-    @out.string.empty?
+    @ui.rows.none? { |_kind, text, _depth| text.include?("Handing the toolchain") }
   end
 
   # Homebrew 7 loads nothing from a tap a user has not trusted, and trust
@@ -134,18 +135,18 @@ class Dev::RunnerUserTest < Minitest::Test
     trusting = GhExecutor.new(logged_in: true)
     user = runner_user(homes: { "runner" => "/home/runner" }, brew: "/home/linuxbrew/.linuxbrew/bin/brew", gh: trusting, tap: org_tap)
     user.converge!
-    first_out = @out.string.dup
-    @out.truncate(0)
+    first_rows = @ui.rows.dup
+    @ui.events.clear
     old = GhExecutor.new(logged_in: true, trusts: false)
     runner_user(homes: { "runner" => "/home/runner" }, brew: "/home/linuxbrew/.linuxbrew/bin/brew", gh: old, tap: org_tap).converge!
 
     Expect "brew trust as the runner user, on the host PATH, the brew dev found; the refusal is one warning naming the by-hand command"
     trusting.calls.count(&trusts) == 1
     trusting.calls.find(&trusts) == %w[sudo -u runner -H env -C / PATH=/opt/brew/bin:/usr/bin env HOMEBREW_NO_AUTO_UPDATE=1 /home/linuxbrew/.linuxbrew/bin/brew trust --tap d3mlabs/d3mlabs]
-    first_out.include?(">>> Trusting the tap d3mlabs/d3mlabs for runner (brew loads nothing from a tap its user has not trusted)")
-    !first_out.include?("warning")
-    @out.string.include?("dev: warning: could not trust the tap d3mlabs/d3mlabs for runner")
-    @out.string.include?("sudo -iu runner brew trust --tap d3mlabs/d3mlabs")
+    first_rows.include?([:step, "Trusting the tap d3mlabs/d3mlabs for runner (brew loads nothing from a tap its user has not trusted)", 0])
+    first_rows.none? { |_kind, text, _depth| text.include?("could not trust") }
+    @ui.rows.any? { |kind, text, _depth| kind == :note && text.start_with?("{{x}} could not trust the tap d3mlabs/d3mlabs for runner") }
+    @ui.rows.any? { |_kind, text, _depth| text.include?("sudo -iu runner brew trust --tap d3mlabs/d3mlabs") }
   end
 
   test "no tap to trust without a deployment tap, or without brew" do
@@ -198,7 +199,7 @@ class Dev::RunnerUserTest < Minitest::Test
       %w[sudo groupadd -f dev],
       %w[sudo usermod -aG docker,dev runner],
     ]
-    @out.string.empty?
+    @ui.rows == [[:step, "Converging the runner user runner (groups, profile)", 0]]
   end
 
   test "home is the user's passwd entry when it exists, /home/<name> before it does" do
@@ -252,35 +253,31 @@ class Dev::RunnerUserTest < Minitest::Test
   test "with something to ask with, a missing login is asked for — hidden — and the answer rides gh's stdin as the runner user; the status is re-read after" do
     Given "no login, and an asker that answers the token"
     gh = GhExecutor.new(logged_in: false, accepts: "ghp_good")
-    user = runner_user(homes: { "runner" => "/home/runner" }, gh: gh)
-    questions = []
-    ask = ->(question) do
-      questions << question
-      "ghp_good"
-    end
+    ui = SecretAnsweringUi.new("ghp_good")
+    user = runner_user(homes: { "runner" => "/home/runner" }, gh: gh, ui: ui)
 
     When
-    user.ensure_gh_authenticated!(ask: ask)
+    user.ensure_gh_authenticated!
 
-    Then "one question naming the identity and what the token must be; status, login (token on stdin only), status"
-    questions.size == 1
-    questions.fetch(0).include?("runner has no GitHub login")
-    questions.fetch(0).include?("machine user's token")
-    questions.fetch(0).include?("repo, read:org, read:packages")
+    Then "one question, hidden, naming the identity and what the token must be; status, login (token on stdin only), status"
+    ui.secrets_asked.size == 1
+    ui.secrets_asked.fetch(0).include?("runner has no GitHub login")
+    ui.secrets_asked.fetch(0).include?("machine user's token")
+    ui.secrets_asked.fetch(0).include?("repo, read:org, read:packages")
     gh.calls.map(&last_three) == ["gh auth status", "auth login --with-token", "gh auth status"]
     gh.calls.fetch(1) == %w[sudo -u runner -H env -C / PATH=/opt/brew/bin:/usr/bin gh auth login --with-token]
     gh.stdins == [nil, "ghp_good", nil]
     gh.calls.flatten.grep(/ghp_/).empty?
   end
 
-  test "an asker that answers nothing (declined, or no terminal behind it) falls back to the headless message; a token gh refuses says so, names the scopes it needs and the command" do
+  test "a terminal that answers nothing (declined, or none behind it — NoUi answers nil) falls back to the headless message; a token gh refuses says so, names the scopes it needs and the command" do
     Given
     declined = GhExecutor.new(logged_in: false)
     refused = GhExecutor.new(logged_in: false, accepts: "ghp_good")
-    user_declined = runner_user(homes: { "runner" => "/home/runner" }, gh: declined)
-    user_refused = runner_user(homes: { "runner" => "/home/runner" }, gh: refused)
-    nothing = assert_raises(Dev::RunnerUser::GhLoginRequiredError) { user_declined.ensure_gh_authenticated!(ask: ->(_q) { "" }) }
-    bad = assert_raises(Dev::RunnerUser::GhLoginRequiredError) { user_refused.ensure_gh_authenticated!(ask: ->(_q) { "ghp_bad" }) }
+    user_declined = runner_user(homes: { "runner" => "/home/runner" }, gh: declined, ui: SecretAnsweringUi.new(""))
+    user_refused = runner_user(homes: { "runner" => "/home/runner" }, gh: refused, ui: SecretAnsweringUi.new("ghp_bad"))
+    nothing = assert_raises(Dev::RunnerUser::GhLoginRequiredError) { user_declined.ensure_gh_authenticated! }
+    bad = assert_raises(Dev::RunnerUser::GhLoginRequiredError) { user_refused.ensure_gh_authenticated! }
 
     Expect
     nothing.message.include?("sudo -iu runner gh auth login --with-token")
@@ -370,9 +367,26 @@ class Dev::RunnerUserTest < Minitest::Test
     Dev::TapTrust::Tap.new(user: "d3mlabs", repo: "d3mlabs")
   end
 
-  def runner_user(homes:, gh: GhExecutor.new(logged_in: true), name: "runner", brew: nil, owner_of: ->(_path) { name }, tap: nil)
+  def runner_user(homes:, gh: GhExecutor.new(logged_in: true), name: "runner", brew: nil, owner_of: ->(_path) { name }, tap: nil, ui: @ui)
     steps = Dev::PrivilegedSteps.new(executor: @executor, tty: true, purpose: "create the runner user")
-    Dev::RunnerUser.new(name: name, steps: steps, executor: gh, out: @out, home_of: ->(user) { homes[user] },
+    Dev::RunnerUser.new(name: name, steps: steps, executor: gh, ui: ui, home_of: ->(user) { homes[user] },
       brew: brew, path: "/opt/brew/bin:/usr/bin", owner_of: owner_of, tap: tap)
+  end
+
+  # A terminal that answers every hidden question with one secret,
+  # remembering the questions.
+  class SecretAnsweringUi < RecordingUi
+    attr_reader :secrets_asked
+
+    def initialize(secret)
+      super()
+      @secret = secret
+      @secrets_asked = []
+    end
+
+    def ask_secret(question)
+      @secrets_asked << question
+      @secret
+    end
   end
 end
