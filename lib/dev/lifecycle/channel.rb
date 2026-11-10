@@ -4,6 +4,7 @@
 require_relative "build"
 require_relative "build_pattern"
 require_relative "publisher_spec"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -30,6 +31,7 @@ module Dev
     # an empty accept set could ship nothing and would be a typo kept.
     class Channel < T::Struct
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # `targets:` on the channel lists no pattern.
       class EmptyAcceptSetError < ArgumentError; end
@@ -95,20 +97,10 @@ module Dev
         name
       end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        other.is_a?(Channel) && name == other.name && desc == other.desc && accepts == other.accepts &&
-          publisher == other.publisher && options == other.options
-      end
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other)
-        self == other
-      end
-
-      sig { returns(Integer) }
-      def hash
-        [Channel, name, desc, accepts, publisher, options].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [name, desc, accepts, publisher, options]
       end
     end
   end

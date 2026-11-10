@@ -1,6 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "../value_equality"
+
 module Dev
   module Deps
     # A single published file: where its bytes live and what they hash to.
@@ -21,6 +23,7 @@ module Dev
     # section of docs/deps-architecture.md for who enforces what, and where.
     class Artifact
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # The artifact's URI is blank, so dev cannot locate the bytes.
       class MissingUriError < StandardError; end
@@ -51,20 +54,10 @@ module Dev
         freeze
       end
 
-      # @param other [Object]
-      # @return [Boolean] whether other describes the same bytes
-      sig { params(other: T.untyped).returns(T::Boolean) }
-      def ==(other)
-        return false unless other.is_a?(Artifact)
-
-        [uri, digest] == [other.uri, other.digest]
-      end
-      alias_method :eql?, :==
-
-      # @return [Integer] hash code
-      sig { returns(Integer) }
-      def hash
-        [self.class, uri, digest].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [uri, digest]
       end
     end
   end

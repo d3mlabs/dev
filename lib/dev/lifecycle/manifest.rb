@@ -9,6 +9,7 @@ require_relative "build"
 require_relative "build_id"
 require_relative "git_state"
 require_relative "target"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -161,6 +162,7 @@ module Dev
         extend T::Helpers
         include Manifest
         final!
+        include Dev::ValueEquality::Derived
 
         FILE_NAME = "build-id.json"
 
@@ -289,19 +291,10 @@ module Dev
           }
         end
 
-        sig(:final) { params(other: Object).returns(T::Boolean) }
-        def ==(other)
-          other.is_a?(Artifact) && to_json_hash == other.to_json_hash
-        end
-
-        sig(:final) { params(other: Object).returns(T::Boolean) }
-        def eql?(other)
-          self == other
-        end
-
-        sig(:final) { returns(Integer) }
-        def hash
-          [Artifact, to_json_hash].hash
+        # @return [Array] the members that constitute identity
+        sig(:final) { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [to_json_hash]
         end
       end
 
@@ -314,6 +307,7 @@ module Dev
         extend T::Helpers
         include Manifest
         final!
+        include Dev::ValueEquality::Derived
 
         FILE_NAME = "release.json"
 
@@ -438,19 +432,10 @@ module Dev
           { "stamp" => @stamp.to_json_hash, "tag" => @tag, "sha" => @sha, "archives" => @archives.map(&:to_json_hash) }
         end
 
-        sig(:final) { params(other: Object).returns(T::Boolean) }
-        def ==(other)
-          other.is_a?(Release) && to_json_hash == other.to_json_hash
-        end
-
-        sig(:final) { params(other: Object).returns(T::Boolean) }
-        def eql?(other)
-          self == other
-        end
-
-        sig(:final) { returns(Integer) }
-        def hash
-          [Release, to_json_hash].hash
+        # @return [Array] the members that constitute identity
+        sig(:final) { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [to_json_hash]
         end
       end
     end

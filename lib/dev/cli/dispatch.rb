@@ -4,6 +4,7 @@
 require "dev/lifecycle"
 require "dev/ui"
 require_relative "transport"
+require_relative "../value_equality"
 
 module Dev
   module Cli
@@ -73,6 +74,7 @@ module Dev
         class Run
           extend T::Sig
           extend T::Helpers
+          include Dev::ValueEquality::Derived
           extend T::Generic
           include Outcome
           final!
@@ -89,22 +91,10 @@ module Dev
             @env = env
           end
 
-          # Compared from the other side: `other` narrows to Run over an
-          # erased Env, whose `==` is the env's own; `@env`'s type member
-          # is unbounded and offers none.
-          sig(:final) { params(other: Object).returns(T::Boolean) }
-          def ==(other)
-            other.is_a?(Run) && other.env == @env
-          end
-
-          sig(:final) { params(other: Object).returns(T::Boolean) }
-          def eql?(other)
-            self == other
-          end
-
-          sig(:final) { returns(Integer) }
-          def hash
-            [Run, @env].hash
+          # @return [Array] the members that constitute identity
+          sig(:final) { override.returns(T::Array[T.anything]) }
+          def equality_members
+            [@env]
           end
         end
 
@@ -113,25 +103,17 @@ module Dev
         class Done
           extend T::Sig
           extend T::Helpers
+          include Dev::ValueEquality::Derived
           extend T::Generic
           include Outcome
           final!
 
           Env = type_member
 
-          sig(:final) { params(other: Object).returns(T::Boolean) }
-          def ==(other)
-            other.is_a?(Done)
-          end
-
-          sig(:final) { params(other: Object).returns(T::Boolean) }
-          def eql?(other)
-            self == other
-          end
-
-          sig(:final) { returns(Integer) }
-          def hash
-            [Done].hash
+          # @return [Array] the members that constitute identity
+          sig(:final) { override.returns(T::Array[T.anything]) }
+          def equality_members
+            []
           end
         end
       end
@@ -145,6 +127,7 @@ module Dev
         extend T::Helpers
         include Dispatch
         final!
+        include Dev::ValueEquality::Derived
 
         sig(:final) do
           override.type_parameters(:Env)
@@ -156,19 +139,10 @@ module Dev
           Outcome::Run[T.type_parameter(:Env)].new(yield)
         end
 
-        sig(:final) { params(other: Object).returns(T::Boolean) }
-        def ==(other)
-          other.is_a?(Native)
-        end
-
-        sig(:final) { params(other: Object).returns(T::Boolean) }
-        def eql?(other)
-          self == other
-        end
-
-        sig(:final) { returns(Integer) }
-        def hash
-          [Native].hash
+        # @return [Array] the members that constitute identity
+        sig(:final) { override.returns(T::Array[T.anything]) }
+        def equality_members
+          []
         end
       end
 

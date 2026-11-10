@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "dev/environment_ref"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -36,6 +37,7 @@ module Dev
       class Script < T::Struct
         extend T::Sig
         include PublisherSpec
+        include Dev::ValueEquality::Derived
 
         const :command, String
         # The environment the line executes in, as declared; nil leaves it
@@ -47,19 +49,10 @@ module Dev
           "run: #{command}"
         end
 
-        sig { params(other: Object).returns(T::Boolean) }
-        def ==(other)
-          other.is_a?(Script) && command == other.command && environment == other.environment
-        end
-
-        sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other)
-          self == other
-        end
-
-        sig { returns(Integer) }
-        def hash
-          [Script, command, environment].hash
+        # @return [Array] the members that constitute identity
+        sig { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [command, environment]
         end
       end
 
@@ -71,6 +64,7 @@ module Dev
       class Integration < T::Struct
         extend T::Sig
         include PublisherSpec
+        include Dev::ValueEquality::Derived
 
         const :name, String
 
@@ -79,19 +73,10 @@ module Dev
           "publisher: #{name}"
         end
 
-        sig { params(other: Object).returns(T::Boolean) }
-        def ==(other)
-          other.is_a?(Integration) && name == other.name
-        end
-
-        sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other)
-          self == other
-        end
-
-        sig { returns(Integer) }
-        def hash
-          [Integration, name].hash
+        # @return [Array] the members that constitute identity
+        sig { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [name]
         end
       end
     end

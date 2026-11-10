@@ -3,6 +3,7 @@
 
 require "time"
 require_relative "git_state"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -14,6 +15,7 @@ module Dev
     # expected; the UTC instant makes two dirty packagings distinguishable.
     class BuildId
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # A string that is not a build id (a manifest written by something
       # other than dev, or edited).
@@ -65,19 +67,10 @@ module Dev
         @value
       end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        other.is_a?(BuildId) && @value == other.to_s
-      end
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other)
-        self == other
-      end
-
-      sig { returns(Integer) }
-      def hash
-        [BuildId, @value].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [@value]
       end
     end
   end

@@ -7,6 +7,7 @@ require_relative "packager"
 require_relative "packed_archive"
 require_relative "part_list"
 require_relative "shell"
+require_relative "../value_equality"
 # Build appears in a signature only; see packager.rb for why build.rb is
 # not required here.
 
@@ -32,6 +33,7 @@ module Dev
     class Archive
       extend T::Sig
       include Packager
+      include Dev::ValueEquality::Derived
 
       # The install directory does not exist.
       class MissingInstallError < RuntimeError; end
@@ -125,6 +127,7 @@ module Dev
         class Zip < T::Struct
           extend T::Sig
           include Form
+          include Dev::ValueEquality::Derived
 
           EXTENSION = "zip"
 
@@ -137,20 +140,10 @@ module Dev
           def to_s
             ""
           end
-
-          sig { params(other: Object).returns(T::Boolean) }
-          def ==(other)
-            other.is_a?(Zip)
-          end
-
-          sig { params(other: Object).returns(T::Boolean) }
-          def eql?(other)
-            self == other
-          end
-
-          sig { returns(Integer) }
-          def hash
-            [Zip].hash
+          # @return [Array] the members that constitute identity
+          sig { override.returns(T::Array[T.anything]) }
+          def equality_members
+            []
           end
         end
 
@@ -159,6 +152,7 @@ module Dev
         class Tar < T::Struct
           extend T::Sig
           include Form
+          include Dev::ValueEquality::Derived
 
           EXTENSION = "tar.zst"
           MANIFEST_EXTENSION = "MANIFEST"
@@ -179,20 +173,10 @@ module Dev
           def to_s
             split? ? " (tar, split #{split})" : " (tar)"
           end
-
-          sig { params(other: Object).returns(T::Boolean) }
-          def ==(other)
-            other.is_a?(Tar) && split == other.split
-          end
-
-          sig { params(other: Object).returns(T::Boolean) }
-          def eql?(other)
-            self == other
-          end
-
-          sig { returns(Integer) }
-          def hash
-            [Tar, split].hash
+          # @return [Array] the members that constitute identity
+          sig { override.returns(T::Array[T.anything]) }
+          def equality_members
+            [split]
           end
         end
       end
@@ -265,19 +249,10 @@ module Dev
         "archive#{@form}"
       end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        other.is_a?(Archive) && form == other.form
-      end
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other)
-        self == other
-      end
-
-      sig { returns(Integer) }
-      def hash
-        [Archive, form].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [form]
       end
 
       private

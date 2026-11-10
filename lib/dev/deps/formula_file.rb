@@ -3,6 +3,7 @@
 
 require "pathname"
 require "uri"
+require_relative "../value_equality"
 
 module Dev
   module Deps
@@ -36,23 +37,15 @@ module Dev
       # download must hash to.
       class StableSpec < T::Struct
         extend T::Sig
+        include Dev::ValueEquality::Derived
 
         const :url, URI::Generic
         const :sha256, String
 
-        sig { params(other: Object).returns(T::Boolean) }
-        def ==(other)
-          other.is_a?(StableSpec) && url == other.url && sha256 == other.sha256
-        end
-
-        sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other)
-          self == other
-        end
-
-        sig { returns(Integer) }
-        def hash
-          [StableSpec, url, sha256].hash
+        # @return [Array] the members that constitute identity
+        sig { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [url, sha256]
         end
 
         sig { returns(String) }

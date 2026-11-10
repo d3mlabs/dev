@@ -5,6 +5,7 @@ require "dev/lifecycle/build"
 require "dev/lifecycle/build_pattern"
 require "dev/lifecycle/channel"
 require "dev/lifecycle/track"
+require_relative "../value_equality"
 
 module Dev
   module Deps
@@ -47,6 +48,7 @@ module Dev
       # One Epic artifact: a binary stream of the product, for one platform.
       class Artifact < T::Struct
         extend T::Sig
+        include Dev::ValueEquality::Derived
 
         const :id, String
         # The app to launch, relative to the build root (`Game.exe`,
@@ -54,19 +56,10 @@ module Dev
         const :launch, String
         const :args, String, default: ""
 
-        sig { params(other: Object).returns(T::Boolean) }
-        def ==(other)
-          other.is_a?(Artifact) && id == other.id && launch == other.launch && args == other.args
-        end
-
-        sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other)
-          self == other
-        end
-
-        sig { returns(Integer) }
-        def hash
-          [Artifact, id, launch, args].hash
+        # @return [Array] the members that constitute identity
+        sig { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [id, launch, args]
         end
       end
 

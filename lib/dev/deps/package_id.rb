@@ -1,6 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "../value_equality"
+
 module Dev
   module Deps
     # Identity of a package within its integration's universe: constraint-free
@@ -22,6 +24,7 @@ module Dev
     # See docs/deps-architecture.md for the four-type ontology this belongs to.
     class PackageId
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # @return [Symbol] the integration whose universe this package lives in
       sig { returns(Symbol) }
@@ -48,20 +51,10 @@ module Dev
         freeze
       end
 
-      # @param other [Object]
-      # @return [Boolean] whether other identifies the same package
-      sig { params(other: T.untyped).returns(T::Boolean) }
-      def ==(other)
-        return false unless other.is_a?(PackageId)
-
-        [integration, name, source] == [other.integration, other.name, other.source]
-      end
-      alias_method :eql?, :==
-
-      # @return [Integer] hash code, so ids work as Hash keys
-      sig { returns(Integer) }
-      def hash
-        [self.class, integration, name, source].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [integration, name, source]
       end
 
       # @return [String] "integration/name", with the source appended when the

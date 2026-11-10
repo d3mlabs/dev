@@ -23,6 +23,7 @@ class Dev::Cli::Builtins::PackCommandTest < Minitest::Test
     !command.staleness_exempt?
     !command.stamps?
     command.category == Dev::Cli::Command::Category::Workflow
+    command.desc.include?("pack DIR [--out STEM] [--format zip|tar] [--split SIZE]")
     command.flags.map(&:name) == ["--out", "--format", "--split"]
     command.flags.all?(&:takes_value?)
   end

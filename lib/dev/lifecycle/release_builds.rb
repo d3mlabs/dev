@@ -4,6 +4,7 @@
 require_relative "build"
 require_relative "build_pattern"
 require_relative "target"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -24,6 +25,7 @@ module Dev
     # attach), and no build appears twice (two assets of one name).
     class ReleaseBuilds
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # A pattern that leaves the config open on a target declaring
       # configs, or — in the empty form — a packageable target that
@@ -114,19 +116,10 @@ module Dev
         @builds.map(&:name)
       end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        other.is_a?(ReleaseBuilds) && @builds == other.builds
-      end
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other)
-        self == other
-      end
-
-      sig { returns(Integer) }
-      def hash
-        [ReleaseBuilds, @builds].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [@builds]
       end
 
       private

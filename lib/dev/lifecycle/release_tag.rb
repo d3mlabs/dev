@@ -1,6 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "../value_equality"
+
 module Dev
   module Lifecycle
     # The name a release carries on the forge (dev#192, K4, K6): the git
@@ -14,6 +16,7 @@ module Dev
     # nothing, a spaced one is not a ref.
     class ReleaseTag
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # A version that cannot name a tag.
       class InvalidVersionError < ArgumentError; end
@@ -50,19 +53,10 @@ module Dev
         name
       end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        other.is_a?(ReleaseTag) && @version == other.version
-      end
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other)
-        self == other
-      end
-
-      sig { returns(Integer) }
-      def hash
-        [ReleaseTag, @version].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [@version]
       end
     end
   end

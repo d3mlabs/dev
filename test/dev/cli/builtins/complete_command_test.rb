@@ -87,6 +87,14 @@ class Dev::Cli::Builtins::CompleteCommandTest < Minitest::Test
     seen == [[], ["--yes"]]
   end
 
+  test "the builtin describes itself as completion plumbing" do
+    Given "the complete builtin over any root"
+    command = Dev::Cli::Builtins::CompleteCommand.new(root_provider: -> { Dev::Cli::CommandGroup.root(desc: "dev", children: {}) }, out: StringIO.new)
+
+    Expect
+    command.desc.include?("shell completion plumbing")
+  end
+
   test "the group walk still lists child names, sorted; a leaf's arguments never leak into a group listing" do
     Given "the same tree"
     leaf = FakeBuiltin.new(completions: ->(_words) { %w[zeta alpha] })

@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "sorbet-runtime"
+require_relative "../value_equality"
 
 module Dev
   module Deps
@@ -14,6 +15,7 @@ module Dev
     # value.
     class UnlockSet
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # @return [Array<String>] the declaration names floated by name;
       #   empty when none or all
@@ -65,17 +67,10 @@ module Dev
         @all || @names.include?(name)
       end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        return false unless other.is_a?(UnlockSet)
-
-        [all?, names] == [other.all?, other.names]
-      end
-      alias_method :eql?, :==
-
-      sig { returns(Integer) }
-      def hash
-        [self.class, all?, names].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [all?, names]
       end
     end
   end

@@ -7,6 +7,7 @@ require_relative "parsed_args"
 require_relative "dispatch"
 require_relative "execution_context"
 require_relative "placement"
+require_relative "../value_equality"
 
 module Dev
   module Cli
@@ -341,6 +342,7 @@ module Dev
       extend T::Helpers
       include Command
       final!
+      include Dev::ValueEquality::Derived
 
       # The placement was read before the composition root bound it. The
       # root binds every project command at load; it leaves the tree unbound
@@ -446,23 +448,10 @@ module Dev
         )
       end
 
-      sig(:final) { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        return false unless other.is_a?(ProjectCommand)
-
-        @run == other.run && @desc == other.desc && @repl == other.repl &&
-          @environment == other.environment && @placement == other.placement &&
-          @hidden == other.hidden? && @children == other.children
-      end
-
-      sig(:final) { params(other: Object).returns(T::Boolean) }
-      def eql?(other)
-        self == other
-      end
-
-      sig(:final) { returns(Integer) }
-      def hash
-        [@run, @desc, @repl, @environment, @placement, @hidden, @children].hash
+      # @return [Array] the members that constitute identity
+      sig(:final) { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [@run, @desc, @repl, @environment, @placement, @hidden, @children]
       end
     end
 
@@ -475,6 +464,7 @@ module Dev
       extend T::Helpers
       include Command
       final!
+      include Dev::ValueEquality::Derived
 
       sig(:final) { returns(BuiltinCommand) }
       attr_reader :builtin
@@ -547,23 +537,10 @@ module Dev
         @builtin.category
       end
 
-      # Value equality over the halves and the subtree (builtins compare by
-      # identity — they are the wired instances).
-      sig(:final) { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        return false unless other.is_a?(OverriddenCommand)
-
-        @builtin == other.builtin && @project == other.project && @children == other.children
-      end
-
-      sig(:final) { params(other: Object).returns(T::Boolean) }
-      def eql?(other)
-        self == other
-      end
-
-      sig(:final) { returns(Integer) }
-      def hash
-        [@builtin, @project, @children].hash
+      # @return [Array] the members that constitute identity
+      sig(:final) { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [@builtin, @project, @children]
       end
     end
 
@@ -580,6 +557,7 @@ module Dev
       extend T::Helpers
       include Command
       final!
+      include Dev::ValueEquality::Derived
 
       # A group with no children can never do anything; rejecting it here
       # keeps every resolved node meaningful.
@@ -648,22 +626,10 @@ module Dev
         true
       end
 
-      sig(:final) { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        return false unless other.is_a?(CommandGroup)
-
-        @path == other.path && @desc == other.desc && @category == other.category &&
-          @children == other.children && @hidden == other.hidden?
-      end
-
-      sig(:final) { params(other: Object).returns(T::Boolean) }
-      def eql?(other)
-        self == other
-      end
-
-      sig(:final) { returns(Integer) }
-      def hash
-        [@path, @desc, @category, @children, @hidden].hash
+      # @return [Array] the members that constitute identity
+      sig(:final) { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [@path, @desc, @category, @children, @hidden]
       end
     end
 

@@ -5,6 +5,7 @@ require_relative "git"
 require_relative "git_state"
 require_relative "project_version"
 require_relative "release_tag"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -56,23 +57,15 @@ module Dev
       # The bump of the version the project keeps in source.
       class VersionBump < T::Struct
         extend T::Sig
+        include Dev::ValueEquality::Derived
 
         const :from, String
         const :to, String
 
-        sig { params(other: Object).returns(T::Boolean) }
-        def ==(other)
-          other.is_a?(VersionBump) && from == other.from && to == other.to
-        end
-
-        sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other)
-          self == other
-        end
-
-        sig { returns(Integer) }
-        def hash
-          [VersionBump, from, to].hash
+        # @return [Array] the members that constitute identity
+        sig { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [from, to]
         end
       end
 
@@ -82,6 +75,7 @@ module Dev
       # ref does not exist — origin was never fetched for this branch.
       class Drift < T::Struct
         extend T::Sig
+        include Dev::ValueEquality::Derived
 
         # @return [String] the remote-tracking ref, `origin/main`
         const :upstream, String
@@ -100,19 +94,10 @@ module Dev
           "#{ahead.positive? ? "#{ahead} ahead, " : ""}#{behind} behind #{upstream} as last fetched"
         end
 
-        sig { params(other: Object).returns(T::Boolean) }
-        def ==(other)
-          other.is_a?(Drift) && upstream == other.upstream && ahead == other.ahead && behind == other.behind
-        end
-
-        sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other)
-          self == other
-        end
-
-        sig { returns(Integer) }
-        def hash
-          [Drift, upstream, ahead, behind].hash
+        # @return [Array] the members that constitute identity
+        sig { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [upstream, ahead, behind]
         end
       end
 
@@ -120,6 +105,7 @@ module Dev
       # checkout before anything moves.
       class Plan < T::Struct
         extend T::Sig
+        include Dev::ValueEquality::Derived
 
         const :tag, ReleaseTag
         # @return [String] the branch HEAD is on — what the push publishes
@@ -150,20 +136,10 @@ module Dev
           commits.empty? ? "Release #{tag}." : commits.join("\n")
         end
 
-        sig { params(other: Object).returns(T::Boolean) }
-        def ==(other)
-          other.is_a?(Plan) && tag == other.tag && branch == other.branch && sha == other.sha && resuming == other.resuming &&
-            bump == other.bump && previous == other.previous && commits == other.commits && drift == other.drift
-        end
-
-        sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other)
-          self == other
-        end
-
-        sig { returns(Integer) }
-        def hash
-          [Plan, tag, branch, sha, resuming, bump, previous, commits, drift].hash
+        # @return [Array] the members that constitute identity
+        sig { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [tag, branch, sha, resuming, bump, previous, commits, drift]
         end
       end
 

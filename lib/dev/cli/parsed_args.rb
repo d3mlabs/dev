@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require_relative "flag"
+require_relative "../value_equality"
 
 module Dev
   module Cli
@@ -12,6 +13,7 @@ module Dev
     # argv to another process or command. Immutable; equal by value.
     class ParsedArgs
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       sig { returns(T::Array[String]) }
       attr_reader :words
@@ -86,17 +88,10 @@ module Dev
         end
       end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        return false unless other.is_a?(ParsedArgs)
-
-        state == other.state
-      end
-      alias eql? ==
-
-      sig { returns(Integer) }
-      def hash
-        state.hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [state]
       end
 
       protected

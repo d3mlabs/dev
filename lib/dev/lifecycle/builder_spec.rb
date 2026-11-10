@@ -1,6 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "../value_equality"
+
 module Dev
   module Lifecycle
     # What a target declares for its Builder port (dev#192, K1): today the
@@ -28,6 +30,7 @@ module Dev
       class Script < T::Struct
         extend T::Sig
         include BuilderSpec
+        include Dev::ValueEquality::Derived
 
         const :command, String
 
@@ -36,19 +39,10 @@ module Dev
           command
         end
 
-        sig { params(other: Object).returns(T::Boolean) }
-        def ==(other)
-          other.is_a?(Script) && command == other.command
-        end
-
-        sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other)
-          self == other
-        end
-
-        sig { returns(Integer) }
-        def hash
-          [Script, command].hash
+        # @return [Array] the members that constitute identity
+        sig { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [command]
         end
       end
     end

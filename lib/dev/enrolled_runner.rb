@@ -1,6 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "value_equality"
+
 module Dev
   # A repo's enrolled runner (dev#192, K8): what bare `dev runner register`
   # makes, and what the lifecycle verbs' remote dispatch targets from a
@@ -20,6 +22,7 @@ module Dev
   # because this is the one derivation.
   class EnrolledRunner < T::Struct
     extend T::Sig
+    include Dev::ValueEquality::Derived
 
     # The repo is not "owner/repo". Refused here rather than enrolled or
     # looked up under a scope dev would read as an org (a bare name is
@@ -51,19 +54,10 @@ module Dev
       end
     end
 
-    sig { params(other: Object).returns(T::Boolean) }
-    def ==(other)
-      other.is_a?(EnrolledRunner) && scope == other.scope && label == other.label
-    end
-
-    sig { params(other: Object).returns(T::Boolean) }
-    def eql?(other)
-      self == other
-    end
-
-    sig { returns(Integer) }
-    def hash
-      [EnrolledRunner, scope, label].hash
+    # @return [Array] the members that constitute identity
+    sig { override.returns(T::Array[T.anything]) }
+    def equality_members
+      [scope, label]
     end
   end
 end

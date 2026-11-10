@@ -4,6 +4,7 @@
 require "securerandom"
 require "time"
 require_relative "build_id"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -21,6 +22,7 @@ module Dev
     # (BuildId's `20261104T123000Z`).
     class SnapshotBranch
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # A branch name under the namespace that the sync step did not mint
       # (a hand-made `dev/build/foo`).
@@ -142,19 +144,10 @@ module Dev
         name
       end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        other.is_a?(SnapshotBranch) && name == other.name
-      end
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other)
-        self == other
-      end
-
-      sig { returns(Integer) }
-      def hash
-        [SnapshotBranch, name].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [name]
       end
     end
   end

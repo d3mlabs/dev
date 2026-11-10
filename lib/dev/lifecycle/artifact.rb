@@ -5,6 +5,7 @@ require "pathname"
 require_relative "build"
 require_relative "git_state"
 require_relative "manifest"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -15,6 +16,7 @@ module Dev
     # name is only the index the Store reaches it by.
     class Artifact
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # @return [Pathname] the artifact's directory in the store
       sig { returns(Pathname) }
@@ -60,19 +62,10 @@ module Dev
         @manifest.current?(state)
       end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        other.is_a?(Artifact) && @dir == other.dir && @manifest == other.manifest
-      end
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other)
-        self == other
-      end
-
-      sig { returns(Integer) }
-      def hash
-        [Artifact, @dir, @manifest].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [@dir, @manifest]
       end
     end
   end

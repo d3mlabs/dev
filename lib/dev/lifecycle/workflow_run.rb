@@ -1,6 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "../value_equality"
+
 module Dev
   module Lifecycle
     # One run of the generic workflow as the forge lists it (dev#192, K7):
@@ -10,6 +12,7 @@ module Dev
     # judges; nothing of the job's output lives here.
     class WorkflowRun < T::Struct
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       COMPLETED = "completed"
       SUCCESS = "success"
@@ -33,19 +36,10 @@ module Dev
         completed? && conclusion == SUCCESS
       end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        other.is_a?(WorkflowRun) && id == other.id && url == other.url && status == other.status && conclusion == other.conclusion
-      end
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other)
-        self == other
-      end
-
-      sig { returns(Integer) }
-      def hash
-        [WorkflowRun, id, url, status, conclusion].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [id, url, status, conclusion]
       end
     end
   end

@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require_relative "archive"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -33,6 +34,7 @@ module Dev
       class Script < T::Struct
         extend T::Sig
         include PackagerSpec
+        include Dev::ValueEquality::Derived
 
         const :command, String
 
@@ -41,19 +43,10 @@ module Dev
           command
         end
 
-        sig { params(other: Object).returns(T::Boolean) }
-        def ==(other)
-          other.is_a?(Script) && command == other.command
-        end
-
-        sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other)
-          self == other
-        end
-
-        sig { returns(Integer) }
-        def hash
-          [Script, command].hash
+        # @return [Array] the members that constitute identity
+        sig { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [command]
         end
       end
 
@@ -62,6 +55,7 @@ module Dev
       class Archive < T::Struct
         extend T::Sig
         include PackagerSpec
+        include Dev::ValueEquality::Derived
 
         const :form, Lifecycle::Archive::Form, factory: -> { Lifecycle::Archive::Form::Zip.new }
 
@@ -70,19 +64,10 @@ module Dev
           "archive#{form}"
         end
 
-        sig { params(other: Object).returns(T::Boolean) }
-        def ==(other)
-          other.is_a?(Archive) && form == other.form
-        end
-
-        sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other)
-          self == other
-        end
-
-        sig { returns(Integer) }
-        def hash
-          [Archive, form].hash
+        # @return [Array] the members that constitute identity
+        sig { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [form]
         end
       end
 
@@ -90,25 +75,17 @@ module Dev
       class AsIs < T::Struct
         extend T::Sig
         include PackagerSpec
+        include Dev::ValueEquality::Derived
 
         sig { override.returns(String) }
         def to_s
           "as-is"
         end
 
-        sig { params(other: Object).returns(T::Boolean) }
-        def ==(other)
-          other.is_a?(AsIs)
-        end
-
-        sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other)
-          self == other
-        end
-
-        sig { returns(Integer) }
-        def hash
-          [AsIs].hash
+        # @return [Array] the members that constitute identity
+        sig { override.returns(T::Array[T.anything]) }
+        def equality_members
+          []
         end
       end
 
@@ -116,25 +93,17 @@ module Dev
       class None < T::Struct
         extend T::Sig
         include PackagerSpec
+        include Dev::ValueEquality::Derived
 
         sig { override.returns(String) }
         def to_s
           "none"
         end
 
-        sig { params(other: Object).returns(T::Boolean) }
-        def ==(other)
-          other.is_a?(None)
-        end
-
-        sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other)
-          self == other
-        end
-
-        sig { returns(Integer) }
-        def hash
-          [None].hash
+        # @return [Array] the members that constitute identity
+        sig { override.returns(T::Array[T.anything]) }
+        def equality_members
+          []
         end
       end
     end

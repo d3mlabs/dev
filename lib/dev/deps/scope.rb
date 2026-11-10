@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "sorbet-runtime"
+require_relative "../value_equality"
 
 module Dev
   module Deps
@@ -17,6 +18,7 @@ module Dev
     # group always names a purpose and defaults to :app.
     class Scope
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # @return [Symbol] purpose the dep was declared for (:app, :test, :build, …)
       sig { returns(Symbol) }
@@ -85,20 +87,10 @@ module Dev
         meta
       end
 
-      # @param other [Object]
-      # @return [Boolean] whether other is the same context
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        return false unless other.is_a?(Scope)
-
-        [group, host, env] == [other.group, other.host, other.env]
-      end
-      alias_method :eql?, :==
-
-      # @return [Integer] hash code, so scopes work as Hash keys
-      sig { returns(Integer) }
-      def hash
-        [self.class, group, host, env].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [group, host, env]
       end
 
       private

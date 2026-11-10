@@ -3,6 +3,7 @@
 
 require "digest"
 require "pathname"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -16,6 +17,7 @@ module Dev
     # what each must hash to.
     class PartList < T::Struct
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # A line that is not `<sha256>  <part>`.
       class MalformedPartListError < RuntimeError; end
@@ -23,23 +25,14 @@ module Dev
       # One part: its digest and its file name, as listed.
       class Part < T::Struct
         extend T::Sig
+        include Dev::ValueEquality::Derived
 
         const :sha256, String
         const :name, String
-
-        sig { params(other: Object).returns(T::Boolean) }
-        def ==(other)
-          other.is_a?(Part) && sha256 == other.sha256 && name == other.name
-        end
-
-        sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other)
-          self == other
-        end
-
-        sig { returns(Integer) }
-        def hash
-          [Part, sha256, name].hash
+        # @return [Array] the members that constitute identity
+        sig { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [sha256, name]
         end
       end
 
@@ -101,19 +94,10 @@ module Dev
         PartList.new(parts: parts.map { |part| Part.new(sha256: part.sha256, name: yield(part.name)) })
       end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        other.is_a?(PartList) && parts == other.parts
-      end
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other)
-        self == other
-      end
-
-      sig { returns(Integer) }
-      def hash
-        [PartList, parts].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [parts]
       end
     end
   end

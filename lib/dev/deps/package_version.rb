@@ -3,6 +3,7 @@
 
 require_relative "artifact"
 require_relative "declarations"
+require_relative "../value_equality"
 
 module Dev
   module Deps
@@ -25,6 +26,7 @@ module Dev
     # docs/deps-architecture.md.
     class PackageVersion
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # @return [String] the version string, in the ecosystem's own vocabulary
       #   (semver, gem version, tag, commit SHA, Steam buildid)
@@ -89,22 +91,10 @@ module Dev
         freeze
       end
 
-      # @param other [Object]
-      # @return [Boolean] whether other reports the same facts
-      sig { params(other: T.untyped).returns(T::Boolean) }
-      def ==(other)
-        return false unless other.is_a?(PackageVersion)
-
-        [version, platforms, digest, artifacts, declarations, metadata] ==
-          [other.version, other.platforms, other.digest, other.artifacts,
-           other.declarations, other.metadata]
-      end
-      alias_method :eql?, :==
-
-      # @return [Integer] hash code
-      sig { returns(Integer) }
-      def hash
-        [self.class, version, platforms, digest, artifacts, declarations, metadata].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [version, platforms, digest, artifacts, declarations, metadata]
       end
     end
   end

@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "sorbet-runtime"
+require_relative "../value_equality"
 
 module Dev
   module Deps
@@ -42,6 +43,7 @@ module Dev
     # See docs/deps-architecture.md for the ontology this belongs to.
     class Declaration
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # A declaration states both an address (revision) and a selection
       # (version constraints) — asking dev to resolve what the author
@@ -106,21 +108,10 @@ module Dev
         freeze
       end
 
-      # @param other [Object]
-      # @return [Boolean] whether other states the same declaration
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        return false unless other.is_a?(Declaration)
-
-        [name, integration, constraint, source, revision] ==
-          [other.name, other.integration, other.constraint, other.source, other.revision]
-      end
-      alias_method :eql?, :==
-
-      # @return [Integer] hash code, so declarations work as Hash keys
-      sig { returns(Integer) }
-      def hash
-        [self.class, name, integration, constraint, source, revision].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [name, integration, constraint, source, revision]
       end
     end
   end

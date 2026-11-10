@@ -3,6 +3,7 @@
 
 require "open3"
 require "pathname"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -15,6 +16,7 @@ module Dev
     # sha is unknown and the tree is never trusted as clean.
     class GitState < T::Struct
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # `git status` failed inside what `git rev-parse` had just called a
       # checkout — the tree is in a state dev cannot describe.
@@ -57,19 +59,10 @@ module Dev
         !sha.nil? && !dirty
       end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        other.is_a?(GitState) && sha == other.sha && dirty == other.dirty
-      end
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other)
-        self == other
-      end
-
-      sig { returns(Integer) }
-      def hash
-        [GitState, sha, dirty].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [sha, dirty]
       end
     end
   end

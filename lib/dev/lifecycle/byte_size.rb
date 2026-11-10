@@ -1,6 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "../value_equality"
+
 module Dev
   module Lifecycle
     # A size in bytes as dev.yml and the CLI spell one — `2GiB`, `500MiB`,
@@ -9,6 +11,7 @@ module Dev
     # stay under, GitHub's 2 GiB per release asset, is binary.
     class ByteSize < T::Struct
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # A string that is not an integer followed by one of the units.
       class InvalidByteSizeError < ArgumentError; end
@@ -49,19 +52,10 @@ module Dev
         "#{bytes / factor}#{unit == "B" ? "" : unit}"
       end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        other.is_a?(ByteSize) && bytes == other.bytes
-      end
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other)
-        self == other
-      end
-
-      sig { returns(Integer) }
-      def hash
-        [ByteSize, bytes].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [bytes]
       end
     end
   end

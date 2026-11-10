@@ -3,6 +3,7 @@
 
 require "dev/environment_ref"
 require_relative "platform"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -41,6 +42,7 @@ module Dev
         extend T::Helpers
         include TargetEnvironment
         final!
+        include Dev::ValueEquality::Derived
 
         # @return [EnvironmentRef] the one reference
         sig(:final) { returns(EnvironmentRef) }
@@ -56,19 +58,10 @@ module Dev
           @reference.to_s
         end
 
-        sig(:final) { params(other: Object).returns(T::Boolean) }
-        def ==(other)
-          other.is_a?(Single) && @reference == other.reference
-        end
-
-        sig(:final) { params(other: Object).returns(T::Boolean) }
-        def eql?(other)
-          self == other
-        end
-
-        sig(:final) { returns(Integer) }
-        def hash
-          [Single, @reference].hash
+        # @return [Array] the members that constitute identity
+        sig(:final) { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [@reference]
         end
       end
 
@@ -79,6 +72,7 @@ module Dev
         extend T::Helpers
         include TargetEnvironment
         final!
+        include Dev::ValueEquality::Derived
 
         # @return [Hash{Platform => EnvironmentRef}] in declaration order
         sig(:final) { returns(T::Hash[Platform, EnvironmentRef]) }
@@ -102,19 +96,10 @@ module Dev
           @references.map { |platform, reference| "#{platform}: #{reference}" }.join(", ")
         end
 
-        sig(:final) { params(other: Object).returns(T::Boolean) }
-        def ==(other)
-          other.is_a?(PerPlatform) && @references == other.references
-        end
-
-        sig(:final) { params(other: Object).returns(T::Boolean) }
-        def eql?(other)
-          self == other
-        end
-
-        sig(:final) { returns(Integer) }
-        def hash
-          [PerPlatform, @references].hash
+        # @return [Array] the members that constitute identity
+        sig(:final) { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [@references]
         end
       end
     end

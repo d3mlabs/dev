@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "dev/ini_file"
+require_relative "value_equality"
 
 module Dev
   # The user's `%USERPROFILE%\.wslconfig` — WSL2's VM-wide settings — as an
@@ -12,6 +13,7 @@ module Dev
   # preserved byte for byte (see IniFile). `with` is the one way in.
   class WslConfig
     extend T::Sig
+    include Dev::ValueEquality::Derived
 
     # A `memory=` value WSL itself would reject (it wants `<n>GB`, `<n>MB`, …).
     class MalformedValueError < RuntimeError; end
@@ -80,9 +82,10 @@ module Dev
       @ini.render
     end
 
-    sig { params(other: Object).returns(T::Boolean) }
-    def ==(other)
-      other.is_a?(WslConfig) && render == other.render
+    # @return [Array] the members that constitute identity
+    sig { override.returns(T::Array[T.anything]) }
+    def equality_members
+      [render]
     end
 
     private

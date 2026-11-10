@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "dev/runner_registry"
+require_relative "value_equality"
 
 module Dev
   # What an org runner group should be, as a label contract obliges it
@@ -29,6 +30,7 @@ module Dev
   # admits repos to it, but what it pins is theirs.
   class RunnerGroupContract
     extend T::Sig
+    include Dev::ValueEquality::Derived
 
     sig { returns(String) }
     attr_reader :name
@@ -87,15 +89,10 @@ module Dev
       drift
     end
 
-    sig { params(other: Object).returns(T::Boolean) }
-    def ==(other)
-      other.is_a?(RunnerGroupContract) && @name == other.name && @workflows == other.workflows && @visibility == other.visibility
-    end
-    alias eql? ==
-
-    sig { returns(Integer) }
-    def hash
-      [@name, @workflows, @visibility].hash
+    # @return [Array] the members that constitute identity
+    sig { override.returns(T::Array[T.anything]) }
+    def equality_members
+      [@name, @workflows, @visibility]
     end
   end
 end

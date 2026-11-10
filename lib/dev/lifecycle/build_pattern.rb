@@ -4,6 +4,7 @@
 require_relative "config"
 require_relative "platform"
 require_relative "target"
+require_relative "../value_equality"
 # Build requires this file (Build.parse is the fully-qualified form of the
 # grammar here); `dev/lifecycle` loads both.
 
@@ -21,6 +22,7 @@ module Dev
     # then an optional config id — never a regexp over the whole name.
     class BuildPattern < T::Struct
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # The name starts with no declared target.
       class UnknownTargetError < ArgumentError; end
@@ -217,19 +219,10 @@ module Dev
         name
       end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        other.is_a?(BuildPattern) && target == other.target && platform == other.platform && config == other.config
-      end
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other)
-        self == other
-      end
-
-      sig { returns(Integer) }
-      def hash
-        [BuildPattern, target, platform, config].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [target, platform, config]
       end
     end
   end
