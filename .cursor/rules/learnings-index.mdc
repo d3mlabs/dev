@@ -67,6 +67,11 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  tree holds a symlink or a lisp path, and path-bound artifacts run by
  their store path.
  → .cursor/skills/learnings/installed-state-in-the-store/
+- [architecture/probe-at-the-owning-identity] A register/status probe
+ runs as the operator, but on a Linux dev host the fact belongs to the
+ runner user or the agent: probe it at the path the contract names or as
+ that user (`sudo -n -u`), never via `which`, PATH, cwd or `~`.
+ → .cursor/skills/learnings/probe-at-the-owning-identity/
 
 ## toolchain
 
