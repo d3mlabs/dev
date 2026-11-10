@@ -9,6 +9,7 @@ require "fileutils"
 require "json"
 require "stringio"
 require "socket"
+require "support/recording_ui"
 
 transform!(RSpock::AST::Transformation)
 class Dev::RunnerSetupTest < Minitest::Test
@@ -36,7 +37,8 @@ class Dev::RunnerSetupTest < Minitest::Test
     end
   end
 
-  def silent = StringIO.new
+  # A Ui whose plain lines go nowhere: the tests here are about what ran.
+  def quiet = Dev::NoUi.new(out: StringIO.new)
 
   def authed_responder
     lambda do |argv|
@@ -165,7 +167,7 @@ class Dev::RunnerSetupTest < Minitest::Test
     Given "a config pointing at a /mnt path"
     config = Dev::RunnerSetupConfig.new(labels: "snappy", dir: "/mnt/c/actions-runner")
     exec = RecordingExecutor.new
-    setup = Dev::RunnerSetup.new(config: config, executor: exec, out: silent)
+    setup = Dev::RunnerSetup.new(config: config, executor: exec, ui: quiet)
 
     When "running setup"
     setup.run
@@ -178,7 +180,7 @@ class Dev::RunnerSetupTest < Minitest::Test
     Given "an executor where gh auth status fails"
     config = Dev::RunnerSetupConfig.new(labels: "snappy", dir: Dir.mktmpdir)
     exec = RecordingExecutor.new { |argv| argv[0, 3] == ["gh", "auth", "status"] ? ["", "no", false] : ["", "", true] }
-    setup = Dev::RunnerSetup.new(config: config, executor: exec, out: silent)
+    setup = Dev::RunnerSetup.new(config: config, executor: exec, ui: quiet)
 
     When "running setup"
     setup.run
@@ -198,10 +200,10 @@ class Dev::RunnerSetupTest < Minitest::Test
     File.chmod(0o755, config_sh)
     config = Dev::RunnerSetupConfig.new(labels: "ue-engine", dir: dir, name: "box")
     exec = RecordingExecutor.new(&authed_responder)
-    setup = Dev::RunnerSetup.new(config: config, executor: exec, out: silent)
+    setup = Dev::RunnerSetup.new(config: config, executor: exec, ui: quiet)
 
     When "running setup with a repo override"
-    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, out: silent,
+    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, ui: quiet,
       host_platform: "linux-x64")
     setup.run
 
@@ -244,7 +246,7 @@ class Dev::RunnerSetupTest < Minitest::Test
     dir = File.join(home, "actions-runner-snappy")
     config = Dev::RunnerSetupConfig.new(labels: "snappy", dir: dir, name: "box")
     exec = RecordingExecutor.new(&authed_responder)
-    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, out: silent,
+    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, ui: quiet,
       host_platform: "linux-x64", as_user: "runner", home: home, path: "/opt/brew/bin:/usr/bin")
 
     When
@@ -274,19 +276,35 @@ class Dev::RunnerSetupTest < Minitest::Test
     FileUtils.remove_entry(home)
   end
 
-  test "as another user, the setup line says so" do
-    Given
+  test "run speaks through the Ui: one frame for the enrollment; a step per child handed the terminal (svc.sh, config.sh); a spin per captured gh or config.sh call; a note per thing found — every reason in the text, for the pipe tier (plans#52)" do
+    Given "a configured, serviced dir being re-enrolled as the runner user"
     dir = Dir.mktmpdir
+    config_sh = File.join(dir, "config.sh")
+    File.write(config_sh, "#!/bin/bash\n")
+    File.chmod(0o755, config_sh)
+    File.write(File.join(dir, ".runner"), "\uFEFF#{JSON.generate("gitHubUrl" => "https://github.com/owner/repo")}")
+    File.write(File.join(dir, ".service"), "unit")
     config = Dev::RunnerSetupConfig.new(labels: "snappy", dir: dir, name: "box")
-    out = StringIO.new
+    ui = RecordingUi.new
     setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: RecordingExecutor.new(&authed_responder),
-      out: out, host_platform: "linux-x64", as_user: "runner", home: File.dirname(dir))
+      ui: ui, host_platform: "linux-x64", as_user: "runner", home: File.dirname(dir))
 
     When
     setup.run
 
     Then
-    out.string.include?(">>> Setting up runner 'box' for owner/repo as runner (labels: snappy)")
+    ui.rows == [
+      [:frame, "Runner 'box' for owner/repo as runner (labels: snappy)", 0],
+      [:note, "actions-runner already present in #{dir}", 1],
+      [:note, "Existing runner config found (owner/repo) — removing it before reconfiguring", 1],
+      [:step, "Stopping + uninstalling the existing runner service", 1],
+      [:spin, "Deregistering at owner/repo", 1],
+      [:note, "Existing config: registration removed", 1],
+      [:spin, "Minting a registration token", 1],
+      [:step, "Configuring the runner (--replace)", 1],
+      [:step, "Installing + starting the runner service as runner", 1],
+      [:note, "{{v}} Runner 'box' is registered and running — it should show Idle on the GitHub Runners page", 1],
+    ]
 
     Cleanup
     FileUtils.remove_entry(dir)
@@ -299,7 +317,7 @@ class Dev::RunnerSetupTest < Minitest::Test
     exec = RecordingExecutor.new(&authed_responder)
 
     When
-    outcome = Dev::RunnerSetup.remove_registration(dir, "owner/repo", executor: exec, out: silent, as_user: "runner")
+    outcome = Dev::RunnerSetup.remove_registration(dir, "owner/repo", executor: exec, ui: quiet, as_user: "runner")
 
     Then
     outcome == "registration removed"
@@ -325,7 +343,7 @@ class Dev::RunnerSetupTest < Minitest::Test
 
     When "running setup org-wide"
     setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", org: true, executor: exec,
-      out: silent, host_platform: "osx-arm64")
+      ui: quiet, host_platform: "osx-arm64")
     setup.run
 
     Then "the registration token is minted at the org endpoint and config.sh targets the org URL"
@@ -354,7 +372,7 @@ class Dev::RunnerSetupTest < Minitest::Test
 
     When "re-running setup org-wide"
     setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", org: true, executor: exec,
-      out: silent, host_platform: "osx-arm64")
+      ui: quiet, host_platform: "osx-arm64")
     setup.run
 
     Then "the installed service is uninstalled, the remove token comes from the old repo scope, " \
@@ -380,7 +398,7 @@ class Dev::RunnerSetupTest < Minitest::Test
     File.write(File.join(dir, ".runner"), "{}")
     config = Dev::RunnerSetupConfig.new(labels: "ue-engine", dir: dir, name: "box")
     exec = RecordingExecutor.new(&authed_responder)
-    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, out: silent)
+    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, ui: quiet)
 
     When "running setup"
     setup.run
@@ -413,14 +431,14 @@ class Dev::RunnerSetupTest < Minitest::Test
       authed.call(argv)
     end
     exec = RecordingExecutor.new(&responder)
-    out = StringIO.new
-    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, out: out)
+    ui = RecordingUi.new
+    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, ui: ui)
 
     When "running setup"
     setup.run
 
     Then "the gone registration is reported, the stale enrollment files are cleared, and registration proceeds"
-    out.string.include?("registration already gone from the server")
+    ui.rows.include?([:note, "Existing config: registration already gone from the server", 1])
     exec.systems.any? { |call| call[:argv][0, 2] == ["./config.sh", "--url"] }
 
     Cleanup
@@ -442,7 +460,7 @@ class Dev::RunnerSetupTest < Minitest::Test
       authed.call(argv)
     end
     setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: RecordingExecutor.new(&responder),
-      out: silent)
+      ui: quiet)
 
     When "running setup"
     setup.run
@@ -460,17 +478,19 @@ class Dev::RunnerSetupTest < Minitest::Test
     dir = Dir.mktmpdir
     config = Dev::RunnerSetupConfig.new(labels: "ue-engine", dir: dir, version: "9.9.9")
     exec = RecordingExecutor.new(&authed_responder)
-    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, out: silent,
+    ui = RecordingUi.new
+    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, ui: ui,
       host_platform: "linux-x64")
 
     When "running setup"
     setup.run
 
-    Then "the pinned runner version is fetched and extracted"
+    Then "the pinned runner version is fetched and extracted, as one step under the enrollment's frame"
     curl = exec.systems.find { |call| call[:argv].first == "curl" }
     curl[:chdir] == dir
     curl[:argv].last == "https://github.com/actions/runner/releases/download/v9.9.9/actions-runner-linux-x64-9.9.9.tar.gz"
     exec.systems.any? { |call| call[:argv].first == "tar" }
+    ui.rows.include?([:step, "Downloading actions-runner 9.9.9", 1])
 
     Cleanup
     FileUtils.remove_entry(dir)
@@ -481,7 +501,7 @@ class Dev::RunnerSetupTest < Minitest::Test
     dir = Dir.mktmpdir
     config = Dev::RunnerSetupConfig.new(labels: "macos,ue-editor", dir: dir, version: "9.9.9")
     exec = RecordingExecutor.new(&authed_responder)
-    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, out: silent,
+    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, ui: quiet,
       host_platform: "osx-arm64")
 
     When "running setup"

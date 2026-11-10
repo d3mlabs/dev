@@ -196,7 +196,7 @@ module Dev
     def deregister(enrollment)
       @out.puts ">>> Removing the registration at #{enrollment.scope} ..."
       as_user = enrollment.owner == @current_user ? nil : enrollment.owner
-      RunnerSetup.remove_registration(enrollment.dir, enrollment.scope, executor: @exec, out: @out, as_user: as_user)
+      RunnerSetup.remove_registration(enrollment.dir, enrollment.scope, executor: @exec, ui: NoUi.new(out: @out), as_user: as_user)
     rescue RunnerSetup::Error => e
       raise TeardownFailedError, e.message
     end
