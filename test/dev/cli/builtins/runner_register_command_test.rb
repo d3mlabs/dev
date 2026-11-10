@@ -1271,7 +1271,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     provisioner = typed_mock(Dev::LinuxDataRootProvisioner)
     harness = build_harness(contracts: 1, runner_user: runner_user, data_root_provisioner: provisioner)
     sequence = sequence("host rule")
-    provisioner.expects(:provision!).once.in_sequence(sequence)
+    provisioner.expects(:provision!).once.with(ui: harness.ui).in_sequence(sequence)
     runner_user.expects(:converge!).once.in_sequence(sequence)
     # The login gate asks at the terminal through the runner user's own Ui (the factory handed it the context's).
     runner_user.expects(:ensure_gh_authenticated!).once.with.in_sequence(sequence)

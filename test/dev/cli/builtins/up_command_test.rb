@@ -73,7 +73,7 @@ class Dev::Cli::Builtins::UpCommandTest < Minitest::Test
     install_deps = install_deps_mock
     provisioner = typed_mock(Dev::LinuxDataRootProvisioner)
     order = []
-    provisioner.expects(:provision!).once.with { order.push(:root).any? }
+    provisioner.expects(:provision!).once.with { |ui:| order.push(:root).any? && ui.is_a?(Dev::Ui) }
     install_deps.expects(:call).once.with { |**| order.push(:install).any? }
     command = Dev::Cli::Builtins::UpCommand.new(
       install_deps_command: install_deps, host_service: quiet_host_service, data_root_provisioner: provisioner,

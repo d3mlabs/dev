@@ -442,7 +442,7 @@ module Dev
           # checked now rather than discovered by a red run (HostReach).
           runner_user = @runner_user_factory.call(args.value(AS_FLAG), context.ui)
           if runner_user
-            @data_root_provisioner&.provision!
+            @data_root_provisioner&.provision!(ui: context.ui)
             runner_user.converge!
             runner_user.ensure_gh_authenticated!
             root = context.project&.root

@@ -2,7 +2,8 @@
 # frozen_string_literal: true
 
 require "fileutils"
-require "stringio"
+
+require "dev/ui"
 
 module Dev
   # The one-off move of a per-user `~/.dev` into a machine data root — the
@@ -22,12 +23,12 @@ module Dev
 
     # @param from [String] the per-user root (`~/.dev`, expanded)
     # @param to [String] the machine root, already present and writable
-    # @param out [IO, StringIO]
-    sig { params(from: String, to: String, out: T.any(IO, StringIO)).void }
-    def initialize(from:, to:, out: $stdout)
+    # @param ui [Ui] each move is a spin on it; a skipped entry is noted
+    sig { params(from: String, to: String, ui: Ui).void }
+    def initialize(from:, to:, ui: NoUi.new)
       @from = from
       @to = to
-      @out = out
+      @ui = ui
     end
 
     # Move every artifact entry that the destination lacks; a no-op when
@@ -43,12 +44,11 @@ module Dev
 
         destination = File.join(@to, entry)
         if File.exist?(destination)
-          @out.puts ">>> Skipping ~/.dev/#{entry} (already present in #{@to})."
+          @ui.note("Skipping ~/.dev/#{entry} (already present in #{@to})")
           next
         end
 
-        @out.puts ">>> Migrating ~/.dev/#{entry} to #{destination} ..."
-        FileUtils.mv(File.join(@from, entry), destination)
+        @ui.spin("Migrating ~/.dev/#{entry} to #{destination}") { FileUtils.mv(File.join(@from, entry), destination) }
       end
     end
   end

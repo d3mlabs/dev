@@ -4,7 +4,7 @@
 require "test_helper"
 require "dev/data_root_migration"
 require "fileutils"
-require "stringio"
+require "support/recording_ui"
 require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
@@ -12,7 +12,7 @@ class Dev::DataRootMigrationTest < Minitest::Test
   def setup
     @from = Dir.mktmpdir("home-dev")
     @to = Dir.mktmpdir("machine-root")
-    @out = StringIO.new
+    @ui = RecordingUi.new
   end
 
   def teardown
@@ -20,7 +20,7 @@ class Dev::DataRootMigrationTest < Minitest::Test
     super
   end
 
-  test "artifact trees move as a rename; per-user state stays" do
+  test "artifact trees move as a rename, each its own spin; per-user state stays" do
     Given
     FileUtils.mkdir_p(File.join(@from, "engines", "ue5"))
     FileUtils.mkdir_p(File.join(@from, "cache"))
@@ -35,7 +35,7 @@ class Dev::DataRootMigrationTest < Minitest::Test
     !File.exist?(File.join(@from, "engines"))
     File.directory?(File.join(@from, "state"))
     !File.exist?(File.join(@to, "state"))
-    @out.string.include?(">>> Migrating ~/.dev/engines to #{File.join(@to, "engines")} ...")
+    @ui.rows == [[:spin, "Migrating ~/.dev/cache to #{File.join(@to, "cache")}", 0], [:spin, "Migrating ~/.dev/engines to #{File.join(@to, "engines")}", 0]]
   end
 
   test "an entry the destination already holds is skipped, the home copy left where it is" do
@@ -50,7 +50,7 @@ class Dev::DataRootMigrationTest < Minitest::Test
     File.directory?(File.join(@to, "engines", "current"))
     !File.exist?(File.join(@to, "engines", "stale"))
     File.directory?(File.join(@from, "engines", "stale"))
-    @out.string.include?(">>> Skipping ~/.dev/engines (already present in #{@to}).")
+    @ui.rows == [[:note, "Skipping ~/.dev/engines (already present in #{@to})", 0]]
   end
 
   test "no per-user root, nothing to do" do
@@ -62,12 +62,12 @@ class Dev::DataRootMigrationTest < Minitest::Test
 
     Then
     Dir.empty?(@to)
-    @out.string.empty?
+    @ui.rows == []
   end
 
   private
 
   def migration
-    Dev::DataRootMigration.new(from: @from, to: @to, out: @out)
+    Dev::DataRootMigration.new(from: @from, to: @to, ui: @ui)
   end
 end

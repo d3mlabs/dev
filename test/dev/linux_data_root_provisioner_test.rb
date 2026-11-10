@@ -6,7 +6,7 @@ require "dev/linux_data_root_provisioner"
 require "dev/privileged_steps"
 require "etc"
 require "fileutils"
-require "stringio"
+require "support/recording_ui"
 require "tmpdir"
 
 # Records every invocation; sudo is the true boundary. Creating the root
@@ -33,7 +33,7 @@ class Dev::LinuxDataRootProvisionerTest < Minitest::Test
     @root = File.join(@dir, "var-lib-dev")
     @home_dev = File.join(@dir, "home-dev")
     @executor = RootCreatingSudoExecutor.new(@root)
-    @out = StringIO.new
+    @ui = RecordingUi.new
   end
 
   def teardown
@@ -47,7 +47,7 @@ class Dev::LinuxDataRootProvisionerTest < Minitest::Test
     FileUtils.mkdir_p(File.join(@home_dev, "state"))
 
     When
-    provisioner.provision!
+    provisioner.provision!(ui: @ui)
 
     Then "the session, the group and the membership, then the root — each its own argv"
     @executor.runs == [
@@ -58,8 +58,11 @@ class Dev::LinuxDataRootProvisionerTest < Minitest::Test
     ]
     File.directory?(File.join(@root, "engines", "ue5"))
     File.directory?(File.join(@home_dev, "state"))
-    @out.string.include?(">>> Creating the data root #{@root}, shared with group dev (one sudo prompt) ...")
-    @out.string.include?("jp is in group dev from the next login")
+    @ui.rows == [
+      [:step, "Creating the data root #{@root}, shared with group dev (one sudo prompt)", 0],
+      [:spin, "Migrating ~/.dev/engines to #{File.join(@root, "engines")}", 0],
+      [:note, "jp is in group dev from the next login (the owner writes regardless)", 0],
+    ]
   end
 
   test "a present, writable, group-shared root is the steady state: no sudo, nothing moved" do
@@ -69,12 +72,12 @@ class Dev::LinuxDataRootProvisionerTest < Minitest::Test
     FileUtils.mkdir_p(File.join(@home_dev, "engines"))
 
     When
-    provisioner(group: own_group).provision!
+    provisioner(group: own_group).provision!(ui: @ui)
 
     Then
     @executor.runs.empty?
     File.directory?(File.join(@home_dev, "engines"))
-    @out.string.empty?
+    @ui.rows == []
   end
 
   test "a present, writable root not yet shared (the single-owner 0755 of dev#308) is converged in place: group and mode, never owner" do
@@ -84,7 +87,7 @@ class Dev::LinuxDataRootProvisionerTest < Minitest::Test
     File.chmod(0o755, @root)
 
     When
-    provisioner.provision!
+    provisioner.provision!(ui: @ui)
 
     Then "group, root mode, then the tree — secrets dirs pruned — with no chown anywhere"
     @executor.runs == [
@@ -95,8 +98,10 @@ class Dev::LinuxDataRootProvisionerTest < Minitest::Test
       ["sudo", *Dev::LinuxDataRootProvisioner.share_tree_argv(@root)],
     ]
     @executor.runs.none? { |cmd| cmd.include?("chown") }
-    @out.string.include?(">>> Sharing the data root #{@root} with group dev (one sudo prompt) ...")
-    @out.string.include?("jp is in group dev from the next login")
+    @ui.rows == [
+      [:step, "Sharing the data root #{@root} with group dev (one sudo prompt)", 0],
+      [:note, "jp is in group dev from the next login (the owner writes regardless)", 0],
+    ]
   end
 
   test "the tree walk opens dirs and files to the group, prunes secrets dirs, and steps over symlinks — a dangling one (a fetched tree's link into a mod) does not fail it" do
@@ -130,7 +135,7 @@ class Dev::LinuxDataRootProvisionerTest < Minitest::Test
     Given
     FileUtils.mkdir_p(@root)
     File.chmod(0o555, @root)
-    error = assert_raises(Dev::LinuxDataRootProvisioner::NotWritableError) { provisioner.provision! }
+    error = assert_raises(Dev::LinuxDataRootProvisioner::NotWritableError) { provisioner.provision!(ui: @ui) }
 
     Expect
     error.message.include?("#{@root} exists but jp cannot write it")
@@ -154,7 +159,7 @@ class Dev::LinuxDataRootProvisionerTest < Minitest::Test
     provisioner(group: group).status.present
     provisioner(group: group).status.writable
     provisioner(group: group).status.shared == shared
-    !Dev::LinuxDataRootProvisioner.new(steps: steps, root: File.join(@dir, "absent"), home_dev: @home_dev, user: "jp", group: "dev", out: @out).status.present
+    !Dev::LinuxDataRootProvisioner.new(steps: steps, root: File.join(@dir, "absent"), home_dev: @home_dev, user: "jp", group: "dev").status.present
     @executor.runs.empty?
 
     Where
@@ -181,8 +186,8 @@ class Dev::LinuxDataRootProvisionerTest < Minitest::Test
     Given "no terminal, and sudo -n -v fails"
     executor = RecordingFailingExecutor.new
     steps = Dev::PrivilegedSteps.new(executor: executor, tty: false, purpose: "create the data root")
-    provisioner = Dev::LinuxDataRootProvisioner.new(steps: steps, root: @root, home_dev: @home_dev, user: "jp", group: "dev", out: @out)
-    error = assert_raises(Dev::PrivilegedSteps::SudoRequiredError) { provisioner.provision! }
+    provisioner = Dev::LinuxDataRootProvisioner.new(steps: steps, root: @root, home_dev: @home_dev, user: "jp", group: "dev")
+    error = assert_raises(Dev::PrivilegedSteps::SudoRequiredError) { provisioner.provision!(ui: @ui) }
 
     Expect
     error.message.include?("dev needs root to create the data root")
@@ -221,7 +226,7 @@ class Dev::LinuxDataRootProvisionerTest < Minitest::Test
   end
 
   def provisioner(group: "dev")
-    Dev::LinuxDataRootProvisioner.new(steps: steps, root: @root, home_dev: @home_dev, user: "jp", group: group, out: @out)
+    Dev::LinuxDataRootProvisioner.new(steps: steps, root: @root, home_dev: @home_dev, user: "jp", group: group)
   end
 end
 

@@ -218,7 +218,7 @@ module Dev
       # artifacts move, `state` stays per-home, what the root holds is kept).
       sig { void }
       def migrate_home_artifacts!
-        DataRootMigration.new(from: @home_dev, to: @data_root, out: @out).run!
+        DataRootMigration.new(from: @home_dev, to: @data_root, ui: NoUi.new(out: @out)).run!
       end
 
       # @return [String] the agent's own settings file

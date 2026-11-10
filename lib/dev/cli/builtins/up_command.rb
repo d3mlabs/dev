@@ -122,7 +122,7 @@ module Dev
           @host_service.sync_skills(project_root: nil)
           # The data root is the machine's, so it is the host half's: it must
           # exist at its final path before anything installs into it.
-          @data_root_provisioner&.provision!
+          @data_root_provisioner&.provision!(ui: context.ui)
           project = context.project
           if project.nil?
             # In-project runs sync learnings via the composed dev deps install
