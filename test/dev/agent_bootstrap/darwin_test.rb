@@ -509,7 +509,7 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
   end
 
   test "after_enroll! warns (never raises) when the agent CLI is unresolvable" do
-    Given "no cursor-agent on the host"
+    Given "no brew, so no cursor-agent, on the host"
     executor = RecordedBootstrapExecutor.new
     runner_dir = Dir.mktmpdir
     File.write(File.join(runner_dir, ".service"), "actions.runner.d3mlabs-x.mac\n")
@@ -521,6 +521,38 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     Then "a warning names the missing CLI"
     out.string.include?("cursor-agent")
     out.string.include?("WARNING")
+  end
+
+  # dev#547: the same probe as Linux's — the cask's link beside brew in the
+  # prefix's bin, the one place the Brewfile step puts it.
+  test "the agent CLI is read beside brew in the prefix's bin — #{what}" do
+    Given "a prefix holding brew#{" and cursor-agent" if present}, owned by the human"
+    prefix = Dir.mktmpdir
+    brew = File.join(prefix, "bin", "brew")
+    FileUtils.mkdir_p(File.dirname(brew))
+    File.write(brew, "")
+    cli = File.join(prefix, "bin", "cursor-agent")
+    if present
+      File.write(cli, "#!/bin/sh\n")
+      File.chmod(0o755, cli)
+    end
+    runner_dir = Dir.mktmpdir
+    File.write(File.join(runner_dir, ".service"), "actions.runner.d3mlabs-x.mac\n")
+    out = StringIO.new
+    bs = bootstrap(RecordedBootstrapExecutor.new, out: out, brew_executable: brew, owner_of: ->(_path) { "human" })
+
+    When "converging the post-enrollment steps"
+    bs.after_enroll!(runner_dir: runner_dir, slot: 1)
+
+    Then "the path is the channel's, and the warning (if any) names the human's dev up"
+    bs.agent_cli_path == cli
+    out.string.include?("WARNING") == !present
+    out.string.include?("`dev up` as human, who owns #{prefix}") == !present
+
+    Where
+    what                  | present
+    "present: no warning" | true
+    "absent: a warning"   | false
   end
 
   test "the agent user is a register-time parameter" do

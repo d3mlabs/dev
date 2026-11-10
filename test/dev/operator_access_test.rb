@@ -50,21 +50,21 @@ class Dev::OperatorAccessTest < Minitest::Test
   test "an org registration probes the org's runner groups — the capability itself, not the token's scope list — and a login that can read them passes silently" do
     Given
     registry = ProbedRegistry.new
-    out = StringIO.new
-    access = Dev::OperatorAccess.new(registry: registry, out: out, refresher: ->(_scope) { raise "never" })
+    ui = answering(false)
+    access = Dev::OperatorAccess.new(registry: registry, refresher: ->(_scope) { raise "never" })
 
     When
-    access.check!(scope: "d3mlabs", org: true, ui: answering(false))
+    access.check!(scope: "d3mlabs", org: true, ui: ui)
 
     Then
     registry.probes == [[:groups, "d3mlabs"]]
-    out.string.empty?
+    ui.rows == []
   end
 
   test "a repo registration probes the repo's runners the same way" do
     Given
     registry = ProbedRegistry.new
-    access = Dev::OperatorAccess.new(registry: registry, out: StringIO.new, refresher: ->(_scope) { raise "never" })
+    access = Dev::OperatorAccess.new(registry: registry, refresher: ->(_scope) { raise "never" })
 
     When
     access.check!(scope: "d3mlabs/cellbound-3d", org: false, ui: answering(false))
@@ -78,8 +78,7 @@ class Dev::OperatorAccessTest < Minitest::Test
     registry = ProbedRegistry.new(refused: ["d3mlabs"])
     ui = AnsweringUi.new(answer: nil)
     refreshed = []
-    out = StringIO.new
-    access = Dev::OperatorAccess.new(registry: registry, out: out, refresher: ->(scope) { refreshed << scope })
+    access = Dev::OperatorAccess.new(registry: registry, refresher: ->(scope) { refreshed << scope })
 
     When
     access.check!(scope: "d3mlabs", org: true, ui: ui)
@@ -101,8 +100,8 @@ class Dev::OperatorAccessTest < Minitest::Test
     Given
     registry = ProbedRegistry.new(refused: ["d3mlabs"])
     refreshed = []
-    out = StringIO.new
-    access = Dev::OperatorAccess.new(registry: registry, out: out,
+    ui = answering(true)
+    access = Dev::OperatorAccess.new(registry: registry,
       refresher: ->(scope) {
         refreshed << scope
         registry.grant_all!
@@ -110,18 +109,20 @@ class Dev::OperatorAccessTest < Minitest::Test
       })
 
     When
-    access.check!(scope: "d3mlabs", org: true, ui: answering(true))
+    access.check!(scope: "d3mlabs", org: true, ui: ui)
 
-    Then
+    Then "the refusal was told once, as a note with its glyph, before the question"
     refreshed == ["admin:org"]
     registry.probes == [[:groups, "d3mlabs"], [:groups, "d3mlabs"]]
-    out.string.include?("cannot read d3mlabs's runner groups")
+    ui.rows.length == 1
+    ui.rows.first[0] == :note
+    ui.rows.first[1].start_with?("{{x}} your gh login cannot read d3mlabs's runner groups")
   end
 
   test "a refresh that does not help (declined in the browser, wrong account) is the same refusal, after one retry" do
     Given
     registry = ProbedRegistry.new(refused: ["d3mlabs"])
-    access = Dev::OperatorAccess.new(registry: registry, out: StringIO.new, refresher: ->(_scope) { true })
+    access = Dev::OperatorAccess.new(registry: registry, refresher: ->(_scope) { true })
 
     When
     access.check!(scope: "d3mlabs", org: true, ui: answering(true))
@@ -135,7 +136,7 @@ class Dev::OperatorAccessTest < Minitest::Test
   test "the repo-scoped refusal names repo admin and the repo scope" do
     Given
     registry = ProbedRegistry.new(refused: ["d3mlabs/cellbound-3d"])
-    access = Dev::OperatorAccess.new(registry: registry, out: StringIO.new, refresher: ->(_scope) { true })
+    access = Dev::OperatorAccess.new(registry: registry, refresher: ->(_scope) { true })
 
     When
     access.check!(scope: "d3mlabs/cellbound-3d", org: false, ui: answering(false))

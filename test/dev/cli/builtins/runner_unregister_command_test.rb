@@ -206,8 +206,8 @@ class Dev::Cli::Builtins::RunnerUnregisterCommandTest < Minitest::Test
   def build_harness(home:, repo: "JPDuchesne/snappy", repo_resolver: nil, answer: nil)
     torn_down = []
     discovery = Dev::RunnerDiscovery.new(home: home)
-    teardown = Dev::RunnerTeardown.new(discovery: discovery, executor: nil, out: StringIO.new, home: home)
-    teardown.define_singleton_method(:teardown!) { |enrollment| torn_down << enrollment }
+    teardown = Dev::RunnerTeardown.new(discovery: discovery, executor: nil, home: home)
+    teardown.define_singleton_method(:teardown!) { |enrollment, ui:| torn_down << enrollment }
     out = StringIO.new
     command = Dev::Cli::Builtins::RunnerUnregisterCommand.new(
       teardown: teardown,

@@ -100,7 +100,7 @@ module Dev
             return
           end
 
-          enrollments.each { |enrollment| @teardown.teardown!(enrollment) }
+          enrollments.each { |enrollment| @teardown.teardown!(enrollment, ui: context.ui) }
         end
 
         private

@@ -162,6 +162,34 @@ class Dev::Cli::UiImplTest < Minitest::Test
     error.message == "HTTP 502"
   end
 
+  test "#spin turns the StdoutRouter on first: cli-ui runs a spinner's block inside a Capture, which refuses with the router off — silently, the block never running — so a verb whose first word is a spin, not a frame, must not depend on a frame having gone before (plans#52)" do
+    Given "a spinner that runs the block, and a router nobody has turned on"
+    spinner = typed_mock(CLI::UI::Spinner, class_of: true)
+    spinner.stubs(:spin).yields.returns(true)
+    router = FakeRouter.new
+    ui = ui(spinner:, router:)
+
+    When
+    ui.spin("Creating runner group 'ai-flow' at d3mlabs") { :created }
+
+    Then
+    router.routing?
+  end
+
+  test "#spin whose spinner answers false without the block having raised — the block never ran — raises rather than answering nil as if it had (plans#52)" do
+    Given "a spinner that refuses the block"
+    spinner = typed_mock(CLI::UI::Spinner, class_of: true)
+    spinner.stubs(:spin).returns(false)
+    ui = ui(spinner:)
+
+    When
+    ui.spin("Creating runner group 'ai-flow' at d3mlabs") { :never }
+
+    Then
+    error = raises Dev::Cli::UiImpl::SpinnerRefusedError
+    error.message.include?("Creating runner group 'ai-flow' at d3mlabs")
+  end
+
   test "#spin owns the terminal for the block: a child with inherited stdio, a prompt, a frame, a step or another spin under it is refused — #{claimant} (plans#52)" do
     Given
     spinner = typed_mock(CLI::UI::Spinner, class_of: true)

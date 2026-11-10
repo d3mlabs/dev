@@ -160,14 +160,16 @@ module Dev
         # leftovers).
         SlotMap = T.type_alias { T::Hash[Integer, T::Array[Dev::RunnerDiscovery::Enrollment]] }
 
-        # Builds the RunnerSetup for the resolved config and flags; injected
-        # so tests can observe the wiring without touching gh or the host.
+        # Builds the RunnerSetup for the resolved config and flags, speaking
+        # on the context's Ui; injected so tests can observe the wiring
+        # without touching gh or the host.
         RunnerSetupFactory = T.type_alias do
           T.proc.params(
             config: RunnerSetupConfig,
             repo: T.nilable(String),
             org: T::Boolean,
             runner_user: T.nilable(Dev::RunnerUser),
+            ui: Ui,
           ).returns(Dev::RunnerSetup)
         end
 
@@ -209,14 +211,13 @@ module Dev
             wsl_runner_host: T.nilable(Dev::WslRunnerHost),
             pins_reader: PinsReader,
             reach_factory: ReachFactory,
-            out: T.any(IO, StringIO),
             groups: T.nilable(Dev::RunnerGroups),
             refresher: Dev::OperatorAccess::Refresher,
           ).void
         end
         def initialize(
-          runner_setup_factory: ->(config, repo, org, runner_user) {
-            Dev::RunnerSetup.new(config:, repo:, org:, as_user: runner_user&.name, home: runner_user&.home, path: runner_user&.path)
+          runner_setup_factory: ->(config, repo, org, runner_user, ui) {
+            Dev::RunnerSetup.new(config:, repo:, org:, as_user: runner_user&.name, home: runner_user&.home, path: runner_user&.path, ui:)
           },
           contracts_factory: ->(labels, agent_user, runner_user) {
             Dev::LabelContracts.for(labels, agent_user: agent_user, runner_user: runner_user)
@@ -237,17 +238,16 @@ module Dev
           wsl_runner_host: Dev::WslRunnerHost.for_host,
           pins_reader: ->(root) { Dev::Deps::Lockfile.new(dir: root).read },
           reach_factory: ->(identity) { Dev::HostReach.new(identity: identity) },
-          out: $stdout,
           # The org's runner groups, converged over the same registry.
           groups: nil,
           # How the operator's login is widened when the pre-flight offers it.
           refresher: Dev::OperatorAccess::DEFAULT_REFRESHER
         )
           super()
-          @groups = T.let(groups || Dev::RunnerGroups.new(registry: registry, out: out), Dev::RunnerGroups)
+          @groups = T.let(groups || Dev::RunnerGroups.new(registry: registry), Dev::RunnerGroups)
           # The operator's own preconditions, probed first (dev#493).
           @operator_access = T.let(
-            Dev::OperatorAccess.new(registry: registry, out: out, refresher: refresher),
+            Dev::OperatorAccess.new(registry: registry, refresher: refresher),
             Dev::OperatorAccess,
           )
           @runner_setup_factory = runner_setup_factory
@@ -262,7 +262,6 @@ module Dev
           @wsl_runner_host = wsl_runner_host
           @pins_reader = pins_reader
           @reach_factory = reach_factory
-          @out = out
         end
 
         # The summary line, then what the operator needs at the prompt: who
@@ -467,12 +466,12 @@ module Dev
             )
           end
 
-          setup = @runner_setup_factory.call(config, args.value(REPO_FLAG), org, runner_user)
+          setup = @runner_setup_factory.call(config, args.value(REPO_FLAG), org, runner_user, context.ui)
           scope = setup.resolve_scope
           yes = args.flag?(YES_FLAG)
           # The org-side contract first: the group the slots will join must
           # exist, with its access, before config.sh names it.
-          group = contract && @groups.converge!(contract, org: scope)
+          group = contract && @groups.converge!(contract, org: scope, ui: context.ui)
           # --dir is the operator picking the dir: no discovery, no detection.
           # The runner user's home is where the rule puts enrollments; the
           # operator's is where the ones from before it are.
@@ -496,8 +495,8 @@ module Dev
             enrollment = by_slot[slot]&.first
             runner = enrollment && runners[enrollment.name]
             if enrollment && runner
-              amend_enrollment(scope, enrollment, runner, config)
-              @groups.place!(group, runner, org: scope) if group
+              amend_enrollment(scope, enrollment, runner, config, ui: context.ui)
+              @groups.place!(group, runner, org: scope, ui: context.ui) if group
               contracts.each { |contract| contract.after_enroll!(runner_dir: enrollment.dir, slot: slot) }
               next
             end
@@ -513,14 +512,14 @@ module Dev
                 name: config.name || naming.slot_name(slot),
                 group: config.group,
               )
-              slot_setup = @runner_setup_factory.call(slot_config, args.value(REPO_FLAG), org, runner_user)
+              slot_setup = @runner_setup_factory.call(slot_config, args.value(REPO_FLAG), org, runner_user, context.ui)
             end
             slot_setup.run
             contracts.each { |contract| contract.after_enroll!(runner_dir: slot_setup.resolve_dir, slot: slot) }
           end
 
           if org
-            converge_access!(scope, group, repo)
+            converge_access!(scope, group, repo, ui: context.ui)
           else
             offer_exclusivity!(scope, labels, yes: yes, ui: context.ui)
           end
@@ -537,12 +536,13 @@ module Dev
         # @param scope [String] the org
         # @param group [Dev::RunnerRegistry::Group, nil] the contract's group, when one was obliged
         # @param repo [String] the repo this registration is for
-        sig { params(scope: String, group: T.nilable(Dev::RunnerRegistry::Group), repo: String).void }
-        def converge_access!(scope, group, repo)
+        # @param ui [Ui]
+        sig { params(scope: String, group: T.nilable(Dev::RunnerRegistry::Group), repo: String, ui: Ui).void }
+        def converge_access!(scope, group, repo, ui:)
           access = group || @registry.group(org: scope, name: DEFAULT_GROUP)
           return if access.nil?
 
-          @groups.admit!(access, repo, org: scope)
+          @groups.admit!(access, repo, org: scope, ui: ui)
         end
 
         # The exclusion, derived (dev#470): a repo-scoped runner is that
@@ -568,15 +568,15 @@ module Dev
           return unless group&.selected?
           return unless @registry.group_repositories(org: org, group_id: group.id).any? { |selected| selected.full_name.casecmp?(scope) }
 
-          @out.puts ">>> #{scope} may also use the org's '#{group.name}' runners for these labels — its jobs would land on either."
+          ui.note("#{scope} may also use the org's '#{group.name}' runners for these labels — its jobs would land on either")
           unless yes || ui.confirm("Make this host's runner its only one?")
-            @out.puts ">>> Left as is: #{scope} keeps using the org's '#{group.name}' runners too."
+            ui.note("{{v}} Left as is: #{scope} keeps using the org's '#{group.name}' runners too")
             return
           end
 
-          @groups.exclude!(group, scope, org: org)
+          @groups.exclude!(group, scope, org: org, ui: ui)
         rescue RunnerRegistry::QueryError => e
-          @out.puts ">>> Could not read #{org}'s runner groups (#{e.message}) — whether #{scope} also uses the org's runners is unchecked."
+          ui.note("{{?}} Could not read #{org}'s runner groups (#{e.message}) — whether #{scope} also uses the org's runners is unchecked")
         end
 
         # `--slots N`: how many slots, a positive integer; nil leaves it
@@ -794,9 +794,9 @@ module Dev
           drifted(enrollments, runner_user).each do |enrollment|
             signs << "an enrollment that runs as #{enrollment.owner}, not #{T.must(runner_user).name}"
           end
-          @out.puts ">>> #{scope} has #{signs.join(" and ")} — the enrollment on disk is not what should be serving GitHub:"
+          ui.note("{{x}} #{scope} has #{signs.join(" and ")} — the enrollment on disk is not what should be serving GitHub:")
           enrollments.each do |enrollment|
-            @out.puts "    #{enrollment.display_dir} (#{enrollment.service_installed ? "service installed" : "no service"})"
+            ui.note("    #{enrollment.display_dir} (#{enrollment.service_installed ? "service installed" : "no service"})")
           end
 
           unless yes || ui.confirm("Unregister these and enroll fresh?")
@@ -805,7 +805,7 @@ module Dev
               "nothing changed. Unregister them yourself, then re-run register:\n#{remedy}"
           end
 
-          enrollments.each { |enrollment| @teardown.teardown!(enrollment) }
+          enrollments.each { |enrollment| @teardown.teardown!(enrollment, ui: ui) }
         end
 
         # `--slots N` under what is enrolled: list the slots past N, ask, and
@@ -820,14 +820,14 @@ module Dev
         def retire_surplus!(scope, surplus, yes:, ui:)
           return if surplus.empty?
 
-          @out.puts ">>> #{scope} has #{surplus.length} more slot#{"s" if surplus.length > 1} than asked for:"
-          surplus.each { |enrollment| @out.puts "    #{enrollment.name} (#{enrollment.display_dir})" }
+          ui.note("#{scope} has #{surplus.length} more slot#{"s" if surplus.length > 1} than asked for:")
+          surplus.each { |enrollment| ui.note("    #{enrollment.name} (#{enrollment.display_dir})") }
           unless yes || ui.confirm("Unregister #{surplus.length == 1 ? "it" : "them"}?")
             remedy = surplus.map { |enrollment| "  dev runner unregister #{enrollment.display_dir}" }.join("\n")
             raise SurplusSlotsError, "nothing changed. Unregister them yourself, or re-run with the slots you have:\n#{remedy}"
           end
 
-          surplus.each { |enrollment| @teardown.teardown!(enrollment) }
+          surplus.each { |enrollment| @teardown.teardown!(enrollment, ui: ui) }
         end
 
         # The amend path: the discovered enrollment still exists on GitHub
@@ -838,23 +838,25 @@ module Dev
         # @param enrollment [Dev::RunnerDiscovery::Enrollment]
         # @param runner [Dev::RunnerRegistry::Runner] GitHub's record of it
         # @param config [Dev::RunnerSetupConfig]
+        # @param ui [Ui] the amend is a spin (captured gh); nothing to do, a note
         sig do
           params(
             scope: String,
             enrollment: Dev::RunnerDiscovery::Enrollment,
             runner: Dev::RunnerRegistry::Runner,
             config: RunnerSetupConfig,
+            ui: Ui,
           ).void
         end
-        def amend_enrollment(scope, enrollment, runner, config)
+        def amend_enrollment(scope, enrollment, runner, config, ui:)
           name = config.name || enrollment.name
           desired = config.labels.split(",")
           if runner.custom_labels.sort == desired.sort
-            @out.puts ">>> Runner '#{name}' already serves #{scope} with labels #{config.labels} — nothing to amend."
+            ui.note("{{v}} Runner '#{name}' already serves #{scope} with labels #{config.labels} — nothing to amend")
           else
-            @out.puts ">>> Amending labels of '#{name}' at #{scope}: " \
-                      "#{runner.custom_labels.join(",")} -> #{config.labels} ..."
-            @registry.amend!(scope: scope, runner_id: runner.id, labels: desired)
+            ui.spin("Amending labels of '#{name}' at #{scope}: #{runner.custom_labels.join(",")} → #{config.labels}") do
+              @registry.amend!(scope: scope, runner_id: runner.id, labels: desired)
+            end
           end
         end
 

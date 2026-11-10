@@ -8,6 +8,7 @@ require "socket"
 require "stringio"
 
 require "dev/lifecycle/gh"
+require "dev/ui"
 
 module Dev
   # Registers the current host as a self-hosted GitHub Actions runner — scoped
@@ -100,7 +101,8 @@ module Dev
     #   of the repo scope, so the runner serves every repo in the org
     # @param executor [#capture, #system] CLI boundary (default: Executor;
     #   injectable for tests)
-    # @param out [IO, StringIO] progress stream
+    # @param ui [Ui] where the run is told: the enrollment's frame, a step
+    #   per child handed the terminal, a spin per captured call, notes
     # @param host_platform [String] actions-runner release platform slug for this
     #   host (e.g. "linux-x64", "osx-arm64"); defaults to detection. Drives both
     #   the tarball choice and the service-install shape (systemd vs LaunchAgent).
@@ -117,20 +119,20 @@ module Dev
         repo: T.nilable(String),
         org: T::Boolean,
         executor: T.untyped,
-        out: T.any(IO, StringIO),
+        ui: Ui,
         host_platform: String,
         as_user: T.nilable(String),
         home: T.nilable(String),
         path: T.nilable(String),
       ).void
     end
-    def initialize(config:, repo: nil, org: false, executor: Executor.new, out: $stdout,
+    def initialize(config:, repo: nil, org: false, executor: Executor.new, ui: NoUi.new,
                    host_platform: self.class.detect_host_platform, as_user: nil, home: nil, path: nil)
       @config = config
       @repo_override = repo
       @org = org
       @exec = executor
-      @out = out
+      @ui = ui
       @host_platform = host_platform
       @as_user = as_user
       @home = T.let(home || Dir.home, String)
@@ -203,28 +205,31 @@ module Dev
       # @param dir [String] the runner install dir
       # @param scope [String] the scope the registration is under
       # @param executor [#capture, #system] CLI boundary
-      # @param out [IO, StringIO] config.sh's output is echoed here
+      # @param ui [Ui] the deregistration is one spin on it — config.sh
+      #   remove is captured, its output kept for the failure message
       # @param as_user [String, nil] the enrollment's owner when not the
       #   invoking user: config.sh and the file removal run as it
       # @return [String] what happened, in words ("registration removed" /
-      #   "registration already gone from the server")
+      #   "registration already gone from the server") — the caller's to
+      #   note where it fits its own ledger
       # @raise [Error] when the token can't be minted or config.sh fails
       #   for another reason; the files are left as they were
       sig do
-        params(dir: String, scope: String, executor: T.untyped, out: T.any(IO, StringIO), as_user: T.nilable(String))
+        params(dir: String, scope: String, executor: T.untyped, ui: Ui, as_user: T.nilable(String))
           .returns(String)
       end
-      def remove_registration(dir, scope, executor: Executor.new, out: $stdout, as_user: nil)
-        token = mint_token(scope, "remove-token", executor: executor)
-        stdout, stderr, ok = executor.capture(*as_user_argv(as_user, ["./config.sh", "remove", "--token", token]), chdir: dir)
-        out.print(stdout) unless stdout.empty?
-        output = "#{stdout}\n#{stderr}".strip
-        unless ok || output.match?(GONE_PATTERN)
-          raise Error, "config.sh remove failed in #{dir} (try ./config.sh remove manually there): #{output}"
-        end
+      def remove_registration(dir, scope, executor: Executor.new, ui: NoUi.new, as_user: nil)
+        ui.spin("Deregistering at #{scope}") do
+          token = mint_token(scope, "remove-token", executor: executor)
+          stdout, stderr, ok = executor.capture(*as_user_argv(as_user, ["./config.sh", "remove", "--token", token]), chdir: dir)
+          output = "#{stdout}\n#{stderr}".strip
+          unless ok || output.match?(GONE_PATTERN)
+            raise Error, "config.sh remove failed in #{dir} (try ./config.sh remove manually there): #{output}"
+          end
 
-        remove_files(ENROLLMENT_FILES, dir: dir, executor: executor, as_user: as_user)
-        ok ? "registration removed" : "registration already gone from the server"
+          remove_files(ENROLLMENT_FILES, dir: dir, executor: executor, as_user: as_user)
+          ok ? "registration removed" : "registration already gone from the server"
+        end
       end
 
       # A command as the enrollment's owner when that is another user, the
@@ -274,7 +279,8 @@ module Dev
       end
     end
 
-    # Run the full setup: preflight, download, register, install the service.
+    # Run the full setup: preflight, then — framed as the enrollment —
+    # download, register, install the service.
     #
     # @return [void]
     # @raise [Error] on any preflight or step failure
@@ -289,15 +295,15 @@ module Dev
       name = resolve_name
       version = resolve_version
 
-      @out.puts ">>> Setting up runner '#{name}' for #{scope}#{@org ? " (org-wide)" : ""}" \
-                "#{@as_user ? " as #{@as_user}" : ""} (labels: #{@config.labels})"
-      download_runner(dir, version)
-      remove_existing_config(dir, scope)
-      token = mint_registration_token(scope)
-      configure_runner(dir: dir, url: url, token: token, name: name)
-      install_service(dir)
-      @out.puts ">>> Runner '#{name}' is registered and running. " \
-                "It should show Idle on the GitHub Runners page."
+      @ui.frame("Runner '#{name}' for #{scope}#{@org ? " (org-wide)" : ""}" \
+                "#{@as_user ? " as #{@as_user}" : ""} (labels: #{@config.labels})") do
+        download_runner(dir, version)
+        remove_existing_config(dir, scope)
+        token = mint_registration_token(scope)
+        configure_runner(dir: dir, url: url, token: token, name: name)
+        install_service(dir)
+        @ui.note("{{v}} Runner '#{name}' is registered and running — it should show Idle on the GitHub Runners page")
+      end
     end
 
     # Absolute install dir. Defaults to <home>/actions-runner-<first label> —
@@ -395,17 +401,19 @@ module Dev
     def download_runner(dir, version)
       make_dir(dir)
       if File.executable?(File.join(dir, "config.sh"))
-        @out.puts ">>> actions-runner already present in #{dir}."
+        @ui.note("actions-runner already present in #{dir}")
         return
       end
 
       tarball = "actions-runner-#{@host_platform}-#{version}.tar.gz"
       url = "https://github.com/actions/runner/releases/download/v#{version}/#{tarball}"
-      @out.puts ">>> Downloading actions-runner #{version} ..."
-      raise Error, "failed to download #{url}" unless @exec.system(*as_user_argv("curl", "-fsSL", "-o", tarball, url), chdir: dir)
-      raise Error, "failed to extract #{tarball}" unless @exec.system(*as_user_argv("tar", "xzf", tarball), chdir: dir)
+      # curl's progress and tar's are the child's own lines: a step, not a spin.
+      @ui.step("Downloading actions-runner #{version}") do
+        raise Error, "failed to download #{url}" unless @exec.system(*as_user_argv("curl", "-fsSL", "-o", tarball, url), chdir: dir)
+        raise Error, "failed to extract #{tarball}" unless @exec.system(*as_user_argv("tar", "xzf", tarball), chdir: dir)
 
-      self.class.remove_files([tarball], dir: dir, executor: @exec, as_user: @as_user)
+        self.class.remove_files([tarball], dir: dir, executor: @exec, as_user: @as_user)
+      end
     end
 
     # The runner dir: made with the operator's own hands for its own
@@ -449,10 +457,10 @@ module Dev
       return unless File.exist?(File.join(dir, ".runner"))
 
       existing_scope = existing_registration_scope(dir) || scope
-      @out.puts ">>> Existing runner config found (#{existing_scope}); removing it before reconfiguring ..."
+      @ui.note("Existing runner config found (#{existing_scope}) — removing it before reconfiguring")
       uninstall_existing_service(dir)
-      outcome = self.class.remove_registration(dir, existing_scope, executor: @exec, out: @out, as_user: @as_user)
-      @out.puts ">>> Existing config: #{outcome}."
+      outcome = self.class.remove_registration(dir, existing_scope, executor: @exec, ui: @ui, as_user: @as_user)
+      @ui.note("Existing config: #{outcome}")
     end
 
     # config.sh remove refuses while the service unit is installed ("Uninstall
@@ -465,9 +473,10 @@ module Dev
     def uninstall_existing_service(dir)
       return unless File.exist?(File.join(dir, ".service"))
 
-      @out.puts ">>> Stopping + uninstalling the existing runner service ..."
-      @exec.system(*service_argv("stop"), chdir: dir)
-      @exec.system(*service_argv("uninstall"), chdir: dir)
+      @ui.step("Stopping + uninstalling the existing runner service") do
+        @exec.system(*service_argv("stop"), chdir: dir)
+        @exec.system(*service_argv("uninstall"), chdir: dir)
+      end
     end
 
     # The scope of the runner currently configured in dir, read from the
@@ -493,8 +502,7 @@ module Dev
     # @raise [Error] when the token can't be minted
     sig { params(scope: String).returns(String) }
     def mint_registration_token(scope)
-      @out.puts ">>> Minting a registration token ..."
-      mint_token(scope, "registration-token")
+      @ui.spin("Minting a registration token") { mint_token(scope, "registration-token") }
     end
 
     # @param scope [String] "owner/repo" or "owner"
@@ -509,11 +517,10 @@ module Dev
     # @raise [Error] when config.sh fails
     sig { params(dir: String, url: String, token: String, name: String).void }
     def configure_runner(dir:, url:, token:, name:)
-      @out.puts ">>> Configuring the runner (--replace) ..."
       argv = self.class.as_user_argv(@as_user, config_argv(url: url, token: token, name: name), path: @path)
-      return if @exec.system(*argv, chdir: dir)
-
-      raise Error, "config.sh failed to register the runner"
+      @ui.step("Configuring the runner (--replace)") do
+        raise Error, "config.sh failed to register the runner" unless @exec.system(*argv, chdir: dir)
+      end
     end
 
     # svc.sh installs and starts the service unit (see .service_argv for the
@@ -526,12 +533,13 @@ module Dev
     # @raise [Error] when the service can't be installed or started
     sig { params(dir: String).void }
     def install_service(dir)
-      @out.puts ">>> Installing + starting the runner service#{@as_user ? " as #{@as_user}" : ""} ..."
       install = service_argv("install")
       as_user = @as_user
       install << as_user if as_user
-      raise Error, "svc.sh install failed" unless @exec.system(*install, chdir: dir)
-      raise Error, "svc.sh start failed" unless @exec.system(*service_argv("start"), chdir: dir)
+      @ui.step("Installing + starting the runner service#{as_user ? " as #{as_user}" : ""}") do
+        raise Error, "svc.sh install failed" unless @exec.system(*install, chdir: dir)
+        raise Error, "svc.sh start failed" unless @exec.system(*service_argv("start"), chdir: dir)
+      end
     end
 
     # @param action [String] svc.sh subcommand
