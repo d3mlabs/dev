@@ -5,6 +5,7 @@ require "test_helper"
 require "dev/cli/builtins/runner_register_command"
 require "dev/deps/dependency"
 require "dev/deps/lockfile"
+require "dev/engine_resources"
 require "dev/enrolled_runner"
 require "dev/environment_image"
 require "dev/host_reach"
@@ -14,6 +15,7 @@ require "dev/runner_registry"
 require "dev/runner_setup_config"
 require "dev/runner_teardown"
 require "dev/runner_user"
+require "dev/wsl_runner_host"
 require "etc"
 require "fileutils"
 require "json"
@@ -1304,6 +1306,52 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.wirings.fetch(0).fetch(3).nil?
   end
 
+  # --- the WSL runner host (dev#261) ------------------------------------
+
+  test "in a WSL2 distro, register converges the WSL runner host with the checkout's engine hint, after the runner user and before any contract" do
+    Given "a Linux host in WSL: a runner user and a WSL runner host, and a checkout with an engine hint"
+    runner_user = runner_user_mock(name: "runner", home: Dir.mktmpdir)
+    wsl_runner_host = typed_mock(Dev::WslRunnerHost)
+    hint = Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 24)
+    harness = build_harness(contracts: 1, runner_user: runner_user, wsl_runner_host: wsl_runner_host)
+    sequence = sequence("wsl runner host")
+    runner_user.expects(:ensure_gh_authenticated!).once.in_sequence(sequence)
+    wsl_runner_host.expects(:converge!).once.with(resources: hint).in_sequence(sequence)
+
+    When "registering in the checkout"
+    harness.command.call(args: no_args, context: harness.build_context(name: "cellbound3d", engine: hint))
+
+    Then "the contract and the enrollment came after"
+    harness.events == [[:converge, false, 8, 24, nil], [:run], [:after_enroll, "/tmp/runner-dir", 1]]
+  end
+
+  test "the WSL runner host refusing (no interop, a restart due) stops register before any contract or enrollment" do
+    Given
+    wsl_runner_host = typed_mock(Dev::WslRunnerHost)
+    wsl_runner_host.stubs(:converge!).raises(Dev::WslRunnerHost::RestartRequiredError, "wsl --shutdown, then `dev runner register` again")
+    harness = build_harness(contracts: 1, wsl_runner_host: wsl_runner_host)
+
+    When
+    harness.command.call(args: no_args, context: harness.build_context(name: "cellbound3d"))
+
+    Then
+    error = raises Dev::WslRunnerHost::RestartRequiredError
+    error.message.include?("wsl --shutdown")
+    harness.events == []
+    harness.wirings == []
+  end
+
+  test "off WSL (a Mac, a bare Linux box) there is no WSL runner host step: --org without a checkout converges nothing Windows-side" do
+    Given "the default harness: the WSL runner host is nil, as WslRunnerHost.for_host answers off WSL"
+    harness = build_harness(contracts: 1)
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: harness.projectless_context)
+
+    Then
+    harness.events == [[:converge, false, nil, nil, nil], [:run], [:after_enroll, "/tmp/runner-dir", 1]]
+  end
+
   test "register's usage carries the three-identity table and the runner-user rule: who mints, who owns, who installs; the login line; examples" do
     Given "the full desc, as `dev runner register --help` prints it"
     desc = Dev::Cli::Builtins::RunnerRegisterCommand.new.desc
@@ -1439,8 +1487,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   # scripts (tests that say nothing tolerate no question).
   def build_harness(contracts: 0, home: Dir.mktmpdir, registry: FakeRegistry.new,
                     scope: "d3mlabs/cellbound-3d", repo: "d3mlabs/cellbound-3d", contracts_factory: nil,
-                    repo_resolver: nil, runner_user: nil, data_root_provisioner: nil, reach: nil, pins: [],
-                    hostname: "mac1", refresher: ->(_scope) { raise "no refresh expected" })
+                    repo_resolver: nil, runner_user: nil, data_root_provisioner: nil, wsl_runner_host: nil, reach: nil,
+                    pins: [], hostname: "mac1", refresher: ->(_scope) { raise "no refresh expected" })
     wirings = []
     events = []
     torn_down = []
@@ -1478,6 +1526,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
         runner_user
       },
       data_root_provisioner: data_root_provisioner,
+      # The WSL runner host (dev#261): nil is any host but a WSL2 distro.
+      wsl_runner_host: wsl_runner_host,
       # The lock as the reach check reads it, and the check itself.
       pins_reader: ->(root) {
         reach_roots << root

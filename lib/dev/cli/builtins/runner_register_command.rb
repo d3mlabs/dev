@@ -22,6 +22,9 @@ require "dev/runner_setup"
 require "dev/runner_setup_config"
 require "dev/runner_teardown"
 require "dev/runner_user"
+require "dev/wsl_conf"
+require "dev/wsl_keepalive_task"
+require "dev/wsl_runner_host"
 
 module Dev
   module Cli
@@ -97,6 +100,15 @@ module Dev
       # enrolling (HostReach); a grant it lacks is this command's message,
       # not a red run an hour in. macOS has no runner user and register runs
       # as it always has.
+      #
+      # Inside a WSL2 distro the host has one more contract (dev#261,
+      # WslRunnerHost): the distro is dormant until a client session holds
+      # it, and WSL stops it ~20 s after the last one ends — runner services
+      # included — so register converges the Windows side a WSL runner needs
+      # before enrolling: the logon keepalive task that boots the distro and
+      # holds a session, systemd in `/etc/wsl.conf`, and `.wslconfig`'s size
+      # (asserted here for every enrollment, not assumed from a `dev up`).
+      # It needs the session's interop and refuses without it.
       #
       # Enrollment state is inspected, never recorded: the labels live on
       # GitHub, the scope in the runner dir's own .runner record — nothing in
@@ -194,6 +206,7 @@ module Dev
             engine_provisioner: Dev::EngineProvisioner,
             runner_user_factory: RunnerUserFactory,
             data_root_provisioner: T.nilable(Dev::LinuxDataRootProvisioner),
+            wsl_runner_host: T.nilable(Dev::WslRunnerHost),
             pins_reader: PinsReader,
             reach_factory: ReachFactory,
             out: T.any(IO, StringIO),
@@ -220,6 +233,8 @@ module Dev
           runner_user_factory: ->(name) { Dev::RunnerUser.for_host(name: name) },
           # The shared data root the runner user joins; nil off Linux.
           data_root_provisioner: Dev::LinuxDataRootProvisioner.for_host,
+          # The Windows side a WSL runner needs (dev#261); nil off WSL.
+          wsl_runner_host: Dev::WslRunnerHost.for_host,
           pins_reader: ->(root) { Dev::Deps::Lockfile.new(dir: root).read },
           reach_factory: ->(identity) { Dev::HostReach.new(identity: identity) },
           out: $stdout,
@@ -244,6 +259,7 @@ module Dev
           @engine_provisioner = engine_provisioner
           @runner_user_factory = runner_user_factory
           @data_root_provisioner = data_root_provisioner
+          @wsl_runner_host = wsl_runner_host
           @pins_reader = pins_reader
           @reach_factory = reach_factory
           @out = out
@@ -326,6 +342,18 @@ module Dev
             and enroll fresh as the runner user. On macOS the enrollment is yours (a
             per-user LaunchAgent); the agent user is the second identity there, and its
             own brew user — register has it trust the deployment's tap the same way.
+
+            Inside a WSL2 distro, register also converges what a runner there needs to
+            survive a reboot (dev#261): WSL stops a distro ~20 s after its last client
+            session ends, and the runner's systemd service is not a session, so a Task
+            Scheduler task at log on (`Start-WSL-<distro>-Runner`) holds one open —
+            `#{WslKeepaliveTask::EXECUTE} --headless wsl.exe -d <distro> -u root -- sleep infinity`, no time
+            limit, one instance; systemd is enabled in #{WslConf::PATH}; and .wslconfig is
+            sized for the checkout's hint (the `dev up` step, asserted here). This needs
+            the session's interop (powershell.exe), so run register from a shell opened in
+            the distro on the Windows desktop, not over ssh; replacing a task a bootstrap
+            script registered as an administrator takes one UAC prompt. A restart dev asks
+            for is yours (`wsl --shutdown`, then `Start-ScheduledTask` or a new logon).
 
             An agent host is a Mac or a Linux dev host (plans#59). Agent labels converge the
             same facts on both: the non-admin agent user (`#{AgentBootstrap::DEFAULT_AGENT_USER}`, --agent-user
@@ -419,6 +447,13 @@ module Dev
             root = context.project&.root
             @reach_factory.call(runner_user).check!(@pins_reader.call(root)) if root
           end
+
+          # The WSL runner host (dev#261): the logon keepalive, systemd and
+          # `.wslconfig` a runner in a WSL2 distro needs to survive a reboot.
+          # After the runner user (its wsl.conf write rides the same sudo
+          # session), before any contract or enrollment: a host that goes
+          # down at the next reboot is not one to enroll on.
+          @wsl_runner_host&.converge!(resources: engine)
 
           # The agent host contract spawns the agent from the enrolling
           # user's service: the runner user on Linux, the operator on a Mac.

@@ -5,9 +5,9 @@ require "etc"
 require "stringio"
 
 require "dev/debian_host"
-require "dev/ini_file"
 require "dev/privileged_steps"
 require "dev/process_executor"
+require "dev/wsl_conf"
 require "dev/wsl_host"
 
 module Dev
@@ -79,7 +79,6 @@ module Dev
     KEYRING = "/etc/apt/keyrings/docker.asc"
     SOURCES_LIST = "/etc/apt/sources.list.d/docker.list"
     DESKTOP_SHIM_MARKER = "/docker-desktop/"
-    WSL_CONF = "/etc/wsl.conf"
     GROUP = "docker"
     # Where the docker CLI looks for its plugins: the system dir the
     # `docker-buildx-plugin` deb installs into, and the user's own.
@@ -108,7 +107,7 @@ module Dev
       ).void
     end
     def initialize(executor: ProcessExecutor.new, wsl: WslHost.new.wsl?, user: T.must(Etc.getpwuid(Process.uid)).name,
-      out: $stderr, path: ENV.fetch("PATH", ""), os_release_path: DebianHost::OS_RELEASE, wsl_conf_path: WSL_CONF,
+      out: $stderr, path: ENV.fetch("PATH", ""), os_release_path: DebianHost::OS_RELEASE, wsl_conf_path: WslConf::PATH,
       cli_plugin_dirs: [SYSTEM_CLI_PLUGINS, File.join(Dir.home, USER_CLI_PLUGINS)])
       @executor = executor
       @wsl = wsl
@@ -261,19 +260,13 @@ module Dev
     # @return [Boolean] whether /etc/wsl.conf has `[boot] systemd=true`
     sig { returns(T::Boolean) }
     def systemd_enabled?
-      wsl_conf.value("boot", "systemd").to_s.casecmp?("true")
-    end
-
-    # @return [IniFile] the distro's wsl.conf (empty when absent)
-    sig { returns(IniFile) }
-    def wsl_conf
-      IniFile.parse(File.exist?(@wsl_conf_path) ? File.read(@wsl_conf_path) : "")
+      WslConf.read(path: @wsl_conf_path).systemd_enabled?
     end
 
     # @return [String] wsl.conf content with systemd enabled
     sig { returns(String) }
     def systemd_wsl_conf
-      wsl_conf.set("boot", "systemd", "true").render
+      WslConf.read(path: @wsl_conf_path).with_systemd_enabled.render
     end
   end
 end

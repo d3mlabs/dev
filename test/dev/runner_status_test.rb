@@ -12,6 +12,8 @@ require "dev/host_reach"
 require "dev/runner_status"
 require "dev/runner_user"
 require "dev/ui"
+require "dev/wsl_keepalive_task"
+require "dev/wsl_runner_host"
 require "support/recording_ui"
 require "etc"
 require "fileutils"
@@ -113,6 +115,100 @@ class Dev::RunnerStatusTest < Minitest::Test
     Then "the report says so and no agent host section appears"
     out.string.include?("No runners enrolled on this host")
     !out.string.include?("Agent host")
+  end
+
+  # --- the WSL runner host (dev#261) ------------------------------------
+
+  test "off WSL there is no WSL runner host frame" do
+    Given
+    ui = RecordingUi.new
+    status = build_status(ui: ui, wsl_runner_host: nil)
+
+    When
+    status.report
+
+    Then
+    ui.rows.none? { |_kind, text, _depth| text.include?("WSL runner host") }
+  end
+
+  test "a converged WSL runner host: one frame named for the distro, every fact green" do
+    Given
+    ui = RecordingUi.new
+    status = build_status(ui: ui, wsl_runner_host: wsl_runner_host)
+
+    When
+    status.report
+
+    Then "the frame, then its five facts"
+    frame_at = ui.rows.index([:frame, "WSL runner host (Ubuntu)", 0])
+    ui.rows.slice(frame_at + 1, 5) == [
+      [:note, "{{v}} systemd running (the runner service is a systemd unit)", 1],
+      [:note, "{{v}} logon keepalive task 'Start-WSL-Ubuntu-Runner' registered", 1],
+      [:note, "{{v}} keepalive action holds a session (conhost.exe --headless wsl.exe -d Ubuntu -u root -- sleep infinity)", 1],
+      [:note, "{{v}} keepalive task running (a held session keeps Ubuntu up)", 1],
+      [:note, "{{v}} Ubuntu autostarts at logon and stays up", 1],
+    ]
+  end
+
+  test "a bootstrap's fire-and-forget task, not running: each shortfall is a finding with register as the remedy" do
+    Given "the task cellbound-3d#280 left: wsl.exe /bin/true, the default limit, Parallel"
+    out = StringIO.new
+    keepalive = converged_keepalive(running: false, execute: "wsl.exe", arguments: "-d Ubuntu -u root -- /bin/true",
+      execution_time_limit: "PT72H", multiple_instances: "Parallel")
+    status = build_status(out: out, wsl_runner_host: wsl_runner_host(keepalive: keepalive))
+
+    When
+    status.report
+
+    Then
+    out.string.include?("✓ logon keepalive task 'Start-WSL-Ubuntu-Runner' registered")
+    out.string.include?("✗ keepalive action does not hold a session (wsl.exe -d Ubuntu -u root -- /bin/true) — WSL stops Ubuntu ~20 s after it exits (run `dev runner register`)")
+    out.string.include?("✗ keepalive task not running — Ubuntu stops when the last shell closes (run `dev runner register`, or `Start-ScheduledTask -TaskName 'Start-WSL-Ubuntu-Runner'`)")
+    out.string.include?("✗ Ubuntu does not autostart and stay up: action does not hold a session (wsl.exe -d Ubuntu -u root -- /bin/true); execution time limit PT72H (the held session would be killed); multiple instances Parallel, not IgnoreNew (run `dev runner register`)")
+  end
+
+  test "no keepalive task: one finding, the distro does not start at logon" do
+    Given
+    out = StringIO.new
+    status = build_status(out: out, wsl_runner_host: wsl_runner_host(keepalive: Dev::WslKeepaliveTask::Observed::ABSENT))
+
+    When
+    status.report
+
+    Then
+    out.string.include?("✗ logon keepalive task 'Start-WSL-Ubuntu-Runner' missing — Ubuntu does not start at logon (run `dev runner register`)")
+    !out.string.include?("holds a session")
+  end
+
+  test "systemd is reported as running, awaiting a restart, or not enabled" do
+    Given
+    out = StringIO.new
+    status = build_status(out: out, wsl_runner_host: wsl_runner_host(systemd_configured: configured, systemd_active: active))
+
+    When
+    status.report
+
+    Then
+    out.string.include?(line)
+
+    Where
+    configured | active | line
+    true       | true   | "✓ systemd running (the runner service is a systemd unit)"
+    true       | false  | "✗ systemd enabled in /etc/wsl.conf but not running — `wsl --shutdown` from Windows, then start the distro"
+    false      | false  | "✗ systemd not enabled in /etc/wsl.conf — the runner service cannot be installed (run `dev runner register`)"
+  end
+
+  test "without interop (a service, an ssh login) the keepalive is unknown — neither glyph — and the line says where to ask from" do
+    Given
+    ui = RecordingUi.new
+    status = build_status(ui: ui, wsl_runner_host: wsl_runner_host(keepalive: nil))
+
+    When
+    status.report
+
+    Then
+    ui.rows.include?([:note, "{{?}} logon keepalive 'Start-WSL-Ubuntu-Runner': cannot tell from this session (no WSL interop — a service or an ssh login) — run `dev runner status` from a shell opened in the distro on the Windows desktop", 1])
+    ui.rows.none? { |_kind, text, _depth| text.include?("keepalive task") && text.include?("{{x}}") }
   end
 
   test "reports each discovered enrollment's scope and its GitHub labels" do
@@ -797,6 +893,26 @@ class Dev::RunnerStatusTest < Minitest::Test
   # @param executor [CannedStatusExecutor] the probe seam status and the bootstrap share
   # @param shared_root [String] the Mac bootstrap's data root
   # @param brew [String, nil] the host's brew; nil for a brewless host
+  # The WSL runner host as status reads it: the distro's keepalive task and
+  # the facts it would re-derive (dev#261).
+  def wsl_runner_host(systemd_configured: true, systemd_active: true, keepalive: converged_keepalive)
+    wsl = typed_mock(Dev::WslRunnerHost)
+    wsl.stubs(:task).returns(Dev::WslKeepaliveTask.new(distro: "Ubuntu"))
+    wsl.stubs(:status).returns(Dev::WslRunnerHost::Status.new(
+      systemd_configured: systemd_configured, systemd_active: systemd_active,
+      interop: !keepalive.nil?, keepalive: keepalive,
+    ))
+    wsl
+  end
+
+  def converged_keepalive(**overrides)
+    Dev::WslKeepaliveTask::Observed.new(**{
+      present: true, running: true, execute: "conhost.exe",
+      arguments: "--headless wsl.exe -d Ubuntu -u root -- sleep infinity",
+      at_logon: true, execution_time_limit: "PT0S", multiple_instances: "IgnoreNew",
+    }.merge(overrides))
+  end
+
   def darwin_bootstrap(executor, shared_root:, brew:)
     Dev::AgentBootstrap::Darwin.new(
       runner_user: "human", executor: executor, out: StringIO.new, data_root: shared_root,
@@ -808,13 +924,16 @@ class Dev::RunnerStatusTest < Minitest::Test
   def build_status(out: StringIO.new, ui: Dev::NoUi.new(out: out), home: Dir.mktmpdir, registry: CannedRegistry.new,
                    executor: CannedStatusExecutor.new, shared_root: Dir.mktmpdir, brew: nil,
                    bootstrap: darwin_bootstrap(executor, shared_root: shared_root, brew: brew), brewfile_path: nil,
-                   container_required: false, host_identity: nil, pins: [], repo: nil, reach: nil, reach_factory: ->(_identity) { reach })
+                   container_required: false, host_identity: nil, pins: [], repo: nil, reach: nil, reach_factory: ->(_identity) { reach },
+                   wsl_runner_host: nil)
     # :default leaves RunnerStatus's own reach factory in place.
     reach_wiring = reach_factory == :default ? {} : { reach_factory: reach_factory }
     Dev::RunnerStatus.new(
       pins: pins,
       repo: repo,
       **reach_wiring,
+      # The WSL runner host (dev#261): nil is any host but a WSL2 distro.
+      wsl_runner_host: wsl_runner_host,
       discovery: Dev::RunnerDiscovery.new(home: home),
       registry: registry,
       ui: ui,
