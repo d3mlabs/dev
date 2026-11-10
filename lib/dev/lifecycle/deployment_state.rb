@@ -47,19 +47,25 @@ module Dev
       #
       # @return [Boolean]
       sig { returns(T::Boolean) }
-      def success? = self == Success
+      def success?
+        self == Success
+      end
 
       # Whether the deploy ended without landing.
       #
       # @return [Boolean]
       sig { returns(T::Boolean) }
-      def failed? = self == Failure || self == Error
+      def failed?
+        self == Failure || self == Error
+      end
 
       # The word, for the API or a report.
       #
       # @return [String]
       sig { returns(String) }
-      def to_s = serialize
+      def to_s
+        serialize
+      end
     end
   end
 end

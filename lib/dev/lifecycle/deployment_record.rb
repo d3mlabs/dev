@@ -48,19 +48,29 @@ module Dev
 
         # @return [Hash] the JSON shape
         sig { returns(JsonHash) }
-        def to_json_hash = { "build" => name, "build_id" => build_id.to_s }
+        def to_json_hash
+          { "build" => name, "build_id" => build_id.to_s }
+        end
 
         sig { returns(String) }
-        def to_s = "#{name} (#{build_id})"
+        def to_s
+          "#{name} (#{build_id})"
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(DeployedBuild) && name == other.name && build_id == other.build_id
+        def ==(other)
+          other.is_a?(DeployedBuild) && name == other.name && build_id == other.build_id
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
+        def eql?(other)
+          self == other
+        end
 
         sig { returns(Integer) }
-        def hash = [DeployedBuild, name, build_id].hash
+        def hash
+          [DeployedBuild, name, build_id].hash
+        end
       end
 
       const :channel, String
@@ -179,10 +189,14 @@ module Dev
       end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [DeploymentRecord, channel, ref, track, builds, state, description].hash
+      def hash
+        [DeploymentRecord, channel, ref, track, builds, state, description].hash
+      end
     end
   end
 end

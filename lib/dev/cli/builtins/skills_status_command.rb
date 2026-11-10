@@ -15,10 +15,14 @@ module Dev
         JSON_FLAG = "--json"
 
         sig { override.returns(String) }
-        def desc = "Show every skill channel: where its links land, what is linked, and from which package/version"
+        def desc
+          "Show every skill channel: where its links land, what is linked, and from which package/version"
+        end
 
         sig { override.returns(T::Array[Cli::Flag]) }
-        def flags = [Cli::Flag.new(JSON_FLAG)]
+        def flags
+          [Cli::Flag.new(JSON_FLAG)]
+        end
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)

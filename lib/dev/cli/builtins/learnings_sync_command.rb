@@ -14,7 +14,9 @@ module Dev
         USAGE = "usage: dev learnings sync"
 
         sig { override.returns(String) }
-        def desc = "Refresh the whole read path now: knowledge repo cache, skill links, invariants render"
+        def desc
+          "Refresh the whole read path now: knowledge repo cache, skill links, invariants render"
+        end
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)

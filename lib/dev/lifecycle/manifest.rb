@@ -263,11 +263,15 @@ module Dev
         end
 
         sig(:final) { override.returns(String) }
-        def file_name = FILE_NAME
+        def file_name
+          FILE_NAME
+        end
 
         # Packaged from a clean tree at the commit the tree is at now.
         sig(:final) { override.params(state: GitState).returns(T::Boolean) }
-        def current?(state) = @state.clean? && @state == state
+        def current?(state)
+          @state.clean? && @state == state
+        end
 
         sig(:final) { override.returns(JsonHash) }
         def to_json_hash
@@ -286,13 +290,19 @@ module Dev
         end
 
         sig(:final) { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(Artifact) && to_json_hash == other.to_json_hash
+        def ==(other)
+          other.is_a?(Artifact) && to_json_hash == other.to_json_hash
+        end
 
         sig(:final) { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
+        def eql?(other)
+          self == other
+        end
 
         sig(:final) { returns(Integer) }
-        def hash = [Artifact, to_json_hash].hash
+        def hash
+          [Artifact, to_json_hash].hash
+        end
       end
 
       # `release.json`: what a cut made — the tag, its commit, and the
@@ -401,7 +411,9 @@ module Dev
         end
 
         sig(:final) { override.returns(String) }
-        def file_name = FILE_NAME
+        def file_name
+          FILE_NAME
+        end
 
         # The tag is immutable: a release is never stale.
         sig(:final) { override.params(state: GitState).returns(T::Boolean) }
@@ -417,7 +429,9 @@ module Dev
         # @param build [Build]
         # @return [Archive, nil]
         sig(:final) { params(build: Build).returns(T.nilable(Archive)) }
-        def archive(build) = @archives.find { |entry| entry.build == build }
+        def archive(build)
+          @archives.find { |entry| entry.build == build }
+        end
 
         sig(:final) { override.returns(JsonHash) }
         def to_json_hash
@@ -425,13 +439,19 @@ module Dev
         end
 
         sig(:final) { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(Release) && to_json_hash == other.to_json_hash
+        def ==(other)
+          other.is_a?(Release) && to_json_hash == other.to_json_hash
+        end
 
         sig(:final) { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
+        def eql?(other)
+          self == other
+        end
 
         sig(:final) { returns(Integer) }
-        def hash = [Release, to_json_hash].hash
+        def hash
+          [Release, to_json_hash].hash
+        end
       end
     end
   end

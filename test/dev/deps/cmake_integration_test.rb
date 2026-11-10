@@ -91,7 +91,9 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     Pathname(data_root) / "cmake" / "github.com" / "google" / "highway" / sha
   end
 
-  def source_link(root, name) = Pathname(root) / "build" / "_deps" / "#{name}-src"
+  def source_link(root, name)
+    Pathname(root) / "build" / "_deps" / "#{name}-src"
+  end
 
   # A real .tar.gz with one top-level directory, as upstream tarballs ship.
   def build_tarball(dir)

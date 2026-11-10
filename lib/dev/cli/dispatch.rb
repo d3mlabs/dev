@@ -93,13 +93,19 @@ module Dev
           # erased Env, whose `==` is the env's own; `@env`'s type member
           # is unbounded and offers none.
           sig(:final) { params(other: Object).returns(T::Boolean) }
-          def ==(other) = other.is_a?(Run) && other.env == @env
+          def ==(other)
+            other.is_a?(Run) && other.env == @env
+          end
 
           sig(:final) { params(other: Object).returns(T::Boolean) }
-          def eql?(other) = self == other
+          def eql?(other)
+            self == other
+          end
 
           sig(:final) { returns(Integer) }
-          def hash = [Run, @env].hash
+          def hash
+            [Run, @env].hash
+          end
         end
 
         # Nothing is left for this process: the dispatch ran the verb — seam
@@ -114,13 +120,19 @@ module Dev
           Env = type_member
 
           sig(:final) { params(other: Object).returns(T::Boolean) }
-          def ==(other) = other.is_a?(Done)
+          def ==(other)
+            other.is_a?(Done)
+          end
 
           sig(:final) { params(other: Object).returns(T::Boolean) }
-          def eql?(other) = self == other
+          def eql?(other)
+            self == other
+          end
 
           sig(:final) { returns(Integer) }
-          def hash = [Done].hash
+          def hash
+            [Done].hash
+          end
         end
       end
 
@@ -145,13 +157,19 @@ module Dev
         end
 
         sig(:final) { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(Native)
+        def ==(other)
+          other.is_a?(Native)
+        end
 
         sig(:final) { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
+        def eql?(other)
+          self == other
+        end
 
         sig(:final) { returns(Integer) }
-        def hash = [Native].hash
+        def hash
+          [Native].hash
+        end
       end
 
       # The verb runs on a host that has the build's environment, reached

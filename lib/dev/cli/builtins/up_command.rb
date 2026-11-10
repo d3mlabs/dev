@@ -77,24 +77,34 @@ module Dev
         end
 
         sig { override.returns(String) }
-        def desc = "Install locked deps and bring the build container up, then run the project's up command (if defined); --no-cache does it from nothing"
+        def desc
+          "Install locked deps and bring the build container up, then run the project's up command (if defined); --no-cache does it from nothing"
+        end
 
         sig { override.returns(Command::Category) }
-        def category = Command::Category::Environment
+        def category
+          Command::Category::Environment
+        end
 
         # Its own cold-run switch, plus everything the composed install takes
         # (the args are handed on to it).
         sig { override.returns(T::Array[Cli::Flag]) }
-        def flags = [Cli::Flag.new(NO_CACHE_FLAG), *@install_deps_command.flags]
+        def flags
+          [Cli::Flag.new(NO_CACHE_FLAG), *@install_deps_command.flags]
+        end
 
         # up IS the staleness remediation — never nag before it.
         sig { override.returns(T::Boolean) }
-        def staleness_exempt? = true
+        def staleness_exempt?
+          true
+        end
 
         # `dev up` treats a stale stamp as its expected precondition and
         # rewrites it after a fully-successful run.
         sig { override.returns(T::Boolean) }
-        def stamps? = true
+        def stamps?
+          true
+        end
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)

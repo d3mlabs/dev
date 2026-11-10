@@ -35,5 +35,7 @@ class AnsweringUi < RecordingUi
   # The questions' texts, for the common assertion.
   #
   # @return [Array<String>]
-  def asked = @questions.map(&:text)
+  def asked
+    @questions.map(&:text)
+  end
 end

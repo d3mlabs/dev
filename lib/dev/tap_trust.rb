@@ -41,7 +41,9 @@ module Dev
       #
       # @return [String]
       sig { returns(String) }
-      def to_s = "#{user}/#{repo}"
+      def to_s
+        "#{user}/#{repo}"
+      end
     end
 
     # A tap-qualified formula name: `user/repo/name`, three non-empty

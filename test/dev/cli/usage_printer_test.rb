@@ -42,7 +42,9 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
 
     attr_reader :desc
 
-    def before(args:, context:) = Dev::Cli::Dispatch::Outcome::Done.new
+    def before(args:, context:)
+      Dev::Cli::Dispatch::Outcome::Done.new
+    end
 
     def seam(env, context:); end
 

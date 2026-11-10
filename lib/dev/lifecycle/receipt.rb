@@ -40,16 +40,24 @@ module Dev
       end
 
       sig { returns(String) }
-      def to_s = summary
+      def to_s
+        summary
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(Receipt) && summary == other.summary && hint == other.hint
+      def ==(other)
+        other.is_a?(Receipt) && summary == other.summary && hint == other.hint
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [Receipt, summary, hint].hash
+      def hash
+        [Receipt, summary, hint].hash
+      end
     end
   end
 end

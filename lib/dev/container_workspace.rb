@@ -80,6 +80,8 @@ module Dev
     # @param repo [String] `owner/repo`
     # @return [String] the HTTPS clone URL, the one gh's helper authenticates
     sig { params(repo: String).returns(String) }
-    def fetch_url(repo) = "https://github.com/#{repo}.git"
+    def fetch_url(repo)
+      "https://github.com/#{repo}.git"
+    end
   end
 end

@@ -18,9 +18,18 @@ class Dev::Cli::Builtins::CompleteCommandTest < Minitest::Test
       @completions = completions
     end
 
-    def desc = "a leaf"
-    def category = Dev::Cli::Command::Category::Workflow
-    def hidden? = @hidden
+    def desc
+      "a leaf"
+    end
+
+    def category
+      Dev::Cli::Command::Category::Workflow
+    end
+
+    def hidden?
+      @hidden
+    end
+
     def call(args:, context:); end
 
     def completions(words)

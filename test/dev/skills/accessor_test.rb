@@ -22,7 +22,9 @@ class Dev::Skills::AccessorTest < Minitest::Test
       @project_scoped = project_scoped
     end
 
-    def project_scoped? = @project_scoped
+    def project_scoped?
+      @project_scoped
+    end
   end
 
   def build_skill(dir, *path_parts)
@@ -38,7 +40,9 @@ class Dev::Skills::AccessorTest < Minitest::Test
     )
   end
 
-  def entry(name, source, **extra) = Dev::Skills::Entry.new(link_name: name, source: source, **extra)
+  def entry(name, source, **extra)
+    Dev::Skills::Entry.new(link_name: name, source: source, **extra)
+  end
 
   # own (user-global) + gem (project-scoped) channels over fixture trees.
   def build_channels(dir)

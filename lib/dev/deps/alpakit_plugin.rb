@@ -82,7 +82,9 @@ module Dev
       #
       # @return [Pathname]
       sig { returns(Pathname) }
-      def uplugin = dir / "#{mod_reference}#{UPLUGIN_EXTENSION}"
+      def uplugin
+        dir / "#{mod_reference}#{UPLUGIN_EXTENSION}"
+      end
 
       # Every file of the tree, relative to its root, in a stable order.
       #
@@ -93,7 +95,9 @@ module Dev
       end
 
       sig { returns(String) }
-      def to_s = "#{mod_reference} (#{target})"
+      def to_s
+        "#{mod_reference} (#{target})"
+      end
     end
   end
 end

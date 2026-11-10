@@ -14,7 +14,9 @@ module Dev
         USAGE = "usage: dev skills sync"
 
         sig { override.returns(String) }
-        def desc = "Re-materialize every skill channel (dev's own, org, the project's gems) now"
+        def desc
+          "Re-materialize every skill channel (dev's own, org, the project's gems) now"
+        end
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)

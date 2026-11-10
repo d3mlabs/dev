@@ -146,7 +146,9 @@ module Dev
       # @param file [Pathname]
       # @return [String] its SHA-256, hex
       sig { params(file: Pathname).returns(String) }
-      def digest(file) = Digest::SHA256.file(file.to_s).hexdigest
+      def digest(file)
+        Digest::SHA256.file(file.to_s).hexdigest
+      end
     end
   end
 end

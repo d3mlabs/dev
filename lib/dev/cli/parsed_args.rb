@@ -95,13 +95,17 @@ module Dev
       alias eql? ==
 
       sig { returns(Integer) }
-      def hash = state.hash
+      def hash
+        state.hash
+      end
 
       protected
 
       # @return [Array] the value this object is equal by
       sig { returns([T::Array[String], T::Array[String], T::Array[String], T::Hash[String, T::Array[String]]]) }
-      def state = [@words, @positionals, @switches, @values]
+      def state
+        [@words, @positionals, @switches, @values]
+      end
     end
   end
 end

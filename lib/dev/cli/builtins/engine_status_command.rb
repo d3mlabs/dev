@@ -29,13 +29,19 @@ module Dev
         end
 
         sig { override.returns(String) }
-        def desc = "Report the container engine: kind, state, size, converge facts, running containers, prefix volumes"
+        def desc
+          "Report the container engine: kind, state, size, converge facts, running containers, prefix volumes"
+        end
 
         sig { override.returns(Command::Category) }
-        def category = Command::Category::Environment
+        def category
+          Command::Category::Environment
+        end
 
         sig { override.returns(T::Boolean) }
-        def staleness_exempt? = true
+        def staleness_exempt?
+          true
+        end
 
         # @param args [Array<String>] unused
         # @param context [ExecutionContext] unused: the engine is machine state

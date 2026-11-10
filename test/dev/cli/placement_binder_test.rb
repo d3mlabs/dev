@@ -251,8 +251,14 @@ class Dev::Cli::PlacementBinderTest < Minitest::Test
     Given "a builtin smuggled into the parsed tree"
     lock(image_pin("snappy-linux"))
     builtin = Class.new(Dev::Cli::BuiltinCommand) do
-      def desc = "x"
-      def category = Dev::Cli::Command::Category::Workflow
+      def desc
+        "x"
+      end
+
+      def category
+        Dev::Cli::Command::Category::Workflow
+      end
+
       def call(args:, context:); end
     end.new
 

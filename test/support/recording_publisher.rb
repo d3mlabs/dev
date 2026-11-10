@@ -36,5 +36,7 @@ class RecordingPublisher
   end
 
   # @return [String]
-  def to_s = "recording"
+  def to_s
+    "recording"
+  end
 end

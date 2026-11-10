@@ -24,13 +24,19 @@ module Dev
         end
 
         sig { override.returns(String) }
-        def desc = "Print this dev's version"
+        def desc
+          "Print this dev's version"
+        end
 
         sig { override.returns(Command::Category) }
-        def category = Command::Category::Workflow
+        def category
+          Command::Category::Workflow
+        end
 
         sig { override.returns(T::Boolean) }
-        def staleness_exempt? = true
+        def staleness_exempt?
+          true
+        end
 
         # @param args [Array<String>] unused
         # @param context [ExecutionContext] unused: the version is the binary's

@@ -41,19 +41,29 @@ module Dev
       #
       # @return [String] `v<version>`
       sig { returns(String) }
-      def name = "#{PREFIX}#{@version}"
+      def name
+        "#{PREFIX}#{@version}"
+      end
 
       sig { returns(String) }
-      def to_s = name
+      def to_s
+        name
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(ReleaseTag) && @version == other.version
+      def ==(other)
+        other.is_a?(ReleaseTag) && @version == other.version
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [ReleaseTag, @version].hash
+      def hash
+        [ReleaseTag, @version].hash
+      end
     end
   end
 end

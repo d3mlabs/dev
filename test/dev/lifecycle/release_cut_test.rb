@@ -36,25 +36,52 @@ class Dev::Lifecycle::ReleaseCutTest < Minitest::Test
     super
   end
 
-  def cut = CUT.new(git: @git)
-  def head = @git.capture(["rev-parse", "HEAD"]).strip
-  def tag_sha(name) = @git.capture(["rev-parse", "#{name}^{commit}"]).strip
-  def last_message = @git.capture(["log", "-1", "--format=%s"]).strip
+  def cut
+    CUT.new(git: @git)
+  end
+
+  def head
+    @git.capture(["rev-parse", "HEAD"]).strip
+  end
+
+  def tag_sha(name)
+    @git.capture(["rev-parse", "#{name}^{commit}"]).strip
+  end
+
+  def last_message
+    @git.capture(["log", "-1", "--format=%s"]).strip
+  end
 
   def remote_refs
     Dev::Lifecycle::Git.new(root: @origin).capture(["for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/", "refs/tags/"])
       .lines.to_h { |line| line.strip.split(" ", 2) }
   end
 
-  def commit(message) = @git.capture(["commit", "-q", "--allow-empty", "-m", message])
-  def push = @git.capture(["push", "-q", "origin", "main"])
-  def rewind(count) = @git.capture(["reset", "-q", "--hard", "HEAD~#{count}"])
-  def remote_main = remote_refs["refs/heads/main"]
+  def commit(message)
+    @git.capture(["commit", "-q", "--allow-empty", "-m", message])
+  end
+
+  def push
+    @git.capture(["push", "-q", "origin", "main"])
+  end
+
+  def rewind(count)
+    @git.capture(["reset", "-q", "--hard", "HEAD~#{count}"])
+  end
+
+  def remote_main
+    remote_refs["refs/heads/main"]
+  end
 
   # The four relations to origin/main, arranged without a fetch: origin
   # moves through this checkout's own pushes, then HEAD rewinds.
-  def stay_in_sync = nil
-  def commit_locally = commit("local")
+  def stay_in_sync
+    nil
+  end
+
+  def commit_locally
+    commit("local")
+  end
 
   def fall_behind
     commit("a")

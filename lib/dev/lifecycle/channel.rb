@@ -65,14 +65,18 @@ module Dev
       #
       # @return [Array<Build>]
       sig { returns(T::Array[Build]) }
-      def builds = accepts.flat_map(&:builds).uniq
+      def builds
+        accepts.flat_map(&:builds).uniq
+      end
 
       # Whether a build is inside the accept set.
       #
       # @param build [Build]
       # @return [Boolean]
       sig { params(build: Build).returns(T::Boolean) }
-      def accepts?(build) = accepts.any? { |pattern| pattern.matches?(build) }
+      def accepts?(build)
+        accepts.any? { |pattern| pattern.matches?(build) }
+      end
 
       # The accept set with every platform spelled out and the config axis
       # left as declared — what `deploy` ships **one artifact per**: a
@@ -82,10 +86,14 @@ module Dev
       #
       # @return [Array<BuildPattern>]
       sig { returns(T::Array[BuildPattern]) }
-      def artifact_patterns = accepts.flat_map(&:per_platform).uniq
+      def artifact_patterns
+        accepts.flat_map(&:per_platform).uniq
+      end
 
       sig { returns(String) }
-      def to_s = name
+      def to_s
+        name
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
       def ==(other)
@@ -94,10 +102,14 @@ module Dev
       end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [Channel, name, desc, accepts, publisher, options].hash
+      def hash
+        [Channel, name, desc, accepts, publisher, options].hash
+      end
     end
   end
 end

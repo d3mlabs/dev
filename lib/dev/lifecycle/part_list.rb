@@ -28,13 +28,19 @@ module Dev
         const :name, String
 
         sig { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(Part) && sha256 == other.sha256 && name == other.name
+        def ==(other)
+          other.is_a?(Part) && sha256 == other.sha256 && name == other.name
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
+        def eql?(other)
+          self == other
+        end
 
         sig { returns(Integer) }
-        def hash = [Part, sha256, name].hash
+        def hash
+          [Part, sha256, name].hash
+        end
       end
 
       const :parts, T::Array[Part]
@@ -72,7 +78,9 @@ module Dev
       #
       # @return [String]
       sig { returns(String) }
-      def render = parts.map { |part| "#{part.sha256}  #{part.name}\n" }.join
+      def render
+        parts.map { |part| "#{part.sha256}  #{part.name}\n" }.join
+      end
 
       # Write the list as a MANIFEST file.
       #
@@ -94,13 +102,19 @@ module Dev
       end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(PartList) && parts == other.parts
+      def ==(other)
+        other.is_a?(PartList) && parts == other.parts
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [PartList, parts].hash
+      def hash
+        [PartList, parts].hash
+      end
     end
   end
 end

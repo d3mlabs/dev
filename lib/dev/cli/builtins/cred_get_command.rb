@@ -23,14 +23,20 @@ module Dev
         end
 
         sig { override.returns(String) }
-        def desc = "Print a stored credential, resolved through the provider chain (get <namespace> <key>)"
+        def desc
+          "Print a stored credential, resolved through the provider chain (get <namespace> <key>)"
+        end
 
         sig { override.returns(Command::Category) }
-        def category = Command::Category::Workflow
+        def category
+          Command::Category::Workflow
+        end
 
         # Host-global: a project's dependency staleness is irrelevant.
         sig { override.returns(T::Boolean) }
-        def staleness_exempt? = true
+        def staleness_exempt?
+          true
+        end
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)

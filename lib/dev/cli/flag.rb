@@ -39,7 +39,9 @@ module Dev
 
       # @return [Boolean]
       sig { returns(T::Boolean) }
-      def takes_value? = @takes_value
+      def takes_value?
+        @takes_value
+      end
     end
   end
 end

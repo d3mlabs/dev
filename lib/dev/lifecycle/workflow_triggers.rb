@@ -57,7 +57,9 @@ module Dev
         # @param name [String] a short branch name
         # @return [Boolean]
         sig { params(name: String).returns(T::Boolean) }
-        def matches?(name) = @regexp.match?(name)
+        def matches?(name)
+          @regexp.match?(name)
+        end
 
         class << self
           extend T::Sig
@@ -203,7 +205,9 @@ module Dev
 
       # @return [PushTrigger] `on: push` with nothing narrowing it
       sig { returns(PushTrigger) }
-      def unfiltered_trigger = PushTrigger.new(branches: nil, branches_ignore: nil, tag_filtered: false)
+      def unfiltered_trigger
+        PushTrigger.new(branches: nil, branches_ignore: nil, tag_filtered: false)
+      end
 
       # @param config [Object] the value under `push:` — nil, `{}` or the filters
       # @return [PushTrigger]

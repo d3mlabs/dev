@@ -55,13 +55,19 @@ module Dev
         const :args, String, default: ""
 
         sig { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(Artifact) && id == other.id && launch == other.launch && args == other.args
+        def ==(other)
+          other.is_a?(Artifact) && id == other.id && launch == other.launch && args == other.args
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
+        def eql?(other)
+          self == other
+        end
 
         sig { returns(Integer) }
-        def hash = [Artifact, id, launch, args].hash
+        def hash
+          [Artifact, id, launch, args].hash
+        end
       end
 
       KEY = "egs"
@@ -220,7 +226,9 @@ module Dev
       # @param track [Lifecycle::Track]
       # @return [String]
       sig { params(track: Lifecycle::Track).returns(String) }
-      def label_for(track) = labels.fetch(track)
+      def label_for(track)
+        labels.fetch(track)
+      end
     end
   end
 end

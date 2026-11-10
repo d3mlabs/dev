@@ -49,16 +49,24 @@ module Dev
 
         # The commit the artifact was packaged from.
         sig { override.returns(T.nilable(String)) }
-        def ref = state.sha
+        def ref
+          state.sha
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(Store) && state == other.state && packaged_at == other.packaged_at
+        def ==(other)
+          other.is_a?(Store) && state == other.state && packaged_at == other.packaged_at
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
+        def eql?(other)
+          self == other
+        end
 
         sig { returns(Integer) }
-        def hash = [Store, state, packaged_at].hash
+        def hash
+          [Store, state, packaged_at].hash
+        end
       end
 
       # Downloaded from the GitHub release of a tag: the tag, and the
@@ -73,16 +81,24 @@ module Dev
 
         # The release's tag — what `dev deploy status --release` reads by.
         sig { override.returns(T.nilable(String)) }
-        def ref = tag.name
+        def ref
+          tag.name
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(Release) && tag == other.tag && sha == other.sha
+        def ==(other)
+          other.is_a?(Release) && tag == other.tag && sha == other.sha
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
+        def eql?(other)
+          self == other
+        end
 
         sig { returns(Integer) }
-        def hash = [Release, tag, sha].hash
+        def hash
+          [Release, tag, sha].hash
+        end
       end
     end
 
@@ -143,16 +159,22 @@ module Dev
 
       # @return [String] the build's fully-qualified name
       sig { returns(String) }
-      def name = build.name
+      def name
+        build.name
+      end
 
       # What the deploy is recorded against (Provenance#ref).
       #
       # @return [String, nil]
       sig { returns(T.nilable(String)) }
-      def ref = provenance.ref
+      def ref
+        provenance.ref
+      end
 
       sig { returns(String) }
-      def to_s = "#{name} (#{build_id})"
+      def to_s
+        "#{name} (#{build_id})"
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
       def ==(other)
@@ -161,10 +183,14 @@ module Dev
       end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [Shipment, archive, build, build_id, archive_sha256, provenance].hash
+      def hash
+        [Shipment, archive, build, build_id, archive_sha256, provenance].hash
+      end
     end
   end
 end

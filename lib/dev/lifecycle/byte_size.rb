@@ -50,13 +50,19 @@ module Dev
       end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(ByteSize) && bytes == other.bytes
+      def ==(other)
+        other.is_a?(ByteSize) && bytes == other.bytes
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [ByteSize, bytes].hash
+      def hash
+        [ByteSize, bytes].hash
+      end
     end
   end
 end

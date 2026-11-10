@@ -32,10 +32,21 @@ class FakeXcodeIntegration < Dev::Deps::XcodeIntegration
 
   private
 
-  def darwin? = @darwin
-  def interactive? = @interactive
-  def xcodes_available? = @xcodes_available
-  def metal_toolchain_present?(_version) = @metal_present
+  def darwin?
+    @darwin
+  end
+
+  def interactive?
+    @interactive
+  end
+
+  def xcodes_available?
+    @xcodes_available
+  end
+
+  def metal_toolchain_present?(_version)
+    @metal_present
+  end
 
   def run_xcodes_install(version)
     @install_invocations << version

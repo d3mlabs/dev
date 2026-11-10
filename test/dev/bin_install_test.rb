@@ -32,7 +32,9 @@ class Dev::BinInstallTest < Minitest::Test
     [out, status]
   end
 
-  def installed = @install.children.map { |child| child.basename.to_s }.sort
+  def installed
+    @install.children.map { |child| child.basename.to_s }.sort
+  end
 
   test "install-core lays out the org-blank tool: bin, lib, share, VERSION, LICENSE, README — replacing whatever the install held" do
     When

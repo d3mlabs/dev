@@ -16,10 +16,14 @@ module Dev
         USAGE = T.let("usage: dev plan new \"<title>\" [#{BLANK_FLAG}] [#{ORG_FLAG}]".freeze, String)
 
         sig { override.returns(String) }
-        def desc = "Create a templated issue + linked local plan (new \"<title>\" [--blank] [--org])"
+        def desc
+          "Create a templated issue + linked local plan (new \"<title>\" [--blank] [--org])"
+        end
 
         sig { override.returns(T::Array[Cli::Flag]) }
-        def flags = [Cli::Flag.new(BLANK_FLAG), Cli::Flag.new(ORG_FLAG)]
+        def flags
+          [Cli::Flag.new(BLANK_FLAG), Cli::Flag.new(ORG_FLAG)]
+        end
 
         private
 

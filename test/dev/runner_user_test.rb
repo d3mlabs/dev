@@ -350,12 +350,25 @@ class Dev::RunnerUserTest < Minitest::Test
 
   # Lambdas, not blocks: a one-parameter block is emitted as |argv,| by the
   # transform (rspockframework/ast-transform#21) and destructures an argv.
-  def logs_in = ->(argv) { argv.include?("login") }
-  def chowns = ->(argv) { argv.include?("chown") }
-  def last_three = ->(argv) { argv.last(3).join(" ") }
+  def logs_in
+    ->(argv) { argv.include?("login") }
+  end
 
-  def trusts = ->(argv) { argv.include?("trust") }
-  def org_tap = Dev::TapTrust::Tap.new(user: "d3mlabs", repo: "d3mlabs")
+  def chowns
+    ->(argv) { argv.include?("chown") }
+  end
+
+  def last_three
+    ->(argv) { argv.last(3).join(" ") }
+  end
+
+  def trusts
+    ->(argv) { argv.include?("trust") }
+  end
+
+  def org_tap
+    Dev::TapTrust::Tap.new(user: "d3mlabs", repo: "d3mlabs")
+  end
 
   def runner_user(homes:, gh: GhExecutor.new(logged_in: true), name: "runner", brew: nil, owner_of: ->(_path) { name }, tap: nil)
     steps = Dev::PrivilegedSteps.new(executor: @executor, tty: true, purpose: "create the runner user")

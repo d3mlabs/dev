@@ -52,12 +52,18 @@ module Dev
     end
 
     sig { params(other: Object).returns(T::Boolean) }
-    def ==(other) = other.is_a?(EnrolledRunner) && scope == other.scope && label == other.label
+    def ==(other)
+      other.is_a?(EnrolledRunner) && scope == other.scope && label == other.label
+    end
 
     sig { params(other: Object).returns(T::Boolean) }
-    def eql?(other) = self == other
+    def eql?(other)
+      self == other
+    end
 
     sig { returns(Integer) }
-    def hash = [EnrolledRunner, scope, label].hash
+    def hash
+      [EnrolledRunner, scope, label].hash
+    end
   end
 end

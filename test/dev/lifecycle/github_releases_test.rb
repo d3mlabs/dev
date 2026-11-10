@@ -14,7 +14,9 @@ class Dev::Lifecycle::GithubReleasesTest < Minitest::Test
   TAG = Dev::Lifecycle::ReleaseTag.new("1.2.0")
   URL = "https://github.com/d3mlabs/rspock/releases/tag/v1.2.0"
 
-  def releases(gh) = Dev::Lifecycle::GithubReleases.new(gh:)
+  def releases(gh)
+    Dev::Lifecycle::GithubReleases.new(gh:)
+  end
 
   test "find asks gh for the tag's release page and answers it as a URI" do
     Given

@@ -38,16 +38,24 @@ module Dev
         final!
 
         sig(:final) { override.returns(String) }
-        def name = EnvironmentImage::HOST
+        def name
+          EnvironmentImage::HOST
+        end
 
         sig(:final) { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(Host)
+        def ==(other)
+          other.is_a?(Host)
+        end
 
         sig(:final) { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
+        def eql?(other)
+          self == other
+        end
 
         sig(:final) { returns(Integer) }
-        def hash = [Host].hash
+        def hash
+          [Host].hash
+        end
       end
 
       # The body runs in a pinned image's environment.
@@ -67,18 +75,26 @@ module Dev
         end
 
         sig(:final) { override.returns(String) }
-        def name = @image.name
+        def name
+          @image.name
+        end
 
         # Two placements of one image are equal by the image's identity (its
         # digest): the lock pins one image per name.
         sig(:final) { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(Image) && @image.name == other.image.name && @image.digest == other.image.digest
+        def ==(other)
+          other.is_a?(Image) && @image.name == other.image.name && @image.digest == other.image.digest
+        end
 
         sig(:final) { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
+        def eql?(other)
+          self == other
+        end
 
         sig(:final) { returns(Integer) }
-        def hash = [Image, @image.name, @image.digest].hash
+        def hash
+          [Image, @image.name, @image.digest].hash
+        end
       end
     end
   end

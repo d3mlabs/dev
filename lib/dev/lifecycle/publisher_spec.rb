@@ -43,16 +43,24 @@ module Dev
         const :environment, T.nilable(EnvironmentRef), default: nil
 
         sig { override.returns(String) }
-        def to_s = "run: #{command}"
+        def to_s
+          "run: #{command}"
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(Script) && command == other.command && environment == other.environment
+        def ==(other)
+          other.is_a?(Script) && command == other.command && environment == other.environment
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
+        def eql?(other)
+          self == other
+        end
 
         sig { returns(Integer) }
-        def hash = [Script, command, environment].hash
+        def hash
+          [Script, command, environment].hash
+        end
       end
 
       # The publisher the lock's integration named `name` contributes — the
@@ -67,16 +75,24 @@ module Dev
         const :name, String
 
         sig { override.returns(String) }
-        def to_s = "publisher: #{name}"
+        def to_s
+          "publisher: #{name}"
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(Integration) && name == other.name
+        def ==(other)
+          other.is_a?(Integration) && name == other.name
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
+        def eql?(other)
+          self == other
+        end
 
         sig { returns(Integer) }
-        def hash = [Integration, name].hash
+        def hash
+          [Integration, name].hash
+        end
       end
     end
   end

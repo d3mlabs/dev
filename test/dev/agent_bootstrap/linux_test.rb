@@ -367,7 +367,9 @@ class Dev::AgentBootstrap::LinuxTest < Minitest::Test
     out.string.include?("cursor-agent")
   end
 
-  def org_tap = Dev::TapTrust::Tap.new(user: "d3mlabs", repo: "d3mlabs")
+  def org_tap
+    Dev::TapTrust::Tap.new(user: "d3mlabs", repo: "d3mlabs")
+  end
 
   # A runner dir the enrollment ceremony left a service record in.
   def enrolled_runner_dir

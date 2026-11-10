@@ -375,7 +375,9 @@ class Dev::RunnerTeardownTest < Minitest::Test
   end
 
   # The Ui a teardown speaks through when the test is about what ran.
-  def quiet = Dev::NoUi.new(out: StringIO.new)
+  def quiet
+    Dev::NoUi.new(out: StringIO.new)
+  end
 
   # A .runner record the way config.sh writes it (UTF-8 BOM + JSON).
   def write_runner(home, dir_name, scope:, name:)

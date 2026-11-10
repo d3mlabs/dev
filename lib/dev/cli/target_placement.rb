@@ -126,10 +126,14 @@ module Dev
       end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [TargetPlacement, @target, @placements, @host_platform].hash
+      def hash
+        [TargetPlacement, @target, @placements, @host_platform].hash
+      end
     end
   end
 end

@@ -43,9 +43,17 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
     )
   end
 
-  def versions(pins) = pins.to_h { |dep| [dep.name, dep.version] }
-  def commits(pins) = pins.to_h { |dep| [dep.name, dep.metadata["tap_commit"]] }
-  def moves(outcome) = outcome.moved.map { |move| [move.name, move.from, move.to, move.reason] }
+  def versions(pins)
+    pins.to_h { |dep| [dep.name, dep.version] }
+  end
+
+  def commits(pins)
+    pins.to_h { |dep| [dep.name, dep.metadata["tap_commit"]] }
+  end
+
+  def moves(outcome)
+    outcome.moved.map { |move| [move.name, move.from, move.to, move.reason] }
+  end
 
   test "keeps every brew pin whose declaration did not change — cellbound-3d#319: one gh entry added on a newer index" do
     Given "a lock with two core formulae, and a resolution on an index a day newer that adds a gh pin"

@@ -47,7 +47,9 @@ module Dev
       # @param build [Lifecycle::Build]
       # @return [Boolean]
       sig { params(build: Lifecycle::Build).returns(T::Boolean) }
-      def bound?(build) = @placements.key?(build.target.name)
+      def bound?(build)
+        @placements.key?(build.target.name)
+      end
 
       # Where a build is declared to run.
       #
@@ -55,7 +57,9 @@ module Dev
       # @return [Placement]
       # @raise [UnboundTargetError]
       sig { params(build: Lifecycle::Build).returns(Placement) }
-      def placement_for(build) = target_placement(build).placement_for(build)
+      def placement_for(build)
+        target_placement(build).placement_for(build)
+      end
 
       # Whether this machine can produce the build where it is placed
       # (TargetPlacement#buildable_here?).
@@ -64,7 +68,9 @@ module Dev
       # @return [Boolean]
       # @raise [UnboundTargetError]
       sig { params(build: Lifecycle::Build).returns(T::Boolean) }
-      def buildable_here?(build) = target_placement(build).buildable_here?(build)
+      def buildable_here?(build)
+        target_placement(build).buildable_here?(build)
+      end
 
       # The dispatch a verb over +build+ hands its env to.
       #

@@ -16,7 +16,9 @@ class ProbedRegistry
     @probes = []
   end
 
-  def grant_all! = @refused.clear
+  def grant_all!
+    @refused.clear
+  end
 
   def group(org:, name:)
     @probes << [:groups, org]
@@ -45,7 +47,9 @@ class Dev::OperatorAccessTest < Minitest::Test
   REFRESH = "gh auth refresh -h github.com -s admin:org"
 
   # The terminal register hands over (Dev::Ui), answering `answer`.
-  def answering(answer) = AnsweringUi.new(answer: answer)
+  def answering(answer)
+    AnsweringUi.new(answer: answer)
+  end
 
   test "an org registration probes the org's runner groups — the capability itself, not the token's scope list — and a login that can read them passes silently" do
     Given

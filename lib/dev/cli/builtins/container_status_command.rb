@@ -21,7 +21,9 @@ module Dev
         extend T::Sig
 
         sig { override.returns(String) }
-        def desc = "Report each build image's state and its container's"
+        def desc
+          "Report each build image's state and its container's"
+        end
 
         # @param args [Array<String>] unused
         # @param context [ExecutionContext] the project

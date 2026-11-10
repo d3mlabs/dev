@@ -69,10 +69,14 @@ module Dev
       #
       # @return [String]
       sig { returns(String) }
-      def name = [target.name, platform&.serialize, config&.serialize].compact.join("-")
+      def name
+        [target.name, platform&.serialize, config&.serialize].compact.join("-")
+      end
 
       sig { returns(String) }
-      def to_s = name
+      def to_s
+        name
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
       def ==(other)
@@ -80,10 +84,14 @@ module Dev
       end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [Build, target, platform, config].hash
+      def hash
+        [Build, target, platform, config].hash
+      end
 
       private
 

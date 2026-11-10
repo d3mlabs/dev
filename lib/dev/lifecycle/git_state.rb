@@ -53,16 +53,24 @@ module Dev
       #
       # @return [Boolean]
       sig { returns(T::Boolean) }
-      def clean? = !sha.nil? && !dirty
+      def clean?
+        !sha.nil? && !dirty
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(GitState) && sha == other.sha && dirty == other.dirty
+      def ==(other)
+        other.is_a?(GitState) && sha == other.sha && dirty == other.dirty
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [GitState, sha, dirty].hash
+      def hash
+        [GitState, sha, dirty].hash
+      end
     end
   end
 end

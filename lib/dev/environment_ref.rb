@@ -59,16 +59,24 @@ module Dev
       final!
 
       sig(:final) { override.returns(String) }
-      def to_s = HOST
+      def to_s
+        HOST
+      end
 
       sig(:final) { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(Host)
+      def ==(other)
+        other.is_a?(Host)
+      end
 
       sig(:final) { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig(:final) { returns(Integer) }
-      def hash = [Host].hash
+      def hash
+        [Host].hash
+      end
     end
 
     # `environment: <image name>` — a newtype over the name, unresolved.
@@ -88,16 +96,24 @@ module Dev
       end
 
       sig(:final) { override.returns(String) }
-      def to_s = @name
+      def to_s
+        @name
+      end
 
       sig(:final) { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(Image) && @name == other.name
+      def ==(other)
+        other.is_a?(Image) && @name == other.name
+      end
 
       sig(:final) { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig(:final) { returns(Integer) }
-      def hash = [Image, @name].hash
+      def hash
+        [Image, @name].hash
+      end
     end
   end
 end

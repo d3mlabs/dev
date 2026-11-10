@@ -76,10 +76,14 @@ module Dev
         end
 
         sig { override.returns(String) }
-        def desc = "Install locked dependencies on this machine (--group/--except/--integration narrow; --pinned-taps pins brew's taps)"
+        def desc
+          "Install locked dependencies on this machine (--group/--except/--integration narrow; --pinned-taps pins brew's taps)"
+        end
 
         sig { override.returns(Command::Category) }
-        def category = Command::Category::Environment
+        def category
+          Command::Category::Environment
+        end
 
         sig { override.returns(T::Array[Cli::Flag]) }
         def flags
@@ -94,12 +98,16 @@ module Dev
         # dev deps install IS the remediation for a stale install — never nag
         # before it.
         sig { override.returns(T::Boolean) }
-        def staleness_exempt? = true
+        def staleness_exempt?
+          true
+        end
 
         # A fully-successful install records the installed stamp (the CI-side
         # install path of the staleness check).
         sig { override.returns(T::Boolean) }
-        def stamps? = true
+        def stamps?
+          true
+        end
 
         # Install-time has no loaded dependencies.rb, so config-level inputs
         # default: install everything the lockfiles pin, filtered to the

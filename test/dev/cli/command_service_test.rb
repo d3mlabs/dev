@@ -25,15 +25,25 @@ class Dev::Cli::CommandServiceTest < Minitest::Test
       @calls = []
     end
 
-    def desc = "a builtin"
+    def desc
+      "a builtin"
+    end
 
-    def category = Dev::Cli::Command::Category::Workflow
+    def category
+      Dev::Cli::Command::Category::Workflow
+    end
 
-    def staleness_exempt? = @staleness_exempt
+    def staleness_exempt?
+      @staleness_exempt
+    end
 
-    def stamps? = @stamps
+    def stamps?
+      @stamps
+    end
 
-    def opaque_args? = @opaque_args
+    def opaque_args?
+      @opaque_args
+    end
 
     def call(args:, context:)
       @calls << [args, context]

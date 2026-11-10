@@ -14,7 +14,9 @@ module Dev
         USAGE = "usage: dev learnings status"
 
         sig { override.returns(String) }
-        def desc = "Show the configured knowledge repo, cache location/age, what's rendered and linked"
+        def desc
+          "Show the configured knowledge repo, cache location/age, what's rendered and linked"
+        end
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)

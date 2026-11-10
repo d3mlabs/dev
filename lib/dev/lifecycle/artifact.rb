@@ -34,15 +34,21 @@ module Dev
 
       # @return [Build]
       sig { returns(Build) }
-      def build = @manifest.build
+      def build
+        @manifest.build
+      end
 
       # @return [String] the build's fully-qualified name
       sig { returns(String) }
-      def name = @manifest.build.name
+      def name
+        @manifest.build.name
+      end
 
       # @return [Pathname] the archive, beside the manifest
       sig { returns(Pathname) }
-      def archive = @dir / @manifest.archive
+      def archive
+        @dir / @manifest.archive
+      end
 
       # Whether the artifact is up to date with a working tree
       # (Manifest::Artifact#current?).
@@ -50,16 +56,24 @@ module Dev
       # @param state [GitState]
       # @return [Boolean]
       sig { params(state: GitState).returns(T::Boolean) }
-      def current?(state) = @manifest.current?(state)
+      def current?(state)
+        @manifest.current?(state)
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(Artifact) && @dir == other.dir && @manifest == other.manifest
+      def ==(other)
+        other.is_a?(Artifact) && @dir == other.dir && @manifest == other.manifest
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [Artifact, @dir, @manifest].hash
+      def hash
+        [Artifact, @dir, @manifest].hash
+      end
     end
   end
 end

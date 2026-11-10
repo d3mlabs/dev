@@ -27,7 +27,9 @@ class Dev::Cli::LifecycleExecutorTest < Minitest::Test
       @stages = []
     end
 
-    def desc = "a recording verb"
+    def desc
+      "a recording verb"
+    end
 
     def before(args:, context:)
       @stages << [:before, args.positionals, context]
@@ -53,9 +55,13 @@ class Dev::Cli::LifecycleExecutorTest < Minitest::Test
     )
   end
 
-  def run_outcome = ->(env) { Dev::Cli::Dispatch::Outcome::Run.new(env) }
+  def run_outcome
+    ->(env) { Dev::Cli::Dispatch::Outcome::Run.new(env) }
+  end
 
-  def done_outcome = ->(_env) { Dev::Cli::Dispatch::Outcome::Done.new }
+  def done_outcome
+    ->(_env) { Dev::Cli::Dispatch::Outcome::Done.new }
+  end
 
   test "Run(env): before, then the seam and after with that env — the args reach before only" do
     Given "a verb whose dispatch runs here"

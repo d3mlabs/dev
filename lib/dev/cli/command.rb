@@ -88,20 +88,26 @@ module Dev
       # usage. Used for internal plumbing (e.g. build primitives) a project
       # keeps invocable without advertising it. Visible by default.
       sig { overridable.returns(T::Boolean) }
-      def hidden? = false
+      def hidden?
+        false
+      end
 
       # Whether the staleness guard skips this command. Exempt commands ARE
       # the staleness remediation (or its explicit check) — nagging before
       # them would block the very fix being run.
       sig { overridable.returns(T::Boolean) }
-      def staleness_exempt? = false
+      def staleness_exempt?
+        false
+      end
 
       # Whether a fully-successful run records the installed stamp
       # (DependencyService#lock!). Stamping commands must run their process
       # halves spawn-and-wait — exec-replace would make the stamp
       # unreachable (#85); CommandExecutor derives wait-vs-exec from this.
       sig { overridable.returns(T::Boolean) }
-      def stamps? = false
+      def stamps?
+        false
+      end
 
       # The `-`-prefixed arguments this command accepts, each with its arity
       # (Cli::Flag). Cli::FlagVocabulary parses an argv against this list
@@ -109,7 +115,9 @@ module Dev
       # a flag a command reads but does not declare here is rejected as
       # unknown. Nothing by default: groups and most leaves take none.
       sig { overridable.returns(T::Array[Cli::Flag]) }
-      def flags = []
+      def flags
+        []
+      end
 
       # Whether this command's argv is forwarded verbatim — no help-flag
       # interpretation, no vocabulary check, `--` kept. True for the shapes
@@ -118,7 +126,9 @@ module Dev
       # another command's argv (`complete`). Dev-defined nodes keep the
       # default and declare `flags` instead.
       sig { overridable.returns(T::Boolean) }
-      def opaque_args? = false
+      def opaque_args?
+        false
+      end
 
       # The argument candidates a command offers to shell completion when the
       # walk down the tree ends on it: `words` are the ones typed after its
@@ -250,7 +260,9 @@ module Dev
       # The four verbs list together: the section is the shape's, not each
       # verb's to choose.
       sig { override.returns(Category) }
-      def category = Category::Lifecycle
+      def category
+        Category::Lifecycle
+      end
 
       # What `dev help <verb>` lists beneath the verb's flags — every build
       # the project declares, with its environment on this machine, for
@@ -258,7 +270,9 @@ module Dev
       #
       # @return [Listing, nil]
       sig { overridable.returns(T.nilable(Listing)) }
-      def listing = nil
+      def listing
+        nil
+      end
 
       # Where the verb's seam runs when that is one place — a channel's
       # protocol (dev#192, K5) — as the usage printer's environment column
@@ -269,7 +283,9 @@ module Dev
       #
       # @return [Placement, nil]
       sig { overridable.returns(T.nilable(Placement)) }
-      def placement = nil
+      def placement
+        nil
+      end
 
       # Lines the usage prints beneath the verb's description — in its own
       # usage and under its row in its parent's listing — for what a one-line
@@ -278,7 +294,9 @@ module Dev
       #
       # @return [Array<String>]
       sig { overridable.returns(T::Array[String]) }
-      def details = []
+      def details
+        []
+      end
 
       # The stage before the seam: consume the flags and positionals into
       # the verb's Env (the build, where its install goes, …), resolve where
@@ -400,15 +418,21 @@ module Dev
       end
 
       sig(:final) { override.returns(T::Boolean) }
-      def hidden? = @hidden
+      def hidden?
+        @hidden
+      end
 
       sig(:final) { override.returns(Category) }
-      def category = Category::Project
+      def category
+        Category::Project
+      end
 
       # The run string owns its argv: dev has no vocabulary to check it
       # against, so every arg — `--help` included — reaches the script.
       sig(:final) { override.returns(T::Boolean) }
-      def opaque_args? = true
+      def opaque_args?
+        true
+      end
 
       # The same command heading a different subtree (the repository's merge
       # of a project `run:` over a builtin group's children).
@@ -479,35 +503,49 @@ module Dev
       # The override owns the slot, so its description wins — a project `up:`
       # shows its own desc in usage, not the generic builtin one.
       sig(:final) { override.returns(String) }
-      def desc = @project.desc
+      def desc
+        @project.desc
+      end
 
       sig(:final) { override.returns(T::Boolean) }
-      def hidden? = @project.hidden?
+      def hidden?
+        @project.hidden?
+      end
 
       # Guard and stamp traits belong to the slot, not the override: a project
       # `up:` still is the provisioning command, so it inherits the builtin's
       # exemption and stamping behavior.
       sig(:final) { override.returns(T::Boolean) }
-      def staleness_exempt? = @builtin.staleness_exempt?
+      def staleness_exempt?
+        @builtin.staleness_exempt?
+      end
 
       sig(:final) { override.returns(T::Boolean) }
-      def stamps? = @builtin.stamps?
+      def stamps?
+        @builtin.stamps?
+      end
 
       # The argv belongs to the override: the project's run string receives
       # the same args as the builtin stage, and the script owns its flags —
       # so the slot is opaque, like any project command.
       sig(:final) { override.returns(T::Boolean) }
-      def opaque_args? = true
+      def opaque_args?
+        true
+      end
 
       # So do the argument completions: the builtin knows its arguments, the
       # project body wrapping it runs after and takes the same ones.
       sig(:final) { override.params(words: T::Array[String]).returns(T::Array[String]) }
-      def completions(words) = @builtin.completions(words)
+      def completions(words)
+        @builtin.completions(words)
+      end
 
       # The usage section belongs to the slot too: an overriding `up:` still
       # lists under Environment, with the project's description.
       sig(:final) { override.returns(Category) }
-      def category = @builtin.category
+      def category
+        @builtin.category
+      end
 
       # Value equality over the halves and the subtree (builtins compare by
       # identity — they are the wired instances).
@@ -599,12 +637,16 @@ module Dev
       end
 
       sig(:final) { override.returns(T::Boolean) }
-      def hidden? = @hidden
+      def hidden?
+        @hidden
+      end
 
       # Usage must work while stale — it is how the children get discovered
       # (same reason as HelpCommand) — and records nothing.
       sig(:final) { override.returns(T::Boolean) }
-      def staleness_exempt? = true
+      def staleness_exempt?
+        true
+      end
 
       sig(:final) { params(other: Object).returns(T::Boolean) }
       def ==(other)

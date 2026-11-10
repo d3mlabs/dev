@@ -19,10 +19,14 @@ module Dev
         GITIGNORE_FLAG = "--gitignore"
 
         sig { override.returns(String) }
-        def desc = "Scaffold this repo's learnings index + .gitignore footprint, or the org layout (--org); write-once"
+        def desc
+          "Scaffold this repo's learnings index + .gitignore footprint, or the org layout (--org); write-once"
+        end
 
         sig { override.returns(T::Array[Cli::Flag]) }
-        def flags = [Cli::Flag.new(ORG_FLAG), Cli::Flag.new(GITIGNORE_FLAG)]
+        def flags
+          [Cli::Flag.new(ORG_FLAG), Cli::Flag.new(GITIGNORE_FLAG)]
+        end
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)

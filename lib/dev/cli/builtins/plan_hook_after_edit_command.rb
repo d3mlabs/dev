@@ -26,10 +26,14 @@ module Dev
         end
 
         sig { override.returns(String) }
-        def desc = "Cursor afterFileEdit hook: auto-push an edited linked plan (payload on stdin)"
+        def desc
+          "Cursor afterFileEdit hook: auto-push an edited linked plan (payload on stdin)"
+        end
 
         sig { override.returns(T::Boolean) }
-        def hidden? = true
+        def hidden?
+          true
+        end
 
         private
 

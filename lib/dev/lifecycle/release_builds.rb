@@ -110,16 +110,24 @@ module Dev
 
       # @return [Array<String>] the builds' names, in order
       sig { returns(T::Array[String]) }
-      def names = @builds.map(&:name)
+      def names
+        @builds.map(&:name)
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(ReleaseBuilds) && @builds == other.builds
+      def ==(other)
+        other.is_a?(ReleaseBuilds) && @builds == other.builds
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [ReleaseBuilds, @builds].hash
+      def hash
+        [ReleaseBuilds, @builds].hash
+      end
 
       private
 

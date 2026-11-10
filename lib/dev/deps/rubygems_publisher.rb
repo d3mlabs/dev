@@ -100,7 +100,9 @@ module Dev
 
       # The declaration as `dev help` renders it.
       sig { returns(String) }
-      def to_s = "gem push"
+      def to_s
+        "gem push"
+      end
 
       private
 

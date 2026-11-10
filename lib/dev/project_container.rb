@@ -105,7 +105,9 @@ module Dev
     # @param image [EnvironmentImage]
     # @return [String]
     sig { params(image: EnvironmentImage).returns(String) }
-    def destination(image) = "in #{image.name} (container)"
+    def destination(image)
+      "in #{image.name} (container)"
+    end
 
     # Refuse before anything is pushed when the engine is not up.
     #

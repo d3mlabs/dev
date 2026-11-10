@@ -46,7 +46,9 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
 
   # The repo has no enrolled runner online.
   class NoneEnrolled < Dev::EnrolledRunnerLookup
-    def available = nil
+    def available
+      nil
+    end
   end
 
   # A FakeGh that snapshots the files of a `release upload` into a kept
@@ -107,11 +109,25 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     out
   end
 
-  def commit(message) = git("commit", "-q", "--allow-empty", "-m", message)
-  def head = git("rev-parse", "HEAD").strip
-  def short_head = head[0, 12]
-  def build_runs = (@root / "build-runs").file? ? (@root / "build-runs").readlines(chomp: true) : []
-  def origin_refs = Open3.capture2("git", "-C", @origin.to_s, "for-each-ref", "--format=%(refname)").first.lines(chomp: true).sort
+  def commit(message)
+    git("commit", "-q", "--allow-empty", "-m", message)
+  end
+
+  def head
+    git("rev-parse", "HEAD").strip
+  end
+
+  def short_head
+    head[0, 12]
+  end
+
+  def build_runs
+    (@root / "build-runs").file? ? (@root / "build-runs").readlines(chomp: true) : []
+  end
+
+  def origin_refs
+    Open3.capture2("git", "-C", @origin.to_s, "for-each-ref", "--format=%(refname)").first.lines(chomp: true).sort
+  end
 
   def client
     Dev::Lifecycle::Target.new(
@@ -127,10 +143,21 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     )
   end
 
-  def targets = [client, server]
-  def build(name) = Dev::Lifecycle::Build.parse(name, targets)
-  def release_builds = Dev::Lifecycle::ReleaseBuilds.new(builds: [build("cellbound-3d-linux64-release"), build("cellbound-3d-server-linux64")])
-  def store = Dev::Lifecycle::Store.new(project_name: "cellbound-3d", targets: targets, data_root: (@root / "data").to_s)
+  def targets
+    [client, server]
+  end
+
+  def build(name)
+    Dev::Lifecycle::Build.parse(name, targets)
+  end
+
+  def release_builds
+    Dev::Lifecycle::ReleaseBuilds.new(builds: [build("cellbound-3d-linux64-release"), build("cellbound-3d-server-linux64")])
+  end
+
+  def store
+    Dev::Lifecycle::Store.new(project_name: "cellbound-3d", targets: targets, data_root: (@root / "data").to_s)
+  end
 
   # Every build is host-placed on a linux64 machine, so each `package`
   # dispatches natively: the remote side is wired as the resolver needs
@@ -151,7 +178,9 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     Dev::Cli::BuildDispatcher.new(placements: placements, resolver: resolver)
   end
 
-  def listing = Dev::Cli::BuildListing.new(targets: targets, dispatcher: dispatcher)
+  def listing
+    Dev::Cli::BuildListing.new(targets: targets, dispatcher: dispatcher)
+  end
 
   def package
     Dev::Cli::Builtins::PackageCommand.new(
@@ -177,9 +206,17 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     Dev::Cli::LifecycleExecutor.new.execute(verb, args: parsed_args(verb, words), context: context(ui:))
   end
 
-  def forge_has_no_release = @gh.refuses(["release", "view"], with: "release not found")
-  def forge_creates = @gh.answers(["release", "create"], with: "#{URL}\n")
-  def forge_accepts_upload = @gh.answers(["release", "upload"], with: "")
+  def forge_has_no_release
+    @gh.refuses(["release", "view"], with: "release not found")
+  end
+
+  def forge_creates
+    @gh.answers(["release", "create"], with: "#{URL}\n")
+  end
+
+  def forge_accepts_upload
+    @gh.answers(["release", "upload"], with: "")
+  end
 
   test "a fresh cut: bumps VERSION, tags, pushes, packages each release build at the tag, creates the release and attaches the archives" do
     Given

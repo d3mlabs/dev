@@ -383,7 +383,9 @@ module Dev
         end
 
         sig { override.returns(Command::Category) }
-        def category = Command::Category::Environment
+        def category
+          Command::Category::Environment
+        end
 
         sig { override.returns(T::Array[Cli::Flag]) }
         def flags

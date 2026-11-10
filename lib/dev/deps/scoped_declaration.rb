@@ -90,23 +90,33 @@ module Dev
 
       # @return [String] the ask's package name (delegated)
       sig { returns(String) }
-      def name = declaration.name
+      def name
+        declaration.name
+      end
 
       # @return [Symbol] the ask's integration (delegated)
       sig { returns(Symbol) }
-      def integration = declaration.integration
+      def integration
+        declaration.integration
+      end
 
       # @return [Hash{String => Object}] the ask's constraint (delegated)
       sig { returns(T::Hash[String, T.untyped]) }
-      def constraint = declaration.constraint
+      def constraint
+        declaration.constraint
+      end
 
       # @return [String, nil] the ask's source coordinate (delegated)
       sig { returns(T.nilable(String)) }
-      def source = declaration.source
+      def source
+        declaration.source
+      end
 
       # @return [String, nil] the ask's addressable revision (delegated)
       sig { returns(T.nilable(String)) }
-      def revision = declaration.revision
+      def revision
+        declaration.revision
+      end
 
       # @param other [Object]
       # @return [Boolean] whether other is the same ask under the same context

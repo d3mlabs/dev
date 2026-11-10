@@ -17,11 +17,17 @@ class Dev::Cli::BuildSelectorTest < Minitest::Test
   class SelectingVerb < Dev::Cli::LifecycleCommand
     Env = type_member { { fixed: String } }
 
-    def desc = "selects"
+    def desc
+      "selects"
+    end
 
-    def flags = Dev::Cli::BuildSelector::FLAGS
+    def flags
+      Dev::Cli::BuildSelector::FLAGS
+    end
 
-    def before(args:, context:) = Dev::Cli::Dispatch::Outcome::Done.new
+    def before(args:, context:)
+      Dev::Cli::Dispatch::Outcome::Done.new
+    end
 
     def seam(env, context:); end
 

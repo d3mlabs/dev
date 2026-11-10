@@ -126,26 +126,34 @@ module Dev
       #
       # @return [Boolean]
       sig { returns(T::Boolean) }
-      def buildable? = !builder.nil?
+      def buildable?
+        !builder.nil?
+      end
 
       # Whether the target is ever shipped: every packager but `none`. A
       # target that is not is invisible to `package`, `release` and `deploy`.
       #
       # @return [Boolean]
       sig { returns(T::Boolean) }
-      def packageable? = !packager.is_a?(PackagerSpec::None)
+      def packageable?
+        !packager.is_a?(PackagerSpec::None)
+      end
 
       # Whether builds of this target carry a platform segment.
       #
       # @return [Boolean]
       sig { returns(T::Boolean) }
-      def platforms? = !platforms.empty?
+      def platforms?
+        !platforms.empty?
+      end
 
       # Whether builds of this target carry a config segment.
       #
       # @return [Boolean]
       sig { returns(T::Boolean) }
-      def configs? = !configs.empty?
+      def configs?
+        !configs.empty?
+      end
 
       # Every build of this target: the cross product of its declared axes
       # in declaration order (one build for a target declaring none).
@@ -163,7 +171,9 @@ module Dev
       #
       # @return [Build]
       sig { returns(Build) }
-      def default_build = Build.new(target: self, platform: platforms.first, config: configs.first)
+      def default_build
+        Build.new(target: self, platform: platforms.first, config: configs.first)
+      end
 
       # Every name that, parsed against this target, names a build or a
       # pattern over its builds: the bare name, each axis alone, and the
@@ -178,7 +188,9 @@ module Dev
       end
 
       sig { returns(String) }
-      def to_s = name
+      def to_s
+        name
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
       def ==(other)
@@ -188,10 +200,14 @@ module Dev
       end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [Target, name, desc, platforms, configs, builder, packager, environment].hash
+      def hash
+        [Target, name, desc, platforms, configs, builder, packager, environment].hash
+      end
 
       private
 

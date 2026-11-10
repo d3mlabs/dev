@@ -61,13 +61,19 @@ module Dev
         const :to, String
 
         sig { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(VersionBump) && from == other.from && to == other.to
+        def ==(other)
+          other.is_a?(VersionBump) && from == other.from && to == other.to
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
+        def eql?(other)
+          self == other
+        end
 
         sig { returns(Integer) }
-        def hash = [VersionBump, from, to].hash
+        def hash
+          [VersionBump, from, to].hash
+        end
       end
 
       # Where the checkout stands against its branch's remote-tracking
@@ -95,13 +101,19 @@ module Dev
         end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(Drift) && upstream == other.upstream && ahead == other.ahead && behind == other.behind
+        def ==(other)
+          other.is_a?(Drift) && upstream == other.upstream && ahead == other.ahead && behind == other.behind
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
+        def eql?(other)
+          self == other
+        end
 
         sig { returns(Integer) }
-        def hash = [Drift, upstream, ahead, behind].hash
+        def hash
+          [Drift, upstream, ahead, behind].hash
+        end
       end
 
       # What one run of the cut will do, and from where, read from the
@@ -134,7 +146,9 @@ module Dev
         #
         # @return [String]
         sig { returns(String) }
-        def notes = commits.empty? ? "Release #{tag}." : commits.join("\n")
+        def notes
+          commits.empty? ? "Release #{tag}." : commits.join("\n")
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
         def ==(other)
@@ -143,10 +157,14 @@ module Dev
         end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
+        def eql?(other)
+          self == other
+        end
 
         sig { returns(Integer) }
-        def hash = [Plan, tag, branch, sha, resuming, bump, previous, commits, drift].hash
+        def hash
+          [Plan, tag, branch, sha, resuming, bump, previous, commits, drift].hash
+        end
       end
 
       # @param git [Git] over the project's checkout
@@ -240,7 +258,9 @@ module Dev
       # @return [String] the full sha
       # @raise [Git::CommandFailedError] when the tag does not exist
       sig { params(tag: ReleaseTag).returns(String) }
-      def sha(tag) = @git.capture(["rev-parse", "--verify", "#{tag.name}^{commit}"]).strip
+      def sha(tag)
+        @git.capture(["rev-parse", "--verify", "#{tag.name}^{commit}"]).strip
+      end
 
       private
 
@@ -286,7 +306,9 @@ module Dev
 
       # @return [String] HEAD's commit
       sig { returns(String) }
-      def head = @git.capture(["rev-parse", "HEAD"]).strip
+      def head
+        @git.capture(["rev-parse", "HEAD"]).strip
+      end
 
       # The nearest tag in HEAD's ancestry other than the release's own
       # (the resume case: it already tags HEAD), or nil for a first release.

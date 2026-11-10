@@ -33,7 +33,9 @@ module Dev
       #
       # @return [Boolean]
       sig { returns(T::Boolean) }
-      def spinning? = Thread.current[KEY] == true
+      def spinning?
+        Thread.current[KEY] == true
+      end
 
       # The terminal is the spinner's for the block.
       #

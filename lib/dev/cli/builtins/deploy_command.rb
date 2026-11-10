@@ -176,10 +176,14 @@ module Dev
         end
 
         sig { override.returns(String) }
-        def desc = @channel.desc
+        def desc
+          @channel.desc
+        end
 
         sig { override.returns(T::Array[Cli::Flag]) }
-        def flags = SELECTION_FLAGS + DispatchResolver::FLAGS
+        def flags
+          SELECTION_FLAGS + DispatchResolver::FLAGS
+        end
 
         sig { override.returns(T.nilable(Placement)) }
         attr_reader :placement

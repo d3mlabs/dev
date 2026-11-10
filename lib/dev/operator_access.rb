@@ -46,7 +46,9 @@ module Dev
       #
       # @return [String]
       sig { returns(String) }
-      def fix = "gh auth refresh -h github.com -s #{scope}"
+      def fix
+        "gh auth refresh -h github.com -s #{scope}"
+      end
     end
 
     # Runs `gh auth refresh` for a scope; true when it succeeded. gh does

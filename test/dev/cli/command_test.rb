@@ -22,11 +22,17 @@ class FakeBuiltin < Dev::Cli::BuiltinCommand
 
   attr_reader :desc, :category
 
-  def hidden? = @hidden
+  def hidden?
+    @hidden
+  end
 
-  def staleness_exempt? = @staleness_exempt
+  def staleness_exempt?
+    @staleness_exempt
+  end
 
-  def stamps? = @stamps
+  def stamps?
+    @stamps
+  end
 
   def call(args:, context:)
     @body&.call(args, context)
@@ -37,9 +43,13 @@ end unless defined?(FakeBuiltin)
 class FakeVerb < Dev::Cli::LifecycleCommand
   Env = type_member { { fixed: String } }
 
-  def desc = "fake verb"
+  def desc
+    "fake verb"
+  end
 
-  def before(args:, context:) = Dev::Cli::Dispatch::Outcome::Run.new(args.positionals.join(" "))
+  def before(args:, context:)
+    Dev::Cli::Dispatch::Outcome::Run.new(args.positionals.join(" "))
+  end
 
   def seam(env, context:); end
 
@@ -149,7 +159,9 @@ class CommandTest < Minitest::Test
   test "a builtin without trait overrides gets the Command defaults" do
     Given "a builtin defining only desc and call"
     builtin = Class.new(Dev::Cli::BuiltinCommand) do
-      def desc = "minimal"
+      def desc
+        "minimal"
+      end
 
       def call(args:, context:); end
     end.new

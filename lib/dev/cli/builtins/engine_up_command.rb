@@ -27,13 +27,19 @@ module Dev
         end
 
         sig { override.returns(String) }
-        def desc = "Start the container engine (sized from this project's resources hint when inside one)"
+        def desc
+          "Start the container engine (sized from this project's resources hint when inside one)"
+        end
 
         sig { override.returns(Command::Category) }
-        def category = Command::Category::Environment
+        def category
+          Command::Category::Environment
+        end
 
         sig { override.returns(T::Boolean) }
-        def staleness_exempt? = true
+        def staleness_exempt?
+          true
+        end
 
         # @param args [Array<String>] unused
         # @param context [ExecutionContext] the project, if any, supplies the hint

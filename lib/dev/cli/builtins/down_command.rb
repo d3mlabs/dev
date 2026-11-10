@@ -42,13 +42,19 @@ module Dev
         end
 
         sig { override.returns(String) }
-        def desc = "Stop this checkout's service dependencies, and the engine if nothing else uses it"
+        def desc
+          "Stop this checkout's service dependencies, and the engine if nothing else uses it"
+        end
 
         sig { override.returns(Command::Category) }
-        def category = Command::Category::Environment
+        def category
+          Command::Category::Environment
+        end
 
         sig { override.returns(T::Boolean) }
-        def staleness_exempt? = true
+        def staleness_exempt?
+          true
+        end
 
         # @param args [Array<String>] unused
         # @param context [ExecutionContext] the project

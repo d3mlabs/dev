@@ -39,7 +39,9 @@ class Dev::Cli::Builtins::DeployCommandTest < Minitest::Test
 
   # The repo has no enrolled runner online.
   class NoneEnrolled < Dev::EnrolledRunnerLookup
-    def available = nil
+    def available
+      nil
+    end
   end
 
   PLATFORM = Dev::Lifecycle::Platform
@@ -83,10 +85,21 @@ class Dev::Cli::Builtins::DeployCommandTest < Minitest::Test
     super
   end
 
-  def git(*args) = Open3.capture2e("git", "-C", @project.to_s, "-c", "user.name=t", "-c", "user.email=t@t", *args)
-  def commit(message) = git("commit", "-q", "--allow-empty", "-m", message)
-  def head = Open3.capture2("git", "-C", @project.to_s, "rev-parse", "--short=12", "HEAD").first.strip
-  def shipped = (@root / "shipped").file? ? (@root / "shipped").readlines.map(&:chomp) : []
+  def git(*args)
+    Open3.capture2e("git", "-C", @project.to_s, "-c", "user.name=t", "-c", "user.email=t@t", *args)
+  end
+
+  def commit(message)
+    git("commit", "-q", "--allow-empty", "-m", message)
+  end
+
+  def head
+    Open3.capture2("git", "-C", @project.to_s, "rev-parse", "--short=12", "HEAD").first.strip
+  end
+
+  def shipped
+    (@root / "shipped").file? ? (@root / "shipped").readlines.map(&:chomp) : []
+  end
 
   def client
     Dev::Lifecycle::Target.new(
@@ -94,9 +107,17 @@ class Dev::Cli::Builtins::DeployCommandTest < Minitest::Test
     )
   end
 
-  def targets = [client, gem_target]
-  def store = Dev::Lifecycle::Store.new(project_name: "cellbound-3d", targets: targets, data_root: (@root / "data").to_s)
-  def build(name) = Dev::Lifecycle::Build.parse(name, targets)
+  def targets
+    [client, gem_target]
+  end
+
+  def store
+    Dev::Lifecycle::Store.new(project_name: "cellbound-3d", targets: targets, data_root: (@root / "data").to_s)
+  end
+
+  def build(name)
+    Dev::Lifecycle::Build.parse(name, targets)
+  end
 
   def release_archives
     Dev::Lifecycle::ReleaseArchives.new(releases: Dev::Lifecycle::GithubReleases.new(gh: @gh), store:, targets:)

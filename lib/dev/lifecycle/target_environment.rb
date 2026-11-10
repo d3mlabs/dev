@@ -52,16 +52,24 @@ module Dev
         end
 
         sig(:final) { override.returns(String) }
-        def to_s = @reference.to_s
+        def to_s
+          @reference.to_s
+        end
 
         sig(:final) { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(Single) && @reference == other.reference
+        def ==(other)
+          other.is_a?(Single) && @reference == other.reference
+        end
 
         sig(:final) { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
+        def eql?(other)
+          self == other
+        end
 
         sig(:final) { returns(Integer) }
-        def hash = [Single, @reference].hash
+        def hash
+          [Single, @reference].hash
+        end
       end
 
       # `environment: { <platform>: <name>, … }` — one reference per
@@ -85,19 +93,29 @@ module Dev
         #
         # @return [Array<Platform>]
         sig(:final) { returns(T::Array[Platform]) }
-        def platforms = @references.keys
+        def platforms
+          @references.keys
+        end
 
         sig(:final) { override.returns(String) }
-        def to_s = @references.map { |platform, reference| "#{platform}: #{reference}" }.join(", ")
+        def to_s
+          @references.map { |platform, reference| "#{platform}: #{reference}" }.join(", ")
+        end
 
         sig(:final) { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(PerPlatform) && @references == other.references
+        def ==(other)
+          other.is_a?(PerPlatform) && @references == other.references
+        end
 
         sig(:final) { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
+        def eql?(other)
+          self == other
+        end
 
         sig(:final) { returns(Integer) }
-        def hash = [PerPlatform, @references].hash
+        def hash
+          [PerPlatform, @references].hash
+        end
       end
     end
   end

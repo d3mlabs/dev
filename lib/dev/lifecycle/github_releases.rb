@@ -153,7 +153,9 @@ module Dev
       # @param name [String] an asset's name
       # @return [String] the glob that matches exactly that name
       sig { params(name: String).returns(String) }
-      def literal(name) = name.gsub(GLOB_METACHARACTERS) { |char| "\\#{char}" }
+      def literal(name)
+        name.gsub(GLOB_METACHARACTERS) { |char| "\\#{char}" }
+      end
 
       # @param printed [String] what gh printed: the release's url
       # @return [URI]

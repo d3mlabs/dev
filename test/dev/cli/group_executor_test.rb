@@ -11,9 +11,13 @@ class Dev::Cli::GroupExecutorTest < Minitest::Test
   include SorbetHelper
 
   class FakeBuiltin < Dev::Cli::BuiltinCommand
-    def desc = "a builtin"
+    def desc
+      "a builtin"
+    end
 
-    def category = Dev::Cli::Command::Category::Workflow
+    def category
+      Dev::Cli::Command::Category::Workflow
+    end
 
     def call(args:, context:); end
   end

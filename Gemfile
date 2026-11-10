@@ -27,9 +27,8 @@ gem "simplecov-sorbet", "~> 0.2", require: false
 gem "pry", "~> 0.14"
 gem "pry-byebug", "~> 3.11"
 
-# Style
-gem "rubocop-shopify", "~> 3.0", require: false
-gem "rubocop-sorbet", "~> 0.10", require: false
+# Style: the org tier (inherits rubocop-shopify, brings rubocop-sorbet)
+gem "rubocop-d3mlabs", "~> 1.0", require: false
 
 # Sorbet: static + runtime type checking
 gem "sorbet", group: :development

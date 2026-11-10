@@ -43,13 +43,17 @@ module Dev
       #
       # @return [Boolean]
       sig { returns(T::Boolean) }
-      def live? = self == Live
+      def live?
+        self == Live
+      end
 
       # The id, for the env, a payload and the report.
       #
       # @return [String]
       sig { returns(String) }
-      def to_s = serialize
+      def to_s
+        serialize
+      end
     end
   end
 end

@@ -11,7 +11,9 @@ module Dev
         extend T::Sig
 
         sig { override.returns(String) }
-        def desc = "Scaffold/update the repo's plan template mirror"
+        def desc
+          "Scaffold/update the repo's plan template mirror"
+        end
 
         private
 

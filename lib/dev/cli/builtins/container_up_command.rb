@@ -113,7 +113,9 @@ module Dev
         end
 
         sig { override.returns(String) }
-        def desc = "Bring the engine up, resolve the build image, start the persistent container"
+        def desc
+          "Bring the engine up, resolve the build image, start the persistent container"
+        end
 
         # The CLI verb: an adapter over the ServiceUp port.
         #

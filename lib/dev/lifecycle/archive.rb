@@ -71,7 +71,9 @@ module Dev
 
           # @return [Array<String>]
           sig { returns(T::Array[String]) }
-          def ids = values.map(&:serialize)
+          def ids
+            values.map(&:serialize)
+          end
         end
       end
 
@@ -127,19 +129,29 @@ module Dev
           EXTENSION = "zip"
 
           sig { override.returns(String) }
-          def extension = EXTENSION
+          def extension
+            EXTENSION
+          end
 
           sig { override.returns(String) }
-          def to_s = ""
+          def to_s
+            ""
+          end
 
           sig { params(other: Object).returns(T::Boolean) }
-          def ==(other) = other.is_a?(Zip)
+          def ==(other)
+            other.is_a?(Zip)
+          end
 
           sig { params(other: Object).returns(T::Boolean) }
-          def eql?(other) = self == other
+          def eql?(other)
+            self == other
+          end
 
           sig { returns(Integer) }
-          def hash = [Zip].hash
+          def hash
+            [Zip].hash
+          end
         end
 
         # `<build>.tar.zst`, or with `split` the parts of at most that size
@@ -154,22 +166,34 @@ module Dev
           const :split, T.nilable(ByteSize), default: nil
 
           sig { returns(T::Boolean) }
-          def split? = !split.nil?
+          def split?
+            !split.nil?
+          end
 
           sig { override.returns(String) }
-          def extension = split? ? MANIFEST_EXTENSION : EXTENSION
+          def extension
+            split? ? MANIFEST_EXTENSION : EXTENSION
+          end
 
           sig { override.returns(String) }
-          def to_s = split? ? " (tar, split #{split})" : " (tar)"
+          def to_s
+            split? ? " (tar, split #{split})" : " (tar)"
+          end
 
           sig { params(other: Object).returns(T::Boolean) }
-          def ==(other) = other.is_a?(Tar) && split == other.split
+          def ==(other)
+            other.is_a?(Tar) && split == other.split
+          end
 
           sig { params(other: Object).returns(T::Boolean) }
-          def eql?(other) = self == other
+          def eql?(other)
+            self == other
+          end
 
           sig { returns(Integer) }
-          def hash = [Tar, split].hash
+          def hash
+            [Tar, split].hash
+          end
         end
       end
 
@@ -237,16 +261,24 @@ module Dev
       #
       # @return [String] `archive`, `archive (tar)`, `archive (tar, split 2GiB)`
       sig { returns(String) }
-      def to_s = "archive#{@form}"
+      def to_s
+        "archive#{@form}"
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(Archive) && form == other.form
+      def ==(other)
+        other.is_a?(Archive) && form == other.form
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [Archive, form].hash
+      def hash
+        [Archive, form].hash
+      end
 
       private
 
@@ -312,7 +344,9 @@ module Dev
       # @param install [Pathname]
       # @return [Array<String>] `tar` streaming the install's contents
       sig { params(install: Pathname).returns(Shell::Argv) }
-      def tar_stage(install) = ["tar", "-C", install.to_s, "-cf", "-", "."]
+      def tar_stage(install)
+        ["tar", "-C", install.to_s, "-cf", "-", "."]
+      end
 
       # @param commands [Array<Array<String>>]
       # @param install [Pathname] named in the failure
@@ -331,13 +365,17 @@ module Dev
       # @param archive [Pathname]
       # @return [Array<Pathname>] the split parts present, in order
       sig { params(archive: Pathname).returns(T::Array[Pathname]) }
-      def parts_of(archive) = Pathname.glob("#{with(archive, Form::Tar::EXTENSION)}.[0-9]*").select(&:file?).sort
+      def parts_of(archive)
+        Pathname.glob("#{with(archive, Form::Tar::EXTENSION)}.[0-9]*").select(&:file?).sort
+      end
 
       # @param archive [Pathname] the path without extension
       # @param extension [String]
       # @return [Pathname]
       sig { params(archive: Pathname, extension: String).returns(Pathname) }
-      def with(archive, extension) = Pathname("#{archive}.#{extension}")
+      def with(archive, extension)
+        Pathname("#{archive}.#{extension}")
+      end
     end
   end
 end

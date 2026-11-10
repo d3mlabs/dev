@@ -21,7 +21,9 @@ class Dev::FootprintTest < Minitest::Test
     root
   end
 
-  def ensure_footprint(root) = Dev::Footprint::Gitignore.new(paths: PATHS).apply(root)
+  def ensure_footprint(root)
+    Dev::Footprint::Gitignore.new(paths: PATHS).apply(root)
+  end
 
   test "MANAGED_PATHS collects each owner's footprint line" do
     Expect "the three paths dev materializes into a project"

@@ -23,24 +23,36 @@ module Dev
 
       # @return [Array<Pathname>] every file written, the archive first
       sig { returns(T::Array[Pathname]) }
-      def files = [archive, *parts]
+      def files
+        [archive, *parts]
+      end
 
       # @return [String] the archive's file name, what the manifest records
       sig { returns(String) }
-      def name = archive.basename.to_s
+      def name
+        archive.basename.to_s
+      end
 
       # @return [Boolean] whether the archive is a split set
       sig { returns(T::Boolean) }
-      def split? = !parts.empty?
+      def split?
+        !parts.empty?
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(PackedArchive) && archive == other.archive && parts == other.parts
+      def ==(other)
+        other.is_a?(PackedArchive) && archive == other.archive && parts == other.parts
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [PackedArchive, archive, parts].hash
+      def hash
+        [PackedArchive, archive, parts].hash
+      end
     end
   end
 end

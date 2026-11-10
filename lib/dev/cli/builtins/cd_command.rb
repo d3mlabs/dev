@@ -29,13 +29,19 @@ module Dev
         end
 
         sig { override.returns(String) }
-        def desc = DESC
+        def desc
+          DESC
+        end
 
         sig { override.returns(Command::Category) }
-        def category = Command::Category::Workflow
+        def category
+          Command::Category::Workflow
+        end
 
         sig { override.returns(T::Array[Cli::Flag]) }
-        def flags = [Cli::Flag.new(RESOLVE_FLAG), Cli::Flag.new(CANDIDATES_FLAG)]
+        def flags
+          [Cli::Flag.new(RESOLVE_FLAG), Cli::Flag.new(CANDIDATES_FLAG)]
+        end
 
         # A bare `dev cd` reaching this process means the shell wrapper is not
         # active: a child process cannot change its parent's cwd.

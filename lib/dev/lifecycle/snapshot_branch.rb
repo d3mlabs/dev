@@ -117,11 +117,15 @@ module Dev
 
       # @return [String] the short branch name (`dev/build/<runner>/<id>`)
       sig { returns(String) }
-      def name = "#{NAMESPACE}/#{@runner}/#{@created_at.strftime(BuildId::INSTANT_FORMAT)}-#{@nonce}"
+      def name
+        "#{NAMESPACE}/#{@runner}/#{@created_at.strftime(BuildId::INSTANT_FORMAT)}-#{@nonce}"
+      end
 
       # @return [String] the full ref (`refs/heads/dev/build/<runner>/<id>`)
       sig { returns(String) }
-      def ref = "#{REF_PREFIX}#{name}"
+      def ref
+        "#{REF_PREFIX}#{name}"
+      end
 
       # Whether the branch was minted more than `max_age` ago.
       #
@@ -129,19 +133,29 @@ module Dev
       # @param now [Time]
       # @return [Boolean]
       sig { params(max_age: Integer, now: Time).returns(T::Boolean) }
-      def older_than?(max_age, now:) = now - @created_at > max_age
+      def older_than?(max_age, now:)
+        now - @created_at > max_age
+      end
 
       sig { returns(String) }
-      def to_s = name
+      def to_s
+        name
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(SnapshotBranch) && name == other.name
+      def ==(other)
+        other.is_a?(SnapshotBranch) && name == other.name
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [SnapshotBranch, name].hash
+      def hash
+        [SnapshotBranch, name].hash
+      end
     end
   end
 end

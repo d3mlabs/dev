@@ -14,7 +14,9 @@ module Dev
         extend T::Sig
 
         sig { override.returns(String) }
-        def desc = "Remove this checkout's build container (discards its incremental state)"
+        def desc
+          "Remove this checkout's build container (discards its incremental state)"
+        end
 
         # @param args [Array<String>] unused
         # @param context [ExecutionContext] the project

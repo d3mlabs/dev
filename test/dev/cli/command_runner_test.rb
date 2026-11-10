@@ -70,7 +70,9 @@ class CommandRunnerTest < Minitest::Test
 
   # The workspace program a container runs ends by becoming the command:
   # what a stubbed client must have been handed as its shell_cmd.
-  def runs_inside(shell_command) = includes("exec #{["sh", "-c", shell_command].shelljoin}\n")
+  def runs_inside(shell_command)
+    includes("exec #{["sh", "-c", shell_command].shelljoin}\n")
+  end
 
   # The container's verdict in exec mode is the process's own: pin the exit
   # instead of leaving the suite to take it.
@@ -107,9 +109,13 @@ class CommandRunnerTest < Minitest::Test
 
   # A host whose gh holds no login: the default for these tests, so the
   # developer's own `gh auth token` never leaks into an expectation.
-  def no_github_token = Dev::ContainerGithubToken.new(source: -> { nil })
+  def no_github_token
+    Dev::ContainerGithubToken.new(source: -> { nil })
+  end
 
-  def host_github_token(token) = Dev::ContainerGithubToken.new(source: -> { token })
+  def host_github_token(token)
+    Dev::ContainerGithubToken.new(source: -> { token })
+  end
 
   def host_rule(marker: nil, inside_container: false)
     path = marker || (@project_root / "no-marker").to_s

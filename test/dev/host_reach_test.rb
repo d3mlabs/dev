@@ -110,8 +110,13 @@ class Dev::HostReachTest < Minitest::Test
 
   # Lambdas rather than blocks: a plain block auto-splats its single array
   # argument under RSpock's transformation.
-  def as_runner = ->(argv) { argv.first(8) == %w[sudo -u runner -H env -C / PATH=/opt/brew/bin:/usr/bin] }
-  def api_path = ->(argv) { argv.fetch(argv.index("api") + 1) }
+  def as_runner
+    ->(argv) { argv.first(8) == %w[sudo -u runner -H env -C / PATH=/opt/brew/bin:/usr/bin] }
+  end
+
+  def api_path
+    ->(argv) { argv.fetch(argv.index("api") + 1) }
+  end
 
   def identity
     Dev::RunnerUser.new(name: "runner", home_of: ->(_user) { "/home/runner" }, brew: nil, path: "/opt/brew/bin:/usr/bin")

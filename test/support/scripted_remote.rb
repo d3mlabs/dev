@@ -77,7 +77,9 @@ class ScriptedRemote
   end
 
   # The `dev …` words the host would run; nil when nothing crossed.
-  def dispatched_verbs = dispatched_inputs&.fetch("verbs")
+  def dispatched_verbs
+    dispatched_inputs&.fetch("verbs")
+  end
 
   # The argv of the download, when one happened.
   def download

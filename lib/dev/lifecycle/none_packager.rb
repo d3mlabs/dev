@@ -33,16 +33,24 @@ module Dev
 
       # The declaration as `dev help` renders it.
       sig { returns(String) }
-      def to_s = "none"
+      def to_s
+        "none"
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(NonePackager)
+      def ==(other)
+        other.is_a?(NonePackager)
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [NonePackager].hash
+      def hash
+        [NonePackager].hash
+      end
     end
   end
 end

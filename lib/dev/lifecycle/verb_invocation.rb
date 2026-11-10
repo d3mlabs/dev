@@ -60,20 +60,30 @@ module Dev
 
       # @return [String] the verb's name
       sig { returns(String) }
-      def verb = T.must(@words.first)
+      def verb
+        T.must(@words.first)
+      end
 
       # @return [String] the words as the `verbs` input spells one entry
       sig { returns(String) }
-      def to_s = @words.join(" ")
+      def to_s
+        @words.join(" ")
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(VerbInvocation) && words == other.words && fetch == other.fetch
+      def ==(other)
+        other.is_a?(VerbInvocation) && words == other.words && fetch == other.fetch
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [VerbInvocation, @words, @fetch].hash
+      def hash
+        [VerbInvocation, @words, @fetch].hash
+      end
     end
   end
 end

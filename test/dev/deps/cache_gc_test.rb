@@ -23,7 +23,9 @@ class FixtureCacheGc < Dev::Deps::CacheGc
 
   private
 
-  def running_mount_sources = @in_use_fixture
+  def running_mount_sources
+    @in_use_fixture
+  end
 end unless defined?(FixtureCacheGc)
 
 transform!(RSpock::AST::Transformation)
@@ -56,7 +58,9 @@ class Dev::Deps::CacheGcTest < Minitest::Test
   end
 
   # The base the store derives for ENGINE_REPO under data root dir.
-  def engine_base(dir) = File.join(dir, "gh", "d3mlabs", "unreal-engine")
+  def engine_base(dir)
+    File.join(dir, "gh", "d3mlabs", "unreal-engine")
+  end
 
   def build_gc(dir, lockfile, **opts)
     FixtureCacheGc.new(lockfile: lockfile, store: Dev::Deps::LocalStore.new(data_root: dir), **opts)

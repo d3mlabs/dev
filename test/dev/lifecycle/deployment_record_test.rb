@@ -34,7 +34,9 @@ class Dev::Lifecycle::DeploymentRecordTest < Minitest::Test
     Dev::Lifecycle::Shipment.of_release(entry, archive: Pathname("/store/.releases/v#{version}") / entry.name, tag: Dev::Lifecycle::ReleaseTag.new(version), sha: "3f2a1c9d8e7b4455")
   end
 
-  def shipped(name, build_id) = RECORD::DeployedBuild.new(name:, build_id: Dev::Lifecycle::BuildId.new(build_id))
+  def shipped(name, build_id)
+    RECORD::DeployedBuild.new(name:, build_id: Dev::Lifecycle::BuildId.new(build_id))
+  end
 
   test "one deploy of artifacts from one commit is one record: the channel, that commit as the ref, the builds with their ids, in order" do
     Given

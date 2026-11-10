@@ -34,21 +34,29 @@ module Dev
 
         # @return [UnlockSet] the conservative re-lock: nothing floats
         sig { returns(UnlockSet) }
-        def none = new
+        def none
+          new
+        end
 
         # @return [UnlockSet] the full re-lock: everything floats
         sig { returns(UnlockSet) }
-        def all = new(all: true)
+        def all
+          new(all: true)
+        end
       end
 
       # @return [Boolean] whether every declaration floats
       sig { returns(T::Boolean) }
-      def all? = @all
+      def all?
+        @all
+      end
 
       # @return [Boolean] whether this is a subset re-lock — some
       #   declarations float by name and every other pin is the lock's
       sig { returns(T::Boolean) }
-      def subset? = !@all && @names.any?
+      def subset?
+        !@all && @names.any?
+      end
 
       # @param name [String] a declaration (or pin) name
       # @return [Boolean] whether the author asked for this name to float

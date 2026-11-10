@@ -24,10 +24,14 @@ module Dev
       end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [Deployment, record, id, created_at, url].hash
+      def hash
+        [Deployment, record, id, created_at, url].hash
+      end
     end
   end
 end

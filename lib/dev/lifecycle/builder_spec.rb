@@ -32,16 +32,24 @@ module Dev
         const :command, String
 
         sig { override.returns(String) }
-        def to_s = command
+        def to_s
+          command
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(Script) && command == other.command
+        def ==(other)
+          other.is_a?(Script) && command == other.command
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
+        def eql?(other)
+          self == other
+        end
 
         sig { returns(Integer) }
-        def hash = [Script, command].hash
+        def hash
+          [Script, command].hash
+        end
       end
     end
   end

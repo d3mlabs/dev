@@ -51,5 +51,7 @@ class RecordingUi < Dev::NoUi
   # The events as `[kind, text, depth]` rows, for a table-shaped assertion.
   #
   # @return [Array<Array>]
-  def rows = @events.map { |event| [event.kind, event.text, event.depth] }
+  def rows
+    @events.map { |event| [event.kind, event.text, event.depth] }
+  end
 end

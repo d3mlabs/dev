@@ -152,7 +152,9 @@ class Dev::Deps::SteamIntegrationTest < Minitest::Test
     tree_dir = File.join(dir, "steam", "1690800")
     dep = build_dependency
     integration = Class.new(Dev::Deps::SteamIntegration) do
-      def provision(_dep, _server_dir) = nil
+      def provision(_dep, _server_dir)
+        nil
+      end
     end.new(
       repository: nil,
       store: Dev::Deps::LocalStore.new(data_root: dir),

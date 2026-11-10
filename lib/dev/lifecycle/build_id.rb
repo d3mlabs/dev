@@ -61,16 +61,24 @@ module Dev
       end
 
       sig { returns(String) }
-      def to_s = @value
+      def to_s
+        @value
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(BuildId) && @value == other.to_s
+      def ==(other)
+        other.is_a?(BuildId) && @value == other.to_s
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [BuildId, @value].hash
+      def hash
+        [BuildId, @value].hash
+      end
     end
   end
 end

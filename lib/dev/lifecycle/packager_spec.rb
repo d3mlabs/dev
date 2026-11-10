@@ -37,16 +37,24 @@ module Dev
         const :command, String
 
         sig { override.returns(String) }
-        def to_s = command
+        def to_s
+          command
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(Script) && command == other.command
+        def ==(other)
+          other.is_a?(Script) && command == other.command
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
+        def eql?(other)
+          self == other
+        end
 
         sig { returns(Integer) }
-        def hash = [Script, command].hash
+        def hash
+          [Script, command].hash
+        end
       end
 
       # `packager: archive` (or omitted) in one of dev's own forms
@@ -58,16 +66,24 @@ module Dev
         const :form, Lifecycle::Archive::Form, factory: -> { Lifecycle::Archive::Form::Zip.new }
 
         sig { override.returns(String) }
-        def to_s = "archive#{form}"
+        def to_s
+          "archive#{form}"
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(Archive) && form == other.form
+        def ==(other)
+          other.is_a?(Archive) && form == other.form
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
+        def eql?(other)
+          self == other
+        end
 
         sig { returns(Integer) }
-        def hash = [Archive, form].hash
+        def hash
+          [Archive, form].hash
+        end
       end
 
       # `packager: as-is` — the install already is the archive.
@@ -76,16 +92,24 @@ module Dev
         include PackagerSpec
 
         sig { override.returns(String) }
-        def to_s = "as-is"
+        def to_s
+          "as-is"
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(AsIs)
+        def ==(other)
+          other.is_a?(AsIs)
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
+        def eql?(other)
+          self == other
+        end
 
         sig { returns(Integer) }
-        def hash = [AsIs].hash
+        def hash
+          [AsIs].hash
+        end
       end
 
       # `packager: none` — built, never shipped.
@@ -94,16 +118,24 @@ module Dev
         include PackagerSpec
 
         sig { override.returns(String) }
-        def to_s = "none"
+        def to_s
+          "none"
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(None)
+        def ==(other)
+          other.is_a?(None)
+        end
 
         sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
+        def eql?(other)
+          self == other
+        end
 
         sig { returns(Integer) }
-        def hash = [None].hash
+        def hash
+          [None].hash
+        end
       end
     end
   end

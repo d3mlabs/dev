@@ -36,7 +36,9 @@ class Dev::Cli::Builtins::DeployAllCommandTest < Minitest::Test
 
   # The repo has no enrolled runner online.
   class NoneEnrolled < Dev::EnrolledRunnerLookup
-    def available = nil
+    def available
+      nil
+    end
   end
 
   REPO = "d3mlabs/cellbound-3d"
@@ -63,10 +65,21 @@ class Dev::Cli::Builtins::DeployAllCommandTest < Minitest::Test
     super
   end
 
-  def shipped = (@root / "shipped").file? ? (@root / "shipped").readlines.map(&:chomp) : []
-  def targets = [client_target, gem_target]
-  def store = Dev::Lifecycle::Store.new(project_name: "cellbound-3d", targets:, data_root: (@root / "data").to_s)
-  def build(name) = Dev::Lifecycle::Build.parse(name, targets)
+  def shipped
+    (@root / "shipped").file? ? (@root / "shipped").readlines.map(&:chomp) : []
+  end
+
+  def targets
+    [client_target, gem_target]
+  end
+
+  def store
+    Dev::Lifecycle::Store.new(project_name: "cellbound-3d", targets:, data_root: (@root / "data").to_s)
+  end
+
+  def build(name)
+    Dev::Lifecycle::Build.parse(name, targets)
+  end
 
   # Script the forge to accept deployments and their statuses, as ids 41, 42, …
   def forge_accepts(count)

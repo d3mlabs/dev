@@ -23,13 +23,19 @@ module Dev
       const :into, Pathname
 
       sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(ArtifactFetch) && name == other.name && into == other.into
+      def ==(other)
+        other.is_a?(ArtifactFetch) && name == other.name && into == other.into
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [ArtifactFetch, name, into].hash
+      def hash
+        [ArtifactFetch, name, into].hash
+      end
     end
   end
 end

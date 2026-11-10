@@ -19,16 +19,24 @@ module Dev
 
       # @return [String] the sha as the crossing line prints it
       sig { returns(String) }
-      def short_sha = T.must(sha[0, 12])
+      def short_sha
+        T.must(sha[0, 12])
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(Snapshot) && sha == other.sha && branch == other.branch
+      def ==(other)
+        other.is_a?(Snapshot) && sha == other.sha && branch == other.branch
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [Snapshot, sha, branch].hash
+      def hash
+        [Snapshot, sha, branch].hash
+      end
     end
   end
 end

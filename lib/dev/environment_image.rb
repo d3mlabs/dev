@@ -235,11 +235,15 @@ module Dev
     # @param platform [Lifecycle::Platform]
     # @return [Boolean]
     sig { params(platform: Lifecycle::Platform).returns(T::Boolean) }
-    def produces?(platform) = @target_platforms.include?(platform)
+    def produces?(platform)
+      @target_platforms.include?(platform)
+    end
 
     # @return [String] the floor pinned by digest — what the FROM line pulls
     sig { returns(String) }
-    def floor_ref = "#{@from}@sha256:#{@from_digest}"
+    def floor_ref
+      "#{@from}@sha256:#{@from_digest}"
+    end
 
     # The Dockerfile dev builds. Root only for the apt layer and the marker;
     # the floor's final user is restored. The apt lists are removed so the
@@ -275,37 +279,53 @@ module Dev
 
     # @return [String] the first SHORT_DIGEST_LENGTH hex, for names and logs
     sig { returns(String) }
-    def short_digest = T.must(digest[0, SHORT_DIGEST_LENGTH])
+    def short_digest
+      T.must(digest[0, SHORT_DIGEST_LENGTH])
+    end
 
     # @return [String] the registry tag: the digest itself
     sig { returns(String) }
-    def tag = digest
+    def tag
+      digest
+    end
 
     # @return [String] the image's repository, `<registry>/<name>` — the
     #   project's own; every tag under it is one of this image's builds
     sig { returns(String) }
-    def repository = "#{@registry}/#{@name}"
+    def repository
+      "#{@registry}/#{@name}"
+    end
 
     # @return [String] the full image reference, `<repository>:<tag>`
     sig { returns(String) }
-    def ref = "#{repository}:#{tag}"
+    def ref
+      "#{repository}:#{tag}"
+    end
 
     # @return [String] the registry's host — what `docker login` takes
     #   (`ghcr.io` of `ghcr.io/d3mlabs`)
     sig { returns(String) }
-    def registry_host = T.must(@registry.split("/").first)
+    def registry_host
+      T.must(@registry.split("/").first)
+    end
 
     # @return [Hash{String => String}] the build arg the marker reads
     sig { returns(T::Hash[String, String]) }
-    def build_args = { DIGEST_BUILD_ARG => digest }
+    def build_args
+      { DIGEST_BUILD_ARG => digest }
+    end
 
     # @return [String] what MARKER_PATH holds inside the image
     sig { returns(String) }
-    def marker = "name=#{@name}\n#{DIGEST_KEY}=#{digest}\n"
+    def marker
+      "name=#{@name}\n#{DIGEST_KEY}=#{digest}\n"
+    end
 
     # @return [String] the platform as dev's key (`linux-x86_64`), variant dropped
     sig { returns(String) }
-    def dev_platform = self.class.dev_platform_of(@platform)
+    def dev_platform
+      self.class.dev_platform_of(@platform)
+    end
 
     # The pin with the digest stored beside its recipe — what the lock
     # writes, and what from_pin checks.

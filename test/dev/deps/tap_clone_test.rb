@@ -40,8 +40,13 @@ class Dev::Deps::TapCloneTest < Minitest::Test
     super
   end
 
-  def origin_head = GIT.new(root: @origin).capture(["rev-parse", "main"]).strip
-  def clone_git = GIT.new(root: @clone.dir)
+  def origin_head
+    GIT.new(root: @origin).capture(["rev-parse", "main"]).strip
+  end
+
+  def clone_git
+    GIT.new(root: @clone.dir)
+  end
 
   def push_from_seed(message)
     (@seed / "Formula" / "dev.rb").write("class Dev < Formula\n  url \"https://x/#{message}.zip\"\n  sha256 \"#{"cd" * 32}\"\nend\n")

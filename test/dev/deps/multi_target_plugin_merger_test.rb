@@ -26,7 +26,9 @@ class Dev::Deps::MultiTargetPluginMergerTest < Minitest::Test
     super
   end
 
-  def new_merger(**options) = Dev::Deps::MultiTargetPluginMerger.new(**options)
+  def new_merger(**options)
+    Dev::Deps::MultiTargetPluginMerger.new(**options)
+  end
 
   test "three per-target zips — two of them Windows — merge into one zip laid out per target, the shared Windows files unioned" do
     Given "snappy's Steam and Epic client builds (one Windows tree each, same content, different binaries) and its server build"

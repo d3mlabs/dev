@@ -20,7 +20,9 @@ module Dev
         include ServiceDown
 
         sig { override.returns(String) }
-        def desc = "Stop this checkout's build container, keeping its incremental state"
+        def desc
+          "Stop this checkout's build container, keeping its incremental state"
+        end
 
         # The CLI verb: an adapter over the ServiceDown port.
         #

@@ -45,16 +45,24 @@ module Dev
 
       # The declaration as `dev help` renders it.
       sig { returns(String) }
-      def to_s = "as-is"
+      def to_s
+        "as-is"
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(AsIsPackager)
+      def ==(other)
+        other.is_a?(AsIsPackager)
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [AsIsPackager].hash
+      def hash
+        [AsIsPackager].hash
+      end
 
       private
 

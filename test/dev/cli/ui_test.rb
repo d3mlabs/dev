@@ -68,7 +68,9 @@ class Dev::Cli::UiImplTest < Minitest::Test
       @log = []
     end
 
-    def is_a?(klass) = klass == CLI::UI::StdoutRouter.singleton_class || super
+    def is_a?(klass)
+      klass == CLI::UI::StdoutRouter.singleton_class || super
+    end
     alias kind_of? is_a?
 
     def enable
@@ -87,20 +89,36 @@ class Dev::Cli::UiImplTest < Minitest::Test
       true
     end
 
-    def enabled?(_stream = nil) = @activated
-    def routing? = @routing
+    def enabled?(_stream = nil)
+      @activated
+    end
+
+    def routing?
+      @routing
+    end
   end
 
   # A CLI::UI that formats nothing and remembers what it printed.
   class RecordingCliUi
     attr_reader :printed
 
-    def initialize = @printed = []
-    def is_a?(klass) = klass == CLI::UI.singleton_class || super
+    def initialize
+      @printed = []
+    end
+
+    def is_a?(klass)
+      klass == CLI::UI.singleton_class || super
+    end
     alias kind_of? is_a?
     def enable_color=(_value); end
-    def fmt(text) = text
-    def puts(text) = @printed << text
+
+    def fmt(text)
+      text
+    end
+
+    def puts(text)
+      @printed << text
+    end
   end
 
   def ui(frame: typed_mock(CLI::UI::Frame, class_of: true), spinner: typed_mock(CLI::UI::Spinner, class_of: true), router: FakeRouter.new,

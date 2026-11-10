@@ -138,7 +138,9 @@ module Dev
       # @return [String] the full sha
       # @raise [Lifecycle::Git::CommandFailedError]
       sig { returns(String) }
-      def head = @git.capture(["rev-parse", "HEAD"]).strip
+      def head
+        @git.capture(["rev-parse", "HEAD"]).strip
+      end
     end
   end
 end

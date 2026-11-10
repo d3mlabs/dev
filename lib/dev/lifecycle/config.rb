@@ -45,20 +45,26 @@ module Dev
         # @param word [String]
         # @return [Boolean]
         sig { params(word: String).returns(T::Boolean) }
-        def id?(word) = !try_deserialize(word).nil?
+        def id?(word)
+          !try_deserialize(word).nil?
+        end
 
         # Every id, in declaration order.
         #
         # @return [Array<String>]
         sig { returns(T::Array[String]) }
-        def ids = values.map(&:serialize)
+        def ids
+          values.map(&:serialize)
+        end
       end
 
       # The id, for a name or a file.
       #
       # @return [String]
       sig { returns(String) }
-      def to_s = serialize
+      def to_s
+        serialize
+      end
     end
   end
 end

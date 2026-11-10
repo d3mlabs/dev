@@ -19,15 +19,21 @@ module Dev
         end
 
         sig { override.returns(String) }
-        def desc = "Check dependency state freshness (manifest vs lockfiles vs installed)"
+        def desc
+          "Check dependency state freshness (manifest vs lockfiles vs installed)"
+        end
 
         sig { override.returns(Command::Category) }
-        def category = Command::Category::Environment
+        def category
+          Command::Category::Environment
+        end
 
         # check IS the explicit staleness inspection — guarding before it
         # would report the same thing twice.
         sig { override.returns(T::Boolean) }
-        def staleness_exempt? = true
+        def staleness_exempt?
+          true
+        end
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)

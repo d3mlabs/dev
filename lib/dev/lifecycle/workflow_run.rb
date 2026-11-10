@@ -23,11 +23,15 @@ module Dev
 
       # @return [Boolean]
       sig { returns(T::Boolean) }
-      def completed? = status == COMPLETED
+      def completed?
+        status == COMPLETED
+      end
 
       # @return [Boolean] completed with GitHub's success verdict
       sig { returns(T::Boolean) }
-      def succeeded? = completed? && conclusion == SUCCESS
+      def succeeded?
+        completed? && conclusion == SUCCESS
+      end
 
       sig { params(other: Object).returns(T::Boolean) }
       def ==(other)
@@ -35,10 +39,14 @@ module Dev
       end
 
       sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      def eql?(other)
+        self == other
+      end
 
       sig { returns(Integer) }
-      def hash = [WorkflowRun, id, url, status, conclusion].hash
+      def hash
+        [WorkflowRun, id, url, status, conclusion].hash
+      end
     end
   end
 end

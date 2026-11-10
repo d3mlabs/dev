@@ -36,7 +36,9 @@ class Dev::Cli::Builtins::BuildCommandTest < Minitest::Test
 
   # The repo has no enrolled runner online.
   class NoneEnrolled < Dev::EnrolledRunnerLookup
-    def available = nil
+    def available
+      nil
+    end
   end
 
   def setup
@@ -70,11 +72,17 @@ class Dev::Cli::Builtins::BuildCommandTest < Minitest::Test
     Dev::Lifecycle::Target.new(name: "opencell", desc: "Sim", builder: Dev::Lifecycle::BuilderSpec::Script.new(command: "exit 2"))
   end
 
-  def gem_target = Dev::Lifecycle::Target.new(name: "rspock", desc: "The gem")
+  def gem_target
+    Dev::Lifecycle::Target.new(name: "rspock", desc: "The gem")
+  end
 
-  def targets = [client, refusing, gem_target]
+  def targets
+    [client, refusing, gem_target]
+  end
 
-  def store = Dev::Lifecycle::Store.new(project_name: "cellbound-3d", targets: targets, data_root: (@root / "data").to_s)
+  def store
+    Dev::Lifecycle::Store.new(project_name: "cellbound-3d", targets: targets, data_root: (@root / "data").to_s)
+  end
 
   def dispatcher(placements: host_placements)
     host_rule = Dev::Cli::HostRule.new(host_environment: Dev::HostEnvironment.new(path: (@root / "no-marker").to_s), inside_container: false)
