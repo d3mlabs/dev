@@ -254,7 +254,7 @@ module Dev
       # `run` streams: the trust step may be the first sudo of a converged
       # host's re-run, and its password prompt has to reach the terminal.
       @tap_trust = T.let(
-        TapTrust.new(user: agent_user, brew: brew_executable, tap: tap, out: out,
+        TapTrust.new(user: agent_user, brew: brew_executable, tap: tap, ui: NoUi.new(out: out),
           run_as_user: ->(argv) { @as_agent.run(*argv) }),
         TapTrust,
       )

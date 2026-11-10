@@ -175,7 +175,7 @@ module Dev
 
         # The host rule: the runner user for this host (nil off Linux), given
         # what `--as` named; injected for tests.
-        RunnerUserFactory = T.type_alias { T.proc.params(name: T.nilable(String)).returns(T.nilable(Dev::RunnerUser)) }
+        RunnerUserFactory = T.type_alias { T.proc.params(name: T.nilable(String), ui: Ui).returns(T.nilable(Dev::RunnerUser)) }
 
         # The checkout's lock, as the reach check reads it; injected for tests.
         PinsReader = T.type_alias { T.proc.params(root: Pathname).returns(T::Array[Dev::Deps::Dependency]) }
@@ -231,7 +231,7 @@ module Dev
           # `dev up`'s engine step, run here for the checked-out repo's hint.
           engine_provisioner: Dev::EngineProvisioner.new,
           # The host rule (Linux: a runner user; elsewhere nil).
-          runner_user_factory: ->(name) { Dev::RunnerUser.for_host(name: name) },
+          runner_user_factory: ->(name, ui) { Dev::RunnerUser.for_host(name: name, ui: ui) },
           # The shared data root the runner user joins; nil off Linux.
           data_root_provisioner: Dev::LinuxDataRootProvisioner.for_host,
           # The Windows side a WSL runner needs (dev#261); nil off WSL.
@@ -440,11 +440,11 @@ module Dev
           # the engine step's session; its gh login gates everything after;
           # and with a checkout, what that login can read of its lock is
           # checked now rather than discovered by a red run (HostReach).
-          runner_user = @runner_user_factory.call(args.value(AS_FLAG))
+          runner_user = @runner_user_factory.call(args.value(AS_FLAG), context.ui)
           if runner_user
             @data_root_provisioner&.provision!
             runner_user.converge!
-            runner_user.ensure_gh_authenticated!(ask: ->(question) { context.ui.ask_secret(question) })
+            runner_user.ensure_gh_authenticated!
             root = context.project&.root
             @reach_factory.call(runner_user).check!(@pins_reader.call(root)) if root
           end

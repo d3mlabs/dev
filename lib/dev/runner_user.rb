@@ -2,13 +2,13 @@
 # frozen_string_literal: true
 
 require "etc"
-require "stringio"
 
 require "dev/data_root"
 require "dev/platform"
 require "dev/privileged_steps"
 require "dev/runner_setup"
 require "dev/tap_trust"
+require "dev/ui"
 
 module Dev
   # The OS user a Linux host's runner services run as (dev#310) — the
@@ -92,13 +92,14 @@ module Dev
       # apply (not Linux).
       #
       # @param name [String, nil] `--as` override
+      # @param ui [Ui] the terminal the user's convergence speaks on
       # @param host_os [String] "darwin" / "linux" / "windows"
       # @return [RunnerUser, nil]
-      sig { params(name: T.nilable(String), host_os: String).returns(T.nilable(RunnerUser)) }
-      def for_host(name: nil, host_os: Platform.os)
+      sig { params(name: T.nilable(String), ui: Ui, host_os: String).returns(T.nilable(RunnerUser)) }
+      def for_host(name: nil, ui: NoUi.new, host_os: Platform.os)
         return nil unless host_os == "linux"
 
-        new(name: name || DEFAULT_NAME)
+        new(name: name || DEFAULT_NAME, ui: ui)
       end
 
       # The home of a user in passwd, or nil when there is no such user.
@@ -164,7 +165,8 @@ module Dev
     # @param name [String] the OS user name
     # @param steps [Dev::PrivilegedSteps] the sudo contract
     # @param executor [#capture] CLI boundary for the gh probe
-    # @param out [IO, StringIO]
+    # @param ui [Ui] where the convergence is told — a step per sudo
+    #   sequence — and where the token is asked for, hidden
     # @param home_of [Proc] passwd lookup (injectable for tests)
     # @param brew [String, nil] Homebrew's binary on this host, if any
     # @param path [String] the PATH the runner user's commands run on
@@ -177,7 +179,7 @@ module Dev
         name: String,
         steps: PrivilegedSteps,
         executor: T.untyped,
-        out: T.any(IO, StringIO),
+        ui: Ui,
         home_of: HomeOf,
         brew: T.nilable(String),
         path: String,
@@ -186,7 +188,7 @@ module Dev
       ).void
     end
     def initialize(name:, steps: PrivilegedSteps.new(purpose: "create the runner user #{name}"),
-                   executor: RunnerSetup::Executor.new, out: $stdout,
+                   executor: RunnerSetup::Executor.new, ui: NoUi.new,
                    home_of: ->(user) { RunnerUser.passwd_home(user) },
                    brew: RunnerUser.brew_path, path: RunnerUser.host_path(brew: brew),
                    owner_of: ->(path_to_own) { RunnerUser.owner_of(path_to_own) },
@@ -194,7 +196,7 @@ module Dev
       @name = name
       @steps = steps
       @exec = executor
-      @out = out
+      @ui = ui
       @home_of = home_of
       @brew = brew
       @path = path
@@ -202,7 +204,7 @@ module Dev
       # Streams (`system`, not `capture`): brew's own refusal is the
       # warning's context, and the sudo session is already open.
       @tap_trust = T.let(
-        TapTrust.new(user: name, brew: brew, tap: tap, out: out,
+        TapTrust.new(user: name, brew: brew, tap: tap, ui: ui,
           run_as_user: ->(argv) { @exec.system(*sudo_argv(*argv)) == true }),
         TapTrust,
       )
@@ -281,17 +283,19 @@ module Dev
     sig { void }
     def converge!
       present = exists?
-      @out.puts ">>> Creating the runner user #{@name} (one sudo prompt) ..." unless present
-      @steps.session!
-      GROUPS.each { |group| @steps.step!("sudo", "groupadd", "-f", group) }
-      if present
-        @steps.step!("sudo", "usermod", "-aG", GROUPS.join(","), @name)
-      else
-        @steps.step!("sudo", "useradd", "-m", "-s", "/bin/bash", "-G", GROUPS.join(","), @name)
-        @steps.step!("sudo", "chmod", "0755", home)
+      name = present ? "Converging the runner user #{@name} (groups, profile)" : "Creating the runner user #{@name} (one sudo prompt)"
+      @ui.step(name) do
+        @steps.session!
+        GROUPS.each { |group| @steps.step!("sudo", "groupadd", "-f", group) }
+        if present
+          @steps.step!("sudo", "usermod", "-aG", GROUPS.join(","), @name)
+        else
+          @steps.step!("sudo", "useradd", "-m", "-s", "/bin/bash", "-G", GROUPS.join(","), @name)
+          @steps.step!("sudo", "chmod", "0755", home)
+        end
+        brew = @brew
+        @steps.install_file!("eval \"$(#{brew} shellenv)\"\n", PROFILE_D, mode: "0644") if brew
       end
-      brew = @brew
-      @steps.install_file!("eval \"$(#{brew} shellenv)\"\n", PROFILE_D, mode: "0644") if brew
       own_toolchain!
       # The deployment's tap, trusted by the runner user — the operator's
       # trust does not carry over (TapTrust); in the session, as that user.
@@ -307,31 +311,27 @@ module Dev
 
       owner = toolchain_owner
       prefix = toolchain_roots.fetch(0)
-      @out.puts ">>> Handing the toolchain #{prefix} (owned by #{owner}) to #{@name}: jobs upgrade dev through it; " \
-                "brew as #{owner} becomes `sudo -iu #{@name} brew ...`"
       chown = ["sudo", "chown", "-R", "#{@name}:#{@name}"] + toolchain_roots
-      @steps.step!(*T.unsafe(chown))
+      @ui.step("Handing the toolchain #{prefix} (owned by #{owner}) to #{@name}: jobs upgrade dev through it; " \
+               "brew as #{owner} becomes `sudo -iu #{@name} brew ...`") do
+        @steps.step!(*T.unsafe(chown))
+      end
     end
 
-    # An asker: a question, answered with the secret — or nil/"" when
-    # there is no terminal, or the user declined (Dev::Ui#ask_secret).
-    Ask = T.type_alias { T.proc.params(question: String).returns(T.nilable(String)) }
-
     # The runner user's gh must be logged in before anything enrolls: it
-    # is the identity every job fetches with. Missing, and given something
-    # to ask with, the token is asked for — hidden input — and handed to
-    # `gh auth login --with-token` on stdin as the runner user, in this
-    # same run; the status is re-read after. Headless (nothing to ask
-    # with, or no answer), the message carries the one command.
+    # is the identity every job fetches with. Missing, the token is asked
+    # for at the terminal — hidden input — and handed to `gh auth login
+    # --with-token` on stdin as the runner user, in this same run; the
+    # status is re-read after. Headless (no terminal: the Ui answers nil)
+    # or declined, the message carries the one command.
     #
-    # @param ask [Proc, nil] how to ask for the token at a terminal
     # @return [void]
     # @raise [GhLoginRequiredError] with the login command
-    sig { params(ask: T.nilable(Ask)).void }
-    def ensure_gh_authenticated!(ask: nil)
+    sig { void }
+    def ensure_gh_authenticated!
       return if gh_authenticated?
 
-      token = ask&.call(
+      token = @ui.ask_secret(
         "#{@name} has no GitHub login, and every job on this host fetches as #{@name}. " \
         "Paste the machine user's token (#{self.class.token_hint})",
       ).to_s.strip

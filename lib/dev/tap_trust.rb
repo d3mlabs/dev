@@ -1,9 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "stringio"
-
 require "dev/settings"
+require "dev/ui"
 
 module Dev
   # Have a host identity trust the deployment's tap. Homebrew 7 loads no
@@ -79,23 +78,29 @@ module Dev
     # @param run_as_user [Proc] how to run a command as that user
     # @param brew [String, nil] Homebrew's binary on this host, if any
     # @param tap [Tap, nil] the deployment's tap; nil for none to trust
-    # @param out [IO, StringIO]
+    # @param ui [Ui] the trust is one step on it (brew streams); a refusal
+    #   marks the step and is noted after it
     sig do
       params(
         user: String,
         run_as_user: RunAsUser,
         brew: T.nilable(String),
         tap: T.nilable(Tap),
-        out: T.any(IO, StringIO),
+        ui: Ui,
       ).void
     end
-    def initialize(user:, run_as_user:, brew:, tap: TapTrust.deployment_tap, out: $stdout)
+    def initialize(user:, run_as_user:, brew:, tap: TapTrust.deployment_tap, ui: NoUi.new)
       @user = user
       @run_as_user = run_as_user
       @brew = brew
       @tap = tap
-      @out = out
+      @ui = ui
     end
+
+    # brew refused `trust` (a brew without the command, or its own
+    # refusal — printed above by brew itself). Raised inside the step so
+    # the step is marked failed, caught right outside: a warning, not a stop.
+    class TrustRefusedError < RuntimeError; end
 
     # Have the user trust the tap, announced; nothing without a tap or
     # without brew. The brew dev found is the one invoked, by path, so the
@@ -110,12 +115,13 @@ module Dev
       brew = @brew
       return unless tap && brew
 
-      @out.puts ">>> Trusting the tap #{tap} for #{@user} (brew loads nothing from a tap its user has not trusted)"
-      return if @run_as_user.call(["env", *TRUST_ENV, brew, "trust", "--tap", tap.to_s])
-
-      @out.puts "dev: warning: could not trust the tap #{tap} for #{@user} (brew's refusal is above; a brew without " \
-                "`trust` has no gate to pass) — if brew as #{@user} is refused the tap's formulae: " \
-                "`sudo -iu #{@user} brew trust --tap #{tap}`"
+      @ui.step("Trusting the tap #{tap} for #{@user} (brew loads nothing from a tap its user has not trusted)") do
+        raise TrustRefusedError, tap.to_s unless @run_as_user.call(["env", *TRUST_ENV, brew, "trust", "--tap", tap.to_s])
+      end
+    rescue TrustRefusedError
+      @ui.note("{{x}} could not trust the tap #{tap} for #{@user} (brew's refusal is above; a brew without " \
+               "`trust` has no gate to pass) — if brew as #{@user} is refused the tap's formulae: " \
+               "`sudo -iu #{@user} brew trust --tap #{tap}`")
     end
   end
 end

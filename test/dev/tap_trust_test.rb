@@ -4,6 +4,7 @@
 require "test_helper"
 require "dev/tap_trust"
 require "stringio"
+require "support/recording_ui"
 
 transform!(RSpock::AST::Transformation)
 class Dev::TapTrustTest < Minitest::Test
@@ -14,25 +15,25 @@ class Dev::TapTrustTest < Minitest::Test
   test "trust! announces, then runs the brew dev found as the user with `trust --tap` — without brew's implicit auto-update (dev#475: its lock is the prefix owner's, and trust is a per-user file needing no API data)" do
     Given "a tap and brew, and a run-as-user seam that records and succeeds"
     runs = []
-    out = StringIO.new
+    ui = RecordingUi.new
     trust = Dev::TapTrust.new(
-      user: "ai-agent", brew: "/opt/homebrew/bin/brew", tap: org_tap, out: out,
+      user: "ai-agent", brew: "/opt/homebrew/bin/brew", tap: org_tap, ui: ui,
       run_as_user: recording(runs),
     )
 
     When
     trust.trust!
 
-    Then "one invocation, by brew's path, auto-update off; the announcement, no warning"
+    Then "one invocation, by brew's path, auto-update off; one step (brew streams), no warning"
     runs == [%w[env HOMEBREW_NO_AUTO_UPDATE=1 /opt/homebrew/bin/brew trust --tap d3mlabs/d3mlabs]]
-    out.string == ">>> Trusting the tap d3mlabs/d3mlabs for ai-agent (brew loads nothing from a tap its user has not trusted)\n"
+    ui.rows == [[:step, "Trusting the tap d3mlabs/d3mlabs for ai-agent (brew loads nothing from a tap its user has not trusted)", 0]]
   end
 
-  test "a brew that refuses `trust` is a warning naming the by-hand command, not a stop" do
+  test "a brew that refuses `trust` is a warning naming the by-hand command, not a stop: the step is marked failed, the note after it says what to do" do
     Given "a run-as-user seam that fails (a brew without the command)"
-    out = StringIO.new
+    ui = RecordingUi.new
     trust = Dev::TapTrust.new(
-      user: "runner", brew: "/home/linuxbrew/.linuxbrew/bin/brew", tap: org_tap, out: out,
+      user: "runner", brew: "/home/linuxbrew/.linuxbrew/bin/brew", tap: org_tap, ui: ui,
       run_as_user: ->(_argv) { false },
     )
 
@@ -40,20 +41,24 @@ class Dev::TapTrustTest < Minitest::Test
     trust.trust!
 
     Then
-    out.string.include?("dev: warning: could not trust the tap d3mlabs/d3mlabs for runner")
-    out.string.include?("`sudo -iu runner brew trust --tap d3mlabs/d3mlabs`")
+    ui.rows.length == 2
+    ui.rows.fetch(0).fetch(0) == :step
+    ui.rows.fetch(1).fetch(0) == :note
+    ui.rows.fetch(1).fetch(1).start_with?("{{x}} could not trust the tap d3mlabs/d3mlabs for runner")
+    ui.rows.fetch(1).fetch(1).include?("`sudo -iu runner brew trust --tap d3mlabs/d3mlabs`")
+    ui.out_text.include?("✗ Trusting the tap d3mlabs/d3mlabs for runner")
   end
 
   test "nothing to trust without a tap, or without brew" do
     Given
     runs = []
-    out = StringIO.new
-    Dev::TapTrust.new(user: "runner", brew: "/opt/homebrew/bin/brew", tap: nil, out: out, run_as_user: recording(runs)).trust!
-    Dev::TapTrust.new(user: "runner", brew: nil, tap: org_tap, out: out, run_as_user: recording(runs)).trust!
+    ui = RecordingUi.new
+    Dev::TapTrust.new(user: "runner", brew: "/opt/homebrew/bin/brew", tap: nil, ui: ui, run_as_user: recording(runs)).trust!
+    Dev::TapTrust.new(user: "runner", brew: nil, tap: org_tap, ui: ui, run_as_user: recording(runs)).trust!
 
     Expect
     runs.empty?
-    out.string.empty?
+    ui.rows == []
   end
 
   test "the deployment's tap is the user/repo of a tap-qualified formula, as a Tap; none for a bare name, a malformed one, or no deployment" do
