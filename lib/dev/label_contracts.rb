@@ -1,8 +1,14 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "etc"
+
 require "dev/agent_bootstrap"
+require "dev/agent_bootstrap/darwin"
+require "dev/agent_bootstrap/linux"
+require "dev/platform"
 require "dev/runner_group_contract"
+require "dev/runner_user"
 
 module Dev
   # The label doctrine's enforcement half (plans#26): a capability label is
@@ -13,7 +19,9 @@ module Dev
   #
   # Two kinds of contract exist. Host-side, the agent capability labels
   # (`ai-build`, `ai-learn`) make the box an agent host and require the
-  # agent host bootstrap. Org-side, an ai-flow label obliges a runner
+  # agent host bootstrap — one contract, an adapter per platform
+  # (AgentBootstrap::Darwin, AgentBootstrap::Linux), chosen here, the
+  # composition root (plans#59). Org-side, an ai-flow label obliges a runner
   # group pinned to ai-flow's workflows — which group depends on what the
   # slots are for (dev#495): the agent labels oblige the `ai-flow` group,
   # whose selected repos are each repo's build concurrency on the host
@@ -91,8 +99,10 @@ module Dev
     )
 
     # The agent host obligation: the host-singular bootstrap, the agent's
-    # own container engine when the served repo builds in one, and the
-    # post-enrollment service/workdir setup.
+    # own container engine when the served repo builds in one (a Mac's
+    # colima; a Linux host refuses — its image-built agent runs inside the
+    # project's container, plans#61), and the post-enrollment
+    # service/workdir setup.
     class AgentHostContract
       extend T::Sig
 
@@ -109,6 +119,7 @@ module Dev
       # @param memory_gib [Integer, nil] engine VM sizing hint
       # @param disk_gib [Integer, nil] engine VM disk hint (grow-only)
       # @return [void]
+      # @raise [AgentBootstrap::Linux::NoAgentEngineError] a container repo on a Linux host
       sig { params(container: T::Boolean, cpus: T.nilable(Integer), memory_gib: T.nilable(Integer), disk_gib: T.nilable(Integer)).void }
       def converge!(container: false, cpus: nil, memory_gib: nil, disk_gib: nil)
         @bootstrap.converge!
@@ -134,21 +145,62 @@ module Dev
       #
       # @param labels [String] comma-separated labels (config.sh shape)
       # @param agent_user [String, nil] run-as user override (default ai-agent)
+      # @param runner_user [String, nil] the enrolling user whose service
+      #   spawns the agent — the Linux host rule's runner user (RunnerUser);
+      #   nil for the platform's default (the operator on a Mac)
       # @param bootstrap [Dev::AgentBootstrap, nil] injectable for tests
       # @return [Array<AgentHostContract>]
+      # @raise [AgentBootstrap::UnsupportedPlatformError] on a host no adapter converges
       sig do
         params(
           labels: String,
           agent_user: T.nilable(String),
+          runner_user: T.nilable(String),
           bootstrap: T.nilable(Dev::AgentBootstrap),
         ).returns(T::Array[AgentHostContract])
       end
-      def for(labels, agent_user: nil, bootstrap: nil)
+      def for(labels, agent_user: nil, runner_user: nil, bootstrap: nil)
         return [] unless agent_host?(labels)
 
-        resolved = bootstrap ||
-          (agent_user ? AgentBootstrap.new(agent_user: agent_user) : AgentBootstrap.new)
+        resolved = bootstrap || agent_bootstrap(agent_user: agent_user || AgentBootstrap::DEFAULT_AGENT_USER, runner_user: runner_user)
         [AgentHostContract.new(bootstrap: resolved)]
+      end
+
+      # The agent host bootstrap for this host: the Darwin adapter on a Mac
+      # (the operator is the runner user), the Linux adapter on a Linux dev
+      # host (dev#310's runner user is). `dev runner status` builds its
+      # inspector over the same object, so register and status read one
+      # set of facts.
+      #
+      # @param agent_user [String] the run-as user
+      # @param runner_user [String, nil] the enrolling user; nil for the
+      #   platform's default
+      # @param executor [#run, #quiet?, #capture] the admin CLI seam
+      # @param host_os [String] "darwin" / "linux" / "windows" (injectable for tests)
+      # @return [Dev::AgentBootstrap]
+      # @raise [AgentBootstrap::UnsupportedPlatformError] on a host no adapter converges
+      sig do
+        params(
+          agent_user: String,
+          runner_user: T.nilable(String),
+          executor: T.untyped,
+          host_os: String,
+        ).returns(AgentBootstrap)
+      end
+      def agent_bootstrap(agent_user: AgentBootstrap::DEFAULT_AGENT_USER, runner_user: nil,
+                          executor: AgentBootstrap::Executor.new, host_os: Platform.os)
+        case host_os
+        when "darwin"
+          AgentBootstrap::Darwin.new(agent_user: agent_user, executor: executor,
+            runner_user: runner_user || T.must(Etc.getpwuid(Process.uid)).name)
+        when "linux"
+          AgentBootstrap::Linux.new(agent_user: agent_user, executor: executor,
+            runner_user: runner_user || RunnerUser::DEFAULT_NAME)
+        else
+          raise AgentBootstrap::UnsupportedPlatformError,
+            "the agent host bootstrap converges a Mac or a Linux dev host (plans#26, plans#59); " \
+            "agent-capability labels cannot be served by a #{host_os} host."
+        end
       end
 
       # Whether an advertised label set makes this box an agent host.

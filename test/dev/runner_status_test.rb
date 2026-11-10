@@ -3,6 +3,8 @@
 
 require "test_helper"
 require "dev/agent_bootstrap"
+require "dev/agent_bootstrap/darwin"
+require "dev/agent_bootstrap/linux"
 require "dev/runner_discovery"
 require "dev/runner_registry"
 require "dev/deps/dependency"
@@ -81,8 +83,8 @@ class Dev::RunnerStatusTest < Minitest::Test
 
   ALL_GREEN_PROBES = {
     ["id", "-u", "ai-agent"] => true,
-    ["dseditgroup", "-o", "checkmember", "-m", "human", "ai"] => true,
-    ["dseditgroup", "-o", "checkmember", "-m", "ai-agent", "ai"] => true,
+    ["dseditgroup", "-o", "checkmember", "-m", "human", "dev"] => true,
+    ["dseditgroup", "-o", "checkmember", "-m", "ai-agent", "dev"] => true,
     ["sudo", "-n", "-u", "ai-agent", "true"] => true,
     ["brew", "list", "--formula", "colima"] => true,
   }.freeze
@@ -90,8 +92,9 @@ class Dev::RunnerStatusTest < Minitest::Test
   # How the agent lists its own rules through the runner → agent edge.
   AGENT_SUDO_LIST = ["sudo", "-n", "-u", "ai-agent", "sudo", "-n", "-l"].freeze
 
-  # The brew edge register writes on a Mac whose prefix is the human's.
-  HUMAN_BREW_EDGE = Dev::AgentBootstrap::BrewEdge.new(agent: "ai-agent", owner: "human", path: "/opt/homebrew/bin/brew")
+  # The brew a Mac whose prefix is the human's has; the bootstrap's edge
+  # is read from it (its prefix owner answered as "human" by build_status).
+  HUMAN_BREW = "/opt/homebrew/bin/brew"
 
   # `sudo -l` as the agent, in sudo 1.9's layout (tags in its order, not ours).
   AGENT_RULES_HEADER = "User ai-agent may run the following commands on mac:\n"
@@ -554,7 +557,8 @@ class Dev::RunnerStatusTest < Minitest::Test
     executor = CannedStatusExecutor.new(
       probe_results: ALL_GREEN_PROBES,
       capture_results: {
-        ["stat", "-f", "%Sg %Sp", work] => "ai drwxrwsr-x\n",
+        ["stat", "-f", "%Sg %Sp", work] => "dev drwxrwsr-x\n",
+        ["stat", "-f", "%Sg %Sp", shared_root] => "dev drwxrwsr-x\n",
         AGENT_SUDO_LIST => "#{AGENT_RULES_HEADER}    (human) SETENV: NOPASSWD: /opt/homebrew/bin/brew\n",
       },
     )
@@ -562,21 +566,68 @@ class Dev::RunnerStatusTest < Minitest::Test
     status = build_status(
       out: out, home: home, registry: CannedRegistry.new(group: CannedRegistry.group(id: 7, name: "ai-flow", pinned: true), &responder),
       executor: executor, shared_root: shared_root,
-      brew_edge: HUMAN_BREW_EDGE, container_required: true,
+      brew: HUMAN_BREW, container_required: true,
     )
 
     When "reporting"
     status.report
 
     Then "every agent host fact reads ok"
-    out.string.include?("Agent host")
+    out.string.include?("Agent host (ai-agent)")
     !out.string.include?("✗ ")
-    out.string.include?("agent user ai-agent")
+    out.string.include?("✓ agent user ai-agent exists")
+    out.string.include?("✓ human in the dev group")
+    out.string.include?("✓ ai-agent in the dev group")
     out.string.include?("✓ runner → agent sudoers edge (human → ai-agent, NOPASSWD:SETENV)")
     out.string.include?("✓ brew edge: ai-agent may run /opt/homebrew/bin/brew as human (NOPASSWD, SETENV)")
-    out.string.include?("_work tree")
-    out.string.include?("shared root")
-    out.string.include?("colima")
+    out.string.include?("✓ _work tree cooperative in #{runner_dir} (group dev, setgid)")
+    out.string.include?("✓ data root #{shared_root} shared with group dev (setgid)")
+    out.string.include?("✓ colima installed (container engine)")
+  end
+
+  # plans#59: the same facts on a Linux dev host, read with that platform's
+  # probes through the Linux adapter — the runner user is dev#310's, the
+  # engine fact says there is none to have.
+  test "inspects a Linux agent host through the Linux adapter: the same facts, the runner user as the grantor, no engine" do
+    Given "an agent-labeled enrollment on an all-green Linux host, for a repo that pins an image"
+    out = StringIO.new
+    home = Dir.mktmpdir
+    runner_dir = write_runner(home, "actions-runner-x", scope: "d3mlabs", name: "box")
+    work = File.join(runner_dir, "_work")
+    FileUtils.mkdir_p(work)
+    data_root = Dir.mktmpdir
+    executor = CannedStatusExecutor.new(
+      probe_results: { ["id", "-u", "ai-agent"] => true, ["sudo", "-n", "-u", "ai-agent", "true"] => true },
+      capture_results: {
+        ["id", "-nG", "runner"] => "runner docker dev\n",
+        ["id", "-nG", "ai-agent"] => "ai-agent dev\n",
+        ["stat", "-c", "%G %A", work] => "dev drwxrwsr-x\n",
+        ["stat", "-c", "%G %A", data_root] => "dev drwxrwsr-x\n",
+        AGENT_SUDO_LIST => "#{AGENT_RULES_HEADER}    (runner) SETENV: NOPASSWD: /home/linuxbrew/.linuxbrew/bin/brew\n",
+      },
+    )
+    bootstrap = Dev::AgentBootstrap::Linux.new(
+      runner_user: "runner", executor: executor, out: StringIO.new, data_root: data_root, tap: nil,
+      brew_executable: "/home/linuxbrew/.linuxbrew/bin/brew", owner_of: ->(_path) { "runner" },
+    )
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-build"], status: "online") }
+    registry = CannedRegistry.new(group: CannedRegistry.group(id: 7, name: "ai-flow", pinned: true), &responder)
+    status = build_status(out: out, home: home, registry: registry, executor: executor, bootstrap: bootstrap, container_required: true)
+
+    When "reporting"
+    status.report
+
+    Then "every host fact reads ok but the engine, which names where the agent runs instead"
+    out.string.include?("✓ agent user ai-agent exists")
+    out.string.include?("✓ runner in the dev group")
+    out.string.include?("✓ ai-agent in the dev group")
+    out.string.include?("✓ runner → agent sudoers edge (runner → ai-agent, NOPASSWD:SETENV)")
+    out.string.include?("✓ brew edge: ai-agent may run /home/linuxbrew/.linuxbrew/bin/brew as runner (NOPASSWD, SETENV)")
+    out.string.include?("✓ _work tree cooperative in #{runner_dir} (group dev, setgid)")
+    out.string.include?("✓ data root #{data_root} shared with group dev (setgid)")
+    out.string.include?("✗ agent engine: ")
+    out.string.include?("plans#61")
+    out.string.scan("✗ ").length == 1
   end
 
   # dev#365: the drop-in is root-owned 0440, so the edges are read the way a
@@ -592,7 +643,7 @@ class Dev::RunnerStatusTest < Minitest::Test
       capture_results: { AGENT_SUDO_LIST => rules },
     )
     responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-build"], status: "online") }
-    status = build_status(out: out, home: home, registry: CannedRegistry.new(&responder), executor: executor, brew_edge: HUMAN_BREW_EDGE)
+    status = build_status(out: out, home: home, registry: CannedRegistry.new(&responder), executor: executor, brew: HUMAN_BREW)
 
     When "reporting"
     status.report
@@ -616,7 +667,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     write_runner(home, "actions-runner-x", scope: "d3mlabs", name: "box")
     executor = CannedStatusExecutor.new(probe_results: { ["sudo", "-n", "-u", "ai-agent", "true"] => false })
     responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-build"], status: "online") }
-    status = build_status(out: out, home: home, registry: CannedRegistry.new(&responder), executor: executor, brew_edge: HUMAN_BREW_EDGE)
+    status = build_status(out: out, home: home, registry: CannedRegistry.new(&responder), executor: executor, brew: HUMAN_BREW)
 
     When "reporting"
     status.report
@@ -633,10 +684,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     write_runner(home, "actions-runner-x", scope: "d3mlabs", name: "box")
     executor = CannedStatusExecutor.new(probe_results: { ["sudo", "-n", "-u", "ai-agent", "true"] => true })
     responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-build"], status: "online") }
-    status = build_status(
-      out: out, home: home, registry: CannedRegistry.new(&responder), executor: executor,
-      brew_edge: Dev::AgentBootstrap::NoBrewEdge.new(reason: "no brew on this host"),
-    )
+    status = build_status(out: out, home: home, registry: CannedRegistry.new(&responder), executor: executor, brew: nil)
 
     When "reporting"
     status.report
@@ -742,9 +790,24 @@ class Dev::RunnerStatusTest < Minitest::Test
     ["sudo", "-n", "-u", user, "-H", "env", "-C", "/", "PATH=#{HOST_PATH}", *cmd]
   end
 
+  # The agent host bootstrap status reads its facts through: by default a
+  # Mac's, over the same canned executor, with the operator "human" as the
+  # runner user, a brew (if any) whose prefix is the human's, and no tap.
+  #
+  # @param executor [CannedStatusExecutor] the probe seam status and the bootstrap share
+  # @param shared_root [String] the Mac bootstrap's data root
+  # @param brew [String, nil] the host's brew; nil for a brewless host
+  def darwin_bootstrap(executor, shared_root:, brew:)
+    Dev::AgentBootstrap::Darwin.new(
+      runner_user: "human", executor: executor, out: StringIO.new, data_root: shared_root,
+      home_dev: File.join(Dir.mktmpdir, "absent"), launch_agents_dir: Dir.mktmpdir,
+      brew_executable: brew, owner_of: ->(_path) { "human" }, tap: nil,
+    )
+  end
+
   def build_status(out: StringIO.new, ui: Dev::NoUi.new(out: out), home: Dir.mktmpdir, registry: CannedRegistry.new,
-                   executor: CannedStatusExecutor.new, shared_root: Dir.mktmpdir,
-                   brew_edge: Dev::AgentBootstrap::NoBrewEdge.new(reason: "no brew on this host"), brewfile_path: nil,
+                   executor: CannedStatusExecutor.new, shared_root: Dir.mktmpdir, brew: nil,
+                   bootstrap: darwin_bootstrap(executor, shared_root: shared_root, brew: brew), brewfile_path: nil,
                    container_required: false, host_identity: nil, pins: [], repo: nil, reach: nil, reach_factory: ->(_identity) { reach })
     # :default leaves RunnerStatus's own reach factory in place.
     reach_wiring = reach_factory == :default ? {} : { reach_factory: reach_factory }
@@ -756,10 +819,9 @@ class Dev::RunnerStatusTest < Minitest::Test
       registry: registry,
       ui: ui,
       executor: executor,
-      runner_user: "human",
+      operator: "human",
       host_identity: host_identity,
-      shared_root: shared_root,
-      brew_edge: brew_edge,
+      bootstrap: bootstrap,
       brewfile_path: brewfile_path,
       container_required: container_required,
     )

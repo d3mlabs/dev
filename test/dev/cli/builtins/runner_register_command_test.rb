@@ -270,7 +270,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     Given "an org with the pinned ai-flow group and no orchestrator group yet; a factory recording what contracts are asked for"
     registry = FakeRegistry.new(groups: { ["d3mlabs", "ai-flow"] => FakeRegistry.group(id: 7, name: "ai-flow", pinned: true) })
     seen = []
-    recorder = ->(labels, agent_user) {
+    recorder = ->(labels, agent_user, _runner_user) {
       seen << [labels, agent_user]
       Dev::LabelContracts.for(labels, agent_user: agent_user, bootstrap: typed_mock(Dev::AgentBootstrap))
     }
@@ -1124,11 +1124,11 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     true
   end
 
-  test "the --agent-user flag reaches the contracts factory" do
-    Given "a factory recording its agent_user argument"
+  test "the --agent-user flag reaches the contracts factory; without a host rule (a Mac) no runner user does" do
+    Given "a factory recording its arguments"
     seen = []
-    recorder = ->(labels, agent_user) {
-      seen << [labels, agent_user]
+    recorder = ->(labels, agent_user, runner_user) {
+      seen << [labels, agent_user, runner_user]
       []
     }
     harness = build_harness(contracts_factory: recorder)
@@ -1138,7 +1138,25 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.command.call(args: parsed_args(harness.command, words), context: harness.projectless_context)
 
     Then
-    seen == [[Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(","), "ci"]]
+    seen == [[Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(","), "ci", nil]]
+  end
+
+  # plans#59: on Linux the sudoers edge is runner → agent, so the contracts
+  # learn who the runner user is from the host rule register converged.
+  test "under the host rule, the runner user's name reaches the contracts factory" do
+    Given "a Linux host (a runner user) and a factory recording its arguments"
+    seen = []
+    recorder = ->(labels, agent_user, runner_user) {
+      seen << [labels, agent_user, runner_user]
+      []
+    }
+    harness = build_harness(contracts_factory: recorder, runner_user: runner_user_mock(name: "runner", home: Dir.mktmpdir))
+
+    When "registering"
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: harness.projectless_context)
+
+    Then
+    seen == [[Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(","), nil, "runner"]]
   end
 
   # --- the host rule: a runner user on Linux (dev#310) -----------------
@@ -1468,7 +1486,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
       reach_factory: ->(_identity) { reach || Dev::HostReach.new(identity: runner_user, executor: nil) },
       # What `gh repo view` would answer for the enclosing checkout, unless overridden.
       repo_resolver: repo_resolver || ->(override) { override || repo },
-      contracts_factory: contracts_factory || ->(_labels, _agent_user) {
+      contracts_factory: contracts_factory || ->(_labels, _agent_user, _runner_user) {
         Array.new(contracts) { RecordedContract.new(events) }
       },
       discovery: discovery,

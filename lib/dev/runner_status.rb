@@ -38,6 +38,11 @@ module Dev
   # login's token expires (a classic PAT's `github-authentication-token-
   # expiration` header; a renewal nobody is warned of is a red run a
   # year from now).
+  #
+  # The agent host facts are the bootstrap's own (AgentBootstrap: the
+  # host's adapter, the one register converges with), read through its
+  # inspection methods — so a Mac and a Linux box report the same facts
+  # in the same words, each probed with its own CLIs (plans#59).
   class RunnerStatus
     extend T::Sig
 
@@ -51,14 +56,15 @@ module Dev
     # @param registry [#find, #group_of, #group_repositories] the GitHub-side reader (never mutates here)
     # @param ui [Dev::Ui] where the report is rendered: a frame per section, a note per fact
     # @param executor [#quiet?, #capture] probe seam (never mutates)
-    # @param agent_user [String] expected run-as user
-    # @param runner_user [String] the enrolling user
-    # @param shared_root [String] expected shared-root location
-    # @param brew_edge [AgentBootstrap::BrewEdge, AgentBootstrap::NoBrewEdge]
-    #   the brew edge register writes for this host, or why none is needed
+    # @param operator [String] who is running status — the account the
+    #   runner-user probes are made from
+    # @param host_identity [Dev::RunnerUser, nil] the Linux host rule's user; nil elsewhere
+    # @param bootstrap [Dev::AgentBootstrap] the host's agent bootstrap, whose
+    #   inspection methods answer the agent host facts (the runner user it
+    #   names is the sudoers grantor: the host identity on Linux, the
+    #   operator on a Mac)
     # @param brewfile_path [String, nil] the org Brewfile (nil when none ships)
     # @param container_required [Boolean] whether the served repo's lock pins an image
-    # @param host_identity [Dev::RunnerUser, nil] the Linux host rule's user; nil elsewhere
     # @param pins [Array<Dev::Deps::Dependency>] the enclosing checkout's lock, when run in one
     # @param repo [String, nil] the enclosing checkout's "owner/repo", when run in one — the
     #   repo whose access to each org scope's slots is reported
@@ -69,13 +75,11 @@ module Dev
         registry: T.untyped,
         ui: Dev::Ui,
         executor: T.untyped,
-        agent_user: String,
-        runner_user: String,
-        shared_root: String,
-        brew_edge: AgentBootstrap::BrewEdgeDecision,
+        operator: String,
+        host_identity: T.nilable(Dev::RunnerUser),
+        bootstrap: AgentBootstrap,
         brewfile_path: T.nilable(String),
         container_required: T::Boolean,
-        host_identity: T.nilable(Dev::RunnerUser),
         pins: T::Array[Deps::Dependency],
         repo: T.nilable(String),
         reach_factory: T.proc.params(identity: Dev::RunnerUser).returns(T.nilable(HostReach)),
@@ -83,13 +87,11 @@ module Dev
     end
     def initialize(discovery: Dev::RunnerDiscovery.new, registry: Dev::RunnerRegistry.new,
                    ui: Dev::NoUi.new, executor: AgentBootstrap::Executor.new,
-                   agent_user: AgentBootstrap::DEFAULT_AGENT_USER,
-                   runner_user: T.must(Etc.getpwuid(Process.uid)).name,
-                   shared_root: DataRoot::SHARED_ROOT,
-                   brew_edge: AgentBootstrap.new(agent_user: agent_user, runner_user: runner_user).brew_edge,
+                   operator: T.must(Etc.getpwuid(Process.uid)).name,
+                   host_identity: Dev::RunnerUser.for_host,
+                   bootstrap: LabelContracts.agent_bootstrap(executor: executor, runner_user: host_identity&.name),
                    brewfile_path: self.class.default_brewfile_path,
                    container_required: false,
-                   host_identity: Dev::RunnerUser.for_host,
                    pins: [],
                    repo: nil,
                    reach_factory: ->(identity) { HostReach.new(identity: identity) })
@@ -101,10 +103,8 @@ module Dev
       @registry = registry
       @ui = ui
       @executor = executor
-      @agent_user = agent_user
-      @runner_user = runner_user
-      @shared_root = shared_root
-      @brew_edge = brew_edge
+      @operator = operator
+      @bootstrap = bootstrap
       @brewfile_path = brewfile_path
       @container_required = container_required
     end
@@ -374,7 +374,7 @@ module Dev
       line(true, "user #{identity.name} exists")
       report_toolchain(identity)
       unless @executor.quiet?(*identity.probe_argv("true"))
-        unknown("gh login: cannot tell as #{@runner_user} (sudo as #{identity.name} needs a password here) — " \
+        unknown("gh login: cannot tell as #{@operator} (sudo as #{identity.name} needs a password here) — " \
                 "check with `#{identity.status_command}`")
         return false
       end
@@ -456,30 +456,32 @@ module Dev
     # @param runner_dirs [Array<String>] the agent-labeled enrollment dirs
     sig { params(runner_dirs: T::Array[String]).void }
     def report_agent_host(runner_dirs)
-      @ui.frame("Agent host (#{@agent_user})") { agent_host_facts(runner_dirs) }
+      @ui.frame("Agent host (#{@bootstrap.agent_user})") { agent_host_facts(runner_dirs) }
     end
 
-    # The agent contract's facts: the user, the group, the sudoers edges,
-    # each work tree, the shared root, and the engine where required.
+    # The agent contract's facts, the bootstrap's inspection asked one by
+    # one: the user, the group memberships, the sudoers edges, each work
+    # tree, the data root's cooperative shape, and the engine where
+    # required.
     #
     # @param runner_dirs [Array<String>] agent-labeled enrollment dirs
     sig { params(runner_dirs: T::Array[String]).void }
     def agent_host_facts(runner_dirs)
-      line(@executor.quiet?("id", "-u", @agent_user), "agent user #{@agent_user} exists")
-      [@runner_user, @agent_user].each do |member|
-        member_ok = @executor.quiet?(
-          "dseditgroup", "-o", "checkmember", "-m", member, AgentBootstrap::GROUP,
-        )
-        line(member_ok, "#{member} in the #{AgentBootstrap::GROUP} group")
+      agent = @bootstrap.agent_user
+      group = DataRoot::GROUP
+      line(@executor.quiet?("id", "-u", agent), "agent user #{agent} exists")
+      [@bootstrap.runner_user, agent].each do |member|
+        line(@bootstrap.group_member?(member), "#{member} in the #{group} group")
       end
       report_sudoers_edges
       runner_dirs.each do |dir|
-        line(work_tree_cooperative?(dir), "_work tree cooperative in #{dir} (group #{AgentBootstrap::GROUP}, setgid)")
+        line(@bootstrap.work_tree_cooperative?(dir), "_work tree cooperative in #{dir} (group #{group}, setgid)")
       end
-      line(File.directory?(@shared_root), "shared root present (#{@shared_root})")
+      root = @bootstrap.data_root
+      line(@bootstrap.cooperative_dir?(root), "data root #{root} shared with group #{group} (setgid)")
       return unless @container_required
 
-      line(@executor.quiet?("brew", "list", "--formula", "colima"), "colima installed (container engine)")
+      line(@bootstrap.engine_converged?, @bootstrap.engine_fact)
     end
 
     # The two edges the sudoers drop-in grants, read the way a job exercises
@@ -490,8 +492,9 @@ module Dev
     # never a prompt, and without that edge the brew edge cannot be read.
     sig { void }
     def report_sudoers_edges
-      edge = "#{@runner_user} → #{@agent_user}, #{AgentBootstrap::EDGE_TAGS.join(":")}"
-      unless @executor.quiet?("sudo", "-n", "-u", @agent_user, "true")
+      agent = @bootstrap.agent_user
+      edge = "#{@bootstrap.runner_user} → #{agent}, #{AgentBootstrap::EDGE_TAGS.join(":")}"
+      unless @executor.quiet?("sudo", "-n", "-u", agent, "true")
         line(false, "runner → agent sudoers edge missing (#{edge}) — the brew edge cannot be read without it " \
                     "(run `dev runner register`)")
         return
@@ -505,7 +508,7 @@ module Dev
     # rule naming the owner and ending in the brew path, carrying every tag.
     sig { void }
     def report_brew_edge
-      edge = @brew_edge
+      edge = @bootstrap.brew_edge
       case edge
       when AgentBootstrap::NoBrewEdge
         line(true, "no brew edge needed (#{edge.reason})")
@@ -537,23 +540,8 @@ module Dev
     # @return [String, nil]
     sig { params(edge: AgentBootstrap::BrewEdge).returns(T.nilable(String)) }
     def brew_rule(edge)
-      rules = @executor.capture("sudo", "-n", "-u", @agent_user, "sudo", "-n", "-l")
+      rules = @executor.capture("sudo", "-n", "-u", @bootstrap.agent_user, "sudo", "-n", "-l")
       rules.lines.map(&:strip).find { |rule| rule.include?("(#{edge.owner})") && rule.end_with?(edge.path) }
-    end
-
-    # Group + setgid facts via stat, so inspection needs no privileges.
-    #
-    # @param runner_dir [String]
-    # @return [Boolean]
-    sig { params(runner_dir: String).returns(T::Boolean) }
-    def work_tree_cooperative?(runner_dir)
-      work = File.join(runner_dir, "_work")
-      return false unless File.directory?(work)
-
-      group, perms = @executor.capture("stat", "-f", "%Sg %Sp", work).strip.split(" ", 2)
-      # %Sp renders "drwxrwsr-x": type + owner triplet + group triplet —
-      # setgid shows as "s" in the group execute slot, index 6.
-      group == AgentBootstrap::GROUP && perms.to_s[6] == "s"
     end
 
     # `brew bundle check` against the org Brewfile — the same list `dev up`

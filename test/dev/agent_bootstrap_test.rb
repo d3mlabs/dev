@@ -3,549 +3,197 @@
 
 require "test_helper"
 require "dev/agent_bootstrap"
+require "dev/agent_bootstrap/darwin"
+require "dev/agent_bootstrap/linux"
+require "support/recorded_bootstrap_executor"
 require "etc"
 require "stringio"
 require "tmpdir"
 
-# Records every host invocation; the admin CLIs (sysadminctl, dseditgroup,
-# visudo, ...) are a true boundary — tests never mutate the host.
-class RecordedBootstrapExecutor
-  attr_reader :runs, :probes
-
-  # @param probe_results [Hash{Array<String> => Boolean}] quiet? answers (default false)
-  # @param capture_results [Hash{Array<String> => String}] capture answers (default "")
-  # @param fail_matching [String, nil] run() fails when the argv mentions this token
-  def initialize(probe_results: {}, capture_results: {}, fail_matching: nil)
-    @probe_results = probe_results
-    @capture_results = capture_results
-    @fail_matching = fail_matching
-    @runs = []
-    @probes = []
-  end
-
-  def run(*cmd, chdir: nil)
-    @runs << (chdir ? cmd + [{ chdir: chdir }] : cmd)
-    return false if @fail_matching && cmd.any? { |arg| arg.include?(@fail_matching) }
-
-    true
-  end
-
-  def quiet?(*cmd)
-    @probes << cmd
-    @probe_results.fetch(cmd, false)
-  end
-
-  def capture(*cmd)
-    @capture_results.fetch(cmd, "")
-  end
-end unless defined?(RecordedBootstrapExecutor)
-
+# The contract's own facts — what both adapters share: the sudoers
+# drop-in, the brew edge, the service env, the executor boundary. The
+# platform steps are each adapter's test (agent_bootstrap/*_test.rb).
 transform!(RSpock::AST::Transformation)
 class Dev::AgentBootstrapTest < Minitest::Test
-  # `colima list -j` answer for a running VM already at the agent's hint
-  # (12 cpus / 24 GiB), so the provisioner has nothing to do.
-  RUNNING_AGENT_VM_JSON = '{"name":"default","status":"Running","arch":"aarch64","cpus":12,' \
-    '"memory":25769803776,"disk":107374182400,"runtime":"docker"}'
+  # The owner lookup the box answers: the Linuxbrew prefix is the runner
+  # user's (dev#337), nothing else is anyone's.
+  RUNNER_OWNS_LINUXBREW = ->(path) { path == "/home/linuxbrew/.linuxbrew" ? "runner" : nil }
 
-  # Filesystem-facing params always point at tmp paths: an already-provisioned
-  # shared root (DDC dir included) and no ~/.dev to migrate; and no
-  # deployment tap (the host's Settings never decide a test), so
-  # identity-step tests stay focused.
-  def bootstrap(executor, darwin: true, **kwargs)
-    provisioned_root = Dir.mktmpdir.tap { |root| FileUtils.mkdir_p(File.join(root, "ddc")) }
-    defaults = { shared_root: provisioned_root, home_dev: File.join(Dir.mktmpdir, "absent-home-dev"), tap: nil }
-    Dev::AgentBootstrap.new(
-      runner_user: "human", executor: executor, out: StringIO.new, darwin: darwin,
-      **defaults.merge(kwargs)
-    )
-  end
+  # The adapters over a recorded executor, with no tap and tmp paths —
+  # class methods so Where tables (evaluated in class scope) can build them.
+  class << self
+    def darwin(**kwargs)
+      Dev::AgentBootstrap::Darwin.new(
+        runner_user: "human", executor: RecordedBootstrapExecutor.new, out: StringIO.new, tap: nil,
+        data_root: Dir.mktmpdir, home_dev: File.join(Dir.mktmpdir, "absent"), brew_executable: nil, **kwargs
+      )
+    end
 
-  test "converge! raises off macOS" do
-    Given "a non-darwin host"
-    executor = RecordedBootstrapExecutor.new
-
-    When "converging"
-    bootstrap(executor, darwin: false).converge!
-
-    Then
-    raises Dev::AgentBootstrap::UnsupportedPlatformError
-  end
-
-  test "converge! is a no-op when the host is already converged" do
-    Given "a host where every probe answers converged"
-    executor = RecordedBootstrapExecutor.new(
-      probe_results: {
-        ["id", "-u", "ai-agent"] => true,
-        ["dseditgroup", "-o", "read", "ai"] => true,
-        ["dseditgroup", "-o", "checkmember", "-m", "human", "ai"] => true,
-        ["dseditgroup", "-o", "checkmember", "-m", "ai-agent", "ai"] => true,
-      },
-      capture_results: {
-        ["sudo", "cat", "/etc/sudoers.d/ai-flow-agent"] =>
-          Dev::AgentBootstrap.new(runner_user: "human", darwin: true).sudoers_content,
-      },
-    )
-
-    When "converging"
-    bootstrap(executor).converge!
-
-    Then "nothing was mutated"
-    executor.runs.empty?
-  end
-
-  test "converge! creates the hidden non-admin agent user with its own home" do
-    Given "a host missing only the agent user"
-    executor = RecordedBootstrapExecutor.new(
-      probe_results: {
-        ["dseditgroup", "-o", "read", "ai"] => true,
-        ["dseditgroup", "-o", "checkmember", "-m", "human", "ai"] => true,
-        ["dseditgroup", "-o", "checkmember", "-m", "ai-agent", "ai"] => true,
-      },
-      capture_results: {
-        ["sudo", "cat", "/etc/sudoers.d/ai-flow-agent"] =>
-          Dev::AgentBootstrap.new(runner_user: "human", darwin: true).sudoers_content,
-      },
-    )
-
-    When "converging"
-    bootstrap(executor).converge!
-
-    Then "sysadminctl creates, dscl hides, createhomedir materializes"
-    executor.runs == [
-      ["sudo", "sysadminctl", "-addUser", "ai-agent", "-fullName", "AI Agent", "-shell", "/bin/zsh"],
-      ["sudo", "dscl", ".", "create", "/Users/ai-agent", "IsHidden", "1"],
-      ["sudo", "createhomedir", "-c", "-u", "ai-agent"],
-    ]
-  end
-
-  test "converge! creates the ai group and enrolls both identities" do
-    Given "a host missing the group"
-    executor = RecordedBootstrapExecutor.new(
-      probe_results: { ["id", "-u", "ai-agent"] => true },
-      capture_results: {
-        ["sudo", "cat", "/etc/sudoers.d/ai-flow-agent"] =>
-          Dev::AgentBootstrap.new(runner_user: "human", darwin: true).sudoers_content,
-      },
-    )
-
-    When "converging"
-    bootstrap(executor).converge!
-
-    Then
-    executor.runs == [
-      ["sudo", "dseditgroup", "-o", "create", "ai"],
-      ["sudo", "dseditgroup", "-o", "edit", "-a", "human", "-t", "user", "ai"],
-      ["sudo", "dseditgroup", "-o", "edit", "-a", "ai-agent", "-t", "user", "ai"],
-    ]
-  end
-
-  test "converge! writes the sudoers drop-in only after visudo validates it" do
-    Given "a host missing only the sudoers drop-in"
-    executor = RecordedBootstrapExecutor.new(
-      probe_results: {
-        ["id", "-u", "ai-agent"] => true,
-        ["dseditgroup", "-o", "read", "ai"] => true,
-        ["dseditgroup", "-o", "checkmember", "-m", "human", "ai"] => true,
-        ["dseditgroup", "-o", "checkmember", "-m", "ai-agent", "ai"] => true,
-      },
-    )
-
-    When "converging"
-    bootstrap(executor).converge!
-
-    Then "validate on a staging file, then install root-owned 0440"
-    executor.runs.length == 2
-    executor.runs.fetch(0).first(4) == ["sudo", "visudo", "-c", "-f"]
-    executor.runs.fetch(1).first(6) ==
-      ["sudo", "install", "-m", "0440", "-o", "root"]
-    executor.runs.fetch(1).last == "/etc/sudoers.d/ai-flow-agent"
-  end
-
-  test "converge! raises and never installs when visudo rejects the drop-in" do
-    Given "visudo failing"
-    executor = RecordedBootstrapExecutor.new(
-      fail_matching: "visudo",
-      probe_results: {
-        ["id", "-u", "ai-agent"] => true,
-        ["dseditgroup", "-o", "read", "ai"] => true,
-        ["dseditgroup", "-o", "checkmember", "-m", "human", "ai"] => true,
-        ["dseditgroup", "-o", "checkmember", "-m", "ai-agent", "ai"] => true,
-      },
-    )
-
-    When "converging"
-    bootstrap(executor).converge!
-
-    Then "it raises and no install ran"
-    raises Dev::AgentBootstrap::StepFailedError
-  end
-
-  test "converge! provisions a fresh shared root with cooperative modes" do
-    Given "converged identities but no shared root"
-    executor = converged_identity_executor
-    shared_root = File.join(Dir.mktmpdir, "dev")
-
-    When "converging"
-    bootstrap(executor, shared_root: shared_root).converge!
-
-    Then "root and DDC dir exist, human-owned, group ai, setgid group-writable"
-    File.directory?(shared_root)
-    File.directory?(File.join(shared_root, "ddc"))
-    executor.runs == [
-      ["sudo", "chown", "human", shared_root],
-      ["sudo", "chgrp", "ai", shared_root],
-      ["sudo", "chmod", "2775", shared_root],
-      ["sudo", "chown", "human", File.join(shared_root, "ddc")],
-      ["sudo", "chgrp", "ai", File.join(shared_root, "ddc")],
-      ["sudo", "chmod", "2775", File.join(shared_root, "ddc")],
-    ]
-  end
-
-  test "converge! provisions the DDC dir under an existing shared root" do
-    Given "a shared root provisioned before the DDC dir existed"
-    executor = converged_identity_executor
-    shared_root = Dir.mktmpdir
-
-    When "converging"
-    bootstrap(executor, shared_root: shared_root).converge!
-
-    Then "only the DDC dir is provisioned (the root itself is left alone)"
-    File.directory?(File.join(shared_root, "ddc"))
-    executor.runs == [
-      ["sudo", "chown", "human", File.join(shared_root, "ddc")],
-      ["sudo", "chgrp", "ai", File.join(shared_root, "ddc")],
-      ["sudo", "chmod", "2775", File.join(shared_root, "ddc")],
-    ]
-  end
-
-  test "converge! migrates ~/.dev artifacts into the shared root, leaving per-user state" do
-    Given "a home data dir carrying artifacts and mutable state"
-    executor = converged_identity_executor
-    home_dev = Dir.mktmpdir
-    FileUtils.mkdir_p(File.join(home_dev, "engines", "ue5"))
-    FileUtils.mkdir_p(File.join(home_dev, "cache"))
-    FileUtils.mkdir_p(File.join(home_dev, "state"))
-    shared_root = File.join(Dir.mktmpdir, "dev")
-
-    When "converging"
-    bootstrap(executor, shared_root: shared_root, home_dev: home_dev).converge!
-
-    Then "artifacts moved once; state stays per-user"
-    File.directory?(File.join(shared_root, "engines", "ue5"))
-    File.directory?(File.join(shared_root, "cache"))
-    !File.exist?(File.join(home_dev, "engines"))
-    File.directory?(File.join(home_dev, "state"))
-    !File.exist?(File.join(shared_root, "state"))
-  end
-
-  test "migration skips entries the shared root already holds" do
-    Given "a shared root that already carries an engines tree"
-    executor = converged_identity_executor
-    home_dev = Dir.mktmpdir
-    FileUtils.mkdir_p(File.join(home_dev, "engines", "stale"))
-    shared_root = Dir.mktmpdir
-    FileUtils.mkdir_p(File.join(shared_root, "engines", "current"))
-
-    When "converging"
-    bootstrap(executor, shared_root: shared_root, home_dev: home_dev).converge!
-
-    Then "the existing tree is untouched and the home copy stays put"
-    File.directory?(File.join(shared_root, "engines", "current"))
-    !File.exist?(File.join(shared_root, "engines", "stale"))
-    File.directory?(File.join(home_dev, "engines", "stale"))
-  end
-
-  test "an existing shared root is left alone (no mode churn)" do
-    Given "an already-provisioned shared root carrying its DDC dir"
-    executor = converged_identity_executor
-    shared_root = Dir.mktmpdir
-    FileUtils.mkdir_p(File.join(shared_root, "ddc"))
-
-    When "converging"
-    bootstrap(executor, shared_root: shared_root).converge!
-
-    Then
-    executor.runs.empty?
-  end
-
-  # dev#374: the agent is a different brew user from the operator, and
-  # Homebrew 7's tap trust is per user — without this step every tap
-  # formula `dev deps` touched as the agent was refused, and a /build pass
-  # ran `brew trust` itself to get on.
-  test "converge! has the agent user trust the deployment's tap — as the agent, through sudo, the brew dev found" do
-    Given "a converged host with brew and the org tap"
-    brew = brew_in(Dir.mktmpdir)
-    executor = converged_identity_executor(brew_executable: brew)
-    out = StringIO.new
-
-    When "converging"
-    bootstrap(executor, out: out, brew_executable: brew, tap: org_tap).converge!
-
-    Then "the one step is brew trust as the agent, and it is announced"
-    executor.runs == [["sudo", "-H", "-u", "ai-agent", "--", "env", "HOMEBREW_NO_AUTO_UPDATE=1", brew, "trust", "--tap", "d3mlabs/d3mlabs"]]
-    out.string.include?(">>> Trusting the tap d3mlabs/d3mlabs for ai-agent")
-    !out.string.include?("warning")
-  end
-
-  test "converge! issues no trust step without brew on the host" do
-    Given "a converged host without brew, and the org tap"
-    executor = converged_identity_executor(brew_executable: nil)
-
-    When "converging"
-    bootstrap(executor, brew_executable: nil, tap: org_tap).converge!
-
-    Then
-    executor.runs.empty?
-  end
-
-  test "a brew without `trust` (nonzero exit) is a warning naming the by-hand command, not StepFailedError" do
-    Given "a converged host whose brew predates `brew trust`"
-    brew = brew_in(Dir.mktmpdir)
-    executor = converged_identity_executor(fail_matching: "trust", brew_executable: brew)
-    out = StringIO.new
-
-    When "converging"
-    bootstrap(executor, out: out, brew_executable: brew, tap: org_tap).converge!
-
-    Then "it ran, it was refused, and register went on"
-    executor.runs.count(&trusts) == 1
-    out.string.include?("dev: warning: could not trust the tap d3mlabs/d3mlabs for ai-agent")
-    out.string.include?("`sudo -iu ai-agent brew trust --tap d3mlabs/d3mlabs`")
-  end
-
-  # A lambda, not a block: a one-parameter block is emitted as |argv,| by
-  # the transform (rspockframework/ast-transform#21) and destructures an argv.
-  def trusts = ->(argv) { argv.include?("trust") }
-  def org_tap = Dev::TapTrust::Tap.new(user: "d3mlabs", repo: "d3mlabs")
-
-  # A brew binary at <prefix>/bin/brew, as BREW_LOCATIONS discovers one.
-  def brew_in(prefix)
-    File.join(prefix, "bin", "brew").tap do |brew|
-      FileUtils.mkdir_p(File.dirname(brew))
-      File.write(brew, "")
+    def linux(**kwargs)
+      Dev::AgentBootstrap::Linux.new(
+        executor: RecordedBootstrapExecutor.new, out: StringIO.new, tap: nil,
+        data_root: Dir.mktmpdir, systemd_dir: Dir.mktmpdir, brew_executable: nil, **kwargs
+      )
     end
   end
 
-  # An executor whose identity probes (user, group, memberships, sudoers) all
-  # answer converged, so shared-root and trust tests isolate their own step.
-  # The sudoers drop-in on "disk" is the one a bootstrap with the same brew
-  # would write, so the brew edge never drifts between probe and desire.
-  #
-  # @param fail_matching [String, nil] run() fails when the argv mentions this token
-  # @param bootstrap_kwargs [Hash] what the bootstrap under test is built
-  #   with that shapes the drop-in (`brew_executable:`)
-  def converged_identity_executor(fail_matching: nil, **bootstrap_kwargs)
-    RecordedBootstrapExecutor.new(
-      fail_matching: fail_matching,
-      probe_results: {
-        ["id", "-u", "ai-agent"] => true,
-        ["dseditgroup", "-o", "read", "ai"] => true,
-        ["dseditgroup", "-o", "checkmember", "-m", "human", "ai"] => true,
-        ["dseditgroup", "-o", "checkmember", "-m", "ai-agent", "ai"] => true,
-      },
-      capture_results: {
-        ["sudo", "cat", "/etc/sudoers.d/ai-flow-agent"] =>
-          Dev::AgentBootstrap.new(runner_user: "human", darwin: true, **bootstrap_kwargs).sudoers_content,
-      },
-    )
+  test "sudoers content grants the one-way SETENV edge from the enrolling user with the agent umask defaults — #{platform}" do
+    Expect "the grantor is the platform's runner user: the operator on a Mac, `runner` on Linux"
+    content.include?("#{grantor} ALL=(ai-agent) NOPASSWD:SETENV: ALL")
+    content.include?("Defaults>ai-agent env_reset, umask=0002, umask_override")
+    content.lines.size == 2
+    content.end_with?("\n")
+
+    Where
+    platform | grantor  | content
+    "darwin" | "human"  | darwin.sudoers_content
+    "linux"  | "runner" | linux.sudoers_content
   end
 
-  test "ensure_agent_engine! converges colima, the agent's engine record, and its VM" do
-    Given "a host with none of the engine leg present"
-    executor = RecordedBootstrapExecutor.new
+  # The prefix owner is whoever runs the suite, so the agent is named
+  # explicitly: on an agent host the suite itself runs as `ai-agent`, and the
+  # default would make the owner the agent — a waived edge, not a granted one.
+  test "sudoers content grants the agent a brew edge to the stat'd prefix owner" do
+    Given "a host with brew at a known prefix owned by the human"
+    dir = Dir.mktmpdir
+    brew = File.join(dir, "bin", "brew")
+    FileUtils.mkdir_p(File.dirname(brew))
+    File.write(brew, "")
+    owner = Etc.getpwuid(File.stat(dir).uid).name
+    content = self.class.darwin(agent_user: "ci", brew_executable: brew).sudoers_content
 
-    When "converging the engine"
-    bootstrap(executor).ensure_agent_engine!
+    Expect "the agent may run exactly brew as the prefix owner, NOPASSWD, with the assignments dev's escalation hands sudo (SETENV)"
+    content.include?("ci ALL=(#{owner}) NOPASSWD:SETENV: #{brew}")
+    !content.include?("NOPASSWD: #{brew}")
 
-    Then "sudo primed; colima installed; record written agent-owned; VM started at defaults"
-    executor.runs.fetch(0) == ["sudo", "-v"]
-    executor.runs.fetch(1) == ["brew", "install", "colima"]
-    executor.runs.fetch(2) ==
-      ["sudo", "-H", "-u", "ai-agent", "--", "mkdir", "-p", "/Users/ai-agent/.config/dev"]
-    executor.runs.fetch(3).first(6) == ["sudo", "install", "-m", "0644", "-o", "ai-agent"]
-    executor.runs.fetch(3).last == "/Users/ai-agent/.config/dev/config.yml"
-    executor.runs.fetch(4) == [
-      "sudo", "-H", "-u", "ai-agent", "--",
-      "colima", "start",
-      "--cpu", Dev::ColimaProvisioner::DEFAULT_CPUS.to_s,
-      "--memory", Dev::ColimaProvisioner::DEFAULT_MEMORY_GIB.to_s,
-      "--vm-type", "vz", "--vz-rosetta",
-    ]
-    executor.runs.length == 5
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
-  test "ensure_agent_engine! sizes the VM from the repo's resources hint" do
-    Given "a resources hint"
-    executor = RecordedBootstrapExecutor.new
+  # plans#59: on the box the prefix is the runner user's (dev#337), so the
+  # brew edge is agent → runner, onto the Linuxbrew path by its realpath.
+  test "on Linux the brew edge targets the runner user's Linuxbrew prefix" do
+    Given "a Linux host whose Linuxbrew prefix stats as runner's"
+    bootstrap = self.class.linux(brew_executable: "/home/linuxbrew/.linuxbrew/bin/brew", owner_of: RUNNER_OWNS_LINUXBREW)
 
-    When "converging the engine with sizing"
-    bootstrap(executor).ensure_agent_engine!(cpus: 12, memory_gib: 24, disk_gib: 250)
+    When "reading the edge"
+    edge = bootstrap.brew_edge
 
     Then
-    executor.runs.last == [
-      "sudo", "-H", "-u", "ai-agent", "--",
-      "colima", "start", "--cpu", "12", "--memory", "24", "--disk", "250", "--vm-type", "vz", "--vz-rosetta",
-    ]
+    edge.is_a?(Dev::AgentBootstrap::BrewEdge)
+    edge.owner == "runner"
+    edge.path == "/home/linuxbrew/.linuxbrew/bin/brew"
+    bootstrap.sudoers_content.lines.last == "ai-agent ALL=(runner) NOPASSWD:SETENV: /home/linuxbrew/.linuxbrew/bin/brew\n"
   end
 
-  test "ensure_agent_engine! is a no-op (bar the sudo prime) when the leg is converged" do
-    Given "colima installed, record written, VM running"
-    executor = RecordedBootstrapExecutor.new(
-      probe_results: { ["brew", "list", "--formula", "colima"] => true },
-      capture_results: {
-        ["sudo", "-n", "-H", "-u", "ai-agent", "--", "colima", "list", "-j"] => RUNNING_AGENT_VM_JSON,
-        ["sudo", "cat", "/Users/ai-agent/.config/dev/config.yml"] => "container_engine: colima\n",
-      },
-    )
+  # dev#365: status inspects the host against the same facts the drop-in
+  # is written from, so they are exposed once and the rule rendered from them.
+  test "the brew edge is exposed as facts — agent, stat'd owner, brew path — and the drop-in carries exactly their rule" do
+    Given "a host with brew at a known prefix owned by the human"
+    dir = Dir.mktmpdir
+    brew = File.join(dir, "bin", "brew")
+    FileUtils.mkdir_p(File.dirname(brew))
+    File.write(brew, "")
+    owner = Etc.getpwuid(File.stat(dir).uid).name
+    bootstrap = self.class.darwin(agent_user: "ci", brew_executable: brew)
 
-    When "converging the engine"
-    bootstrap(executor).ensure_agent_engine!
+    When "reading the edge"
+    edge = bootstrap.brew_edge
 
-    Then
-    executor.runs == [["sudo", "-v"]]
+    Then "the facts are the three the rule names, every tag on it, and the content is built from them"
+    edge.is_a?(Dev::AgentBootstrap::BrewEdge)
+    edge.agent == "ci"
+    edge.owner == owner
+    edge.path == brew
+    Dev::AgentBootstrap::EDGE_TAGS.all? { |tag| edge.sudoers_rule.include?(tag) }
+    bootstrap.sudoers_content.lines.last == "#{edge.sudoers_rule}\n"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
-  test "ensure_agent_engine! merges the record into an existing agent config" do
-    Given "an agent config carrying another key"
-    executor = RecordedBootstrapExecutor.new(
-      probe_results: { ["brew", "list", "--formula", "colima"] => true },
-      capture_results: {
-        ["sudo", "-n", "-H", "-u", "ai-agent", "--", "colima", "list", "-j"] => RUNNING_AGENT_VM_JSON,
-        ["sudo", "cat", "/Users/ai-agent/.config/dev/config.yml"] => "plans_repo: d3mlabs/plans\n",
-      },
-    )
-    bs = bootstrap(executor)
+  test "sudoers content omits the brew edge when brew is absent (#{what}), and says why" do
+    Expect "only the spawn edge and the umask defaults remain; the waiver names the missing brew"
+    bootstrap.sudoers_content.lines.size == 2
+    bootstrap.brew_edge.is_a?(Dev::AgentBootstrap::NoBrewEdge)
+    bootstrap.brew_edge.reason == "no brew on this host"
 
-    When "converging the engine"
-    bs.ensure_agent_engine!
-
-    Then "the staged content keeps the existing key alongside the record"
-    staged = bs.agent_config_content("plans_repo: d3mlabs/plans\n")
-    staged.include?("plans_repo: d3mlabs/plans")
-    staged.include?("container_engine: colima")
+    Where
+    what                        | bootstrap
+    "no brew discovered"        | darwin(brew_executable: nil)
+    "a prefix no longer there"  | darwin(brew_executable: "/dev-test-gone-#{Process.pid}/bin/brew")
   end
 
-  test "after_enroll! grants the _work tree cooperatively and wires the service" do
-    Given "a freshly enrolled runner dir"
-    executor = RecordedBootstrapExecutor.new
-    runner_dir = Dir.mktmpdir
-    File.write(File.join(runner_dir, ".service"), "actions.runner.d3mlabs-x.mac\n")
-    agents_dir = Dir.mktmpdir
-    plist = File.join(agents_dir, "actions.runner.d3mlabs-x.mac.plist")
-    work = File.join(runner_dir, "_work")
+  test "sudoers content omits the brew edge when the agent already owns the prefix, and says why" do
+    Given "a brew prefix owned by the agent user itself"
+    dir = Dir.mktmpdir
+    brew = File.join(dir, "bin", "brew")
+    FileUtils.mkdir_p(File.dirname(brew))
+    File.write(brew, "")
+    owner = Etc.getpwuid(File.stat(dir).uid).name
+    bootstrap = self.class.darwin(agent_user: owner, brew_executable: brew)
 
-    When "converging the post-enrollment steps"
-    bootstrap(executor, launch_agents_dir: agents_dir).after_enroll!(runner_dir: runner_dir, slot: 1)
+    Expect "no self-edge is emitted; the waiver names the owner"
+    !bootstrap.sudoers_content.include?(brew)
+    bootstrap.brew_edge.is_a?(Dev::AgentBootstrap::NoBrewEdge)
+    bootstrap.brew_edge.reason == "#{owner} owns the brew prefix #{dir}"
 
-    Then "the _work tree gets the cooperative grant; the plist gets the service env; the service restarts"
-    File.directory?(work)
-    executor.runs.include?(["sudo", "chgrp", "-R", "ai", work])
-    executor.runs.include?(["sudo", "chmod", "-R", "g+rwX", work])
-    executor.runs.include?(["sudo", "find", work, "-type", "d", "-exec", "chmod", "g+s", "{}", "+"])
-    executor.runs.include?(["./svc.sh", "stop", { chdir: runner_dir }])
-    executor.runs.include?(["/usr/libexec/PlistBuddy", "-c", "Set :Umask 2", plist])
-    executor.runs.include?(
-      ["/usr/libexec/PlistBuddy", "-c", "Set :EnvironmentVariables:AI_FLOW_AGENT_USER ai-agent", plist],
-    )
-    executor.runs.include?(
-      ["/usr/libexec/PlistBuddy", "-c", "Set :EnvironmentVariables:AI_FLOW_RUNNER_SLOT 1", plist],
-    )
-    executor.runs.last == ["./svc.sh", "start", { chdir: runner_dir }]
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
-  # ai-flow#116 / dev#485: ai-flow keys per-slot state (the agent's gem
-  # home, a persistent workspace) by the slot number; only dev knows which
-  # enrollment is which slot, so dev records it where it records the agent
-  # user — this slot's service env.
-  test "after_enroll! writes the slot number into that slot's service env" do
-    Given "slot 3's freshly enrolled runner dir"
-    executor = RecordedBootstrapExecutor.new
-    runner_dir = Dir.mktmpdir
-    File.write(File.join(runner_dir, ".service"), "actions.runner.d3mlabs-x.mac-3\n")
-    agents_dir = Dir.mktmpdir
-    plist = File.join(agents_dir, "actions.runner.d3mlabs-x.mac-3.plist")
+  # plans#59: one record of the env both services carry — the agent user,
+  # the group ai-flow shares fresh workspaces with (read from here rather
+  # than defaulted), and the slot (dev#485).
+  test "the service env names the agent user, the data root's group and the slot — #{platform}" do
+    Expect
+    bootstrap.service_env(3) == {
+      "AI_FLOW_AGENT_USER" => "ci",
+      "AI_FLOW_AGENT_GROUP" => Dev::DataRoot::GROUP,
+      "AI_FLOW_RUNNER_SLOT" => "3",
+    }
+    Dev::DataRoot::GROUP == "dev"
 
-    When "converging the post-enrollment steps for slot 3"
-    bootstrap(executor, launch_agents_dir: agents_dir).after_enroll!(runner_dir: runner_dir, slot: 3)
-
-    Then "the plist carries AI_FLOW_RUNNER_SLOT=3, between the service stop and start"
-    stop = executor.runs.index(["./svc.sh", "stop", { chdir: runner_dir }])
-    slot = executor.runs.index(["/usr/libexec/PlistBuddy", "-c", "Set :EnvironmentVariables:AI_FLOW_RUNNER_SLOT 3", plist])
-    start = executor.runs.index(["./svc.sh", "start", { chdir: runner_dir }])
-    !stop.nil? && !slot.nil? && !start.nil?
-    stop < slot && slot < start
+    Where
+    platform | bootstrap
+    "darwin" | darwin(agent_user: "ci")
+    "linux"  | linux(agent_user: "ci")
   end
 
-  test "after_enroll! uses the .service record verbatim when it is a plist path (macOS svc.sh shape)" do
-    Given "a runner dir whose .service records the full plist path, as macOS svc.sh writes it"
-    executor = RecordedBootstrapExecutor.new
-    runner_dir = Dir.mktmpdir
-    agents_dir = Dir.mktmpdir
-    plist = File.join(agents_dir, "actions.runner.d3mlabs.mac.plist")
-    File.write(File.join(runner_dir, ".service"), "#{plist}\n")
+  test "a cooperative dir is in the data root's group and setgid, read with the platform's stat — #{platform}" do
+    Given "a real directory whose stat the executor answers as #{answer.inspect}"
+    dir = Dir.mktmpdir
+    executor = RecordedBootstrapExecutor.new(capture_results: { stat_argv.call(dir) => answer })
+    bootstrap = builder.call(executor)
 
-    When "converging the post-enrollment steps"
-    bootstrap(executor, launch_agents_dir: agents_dir).after_enroll!(runner_dir: runner_dir, slot: 1)
+    Expect
+    bootstrap.cooperative_dir?(dir) == cooperative
+    !bootstrap.cooperative_dir?(File.join(dir, "absent"))
 
-    Then "PlistBuddy targets the recorded path, not a re-joined one"
-    executor.runs.include?(["/usr/libexec/PlistBuddy", "-c", "Set :Umask 2", plist])
-    executor.runs.include?(
-      ["/usr/libexec/PlistBuddy", "-c", "Set :EnvironmentVariables:AI_FLOW_AGENT_USER ai-agent", plist],
-    )
+    Where
+    platform | builder                                                        | stat_argv                                | answer              | cooperative
+    "darwin" | ->(ex) { Dev::AgentBootstrapTest.darwin(executor: ex) }        | ->(p) { ["stat", "-f", "%Sg %Sp", p] }   | "dev drwxrwsr-x\n"  | true
+    "darwin" | ->(ex) { Dev::AgentBootstrapTest.darwin(executor: ex) }        | ->(p) { ["stat", "-f", "%Sg %Sp", p] }   | "ai drwxrwsr-x\n"   | false
+    "darwin" | ->(ex) { Dev::AgentBootstrapTest.darwin(executor: ex) }        | ->(p) { ["stat", "-f", "%Sg %Sp", p] }   | "dev drwxrwxr-x\n"  | false
+    "linux"  | ->(ex) { Dev::AgentBootstrapTest.linux(executor: ex) }         | ->(p) { ["stat", "-c", "%G %A", p] }     | "dev drwxrwsr-x\n"  | true
+    "linux"  | ->(ex) { Dev::AgentBootstrapTest.linux(executor: ex) }         | ->(p) { ["stat", "-c", "%G %A", p] }     | "dev drwxr-xr-x\n"  | false
   end
 
-  test "after_enroll! adds plist keys when Set finds none" do
-    Given "PlistBuddy Set failing (fresh plist without the keys)"
-    executor = RecordedBootstrapExecutor.new(fail_matching: "Set :")
-    runner_dir = Dir.mktmpdir
-    File.write(File.join(runner_dir, ".service"), "actions.runner.d3mlabs-x.mac\n")
-    agents_dir = Dir.mktmpdir
-    plist = File.join(agents_dir, "actions.runner.d3mlabs-x.mac.plist")
+  test "SudoAgentExecutor crosses to the agent, with the adapter's prelude between sudo and the command" do
+    Given "a recorded executor behind the agent seam, with Linux's prelude"
+    executor = RecordedBootstrapExecutor.new(capture_results: { ["sudo", "-n", "-H", "-u", "ci", "--", "env", "-C", "/", "id"] => "ci\n" })
+    as_agent = Dev::AgentBootstrap::SudoAgentExecutor.new(executor: executor, agent_user: "ci", prelude: %w[env -C /])
 
-    When "converging the post-enrollment steps"
-    bootstrap(executor, launch_agents_dir: agents_dir).after_enroll!(runner_dir: runner_dir, slot: 1)
+    When "running, probing and capturing"
+    as_agent.run("true")
+    probed = as_agent.quiet?("true")
+    captured = as_agent.capture("id")
 
-    Then "Add fallbacks ran"
-    executor.runs.include?(["/usr/libexec/PlistBuddy", "-c", "Add :Umask integer 2", plist])
-    executor.runs.include?(
-      ["/usr/libexec/PlistBuddy", "-c",
-       "Add :EnvironmentVariables:AI_FLOW_AGENT_USER string ai-agent", plist],
-    )
-    executor.runs.include?(
-      ["/usr/libexec/PlistBuddy", "-c", "Add :EnvironmentVariables:AI_FLOW_RUNNER_SLOT string 1", plist],
-    )
-  end
-
-  test "after_enroll! raises when the runner dir carries no service record" do
-    Given "a runner dir the ceremony never installed a service into"
-    executor = RecordedBootstrapExecutor.new
-    runner_dir = Dir.mktmpdir
-
-    When "converging the post-enrollment steps"
-    bootstrap(executor).after_enroll!(runner_dir: runner_dir, slot: 1)
-
-    Then
-    raises Dev::AgentBootstrap::StepFailedError
-  end
-
-  test "after_enroll! warns (never raises) when the agent CLI is unresolvable" do
-    Given "no cursor-agent on the host"
-    executor = RecordedBootstrapExecutor.new
-    runner_dir = Dir.mktmpdir
-    File.write(File.join(runner_dir, ".service"), "actions.runner.d3mlabs-x.mac\n")
-    out = StringIO.new
-    bs = Dev::AgentBootstrap.new(
-      runner_user: "human", executor: executor, out: out, darwin: true,
-      shared_root: Dir.mktmpdir, home_dev: File.join(Dir.mktmpdir, "absent"),
-      launch_agents_dir: Dir.mktmpdir,
-    )
-
-    When "converging the post-enrollment steps"
-    bs.after_enroll!(runner_dir: runner_dir, slot: 1)
-
-    Then "a warning names the missing CLI"
-    out.string.include?("cursor-agent")
-    out.string.include?("WARNING")
+    Then "run streams without -n; probes and captures never prompt"
+    executor.runs == [["sudo", "-H", "-u", "ci", "--", "env", "-C", "/", "true"]]
+    executor.probes == [["sudo", "-n", "-H", "-u", "ci", "--", "env", "-C", "/", "true"]]
+    !probed
+    captured == "ci\n"
   end
 
   # The real executor is the true admin-CLI boundary; prove the thin wrapper
@@ -578,109 +226,5 @@ class Dev::AgentBootstrapTest < Minitest::Test
     executor.capture("echo", "hello") == "hello\n"
     executor.capture("false") == ""
     executor.capture("dev-test-no-such-binary-#{Process.pid}") == ""
-  end
-
-  test "sudoers content grants the one-way SETENV edge with the agent umask defaults" do
-    Given "a bootstrap"
-    content = Dev::AgentBootstrap.new(runner_user: "human", darwin: true).sudoers_content
-
-    Expect
-    content.include?("human ALL=(ai-agent) NOPASSWD:SETENV: ALL")
-    content.include?("Defaults>ai-agent env_reset, umask=0002, umask_override")
-    content.end_with?("\n")
-  end
-
-  # The prefix owner is whoever runs the suite, so the agent is named
-  # explicitly: on an agent host the suite itself runs as `ai-agent`, and the
-  # default would make the owner the agent — a waived edge, not a granted one.
-  test "sudoers content grants the agent a brew edge to the prefix owner" do
-    Given "a host with brew at a known prefix owned by the human"
-    dir = Dir.mktmpdir
-    brew = File.join(dir, "bin", "brew")
-    FileUtils.mkdir_p(File.dirname(brew))
-    File.write(brew, "")
-    owner = Etc.getpwuid(File.stat(dir).uid).name
-    content = Dev::AgentBootstrap.new(
-      agent_user: "ci", runner_user: "human", darwin: true, brew_executable: brew,
-    ).sudoers_content
-
-    Expect "the agent may run exactly brew as the prefix owner, NOPASSWD, with the assignments dev's escalation hands sudo (SETENV)"
-    content.include?("ci ALL=(#{owner}) NOPASSWD:SETENV: #{brew}")
-    !content.include?("NOPASSWD: #{brew}")
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  # dev#365: status inspects the host against the same facts the drop-in
-  # is written from, so they are exposed once and the rule rendered from them.
-  test "the brew edge is exposed as facts — agent, stat'd owner, brew path — and the drop-in carries exactly their rule" do
-    Given "a host with brew at a known prefix owned by the human"
-    dir = Dir.mktmpdir
-    brew = File.join(dir, "bin", "brew")
-    FileUtils.mkdir_p(File.dirname(brew))
-    File.write(brew, "")
-    owner = Etc.getpwuid(File.stat(dir).uid).name
-    bootstrap = Dev::AgentBootstrap.new(agent_user: "ci", runner_user: "human", darwin: true, brew_executable: brew)
-
-    When "reading the edge"
-    edge = bootstrap.brew_edge
-
-    Then "the facts are the three the rule names, every tag on it, and the content is built from them"
-    edge.is_a?(Dev::AgentBootstrap::BrewEdge)
-    edge.agent == "ci"
-    edge.owner == owner
-    edge.path == brew
-    Dev::AgentBootstrap::EDGE_TAGS.all? { |tag| edge.sudoers_rule.include?(tag) }
-    bootstrap.sudoers_content.lines.last == "#{edge.sudoers_rule}\n"
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  test "sudoers content omits the brew edge when brew is absent, and says why" do
-    Given "a host with no brew executable"
-    bootstrap = Dev::AgentBootstrap.new(
-      runner_user: "human", darwin: true,
-      brew_executable: File.join(Dir.mktmpdir, "no-brew"),
-    )
-
-    Expect "only the spawn edge and the umask defaults remain; the waiver names the missing brew"
-    bootstrap.sudoers_content.lines.size == 2
-    bootstrap.brew_edge.is_a?(Dev::AgentBootstrap::NoBrewEdge)
-    bootstrap.brew_edge.reason == "no brew on this host"
-  end
-
-  test "sudoers content omits the brew edge when the agent already owns the prefix, and says why" do
-    Given "a brew prefix owned by the agent user itself"
-    dir = Dir.mktmpdir
-    brew = File.join(dir, "bin", "brew")
-    FileUtils.mkdir_p(File.dirname(brew))
-    File.write(brew, "")
-    owner = Etc.getpwuid(File.stat(dir).uid).name
-    bootstrap = Dev::AgentBootstrap.new(
-      runner_user: "human", agent_user: owner, darwin: true, brew_executable: brew,
-    )
-
-    Expect "no self-edge is emitted; the waiver names the owner"
-    !bootstrap.sudoers_content.include?(brew)
-    bootstrap.brew_edge.is_a?(Dev::AgentBootstrap::NoBrewEdge)
-    bootstrap.brew_edge.reason == "#{owner} owns the brew prefix #{dir}"
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  test "the agent user is a register-time parameter" do
-    Given "an overridden run-as user"
-    executor = RecordedBootstrapExecutor.new
-
-    When "converging"
-    bootstrap(executor, agent_user: "ci").converge!
-
-    Then "every step targets the override"
-    executor.runs.fetch(0) ==
-      ["sudo", "sysadminctl", "-addUser", "ci", "-fullName", "AI Agent", "-shell", "/bin/zsh"]
-    executor.probes.include?(["id", "-u", "ci"])
   end
 end

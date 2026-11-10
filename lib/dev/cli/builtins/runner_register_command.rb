@@ -1,7 +1,10 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "dev/agent_bootstrap"
+require "dev/agent_bootstrap/darwin"
 require "dev/cli/command"
+require "dev/data_root"
 require "dev/deps/lockfile"
 require "dev/engine_provisioner"
 require "dev/enrolled_runner"
@@ -166,11 +169,13 @@ module Dev
         # The reach check for an identity; injected for tests.
         ReachFactory = T.type_alias { T.proc.params(identity: Dev::RunnerUser).returns(Dev::HostReach) }
 
-        # Resolves the advertised labels' contracts; injected for tests.
+        # Resolves the advertised labels' contracts for the agent user and
+        # the host rule's runner user (nil on a Mac); injected for tests.
         ContractsFactory = T.type_alias do
           T.proc.params(
             labels: String,
             agent_user: T.nilable(String),
+            runner_user: T.nilable(String),
           ).returns(T::Array[Dev::LabelContracts::AgentHostContract])
         end
 
@@ -200,7 +205,9 @@ module Dev
           runner_setup_factory: ->(config, repo, org, runner_user) {
             Dev::RunnerSetup.new(config:, repo:, org:, as_user: runner_user&.name, home: runner_user&.home, path: runner_user&.path)
           },
-          contracts_factory: ->(labels, agent_user) { Dev::LabelContracts.for(labels, agent_user: agent_user) },
+          contracts_factory: ->(labels, agent_user, runner_user) {
+            Dev::LabelContracts.for(labels, agent_user: agent_user, runner_user: runner_user)
+          },
           repo_resolver: ->(override) { override || Dev::RunnerSetup.current_repo },
           discovery: Dev::RunnerDiscovery.new,
           # The GitHub boundary (#find/#amend!); T.untyped so tests fake it.
@@ -300,7 +307,7 @@ module Dev
             terminal, and stops otherwise.
 
             On Linux the runner user is `#{Dev::RunnerUser::DEFAULT_NAME}` by rule (--as renames it): created if absent, in
-            docker and #{LinuxDataRootProvisioner::GROUP}, no password, no sudo; its commands and every job run on the
+            docker and #{DataRoot::GROUP}, no password, no sudo; its commands and every job run on the
             host PATH (brew's bin and sbin, then the system's — nothing of yours), and
             Homebrew's shellenv lands in #{Dev::RunnerUser::PROFILE_D} so `sudo -iu` shells
             find gh. Jobs upgrade dev through brew, and brew is single-owner, so
@@ -319,6 +326,22 @@ module Dev
             and enroll fresh as the runner user. On macOS the enrollment is yours (a
             per-user LaunchAgent); the agent user is the second identity there, and its
             own brew user — register has it trust the deployment's tap the same way.
+
+            An agent host is a Mac or a Linux dev host (plans#59). Agent labels converge the
+            same facts on both: the non-admin agent user (`#{AgentBootstrap::DEFAULT_AGENT_USER}`, --agent-user
+            renames it) in the data root's `#{DataRoot::GROUP}` group beside the runner user; the one-way
+            sudoers edge from the runner user to the agent (NOPASSWD, SETENV — the operator on a
+            Mac, `#{Dev::RunnerUser::DEFAULT_NAME}` on Linux) with the brew edge onto the prefix owner's brew; the tap
+            trusted as the agent; the `_work` tree group-writable; and the service env naming
+            the agent user, the group and the slot (#{AgentBootstrap::AGENT_USER_ENV}, #{AgentBootstrap::AGENT_GROUP_ENV},
+            #{AgentBootstrap::RUNNER_SLOT_ENV}) under a 002 umask — a LaunchAgent plist on a Mac, a systemd unit
+            drop-in on Linux. A Mac provisions the shared root (#{DataRoot::SHARED_ROOT}) and
+            gives the agent its own colima when the checkout pins an image; a Linux host
+            joins the agent to the root `dev up` made and has no agent engine — an
+            image-built repo's agent runs inside the project's container (plans#61), so
+            agent labels for such a repo are refused there until that lands. A Mac
+            bootstrapped before the one group name re-groups its root and `_work` trees from
+            `#{AgentBootstrap::Darwin::LEGACY_GROUP}` to `#{DataRoot::GROUP}` on its next register.
 
             Examples:
               dev runner register                      # repo scope; label = the repo name
@@ -397,7 +420,9 @@ module Dev
             @reach_factory.call(runner_user).check!(@pins_reader.call(root)) if root
           end
 
-          contracts = @contracts_factory.call(labels, args.value(AGENT_USER_FLAG))
+          # The agent host contract spawns the agent from the enrolling
+          # user's service: the runner user on Linux, the operator on a Mac.
+          contracts = @contracts_factory.call(labels, args.value(AGENT_USER_FLAG), runner_user&.name)
           contracts.each do |contract|
             contract.converge!(
               container: container,
