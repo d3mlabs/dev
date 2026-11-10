@@ -655,6 +655,7 @@ class Dev::RunnerStatusTest < Minitest::Test
       capture_results: {
         ["stat", "-f", "%Sg %Sp", work] => "dev drwxrwsr-x\n",
         ["stat", "-f", "%Sg %Sp", shared_root] => "dev drwxrwsr-x\n",
+        ["stat", "-f", "%Sg %Sp", "/opt/homebrew/var/homebrew/locks"] => "dev drwxrwsr-x\n",
         AGENT_SUDO_LIST => "#{AGENT_RULES_HEADER}    (human) SETENV: NOPASSWD: /opt/homebrew/bin/brew\n",
       },
     )
@@ -678,6 +679,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     out.string.include?("✓ brew edge: ai-agent may run /opt/homebrew/bin/brew as human (NOPASSWD, SETENV)")
     out.string.include?("✓ _work tree cooperative in #{runner_dir} (group dev, setgid)")
     out.string.include?("✓ data root #{shared_root} shared with group dev (setgid)")
+    out.string.include?("✓ brew lock dir /opt/homebrew/var/homebrew/locks shared with group dev (setgid, locks group-writable)")
     out.string.include?("✓ colima installed (container engine)")
   end
 
@@ -699,6 +701,7 @@ class Dev::RunnerStatusTest < Minitest::Test
         ["id", "-nG", "ai-agent"] => "ai-agent dev\n",
         ["stat", "-c", "%G %A", work] => "dev drwxrwsr-x\n",
         ["stat", "-c", "%G %A", data_root] => "dev drwxrwsr-x\n",
+        ["stat", "-c", "%G %A", "/home/linuxbrew/.linuxbrew/var/homebrew/locks"] => "dev drwxrwsr-x\n",
         AGENT_SUDO_LIST => "#{AGENT_RULES_HEADER}    (runner) SETENV: NOPASSWD: /home/linuxbrew/.linuxbrew/bin/brew\n",
       },
     )
@@ -721,6 +724,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     out.string.include?("✓ brew edge: ai-agent may run /home/linuxbrew/.linuxbrew/bin/brew as runner (NOPASSWD, SETENV)")
     out.string.include?("✓ _work tree cooperative in #{runner_dir} (group dev, setgid)")
     out.string.include?("✓ data root #{data_root} shared with group dev (setgid)")
+    out.string.include?("✓ brew lock dir /home/linuxbrew/.linuxbrew/var/homebrew/locks shared with group dev (setgid, locks group-writable)")
     out.string.include?("✗ agent engine: ")
     out.string.include?("plans#61")
     out.string.scan("✗ ").length == 1

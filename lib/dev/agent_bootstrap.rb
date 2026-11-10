@@ -26,9 +26,11 @@ module Dev
   # (DataRoot::GROUP), one name across hosts; the one-way sudoers edge
   # (runner user → agent, SETENV, with the agent-side umask defaults that
   # keep agent-created dirs group-writable) and the brew edge beside it;
-  # the data root the agent reads through the group; the agent's trust of
-  # the deployment's tap (TapTrust, dev#374 — the agent is a different
-  # brew user); and after enrollment, the `_work` tree as a group space and
+  # the data root the agent reads through the group; brew's lock dir as a
+  # group space, so the agent's brew reads can take the API download lock
+  # in a prefix it does not own (dev#558); the agent's trust of the
+  # deployment's tap (TapTrust, dev#374 — the agent is a different brew
+  # user); and after enrollment, the `_work` tree as a group space and
   # the service env naming the agent user, the group and the slot.
   #
   # One contract, two adapters (plans#59): the facts are the same on a Mac
@@ -70,6 +72,10 @@ module Dev
 
     # The sudoers drop-in carrying the one-way spawn edge.
     SUDOERS_PATH = "/etc/sudoers.d/ai-flow-agent"
+
+    # brew's lock dir under its prefix: HOMEBREW_LOCKS as brew.sh pins it,
+    # not overridable, so the agent's locks go where the owner's do.
+    BREW_LOCKS = "var/homebrew/locks"
 
     # The tags every edge in the drop-in carries: no prompt (jobs run
     # unattended) and SETENV (the caller's `VAR=value` assignments ride
@@ -266,6 +272,7 @@ module Dev
       ensure_group!
       ensure_sudoers!
       ensure_data_root!
+      ensure_brew_locks!
       @tap_trust.trust!
     end
 
@@ -365,6 +372,33 @@ module Dev
       BrewEdge.new(agent: @agent_user, owner: owner, path: brew)
     end
 
+    # Inspection: brew's lock dir on a host whose brew the agent uses but
+    # does not own (the #brew_edge hosts) — `<prefix>/var/homebrew/locks`,
+    # where brew.sh pins HOMEBREW_LOCKS (not overridable). nil without
+    # brew, or when the agent owns the prefix and takes its own locks.
+    #
+    # @return [String, nil]
+    sig { returns(T.nilable(String)) }
+    def brew_locks_dir
+      edge = brew_edge
+      edge.is_a?(BrewEdge) ? File.join(prefix_of(edge.path), BREW_LOCKS) : nil
+    end
+
+    # Inspection: whether the agent can take brew's locks — the dir a
+    # cooperative space and every lock in it open to the group (brew opens
+    # an existing lock read-write and never deletes one, so a lock the
+    # owner left 0644 is as closed as the dir was). true where no lock dir
+    # is the agent's concern.
+    #
+    # @return [Boolean]
+    sig { returns(T::Boolean) }
+    def brew_locks_cooperative?
+      dir = brew_locks_dir
+      return true if dir.nil?
+
+      cooperative_dir?(dir) && @executor.capture("find", dir, "!", "-perm", "-g+w").strip.empty?
+    end
+
     # Inspection: where the agent CLI lands on this host — the cask's
     # `binary` link beside brew in the prefix's bin — or nil on a host
     # without brew, where the deployment Brewfile has no channel to arrive
@@ -390,14 +424,12 @@ module Dev
 
     # Inspection: whether a directory is a cooperative space — in the group,
     # setgid so new entries inherit it. Read via stat, so inspection needs
-    # no privileges; false for a missing dir.
+    # no privileges; false for a missing dir (stat says nothing).
     #
     # @param path [String]
     # @return [Boolean]
     sig { params(path: String).returns(T::Boolean) }
     def cooperative_dir?(path)
-      return false unless File.directory?(path)
-
       group, perms = @executor.capture(*stat_argv(path)).strip.split(" ", 2)
       # perms renders "drwxrwsr-x": type + owner triplet + group triplet —
       # setgid shows as "s" in the group execute slot, index 6.
@@ -470,6 +502,28 @@ module Dev
         step!("sudo", "visudo", "-c", "-f", staging.path)
         step!("sudo", "install", "-m", "0440", "-o", "root", staging.path, SUDOERS_PATH)
       end
+    end
+
+    # Step 5b: brew's lock dir as a cooperative space, before the agent's
+    # first brew (the tap trust, dev#558). Every brew read by a user with
+    # no API cache downloads the signed index under a lock in
+    # `<prefix>/var/homebrew/locks`, which the prefix owner alone could
+    # write — so on the box `brew trust` as the agent died on
+    # `packages.x86_64_linux.jws.json.download.lock`. The dir holds no code
+    # and no trust state (trust is per user, under the agent's home), so
+    # the grant widens nothing the brew edge has not. Re-granted whenever a
+    # lock in it is closed to the group — the owner's interactive brew
+    # leaves 0644 locks behind.
+    sig { void }
+    def ensure_brew_locks!
+      dir = brew_locks_dir
+      return if dir.nil? || brew_locks_cooperative?
+
+      @out.puts ">>> Granting the #{DataRoot::GROUP} group cooperative access to brew's lock dir #{dir} ..."
+      step!("sudo", "mkdir", "-p", dir)
+      step!("sudo", "chgrp", "-R", DataRoot::GROUP, dir)
+      step!("sudo", "chmod", "-R", "g+rwX", dir)
+      step!("sudo", "chmod", "g+s", dir)
     end
 
     # Step 4: the `_work` tree as a cooperative read-write space — the

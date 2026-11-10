@@ -13,6 +13,7 @@ transform!(RSpock::AST::Transformation)
 class Dev::AgentBootstrap::LinuxTest < Minitest::Test
   SUDOERS_PROBE = ["sudo", "cat", "/etc/sudoers.d/ai-flow-agent"].freeze
   LINUXBREW = "/home/linuxbrew/.linuxbrew/bin/brew"
+  LINUXBREW_LOCKS = "/home/linuxbrew/.linuxbrew/var/homebrew/locks"
 
   # The box's owner lookup: the Linuxbrew prefix is the runner user's
   # (dev#337); nothing else is anyone's.
@@ -133,9 +134,9 @@ class Dev::AgentBootstrap::LinuxTest < Minitest::Test
   end
 
   test "converge! raises DataRootNotSharedError when the data root is missing" do
-    Given "no data root at all"
+    Given "no data root at all — stat says nothing of it"
     missing_root = File.join(Dir.mktmpdir, "absent")
-    executor = RecordedBootstrapExecutor.new(probe_results: converged_probes, capture_results: converged_captures(missing_root))
+    executor = converged_executor(missing_root, except_captures: [["stat", "-c", "%G %A", missing_root]])
 
     When "converging"
     bootstrap(executor, data_root: missing_root).converge!
@@ -147,7 +148,7 @@ class Dev::AgentBootstrap::LinuxTest < Minitest::Test
   # dev#493: sudo keeps the operator's cwd, which the agent cannot enter;
   # every as-agent command starts from `/`.
   test "converge! has the agent trust the tap as the agent, from /, through the runner's Linuxbrew" do
-    Given "a converged host with Linuxbrew and the org tap"
+    Given "a converged host with Linuxbrew (its lock dir cooperative) and the org tap"
     data_root = Dir.mktmpdir
     executor = converged_executor(data_root, brew_executable: LINUXBREW)
     out = StringIO.new
@@ -161,6 +162,28 @@ class Dev::AgentBootstrap::LinuxTest < Minitest::Test
       "env", "HOMEBREW_NO_AUTO_UPDATE=1", LINUXBREW, "trust", "--tap", "d3mlabs/d3mlabs",
     ]]
     out.string.include?(">>> Trusting the tap d3mlabs/d3mlabs for ai-agent")
+  end
+
+  # dev#558: the box's first register — `brew trust` as ai-agent died on
+  # `var/homebrew/locks/packages.x86_64_linux.jws.json.download.lock`, the
+  # runner-owned prefix's lock dir; the lock dir is granted before the
+  # agent's first brew, in the Linux stat dialect.
+  test "converge! grants the group the runner's Linuxbrew lock dir before the tap trust" do
+    Given "a converged host whose Linuxbrew lock dir is the runner's alone"
+    data_root = Dir.mktmpdir
+    executor = converged_executor(data_root, except_captures: [["stat", "-c", "%G %A", LINUXBREW_LOCKS]], brew_executable: LINUXBREW)
+
+    When "converging"
+    bootstrap(executor, data_root: data_root, brew_executable: LINUXBREW, tap: org_tap).converge!
+
+    Then
+    executor.runs.first(4) == [
+      ["sudo", "mkdir", "-p", LINUXBREW_LOCKS],
+      ["sudo", "chgrp", "-R", "dev", LINUXBREW_LOCKS],
+      ["sudo", "chmod", "-R", "g+rwX", LINUXBREW_LOCKS],
+      ["sudo", "chmod", "g+s", LINUXBREW_LOCKS],
+    ]
+    executor.runs.fetch(4).include?("trust")
   end
 
   # dev#337: the brew edge's grantee is whoever owns the prefix on this
@@ -400,6 +423,7 @@ class Dev::AgentBootstrap::LinuxTest < Minitest::Test
       ["id", "-nG", "ai-agent"] => "ai-agent dev\n",
       SUDOERS_PROBE => bootstrap(RecordedBootstrapExecutor.new, **bootstrap_kwargs).sudoers_content,
       ["stat", "-c", "%G %A", data_root] => "dev drwxrwsr-x\n",
+      ["stat", "-c", "%G %A", LINUXBREW_LOCKS] => "dev drwxrwsr-x\n",
     }
   end
 
