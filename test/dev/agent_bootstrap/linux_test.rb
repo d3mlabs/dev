@@ -166,13 +166,16 @@ class Dev::AgentBootstrap::LinuxTest < Minitest::Test
   # dev#337: the brew edge's grantee is whoever owns the prefix on this
   # host, stat'd at bootstrap time — never a hardcoded `runner`.
   test "the brew edge stats the prefix owner on the host when no lookup is injected" do
-    Given "a brew under a prefix this process owns, and the adapter's own owner lookup"
+    Given "a brew under a prefix this process owns, the adapter's own owner lookup, and an agent that is not this process's user"
     prefix = Dir.mktmpdir
     brew = File.join(prefix, "bin", "brew")
     FileUtils.mkdir_p(File.dirname(brew))
     File.write(brew, "")
+    # The suite may itself run as the default agent user (an ai-flow pass
+    # does), and an agent owning the prefix waives the edge — the point
+    # here is the stat, so the agent is someone else.
     bs = Dev::AgentBootstrap::Linux.new(
-      executor: RecordedBootstrapExecutor.new, out: StringIO.new, tap: nil,
+      agent_user: "ci", executor: RecordedBootstrapExecutor.new, out: StringIO.new, tap: nil,
       data_root: Dir.mktmpdir, systemd_dir: Dir.mktmpdir, brew_executable: brew,
     )
 
@@ -310,22 +313,77 @@ class Dev::AgentBootstrap::LinuxTest < Minitest::Test
     raises Dev::AgentBootstrap::StepFailedError
   end
 
-  test "after_enroll! warns (never raises) when the agent CLI is unresolvable" do
-    Given "no cursor-agent on the host"
+  # dev#547: the cursor-cli cask's `binary` lands in the prefix's bin, and
+  # the probe reads it there — never through the enrolling shell's PATH,
+  # which on the box is the operator's while the prefix is the runner
+  # user's and the CLI the agent's.
+  test "the agent CLI is read beside brew in the prefix's bin, never through the enrolling shell's PATH" do
+    Given "a prefix holding brew and the cask's cursor-agent link"
+    prefix = Dir.mktmpdir
+    brew = executable_in(prefix, "brew")
+    cli = executable_in(prefix, "cursor-agent")
     executor = RecordedBootstrapExecutor.new
-    runner_dir = Dir.mktmpdir
-    File.write(File.join(runner_dir, ".service"), "actions.runner.d3mlabs-x.box.service\n")
+    out = StringIO.new
+    bs = bootstrap(executor, out: out, brew_executable: brew)
+
+    When "converging the post-enrollment steps"
+    bs.after_enroll!(runner_dir: enrolled_runner_dir, slot: 1)
+
+    Then "the path is the channel's landing spot, nothing was looked up, nothing warned"
+    bs.agent_cli_path == cli
+    executor.probes.none? { |argv| argv.first == "which" }
+    !out.string.include?("WARNING")
+  end
+
+  test "after_enroll! warns (never raises) when the agent CLI has not landed, naming the path and the prefix owner's dev up" do
+    Given "a runner-owned prefix with brew but no cursor-agent"
+    prefix = Dir.mktmpdir
+    brew = executable_in(prefix, "brew")
+    executor = RecordedBootstrapExecutor.new
     out = StringIO.new
 
-    When
-    bootstrap(executor, out: out).after_enroll!(runner_dir: runner_dir, slot: 1)
+    When "converging the post-enrollment steps"
+    bootstrap(executor, out: out, brew_executable: brew, owner_of: ->(_path) { "runner" })
+      .after_enroll!(runner_dir: enrolled_runner_dir, slot: 1)
+
+    Then "the warning says where the cask lands and whose dev up puts it there"
+    out.string.include?("WARNING: the agent CLI is not at #{File.join(prefix, "bin", "cursor-agent")}")
+    out.string.include?("`dev up` as runner, who owns #{prefix}")
+    out.string.include?("sudo -iu runner dev up")
+  end
+
+  test "without brew the agent CLI has no channel: no path, a warning naming the gap" do
+    Given "a brewless host"
+    executor = RecordedBootstrapExecutor.new
+    out = StringIO.new
+    bs = bootstrap(executor, out: out, brew_executable: nil)
+
+    When "converging the post-enrollment steps"
+    bs.after_enroll!(runner_dir: enrolled_runner_dir, slot: 1)
 
     Then
-    out.string.include?("WARNING")
+    bs.agent_cli_path.nil?
+    out.string.include?("WARNING: no brew on this host")
     out.string.include?("cursor-agent")
   end
 
   def org_tap = Dev::TapTrust::Tap.new(user: "d3mlabs", repo: "d3mlabs")
+
+  # A runner dir the enrollment ceremony left a service record in.
+  def enrolled_runner_dir
+    Dir.mktmpdir.tap { |dir| File.write(File.join(dir, ".service"), "actions.runner.d3mlabs-x.box.service\n") }
+  end
+
+  # An executable under `<prefix>/bin`, the way brew links one.
+  #
+  # @return [String] its path
+  def executable_in(prefix, name)
+    path = File.join(prefix, "bin", name)
+    FileUtils.mkdir_p(File.dirname(path))
+    File.write(path, "#!/bin/sh\n")
+    File.chmod(0o755, path)
+    path
+  end
 
   # Probes that answer converged: the agent user exists, the group exists.
   def converged_probes
