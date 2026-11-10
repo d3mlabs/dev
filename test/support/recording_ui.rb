@@ -29,7 +29,9 @@ class RecordingUi < Dev::NoUi
   # What the plain tier printed, when `out` is a StringIO (the default).
   #
   # @return [String]
-  def out_text = @out_io.string
+  def out_text
+    @out_io.string
+  end
 
   def frame(title, &block)
     @events << Event.new(kind: :frame, text: title, depth: @depth)
