@@ -2,11 +2,11 @@
 # frozen_string_literal: true
 
 require "etc"
-require "stringio"
 
 require "dev/runner_discovery"
 require "dev/runner_slots"
 require "dev/runner_setup"
+require "dev/ui"
 
 module Dev
   # The exact inverse of RunnerSetup: removes one of this host's runner
@@ -58,7 +58,6 @@ module Dev
     # @param discovery [Dev::RunnerDiscovery] this host's enrollments
     # @param executor [#capture, #system] CLI boundary (default: the real
     #   one; injectable for tests)
-    # @param out [IO, StringIO] progress stream
     # @param host_platform [String] actions-runner platform slug; drives the
     #   svc.sh sudo split (systemd vs LaunchAgent)
     # @param home [String] what a leading `~` in a dir reference expands to
@@ -68,18 +67,16 @@ module Dev
       params(
         discovery: Dev::RunnerDiscovery,
         executor: T.untyped,
-        out: T.any(IO, StringIO),
         host_platform: String,
         home: String,
         current_user: String,
       ).void
     end
-    def initialize(discovery: Dev::RunnerDiscovery.new, executor: RunnerSetup::Executor.new, out: $stdout,
+    def initialize(discovery: Dev::RunnerDiscovery.new, executor: RunnerSetup::Executor.new,
                    host_platform: RunnerSetup.detect_host_platform, home: Dir.home,
                    current_user: T.must(Etc.getpwuid(Process.uid)).name)
       @discovery = discovery
       @exec = executor
-      @out = out
       @host_platform = host_platform
       @home = home
       @current_user = current_user
@@ -138,18 +135,22 @@ module Dev
 
     # Remove the enrollment: stop and uninstall its service when one is
     # installed, deregister it at its own scope, clear the enrollment
-    # files. One line of output names what happened and where.
+    # files — framed as the enrollment on the Ui: the service a step (svc.sh
+    # owns the terminal), the deregistration a spin (captured), and one
+    # closing note saying what happened.
     #
     # @param enrollment [Dev::RunnerDiscovery::Enrollment]
+    # @param ui [Ui]
     # @return [void]
     # @raise [TeardownFailedError] when a step is refused; the enrollment
     #   is left at that step
-    sig { params(enrollment: Dev::RunnerDiscovery::Enrollment).void }
-    def teardown!(enrollment)
-      service = enrollment.service_installed ? uninstall_service(enrollment.dir) : "no service installed"
-      registration = deregister(enrollment)
-      @out.puts ">>> Unregistered #{enrollment.name} from #{enrollment.scope} (#{enrollment.display_dir}): " \
-                "#{service}, #{registration}, enrollment files cleared; binaries left in place."
+    sig { params(enrollment: Dev::RunnerDiscovery::Enrollment, ui: Ui).void }
+    def teardown!(enrollment, ui:)
+      ui.frame("Unregistering #{enrollment.name} from #{enrollment.scope} (#{enrollment.display_dir})") do
+        service = enrollment.service_installed ? uninstall_service(enrollment.dir, ui) : "no service installed"
+        registration = deregister(enrollment, ui)
+        ui.note("{{v}} #{service}, #{registration}, enrollment files cleared; binaries left in place")
+      end
     end
 
     private
@@ -170,16 +171,18 @@ module Dev
     # svc.sh stop then uninstall, in the dir.
     #
     # @param dir [String]
-    # @return [String] what happened, for the summary line
+    # @param ui [Ui]
+    # @return [String] what happened, for the closing note
     # @raise [TeardownFailedError] when svc.sh refuses
-    sig { params(dir: String).returns(String) }
-    def uninstall_service(dir)
-      @out.puts ">>> Stopping + uninstalling the runner service ..."
-      %w[stop uninstall].each do |action|
-        argv = RunnerSetup.service_argv(action, host_platform: @host_platform)
-        next if @exec.system(*argv, chdir: dir)
+    sig { params(dir: String, ui: Ui).returns(String) }
+    def uninstall_service(dir, ui)
+      ui.step("Stopping + uninstalling the runner service") do
+        %w[stop uninstall].each do |action|
+          argv = RunnerSetup.service_argv(action, host_platform: @host_platform)
+          next if @exec.system(*argv, chdir: dir)
 
-        raise TeardownFailedError, "svc.sh #{action} failed in #{dir}"
+          raise TeardownFailedError, "svc.sh #{action} failed in #{dir}"
+        end
       end
       "service stopped and uninstalled"
     end
@@ -189,14 +192,14 @@ module Dev
     # and unregister agree on what "gone from the server" means.
     #
     # @param enrollment [Dev::RunnerDiscovery::Enrollment]
-    # @return [String] what happened, for the summary line
+    # @param ui [Ui]
+    # @return [String] what happened, for the closing note
     # @raise [TeardownFailedError] when the token can't be minted or
     #   config.sh fails for a reason other than a gone registration
-    sig { params(enrollment: Dev::RunnerDiscovery::Enrollment).returns(String) }
-    def deregister(enrollment)
-      @out.puts ">>> Removing the registration at #{enrollment.scope} ..."
+    sig { params(enrollment: Dev::RunnerDiscovery::Enrollment, ui: Ui).returns(String) }
+    def deregister(enrollment, ui)
       as_user = enrollment.owner == @current_user ? nil : enrollment.owner
-      RunnerSetup.remove_registration(enrollment.dir, enrollment.scope, executor: @exec, ui: NoUi.new(out: @out), as_user: as_user)
+      RunnerSetup.remove_registration(enrollment.dir, enrollment.scope, executor: @exec, ui: ui, as_user: as_user)
     rescue RunnerSetup::Error => e
       raise TeardownFailedError, e.message
     end

@@ -1,15 +1,16 @@
 # typed: false
 # frozen_string_literal: true
 
-require "dev/ui"
 require "stringio"
+require "support/recording_ui"
 
 # A terminal that answers every `confirm` as told, remembering each
 # question with the default it was offered — the one double for a
 # command whose test is about the question (dev#533). Everything else is
-# `NoUi`: plain lines on `out`, no spinner, no router. Each instance keeps
-# only its own questions, so tests share no state through it.
-class AnsweringUi < Dev::NoUi
+# `RecordingUi`: what was said around the question is on `rows`, plain
+# lines on `out`, no spinner, no router. Each instance keeps only its own
+# questions, so tests share no state through it.
+class AnsweringUi < RecordingUi
   # One `confirm` as it was asked.
   Question = Data.define(:text, :default)
 

@@ -232,7 +232,7 @@ module Dev
           @groups = T.let(groups || Dev::RunnerGroups.new(registry: registry), Dev::RunnerGroups)
           # The operator's own preconditions, probed first (dev#493).
           @operator_access = T.let(
-            Dev::OperatorAccess.new(registry: registry, out: out, refresher: refresher),
+            Dev::OperatorAccess.new(registry: registry, refresher: refresher),
             Dev::OperatorAccess,
           )
           @runner_setup_factory = runner_setup_factory
@@ -771,7 +771,7 @@ module Dev
               "nothing changed. Unregister them yourself, then re-run register:\n#{remedy}"
           end
 
-          enrollments.each { |enrollment| @teardown.teardown!(enrollment) }
+          enrollments.each { |enrollment| @teardown.teardown!(enrollment, ui: ui) }
         end
 
         # `--slots N` under what is enrolled: list the slots past N, ask, and
@@ -793,7 +793,7 @@ module Dev
             raise SurplusSlotsError, "nothing changed. Unregister them yourself, or re-run with the slots you have:\n#{remedy}"
           end
 
-          surplus.each { |enrollment| @teardown.teardown!(enrollment) }
+          surplus.each { |enrollment| @teardown.teardown!(enrollment, ui: ui) }
         end
 
         # The amend path: the discovered enrollment still exists on GitHub

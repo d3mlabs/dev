@@ -1465,8 +1465,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     engine = typed_mock(Dev::EngineProvisioner)
     engine.stubs(:provision!)
     discovery = Dev::RunnerDiscovery.new(home: home)
-    teardown = Dev::RunnerTeardown.new(discovery: discovery, executor: nil, out: StringIO.new, home: home)
-    teardown.define_singleton_method(:teardown!) { |enrollment| torn_down << enrollment }
+    teardown = Dev::RunnerTeardown.new(discovery: discovery, executor: nil, home: home)
+    teardown.define_singleton_method(:teardown!) { |enrollment, ui:| torn_down << enrollment }
     ui = RecordingUi.new(out: out)
     command = Dev::Cli::Builtins::RunnerRegisterCommand.new(
       runner_setup_factory: ->(config, repo_override, org, as_user) {
