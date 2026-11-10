@@ -62,6 +62,12 @@ module Dev
     AGENT_GROUP_ENV = "AI_FLOW_AGENT_GROUP"
     RUNNER_SLOT_ENV = "AI_FLOW_RUNNER_SLOT"
 
+    # The agent CLI's binary name: the cursor-cli cask's `binary` target,
+    # which brew links into `<prefix>/bin` on every platform, and what
+    # ai-flow's dispatcher spawns. A cross-repo literal with the deployment
+    # Brewfile's cask line, duplicated knowingly like the env keys.
+    AGENT_CLI = "cursor-agent"
+
     # The sudoers drop-in carrying the one-way spawn edge.
     SUDOERS_PATH = "/etc/sudoers.d/ai-flow-agent"
 
@@ -280,9 +286,10 @@ module Dev
     # cooperative read-write space (the @workdir that /ask, /split, and
     # PR-mode /build edit in place), and the runner service gets its env
     # (#service_env) under a 002 umask so re-checkouts stay
-    # group-accessible. The agent CLI resolution check is warn-only: the
-    # cursor-cli cask arrives via the deployment Brewfile's `dev up`,
-    # which may legitimately not have run yet.
+    # group-accessible. The agent CLI check is warn-only, read at the
+    # channel's landing spot (#agent_cli_path): the cursor-cli cask arrives
+    # via the deployment Brewfile on the prefix owner's `dev up`, which may
+    # legitimately not have run yet.
     #
     # @param runner_dir [String] the enrolled runner's install dir
     # @param slot [Integer] which of the host's slots this runner is, 1-based
@@ -350,12 +357,27 @@ module Dev
       brew = @brew_executable
       return NoBrewEdge.new(reason: "no brew on this host") unless brew
 
-      prefix = File.dirname(File.dirname(brew))
+      prefix = prefix_of(brew)
       owner = @owner_of.call(prefix)
       return NoBrewEdge.new(reason: "no brew on this host") unless owner
       return NoBrewEdge.new(reason: "#{@agent_user} owns the brew prefix #{prefix}") if owner == @agent_user
 
       BrewEdge.new(agent: @agent_user, owner: owner, path: brew)
+    end
+
+    # Inspection: where the agent CLI lands on this host — the cask's
+    # `binary` link beside brew in the prefix's bin — or nil on a host
+    # without brew, where the deployment Brewfile has no channel to arrive
+    # through. A path, never a PATH lookup: the fact belongs to the channel,
+    # so it is read where the channel puts it. The enrolling shell's PATH
+    # answers for the operator, which on a Linux box is neither the prefix's
+    # owner (the runner user, dev#337) nor the identity that runs the CLI.
+    #
+    # @return [String, nil]
+    sig { returns(T.nilable(String)) }
+    def agent_cli_path
+      brew = @brew_executable
+      brew && File.join(File.dirname(brew), AGENT_CLI)
     end
 
     # Inspection: whether a user is in the cooperative group — the probe
@@ -466,15 +488,48 @@ module Dev
       step!("sudo", "find", work, "-type", "d", "-exec", "chmod", "g+s", "{}", "+")
     end
 
-    # Warn when the agent CLI does not resolve — the cursor-cli cask arrives
-    # via the deployment Brewfile's `dev up`, so absence is an ordering
-    # fact, not a bootstrap failure.
+    # Warn when the agent CLI has not landed at #agent_cli_path — the
+    # cursor-cli cask arrives via the deployment Brewfile on `dev up`, so
+    # absence is an ordering fact, not a bootstrap failure. brew is
+    # single-owner, so only the prefix owner's `dev up` converges the
+    # Brewfile (HostService skips the layer for anyone else): the remedy
+    # names that owner, who on a Linux box is the runner user, not the
+    # operator reading this.
     sig { void }
     def verify_agent_cli!
-      return if @executor.quiet?("which", "cursor-agent")
+      path = agent_cli_path
+      if path.nil?
+        @out.puts ">>> WARNING: no brew on this host, so the agent CLI (#{AGENT_CLI}) has no channel to arrive " \
+                  "through — install Homebrew, then run `dev up`."
+        return
+      end
+      return if File.executable?(path)
 
-      @out.puts ">>> WARNING: the agent CLI (cursor-agent) does not resolve on this host. " \
-                "Run `dev up` in the ai-flow checkout to install it."
+      @out.puts ">>> WARNING: the agent CLI is not at #{path}. The cursor-cli cask lands there through the " \
+                "deployment Brewfile on #{tooling_converge_remedy(prefix_of(path))}; jobs cannot run until it does."
+    end
+
+    # The `dev up` that converges the Brewfile into a prefix: the owner's,
+    # with the sudo form for an operator who is not the owner.
+    #
+    # @param prefix [String] the brew prefix
+    # @return [String]
+    sig { params(prefix: String).returns(String) }
+    def tooling_converge_remedy(prefix)
+      owner = @owner_of.call(prefix)
+      return "`dev up` as the owner of #{prefix}" unless owner
+
+      "`dev up` as #{owner}, who owns #{prefix} (from another account: `sudo -iu #{owner} dev up`)"
+    end
+
+    # The brew prefix a binary in its bin belongs to (`<prefix>/bin/<name>`:
+    # brew itself, or a cask's linked binary).
+    #
+    # @param binary [String]
+    # @return [String]
+    sig { params(binary: String).returns(String) }
+    def prefix_of(binary)
+      File.dirname(File.dirname(binary))
     end
 
     # The runner service record svc.sh wrote at install — the one fact the
