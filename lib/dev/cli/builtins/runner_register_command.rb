@@ -184,12 +184,14 @@ module Dev
         ReachFactory = T.type_alias { T.proc.params(identity: Dev::RunnerUser).returns(Dev::HostReach) }
 
         # Resolves the advertised labels' contracts for the agent user and
-        # the host rule's runner user (nil on a Mac); injected for tests.
+        # the host rule's runner user (nil on a Mac), speaking on the Ui;
+        # injected for tests.
         ContractsFactory = T.type_alias do
           T.proc.params(
             labels: String,
             agent_user: T.nilable(String),
             runner_user: T.nilable(String),
+            ui: Ui,
           ).returns(T::Array[Dev::LabelContracts::AgentHostContract])
         end
 
@@ -219,8 +221,8 @@ module Dev
           runner_setup_factory: ->(config, repo, org, runner_user, ui) {
             Dev::RunnerSetup.new(config:, repo:, org:, as_user: runner_user&.name, home: runner_user&.home, path: runner_user&.path, ui:)
           },
-          contracts_factory: ->(labels, agent_user, runner_user) {
-            Dev::LabelContracts.for(labels, agent_user: agent_user, runner_user: runner_user)
+          contracts_factory: ->(labels, agent_user, runner_user, ui) {
+            Dev::LabelContracts.for(labels, agent_user: agent_user, runner_user: runner_user, ui: ui)
           },
           repo_resolver: ->(override) { override || Dev::RunnerSetup.current_repo },
           discovery: Dev::RunnerDiscovery.new,
@@ -458,7 +460,7 @@ module Dev
 
           # The agent host contract spawns the agent from the enrolling
           # user's service: the runner user on Linux, the operator on a Mac.
-          contracts = @contracts_factory.call(labels, args.value(AGENT_USER_FLAG), runner_user&.name)
+          contracts = @contracts_factory.call(labels, args.value(AGENT_USER_FLAG), runner_user&.name, context.ui)
           contracts.each do |contract|
             contract.converge!(
               container: container,

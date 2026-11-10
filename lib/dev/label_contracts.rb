@@ -149,6 +149,7 @@ module Dev
       #   spawns the agent — the Linux host rule's runner user (RunnerUser);
       #   nil for the platform's default (the operator on a Mac)
       # @param bootstrap [Dev::AgentBootstrap, nil] injectable for tests
+      # @param ui [Ui] where the host's bootstrap speaks (register's terminal)
       # @return [Array<AgentHostContract>]
       # @raise [AgentBootstrap::UnsupportedPlatformError] on a host no adapter converges
       sig do
@@ -157,12 +158,13 @@ module Dev
           agent_user: T.nilable(String),
           runner_user: T.nilable(String),
           bootstrap: T.nilable(Dev::AgentBootstrap),
+          ui: Ui,
         ).returns(T::Array[AgentHostContract])
       end
-      def for(labels, agent_user: nil, runner_user: nil, bootstrap: nil)
+      def for(labels, agent_user: nil, runner_user: nil, bootstrap: nil, ui: NoUi.new)
         return [] unless agent_host?(labels)
 
-        resolved = bootstrap || agent_bootstrap(agent_user: agent_user || AgentBootstrap::DEFAULT_AGENT_USER, runner_user: runner_user)
+        resolved = bootstrap || agent_bootstrap(agent_user: agent_user || AgentBootstrap::DEFAULT_AGENT_USER, runner_user: runner_user, ui: ui)
         [AgentHostContract.new(bootstrap: resolved)]
       end
 
@@ -176,6 +178,8 @@ module Dev
       # @param runner_user [String, nil] the enrolling user; nil for the
       #   platform's default
       # @param executor [#run, #quiet?, #capture] the admin CLI seam
+      # @param ui [Ui] where the bootstrap speaks; the plain tier for a
+      #   read-only build (`dev runner status`)
       # @param host_os [String] "darwin" / "linux" / "windows" (injectable for tests)
       # @return [Dev::AgentBootstrap]
       # @raise [AgentBootstrap::UnsupportedPlatformError] on a host no adapter converges
@@ -184,17 +188,18 @@ module Dev
           agent_user: String,
           runner_user: T.nilable(String),
           executor: T.untyped,
+          ui: Ui,
           host_os: String,
         ).returns(AgentBootstrap)
       end
       def agent_bootstrap(agent_user: AgentBootstrap::DEFAULT_AGENT_USER, runner_user: nil,
-                          executor: AgentBootstrap::Executor.new, host_os: Platform.os)
+                          executor: AgentBootstrap::Executor.new, ui: NoUi.new, host_os: Platform.os)
         case host_os
         when "darwin"
-          AgentBootstrap::Darwin.new(agent_user: agent_user, executor: executor,
+          AgentBootstrap::Darwin.new(agent_user: agent_user, executor: executor, ui: ui,
             runner_user: runner_user || T.must(Etc.getpwuid(Process.uid)).name)
         when "linux"
-          AgentBootstrap::Linux.new(agent_user: agent_user, executor: executor,
+          AgentBootstrap::Linux.new(agent_user: agent_user, executor: executor, ui: ui,
             runner_user: runner_user || RunnerUser::DEFAULT_NAME)
         else
           raise AgentBootstrap::UnsupportedPlatformError,

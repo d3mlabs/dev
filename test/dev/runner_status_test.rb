@@ -706,7 +706,7 @@ class Dev::RunnerStatusTest < Minitest::Test
       },
     )
     bootstrap = Dev::AgentBootstrap::Linux.new(
-      runner_user: "runner", executor: executor, out: StringIO.new, data_root: data_root, tap: nil,
+      runner_user: "runner", executor: executor, data_root: data_root, tap: nil,
       brew_executable: "/home/linuxbrew/.linuxbrew/bin/brew", owner_of: ->(_path) { "runner" },
     )
     responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-build"], status: "online") }
@@ -919,7 +919,7 @@ class Dev::RunnerStatusTest < Minitest::Test
 
   def darwin_bootstrap(executor, shared_root:, brew:)
     Dev::AgentBootstrap::Darwin.new(
-      runner_user: "human", executor: executor, out: StringIO.new, data_root: shared_root,
+      runner_user: "human", executor: executor, data_root: shared_root,
       home_dev: File.join(Dir.mktmpdir, "absent"), launch_agents_dir: Dir.mktmpdir,
       brew_executable: brew, owner_of: ->(_path) { "human" }, tap: nil,
     )

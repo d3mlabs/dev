@@ -3,7 +3,6 @@
 
 require "etc"
 require "fileutils"
-require "stringio"
 require "tempfile"
 require "yaml"
 
@@ -48,7 +47,7 @@ module Dev
       # @param runner_user [String] the enrolling user (the sudoers grantor);
       #   defaults to whoever is running register
       # @param executor [#run, #quiet?, #capture] admin CLI seam
-      # @param out [IO, StringIO] progress stream
+      # @param ui [Ui] where the convergence is told (AgentBootstrap)
       # @param data_root [String] where the shared data root is provisioned
       # @param home_dev [String] the per-user data dir migrated out of
       # @param launch_agents_dir [String] where svc.sh installs runner plists
@@ -62,7 +61,7 @@ module Dev
           agent_user: String,
           runner_user: String,
           executor: T.untyped,
-          out: T.any(IO, StringIO),
+          ui: Ui,
           data_root: String,
           home_dev: String,
           launch_agents_dir: String,
@@ -72,13 +71,13 @@ module Dev
         ).void
       end
       def initialize(agent_user: DEFAULT_AGENT_USER, runner_user: T.must(Etc.getpwuid(Process.uid)).name,
-                     executor: Executor.new, out: $stdout,
+                     executor: Executor.new, ui: NoUi.new,
                      data_root: DataRoot::SHARED_ROOT, home_dev: File.expand_path(DataRoot::HOME_ROOT),
                      launch_agents_dir: File.join(Dir.home, "Library", "LaunchAgents"),
                      brew_executable: BREW_LOCATIONS.find { |path| File.exist?(path) },
                      owner_of: ->(path) { RunnerUser.owner_of(path) },
                      tap: TapTrust.deployment_tap)
-        super(agent_user: agent_user, runner_user: runner_user, executor: executor, out: out, data_root: data_root,
+        super(agent_user: agent_user, runner_user: runner_user, executor: executor, ui: ui, data_root: data_root,
           brew_executable: brew_executable, owner_of: owner_of, tap: tap)
         @home_dev = home_dev
         @launch_agents_dir = launch_agents_dir
@@ -192,11 +191,12 @@ module Dev
       def ensure_cooperative_dir!(path, description)
         return if File.directory?(path)
 
-        @out.puts ">>> Provisioning #{description} at #{path} ..."
-        FileUtils.mkdir_p(path)
-        step!("sudo", "chown", @runner_user, path)
-        step!("sudo", "chgrp", DataRoot::GROUP, path)
-        step!("sudo", "chmod", "2775", path)
+        @ui.step("Provisioning #{description} at #{path}") do
+          FileUtils.mkdir_p(path)
+          step!("sudo", "chown", @runner_user, path)
+          step!("sudo", "chgrp", DataRoot::GROUP, path)
+          step!("sudo", "chmod", "2775", path)
+        end
       end
 
       # A root in the legacy `ai` group moves, tree and all, to the data
@@ -210,15 +210,16 @@ module Dev
       def regroup_legacy!(path)
         return unless group_of(path) == LEGACY_GROUP
 
-        @out.puts ">>> Re-grouping #{path} from #{LEGACY_GROUP} to #{DataRoot::GROUP} (one group across hosts) ..."
-        step!("sudo", "chgrp", "-Rh", DataRoot::GROUP, path)
+        @ui.step("Re-grouping #{path} from #{LEGACY_GROUP} to #{DataRoot::GROUP} (one group across hosts)") do
+          step!("sudo", "chgrp", "-Rh", DataRoot::GROUP, path)
+        end
       end
 
       # The one-off ~/.dev migration into the shared root (DataRootMigration:
       # artifacts move, `state` stays per-home, what the root holds is kept).
       sig { void }
       def migrate_home_artifacts!
-        DataRootMigration.new(from: @home_dev, to: @data_root, ui: NoUi.new(out: @out)).run!
+        DataRootMigration.new(from: @home_dev, to: @data_root, ui: @ui).run!
       end
 
       # @return [String] the agent's own settings file
@@ -232,8 +233,7 @@ module Dev
       def ensure_colima_installed!
         return if engine_converged?
 
-        @out.puts ">>> Installing colima ..."
-        step!("brew", "install", "colima")
+        @ui.step("Installing colima") { step!("brew", "install", "colima") }
       end
 
       # Write `container_engine: colima` into the agent's own config, agent-
@@ -244,13 +244,14 @@ module Dev
         parsed = YAML.safe_load(existing)
         return if parsed.is_a?(Hash) && parsed["container_engine"] == "colima"
 
-        @out.puts ">>> Recording container_engine: colima for #{@agent_user} ..."
-        step!("sudo", "-H", "-u", @agent_user, "--", "mkdir", "-p", File.dirname(agent_config_path))
-        Tempfile.create("agent-dev-config") do |staging|
-          staging.write(agent_config_content(existing))
-          staging.flush
-          File.chmod(0o644, staging.path)
-          step!("sudo", "install", "-m", "0644", "-o", @agent_user, staging.path, agent_config_path)
+        @ui.step("Recording container_engine: colima for #{@agent_user}") do
+          step!("sudo", "-H", "-u", @agent_user, "--", "mkdir", "-p", File.dirname(agent_config_path))
+          Tempfile.create("agent-dev-config") do |staging|
+            staging.write(agent_config_content(existing))
+            staging.flush
+            File.chmod(0o644, staging.path)
+            step!("sudo", "install", "-m", "0644", "-o", @agent_user, staging.path, agent_config_path)
+          end
         end
       end
 
@@ -271,14 +272,15 @@ module Dev
         service = service_record(runner_dir)
         plist = service.end_with?(".plist") ? service : File.join(@launch_agents_dir, "#{service}.plist")
         env = service_env(slot)
-        @out.puts ">>> Writing Umask 002 + #{env.map { |key, value| "#{key}=#{value}" }.join(" + ")} into #{plist} ..."
-        step!("./svc.sh", "stop", chdir: runner_dir)
-        plist_set!(plist, "Umask", "integer", "2")
-        # The EnvironmentVariables dict may not exist yet; a failed Add just
-        # means it already does.
-        @executor.run("/usr/libexec/PlistBuddy", "-c", "Add :EnvironmentVariables dict", plist)
-        env.each { |key, value| plist_set!(plist, "EnvironmentVariables:#{key}", "string", value) }
-        step!("./svc.sh", "start", chdir: runner_dir)
+        @ui.step("Writing Umask 002 + #{env.map { |key, value| "#{key}=#{value}" }.join(" + ")} into #{plist}") do
+          step!("./svc.sh", "stop", chdir: runner_dir)
+          plist_set!(plist, "Umask", "integer", "2")
+          # The EnvironmentVariables dict may not exist yet; a failed Add just
+          # means it already does.
+          @executor.run("/usr/libexec/PlistBuddy", "-c", "Add :EnvironmentVariables dict", plist)
+          env.each { |key, value| plist_set!(plist, "EnvironmentVariables:#{key}", "string", value) }
+          step!("./svc.sh", "start", chdir: runner_dir)
+        end
       end
 
       # Set a plist key, adding it when Set finds none (PlistBuddy's Set fails

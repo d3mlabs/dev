@@ -4,6 +4,7 @@
 require "test_helper"
 require "dev/label_contracts"
 require "etc"
+require "support/recording_ui"
 
 transform!(RSpock::AST::Transformation)
 class Dev::LabelContractsTest < Minitest::Test
@@ -105,10 +106,11 @@ class Dev::LabelContractsTest < Minitest::Test
   test "the run-as user and the runner user reach the host's bootstrap construction" do
     Given "an agent-user override and the host rule's runner user"
     bootstrap = typed_mock(Dev::AgentBootstrap)
-    Dev::LabelContracts.expects(:agent_bootstrap).with(agent_user: "ci", runner_user: "runner").returns(bootstrap)
+    ui = RecordingUi.new
+    Dev::LabelContracts.expects(:agent_bootstrap).with(agent_user: "ci", runner_user: "runner", ui: ui).returns(bootstrap)
 
     When "resolving contracts"
-    contracts = Dev::LabelContracts.for("ai-build", agent_user: "ci", runner_user: "runner")
+    contracts = Dev::LabelContracts.for("ai-build", agent_user: "ci", runner_user: "runner", ui: ui)
 
     Then
     contracts.length == 1
@@ -117,7 +119,7 @@ class Dev::LabelContractsTest < Minitest::Test
   test "without overrides the bootstrap is built for the default agent user and the platform's runner user" do
     Given
     bootstrap = typed_mock(Dev::AgentBootstrap)
-    Dev::LabelContracts.expects(:agent_bootstrap).with(agent_user: "ai-agent", runner_user: nil).returns(bootstrap)
+    Dev::LabelContracts.expects(:agent_bootstrap).with { |agent_user:, runner_user:, ui:| agent_user == "ai-agent" && runner_user.nil? && ui.is_a?(Dev::NoUi) }.returns(bootstrap)
 
     When
     contracts = Dev::LabelContracts.for("ai-build")
@@ -145,6 +147,23 @@ class Dev::LabelContractsTest < Minitest::Test
     host_os  | adapter                        | runner_user
     "darwin" | Dev::AgentBootstrap::Darwin    | Etc.getpwuid(Process.uid).name
     "linux"  | Dev::AgentBootstrap::Linux     | Dev::RunnerUser::DEFAULT_NAME
+  end
+
+  test "the host factory hands the Ui to the #{host_os} adapter: the bootstrap speaks where register does" do
+    Given "an adapter intercepted at construction"
+    ui = RecordingUi.new
+    adapter.expects(:new).once.with { |**kwargs| kwargs.fetch(:ui).equal?(ui) }.returns(typed_mock(Dev::AgentBootstrap))
+
+    When
+    Dev::LabelContracts.agent_bootstrap(host_os: host_os, ui: ui)
+
+    Then "the expectation on the construction boundary holds"
+    true
+
+    Where
+    host_os  | adapter
+    "darwin" | Dev::AgentBootstrap::Darwin
+    "linux"  | Dev::AgentBootstrap::Linux
   end
 
   test "the host factory hands an explicit runner user through" do
