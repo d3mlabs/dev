@@ -73,6 +73,44 @@ class Dev::WslHostTest < Minitest::Test
     ENV["WSL_INTEROP"] = saved if saved
   end
 
+  test "distro is the name WSL's /init hands every login session, as `wsl -d` addresses it" do
+    Expect
+    host(env: { "WSL_INTEROP" => "/run/WSL/8_interop", "WSL_DISTRO_NAME" => "Ubuntu-24.04" }).distro == "Ubuntu-24.04"
+  end
+
+  test "distro raises DistroUnknownError in a session that does not name it (a service's env)" do
+    Given "an env without WSL_DISTRO_NAME"
+    wsl = host(env: env)
+
+    When "asking for the distro"
+    error = assert_raises(Dev::WslHost::DistroUnknownError) { wsl.distro }
+
+    Then "the message names the variable and where it is set"
+    error.message.include?("WSL_DISTRO_NAME")
+    error.message.include?("login shell")
+
+    Cleanup
+    nil
+
+    Where
+    env                                       | _
+    {}                                        | nil
+    { "WSL_DISTRO_NAME" => "" }               | nil
+  end
+
+  test "powershell_argv carries a script as -EncodedCommand (UTF-16LE base64), profile-less and non-interactive, so no quoting of bash, wsl.exe or PowerShell touches it" do
+    Given "a script with quotes of both kinds and several lines"
+    script = "$x = 'it''s'\n\"$x\" | Out-Null\n"
+
+    When "building the argv"
+    argv = Dev::WslHost.powershell_argv(script)
+
+    Then "the encoded command decodes back to the script byte for byte"
+    argv.take(4) == ["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand"]
+    argv.length == 5
+    argv.fetch(4).unpack1("m0").force_encoding("UTF-16LE").encode("UTF-8") == script
+  end
+
   test "windows_profile asks cmd.exe and converts through wslpath" do
     Given "a host with working interop"
     executor = RecordedWslExecutor.new(userprofile: "C:\\Users\\jpduc", profile_dir: "/mnt/c/Users/jpduc")

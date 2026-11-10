@@ -16,6 +16,8 @@ require "dev/runner_registry"
 require "dev/runner_user"
 require "dev/settings"
 require "dev/ui"
+require "dev/wsl_conf"
+require "dev/wsl_runner_host"
 
 module Dev
   # `dev runner status` — register's inspect-only counterpart: this
@@ -43,6 +45,14 @@ module Dev
   # host's adapter, the one register converges with), read through its
   # inspection methods — so a Mac and a Linux box report the same facts
   # in the same words, each probed with its own CLIs (plans#59).
+  #
+  # Inside a WSL2 distro a **WSL runner host** section reports what
+  # register converged there (dev#261, WslRunnerHost): systemd running, and
+  # the logon keepalive task — present, holding a session, running — that
+  # is the difference between a distro that autostarts and stays up and
+  # one WSL stops ~20 s after the operator's last shell closes. The task
+  # is read through interop, which only a login session has; without it
+  # the keepalive is `{{?}}`, never a false finding.
   class RunnerStatus
     extend T::Sig
 
@@ -69,6 +79,8 @@ module Dev
     # @param repo [String, nil] the enclosing checkout's "owner/repo", when run in one — the
     #   repo whose access to each org scope's slots is reported
     # @param reach_factory [Proc] builds the reach check for an identity; injected for tests
+    # @param wsl_runner_host [Dev::WslRunnerHost, nil] the WSL runner host's
+    #   facts (dev#261); nil off WSL
     sig do
       params(
         discovery: Dev::RunnerDiscovery,
@@ -83,6 +95,7 @@ module Dev
         pins: T::Array[Deps::Dependency],
         repo: T.nilable(String),
         reach_factory: T.proc.params(identity: Dev::RunnerUser).returns(T.nilable(HostReach)),
+        wsl_runner_host: T.nilable(WslRunnerHost),
       ).void
     end
     def initialize(discovery: Dev::RunnerDiscovery.new, registry: Dev::RunnerRegistry.new,
@@ -94,7 +107,9 @@ module Dev
                    container_required: false,
                    pins: [],
                    repo: nil,
-                   reach_factory: ->(identity) { HostReach.new(identity: identity) })
+                   reach_factory: ->(identity) { HostReach.new(identity: identity) },
+                   wsl_runner_host: WslRunnerHost.for_host)
+      @wsl_runner_host = wsl_runner_host
       @host_identity = host_identity
       @pins = pins
       @repo = repo
@@ -133,6 +148,7 @@ module Dev
     def report
       agent_dirs = report_enrollments
       report_host_reach if report_host_identity
+      report_wsl_runner_host
       report_agent_host(agent_dirs) unless agent_dirs.empty?
       report_host_tooling
     end
@@ -449,6 +465,76 @@ module Dev
       headers = @executor.capture(*identity.probe_argv("gh", "api", "user", "-i"))
       match = EXPIRATION_HEADER.match(headers)
       match && Date.parse(T.must(match[1]))
+    end
+
+    # The WSL runner host's facts (dev#261), re-derived: nothing off WSL.
+    sig { void }
+    def report_wsl_runner_host
+      wsl = @wsl_runner_host
+      return unless wsl
+
+      @ui.frame("WSL runner host (#{wsl.task.distro})") { wsl_runner_host_facts(wsl) }
+    end
+
+    # systemd first (the runner service is a unit of it), then the
+    # keepalive: present, holding a session, running, and the verdict —
+    # does the distro autostart at logon and stay up. Each line's remedy is
+    # register; the keepalive lines are `{{?}}` when this session cannot
+    # ask Windows.
+    #
+    # @param wsl [Dev::WslRunnerHost]
+    sig { params(wsl: WslRunnerHost).void }
+    def wsl_runner_host_facts(wsl)
+      status = wsl.status
+      report_wsl_systemd(status)
+      task = wsl.task
+      observed = status.keepalive
+      if observed.nil?
+        unknown("logon keepalive '#{task.name}': cannot tell from this session (no WSL interop — a service or an " \
+                "ssh login) — run `dev runner status` from a shell opened in the distro on the Windows desktop")
+        return
+      end
+
+      unless observed.present
+        line(false, "logon keepalive task '#{task.name}' missing — #{task.distro} does not start at logon " \
+                    "(run `dev runner register`)")
+        return
+      end
+
+      line(true, "logon keepalive task '#{task.name}' registered")
+      if task.holds_session?(observed)
+        line(true, "keepalive action holds a session (#{task.command})")
+      else
+        line(false, "keepalive action does not hold a session (#{observed.execute} #{observed.arguments}) — WSL stops " \
+                    "#{task.distro} ~20 s after it exits (run `dev runner register`)")
+      end
+      if observed.running
+        line(true, "keepalive task running (a held session keeps #{task.distro} up)")
+      else
+        line(false, "keepalive task not running — #{task.distro} stops when the last shell closes " \
+                    "(run `dev runner register`, or `Start-ScheduledTask -TaskName '#{task.name}'`)")
+      end
+      shortfalls = task.shortfalls(observed)
+      if shortfalls.empty?
+        line(true, "#{task.distro} autostarts at logon and stays up")
+      else
+        line(false, "#{task.distro} does not autostart and stay up: #{shortfalls.join("; ")} (run `dev runner register`)")
+      end
+    end
+
+    # systemd running, or why not: a wsl.conf that enables it awaits a
+    # restart; one that does not awaits register.
+    #
+    # @param status [Dev::WslRunnerHost::Status]
+    sig { params(status: WslRunnerHost::Status).void }
+    def report_wsl_systemd(status)
+      if status.systemd_active
+        line(true, "systemd running (the runner service is a systemd unit)")
+      elsif status.systemd_configured
+        line(false, "systemd enabled in #{WslConf::PATH} but not running — `wsl --shutdown` from Windows, then start the distro")
+      else
+        line(false, "systemd not enabled in #{WslConf::PATH} — the runner service cannot be installed (run `dev runner register`)")
+      end
     end
 
     # Every fact the agent contract obliges, re-derived from the host.

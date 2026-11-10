@@ -27,6 +27,10 @@ module Dev
     # the ring buffer wrapped, or this is not a Hyper-V guest after all.
     class MemoryUnknownError < RuntimeError; end
 
+    # This process does not know which distro it runs in: WSL's /init names
+    # it in every login session's env (DISTRO_VAR), but not a service's.
+    class DistroUnknownError < RuntimeError; end
+
     # The WSL side of `dev engine status`: what the user configured, what the
     # VM got, what the box could give. Configured and hardware are unknown
     # (nil) when interop is off.
@@ -63,11 +67,16 @@ module Dev
     HV_BALLOON_MEMORY = /hv_balloon: Max\. dynamic memory size: (\d+) MB/
 
     USERPROFILE_PROBE = T.let(["cmd.exe", "/c", "echo %USERPROFILE%"].freeze, T::Array[String])
+
+    # Windows PowerShell through interop, with nothing of the user's: no
+    # profile, and no prompt a non-terminal could hang on.
+    POWERSHELL = T.let(%w[powershell.exe -NoProfile -NonInteractive].freeze, T::Array[String])
+
     HARDWARE_PROBE = T.let(
-      [
-        "powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+      (POWERSHELL + [
+        "-Command",
         "$cs = Get-CimInstance Win32_ComputerSystem; \"$($cs.NumberOfLogicalProcessors) $($cs.TotalPhysicalMemory)\"",
-      ].freeze,
+      ]).freeze,
       T::Array[String],
     )
 
@@ -76,6 +85,29 @@ module Dev
     # Windows binary. A process without it — a systemd service, the runner
     # user's jobs among them — has interop registered and unusable.
     INTEROP_SOCKET_VAR = "WSL_INTEROP"
+
+    # The env var WSL's /init gives every login session: the name of the
+    # distro it runs in, as `wsl -d <name>` addresses it from Windows.
+    DISTRO_VAR = "WSL_DISTRO_NAME"
+
+    class << self
+      extend T::Sig
+
+      # A PowerShell script as an interop argv. `-EncodedCommand` carries the
+      # script as UTF-16LE base64, so a multi-line script with quotes of its
+      # own crosses bash, wsl.exe and PowerShell's own command-line parser
+      # untouched — the one shape that needs no escaping rules for any of
+      # the three.
+      #
+      # @param script [String] PowerShell source
+      # @return [Array<String>] argv
+      sig { params(script: String).returns(T::Array[String]) }
+      def powershell_argv(script)
+        # pack("m0") is strict (unpadded-newline-free) base64 from the standard
+        # library; the base64 gem is no longer bundled with Ruby.
+        POWERSHELL + ["-EncodedCommand", [script.encode("UTF-16LE")].pack("m0")]
+      end
+    end
 
     # @param executor [#run, #quiet?, #capture] process seam for the interop binaries, `nproc`, and `dmesg`
     # @param host_os [String] "darwin" / "linux" / "windows"
@@ -120,6 +152,20 @@ module Dev
       Dir.glob(File.join(@binfmt_dir, "WSLInterop*")).any? do |path|
         File.read(path).lines.first.to_s.strip == "enabled"
       end
+    end
+
+    # The distro this process runs in, by the name Windows addresses it.
+    #
+    # @return [String]
+    # @raise [DistroUnknownError] when the session's env does not name it
+    sig { returns(String) }
+    def distro
+      name = @env[DISTRO_VAR].to_s
+      return name unless name.empty?
+
+      raise DistroUnknownError,
+        "#{DISTRO_VAR} is not set, so this process does not know which WSL distro it runs in — " \
+        "run this from a login shell in the distro, where WSL's /init sets it."
     end
 
     # The Windows user's profile directory, as a Linux path (`/mnt/c/Users/<name>`).
