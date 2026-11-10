@@ -257,20 +257,21 @@ class Dev::AgentBootstrap::LinuxTest < Minitest::Test
     When "converging the post-enrollment steps"
     bootstrap(executor, systemd_dir: systemd_dir).after_enroll!(runner_dir: runner_dir, slot: 1)
 
-    Then "the _work grant, then the drop-in sequence under root"
-    File.directory?(work)
-    executor.runs.first(3) == [
+    Then "the _work tree made under root as the runner's own (its dir is the runner's, not the operator's), then the grant, then the drop-in sequence"
+    !File.directory?(work)
+    executor.runs.first(4) == [
+      ["sudo", "install", "-d", "-o", "runner", "-g", "dev", "-m", "2775", work],
       ["sudo", "chgrp", "-R", "dev", work],
       ["sudo", "chmod", "-R", "g+rwX", work],
       ["sudo", "find", work, "-type", "d", "-exec", "chmod", "g+s", "{}", "+"],
     ]
-    executor.runs.fetch(3) == ["sudo", "./svc.sh", "stop", { chdir: runner_dir }]
-    executor.runs.fetch(4) == ["sudo", "install", "-d", "-m", "0755", File.dirname(drop_in)]
-    executor.runs.fetch(5).first(4) == ["sudo", "install", "-m", "0644"]
-    executor.runs.fetch(5).last == drop_in
-    executor.runs.fetch(6) == ["sudo", "systemctl", "daemon-reload"]
-    executor.runs.fetch(7) == ["sudo", "./svc.sh", "start", { chdir: runner_dir }]
-    executor.runs.length == 8
+    executor.runs.fetch(4) == ["sudo", "./svc.sh", "stop", { chdir: runner_dir }]
+    executor.runs.fetch(5) == ["sudo", "install", "-d", "-m", "0755", File.dirname(drop_in)]
+    executor.runs.fetch(6).first(4) == ["sudo", "install", "-m", "0644"]
+    executor.runs.fetch(6).last == drop_in
+    executor.runs.fetch(7) == ["sudo", "systemctl", "daemon-reload"]
+    executor.runs.fetch(8) == ["sudo", "./svc.sh", "start", { chdir: runner_dir }]
+    executor.runs.length == 9
   end
 
   test "after_enroll! appends .service to a bare unit record" do
@@ -302,7 +303,7 @@ class Dev::AgentBootstrap::LinuxTest < Minitest::Test
     bs.after_enroll!(runner_dir: runner_dir, slot: 2)
 
     Then "only the _work grant ran"
-    executor.runs.length == 3
+    executor.runs.length == 4
     executor.runs.none? { |argv| argv.include?("systemctl") }
   end
 

@@ -516,8 +516,9 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     When "converging the post-enrollment steps"
     bootstrap(executor, launch_agents_dir: agents_dir).after_enroll!(runner_dir: runner_dir, slot: 1)
 
-    Then "the _work tree gets the cooperative grant in group dev; the plist gets the service env; the service restarts"
-    File.directory?(work)
+    Then "the _work tree is made as the runner user's in group dev and gets the cooperative grant; the plist gets the service env; the service restarts"
+    !File.directory?(work)
+    executor.runs.include?(["sudo", "install", "-d", "-o", "human", "-g", "dev", "-m", "2775", work])
     executor.runs.include?(["sudo", "chgrp", "-R", "dev", work])
     executor.runs.include?(["sudo", "chmod", "-R", "g+rwX", work])
     executor.runs.include?(["sudo", "find", work, "-type", "d", "-exec", "chmod", "g+s", "{}", "+"])

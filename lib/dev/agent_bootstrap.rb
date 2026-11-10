@@ -529,14 +529,17 @@ module Dev
     # Step 4: the `_work` tree as a cooperative read-write space — the
     # group, group-writable, setgid dirs so re-checkouts inherit the
     # group. Unconditional, so a tree from before the group's name was
-    # the data root's is re-grouped on the next register.
+    # the data root's is re-grouped on the next register. The tree is made
+    # under root as the runner user's own: the runner dir is that user's,
+    # which on Linux is not the operator running this (dev#310), and the
+    # first job has not created `_work` yet.
     #
     # @param runner_dir [String]
     sig { params(runner_dir: String).void }
     def grant_work_tree!(runner_dir)
       work = File.join(runner_dir, "_work")
-      FileUtils.mkdir_p(work)
       @out.puts ">>> Granting the #{DataRoot::GROUP} group cooperative access to #{work} ..."
+      step!("sudo", "install", "-d", "-o", @runner_user, "-g", DataRoot::GROUP, "-m", "2775", work)
       step!("sudo", "chgrp", "-R", DataRoot::GROUP, work)
       step!("sudo", "chmod", "-R", "g+rwX", work)
       step!("sudo", "find", work, "-type", "d", "-exec", "chmod", "g+s", "{}", "+")
