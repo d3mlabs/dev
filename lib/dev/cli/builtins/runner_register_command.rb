@@ -444,11 +444,13 @@ module Dev
           # checked now rather than discovered by a red run (HostReach).
           runner_user = @runner_user_factory.call(args.value(AS_FLAG), context.ui)
           if runner_user
-            @data_root_provisioner&.provision!(ui: context.ui)
-            runner_user.converge!
-            runner_user.ensure_gh_authenticated!
-            root = context.project&.root
-            @reach_factory.call(runner_user).check!(@pins_reader.call(root)) if root
+            context.ui.frame("Host rule (#{runner_user.name})") do
+              @data_root_provisioner&.provision!(ui: context.ui)
+              runner_user.converge!
+              runner_user.ensure_gh_authenticated!
+              root = context.project&.root
+              @reach_factory.call(runner_user).check!(@pins_reader.call(root)) if root
+            end
           end
 
           # The WSL runner host (dev#261): the logon keepalive, systemd and
@@ -460,14 +462,20 @@ module Dev
 
           # The agent host contract spawns the agent from the enrolling
           # user's service: the runner user on Linux, the operator on a Mac.
+          # Its frame is named for the agent user, and opens only when there
+          # is a contract to converge in it.
           contracts = @contracts_factory.call(labels, args.value(AGENT_USER_FLAG), runner_user&.name, context.ui)
-          contracts.each do |contract|
-            contract.converge!(
-              container: container,
-              cpus: engine&.cpus,
-              memory_gib: engine&.memory_gib,
-              disk_gib: engine&.disk_gib,
-            )
+          unless contracts.empty?
+            context.ui.frame("Agent host (#{args.value(AGENT_USER_FLAG) || Dev::AgentBootstrap::DEFAULT_AGENT_USER})") do
+              contracts.each do |contract|
+                contract.converge!(
+                  container: container,
+                  cpus: engine&.cpus,
+                  memory_gib: engine&.memory_gib,
+                  disk_gib: engine&.disk_gib,
+                )
+              end
+            end
           end
 
           setup = @runner_setup_factory.call(config, args.value(REPO_FLAG), org, runner_user, context.ui)

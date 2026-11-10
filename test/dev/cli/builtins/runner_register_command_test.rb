@@ -461,7 +461,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.events == [[:converge, false, nil, nil, nil], [:run], [:after_enroll, "/tmp/runner-dir", 1]]
     harness.wirings.last.fetch(0) == Dev::RunnerSetupConfig.new(labels: "snappy")
     registry.amends == []
-    harness.ui.rows.first(3) == [
+    harness.ui.rows.reject { |row| row.fetch(0) == :frame }.first(3) == [
       [:note, "{{x}} JPDuchesne/snappy has 2 local enrollments named 'JPSFF' — the enrollment on disk is not what should be serving GitHub:", 0],
       [:note, "    ~/actions-runner (service installed)", 0],
       [:note, "    ~/actions-runner-snappy (no service)", 0],
@@ -1186,6 +1186,25 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.events.fetch(0) == [:converge, true, 8, 24, nil]
   end
 
+  test "the agent host frame is named for the agent user — #{what}" do
+    Given "a Mac (no host rule) with #{contracts} agent host contract(s)"
+    harness = build_harness(contracts: contracts)
+
+    When "registering"
+    harness.command.call(args: parsed_args(harness.command, words), context: harness.build_context(name: "Cellbound3D"))
+
+    Then "no host rule frame on a Mac; the agent host frame only when there is a contract to converge in it"
+    frames = harness.ui.rows.select { |row| row.fetch(0) == :frame }.map { |row| row.fetch(1) }
+    frames.none? { |title| title.start_with?("Host rule") }
+    frames.first(agent_frames.length) == agent_frames
+
+    Where
+    what                              | contracts | words                   | agent_frames
+    "the default agent user"          | 1         | []                      | ["Agent host (ai-agent)"]
+    "--agent-user ci"                 | 1         | ["--agent-user", "ci"]  | ["Agent host (ci)"]
+    "no contract: no empty frame"     | 0         | []                      | []
+  end
+
   test "register brings the engine up for the checked-out repo's hint before converging contracts (#197)" do
     Given "a container repo with an `engine:` block and an engine provisioner that records its call"
     harness = build_harness(contracts: 1)
@@ -1284,6 +1303,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.wirings.fetch(0).fetch(3) == runner_user
     harness.as_names == [nil]
     harness.factory_uis == [harness.ui]
+    # The identity work is framed as the host rule, the contract as the agent host — in that order, before the enrollment's.
+    harness.ui.rows.select { |row| row.fetch(0) == :frame }.first(2) == [[:frame, "Host rule (runner)", 0], [:frame, "Agent host (ai-agent)", 0]]
   end
 
   test "with a checkout, register checks the runner user's reach over the lock after the gh login and before any contract: unreachable refuses with the grants" do
