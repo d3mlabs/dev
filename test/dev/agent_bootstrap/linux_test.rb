@@ -4,6 +4,7 @@
 require "test_helper"
 require "dev/agent_bootstrap/linux"
 require "support/recorded_bootstrap_executor"
+require "etc"
 require "fileutils"
 require "stringio"
 require "tmpdir"
@@ -160,6 +161,28 @@ class Dev::AgentBootstrap::LinuxTest < Minitest::Test
       "env", "HOMEBREW_NO_AUTO_UPDATE=1", LINUXBREW, "trust", "--tap", "d3mlabs/d3mlabs",
     ]]
     out.string.include?(">>> Trusting the tap d3mlabs/d3mlabs for ai-agent")
+  end
+
+  # dev#337: the brew edge's grantee is whoever owns the prefix on this
+  # host, stat'd at bootstrap time — never a hardcoded `runner`.
+  test "the brew edge stats the prefix owner on the host when no lookup is injected" do
+    Given "a brew under a prefix this process owns, and the adapter's own owner lookup"
+    prefix = Dir.mktmpdir
+    brew = File.join(prefix, "bin", "brew")
+    FileUtils.mkdir_p(File.dirname(brew))
+    File.write(brew, "")
+    bs = Dev::AgentBootstrap::Linux.new(
+      executor: RecordedBootstrapExecutor.new, out: StringIO.new, tap: nil,
+      data_root: Dir.mktmpdir, systemd_dir: Dir.mktmpdir, brew_executable: brew,
+    )
+
+    When "reading the edge"
+    edge = bs.brew_edge
+
+    Then "the grantee is the prefix's actual owner"
+    edge.is_a?(Dev::AgentBootstrap::BrewEdge)
+    edge.owner == Etc.getpwuid(Process.uid).name
+    edge.path == brew
   end
 
   test "ensure_agent_engine! refuses — the agent for an image-built repo runs inside the container (plans#61)" do
