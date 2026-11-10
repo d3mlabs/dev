@@ -47,6 +47,20 @@ module Dev
       @group = group
     end
 
+    # The first label, sanitized for a dir name: what the default install
+    # dir (`~/actions-runner-<suffix>`) and, when a scope already has a
+    # family under the bare hostname, the runner name (`<hostname>-<suffix>`)
+    # are derived from (dev#557) — one derivation, so a family's dirs and
+    # names say the same thing.
+    #
+    # @return [String]
+    sig { returns(String) }
+    def dir_suffix
+      first = @labels.split(",").first.to_s
+      sanitized = first.gsub(/[^A-Za-z0-9_.-]/, "-")
+      sanitized.empty? ? "default" : sanitized
+    end
+
     # @return [Array] the members that constitute identity
     sig { override.returns(T::Array[T.anything]) }
     def equality_members

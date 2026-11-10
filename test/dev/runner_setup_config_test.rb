@@ -28,6 +28,18 @@ class Dev::RunnerSetupConfigTest < Minitest::Test
     a.hash == b.hash
   end
 
+  test "dir_suffix is the first label, sanitized for a dir name — #{labels.inspect} → #{suffix.inspect}" do
+    Expect
+    Dev::RunnerSetupConfig.new(labels: labels).dir_suffix == suffix
+
+    Where
+    labels                                  | suffix
+    "ai-ask,ai-edit,ai-split"               | "ai-ask"
+    "ai-orchestrator"                       | "ai-orchestrator"
+    "ue 5.8/editor,macos"                   | "ue-5.8-editor"
+    ""                                      | "default"
+  end
+
   test "inequality when a field differs" do
     Given "two configs with different labels"
     a = Dev::RunnerSetupConfig.new(labels: "ue-engine")

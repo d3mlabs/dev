@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "dev/runner_slots"
 require "etc"
 require "json"
 
@@ -24,6 +25,8 @@ module Dev
 
     # One local enrollment: where it lives and what its .runner records.
     class Enrollment < T::Struct
+      extend T::Sig
+
       # Absolute install dir. Its name is history (register defaults it from
       # the first label at enrollment time) — never identity; the .runner
       # record inside is what binds it to a scope.
@@ -48,13 +51,31 @@ module Dev
 
       # The user whose dir this is — the one its service runs as.
       const :owner, String
+
+      # The label register named the dir from — `actions-runner-<label>`,
+      # a further slot's `-<n>` stripped (RunnerSlots); nil for the
+      # suffixless dir. History, not identity: the one hint to which
+      # family an enrollment belongs once GitHub has lost the runner and
+      # its labels with it (dev#557).
+      #
+      # @return [String, nil]
+      sig { returns(T.nilable(String)) }
+      def dir_label
+        stem = RunnerSlots.base_of(File.basename(dir))
+        return nil if stem == DIR_STEM
+
+        stem.delete_prefix("#{DIR_STEM}-")
+      end
     end
+
+    # The name every runner install dir starts with.
+    DIR_STEM = T.let("actions-runner", String)
 
     # The dir names a runner install may have under home: the suffixless
     # name a hand-run `config.sh` leaves (GitHub's own instructions) and
     # the `-<label>` suffix register derives. Both are enrollments when
     # configured.
-    DIR_GLOBS = T.let(["actions-runner", "actions-runner-*"].freeze, T::Array[String])
+    DIR_GLOBS = T.let([DIR_STEM, "#{DIR_STEM}-*"].freeze, T::Array[String])
 
     # @param home [String] the home dir to scan (injectable for tests); the
     #   one display dirs are relative to
