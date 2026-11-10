@@ -1,8 +1,6 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "stringio"
-
 require "dev/runner_registry"
 require "dev/ui"
 
@@ -63,18 +61,15 @@ module Dev
     )
 
     # @param registry [#group, #find] the GitHub boundary the probes go through
-    # @param out [IO, StringIO]
     # @param refresher [Proc] how a refresh is run (injectable for tests)
     sig do
       params(
         registry: T.untyped,
-        out: T.any(IO, StringIO),
         refresher: Refresher,
       ).void
     end
-    def initialize(registry:, out: $stdout, refresher: DEFAULT_REFRESHER)
+    def initialize(registry:, refresher: DEFAULT_REFRESHER)
       @registry = registry
-      @out = out
       @refresher = refresher
     end
 
@@ -85,7 +80,7 @@ module Dev
     #
     # @param scope [String] "owner" (org) or "owner/repo"
     # @param org [Boolean] whether the registration is org-scoped
-    # @param ui [Dev::Ui] where the yes/no is asked — nil (no terminal) is a no
+    # @param ui [Dev::Ui] the refusal is noted on it, then the yes/no asked — nil (no terminal) is a no
     # @return [void]
     # @raise [RefusedError] when the login cannot, and a refresh did not or could not help
     sig { params(scope: String, org: T::Boolean, ui: Dev::Ui).void }
@@ -94,7 +89,7 @@ module Dev
       refusal = refusal_of(precondition)
       return if refusal.nil?
 
-      @out.puts ">>> #{headline(precondition, refusal)}"
+      ui.note("{{x}} #{headline(precondition, refusal)}")
       if ui.confirm("Run `#{precondition.fix}` now?") && @refresher.call(precondition.scope)
         refusal = refusal_of(precondition)
         return if refusal.nil?

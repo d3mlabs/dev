@@ -7,6 +7,7 @@ require "dev/runner_teardown"
 require "fileutils"
 require "json"
 require "stringio"
+require "support/recording_ui"
 require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
@@ -181,14 +182,15 @@ class Dev::RunnerTeardownTest < Minitest::Test
     File.write(File.join(dir, ".service"), "actions.runner.JPDuchesne-snappy.JPSFF.service\n")
     File.write(File.join(dir, "config.sh"), "#!/bin/sh\n")
     exec = RecordingExecutor.new(&minting_responder)
-    out = StringIO.new
-    teardown = build_teardown(home: home, executor: exec, out: out)
+    ui = RecordingUi.new
+    teardown = build_teardown(home: home, executor: exec)
 
     When "tearing it down"
-    teardown.teardown!(teardown.resolve("~/actions-runner"))
+    teardown.teardown!(teardown.resolve("~/actions-runner"), ui: ui)
 
     Then "service first (sudo on Linux), then a remove-token at the repo scope, then config.sh remove — all in the dir; " \
-         "the enrollment files are gone, the binaries are not; the output says exactly what happened and where"
+         "the enrollment files are gone, the binaries are not; the Ui frames the enrollment, steps the service (a child), " \
+         "spins the deregistration (captured) and notes exactly what happened"
     exec.calls == [
       { argv: ["sudo", "./svc.sh", "stop"], chdir: dir },
       { argv: ["sudo", "./svc.sh", "uninstall"], chdir: dir },
@@ -198,10 +200,12 @@ class Dev::RunnerTeardownTest < Minitest::Test
     ]
     %w[.runner .credentials .credentials_rsaparams .service].none? { |f| File.exist?(File.join(dir, f)) }
     File.exist?(File.join(dir, "config.sh"))
-    out.string.include?(
-      ">>> Unregistered JPSFF from JPDuchesne/snappy (~/actions-runner): service stopped and uninstalled, " \
-      "registration removed, enrollment files cleared; binaries left in place.",
-    )
+    ui.rows == [
+      [:frame, "Unregistering JPSFF from JPDuchesne/snappy (~/actions-runner)", 0],
+      [:step, "Stopping + uninstalling the runner service", 1],
+      [:spin, "Deregistering at JPDuchesne/snappy", 1],
+      [:note, "{{v}} service stopped and uninstalled, registration removed, enrollment files cleared; binaries left in place", 1],
+    ]
   end
 
   test "teardown! of another user's enrollment deregisters and clears the files as that user, through sudo (dev#310)" do
@@ -211,13 +215,13 @@ class Dev::RunnerTeardownTest < Minitest::Test
     File.write(File.join(dir, ".service"), "actions.runner.JPDuchesne-snappy.JPSFF.service\n")
     exec = RecordingExecutor.new(&minting_responder)
     teardown = Dev::RunnerTeardown.new(discovery: Dev::RunnerDiscovery.new(home: home), executor: exec,
-      out: StringIO.new, host_platform: "linux-x64", home: home, current_user: "jpduchesne")
+      host_platform: "linux-x64", home: home, current_user: "jpduchesne")
     enrollment = teardown.resolve("~/actions-runner-snappy")
     enrollment = Dev::RunnerDiscovery::Enrollment.new(dir: enrollment.dir, scope: enrollment.scope, name: enrollment.name,
       service_installed: true, display_dir: enrollment.display_dir, owner: "runner")
 
     When
-    teardown.teardown!(enrollment)
+    teardown.teardown!(enrollment, ui: quiet)
 
     Then "the unit is root's either way; config.sh and rm run as the owner; nothing is removed with the operator's hands"
     exec.calls == [
@@ -236,15 +240,16 @@ class Dev::RunnerTeardownTest < Minitest::Test
     home = Dir.mktmpdir
     dir = write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
     exec = RecordingExecutor.new(&minting_responder)
-    out = StringIO.new
-    teardown = build_teardown(home: home, executor: exec, out: out)
+    ui = RecordingUi.new
+    teardown = build_teardown(home: home, executor: exec)
 
     When "tearing it down"
-    teardown.teardown!(teardown.resolve("JPDuchesne/snappy"))
+    teardown.teardown!(teardown.resolve("JPDuchesne/snappy"), ui: ui)
 
     Then "no svc.sh call; config.sh remove still runs"
     exec.calls.map { |c| c[:argv].first(2) } == [%w[gh api], ["./config.sh", "remove"]]
-    out.string.include?("(~/actions-runner-snappy): no service installed, registration removed")
+    ui.rows.none? { |kind, _text, _depth| kind == :step }
+    ui.rows.include?([:note, "{{v}} no service installed, registration removed, enrollment files cleared; binaries left in place", 1])
     !File.exist?(File.join(dir, ".runner"))
   end
 
@@ -256,7 +261,7 @@ class Dev::RunnerTeardownTest < Minitest::Test
     teardown = build_teardown(home: home, executor: exec)
 
     When "tearing it down"
-    teardown.teardown!(teardown.resolve("d3mlabs"))
+    teardown.teardown!(teardown.resolve("d3mlabs"), ui: quiet)
 
     Then
     exec.calls.fetch(0)[:argv].fetch(4) == "orgs/d3mlabs/actions/runners/remove-token"
@@ -271,7 +276,7 @@ class Dev::RunnerTeardownTest < Minitest::Test
     teardown = build_teardown(home: home, executor: exec, host_platform: "osx-arm64")
 
     When "tearing it down"
-    teardown.teardown!(teardown.resolve("d3mlabs"))
+    teardown.teardown!(teardown.resolve("d3mlabs"), ui: quiet)
 
     Then
     exec.calls.first(2).map { |c| c[:argv] } == [["./svc.sh", "stop"], ["./svc.sh", "uninstall"]]
@@ -288,16 +293,16 @@ class Dev::RunnerTeardownTest < Minitest::Test
 
       ["", "", true]
     end
-    out = StringIO.new
-    teardown = build_teardown(home: home, executor: RecordingExecutor.new(&responder), out: out)
+    ui = RecordingUi.new
+    teardown = build_teardown(home: home, executor: RecordingExecutor.new(&responder))
 
     When "tearing it down"
-    teardown.teardown!(teardown.resolve("~/actions-runner"))
+    teardown.teardown!(teardown.resolve("~/actions-runner"), ui: ui)
 
-    Then "no raise; the files are gone; the output says the registration was already gone"
+    Then "no raise; the files are gone; the note says the registration was already gone"
     !File.exist?(File.join(dir, ".runner"))
     !File.exist?(File.join(dir, ".credentials"))
-    out.string.include?("registration already gone from the server")
+    ui.rows.last == [:note, "{{v}} no service installed, registration already gone from the server, enrollment files cleared; binaries left in place", 1]
   end
 
   test "any other config.sh remove failure is a TeardownFailedError carrying config.sh's output, files untouched" do
@@ -313,7 +318,7 @@ class Dev::RunnerTeardownTest < Minitest::Test
     teardown = build_teardown(home: home, executor: RecordingExecutor.new(&responder))
 
     When "tearing it down"
-    teardown.teardown!(teardown.resolve("JPDuchesne/snappy"))
+    teardown.teardown!(teardown.resolve("JPDuchesne/snappy"), ui: quiet)
 
     Then
     error = raises Dev::RunnerTeardown::TeardownFailedError
@@ -334,7 +339,7 @@ class Dev::RunnerTeardownTest < Minitest::Test
     teardown = build_teardown(home: home, executor: exec)
 
     When "tearing it down"
-    teardown.teardown!(teardown.resolve("~/actions-runner"))
+    teardown.teardown!(teardown.resolve("~/actions-runner"), ui: quiet)
 
     Then "it stops at the service; config.sh remove never ran; the enrollment is intact"
     error = raises Dev::RunnerTeardown::TeardownFailedError
@@ -351,7 +356,7 @@ class Dev::RunnerTeardownTest < Minitest::Test
     teardown = build_teardown(home: home, executor: RecordingExecutor.new(&responder))
 
     When "tearing it down"
-    teardown.teardown!(teardown.resolve("JPDuchesne/snappy"))
+    teardown.teardown!(teardown.resolve("JPDuchesne/snappy"), ui: quiet)
 
     Then
     error = raises Dev::RunnerTeardown::TeardownFailedError
@@ -360,16 +365,17 @@ class Dev::RunnerTeardownTest < Minitest::Test
 
   private
 
-  def build_teardown(home:, executor: RecordingExecutor.new(&minting_responder), out: StringIO.new,
-                     host_platform: "linux-x64")
+  def build_teardown(home:, executor: RecordingExecutor.new(&minting_responder), host_platform: "linux-x64")
     Dev::RunnerTeardown.new(
       discovery: Dev::RunnerDiscovery.new(home: home),
       executor: executor,
-      out: out,
       host_platform: host_platform,
       home: home,
     )
   end
+
+  # The Ui a teardown speaks through when the test is about what ran.
+  def quiet = Dev::NoUi.new(out: StringIO.new)
 
   # A .runner record the way config.sh writes it (UTF-8 BOM + JSON).
   def write_runner(home, dir_name, scope:, name:)

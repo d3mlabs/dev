@@ -1,10 +1,9 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "stringio"
-
 require "dev/runner_group_contract"
 require "dev/runner_registry"
+require "dev/ui"
 
 module Dev
   # An org's runner groups, converged to their contracts (dev#470): the
@@ -19,6 +18,10 @@ module Dev
   # approved fork PR's YAML saying `runs-on: self-hosted` must find no
   # runner). Admitting a public repo to an unpinned group is refused,
   # whatever flags asked for it.
+  #
+  # Every verb takes the Ui it speaks through: a write to GitHub is a
+  # spin (captured gh, parsed), a fact already so is a note with its
+  # glyph, and a group that needs nothing says nothing.
   class RunnerGroups
     extend T::Sig
 
@@ -35,11 +38,9 @@ module Dev
 
     # @param registry [#group, #create_group!, #update_group!, #group_repositories,
     #   #select_group_repositories!, #place_in_group!, #group_of, #repository]
-    # @param out [IO, StringIO]
-    sig { params(registry: T.untyped, out: T.any(IO, StringIO)).void }
-    def initialize(registry: RunnerRegistry.new, out: $stdout)
+    sig { params(registry: T.untyped).void }
+    def initialize(registry: RunnerRegistry.new)
       @registry = registry
-      @out = out
     end
 
     # The group a contract names, as GitHub records it once converged: an
@@ -52,10 +53,11 @@ module Dev
     #
     # @param contract [Dev::RunnerGroupContract]
     # @param org [String]
+    # @param ui [Ui]
     # @return [Dev::RunnerRegistry::Group]
     # @raise [NoSuchGroupError] a named group the org lacks
-    sig { params(contract: RunnerGroupContract, org: String).returns(RunnerRegistry::Group) }
-    def converge!(contract, org:)
+    sig { params(contract: RunnerGroupContract, org: String, ui: Ui).returns(RunnerRegistry::Group) }
+    def converge!(contract, org:, ui:)
       group = @registry.group(org: org, name: contract.name)
       unless contract.owned?
         return group if group
@@ -65,9 +67,10 @@ module Dev
       end
 
       if group.nil?
-        @out.puts ">>> Creating runner group '#{contract.name}' at #{org}#{contract.open? ? " (open to every repo)" : ""}, pinned to #{contract.workflows.join(", ")} ..."
-        return @registry.create_group!(org: org, name: contract.name, visibility: contract.visibility, allows_public_repositories: contract.open?,
-          selected_workflows: contract.workflows)
+        return ui.spin("Creating runner group '#{contract.name}' at #{org}#{contract.open? ? " (open to every repo)" : ""}, pinned to #{contract.workflows.join(", ")}") do
+          @registry.create_group!(org: org, name: contract.name, visibility: contract.visibility, allows_public_repositories: contract.open?,
+            selected_workflows: contract.workflows)
+        end
       end
 
       drift = contract.drift(group)
@@ -76,9 +79,10 @@ module Dev
       # Visibility is named only when it must flip: a PATCH naming it
       # clears the group's selected repositories (plans#5 H3), and a group
       # that was open to all has none to lose.
-      @out.puts ">>> Runner group '#{contract.name}' drifted (#{drift.join("; ")}) — re-converging ..."
       flip = group.visibility == contract.visibility ? nil : contract.visibility
-      @registry.update_group!(org: org, group_id: group.id, visibility: flip, selected_workflows: contract.workflows)
+      ui.spin("Re-converging runner group '#{contract.name}' — drifted: #{drift.join("; ")}") do
+        @registry.update_group!(org: org, group_id: group.id, visibility: flip, selected_workflows: contract.workflows)
+      end
     end
 
     # Put a runner in the group when it sits elsewhere (config.sh places
@@ -87,13 +91,15 @@ module Dev
     # @param group [Dev::RunnerRegistry::Group]
     # @param runner [Dev::RunnerRegistry::Runner]
     # @param org [String]
-    sig { params(group: RunnerRegistry::Group, runner: RunnerRegistry::Runner, org: String).void }
-    def place!(group, runner, org:)
+    # @param ui [Ui]
+    sig { params(group: RunnerRegistry::Group, runner: RunnerRegistry::Runner, org: String, ui: Ui).void }
+    def place!(group, runner, org:, ui:)
       current = @registry.group_of(org: org, runner_id: runner.id)
       return if current&.id == group.id
 
-      @out.puts ">>> Moving runner #{runner.id} into group '#{group.name}'#{current ? " from '#{current.name}'" : ""} ..."
-      @registry.place_in_group!(org: org, group_id: group.id, runner_id: runner.id)
+      ui.spin("Moving runner #{runner.id} into group '#{group.name}'#{current ? " from '#{current.name}'" : ""}") do
+        @registry.place_in_group!(org: org, group_id: group.id, runner_id: runner.id)
+      end
     end
 
     # Let a repo use the group: nothing when the group is open to all
@@ -103,17 +109,18 @@ module Dev
     # @param group [Dev::RunnerRegistry::Group]
     # @param repo [String] "owner/repo"
     # @param org [String]
+    # @param ui [Ui]
     # @raise [UnpinnedGroupError] a public repo into an unrestricted group
-    sig { params(group: RunnerRegistry::Group, repo: String, org: String).void }
-    def admit!(group, repo, org:)
+    sig { params(group: RunnerRegistry::Group, repo: String, org: String, ui: Ui).void }
+    def admit!(group, repo, org:, ui:)
       unless group.selected?
-        @out.puts ">>> #{repo} may use group '#{group.name}' (open to every repo at #{org})."
+        ui.note("{{v}} #{repo} may use group '#{group.name}' (open to every repo at #{org})")
         return
       end
 
       current = T.let(@registry.group_repositories(org: org, group_id: group.id), T::Array[RunnerRegistry::GroupRepository])
       if current.any? { |selected| selected.full_name.casecmp?(repo) }
-        @out.puts ">>> #{repo} may use group '#{group.name}'."
+        ui.note("{{v}} #{repo} may use group '#{group.name}'")
         return
       end
 
@@ -126,14 +133,16 @@ module Dev
         end
         unless group.allows_public_repositories
           # The pins ride along: GitHub's PATCH wipes what it does not name.
-          @out.puts ">>> Group '#{group.name}' now allows public repositories (#{repo} is public; pinned to #{group.selected_workflows.join(", ")}) ..."
-          @registry.update_group!(org: org, group_id: group.id, allows_public_repositories: true, selected_workflows: group.selected_workflows)
+          ui.spin("Allowing public repositories in group '#{group.name}' (#{repo} is public; pinned to #{group.selected_workflows.join(", ")})") do
+            @registry.update_group!(org: org, group_id: group.id, allows_public_repositories: true, selected_workflows: group.selected_workflows)
+          end
         end
       end
 
       others = current.map(&:full_name).join(", ")
-      @out.puts ">>> #{repo} may use group '#{group.name}' (with #{others.empty? ? "no other repo" : others}) ..."
-      @registry.select_group_repositories!(org: org, group_id: group.id, repository_ids: current.map(&:id) + [repository.id])
+      ui.spin("Admitting #{repo} to group '#{group.name}' (with #{others.empty? ? "no other repo" : others})") do
+        @registry.select_group_repositories!(org: org, group_id: group.id, repository_ids: current.map(&:id) + [repository.id])
+      end
     end
 
     # Take a repo out of the group's selection; nothing when it is not
@@ -142,9 +151,10 @@ module Dev
     # @param group [Dev::RunnerRegistry::Group]
     # @param repo [String] "owner/repo"
     # @param org [String]
+    # @param ui [Ui]
     # @raise [Error] the group is open to every repo
-    sig { params(group: RunnerRegistry::Group, repo: String, org: String).void }
-    def exclude!(group, repo, org:)
+    sig { params(group: RunnerRegistry::Group, repo: String, org: String, ui: Ui).void }
+    def exclude!(group, repo, org:, ui:)
       unless group.selected?
         raise Error,
           "group '#{group.name}' is open to every repo at #{org} — narrow it to selected repositories in the org's settings before hiding it from #{repo}"
@@ -153,13 +163,14 @@ module Dev
       current = @registry.group_repositories(org: org, group_id: group.id)
       kept = current.reject { |selected| selected.full_name.casecmp?(repo) }
       if kept.length == current.length
-        @out.puts ">>> #{repo} already cannot use group '#{group.name}'."
+        ui.note("{{v}} #{repo} already cannot use group '#{group.name}'")
         return
       end
 
       left = kept.map(&:full_name).join(", ")
-      @out.puts ">>> #{repo} may no longer use group '#{group.name}' (left: #{left.empty? ? "no repo" : left}) ..."
-      @registry.select_group_repositories!(org: org, group_id: group.id, repository_ids: kept.map(&:id))
+      ui.spin("Excluding #{repo} from group '#{group.name}' (left: #{left.empty? ? "no repo" : left})") do
+        @registry.select_group_repositories!(org: org, group_id: group.id, repository_ids: kept.map(&:id))
+      end
     end
   end
 end
