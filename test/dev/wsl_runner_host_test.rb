@@ -135,6 +135,24 @@ class Dev::WslRunnerHostTest < Minitest::Test
     runner.task.name == "Start-WSL-Ubuntu-Runner"
   end
 
+  # dev#564: the CLI builds every builtin at startup, and register's default
+  # wiring is `WslRunnerHost.for_host` — so a session without the distro's
+  # name (a job under the runner's systemd service) must get a host, not an
+  # error, or no `dev` command runs on the box at all. The name is asked
+  # for where it is needed: the keepalive.
+  test "for_host in a session that does not name its distro (a service's) still answers; the distro is demanded only by the keepalive" do
+    Given "a WSL host read from a service's env — interop socket, no distro name"
+    service_env = { "WSL_INTEROP" => "/run/WSL/8_interop" }
+
+    When
+    runner = Dev::WslRunnerHost.for_host(host: host(executor: RecordedRunnerHostExecutor.new, env: service_env))
+
+    Then "the host exists; its task raises the same error, where the name matters"
+    runner.is_a?(Dev::WslRunnerHost)
+    error = assert_raises(Dev::WslHost::DistroUnknownError) { runner.task }
+    error.message.include?("WSL_DISTRO_NAME is not set")
+  end
+
   test "a converged host: one probe, nothing registered, nothing written, the ratchet still asked" do
     Given
     executor = RecordedRunnerHostExecutor.new(task: CONVERGED_TASK)
