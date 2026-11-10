@@ -156,11 +156,12 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     When "running register with no flags"
     harness.command.call(args: no_args, context: context)
 
-    Then "the label is the repo's name as GitHub spells it, repo-scoped, dir/name defaulted"
-    config, repo_override, org = harness.wirings.fetch(0)
+    Then "the label is the repo's name as GitHub spells it, repo-scoped, dir/name defaulted; the setup speaks on the context's Ui"
+    config, repo_override, org, _as_user, ui = harness.wirings.fetch(0)
     config == Dev::RunnerSetupConfig.new(labels: label)
     repo_override.nil?
     org == false
+    ui.equal?(harness.ui)
 
     Cleanup
     nil
@@ -414,10 +415,10 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     When "re-running register"
     harness.command.call(args: no_args, context: harness.build_context(name: "Cellbound3D"))
 
-    Then "nothing is amended and nothing re-enrolls"
+    Then "nothing is amended and nothing re-enrolls; the slot's state is one note with its glyph"
     registry.amends == []
     harness.events == []
-    harness.out.string.include?("nothing to amend")
+    harness.ui.rows == [[:note, "{{v}} Runner 'box' already serves d3mlabs/cellbound-3d with labels cellbound-3d — nothing to amend", 0]]
   end
 
   test "a local enrollment GitHub has lost re-enrolls into the same dir" do
@@ -456,9 +457,11 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.events == [[:converge, false, nil, nil, nil], [:run], [:after_enroll, "/tmp/runner-dir", 1]]
     harness.wirings.last.fetch(0) == Dev::RunnerSetupConfig.new(labels: "snappy")
     registry.amends == []
-    harness.out.string.include?("2 local enrollments")
-    harness.out.string.include?("~/actions-runner (service installed)")
-    harness.out.string.include?("~/actions-runner-snappy (no service)")
+    harness.ui.rows.first(3) == [
+      [:note, "{{x}} JPDuchesne/snappy has 2 local enrollments named 'JPSFF' — the enrollment on disk is not what should be serving GitHub:", 0],
+      [:note, "    ~/actions-runner (service installed)", 0],
+      [:note, "    ~/actions-runner-snappy (no service)", 0],
+    ]
   end
 
   test "one local enrollment whose runner GitHub lists offline: register asks; --yes answers for it" do
@@ -1005,7 +1008,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     Then "the slot was enrolled at repo scope with no group, then the repo left the org group — the list written whole"
     harness.wirings.first.first == Dev::RunnerSetupConfig.new(labels: AI_FLOW_SET)
     registry.group_writes == [[:select, "d3mlabs", 7, [100]]]
-    harness.out.string.include?("d3mlabs/cellbound-3d may also use the org's 'ai-flow' runners for these labels — its jobs would land on either.")
+    harness.out.string.include?("d3mlabs/cellbound-3d may also use the org's 'ai-flow' runners for these labels — its jobs would land on either")
     harness.out.string.include?("Excluding d3mlabs/cellbound-3d from group 'ai-flow'")
   end
 
@@ -1030,7 +1033,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     Then
     declined.group_writes == []
-    declining.out.string.include?("Left as is: d3mlabs/cellbound-3d keeps using the org's 'ai-flow' runners too.")
+    declining.out.string.include?("Left as is: d3mlabs/cellbound-3d keeps using the org's 'ai-flow' runners too")
     headless.group_writes == [[:select, "d3mlabs", 7, []]]
   end
 
@@ -1066,7 +1069,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     Then
     harness.wirings.first.first == Dev::RunnerSetupConfig.new(labels: AI_FLOW_SET)
-    harness.out.string.include?("Could not read d3mlabs's runner groups (could not list the runner groups at d3mlabs: HTTP 403) — whether d3mlabs/cellbound-3d also uses the org's runners is unchecked.")
+    harness.out.string.include?("Could not read d3mlabs's runner groups (could not list the runner groups at d3mlabs: HTTP 403) — whether d3mlabs/cellbound-3d also uses the org's runners is unchecked")
   end
 
   # --- contracts --------------------------------------------------------
@@ -1354,12 +1357,13 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     setup.expects(:run).once
     setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
     setup.stubs(:resolve_scope).returns("owner/repo")
+    context = projectless_context
     Dev::RunnerSetup.expects(:new)
-      .with(config: Dev::RunnerSetupConfig.new(labels: "ue-engine"), repo: nil, org: false, as_user: nil, home: nil, path: nil).returns(setup)
+      .with(config: Dev::RunnerSetupConfig.new(labels: "ue-engine"), repo: nil, org: false, as_user: nil, home: nil, path: nil, ui: context.ui).returns(setup)
     command = Dev::Cli::Builtins::RunnerRegisterCommand.new(data_root_provisioner: nil)
 
     When "running register with --as, the host rule's one input"
-    command.call(args: parsed_args(command, ["--labels", "ue-engine", "--as", "ci"]), context: projectless_context)
+    command.call(args: parsed_args(command, ["--labels", "ue-engine", "--as", "ci"]), context: context)
 
     Then "the expectations on the construction boundary hold"
     true
@@ -1386,12 +1390,13 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     setup.expects(:run).once
     setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
     setup.stubs(:resolve_scope).returns("owner/repo")
+    context = build_context(name: "snappy", root: root)
     Dev::RunnerSetup.expects(:new)
-      .with(config: Dev::RunnerSetupConfig.new(labels: "ue-engine"), repo: nil, org: false, as_user: "svc-runner", home: runner_user.home, path: "/opt/brew/bin:/usr/bin").returns(setup)
+      .with(config: Dev::RunnerSetupConfig.new(labels: "ue-engine"), repo: nil, org: false, as_user: "svc-runner", home: runner_user.home, path: "/opt/brew/bin:/usr/bin", ui: context.ui).returns(setup)
     command = Dev::Cli::Builtins::RunnerRegisterCommand.new(data_root_provisioner: nil)
 
     When "registering in that checkout with default wiring"
-    command.call(args: parsed_args(command, ["--labels", "ue-engine"]), context: build_context(name: "snappy", root: root))
+    command.call(args: parsed_args(command, ["--labels", "ue-engine"]), context: context)
 
     Then "the lock was read from the checkout and checked as the runner user"
     true
@@ -1409,12 +1414,13 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     setup.expects(:run).once
     setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
     setup.stubs(:resolve_scope).returns("d3mlabs/Cellbound-3D")
+    context = build_context(name: "Cellbound3D")
     Dev::RunnerSetup.expects(:new)
-      .with(config: Dev::RunnerSetupConfig.new(labels: "cellbound-3d"), repo: nil, org: false, as_user: nil, home: nil, path: nil).returns(setup)
+      .with(config: Dev::RunnerSetupConfig.new(labels: "cellbound-3d"), repo: nil, org: false, as_user: nil, home: nil, path: nil, ui: context.ui).returns(setup)
     command = Dev::Cli::Builtins::RunnerRegisterCommand.new(runner_user_factory: ->(_name) { nil }, data_root_provisioner: nil)
 
     When "running bare register inside a checkout whose dev.yml name differs"
-    command.call(args: no_args, context: build_context(name: "Cellbound3D"))
+    command.call(args: no_args, context: context)
 
     Then "the label came from gh's repo name, lowercased"
     true
@@ -1469,8 +1475,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     teardown.define_singleton_method(:teardown!) { |enrollment, ui:| torn_down << enrollment }
     ui = RecordingUi.new(out: out)
     command = Dev::Cli::Builtins::RunnerRegisterCommand.new(
-      runner_setup_factory: ->(config, repo_override, org, as_user) {
-        wirings << [config, repo_override, org, as_user]
+      runner_setup_factory: ->(config, repo_override, org, as_user, ui) {
+        wirings << [config, repo_override, org, as_user, ui]
         setups[config.dir]
       },
       # The host rule's seam: nil is a Mac (no runner user); a test on the
@@ -1495,7 +1501,6 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
       registry: registry,
       teardown: teardown,
       engine_provisioner: engine,
-      out: out,
       refresher: refresher,
     )
     Harness.new(command: command, wirings: wirings, events: events, out: out, engine: engine,
