@@ -313,7 +313,7 @@ module Dev
     # @return [String]
     sig { returns(String) }
     def resolve_dir
-      File.expand_path(@config.dir || File.join(@home, "actions-runner-#{default_dir_suffix}"))
+      File.expand_path(@config.dir || File.join(@home, "actions-runner-#{@config.dir_suffix}"))
     end
 
     # @return [String]
@@ -547,16 +547,6 @@ module Dev
     sig { params(action: String).returns(T::Array[String]) }
     def service_argv(action)
       self.class.service_argv(action, host_platform: @host_platform)
-    end
-
-    # First label, sanitized for use in a directory name.
-    #
-    # @return [String]
-    sig { returns(String) }
-    def default_dir_suffix
-      first = @config.labels.split(",").first.to_s
-      sanitized = first.gsub(/[^A-Za-z0-9_.-]/, "-")
-      sanitized.empty? ? "default" : sanitized
     end
   end
 end

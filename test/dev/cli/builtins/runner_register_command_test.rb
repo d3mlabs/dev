@@ -726,6 +726,101 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.torn_down == []
   end
 
+  # --- families: two org-scoped label sets on one host (dev#557) ----------
+
+  test "the agent family enrolls beside the orchestrator pool at the same org scope: the pool is neither counted, amended nor retired, and the family takes its own base since the pool holds the hostname" do
+    Given "the box: ten pool slots under the bare hostname, GitHub knowing them all as online orchestrators"
+    home = Dir.mktmpdir
+    registry = FakeRegistry.new(runners: pool_runners(home, count: 10, hostname: "JPSFF"))
+    harness = build_harness(contracts: 1, home: home, registry: registry, scope: "d3mlabs", hostname: "JPSFF")
+    harness.ui.expects(:confirm).never
+
+    When "registering the agent host with three slots"
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "3"]), context: harness.projectless_context)
+
+    Then "three fresh slots named <hostname>-<first label>[-n], the pool untouched"
+    labels = Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(",")
+    harness.wirings.drop(1).map(&:first) == [
+      Dev::RunnerSetupConfig.new(labels: labels, dir: "/tmp/runner-dir", name: "JPSFF-ai-ask", group: "ai-flow"),
+      Dev::RunnerSetupConfig.new(labels: labels, dir: "/tmp/runner-dir-2", name: "JPSFF-ai-ask-2", group: "ai-flow"),
+      Dev::RunnerSetupConfig.new(labels: labels, dir: "/tmp/runner-dir-3", name: "JPSFF-ai-ask-3", group: "ai-flow"),
+    ]
+    harness.events == [
+      [:converge, false, nil, nil, nil],
+      [:run], [:after_enroll, "/tmp/runner-dir", 1],
+      [:run], [:after_enroll, "/tmp/runner-dir-2", 2],
+      [:run], [:after_enroll, "/tmp/runner-dir-3", 3],
+    ]
+    harness.torn_down == []
+    registry.amends == []
+    !harness.out.string.include?("more slots than asked for")
+  end
+
+  test "re-running the agent family beside the pool is a no-op on both: its own slots are amended, the pool's never named" do
+    Given "the pool and a three-slot agent family under its own base, all online and current"
+    home = Dir.mktmpdir
+    runners = pool_runners(home, count: 10, hostname: "JPSFF")
+    %w[JPSFF-ai-ask JPSFF-ai-ask-2 JPSFF-ai-ask-3].each_with_index do |name, i|
+      write_runner(home, "actions-runner-ai-ask#{"-#{i + 1}" if i.positive?}", scope: "d3mlabs", name: name)
+      runners[["d3mlabs", name]] = Dev::RunnerRegistry::Runner.new(id: 100 + i, custom_labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS, status: "online")
+    end
+    registry = FakeRegistry.new(runners: runners)
+    harness = build_harness(contracts: 1, home: home, registry: registry, scope: "d3mlabs", hostname: "JPSFF")
+    harness.ui.expects(:confirm).never
+
+    When "re-running without --slots"
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: harness.projectless_context)
+
+    Then "three after_enrolls, nothing run, nothing torn down, no surplus"
+    harness.events.map(&:first) == [:converge, :after_enroll, :after_enroll, :after_enroll]
+    harness.torn_down == []
+    registry.amends == []
+    !harness.out.string.include?("more slots than asked for")
+  end
+
+  test "the reverse order: the pool enrolls beside an agent family holding the hostname, under its own base, and a smaller --slots never counts the family's slots as surplus" do
+    Given "a two-slot agent family under the bare hostname"
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
+    write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
+    registry = FakeRegistry.new(
+      runners: {
+        ["d3mlabs", "mac1"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS, status: "online"),
+        ["d3mlabs", "mac1-2"] => Dev::RunnerRegistry::Runner.new(id: 2, custom_labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS, status: "online"),
+      },
+      groups: { ["d3mlabs", "ai-flow"] => FakeRegistry.group(id: 7, name: "ai-flow", pinned: true) },
+    )
+    harness = build_harness(home: home, registry: registry, scope: "d3mlabs", hostname: "mac1")
+    harness.ui.expects(:confirm).never
+
+    When "enrolling a one-slot pool"
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-orchestrator", "--slots", "1"]), context: harness.projectless_context)
+
+    Then
+    harness.wirings.last.first == Dev::RunnerSetupConfig.new(labels: "ai-orchestrator", dir: "/tmp/runner-dir", name: "mac1-ai-orchestrator", group: "ai-orchestrator")
+    harness.events == [[:run]]
+    harness.torn_down == []
+    registry.amends == []
+  end
+
+  test "a pool slot GitHub has lost is still the pool's — its dir says so — not a stranger for the agent family to retire" do
+    Given "the pool with one slot gone server-side, and no agent family yet"
+    home = Dir.mktmpdir
+    runners = pool_runners(home, count: 3, hostname: "JPSFF")
+    runners.delete(["d3mlabs", "JPSFF-3"])
+    registry = FakeRegistry.new(runners: runners)
+    harness = build_harness(contracts: 1, home: home, registry: registry, scope: "d3mlabs", hostname: "JPSFF")
+    harness.ui.expects(:confirm).never
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: harness.projectless_context)
+
+    Then "one fresh agent slot under its own base; nothing retired"
+    harness.wirings.last.first == Dev::RunnerSetupConfig.new(labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(","), dir: "/tmp/runner-dir", name: "JPSFF-ai-ask", group: "ai-flow")
+    harness.torn_down == []
+    !harness.out.string.include?("none of this host's slots")
+  end
+
   test "an enrollment at the scope that is none of this host's slots — another name — is superseded like a leftover: listed, asked about, retired, then the slots enroll fresh" do
     Given "one of this host's slots and an enrollment under a name that is nobody's slot"
     home = Dir.mktmpdir
@@ -1568,6 +1663,17 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     record = { "agentName" => name, "gitHubUrl" => "https://github.com/#{scope}" }
     File.write(File.join(dir, ".runner"), "\uFEFF#{JSON.generate(record)}")
     dir
+  end
+
+  # The orchestrator pool as plans#55 enrolled it on the box: `count` slots
+  # in `actions-runner-ai-orchestrator[-n]` named `<hostname>[-n]`, each
+  # known to GitHub as an online orchestrator. Returns the registry's map.
+  def pool_runners(home, count:, hostname:)
+    (1..count).to_h do |slot|
+      suffix = slot == 1 ? "" : "-#{slot}"
+      write_runner(home, "actions-runner-ai-orchestrator#{suffix}", scope: "d3mlabs", name: "#{hostname}#{suffix}")
+      [["d3mlabs", "#{hostname}#{suffix}"], Dev::RunnerRegistry::Runner.new(id: slot, custom_labels: ["ai-orchestrator"], status: "online")]
+    end
   end
 
   # The runner user as register sees it: a name and a home; the converge

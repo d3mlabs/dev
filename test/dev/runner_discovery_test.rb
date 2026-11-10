@@ -82,6 +82,31 @@ class Dev::RunnerDiscoveryTest < Minitest::Test
     Dev::RunnerDiscovery.new(home: home).enrollments.fetch(0).owner == Etc.getpwuid(Process.uid).name
   end
 
+  test "dir_label is the label register named the dir from — #{dir_name} → #{label.inspect} — the one hint left when GitHub has lost the runner (dev#557)" do
+    Given
+    home = Dir.mktmpdir
+    write_runner(home, dir_name, scope: "d3mlabs", name: "JPSFF-7")
+
+    Expect
+    Dev::RunnerDiscovery.new(home: home).enrollments.fetch(0).dir_label == label
+
+    Where
+    dir_name                           | label
+    "actions-runner-ai-orchestrator"   | "ai-orchestrator"
+    "actions-runner-ai-orchestrator-7" | "ai-orchestrator"
+    "actions-runner-ai-ask-2"          | "ai-ask"
+    "actions-runner-cellbound3d"       | "cellbound3d"
+  end
+
+  test "the suffixless dir was named from no label: dir_label is nil" do
+    Given
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner", scope: "d3mlabs", name: "JPSFF")
+
+    Expect
+    Dev::RunnerDiscovery.new(home: home).enrollments.fetch(0).dir_label.nil?
+  end
+
   test "display_dir is the dir relative to home with a ~, or absolute when outside home" do
     Given "an enrollment under home and one elsewhere"
     home = Dir.mktmpdir
