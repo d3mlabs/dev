@@ -3,6 +3,7 @@
 
 require "test_helper"
 require "dev/label_contracts"
+require "etc"
 
 transform!(RSpock::AST::Transformation)
 class Dev::LabelContractsTest < Minitest::Test
@@ -101,15 +102,67 @@ class Dev::LabelContractsTest < Minitest::Test
     true
   end
 
-  test "the run-as user override reaches the bootstrap construction" do
-    Given "an agent-user override"
+  test "the run-as user and the runner user reach the host's bootstrap construction" do
+    Given "an agent-user override and the host rule's runner user"
     bootstrap = typed_mock(Dev::AgentBootstrap)
-    Dev::AgentBootstrap.expects(:new).with(agent_user: "ci").returns(bootstrap)
+    Dev::LabelContracts.expects(:agent_bootstrap).with(agent_user: "ci", runner_user: "runner").returns(bootstrap)
 
     When "resolving contracts"
-    contracts = Dev::LabelContracts.for("ai-build", agent_user: "ci")
+    contracts = Dev::LabelContracts.for("ai-build", agent_user: "ci", runner_user: "runner")
 
     Then
     contracts.length == 1
+  end
+
+  test "without overrides the bootstrap is built for the default agent user and the platform's runner user" do
+    Given
+    bootstrap = typed_mock(Dev::AgentBootstrap)
+    Dev::LabelContracts.expects(:agent_bootstrap).with(agent_user: "ai-agent", runner_user: nil).returns(bootstrap)
+
+    When
+    contracts = Dev::LabelContracts.for("ai-build")
+
+    Then
+    contracts.length == 1
+  end
+
+  # plans#59: one contract, an adapter per platform, chosen here — the
+  # composition root. The runner user is the sudoers grantor: the operator
+  # on a Mac (a per-user LaunchAgent), dev#310's `runner` on Linux.
+  test "the host factory picks the #{host_os} adapter with that platform's runner user" do
+    Given "no deployment tap to read from the host's settings"
+    Dev::TapTrust.stubs(:deployment_tap).returns(nil)
+
+    When "building the bootstrap for the host"
+    bootstrap = Dev::LabelContracts.agent_bootstrap(agent_user: "ci", host_os: host_os)
+
+    Then
+    bootstrap.is_a?(adapter)
+    bootstrap.agent_user == "ci"
+    bootstrap.runner_user == runner_user
+
+    Where
+    host_os  | adapter                        | runner_user
+    "darwin" | Dev::AgentBootstrap::Darwin    | Etc.getpwuid(Process.uid).name
+    "linux"  | Dev::AgentBootstrap::Linux     | Dev::RunnerUser::DEFAULT_NAME
+  end
+
+  test "the host factory hands an explicit runner user through" do
+    Given
+    Dev::TapTrust.stubs(:deployment_tap).returns(nil)
+
+    Expect
+    Dev::LabelContracts.agent_bootstrap(host_os: "linux", runner_user: "svc").runner_user == "svc"
+    Dev::LabelContracts.agent_bootstrap(host_os: "darwin", runner_user: "human").runner_user == "human"
+  end
+
+  test "the host factory refuses a platform no adapter converges" do
+    When
+    Dev::LabelContracts.agent_bootstrap(host_os: "windows")
+
+    Then
+    error = raises Dev::AgentBootstrap::UnsupportedPlatformError
+    error.message.include?("windows")
+    error.message.include?("plans#59")
   end
 end

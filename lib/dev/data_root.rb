@@ -41,6 +41,17 @@ module Dev
     # The per-user default, and the literal prefix `expand` re-roots.
     HOME_ROOT = "~/.dev"
 
+    # The one cooperative group on every dev host: the identities that
+    # share dev's state — the operator, a Linux host's runner user, an
+    # agent host's agent user — are its members, and the shared root,
+    # the `_work` trees and the agent's workspaces carry it (plans#59).
+    # Named by the layer that owns the root: both data-root provisioners
+    # and both agent host bootstraps use this constant and no other, and
+    # `dev runner register` hands the name to ai-flow in the service env
+    # (AgentBootstrap::AGENT_GROUP_ENV). A Mac's root from before this
+    # constant carried `ai`; AgentBootstrap::Darwin re-groups it.
+    GROUP = "dev"
+
     class << self
       extend T::Sig
 

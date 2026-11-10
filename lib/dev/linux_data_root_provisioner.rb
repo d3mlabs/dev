@@ -12,7 +12,7 @@ require "dev/privileged_steps"
 module Dev
   # Brings a Linux host's data root into being: `/var/lib/dev`
   # (DataRoot::LINUX_ROOT, dev#308) created as root, owned by the invoking
-  # user and shared with the `dev` group (GROUP), then the per-user `~/.dev`
+  # user and shared with the `dev` group (DataRoot::GROUP), then the per-user `~/.dev`
   # moved into it (DataRootMigration). The default root is in effect whether
   # or not the directory exists; this is the one step that makes it exist,
   # run by `dev up` on the host before anything installs.
@@ -41,10 +41,6 @@ module Dev
   # dev names the group fix and never re-owns it.
   class LinuxDataRootProvisioner
     extend T::Sig
-
-    # The group the data root is shared with; both the operator and the
-    # runner user are members.
-    GROUP = "dev"
 
     # The root exists and this user cannot write it.
     class NotWritableError < RuntimeError; end
@@ -99,7 +95,8 @@ module Dev
     # @param root [String] the data root to create
     # @param home_dev [String] the per-user root to migrate from
     # @param user [String] the owner the root is handed to
-    # @param group [String] the group it is shared with
+    # @param group [String] the group it is shared with (DataRoot::GROUP;
+    #   injectable so tests stat a group this process is in)
     # @param out [IO, StringIO]
     sig do
       params(
@@ -113,7 +110,7 @@ module Dev
     end
     def initialize(steps: PrivilegedSteps.new(purpose: "create the data root #{DataRoot::LINUX_ROOT}"),
                    root: DataRoot::LINUX_ROOT, home_dev: File.expand_path(DataRoot::HOME_ROOT),
-                   user: T.must(Etc.getpwuid(Process.uid)).name, group: GROUP,
+                   user: T.must(Etc.getpwuid(Process.uid)).name, group: DataRoot::GROUP,
                    out: $stdout)
       @steps = steps
       @root = root

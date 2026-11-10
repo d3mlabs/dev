@@ -4,7 +4,7 @@
 require "etc"
 require "stringio"
 
-require "dev/linux_data_root_provisioner"
+require "dev/data_root"
 require "dev/platform"
 require "dev/privileged_steps"
 require "dev/runner_setup"
@@ -28,8 +28,9 @@ module Dev
   # runs with the operator's credentials.
   #
   # The runner user is in `docker` (the engine's socket) and the data
-  # root's group (LinuxDataRootProvisioner::GROUP: one tree, two
-  # writers). Its gh login is the machine user's token, pasted once by the
+  # root's group (DataRoot::GROUP: one tree, two writers — three on an
+  # agent host, AgentBootstrap::Linux). Its gh login is the machine
+  # user's token, pasted once by the
   # operator on stdin — dev never sees or stores it, and refuses to enroll
   # while the login is missing, naming the command.
   #
@@ -55,7 +56,7 @@ module Dev
 
     # The groups the runner user needs: the engine's socket and the shared
     # data root.
-    GROUPS = T.let(["docker", LinuxDataRootProvisioner::GROUP].freeze, T::Array[String])
+    GROUPS = T.let(["docker", DataRoot::GROUP].freeze, T::Array[String])
 
     # A passwd lookup: the user's home, or nil when there is no such user.
     HomeOf = T.type_alias { T.proc.params(name: String).returns(T.nilable(String)) }

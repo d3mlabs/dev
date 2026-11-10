@@ -309,7 +309,7 @@ class Dev::RunnerUserTest < Minitest::Test
   test "the default runner user is runner, in docker and the data root's group" do
     Expect
     Dev::RunnerUser::DEFAULT_NAME == "runner"
-    Dev::RunnerUser::GROUPS == ["docker", Dev::LinuxDataRootProvisioner::GROUP]
+    Dev::RunnerUser::GROUPS == ["docker", Dev::DataRoot::GROUP]
   end
 
   # dev#337: the toolchain is brew's prefix (and, on Linuxbrew, the home it

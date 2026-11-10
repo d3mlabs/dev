@@ -189,9 +189,11 @@ class Dev::LinuxDataRootProvisionerTest < Minitest::Test
     !File.exist?(@root)
   end
 
-  test "the shared group is dev by default" do
+  # plans#59: one group name across hosts — the root's provisioner and
+  # the agent host bootstrap share the data root's constant.
+  test "the shared group is the data root's, dev" do
     Expect
-    Dev::LinuxDataRootProvisioner::GROUP == "dev"
+    Dev::DataRoot::GROUP == "dev"
   end
 
   test "for_host applies on Linux with the default root only: #{what}" do
