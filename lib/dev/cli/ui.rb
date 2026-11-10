@@ -15,6 +15,11 @@ module Dev
       extend T::Sig
       include Ui
 
+      # cli-ui's spinner answered false without the block having raised:
+      # the block never ran (its Capture refused — the router was off, or
+      # cli-ui changed its mind). Never nil as if it had run.
+      class SpinnerRefusedError < RuntimeError; end
+
       # @param cli_ui [Class] CLI::UI
       # @param prompt [Class] CLI::UI::Prompt (injectable for tests)
       # @param frame [Class] CLI::UI::Frame (injectable for tests)
@@ -71,14 +76,20 @@ module Dev
         @frame.open(title, timing: true, &block)
       end
 
-      # The spinner swallows the block's raise and answers false
-      # (auto_debrief off: no backtrace dump — the verb reports the
-      # failure in its own words); the raise is kept and re-raised.
+      # The router first: cli-ui runs the block inside a StdoutRouter
+      # Capture, which refuses with the router off — silently, the block
+      # never running, the spinner answering false (plans#52: a verb whose
+      # first word is a spin, with no frame before it). The spinner
+      # swallows the block's raise and answers false (auto_debrief off: no
+      # backtrace dump — the verb reports the failure in its own words);
+      # the raise is kept and re-raised. False with no raise kept is the
+      # block never having run, and says so.
       sig { override.type_parameters(:T).params(name: String, block: T.proc.returns(T.type_parameter(:T))).returns(T.type_parameter(:T)) }
       def spin(name, &block)
+        @router.enable
         result = T.let(nil, T.nilable(T.type_parameter(:T)))
         failure = T.let(nil, T.nilable(StandardError))
-        TerminalOwner.spinning do
+        ran = TerminalOwner.spinning do
           @spinner.spin(name, auto_debrief: false) do
             result = block.call
           rescue StandardError => e
@@ -87,6 +98,7 @@ module Dev
           end
         end
         raise failure if failure
+        raise SpinnerRefusedError, "the spinner never ran its block: #{name}" unless ran
 
         T.cast(result, T.type_parameter(:T))
       end
