@@ -71,11 +71,11 @@ module Dev
       extend T::Sig
 
       # The WSL runner host for this machine, or nil when the step does not
-      # apply (not a WSL2 distro).
+      # apply (not a WSL2 distro). Never raises for a session that does not
+      # name its distro — see #task.
       #
       # @param host [WslHost] the machine
       # @return [WslRunnerHost, nil]
-      # @raise [WslHost::DistroUnknownError] on WSL, when the session does not name its distro
       sig { params(host: WslHost).returns(T.nilable(WslRunnerHost)) }
       def for_host(host: WslHost.new)
         return nil unless host.wsl?
@@ -84,12 +84,22 @@ module Dev
       end
     end
 
-    # The task this host's keepalive is.
+    # The task this host's keepalive is, for this session's distro. Built
+    # on first use, not at construction: the CLI builds every builtin at
+    # startup, and a job under the runner's systemd service has no
+    # WSL_DISTRO_NAME in its env — asking there would stop every `dev`
+    # command on the box before it parsed argv (dev#564). The name is
+    # demanded where the keepalive is converged or inspected.
+    #
+    # @return [WslKeepaliveTask]
+    # @raise [WslHost::DistroUnknownError] when the session does not name its distro
     sig { returns(WslKeepaliveTask) }
-    attr_reader :task
+    def task
+      @task ||= WslKeepaliveTask.new(distro: @host.distro)
+    end
 
     # @param host [WslHost] the WSL machine (interop, the distro's name)
-    # @param task [WslKeepaliveTask] the keepalive for this distro
+    # @param task [WslKeepaliveTask, nil] the keepalive for this distro; built from the session's distro name on first use
     # @param executor [#run, #capture] process seam for powershell.exe
     # @param steps [Dev::PrivilegedSteps] the sudo contract, for wsl.conf
     # @param wsl [Dev::WslProvisioner] the `.wslconfig` ratchet
@@ -99,7 +109,7 @@ module Dev
     sig do
       params(
         host: WslHost,
-        task: WslKeepaliveTask,
+        task: T.nilable(WslKeepaliveTask),
         executor: T.untyped,
         steps: PrivilegedSteps,
         wsl: WslProvisioner,
@@ -108,7 +118,7 @@ module Dev
         out: T.any(IO, StringIO),
       ).void
     end
-    def initialize(host:, task: WslKeepaliveTask.new(distro: host.distro), executor: ProcessExecutor.new,
+    def initialize(host:, task: nil, executor: ProcessExecutor.new,
                    steps: PrivilegedSteps.new(executor: executor, purpose: "enable systemd in #{WslConf::PATH}"),
                    wsl: WslProvisioner.new(host: host, executor: executor), wsl_conf_path: WslConf::PATH,
                    systemd_run_dir: SYSTEMD_RUN_DIR, out: $stdout)
@@ -179,22 +189,22 @@ module Dev
     sig { void }
     def ensure_keepalive!
       observed = observe_keepalive
-      if @task.converged?(observed)
+      if task.converged?(observed)
         return if observed.running
 
-        @out.puts ">>> Starting the logon keepalive task '#{@task.name}' (holds a session so #{@task.distro} stays up) ..."
-        step!(@task.start_script, "start the keepalive task '#{@task.name}'")
+        @out.puts ">>> Starting the logon keepalive task '#{task.name}' (holds a session so #{task.distro} stays up) ..."
+        step!(task.start_script, "start the keepalive task '#{task.name}'")
         return
       end
 
-      @out.puts ">>> Registering the logon keepalive task '#{@task.name}' (at log on: #{@task.command}) ..."
-      @task.shortfalls(observed).each { |reason| @out.puts "    #{reason}" } if observed.present
-      return if run_powershell(@task.register_script)
-      raise StepFailedError, "could not register the keepalive task '#{@task.name}' (powershell.exe exited nonzero)" unless observed.present
+      @out.puts ">>> Registering the logon keepalive task '#{task.name}' (at log on: #{task.command}) ..."
+      task.shortfalls(observed).each { |reason| @out.puts "    #{reason}" } if observed.present
+      return if run_powershell(task.register_script)
+      raise StepFailedError, "could not register the keepalive task '#{task.name}' (powershell.exe exited nonzero)" unless observed.present
 
-      @out.puts ">>> '#{@task.name}' was registered by an administrator, so replacing it needs the same — " \
+      @out.puts ">>> '#{task.name}' was registered by an administrator, so replacing it needs the same — " \
                 "one UAC prompt on the Windows desktop ..."
-      step!(@task.elevated(@task.register_script), "replace the keepalive task '#{@task.name}' (elevated)")
+      step!(task.elevated(task.register_script), "replace the keepalive task '#{task.name}' (elevated)")
     end
 
     # Step 2: `[boot] systemd=true` in wsl.conf, written through one sudo
@@ -250,8 +260,8 @@ module Dev
     # @return [String]
     sig { returns(String) }
     def keepalive_after_restart
-      "After the shutdown, `Start-ScheduledTask -TaskName '#{@task.name}'` in PowerShell (or log off and on) " \
-        "brings #{@task.distro} back up under the keepalive's held session — a shell you open instead holds it " \
+      "After the shutdown, `Start-ScheduledTask -TaskName '#{task.name}'` in PowerShell (or log off and on) " \
+        "brings #{task.distro} back up under the keepalive's held session — a shell you open instead holds it " \
         "only while it is open."
     end
 
@@ -268,10 +278,10 @@ module Dev
     # @raise [WslKeepaliveTask::MalformedTaskError]
     sig { returns(WslKeepaliveTask::Observed) }
     def observe_keepalive
-      answer = T.unsafe(@executor).capture(*WslHost.powershell_argv(@task.probe_script))
+      answer = T.unsafe(@executor).capture(*WslHost.powershell_argv(task.probe_script))
       if answer.strip.empty?
         raise WslHost::InteropError,
-          "powershell.exe printed nothing for the scheduled task '#{@task.name}' — is WSL interop enabled?"
+          "powershell.exe printed nothing for the scheduled task '#{task.name}' — is WSL interop enabled?"
       end
 
       WslKeepaliveTask.parse_observed(answer)
