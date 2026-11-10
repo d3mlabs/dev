@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "dev/ini_file"
+require_relative "value_equality"
 
 module Dev
   # The distro's `/etc/wsl.conf` — WSL2's per-distro boot settings — as an
@@ -12,6 +13,7 @@ module Dev
   # distro start, so a change here is in effect only after `wsl --shutdown`.
   class WslConf
     extend T::Sig
+    include Dev::ValueEquality::Derived
 
     PATH = "/etc/wsl.conf"
     BOOT_SECTION = "boot"
@@ -66,9 +68,10 @@ module Dev
       @ini.render
     end
 
-    sig { params(other: Object).returns(T::Boolean) }
-    def ==(other)
-      other.is_a?(WslConf) && render == other.render
+    # @return [Array] the members that constitute identity
+    sig { override.returns(T::Array[T.anything]) }
+    def equality_members
+      [render]
     end
   end
 end

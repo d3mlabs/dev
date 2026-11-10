@@ -38,7 +38,9 @@ class Dev::RunnerSetupTest < Minitest::Test
   end
 
   # A Ui whose plain lines go nowhere: the tests here are about what ran.
-  def quiet = Dev::NoUi.new(out: StringIO.new)
+  def quiet
+    Dev::NoUi.new(out: StringIO.new)
+  end
 
   def authed_responder
     lambda do |argv|

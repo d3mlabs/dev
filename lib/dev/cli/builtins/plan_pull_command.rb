@@ -15,10 +15,14 @@ module Dev
         USAGE = T.let("usage: dev plan pull <n> [#{MERGE_FLAG}] [#{ORG_FLAG}]".freeze, String)
 
         sig { override.returns(String) }
-        def desc = "Fetch the issue into the local plan (pull <n> [--merge] [--org])"
+        def desc
+          "Fetch the issue into the local plan (pull <n> [--merge] [--org])"
+        end
 
         sig { override.returns(T::Array[Cli::Flag]) }
-        def flags = [Cli::Flag.new(MERGE_FLAG), Cli::Flag.new(ORG_FLAG)]
+        def flags
+          [Cli::Flag.new(MERGE_FLAG), Cli::Flag.new(ORG_FLAG)]
+        end
 
         private
 

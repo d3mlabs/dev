@@ -95,7 +95,9 @@ module Dev
         end
 
         sig { override.returns(T::Array[Cli::Flag]) }
-        def flags = FLAGS + DispatchResolver::FLAGS
+        def flags
+          FLAGS + DispatchResolver::FLAGS
+        end
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).returns(Dispatch::Outcome[FanOutEnv]) }
         def before(args:, context:)

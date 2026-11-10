@@ -57,7 +57,9 @@ module Dev
       # @param targets [Array<Lifecycle::Target>] as for #listing
       # @return [Array<String>]
       sig { params(targets: T::Array[Lifecycle::Target]).returns(T::Array[String]) }
-      def completions(targets: @targets) = targets.flat_map(&:pattern_names)
+      def completions(targets: @targets)
+        targets.flat_map(&:pattern_names)
+      end
 
       private
 

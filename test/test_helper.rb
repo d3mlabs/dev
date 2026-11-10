@@ -23,6 +23,7 @@ require "mocha/minitest"
 require "support/sorbet_helper"
 require "support/provisioning_guard_helper"
 require "support/parsed_args_helper"
+require "support/value_semantics_assertions"
 require "minitest/hell" if ENV["MT_HELL"]
 
 # Arm the provisioning kill-switch for every test process (dev#208): a test
@@ -33,6 +34,7 @@ require "minitest/hell" if ENV["MT_HELL"]
 ENV[Dev::ProvisioningGuard::ENV_VAR] = "1"
 Minitest::Test.include(ProvisioningGuardHelper)
 Minitest::Test.include(ParsedArgsHelper)
+Minitest::Test.include(ValueSemanticsAssertions)
 
 # Minitest Reporters (optional; rspock uses RakeRerunReporter)
 begin

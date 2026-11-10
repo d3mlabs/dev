@@ -454,8 +454,13 @@ class Dev::Cli::GlobalDispatchTest < Minitest::Test
   # hook is always current. Subclasses the real installer to satisfy the
   # accessors' typed constructors.
   class QuietHookInstaller < Dev::Cd::HookInstaller
-    def ensure_installed = nil
-    def installed? = true
+    def ensure_installed
+      nil
+    end
+
+    def installed?
+      true
+    end
   end
 
   def quiet_hook_installer

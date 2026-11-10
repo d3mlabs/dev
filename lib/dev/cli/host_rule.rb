@@ -41,14 +41,18 @@ module Dev
       #
       # @return [Boolean]
       sig { returns(T::Boolean) }
-      def inside_container? = @inside_container
+      def inside_container?
+        @inside_container
+      end
 
       # What this machine was provisioned from, for a report line
       # (`name@<12 hex>`, or what is missing).
       #
       # @return [String]
       sig { returns(String) }
-      def host = @host_environment.describe
+      def host
+        @host_environment.describe
+      end
 
       # Whether +image+'s work runs on this host (no container).
       #

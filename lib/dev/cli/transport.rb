@@ -85,7 +85,9 @@ module Dev
         attr_reader :runner
 
         sig(:final) { override.returns(String) }
-        def destination = "on #{@runner}"
+        def destination
+          "on #{@runner}"
+        end
 
         # @param runner [String] the label the job demands beside `self-hosted`
         # @param runs [Lifecycle::WorkflowRuns] the forge's side of the dispatch
@@ -103,7 +105,9 @@ module Dev
 
         # @raise [Lifecycle::LifecycleWorkflow::WorkflowMissingError]
         sig(:final) { override.void }
-        def assert_ready! = @workflow.assert_installed!
+        def assert_ready!
+          @workflow.assert_installed!
+        end
 
         # @raise [RemoteVerbFailedError]
         # @raise [Lifecycle::WorkflowRuns::RunNotListedError]
@@ -172,14 +176,20 @@ module Dev
         end
 
         sig(:final) { override.returns(String) }
-        def runner = ContainerWorkspace::RUNNER
+        def runner
+          ContainerWorkspace::RUNNER
+        end
 
         sig(:final) { override.returns(String) }
-        def destination = @containers.destination(@image)
+        def destination
+          @containers.destination(@image)
+        end
 
         # @raise [ProjectContainer::EngineUnavailableError]
         sig(:final) { override.void }
-        def assert_ready! = @containers.assert_engine_up!
+        def assert_ready!
+          @containers.assert_engine_up!
+        end
 
         # @raise [ContainerVerbFailedError]
         # @raise [EngineResourcesCheck::UndersizedEngineError]

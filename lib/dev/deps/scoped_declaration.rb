@@ -4,6 +4,7 @@
 require "sorbet-runtime"
 require_relative "declaration"
 require_relative "scope"
+require_relative "../value_equality"
 
 module Dev
   module Deps
@@ -26,6 +27,7 @@ module Dev
     # and no upstream manifest states where you install something.
     class ScopedDeclaration
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # @return [Declaration] the ask: name + integration + constraint + source
       sig { returns(Declaration) }
@@ -90,39 +92,38 @@ module Dev
 
       # @return [String] the ask's package name (delegated)
       sig { returns(String) }
-      def name = declaration.name
+      def name
+        declaration.name
+      end
 
       # @return [Symbol] the ask's integration (delegated)
       sig { returns(Symbol) }
-      def integration = declaration.integration
+      def integration
+        declaration.integration
+      end
 
       # @return [Hash{String => Object}] the ask's constraint (delegated)
       sig { returns(T::Hash[String, T.untyped]) }
-      def constraint = declaration.constraint
+      def constraint
+        declaration.constraint
+      end
 
       # @return [String, nil] the ask's source coordinate (delegated)
       sig { returns(T.nilable(String)) }
-      def source = declaration.source
+      def source
+        declaration.source
+      end
 
       # @return [String, nil] the ask's addressable revision (delegated)
       sig { returns(T.nilable(String)) }
-      def revision = declaration.revision
-
-      # @param other [Object]
-      # @return [Boolean] whether other is the same ask under the same context
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        return false unless other.is_a?(ScopedDeclaration)
-
-        [declaration, scope, platform, post_install, materialization] ==
-          [other.declaration, other.scope, other.platform, other.post_install, other.materialization]
+      def revision
+        declaration.revision
       end
-      alias_method :eql?, :==
 
-      # @return [Integer] hash code
-      sig { returns(Integer) }
-      def hash
-        [self.class, declaration, scope, platform, post_install, materialization].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [declaration, scope, platform, post_install, materialization]
       end
     end
   end

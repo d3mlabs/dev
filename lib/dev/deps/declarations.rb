@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require_relative "declaration"
+require_relative "../value_equality"
 
 module Dev
   module Deps
@@ -33,6 +34,7 @@ module Dev
       # The declared deps are facts dev can walk.
       class Resolved < Declarations
         extend T::Sig
+        include Dev::ValueEquality::Derived
 
         # @return [Array<Declaration>] the version's declared dependencies,
         #   normalized and integration-stamped by the reporting Repository
@@ -47,20 +49,10 @@ module Dev
           freeze
         end
 
-        # @param other [Object]
-        # @return [Boolean] whether other makes the same claim
-        sig { params(other: T.untyped).returns(T::Boolean) }
-        def ==(other)
-          return false unless other.is_a?(Resolved)
-
-          declarations == other.declarations
-        end
-        alias_method :eql?, :==
-
-        # @return [Integer] hash code
-        sig { returns(Integer) }
-        def hash
-          [self.class, declarations].hash
+        # @return [Array] the members that constitute identity
+        sig { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [declarations]
         end
       end
 
@@ -68,24 +60,17 @@ module Dev
       # closure and must not pretend to.
       class ToolOwned < Declarations
         extend T::Sig
+        include Dev::ValueEquality::Derived
 
         sig { void }
         def initialize
           freeze
         end
 
-        # @param other [Object]
-        # @return [Boolean] whether other is also a tool-owned claim
-        sig { params(other: T.untyped).returns(T::Boolean) }
-        def ==(other)
-          other.is_a?(ToolOwned)
-        end
-        alias_method :eql?, :==
-
-        # @return [Integer] hash code
-        sig { returns(Integer) }
-        def hash
-          self.class.hash
+        # @return [Array] the members that constitute identity
+        sig { override.returns(T::Array[T.anything]) }
+        def equality_members
+          []
         end
       end
     end

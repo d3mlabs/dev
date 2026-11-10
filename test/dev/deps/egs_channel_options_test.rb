@@ -22,7 +22,9 @@ class Dev::Deps::EgsChannelOptionsTest < Minitest::Test
     )
   end
 
-  def pattern(name) = Dev::Lifecycle::BuildPattern.parse(name, all_targets)
+  def pattern(name)
+    Dev::Lifecycle::BuildPattern.parse(name, all_targets)
+  end
 
   test "parse reads the organization, the product, an artifact per pattern and the labels, defaulting testing to Testing and live to Live" do
     When

@@ -277,8 +277,13 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
 
   # A lambda, not a block: a one-parameter block is emitted as |argv,| by
   # the transform (rspockframework/ast-transform#21) and destructures an argv.
-  def trusts = ->(argv) { argv.include?("trust") }
-  def org_tap = Dev::TapTrust::Tap.new(user: "d3mlabs", repo: "d3mlabs")
+  def trusts
+    ->(argv) { argv.include?("trust") }
+  end
+
+  def org_tap
+    Dev::TapTrust::Tap.new(user: "d3mlabs", repo: "d3mlabs")
+  end
 
   # A brew binary at <prefix>/bin/brew, as BREW_LOCATIONS discovers one.
   def brew_in(prefix)

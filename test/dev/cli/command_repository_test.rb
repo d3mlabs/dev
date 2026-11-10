@@ -15,9 +15,13 @@ class RepositoryFakeBuiltin < Dev::Cli::BuiltinCommand
 
   attr_reader :desc
 
-  def hidden? = @hidden
+  def hidden?
+    @hidden
+  end
 
-  def category = Dev::Cli::Command::Category::Workflow
+  def category
+    Dev::Cli::Command::Category::Workflow
+  end
 
   def call(args:, context:); end
 end unless defined?(RepositoryFakeBuiltin)
@@ -27,9 +31,13 @@ end unless defined?(RepositoryFakeBuiltin)
 class RepositoryFakeVerb < Dev::Cli::LifecycleCommand
   Env = type_member { { fixed: String } }
 
-  def desc = "a verb"
+  def desc
+    "a verb"
+  end
 
-  def before(args:, context:) = Dev::Cli::Dispatch::Outcome::Done.new
+  def before(args:, context:)
+    Dev::Cli::Dispatch::Outcome::Done.new
+  end
 
   def seam(env, context:); end
 

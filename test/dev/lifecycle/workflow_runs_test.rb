@@ -22,7 +22,9 @@ class Dev::Lifecycle::WorkflowRunsTest < Minitest::Test
     @runs = Dev::Lifecycle::WorkflowRuns.new(gh: @gh, sleeper: ->(seconds) { @slept << seconds })
   end
 
-  def branch = Dev::Lifecycle::SnapshotBranch.mint(runner: "box", now: Time.utc(2026, 11, 6, 10, 0, 0), nonce: "abcdef")
+  def branch
+    Dev::Lifecycle::SnapshotBranch.mint(runner: "box", now: Time.utc(2026, 11, 6, 10, 0, 0), nonce: "abcdef")
+  end
 
   test "dispatch runs the workflow by file on the ref with each input as -f name=value" do
     Given

@@ -36,10 +36,14 @@ module Dev
         end
 
         sig { override.returns(String) }
-        def desc = "Print a locked artifact's path (path ficsit <mod> <platform> | path xcode | path gh <name> | path wwise <name>)"
+        def desc
+          "Print a locked artifact's path (path ficsit <mod> <platform> | path xcode | path gh <name> | path wwise <name>)"
+        end
 
         sig { override.returns(Command::Category) }
-        def category = Command::Category::Environment
+        def category
+          Command::Category::Environment
+        end
 
         # A lockfile query, not a dependency consumer: it reads where the
         # locked artifact lives and nothing else. The install stamp is
@@ -50,7 +54,9 @@ module Dev
         # Scripts call this path from hooks that must not flap on stamp state;
         # a genuinely missing artifact still fails honestly in the accessor.
         sig { override.returns(T::Boolean) }
-        def staleness_exempt? = true
+        def staleness_exempt?
+          true
+        end
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)

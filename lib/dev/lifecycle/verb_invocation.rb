@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require_relative "artifact_fetch"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -21,6 +22,7 @@ module Dev
     # entry back into an argv.
     class VerbInvocation
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # A word the `verbs` input cannot carry whole.
       class UnspeakableWordError < ArgumentError; end
@@ -60,20 +62,21 @@ module Dev
 
       # @return [String] the verb's name
       sig { returns(String) }
-      def verb = T.must(@words.first)
+      def verb
+        T.must(@words.first)
+      end
 
       # @return [String] the words as the `verbs` input spells one entry
       sig { returns(String) }
-      def to_s = @words.join(" ")
+      def to_s
+        @words.join(" ")
+      end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(VerbInvocation) && words == other.words && fetch == other.fetch
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
-
-      sig { returns(Integer) }
-      def hash = [VerbInvocation, @words, @fetch].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [@words, @fetch]
+      end
     end
   end
 end

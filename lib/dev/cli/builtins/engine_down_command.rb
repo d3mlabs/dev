@@ -49,16 +49,24 @@ module Dev
         end
 
         sig { override.returns(String) }
-        def desc = "Stop the container engine, stopping dev's build containers first (--force: the rest too)"
+        def desc
+          "Stop the container engine, stopping dev's build containers first (--force: the rest too)"
+        end
 
         sig { override.returns(Command::Category) }
-        def category = Command::Category::Environment
+        def category
+          Command::Category::Environment
+        end
 
         sig { override.returns(T::Array[Cli::Flag]) }
-        def flags = [Cli::Flag.new(FORCE_FLAG)]
+        def flags
+          [Cli::Flag.new(FORCE_FLAG)]
+        end
 
         sig { override.returns(T::Boolean) }
-        def staleness_exempt? = true
+        def staleness_exempt?
+          true
+        end
 
         # @param args [Array<String>] `--force` stops unmanaged containers unasked
         # @param context [ExecutionContext] its Ui asks about the user's own containers

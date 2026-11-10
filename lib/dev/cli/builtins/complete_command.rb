@@ -32,24 +32,34 @@ module Dev
         end
 
         sig { override.returns(String) }
-        def desc = "Print the command names that can follow the given words (shell completion plumbing)"
+        def desc
+          "Print the command names that can follow the given words (shell completion plumbing)"
+        end
 
         sig { override.returns(Command::Category) }
-        def category = Command::Category::Workflow
+        def category
+          Command::Category::Workflow
+        end
 
         sig { override.returns(T::Boolean) }
-        def hidden? = true
+        def hidden?
+          true
+        end
 
         # Completion must keep working while the dependency state is stale.
         sig { override.returns(T::Boolean) }
-        def staleness_exempt? = true
+        def staleness_exempt?
+          true
+        end
 
         # The words are another command's argv, flags included (`dev plan
         # pull --merge <Tab>` hands this command `--merge`): none of them is
         # a flag of `complete`, and a `-h` among them asks for candidates,
         # not for this command's usage.
         sig { override.returns(T::Boolean) }
-        def opaque_args? = true
+        def opaque_args?
+          true
+        end
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)

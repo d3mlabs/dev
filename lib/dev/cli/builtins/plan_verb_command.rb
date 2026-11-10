@@ -42,12 +42,16 @@ module Dev
         end
 
         sig { override.returns(Command::Category) }
-        def category = Command::Category::Workflow
+        def category
+          Command::Category::Workflow
+        end
 
         # plan never touches dependencies and runs headlessly from Cursor
         # hooks, where a staleness warning would only add noise.
         sig { override.returns(T::Boolean) }
-        def staleness_exempt? = true
+        def staleness_exempt?
+          true
+        end
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)

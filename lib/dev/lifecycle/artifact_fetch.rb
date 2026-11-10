@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "pathname"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -16,20 +17,18 @@ module Dev
     # when a deploy leaves from the Mac.
     class ArtifactFetch < T::Struct
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # @return [String] the workflow artifact's name: the build's
       const :name, String
       # @return [Pathname] the store directory the files land in
       const :into, Pathname
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(ArtifactFetch) && name == other.name && into == other.into
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
-
-      sig { returns(Integer) }
-      def hash = [ArtifactFetch, name, into].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [name, into]
+      end
     end
   end
 end

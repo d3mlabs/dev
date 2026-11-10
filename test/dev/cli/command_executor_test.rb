@@ -14,9 +14,13 @@ class Dev::Cli::CommandExecutorTest < Minitest::Test
   # type, so the fake carries no behavior — the strategy mock receives it
   # untouched.
   class FakeBuiltin < Dev::Cli::BuiltinCommand
-    def desc = "a builtin"
+    def desc
+      "a builtin"
+    end
 
-    def category = Dev::Cli::Command::Category::Workflow
+    def category
+      Dev::Cli::Command::Category::Workflow
+    end
 
     def call(args:, context:); end
   end
@@ -26,9 +30,13 @@ class Dev::Cli::CommandExecutorTest < Minitest::Test
   class FakeVerb < Dev::Cli::LifecycleCommand
     Env = type_member { { fixed: String } }
 
-    def desc = "a verb"
+    def desc
+      "a verb"
+    end
 
-    def before(args:, context:) = Dev::Cli::Dispatch::Outcome::Done.new
+    def before(args:, context:)
+      Dev::Cli::Dispatch::Outcome::Done.new
+    end
 
     def seam(env, context:); end
 

@@ -26,13 +26,17 @@ class Dev::Lifecycle::ReleaseArchivesTest < Minitest::Test
     super
   end
 
-  def store = Dev::Lifecycle::Store.new(project_name: "cellbound-3d", targets: all_targets, data_root: @root.to_s)
+  def store
+    Dev::Lifecycle::Store.new(project_name: "cellbound-3d", targets: all_targets, data_root: @root.to_s)
+  end
 
   def archives
     Dev::Lifecycle::ReleaseArchives.new(releases: Dev::Lifecycle::GithubReleases.new(gh: @gh), store:, targets: all_targets)
   end
 
-  def release_dir = store.release_dir(TAG)
+  def release_dir
+    store.release_dir(TAG)
+  end
 
   test "manifest looks the release up, downloads release.json into the store's .releases/<tag>/ and reads it" do
     Given

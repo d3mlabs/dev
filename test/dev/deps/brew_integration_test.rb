@@ -21,7 +21,9 @@ class HoldingLock < Dev::HostLock
     @holding = false
   end
 
-  def holding? = @holding
+  def holding?
+    @holding
+  end
 
   def synchronize
     super do

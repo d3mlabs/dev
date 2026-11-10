@@ -70,7 +70,9 @@ module Dev
       # @param build [Build]
       # @return [Pathname]
       sig { params(build: Build).returns(Pathname) }
-      def dir(build) = @root / build.name
+      def dir(build)
+        @root / build.name
+      end
 
       # Where a build's install goes: the directory the builder writes
       # (`DEV_INSTALL`) and the packager reads, beside the archive it
@@ -82,7 +84,9 @@ module Dev
       # @param build [Build]
       # @return [Pathname]
       sig { params(build: Build).returns(Pathname) }
-      def install_dir(build) = dir(build) / INSTALL_DIR
+      def install_dir(build)
+        dir(build) / INSTALL_DIR
+      end
 
       # The archive's path without its extension — what the packager is
       # handed (`DEV_ARTIFACT`) and appends its format's extension to.
@@ -90,7 +94,9 @@ module Dev
       # @param build [Build]
       # @return [Pathname]
       sig { params(build: Build).returns(Pathname) }
-      def archive_stem(build) = dir(build) / build.name
+      def archive_stem(build)
+        dir(build) / build.name
+      end
 
       # A channel's scratch directory — handed to its publisher at deploy,
       # which creates it when it needs it.
@@ -98,7 +104,9 @@ module Dev
       # @param channel [Channel]
       # @return [Pathname]
       sig { params(channel: Channel).returns(Pathname) }
-      def scratch(channel) = @root / "#{SCRATCH_PREFIX}#{channel.name}"
+      def scratch(channel)
+        @root / "#{SCRATCH_PREFIX}#{channel.name}"
+      end
 
       # Where a release's downloaded archives and `release.json` are kept
       # for `deploy --release` — or would be.
@@ -106,7 +114,9 @@ module Dev
       # @param tag [ReleaseTag]
       # @return [Pathname]
       sig { params(tag: ReleaseTag).returns(Pathname) }
-      def release_dir(tag) = @root / "#{SCRATCH_PREFIX}#{RELEASES_DIR}" / tag.name
+      def release_dir(tag)
+        @root / "#{SCRATCH_PREFIX}#{RELEASES_DIR}" / tag.name
+      end
 
       # The stamped artifact of a build, or nil when none has been packaged
       # (or one was started and never stamped).
@@ -137,7 +147,9 @@ module Dev
       # @raise [MisnamedArtifactError]
       # @raise [Manifest::MalformedManifestError]
       sig { returns(T::Array[Artifact]) }
-      def artifacts = @targets.flat_map(&:builds).filter_map { |build| artifact(build) }
+      def artifacts
+        @targets.flat_map(&:builds).filter_map { |build| artifact(build) }
+      end
 
       # Stamp a build's directory with its manifest — the last step of
       # `package`, after the archive is in place, so a directory without one

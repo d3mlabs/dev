@@ -35,7 +35,9 @@ class FakeFicsitClient < Dev::Deps::FicsitClient
   #
   # @param operation [String]
   # @return [Array<Call>]
-  def calls_of(operation) = @calls.select { |call| call.operation == operation }
+  def calls_of(operation)
+    @calls.select { |call| call.operation == operation }
+  end
 
   private
 

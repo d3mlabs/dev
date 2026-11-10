@@ -86,17 +86,25 @@ module Dev
         const :tag, String
 
         sig { returns(String) }
-        def name = "#{host}/#{repository}"
+        def name
+          "#{host}/#{repository}"
+        end
 
         # The reference as it was written: `<host>/<repository>:<tag>`.
         sig { returns(String) }
-        def to_s = "#{name}:#{tag}"
+        def to_s
+          "#{name}:#{tag}"
+        end
 
         sig { returns(String) }
-        def manifest_url = "https://#{host}/v2/#{repository}/manifests/#{tag}"
+        def manifest_url
+          "https://#{host}/v2/#{repository}/manifests/#{tag}"
+        end
 
         sig { params(digest: String).returns(String) }
-        def blob_url(digest) = "https://#{host}/v2/#{repository}/blobs/#{digest}"
+        def blob_url(digest)
+          "https://#{host}/v2/#{repository}/blobs/#{digest}"
+        end
       end
 
       # @param auth [Dev::GhAuth] the token the challenge is answered with

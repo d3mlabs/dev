@@ -27,7 +27,9 @@ class FixtureWwiseIntegration < Dev::Deps::WwiseIntegration
 
   private
 
-  def wwise_cli_available? = @cli_available
+  def wwise_cli_available?
+    @cli_available
+  end
 
   def credentials_env
     @credential_resolutions += 1

@@ -83,7 +83,9 @@ module Dev
     #
     # @return [Array<Volume>]
     sig { returns(T::Array[Volume]) }
-    def stale = list.select(&:stale)
+    def stale
+      list.select(&:stale)
+    end
 
     # Drop one volume.
     #

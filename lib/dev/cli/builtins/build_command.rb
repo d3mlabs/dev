@@ -81,10 +81,14 @@ module Dev
         end
 
         sig { override.returns(T::Array[Cli::Flag]) }
-        def flags = BuildSelector::FLAGS + DispatchResolver::FLAGS
+        def flags
+          BuildSelector::FLAGS + DispatchResolver::FLAGS
+        end
 
         sig { override.returns(T.nilable(Listing)) }
-        def listing = @listing.listing
+        def listing
+          @listing.listing
+        end
 
         sig { override.params(words: T::Array[String]).returns(T::Array[String]) }
         def completions(words)
@@ -124,7 +128,9 @@ module Dev
 
         # @return [String] what bare `dev build` means
         sig { returns(String) }
-        def default_build = T.must(@selector.targets.first).default_build.name
+        def default_build
+          T.must(@selector.targets.first).default_build.name
+        end
       end
     end
   end

@@ -10,6 +10,7 @@ gem:
   exclude:
     - rubocop
     - rubocop-ast
+    - rubocop-d3mlabs
     - rubocop-shopify
     - rubocop-sorbet
 dsl:

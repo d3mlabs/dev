@@ -5,6 +5,7 @@ require "pathname"
 require_relative "build"
 require_relative "packager"
 require_relative "packed_archive"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -16,6 +17,7 @@ module Dev
     class NonePackager
       extend T::Sig
       include Packager
+      include Dev::ValueEquality::Derived
 
       # `package` reached a target that declares `packager: none`.
       class NeverPackagedError < RuntimeError; end
@@ -33,16 +35,15 @@ module Dev
 
       # The declaration as `dev help` renders it.
       sig { returns(String) }
-      def to_s = "none"
+      def to_s
+        "none"
+      end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(NonePackager)
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
-
-      sig { returns(Integer) }
-      def hash = [NonePackager].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        []
+      end
     end
   end
 end

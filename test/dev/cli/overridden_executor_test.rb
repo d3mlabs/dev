@@ -18,11 +18,17 @@ class Dev::Cli::OverriddenExecutorTest < Minitest::Test
       super()
     end
 
-    def desc = "a builtin"
+    def desc
+      "a builtin"
+    end
 
-    def category = Dev::Cli::Command::Category::Workflow
+    def category
+      Dev::Cli::Command::Category::Workflow
+    end
 
-    def stamps? = @stamps
+    def stamps?
+      @stamps
+    end
 
     def call(args:, context:); end
   end

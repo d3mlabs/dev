@@ -169,7 +169,9 @@ module Dev
       # @param track [Lifecycle::Track]
       # @return [String]
       sig { params(track: Lifecycle::Track).returns(String) }
-      def branch_for(track) = branches.fetch(track)
+      def branch_for(track)
+        branches.fetch(track)
+      end
 
       # Whether a branch is Steam's default one — the one a build script
       # cannot set live.
@@ -177,7 +179,9 @@ module Dev
       # @param branch [String]
       # @return [Boolean]
       sig { params(branch: String).returns(T::Boolean) }
-      def default_branch?(branch) = branch == DEFAULT_BRANCH
+      def default_branch?(branch)
+        branch == DEFAULT_BRANCH
+      end
     end
   end
 end

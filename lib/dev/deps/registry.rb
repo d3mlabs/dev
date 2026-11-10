@@ -120,43 +120,69 @@ module Dev
         # typed readers. Data#to_h reads members at the C level (it does not
         # call these readers), so the delegation is safe and non-recursive.
         sig { returns(Symbol) }
-        def symbol = to_h.fetch(:symbol)
+        def symbol
+          to_h.fetch(:symbol)
+        end
 
         sig { returns(T.class_of(Repository)) }
-        def repository = to_h.fetch(:repository)
+        def repository
+          to_h.fetch(:repository)
+        end
 
         sig { returns(T::Array[Symbol]) }
-        def repository_needs = to_h.fetch(:repository_needs)
+        def repository_needs
+          to_h.fetch(:repository_needs)
+        end
 
         sig { returns(T.nilable(T.class_of(VersionScheme))) }
-        def scheme = to_h.fetch(:scheme)
+        def scheme
+          to_h.fetch(:scheme)
+        end
 
         sig { returns(T::Hash[Symbol, T.untyped]) }
-        def scheme_args = to_h.fetch(:scheme_args)
+        def scheme_args
+          to_h.fetch(:scheme_args)
+        end
 
         sig { returns(T.nilable(T.class_of(Locker))) }
-        def locker = to_h.fetch(:locker)
+        def locker
+          to_h.fetch(:locker)
+        end
 
         sig { returns(T::Array[Symbol]) }
-        def locker_needs = to_h.fetch(:locker_needs)
+        def locker_needs
+          to_h.fetch(:locker_needs)
+        end
 
         sig { returns(T.nilable(T.class_of(Integration))) }
-        def integration = to_h.fetch(:integration)
+        def integration
+          to_h.fetch(:integration)
+        end
 
         sig { returns(T::Array[Symbol]) }
-        def integration_needs = to_h.fetch(:integration_needs)
+        def integration_needs
+          to_h.fetch(:integration_needs)
+        end
 
         sig { returns(T.nilable(Symbol)) }
-        def install_alias = to_h.fetch(:install_alias)
+        def install_alias
+          to_h.fetch(:install_alias)
+        end
 
         sig { returns(T.nilable(T::Class[Lifecycle::Publisher])) }
-        def publisher = to_h.fetch(:publisher)
+        def publisher
+          to_h.fetch(:publisher)
+        end
 
         sig { returns(T::Array[Symbol]) }
-        def publisher_needs = to_h.fetch(:publisher_needs)
+        def publisher_needs
+          to_h.fetch(:publisher_needs)
+        end
 
         sig { returns(T.nilable(String)) }
-        def channel = to_h.fetch(:channel)
+        def channel
+          to_h.fetch(:channel)
+        end
 
         sig do
           params(
@@ -206,7 +232,9 @@ module Dev
         #
         # @return [String]
         sig { returns(String) }
-        def channel_name = channel || symbol.to_s
+        def channel_name
+          channel || symbol.to_s
+        end
       end
 
       INTEGRATIONS = T.let(

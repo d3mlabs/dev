@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "dev/environment_image"
+require_relative "value_equality"
 
 module Dev
   # What a dev.yml `environment:` key names, as the parser emits it (dev#409):
@@ -57,18 +58,18 @@ module Dev
       extend T::Helpers
       include EnvironmentRef
       final!
+      include Dev::ValueEquality::Derived
 
       sig(:final) { override.returns(String) }
-      def to_s = HOST
+      def to_s
+        HOST
+      end
 
-      sig(:final) { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(Host)
-
-      sig(:final) { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
-
-      sig(:final) { returns(Integer) }
-      def hash = [Host].hash
+      # @return [Array] the members that constitute identity
+      sig(:final) { override.returns(T::Array[T.anything]) }
+      def equality_members
+        []
+      end
     end
 
     # `environment: <image name>` — a newtype over the name, unresolved.
@@ -77,6 +78,7 @@ module Dev
       extend T::Helpers
       include EnvironmentRef
       final!
+      include Dev::ValueEquality::Derived
 
       # @return [String] the `image` block's name, as written
       sig(:final) { returns(String) }
@@ -88,16 +90,15 @@ module Dev
       end
 
       sig(:final) { override.returns(String) }
-      def to_s = @name
+      def to_s
+        @name
+      end
 
-      sig(:final) { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(Image) && @name == other.name
-
-      sig(:final) { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
-
-      sig(:final) { returns(Integer) }
-      def hash = [Image, @name].hash
+      # @return [Array] the members that constitute identity
+      sig(:final) { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [@name]
+      end
     end
   end
 end

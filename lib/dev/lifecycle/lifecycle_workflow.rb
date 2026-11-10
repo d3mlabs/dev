@@ -41,7 +41,9 @@ module Dev
 
       # @return [Pathname] the project's copy
       sig { returns(Pathname) }
-      def path = @root / PROJECT_PATH
+      def path
+        @root / PROJECT_PATH
+      end
 
       # Refuse before anything leaves the machine when the project carries
       # no copy to dispatch.

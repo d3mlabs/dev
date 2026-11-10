@@ -39,11 +39,15 @@ module Dev
 
     # @return [String, nil] the own gem's name; nil when the lock has none
     sig { returns(T.nilable(String)) }
-    def own_gem = @spec&.[](:gem)
+    def own_gem
+      @spec&.[](:gem)
+    end
 
     # @return [String, nil] the own gem's version; nil when the lock has none
     sig { returns(T.nilable(String)) }
-    def own_version = @spec&.[](:version)
+    def own_version
+      @spec&.[](:version)
+    end
 
     # The lock with the own gem at +version+: its spec line and, when the
     # lock has one, its `CHECKSUMS` entry — nothing else.

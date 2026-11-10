@@ -4,6 +4,7 @@
 require_relative "config"
 require_relative "platform"
 require_relative "target"
+require_relative "../value_equality"
 # Build requires this file (Build.parse is the fully-qualified form of the
 # grammar here); `dev/lifecycle` loads both.
 
@@ -21,6 +22,7 @@ module Dev
     # then an optional config id — never a regexp over the whole name.
     class BuildPattern < T::Struct
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # The name starts with no declared target.
       class UnknownTargetError < ArgumentError; end
@@ -141,7 +143,9 @@ module Dev
       #
       # @return [Boolean]
       sig { returns(T::Boolean) }
-      def fully_qualified? = (!target.platforms? || !platform.nil?) && (!target.configs? || !config.nil?)
+      def fully_qualified?
+        (!target.platforms? || !platform.nil?) && (!target.configs? || !config.nil?)
+      end
 
       # The one build a fully-qualified pattern names.
       #
@@ -164,7 +168,9 @@ module Dev
       #
       # @return [Array<Build>]
       sig { returns(T::Array[Build]) }
-      def builds = target.builds.select { |candidate| matches?(candidate) }
+      def builds
+        target.builds.select { |candidate| matches?(candidate) }
+      end
 
       # The pattern split along the platform axis, the config axis left as
       # written: one pattern per declared platform it admits — itself when
@@ -204,21 +210,20 @@ module Dev
       #
       # @return [String]
       sig { returns(String) }
-      def name = [target.name, platform&.serialize, config&.serialize].compact.join("-")
-
-      sig { returns(String) }
-      def to_s = name
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        other.is_a?(BuildPattern) && target == other.target && platform == other.platform && config == other.config
+      def name
+        [target.name, platform&.serialize, config&.serialize].compact.join("-")
       end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      sig { returns(String) }
+      def to_s
+        name
+      end
 
-      sig { returns(Integer) }
-      def hash = [BuildPattern, target, platform, config].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [target, platform, config]
+      end
     end
   end
 end

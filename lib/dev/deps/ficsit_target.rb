@@ -46,7 +46,9 @@ module Dev
       #
       # @return [String]
       sig { returns(String) }
-      def to_s = serialize
+      def to_s
+        serialize
+      end
     end
   end
 end

@@ -13,7 +13,9 @@ class Dev::DockerCliPluginsTest < Minitest::Test
     Dev::DockerCliPlugins.new(config_path: File.join(dir, ".docker", "config.json"), brew_prefix: brew_prefix)
   end
 
-  def read_config(dir) = JSON.parse(File.read(File.join(dir, ".docker", "config.json")))
+  def read_config(dir)
+    JSON.parse(File.read(File.join(dir, ".docker", "config.json")))
+  end
 
   test "ensure! creates the config and points the CLI at brew's plugin dir when none exists" do
     Given "a home with no ~/.docker at all"

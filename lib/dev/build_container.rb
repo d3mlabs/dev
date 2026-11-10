@@ -432,7 +432,9 @@ module Dev
     #
     # @return [Boolean]
     sig { returns(T::Boolean) }
-    def data_root_shared? = @host_os == "linux"
+    def data_root_shared?
+      @host_os == "linux"
+    end
 
     # Where the container sees a path under the host's data root: the same
     # relative path under its own (one store layout on both sides).
@@ -573,7 +575,9 @@ module Dev
     #
     # @return [String]
     sig { returns(String) }
-    def prefix_volume = BuildContainer.prefix_volume(host_os: @host_os, host_user: @host_user)
+    def prefix_volume
+      BuildContainer.prefix_volume(host_os: @host_os, host_user: @host_user)
+    end
 
     # The volume a container has mounted at the Linuxbrew prefix.
     #

@@ -4,6 +4,7 @@
 require_relative "build"
 require_relative "build_pattern"
 require_relative "publisher_spec"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -30,6 +31,7 @@ module Dev
     # an empty accept set could ship nothing and would be a typo kept.
     class Channel < T::Struct
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # `targets:` on the channel lists no pattern.
       class EmptyAcceptSetError < ArgumentError; end
@@ -65,14 +67,18 @@ module Dev
       #
       # @return [Array<Build>]
       sig { returns(T::Array[Build]) }
-      def builds = accepts.flat_map(&:builds).uniq
+      def builds
+        accepts.flat_map(&:builds).uniq
+      end
 
       # Whether a build is inside the accept set.
       #
       # @param build [Build]
       # @return [Boolean]
       sig { params(build: Build).returns(T::Boolean) }
-      def accepts?(build) = accepts.any? { |pattern| pattern.matches?(build) }
+      def accepts?(build)
+        accepts.any? { |pattern| pattern.matches?(build) }
+      end
 
       # The accept set with every platform spelled out and the config axis
       # left as declared — what `deploy` ships **one artifact per**: a
@@ -82,22 +88,20 @@ module Dev
       #
       # @return [Array<BuildPattern>]
       sig { returns(T::Array[BuildPattern]) }
-      def artifact_patterns = accepts.flat_map(&:per_platform).uniq
-
-      sig { returns(String) }
-      def to_s = name
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        other.is_a?(Channel) && name == other.name && desc == other.desc && accepts == other.accepts &&
-          publisher == other.publisher && options == other.options
+      def artifact_patterns
+        accepts.flat_map(&:per_platform).uniq
       end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      sig { returns(String) }
+      def to_s
+        name
+      end
 
-      sig { returns(Integer) }
-      def hash = [Channel, name, desc, accepts, publisher, options].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [name, desc, accepts, publisher, options]
+      end
     end
   end
 end

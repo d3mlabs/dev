@@ -3,6 +3,7 @@
 
 require "dev/environment_ref"
 require_relative "platform"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -41,6 +42,7 @@ module Dev
         extend T::Helpers
         include TargetEnvironment
         final!
+        include Dev::ValueEquality::Derived
 
         # @return [EnvironmentRef] the one reference
         sig(:final) { returns(EnvironmentRef) }
@@ -52,16 +54,15 @@ module Dev
         end
 
         sig(:final) { override.returns(String) }
-        def to_s = @reference.to_s
+        def to_s
+          @reference.to_s
+        end
 
-        sig(:final) { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(Single) && @reference == other.reference
-
-        sig(:final) { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
-
-        sig(:final) { returns(Integer) }
-        def hash = [Single, @reference].hash
+        # @return [Array] the members that constitute identity
+        sig(:final) { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [@reference]
+        end
       end
 
       # `environment: { <platform>: <name>, … }` — one reference per
@@ -71,6 +72,7 @@ module Dev
         extend T::Helpers
         include TargetEnvironment
         final!
+        include Dev::ValueEquality::Derived
 
         # @return [Hash{Platform => EnvironmentRef}] in declaration order
         sig(:final) { returns(T::Hash[Platform, EnvironmentRef]) }
@@ -85,19 +87,20 @@ module Dev
         #
         # @return [Array<Platform>]
         sig(:final) { returns(T::Array[Platform]) }
-        def platforms = @references.keys
+        def platforms
+          @references.keys
+        end
 
         sig(:final) { override.returns(String) }
-        def to_s = @references.map { |platform, reference| "#{platform}: #{reference}" }.join(", ")
+        def to_s
+          @references.map { |platform, reference| "#{platform}: #{reference}" }.join(", ")
+        end
 
-        sig(:final) { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(PerPlatform) && @references == other.references
-
-        sig(:final) { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
-
-        sig(:final) { returns(Integer) }
-        def hash = [PerPlatform, @references].hash
+        # @return [Array] the members that constitute identity
+        sig(:final) { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [@references]
+        end
       end
     end
   end

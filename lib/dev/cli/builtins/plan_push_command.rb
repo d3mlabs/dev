@@ -14,10 +14,14 @@ module Dev
         USAGE = T.let("usage: dev plan push [<file>|<n>] [#{ORG_FLAG}]".freeze, String)
 
         sig { override.returns(String) }
-        def desc = "Update the issue body from the local plan, guarded (push [<file>|<n>] [--org])"
+        def desc
+          "Update the issue body from the local plan, guarded (push [<file>|<n>] [--org])"
+        end
 
         sig { override.returns(T::Array[Cli::Flag]) }
-        def flags = [Cli::Flag.new(ORG_FLAG)]
+        def flags
+          [Cli::Flag.new(ORG_FLAG)]
+        end
 
         private
 

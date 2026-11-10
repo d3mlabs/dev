@@ -3,6 +3,7 @@
 
 require "time"
 require_relative "deployment_record"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -12,22 +13,18 @@ module Dev
     # what makes the ledger readable without dev at all.
     class Deployment < T::Struct
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       const :record, DeploymentRecord
       const :id, Integer
       const :created_at, Time
       const :url, String
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        other.is_a?(Deployment) && record == other.record && id == other.id && created_at == other.created_at && url == other.url
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [record, id, created_at, url]
       end
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
-
-      sig { returns(Integer) }
-      def hash = [Deployment, record, id, created_at, url].hash
     end
   end
 end

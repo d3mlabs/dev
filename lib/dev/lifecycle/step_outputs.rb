@@ -44,7 +44,9 @@ module Dev
       #
       # @return [Boolean]
       sig { returns(T::Boolean) }
-      def active? = !@path.nil?
+      def active?
+        !@path.nil?
+      end
 
       # Name the artifact a `package` stamped: its build and every file the
       # upload takes (the archive, its parts, the manifest).

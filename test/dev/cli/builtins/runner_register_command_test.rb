@@ -71,7 +71,9 @@ class FakeRegistry
   end
 
   # Scopes GitHub refuses this login at (403), lifted by a refresh.
-  def grant_all! = @refused.clear
+  def grant_all!
+    @refused.clear
+  end
 
   def find(scope:, name:)
     refuse!(scope)
@@ -1483,7 +1485,9 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     end
 
     # The same, with no project (`--org`).
-    def projectless_context = Dev::Cli::ExecutionContext.new(ui: ui)
+    def projectless_context
+      Dev::Cli::ExecutionContext.new(ui: ui)
+    end
   end
 
   # A command over recording seams: the setup factory records each

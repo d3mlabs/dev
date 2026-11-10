@@ -30,11 +30,17 @@ class Dev::Cli::Builtins::DeployStatusCommandTest < Minitest::Test
     )
   end
 
-  def channels = [channel("staging", "cellbound-3d-win64"), channel("steam", "cellbound-3d-steamworks"), channel("rubygems", "rspock")]
+  def channels
+    [channel("staging", "cellbound-3d-win64"), channel("steam", "cellbound-3d-steamworks"), channel("rubygems", "rspock")]
+  end
 
-  def command = Dev::Cli::Builtins::DeployStatusCommand.new(channels:, deployments: Dev::Lifecycle::GithubDeployments.new(gh: @gh), out: @out)
+  def command
+    Dev::Cli::Builtins::DeployStatusCommand.new(channels:, deployments: Dev::Lifecycle::GithubDeployments.new(gh: @gh), out: @out)
+  end
 
-  def context = Dev::Cli::ExecutionContext.new(ui: typed_mock(Dev::Ui))
+  def context
+    Dev::Cli::ExecutionContext.new(ui: typed_mock(Dev::Ui))
+  end
 
   def deployment(id, ref:, track:, builds:)
     {

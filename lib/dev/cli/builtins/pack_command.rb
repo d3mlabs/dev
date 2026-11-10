@@ -40,13 +40,19 @@ module Dev
         end
 
         sig { override.returns(String) }
-        def desc = "Archive a directory in one of dev's forms (pack DIR [--out STEM] [--format zip|tar] [--split SIZE])"
+        def desc
+          "Archive a directory in one of dev's forms (pack DIR [--out STEM] [--format zip|tar] [--split SIZE])"
+        end
 
         sig { override.returns(Command::Category) }
-        def category = Command::Category::Workflow
+        def category
+          Command::Category::Workflow
+        end
 
         sig { override.returns(T::Boolean) }
-        def hidden? = true
+        def hidden?
+          true
+        end
 
         sig { override.returns(T::Array[Cli::Flag]) }
         def flags

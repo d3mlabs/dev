@@ -15,7 +15,9 @@ module Dev
         extend T::Sig
 
         sig { returns(T::Boolean) }
-        def conflicts? = conflicts
+        def conflicts?
+          conflicts
+        end
       end
 
       module_function

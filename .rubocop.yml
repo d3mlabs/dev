@@ -1,12 +1,11 @@
+# The org tier: rubocop-shopify + rubocop-sorbet, every file carries a
+# `typed:` sigil, no endless defs, RSpock test-dialect exclusions.
 inherit_gem:
-  rubocop-shopify: rubocop.yml
+  rubocop-d3mlabs: rubocop.yml
 
 inherit_mode:
   merge:
     - Exclude
-
-plugins:
-  - rubocop-sorbet
 
 # dev's own cop: the one layering rule (ADR-0014). Not shipped — the
 # gate's, not the tool's.
@@ -14,7 +13,6 @@ require:
   - ./rubocop/cop/dev/shell_reference
 
 AllCops:
-  SuggestExtensions: false
   Exclude:
     # Polyglot sh/ruby bootstrap scripts (#!/bin/sh preamble re-execing via
     # `ruby -x`); not parseable as plain Ruby.
@@ -24,14 +22,9 @@ AllCops:
     # bundle`, not Ruby of dev's own.
     - deploy/**/Brewfile
 
-# Every Ruby file must declare a `typed:` sigil (bin/ and tmp/ stay excluded
-# via AllCops above).
-Sorbet/ValidSigil:
-  RequireSigilOnAllFiles: true
-
 # Production code is `typed: strict`. Test files are exempt (RSpock's AST
 # transform and type pinnings in setup methods keep them at `typed: false`);
-# sigil presence is still enforced there by Sorbet/ValidSigil.
+# sigil presence is still enforced there by the org tier's Sorbet/ValidSigil.
 Sorbet/StrictSigil:
   Enabled: true
   Include:
@@ -47,17 +40,6 @@ Sorbet/StrictSigil:
     # the root dependencies.rb: their verbs are DSL methods Sorbet does not
     # see statically.
     - lib/dev/deps/*_integration/dependencies.rb
-
-# dev's tests are written in the RSpock dialect: bare comparisons in
-# Then/Expect blocks, block-name constants (Given/When/Then/Where), and
-# Where-table rows (`a | b`, sometimes with identical operands) are rewritten
-# by the AST transform, not evaluated for value.
-Lint/Void:
-  Exclude:
-    - test/**/*
-Lint/BinaryOperatorWithIdenticalOperands:
-  Exclude:
-    - test/**/*
 
 # Nothing under lib/dev outside the shell (lib/dev/cli/) references a
 # `Dev::Cli::*` constant — features and the vocabulary never depend on the

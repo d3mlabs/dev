@@ -7,6 +7,7 @@ require_relative "packager"
 require_relative "packed_archive"
 require_relative "part_list"
 require_relative "shell"
+require_relative "../value_equality"
 # Build appears in a signature only; see packager.rb for why build.rb is
 # not required here.
 
@@ -32,6 +33,7 @@ module Dev
     class Archive
       extend T::Sig
       include Packager
+      include Dev::ValueEquality::Derived
 
       # The install directory does not exist.
       class MissingInstallError < RuntimeError; end
@@ -71,7 +73,9 @@ module Dev
 
           # @return [Array<String>]
           sig { returns(T::Array[String]) }
-          def ids = values.map(&:serialize)
+          def ids
+            values.map(&:serialize)
+          end
         end
       end
 
@@ -123,23 +127,24 @@ module Dev
         class Zip < T::Struct
           extend T::Sig
           include Form
+          include Dev::ValueEquality::Derived
 
           EXTENSION = "zip"
 
           sig { override.returns(String) }
-          def extension = EXTENSION
+          def extension
+            EXTENSION
+          end
 
           sig { override.returns(String) }
-          def to_s = ""
-
-          sig { params(other: Object).returns(T::Boolean) }
-          def ==(other) = other.is_a?(Zip)
-
-          sig { params(other: Object).returns(T::Boolean) }
-          def eql?(other) = self == other
-
-          sig { returns(Integer) }
-          def hash = [Zip].hash
+          def to_s
+            ""
+          end
+          # @return [Array] the members that constitute identity
+          sig { override.returns(T::Array[T.anything]) }
+          def equality_members
+            []
+          end
         end
 
         # `<build>.tar.zst`, or with `split` the parts of at most that size
@@ -147,6 +152,7 @@ module Dev
         class Tar < T::Struct
           extend T::Sig
           include Form
+          include Dev::ValueEquality::Derived
 
           EXTENSION = "tar.zst"
           MANIFEST_EXTENSION = "MANIFEST"
@@ -154,22 +160,24 @@ module Dev
           const :split, T.nilable(ByteSize), default: nil
 
           sig { returns(T::Boolean) }
-          def split? = !split.nil?
+          def split?
+            !split.nil?
+          end
 
           sig { override.returns(String) }
-          def extension = split? ? MANIFEST_EXTENSION : EXTENSION
+          def extension
+            split? ? MANIFEST_EXTENSION : EXTENSION
+          end
 
           sig { override.returns(String) }
-          def to_s = split? ? " (tar, split #{split})" : " (tar)"
-
-          sig { params(other: Object).returns(T::Boolean) }
-          def ==(other) = other.is_a?(Tar) && split == other.split
-
-          sig { params(other: Object).returns(T::Boolean) }
-          def eql?(other) = self == other
-
-          sig { returns(Integer) }
-          def hash = [Tar, split].hash
+          def to_s
+            split? ? " (tar, split #{split})" : " (tar)"
+          end
+          # @return [Array] the members that constitute identity
+          sig { override.returns(T::Array[T.anything]) }
+          def equality_members
+            [split]
+          end
         end
       end
 
@@ -237,16 +245,15 @@ module Dev
       #
       # @return [String] `archive`, `archive (tar)`, `archive (tar, split 2GiB)`
       sig { returns(String) }
-      def to_s = "archive#{@form}"
+      def to_s
+        "archive#{@form}"
+      end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(Archive) && form == other.form
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
-
-      sig { returns(Integer) }
-      def hash = [Archive, form].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [form]
+      end
 
       private
 
@@ -312,7 +319,9 @@ module Dev
       # @param install [Pathname]
       # @return [Array<String>] `tar` streaming the install's contents
       sig { params(install: Pathname).returns(Shell::Argv) }
-      def tar_stage(install) = ["tar", "-C", install.to_s, "-cf", "-", "."]
+      def tar_stage(install)
+        ["tar", "-C", install.to_s, "-cf", "-", "."]
+      end
 
       # @param commands [Array<Array<String>>]
       # @param install [Pathname] named in the failure
@@ -331,13 +340,17 @@ module Dev
       # @param archive [Pathname]
       # @return [Array<Pathname>] the split parts present, in order
       sig { params(archive: Pathname).returns(T::Array[Pathname]) }
-      def parts_of(archive) = Pathname.glob("#{with(archive, Form::Tar::EXTENSION)}.[0-9]*").select(&:file?).sort
+      def parts_of(archive)
+        Pathname.glob("#{with(archive, Form::Tar::EXTENSION)}.[0-9]*").select(&:file?).sort
+      end
 
       # @param archive [Pathname] the path without extension
       # @param extension [String]
       # @return [Pathname]
       sig { params(archive: Pathname, extension: String).returns(Pathname) }
-      def with(archive, extension) = Pathname("#{archive}.#{extension}")
+      def with(archive, extension)
+        Pathname("#{archive}.#{extension}")
+      end
     end
   end
 end

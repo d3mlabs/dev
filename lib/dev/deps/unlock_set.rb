@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "sorbet-runtime"
+require_relative "../value_equality"
 
 module Dev
   module Deps
@@ -14,6 +15,7 @@ module Dev
     # value.
     class UnlockSet
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # @return [Array<String>] the declaration names floated by name;
       #   empty when none or all
@@ -34,21 +36,29 @@ module Dev
 
         # @return [UnlockSet] the conservative re-lock: nothing floats
         sig { returns(UnlockSet) }
-        def none = new
+        def none
+          new
+        end
 
         # @return [UnlockSet] the full re-lock: everything floats
         sig { returns(UnlockSet) }
-        def all = new(all: true)
+        def all
+          new(all: true)
+        end
       end
 
       # @return [Boolean] whether every declaration floats
       sig { returns(T::Boolean) }
-      def all? = @all
+      def all?
+        @all
+      end
 
       # @return [Boolean] whether this is a subset re-lock — some
       #   declarations float by name and every other pin is the lock's
       sig { returns(T::Boolean) }
-      def subset? = !@all && @names.any?
+      def subset?
+        !@all && @names.any?
+      end
 
       # @param name [String] a declaration (or pin) name
       # @return [Boolean] whether the author asked for this name to float
@@ -57,17 +67,10 @@ module Dev
         @all || @names.include?(name)
       end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        return false unless other.is_a?(UnlockSet)
-
-        [all?, names] == [other.all?, other.names]
-      end
-      alias_method :eql?, :==
-
-      sig { returns(Integer) }
-      def hash
-        [self.class, all?, names].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [all?, names]
       end
     end
   end

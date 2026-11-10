@@ -1,6 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "value_equality"
+
 module Dev
   # A minimal INI editor for the files WSL reads (`.wslconfig`, `/etc/wsl.conf`):
   # `[section]` headers and `key=value` lines. Reads are case-insensitive on
@@ -10,6 +12,7 @@ module Dev
   # the file's line endings survive byte for byte. The file is the user's.
   class IniFile
     extend T::Sig
+    include Dev::ValueEquality::Derived
 
     SECTION_PATTERN = /\A\s*\[\s*([^\]]+?)\s*\]\s*\z/
     KEY_PATTERN = /\A(\s*)([A-Za-z][A-Za-z0-9]*)(\s*=\s*)(.*?)(\s*)\z/
@@ -90,9 +93,10 @@ module Dev
       @lines.join
     end
 
-    sig { params(other: Object).returns(T::Boolean) }
-    def ==(other)
-      other.is_a?(IniFile) && render == other.render
+    # @return [Array] the members that constitute identity
+    sig { override.returns(T::Array[T.anything]) }
+    def equality_members
+      [render]
     end
 
     private

@@ -73,7 +73,9 @@ module Dev
 
       # The declaration as `dev help` renders it: the line itself.
       sig { returns(String) }
-      def to_s = @command
+      def to_s
+        @command
+      end
 
       private
 

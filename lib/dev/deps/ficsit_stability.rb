@@ -31,14 +31,18 @@ module Dev
         # @param track [Lifecycle::Track]
         # @return [FicsitStability]
         sig { params(track: Lifecycle::Track).returns(FicsitStability) }
-        def for_track(track) = track.live? ? Release : Beta
+        def for_track(track)
+          track.live? ? Release : Beta
+        end
       end
 
       # The id, as the API spells it.
       #
       # @return [String]
       sig { returns(String) }
-      def to_s = serialize
+      def to_s
+        serialize
+      end
     end
   end
 end

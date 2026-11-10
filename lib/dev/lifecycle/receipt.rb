@@ -1,6 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "../value_equality"
+
 module Dev
   module Lifecycle
     # What a publisher says of the upload it made (dev#192, K5, K6): the
@@ -20,6 +22,7 @@ module Dev
     # would record a deploy nobody can read back.
     class Receipt < T::Struct
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # A publisher returned a receipt with nothing in it.
       class EmptyReceiptError < ArgumentError; end
@@ -40,16 +43,15 @@ module Dev
       end
 
       sig { returns(String) }
-      def to_s = summary
+      def to_s
+        summary
+      end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(Receipt) && summary == other.summary && hint == other.hint
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
-
-      sig { returns(Integer) }
-      def hash = [Receipt, summary, hint].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [summary, hint]
+      end
     end
   end
 end

@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "pathname"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -14,6 +15,7 @@ module Dev
     # directory, beside the manifest the stage stamps afterwards.
     class PackedArchive < T::Struct
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # @return [Pathname] the file that stands for the archive
       const :archive, Pathname
@@ -23,24 +25,27 @@ module Dev
 
       # @return [Array<Pathname>] every file written, the archive first
       sig { returns(T::Array[Pathname]) }
-      def files = [archive, *parts]
+      def files
+        [archive, *parts]
+      end
 
       # @return [String] the archive's file name, what the manifest records
       sig { returns(String) }
-      def name = archive.basename.to_s
+      def name
+        archive.basename.to_s
+      end
 
       # @return [Boolean] whether the archive is a split set
       sig { returns(T::Boolean) }
-      def split? = !parts.empty?
+      def split?
+        !parts.empty?
+      end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(PackedArchive) && archive == other.archive && parts == other.parts
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
-
-      sig { returns(Integer) }
-      def hash = [PackedArchive, archive, parts].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [archive, parts]
+      end
     end
   end
 end

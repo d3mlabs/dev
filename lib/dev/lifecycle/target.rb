@@ -7,6 +7,7 @@ require_relative "config"
 require_relative "packager_spec"
 require_relative "platform"
 require_relative "target_environment"
+require_relative "../value_equality"
 # Build and Target reference each other (a build names its target, a target
 # enumerates its builds); build.rb requires this file, and `dev/lifecycle`
 # loads both, so neither requires the other here.
@@ -33,6 +34,7 @@ module Dev
     # per-platform environment names exactly the platforms declared.
     class Target < T::Struct
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # The name is not a `-`-joined sequence of lower-case alphanumeric
       # segments — the shape a build name, a store directory and an archive
@@ -126,26 +128,34 @@ module Dev
       #
       # @return [Boolean]
       sig { returns(T::Boolean) }
-      def buildable? = !builder.nil?
+      def buildable?
+        !builder.nil?
+      end
 
       # Whether the target is ever shipped: every packager but `none`. A
       # target that is not is invisible to `package`, `release` and `deploy`.
       #
       # @return [Boolean]
       sig { returns(T::Boolean) }
-      def packageable? = !packager.is_a?(PackagerSpec::None)
+      def packageable?
+        !packager.is_a?(PackagerSpec::None)
+      end
 
       # Whether builds of this target carry a platform segment.
       #
       # @return [Boolean]
       sig { returns(T::Boolean) }
-      def platforms? = !platforms.empty?
+      def platforms?
+        !platforms.empty?
+      end
 
       # Whether builds of this target carry a config segment.
       #
       # @return [Boolean]
       sig { returns(T::Boolean) }
-      def configs? = !configs.empty?
+      def configs?
+        !configs.empty?
+      end
 
       # Every build of this target: the cross product of its declared axes
       # in declaration order (one build for a target declaring none).
@@ -163,7 +173,9 @@ module Dev
       #
       # @return [Build]
       sig { returns(Build) }
-      def default_build = Build.new(target: self, platform: platforms.first, config: configs.first)
+      def default_build
+        Build.new(target: self, platform: platforms.first, config: configs.first)
+      end
 
       # Every name that, parsed against this target, names a build or a
       # pattern over its builds: the bare name, each axis alone, and the
@@ -178,20 +190,15 @@ module Dev
       end
 
       sig { returns(String) }
-      def to_s = name
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        other.is_a?(Target) && name == other.name && desc == other.desc &&
-          platforms == other.platforms && configs == other.configs &&
-          builder == other.builder && packager == other.packager && environment == other.environment
+      def to_s
+        name
       end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
-
-      sig { returns(Integer) }
-      def hash = [Target, name, desc, platforms, configs, builder, packager, environment].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [name, desc, platforms, configs, builder, packager, environment]
+      end
 
       private
 

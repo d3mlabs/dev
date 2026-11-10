@@ -24,7 +24,9 @@ class Dev::Deps::BundlerLockerTest < Minitest::Test
     )
   end
 
-  def succeeded = ["", "", stub(success?: true)]
+  def succeeded
+    ["", "", stub(success?: true)]
+  end
 
   test "lock generates a Gemfile mapping dev groups to bundler groups" do
     Given "gem declarations in the default and test groups"

@@ -58,22 +58,30 @@ module Dev
 
       # A script takes its parameters from the env, never from the target.
       sig { override.returns(T::Array[String]) }
-      def target_options_schema = []
+      def target_options_schema
+        []
+      end
 
       # What the manifest records for an install a `build:` line made.
       NAME = "script"
 
       sig { override.returns(String) }
-      def name = NAME
+      def name
+        NAME
+      end
 
       # A script has no version of its own: the tree it ran in is the
       # provenance, and the manifest's sha records that.
       sig { override.returns(T.nilable(String)) }
-      def version = nil
+      def version
+        nil
+      end
 
       # The declaration as `dev help` renders it: the line itself.
       sig { returns(String) }
-      def to_s = @command
+      def to_s
+        @command
+      end
     end
   end
 end

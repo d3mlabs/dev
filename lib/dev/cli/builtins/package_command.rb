@@ -170,7 +170,9 @@ module Dev
         end
 
         sig { override.returns(T.nilable(Listing)) }
-        def listing = @listing.listing(targets: packageable_targets)
+        def listing
+          @listing.listing(targets: packageable_targets)
+        end
 
         sig { override.params(words: T::Array[String]).returns(T::Array[String]) }
         def completions(words)
@@ -258,7 +260,9 @@ module Dev
 
         # @return [Array<Lifecycle::Target>] the targets `package` acts on
         sig { returns(T::Array[Lifecycle::Target]) }
-        def packageable_targets = @selector.targets.select(&:packageable?)
+        def packageable_targets
+          @selector.targets.select(&:packageable?)
+        end
 
         # @param target [Lifecycle::Target]
         # @return [void]

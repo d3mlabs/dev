@@ -34,11 +34,15 @@ module Dev
 
     # @return [String, nil] the image's name, nil without a well-formed marker
     sig { returns(T.nilable(String)) }
-    def name = fields["name"]
+    def name
+      fields["name"]
+    end
 
     # @return [String, nil] the image's digest (64 hex), nil without a well-formed marker
     sig { returns(T.nilable(String)) }
-    def digest = fields["digest"]
+    def digest
+      fields["digest"]
+    end
 
     # Whether this machine was provisioned from +image+ as the lock pins it.
     #

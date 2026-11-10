@@ -12,7 +12,9 @@ transform!(RSpock::AST::Transformation)
 class Dev::Cli::ChannelParserTest < Minitest::Test
   include LifecycleFixtures
 
-  def parser = Dev::Cli::ChannelParser.new(command_parser: Dev::Cli::CommandParser.new)
+  def parser
+    Dev::Cli::ChannelParser.new(command_parser: Dev::Cli::CommandParser.new)
+  end
 
   test "every deploy child is a channel: its targets: as accept patterns, its run: as a script publisher, desc and environment as any command's" do
     Given "a deploy entry with two destinations"

@@ -24,7 +24,9 @@ class Dev::Deps::FicsitClientTest < Minitest::Test
       @thread = Thread.new { serve(status, body) }
     end
 
-    def endpoint = URI("http://127.0.0.1:#{@socket.addr[1]}/v2/query")
+    def endpoint
+      URI("http://127.0.0.1:#{@socket.addr[1]}/v2/query")
+    end
 
     def join
       @thread.join(5)

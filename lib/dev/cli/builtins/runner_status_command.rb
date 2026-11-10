@@ -53,10 +53,14 @@ module Dev
         end
 
         sig { override.returns(String) }
-        def desc = "Inspect this host's runner enrollments and their contract facts"
+        def desc
+          "Inspect this host's runner enrollments and their contract facts"
+        end
 
         sig { override.returns(Command::Category) }
-        def category = Command::Category::Environment
+        def category
+          Command::Category::Environment
+        end
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)

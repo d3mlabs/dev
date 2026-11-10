@@ -29,13 +29,19 @@ module Dev
         end
 
         sig { override.returns(String) }
-        def desc = DESC
+        def desc
+          DESC
+        end
 
         sig { override.returns(Command::Category) }
-        def category = Command::Category::Workflow
+        def category
+          Command::Category::Workflow
+        end
 
         sig { override.returns(T::Array[Cli::Flag]) }
-        def flags = [Cli::Flag.new(PATH_FLAG)]
+        def flags
+          [Cli::Flag.new(PATH_FLAG)]
+        end
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)

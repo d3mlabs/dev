@@ -23,7 +23,9 @@ class Dev::Skills::MaterializerTest < Minitest::Test
       @project_scoped = project_scoped
     end
 
-    def project_scoped? = @project_scoped
+    def project_scoped?
+      @project_scoped
+    end
   end
 
   def build_skill(dir, *path_parts)
@@ -33,7 +35,9 @@ class Dev::Skills::MaterializerTest < Minitest::Test
     source
   end
 
-  def entry(name, source, **extra) = Dev::Skills::Entry.new(link_name: name, source: source, **extra)
+  def entry(name, source, **extra)
+    Dev::Skills::Entry.new(link_name: name, source: source, **extra)
+  end
 
   # The fixture trees live under the real temp dir, so the installer's
   # ephemeral-source guard is pinned inside the fixture dir.
@@ -43,7 +47,9 @@ class Dev::Skills::MaterializerTest < Minitest::Test
     )
   end
 
-  def manifest_links(root) = JSON.parse(File.read(File.join(root, "manifest.json"))).fetch("skills").map { |s| s["link"] }
+  def manifest_links(root)
+    JSON.parse(File.read(File.join(root, "manifest.json"))).fetch("skills").map { |s| s["link"] }
+  end
 
   test "sync links every entry of every channel into that channel's root, nested names included" do
     Given "two channels with different roots, one using nested link names"

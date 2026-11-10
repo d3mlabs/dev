@@ -132,7 +132,9 @@ module Dev
       # @return [String]
       # @raise [RepoUnresolvedError]
       sig { params(channel: String).returns(String) }
-      def page(channel) = format(DEPLOYMENTS_PAGE, repo:, channel:)
+      def page(channel)
+        format(DEPLOYMENTS_PAGE, repo:, channel:)
+      end
 
       private
 

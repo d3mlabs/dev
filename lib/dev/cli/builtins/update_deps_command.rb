@@ -47,18 +47,26 @@ module Dev
         INTERPRETER_TYPES = T.let(%i[ruby python].freeze, T::Array[Symbol])
 
         sig { override.returns(String) }
-        def desc = "Resolve dependency constraints and write lockfiles, keeping unchanged pins (<name>… or --all to float)"
+        def desc
+          "Resolve dependency constraints and write lockfiles, keeping unchanged pins (<name>… or --all to float)"
+        end
 
         sig { override.returns(Command::Category) }
-        def category = Command::Category::Environment
+        def category
+          Command::Category::Environment
+        end
 
         sig { override.returns(T::Array[Cli::Flag]) }
-        def flags = [Cli::Flag.new(ALL_FLAG, desc: "float every pin to the registries' current versions")]
+        def flags
+          [Cli::Flag.new(ALL_FLAG, desc: "float every pin to the registries' current versions")]
+        end
 
         # dev deps update IS the remediation for a stale manifest — nagging before
         # it would block the very fix being run.
         sig { override.returns(T::Boolean) }
-        def staleness_exempt? = true
+        def staleness_exempt?
+          true
+        end
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)

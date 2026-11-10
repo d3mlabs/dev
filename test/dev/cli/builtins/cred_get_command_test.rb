@@ -17,6 +17,7 @@ class Dev::Cli::Builtins::CredGetCommandTest < Minitest::Test
     command.staleness_exempt? == true
     command.stamps? == false
     command.category == Dev::Cli::Command::Category::Workflow
+    command.desc.include?("get <namespace> <key>")
   end
 
   test "call forwards its argv and stream to the accessor's get" do

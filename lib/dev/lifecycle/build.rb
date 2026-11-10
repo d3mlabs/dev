@@ -5,6 +5,7 @@ require_relative "build_pattern"
 require_relative "config"
 require_relative "platform"
 require_relative "target"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -18,6 +19,7 @@ module Dev
     # declares it, and holds one of the target's declared values.
     class Build < T::Struct
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # The platform is absent for a target that declares platforms, present
       # for one that does not, or outside the target's declared subset.
@@ -69,21 +71,20 @@ module Dev
       #
       # @return [String]
       sig { returns(String) }
-      def name = [target.name, platform&.serialize, config&.serialize].compact.join("-")
-
-      sig { returns(String) }
-      def to_s = name
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        other.is_a?(Build) && target == other.target && platform == other.platform && config == other.config
+      def name
+        [target.name, platform&.serialize, config&.serialize].compact.join("-")
       end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      sig { returns(String) }
+      def to_s
+        name
+      end
 
-      sig { returns(Integer) }
-      def hash = [Build, target, platform, config].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [target, platform, config]
+      end
 
       private
 

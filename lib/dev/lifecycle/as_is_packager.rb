@@ -6,6 +6,7 @@ require "pathname"
 require_relative "build"
 require_relative "packager"
 require_relative "packed_archive"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -18,6 +19,7 @@ module Dev
     class AsIsPackager
       extend T::Sig
       include Packager
+      include Dev::ValueEquality::Derived
 
       # The install directory does not exist or holds no file.
       class NoInstallFileError < RuntimeError; end
@@ -45,16 +47,15 @@ module Dev
 
       # The declaration as `dev help` renders it.
       sig { returns(String) }
-      def to_s = "as-is"
+      def to_s
+        "as-is"
+      end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(AsIsPackager)
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
-
-      sig { returns(Integer) }
-      def hash = [AsIsPackager].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        []
+      end
 
       private
 

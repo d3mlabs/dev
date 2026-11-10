@@ -8,6 +8,7 @@ require_relative "build_id"
 require_relative "git_state"
 require_relative "manifest"
 require_relative "release_tag"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -43,22 +44,22 @@ module Dev
       class Store < T::Struct
         extend T::Sig
         include Provenance
+        include Dev::ValueEquality::Derived
 
         const :state, GitState
         const :packaged_at, Time
 
         # The commit the artifact was packaged from.
         sig { override.returns(T.nilable(String)) }
-        def ref = state.sha
+        def ref
+          state.sha
+        end
 
-        sig { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(Store) && state == other.state && packaged_at == other.packaged_at
-
-        sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
-
-        sig { returns(Integer) }
-        def hash = [Store, state, packaged_at].hash
+        # @return [Array] the members that constitute identity
+        sig { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [state, packaged_at]
+        end
       end
 
       # Downloaded from the GitHub release of a tag: the tag, and the
@@ -67,22 +68,22 @@ module Dev
       class Release < T::Struct
         extend T::Sig
         include Provenance
+        include Dev::ValueEquality::Derived
 
         const :tag, ReleaseTag
         const :sha, String
 
         # The release's tag — what `dev deploy status --release` reads by.
         sig { override.returns(T.nilable(String)) }
-        def ref = tag.name
+        def ref
+          tag.name
+        end
 
-        sig { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(Release) && tag == other.tag && sha == other.sha
-
-        sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
-
-        sig { returns(Integer) }
-        def hash = [Release, tag, sha].hash
+        # @return [Array] the members that constitute identity
+        sig { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [tag, sha]
+        end
       end
     end
 
@@ -96,6 +97,7 @@ module Dev
     # before it — by the verb, from the same fact).
     class Shipment < T::Struct
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       const :archive, Pathname
       const :build, Build
@@ -143,28 +145,28 @@ module Dev
 
       # @return [String] the build's fully-qualified name
       sig { returns(String) }
-      def name = build.name
+      def name
+        build.name
+      end
 
       # What the deploy is recorded against (Provenance#ref).
       #
       # @return [String, nil]
       sig { returns(T.nilable(String)) }
-      def ref = provenance.ref
-
-      sig { returns(String) }
-      def to_s = "#{name} (#{build_id})"
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        other.is_a?(Shipment) && archive == other.archive && build == other.build && build_id == other.build_id &&
-          archive_sha256 == other.archive_sha256 && provenance == other.provenance
+      def ref
+        provenance.ref
       end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
+      sig { returns(String) }
+      def to_s
+        "#{name} (#{build_id})"
+      end
 
-      sig { returns(Integer) }
-      def hash = [Shipment, archive, build, build_id, archive_sha256, provenance].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [archive, build, build_id, archive_sha256, provenance]
+      end
     end
   end
 end

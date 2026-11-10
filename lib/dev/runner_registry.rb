@@ -46,7 +46,9 @@ module Dev
       #
       # @return [Boolean]
       sig { returns(T::Boolean) }
-      def online? = status == "online"
+      def online?
+        status == "online"
+      end
 
       # Whether the runner advertises a custom label — compared the way
       # GitHub routes a `runs-on` demand against it, case-insensitively.
@@ -54,7 +56,9 @@ module Dev
       # @param label [String]
       # @return [Boolean]
       sig { params(label: String).returns(T::Boolean) }
-      def carries?(label) = custom_labels.any? { |custom| custom.casecmp?(label) }
+      def carries?(label)
+        custom_labels.any? { |custom| custom.casecmp?(label) }
+      end
     end
 
     # @param executor [#capture] CLI boundary (injectable for tests)
@@ -142,13 +146,17 @@ module Dev
 
       # Whether the group's repository access is a selection to converge.
       sig { returns(T::Boolean) }
-      def selected? = visibility == "selected"
+      def selected?
+        visibility == "selected"
+      end
 
       # Whether at least one workflow is pinned: the state the public-repo
       # rule (plans#5 H3) wants. Restricted to *no* workflow is what an
       # incomplete PATCH leaves — a group no job can reach, not a safe one.
       sig { returns(T::Boolean) }
-      def pinned? = restricted_to_workflows && !selected_workflows.empty?
+      def pinned?
+        restricted_to_workflows && !selected_workflows.empty?
+      end
     end
 
     # A repository a group is visible to, as GitHub lists it.
@@ -172,7 +180,9 @@ module Dev
       const :visibility, String
 
       sig { returns(T::Boolean) }
-      def public? = visibility == "public"
+      def public?
+        visibility == "public"
+      end
     end
 
     # The org's runner group of that name, or nil when none is.

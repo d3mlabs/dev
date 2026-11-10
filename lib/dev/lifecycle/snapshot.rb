@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require_relative "snapshot_branch"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -12,6 +13,7 @@ module Dev
     # container fetches.
     class Snapshot < T::Struct
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # @return [String] the full commit sha
       const :sha, String
@@ -19,16 +21,15 @@ module Dev
 
       # @return [String] the sha as the crossing line prints it
       sig { returns(String) }
-      def short_sha = T.must(sha[0, 12])
+      def short_sha
+        T.must(sha[0, 12])
+      end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(Snapshot) && sha == other.sha && branch == other.branch
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
-
-      sig { returns(Integer) }
-      def hash = [Snapshot, sha, branch].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [sha, branch]
+      end
     end
   end
 end

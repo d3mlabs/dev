@@ -65,7 +65,9 @@ end unless defined?(FakePlanIssues)
 
 # A settings stand-in with a fixed org plans repo (no config file needed).
 class FakePlanSettings
-  def plans_repo = "d3mlabs/plans"
+  def plans_repo
+    "d3mlabs/plans"
+  end
 end unless defined?(FakePlanSettings)
 
 # A host service stand-in: plan flows are under test here, and the real
@@ -88,8 +90,13 @@ class RecordingHostService < NoopHostService
     @calls = []
   end
 
-  def sync_skills(project_root: nil) = @calls << [:sync_skills, project_root]
-  def sync_learnings(project_root: nil) = @calls << [:sync_learnings, project_root]
+  def sync_skills(project_root: nil)
+    @calls << [:sync_skills, project_root]
+  end
+
+  def sync_learnings(project_root: nil)
+    @calls << [:sync_learnings, project_root]
+  end
 end unless defined?(RecordingHostService)
 
 transform!(RSpock::AST::Transformation)

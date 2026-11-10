@@ -73,7 +73,9 @@ module Dev
       # @param pins [Array<Deps::Dependency>]
       # @return [Array<Symbol>]
       sig { params(pins: T::Array[Deps::Dependency]).returns(T::Array[Symbol]) }
-      def pinned_types(pins) = pins.map(&:integration).uniq
+      def pinned_types(pins)
+        pins.map(&:integration).uniq
+      end
 
       # The taps the lock pins formulae from, each once, in lock order.
       #

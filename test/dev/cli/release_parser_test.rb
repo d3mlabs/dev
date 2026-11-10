@@ -10,7 +10,9 @@ transform!(RSpock::AST::Transformation)
 class Dev::Cli::ReleaseParserTest < Minitest::Test
   include LifecycleFixtures
 
-  def parse(yaml, targets: all_targets) = Dev::Cli::ReleaseParser.new.parse(YAML.safe_load(yaml), targets)
+  def parse(yaml, targets: all_targets)
+    Dev::Cli::ReleaseParser.new.parse(YAML.safe_load(yaml), targets)
+  end
 
   test "targets: lists the builds a release contains, fully qualified, in declaration order" do
     When

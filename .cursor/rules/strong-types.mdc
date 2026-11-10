@@ -82,6 +82,41 @@ def parse(path)
 end
 ```
 
+## Value equality is declared, never hand-rolled
+
+A value object gets `==`, `eql?` and `hash` from `Dev::ValueEquality::Derived`
+and one `equality_members` list — the three can then never drift apart, and
+the sweep in `test/dev/value_equality_test.rb` catches an includer that forgot.
+Tests assert the contract with `assert_value_semantics` (in every test class
+via `ValueSemanticsAssertions`), not with ad-hoc `==` lines.
+
+```ruby
+# BAD: three methods that must agree by hand
+def ==(other)
+  other.is_a?(Part) && sha256 == other.sha256 && name == other.name
+end
+
+def eql?(other)
+  self == other
+end
+
+def hash
+  [Part, sha256, name].hash
+end
+
+# GOOD: one declaration
+include Dev::ValueEquality::Derived
+
+sig { override.returns(T::Array[T.anything]) }
+def equality_members
+  [sha256, name]
+end
+```
+
+Members are values (ivar reads or method calls), never symbols; a memo or
+other irrelevant internal stays off the list. Equality that is not memberwise
+implements `==`/`hash` against `Dev::ValueEquality` directly.
+
 ## Never erase types
 
 When the language or type system gives you a way to express a type, use it.

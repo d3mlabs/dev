@@ -24,10 +24,14 @@ module Dev
 
       # @return [Integer] the zip's size in bytes
       sig { returns(Integer) }
-      def size = archive.size
+      def size
+        archive.size
+      end
 
       sig { returns(String) }
-      def to_s = "#{mod_reference} (#{targets.map(&:serialize).join(", ")})"
+      def to_s
+        "#{mod_reference} (#{targets.map(&:serialize).join(", ")})"
+      end
     end
   end
 end

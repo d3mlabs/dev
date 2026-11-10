@@ -3,6 +3,7 @@
 
 require "pathname"
 require "uri"
+require_relative "../value_equality"
 
 module Dev
   module Deps
@@ -36,21 +37,21 @@ module Dev
       # download must hash to.
       class StableSpec < T::Struct
         extend T::Sig
+        include Dev::ValueEquality::Derived
 
         const :url, URI::Generic
         const :sha256, String
 
-        sig { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(StableSpec) && url == other.url && sha256 == other.sha256
-
-        sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
-
-        sig { returns(Integer) }
-        def hash = [StableSpec, url, sha256].hash
+        # @return [Array] the members that constitute identity
+        sig { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [url, sha256]
+        end
 
         sig { returns(String) }
-        def to_s = "#{url} (#{sha256})"
+        def to_s
+          "#{url} (#{sha256})"
+        end
       end
 
       EXTENSION = ".rb"
@@ -74,7 +75,9 @@ module Dev
       #
       # @return [String]
       sig { returns(String) }
-      def name = @path.basename(EXTENSION).to_s
+      def name
+        @path.basename(EXTENSION).to_s
+      end
 
       # The formulas this one depends on, as brew resolves a `depends_on`:
       # the formula's own name, the tap prefix dropped — in file order,
@@ -120,7 +123,9 @@ module Dev
 
       # @return [Array<String>] the file's lines, without their endings
       sig { returns(T::Array[String]) }
-      def read_lines = @path.read(encoding: "UTF-8").lines(chomp: true)
+      def read_lines
+        @path.read(encoding: "UTF-8").lines(chomp: true)
+      end
 
       # The indices of the stable spec's two lines: the first `url`, and
       # the first `sha256` after it with no other `url` between.

@@ -14,10 +14,14 @@ module Dev
         USAGE = T.let("usage: dev plan link <n> [<file>] | link <file> [#{ORG_FLAG}]".freeze, String)
 
         sig { override.returns(String) }
-        def desc = "Attach a plan file to issue #n, or create an issue from a plan file (link <n> [<file>] | link <file>)"
+        def desc
+          "Attach a plan file to issue #n, or create an issue from a plan file (link <n> [<file>] | link <file>)"
+        end
 
         sig { override.returns(T::Array[Cli::Flag]) }
-        def flags = [Cli::Flag.new(ORG_FLAG)]
+        def flags
+          [Cli::Flag.new(ORG_FLAG)]
+        end
 
         private
 

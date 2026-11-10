@@ -44,10 +44,14 @@ module Dev
         end
 
         sig { override.returns(String) }
-        def desc = "What each channel carries and from where (status [--release V])"
+        def desc
+          "What each channel carries and from where (status [--release V])"
+        end
 
         sig { override.returns(Command::Category) }
-        def category = Command::Category::Lifecycle
+        def category
+          Command::Category::Lifecycle
+        end
 
         sig { override.returns(T::Array[Cli::Flag]) }
         def flags
@@ -84,7 +88,9 @@ module Dev
         # @param tag [Lifecycle::ReleaseTag, nil]
         # @return [String] the line for a channel with nothing recorded
         sig { params(tag: T.nilable(Lifecycle::ReleaseTag)).returns(String) }
-        def absence(tag) = tag ? "– #{tag} not deployed" : "– nothing deployed"
+        def absence(tag)
+          tag ? "– #{tag} not deployed" : "– nothing deployed"
+        end
 
         # @param deployment [Lifecycle::Deployment]
         # @return [String] one line: how it ended, the track, the ref, when, and what the publisher said

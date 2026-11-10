@@ -38,15 +38,21 @@ module Dev
         end
 
         sig { override.returns(String) }
-        def desc = "Show this usage"
+        def desc
+          "Show this usage"
+        end
 
         sig { override.returns(Command::Category) }
-        def category = Command::Category::Workflow
+        def category
+          Command::Category::Workflow
+        end
 
         # Help must work while the dependency state is stale — it is how the
         # remediation commands get discovered in the first place.
         sig { override.returns(T::Boolean) }
-        def staleness_exempt? = true
+        def staleness_exempt?
+          true
+        end
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)

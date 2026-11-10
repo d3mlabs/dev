@@ -10,8 +10,13 @@ transform!(RSpock::AST::Transformation)
 class Dev::Lifecycle::ChannelTest < Minitest::Test
   include LifecycleFixtures
 
-  def pattern(name) = Dev::Lifecycle::BuildPattern.parse(name, all_targets)
-  def script(command = "./bin/stage", environment: nil) = Dev::Lifecycle::PublisherSpec::Script.new(command:, environment:)
+  def pattern(name)
+    Dev::Lifecycle::BuildPattern.parse(name, all_targets)
+  end
+
+  def script(command = "./bin/stage", environment: nil)
+    Dev::Lifecycle::PublisherSpec::Script.new(command:, environment:)
+  end
 
   def staging
     Dev::Lifecycle::Channel.new(name: "staging", desc: "rsync to the gamebox", accepts: [pattern("cellbound-3d-win64")], publisher: script)

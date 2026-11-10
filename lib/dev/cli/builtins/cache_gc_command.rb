@@ -49,13 +49,19 @@ module Dev
         end
 
         sig { override.returns(String) }
-        def desc = "Reclaim stale tree versions, build images, prefix volumes and snapshot branches (--keep N; --tool-caches drops the tools' caches)"
+        def desc
+          "Reclaim stale tree versions, build images, prefix volumes and snapshot branches (--keep N; --tool-caches drops the tools' caches)"
+        end
 
         sig { override.returns(Command::Category) }
-        def category = Command::Category::Workflow
+        def category
+          Command::Category::Workflow
+        end
 
         sig { override.returns(T::Array[Cli::Flag]) }
-        def flags = [Cli::Flag.new(KEEP_FLAG, takes_value: true), Cli::Flag.new(TOOL_CACHES_FLAG)]
+        def flags
+          [Cli::Flag.new(KEEP_FLAG, takes_value: true), Cli::Flag.new(TOOL_CACHES_FLAG)]
+        end
 
         # GC is maintenance over the cache, not a build: it reads the lockfile to
         # know what to keep and never needs the deps installed. It also runs as
@@ -63,7 +69,9 @@ module Dev
         # exactly when the staleness guard would fire — and bury the real error
         # under "dependencies have never been installed".
         sig { override.returns(T::Boolean) }
-        def staleness_exempt? = true
+        def staleness_exempt?
+          true
+        end
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)

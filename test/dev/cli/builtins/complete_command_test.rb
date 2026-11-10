@@ -18,9 +18,18 @@ class Dev::Cli::Builtins::CompleteCommandTest < Minitest::Test
       @completions = completions
     end
 
-    def desc = "a leaf"
-    def category = Dev::Cli::Command::Category::Workflow
-    def hidden? = @hidden
+    def desc
+      "a leaf"
+    end
+
+    def category
+      Dev::Cli::Command::Category::Workflow
+    end
+
+    def hidden?
+      @hidden
+    end
+
     def call(args:, context:); end
 
     def completions(words)
@@ -76,6 +85,14 @@ class Dev::Cli::Builtins::CompleteCommandTest < Minitest::Test
     first == %w[zeta alpha mid]
     second == %w[zeta alpha mid]
     seen == [[], ["--yes"]]
+  end
+
+  test "the builtin describes itself as completion plumbing" do
+    Given "the complete builtin over any root"
+    command = Dev::Cli::Builtins::CompleteCommand.new(root_provider: -> { Dev::Cli::CommandGroup.root(desc: "dev", children: {}) }, out: StringIO.new)
+
+    Expect
+    command.desc.include?("shell completion plumbing")
   end
 
   test "the group walk still lists child names, sorted; a leaf's arguments never leak into a group listing" do

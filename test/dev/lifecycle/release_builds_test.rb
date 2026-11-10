@@ -15,7 +15,9 @@ class Dev::Lifecycle::ReleaseBuildsTest < Minitest::Test
     Dev::Lifecycle::Target.new(name: "opencell", desc: "The sim", packager: Dev::Lifecycle::PackagerSpec::None.new)
   end
 
-  def patterns(*names) = names.map { |name| Dev::Lifecycle::BuildPattern.parse(name, all_targets + [unshipped_target]) }
+  def patterns(*names)
+    names.map { |name| Dev::Lifecycle::BuildPattern.parse(name, all_targets + [unshipped_target]) }
+  end
 
   test "declared: each pattern with its config named is spelled out per platform, in declaration order" do
     When

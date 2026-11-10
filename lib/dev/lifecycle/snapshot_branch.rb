@@ -4,6 +4,7 @@
 require "securerandom"
 require "time"
 require_relative "build_id"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -21,6 +22,7 @@ module Dev
     # (BuildId's `20261104T123000Z`).
     class SnapshotBranch
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # A branch name under the namespace that the sync step did not mint
       # (a hand-made `dev/build/foo`).
@@ -117,11 +119,15 @@ module Dev
 
       # @return [String] the short branch name (`dev/build/<runner>/<id>`)
       sig { returns(String) }
-      def name = "#{NAMESPACE}/#{@runner}/#{@created_at.strftime(BuildId::INSTANT_FORMAT)}-#{@nonce}"
+      def name
+        "#{NAMESPACE}/#{@runner}/#{@created_at.strftime(BuildId::INSTANT_FORMAT)}-#{@nonce}"
+      end
 
       # @return [String] the full ref (`refs/heads/dev/build/<runner>/<id>`)
       sig { returns(String) }
-      def ref = "#{REF_PREFIX}#{name}"
+      def ref
+        "#{REF_PREFIX}#{name}"
+      end
 
       # Whether the branch was minted more than `max_age` ago.
       #
@@ -129,19 +135,20 @@ module Dev
       # @param now [Time]
       # @return [Boolean]
       sig { params(max_age: Integer, now: Time).returns(T::Boolean) }
-      def older_than?(max_age, now:) = now - @created_at > max_age
+      def older_than?(max_age, now:)
+        now - @created_at > max_age
+      end
 
       sig { returns(String) }
-      def to_s = name
+      def to_s
+        name
+      end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other) = other.is_a?(SnapshotBranch) && name == other.name
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
-
-      sig { returns(Integer) }
-      def hash = [SnapshotBranch, name].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [name]
+      end
     end
   end
 end

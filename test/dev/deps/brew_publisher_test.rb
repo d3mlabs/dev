@@ -142,8 +142,13 @@ class Dev::Deps::BrewPublisherTest < Minitest::Test
     Dev::Deps::BrewPublisher.new(project_root: @project, taps:, releases: Dev::Lifecycle::GithubReleases.new(gh:))
   end
 
-  def origin_git = GIT.new(root: @origin)
-  def origin_formula(name) = origin_git.capture(["show", "main:Formula/#{name}.rb"])
+  def origin_git
+    GIT.new(root: @origin)
+  end
+
+  def origin_formula(name)
+    origin_git.capture(["show", "main:Formula/#{name}.rb"])
+  end
 
   test "a release's archives point each formula of a build's name at that build's asset with release.json's digest, in one commit pushed to the tap" do
     Given "the clone in the scratch, and the forge serving both assets"

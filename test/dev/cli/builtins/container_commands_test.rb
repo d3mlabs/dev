@@ -683,12 +683,18 @@ class Dev::Cli::Builtins::ContainerCommandsTest < Minitest::Test
   # given shape; the checkout is removed in teardown.
   # The snapshot step canned (one snapshot, no git): what `dev up` syncs
   # the checkout as before installing inside.
-  def canned_sync_for = ->(_root) { ScriptedRemote::CannedSync.new }
+  def canned_sync_for
+    ->(_root) { ScriptedRemote::CannedSync.new }
+  end
 
-  def canned_snapshot = responds_with(:sha, ScriptedRemote::SHA)
+  def canned_snapshot
+    responds_with(:sha, ScriptedRemote::SHA)
+  end
 
   # The pinned image an install is handed, matched by name.
-  def named(image_name) = responds_with(:name, image_name)
+  def named(image_name)
+    responds_with(:name, image_name)
+  end
 
   def pinned_project(persist:, volumes: [], run_env: {}, engine: nil)
     metadata = { "persist" => persist }

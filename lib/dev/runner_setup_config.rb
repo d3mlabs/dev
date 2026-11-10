@@ -1,6 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "value_equality"
+
 module Dev
   # Value object for one enrollment's identity, resolved by `dev runner
   # register` from its flags and derivations (never a file — the dev.yml
@@ -11,6 +13,7 @@ module Dev
   # registration joins (config.sh's `--runnergroup`; unnamed = Default).
   class RunnerSetupConfig
     extend T::Sig
+    include Dev::ValueEquality::Derived
 
     sig { returns(String) }
     attr_reader :labels
@@ -44,22 +47,10 @@ module Dev
       @group = group
     end
 
-    sig { params(other: Object).returns(T::Boolean) }
-    def ==(other)
-      return false unless other.is_a?(RunnerSetupConfig)
-
-      @labels == other.labels && @dir == other.dir &&
-        @name == other.name && @version == other.version && @group == other.group
-    end
-
-    sig { params(other: Object).returns(T::Boolean) }
-    def eql?(other)
-      self == other
-    end
-
-    sig { returns(Integer) }
-    def hash
-      [@labels, @dir, @name, @version, @group].hash
+    # @return [Array] the members that constitute identity
+    sig { override.returns(T::Array[T.anything]) }
+    def equality_members
+      [@labels, @dir, @name, @version, @group]
     end
   end
 end

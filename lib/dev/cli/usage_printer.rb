@@ -227,7 +227,9 @@ module Dev
       # @param command [Dev::Cli::Command]
       # @return [Array<String>]
       sig { params(command: Command).returns(T::Array[String]) }
-      def details(command) = command.is_a?(LifecycleCommand) ? command.details : []
+      def details(command)
+        command.is_a?(LifecycleCommand) ? command.details : []
+      end
 
       # A desc's first line. A multi-line desc is a summary line plus detail
       # that only the node's own usage prints (print_node puts the whole
@@ -250,7 +252,9 @@ module Dev
       # @param command [Dev::Cli::Command]
       # @return [String, nil]
       sig { params(command: Command).returns(T.nilable(String)) }
-      def environment_label(command) = placement_label(placement_of(command), lifecycle: command.is_a?(LifecycleCommand))
+      def environment_label(command)
+        placement_label(placement_of(command), lifecycle: command.is_a?(LifecycleCommand))
+      end
 
       # A placement as the column spells it; nil for none.
       #

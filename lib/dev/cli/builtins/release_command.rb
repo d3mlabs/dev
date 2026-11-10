@@ -166,10 +166,14 @@ module Dev
         end
 
         sig { override.returns(T.nilable(Listing)) }
-        def listing = @listing.listing_of(@release.builds, heading: LISTING_HEADING)
+        def listing
+          @listing.listing_of(@release.builds, heading: LISTING_HEADING)
+        end
 
         sig { override.returns(T::Array[Cli::Flag]) }
-        def flags = FLAGS
+        def flags
+          FLAGS
+        end
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).returns(Dispatch::Outcome[ReleaseEnv]) }
         def before(args:, context:)

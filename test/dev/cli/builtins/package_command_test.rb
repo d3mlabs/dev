@@ -40,7 +40,9 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
 
   # The repo has no enrolled runner online.
   class NoneEnrolled < Dev::EnrolledRunnerLookup
-    def available = nil
+    def available
+      nil
+    end
   end
 
   def setup
@@ -72,10 +74,21 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
     super
   end
 
-  def git(*args) = Open3.capture2e("git", "-C", @project.to_s, "-c", "user.name=t", "-c", "user.email=t@t", *args)
-  def commit(message) = git("commit", "-q", "--allow-empty", "-m", message)
-  def head = Open3.capture2("git", "-C", @project.to_s, "rev-parse", "--short=12", "HEAD").first.strip
-  def build_runs = (@root / "build-runs").file? ? (@root / "build-runs").readlines.size : 0
+  def git(*args)
+    Open3.capture2e("git", "-C", @project.to_s, "-c", "user.name=t", "-c", "user.email=t@t", *args)
+  end
+
+  def commit(message)
+    git("commit", "-q", "--allow-empty", "-m", message)
+  end
+
+  def head
+    Open3.capture2("git", "-C", @project.to_s, "rev-parse", "--short=12", "HEAD").first.strip
+  end
+
+  def build_runs
+    (@root / "build-runs").file? ? (@root / "build-runs").readlines.size : 0
+  end
 
   def client
     Dev::Lifecycle::Target.new(
@@ -91,7 +104,9 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
     )
   end
 
-  def adopted = Dev::Lifecycle::Target.new(name: "site", desc: "Prebuilt site", packager: Dev::Lifecycle::PackagerSpec::AsIs.new)
+  def adopted
+    Dev::Lifecycle::Target.new(name: "site", desc: "Prebuilt site", packager: Dev::Lifecycle::PackagerSpec::AsIs.new)
+  end
 
   def unshipped
     Dev::Lifecycle::Target.new(
@@ -100,9 +115,13 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
     )
   end
 
-  def targets = [client, gem_target, adopted, unshipped]
+  def targets
+    [client, gem_target, adopted, unshipped]
+  end
 
-  def store = Dev::Lifecycle::Store.new(project_name: "cellbound-3d", targets: targets, data_root: (@root / "data").to_s)
+  def store
+    Dev::Lifecycle::Store.new(project_name: "cellbound-3d", targets: targets, data_root: (@root / "data").to_s)
+  end
 
   def dispatcher
     host_rule = Dev::Cli::HostRule.new(host_environment: Dev::HostEnvironment.new(path: (@root / "no-marker").to_s), inside_container: false)
@@ -140,7 +159,9 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
     Dev::Cli::LifecycleExecutor.new.execute(verb, args: parsed_args(verb, words), context: context)
   end
 
-  def build(name) = Dev::Lifecycle::Build.parse(name, targets)
+  def build(name)
+    Dev::Lifecycle::Build.parse(name, targets)
+  end
 
   test "bare `dev package` builds the first target's default build, zips the install and stamps build-id.json last" do
     Given

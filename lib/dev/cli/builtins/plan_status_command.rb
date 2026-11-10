@@ -11,7 +11,9 @@ module Dev
         extend T::Sig
 
         sig { override.returns(String) }
-        def desc = "Sync state of all linked plans"
+        def desc
+          "Sync state of all linked plans"
+        end
 
         private
 

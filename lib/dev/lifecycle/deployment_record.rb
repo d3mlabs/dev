@@ -5,6 +5,7 @@ require_relative "build_id"
 require_relative "deployment_state"
 require_relative "shipment"
 require_relative "track"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -24,6 +25,7 @@ module Dev
     # a record never needs the project's targets.
     class DeploymentRecord < T::Struct
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # An artifact packaged outside a checkout carries no commit, so there
       # is nothing on the forge to record its deploy against.
@@ -42,25 +44,26 @@ module Dev
       # One build the deploy shipped, with the id it was packaged under.
       class DeployedBuild < T::Struct
         extend T::Sig
+        include Dev::ValueEquality::Derived
 
         const :name, String
         const :build_id, BuildId
 
         # @return [Hash] the JSON shape
         sig { returns(JsonHash) }
-        def to_json_hash = { "build" => name, "build_id" => build_id.to_s }
+        def to_json_hash
+          { "build" => name, "build_id" => build_id.to_s }
+        end
 
         sig { returns(String) }
-        def to_s = "#{name} (#{build_id})"
-
-        sig { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(DeployedBuild) && name == other.name && build_id == other.build_id
-
-        sig { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
-
-        sig { returns(Integer) }
-        def hash = [DeployedBuild, name, build_id].hash
+        def to_s
+          "#{name} (#{build_id})"
+        end
+        # @return [Array] the members that constitute identity
+        sig { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [name, build_id]
+        end
       end
 
       const :channel, String
@@ -172,17 +175,11 @@ module Dev
         { "schema" => SCHEMA, "track" => track.to_s, "builds" => builds.map(&:to_json_hash) }
       end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        other.is_a?(DeploymentRecord) && channel == other.channel && ref == other.ref && track == other.track &&
-          builds == other.builds && state == other.state && description == other.description
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [channel, ref, track, builds, state, description]
       end
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
-
-      sig { returns(Integer) }
-      def hash = [DeploymentRecord, channel, ref, track, builds, state, description].hash
     end
   end
 end

@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "dev/environment_image"
+require_relative "../value_equality"
 
 module Dev
   module Cli
@@ -36,18 +37,18 @@ module Dev
         extend T::Helpers
         include Placement
         final!
+        include Dev::ValueEquality::Derived
 
         sig(:final) { override.returns(String) }
-        def name = EnvironmentImage::HOST
+        def name
+          EnvironmentImage::HOST
+        end
 
-        sig(:final) { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(Host)
-
-        sig(:final) { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
-
-        sig(:final) { returns(Integer) }
-        def hash = [Host].hash
+        # @return [Array] the members that constitute identity
+        sig(:final) { override.returns(T::Array[T.anything]) }
+        def equality_members
+          []
+        end
       end
 
       # The body runs in a pinned image's environment.
@@ -56,6 +57,7 @@ module Dev
         extend T::Helpers
         include Placement
         final!
+        include Dev::ValueEquality::Derived
 
         # @return [Dev::EnvironmentImage] the lock's image
         sig(:final) { returns(EnvironmentImage) }
@@ -67,18 +69,15 @@ module Dev
         end
 
         sig(:final) { override.returns(String) }
-        def name = @image.name
+        def name
+          @image.name
+        end
 
-        # Two placements of one image are equal by the image's identity (its
-        # digest): the lock pins one image per name.
-        sig(:final) { params(other: Object).returns(T::Boolean) }
-        def ==(other) = other.is_a?(Image) && @image.name == other.image.name && @image.digest == other.image.digest
-
-        sig(:final) { params(other: Object).returns(T::Boolean) }
-        def eql?(other) = self == other
-
-        sig(:final) { returns(Integer) }
-        def hash = [Image, @image.name, @image.digest].hash
+        # @return [Array] the members that constitute identity
+        sig(:final) { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [@image.name, @image.digest]
+        end
       end
     end
   end

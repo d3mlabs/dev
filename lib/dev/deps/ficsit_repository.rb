@@ -149,7 +149,9 @@ module Dev
         const :auto_approved, T::Boolean
 
         sig { returns(String) }
-        def to_s = "version #{version} (#{id}), #{auto_approved ? "auto-approved" : "awaiting approval"}"
+        def to_s
+          "version #{version} (#{id}), #{auto_approved ? "auto-approved" : "awaiting approval"}"
+        end
       end
 
       # How the processing wait sleeps when nothing substitutes it: really.
@@ -230,7 +232,9 @@ module Dev
 
       # The declaration as `dev help` renders it.
       sig { returns(String) }
-      def to_s = CHANNEL
+      def to_s
+        CHANNEL
+      end
 
       private
 

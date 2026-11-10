@@ -197,7 +197,9 @@ class Dev::Cli::Builtins::RunnerUnregisterCommandTest < Minitest::Test
 
   Harness = Struct.new(:command, :torn_down, :ui, :out, keyword_init: true) do
     # The projectless context the command runs in, carrying the answering Ui.
-    def context = Dev::Cli::ExecutionContext.new(ui: ui)
+    def context
+      Dev::Cli::ExecutionContext.new(ui: ui)
+    end
   end
 
   # A teardown whose resolution is real (tempdir discovery) and whose

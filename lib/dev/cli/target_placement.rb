@@ -3,6 +3,7 @@
 
 require "dev/lifecycle"
 require_relative "placement"
+require_relative "../value_equality"
 
 module Dev
   module Cli
@@ -26,6 +27,7 @@ module Dev
     # the environment column from, so neither re-reads the lock.
     class TargetPlacement
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # A build of another target was asked for.
       class ForeignBuildError < ArgumentError; end
@@ -119,17 +121,11 @@ module Dev
             "under `environment:`"
       end
 
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        other.is_a?(TargetPlacement) && @target == other.target && @placements == other.placements &&
-          @host_platform == other.host_platform
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [@target, @placements, @host_platform]
       end
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other) = self == other
-
-      sig { returns(Integer) }
-      def hash = [TargetPlacement, @target, @placements, @host_platform].hash
     end
   end
 end

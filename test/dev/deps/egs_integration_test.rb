@@ -65,7 +65,9 @@ class Dev::Deps::EgsIntegrationTest < Minitest::Test
     )
   end
 
-  def digest_of(path) = "SHA256=#{Digest::SHA256.file(path).hexdigest}"
+  def digest_of(path)
+    "SHA256=#{Digest::SHA256.file(path).hexdigest}"
+  end
 
   def integration(zip)
     FixtureEgsIntegration.new(zip:, repository: Dev::Deps::UrlRepository.new, store: Dev::Deps::LocalStore.new(data_root: @data_root.to_s))

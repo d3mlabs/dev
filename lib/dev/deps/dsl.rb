@@ -322,7 +322,9 @@ module Dev
 
       # @return [Array<String>] the apt packages, sorted and unique
       sig { returns(T::Array[String]) }
-      def packages = @packages.sort.uniq
+      def packages
+        @packages.sort.uniq
+      end
 
       # What the image can build, as lock metadata: `target_platforms`, the
       # ids in the platform set's own order and unique — only when the

@@ -14,7 +14,9 @@ module Dev
         USAGE = "usage: dev learnings invariants"
 
         sig { override.returns(String) }
-        def desc = "Print the always-on org invariants block (the Tier-0 prompt seam)"
+        def desc
+          "Print the always-on org invariants block (the Tier-0 prompt seam)"
+        end
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)

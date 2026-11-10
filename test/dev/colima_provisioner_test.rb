@@ -71,8 +71,13 @@ class Dev::ColimaProvisionerTest < Minitest::Test
     executor.runs.select { |bin, sub, *_rest| bin == "colima" && sub == verb }
   end
 
-  def starts(executor) = colima_runs(executor, "start")
-  def stops(executor) = colima_runs(executor, "stop")
+  def starts(executor)
+    colima_runs(executor, "start")
+  end
+
+  def stops(executor)
+    colima_runs(executor, "stop")
+  end
 
   # --- no VM yet -----------------------------------------------------------
 

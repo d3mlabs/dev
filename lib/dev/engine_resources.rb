@@ -1,6 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "value_equality"
+
 module Dev
   # What a container engine actually has: whole cpus and GiB, as its daemon
   # reports them. The counterpart of EngineResources::Hint — the repo's
@@ -8,6 +10,7 @@ module Dev
   # demands nothing.
   class EngineResources
     extend T::Sig
+    include Dev::ValueEquality::Derived
 
     GIB = 1_073_741_824 # 1024**3
 
@@ -18,6 +21,7 @@ module Dev
     # field is optional: a repo pins just the ones that matter.
     class Hint
       extend T::Sig
+      include Dev::ValueEquality::Derived
 
       # @return [Integer, nil] CPU count for the engine VM
       sig { returns(T.nilable(Integer)) }
@@ -42,20 +46,10 @@ module Dev
         @memory_gib = memory_gib
         @disk_gib = disk_gib
       end
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def ==(other)
-        other.is_a?(Hint) && @cpus == other.cpus && @memory_gib == other.memory_gib && @disk_gib == other.disk_gib
-      end
-
-      sig { params(other: Object).returns(T::Boolean) }
-      def eql?(other)
-        self == other
-      end
-
-      sig { returns(Integer) }
-      def hash
-        [@cpus, @memory_gib, @disk_gib].hash
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [@cpus, @memory_gib, @disk_gib]
       end
     end
 
@@ -109,19 +103,10 @@ module Dev
       "#{@cpus} cpus / #{@memory_gib} GiB"
     end
 
-    sig { params(other: Object).returns(T::Boolean) }
-    def ==(other)
-      other.is_a?(EngineResources) && @cpus == other.cpus && @memory_gib == other.memory_gib
-    end
-
-    sig { params(other: Object).returns(T::Boolean) }
-    def eql?(other)
-      self == other
-    end
-
-    sig { returns(Integer) }
-    def hash
-      [@cpus, @memory_gib].hash
+    # @return [Array] the members that constitute identity
+    sig { override.returns(T::Array[T.anything]) }
+    def equality_members
+      [@cpus, @memory_gib]
     end
   end
 end

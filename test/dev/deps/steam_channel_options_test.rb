@@ -19,7 +19,9 @@ class Dev::Deps::SteamChannelOptionsTest < Minitest::Test
     )
   end
 
-  def pattern(name) = Dev::Lifecycle::BuildPattern.parse(name, all_targets)
+  def pattern(name)
+    Dev::Lifecycle::BuildPattern.parse(name, all_targets)
+  end
 
   test "parse reads the app, a depot per pattern and the branches, defaulting testing to beta and live to default" do
     When

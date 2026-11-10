@@ -22,14 +22,20 @@ module Dev
         end
 
         sig { override.returns(String) }
-        def desc = "Print a setting's resolved value (get <key>)"
+        def desc
+          "Print a setting's resolved value (get <key>)"
+        end
 
         sig { override.returns(Command::Category) }
-        def category = Command::Category::Workflow
+        def category
+          Command::Category::Workflow
+        end
 
         # Host-global: a project's dependency staleness is irrelevant.
         sig { override.returns(T::Boolean) }
-        def staleness_exempt? = true
+        def staleness_exempt?
+          true
+        end
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)

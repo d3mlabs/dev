@@ -27,11 +27,17 @@ class Dev::Cli::DeploySelectorTest < Minitest::Test
   class SelectingVerb < Dev::Cli::LifecycleCommand
     Env = type_member { { fixed: String } }
 
-    def desc = "selects"
+    def desc
+      "selects"
+    end
 
-    def flags = Dev::Cli::DeploySelector::FLAGS
+    def flags
+      Dev::Cli::DeploySelector::FLAGS
+    end
 
-    def before(args:, context:) = Dev::Cli::Dispatch::Outcome::Done.new
+    def before(args:, context:)
+      Dev::Cli::Dispatch::Outcome::Done.new
+    end
 
     def seam(env, context:); end
 
@@ -48,7 +54,9 @@ class Dev::Cli::DeploySelectorTest < Minitest::Test
     super
   end
 
-  def store = Dev::Lifecycle::Store.new(project_name: "cellbound-3d", targets: all_targets, data_root: @root.to_s)
+  def store
+    Dev::Lifecycle::Store.new(project_name: "cellbound-3d", targets: all_targets, data_root: @root.to_s)
+  end
 
   def release_archives
     Dev::Lifecycle::ReleaseArchives.new(releases: Dev::Lifecycle::GithubReleases.new(gh: @gh), store:, targets: all_targets)

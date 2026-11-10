@@ -200,6 +200,8 @@ module Dev
     private
 
     sig { returns(T.any(IO, StringIO)) }
-    def out = @out || $stdout
+    def out
+      @out || $stdout
+    end
   end
 end

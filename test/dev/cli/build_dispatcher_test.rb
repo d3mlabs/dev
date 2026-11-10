@@ -33,7 +33,9 @@ class Dev::Cli::BuildDispatcherTest < Minitest::Test
 
   # The repo has no enrolled runner online.
   class NoneEnrolled < Dev::EnrolledRunnerLookup
-    def available = nil
+    def available
+      nil
+    end
   end
 
   def setup

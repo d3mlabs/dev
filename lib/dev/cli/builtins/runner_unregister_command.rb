@@ -63,13 +63,19 @@ module Dev
         end
 
         sig { override.returns(String) }
-        def desc = "Remove one of this host's runner enrollments — or every slot it has at a scope — named by scope or dir (--yes skips the confirmation)"
+        def desc
+          "Remove one of this host's runner enrollments — or every slot it has at a scope — named by scope or dir (--yes skips the confirmation)"
+        end
 
         sig { override.returns(Command::Category) }
-        def category = Command::Category::Environment
+        def category
+          Command::Category::Environment
+        end
 
         sig { override.returns(T::Array[Cli::Flag]) }
-        def flags = [Cli::Flag.new(YES_FLAG), Cli::Flag.new(ORG_FLAG)]
+        def flags
+          [Cli::Flag.new(YES_FLAG), Cli::Flag.new(ORG_FLAG)]
+        end
 
         # What the enrollment argument can be, from discovery alone (offline;
         # never gh): every local scope once, in discovery order, then every
