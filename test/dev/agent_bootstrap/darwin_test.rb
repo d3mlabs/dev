@@ -235,9 +235,9 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
   # formula `dev deps` touched as the agent was refused, and a /build pass
   # ran `brew trust` itself to get on.
   test "converge! has the agent user trust the deployment's tap — as the agent, through sudo, the brew dev found" do
-    Given "a converged host with brew and the org tap"
+    Given "a converged host with brew (its lock dir cooperative) and the org tap"
     brew = brew_in(Dir.mktmpdir)
-    executor = converged_identity_executor(brew_executable: brew)
+    executor = converged_identity_executor(brew_executable: brew, capture_results: cooperative_locks(brew))
     out = StringIO.new
 
     When "converging"
@@ -247,6 +247,84 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     executor.runs == [["sudo", "-H", "-u", "ai-agent", "--", "env", "HOMEBREW_NO_AUTO_UPDATE=1", brew, "trust", "--tap", "d3mlabs/d3mlabs"]]
     out.string.include?(">>> Trusting the tap d3mlabs/d3mlabs for ai-agent")
     !out.string.include?("warning")
+  end
+
+  # dev#558: brew takes its locks in <prefix>/var/homebrew/locks (HOMEBREW_LOCKS,
+  # not overridable), owned by the prefix owner — and every brew read by a
+  # user with no API cache downloads the signed index under one. The agent's
+  # first brew is the tap trust, so the lock dir is granted before it.
+  test "converge! grants the group brew's lock dir — and the locks in it — before the agent's first brew, the tap trust" do
+    Given "a converged host whose brew lock dir is the prefix owner's alone"
+    prefix = Dir.mktmpdir
+    brew = brew_in(prefix)
+    executor = converged_identity_executor(brew_executable: brew)
+    out = StringIO.new
+
+    When "converging"
+    bootstrap(executor, out: out, brew_executable: brew, tap: org_tap).converge!
+
+    Then "mkdir, regroup, group-writable throughout, setgid — then the trust"
+    locks = File.join(prefix, "var", "homebrew", "locks")
+    executor.runs == [
+      ["sudo", "mkdir", "-p", locks],
+      ["sudo", "chgrp", "-R", "dev", locks],
+      ["sudo", "chmod", "-R", "g+rwX", locks],
+      ["sudo", "chmod", "g+s", locks],
+      ["sudo", "-H", "-u", "ai-agent", "--", "env", "HOMEBREW_NO_AUTO_UPDATE=1", brew, "trust", "--tap", "d3mlabs/d3mlabs"],
+    ]
+    out.string.include?(">>> Granting the dev group cooperative access to brew's lock dir #{locks}")
+  end
+
+  test "a cooperative lock dir still holding a lock the owner left 0644 is re-granted: the agent opens every lock read-write" do
+    Given "a converged host whose lock dir is in the group and setgid, with one lock file not group-writable"
+    prefix = Dir.mktmpdir
+    brew = brew_in(prefix)
+    locks = File.join(prefix, "var", "homebrew", "locks")
+    executor = converged_identity_executor(
+      brew_executable: brew,
+      capture_results: cooperative_locks(brew).merge(["find", locks, "!", "-perm", "-g+w"] => "#{locks}/packages.arm64_tahoe.jws.json.download.lock\n"),
+    )
+
+    When "converging"
+    bootstrap(executor, brew_executable: brew, tap: nil).converge!
+
+    Then
+    executor.runs.include?(["sudo", "chmod", "-R", "g+rwX", locks])
+  end
+
+  test "no lock dir step without a brew edge — the agent owning the prefix takes its own locks" do
+    Given "a converged host whose brew prefix the agent owns"
+    brew = brew_in(Dir.mktmpdir)
+    executor = converged_identity_executor(brew_executable: brew, owner_of: ->(_prefix) { "ai-agent" })
+
+    When "converging"
+    bootstrap(executor, brew_executable: brew, owner_of: ->(_prefix) { "ai-agent" }, tap: nil).converge!
+
+    Then
+    executor.runs.empty?
+    bootstrap(executor, brew_executable: brew, owner_of: ->(_prefix) { "ai-agent" }).brew_locks_dir.nil?
+  end
+
+  test "brew_locks_cooperative? reads the dir's group and setgid and that no lock in it is closed to the group — #{what}" do
+    Given
+    prefix = Dir.mktmpdir
+    brew = brew_in(prefix)
+    locks = File.join(prefix, "var", "homebrew", "locks")
+    executor = RecordedBootstrapExecutor.new(capture_results: {
+      ["stat", "-f", "%Sg %Sp", locks] => stat,
+      ["find", locks, "!", "-perm", "-g+w"] => closed,
+    })
+
+    Expect
+    bootstrap(executor, brew_executable: brew).brew_locks_cooperative? == cooperative
+
+    Where
+    what                              | stat                 | closed                 | cooperative
+    "in the group, setgid, all open"  | "dev drwxrwsr-x\n"   | ""                     | true
+    "a lock closed to the group"      | "dev drwxrwsr-x\n"   | "ruby.formula.lock\n"  | false
+    "not setgid"                      | "dev drwxrwxr-x\n"   | ""                     | false
+    "the owner's group"               | "admin drwxr-xr-x\n" | ""                     | false
+    "missing (stat says nothing)"     | ""                   | ""                     | false
   end
 
   test "converge! issues no trust step without brew on the host" do
@@ -283,6 +361,13 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
 
   def org_tap
     Dev::TapTrust::Tap.new(user: "d3mlabs", repo: "d3mlabs")
+  end
+
+  # The captures saying a brew's lock dir is already cooperative: in the
+  # group, setgid, every lock open to the group.
+  def cooperative_locks(brew)
+    locks = File.join(File.dirname(File.dirname(brew)), "var", "homebrew", "locks")
+    { ["stat", "-f", "%Sg %Sp", locks] => "dev drwxrwsr-x\n", ["find", locks, "!", "-perm", "-g+w"] => "" }
   end
 
   # A brew binary at <prefix>/bin/brew, as BREW_LOCATIONS discovers one.

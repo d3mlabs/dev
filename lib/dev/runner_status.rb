@@ -565,6 +565,11 @@ module Dev
       end
       root = @bootstrap.data_root
       line(@bootstrap.cooperative_dir?(root), "data root #{root} shared with group #{group} (setgid)")
+      locks = @bootstrap.brew_locks_dir
+      if locks
+        line(@bootstrap.brew_locks_cooperative?,
+          "brew lock dir #{locks} shared with group #{group} (setgid, locks group-writable)")
+      end
       return unless @container_required
 
       line(@bootstrap.engine_converged?, @bootstrap.engine_fact)
