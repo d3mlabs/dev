@@ -31,7 +31,7 @@ module Dev
           number = args.positionals.first
           raise Dev::Plan::Accessor::UsageError, USAGE unless args.positionals.size == 1 && number&.match?(/\A\d+\z/)
 
-          accessor.pull(Integer(number), merge: args.flag?(MERGE_FLAG), org: args.flag?(ORG_FLAG), out: @out)
+          accessor.pull(Integer(number), merge: args.flag?(MERGE_FLAG), org: args.flag?(ORG_FLAG))
         end
       end
     end

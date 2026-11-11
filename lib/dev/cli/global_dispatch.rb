@@ -44,8 +44,9 @@ module Dev
       FLAG_SPELLINGS = T.let({ "--version" => "version" }.freeze, T::Hash[String, String])
 
       # @param catalog [Dev::Cli::GlobalCatalog] the global command tree
-      # @param ui [Dev::Ui] the host half of the execution context (the
-      #   global leaves print plainly, so the silent UI is the default)
+      # @param ui [Dev::Ui] the host half of the execution context — the tier
+      #   bin/dev chose for the process; the plain tier is the default for
+      #   tests and embedders
       # @param out [IO, StringIO] where group usage prints
       # @param flag_vocabulary [Dev::Cli::FlagVocabulary] recognizes a help
       #   request among the args (the Runner's to answer)

@@ -6,6 +6,7 @@ require "dev"
 require "dev/cli/global_dispatch"
 require "fileutils"
 require "stringio"
+require "support/recording_ui"
 require "tmpdir"
 
 # A credential accessor stand-in recording the verb it received, so dispatch
@@ -49,9 +50,9 @@ transform!(RSpock::AST::Transformation)
 class Dev::Cli::GlobalDispatchTest < Minitest::Test
   # A dispatcher over a catalog whose accessors never touch the real
   # providers unless a test passes real ones in; usage goes to `out`.
-  def build_dispatch(out: StringIO.new, **accessors)
+  def build_dispatch(out: StringIO.new, ui: RecordingUi.new, **accessors)
     accessors = { cred_accessor: RecordingCredAccessor.new }.merge(accessors)
-    Dev::Cli::GlobalDispatch.new(catalog: Dev::Cli::GlobalCatalog.new(out: out, **accessors), out: out)
+    Dev::Cli::GlobalDispatch.new(catalog: Dev::Cli::GlobalCatalog.new(out: out, **accessors), ui: ui, out: out)
   end
 
   test "#{name} is a global command: #{expected}" do
@@ -149,15 +150,16 @@ class Dev::Cli::GlobalDispatchTest < Minitest::Test
     ENV["DEV_KNOWLEDGE_REPO"] = File.join(dir, "knowledge")
     ENV["XDG_DATA_HOME"] = File.join(dir, "data")
     ENV["XDG_CONFIG_HOME"] = File.join(dir, "config")
-    out = StringIO.new
-    dispatch = build_dispatch(out: out)
+    ui = RecordingUi.new
+    dispatch = build_dispatch(ui: ui)
 
     When "we dispatch dev learnings status from a cwd with no dev.yml"
     Dir.chdir(dir) { dispatch.run(["learnings", "status"]) }
 
-    Then "the status reports the configured repo and the empty cache"
-    out.string.include?(File.join(dir, "knowledge"))
-    out.string.include?("not cloned yet")
+    Then "the status speaks through the dispatcher's ui: the configured repo frames the empty-cache fact"
+    ui.rows.map(&:first) == [:frame, :note]
+    ui.out_text.include?(File.join(dir, "knowledge"))
+    ui.out_text.include?("not cloned yet")
 
     Cleanup
     saved.each { |key, value| value ? ENV[key] = value : ENV.delete(key) }

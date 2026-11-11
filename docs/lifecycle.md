@@ -710,7 +710,13 @@ with no frame open the router prefixes nothing.
 a TTY or `CI` / `CLICOLOR_FORCE` is set, `Dev::NoUi` otherwise (a pipe,
 ai-flow, the runner). The vocabulary (`Dev::Ui`) and the plain tier live
 in `lib/dev/ui.rb` so a feature may take `ui:` — `OperatorAccess#check!`
-does — while the cli-ui tier and the choice between them are the
+does, and the `plan` / `learnings` / `skills` accessors speak through
+nothing else ([dev#575](https://github.com/d3mlabs/dev/issues/575)): a
+frame per verb, a spin per captured `gh` / `git` call, a `✓` / `✗` note
+per fact, the one-line result (`✓ pushed <file> to <owner/repo>#<n>`) the
+frame's last note so a log reads as before; the payload forms
+(`learnings invariants`, `skills status --json`) never touch the seam —
+while the cli-ui tier and the choice between them are the
 shell's ([ADR-0014](DECISIONS.md), [dev#537](https://github.com/d3mlabs/dev/issues/537)).
 `NoUi` prints the same facts as plain lines, no escape codes:
 the frame's title, `✓ name` / `✗ name` per spin, a step's name before

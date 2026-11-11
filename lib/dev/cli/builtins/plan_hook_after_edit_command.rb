@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "stringio"
 require "dev/cli/builtins/plan_verb_command"
 
 module Dev
@@ -13,15 +14,9 @@ module Dev
       class PlanHookAfterEditCommand < PlanVerbCommand
         extend T::Sig
 
-        sig do
-          params(
-            accessor_factory: AccessorFactory,
-            out: T.any(IO, StringIO),
-            input: T.any(IO, StringIO),
-          ).void
-        end
-        def initialize(accessor_factory: DEFAULT_ACCESSOR_FACTORY, out: $stdout, input: $stdin)
-          super(accessor_factory:, out:)
+        sig { params(accessor_factory: AccessorFactory, input: T.any(IO, StringIO)).void }
+        def initialize(accessor_factory: DEFAULT_ACCESSOR_FACTORY, input: $stdin)
+          super(accessor_factory:)
           @input = input
         end
 
@@ -41,7 +36,7 @@ module Dev
         def perform(accessor, args)
           raise Dev::Plan::Accessor::UsageError, "usage: dev plan hook-after-edit" unless args.positionals.empty?
 
-          accessor.hook_after_edit(@input, out: @out)
+          accessor.hook_after_edit(@input)
         end
       end
     end
