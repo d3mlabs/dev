@@ -1151,39 +1151,35 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "brew_prefix is discovered from brew --prefix once and memoized" do
-    Given "an integration with no injected prefix and a brew that answers --prefix"
+  # dev#568: the prefix is the machine's one resolution (Settings.brew_prefix),
+  # not a `brew --prefix` subprocess of its own — the same answer every other
+  # brew-facing part of dev reads, with no brew on PATH required.
+  test "an integration with no injected prefix takes the machine's resolved brew prefix" do
+    Given "HOMEBREW_PREFIX naming a prefix, and an integration with no injected one"
     dir = Dir.mktmpdir("dev-brew-int-test-")
+    saved = ENV["HOMEBREW_PREFIX"]
+    ENV["HOMEBREW_PREFIX"] = dir
     integration = Dev::Deps::BrewIntegration.new(
       repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir),
     )
-    Open3.expects(:capture3).with("brew", "--prefix").once.returns(["#{dir}\n", "", stub(success?: true)])
 
-    When "resolving the prefix twice"
-    first = integration.send(:brew_prefix)
-    second = integration.send(:brew_prefix)
-
-    Then "both resolutions return the discovered prefix from a single brew call (Mocha-verified once)"
-    first == dir
-    second == dir
+    Expect "the resolved prefix, with no brew called for it"
+    integration.send(:brew_prefix) == dir
 
     Cleanup
+    saved ? ENV["HOMEBREW_PREFIX"] = saved : ENV.delete("HOMEBREW_PREFIX")
     FileUtils.rm_rf(dir)
   end
 
-  test "brew_prefix is nil when brew is absent, so writes run unescalated" do
-    Given "an integration with no injected prefix and no brew on PATH"
+  test "brew_prefix is nil on a machine without brew, so writes run unescalated" do
+    Given "an integration on a machine whose brew prefix resolves to nothing"
     dir = Dir.mktmpdir("dev-brew-int-test-")
     integration = Dev::Deps::BrewIntegration.new(
-      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir),
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: nil,
     )
-    Open3.stubs(:capture3).with("brew", "--prefix").raises(Errno::ENOENT)
 
-    When "resolving the prefix"
-    prefix = integration.send(:brew_prefix)
-
-    Then "the prefix is nil and escalation is empty"
-    prefix.nil?
+    Expect "the prefix is nil and escalation is empty"
+    integration.send(:brew_prefix).nil?
     integration.send(:escalation) == []
 
     Cleanup

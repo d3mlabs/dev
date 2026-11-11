@@ -109,17 +109,6 @@ module Dev
     # What the drop-in does about brew: the edge it grants, or why none.
     BrewEdgeDecision = T.type_alias { T.any(BrewEdge, NoBrewEdge) }
 
-    # Where brew lives on supported hosts, in discovery order (Apple
-    # Silicon, Intel mac, Linuxbrew).
-    BREW_LOCATIONS = T.let(
-      [
-        "/opt/homebrew/bin/brew",
-        "/usr/local/bin/brew",
-        "/home/linuxbrew/.linuxbrew/bin/brew",
-      ].freeze,
-      T::Array[String],
-    )
-
     # Runs the admin CLIs. `run` streams (sudo password prompts must reach
     # the terminal), `quiet?` probes success silently, `capture` returns
     # stdout ("" on failure) — the recorded-executor seam tests fake.

@@ -161,21 +161,55 @@ class Dev::RunnerUserTest < Minitest::Test
     brewless.calls.none?(&trusts)
   end
 
-  test "brew is the one the operator's PATH names, never its symlink target: Linuxbrew's bin/brew points into Homebrew/bin, and brew's prefix is where the link lives" do
-    Given "a PATH with a bin dir whose brew is a symlink into the repository under the prefix (Linuxbrew's layout)"
-    prefix = Dir.mktmpdir
-    FileUtils.mkdir_p(File.join(prefix, "Homebrew", "bin"))
-    File.write(File.join(prefix, "Homebrew", "bin", "brew"), "#!/bin/sh\n")
-    File.chmod(0o755, File.join(prefix, "Homebrew", "bin", "brew"))
-    FileUtils.mkdir_p(File.join(prefix, "bin"))
-    File.symlink(File.join(prefix, "Homebrew", "bin", "brew"), File.join(prefix, "bin", "brew"))
-    empty = Dir.mktmpdir
+  # dev#568: the host's brew is `<prefix>/bin/brew` under the one prefix dev
+  # resolves (Settings.brew_prefix), not whatever the operator's PATH names
+  # — PATH is shell state, and a register run from a shell without brew on
+  # it would hand the runner no shellenv, no toolchain, no brew edge. The
+  # prefix's own `bin/brew`, never its realpath: Linuxbrew's is a link into
+  # `<prefix>/Homebrew/bin`, and brew takes its prefix from the path it is
+  # invoked by.
+  test "the host's brew is <prefix>/bin/brew under the resolved prefix — #{what}" do
+    Given "a prefix #{what}"
+    dir = Dir.mktmpdir
+    prefix = File.join(dir, "prefix")
+    send(layout, prefix)
+    brew = Dev::RunnerUser.brew_path(prefix: resolved ? prefix : nil)
 
-    Expect
-    Dev::RunnerUser.brew_path(env_path: "#{empty}:#{prefix}/bin") == File.join(prefix, "bin", "brew")
-    Dev::RunnerUser.host_path(brew: Dev::RunnerUser.brew_path(env_path: "#{prefix}/bin")) == "#{prefix}/bin:#{prefix}/sbin:#{Dev::RunnerUser::SYSTEM_PATH}"
-    Dev::RunnerUser.brew_path(env_path: empty).nil?
-    Dev::RunnerUser.brew_path(env_path: "").nil?
+    Expect "the link itself, and a PATH built on the prefix it lives in"
+    brew == (found ? File.join(prefix, "bin", "brew") : nil)
+    Dev::RunnerUser.host_path(brew: brew) == (found ? "#{prefix}/bin:#{prefix}/sbin:#{Dev::RunnerUser::SYSTEM_PATH}" : Dev::RunnerUser::SYSTEM_PATH)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+
+    Where
+    what                                  | resolved | layout        | found
+    "with brew at bin/brew"               | true     | :brew_at      | true
+    "linking bin/brew into Homebrew/bin"  | true     | :linuxbrew_at | true
+    "without a bin/brew"                  | true     | :empty_bin_at | false
+    "unresolved (a machine without brew)" | false    | :empty_bin_at | false
+  end
+
+  # macOS's layout: brew itself at <prefix>/bin/brew.
+  def brew_at(prefix)
+    executable(File.join(prefix, "bin", "brew"))
+  end
+
+  # Linuxbrew's layout: <prefix>/bin/brew a link into <prefix>/Homebrew/bin.
+  def linuxbrew_at(prefix)
+    executable(File.join(prefix, "Homebrew", "bin", "brew"))
+    FileUtils.mkdir_p(File.join(prefix, "bin"))
+    File.symlink(File.join("..", "Homebrew", "bin", "brew"), File.join(prefix, "bin", "brew"))
+  end
+
+  def empty_bin_at(prefix)
+    FileUtils.mkdir_p(File.join(prefix, "bin"))
+  end
+
+  def executable(path)
+    FileUtils.mkdir_p(File.dirname(path))
+    File.write(path, "#!/bin/sh\n")
+    FileUtils.chmod(0o755, path)
   end
 
   test "the runner user's PATH is deliberate: brew's bin and sbin ahead of the system's, nothing of the operator's; without brew, the system's alone" do
