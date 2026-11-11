@@ -3,6 +3,7 @@
 
 require "pathname"
 require "dev/credentials"
+require "dev/ui"
 require "dev/lifecycle/channel"
 require "dev/lifecycle/publisher"
 require "dev/lifecycle/receipt"
@@ -128,17 +129,8 @@ module Dev
       ApiKeySource = T.type_alias { T.proc.returns(String) }
       Sleeper = T.type_alias { T.proc.params(seconds: Integer).void }
 
-      # The channel's credential: the API key a user makes on ficsit.app's
-      # settings page, stored once with `dev cred` or set in the env.
-      DEFAULT_API_KEY = T.let(
-        lambda do
-          Credentials.resolve(
-            namespace: CHANNEL, key: "api_key", env_var: "FICSIT_API_KEY",
-            prompt_label: "ficsit.app API key", create_url: "https://ficsit.app/settings",
-          )
-        end,
-        ApiKeySource,
-      )
+      # Where a user makes the channel's credential, the API key.
+      API_KEY_URL = "https://ficsit.app/settings"
 
       # What SMR made of an upload once processed (`CreateVersionResponse`).
       class PublishedVersion < T::Struct
@@ -159,18 +151,23 @@ module Dev
 
       # @param client [FicsitClient] the API boundary
       # @param merger [MultiTargetPluginMerger] makes the multi-target zip
-      # @param api_key [Proc] resolves the API key when a publish needs it
+      # @param api_key [Proc, nil] resolves the API key when a publish needs
+      #   it; nil is the channel's credential — the key a user makes on
+      #   ficsit.app's settings page, stored once with `dev cred` or set in
+      #   the env — onboarded at `ui` the first time
       # @param sleeper [Proc] how the processing wait sleeps (injectable for tests)
       # @param part_size [Integer] bytes per upload part (tests lower it to exercise the chunking)
+      # @param ui [Ui] the terminal a first-time API key is onboarded at
       sig do
-        params(client: FicsitClient, merger: MultiTargetPluginMerger, api_key: ApiKeySource, sleeper: Sleeper, part_size: Integer).void
+        params(client: FicsitClient, merger: MultiTargetPluginMerger, api_key: T.nilable(ApiKeySource), sleeper: Sleeper,
+          part_size: Integer, ui: Ui).void
       end
-      def initialize(client: FicsitClient.new, merger: MultiTargetPluginMerger.new, api_key: DEFAULT_API_KEY,
-                     sleeper: DEFAULT_SLEEPER, part_size: PART_SIZE)
+      def initialize(client: FicsitClient.new, merger: MultiTargetPluginMerger.new, api_key: nil,
+                     sleeper: DEFAULT_SLEEPER, part_size: PART_SIZE, ui: NoUi.new)
         super()
         @client = client
         @merger = merger
-        @api_key = api_key
+        @api_key = T.let(api_key || credential_api_key(ui), ApiKeySource)
         @sleeper = sleeper
         @part_size = part_size
       end
@@ -237,6 +234,22 @@ module Dev
       end
 
       private
+
+      # The channel's credential as a source: resolved when a publish needs
+      # it, never at construction (the read side builds this class too, and
+      # a `find` must not prompt for a publisher's key).
+      #
+      # @param ui [Ui] the terminal a first-time key is onboarded at
+      # @return [Proc]
+      sig { params(ui: Ui).returns(ApiKeySource) }
+      def credential_api_key(ui)
+        lambda do
+          Credentials.resolve(
+            namespace: CHANNEL, key: "api_key", env_var: "FICSIT_API_KEY",
+            prompt_label: "ficsit.app API key", create_url: API_KEY_URL, ui: ui,
+          )
+        end
+      end
 
       # Map one GraphQL version object to a PackageVersion: universe facts
       # only, unconditional — nothing here depends on who asked.

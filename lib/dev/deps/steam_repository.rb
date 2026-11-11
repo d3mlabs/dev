@@ -3,6 +3,7 @@
 
 require "pathname"
 require "dev/credentials"
+require "dev/ui"
 require "dev/lifecycle/channel"
 require "dev/lifecycle/publisher"
 require "dev/lifecycle/receipt"
@@ -72,10 +73,12 @@ module Dev
       BUILD_ID_PATTERN = /Successfully finished AppID \d+ build \(BuildID (\d+)\)/
 
       # @param unpacker [Lifecycle::Unpacker] what turns an archive into a content root
-      sig { params(unpacker: Lifecycle::Unpacker).void }
-      def initialize(unpacker: Lifecycle::Unpacker.new)
+      # @param ui [Ui] the terminal a first-time build account is onboarded at
+      sig { params(unpacker: Lifecycle::Unpacker, ui: Ui).void }
+      def initialize(unpacker: Lifecycle::Unpacker.new, ui: NoUi.new)
         super()
         @unpacker = unpacker
+        @ui = ui
       end
 
       # Report a Steam app's universe: the current buildid of every branch,
@@ -205,7 +208,7 @@ module Dev
       def login
         username = Credentials.resolve(
           namespace: CREDENTIAL_NAMESPACE, key: "username", env_var: "STEAM_USERNAME",
-          prompt_label: "Steam build account (a Steamworks user with Edit App Metadata)", create_url: BUILD_ACCOUNT_URL,
+          prompt_label: "Steam build account (a Steamworks user with Edit App Metadata)", create_url: BUILD_ACCOUNT_URL, ui: @ui,
         )
         password = ENV.fetch("STEAM_PASSWORD") { Credentials.load(CREDENTIAL_NAMESPACE, "password") }
         [username, password].compact

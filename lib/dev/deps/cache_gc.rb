@@ -3,7 +3,7 @@
 
 require "set"
 require "pathname"
-require "stringio"
+require "dev/ui"
 require_relative "local_store"
 require_relative "lockfile"
 require_relative "tree_integrations"
@@ -38,6 +38,11 @@ module Dev
     #   would just reinstall them.
     # - IN-USE versions (mounted by a running container) are never evicted —
     #   removing a directory a job has mounted would corrupt that job.
+    #
+    # What gc says, it says through its Ui (plans#52, dev#573): a frame per
+    # tier that has something stale, a spin per removal (in-process, or a
+    # captured engine call), a note per fact (a volume kept, and why; an
+    # orphan already swept). A tier with nothing stale says nothing.
     class CacheGc
       extend T::Sig
 
@@ -47,7 +52,7 @@ module Dev
       # @param engine   [Dev::ContainerEngine] the invoking user's engine, so
       #   the in-use probes and image pruning see that user's daemon
       # @param store    [ArtifactStore] the store whose trees are reclaimed
-      # @param out      [IO, StringIO] progress stream
+      # @param ui       [Dev::Ui] what gc says its work through
       # @param prefix_volumes [Dev::PrefixVolumes] the engine's Linuxbrew
       #   prefix volumes, whose stale ones gc reclaims
       sig do
@@ -55,15 +60,15 @@ module Dev
           lockfile: Lockfile,
           engine: Dev::ContainerEngine,
           store: ArtifactStore,
-          out: T.any(IO, StringIO),
+          ui: Dev::Ui,
           prefix_volumes: Dev::PrefixVolumes,
         ).void
       end
-      def initialize(lockfile:, engine:, store: LocalStore.new, out: $stdout, prefix_volumes: Dev::PrefixVolumes.new(engine:))
+      def initialize(lockfile:, engine:, store: LocalStore.new, ui: Dev::NoUi.new, prefix_volumes: Dev::PrefixVolumes.new(engine:))
         @lockfile = lockfile
         @engine = engine
         @store = store
-        @out = out
+        @ui = ui
         @prefix_volumes = prefix_volumes
       end
 
@@ -95,14 +100,18 @@ module Dev
       # @return [void]
       sig { void }
       def gc_prefix_volumes
-        @prefix_volumes.stale.each do |volume|
-          reason = volume.user ? "no host user #{volume.user}" : "no host user"
-          if volume.mounted_by.empty?
-            @out.puts ">>> gc: removing prefix volume #{volume.name} (#{reason})"
-            @prefix_volumes.remove!(volume)
-          else
-            @out.puts ">>> gc: keeping prefix volume #{volume.name} (#{reason}) — mounted by #{volume.mounted_by.join(", ")} " \
-                      "(dev container up there recreates it)"
+        stale = @prefix_volumes.stale
+        return if stale.empty?
+
+        @ui.frame("Prefix volumes: #{stale.size} stale") do
+          stale.each do |volume|
+            reason = volume.user ? "no host user #{volume.user}" : "no host user"
+            if volume.mounted_by.empty?
+              @ui.spin("Removing prefix volume #{volume.name} (#{reason})") { @prefix_volumes.remove!(volume) }
+            else
+              @ui.note("keeping prefix volume #{volume.name} (#{reason}) — mounted by #{volume.mounted_by.join(", ")} " \
+                       "(dev container up there recreates it)")
+            end
           end
         end
       end
@@ -112,14 +121,19 @@ module Dev
       # @return [void]
       sig { void }
       def gc_tool_caches
-        @store.tool_caches.each do |tool|
-          @out.puts ">>> gc: removing tool cache #{@store.tool_cache(tool)}"
-          @store.remove_tool_cache(tool)
+        tools = @store.tool_caches
+        return if tools.empty?
+
+        @ui.frame("Tool caches: #{tools.size}") do
+          tools.each do |tool|
+            @ui.spin("Removing tool cache #{@store.tool_cache(tool)}") { @store.remove_tool_cache(tool) }
+          end
         end
       end
 
       # Per locked base, keep the locked version + in-use versions + the
-      # newest others up to `keep`; remove the rest and any orphan staging dirs.
+      # newest others up to `keep`; remove the rest and any orphan staging
+      # dirs. One frame per base with something to reclaim.
       #
       # @param keep   [Integer]
       # @param in_use [Set<String>] absolute host paths mounted by live containers
@@ -127,8 +141,16 @@ module Dev
       sig { params(keep: Integer, in_use: T::Set[String]).void }
       def gc_trees(keep:, in_use:)
         locked_versions_by_base.each do |base, locked|
-          @store.remove_orphan_staging(base).each { |staging| @out.puts ">>> gc: removing orphan staging #{staging}" }
-          prune_versions(base, locked: locked, keep: keep, in_use: in_use)
+          orphans = @store.remove_orphan_staging(base)
+          stale = stale_versions(base, locked: locked, keep: keep, in_use: in_use)
+          next if orphans.empty? && stale.empty?
+
+          @ui.frame("Trees under #{base}: #{stale.size} stale") do
+            orphans.each { |staging| @ui.note("{{v}} removed orphan staging #{staging}") }
+            stale.each do |version|
+              @ui.spin("Removing #{tree_path(base, version)}") { @store.remove_tree(TreeKey.new(base:, version:)) }
+            end
+          end
         end
       end
 
@@ -149,25 +171,23 @@ module Dev
         end
       end
 
+      # The versions of a base to remove: neither locked, nor among the
+      # newest `keep`, nor mounted by a live container.
+      #
       # @param base   [String] tree base
       # @param locked [Set<String>]
       # @param keep   [Integer]
       # @param in_use [Set<String>]
-      sig { params(base: String, locked: T::Set[String], keep: Integer, in_use: T::Set[String]).void }
-      def prune_versions(base, locked:, keep:, in_use:)
+      # @return [Array<String>] newest first
+      sig { params(base: String, locked: T::Set[String], keep: Integer, in_use: T::Set[String]).returns(T::Array[String]) }
+      def stale_versions(base, locked:, keep:, in_use:)
         # Newest first, so the retained "others" are the most recently used.
         versions = @store.tree_versions(base).sort_by { |v| -File.mtime(tree_path(base, v)).to_f }
 
         keepers = Set.new(locked)
         versions.each { |v| keepers << v if keepers.size < keep }
 
-        versions.each do |version|
-          path = tree_path(base, version).to_s
-          next if keepers.include?(version) || mounted?(path, in_use)
-
-          @out.puts ">>> gc: removing #{path}"
-          @store.remove_tree(TreeKey.new(base:, version:))
-        end
+        versions.reject { |version| keepers.include?(version) || mounted?(tree_path(base, version).to_s, in_use) }
       end
 
       # @param base [String] tree base
@@ -217,11 +237,14 @@ module Dev
         images.each do |image|
           tags = @engine.capture(["images", image.repository, "--format", "{{.Repository}}:{{.Tag}}"])
             .split("\n").map(&:strip).reject(&:empty?)
-          tags.each do |tag|
-            next if tag == image.ref || in_use_images.include?(tag)
+          stale = tags.reject { |tag| tag == image.ref || in_use_images.include?(tag) }
+          next if stale.empty?
 
-            @out.puts ">>> gc: removing image #{tag}"
-            @engine.run(["rmi", tag], out: File::NULL, err: File::NULL)
+          @ui.frame("Images of #{image.repository}: #{stale.size} stale") do
+            stale.each do |tag|
+              # The engine's output is discarded, so the call is captured: a spin.
+              @ui.spin("Removing image #{tag}") { @engine.run(["rmi", tag], out: File::NULL, err: File::NULL) }
+            end
           end
         end
       end

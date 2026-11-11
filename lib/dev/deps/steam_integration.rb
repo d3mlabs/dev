@@ -52,26 +52,30 @@ module Dev
 
       private
 
+      # An installed tree is a fact; a missing one is a step — SteamCMD's
+      # bootstrap (SteamCmd.ensure!) runs with the terminal — and the fact
+      # of where it landed.
+      #
       # @param dep [Dependency]
       sig { params(dep: Dependency).void }
       def install(dep)
         key = tree_key(dep)
         if (installed = store!.tree(key))
-          puts ">>> #{dep.name}@#{dep.version} already installed at #{installed}"
+          @ui.note("{{v}} #{dep.name}@#{dep.version} is installed at #{installed}")
           return
         end
 
         target_dir = store!.tree_path(key)
-        published = store!.publish_tree(key) do |staging|
-          server_dir = staging / SERVER_SUBDIR
-          FileUtils.mkdir_p(server_dir)
-
-          puts ">>> Provisioning #{dep.name} (app #{dep.metadata["app"]}, build #{dep.version}) into #{target_dir}"
-          provision(dep, server_dir)
-          verify_build_id(dep, server_dir)
-          staging
+        published = @ui.step("Provisioning #{dep.name} (app #{dep.metadata["app"]}, build #{dep.version}) into #{target_dir}") do
+          store!.publish_tree(key) do |staging|
+            server_dir = staging / SERVER_SUBDIR
+            FileUtils.mkdir_p(server_dir)
+            provision(dep, server_dir)
+            verify_build_id(dep, server_dir)
+            staging
+          end
         end
-        puts ">>> Installed #{dep.name}@#{dep.version} to #{published / SERVER_SUBDIR}"
+        @ui.note("{{v}} #{dep.name}@#{dep.version} installed at #{published / SERVER_SUBDIR}")
       end
 
       # SteamCMD boundary. Isolated so tests can stub it. +force_install_dir must

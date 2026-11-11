@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "stringio"
+require "dev/ui"
 
 module Dev
   # Read accessor over the Credentials provider, surfaced as `dev cred get`
@@ -10,11 +11,13 @@ module Dev
   # Mirrors Dev::Deps::Accessor (`dev deps path`): it exposes an internal
   # resolution detail — here the ENV → keychain → file → prompt fallback chain —
   # to shell consumers (e.g. stage.sh) so they never reimplement credential
-  # lookup or hardcode a storage backend. A non-interactive miss raises the
-  # provider's MissingCredentialError, whose message points at `gh secret set`.
+  # lookup or hardcode a storage backend. The payload is the value alone;
+  # the prompt a first-time miss raises is the Ui's (plans#52), and a
+  # non-interactive miss raises the provider's MissingCredentialError, whose
+  # message points at `gh secret set`.
   #
   # Credentials is injected (defaulting to the real provider) so tests can
-  # exercise dispatch without loading io/console.
+  # exercise dispatch without the real storage behind it.
   class CredentialAccessor
     extend T::Sig
 
@@ -31,10 +34,11 @@ module Dev
     # `dev cred get <namespace> <key>`: print the resolved value.
     #
     # @param args [Array<String>] argv after "get" — exactly a namespace and key
+    # @param ui [Ui] the terminal a first-time miss is onboarded at
     # @param out  [IO, StringIO] output stream
     # @raise [UsageError] without exactly a namespace and key
-    sig { params(args: T::Array[String], out: T.any(IO, StringIO)).void }
-    def get(args, out: $stdout)
+    sig { params(args: T::Array[String], ui: Ui, out: T.any(IO, StringIO)).void }
+    def get(args, ui:, out: $stdout)
       namespace, key, *extra = args
       raise UsageError, USAGE unless namespace && key && extra.empty?
 
@@ -43,6 +47,7 @@ module Dev
         key: key,
         env_var: default_env_var(namespace, key),
         prompt_label: "#{namespace} #{key}",
+        ui: ui,
       )
     end
 

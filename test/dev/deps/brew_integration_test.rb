@@ -8,6 +8,7 @@ require "dev/deps/local_store"
 require "dev/deps/dependency"
 require "dev/deps/tap"
 require "dev/host_lock"
+require "support/recording_ui"
 require "fileutils"
 require "etc"
 require "pathname"
@@ -93,7 +94,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     ]
 
     integration.stubs(:brew_installed?).returns(false)
-    integration.stubs(:verify_installed!)
+    integration.stubs(:verify_installed!).returns(false)
     integration.stubs(:run_brew_install).returns(nil)
 
     When "installing all"
@@ -116,7 +117,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
         version: "4.3.4", hash: "SHA256=abc", metadata: {}),
     ]
     integration.stubs(:brew_installed?).returns(false)
-    integration.stubs(:verify_installed!)
+    integration.stubs(:verify_installed!).returns(false)
     Open3.expects(:capture3).with(*cache_env(dir), "brew", "install", "cmake").returns(["", "", stub(success?: true)])
 
     When "installing all"
@@ -140,7 +141,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
         metadata: { "version_suffix" => "18" }),
     ]
     integration.stubs(:brew_installed?).returns(false)
-    integration.stubs(:verify_installed!)
+    integration.stubs(:verify_installed!).returns(false)
     Open3.expects(:capture3).with(*cache_env(dir), "brew", "install", "llvm@18").returns(["", "", stub(success?: true)])
 
     When "installing all"
@@ -165,7 +166,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     ]
 
     integration.stubs(:brew_installed?).returns(false)
-    integration.stubs(:verify_installed!)
+    integration.stubs(:verify_installed!).returns(false)
     failed_status = stub(success?: false)
     Open3.stubs(:capture3)
          .with(*cache_env(dir), "brew", "install", "bad_formula@1")
@@ -195,7 +196,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
         version: "2.0.0", hash: nil, metadata: {}),
     ]
     integration.stubs(:brew_installed?).returns(false)
-    integration.stubs(:verify_installed!)
+    integration.stubs(:verify_installed!).returns(false)
     Open3.stubs(:capture3)
          .with(*cache_env(dir), "brew", "install", "bad_formula")
          .returns(["", "Error: No available formula", stub(success?: false)])
@@ -464,11 +465,11 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
   # @param dir [String] the data root
   # @param pinner [Mocha::Mock]
   # @return [Dev::Deps::BrewIntegration]
-  def converging_integration(dir, pinner)
+  def converging_integration(dir, pinner, ui: RecordingUi.new)
     Open3.expects(:capture3).with { |*args| args.any? { |arg| arg.to_s.end_with?(".tar.gz") } }.never
     Dev::Deps::BrewIntegration.new(
       repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir,
-      tap_pinner: pinner,
+      tap_pinner: pinner, ui: ui,
     )
   end
 
@@ -476,20 +477,24 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     Given "cmake 4.4.4 installed, the lock pinning 4.4.5 from a tap commit"
     dir = Dir.mktmpdir("dev-brew-int-test-")
     pinner = typed_mock(Dev::Deps::TapPinner)
-    integration = converging_integration(dir, pinner)
+    ui = RecordingUi.new
+    integration = converging_integration(dir, pinner, ui: ui)
     integration.stubs(:brew_installed?).returns(true)
     brew_lists_cmake("4.4.4", "4.4.4 4.4.5")
 
     When "installing"
-    out, _err = capture_io { integration.install_all([cmake_pin("4.4.5", tap:)]) }
+    integration.install_all([cmake_pin("4.4.5", tap:)])
 
-    Then "the tap is pinned, brew installs the spec from it and not from the API, the tap is restored; nothing is downloaded by dev"
+    Then "the tap is pinned, brew installs the spec from it and not from the API, the tap is restored; nothing is downloaded by dev; the converge is a fact and the install a spin (brew is ours)"
     1 * pinner.pin!(pinned_tap, COMMIT)
     1 * Open3.capture3(*cache_env(dir), *PINNED_ENV, "brew", "install", spec) >> ["", "", stub(success?: true)]
     1 * pinner.restore!(pinned_tap)
     0 * Open3.capture3(*cache_env(dir), "brew", "update")
     0 * Open3.capture3("curl", any_parameters)
-    out.include?("converging")
+    ui.rows == [
+      [:note, "cmake is 4.4.4 here — converging to the locked 4.4.5", 0],
+      [:spin, "Installing #{spec} 4.4.5 from #{pinned_tap} at #{COMMIT[0, 12]}", 0],
+    ]
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -596,17 +601,24 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
   test "a failed brew update is a warning; the upgrade still runs against the index brew has" do
     Given "an offline brew update"
     dir = Dir.mktmpdir("dev-brew-int-test-")
-    integration = converging_integration(dir, typed_mock(Dev::Deps::TapPinner))
+    ui = RecordingUi.new
+    integration = converging_integration(dir, typed_mock(Dev::Deps::TapPinner), ui: ui)
     integration.stubs(:brew_installed?).returns(true)
     brew_lists_cmake("4.4.4", "4.4.5")
     Open3.stubs(:capture3).with(*cache_env(dir), "brew", "update").returns(["", "fatal: unable to access\n", stub(success?: false)])
 
     When "installing"
-    _out, err = capture_io { integration.install_all([legacy_cmake_pin("4.4.5")]) }
+    integration.install_all([legacy_cmake_pin("4.4.5")])
 
-    Then
+    Then "the refresh closed as the failure it was, the warning follows it as a note with brew's words, and the upgrade is its own spin"
     1 * Open3.capture3(*cache_env(dir), "brew", "upgrade", "cmake") >> ["", "", stub(success?: true)]
-    err.include?("brew update failed")
+    ui.rows == [
+      [:note, "cmake is 4.4.4 here — converging to the locked 4.4.5", 0],
+      [:spin, "Refreshing brew's index", 0],
+      [:note, "{{x}} brew update failed (fatal: unable to access) — upgrading from the index brew has", 0],
+      [:spin, "Upgrading cmake", 0],
+    ]
+    ui.out_text.lines.map(&:chomp).include?("✗ Refreshing brew's index")
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -729,7 +741,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
         metadata: { "tap" => "d3mlabs/d3mlabs", "tap_commit" => "e5810c4f", "format" => "source" }),
     ]
     integration.stubs(:brew_installed?).returns(false)
-    integration.stubs(:verify_installed!)
+    integration.stubs(:verify_installed!).returns(false)
 
     When "installing all"
     integration.install_all(deps)
@@ -925,7 +937,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
         version: "4.3.4", hash: nil, metadata: {}),
     ]
     integration.stubs(:brew_installed?).returns(false)
-    integration.stubs(:verify_installed!)
+    integration.stubs(:verify_installed!).returns(false)
     Open3.expects(:capture3).with(*cache_env(dir), "brew", "install", "cmake").returns(["", "", stub(success?: true)])
 
     When "installing all"
@@ -955,7 +967,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
         version: "4.3.4", hash: nil, metadata: {}),
     ]
     integration.stubs(:brew_installed?).returns(false)
-    integration.stubs(:verify_installed!)
+    integration.stubs(:verify_installed!).returns(false)
     Open3.expects(:capture3)
          .with("sudo", "-n", "-u", owner, cache_assignment(dir), owner_brew(prefix), "install", "cmake")
          .returns(["", "", stub(success?: true)])
@@ -985,7 +997,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
       pin_taps: true, tap_pinner: pinner,
     )
     integration.stubs(:brew_installed?).returns(false)
-    integration.stubs(:verify_installed!)
+    integration.stubs(:verify_installed!).returns(false)
     argv = T.let(nil, T.nilable(T::Array[String]))
     Open3.stubs(:capture3).with { |*args| argv = args if args.include?("install") }.returns(["", "", stub(success?: true)])
 
@@ -1012,7 +1024,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
       repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: prefix,
     )
     integration.stubs(:brew_installed?).returns(false)
-    integration.stubs(:verify_installed!)
+    integration.stubs(:verify_installed!).returns(false)
     refusal = "sudo: sorry, you are not allowed to set the following environment variables: HOMEBREW_CACHE\n"
     Open3.stubs(:capture3)
          .with("sudo", "-n", "-u", owner, cache_assignment(dir), owner_brew(prefix), "install", "cmake")
@@ -1049,7 +1061,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
         version: "4.3.4", hash: nil, metadata: {}),
     ]
     integration.stubs(:brew_installed?).returns(false)
-    integration.stubs(:verify_installed!)
+    integration.stubs(:verify_installed!).returns(false)
     Open3.stubs(:capture3)
          .with("sudo", "-n", "-u", owner, cache_assignment(dir), owner_brew(prefix), "install", "cmake")
          .returns(["", "sudo: a password is required\n", stub(success?: false)])
@@ -1223,7 +1235,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
         version: "4.4.3", hash: nil, metadata: {}),
     ]
     integration.stubs(:brew_installed?).returns(true)
-    integration.stubs(:verify_installed!)
+    integration.stubs(:verify_installed!).returns(false)
 
     When "installing all"
     integration.install_all(deps)
@@ -1255,7 +1267,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
         version: "0.2.5", hash: nil, metadata: {}),
     ]
     integration.stubs(:brew_installed?).returns(true)
-    integration.stubs(:verify_installed!)
+    integration.stubs(:verify_installed!).returns(false)
 
     When "installing all"
     integration.install_all(deps)
@@ -1316,7 +1328,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
         version: "4.4.3", hash: nil, metadata: {}),
     ]
     integration.stubs(:brew_installed?).returns(true)
-    integration.stubs(:verify_installed!)
+    integration.stubs(:verify_installed!).returns(false)
 
     When "installing all"
     integration.install_all(deps)
@@ -1346,7 +1358,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
         version: "3.12.8", hash: nil, metadata: { "version_suffix" => "3.12" }),
     ]
     integration.stubs(:brew_installed?).returns(true)
-    integration.stubs(:verify_installed!)
+    integration.stubs(:verify_installed!).returns(false)
 
     When "installing all"
     integration.install_all(deps)
@@ -1377,7 +1389,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
         version: "3.12.8", hash: nil, metadata: { "version_suffix" => "3.12" }),
     ]
     integration.stubs(:brew_installed?).returns(true)
-    integration.stubs(:verify_installed!)
+    integration.stubs(:verify_installed!).returns(false)
 
     When "installing all"
     integration.install_all(deps)
@@ -1408,7 +1420,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
         version: "4.4.3", hash: nil, metadata: {}),
     ]
     integration.stubs(:brew_installed?).returns(true)
-    integration.stubs(:verify_installed!)
+    integration.stubs(:verify_installed!).returns(false)
 
     When "installing all"
     integration.install_all(deps)
@@ -1440,7 +1452,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
         version: nil, hash: nil, metadata: { "cask" => true }),
     ]
     integration.stubs(:brew_installed?).returns(true)
-    integration.stubs(:verify_installed!)
+    integration.stubs(:verify_installed!).returns(false)
 
     When "installing all"
     integration.install_all(deps)
@@ -1460,25 +1472,30 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     lay_cellar(prefix, "cmake" => ["4.4.3"])
     FileUtils.chmod(0o555, prefix)
     brew_env = Dev::BrewEnv.new(path: Pathname(dir) / "brew.env")
+    ui = RecordingUi.new
     integration = Dev::Deps::BrewIntegration.new(
       repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir),
-      project_dir: dir, brew_prefix: prefix, brew_env: brew_env,
+      project_dir: dir, brew_prefix: prefix, brew_env: brew_env, ui: ui,
     )
     deps = [
       Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
         version: "4.4.3", hash: nil, metadata: {}),
     ]
     integration.stubs(:brew_installed?).returns(true)
-    integration.stubs(:verify_installed!)
+    integration.stubs(:verify_installed!).returns(false)
 
     When "installing all"
-    _out, err = capture_io { integration.install_all(deps) }
+    integration.install_all(deps)
 
-    Then "the keg is still activated for this project, retention is skipped and said so"
+    Then "the keg is still activated for this project, retention is skipped and said so, after the facts"
     _ * Kernel.system >> true
     brew_lisp(dir).include?("cmake/4.4.3/bin")
     !File.exist?(File.join(dir, "brew.env"))
-    err.include?("brew.env")
+    ui.rows == [
+      [:note, "{{v}} cmake 4.4.3 already installed", 0],
+      [:note, "{{v}} activated 1 keg bin(s) on the project PATH (.shadowenv.d/515_brew.lisp)", 0],
+      [:note, "brew writes are escalated to the prefix owner; not recording locked formulae in this user's brew.env", 0],
+    ]
 
     Cleanup
     FileUtils.chmod(0o755, prefix)
@@ -1503,7 +1520,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     ]
     integration.stubs(:brew_installed?).with("cmake").returns(true)
     integration.stubs(:brew_installed?).with("ninja").returns(false)
-    integration.stubs(:verify_installed!)
+    integration.stubs(:verify_installed!).returns(false)
     integration.stubs(:run_brew_install).with("ninja", "ninja").raises(Dev::Deps::BrewIntegration::InstallError, "boom")
 
     When "installing all"
@@ -1541,5 +1558,97 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
 
     Cleanup
     FileUtils.rm_rf(dir)
+  end
+
+  test "the batch speaks through its Ui (dev#573): a fresh formula is a spin (brew is ours), a tap a step, a satisfied pin a fact, the activation a fact" do
+    Given "a tap to register, one formula brew lacks and one it has at the locked version, over a recording Ui"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    lay_cellar(prefix, "cmake" => ["4.4.3"])
+    ui = RecordingUi.new
+    tap = Dev::Deps::Tap.new(name: "org/tap")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir),
+      taps: [tap], project_dir: dir, brew_prefix: prefix, ui: ui,
+    )
+    integration.stubs(:system).with("brew", "tap", "org/tap").returns(true)
+    integration.stubs(:brew_installed?).with("cmake").returns(true)
+    integration.stubs(:brew_installed?).with("ninja").returns(false)
+    integration.stubs(:verify_installed!).returns(false)
+    Open3.stubs(:capture3).with(*cache_env(dir), "brew", "install", "ninja").returns(["", "", stub(success?: true)])
+    deps = [
+      Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: "4.4.3", hash: nil, metadata: {}),
+      Dev::Deps::Dependency.new(name: "ninja", integration: :brew, group: :build, version: "1.12.1", hash: nil, metadata: {}),
+    ]
+
+    When "installing all"
+    integration.install_all(deps)
+
+    Then "the tap is a step (brew tap owns the terminal), the install a spin, then the facts in order"
+    ui.rows == [
+      [:step, "Registering the tap org/tap", 0],
+      [:spin, "Installing ninja", 0],
+      [:note, "{{v}} cmake 4.4.3 already installed", 0],
+      [:note, "{{v}} activated 1 keg bin(s) on the project PATH (.shadowenv.d/515_brew.lisp)", 0],
+    ]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "an escalated write is a step, named for the owner whose brew it writes: sudo owns the terminal" do
+    Given "an unwritable prefix and a formula brew lacks"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    FileUtils.mkdir_p(prefix)
+    FileUtils.chmod(0o555, prefix)
+    owner = Etc.getpwuid(File.stat(prefix).uid).name
+    ui = RecordingUi.new
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: prefix, ui: ui,
+    )
+    integration.stubs(:brew_installed?).returns(false)
+    integration.stubs(:verify_installed!).returns(false)
+    Open3.stubs(:capture3).with("sudo", "-n", "-u", owner, cache_assignment(dir), owner_brew(prefix), "install", "cmake")
+         .returns(["", "", stub(success?: true)])
+
+    When "installing"
+    integration.install_all([legacy_cmake_pin("4.3.4")])
+
+    Then
+    ui.rows == [[:step, "Installing cmake (sudo -u #{owner})", 0]]
+
+    Cleanup
+    FileUtils.chmod(0o755, prefix)
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a failing write closes its spin as ✗ and the batch's aggregate carries brew's words" do
+    Given "a formula brew refuses"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    ui = RecordingUi.new
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: dir, ui: ui,
+    )
+    integration.stubs(:brew_installed?).returns(false)
+    Open3.stubs(:capture3).with(*cache_env(dir), "brew", "install", "cmake").returns(["", "Error: no bottle\n", stub(success?: false)])
+
+    When "installing"
+    integration.install_all([legacy_cmake_pin("4.3.4")])
+
+    Then
+    error = raises Dev::Deps::Integration::PartialInstallError
+    error.failures.map(&:first) == ["cmake"]
+    error.failures[0][1].is_a?(Dev::Deps::BrewIntegration::InstallError)
+    ui.rows == [[:spin, "Installing cmake", 0]]
+    ui.out_text.lines.map(&:chomp) == ["✗ Installing cmake"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "IndexUpdateError carries brew's words, trimmed" do
+    Expect
+    Dev::Deps::BrewIntegration::IndexUpdateError.new(stderr: "fatal: unable to access\n").message == "brew update failed (fatal: unable to access)"
   end
 end

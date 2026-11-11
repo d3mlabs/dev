@@ -72,12 +72,15 @@ module Dev
 
       private
 
+      # An installed tree is a fact; a missing one is two steps — curl and
+      # unzip each run with the terminal — and the fact of where it landed.
+      #
       # @param dep [Dependency]
       sig { params(dep: Dependency).void }
       def install(dep)
         key = tree_key(dep)
         if (installed = store!.tree(key))
-          puts ">>> #{dep.name} already installed at #{installed}"
+          @ui.note("{{v}} #{dep.name} is installed at #{installed}")
           return
         end
 
@@ -86,13 +89,14 @@ module Dev
           tool = staging / "tool"
           FileUtils.mkdir_p(tool)
 
-          puts ">>> Downloading #{dep.name} from #{dep.metadata["url"]}"
-          download(dep, archive)
-          verify(dep, archive)
-          extract(archive, tool)
+          @ui.step("Downloading #{dep.name} from #{dep.metadata["url"]}") do
+            download(dep, archive)
+            verify(dep, archive)
+          end
+          @ui.step("Extracting #{dep.name}") { extract(archive, tool) }
           tool
         end
-        puts ">>> Installed #{dep.name} to #{published}"
+        @ui.note("{{v}} #{dep.name} installed at #{published}")
       end
 
       # @param dep [Dependency]

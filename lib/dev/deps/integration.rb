@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "pathname"
+require "dev/ui"
 require_relative "../data_root"
 require_relative "artifact_store"
 require_relative "dependency"
@@ -20,6 +21,14 @@ module Dev
     # project uses; dev locks the manifest's exports into the using
     # project's lock and installs them before this integration's batch
     # (ADR-0011).
+    #
+    # What an install says, it says through its Ui (plans#52, dev#573),
+    # inside the frame the Installer opens for its batch: a **step** for a
+    # child handed the terminal (an installer that may prompt, sudo), a
+    # **spin** for a captured call it parses, a **note** for a fact with its
+    # glyph (`{{v}}` already installed, `{{x}}` a warning after the step it
+    # qualifies). An integration with nothing to report says nothing; none
+    # writes to stdout directly.
     class Integration
       extend T::Sig
 
@@ -52,10 +61,13 @@ module Dev
 
       # @param repository [Repository, nil] source adapter for this integration type
       # @param store      [ArtifactStore, nil] where installed trees and downloaded blobs live
-      sig { params(repository: T.nilable(Repository), store: T.nilable(ArtifactStore)).void }
-      def initialize(repository:, store:)
+      # @param ui         [Ui] what the install says, and where a child that
+      #   owns the terminal is announced (the plain tier when nothing listens)
+      sig { params(repository: T.nilable(Repository), store: T.nilable(ArtifactStore), ui: Ui).void }
+      def initialize(repository:, store:, ui: NoUi.new)
         @repository = repository
         @store = store
+        @ui = ui
       end
 
       class << self

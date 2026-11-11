@@ -37,16 +37,18 @@ module Dev
       # @param store          [ArtifactStore, nil] the store whose bundler tool cache bundler downloads into
       # @param project_root   [String, Pathname] root the generated Gemfile lives in
       # @param shadowenv_exec [ShadowenvExec]    spawn seam for the project's Ruby toolchain
+      # @param ui [Ui] what the install says its work through
       sig do
         params(
           repository: T.nilable(Repository),
           store: T.nilable(ArtifactStore),
           project_root: T.any(String, Pathname),
           shadowenv_exec: ShadowenvExec,
+          ui: Ui,
         ).void
       end
-      def initialize(repository:, store:, project_root:, shadowenv_exec: ShadowenvExec.new(project_root: project_root))
-        super(repository:, store:)
+      def initialize(repository:, store:, project_root:, shadowenv_exec: ShadowenvExec.new(project_root: project_root), ui: NoUi.new)
+        super(repository:, store:, ui:)
         @project_root = T.let(Pathname(project_root), Pathname)
         @shadowenv_exec = shadowenv_exec
       end

@@ -5,6 +5,7 @@ require "test_helper"
 require "dev/deps/ficsit_repository"
 require "dev/lifecycle"
 require "support/alpakit_fixtures"
+require "support/answering_ui"
 require "support/fake_ficsit_client"
 require "support/lifecycle_fixtures"
 require "fileutils"
@@ -368,16 +369,46 @@ class Dev::Deps::FicsitRepositoryTest < Minitest::Test
   end
 
   test "the default API key is the ficsit namespace's api_key, FICSIT_API_KEY in the env, and the publisher reads as its channel" do
-    Expect "the credential a `dev cred get ficsit api_key` resolves (the env wins, so nothing prompts here)"
-    key = begin
-      ENV["FICSIT_API_KEY"] = "from-env"
-      Dev::Deps::FicsitRepository::DEFAULT_API_KEY.call
-    ensure
-      ENV.delete("FICSIT_API_KEY")
-    end
-    key == "from-env"
+    Given "a publisher with no key injected, the key in the env, and a mod SMR does not know"
+    ui = AnsweringUi.new
+    client = FakeFicsitClient.new(upload_answers.merge("GetModId" => { "getModByReference" => nil }))
+    repository = Dev::Deps::FicsitRepository.new(client:, ui: ui)
+    ENV["FICSIT_API_KEY"] = "from-env"
+
+    When "publishing"
+    repository.publish(snappy_shipments, channel:, track: Dev::Lifecycle::Track::Live, scratch: @scratch)
+
+    Then "the one call carried the credential a `dev cred get ficsit api_key` resolves (the env wins, so nothing was asked at the Ui)"
+    raises Dev::Deps::FicsitRepository::ModNotFoundError
+    client.calls.map(&:token) == ["from-env"]
+    ui.secrets_asked == []
     Dev::Deps::FicsitRepository.new.to_s == "ficsit"
     Dev::Deps::FicsitRepository.new.is_a?(Dev::Lifecycle::Publisher)
+
+    Cleanup
+    ENV.delete("FICSIT_API_KEY")
+  end
+
+  test "a first-time API key is onboarded at the publisher's Ui" do
+    Given "a publisher over a terminal that pastes the key, no key anywhere yet, and a mod SMR does not know"
+    tmpdir = Dir.mktmpdir("ficsit-cred-")
+    ENV["XDG_CONFIG_HOME"] = tmpdir
+    Dev::Credentials.stubs(:keychain_available?).returns(false)
+    ui = AnsweringUi.new(answer: false, secret: "smr-key")
+    client = FakeFicsitClient.new(upload_answers.merge("GetModId" => { "getModByReference" => nil }))
+    repository = Dev::Deps::FicsitRepository.new(client:, ui: ui)
+
+    When "publishing"
+    repository.publish(snappy_shipments, channel:, track: Dev::Lifecycle::Track::Live, scratch: @scratch)
+
+    Then "the paste was asked for at this Ui, and is the credential the call carried"
+    raises Dev::Deps::FicsitRepository::ModNotFoundError
+    ui.secrets_asked == ["Paste your ficsit.app API key"]
+    client.calls.map(&:token) == ["smr-key"]
+
+    Cleanup
+    ENV.delete("XDG_CONFIG_HOME")
+    FileUtils.rm_rf(tmpdir)
   end
 
   test "the default sleeper is Kernel.sleep: the processing wait really waits outside tests" do

@@ -90,18 +90,20 @@ module Dev
       sig { params(dep: Dependency, platform: String, target: T::Hash[String, T.untyped]).void }
       def install_platform(dep, platform, target)
         key = self.class.cache_key(name: dep.name, version: dep.version, platform:, hash: target["hash"])
+        label = "#{dep.name}@#{dep.version} (#{platform})"
         if store!.blob(key)
-          puts ">>> #{dep.name}@#{dep.version} (#{platform}) already cached"
+          @ui.note("{{v}} #{label} is cached")
           return
         end
 
-        Dir.mktmpdir("dev-ficsit-fetch-") do |tmpdir|
-          zip = File.join(tmpdir, "mod.zip")
-          puts ">>> Downloading #{dep.name}@#{dep.version} (#{platform})"
-          download(target["link"], zip)
-          verify(zip, target["hash"], dep, platform)
-          File.open(zip, "rb") { |file| store!.put_blob(key, file) }
-          puts ">>> Cached #{dep.name}@#{dep.version} (#{platform})"
+        # A step: curl runs with the terminal.
+        @ui.step("Downloading #{label}") do
+          Dir.mktmpdir("dev-ficsit-fetch-") do |tmpdir|
+            zip = File.join(tmpdir, "mod.zip")
+            download(target["link"], zip)
+            verify(zip, target["hash"], dep, platform)
+            File.open(zip, "rb") { |file| store!.put_blob(key, file) }
+          end
         end
       end
 

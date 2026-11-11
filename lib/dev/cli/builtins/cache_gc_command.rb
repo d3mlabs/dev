@@ -23,9 +23,10 @@ module Dev
         KEEP_FLAG = "--keep"
         TOOL_CACHES_FLAG = "--tool-caches"
 
-        # Builds the GC over a project's lockfile (per-call project root).
+        # Builds the GC over a project's lockfile (per-call project root),
+        # speaking through the run's Ui.
         CacheGcFactory = T.type_alias do
-          T.proc.params(lockfile: Dev::Deps::Lockfile).returns(Dev::Deps::CacheGc)
+          T.proc.params(lockfile: Dev::Deps::Lockfile, ui: Dev::Ui).returns(Dev::Deps::CacheGc)
         end
 
         # Builds the snapshot-branch namespace over a project's checkout
@@ -36,8 +37,8 @@ module Dev
 
         sig { params(cache_gc_factory: CacheGcFactory, snapshot_branches_factory: SnapshotBranchesFactory).void }
         def initialize(
-          cache_gc_factory: ->(lockfile) {
-            Dev::Deps::CacheGc.new(lockfile:, engine: Dev::ContainerEngine.resolve)
+          cache_gc_factory: ->(lockfile, ui) {
+            Dev::Deps::CacheGc.new(lockfile:, engine: Dev::ContainerEngine.resolve, ui:)
           },
           snapshot_branches_factory: ->(root) {
             Dev::Lifecycle::SnapshotBranches.new(git: Dev::Lifecycle::Git.new(root:))
@@ -76,7 +77,7 @@ module Dev
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)
           project = context.project!
-          gc = @cache_gc_factory.call(Dev::Deps::Lockfile.new(dir: project.root))
+          gc = @cache_gc_factory.call(Dev::Deps::Lockfile.new(dir: project.root), context.ui)
           gc.gc(
             keep: parse_keep(args), images: project.project_images.pinned,
             tool_caches: args.flag?(TOOL_CACHES_FLAG),

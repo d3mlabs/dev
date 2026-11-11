@@ -7,6 +7,7 @@ require "dev/deps/gh_repository"
 require "dev/deps/local_store"
 require "dev/deps/dependency"
 require "digest"
+require "support/recording_ui"
 require "tmpdir"
 
 # GhIntegration with the gh CLI download boundary replaced by copying
@@ -116,12 +117,56 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     )
   end
 
-  def build_integration(fixture_files, data_root)
+  def build_integration(fixture_files, data_root, ui: RecordingUi.new)
     FixtureGhIntegration.new(
       fixture_files: fixture_files,
       repository: Dev::Deps::GhRepository.new,
       store: Dev::Deps::LocalStore.new(data_root: data_root),
+      ui: ui,
     )
+  end
+
+  test "a fresh install speaks through the Ui (dev#573): steps for the children handed the terminal, a spin for the digest check, then the fact of where it landed" do
+    Given "a split zstd tarball fixture and a gh dependency, over a recording Ui"
+    dir = Dir.mktmpdir("dev-gh-int-test-")
+    parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
+    dep = build_dependency(parts)
+    ui = RecordingUi.new
+    integration = build_integration(parts, dir, ui: ui)
+
+    When "installing"
+    integration.install_all([dep])
+
+    Then
+    ui.rows == [
+      [:step, "Downloading UnrealEngine@5.6.1-css-83 from satisfactorymodding/UnrealEngine", 0],
+      [:spin, "Verifying UnrealEngine@5.6.1-css-83", 0],
+      [:step, "Extracting UnrealEngine@5.6.1-css-83", 0],
+      [:note, "{{v}} UnrealEngine@5.6.1-css-83 installed at #{File.join(dir, "gh", "satisfactorymodding", "UnrealEngine", "5.6.1-css-83")}", 0],
+    ]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "an installed tree is one fact on the Ui, and nothing runs" do
+    Given "a version dir with a matching marker, over a recording Ui"
+    dir = Dir.mktmpdir("dev-gh-int-test-")
+    parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
+    version_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine", "5.6.1-css-83")
+    FileUtils.mkdir_p(version_dir)
+    File.write(File.join(version_dir, ".dev-gh-release"), "5.6.1-css-83")
+    ui = RecordingUi.new
+    integration = build_integration(parts, dir, ui: ui)
+
+    When "installing again"
+    integration.install_all([build_dependency(parts)])
+
+    Then
+    ui.rows == [[:note, "{{v}} UnrealEngine@5.6.1-css-83 is installed at #{version_dir}", 0]]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
   test "tree_key places a gh tree by identity: ~/.dev/gh/<owner>/<repo>/<tag>" do

@@ -316,7 +316,7 @@ module Dev
       def bind_placements(manifest, project)
         binder = PlacementBinder.new(images: project.project_images)
         targets = binder.bind_targets(manifest.targets)
-        project_publishers = ProjectPublishers.new(root: project.root)
+        project_publishers = ProjectPublishers.new(root: project.root, ui: @ui)
         publishers = project_publishers.contributed
         channel_binder = ChannelBinder.new(publishers:, reach: project_publishers.reach, targets: manifest.targets.values)
         channels = channel_binder.bind(manifest.channels)

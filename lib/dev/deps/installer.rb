@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "sorbet-runtime"
+require "dev/ui"
 require_relative "dependency"
 require_relative "integration"
 
@@ -10,7 +11,10 @@ module Dev
     # Reads locked dependencies and dispatches to integrations.
     #
     # Cross-cutting install concerns (env filtering, install ordering) live
-    # here — not in Integration or Lockfile.
+    # here — not in Integration or Lockfile. So does the shape of the
+    # report (plans#52, dev#573): one Ui frame per batch dispatched, titled
+    # by the lock keys it spans, inside which the integration speaks; a
+    # type with no selected pins has no batch, and so says nothing.
     class Installer
       extend T::Sig
 
@@ -44,10 +48,12 @@ module Dev
 
       # @param lockfile [Lockfile] lockfile reader
       # @param integrations [Hash{Symbol => Integration}] integration type → integration
-      sig { params(lockfile: Lockfile, integrations: T::Hash[Symbol, T.untyped]).void }
-      def initialize(lockfile:, integrations:)
+      # @param ui [Ui] where each batch's frame opens
+      sig { params(lockfile: Lockfile, integrations: T::Hash[Symbol, T.untyped], ui: Ui).void }
+      def initialize(lockfile:, integrations:, ui: NoUi.new)
         @lockfile = lockfile
         @integrations = integrations
+        @ui = ui
       end
 
       # Read lockfiles and dispatch to integrations, in the order the lock's
@@ -223,26 +229,38 @@ module Dev
           "an integration's needs must be pins of other integrations"
       end
 
-      # Hand one batch to its integration.
+      # Hand one batch to its integration, in a frame of its own.
       #
       # A failing integration never blocks the others: the graph only orders
       # the attempts, so a batch whose prerequisite failed still runs and
       # reports its own, derivative failure after the root cause. Failures
       # are collected — per-dep entries when the integration isolated them
       # (PartialInstallError), one entry when it failed whole (e.g. a tap
-      # registration preamble) — and reported by the caller's aggregate.
+      # registration preamble) — and reported by the caller's aggregate. The
+      # raise crosses the frame, so the frame closes as a failure; the
+      # reasons are the aggregate's to say, once, after every batch ran.
       #
       # @param integration [Integration] the batch's instance
       # @param deps [Array<Dependency>] its pins
       # @return [Array<String>] one entry per failure
       sig { params(integration: Integration, deps: T::Array[Dependency]).returns(T::Array[String]) }
       def dispatch(integration, deps)
-        integration.install_all(deps)
+        @ui.frame(frame_title(deps)) { integration.install_all(deps) }
         []
       rescue Integration::PartialInstallError => e
         e.failures.map { |name, error| "#{label(deps)}: #{name} — #{error.message}" }
       rescue StandardError => e
         ["#{label(deps)}: #{e.message}"]
+      end
+
+      # The batch's frame title: its lock keys and how many pins it carries
+      # ("brew+ruby+python: 3 pins").
+      #
+      # @param deps [Array<Dependency>] one batch
+      # @return [String]
+      sig { params(deps: T::Array[Dependency]).returns(String) }
+      def frame_title(deps)
+        "#{label(deps)}: #{deps.size} #{deps.size == 1 ? "pin" : "pins"}"
       end
 
       # The lock keys a batch spans, joined ("cmake+url").

@@ -6,6 +6,7 @@ require "dev/deps/xcode_integration"
 require "dev/deps/xcode_repository"
 require "dev/deps/local_store"
 require "dev/deps/dependency"
+require "support/recording_ui"
 require "tmpdir"
 require "fileutils"
 
@@ -77,6 +78,48 @@ class Dev::Deps::XcodeIntegrationTest < Minitest::Test
       install_root: File.join(dir, "Applications"),
       **overrides,
     )
+  end
+
+  test "the install speaks through the Ui (dev#573): xcodes and xcodebuild are steps (each owns the terminal), the bundle and the published env facts" do
+    Given "no bundle on disk, no Metal toolchain, a working xcodes, over a recording Ui"
+    dir = Dir.mktmpdir("dev-xcode-int-test-")
+    FileUtils.mkdir_p(File.join(dir, "project"))
+    ui = RecordingUi.new
+    integration = build_integration(dir, metal_present: false, ui: ui)
+    developer_dir = File.join(dir, "Applications", "Xcode-26.1.1.app", "Contents", "Developer")
+
+    When "installing twice"
+    integration.install_all([build_dependency("26.1.1")])
+    integration.install_all([build_dependency("26.1.1")])
+
+    Then "the first pass is two steps and a fact; the second, with the bundle present and the env published, one fact (the Metal probe is the fake's)"
+    ui.rows == [
+      [:step, "Installing Xcode 26.1.1 via xcodes (this downloads several GB)", 0],
+      [:step, "Downloading the Metal toolchain component for Xcode 26.1.1 (~700 MB)", 0],
+      [:note, "{{v}} Xcode 26.1.1: DEVELOPER_DIR published via shadowenv (#{developer_dir})", 0],
+      [:note, "{{v}} Xcode 26.1.1 is installed at #{File.join(dir, "Applications", "Xcode-26.1.1.app")}", 0],
+      [:step, "Downloading the Metal toolchain component for Xcode 26.1.1 (~700 MB)", 0],
+    ]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "off macOS the batch says so, once, and nothing else" do
+    Given "a non-darwin host over a recording Ui"
+    dir = Dir.mktmpdir("dev-xcode-int-test-")
+    FileUtils.mkdir_p(File.join(dir, "project"))
+    ui = RecordingUi.new
+    integration = build_integration(dir, darwin: false, ui: ui)
+
+    When "installing"
+    integration.install_all([build_dependency("26.1.1")])
+
+    Then
+    ui.rows == [[:note, "xcode: not a macOS host, skipping", 0]]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
   test "install_all is a no-op off macOS" do
