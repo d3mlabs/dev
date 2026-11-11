@@ -67,6 +67,11 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  tree holds a symlink or a lisp path, and path-bound artifacts run by
  their store path.
  → .cursor/skills/learnings/installed-state-in-the-store/
+- [architecture/own-before-replace] A remote's takeover flag (`--replace`,
+ `--force`, `--clobber`) is never idempotency: look the name up first,
+ replace only what is ours, refuse any other holder by name — a naming
+ scheme only lowers how often the collision fires.
+ → .cursor/skills/learnings/own-before-replace/
 
 ## toolchain
 
