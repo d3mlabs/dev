@@ -3,6 +3,7 @@
 
 require "fileutils"
 require "json"
+require "dev/settings"
 
 module Dev
   # Points the Homebrew `docker` CLI at Homebrew's CLI plugins so `docker
@@ -28,19 +29,23 @@ module Dev
     KEY = "cliPluginsExtraDirs"
 
     # @param config_path [String] the docker CLI config file (~/.docker/config.json)
-    # @param brew_prefix [String] the Homebrew prefix the plugins live under
-    sig { params(config_path: String, brew_prefix: String).void }
-    def initialize(config_path: File.join(Dir.home, ".docker", "config.json"), brew_prefix: self.class.default_brew_prefix)
+    # @param brew_prefix [String, nil] the Homebrew prefix the plugins live
+    #   under (Settings.brew_prefix); nil on a machine without brew
+    sig { params(config_path: String, brew_prefix: T.nilable(String)).void }
+    def initialize(config_path: File.join(Dir.home, ".docker", "config.json"), brew_prefix: Settings.brew_prefix)
       @config_path = config_path
       @brew_prefix = brew_prefix
     end
 
     # Ensure the brew plugin dir is listed in cliPluginsExtraDirs.
     #
-    # @return [Symbol] :added when the entry was written, :already_present otherwise
+    # @return [Symbol] :added when the entry was written, :already_present
+    #   when it was there, :no_brew when there is no prefix to point at
     # @raise [UnreadableConfigError] when an existing config.json is not JSON
     sig { returns(Symbol) }
     def ensure!
+      return :no_brew unless @brew_prefix
+
       plugin_dir = File.join(@brew_prefix, PLUGIN_DIR)
       config = read_config
       dirs = Array(config[KEY])
@@ -50,19 +55,6 @@ module Dev
       FileUtils.mkdir_p(File.dirname(@config_path))
       File.write(@config_path, "#{JSON.pretty_generate(config)}\n")
       :added
-    end
-
-    class << self
-      extend T::Sig
-
-      # The Homebrew prefix: the shellenv export when present, else the
-      # platform default (Apple silicon vs Intel).
-      #
-      # @return [String]
-      sig { returns(String) }
-      def default_brew_prefix
-        ENV.fetch("HOMEBREW_PREFIX") { RUBY_PLATFORM.include?("arm64") ? "/opt/homebrew" : "/usr/local" }
-      end
     end
 
     private
