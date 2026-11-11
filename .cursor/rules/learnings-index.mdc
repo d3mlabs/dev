@@ -67,6 +67,11 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  tree holds a symlink or a lisp path, and path-bound artifacts run by
  their store path.
  → .cursor/skills/learnings/installed-state-in-the-store/
+- [architecture/ui-seam-ownership] On the `Dev::Ui` seam the coordinator
+ owns the frame, the unit inside speaks step (child may take the
+ terminal) / spin (captured call) / note (fact with glyph), silence means
+ nothing to do, and tests assert `RecordingUi#rows`, never `out.string`.
+ → .cursor/skills/learnings/ui-seam-ownership/
 
 ## toolchain
 
