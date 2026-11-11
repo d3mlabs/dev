@@ -38,3 +38,6 @@ The seams:
 - Project commands live in dev.yml, never in dev's core; `commands:` parse
   to the node's `children` (`CommandGroup` when no `run:`) and merge child
   by child with a same-named builtin in the repository.
+- The `Dev::Ui` tier is chosen once in `bin/dev` and handed to **both**
+  roots (`GlobalDispatch.new(ui:)`, `Runner.new(ui:)`); a root left on its
+  `NoUi` default renders every leaf plain at a terminal (dev#575).
