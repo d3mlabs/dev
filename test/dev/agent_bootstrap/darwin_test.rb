@@ -20,16 +20,22 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
   # probe never drifts from the desire.
   SUDOERS_PROBE = ["sudo", "cat", "/etc/sudoers.d/ai-flow-agent"].freeze
 
+  # The mac's owner lookup: the human installed brew, so the prefix — and
+  # every other path a test makes — is theirs.
+  HUMAN_OWNS_EVERYTHING = ->(_path) { "human" }
+
   # Filesystem-facing params always point at tmp paths: an already-provisioned
   # shared root (DDC dir included) and no ~/.dev to migrate; and no
   # deployment tap (the host's Settings never decide a test), so
-  # identity-step tests stay focused. The Ui is a recorder: pass one to
-  # read what the bootstrap said.
+  # identity-step tests stay focused. Every path is the human's — the owner
+  # lookup never stats the host, whose tmpdir is whoever runs the suite
+  # (on the box, a user named ai-agent, which read as the agent owning the
+  # prefix). The Ui is a recorder: pass one to read what the bootstrap said.
   def bootstrap(executor, **kwargs)
     provisioned_root = Dir.mktmpdir.tap { |root| FileUtils.mkdir_p(File.join(root, "ddc")) }
     defaults = {
       data_root: provisioned_root, home_dev: File.join(Dir.mktmpdir, "absent-home-dev"),
-      launch_agents_dir: Dir.mktmpdir, brew_executable: nil, tap: nil,
+      launch_agents_dir: Dir.mktmpdir, brew_executable: nil, owner_of: HUMAN_OWNS_EVERYTHING, tap: nil,
     }
     Dev::AgentBootstrap::Darwin.new(runner_user: "human", executor: executor, ui: RecordingUi.new, **defaults.merge(kwargs))
   end
