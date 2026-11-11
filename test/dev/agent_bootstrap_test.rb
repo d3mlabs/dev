@@ -70,6 +70,53 @@ class Dev::AgentBootstrapTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  # dev#568: the brew the edge grants is the one under the prefix dev
+  # resolves (Settings.brew_prefix) — one resolution, not a second list of
+  # standard locations beside it. The prefix's own `bin/brew`, never its
+  # realpath: Linuxbrew's is a link into `<prefix>/Homebrew/bin`, and brew
+  # takes its prefix from the path it is invoked by.
+  test "the host's brew is <prefix>/bin/brew under the resolved prefix — #{what}" do
+    Given "a prefix #{what}"
+    dir = Dir.mktmpdir
+    prefix = File.join(dir, "prefix")
+    send(layout, prefix)
+
+    Expect
+    Dev::AgentBootstrap.host_brew(prefix: resolved ? prefix : nil) == (found ? File.join(prefix, "bin", "brew") : nil)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+
+    Where
+    what                                  | resolved | layout                 | found
+    "with brew at bin/brew"               | true     | :brew_at               | true
+    "linking bin/brew into Homebrew/bin"  | true     | :linuxbrew_at          | true
+    "without a bin/brew"                  | true     | :empty_bin_at          | false
+    "unresolved (a machine without brew)" | false    | :empty_bin_at          | false
+  end
+
+  # macOS's layout: brew itself at <prefix>/bin/brew.
+  def brew_at(prefix)
+    executable(File.join(prefix, "bin", "brew"))
+  end
+
+  # Linuxbrew's layout: <prefix>/bin/brew a link into <prefix>/Homebrew/bin.
+  def linuxbrew_at(prefix)
+    executable(File.join(prefix, "Homebrew", "bin", "brew"))
+    FileUtils.mkdir_p(File.join(prefix, "bin"))
+    File.symlink(File.join("..", "Homebrew", "bin", "brew"), File.join(prefix, "bin", "brew"))
+  end
+
+  def empty_bin_at(prefix)
+    FileUtils.mkdir_p(File.join(prefix, "bin"))
+  end
+
+  def executable(path)
+    FileUtils.mkdir_p(File.dirname(path))
+    File.write(path, "")
+    FileUtils.chmod(0o755, path)
+  end
+
   # plans#59: on the box the prefix is the runner user's (dev#337), so the
   # brew edge is agent → runner, onto the Linuxbrew path by its realpath.
   test "on Linux the brew edge targets the runner user's Linuxbrew prefix" do

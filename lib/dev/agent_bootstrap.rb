@@ -8,6 +8,7 @@ require "tempfile"
 
 require "dev/data_root"
 require "dev/runner_user"
+require "dev/settings"
 require "dev/tap_trust"
 require "dev/ui"
 
@@ -109,16 +110,26 @@ module Dev
     # What the drop-in does about brew: the edge it grants, or why none.
     BrewEdgeDecision = T.type_alias { T.any(BrewEdge, NoBrewEdge) }
 
-    # Where brew lives on supported hosts, in discovery order (Apple
-    # Silicon, Intel mac, Linuxbrew).
-    BREW_LOCATIONS = T.let(
-      [
-        "/opt/homebrew/bin/brew",
-        "/usr/local/bin/brew",
-        "/home/linuxbrew/.linuxbrew/bin/brew",
-      ].freeze,
-      T::Array[String],
-    )
+    class << self
+      extend T::Sig
+
+      # The host's brew binary: `<prefix>/bin/brew` under the prefix dev
+      # resolves, when it is there; nil without brew. The prefix's own
+      # `bin/brew`, never its realpath — Linuxbrew's is a link into
+      # `<prefix>/Homebrew/bin`, and brew takes its prefix from the path it
+      # is invoked by (RunnerUser.brew_path says the same).
+      #
+      # @param prefix [String, nil] the machine's brew prefix
+      #   (Settings.brew_prefix; injectable for tests)
+      # @return [String, nil]
+      sig { params(prefix: T.nilable(String)).returns(T.nilable(String)) }
+      def host_brew(prefix: Settings.brew_prefix)
+        return nil unless prefix
+
+        brew = File.join(prefix, "bin", "brew")
+        File.executable?(brew) ? brew : nil
+      end
+    end
 
     # Runs the admin CLIs. `run` streams (sudo password prompts must reach
     # the terminal), `quiet?` probes success silently, `capture` returns
