@@ -2,7 +2,9 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "pathname"
 require "yaml"
+require_relative "version"
 
 module Dev
   # Global (per-machine) settings — the seam where an org's identity enters
@@ -13,8 +15,9 @@ module Dev
   #      DEV_DEPLOYMENT_FORMULA) — CI/fleet management, no files needed
   #   2. user file: ~/.config/dev/config.yml (or $XDG_CONFIG_HOME/dev/…) —
   #      individuals and per-user overrides
-  #   3. system file: $(brew --prefix)/etc/dev/config.yml — shipped by an
-  #      org's deployment formula (see README "Org configuration & deployment")
+  #   3. system file: <brew prefix>/etc/dev/config.yml — shipped by an
+  #      org's deployment formula into the prefix dev's own keg lives in
+  #      (see README "Org configuration & deployment")
   #
   # Keys:
   #
@@ -225,7 +228,7 @@ module Dev
     end
 
     # The system layer an org deployment formula installs into the Homebrew
-    # prefix (pkgetc); nil (an empty layer) on brewless machines.
+    # prefix (pkgetc); nil (an empty layer) when dev runs from no prefix.
     #
     # @return [String, nil]
     sig { returns(T.nilable(String)) }
@@ -237,15 +240,25 @@ module Dev
     class << self
       extend T::Sig
 
-      # The machine's Homebrew prefix: HOMEBREW_PREFIX when set, else the
-      # first standard install location present; nil on brewless machines.
+      # The Homebrew prefix dev runs from: HOMEBREW_PREFIX when set, else
+      # the prefix whose Cellar holds dev's own keg
+      # (`<prefix>/Cellar/dev-core/<version>/libexec/dev`), else nil — a
+      # source checkout, which has no system layer. The prefix is a fact
+      # about where dev is installed, never a guess at the environment: a
+      # job without a login shell exports no HOMEBREW_PREFIX, and probing
+      # standard locations found `/usr/local` on every Linux host whether
+      # or not brew was there (dev#568). The root is read through its
+      # realpath so brew's `opt/` link resolves into the Cellar too.
       #
+      # @param root [String] dev's root (injectable for tests)
       # @return [String, nil]
-      sig { returns(T.nilable(String)) }
-      def brew_prefix
-        prefix = ENV["HOMEBREW_PREFIX"]
-        prefix = nil if prefix && prefix.empty?
-        prefix || ["/opt/homebrew", "/usr/local", "/home/linuxbrew/.linuxbrew"].find { |p| Dir.exist?(p) }
+      sig { params(root: String).returns(T.nilable(String)) }
+      def brew_prefix(root: Dev::Version::ROOT)
+        override = ENV["HOMEBREW_PREFIX"]
+        return override if override && !override.empty?
+
+        cellar = Pathname(File.realpath(root)).ascend.find { |dir| dir.basename.to_s == "Cellar" }
+        cellar&.dirname&.to_s
       end
     end
 

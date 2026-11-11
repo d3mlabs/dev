@@ -372,23 +372,48 @@ class Dev::SettingsTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "the machine's brew prefix is HOMEBREW_PREFIX when set, else the first standard location present, else nil" do
-    Given "a directory standing in for a prefix, named by HOMEBREW_PREFIX; then an empty HOMEBREW_PREFIX with /usr/local the one standard location present"
+  # dev#568: the box's shape — a job without a login shell exports no
+  # HOMEBREW_PREFIX, and /usr/local (present on this test host as on every
+  # Linux one) is not where brew is. The prefix is a fact about where dev
+  # runs from: the Cellar its own keg sits in.
+  test "with HOMEBREW_PREFIX unset the brew prefix is the one whose Cellar holds dev's keg — by keg path or opt link — and a source checkout has none" do
+    Given "a Linuxbrew-shaped prefix holding dev's keg and its opt link, a bare checkout, and no HOMEBREW_PREFIX"
     dir = Dir.mktmpdir("dev-settings-test-")
+    prefix = File.join(dir, "home", "linuxbrew", ".linuxbrew")
+    keg = File.join(prefix, "Cellar", "dev-core", "0.8.9")
+    checkout = File.join(dir, "src", "dev")
+    FileUtils.mkdir_p([File.join(keg, "libexec", "dev", "lib"), File.join(prefix, "opt"), checkout])
+    File.symlink(File.join("..", "Cellar", "dev-core", "0.8.9"), File.join(prefix, "opt", "dev-core"))
+    saved = ENV.delete("HOMEBREW_PREFIX")
+
+    Expect "the prefix dev is installed under, and nil for the checkout — not /usr/local"
+    Dir.exist?("/usr/local")
+    Dev::Settings.brew_prefix(root: File.join(keg, "libexec", "dev")) == File.realpath(prefix)
+    Dev::Settings.brew_prefix(root: File.join(prefix, "opt", "dev-core", "libexec", "dev")) == File.realpath(prefix)
+    Dev::Settings.brew_prefix(root: checkout).nil?
+
+    Cleanup
+    ENV["HOMEBREW_PREFIX"] = saved if saved
+    FileUtils.rm_rf(dir)
+  end
+
+  test "HOMEBREW_PREFIX overrides the keg-derived prefix and names the system layer under it; an empty one counts as unset" do
+    Given "a keg root under one prefix and HOMEBREW_PREFIX naming another; then an empty HOMEBREW_PREFIX"
+    dir = Dir.mktmpdir("dev-settings-test-")
+    keg_root = File.join(dir, "Cellar", "dev-core", "0.8.9", "libexec", "dev")
+    named = File.join(dir, "named")
+    FileUtils.mkdir_p([keg_root, named])
     saved = ENV["HOMEBREW_PREFIX"]
-    ENV["HOMEBREW_PREFIX"] = dir
-    named = Dev::Settings.brew_prefix
+    ENV["HOMEBREW_PREFIX"] = named
+    overridden = Dev::Settings.brew_prefix(root: keg_root)
     system_path = Dev::Settings.new(config_path: File.join(dir, "u.yml")).system_config_path
     ENV["HOMEBREW_PREFIX"] = ""
-    Dir.stubs(:exist?).returns(false)
-    Dir.stubs(:exist?).with("/usr/local").returns(true)
-    found = Dev::Settings.brew_prefix
-    Dir.unstub(:exist?)
+    derived = Dev::Settings.brew_prefix(root: keg_root)
 
-    Expect "the named prefix, the system layer under it, and the found one"
-    named == dir
-    system_path == File.join(dir, "etc", "dev", "config.yml")
-    found == "/usr/local"
+    Expect "the named prefix, the system layer under it, and the keg's prefix once the override is empty"
+    overridden == named
+    system_path == File.join(named, "etc", "dev", "config.yml")
+    derived == File.realpath(dir)
 
     Cleanup
     saved ? ENV["HOMEBREW_PREFIX"] = saved : ENV.delete("HOMEBREW_PREFIX")
