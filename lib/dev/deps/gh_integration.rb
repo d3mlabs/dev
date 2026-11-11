@@ -25,10 +25,11 @@ module Dev
     #   4. Extract (concatenating split .tar.zst.* archives) and publish
     #
     # Build from source (declared with build:, e.g. stock UE which Epic ships as
-    # source only):
-    #   1. Skip when the marker file already records the locked tag (idempotent)
-    #   2. Fetch the tag's source tarball via `gh api .../tarball` (auth'd, follows
-    #      the codeload redirect so private/Epic-gated repos work)
+    # source only) — the only shape a commit pin (sha:) can take, since a bare
+    # commit publishes no release to download assets from:
+    #   1. Skip when the marker file already records the locked version (idempotent)
+    #   2. Fetch the version's source tarball via `gh api .../tarball/<tag-or-sha>`
+    #      (auth'd, follows the codeload redirect so private/Epic-gated repos work)
     #   3. Extract, then run the build recipe with the cwd set to the source tree
     #      and $DEV_SOURCE_DIR / $DEV_INSTALL_DIR / $DEV_VERSION in the environment.
     #      The recipe must leave the final artifact in $DEV_INSTALL_DIR (dev creates
@@ -66,8 +67,9 @@ module Dev
       class << self
         extend T::Sig
 
-        # A gh tree lives at `~/.dev/gh/<owner>/<repo>/<tag>`: the repo slug
-        # the lock records is the identity, the tag the version.
+        # A gh tree lives at `~/.dev/gh/<owner>/<repo>/<version>`: the repo
+        # slug the lock records is the identity, the tag — or the commit SHA
+        # of a sha: pin — the version.
         #
         # @param dep [Dependency] a locked gh dependency
         # @return [TreeKey]
@@ -200,14 +202,19 @@ module Dev
         puts ">>> Installed #{dep.name}@#{dep.version} to #{published}"
       end
 
-      # Fetch the tag's source tarball into archive_path. Uses `gh api .../tarball`
-      # rather than a bare codeload URL so the request carries gh's auth token and
-      # follows the redirect — required for private/Epic-gated repos. Isolated so
-      # tests can stub the gh CLI boundary.
+      # Fetch the version's source tarball into archive_path. Uses `gh api
+      # .../tarball/<ref>` rather than a bare codeload URL so the request carries
+      # gh's auth token and follows the redirect — required for private/Epic-gated
+      # repos. The endpoint resolves any ref, so the locked version is passed as
+      # written: a tag, or the commit SHA of a sha: pin — for which this fetch is
+      # also the existence check (GitHub answers 404 for a commit the repo does
+      # not have, and that surfaces here as a DownloadError). Isolated so tests
+      # can stub the gh CLI boundary.
       #
       # @param dep [Dependency]
       # @param archive_path [Pathname] destination .tar.gz
-      # @raise [DownloadError] if the fetch fails
+      # @raise [DownloadError] if the fetch fails — including a sha: pin whose
+      #   commit the repo does not have
       sig { params(dep: Dependency, archive_path: Pathname).void }
       def download_source(dep, archive_path)
         success = system(

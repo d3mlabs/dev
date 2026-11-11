@@ -12,7 +12,8 @@ require_relative "repository"
 module Dev
   module Deps
     # Reports GitHub-hosted dependencies via the gh CLI: the discrete
-    # universe is the repo's tags and releases, fully enumerated with facts.
+    # universe is the repo's tags and releases, fully enumerated with facts;
+    # the continuous space is the repo's commit SHAs.
     #
     # Two paginated list calls cover everything: the releases list carries
     # each release's assets (names, sizes, API-reported SHA256 digests) and
@@ -25,11 +26,21 @@ module Dev
     # glob happens at install, where the glob arrives via the pin's
     # materialization.
     #
+    # Commit SHAs are unreachable by enumeration (no endpoint lists reachable
+    # commits), so a commit pin arrives as the declaration's revision and is
+    # lifted by at — pure, no network, exactly as GitRepository#at: a full
+    # SHA is self-certifying as an address, and existence surfaces at fetch
+    # time. A commit publishes no release, so its only materialization is a
+    # source build (GhIntegration fetches the commit's tarball).
+    #
     # Declared in dependencies.rb as:
     #   gh "UnrealEngine",
     #      github: "d3mlabs/unreal-engine",
     #      tag: "5.8.0-wine-7",
     #      assets: "UnrealEngine-Wine-Editor-Linux.tar.zst.*"
+    # or, at a commit:
+    #   gh "json", github: "nlohmann/json",
+    #      sha: "9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03", build: :none
     class GhRepository < Repository
       extend T::Sig
 
@@ -91,6 +102,24 @@ module Dev
           version_for(repo_slug, tag, commit_by_tag[tag], release_by_tag[tag])
         end
         Package.new(id: id, versions: versions)
+      end
+
+      # Lift a commit SHA into a version. Pure — no network: the SHA is the
+      # version and the integrity statement, the author already chose it,
+      # and a bad address surfaces at fetch time (GitHub's tarball endpoint
+      # answers 404 for a commit the repo does not have). No release facts
+      # ride along: a commit publishes none.
+      #
+      # @param id [PackageId] source is the "owner/repo" slug
+      # @param revision [String] full 40-char commit SHA (DSL-validated)
+      # @return [PackageVersion]
+      sig { override.params(id: PackageId, revision: String).returns(PackageVersion) }
+      def at(id, revision)
+        PackageVersion.new(
+          version: revision,
+          metadata: { "repo" => T.must(id.source) },
+          declarations: Declarations::Resolved.new([]),
+        )
       end
 
       private

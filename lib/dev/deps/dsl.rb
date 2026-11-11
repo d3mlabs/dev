@@ -550,16 +550,24 @@ module Dev
 
       class EmptyNameError < StandardError; end
 
-      # A commit: pin that is not a full 40-char SHA. Conflict rejection
-      # compares revisions textually, so only the canonical spelling keeps
-      # equality trustworthy — and today's silent fall-through (a short
-      # "commit" quietly resolved as a tag) was a lie worth killing.
+      # A commit pin (cmake commit:, gh sha:) that is not a full 40-char SHA.
+      # Conflict rejection compares revisions textually, so only the
+      # canonical spelling keeps equality trustworthy — and the old silent
+      # fall-through (a short "commit" quietly resolved as a tag) was a lie
+      # worth killing.
       class InvalidRevisionError < StandardError; end
 
-      # A git-backed cmake dep with nothing to select or address: no tag:, no
-      # branch:, no commit:. An unconstrained enumeration would pin an
-      # arbitrary ref, so the ask must say what it wants.
+      # A git-backed dep with nothing to select or address: a cmake dep with
+      # no tag:, branch:, or commit:, a gh dep with no tag: or sha:. An
+      # unconstrained enumeration would pin an arbitrary ref, so the ask
+      # must say what it wants.
       class MissingRefError < StandardError; end
+
+      # `assets:` on a gh dep pinned at a sha:. Release assets hang off a
+      # release, and a commit publishes none — the only thing GitHub serves
+      # for a bare commit is its source, so a sha: pin materializes with
+      # build: alone.
+      class AssetsAtCommitError < StandardError; end
 
       # `install_dir:` on a tree dep (gh, steam, wwise). Retired by dev#271:
       # the store places a tree from its identity, so the manifest no longer
@@ -650,11 +658,7 @@ module Dev
           return add_declaration(name, :url, spec, source: url, materialization: materialization)
         end
 
-        if revision && !revision.match?(FULL_SHA)
-          raise InvalidRevisionError,
-            "cmake #{name} pins commit: #{revision.inspect} — a commit is a full 40-char SHA " \
-              "(tags select with tag:)"
-        end
+        validate_full_sha!("cmake", name.to_s, :commit, revision)
         if revision.nil? && !spec.key?(:tag) && !spec.key?(:branch)
           raise MissingRefError,
             "cmake #{name} names no tag:, branch:, or commit: — an unconstrained git universe " \
@@ -731,22 +735,34 @@ module Dev
       # Exactly one of assets:/build: must be given (the verb names the FETCH backend;
       # assets/build names how it's MATERIALIZED).
       #
+      # Two ways to say which version, exactly one of them:
+      #   - tag:  a constraint selecting one tag out of the repo's enumerated
+      #           releases+tags universe (ExactScheme).
+      #   - sha:  a revision — an address into the continuous space between
+      #           tags, full 40-char commit SHA only. No release exists for a
+      #           bare commit, so a sha: pin materializes with build: alone.
+      #
       # The first argument is the declaration name. With github:/repo: it is the name and
       # the slug comes from that option; otherwise it is the "owner/repo" slug and the
       # name is its basename (e.g. gh "EpicGames/UnrealEngine" -> name "UnrealEngine").
       #
       # @param name_or_slug [String, Symbol] dependency name, or "owner/repo" slug
-      # @param tag [String] exact tag (e.g. "5.6.1-release") — no floating "latest"
+      # @param tag [String, nil] exact tag (e.g. "5.6.1-release") — no floating "latest"
+      # @param sha [String, nil] full 40-char commit SHA to pin instead of a tag
       # @param github [String, nil] "owner/repo" slug (shorthand; makes the first arg the name)
       # @param repo [String, nil] alias for github:
       # @param assets [String, nil] glob selecting prebuilt release assets
       # @param build [String, Symbol, nil] build-from-source recipe (script path / shell / :none)
       # @param spec [Hash] additional options
       # @return [void]
+      # @raise [MissingRefError] if neither tag: nor sha: is given
+      # @raise [InvalidRevisionError] if sha: is not a full 40-char SHA
+      # @raise [AssetsAtCommitError] if assets: is combined with sha:
       sig do
         params(
           name_or_slug: T.any(String, Symbol),
-          tag: String,
+          tag: T.nilable(String),
+          sha: T.nilable(String),
           github: T.nilable(String),
           repo: T.nilable(String),
           assets: T.nilable(String),
@@ -754,7 +770,7 @@ module Dev
           spec: T.untyped,
         ).void
       end
-      def gh(name_or_slug, tag:, github: nil, repo: nil, assets: nil, build: nil, **spec)
+      def gh(name_or_slug, tag: nil, sha: nil, github: nil, repo: nil, assets: nil, build: nil, **spec)
         slug = (github || repo || name_or_slug).to_s
         name = (github || repo) ? name_or_slug.to_s : T.must(slug.split("/").last)
         reject_install_dir!("gh", name, spec, place: "gh/#{slug}")
@@ -764,15 +780,27 @@ module Dev
             "gh #{name.inspect}: provide exactly one of assets: (prebuilt release asset) " \
             "or build: (build from source)"
         end
+        if tag.nil? && sha.nil?
+          raise MissingRefError,
+            "gh #{name.inspect} names no tag: or sha: — a gh pin never floats to the latest release"
+        end
+        validate_full_sha!("gh", name, :sha, sha)
+        if sha && assets
+          raise AssetsAtCommitError,
+            "gh #{name.inspect}: assets: selects release assets, and a commit publishes no release — " \
+              "a sha: pin materializes from source (build:)"
+        end
 
         # Sorted into fields: the slug is the source coordinate, the tag is
-        # the constraint, and how to materialize (which assets to fetch or
-        # how to build) is install instruction — the repository never sees
-        # any of it. Where it lands is the store's: ~/.dev/gh/<slug>/<tag>.
+        # the constraint (or the sha the revision — Declaration refuses
+        # both), and how to materialize (which assets to fetch or how to
+        # build) is install instruction — the repository never sees any of
+        # it. Where it lands is the store's: ~/.dev/gh/<slug>/<tag-or-sha>.
         materialization = {}
         materialization["asset_pattern"] = assets if assets
         materialization["build"] = build.to_s if build
-        add_declaration(name, :gh, spec.merge(tag: tag), source: slug, materialization: materialization)
+        spec[:tag] = tag if tag
+        add_declaration(name, :gh, spec, source: slug, revision: sha, materialization: materialization)
       end
 
       # Declare a Steam application dependency (e.g. the Satisfactory Dedicated
@@ -1025,6 +1053,25 @@ module Dev
           A tree already installed moves with: mv #{old}/<version> #{new_base} \
           (or let `dev up` fetch it again). See dev#271.
         MSG
+      end
+
+      # Refuse a commit pin that is not spelled canonically. A nil revision
+      # is no pin at all and passes; the verbs decide separately whether
+      # one was required.
+      #
+      # @param verb [String] the DSL verb ("cmake", "gh")
+      # @param name [String] the declaration name
+      # @param option [Symbol] the option carrying the pin (:commit, :sha)
+      # @param revision [String, nil] the pin as written
+      # @return [void]
+      # @raise [InvalidRevisionError] if the revision is not a full 40-char SHA
+      sig { params(verb: String, name: String, option: Symbol, revision: T.nilable(String)).void }
+      def validate_full_sha!(verb, name, option, revision)
+        return if revision.nil? || revision.match?(FULL_SHA)
+
+        raise InvalidRevisionError,
+          "#{verb} #{name} pins #{option}: #{revision.inspect} — a commit is a full 40-char SHA " \
+            "(tags select with tag:)"
       end
 
       # Create a ScopedDeclaration and store it.

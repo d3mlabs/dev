@@ -401,6 +401,71 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "install_all materializes a sha: pin from source under gh/<slug>/<sha> — the SHA is the version" do
+    Given "a header-only dependency pinned at a commit"
+    dir = Dir.mktmpdir("dev-gh-src-test-")
+    tarball = build_source_tarball(dir, files: { "include/lib.h" => "#pragma once" })
+    sha = "9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03"
+    tree_dir = File.join(dir, "gh", "EpicGames", "UnrealEngine")
+    dep = source_dep(build: "none", tag: sha).with(metadata: { "repo" => "EpicGames/UnrealEngine", "build" => "none" })
+    integration = build_source_integration(tarball, File.join(dir, "project"), dir)
+
+    When "installing"
+    integration.install_all([dep])
+
+    Then "the tree is keyed by the commit and the marker records it"
+    version_dir = File.join(tree_dir, sha)
+    File.read(File.join(version_dir, "include", "lib.h")) == "#pragma once"
+    File.read(File.join(version_dir, ".dev-gh-release")) == sha
+    integration.download_count == 1
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "download_source fetches the locked version's tarball as written — a sha: pin by its commit" do
+    Given "a dependency pinned at a commit and an integration speaking to gh"
+    dir = Dir.mktmpdir("dev-gh-src-test-")
+    sha = "9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03"
+    dep = source_dep(build: "none", tag: sha).with(metadata: { "repo" => "nlohmann/json", "build" => "none" })
+    integration = Dev::Deps::GhIntegration.new(
+      repository: Dev::Deps::GhRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir),
+    )
+    archive_path = Pathname(File.join(dir, "source.tar.gz"))
+    integration.expects(:system)
+               .with("gh", "api", "repos/nlohmann/json/tarball/#{sha}", out: archive_path.to_s)
+               .returns(true)
+
+    When "fetching"
+    integration.send(:download_source, dep, archive_path)
+
+    Then "the tarball endpoint resolves the commit; no release is consulted"
+    true
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "download_source raises DownloadError when the repo has no such commit — the address's existence check" do
+    Given "a sha: pin GitHub answers 404 for"
+    dir = Dir.mktmpdir("dev-gh-src-test-")
+    sha = "0000000000000000000000000000000000000000"
+    dep = source_dep(build: "none", tag: sha).with(metadata: { "repo" => "nlohmann/json", "build" => "none" })
+    integration = Dev::Deps::GhIntegration.new(
+      repository: Dev::Deps::GhRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir),
+    )
+    integration.stubs(:system).returns(false)
+
+    When "fetching"
+    integration.send(:download_source, dep, Pathname(File.join(dir, "source.tar.gz")))
+
+    Then
+    raises Dev::Deps::GhIntegration::DownloadError
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "install_all skips the source build when the version dir already records the tag" do
     Given "a version dir with a matching marker"
     dir = Dir.mktmpdir("dev-gh-src-test-")
