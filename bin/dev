@@ -85,10 +85,11 @@ require "dev/shared_umask"
 Dev::SharedUmask.apply!
 
 # The Ui tier is one process-wide choice, made before anything that may
-# ask or report runs — the global builtins included (`cred get` onboards
-# a first-time credential at the terminal, `engine down` confirms; dev#573),
-# so it is chosen ahead of their dispatch, not after. The StdoutRouter is
-# the Ui's to turn on, with its first frame (plans#52, dev#523) — never here.
+# ask or report runs — the global builtins included (plan, learnings,
+# skills: dev#575; `cred get` onboards a first-time credential at the
+# terminal, `engine down` confirms: dev#573), so it is chosen ahead of
+# their dispatch, not after. The StdoutRouter is the Ui's to turn on, with
+# its first frame (plans#52, dev#523) — never here.
 ui = if $stdout.tty? || ENV["CI"] || ENV["CLICOLOR_FORCE"]
   Dev::Cli::UiImpl.new(cli_ui: CLI::UI)
 else

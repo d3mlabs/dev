@@ -7,6 +7,7 @@ require "pathname"
 require "uri"
 require "dev/brew_env"
 require "dev/host_lock"
+require "dev/settings"
 require "dev/shadowenv_path"
 require "dev/shadowenv_python"
 require "dev/shadowenv_ruby"
@@ -222,7 +223,8 @@ module Dev
       #   (dev.yml `name`), which the interpreter activations key the
       #   project's store state by; nil with project_dir nil (no project)
       # @param brew_prefix [String, Pathname, nil] the Homebrew prefix
-      #   (discovered via `brew --prefix` when nil; injectable for tests)
+      #   (the machine's, Settings.brew_prefix; injectable for tests; nil =
+      #   a machine without brew)
       # @param pin_taps [Boolean] check each formula's tap out at the commit
       #   the lock names and install from the taps instead of brew's API —
       #   the image build's reproducible mode
@@ -255,8 +257,8 @@ module Dev
           ui: Ui,
         ).void
       end
-      def initialize(repository:, store:, taps: [], project_dir: nil, project_name: nil, brew_prefix: nil, pin_taps: false,
-        tap_pinner: nil, brew_env: nil, interpreters: INTERPRETERS, lock: nil, ui: NoUi.new)
+      def initialize(repository:, store:, taps: [], project_dir: nil, project_name: nil, brew_prefix: Settings.brew_prefix,
+        pin_taps: false, tap_pinner: nil, brew_env: nil, interpreters: INTERPRETERS, lock: nil, ui: NoUi.new)
         super(repository:, store:, ui:)
         @lock = T.let(lock || HostLock.new(name: TOOL), HostLock)
         @taps = taps
@@ -264,7 +266,6 @@ module Dev
         @project_name = project_name
         @taps_registered = T.let(false, T::Boolean)
         @brew_prefix = T.let(brew_prefix&.to_s, T.nilable(String))
-        @brew_prefix_resolved = T.let(!brew_prefix.nil?, T::Boolean)
         @pin_taps = pin_taps
         @tap_pinner = tap_pinner
         @brew_env = brew_env
@@ -959,21 +960,12 @@ module Dev
           "by them and the sudoers brew edge exists — run `dev runner register` to re-converge it)"
       end
 
-      # The Homebrew prefix, resolved once: injected (tests), else asked of
-      # brew itself. nil when brew is absent — writes then run unescalated
-      # and surface brew's own error.
+      # The Homebrew prefix. nil when the machine has no brew — writes then
+      # run unescalated and surface brew's own error.
       #
       # @return [String, nil]
       sig { returns(T.nilable(String)) }
-      def brew_prefix
-        return @brew_prefix if @brew_prefix_resolved
-
-        @brew_prefix_resolved = true
-        out, _err, status = Open3.capture3("brew", "--prefix")
-        @brew_prefix = (out.strip if status.success? && !out.strip.empty?)
-      rescue Errno::ENOENT
-        @brew_prefix = nil
-      end
+      attr_reader :brew_prefix
 
       # @param err [String] a brew invocation's stderr
       # @return [Boolean] whether sudo -n refused: no NOPASSWD rule for the

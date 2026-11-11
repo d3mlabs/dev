@@ -29,7 +29,7 @@ module Dev
         def perform(accessor, args)
           raise Dev::Plan::Accessor::UsageError, USAGE if args.positionals.size > 1
 
-          accessor.push(args.positionals.first, org: args.flag?(ORG_FLAG), out: @out)
+          accessor.push(args.positionals.first, org: args.flag?(ORG_FLAG))
         end
       end
     end

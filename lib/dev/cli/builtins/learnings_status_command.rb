@@ -22,7 +22,7 @@ module Dev
         def call(args:, context:)
           raise Dev::Learnings::Accessor::UsageError, USAGE unless args.positionals.empty?
 
-          @accessor_factory.call.status(out: @out)
+          @accessor_factory.call(context.ui).status
         end
       end
     end

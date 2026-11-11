@@ -11,6 +11,7 @@ require "dev/cli/builtins/plan_push_command"
 require "dev/cli/builtins/plan_status_command"
 require "fileutils"
 require "stringio"
+require "support/recording_ui"
 require "tmpdir"
 
 # The `plan` verbs share PlanVerbCommand's shape (per-call accessor, host
@@ -32,7 +33,7 @@ class Dev::Cli::Builtins::PlanCommandsTest < Minitest::Test
 
   test "#{klass} traits: staleness-exempt (headless Cursor hooks), never stamps, workflow, hidden: #{hidden}" do
     Given "the builtin"
-    command = klass.new(accessor_factory: -> { typed_mock(Dev::Plan::Accessor) }, out: StringIO.new)
+    command = klass.new(accessor_factory: ->(_ui) { typed_mock(Dev::Plan::Accessor) })
 
     Expect "the declarative traits"
     command.staleness_exempt? == true
@@ -53,23 +54,23 @@ class Dev::Cli::Builtins::PlanCommandsTest < Minitest::Test
   end
 
   test "#{klass} refreshes the host, then forwards #{args.inspect} to #{verb} as #{positional.inspect} #{options.inspect}" do
-    Given "an accessor expecting the refresh then the verb, behind a counting factory"
-    out = StringIO.new
+    Given "an accessor expecting the refresh then the verb, behind a factory recording the ui it was handed"
+    ui = RecordingUi.new
     accessor = typed_mock(Dev::Plan::Accessor)
     sequence = sequence("plan verb")
     accessor.expects(:refresh_host).once.in_sequence(sequence)
-    accessor.expects(verb).with(*positional, **options, out: out).once.in_sequence(sequence)
-    calls = 0
-    command = klass.new(accessor_factory: lambda {
-      calls += 1
+    accessor.expects(verb).with(*positional, **options).once.in_sequence(sequence)
+    factory_uis = []
+    command = klass.new(accessor_factory: lambda { |factory_ui|
+      factory_uis << factory_ui
       accessor
-    }, out: out)
+    })
 
     When "calling the leaf in a projectless context"
-    command.call(args: parsed_args(command, args), context: build_context)
+    command.call(args: parsed_args(command, args), context: build_context(ui))
 
-    Then "the factory was consulted once"
-    calls == 1
+    Then "the factory was consulted once, with the context's ui — the accessor speaks through the seam"
+    factory_uis == [ui]
 
     Where
     klass           | verb      | args                   | positional    | options
@@ -88,7 +89,7 @@ class Dev::Cli::Builtins::PlanCommandsTest < Minitest::Test
     Given "a leaf over an accessor that only expects the host refresh"
     accessor = typed_mock(Dev::Plan::Accessor)
     accessor.expects(:refresh_host).once
-    command = klass.new(accessor_factory: -> { accessor }, out: StringIO.new)
+    command = klass.new(accessor_factory: ->(_ui) { accessor })
 
     When "calling it with a malformed argv"
     command.call(args: parsed_args(command, args), context: build_context)
@@ -112,13 +113,12 @@ class Dev::Cli::Builtins::PlanCommandsTest < Minitest::Test
 
   test "hook-after-edit refreshes the host, then hands the injected stdin payload to the accessor" do
     Given "a hook leaf over an expecting accessor and a payload stream"
-    out = StringIO.new
     input = StringIO.new('{"file_path":"x"}')
     accessor = typed_mock(Dev::Plan::Accessor)
     sequence = sequence("hook")
     accessor.expects(:refresh_host).once.in_sequence(sequence)
-    accessor.expects(:hook_after_edit).with(input, out: out).once.in_sequence(sequence)
-    command = LEAVES[:hook].new(accessor_factory: -> { accessor }, out: out, input: input)
+    accessor.expects(:hook_after_edit).with(input).once.in_sequence(sequence)
+    command = LEAVES[:hook].new(accessor_factory: ->(_ui) { accessor }, input: input)
 
     When "the hook fires"
     command.call(args: no_args, context: build_context)
@@ -131,7 +131,7 @@ class Dev::Cli::Builtins::PlanCommandsTest < Minitest::Test
     Given "a leaf over an accessor that only expects the host refresh"
     accessor = typed_mock(Dev::Plan::Accessor)
     accessor.expects(:refresh_host).once
-    command = klass.new(accessor_factory: -> { accessor }, out: StringIO.new)
+    command = klass.new(accessor_factory: ->(_ui) { accessor })
 
     When "calling it with an argument it takes none of"
     command.call(args: parsed_args(command, ["extra"]), context: build_context)
@@ -154,7 +154,9 @@ class Dev::Cli::Builtins::PlanCommandsTest < Minitest::Test
     ENV["XDG_DATA_HOME"] = File.join(dir, "data")
 
     When "calling the production factory from inside the checkout"
-    accessor = Dir.chdir(File.join(dir, "repo")) { Dev::Cli::Builtins::PlanVerbCommand::DEFAULT_ACCESSOR_FACTORY.call }
+    accessor = Dir.chdir(File.join(dir, "repo")) do
+      Dev::Cli::Builtins::PlanVerbCommand::DEFAULT_ACCESSOR_FACTORY.call(RecordingUi.new)
+    end
 
     Then "a real accessor comes back"
     accessor.is_a?(Dev::Plan::Accessor)
@@ -166,7 +168,7 @@ class Dev::Cli::Builtins::PlanCommandsTest < Minitest::Test
 
   private
 
-  def build_context
-    Dev::Cli::ExecutionContext.new(ui: typed_mock(Dev::Ui))
+  def build_context(ui = RecordingUi.new)
+    Dev::Cli::ExecutionContext.new(ui: ui)
   end
 end

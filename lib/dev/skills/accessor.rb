@@ -5,6 +5,7 @@ require "json"
 require "pathname"
 require "stringio"
 require_relative "../footprint"
+require_relative "../ui"
 require_relative "channel"
 require_relative "layout"
 require_relative "legacy"
@@ -29,7 +30,10 @@ module Dev
     #
     # The channels are composed by the caller (HostService knows which
     # producers exist on this machine for a project); this class only knows
-    # how to show and sync a list of them.
+    # how to show and sync a list of them. Both verbs speak through the Ui
+    # (plans#52): a frame per channel on `status`, a `{{v}}` / `{{x}}` fact
+    # per link; one frame on `sync`, a spin per channel materialized. The
+    # `--json` form is a payload for tooling, printed bare on its stream.
     class Accessor
       extend T::Sig
 
@@ -37,53 +41,67 @@ module Dev
 
       # @param channels [Array<Dev::Skills::Channel>] every channel to report
       #   or materialize, in display order
+      # @param ui [Dev::Ui] the terminal the verbs speak through
       # @param project_root [Pathname, String, nil] the enclosing project, for
       #   the one-time legacy sweep on sync; nil outside any project
       # @param materializer [Dev::Skills::Materializer]
       sig do
         params(
           channels: T::Array[Channel],
+          ui: Dev::Ui,
           project_root: T.nilable(T.any(Pathname, String)),
           materializer: Materializer,
         ).void
       end
-      def initialize(channels:, project_root: nil, materializer: Materializer.new)
+      def initialize(channels:, ui:, project_root: nil, materializer: Materializer.new)
         @channels = channels
+        @ui = ui
         @project_root = project_root
         @materializer = materializer
       end
 
-      # `dev skills status [--json]`: each channel's root and its recorded
-      # links, then the same-name groups.
+      # `dev skills status`: a frame per channel with its root and a fact
+      # per recorded link, then the same-name groups and the footprint.
       #
-      # @param out [IO, StringIO]
-      # @param json [Boolean] machine-readable instead of the table
       # @return [void]
-      sig { params(out: T.any(IO, StringIO), json: T::Boolean).void }
-      def status(out:, json: false)
-        report = @channels.map { |channel| [channel, @materializer.materialized(channel)] }
-        return out.puts(JSON.pretty_generate(json_report(report))) if json
-
+      sig { void }
+      def status
+        report = build_report
         report.each do |channel, links|
-          out.puts "dev: #{channel.name} skills: #{links.size} linked under #{channel.root}"
-          links.each { |link| out.puts "  #{describe(link)}" }
+          @ui.frame("#{channel.name} skills (#{links.size} linked under #{channel.root})") do
+            links.each { |link| @ui.note(describe(link)) }
+          end
         end
-        print_same_named(out, report)
-        warn_footprint(out)
+        note_same_named(report)
+        warn_footprint
       end
 
-      # `dev skills sync`: materialize every channel now (sweeping the
-      # project's pre-#250 flat gem links first, like the hooks do).
+      # `dev skills status --json`: the manifests per channel with presence,
+      # as one JSON document — a payload for tooling, never the Ui's.
       #
       # @param out [IO, StringIO]
       # @return [void]
       sig { params(out: T.any(IO, StringIO)).void }
-      def sync(out:)
+      def status_json(out:)
+        out.puts(JSON.pretty_generate(json_report(build_report)))
+      end
+
+      # `dev skills sync`: materialize every channel now (sweeping the
+      # project's pre-#250 flat gem links first, like the hooks do) — a spin
+      # per channel, then what each holds.
+      #
+      # @return [void]
+      sig { void }
+      def sync
         project_root = @project_root
-        Legacy.sweep(project_root) if project_root
-        @materializer.sync(@channels)
-        @channels.each do |channel|
-          out.puts "dev: #{channel.name} skills: #{@materializer.materialized(channel).size} materialized under #{channel.root}."
+        @ui.frame("Syncing skill channels") do
+          Legacy.sweep(project_root) if project_root
+          @channels.each do |channel|
+            @ui.spin("Materializing #{channel.name} skills under #{channel.root}") { @materializer.sync([channel]) }
+          end
+          @channels.each do |channel|
+            @ui.note("{{v}} #{channel.name} skills: #{@materializer.materialized(channel).size} materialized under #{channel.root}.")
+          end
         end
       end
 
@@ -91,8 +109,15 @@ module Dev
 
       Report = T.type_alias { T::Array[[Channel, T::Array[Materializer::Materialized]]] }
 
-      # One status line: the link, its provenance when known, the source,
-      # and a flag when the link no longer matches its record.
+      # @return [Array] every channel with its recorded links
+      sig { returns(Report) }
+      def build_report
+        @channels.map { |channel| [channel, @materializer.materialized(channel)] }
+      end
+
+      # One link fact: `{{v}}` when the link stands, `{{x}}` with the remedy
+      # when it no longer matches its record; the provenance when known and
+      # the source between.
       #
       # @param link [Dev::Skills::Materializer::Materialized]
       # @return [String]
@@ -104,38 +129,37 @@ module Dev
         parts << "[#{provenance}]" unless provenance.empty?
         parts << "-> #{record.source}"
         parts << "(missing — run `dev skills sync`)" unless link.present
-        parts.join("  ")
+        "#{link.present ? "{{v}}" : "{{x}}"} #{parts.join("  ")}"
       end
 
       # Skills whose name appears under more than one channel/package —
       # expected with several ecosystems, listed so nobody has to diff roots
       # to notice.
       #
-      # @param out [IO, StringIO]
       # @param report [Array]
       # @return [void]
-      sig { params(out: T.any(IO, StringIO), report: Report).void }
-      def print_same_named(out, report)
+      sig { params(report: Report).void }
+      def note_same_named(report)
         by_name = report.flat_map { |_channel, links| links.map(&:record) }.group_by(&:name)
         groups = by_name.select { |_name, records| records.size > 1 }.sort
         return if groups.empty?
 
-        out.puts "dev: same-named skills (all load; the agent sees each by path):"
-        groups.each do |name, records|
-          out.puts "  #{name} ← #{records.map { |record| origin(record) }.join(", ")}"
+        @ui.frame("Same-named skills (all load; the agent sees each by path)") do
+          groups.each do |name, records|
+            @ui.note("#{name} ← #{records.map { |record| origin(record) }.join(", ")}")
+          end
         end
       end
 
       # The project-scoped root must be gitignored; say so when it is not.
       #
-      # @param out [IO, StringIO]
       # @return [void]
-      sig { params(out: T.any(IO, StringIO)).void }
-      def warn_footprint(out)
+      sig { void }
+      def warn_footprint
         project_root = @project_root
         return unless project_root && @channels.any?(&:project_scoped?)
 
-        Dev::Footprint.warn_missing(out, project_root, [Layout::GITIGNORE_FOOTPRINT])
+        Dev::Footprint.warn_missing(@ui, project_root, [Layout::GITIGNORE_FOOTPRINT])
       end
 
       # @param record [Dev::Skills::Manifest::Record]
