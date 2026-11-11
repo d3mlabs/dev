@@ -67,11 +67,11 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  tree holds a symlink or a lisp path, and path-bound artifacts run by
  their store path.
  → .cursor/skills/learnings/installed-state-in-the-store/
-- [architecture/prefix-from-own-keg] The brew prefix is a fact about where
- dev runs from: `Settings.brew_prefix` derives it from dev's own keg
- realpath, `HOMEBREW_PREFIX` is the override, and no code probes standard
- directories or login-shell state — a runner service has no login shell.
- → .cursor/skills/learnings/prefix-from-own-keg/
+- [architecture/one-brew-prefix-resolution] `Settings.brew_prefix` is the
+ one brew-prefix resolution (`RunnerUser.brew_path` for the binary): never
+ a second probe of HOMEBREW_PREFIX, PATH, `brew --prefix`, or a directory
+ that merely exists — a runner service has no login shell.
+ → .cursor/skills/learnings/one-brew-prefix-resolution/
 
 ## toolchain
 
