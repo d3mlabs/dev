@@ -5,6 +5,7 @@ require "pathname"
 require "stringio"
 require_relative "../footprint"
 require_relative "../settings"
+require_relative "../ui"
 require_relative "cache"
 require_relative "invariants_renderer"
 require_relative "layout"
@@ -41,6 +42,11 @@ module Dev
     # routes `sync` / `status` / `invariants` / `init` to them, and the
     # leaves own the argv shape (flags, no stray arguments).
     #
+    # The verbs speak through the Ui (plans#52): a frame per verb, a spin
+    # for the captured pull, a `{{v}}` / `{{x}}` note per fact with its
+    # remedy, the one-line result last. `invariants` is the exception — a
+    # payload other tools parse, printed bare on its stream.
+    #
     # RuntimeError subclasses throughout so the CLI boundary prints clean
     # `dev:` messages instead of backtraces.
     class Accessor
@@ -59,6 +65,7 @@ module Dev
       # @param project_root [Pathname, String, nil] the enclosing project for
       #   the project-scoped invariants link; nil when invoked outside any
       #   project — the link is skipped
+      # @param ui [Dev::Ui] the terminal the verbs speak through
       # @param settings [Dev::Settings]
       # @param cache [Dev::Learnings::Cache, nil] override for tests; defaults
       #   to a cache over the configured knowledge repo (nil when unconfigured)
@@ -70,6 +77,7 @@ module Dev
       sig do
         params(
           project_root: T.nilable(T.any(Pathname, String)),
+          ui: Dev::Ui,
           settings: Dev::Settings,
           cache: T.nilable(Cache),
           synchronizer: T.untyped,
@@ -78,10 +86,11 @@ module Dev
           gitignore: Dev::Footprint::Gitignore,
         ).void
       end
-      def initialize(project_root:, settings: Dev::Settings.new, cache: nil, synchronizer: nil,
+      def initialize(project_root:, ui:, settings: Dev::Settings.new, cache: nil, synchronizer: nil,
                      renderer: InvariantsRenderer.new, scaffolder: Scaffolder.new,
                      gitignore: Dev::Footprint::Gitignore.new)
         @project_root = T.let(project_root && Pathname(project_root), T.nilable(Pathname))
+        @ui = ui
         @settings = settings
         repo = settings.knowledge_repo
         @cache = T.let(cache || (repo && Cache.new(repo: repo)), T.nilable(Cache))
@@ -98,43 +107,63 @@ module Dev
       end
 
       # `dev learnings sync`: the org tier, blocking, errors bubbling — cache
-      # pull, org skills channel, invariants render + project link.
+      # pull, org skills channel, invariants render + project link. The pull
+      # is the spin (git, captured); what it distributed are the facts.
       #
-      # @param out [IO, StringIO]
       # @return [void]
-      sig { params(out: T.any(IO, StringIO)).void }
-      def sync(out:)
-        @synchronizer.sync!(project_root: @project_root)
-        out.puts "dev: learnings synced from #{@settings.knowledge_repo} (#{T.must(@cache).dir})."
-        out.puts "dev: no enclosing project — skipped the invariants link." if @project_root.nil?
+      # @raise [Synchronizer::KnowledgeRepoNotConfiguredError] no knowledge repo configured
+      # @raise [Cache::KnowledgeCloneError] when the initial clone fails
+      # @raise [Cache::KnowledgeFetchError] when the refresh fails
+      sig { void }
+      def sync
+        cache = @cache
+        # Unconfigured: the null synchronizer's sync! is the refusal, with
+        # the configuration instructions — raised before any frame opens.
+        return @synchronizer.sync!(project_root: @project_root) if cache.nil?
+
+        repo = T.must(@settings.knowledge_repo)
+        project_root = @project_root
+        @ui.frame("Syncing the org learnings from #{repo}") do
+          @ui.spin("Pulling #{repo} into #{cache.dir} and distributing it") { @synchronizer.sync!(project_root: project_root) }
+          @ui.note("{{v}} invariants rendered at #{@synchronizer.rendered_invariants_file}")
+          if project_root
+            @ui.note("{{v}} invariants linked at #{@synchronizer.project_rules_file(project_root)}")
+          else
+            @ui.note("no enclosing project — skipped the invariants link.")
+          end
+          @ui.note("{{v}} learnings synced from #{repo} (#{cache.dir}).")
+        end
       end
 
       # `dev learnings status`: the configured repo, cache location/age, and
-      # what is rendered and linked.
+      # what is rendered and linked — a frame for the org tier, one for the
+      # project, a `{{v}}` / `{{x}}` fact per line with its remedy.
       #
-      # @param out [IO, StringIO]
       # @return [void]
-      sig { params(out: T.any(IO, StringIO)).void }
-      def status(out:)
+      sig { void }
+      def status
         repo = @settings.knowledge_repo
         if repo.nil?
-          out.puts "dev: no knowledge repo configured — add `knowledge_repo: <owner>/<repo>` " \
-            "to #{@settings.config_path} (or set DEV_KNOWLEDGE_REPO)."
+          @ui.note("no knowledge repo configured — add `knowledge_repo: <owner>/<repo>` " \
+            "to #{@settings.config_path} (or set DEV_KNOWLEDGE_REPO).")
           return
         end
 
-        out.puts "dev: knowledge repo: #{repo}"
         cache = T.must(@cache)
-        unless cache.present?
-          out.puts "dev: cache: #{cache.dir} (not cloned yet — run `dev learnings sync`)."
-          return
+        @ui.frame("Org learnings (#{repo})") do
+          if cache.present?
+            @ui.note("{{v}} cache: #{cache.dir} (refreshed #{format_age(Time.now - T.must(cache.synced_at))} ago).")
+            status_org_tier
+          else
+            @ui.note("{{x}} cache: #{cache.dir} (not cloned yet — run `dev learnings sync`).")
+          end
         end
-
-        out.puts "dev: cache: #{cache.dir} (refreshed #{format_age(Time.now - T.must(cache.synced_at))} ago)."
-        status_org_tier(out)
-        status_project_tier(out)
+        status_project_tier if cache.present?
       end
 
+      # `dev learnings invariants`: the Tier-0 prompt block, bare — a payload
+      # consumers (ai-flow) parse, never the Ui's.
+      #
       # @param out [IO, StringIO]
       # @return [void]
       # @raise [InvariantsUnavailableError] when the block cannot be produced
@@ -167,14 +196,13 @@ module Dev
       # patterns are respected; `gitignore_only` skips the index for a repo
       # that is already scaffolded.
       #
-      # @param out [IO, StringIO]
       # @param org [Boolean] scaffold the org knowledge-repo layout instead
       #   of the repo tier
       # @param gitignore_only [Boolean] only ensure the .gitignore footprint
       # @return [void]
       # @raise [NoEnclosingProjectError] when run outside any project
-      sig { params(out: T.any(IO, StringIO), org: T::Boolean, gitignore_only: T::Boolean).void }
-      def init(out:, org: false, gitignore_only: false)
+      sig { params(org: T::Boolean, gitignore_only: T::Boolean).void }
+      def init(org: false, gitignore_only: false)
         project_root = @project_root
         if project_root.nil?
           raise NoEnclosingProjectError,
@@ -182,85 +210,91 @@ module Dev
         end
 
         if org
-          @scaffolder.scaffold_org(project_root)
-          out.puts "dev: scaffolded #{Layout.org_index_file(project_root)} and " \
-            "#{Layout.org_skills_dir(project_root)}/ (the org knowledge-repo layout) — commit them."
+          @ui.frame("Org knowledge-repo scaffold (#{project_root})") do
+            @scaffolder.scaffold_org(project_root)
+            @ui.note("{{v}} scaffolded #{Layout.org_index_file(project_root)} and " \
+              "#{Layout.org_skills_dir(project_root)}/ (the org knowledge-repo layout) — commit them.")
+          end
           return
         end
 
-        scaffold_repo_index(out, project_root) unless gitignore_only
-        ensure_gitignore(out, project_root)
+        @ui.frame("Learnings scaffold (#{project_root})") do
+          scaffold_repo_index(project_root) unless gitignore_only
+          ensure_gitignore(project_root)
+        end
       end
 
       private
 
-      # @param out [IO, StringIO]
+      # The write-once index: scaffolded, or reported as already there (the
+      # scaffolder's refusal is the no-op's wording, not a failure).
+      #
       # @param project_root [Pathname]
       # @return [void]
-      sig { params(out: T.any(IO, StringIO), project_root: Pathname).void }
-      def scaffold_repo_index(out, project_root)
+      sig { params(project_root: Pathname).void }
+      def scaffold_repo_index(project_root)
         @scaffolder.scaffold_repo(project_root)
-        out.puts "dev: scaffolded #{Layout.repo_index_file(project_root)} " \
-          "(this repo's empty always-on learnings index) — commit it."
+        @ui.note("{{v}} scaffolded #{Layout.repo_index_file(project_root)} " \
+          "(this repo's empty always-on learnings index) — commit it.")
       rescue Scaffolder::IndexAlreadyExistsError => e
-        out.puts "dev: #{e.message}"
+        @ui.note(e.message)
       end
 
-      # @param out [IO, StringIO]
       # @param project_root [Pathname]
       # @return [void]
-      sig { params(out: T.any(IO, StringIO), project_root: Pathname).void }
-      def ensure_gitignore(out, project_root)
+      sig { params(project_root: Pathname).void }
+      def ensure_gitignore(project_root)
         added = @gitignore.apply(project_root)
-        out.puts(if added.empty?
-          "dev: .gitignore already covers dev's managed footprint."
+        @ui.note(if added.empty?
+          "{{v}} .gitignore already covers dev's managed footprint."
         else
-          "dev: added #{added.join(", ")} to .gitignore (dev's managed footprint) — commit it."
+          "{{v}} added #{added.join(", ")} to .gitignore (dev's managed footprint) — commit it."
         end)
       end
 
       # The org tier's rendered state: the machine-side invariants render.
       #
-      # @param out [IO, StringIO]
       # @return [void]
-      sig { params(out: T.any(IO, StringIO)).void }
-      def status_org_tier(out)
+      sig { void }
+      def status_org_tier
         rendered = @synchronizer.rendered_invariants_file
-        out.puts(if rendered.file?
-          "dev: invariants: rendered at #{rendered}."
+        @ui.note(if rendered.file?
+          "{{v}} invariants: rendered at #{rendered}."
         else
-          "dev: invariants: not rendered (no invariants section in the index, or never synced)."
+          "{{x}} invariants: not rendered (no invariants section in the index, or never synced)."
         end)
       end
 
-      # The project tier's linked state: the invariants link, or a pointer
-      # when there is no enclosing project.
+      # The project tier's linked state: a frame for the project with the
+      # invariants link and its footprint, or a pointer when there is no
+      # enclosing project.
       #
-      # @param out [IO, StringIO]
       # @return [void]
-      sig { params(out: T.any(IO, StringIO)).void }
-      def status_project_tier(out)
+      sig { void }
+      def status_project_tier
         project_root = @project_root
         if project_root.nil?
-          out.puts "dev: project: none — run inside a repo to see its invariants link."
+          @ui.note("project: none — run inside a repo to see its invariants link.")
           return
         end
 
-        rules_file = @synchronizer.project_rules_file(project_root)
-        out.puts "dev: project invariants link: #{rules_file} (#{invariants_link_state(rules_file)})."
-        Dev::Footprint.warn_missing(out, project_root, [Layout::GITIGNORE_FOOTPRINT])
+        @ui.frame("Project (#{project_root})") do
+          @ui.note(invariants_link_fact(@synchronizer.project_rules_file(project_root)))
+          Dev::Footprint.warn_missing(@ui, project_root, [Layout::GITIGNORE_FOOTPRINT])
+        end
       end
 
-      # @param rules_file [Pathname]
-      # @return [String]
+      # @param rules_file [Pathname] the project's invariants rules file
+      # @return [String] the link fact with its glyph: linked, or how it is
+      #   not and the remedy
       sig { params(rules_file: Pathname).returns(String) }
-      def invariants_link_state(rules_file)
+      def invariants_link_fact(rules_file)
         if rules_file.symlink? && rules_file.readlink == @synchronizer.rendered_invariants_file
-          "linked"
+          "{{v}} invariants link: #{rules_file} (linked)."
         elsif rules_file.symlink? || rules_file.file?
-          "present but not dev's link — run `dev learnings sync`"
+          "{{x}} invariants link: #{rules_file} (present but not dev's link — run `dev learnings sync`)."
         else
-          "missing — run `dev learnings sync`"
+          "{{x}} invariants link: #{rules_file} (missing — run `dev learnings sync`)."
         end
       end
 

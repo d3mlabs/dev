@@ -7,6 +7,7 @@ require "fileutils"
 require "json"
 require "pathname"
 require "stringio"
+require "support/recording_ui"
 require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
@@ -58,17 +59,22 @@ class Dev::Skills::AccessorTest < Minitest::Test
   test "sync materializes every channel and reports a count per channel" do
     Given "two channels"
     dir = Dir.mktmpdir("dev-skills-accessor-test-")
-    accessor = Dev::Skills::Accessor.new(channels: build_channels(dir), materializer: build_materializer(dir))
-    out = StringIO.new
+    ui = RecordingUi.new
+    accessor = Dev::Skills::Accessor.new(channels: build_channels(dir), ui: ui, materializer: build_materializer(dir))
 
     When "syncing"
-    accessor.sync(out: out)
+    accessor.sync
 
-    Then "both links exist and each channel is reported"
+    Then "both links exist; one frame, a spin per channel materialized, then a count per channel"
     File.symlink?(File.join(dir, "global", "one"))
     File.symlink?(File.join(dir, "project", "gem", "rspock", "rspock"))
-    out.string == "dev: dev skills: 1 materialized under #{dir}/global.\n" \
-      "dev: gem skills: 1 materialized under #{dir}/project.\n"
+    ui.rows == [
+      [:frame, "Syncing skill channels", 0],
+      [:spin, "Materializing dev skills under #{dir}/global", 1],
+      [:spin, "Materializing gem skills under #{dir}/project", 1],
+      [:note, "{{v}} dev skills: 1 materialized under #{dir}/global.", 1],
+      [:note, "{{v}} gem skills: 1 materialized under #{dir}/project.", 1],
+    ]
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -81,10 +87,12 @@ class Dev::Skills::AccessorTest < Minitest::Test
     FileUtils.mkdir_p(skills)
     File.symlink("/nowhere/rspock", skills / "gem-rspock--rspock")
     File.symlink("/nowhere/mine", skills / "mine")
-    accessor = Dev::Skills::Accessor.new(channels: [], project_root: dir, materializer: build_materializer(dir))
+    accessor = Dev::Skills::Accessor.new(
+      channels: [], ui: RecordingUi.new, project_root: dir, materializer: build_materializer(dir),
+    )
 
     When "syncing"
-    accessor.sync(out: StringIO.new)
+    accessor.sync
 
     Then "the legacy link is gone, the repo's own stands"
     !File.symlink?(skills / "gem-rspock--rspock")
@@ -101,19 +109,20 @@ class Dev::Skills::AccessorTest < Minitest::Test
     materializer = build_materializer(dir)
     materializer.sync(channels)
     FileUtils.rm_f(File.join(dir, "project", "gem", "rspock", "rspock"))
-    accessor = Dev::Skills::Accessor.new(channels: channels, materializer: materializer)
-    out = StringIO.new
+    ui = RecordingUi.new
+    accessor = Dev::Skills::Accessor.new(channels: channels, ui: ui, materializer: materializer)
 
     When "asking for status"
-    accessor.status(out: out)
+    accessor.status
 
-    Then "the report groups by channel, names the package/version, and flags the missing link"
-    out.string == <<~OUT
-      dev: dev skills: 1 linked under #{dir}/global
-        one  -> #{dir}/shipped/one
-      dev: gem skills: 1 linked under #{dir}/project
-        gem/rspock/rspock  [rspock 3.0.0]  -> #{dir}/gems/rspock-3.0.0/skills/rspock  (missing — run `dev skills sync`)
-    OUT
+    Then "a frame per channel; each link a fact naming the package/version, the missing one a {{x}} with the remedy"
+    ui.rows == [
+      [:frame, "dev skills (1 linked under #{dir}/global)", 0],
+      [:note, "{{v}} one  -> #{dir}/shipped/one", 1],
+      [:frame, "gem skills (1 linked under #{dir}/project)", 0],
+      [:note, "{{x}} gem/rspock/rspock  [rspock 3.0.0]  -> #{dir}/gems/rspock-3.0.0/skills/rspock  " \
+        "(missing — run `dev skills sync`)", 1],
+    ]
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -134,17 +143,17 @@ class Dev::Skills::AccessorTest < Minitest::Test
     ]
     materializer = build_materializer(dir)
     materializer.sync(channels)
-    accessor = Dev::Skills::Accessor.new(channels: channels, materializer: materializer)
-    out = StringIO.new
+    ui = RecordingUi.new
+    accessor = Dev::Skills::Accessor.new(channels: channels, ui: ui, materializer: materializer)
 
     When "asking for status"
-    accessor.status(out: out)
+    accessor.status
 
-    Then "a trailing section lists the group with each origin"
-    out.string.end_with?(<<~OUT)
-      dev: same-named skills (all load; the agent sees each by path):
-        tdd ← org, gem/a 1.2.0, pip/b 0.9.1
-    OUT
+    Then "a trailing frame lists the group with each origin"
+    ui.rows.last(2) == [
+      [:frame, "Same-named skills (all load; the agent sees each by path)", 0],
+      [:note, "tdd ← org, gem/a 1.2.0, pip/b 0.9.1", 1],
+    ]
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -157,18 +166,20 @@ class Dev::Skills::AccessorTest < Minitest::Test
     FileUtils.mkdir_p(repo)
     system("git", "-C", repo.to_s, "init", "-q", exception: true)
     gem = ListChannel.new(name: "gem", root: repo / ".agents" / "skills" / "dev", project_scoped: true, entries: [])
-    accessor = Dev::Skills::Accessor.new(channels: [gem], project_root: repo, materializer: build_materializer(dir))
-    before = StringIO.new
-    after = StringIO.new
+    before = RecordingUi.new
+    after = RecordingUi.new
+    build = lambda do |ui|
+      Dev::Skills::Accessor.new(channels: [gem], ui: ui, project_root: repo, materializer: build_materializer(dir))
+    end
 
     When "asking for status before and after adding the ignore line"
-    accessor.status(out: before)
+    build.call(before).status
     (repo / ".gitignore").write(".agents/skills/dev/\n")
-    accessor.status(out: after)
+    build.call(after).status
 
-    Then "the warning names the root and the repair, then disappears"
-    before.string.end_with?("dev: warning: .agents/skills/dev/ is not gitignored — run `dev learnings init --gitignore`.\n")
-    !after.string.include?("warning")
+    Then "the warning is a bare {{x}} note after the channel frames, naming the root and the repair; then it is gone"
+    before.rows.last == [:note, "{{x}} .agents/skills/dev/ is not gitignored — run `dev learnings init --gitignore`.", 0]
+    after.rows.none? { |_kind, text, _depth| text.include?("not gitignored") }
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -180,13 +191,15 @@ class Dev::Skills::AccessorTest < Minitest::Test
     channels = build_channels(dir)
     materializer = build_materializer(dir)
     materializer.sync(channels)
-    accessor = Dev::Skills::Accessor.new(channels: channels, materializer: materializer)
+    ui = RecordingUi.new
+    accessor = Dev::Skills::Accessor.new(channels: channels, ui: ui, materializer: materializer)
     out = StringIO.new
 
     When "asking for JSON status"
-    accessor.status(out: out, json: true)
+    accessor.status_json(out: out)
 
-    Then "the document carries each channel's root and records"
+    Then "the document carries each channel's root and records, bare — the Ui is never spoken to"
+    ui.rows == []
     JSON.parse(out.string) == {
       "channels" => [
         { "name" => "dev", "root" => "#{dir}/global", "skills" => [

@@ -293,9 +293,15 @@ class Dev::BinDevTest < Minitest::Test
   # A gem env that resolves nothing, with the suite's own Ruby first on
   # PATH so the shim's probe picks it deterministically. The suite runs
   # under bundler; the shim's sh layer strips that activation itself, which
-  # is why these tests go through `sh`, not `ruby -x`.
+  # is why these tests go through `sh`, not `ruby -x`. The Ui tier is
+  # pinned plain: a terminal's (or CI's) tier loads CLI::UI::Prompt, whose
+  # reline is the Ruby's bundled gem, reached through Gem.path — not a
+  # vendored gem, and not what this env is about.
   def no_gems_env(no_gems)
-    { "GEM_HOME" => no_gems, "GEM_PATH" => no_gems, "PATH" => "#{File.dirname(RbConfig.ruby)}:#{ENV.fetch("PATH")}" }
+    {
+      "GEM_HOME" => no_gems, "GEM_PATH" => no_gems, "PATH" => "#{File.dirname(RbConfig.ruby)}:#{ENV.fetch("PATH")}",
+      "CI" => nil, "CLICOLOR_FORCE" => nil,
+    }
   end
 
   # Variable names from `env` output — whole names, because the suite's

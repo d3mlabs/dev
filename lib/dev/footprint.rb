@@ -6,6 +6,7 @@ require "pathname"
 require_relative "learnings/layout"
 require_relative "plan/workspace"
 require_relative "skills/layout"
+require_relative "ui"
 
 module Dev
   # What dev materializes into an adopting repo's checkout that must never
@@ -54,16 +55,17 @@ module Dev
         paths.select { |path| ignored?(root, path) == false }
       end
 
-      # Print one warning per path git does not ignore, on the given stream.
+      # One `{{x}}` note per path git does not ignore: a drift fact with
+      # its remedy, in the status ledger that checks it.
       #
-      # @param out [IO, StringIO]
+      # @param ui [Dev::Ui]
       # @param project_root [Pathname, String]
       # @param paths [Array<String>]
       # @return [void]
-      sig { params(out: T.any(IO, StringIO), project_root: T.any(Pathname, String), paths: T::Array[String]).void }
-      def warn_missing(out, project_root, paths)
+      sig { params(ui: Dev::Ui, project_root: T.any(Pathname, String), paths: T::Array[String]).void }
+      def warn_missing(ui, project_root, paths)
         missing(project_root, paths).each do |path|
-          out.puts "dev: warning: #{path} is not gitignored — #{REPAIR_HINT}."
+          ui.note("{{x}} #{path} is not gitignored — #{REPAIR_HINT}.")
         end
       end
 

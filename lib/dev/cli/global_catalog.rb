@@ -129,10 +129,10 @@ module Dev
               "or ai-flow's /learn on GitHub — both open a proposal PR; human merge is the gate.",
             category: Command::Category::Workflow,
             children: {
-              "sync" => Builtins::LearningsSyncCommand.new(out: @out),
-              "status" => Builtins::LearningsStatusCommand.new(out: @out),
+              "sync" => Builtins::LearningsSyncCommand.new,
+              "status" => Builtins::LearningsStatusCommand.new,
               "invariants" => Builtins::LearningsInvariantsCommand.new(out: @out),
-              "init" => Builtins::LearningsInitCommand.new(out: @out),
+              "init" => Builtins::LearningsInitCommand.new,
             },
           ),
           "skills" => CommandGroup.new(
@@ -143,7 +143,7 @@ module Dev
             category: Command::Category::Workflow,
             children: {
               "status" => Builtins::SkillsStatusCommand.new(out: @out),
-              "sync" => Builtins::SkillsSyncCommand.new(out: @out),
+              "sync" => Builtins::SkillsSyncCommand.new,
             },
           ),
           "plan" => CommandGroup.new(
@@ -151,13 +151,13 @@ module Dev
             desc: "Sync Cursor plans with GitHub issues",
             category: Command::Category::Workflow,
             children: {
-              "new" => Builtins::PlanNewCommand.new(out: @out),
-              "link" => Builtins::PlanLinkCommand.new(out: @out),
-              "pull" => Builtins::PlanPullCommand.new(out: @out),
-              "push" => Builtins::PlanPushCommand.new(out: @out),
-              "status" => Builtins::PlanStatusCommand.new(out: @out),
-              "init" => Builtins::PlanInitCommand.new(out: @out),
-              "hook-after-edit" => Builtins::PlanHookAfterEditCommand.new(out: @out),
+              "new" => Builtins::PlanNewCommand.new,
+              "link" => Builtins::PlanLinkCommand.new,
+              "pull" => Builtins::PlanPullCommand.new,
+              "push" => Builtins::PlanPushCommand.new,
+              "status" => Builtins::PlanStatusCommand.new,
+              "init" => Builtins::PlanInitCommand.new,
+              "hook-after-edit" => Builtins::PlanHookAfterEditCommand.new,
             },
           ),
           # The binary's version is the binary's, wherever it runs; the host
