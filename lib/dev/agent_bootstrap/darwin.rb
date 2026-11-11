@@ -52,7 +52,7 @@ module Dev
       # @param home_dev [String] the per-user data dir migrated out of
       # @param launch_agents_dir [String] where svc.sh installs runner plists
       # @param brew_executable [String, nil] the host's brew binary
-      #   (AgentBootstrap.host_brew; injectable for tests; nil = no brew
+      #   (RunnerUser.brew_path; injectable for tests; nil = no brew
       #   edge, no tap to trust)
       # @param owner_of [Proc] who owns a path (injectable for tests)
       # @param tap [Dev::TapTrust::Tap, nil] the deployment's tap; nil for none
@@ -74,7 +74,7 @@ module Dev
                      executor: Executor.new, ui: NoUi.new,
                      data_root: DataRoot::SHARED_ROOT, home_dev: File.expand_path(DataRoot::HOME_ROOT),
                      launch_agents_dir: File.join(Dir.home, "Library", "LaunchAgents"),
-                     brew_executable: AgentBootstrap.host_brew,
+                     brew_executable: RunnerUser.brew_path,
                      owner_of: ->(path) { RunnerUser.owner_of(path) },
                      tap: TapTrust.deployment_tap)
         super(agent_user: agent_user, runner_user: runner_user, executor: executor, ui: ui, data_root: data_root,

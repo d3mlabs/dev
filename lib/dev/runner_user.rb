@@ -7,6 +7,7 @@ require "dev/data_root"
 require "dev/platform"
 require "dev/privileged_steps"
 require "dev/runner_setup"
+require "dev/settings"
 require "dev/tap_trust"
 require "dev/ui"
 
@@ -124,17 +125,22 @@ module Dev
         nil
       end
 
-      # Homebrew's binary as the operator's PATH names it, or nil without
-      # one. Never its symlink target: Linuxbrew's `<prefix>/bin/brew` is a
-      # link into `<prefix>/Homebrew/bin/brew`, and brew takes its prefix
-      # from the path it is invoked by — through the target, `shellenv`
-      # answers `<prefix>/Homebrew`, whose bin holds brew alone.
+      # Homebrew's binary: `<prefix>/bin/brew` under the prefix dev resolves,
+      # when it is there; nil without brew. The prefix's own `bin/brew`,
+      # never its symlink target: Linuxbrew's is a link into
+      # `<prefix>/Homebrew/bin/brew`, and brew takes its prefix from the
+      # path it is invoked by — through the target, `shellenv` answers
+      # `<prefix>/Homebrew`, whose bin holds brew alone.
       #
-      # @param env_path [String]
+      # @param prefix [String, nil] the machine's brew prefix
+      #   (Settings.brew_prefix; injectable for tests)
       # @return [String, nil]
-      sig { params(env_path: String).returns(T.nilable(String)) }
-      def brew_path(env_path: ENV.fetch("PATH", ""))
-        env_path.split(File::PATH_SEPARATOR).map { |dir| File.join(dir, "brew") }.find { |candidate| File.executable?(candidate) }
+      sig { params(prefix: T.nilable(String)).returns(T.nilable(String)) }
+      def brew_path(prefix: Settings.brew_prefix)
+        return nil unless prefix
+
+        brew = File.join(prefix, "bin", "brew")
+        File.executable?(brew) ? brew : nil
       end
 
       # The PATH the runner user's commands run on: brew's bin and sbin

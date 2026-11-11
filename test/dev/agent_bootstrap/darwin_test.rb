@@ -400,7 +400,7 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     { ["stat", "-f", "%Sg %Sp", locks] => "dev drwxrwsr-x\n", ["find", locks, "!", "-perm", "-g+w"] => "" }
   end
 
-  # A brew binary at <prefix>/bin/brew, as AgentBootstrap.host_brew finds one.
+  # A brew binary at <prefix>/bin/brew, as RunnerUser.brew_path finds one.
   def brew_in(prefix)
     File.join(prefix, "bin", "brew").tap do |brew|
       FileUtils.mkdir_p(File.dirname(brew))
