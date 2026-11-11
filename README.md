@@ -265,7 +265,7 @@ All dev shell RC hooks — shadowenv activation (`eval "$(shadowenv init <shell>
 
 1. **ENV var** — `DEV_PLANS_REPO`, `DEV_KNOWLEDGE_REPO`, `DEV_DEPLOYMENT_FORMULA`, `DEV_CONTAINER_ENGINE`, `DEV_LIFECYCLE_RUNNER`. Highest precedence.
 2. **User file** — `~/.config/dev/config.yml` (or `$XDG_CONFIG_HOME/dev/config.yml`).
-3. **System file** — `<brew prefix>/etc/dev/config.yml`, shipped by an org's deployment formula. The prefix is the one dev's own keg lives in (`<prefix>/Cellar/dev-core/<version>/…`), derived from where dev runs from, so a job without a login shell — a systemd runner service, say — resolves the same layer a login shell does; `HOMEBREW_PREFIX` overrides it when set. A source checkout runs from no keg and has no system layer.
+3. **System file** — `<brew prefix>/etc/dev/config.yml`, shipped by an org's deployment formula. The prefix is resolved without a shell: `HOMEBREW_PREFIX` when set; else the one dev's own keg lives in (`<prefix>/Cellar/dev-core/<version>/…`); else the standard location (`/opt/homebrew`, `/usr/local`, `/home/linuxbrew/.linuxbrew`) whose `bin/brew` exists — so a job without a login shell (a systemd runner service) and a source checkout in a non-login shell both resolve the same layer a login shell does. A machine without brew has no system layer.
 
 Missing files are empty layers; a key set in the user file wins over the system file. The keys:
 

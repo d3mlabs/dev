@@ -16,8 +16,8 @@ module Dev
   #   2. user file: ~/.config/dev/config.yml (or $XDG_CONFIG_HOME/dev/…) —
   #      individuals and per-user overrides
   #   3. system file: <brew prefix>/etc/dev/config.yml — shipped by an
-  #      org's deployment formula into the prefix dev's own keg lives in
-  #      (see README "Org configuration & deployment")
+  #      org's deployment formula into the machine's brew prefix
+  #      (Settings.brew_prefix; see README "Org configuration & deployment")
   #
   # Keys:
   #
@@ -228,7 +228,7 @@ module Dev
     end
 
     # The system layer an org deployment formula installs into the Homebrew
-    # prefix (pkgetc); nil (an empty layer) when dev runs from no prefix.
+    # prefix (pkgetc); nil (an empty layer) on a machine without brew.
     #
     # @return [String, nil]
     sig { returns(T.nilable(String)) }
@@ -237,28 +237,54 @@ module Dev
       prefix && File.join(prefix, "etc", "dev", "config.yml")
     end
 
+    # Where Homebrew installs on supported hosts: Apple Silicon, Intel mac,
+    # Linuxbrew.
+    STANDARD_BREW_PREFIXES = T.let(%w[/opt/homebrew /usr/local /home/linuxbrew/.linuxbrew].freeze, T::Array[String])
+
     class << self
       extend T::Sig
 
-      # The Homebrew prefix dev runs from: HOMEBREW_PREFIX when set, else
-      # the prefix whose Cellar holds dev's own keg
-      # (`<prefix>/Cellar/dev-core/<version>/libexec/dev`), else nil — a
-      # source checkout, which has no system layer. The prefix is a fact
-      # about where dev is installed, never a guess at the environment: a
-      # job without a login shell exports no HOMEBREW_PREFIX, and probing
-      # standard locations found `/usr/local` on every Linux host whether
-      # or not brew was there (dev#568). The root is read through its
-      # realpath so brew's `opt/` link resolves into the Cellar too.
+      # The machine's Homebrew prefix — the one resolution every brew-facing
+      # part of dev shares. In order: HOMEBREW_PREFIX when set (the
+      # override); the prefix whose Cellar holds dev's own keg (installed
+      # dev); the standard prefix whose `bin/brew` is there (a source
+      # checkout on a machine with brew); nil on a machine without brew.
+      #
+      # Never a guess at the environment: a job without a login shell
+      # exports no HOMEBREW_PREFIX, and a probe for a prefix that merely
+      # *exists* found `/usr/local` on every Linux host whether or not brew
+      # was there (dev#568) — brew's presence is `<prefix>/bin/brew`.
       #
       # @param root [String] dev's root (injectable for tests)
+      # @param standard_prefixes [Array<String>] where brew may be installed,
+      #   in discovery order (injectable for tests)
       # @return [String, nil]
-      sig { params(root: String).returns(T.nilable(String)) }
-      def brew_prefix(root: Dev::Version::ROOT)
+      sig { params(root: String, standard_prefixes: T::Array[String]).returns(T.nilable(String)) }
+      def brew_prefix(root: Dev::Version::ROOT, standard_prefixes: STANDARD_BREW_PREFIXES)
         override = ENV["HOMEBREW_PREFIX"]
         return override if override && !override.empty?
 
-        cellar = Pathname(File.realpath(root)).ascend.find { |dir| dir.basename.to_s == "Cellar" }
-        cellar&.dirname&.to_s
+        keg_prefix(root) || standard_prefixes.find { |prefix| File.executable?(File.join(prefix, "bin", "brew")) }
+      end
+
+      private
+
+      # The prefix dev's keg is installed under: a brew keg puts dev's root at
+      # `<prefix>/Cellar/<formula>/<version>/libexec/dev`, so the Cellar is
+      # the root's fourth ancestor and the prefix the Cellar's parent. The
+      # root is read through its realpath so brew's `opt/<formula>` link
+      # resolves into the Cellar too. nil for a root of any other shape — a
+      # source checkout.
+      #
+      # @param root [String] dev's root
+      # @return [String, nil]
+      sig { params(root: String).returns(T.nilable(String)) }
+      def keg_prefix(root)
+        libexec = Pathname(File.realpath(root)).parent
+        version = libexec.parent
+        formula = version.parent
+        cellar = formula.parent
+        cellar.basename.to_s == "Cellar" ? cellar.parent.to_s : nil
       end
     end
 
