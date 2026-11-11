@@ -9,8 +9,10 @@ module Dev
   # `runner:` block is retired): the comma-separated labels config.sh
   # expects, plus optional dir/name/version overrides (see Dev::RunnerSetup
   # for their defaults: ~/actions-runner-<first label>, the hostname, and
-  # the pinned runner version) and, at an org scope, the runner group the
-  # registration joins (config.sh's `--runnergroup`; unnamed = Default).
+  # the pinned runner version), at an org scope the runner group the
+  # registration joins (config.sh's `--runnergroup`; unnamed = Default),
+  # and whether config.sh may `--replace` a registration GitHub already
+  # holds under the name (register's rule, dev#565: only this family's own).
   class RunnerSetupConfig
     extend T::Sig
     include Dev::ValueEquality::Derived
@@ -30,6 +32,16 @@ module Dev
     sig { returns(T.nilable(String)) }
     attr_reader :group
 
+    # Whether config.sh takes over a registration already held under this
+    # name (`--replace`). GitHub refuses a duplicate runner name at a scope;
+    # `--replace` turns that refusal into a takeover, so it is only ever
+    # true for a name whose registration is this family's own — register
+    # decides, having looked the name up (dev#565). False enrolls plainly:
+    # a name nothing holds needs no replacing, and one another family holds
+    # is refused upstream rather than stolen here.
+    sig { returns(T::Boolean) }
+    attr_reader :replace
+
     sig do
       params(
         labels: String,
@@ -37,14 +49,16 @@ module Dev
         name: T.nilable(String),
         version: T.nilable(String),
         group: T.nilable(String),
+        replace: T::Boolean,
       ).void
     end
-    def initialize(labels:, dir: nil, name: nil, version: nil, group: nil)
+    def initialize(labels:, dir: nil, name: nil, version: nil, group: nil, replace: false)
       @labels = labels
       @dir = dir
       @name = name
       @version = version
       @group = group
+      @replace = replace
     end
 
     # The first label, sanitized for a dir name: what the default install
@@ -64,7 +78,7 @@ module Dev
     # @return [Array] the members that constitute identity
     sig { override.returns(T::Array[T.anything]) }
     def equality_members
-      [@labels, @dir, @name, @version, @group]
+      [@labels, @dir, @name, @version, @group, @replace]
     end
   end
 end
