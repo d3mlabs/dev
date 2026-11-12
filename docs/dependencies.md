@@ -77,7 +77,7 @@ end
 | `gem "name" [, "req"]` | A gem. dev generates `Gemfile` and `Gemfile.lock`. A group becomes a bundler group. | `bundle install` |
 | `brew "name" [, version:]` | A formula. | `brew install` at the locked version |
 | `tap "owner/repo" [, url:]` | A tap formulae may come from. | `brew tap` |
-| `gh "name", github: "owner/repo", tag:, assets:` or `build:` | A GitHub release: prebuilt assets by glob, or a source build. | download into the store |
+| `gh "name", github: "owner/repo", tag: \| sha:, assets:` or `build:` | A GitHub release by `tag:`, or a commit by full 40-hex `sha:`. `assets:` selects prebuilt release assets by glob; `build:` builds from the source archive. A `sha:` pin has no release, so it takes `build:` only. | download into the store |
 | `cmake "name", github:/url:, tag:/branch:/commit: [, targets:]` | A CMake source dependency, linked at `build/_deps/<name>-src`. | checkout into the store |
 | `luarocks "name" [, "req"]` | A rock. Transitive deps resolved by luarocks at install. | `luarocks install` |
 | `pip "name" [, "req"]` | A package in the project venv. Transitive deps resolved by pip at install. Needs `python`. | `pip install` |
@@ -299,7 +299,9 @@ the locked version is not yet downloaded.
 
 Downloaded or checked out into version-keyed trees under the data root;
 see [Data root](data-root.md). Projects reach them through `dev deps path`
-or, for `cmake`, the `build/_deps/<name>-src` link `dev up` maintains.
+or, for `cmake`, the `build/_deps/<name>-src` link `dev up` maintains. A
+`gh` tree that ships a `bin/` is also put on the project `PATH` through
+`.shadowenv.d/515_gh.lisp`.
 
 ## What the checkout carries
 

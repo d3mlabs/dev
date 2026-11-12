@@ -104,7 +104,8 @@ deps update` through the registry's HTTP API with your `gh` token. dev
 generates the Dockerfile: the floor by digest, one apt layer, Linuxbrew on
 `PATH`, a `builder` user, and a marker file `/etc/dev/environment` naming
 the image and its digest. The image's tag is the Dockerfile's SHA-256
-(`<registry>/<name>:<digest>`; the registry defaults to the floor's).
+(`<registry>/<name>:<digest>`; the registry is the floor's unless the block
+passes `registry:`).
 
 Nothing from the lock enters the image. The container's own `dev deps
 install` installs dependencies inside, so the image rebuilds when the OS

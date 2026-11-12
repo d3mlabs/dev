@@ -220,9 +220,10 @@ A channel cannot be named `help`, `status` or `releases`, and cannot have
 ### Channels from the lock
 
 Integrations with a publisher contribute a channel of their own name:
-`steam` for a project pinning the Steamworks SDK, `rubygems` for one
-declaring gems, `ghcr` for one pinning an image, `ficsit` for an SML mod,
-`brew` for a project whose lock's tap publishes it. A declared channel of
+`steam` for a project pinning a Steam app, `egs` for one pinning Epic's
+BuildPatchTool, `rubygems` for one declaring gems, `ghcr` for one pinning
+an image, `ficsit` for an SML mod, `brew` for one pinning a formula from a
+tap. A declared channel of
 the same name **with** `run:` replaces the publisher; one **without**
 `run:` configures it (`targets:` and options); a contributed channel the
 project does not declare appears as is, accepting every packageable build.

@@ -112,8 +112,8 @@ The builtins:
 | `dev engine up\|down\|status` | The per-user container engine | [Containers](docs/containers.md) |
 | `dev container up\|down\|reset\|status` | This checkout's build containers | [Containers](docs/containers.md) |
 | `dev runner register\|status\|unregister` | Enroll this machine as a self-hosted runner | [Runners](docs/runners.md) |
-| `dev plan new\|link\|pull\|push\|status` | Sync Cursor plans with GitHub issues | [Agents](docs/agents.md) |
-| `dev learnings sync\|status\|init` | Sync org learnings into the machine | [Agents](docs/agents.md) |
+| `dev plan new\|link\|pull\|push\|status\|init` | Sync Cursor plans with GitHub issues | [Agents](docs/agents.md) |
+| `dev learnings sync\|status\|invariants\|init` | Sync org learnings into the machine | [Agents](docs/agents.md) |
 | `dev skills status\|sync` | Inspect agent skill links | [Agents](docs/agents.md) |
 | `dev cache gc` | Reclaim caches and old artifacts | [Data root](docs/data-root.md) |
 | `dev version`, `dev help` | | |

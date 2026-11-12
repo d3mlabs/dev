@@ -84,13 +84,18 @@ developer machine needs regardless of project — an agent CLI, say. On
 every `dev up`, before project provisioning, dev:
 
 1. runs `brew update`;
-2. upgrades the deployment formula named in `config.yml`;
+2. upgrades one formula: the `deployment_formula` setting when set, else
+   `dev-core` when brew installed it, else nothing (a source checkout);
 3. runs `brew bundle install` against the Brewfile when one exists.
 
 The step is warn-only: offline machines and failed upgrades never block
 project provisioning. There is no throttle beyond brew's own
 `HOMEBREW_AUTO_UPDATE_SECS`. A deployment fix therefore reaches every
 machine on its next `dev up`.
+
+A system `config.yml` that does not set `deployment_formula` draws a
+warning on every `dev up`: dev has a deployment but cannot name what to
+upgrade.
 
 What goes where:
 

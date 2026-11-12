@@ -65,10 +65,10 @@ Each builtin runs in one of three scopes:
 | `dev deps install [--group G] [--except G] [--integration I] [--pinned-taps]` | Install the lock on this machine. |
 | `dev deps check` | Exit non-zero when the manifest, lock, or installed state disagree. |
 | `dev deps path <integration> <name> [<platform>]` | Print a locked artifact's path. |
-| `dev build [BUILD] [--target T] [--platform P] [--config C]` | Build one target's install. |
-| `dev package [BUILD] [--no-build] [--fetch]` | Build, then archive and stamp the artifact. |
-| `dev deploy <channel> [BUILD] [--release V] [--config C] [--allow-stale] [--force] [--dry-run]` | Ship artifacts to a channel. |
-| `dev deploy --release V` | Ship a release to every channel. |
+| `dev build [BUILD] [--target T] [--platform P] [--config C] [--runner L \| --container]` | Build one target's install. |
+| `dev package [BUILD] [--target T] [--platform P] [--config C] [--no-build] [--runner L \| --container] [--fetch]` | Build, then archive and stamp the artifact. `--fetch` brings a remote host's artifact into this machine's store. |
+| `dev deploy <channel> [BUILD] [--release V] [--config C] [--allow-stale] [--force] [--dry-run] [--runner L]` | Ship artifacts to a channel. |
+| `dev deploy --release V [--dry-run]` | Ship a release to every channel. |
 | `dev deploy status [--release V]` | What each channel carries. |
 | `dev release [<version>\|major\|minor\|patch] [--yes]` | Tag, push, package and attach archives to a GitHub release. |
 | `dev cd <repo>` | Jump to a checkout by fuzzy name. |
@@ -76,7 +76,7 @@ Each builtin runs in one of three scopes:
 | `dev config list\|get <key>\|set <key> <value>` | Settings. |
 | `dev cred get <namespace> <key>` | Resolve a credential and print it. |
 | `dev engine up\|down [--force]\|status` | The per-user container engine. |
-| `dev container up\|down\|reset\|tag\|status` | This checkout's images and containers. |
+| `dev container up\|down\|reset\|status` | This checkout's images and containers. |
 | `dev runner register\|status\|unregister` | Self-hosted runner enrollment. |
 | `dev plan new\|link\|pull\|push\|status\|init` | Plans as GitHub issues. |
 | `dev learnings sync\|status\|invariants\|init` | Org learnings read path. |
