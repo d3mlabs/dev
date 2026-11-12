@@ -165,7 +165,8 @@ module Dev
     # because of the pin, not as an input.
     sig { returns(T::Boolean) }
     def org_scoped?
-      !@group.nil? && T.must(@group).owned?
+      group = @group
+      !group.nil? && group.owned?
     end
 
     sig { returns(T::Boolean) }
