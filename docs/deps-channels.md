@@ -112,7 +112,7 @@ flowchart LR
   channel --> host --> persist
 ```
 
-The verb is a channel choice. Warmth is shape × the host's persistence mechanism, and has nothing to do with which group a dependency is in or whether it is "build" or "runtime". A workstation and a box persist the data root and brew prefix continuously on a disk; a Mac's container persists them on two named volumes; a hosted runner persists them discretely in the **checkpoint** — a GitHub custom image of the whole boot disk, minted by a `main`-only job after a green run that changed a lock file. A cache action for a workdir ([dev#265](https://github.com/d3mlabs/dev/issues/265)) is an optimization of the gap between the checkpoint and the current lock, built only if the measured gap warrants it. See [Setting up a host](../README.md#setting-up-a-host-warmth-is-the-data-root).
+The verb is a channel choice. Warmth is shape × the host's persistence mechanism, and has nothing to do with which group a dependency is in or whether it is "build" or "runtime". A workstation and a box persist the data root and brew prefix continuously on a disk; a Mac's container persists them on two named volumes; a hosted runner persists them discretely in the **checkpoint** — a GitHub custom image of the whole boot disk, minted by a `main`-only job after a green run that changed a lock file. A cache action for a workdir ([dev#265](https://github.com/d3mlabs/dev/issues/265)) is an optimization of the gap between the checkpoint and the current lock, built only if the measured gap warrants it. See [Build hosts, cold to warm](runners.md#build-hosts-cold-to-warm).
 
 ## What the checkout carries, and gitignores
 
