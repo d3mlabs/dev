@@ -151,6 +151,8 @@ class Dev::RunnerRoleTest < Minitest::Test
     Dev::RunnerRole::AGENT                              | ["ai-ask"]             | true
     Dev::RunnerRole::AGENT                              | ["cellbound3d"]        | true
     Dev::RunnerRole::AGENT                              | ["ai-orchestrator"]    | false
+    Dev::RunnerRole::AGENT                              | ["ai-build", "ai-orchestrator"] | false
+    Dev::RunnerRole::ORCHESTRATOR                       | ["ai-build", "ai-orchestrator"] | false
     Dev::RunnerRole::ORCHESTRATOR                       | ["ai-orchestrator"]    | true
     Dev::RunnerRole::ORCHESTRATOR                       | ["ai-build"]           | false
     Dev::RunnerRole::ORCHESTRATOR                       | ["old"]                | true
