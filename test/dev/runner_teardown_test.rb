@@ -218,7 +218,7 @@ class Dev::RunnerTeardownTest < Minitest::Test
       host_platform: "linux-x64", home: home, current_user: "jpduchesne")
     enrollment = teardown.resolve("~/actions-runner-snappy")
     enrollment = Dev::RunnerDiscovery::Enrollment.new(dir: enrollment.dir, scope: enrollment.scope, name: enrollment.name,
-      service_installed: true, display_dir: enrollment.display_dir, owner: "runner")
+      agent_id: enrollment.agent_id, service_installed: true, display_dir: enrollment.display_dir, owner: "runner")
 
     When
     teardown.teardown!(enrollment, ui: quiet)
@@ -383,7 +383,7 @@ class Dev::RunnerTeardownTest < Minitest::Test
   def write_runner(home, dir_name, scope:, name:)
     dir = File.join(home, dir_name)
     FileUtils.mkdir_p(dir)
-    record = { "agentName" => name, "gitHubUrl" => "https://github.com/#{scope}" }
+    record = { "agentId" => 1, "agentName" => name, "gitHubUrl" => "https://github.com/#{scope}" }
     File.write(File.join(dir, ".runner"), "\uFEFF#{JSON.generate(record)}")
     dir
   end

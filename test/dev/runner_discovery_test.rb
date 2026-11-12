@@ -107,6 +107,26 @@ class Dev::RunnerDiscoveryTest < Minitest::Test
     Dev::RunnerDiscovery.new(home: home).enrollments.fetch(0).dir_label.nil?
   end
 
+  test "an enrollment knows its registration's id (.runner agentId): what tells this host's own registration from a look-alike under the same name (dev#565)" do
+    Given
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF", agent_id: 74)
+
+    Expect
+    Dev::RunnerDiscovery.new(home: home).enrollments.fetch(0).agent_id == 74
+  end
+
+  test "a .runner record without an agentId is not an enrollment — config.sh always writes one, so a record without it is not config.sh's" do
+    Given
+    home = Dir.mktmpdir
+    dir = File.join(home, "actions-runner-snappy")
+    FileUtils.mkdir_p(dir)
+    File.write(File.join(dir, ".runner"), "\uFEFF#{JSON.generate({ "agentName" => "JPSFF", "gitHubUrl" => "https://github.com/JPDuchesne/snappy" })}")
+
+    Expect
+    Dev::RunnerDiscovery.new(home: home).enrollments.empty?
+  end
+
   test "display_dir is the dir relative to home with a ~, or absolute when outside home" do
     Given "an enrollment under home and one elsewhere"
     home = Dir.mktmpdir
@@ -185,11 +205,11 @@ class Dev::RunnerDiscoveryTest < Minitest::Test
   private
 
   # A .runner record the way config.sh writes it: UTF-8 BOM + JSON with
-  # gitHubUrl/agentName (scope "owner" or "owner/repo").
-  def write_runner(home, dir_name, scope:, name:)
+  # agentId/agentName/gitHubUrl (scope "owner" or "owner/repo").
+  def write_runner(home, dir_name, scope:, name:, agent_id: 1)
     dir = File.join(home, dir_name)
     FileUtils.mkdir_p(dir)
-    record = { "agentName" => name, "gitHubUrl" => "https://github.com/#{scope}", "workFolder" => "_work" }
+    record = { "agentId" => agent_id, "agentName" => name, "gitHubUrl" => "https://github.com/#{scope}", "workFolder" => "_work" }
     File.write(File.join(dir, ".runner"), "\uFEFF#{JSON.pretty_generate(record)}")
     dir
   end

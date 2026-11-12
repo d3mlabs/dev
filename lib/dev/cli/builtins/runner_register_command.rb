@@ -92,11 +92,14 @@ module Dev
       # runner's service keeps running against a record GitHub no longer
       # holds. So before any slot enrolls, every fresh slot's name is looked
       # up at the scope: a name nothing holds enrolls without `--replace`;
-      # one held by this family's own enrollment (same scope, same host,
-      # same group — the partition below) is re-enrolled with it; any other
-      # holder refuses, naming its labels and status and pointing at
-      # `--name`, having changed nothing. The naming scheme only decides how
-      # often that fires; uniqueness is this rule's.
+      # one held by this host's own registration — an enrollment of this
+      # family's (same scope, same host, same group — the partition below)
+      # whose `.runner` id is the id GitHub holds — is re-enrolled with it;
+      # any other holder refuses, naming its labels and status and pointing
+      # at `--name` (another family) or at the stale dir (another host that
+      # took this name after the registration was lost), having changed
+      # nothing. The naming scheme only decides how often that fires;
+      # uniqueness is this rule's, and identity is the registration's id.
       #
       # On Linux the enrollment is the **runner user's**, by rule (dev#310,
       # RunnerUser): before anything enrolls, register converges the shared
@@ -318,9 +321,11 @@ module Dev
             Register never steals a registration. Runner names are unique per scope, and
             `config.sh --replace` would turn GitHub's refusal of a duplicate into a silent
             takeover of a runner that keeps running; so --replace is passed only for a name
-            whose registration is this family's own (same scope, host and group), a name
-            nothing holds enrolls without it, and any other collision refuses, naming the
-            holder's labels and status — pass --name to enroll beside it.
+            whose registration is this host's own — an enrollment of this family's (same
+            scope, host and group) whose .runner id is the id GitHub holds — a name nothing
+            holds enrolls without it, and any other collision refuses, naming the holder's
+            labels and status: pass --name to enroll beside another family; unregister the
+            stale dir when another host took this name after the registration was lost.
 
             Two kinds of ai-flow host. An agent host (--ai-flow, or --labels over
             #{LabelContracts::AI_FLOW_AGENT_LABELS.join(" ")}) runs the agent: one slot is one agent
@@ -509,17 +514,24 @@ module Dev
           # The org-side contract first: the group the slots will join must
           # exist, with its access, before config.sh names it.
           group = contract && @groups.converge!(contract, org: scope, ui: context.ui)
-          # --dir is the operator picking the dir: no discovery, no detection
-          # — and so no family of this host's to own a held name; a name
-          # another registration holds is refused there like anywhere else.
-          # The runner user's home is where the rule puts enrollments; the
+          # --dir is the operator picking the dir: no discovery, no detection.
+          # The one enrollment that can be this host's own there is the
+          # dir's own record (`own`, below) — a name GitHub holds under any
+          # other registration is refused there like anywhere else. The
+          # runner user's home is where the rule puts enrollments; the
           # operator's is where the ones from before it are.
           discovery = runner_user ? @discovery.also_under(runner_user.home) : @discovery
           at_scope = config.dir ? [] : discovery.enrollments_for(scope)
+          picked = config.dir ? [discovery.at(setup.resolve_dir)].compact.select { |enrollment| enrollment.scope == scope } : []
           # GitHub's record of each, looked up once: what tells the families
           # apart below, and what the amend path reads.
-          known = at_scope.to_h { |enrollment| [enrollment.name, @registry.find(scope: scope, name: enrollment.name)] }
+          known = (at_scope + picked).to_h { |enrollment| [enrollment.name, @registry.find(scope: scope, name: enrollment.name)] }
           enrollments, others = partition_family(at_scope, known, labels)
+          # Before anything is retired or enrolled: an enrollment of this
+          # host's whose record GitHub holds under another registration id
+          # is a look-alike, not this host's — refused here, with nothing
+          # changed (dev#565).
+          refuse_look_alikes!(scope, config.dir ? picked : enrollments, known, ui: context.ui)
           naming = resolve_naming(enrollments, others, config, setup, slots)
           by_slot, runners = enrolled_slots(scope, enrollments, naming, config, known)
 
@@ -544,7 +556,8 @@ module Dev
             enrollment = by_slot[slot]&.first
             enrollment && runners.key?(enrollment.name)
           end
-          replacing = fresh.to_h { |slot| [slot, replace?(scope, fresh_slot_name(slot, naming, setup), enrollments, known, ui: context.ui)] }
+          own = config.dir ? picked : enrollments
+          replacing = fresh.to_h { |slot| [slot, replace?(scope, fresh_slot_name(slot, naming, setup), own, known, ui: context.ui)] }
           retire_surplus!(scope, by_slot.select { |slot, _dirs| slot > count }.values.flatten, yes: yes, ui: context.ui)
 
           (1..count).each do |slot|
@@ -816,37 +829,75 @@ module Dev
           naming.base.empty? ? setup.resolve_name : naming.slot_name(slot)
         end
 
+        # Refuse when a local enrollment's name is held on GitHub by a
+        # registration that is not the one the enrollment records
+        # (dev#565). Own is the registration, not the name: names are
+        # reused (another machine with this hostname, enrolled after this
+        # registration was lost), ids are not, so a `.runner` under the
+        # name with another id is a look-alike — and `--replace`, or the
+        # retire-and-enroll-fresh path, would take the other machine's
+        # runner over. Said before anything is torn down or enrolled.
+        #
+        # @param scope [String]
+        # @param enrollments [Array<Dev::RunnerDiscovery::Enrollment>] this host's candidates: the family's, or the `--dir`'s
+        # @param known [Hash{String => Runner, nil}] GitHub's record by discovered name; nil where lost
+        # @param ui [Ui] the refusal is said here before it is raised
+        # @raise [RegistrationHeldError] when a name is held by another registration
+        sig do
+          params(
+            scope: String,
+            enrollments: T::Array[Dev::RunnerDiscovery::Enrollment],
+            known: T::Hash[String, T.nilable(Dev::RunnerRegistry::Runner)],
+            ui: Ui,
+          ).void
+        end
+        def refuse_look_alikes!(scope, enrollments, known, ui:)
+          enrollments.each do |enrollment|
+            holder = known.fetch(enrollment.name) { @registry.find(scope: scope, name: enrollment.name) }
+            next if holder.nil? || holder.id == enrollment.agent_id
+
+            ui.note("{{x}} '#{enrollment.name}' at #{scope} is registered by another host under this family's name " \
+              "(labels: #{holder.custom_labels.join(",")}, #{holder.status}); this host's #{enrollment.display_dir} records a registration " \
+              "GitHub no longer holds — dev runner unregister it, then re-run")
+            raise RegistrationHeldError, "nothing changed: '#{enrollment.name}' at #{scope} is not this host's registration to replace"
+          end
+        end
+
         # Whether config.sh may `--replace` the registration held under
         # `name` at the scope (dev#565): no when nothing holds it (nothing
-        # to replace); yes only when the holder is this family's own — one
-        # of the enrollments this host has for the family, which is the
-        # same scope, host and group by partition_family's construction;
-        # any other holder is a refusal naming it, since GitHub would refuse
-        # the duplicate and `--replace` would turn that into a silent
-        # takeover of a runner that keeps running. GitHub's record is read
-        # once per name: the discovered names' from the partition's lookup,
-        # a fresh slot's here.
+        # to replace); yes only when the holder is this host's own
+        # registration — an enrollment of this family's (same scope, host
+        # and group by partition_family's construction; the `--dir`'s own
+        # record when the operator picked the dir) whose `.runner` id *is*
+        # the id GitHub holds under the name. Own is the registration, not
+        # the name (refuse_look_alikes! has already said so of any local
+        # record under the name with another id). Any other holder is a refusal
+        # naming it, since GitHub would refuse the duplicate and `--replace`
+        # would turn that into a silent takeover of a runner that keeps
+        # running. GitHub's record is read once per name: the discovered
+        # names' from the partition's lookup, a fresh slot's here.
         #
         # @param scope [String]
         # @param name [String] the name the slot would enroll under
-        # @param enrollments [Array<Dev::RunnerDiscovery::Enrollment>] this family's
+        # @param own [Array<Dev::RunnerDiscovery::Enrollment>] the enrollments that may be this host's own: the family's, or the `--dir`'s
         # @param known [Hash{String => Runner, nil}] GitHub's record by discovered name; nil where lost
         # @param ui [Ui] the refusal is said here before it is raised
         # @return [Boolean]
-        # @raise [RegistrationHeldError] when another family holds the name
+        # @raise [RegistrationHeldError] when a registration not this host's holds the name
         sig do
           params(
             scope: String,
             name: String,
-            enrollments: T::Array[Dev::RunnerDiscovery::Enrollment],
+            own: T::Array[Dev::RunnerDiscovery::Enrollment],
             known: T::Hash[String, T.nilable(Dev::RunnerRegistry::Runner)],
             ui: Ui,
           ).returns(T::Boolean)
         end
-        def replace?(scope, name, enrollments, known, ui:)
+        def replace?(scope, name, own, known, ui:)
           holder = known.fetch(name) { @registry.find(scope: scope, name: name) }
           return false if holder.nil?
-          return true if enrollments.any? { |enrollment| enrollment.name == name }
+
+          return true if own.any? { |enrollment| enrollment.name == name && enrollment.agent_id == holder.id }
 
           ui.note("{{x}} '#{name}' at #{scope} is registered by another family " \
             "(labels: #{holder.custom_labels.join(",")}, #{holder.status}) — pass #{NAME_FLAG} to enroll beside it")
