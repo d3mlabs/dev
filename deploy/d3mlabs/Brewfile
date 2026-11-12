@@ -1,5 +1,5 @@
 # The d3mlabs org's host tooling beyond dev-core's own dependencies (the
 # sets are disjoint by design), installed by the d3mlabs deployment formula
 # into $(brew --prefix)/etc/dev/Brewfile and converged by `dev up` via
-# brew bundle. README: "Host tooling: the Brewfile contract".
+# brew bundle. See docs/configuration.md, "Host tooling".
 cask "cursor-cli"

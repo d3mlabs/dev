@@ -17,7 +17,7 @@ module Dev
   #      individuals and per-user overrides
   #   3. system file: <brew prefix>/etc/dev/config.yml — shipped by an
   #      org's deployment formula into the machine's brew prefix
-  #      (Settings.brew_prefix; see README "Org configuration & deployment")
+  #      (Settings.brew_prefix; see docs/configuration.md, "Two formulas")
   #
   # Keys:
   #

@@ -9,7 +9,7 @@
 # which formula to self-upgrade (the deployment names itself).
 #
 # Shipped by the `dev` target (bin/install-deployment); dev-core carries
-# nothing of it. README: "Org configuration & deployment".
+# nothing of it. See docs/configuration.md, "Two formulas".
 plans_repo: d3mlabs/plans
 knowledge_repo: d3mlabs/knowledge
 deployment_formula: d3mlabs/d3mlabs/dev
