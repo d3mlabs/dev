@@ -316,6 +316,22 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
     raises Dev::Deps::GhRepository::ApiError
   end
 
+  test "at lifts a commit SHA purely — no gh call, the SHA is the version" do
+    Given "a commit address"
+    repo = Dev::Deps::GhRepository.new
+    sha = "9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03"
+    repo.expects(:run_gh_api).never
+
+    When "lifting"
+    version = repo.at(Dev::Deps::PackageId.new(integration: :gh, name: "json", source: "nlohmann/json"), sha)
+
+    Then "the address is trusted at resolve; no release facts, existence surfaces at fetch"
+    version.version == sha
+    version.digest.nil?
+    version.metadata == { "repo" => "nlohmann/json" }
+    version.declarations == Dev::Deps::Declarations::Resolved.new([])
+  end
+
   test "find raises GhMissingError when the gh CLI is not installed" do
     Given "no gh binary on PATH"
     repo = Dev::Deps::GhRepository.new
