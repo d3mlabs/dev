@@ -22,6 +22,14 @@ class RunnerTest < Minitest::Test
   extend T::Sig
   include SorbetHelper
 
+  # The composition root builds every builtin on its platform defaults
+  # (`for_host`): the same Mac for every test here, pinned, so the catalog
+  # and the usage read the same on a laptop, the box and hosted CI.
+  def setup
+    super
+    @host_probes = pin_host_platform(os: "darwin")
+  end
+
   test "run with empty argv prints usage" do
     Given "a Runner with a dev.yml"
     out = StringIO.new
@@ -1197,6 +1205,7 @@ class RunnerTest < Minitest::Test
   end
 
   def teardown
+    restore_host_probe_guard(@host_probes)
     @tmp_roots&.each { |root| FileUtils.rm_rf(root) }
     @tmp_files&.each(&:close!)
     super

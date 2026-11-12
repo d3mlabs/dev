@@ -46,7 +46,10 @@ class HostRuleIntegrationTest < Minitest::Test
     Dev.stubs(:target_project_root).returns(@root)
     Dev::Deps.stubs(:detect_env).returns("dev")
     Dev::Platform.stubs(:current).returns("linux-x86_64")
-    Dev::Platform.stubs(:os).returns("linux")
+    # The composition root builds every builtin on its platform defaults
+    # (`for_host`): a Linux host, pinned, with DEV_DATA_ROOT set above, so
+    # they answer the same on every machine.
+    @host_probes = pin_host_platform(os: "linux")
     @engine = FakeContainerEngine.new(&method(:docker_succeeds?))
     Dev::ContainerEngine.stubs(:resolve).returns(@engine)
     Dev::ShadowenvLlvm.stubs(:project_needs_llvm?).returns(false)
@@ -56,6 +59,7 @@ class HostRuleIntegrationTest < Minitest::Test
   end
 
   def teardown
+    restore_host_probe_guard(@host_probes)
     $stderr = @original_stderr
     @original_data_root.nil? ? ENV.delete("DEV_DATA_ROOT") : ENV["DEV_DATA_ROOT"] = @original_data_root
     Dir.chdir(@original_cwd)

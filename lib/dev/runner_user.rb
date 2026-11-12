@@ -4,6 +4,7 @@
 require "etc"
 
 require "dev/data_root"
+require "dev/host_probe_guard"
 require "dev/platform"
 require "dev/privileged_steps"
 require "dev/runner_setup"
@@ -93,10 +94,12 @@ module Dev
       #
       # @param name [String, nil] `--as` override
       # @param ui [Ui] the terminal the user's convergence speaks on
-      # @param host_os [String] "darwin" / "linux" / "windows"
+      # @param host_os [String, nil] "darwin" / "linux" / "windows"; nil reads
+      #   this host's (a host probe — refused under the test harness, HostProbeGuard)
       # @return [RunnerUser, nil]
-      sig { params(name: T.nilable(String), ui: Ui, host_os: String).returns(T.nilable(RunnerUser)) }
-      def for_host(name: nil, ui: NoUi.new, host_os: Platform.os)
+      sig { params(name: T.nilable(String), ui: Ui, host_os: T.nilable(String)).returns(T.nilable(RunnerUser)) }
+      def for_host(name: nil, ui: NoUi.new, host_os: nil)
+        host_os ||= HostProbeGuard.probe("Platform.os", inject: "host_os:") { Platform.os }
         return nil unless host_os == "linux"
 
         new(name: name || DEFAULT_NAME, ui: ui)

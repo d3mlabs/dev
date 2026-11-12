@@ -5,6 +5,7 @@ require "etc"
 
 require "dev/data_root"
 require "dev/data_root_migration"
+require "dev/host_probe_guard"
 require "dev/platform"
 require "dev/privileged_steps"
 require "dev/ui"
@@ -61,12 +62,16 @@ module Dev
       # not Linux, or `DEV_DATA_ROOT` points elsewhere (an override is the
       # user's to create).
       #
-      # @param env [Hash{String => String}] process env
-      # @param host_os [String] "darwin" / "linux" / "windows"
+      # @param env [Hash{String => String}, nil] process env; nil reads this
+      #   process's (a host probe — refused under the test harness, HostProbeGuard)
+      # @param host_os [String, nil] "darwin" / "linux" / "windows"; nil reads this host's (likewise)
       # @return [LinuxDataRootProvisioner, nil]
-      sig { params(env: T::Hash[String, String], host_os: String).returns(T.nilable(LinuxDataRootProvisioner)) }
-      def for_host(env: ENV.to_h, host_os: Platform.os)
+      sig { params(env: T.nilable(T::Hash[String, String]), host_os: T.nilable(String)).returns(T.nilable(LinuxDataRootProvisioner)) }
+      def for_host(env: nil, host_os: nil)
+        host_os ||= HostProbeGuard.probe("Platform.os", inject: "host_os:") { Platform.os }
         return nil unless host_os == "linux"
+
+        env ||= HostProbeGuard.probe("the process env", inject: "env:") { ENV.to_h }
         return nil unless env["DEV_DATA_ROOT"].to_s.empty?
 
         new

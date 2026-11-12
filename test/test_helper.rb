@@ -22,6 +22,7 @@ require "minitest/mock"
 require "mocha/minitest"
 require "support/sorbet_helper"
 require "support/provisioning_guard_helper"
+require "support/host_probe_guard_helper"
 require "support/parsed_args_helper"
 require "support/value_semantics_assertions"
 require "minitest/hell" if ENV["MT_HELL"]
@@ -32,7 +33,13 @@ require "minitest/hell" if ENV["MT_HELL"]
 # installing on the developer's machine. Tests that drive a
 # seam themselves lift it via ProvisioningGuardHelper.
 ENV[Dev::ProvisioningGuard::ENV_VAR] = "1"
+# And the host-probe kill-switch: a platform seam's default (`for_host`)
+# answers per machine, so a test that reaches one is green here and red on
+# the box, or the reverse. Armed, it fails on every host naming the seam to
+# inject.
+ENV[Dev::HostProbeGuard::ENV_VAR] = "1"
 Minitest::Test.include(ProvisioningGuardHelper)
+Minitest::Test.include(HostProbeGuardHelper)
 Minitest::Test.include(ParsedArgsHelper)
 Minitest::Test.include(ValueSemanticsAssertions)
 

@@ -139,8 +139,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   # --- usage ------------------------------------------------------------
 
   test "every flag register declares carries a description, so `dev runner register --help` explains each" do
-    Given "the command as the CLI builds it"
-    command = Dev::Cli::Builtins::RunnerRegisterCommand.new
+    Given "the command as the CLI builds it, its host seams answered off"
+    command = usage_command
 
     Expect "no flag lists by name alone"
     command.flags.all? { |flag| !flag.desc.empty? }
@@ -1558,7 +1558,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
   test "register's usage carries the three-identity table and the runner-user rule: who mints, who owns, who installs; the login line; examples" do
     Given "the full desc, as `dev runner register --help` prints it"
-    desc = Dev::Cli::Builtins::RunnerRegisterCommand.new.desc
+    desc = usage_command.desc
 
     Expect "a one-line summary first, then the detail"
     desc.lines.fetch(0).chomp == "Enroll this host as a self-hosted runner, converging label contracts (--org, --labels, --ai-flow)"
@@ -1579,7 +1579,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
   test "--as carries a description, like every register flag" do
     Expect
-    Dev::Cli::Builtins::RunnerRegisterCommand.new.flags.map(&:name).include?("--as")
+    usage_command.flags.map(&:name).include?("--as")
   end
 
   # --- plumbing ---------------------------------------------------------
@@ -1768,6 +1768,16 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     )
     Harness.new(command: command, wirings: wirings, events: events, out: out, engine: engine,
       torn_down: torn_down, ui: ui, as_names: as_names, factory_uis: factory_uis, reach_roots: reach_roots)
+  end
+
+  # The command with its default wiring but the three platform seams
+  # answered off (a Mac with no runner user, no data root, no WSL side):
+  # usage and flags do not depend on the host, and the host-probe guard
+  # refuses the defaults that would read it.
+  def usage_command
+    Dev::Cli::Builtins::RunnerRegisterCommand.new(
+      runner_user_factory: ->(_name, _ui) { nil }, data_root_provisioner: nil, wsl_runner_host: nil,
+    )
   end
 
   # A .runner record the way config.sh writes it (UTF-8 BOM + JSON).

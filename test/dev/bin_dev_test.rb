@@ -33,6 +33,21 @@ class Dev::BinDevTest < Minitest::Test
   # copy that could drift.
   SHIM_UNSET_KEYS = File.read(BIN_DEV)[/^unset ((?:\\\n|[^\n])*)/, 1].gsub("\\\n", " ").split.freeze
 
+  # These tests spawn the real `bin/dev`, which builds every builtin on
+  # its platform defaults and inherits this process's env: the host-probe
+  # kill-switch is lifted so the child reads its host, as a user's would.
+  # What is asserted here (boot, usage, exit codes) is the same on every
+  # host.
+  def setup
+    super
+    @host_probes = allow_host_probes
+  end
+
+  def teardown
+    restore_host_probe_guard(@host_probes)
+    super
+  end
+
   test "a hostile bundler env cannot stop dev from booting" do
     Given "a directory with no dev.yml, and the env a bundle-exec harness leaks (ai-flow#44)"
     dir = Dir.mktmpdir("dev-bin-test-")
