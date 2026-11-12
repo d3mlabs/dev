@@ -14,7 +14,8 @@ module Dev
     # across declaring groups instead of inheriting).
     #
     # host and env use nil as their all-encompassing empty form ("installs
-    # everywhere"), matching the declaration axes documented in the README;
+    # everywhere"), matching the declaration axes in docs/dependencies.md,
+    # "Scoping a declaration";
     # group always names a purpose and defaults to :app.
     class Scope
       extend T::Sig

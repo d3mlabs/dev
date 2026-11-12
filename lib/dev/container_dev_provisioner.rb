@@ -8,7 +8,8 @@ require "dev/version"
 
 module Dev
   # Keeps a build container's dev at the host's exact version — "containers
-  # match the orchestrator" (README, "dev is live infrastructure").
+  # match the orchestrator" (docs/configuration.md, "dev is live
+  # infrastructure").
   #
   # Compare-and-install with a no-op steady state: `dev version` inside the
   # container is probed through `docker exec`; when it differs from the

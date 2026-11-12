@@ -25,8 +25,8 @@
 # installed artifacts (e.g. a gh engine release) that are volume-mounted into
 # the container, never baked into the image. dev-core is uninstalled
 # afterwards: dev is live infrastructure, and a copy frozen into an image
-# layer would be a stale dev waiting to be run by accident (README: "dev is
-# live infrastructure").
+# layer would be a stale dev waiting to be run by accident
+# (docs/configuration.md, "dev is live infrastructure").
 #
 # This is NOT a user-facing CLI command. It runs inside docker build only.
 
@@ -114,8 +114,8 @@ fi
 (cd "$DEPS_DIR" && CI=true dev deps install --group build --integration brew ${PINNED_TAPS[@]+"${PINNED_TAPS[@]}"})
 
 echo ">>> Removing dev-core from the image"
-# The toolchain stays; dev leaves (README: "dev is live infrastructure" —
-# the image contains no dev). dev-core's own dependencies (gh, git, ruby,
+# The toolchain stays; dev leaves (docs/configuration.md, "dev is live
+# infrastructure" — the image contains no dev). dev-core's own dependencies (gh, git, ruby,
 # shadowenv, …) stay too: Homebrew 7 autoremoves a formula's
 # now-unneeded dependencies on uninstall by default, and every container
 # bin/container-provision-dev.sh later brings to the host's version would
