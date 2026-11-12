@@ -147,7 +147,7 @@ class Dev::Cli::Builtins::CacheGcCommandTest < Minitest::Test
 
   def build_command(gc, snapshot_branches: quiet_snapshot_branches)
     Dev::Cli::Builtins::CacheGcCommand.new(
-      cache_gc_factory: ->(_lockfile) { gc },
+      cache_gc_factory: ->(_lockfile, _ui) { gc },
       snapshot_branches_factory: ->(_root) { snapshot_branches },
     )
   end

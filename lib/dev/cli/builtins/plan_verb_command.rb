@@ -1,27 +1,29 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "stringio"
 require "dev/cli/command"
 require "dev/plan"
+require "dev/ui"
 require "dev/cli/workspace_root"
 
 module Dev
   module Cli
     module Builtins
       # The shape every `dev plan <verb>` leaf shares: the accessor is built
-      # per call, anchored at the enclosing workspace (nearest dev.yml, else
-      # git root, else the cwd — a global command runs from any directory),
-      # the host hook point runs first (shipped skill links + org learnings
-      # artifacts, see Plan::Accessor#refresh_host), then the verb. Subclasses
-      # own the verb: its argv shape and which accessor method it calls.
+      # per call over the context's Ui, anchored at the enclosing workspace
+      # (nearest dev.yml, else git root, else the cwd — a global command runs
+      # from any directory), the host hook point runs first (shipped skill
+      # links + org learnings artifacts, see Plan::Accessor#refresh_host),
+      # then the verb. Subclasses own the verb: its argv shape and which
+      # accessor method it calls.
       class PlanVerbCommand < BuiltinCommand
         extend T::Sig
         extend T::Helpers
 
         abstract!
 
-        AccessorFactory = T.type_alias { T.proc.returns(Dev::Plan::Accessor) }
+        # Builds the accessor over the Ui the verb speaks through.
+        AccessorFactory = T.type_alias { T.proc.params(ui: Dev::Ui).returns(Dev::Plan::Accessor) }
 
         # Target the org plans repo instead of the enclosing project's. Shared
         # by every verb that resolves a repo.
@@ -30,15 +32,14 @@ module Dev
         # The production factory; a constant so its wiring is testable apart
         # from any verb.
         DEFAULT_ACCESSOR_FACTORY = T.let(
-          -> { Dev::Plan::Accessor.new(project_root: WorkspaceRoot.workspace) },
+          ->(ui) { Dev::Plan::Accessor.new(project_root: WorkspaceRoot.workspace, ui:) },
           AccessorFactory,
         )
 
-        sig { params(accessor_factory: AccessorFactory, out: T.any(IO, StringIO)).void }
-        def initialize(accessor_factory: DEFAULT_ACCESSOR_FACTORY, out: $stdout)
+        sig { params(accessor_factory: AccessorFactory).void }
+        def initialize(accessor_factory: DEFAULT_ACCESSOR_FACTORY)
           super()
           @accessor_factory = accessor_factory
-          @out = out
         end
 
         sig { override.returns(Command::Category) }
@@ -55,7 +56,7 @@ module Dev
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)
-          accessor = @accessor_factory.call
+          accessor = @accessor_factory.call(context.ui)
           accessor.refresh_host
           perform(accessor, args)
         end

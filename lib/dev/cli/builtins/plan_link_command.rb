@@ -30,7 +30,7 @@ module Dev
           target, file = args.positionals
           raise Dev::Plan::Accessor::UsageError, USAGE if target.nil? || args.positionals.size > 2
 
-          accessor.link(target, file:, org: args.flag?(ORG_FLAG), out: @out)
+          accessor.link(target, file:, org: args.flag?(ORG_FLAG))
         end
       end
     end

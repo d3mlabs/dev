@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "support/recording_ui"
 require "dev/deps/egs_integration"
 require "dev/deps/build_patch_tool"
 require "dev/deps/local_store"
@@ -69,8 +70,29 @@ class Dev::Deps::EgsIntegrationTest < Minitest::Test
     "SHA256=#{Digest::SHA256.file(path).hexdigest}"
   end
 
-  def integration(zip)
-    FixtureEgsIntegration.new(zip:, repository: Dev::Deps::UrlRepository.new, store: Dev::Deps::LocalStore.new(data_root: @data_root.to_s))
+  def integration(zip, ui: RecordingUi.new)
+    FixtureEgsIntegration.new(zip:, repository: Dev::Deps::UrlRepository.new, store: Dev::Deps::LocalStore.new(data_root: @data_root.to_s), ui: ui)
+  end
+
+  test "the install speaks through the Ui (dev#573): a step per child handed the terminal, then the fact; a second pass is the fact alone" do
+    Given "a tool zip and the dep locked to its digest, over a recording Ui"
+    zip = tool_zip
+    dep = dependency(digest_of(zip))
+    ui = RecordingUi.new
+    integration = integration(zip, ui: ui)
+    tree = @data_root / "egs/BuildPatchTool" / dep.hash
+
+    When "installing twice"
+    integration.install_all([dep])
+    integration.install_all([dep])
+
+    Then
+    ui.rows == [
+      [:step, "Downloading BuildPatchTool from #{URL}", 0],
+      [:step, "Extracting BuildPatchTool", 0],
+      [:note, "{{v}} BuildPatchTool installed at #{tree}", 0],
+      [:note, "{{v}} BuildPatchTool is installed at #{tree}", 0],
+    ]
   end
 
   test "tree_key places the tool by identity and digest: ~/.dev/egs/<name>/<digest>" do

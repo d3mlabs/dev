@@ -84,21 +84,25 @@ require "dev/shared_umask"
 # group (dev#310); dev and everything it spawns write it group-writable.
 Dev::SharedUmask.apply!
 
-# Global builtins (see Dev::Cli::GlobalCatalog) dispatch before any dev.yml
-# lookup — they are host- or workspace-global, not project commands. Help
-# flags are the Runner's.
-global_dispatch = Dev::Cli::GlobalDispatch.new
-if global_dispatch.global_command?(ARGV)
-  global_dispatch.run(ARGV)
-  exit 0
-end
-
-# The StdoutRouter is the Ui's to turn on, with its first frame (plans#52,
-# dev#523) — never here.
+# The Ui tier is one process-wide choice, made before anything that may
+# ask or report runs — the global builtins included (plan, learnings,
+# skills: dev#575; `cred get` onboards a first-time credential at the
+# terminal, `engine down` confirms: dev#573), so it is chosen ahead of
+# their dispatch, not after. The StdoutRouter is the Ui's to turn on, with
+# its first frame (plans#52, dev#523) — never here.
 ui = if $stdout.tty? || ENV["CI"] || ENV["CLICOLOR_FORCE"]
   Dev::Cli::UiImpl.new(cli_ui: CLI::UI)
 else
   Dev::NoUi.new
+end
+
+# Global builtins (see Dev::Cli::GlobalCatalog) dispatch before any dev.yml
+# lookup — they are host- or workspace-global, not project commands. Help
+# flags are the Runner's.
+global_dispatch = Dev::Cli::GlobalDispatch.new(ui: ui)
+if global_dispatch.global_command?(ARGV)
+  global_dispatch.run(ARGV)
+  exit 0
 end
 
 # The Runner is project-optional and owns the rescue-to-exit mapping of the

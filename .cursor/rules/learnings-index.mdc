@@ -67,6 +67,11 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  tree holds a symlink or a lisp path, and path-bound artifacts run by
  their store path.
  → .cursor/skills/learnings/installed-state-in-the-store/
+- [architecture/one-brew-prefix-resolution] `Settings.brew_prefix` is the
+ one brew-prefix resolution (`RunnerUser.brew_path` for the binary): never
+ a second probe of HOMEBREW_PREFIX, PATH, `brew --prefix`, or a directory
+ that merely exists — a runner service has no login shell.
+ → .cursor/skills/learnings/one-brew-prefix-resolution/
 - [architecture/record-over-derivation] Identity is the id in the record
  (`.runner` `agentId`/`poolName`, GitHub `Runner#id`), never a derivation
  from a name, label, dir name or hostname; derivations are display hints,

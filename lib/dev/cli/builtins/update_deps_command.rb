@@ -118,7 +118,7 @@ module Dev
           interpreters = carryover.apply(
             declarations: answered, previous:, resolved: resolver.resolve(interpreter_declarations), unlock:,
           ).pins.select { |dep| INTERPRETER_TYPES.include?(dep.integration) }
-          install_interpreters!(project, interpreters) if interpreters.any?
+          install_interpreters!(project, interpreters, ui: context.ui) if interpreters.any?
 
           # Lock, then resolve: integrations whose ecosystem tool owns the
           # whole-set solve (bundler) materialize their tool lockfile first, so
@@ -202,17 +202,22 @@ module Dev
         # Install the resolved interpreter pins through the brew integration —
         # the same install `dev deps install` would run for them, bottle,
         # verification and activation included — so the lockers that follow
-        # run under the interpreters the lock is about to pin.
+        # run under the interpreters the lock is about to pin. One frame, as
+        # the Installer would open for the batch (dev#573).
         #
         # @param project [ProjectContext]
         # @param interpreters [Array<Dev::Deps::Dependency>] the :ruby/:python pins
+        # @param ui [Dev::Ui] what the install says its work through
         # @return [void]
-        sig { params(project: ProjectContext, interpreters: T::Array[Dev::Deps::Dependency]).void }
-        def install_interpreters!(project, interpreters)
+        sig { params(project: ProjectContext, interpreters: T::Array[Dev::Deps::Dependency], ui: Dev::Ui).void }
+        def install_interpreters!(project, interpreters, ui:)
           integrations = Dev::Deps::Registry.host_integrations(
-            project_root: project.root, project_name: project.name, store: Dev::Deps::LocalStore.new,
+            project_root: project.root, project_name: project.name, store: Dev::Deps::LocalStore.new, ui:,
           )
-          integrations.fetch(:brew).install_all(interpreters)
+          keys = interpreters.map(&:integration).uniq.join("+")
+          ui.frame("#{keys}: #{interpreters.size} #{interpreters.size == 1 ? "pin" : "pins"}") do
+            integrations.fetch(:brew).install_all(interpreters)
+          end
         end
 
         # Name each formula the image build would compile from source: a

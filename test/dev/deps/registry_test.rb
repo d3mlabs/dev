@@ -51,7 +51,7 @@ class Dev::Deps::RegistryTest < Minitest::Test
     entry.integration.nil?
     entry.install_alias.nil?
     !entry.host?
-    !Dev::Deps::Registry.host_integrations(project_root: Pathname("/tmp"), project_name: "proj", store: Dev::Deps::LocalStore.new).key?(:image)
+    !Dev::Deps::Registry.host_integrations(project_root: Pathname("/tmp"), project_name: "proj", store: Dev::Deps::LocalStore.new, ui: Dev::NoUi.new).key?(:image)
   end
 
   test "an entry publishes exactly when it names a publisher class, and the channel it contributes is its own name (dev#422)" do
@@ -72,11 +72,11 @@ class Dev::Deps::RegistryTest < Minitest::Test
     Given
     ficsit = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :ficsit }
 
-    Expect "the write side is the read side's class, built with no kwargs"
+    Expect "the write side is the read side's class, built over the Ui its first-time key is onboarded at (dev#573)"
     ficsit.publisher == Dev::Deps::FicsitRepository
-    ficsit.publisher_needs == []
+    ficsit.publisher_needs == %i[ui]
     ficsit.channel_name == "ficsit"
-    publishers = Dev::Deps::Registry.publishers(project_root: Pathname("/tmp"), pinned: [:ficsit])
+    publishers = Dev::Deps::Registry.publishers(project_root: Pathname("/tmp"), pinned: [:ficsit], ui: Dev::NoUi.new)
     publishers.keys == ["ficsit"]
     publishers.fetch("ficsit").is_a?(Dev::Deps::FicsitRepository)
   end
@@ -87,9 +87,9 @@ class Dev::Deps::RegistryTest < Minitest::Test
 
     Expect
     by_symbol[:steam].publisher == Dev::Deps::SteamRepository
-    by_symbol[:steam].publisher_needs == []
+    by_symbol[:steam].publisher_needs == %i[ui]
     by_symbol[:egs].publisher == Dev::Deps::EgsPublisher
-    by_symbol[:egs].publisher_needs == %i[project_root]
+    by_symbol[:egs].publisher_needs == %i[project_root ui]
     by_symbol[:egs].repository == Dev::Deps::UrlRepository
     by_symbol[:egs].integration == Dev::Deps::EgsIntegration
   end
@@ -130,7 +130,7 @@ class Dev::Deps::RegistryTest < Minitest::Test
 
   test "publishers over the built-in table: #{pinned.inspect} contributes #{channels.inspect}" do
     When
-    publishers = Dev::Deps::Registry.publishers(project_root: Pathname("/project"), pinned:, taps: [Dev::Deps::Tap.new(name: "d3mlabs/d3mlabs")])
+    publishers = Dev::Deps::Registry.publishers(project_root: Pathname("/project"), pinned:, ui: Dev::NoUi.new, taps: [Dev::Deps::Tap.new(name: "d3mlabs/d3mlabs")])
 
     Then
     publishers.keys == channels
@@ -156,12 +156,12 @@ class Dev::Deps::RegistryTest < Minitest::Test
     taps = [Dev::Deps::Tap.new(name: "d3mlabs/d3mlabs")]
 
     When
-    publishers = Dev::Deps::Registry.publishers(project_root: Pathname("/tmp"), pinned: [:ruby], taps:)
+    publishers = Dev::Deps::Registry.publishers(project_root: Pathname("/tmp"), pinned: [:ruby], ui: Dev::NoUi.new, taps:)
 
     Then
     publishers.keys == ["brew"]
     publishers["brew"].is_a?(Dev::Deps::BrewPublisher)
-    Dev::Deps::Registry.publishers(project_root: Pathname("/tmp"), pinned: [:cmake, :git], taps:) == {}
+    Dev::Deps::Registry.publishers(project_root: Pathname("/tmp"), pinned: [:cmake, :git], ui: Dev::NoUi.new, taps:) == {}
   end
 
   test "publisher_reach maps each channel a table can ship to onto the types whose pin reaches it, directly or through an alias (dev#509)" do
@@ -191,7 +191,7 @@ class Dev::Deps::RegistryTest < Minitest::Test
     ]
 
     When
-    publishers = Dev::Deps::Registry.publishers(project_root: Pathname("/project"), pinned: pinned, taps:, entries:)
+    publishers = Dev::Deps::Registry.publishers(project_root: Pathname("/project"), pinned: pinned, ui: Dev::NoUi.new, taps:, entries:)
 
     Then
     publishers.keys == channels
@@ -206,5 +206,23 @@ class Dev::Deps::RegistryTest < Minitest::Test
     [:ruby, :steam]  | ["brew", "steam"]
     [:cmake]         | []
     []               | []
+  end
+
+  test "publishers hands the Ui to the write sides that onboard a credential, and only to those (dev#573)" do
+    Given "a table where steam asks for the Ui and brew does not"
+    ui = Dev::NoUi.new
+    entries = [
+      Dev::Deps::Registry::Entry.new(symbol: :brew, repository: Dev::Deps::BrewRepository, scheme: nil, integration: nil,
+        publisher: RecordingPublisher, publisher_needs: %i[project_root]),
+      Dev::Deps::Registry::Entry.new(symbol: :steam, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil,
+        publisher: RecordingPublisher, publisher_needs: %i[ui]),
+    ]
+
+    When
+    publishers = Dev::Deps::Registry.publishers(project_root: Pathname("/project"), pinned: %i[brew steam], ui: ui, entries:)
+
+    Then
+    publishers.fetch("steam").ui.equal?(ui)
+    publishers.fetch("brew").ui.nil?
   end
 end

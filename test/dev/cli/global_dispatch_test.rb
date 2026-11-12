@@ -6,6 +6,7 @@ require "dev"
 require "dev/cli/global_dispatch"
 require "fileutils"
 require "stringio"
+require "support/recording_ui"
 require "tmpdir"
 
 # A credential accessor stand-in recording the verb it received, so dispatch
@@ -14,10 +15,19 @@ require "tmpdir"
 class RecordingCredAccessor < Dev::CredentialAccessor
   attr_reader :last_call
 
-  def get(args, out: $stdout)
+  def get(args, ui:, out: $stdout)
     @last_call = [:get, args]
   end
 end unless defined?(RecordingCredAccessor)
+
+# A credential accessor whose `get` predates the `out:` keyword the command
+# passes — the programming error a stale stand-in or a missed call site
+# makes, which must surface as a bug, not a clean exit.
+class StaleCredAccessor < Dev::CredentialAccessor
+  def get(args)
+    args
+  end
+end unless defined?(StaleCredAccessor)
 
 # A config accessor stand-in recording the verb it received, so dispatch is
 # tested without touching the real config files. Subclasses the real
@@ -49,9 +59,9 @@ transform!(RSpock::AST::Transformation)
 class Dev::Cli::GlobalDispatchTest < Minitest::Test
   # A dispatcher over a catalog whose accessors never touch the real
   # providers unless a test passes real ones in; usage goes to `out`.
-  def build_dispatch(out: StringIO.new, **accessors)
+  def build_dispatch(out: StringIO.new, ui: RecordingUi.new, **accessors)
     accessors = { cred_accessor: RecordingCredAccessor.new }.merge(accessors)
-    Dev::Cli::GlobalDispatch.new(catalog: Dev::Cli::GlobalCatalog.new(out: out, **accessors), out: out)
+    Dev::Cli::GlobalDispatch.new(catalog: Dev::Cli::GlobalCatalog.new(out: out, **accessors), ui: ui, out: out)
   end
 
   test "#{name} is a global command: #{expected}" do
@@ -149,15 +159,16 @@ class Dev::Cli::GlobalDispatchTest < Minitest::Test
     ENV["DEV_KNOWLEDGE_REPO"] = File.join(dir, "knowledge")
     ENV["XDG_DATA_HOME"] = File.join(dir, "data")
     ENV["XDG_CONFIG_HOME"] = File.join(dir, "config")
-    out = StringIO.new
-    dispatch = build_dispatch(out: out)
+    ui = RecordingUi.new
+    dispatch = build_dispatch(ui: ui)
 
     When "we dispatch dev learnings status from a cwd with no dev.yml"
     Dir.chdir(dir) { dispatch.run(["learnings", "status"]) }
 
-    Then "the status reports the configured repo and the empty cache"
-    out.string.include?(File.join(dir, "knowledge"))
-    out.string.include?("not cloned yet")
+    Then "the status speaks through the dispatcher's ui: the configured repo frames the empty-cache fact"
+    ui.rows.map(&:first) == [:frame, :note]
+    ui.out_text.include?(File.join(dir, "knowledge"))
+    ui.out_text.include?("not cloned yet")
 
     Cleanup
     saved.each { |key, value| value ? ENV[key] = value : ENV.delete(key) }
@@ -430,6 +441,18 @@ class Dev::Cli::GlobalDispatchTest < Minitest::Test
 
     Cleanup
     $stderr = old_stderr
+  end
+
+  test "a programming error inside a global builtin re-raises with its backtrace — never a silent exit" do
+    Given "a builtin calling an accessor whose signature went stale"
+    dispatch = build_dispatch(cred_accessor: StaleCredAccessor.new)
+    Kernel.expects(:exit).never
+
+    When "we dispatch to it"
+    dispatch.run(["cred", "get", "github_token"])
+
+    Then "the ArgumentError reaches the caller as the dev bug it is"
+    raises ArgumentError
   end
 
   test "project commands still require a nearby dev.yml" do

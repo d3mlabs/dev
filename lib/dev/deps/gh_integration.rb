@@ -25,10 +25,11 @@ module Dev
     #   4. Extract (concatenating split .tar.zst.* archives) and publish
     #
     # Build from source (declared with build:, e.g. stock UE which Epic ships as
-    # source only):
-    #   1. Skip when the marker file already records the locked tag (idempotent)
-    #   2. Fetch the tag's source tarball via `gh api .../tarball` (auth'd, follows
-    #      the codeload redirect so private/Epic-gated repos work)
+    # source only) — the only shape a commit pin (sha:) can take, since a bare
+    # commit publishes no release to download assets from:
+    #   1. Skip when the marker file already records the locked version (idempotent)
+    #   2. Fetch the version's source tarball via `gh api .../tarball/<tag-or-sha>`
+    #      (auth'd, follows the codeload redirect so private/Epic-gated repos work)
     #   3. Extract, then run the build recipe with the cwd set to the source tree
     #      and $DEV_SOURCE_DIR / $DEV_INSTALL_DIR / $DEV_VERSION in the environment.
     #      The recipe must leave the final artifact in $DEV_INSTALL_DIR (dev creates
@@ -66,8 +67,9 @@ module Dev
       class << self
         extend T::Sig
 
-        # A gh tree lives at `~/.dev/gh/<owner>/<repo>/<tag>`: the repo slug
-        # the lock records is the identity, the tag the version.
+        # A gh tree lives at `~/.dev/gh/<owner>/<repo>/<version>`: the repo
+        # slug the lock records is the identity, the tag — or the commit SHA
+        # of a sha: pin — the version.
         #
         # @param dep [Dependency] a locked gh dependency
         # @return [TreeKey]
@@ -81,15 +83,17 @@ module Dev
       # @param store [ArtifactStore, nil]
       # @param project_root [String, Pathname, nil] repo root, used to resolve a
       #   project-relative build: script path (e.g. "bin/build-ue.sh")
+      # @param ui [Ui] what the install says its work through
       sig do
         params(
           repository: T.nilable(Repository),
           store: T.nilable(ArtifactStore),
           project_root: T.nilable(T.any(String, Pathname)),
+          ui: Ui,
         ).void
       end
-      def initialize(repository:, store:, project_root: nil)
-        super(repository: repository, store: store)
+      def initialize(repository:, store:, project_root: nil, ui: NoUi.new)
+        super(repository: repository, store: store, ui: ui)
         @project_root = T.let(project_root && Pathname(project_root), T.nilable(Pathname))
       end
 
@@ -126,7 +130,7 @@ module Dev
         activated = installed.map { |dep| "#{dep.name}@#{dep.version}" }.sort.join(" ")
         bins = installed.filter_map { |dep| tree_bin(dep) }
         written = ShadowenvPath.setup!(project_root: root, filename: LISP_FILENAME, provide: ["gh", activated], paths: bins)
-        puts ">>> gh: activated #{bins.size} tree bin(s) on the project PATH (.shadowenv.d/#{LISP_FILENAME})" if written
+        @ui.note("{{v}} activated #{bins.size} tree bin(s) on the project PATH (.shadowenv.d/#{LISP_FILENAME})") if written
       end
 
       # @param dep [Dependency] an installed dep
@@ -149,12 +153,18 @@ module Dev
         dep.metadata["asset_pattern"] ? install_prebuilt(dep) : install_from_source(dep)
       end
 
+      # An installed tree is a fact. A missing one: two steps — `gh release
+      # download` and the extraction pipeline each run with the terminal —
+      # with the digest check, in-process, under a spin between them; then
+      # the fact of where it landed.
+      #
       # @param dep [Dependency]
       sig { params(dep: Dependency).void }
       def install_prebuilt(dep)
         key = tree_key(dep)
+        label = "#{dep.name}@#{dep.version}"
         if (installed = store!.tree(key))
-          puts ">>> #{dep.name}@#{dep.version} already installed at #{installed}"
+          @ui.note("{{v}} #{label} is installed at #{installed}")
           return
         end
 
@@ -164,23 +174,25 @@ module Dev
           FileUtils.mkdir_p(archives_dir)
           FileUtils.mkdir_p(extracted_dir)
 
-          puts ">>> Downloading #{dep.name}@#{dep.version} from #{dep.metadata["repo"]}"
-          download_assets(dep, archives_dir)
-          verify_assets(dep, archives_dir)
-
-          puts ">>> Extracting #{dep.name}@#{dep.version}"
-          extract_archives(archives_dir, extracted_dir)
+          @ui.step("Downloading #{label} from #{dep.metadata["repo"]}") { download_assets(dep, archives_dir) }
+          @ui.spin("Verifying #{label}") { verify_assets(dep, archives_dir) }
+          @ui.step("Extracting #{label}") { extract_archives(archives_dir, extracted_dir) }
           extracted_dir
         end
-        puts ">>> Installed #{dep.name}@#{dep.version} to #{published}"
+        @ui.note("{{v}} #{label} installed at #{published}")
       end
 
+      # An installed tree is a fact. A missing one: a step for the fetch
+      # (`gh api` and tar run with the terminal), then the build's
+      # ({build_source}), then the fact of where it landed.
+      #
       # @param dep [Dependency]
       sig { params(dep: Dependency).void }
       def install_from_source(dep)
         key = tree_key(dep)
+        label = "#{dep.name}@#{dep.version}"
         if (installed = store!.tree(key))
-          puts ">>> #{dep.name}@#{dep.version} already installed at #{installed}"
+          @ui.note("{{v}} #{label} is installed at #{installed}")
           return
         end
 
@@ -191,23 +203,29 @@ module Dev
           FileUtils.mkdir_p(source_dir)
           FileUtils.mkdir_p(install_dir)
 
-          puts ">>> Fetching #{dep.name}@#{dep.version} source from #{dep.metadata["repo"]}"
-          download_source(dep, archive_path)
-          extract_source(archive_path, source_dir)
+          @ui.step("Fetching #{label} source from #{dep.metadata["repo"]}") do
+            download_source(dep, archive_path)
+            extract_source(archive_path, source_dir)
+          end
 
           build_source(dep, source_dir, install_dir)
         end
-        puts ">>> Installed #{dep.name}@#{dep.version} to #{published}"
+        @ui.note("{{v}} #{label} installed at #{published}")
       end
 
-      # Fetch the tag's source tarball into archive_path. Uses `gh api .../tarball`
-      # rather than a bare codeload URL so the request carries gh's auth token and
-      # follows the redirect — required for private/Epic-gated repos. Isolated so
-      # tests can stub the gh CLI boundary.
+      # Fetch the version's source tarball into archive_path. Uses `gh api
+      # .../tarball/<ref>` rather than a bare codeload URL so the request carries
+      # gh's auth token and follows the redirect — required for private/Epic-gated
+      # repos. The endpoint resolves any ref, so the locked version is passed as
+      # written: a tag, or the commit SHA of a sha: pin — for which this fetch is
+      # also the existence check (GitHub answers 404 for a commit the repo does
+      # not have, and that surfaces here as a DownloadError). Isolated so tests
+      # can stub the gh CLI boundary.
       #
       # @param dep [Dependency]
       # @param archive_path [Pathname] destination .tar.gz
-      # @raise [DownloadError] if the fetch fails
+      # @raise [DownloadError] if the fetch fails — including a sha: pin whose
+      #   commit the repo does not have
       sig { params(dep: Dependency, archive_path: Pathname).void }
       def download_source(dep, archive_path)
         success = system(
@@ -237,8 +255,9 @@ module Dev
         raise ExtractionError, "source extraction failed for #{archive_path}"
       end
 
-      # Produce the directory to publish: the build output for a real recipe, or
-      # the source tree itself for header-only deps (build: :none).
+      # Produce the directory to publish: the build output for a real recipe
+      # (a step — the recipe owns the terminal), or the source tree itself for
+      # header-only deps (build: :none; a fact).
       #
       # @param dep [Dependency]
       # @param source_dir [Pathname] extracted source ($DEV_SOURCE_DIR)
@@ -247,12 +266,11 @@ module Dev
       sig { params(dep: Dependency, source_dir: Pathname, install_dir: Pathname).returns(Pathname) }
       def build_source(dep, source_dir, install_dir)
         if dep.metadata["build"] == "none"
-          puts ">>> #{dep.name}@#{dep.version}: header-only, publishing source as-is"
+          @ui.note("#{dep.name}@#{dep.version}: header-only, publishing source as-is")
           return source_dir
         end
 
-        puts ">>> Building #{dep.name}@#{dep.version} (#{dep.metadata["build"]})"
-        run_build(dep, source_dir, install_dir)
+        @ui.step("Building #{dep.name}@#{dep.version} (#{dep.metadata["build"]})") { run_build(dep, source_dir, install_dir) }
         install_dir
       end
 

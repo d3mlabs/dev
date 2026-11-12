@@ -90,6 +90,24 @@ class Dev::DockerCliPluginsTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  # dev#568: the prefix is Settings.brew_prefix's to resolve, not a second
+  # platform guess here. Without brew there is no brew docker CLI to point
+  # anywhere, so there is nothing to write.
+  test "ensure! writes nothing on a machine without a brew prefix" do
+    Given "a home with no ~/.docker and no brew prefix"
+    dir = Dir.mktmpdir("dev-docker-cli-plugins-")
+
+    When "ensuring"
+    result = build(dir, brew_prefix: nil).ensure!
+
+    Then
+    result == :no_brew
+    !File.exist?(File.join(dir, ".docker"))
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "ensure! refuses to clobber a config it cannot parse" do
     Given "a config.json that is not JSON"
     dir = Dir.mktmpdir("dev-docker-cli-plugins-")

@@ -20,15 +20,16 @@ class Dev::Cli::Builtins::CredGetCommandTest < Minitest::Test
     command.desc.include?("get <namespace> <key>")
   end
 
-  test "call forwards its argv and stream to the accessor's get" do
+  test "call forwards its argv, the context's Ui and its stream to the accessor's get" do
     Given "a cred get leaf over an expecting accessor"
     out = StringIO.new
+    ui = typed_mock(Dev::Ui)
     accessor = typed_mock(Dev::CredentialAccessor)
-    accessor.expects(:get).with(["wwise", "email"], out: out).once
+    accessor.expects(:get).with(["wwise", "email"], ui: ui, out: out).once
     command = Dev::Cli::Builtins::CredGetCommand.new(accessor: accessor, out: out)
 
     When "running cred get"
-    command.call(args: parsed_args(command, ["wwise", "email"]), context: Dev::Cli::ExecutionContext.new(ui: typed_mock(Dev::Ui)))
+    command.call(args: parsed_args(command, ["wwise", "email"]), context: Dev::Cli::ExecutionContext.new(ui: ui))
 
     Then "the expectation on the accessor holds"
     true

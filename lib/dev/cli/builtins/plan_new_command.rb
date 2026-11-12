@@ -32,7 +32,7 @@ module Dev
           title = args.positionals.first
           raise Dev::Plan::Accessor::UsageError, USAGE if title.nil? || title.empty? || args.positionals.size > 1
 
-          accessor.new_plan(title, blank: args.flag?(BLANK_FLAG), org: args.flag?(ORG_FLAG), out: @out)
+          accessor.new_plan(title, blank: args.flag?(BLANK_FLAG), org: args.flag?(ORG_FLAG))
         end
       end
     end

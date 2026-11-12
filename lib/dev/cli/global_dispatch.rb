@@ -44,8 +44,9 @@ module Dev
       FLAG_SPELLINGS = T.let({ "--version" => "version" }.freeze, T::Hash[String, String])
 
       # @param catalog [Dev::Cli::GlobalCatalog] the global command tree
-      # @param ui [Dev::Ui] the host half of the execution context (the
-      #   global leaves print plainly, so the silent UI is the default)
+      # @param ui [Dev::Ui] the host half of the execution context — the tier
+      #   bin/dev chose for the process; the plain tier is the default for
+      #   tests and embedders
       # @param out [IO, StringIO] where group usage prints
       # @param flag_vocabulary [Dev::Cli::FlagVocabulary] recognizes a help
       #   request among the args (the Runner's to answer)
@@ -81,7 +82,11 @@ module Dev
 
       # Run a global builtin. Clean failures (usage errors, unresolved repos,
       # unknown subcommands) print to stderr and exit non-zero, mirroring the
-      # Runner's CLI boundary.
+      # Runner's CLI boundary. A clean failure is a RuntimeError subclass by
+      # convention (every accessor's UsageError and kin); anything else — an
+      # ArgumentError from a call site whose arity went stale, a NoMethodError
+      # — is a dev bug and re-raises with its backtrace, so a test process
+      # fails loudly instead of exiting with no summary.
       #
       # @param argv [Array<String>] full argv including the command name
       # @return [void]
@@ -102,8 +107,7 @@ module Dev
         # Exit 2: the getopt/cobra convention for a malformed command line.
         Cli::UsagePrinter.new.print_usage_error(e, out: $stderr)
         Kernel.exit(2)
-      rescue Dev::Cd::Matcher::RepoNotFoundError, Dev::CredentialAccessor::UsageError,
-             ArgumentError, RuntimeError => e
+      rescue Dev::Cd::Matcher::RepoNotFoundError, Dev::CredentialAccessor::UsageError, RuntimeError => e
         $stderr.puts "dev: #{e}"
         Kernel.exit(1)
       end

@@ -7,6 +7,7 @@ require "dev/deps/gh_repository"
 require "dev/deps/local_store"
 require "dev/deps/dependency"
 require "digest"
+require "support/recording_ui"
 require "tmpdir"
 
 # GhIntegration with the gh CLI download boundary replaced by copying
@@ -116,12 +117,56 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     )
   end
 
-  def build_integration(fixture_files, data_root)
+  def build_integration(fixture_files, data_root, ui: RecordingUi.new)
     FixtureGhIntegration.new(
       fixture_files: fixture_files,
       repository: Dev::Deps::GhRepository.new,
       store: Dev::Deps::LocalStore.new(data_root: data_root),
+      ui: ui,
     )
+  end
+
+  test "a fresh install speaks through the Ui (dev#573): steps for the children handed the terminal, a spin for the digest check, then the fact of where it landed" do
+    Given "a split zstd tarball fixture and a gh dependency, over a recording Ui"
+    dir = Dir.mktmpdir("dev-gh-int-test-")
+    parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
+    dep = build_dependency(parts)
+    ui = RecordingUi.new
+    integration = build_integration(parts, dir, ui: ui)
+
+    When "installing"
+    integration.install_all([dep])
+
+    Then
+    ui.rows == [
+      [:step, "Downloading UnrealEngine@5.6.1-css-83 from satisfactorymodding/UnrealEngine", 0],
+      [:spin, "Verifying UnrealEngine@5.6.1-css-83", 0],
+      [:step, "Extracting UnrealEngine@5.6.1-css-83", 0],
+      [:note, "{{v}} UnrealEngine@5.6.1-css-83 installed at #{File.join(dir, "gh", "satisfactorymodding", "UnrealEngine", "5.6.1-css-83")}", 0],
+    ]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "an installed tree is one fact on the Ui, and nothing runs" do
+    Given "a version dir with a matching marker, over a recording Ui"
+    dir = Dir.mktmpdir("dev-gh-int-test-")
+    parts = build_split_archive(dir, "engine.tar.zst", part_size: 64)
+    version_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine", "5.6.1-css-83")
+    FileUtils.mkdir_p(version_dir)
+    File.write(File.join(version_dir, ".dev-gh-release"), "5.6.1-css-83")
+    ui = RecordingUi.new
+    integration = build_integration(parts, dir, ui: ui)
+
+    When "installing again"
+    integration.install_all([build_dependency(parts)])
+
+    Then
+    ui.rows == [[:note, "{{v}} UnrealEngine@5.6.1-css-83 is installed at #{version_dir}", 0]]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
   test "tree_key places a gh tree by identity: ~/.dev/gh/<owner>/<repo>/<tag>" do
@@ -396,6 +441,71 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     File.read(File.join(version_dir, "include", "lib.h")) == "#pragma once"
     File.read(File.join(version_dir, ".dev-gh-release")) == "v1.0"
     Dir.glob(File.join(tree_dir, ".staging-*")).empty?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all materializes a sha: pin from source under gh/<slug>/<sha> — the SHA is the version" do
+    Given "a header-only dependency pinned at a commit"
+    dir = Dir.mktmpdir("dev-gh-src-test-")
+    tarball = build_source_tarball(dir, files: { "include/lib.h" => "#pragma once" })
+    sha = "9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03"
+    tree_dir = File.join(dir, "gh", "EpicGames", "UnrealEngine")
+    dep = source_dep(build: "none", tag: sha).with(metadata: { "repo" => "EpicGames/UnrealEngine", "build" => "none" })
+    integration = build_source_integration(tarball, File.join(dir, "project"), dir)
+
+    When "installing"
+    integration.install_all([dep])
+
+    Then "the tree is keyed by the commit and the marker records it"
+    version_dir = File.join(tree_dir, sha)
+    File.read(File.join(version_dir, "include", "lib.h")) == "#pragma once"
+    File.read(File.join(version_dir, ".dev-gh-release")) == sha
+    integration.download_count == 1
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "download_source fetches the locked version's tarball as written — a sha: pin by its commit" do
+    Given "a dependency pinned at a commit and an integration speaking to gh"
+    dir = Dir.mktmpdir("dev-gh-src-test-")
+    sha = "9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03"
+    dep = source_dep(build: "none", tag: sha).with(metadata: { "repo" => "nlohmann/json", "build" => "none" })
+    integration = Dev::Deps::GhIntegration.new(
+      repository: Dev::Deps::GhRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir),
+    )
+    archive_path = Pathname(File.join(dir, "source.tar.gz"))
+    integration.expects(:system)
+               .with("gh", "api", "repos/nlohmann/json/tarball/#{sha}", out: archive_path.to_s)
+               .returns(true)
+
+    When "fetching"
+    integration.send(:download_source, dep, archive_path)
+
+    Then "the tarball endpoint resolves the commit; no release is consulted"
+    true
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "download_source raises DownloadError when the repo has no such commit — the address's existence check" do
+    Given "a sha: pin GitHub answers 404 for"
+    dir = Dir.mktmpdir("dev-gh-src-test-")
+    sha = "0000000000000000000000000000000000000000"
+    dep = source_dep(build: "none", tag: sha).with(metadata: { "repo" => "nlohmann/json", "build" => "none" })
+    integration = Dev::Deps::GhIntegration.new(
+      repository: Dev::Deps::GhRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir),
+    )
+    integration.stubs(:system).returns(false)
+
+    When "fetching"
+    integration.send(:download_source, dep, Pathname(File.join(dir, "source.tar.gz")))
+
+    Then
+    raises Dev::Deps::GhIntegration::DownloadError
 
     Cleanup
     FileUtils.rm_rf(dir)

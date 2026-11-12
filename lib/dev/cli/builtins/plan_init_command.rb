@@ -21,7 +21,7 @@ module Dev
         def perform(accessor, args)
           raise Dev::Plan::Accessor::UsageError, "usage: dev plan init" unless args.positionals.empty?
 
-          accessor.init(out: @out)
+          accessor.init
         end
       end
     end

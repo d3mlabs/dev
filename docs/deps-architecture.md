@@ -97,15 +97,15 @@ operation:
   reconciliation — a revision is exact by definition).
 
 Overriding `at` *is* the declaration that an integration has a continuous
-space (cmake/git commits, xcode and wwise versions); the base class refuses with
-`NoAddressableSpaceError` and the Resolver lets that refusal propagate.
-There is no registry flag to drift out of sync.
+space (cmake/git and gh commits, xcode and wwise versions); the base class
+refuses with `NoAddressableSpaceError` and the Resolver lets that refusal
+propagate. There is no registry flag to drift out of sync.
 
 Revisions are deliberately *not* standardized the way constraints are: a
 constraint is a predicate dev must evaluate, so it must be in dev's shape;
 a revision is an opaque address dev only forwards, spelled in the
 ecosystem's canonical form and validated at the DSL boundary (a cmake
-`commit:` must be a full 40-hex SHA).
+`commit:` and a gh `sha:` must be a full 40-hex SHA).
 
 ## The resolve pipeline
 
@@ -350,7 +350,7 @@ that needs the absolute path rather than PATH.
 | ficsit | `SemverScheme` | node-style ranges (`^`, `~`, comparators) |
 | pip | `Pep440Scheme` | PEP 440 specifiers (`==`, `~=`, wildcards, conjunction) |
 | luarocks | `RockScheme` | rockspec-style comparators and `~>` |
-| gh | `ExactScheme(key: "tag")` | the constraint names one release tag out of the enumerated releases+tags universe; no range grammar exists by design. Unconstrained selects the latest release. |
+| gh | `ExactScheme(key: "tag")` | `tag:` names one release tag out of the enumerated releases+tags universe; no range grammar exists by design. Unconstrained selects the latest release. `sha:` is not a constraint at all — it is a revision (continuous space, `at`), a full 40-hex commit SHA; a commit publishes no release, so a `sha:` pin materializes with `build:` alone (its source tarball, fetched by commit). |
 | cmake | `GitScheme` | `tag:`/`branch:` match the version's `ref` fact over the enumerated `ls-remote` refs. `commit:` is not a constraint at all — it is a revision (continuous space, `at`). |
 | steam | `SteamScheme` | `branch:` selects by the version's branch fact (default `public`); optional `buildid:` is an exact assertion that fails loudly when it is no longer the branch tip — the failure names the current tip and the two ways out (bump `buildid:`, or drop it to follow the branch). |
 | ruby | `GemScheme` | the `ruby` verb's version is a rubygems requirement over the d3mlabs tap's `ruby@X.Y.Z` family — one immutable formula per patch, enumerated from the tap's own formula list (`brew tap-info`), each member's `version_suffix` being its exact version: `"4.0.6"` pins, `"~> 4.0"` ranges, a bare minor `"4.0"` is `"~> 4.0.0"`. Resolves, locks (`ruby:`) and installs as a brew pin (`install_alias: :brew`). |
@@ -391,8 +391,11 @@ Who guarantees the bytes you install are the bytes that were resolved:
   for audit; the check at install is brew's own), gh (release assets carry
   API digests; `gh` downloads), steam (Steam's own depot verification),
   luarocks (rockspec digests checked by luarocks).
-- **identity-as-integrity** — git SHAs: pinning the 40-char commit *is*
-  the integrity statement; there is no separate digest.
+- **identity-as-integrity** — git SHAs (cmake `commit:`, gh `sha:`):
+  pinning the 40-char commit *is* the integrity statement; there is no
+  separate digest. A gh commit is dereferenced through GitHub's tarball
+  endpoint over gh's authenticated channel, where a commit the repo does
+  not have answers 404 — the address's existence check, at install.
 
 A nil `PackageVersion#digest` means exactly "upstream publishes none" —
 never "we didn't bother".

@@ -37,16 +37,18 @@ module Dev
       # @param project_root  [String, Pathname] project root (holds the venv link)
       # @param inside_container [Boolean] whether this dev runs inside the
       #   build container — which side's venv pip installs into
+      # @param ui [Ui] what the install says its work through
       sig do
         params(
           repository: T.nilable(Repository),
           store: T.nilable(ArtifactStore),
           project_root: T.any(String, Pathname),
           inside_container: T::Boolean,
+          ui: Ui,
         ).void
       end
-      def initialize(repository:, store:, project_root:, inside_container: ContainerContext.inside?)
-        super(repository:, store:)
+      def initialize(repository:, store:, project_root:, inside_container: ContainerContext.inside?, ui: NoUi.new)
+        super(repository:, store:, ui:)
         @venv_link = T.let(ShadowenvPython.venv_path(Pathname(project_root), inside: inside_container), Pathname)
       end
 

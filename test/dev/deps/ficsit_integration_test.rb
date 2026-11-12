@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "support/recording_ui"
 require "dev/deps/ficsit_integration"
 require "dev/deps/ficsit_repository"
 require "dev/deps/local_store"
@@ -76,6 +77,38 @@ class Dev::Deps::FicsitIntegrationTest < Minitest::Test
     !store.blob(win_key).nil?
     !store.blob(lin_key).nil?
     integration.download_count == 2
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "the install speaks through the Ui (dev#573): a cached platform is a fact, a missing one a step (curl owns the terminal)" do
+    Given "an SML dep for two platforms, the Windows zip already cached, over a recording Ui"
+    dir = Dir.mktmpdir("dev-ficsit-int-test-")
+    win_path, win_hash = build_fixture(dir, "win.zip", "windows-mod-bytes")
+    lin_path, lin_hash = build_fixture(dir, "lin.zip", "linux-mod-bytes")
+    win_link = "https://api.ficsit.app/v1/version/ver1/Windows/download"
+    lin_link = "https://api.ficsit.app/v1/version/ver1/LinuxServer/download"
+    dep = build_dependency(
+      "Windows" => { "hash" => win_hash, "link" => win_link },
+      "LinuxServer" => { "hash" => lin_hash, "link" => lin_link },
+    )
+    store = Dev::Deps::LocalStore.new(data_root: dir)
+    win_key = Dev::Deps::FicsitIntegration.cache_key(name: "SML", version: "3.12.0", platform: "Windows", hash: win_hash)
+    File.open(win_path, "rb") { |f| store.put_blob(win_key, f) }
+    ui = RecordingUi.new
+    integration = FixtureFicsitIntegration.new(
+      fixtures: { lin_link => lin_path }, repository: Dev::Deps::FicsitRepository.new, store: store, ui: ui,
+    )
+
+    When "installing"
+    integration.install_all([dep])
+
+    Then
+    ui.rows == [
+      [:note, "{{v}} SML@3.12.0 (Windows) is cached", 0],
+      [:step, "Downloading SML@3.12.0 (LinuxServer)", 0],
+    ]
 
     Cleanup
     FileUtils.rm_rf(dir)

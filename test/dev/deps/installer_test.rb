@@ -6,6 +6,7 @@ require "dev/deps/installer"
 require "dev/deps/lockfile"
 require "dev/deps/dependency"
 require "dev/deps/integration"
+require "support/recording_ui"
 require "tmpdir"
 
 class RecordingIntegration < Dev::Deps::Integration
@@ -559,6 +560,72 @@ class Dev::Deps::InstallerTest < Minitest::Test
 
     Then "no error raised"
     true
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install opens one frame per batch, titled by the lock keys it spans and its pin count, in install order; the integration speaks inside it (dev#573)" do
+    Given "a lock with a brew pin (the prerequisite), a cmake pin and a url pin through cmake's instance, over a recording Ui"
+    dir = Dir.mktmpdir("installer-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
+    lockfile.lock([pin("boost", :cmake), pin("sdl", :url), pin("cmake", :brew)])
+    ui = RecordingUi.new
+    cmake_int = RecordingIntegration.new
+    cmake_int.define_singleton_method(:install_all) { |dependencies| ui.note("{{v}} #{dependencies.size} fetched") }
+    installer = Dev::Deps::Installer.new(
+      lockfile:, integrations: { brew: PrerequisiteIntegration.new, cmake: cmake_int, url: cmake_int }, ui: ui,
+    )
+
+    When "running install"
+    installer.install
+
+    Then "brew's frame first, then one frame for the shared cmake+url batch with the integration's note nested under it"
+    ui.rows == [
+      [:frame, "brew: 1 pin", 0],
+      [:frame, "cmake+url: 2 pins", 0],
+      [:note, "{{v}} 2 fetched", 1],
+    ]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install opens no frame for a type with nothing selected: an integration that needs nothing says nothing" do
+    Given "a lock whose only pin is outside the selected group"
+    dir = Dir.mktmpdir("installer-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
+    lockfile.lock([pin("boost", :cmake, group: :test)])
+    ui = RecordingUi.new
+    installer = Dev::Deps::Installer.new(lockfile:, integrations: { cmake: RecordingIntegration.new }, ui: ui)
+
+    When "installing another group"
+    installer.install(groups: [:app])
+
+    Then
+    ui.rows == []
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a batch's failure crosses its frame, and the aggregate still names it" do
+    Given "a failing integration over a recording Ui"
+    dir = Dir.mktmpdir("installer-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: Pathname(dir))
+    lockfile.lock([pin("wwise-cli", :brew)])
+    ui = RecordingUi.new
+    brew_int = RecordingIntegration.new
+    brew_int.define_singleton_method(:install_all) { |_dependencies| raise "Homebrew prefix is not writable" }
+    installer = Dev::Deps::Installer.new(lockfile:, integrations: { brew: brew_int }, ui: ui)
+
+    When "running install"
+    installer.install
+
+    Then "the frame opened, and the failure is the aggregate's"
+    error = raises Dev::Deps::Installer::InstallFailedError
+    error.message.include?("brew: Homebrew prefix is not writable")
+    ui.rows == [[:frame, "brew: 1 pin", 0]]
 
     Cleanup
     FileUtils.rm_rf(dir)

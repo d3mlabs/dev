@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "support/recording_ui"
 require "dev/deps/cache_gc"
 require "dev/prefix_volumes"
 require "dev/deps/lockfile"
@@ -72,13 +73,22 @@ class Dev::Deps::CacheGcTest < Minitest::Test
     base = engine_base(dir)
     seed_versions(base, "a", "b", "c", "d") # d newest
     lockfile = lock_engine(dir, version: "c")
-    gc = build_gc(dir, lockfile, out: StringIO.new)
+    ui = RecordingUi.new
+    gc = build_gc(dir, lockfile, ui: ui)
 
-    When "collecting with keep: 2"
+    When "collecting with keep: 2, twice"
+    gc.gc(keep: 2)
+    rows_after_first = ui.rows.dup
     gc.gc(keep: 2)
 
-    Then "the locked version (c) and the newest (d) survive; a and b are reclaimed"
+    Then "the locked version (c) and the newest (d) survive; a and b are reclaimed, a spin each in the base's frame"
     Dir.children(base).sort == ["c", "d"]
+    rows_after_first == [
+      [:frame, "Trees under ~/.dev/gh/d3mlabs/unreal-engine: 2 stale", 0],
+      [:spin, "Removing #{base}/b", 1],
+      [:spin, "Removing #{base}/a", 1],
+    ]
+    ui.rows == rows_after_first # the warm second pass, with nothing stale, says nothing
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -96,7 +106,7 @@ class Dev::Deps::CacheGcTest < Minitest::Test
       Dev::Deps::Dependency.new(name: "UnrealEngineToo", integration: :gh, group: :build,
         version: "b", hash: nil, metadata: { "repo" => ENGINE_REPO }),
     ])
-    gc = build_gc(dir, lockfile, out: StringIO.new)
+    gc = build_gc(dir, lockfile)
 
     When "collecting with keep: 1"
     gc.gc(keep: 1)
@@ -118,7 +128,7 @@ class Dev::Deps::CacheGcTest < Minitest::Test
       Dev::Deps::Dependency.new(name: "boost", integration: :url, group: :app,
         version: "1.90.0", hash: "SHA256=aaaa", metadata: { "url" => "https://example.com/boost-1.90.0.tar.gz" }),
     ])
-    gc = build_gc(dir, lockfile, out: StringIO.new)
+    gc = build_gc(dir, lockfile)
 
     When "collecting with keep: 2"
     gc.gc(keep: 2)
@@ -136,7 +146,7 @@ class Dev::Deps::CacheGcTest < Minitest::Test
     base = engine_base(dir)
     seed_versions(base, "a", "b", "c") # c newest
     lockfile = lock_engine(dir, version: "c")
-    gc = build_gc(dir, lockfile, out: StringIO.new, in_use: [File.join(base, "a")])
+    gc = build_gc(dir, lockfile, in_use: [File.join(base, "a")])
 
     When "collecting with a tight keep: 1"
     gc.gc(keep: 1)
@@ -157,19 +167,22 @@ class Dev::Deps::CacheGcTest < Minitest::Test
     base = engine_base(dir)
     seed_versions(base, "c")
     lockfile = lock_engine(dir, version: "c")
-    out = StringIO.new
-    gc = FixtureCacheGc.new(lockfile: lockfile, store: store, out: out)
+    ui = RecordingUi.new
+    gc = FixtureCacheGc.new(lockfile: lockfile, store: store, ui: ui)
 
     When "collecting without, then with, tool caches"
     gc.gc(keep: 2)
     untouched = store.tool_caches
     gc.gc(keep: 2, tool_caches: true)
 
-    Then "the default pass never reaches into a tool's cache; the explicit pass removes each as a unit and says so"
+    Then "the default pass never reaches into a tool's cache; the explicit pass removes each as a unit, a spin each in the tier's frame"
     untouched == %w[brew bundler]
     store.tool_caches == []
-    out.string.include?("removing tool cache #{dir}/tool-caches/brew")
-    out.string.include?("removing tool cache #{dir}/tool-caches/bundler")
+    ui.rows == [
+      [:frame, "Tool caches: 2", 0],
+      [:spin, "Removing tool cache #{dir}/tool-caches/brew", 1],
+      [:spin, "Removing tool cache #{dir}/tool-caches/bundler", 1],
+    ]
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -182,7 +195,7 @@ class Dev::Deps::CacheGcTest < Minitest::Test
     seed_versions(base, "c")
     FileUtils.mkdir_p(File.join(base, ".staging-999-deadbeef"))
     lockfile = lock_engine(dir, version: "c")
-    gc = build_gc(dir, lockfile, out: StringIO.new)
+    gc = build_gc(dir, lockfile)
 
     When "collecting"
     gc.gc(keep: 2)
@@ -200,7 +213,7 @@ class Dev::Deps::CacheGcTest < Minitest::Test
     base = engine_base(dir)
     seed_versions(base, "old", "mid", "new") # locked = old (oldest)
     lockfile = lock_engine(dir, version: "old")
-    gc = build_gc(dir, lockfile, out: StringIO.new)
+    gc = build_gc(dir, lockfile)
 
     When "collecting with keep: 2"
     gc.gc(keep: 2)
@@ -223,7 +236,7 @@ class Dev::Deps::CacheGcTest < Minitest::Test
       else ""
       end
     })
-    gc = Dev::Deps::CacheGc.new(lockfile: Dev::Deps::Lockfile.new(dir: dir), engine: engine, out: StringIO.new)
+    gc = Dev::Deps::CacheGc.new(lockfile: Dev::Deps::Lockfile.new(dir: dir), engine: engine)
 
     When "collecting mount sources"
     sources = gc.send(:running_mount_sources)
@@ -251,18 +264,20 @@ class Dev::Deps::CacheGcTest < Minitest::Test
       end
     })
     volumes = Dev::PrefixVolumes.new(engine: engine, host_os: "linux", user_exists: ->(name) { %w[jp runner].include?(name) })
-    out = StringIO.new
-    gc = Dev::Deps::CacheGc.new(lockfile: Dev::Deps::Lockfile.new(dir: dir), engine: engine, out: out, prefix_volumes: volumes)
+    ui = RecordingUi.new
+    gc = Dev::Deps::CacheGc.new(lockfile: Dev::Deps::Lockfile.new(dir: dir), engine: engine, ui: ui, prefix_volumes: volumes)
 
     When
     gc.gc
 
-    Then
+    Then "the removal is a spin, the kept volume a fact with its reason, and the live ones unmentioned"
     engine.runs.include?(["volume", "rm", "dev-linuxbrew-olduser"])
     engine.runs.select { |*run| run.flatten.first(2) == %w[volume rm] } == [["volume", "rm", "dev-linuxbrew-olduser"]]
-    out.string.include?(">>> gc: removing prefix volume dev-linuxbrew-olduser (no host user olduser)\n")
-    out.string.include?(">>> gc: keeping prefix volume dev-linuxbrew (no host user) — mounted by dev-snappy-linux-abc (dev container up there recreates it)\n")
-    !out.string.include?("dev-linuxbrew-runner")
+    ui.rows == [
+      [:frame, "Prefix volumes: 2 stale", 0],
+      [:note, "keeping prefix volume dev-linuxbrew (no host user) — mounted by dev-snappy-linux-abc (dev container up there recreates it)", 1],
+      [:spin, "Removing prefix volume dev-linuxbrew-olduser (no host user olduser)", 1],
+    ]
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -280,15 +295,18 @@ class Dev::Deps::CacheGcTest < Minitest::Test
       else ""
       end
     })
-    out = StringIO.new
-    gc = Dev::Deps::CacheGc.new(lockfile: Dev::Deps::Lockfile.new(dir: dir), engine: engine, out: out)
+    ui = RecordingUi.new
+    gc = Dev::Deps::CacheGc.new(lockfile: Dev::Deps::Lockfile.new(dir: dir), engine: engine, ui: ui)
 
     When "reaping for the lock's images"
     gc.send(:gc_docker, images: [image])
 
-    Then "the one tag the lock does not name and no container runs is removed, and named"
+    Then "the one tag the lock does not name and no container runs is removed, a spin in the repository's frame"
     engine.runs == [["rmi", "#{image.repository}:#{"0" * 64}"]]
-    out.string == ">>> gc: removing image #{image.repository}:#{"0" * 64}\n"
+    ui.rows == [
+      [:frame, "Images of #{image.repository}: 1 stale", 0],
+      [:spin, "Removing image #{image.repository}:#{"0" * 64}", 1],
+    ]
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -311,7 +329,7 @@ class Dev::Deps::CacheGcTest < Minitest::Test
       else ""
       end
     })
-    gc = Dev::Deps::CacheGc.new(lockfile: Dev::Deps::Lockfile.new(dir: dir), engine: engine, out: StringIO.new)
+    gc = Dev::Deps::CacheGc.new(lockfile: Dev::Deps::Lockfile.new(dir: dir), engine: engine)
 
     When "reaping for both, then for none"
     gc.send(:gc_docker, images: [linux, server])

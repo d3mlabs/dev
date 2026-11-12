@@ -38,6 +38,13 @@ module Dev
       # The runner's GitHub-side name (.runner agentName).
       const :name, String
 
+      # The registration's id (.runner agentId) — GitHub's `Runner#id` for
+      # the registration config.sh made in this dir. Names are reused
+      # (another host with the same hostname, after this registration was
+      # lost), ids are not: this is what tells this host's own
+      # registration from a look-alike under the same name (dev#565).
+      const :agent_id, Integer
+
       # Whether svc.sh has installed this enrollment's service: its
       # `.service` marker (the unit name) exists in the dir. The unit is
       # named from scope and runner name, not from the dir — so two dirs
@@ -108,6 +115,18 @@ module Dev
       end
     end
 
+    # The enrollment in one dir the operator named (`--dir`, resolved by
+    # the setup to the enrollment owner's home), whatever home it is
+    # under; nil when the dir is not configured. Displayed relative to
+    # this discovery's home.
+    #
+    # @param dir [String] a runner install dir
+    # @return [Enrollment, nil]
+    sig { params(dir: String).returns(T.nilable(Enrollment)) }
+    def at(dir)
+      self.class.read(File.expand_path(dir), home: @home)
+    end
+
     # Every local enrollment serving a scope, in dir order. More than one
     # is the broken state `config.sh --replace` leaves behind (the newest
     # dir holds the registration, an older one the service unit); the
@@ -144,7 +163,9 @@ module Dev
 
       # Parse a runner dir's .runner record. config.sh writes the file with
       # a UTF-8 BOM, so read with "bom|utf-8" or JSON.parse chokes on the
-      # first byte. nil when absent or unreadable — an unconfigured dir.
+      # first byte. nil when absent or unreadable — an unconfigured dir —
+      # and when the record names no registration id: config.sh always
+      # writes one, so a record without it is not config.sh's.
       #
       # @param dir [String] a runner install dir
       # @param home [String] the home the display dir is relative to
@@ -156,12 +177,14 @@ module Dev
         url = record["gitHubUrl"].to_s
         scope = url.sub(%r{\Ahttps://github\.com/}, "").chomp("/")
         name = record["agentName"].to_s
-        return nil if scope.empty? || scope == url || name.empty?
+        agent_id = record["agentId"]
+        return nil if scope.empty? || scope == url || name.empty? || !agent_id.is_a?(Integer)
 
         Enrollment.new(
           dir: dir,
           scope: scope,
           name: name,
+          agent_id: agent_id,
           service_installed: File.exist?(File.join(dir, ".service")),
           display_dir: display_dir(dir, home),
           owner: owner(dir),

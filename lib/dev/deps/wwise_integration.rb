@@ -81,7 +81,7 @@ module Dev
       def install(dep)
         key = tree_key(dep)
         if (installed = store!.tree(key))
-          puts ">>> #{dep.name}@#{dep.version} already installed at #{installed}"
+          @ui.note("{{v}} #{dep.name}@#{dep.version} is installed at #{installed}")
           return
         end
 
@@ -92,19 +92,23 @@ module Dev
             "run dev deps update to re-lock, then dev up."
         end
 
+        # The credentials first, outside any step: a first-time login is
+        # asked at the terminal, which no child may own at that moment.
         env = credentials_env
         integration_version = dep.metadata.fetch("integration_version")
         published = store!.publish_tree(key) do |staging|
-          puts ">>> Downloading Wwise SDK #{dep.version} into #{store!.tree_path(key)}"
-          download_sdk(dep, staging, env)
-          verify_cache_entry(staging, SDK_PRODUCT, dep.version)
-
-          puts ">>> Fetching Wwise Unreal integration #{integration_version} for UE #{dep.metadata.fetch("ue")}"
-          fetch_integration(dep, staging, env)
-          verify_cache_entry(staging, INTEGRATION_PRODUCT, integration_version)
+          # Steps: wwise-cli runs with the terminal (its own progress).
+          @ui.step("Downloading Wwise SDK #{dep.version} into #{store!.tree_path(key)}") do
+            download_sdk(dep, staging, env)
+            verify_cache_entry(staging, SDK_PRODUCT, dep.version)
+          end
+          @ui.step("Fetching Wwise Unreal integration #{integration_version} for UE #{dep.metadata.fetch("ue")}") do
+            fetch_integration(dep, staging, env)
+            verify_cache_entry(staging, INTEGRATION_PRODUCT, integration_version)
+          end
           staging
         end
-        puts ">>> Installed #{dep.name}@#{dep.version} to #{published}"
+        @ui.note("{{v}} #{dep.name}@#{dep.version} installed at #{published}")
       end
 
       # `wwise-cli download`: the SDK package(s) for the declared deployment
@@ -172,11 +176,11 @@ module Dev
         {
           "WWISE_EMAIL" => Credentials.resolve(
             namespace: CREDENTIAL_NAMESPACE, key: "email", env_var: "WWISE_EMAIL",
-            prompt_label: "Wwise account email (the Audiokinetic login)",
+            prompt_label: "Wwise account email (the Audiokinetic login)", ui: @ui,
           ),
           "WWISE_PASSWORD" => Credentials.resolve(
             namespace: CREDENTIAL_NAMESPACE, key: "password", env_var: "WWISE_PASSWORD",
-            prompt_label: "Wwise account password",
+            prompt_label: "Wwise account password", ui: @ui,
           ),
         }
       end

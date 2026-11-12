@@ -34,7 +34,7 @@ module Dev
           gitignore_only = args.flag?(GITIGNORE_FLAG)
           raise Dev::Learnings::Accessor::UsageError, USAGE unless args.positionals.empty? && !(org && gitignore_only)
 
-          @accessor_factory.call.init(out: @out, org: org, gitignore_only: gitignore_only)
+          @accessor_factory.call(context.ui).init(org: org, gitignore_only: gitignore_only)
         end
       end
     end

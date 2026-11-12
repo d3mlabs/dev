@@ -5,7 +5,7 @@ require "test_helper"
 require "dev/footprint"
 require "fileutils"
 require "pathname"
-require "stringio"
+require "support/recording_ui"
 require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
@@ -153,17 +153,17 @@ class Dev::FootprintTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "warn_missing prints one repair line per uncovered path" do
+  test "warn_missing notes one {{x}} repair line per uncovered path" do
     Given "a repo ignoring nothing"
     dir = Dir.mktmpdir("dev-footprint-test-")
     root = git_repo(dir)
-    out = StringIO.new
+    ui = RecordingUi.new
 
     When "warning for one path"
-    Dev::Footprint.warn_missing(out, root, [".cursor/plans/"])
+    Dev::Footprint.warn_missing(ui, root, [".cursor/plans/"])
 
     Then
-    out.string == "dev: warning: .cursor/plans/ is not gitignored — run `dev learnings init --gitignore`.\n"
+    ui.rows == [[:note, "{{x}} .cursor/plans/ is not gitignored — run `dev learnings init --gitignore`.", 0]]
 
     Cleanup
     FileUtils.rm_rf(dir)

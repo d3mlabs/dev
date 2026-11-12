@@ -20,9 +20,14 @@ module Dev
   # of vendoring a per-repo setup script. With `gh` already authenticated, there's
   # no manual "copy a registration token from the web UI" step — we mint one via
   # the API (org scope needs the admin:org gh scope). Idempotent: re-running
-  # reconfigures the existing runner (--replace), including across scopes — a
+  # over a configured dir deregisters it first, including across scopes — a
   # repo-scoped runner re-registered with `org: true` is deregistered at its old
-  # scope first (read back from the runner's own .runner file).
+  # scope first (read back from the runner's own .runner file). `--replace` —
+  # config.sh taking over a registration GitHub already holds under the name,
+  # which GitHub would otherwise refuse as a duplicate — is passed only when
+  # the config says so: register's rule (dev#565) is that only this family's
+  # own name is ever replaced; any other holder is refused upstream, never
+  # overwritten here.
   #
   # It installs a systemd service and touches the host filesystem + network, so it
   # runs on the host (a built-in command), never inside a build container.
@@ -358,7 +363,12 @@ module Dev
       # config.sh lands an unnamed one in Default.
       group = @config.group
       argv += ["--runnergroup", group] if group
-      argv + ["--unattended", "--replace"]
+      argv << "--unattended"
+      # Only a name whose registration is this family's own is ever
+      # replaced (dev#565); without the flag a held name is GitHub's
+      # refusal, not a takeover.
+      argv << "--replace" if @config.replace
+      argv
     end
 
     private
@@ -518,7 +528,7 @@ module Dev
     sig { params(dir: String, url: String, token: String, name: String).void }
     def configure_runner(dir:, url:, token:, name:)
       argv = self.class.as_user_argv(@as_user, config_argv(url: url, token: token, name: name), path: @path)
-      @ui.step("Configuring the runner (--replace)") do
+      @ui.step("Configuring the runner#{" (--replace)" if @config.replace}") do
         raise Error, "config.sh failed to register the runner" unless @exec.system(*argv, chdir: dir)
       end
     end

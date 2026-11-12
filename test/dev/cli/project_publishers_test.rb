@@ -32,7 +32,7 @@ class Dev::Cli::ProjectPublishersTest < Minitest::Test
     Given "a checkout with that lock"
     root = Pathname(Dir.mktmpdir("project-publishers-"))
     Dev::Deps::Lockfile.new(dir: root).lock(pins.map { |name, integration, tap| pin(name, integration, tap:) })
-    publishers = Dev::Cli::ProjectPublishers.new(root:, entries: ENTRIES)
+    publishers = Dev::Cli::ProjectPublishers.new(root:, ui: Dev::NoUi.new, entries: ENTRIES)
 
     When
     contributed = publishers.contributed
@@ -63,7 +63,7 @@ class Dev::Cli::ProjectPublishersTest < Minitest::Test
     root = Pathname(Dir.mktmpdir("project-publishers-"))
 
     Expect
-    Dev::Cli::ProjectPublishers.new(root:, entries: ENTRIES).reach == { "brew" => %i[brew ruby], "steam" => %i[steam] }
+    Dev::Cli::ProjectPublishers.new(root:, ui: Dev::NoUi.new, entries: ENTRIES).reach == { "brew" => %i[brew ruby], "steam" => %i[steam] }
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -75,7 +75,7 @@ class Dev::Cli::ProjectPublishersTest < Minitest::Test
     (root / "build-deps.lock").write("")
 
     When
-    Dev::Cli::ProjectPublishers.new(root:, entries: ENTRIES).contributed
+    Dev::Cli::ProjectPublishers.new(root:, ui: Dev::NoUi.new, entries: ENTRIES).contributed
 
     Then
     raises Dev::Deps::Lockfile::RetiredBuildLockError
