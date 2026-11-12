@@ -869,7 +869,7 @@ class Dev::RunnerStatusTest < Minitest::Test
   def write_runner(home, dir_name, scope:, name:)
     dir = File.join(home, dir_name)
     FileUtils.mkdir_p(dir)
-    record = { "agentName" => name, "gitHubUrl" => "https://github.com/#{scope}" }
+    record = { "agentId" => 1, "agentName" => name, "gitHubUrl" => "https://github.com/#{scope}" }
     File.write(File.join(dir, ".runner"), "\uFEFF#{JSON.generate(record)}")
     dir
   end

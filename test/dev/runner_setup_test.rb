@@ -96,7 +96,7 @@ class Dev::RunnerSetupTest < Minitest::Test
     nil
   end
 
-  test "config_argv builds the config.sh registration contract" do
+  test "config_argv builds the config.sh registration contract — without --replace: a name nothing holds enrolls plainly, and a held one is never taken over unless the config says it is this family's own (dev#565)" do
     Given "a runner config with labels"
     config = Dev::RunnerSetupConfig.new(labels: "ue-engine,x64")
     setup = Dev::RunnerSetup.new(config: config)
@@ -112,8 +112,30 @@ class Dev::RunnerSetupTest < Minitest::Test
       "--labels", "ue-engine,x64",
       "--name", "box",
       "--unattended",
-      "--replace",
     ]
+  end
+
+  test "config_argv passes --replace only when the config says the held name is this family's own; the step says so too (dev#565)" do
+    Given "a configured dir being re-enrolled under its family's own held name"
+    dir = Dir.mktmpdir
+    config_sh = File.join(dir, "config.sh")
+    File.write(config_sh, "#!/bin/bash\n")
+    File.chmod(0o755, config_sh)
+    config = Dev::RunnerSetupConfig.new(labels: "snappy", dir: dir, name: "box", replace: true)
+    exec = RecordingExecutor.new(&authed_responder)
+    ui = RecordingUi.new
+    setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, ui: ui, host_platform: "linux-x64")
+
+    When
+    setup.run
+
+    Then "--replace rides last, after --unattended, and the configure step names it"
+    register = exec.systems.find { |call| call[:argv].first == "./config.sh" }
+    register[:argv].last(2) == ["--unattended", "--replace"]
+    ui.rows.include?([:step, "Configuring the runner (--replace)", 1])
+
+    Cleanup
+    FileUtils.remove_entry(dir)
   end
 
   test "config_argv names the runner group when the enrollment joins one (dev#470); unnamed, config.sh lands it in Default" do
@@ -133,7 +155,6 @@ class Dev::RunnerSetupTest < Minitest::Test
       "--name", "mac1-2",
       "--runnergroup", "agents",
       "--unattended",
-      "--replace",
     ]
   end
 
@@ -219,7 +240,6 @@ class Dev::RunnerSetupTest < Minitest::Test
       "--labels", "ue-engine",
       "--name", "box",
       "--unattended",
-      "--replace",
     ]
     exec.systems.any? { |call| call[:argv] == ["sudo", "./svc.sh", "install"] && call[:chdir] == dir }
     exec.systems.any? { |call| call[:argv] == ["sudo", "./svc.sh", "start"] && call[:chdir] == dir }
@@ -266,7 +286,7 @@ class Dev::RunnerSetupTest < Minitest::Test
       ["sudo", "-u", "runner", "-H", "rm", "-f", "actions-runner-linux-x64-#{Dev::RunnerSetup::DEFAULT_VERSION}.tar.gz"],
       [*as_runner, "./config.sh",
        "--url", "https://github.com/owner/repo", "--token", "TOKEN123",
-       "--labels", "snappy", "--name", "box", "--unattended", "--replace",],
+       "--labels", "snappy", "--name", "box", "--unattended",],
       ["sudo", "./svc.sh", "install", "runner"],
       ["sudo", "./svc.sh", "start"],
     ]
@@ -303,7 +323,7 @@ class Dev::RunnerSetupTest < Minitest::Test
       [:spin, "Deregistering at owner/repo", 1],
       [:note, "Existing config: registration removed", 1],
       [:spin, "Minting a registration token", 1],
-      [:step, "Configuring the runner (--replace)", 1],
+      [:step, "Configuring the runner", 1],
       [:step, "Installing + starting the runner service as runner", 1],
       [:note, "{{v}} Runner 'box' is registered and running — it should show Idle on the GitHub Runners page", 1],
     ]

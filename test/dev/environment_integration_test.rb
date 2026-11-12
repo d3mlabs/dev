@@ -51,6 +51,9 @@ class EnvironmentIntegrationTest < Minitest::Test
     Dev::Deps.stubs(:detect_env).returns("dev")
     # A Mac: neither image's platform, so both commands reach their container.
     Dev::Platform.stubs(:current).returns("darwin-arm64")
+    # The composition root builds every builtin on its platform defaults
+    # (`for_host`): the same Mac, pinned, so they answer nil on every machine.
+    @host_probes = pin_host_platform(os: "darwin")
     # Every docker call succeeds (the image is found locally) except the
     # persistent container's existence probe, so a persisted image creates
     # its container and the test can see the shape it was created with.
@@ -63,6 +66,7 @@ class EnvironmentIntegrationTest < Minitest::Test
   end
 
   def teardown
+    restore_host_probe_guard(@host_probes)
     $stderr = @original_stderr
     Dir.chdir(@original_cwd)
     FileUtils.rm_rf(@root)

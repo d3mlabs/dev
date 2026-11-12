@@ -139,8 +139,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   # --- usage ------------------------------------------------------------
 
   test "every flag register declares carries a description, so `dev runner register --help` explains each" do
-    Given "the command as the CLI builds it"
-    command = Dev::Cli::Builtins::RunnerRegisterCommand.new
+    Given "the command as the CLI builds it, its host seams answered off"
+    command = usage_command
 
     Expect "no flag lists by name alone"
     command.flags.all? { |flag| !flag.desc.empty? }
@@ -390,7 +390,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "an enrolled scope with drifted labels is amended in place, never re-enrolled" do
     Given "this host already serves the org, with a stale label set, in a repo-named dir"
     home = Dir.mktmpdir
-    dir = write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs", name: "mac-box")
+    dir = write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs", name: "mac-box", agent_id: 42)
     registry = FakeRegistry.new(
       runners: { ["d3mlabs", "mac-box"] => Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: ["cellbound3d"], status: "online") },
     )
@@ -410,7 +410,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "an enrolled scope with current labels is a no-op amend" do
     Given "the enrollment already advertises the desired set"
     home = Dir.mktmpdir
-    write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs/cellbound-3d", name: "box")
+    write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs/cellbound-3d", name: "box", agent_id: 7)
     registry = FakeRegistry.new(
       runners: { ["d3mlabs/cellbound-3d", "box"] => Dev::RunnerRegistry::Runner.new(id: 7, custom_labels: ["cellbound-3d"], status: "online") },
     )
@@ -444,9 +444,9 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "two local enrollments for the scope: register lists them, asks, and on yes unregisters both then enrolls fresh" do
     Given "the --replace aftermath: a legacy dir owning the service, a newer dir owning the (online) registration"
     home = Dir.mktmpdir
-    legacy = write_runner(home, "actions-runner", scope: "JPDuchesne/snappy", name: "JPSFF")
+    legacy = write_runner(home, "actions-runner", scope: "JPDuchesne/snappy", name: "JPSFF", agent_id: 9)
     File.write(File.join(legacy, ".service"), "unit\n")
-    newer = write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    newer = write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF", agent_id: 9)
     registry = FakeRegistry.new(
       runners: { ["JPDuchesne/snappy", "JPSFF"] => Dev::RunnerRegistry::Runner.new(id: 9, custom_labels: ["snappy"], status: "online") },
     )
@@ -471,7 +471,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "one local enrollment whose runner GitHub lists offline: register asks; --yes answers for it" do
     Given "a registration nothing is running"
     home = Dir.mktmpdir
-    dir = write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    dir = write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF", agent_id: 9)
     registry = FakeRegistry.new(
       runners: { ["JPDuchesne/snappy", "JPSFF"] => Dev::RunnerRegistry::Runner.new(id: 9, custom_labels: ["snappy"], status: "offline") },
     )
@@ -510,7 +510,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "one local enrollment, online: the amend path, no question asked" do
     Given "the steady state"
     home = Dir.mktmpdir
-    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF", agent_id: 9)
     registry = FakeRegistry.new(
       runners: { ["JPDuchesne/snappy", "JPSFF"] => Dev::RunnerRegistry::Runner.new(id: 9, custom_labels: ["snappy"], status: "online") },
     )
@@ -545,7 +545,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "--dir skips discovery: the dir is the operator's to pick" do
     Given "an enrollment discovery would have found"
     home = Dir.mktmpdir
-    write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs", name: "mac-box")
+    write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs", name: "mac-box", agent_id: 42)
     registry = FakeRegistry.new(
       runners: { ["d3mlabs", "mac-box"] => Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: ["x"], status: "online") },
     )
@@ -587,7 +587,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "--slots 3 over a one-slot enrollment amends slot 1 in place and adds slots 2 and 3 beside its dir" do
     Given "a host already serving the org with one online runner, in a dir of its own naming"
     home = Dir.mktmpdir
-    dir = write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs", name: "mac-box")
+    dir = write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs", name: "mac-box", agent_id: 42)
     registry = FakeRegistry.new(
       runners: { ["d3mlabs", "mac-box"] => Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: ["cellbound3d"], status: "online") },
     )
@@ -615,8 +615,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "re-running without --slots keeps the slot count: every slot amended, nothing added or retired" do
     Given "two slots, both online with stale labels"
     home = Dir.mktmpdir
-    one = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
-    two = write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
+    one = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1", agent_id: 1)
+    two = write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2", agent_id: 2)
     registry = FakeRegistry.new(
       runners: {
         ["d3mlabs", "mac1"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-ask"], status: "online"),
@@ -638,9 +638,9 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "a smaller --slots lists the surplus slots, asks, and on yes unregisters them — the kept slots are amended as usual" do
     Given "three slots, asked down to one"
     home = Dir.mktmpdir
-    one = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
-    two = write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
-    three = write_runner(home, "actions-runner-ai-ask-3", scope: "d3mlabs", name: "mac1-3")
+    one = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1", agent_id: 1)
+    two = write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2", agent_id: 2)
+    three = write_runner(home, "actions-runner-ai-ask-3", scope: "d3mlabs", name: "mac1-3", agent_id: 3)
     runners = %w[mac1 mac1-2 mac1-3].each_with_index.to_h do |name, i|
       [["d3mlabs", name], Dev::RunnerRegistry::Runner.new(id: i + 1, custom_labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS, status: "online")]
     end
@@ -663,8 +663,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "declining the shrink changes nothing and names the unregister commands" do
     Given "two slots, asked down to one, and an operator who says no"
     home = Dir.mktmpdir
-    write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
-    write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
+    write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1", agent_id: 1)
+    write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2", agent_id: 2)
     registry = FakeRegistry.new(
       runners: {
         ["d3mlabs", "mac1"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-ask"], status: "online"),
@@ -688,8 +688,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "a gap in the slots is re-filled: slots 1 and 3 enrolled, bare register adds slot 2" do
     Given
     home = Dir.mktmpdir
-    one = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
-    write_runner(home, "actions-runner-ai-ask-3", scope: "d3mlabs", name: "mac1-3")
+    one = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1", agent_id: 1)
+    write_runner(home, "actions-runner-ai-ask-3", scope: "d3mlabs", name: "mac1-3", agent_id: 3)
     registry = FakeRegistry.new(
       runners: {
         ["d3mlabs", "mac1"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS, status: "online"),
@@ -709,7 +709,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "a slot GitHub has lost re-enrolls into its own dir under its own name; the rest are amended" do
     Given "two slots whose second runner is gone server-side"
     home = Dir.mktmpdir
-    write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
+    write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1", agent_id: 1)
     two = write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
     registry = FakeRegistry.new(
       runners: { ["d3mlabs", "mac1"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS, status: "online") },
@@ -761,7 +761,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     home = Dir.mktmpdir
     runners = pool_runners(home, count: 10, hostname: "JPSFF")
     %w[JPSFF-ai-ask JPSFF-ai-ask-2 JPSFF-ai-ask-3].each_with_index do |name, i|
-      write_runner(home, "actions-runner-ai-ask#{"-#{i + 1}" if i.positive?}", scope: "d3mlabs", name: name)
+      write_runner(home, "actions-runner-ai-ask#{"-#{i + 1}" if i.positive?}", scope: "d3mlabs", name: name, agent_id: 100 + i)
       runners[["d3mlabs", name]] = Dev::RunnerRegistry::Runner.new(id: 100 + i, custom_labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS, status: "online")
     end
     registry = FakeRegistry.new(runners: runners)
@@ -781,8 +781,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "the reverse order: the pool enrolls beside an agent family holding the hostname, under its own base, and a smaller --slots never counts the family's slots as surplus" do
     Given "a two-slot agent family under the bare hostname"
     home = Dir.mktmpdir
-    write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
-    write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
+    write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1", agent_id: 1)
+    write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2", agent_id: 2)
     registry = FakeRegistry.new(
       runners: {
         ["d3mlabs", "mac1"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS, status: "online"),
@@ -824,8 +824,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "an enrollment at the scope that is none of this host's slots — another name — is superseded like a leftover: listed, asked about, retired, then the slots enroll fresh" do
     Given "one of this host's slots and an enrollment under a name that is nobody's slot"
     home = Dir.mktmpdir
-    mine = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
-    other = write_runner(home, "actions-runner-old", scope: "d3mlabs", name: "old-box")
+    mine = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1", agent_id: 1)
+    other = write_runner(home, "actions-runner-old", scope: "d3mlabs", name: "old-box", agent_id: 9)
     registry = FakeRegistry.new(
       runners: {
         ["d3mlabs", "mac1"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-ask"], status: "online"),
@@ -842,6 +842,146 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.torn_down.map(&:dir).sort == [mine, other].sort
     harness.out.string.include?("an enrollment named 'old-box' that is none of this host's slots")
     harness.events == [[:run], [:run]]
+  end
+
+  # --- never steal a registration (dev#565) --------------------------------
+
+  test "a fresh family at a scope where GitHub holds the hostname for another family — no dir of this host's — refuses, naming the holder, and changes nothing: --replace would have taken the registration over" do
+    Given "GitHub listing an online orchestrator under this host's name at the org, and no local enrollment at all"
+    registry = FakeRegistry.new(runners: { ["d3mlabs", "JPSFF"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-orchestrator"], status: "online") })
+    harness = build_harness(home: Dir.mktmpdir, registry: registry, scope: "d3mlabs", hostname: "JPSFF")
+    harness.ui.expects(:confirm).never
+
+    When "registering the agent host"
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: harness.projectless_context)
+
+    Then "refused with the holder's labels and status and the way beside it; nothing enrolled, amended or torn down"
+    raises Dev::Cli::Builtins::RunnerRegisterCommand::RegistrationHeldError
+    harness.ui.rows.include?([:note, "{{x}} 'JPSFF' at d3mlabs is registered by another family (labels: ai-orchestrator, online) — pass --name to enroll beside it", 0])
+    harness.events == []
+    harness.torn_down == []
+    registry.amends == []
+  end
+
+  test "--name asking for a name the other family on this host holds is refused the same way — the pool's slot is never replaced, and no slot enrolls" do
+    Given "the box's pool under the bare hostname, and an agent family asked to take that name with two slots"
+    home = Dir.mktmpdir
+    registry = FakeRegistry.new(runners: pool_runners(home, count: 2, hostname: "JPSFF"))
+    harness = build_harness(contracts: 1, home: home, registry: registry, scope: "d3mlabs", hostname: "JPSFF")
+    harness.ui.expects(:confirm).never
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--name", "JPSFF", "--slots", "2"]), context: harness.projectless_context)
+
+    Then "the refusal names the pool's registration; the contract converged (host facts, not enrollment) but neither slot ran"
+    error = raises Dev::Cli::Builtins::RunnerRegisterCommand::RegistrationHeldError
+    error.message.include?("'JPSFF' at d3mlabs")
+    harness.out.string.include?("'JPSFF' at d3mlabs is registered by another family (labels: ai-orchestrator, online) — pass --name to enroll beside it")
+    harness.events == [[:converge, false, nil, nil, nil]]
+    harness.torn_down == []
+    registry.amends == []
+  end
+
+  test "re-enrolling a family's own slot — GitHub still listing its name — passes --replace: the only registration register ever takes over" do
+    Given "this family's one slot, offline on GitHub under the hostname, so register retires it and enrolls fresh under the same name"
+    home = Dir.mktmpdir
+    dir = write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF", agent_id: 9)
+    registry = FakeRegistry.new(
+      runners: { ["JPDuchesne/snappy", "JPSFF"] => Dev::RunnerRegistry::Runner.new(id: 9, custom_labels: ["snappy"], status: "offline") },
+    )
+    harness = build_harness(home: home, registry: registry, scope: "JPDuchesne/snappy", repo: "JPDuchesne/snappy", hostname: "JPSFF")
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--yes"]), context: harness.build_context(name: "snappy"))
+
+    Then "torn down, then enrolled with --replace under its own name"
+    harness.torn_down.map(&:dir) == [dir]
+    harness.events == [[:run]]
+    harness.wirings.last.first == Dev::RunnerSetupConfig.new(labels: "snappy", dir: "/tmp/runner-dir", name: "JPSFF", replace: true)
+  end
+
+  test "own is the registration, not the name: a local enrollment whose .runner id is not the id GitHub holds under that name is another machine's look-alike — refused, the stale dir named, nothing replaced" do
+    Given "this host's dir for 'mac1-agent' records id 42; GitHub's 'mac1-agent' is id 77 — another host with the same hostname enrolled after this registration was lost"
+    home = Dir.mktmpdir
+    dir = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1", agent_id: 42)
+    registry = FakeRegistry.new(
+      runners: { ["d3mlabs", "mac1"] => Dev::RunnerRegistry::Runner.new(id: 77, custom_labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS, status: "offline") },
+    )
+    harness = build_harness(home: home, registry: registry, scope: "d3mlabs", hostname: "mac1")
+    harness.ui.expects(:confirm).never
+
+    When "re-registering here (GitHub lists the name offline, so the family looks like its own superseded slot)"
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--yes"]), context: harness.projectless_context)
+
+    Then "refused before anything is torn down or enrolled; the message says the local record is stale and how to clear it"
+    raises Dev::Cli::Builtins::RunnerRegisterCommand::RegistrationHeldError
+    harness.out.string.include?("'mac1' at d3mlabs is registered by another host under this family's name")
+    harness.out.string.include?("this host's #{Dev::RunnerDiscovery.read(dir, home: home).display_dir} records a registration GitHub no longer holds — dev runner unregister it, then re-run")
+    harness.torn_down == []
+    harness.events == []
+    registry.amends == []
+  end
+
+  test "--dir over this host's own configured dir whose name GitHub holds re-enrolls with --replace: the dir's own record is the family, discovery or not" do
+    Given "an operator-picked dir already enrolled as 'box' (id 5), which GitHub lists under that name with the same id"
+    home = Dir.mktmpdir
+    dir = write_runner(home, "actions-runner-heavy", scope: "d3mlabs", name: "box", agent_id: 5)
+    registry = FakeRegistry.new(
+      runners: { ["d3mlabs", "box"] => Dev::RunnerRegistry::Runner.new(id: 5, custom_labels: ["ai-build"], status: "online") },
+    )
+    harness = build_harness(home: home, registry: registry, scope: "d3mlabs", hostname: "box")
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-build", "--dir", dir]), context: harness.projectless_context)
+
+    Then "the full enrollment runs there with --replace; no refusal, no amend"
+    harness.events == [[:run]]
+    harness.wirings.map(&:first).last.replace == true
+    registry.amends == []
+  end
+
+  test "--dir over this host's configured dir whose name GitHub now holds under another id is refused like any other collision" do
+    Given "the dir records id 5; GitHub's 'box' is id 6"
+    home = Dir.mktmpdir
+    dir = write_runner(home, "actions-runner-heavy", scope: "d3mlabs", name: "box", agent_id: 5)
+    registry = FakeRegistry.new(
+      runners: { ["d3mlabs", "box"] => Dev::RunnerRegistry::Runner.new(id: 6, custom_labels: ["ai-build"], status: "online") },
+    )
+    harness = build_harness(home: home, registry: registry, scope: "d3mlabs", hostname: "box")
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-build", "--dir", dir]), context: harness.projectless_context)
+
+    Then
+    raises Dev::Cli::Builtins::RunnerRegisterCommand::RegistrationHeldError
+    harness.events == []
+  end
+
+  test "a name nothing holds at the scope enrolls without --replace, slot 1 and the slots beside it alike" do
+    Given "a fresh org scope"
+    harness = build_harness(scope: "d3mlabs", hostname: "mac1")
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "2"]), context: harness.projectless_context)
+
+    Then
+    harness.events == [[:run], [:run]]
+    harness.wirings.map { |config, _repo, _org| config.replace } == [false, false]
+  end
+
+  test "--name with --slots names every slot from it — <name>, <name>-2 — never two slots under one name" do
+    Given "a fresh org scope and a name of the operator's choosing"
+    harness = build_harness(scope: "d3mlabs", hostname: "mac1")
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--name", "agents", "--slots", "2"]), context: harness.projectless_context)
+
+    Then "slot 1 is the plain config under the name; slot 2 is named and placed from it"
+    labels = Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(",")
+    harness.wirings.map(&:first) == [
+      Dev::RunnerSetupConfig.new(labels: labels, name: "agents", group: "ai-flow"),
+      Dev::RunnerSetupConfig.new(labels: labels, dir: "/tmp/runner-dir-2", name: "agents-2", group: "ai-flow"),
+    ]
   end
 
   test "--slots #{raw.inspect} is refused before anything converges" do
@@ -933,7 +1073,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "an amended slot sitting in another group is moved into the ai-flow group; one already there is not touched" do
     Given "one slot in Default, growing to two; the ai-flow group already sees the checkout's repo"
     home = Dir.mktmpdir
-    dir = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1")
+    dir = write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1", agent_id: 1)
     default = FakeRegistry.group(id: 1, name: "Default", visibility: "all")
     ai_flow = FakeRegistry.group(id: 7, name: "ai-flow", pinned: true)
     registry = FakeRegistry.new(
@@ -1374,7 +1514,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "an enrollment owned by another user — the operator's own, from before the rule — is drift: register says whose it is, asks, tears it down and enrolls fresh as the runner user" do
     Given "an online enrollment in the operator's home, and a runner user as the rule (named so it cannot be this test's own user: hosted CI runs as `runner`)"
     home = Dir.mktmpdir
-    dir = write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    dir = write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF", agent_id: 9)
     registry = FakeRegistry.new(
       runners: { ["JPDuchesne/snappy", "JPSFF"] => Dev::RunnerRegistry::Runner.new(id: 9, custom_labels: ["snappy"], status: "online") },
     )
@@ -1397,7 +1537,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "an enrollment under the runner user's home, owned by it and online, is the steady state: the amend path, no question" do
     Given "the enrollment where the rule puts it (owned by this test's user, who plays the runner user)"
     runner_home = Dir.mktmpdir
-    write_runner(runner_home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    write_runner(runner_home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF", agent_id: 9)
     registry = FakeRegistry.new(
       runners: { ["JPDuchesne/snappy", "JPSFF"] => Dev::RunnerRegistry::Runner.new(id: 9, custom_labels: ["snappy"], status: "online") },
     )
@@ -1475,7 +1615,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
   test "register's usage carries the three-identity table and the runner-user rule: who mints, who owns, who installs; the login line; examples" do
     Given "the full desc, as `dev runner register --help` prints it"
-    desc = Dev::Cli::Builtins::RunnerRegisterCommand.new.desc
+    desc = usage_command.desc
 
     Expect "a one-line summary first, then the detail"
     desc.lines.fetch(0).chomp == "Enroll this host as a self-hosted runner, converging label contracts (--org, --labels, --ai-flow)"
@@ -1496,7 +1636,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
   test "--as carries a description, like every register flag" do
     Expect
-    Dev::Cli::Builtins::RunnerRegisterCommand.new.flags.map(&:name).include?("--as")
+    usage_command.flags.map(&:name).include?("--as")
   end
 
   # --- plumbing ---------------------------------------------------------
@@ -1518,14 +1658,18 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     Dev::RunnerSetup.expects(:current_repo).once.returns("owner/repo")
     registry = typed_mock(Dev::RunnerRegistry)
     registry.expects(:find).once.with(scope: "owner/repo", name: "").returns(nil)
+    # The rule's lookup (dev#565): the fresh slot's name, held by nobody.
+    registry.expects(:find).once.with(scope: "owner/repo", name: "box").returns(nil)
     Dev::RunnerRegistry.expects(:new).returns(registry)
     setup = typed_mock(Dev::RunnerSetup)
     setup.expects(:run).once
     setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
+    setup.stubs(:resolve_name).returns("box")
     setup.stubs(:resolve_scope).returns("owner/repo")
     Dev::RunnerSetup.expects(:new)
       .with(config: Dev::RunnerSetupConfig.new(labels: "ue-engine"), repo: nil, org: false, as_user: nil, home: nil, path: nil, ui: context.ui).returns(setup)
-    command = Dev::Cli::Builtins::RunnerRegisterCommand.new(data_root_provisioner: nil)
+    # The WSL runner host is answered at its platform seam too, so the run never converges Windows-side on a WSL host.
+    command = Dev::Cli::Builtins::RunnerRegisterCommand.new(data_root_provisioner: nil, wsl_runner_host: nil)
 
     When "running register with --as, the host rule's one input"
     command.call(args: parsed_args(command, ["--labels", "ue-engine", "--as", "ci"]), context: context)
@@ -1551,14 +1695,16 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     Dev::RunnerSetup.expects(:current_repo).once.returns("owner/repo")
     registry = typed_mock(Dev::RunnerRegistry)
     registry.expects(:find).once.with(scope: "owner/repo", name: "").returns(nil)
+    registry.expects(:find).once.with(scope: "owner/repo", name: "box").returns(nil)
     Dev::RunnerRegistry.expects(:new).returns(registry)
     setup = typed_mock(Dev::RunnerSetup)
     setup.expects(:run).once
     setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
+    setup.stubs(:resolve_name).returns("box")
     setup.stubs(:resolve_scope).returns("owner/repo")
     Dev::RunnerSetup.expects(:new)
       .with(config: Dev::RunnerSetupConfig.new(labels: "ue-engine"), repo: nil, org: false, as_user: "svc-runner", home: runner_user.home, path: "/opt/brew/bin:/usr/bin", ui: context.ui).returns(setup)
-    command = Dev::Cli::Builtins::RunnerRegisterCommand.new(data_root_provisioner: nil)
+    command = Dev::Cli::Builtins::RunnerRegisterCommand.new(data_root_provisioner: nil, wsl_runner_host: nil)
 
     When "registering in that checkout with default wiring"
     command.call(args: parsed_args(command, ["--labels", "ue-engine"]), context: context)
@@ -1574,15 +1720,17 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     Dev::RunnerSetup.expects(:current_repo).once.returns("d3mlabs/Cellbound-3D")
     registry = typed_mock(Dev::RunnerRegistry)
     registry.expects(:find).once.with(scope: "d3mlabs/Cellbound-3D", name: "").returns(nil)
+    registry.expects(:find).once.with(scope: "d3mlabs/Cellbound-3D", name: "box").returns(nil)
     Dev::RunnerRegistry.expects(:new).returns(registry)
     setup = typed_mock(Dev::RunnerSetup)
     setup.expects(:run).once
     setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
+    setup.stubs(:resolve_name).returns("box")
     setup.stubs(:resolve_scope).returns("d3mlabs/Cellbound-3D")
     context = build_context(name: "Cellbound3D")
     Dev::RunnerSetup.expects(:new)
       .with(config: Dev::RunnerSetupConfig.new(labels: "cellbound-3d"), repo: nil, org: false, as_user: nil, home: nil, path: nil, ui: context.ui).returns(setup)
-    command = Dev::Cli::Builtins::RunnerRegisterCommand.new(runner_user_factory: ->(_name, _ui) { nil }, data_root_provisioner: nil)
+    command = Dev::Cli::Builtins::RunnerRegisterCommand.new(runner_user_factory: ->(_name, _ui) { nil }, data_root_provisioner: nil, wsl_runner_host: nil)
 
     When "running bare register inside a checkout whose dev.yml name differs"
     command.call(args: no_args, context: context)
@@ -1679,11 +1827,25 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
       torn_down: torn_down, ui: ui, as_names: as_names, factory_uis: factory_uis, reach_roots: reach_roots)
   end
 
+  # The command with its default wiring but the three platform seams
+  # answered off (a Mac with no runner user, no data root, no WSL side):
+  # usage and flags do not depend on the host, and the host-probe guard
+  # refuses the defaults that would read it.
+  def usage_command
+    Dev::Cli::Builtins::RunnerRegisterCommand.new(
+      runner_user_factory: ->(_name, _ui) { nil }, data_root_provisioner: nil, wsl_runner_host: nil,
+    )
+  end
+
   # A .runner record the way config.sh writes it (UTF-8 BOM + JSON).
-  def write_runner(home, dir_name, scope:, name:)
+  # `agent_id` is the registration's id (.runner agentId) — what GitHub's
+  # `Runner#id` is compared with to tell this family's own registration
+  # from a look-alike (dev#565); 0 by default, an id no registry double
+  # here hands out, so a test that means "own" says the id.
+  def write_runner(home, dir_name, scope:, name:, agent_id: 0)
     dir = File.join(home, dir_name)
     FileUtils.mkdir_p(dir)
-    record = { "agentName" => name, "gitHubUrl" => "https://github.com/#{scope}" }
+    record = { "agentId" => agent_id, "agentName" => name, "gitHubUrl" => "https://github.com/#{scope}" }
     File.write(File.join(dir, ".runner"), "\uFEFF#{JSON.generate(record)}")
     dir
   end
@@ -1694,7 +1856,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   def pool_runners(home, count:, hostname:)
     (1..count).to_h do |slot|
       suffix = slot == 1 ? "" : "-#{slot}"
-      write_runner(home, "actions-runner-ai-orchestrator#{suffix}", scope: "d3mlabs", name: "#{hostname}#{suffix}")
+      write_runner(home, "actions-runner-ai-orchestrator#{suffix}", scope: "d3mlabs", name: "#{hostname}#{suffix}", agent_id: slot)
       [["d3mlabs", "#{hostname}#{suffix}"], Dev::RunnerRegistry::Runner.new(id: slot, custom_labels: ["ai-orchestrator"], status: "online")]
     end
   end

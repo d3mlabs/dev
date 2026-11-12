@@ -10,11 +10,12 @@ class Dev::RunnerSetupConfigTest < Minitest::Test
     When "creating a config with only labels"
     config = Dev::RunnerSetupConfig.new(labels: "ue-engine")
 
-    Then
+    Then "and config.sh is not told to --replace: a held name is never taken over unless register says it is this family's own (dev#565)"
     config.labels == "ue-engine"
     config.dir.nil?
     config.name.nil?
     config.version.nil?
+    config.replace == false
   end
 
   test "equality compares all fields" do
@@ -41,12 +42,14 @@ class Dev::RunnerSetupConfigTest < Minitest::Test
   end
 
   test "inequality when a field differs" do
-    Given "two configs with different labels"
+    Given "two configs with different labels, and two differing only in whether config.sh may --replace"
     a = Dev::RunnerSetupConfig.new(labels: "ue-engine")
     b = Dev::RunnerSetupConfig.new(labels: "cellbound3d")
+    replacing = Dev::RunnerSetupConfig.new(labels: "ue-engine", replace: true)
 
     Expect
     a != b
     a.hash != b.hash
+    a != replacing
   end
 end

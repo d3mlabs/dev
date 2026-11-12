@@ -4,6 +4,7 @@
 require "stringio"
 
 require "dev/engine_resources"
+require "dev/host_probe_guard"
 require "dev/privileged_steps"
 require "dev/process_executor"
 require "dev/wsl_conf"
@@ -74,10 +75,12 @@ module Dev
       # apply (not a WSL2 distro). Never raises for a session that does not
       # name its distro — see #task.
       #
-      # @param host [WslHost] the machine
+      # @param host [WslHost, nil] the machine; nil reads this one (a host
+      #   probe — refused under the test harness, HostProbeGuard)
       # @return [WslRunnerHost, nil]
-      sig { params(host: WslHost).returns(T.nilable(WslRunnerHost)) }
-      def for_host(host: WslHost.new)
+      sig { params(host: T.nilable(WslHost)).returns(T.nilable(WslRunnerHost)) }
+      def for_host(host: nil)
+        host ||= HostProbeGuard.probe("the WSL interop (WslHost.new)", inject: "host:") { WslHost.new }
         return nil unless host.wsl?
 
         new(host: host)
