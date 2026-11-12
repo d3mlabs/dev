@@ -8,7 +8,7 @@ the declarations, the ports and their env contract, the build grammar,
 which verbs exist when, the channel contract, the dependency graph, and
 how a verb decides where it runs. The
 decision record is
-[ADR-0013](DECISIONS.md#adr-0013-the-lifecycle-model-targets-derived-builds-two-ports-a-stamped-store);
+[ADR-0013](DECISIONS.md#adr-0013--the-lifecycle-model-targets-derived-builds-two-ports-a-stamped-store);
 the plan is [dev#192](https://github.com/d3mlabs/dev/issues/192).
 
 ## Ontology
@@ -1049,7 +1049,7 @@ has nothing to check.
    `--container`: that host produces the build, not this one.
 3. `Dev::Cli::DispatchResolver#resolve(placement, runner:, container:)` under
    the host rule
-   ([README: The host rule](../README.md#the-host-rule-native-when-provisioned-from-the-image-inside-it-otherwise)),
+   ([The host rule](containers.md#the-host-rule)),
    then against the hosts the remote dispatch can reach, in this order:
 
 | Placement | This machine | Dispatch |
