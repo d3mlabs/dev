@@ -20,6 +20,15 @@ class RecordingCredAccessor < Dev::CredentialAccessor
   end
 end unless defined?(RecordingCredAccessor)
 
+# A credential accessor whose `get` predates the `out:` keyword the command
+# passes — the programming error a stale stand-in or a missed call site
+# makes, which must surface as a bug, not a clean exit.
+class StaleCredAccessor < Dev::CredentialAccessor
+  def get(args)
+    args
+  end
+end unless defined?(StaleCredAccessor)
+
 # A config accessor stand-in recording the verb it received, so dispatch is
 # tested without touching the real config files. Subclasses the real
 # accessor to satisfy the catalog's typed constructor.
@@ -432,6 +441,18 @@ class Dev::Cli::GlobalDispatchTest < Minitest::Test
 
     Cleanup
     $stderr = old_stderr
+  end
+
+  test "a programming error inside a global builtin re-raises with its backtrace — never a silent exit" do
+    Given "a builtin calling an accessor whose signature went stale"
+    dispatch = build_dispatch(cred_accessor: StaleCredAccessor.new)
+    Kernel.expects(:exit).never
+
+    When "we dispatch to it"
+    dispatch.run(["cred", "get", "github_token"])
+
+    Then "the ArgumentError reaches the caller as the dev bug it is"
+    raises ArgumentError
   end
 
   test "project commands still require a nearby dev.yml" do
