@@ -311,14 +311,15 @@ module Dev
       end
     end
 
-    # Absolute install dir. Defaults to <home>/actions-runner-<first label> —
-    # the enrollment owner's home — so multiple repos can register distinct
-    # runners on the same box without colliding.
+    # Absolute install dir. Defaults to <home>/actions-runner-<role suffix>
+    # (RunnerRole#dir_suffix: the role's name, a build host's first label) —
+    # the enrollment owner's home — so the roles a host plays register
+    # distinct runners on the same box without colliding.
     #
     # @return [String]
     sig { returns(String) }
     def resolve_dir
-      File.expand_path(@config.dir || File.join(@home, "actions-runner-#{@config.dir_suffix}"))
+      File.expand_path(@config.dir || File.join(@home, "actions-runner-#{@config.role.dir_suffix}"))
     end
 
     # @return [String]
