@@ -39,6 +39,17 @@ is valid only when its body names the root cause and why it stays
 unfixed. (ai-flow's capture passes declare these on a `FIX:` output
 line; in a session, just say it.)
 
+**Enforcement gate**: a learning guards what tests cannot. If the
+change you just made *enforces* the rule — a refusal path, a type, a
+test that goes red on violation, a `--help` line — the rule is now the
+code's to keep, not a learning's: writing it up again is a second copy
+that drifts. Ask "if this were violated tomorrow, would the suite or the
+typecheck catch it?" — yes means no learning from this incident alone.
+What a learning *can* hold is the judgement upstream of the code: the
+shape of the mistake that led here (a derivation treated as identity, a
+flag treated as idempotency), named so the next design avoids it — and
+only when the wide angle below shows that shape more than once.
+
 **Wide angle**: the incident in front of you is one sample, seen from
 inside. Before drafting, step back and look for the pattern behind the
 instance in whatever evidence is at hand — recent commits and PRs, the
