@@ -218,7 +218,7 @@ class Dev::RunnerTeardownTest < Minitest::Test
       host_platform: "linux-x64", home: home, current_user: "jpduchesne")
     enrollment = teardown.resolve("~/actions-runner-snappy")
     enrollment = Dev::RunnerDiscovery::Enrollment.new(dir: enrollment.dir, scope: enrollment.scope, name: enrollment.name,
-      agent_id: enrollment.agent_id, service_installed: true, display_dir: enrollment.display_dir, owner: "runner")
+      agent_id: enrollment.agent_id, service_installed: true, display_dir: enrollment.display_dir, owner: "runner", pool: enrollment.pool)
 
     When
     teardown.teardown!(enrollment, ui: quiet)
