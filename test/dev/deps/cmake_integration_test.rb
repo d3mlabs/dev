@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "support/recording_ui"
 require "dev/deps/cmake_integration"
 require "dev/deps/git_repository"
 require "dev/deps/url_repository"
@@ -77,13 +78,33 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
   end
 
   # A store and a fixture integration for a checkout at `root`, over `data_root`.
-  def fixture_integration(root, data_root, fail_names: [])
+  def fixture_integration(root, data_root, fail_names: [], ui: RecordingUi.new)
     FixtureCmakeIntegration.new(
       fail_names: fail_names,
       repository: Dev::Deps::GitRepository.new,
       store: Dev::Deps::LocalStore.new(data_root: data_root),
       project_root: root,
+      ui: ui,
     )
+  end
+
+  test "a fetch is a step on the Ui (git owns the terminal); a warm store says nothing (dev#573)" do
+    Given "a checkout, an empty data root and a git dep, over a recording Ui"
+    dir = Dir.mktmpdir("dev-cmake-int-test-")
+    root = File.join(dir, "checkout")
+    data_root = File.join(dir, "data")
+    ui = RecordingUi.new
+    integration = fixture_integration(root, data_root, ui: ui)
+
+    When "installing twice"
+    integration.install_all([git_dependency])
+    integration.install_all([git_dependency])
+
+    Then "one step, for the first pass"
+    ui.rows == [[:step, "Fetching highway source into #{published_source(data_root)}", 0]]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
   # Where the store publishes a git source under `data_root`.

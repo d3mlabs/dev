@@ -77,16 +77,18 @@ module Dev
       # @param store [ArtifactStore, nil]
       # @param project_root [String, Pathname, nil] repo root (shadowenv lives there)
       # @param install_root [String] where Xcode bundles live (tests use a tmpdir)
+      # @param ui [Ui] what the install says its work through
       sig do
         params(
           repository: T.nilable(Repository),
           store: T.nilable(ArtifactStore),
           project_root: T.nilable(T.any(String, Pathname)),
           install_root: String,
+          ui: Ui,
         ).void
       end
-      def initialize(repository:, store:, project_root: nil, install_root: INSTALL_ROOT)
-        super(repository:, store:)
+      def initialize(repository:, store:, project_root: nil, install_root: INSTALL_ROOT, ui: NoUi.new)
+        super(repository:, store:, ui:)
         @project_root = T.let(project_root && Pathname(project_root), T.nilable(Pathname))
         @install_root = install_root
       end
@@ -97,7 +99,7 @@ module Dev
       sig { params(dependencies: T::Array[Dependency]).void }
       def install_all(dependencies)
         unless darwin?
-          puts ">>> xcode: not a macOS host, skipping" if dependencies.any?
+          @ui.note("xcode: not a macOS host, skipping") if dependencies.any?
           return
         end
 
@@ -117,7 +119,7 @@ module Dev
       def install(dep)
         app = self.class.app_path(dep.version, root: install_root)
         if Dir.exist?(app)
-          puts ">>> xcode #{dep.version} already installed at #{app}"
+          @ui.note("{{v}} Xcode #{dep.version} is installed at #{app}")
         else
           install_via_xcodes(dep.version)
         end
@@ -126,7 +128,8 @@ module Dev
       end
 
       # Download the Metal toolchain component when the pin can't compile
-      # shaders yet (see the class contract, step 3).
+      # shaders yet (see the class contract, step 3). A step: xcodebuild
+      # runs with the terminal (its own progress, and any prompt).
       #
       # @param version [String]
       # @raise [InstallError] when the component download fails
@@ -134,13 +137,14 @@ module Dev
       def ensure_metal_toolchain(version)
         return if metal_toolchain_present?(version)
 
-        puts ">>> xcode #{version}: downloading the Metal toolchain component (~700 MB)"
-        return if run_metal_toolchain_download(version)
+        @ui.step("Downloading the Metal toolchain component for Xcode #{version} (~700 MB)") do
+          next if run_metal_toolchain_download(version)
 
-        raise InstallError,
-          "xcodebuild -downloadComponent MetalToolchain failed for Xcode #{version}. " \
-          "Retry manually: DEVELOPER_DIR=#{self.class.developer_dir(version, root: install_root)} " \
-          "xcodebuild -downloadComponent MetalToolchain"
+          raise InstallError,
+            "xcodebuild -downloadComponent MetalToolchain failed for Xcode #{version}. " \
+            "Retry manually: DEVELOPER_DIR=#{self.class.developer_dir(version, root: install_root)} " \
+            "xcodebuild -downloadComponent MetalToolchain"
+        end
       end
 
       # @param version [String]
@@ -155,10 +159,13 @@ module Dev
             "run dev deps update to re-lock, then dev up."
         end
 
-        puts ">>> Installing Xcode #{version} via xcodes (this downloads several GB)"
-        return if run_xcodes_install(version) && Dir.exist?(self.class.app_path(version, root: install_root))
+        # A step: xcodes owns the terminal — its download progress, and the
+        # Apple ID / 2FA prompts an interactive run answers.
+        @ui.step("Installing Xcode #{version} via xcodes (this downloads several GB)") do
+          next if run_xcodes_install(version) && Dir.exist?(self.class.app_path(version, root: install_root))
 
-        raise InstallError, install_failure_message(version)
+          raise InstallError, install_failure_message(version)
+        end
       end
 
       # Run `xcodes install`, wiring stdio by context: interactive runs inherit
@@ -204,7 +211,7 @@ module Dev
         return if ShadowenvXcode.provisioned?(developer_dir, project_root: root)
 
         ShadowenvXcode.setup!(project_root: root, version: version, developer_dir: developer_dir)
-        puts ">>> xcode #{version}: DEVELOPER_DIR published via shadowenv (#{developer_dir})"
+        @ui.note("{{v}} Xcode #{version}: DEVELOPER_DIR published via shadowenv (#{developer_dir})")
       end
 
       # Whether the pinned Xcode can already resolve the `metal` tool. `xcrun

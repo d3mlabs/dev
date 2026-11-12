@@ -3,6 +3,7 @@
 
 require "test_helper"
 require "dev/credentials"
+require "support/answering_ui"
 require "tmpdir"
 require "fileutils"
 
@@ -19,6 +20,7 @@ class Dev::CredentialsTest < Minitest::Test
       env_var: env_key,
       prompt_label: "Test token",
       create_url: "https://example.com",
+      ui: Dev::NoUi.new,
     )
 
     Then "it returns the ENV value without touching storage"
@@ -43,6 +45,7 @@ class Dev::CredentialsTest < Minitest::Test
       env_var: env_key,
       prompt_label: "Test token",
       create_url: "https://example.com",
+      ui: Dev::NoUi.new,
     )
 
     Then "ENV takes precedence"
@@ -217,36 +220,112 @@ class Dev::CredentialsTest < Minitest::Test
     )
   end
 
-  test "prompt_and_store raises MissingCredentialError in non-TTY" do
-    Given "a non-TTY stdin"
-    $stdin.stubs(:tty?).returns(false)
+  test "prompt_and_store with no terminal to ask at raises MissingCredentialError with the setup instructions, and opens nothing" do
+    Given "a Ui with nobody behind it: every question answers nil"
+    ui = AnsweringUi.new(answer: nil, secret: nil)
 
     When "prompting for a credential"
     Dev::Credentials.prompt_and_store(
       "curseforge", "api_key", "CF_API_KEY",
-      "CurseForge API key", "https://console.curseforge.com",
+      "CurseForge API key", "https://console.curseforge.com", ui:
     )
 
-    Then "it raises with setup instructions"
+    Then "the browser offer was declined by silence, the paste was asked and answered nil, and the miss carries the remediation"
+    0 * Kernel.system(any_parameters)
     error = raises Dev::Credentials::MissingCredentialError
     assert_includes error.message, "CurseForge API key"
     assert_includes error.message, "https://console.curseforge.com"
     assert_includes error.message, "gh secret set CF_API_KEY"
+    ui.asked == ["CurseForge API key required — create one (free) at https://console.curseforge.com. Open it in the browser?"]
+    ui.secrets_asked == ["Paste your CurseForge API key"]
   end
 
   test "prompt_and_store raises MissingCredentialError when the pasted value is empty" do
+    Given "a terminal that pastes nothing"
+    ui = AnsweringUi.new(secret: "")
+
     When "prompting for a credential without a create URL"
     Dev::Credentials.prompt_and_store(
-      "curseforge", "api_key", "CF_API_KEY", "CurseForge API key", nil
+      "curseforge", "api_key", "CF_API_KEY", "CurseForge API key", nil, ui:
     )
 
-    Then "an interactive stdin that pastes nothing raises"
-    _ * $stdin.tty? >> true
-    _ * $stdin.noecho >> ""
-    _ * $stdout.puts
-    _ * $stdout.print
+    Then "nothing was offered (no page to open), the paste was asked, and the empty answer raises"
     error = raises Dev::Credentials::MissingCredentialError
     assert_includes error.message, "No api_key provided"
+    ui.asked == []
+    ui.secrets_asked == ["Paste your CurseForge API key"]
+  end
+
+  test "prompt_and_store opens the page when the offer is accepted, stores the paste and says so — the secret never on the Ui" do
+    Given "a credentials file home and a terminal that accepts the offer and pastes a key"
+    tmpdir = Dir.mktmpdir("credentials-test-")
+    ENV["XDG_CONFIG_HOME"] = tmpdir
+    Dev::Credentials.stubs(:keychain_available?).returns(false)
+    ui = AnsweringUi.new(answer: true, secret: "cf-pasted")
+
+    When "prompting for a credential"
+    value = Dev::Credentials.prompt_and_store(
+      "curseforge", "api_key", "CF_API_KEY",
+      "CurseForge API key", "https://console.curseforge.com", ui:
+    )
+
+    Then "the browser opened on the page, the value is answered and stored, and the Ui saw the fact but not the secret"
+    1 * Kernel.system("open", "https://console.curseforge.com")
+    value == "cf-pasted"
+    Dev::Credentials.load_from_file("curseforge", "api_key") == "cf-pasted"
+    ui.questions.map(&:default) == [true]
+    ui.rows == [[:note, "{{v}} CurseForge API key stored", 0]]
+    !ui.out_text.include?("cf-pasted")
+
+    Cleanup
+    ENV.delete("XDG_CONFIG_HOME")
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "prompt_and_store leaves the browser closed when the offer is declined, and still asks for the paste" do
+    Given "a terminal that declines the offer and pastes a key"
+    tmpdir = Dir.mktmpdir("credentials-test-")
+    ENV["XDG_CONFIG_HOME"] = tmpdir
+    Dev::Credentials.stubs(:keychain_available?).returns(false)
+    ui = AnsweringUi.new(answer: false, secret: "cf-pasted")
+
+    When "prompting for a credential"
+    value = Dev::Credentials.prompt_and_store(
+      "curseforge", "api_key", "CF_API_KEY",
+      "CurseForge API key", "https://console.curseforge.com", ui:
+    )
+
+    Then
+    0 * Kernel.system(any_parameters)
+    value == "cf-pasted"
+    ui.secrets_asked == ["Paste your CurseForge API key"]
+
+    Cleanup
+    ENV.delete("XDG_CONFIG_HOME")
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "resolve hands its Ui to the prompt when ENV and storage both miss" do
+    Given "no ENV value, nothing stored, and a terminal that pastes"
+    tmpdir = Dir.mktmpdir("credentials-test-")
+    ENV["XDG_CONFIG_HOME"] = tmpdir
+    Dev::Credentials.stubs(:keychain_available?).returns(false)
+    ui = AnsweringUi.new(secret: "pasted-token")
+
+    When "resolving the credential"
+    result = Dev::Credentials.resolve(
+      namespace: "test", key: "token", env_var: "TEST_CRED_MISSING_#{Process.pid}",
+      prompt_label: "Test token", ui:,
+    )
+
+    Then "the paste is the answer, stored for next time"
+    result == "pasted-token"
+    ui.secrets_asked == ["Paste your Test token"]
+    Dev::Credentials.load_from_file("test", "token") == "pasted-token"
+
+    Cleanup
+    ENV.delete("XDG_CONFIG_HOME")
+    FileUtils.rm_rf(tmpdir)
   end
 
   test "credentials_path respects XDG_CONFIG_HOME" do

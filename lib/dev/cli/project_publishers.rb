@@ -7,6 +7,7 @@ require "dev/deps/lockfile"
 require "dev/deps/registry"
 require "dev/deps/tap"
 require "dev/lifecycle"
+require "dev/ui"
 
 module Dev
   module Cli
@@ -34,11 +35,14 @@ module Dev
       TAP_KEY = "tap"
 
       # @param root [Pathname] the checkout (its deps.lock is read, once)
+      # @param ui [Dev::Ui] the terminal a publisher onboards a first-time
+      #   credential at
       # @param entries [Array<Deps::Registry::Entry>] the registry table to
       #   read the write sides from (tests substitute one)
-      sig { params(root: Pathname, entries: T::Array[Deps::Registry::Entry]).void }
-      def initialize(root:, entries: Deps::Registry::INTEGRATIONS)
+      sig { params(root: Pathname, ui: Dev::Ui, entries: T::Array[Deps::Registry::Entry]).void }
+      def initialize(root:, ui:, entries: Deps::Registry::INTEGRATIONS)
         @root = root
+        @ui = ui
         @entries = entries
         @contributed = T.let(nil, T.nilable(T::Hash[String, Lifecycle::Publisher]))
       end
@@ -51,7 +55,7 @@ module Dev
       def contributed
         @contributed ||= begin
           pins = Deps::Lockfile.new(dir: @root).read
-          Deps::Registry.publishers(project_root: @root, pinned: pinned_types(pins), taps: pinned_taps(pins), entries: @entries)
+          Deps::Registry.publishers(project_root: @root, pinned: pinned_types(pins), taps: pinned_taps(pins), ui: @ui, entries: @entries)
         end
       end
 

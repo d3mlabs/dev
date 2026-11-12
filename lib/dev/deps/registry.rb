@@ -44,6 +44,7 @@ require_relative "semver_scheme"
 require_relative "steam_scheme"
 require_relative "version_scheme"
 require "dev/lifecycle/publisher"
+require "dev/ui"
 
 module Dev
   module Deps
@@ -335,6 +336,7 @@ module Dev
             scheme: SemverScheme,
             integration: FicsitIntegration,
             publisher: FicsitRepository,
+            publisher_needs: %i[ui],
           ),
           Entry.new(
             symbol: :gh,
@@ -352,6 +354,7 @@ module Dev
             scheme: SteamScheme,
             integration: SteamIntegration,
             publisher: SteamRepository,
+            publisher_needs: %i[ui],
           ),
           # The Epic Games Store's tooling (dev#426): BuildPatchTool is the
           # one declarable dependency — a url-shaped universe (the zip Epic
@@ -366,7 +369,7 @@ module Dev
             scheme: nil,
             integration: EgsIntegration,
             publisher: EgsPublisher,
-            publisher_needs: %i[project_root],
+            publisher_needs: %i[project_root ui],
           ),
           Entry.new(
             symbol: :xcode,
@@ -495,6 +498,7 @@ module Dev
         # @param project_name [String] the project's package identity (dev.yml
         #   `name`): what keys the project's own state in the store (the venv)
         # @param store [ArtifactStore] where installed trees and downloaded blobs live (passed to every integration)
+        # @param ui [Dev::Ui] what every integration says its install through
         # @param taps [Array<Tap>] Homebrew taps for the brew integration
         # @param pin_taps [Boolean] brew installs from taps checked out at the
         #   lock's commits (BrewIntegration), not brew's API
@@ -504,12 +508,13 @@ module Dev
             project_root: Pathname,
             project_name: String,
             store: ArtifactStore,
+            ui: Dev::Ui,
             taps: T::Array[Tap],
             pin_taps: T::Boolean,
           ).returns(T::Hash[Symbol, Integration])
         end
-        def host_integrations(project_root:, project_name:, store:, taps: [], pin_taps: false)
-          integrations_for(INTEGRATIONS.select(&:host?), project_root:, project_name:, store:, taps:, pin_taps:)
+        def host_integrations(project_root:, project_name:, store:, ui:, taps: [], pin_taps: false)
+          integrations_for(INTEGRATIONS.select(&:host?), project_root:, project_name:, store:, ui:, taps:, pin_taps:)
         end
 
         # Build the channel-name -> Publisher hash of the write sides the
@@ -524,16 +529,18 @@ module Dev
         #
         # @param project_root [Pathname] project root (threaded to publishers that need it)
         # @param pinned [Array<Symbol>] the integration types the lock pins
+        # @param ui [Dev::Ui] the terminal a publisher onboards a first-time
+        #   credential at (threaded to publishers that prompt)
         # @param taps [Array<Tap>] the taps the lock pins formulae from (the
         #   brew publisher's destination)
         # @param entries [Array<Entry>] the table to read (tests substitute one)
         # @return [Hash{String => Lifecycle::Publisher}] in table order
         sig do
-          params(project_root: Pathname, pinned: T::Array[Symbol], taps: T::Array[Tap], entries: T::Array[Entry])
+          params(project_root: Pathname, pinned: T::Array[Symbol], ui: Dev::Ui, taps: T::Array[Tap], entries: T::Array[Entry])
             .returns(T::Hash[String, Lifecycle::Publisher])
         end
-        def publishers(project_root:, pinned:, taps: [], entries: INTEGRATIONS)
-          context = { project_root:, taps: }
+        def publishers(project_root:, pinned:, ui:, taps: [], entries: INTEGRATIONS)
+          context = { project_root:, taps:, ui: }
           reached = entries.select { |entry| pinned.include?(entry.symbol) }.flat_map { |entry| [entry.symbol, entry.install_alias] }
           entries.select { |entry| entry.publishes? && reached.include?(entry.symbol) }.to_h do |entry|
             # T.unsafe: the keyword set is runtime-selected (publisher_needs);
@@ -567,6 +574,7 @@ module Dev
         # @param project_root [Pathname]
         # @param project_name [String]
         # @param store [ArtifactStore]
+        # @param ui [Dev::Ui]
         # @param taps [Array<Tap>]
         # @param pin_taps [Boolean]
         # @return [Hash{Symbol => Integration}]
@@ -576,11 +584,12 @@ module Dev
             project_root: Pathname,
             project_name: String,
             store: ArtifactStore,
+            ui: Dev::Ui,
             taps: T::Array[Tap],
             pin_taps: T::Boolean,
           ).returns(T::Hash[Symbol, Integration])
         end
-        def integrations_for(entries, project_root:, project_name:, store:, taps:, pin_taps:)
+        def integrations_for(entries, project_root:, project_name:, store:, ui:, taps:, pin_taps:)
           context = {
             project_root:,
             project_dir: project_root,
@@ -596,6 +605,7 @@ module Dev
             integration = T.unsafe(T.must(entry.integration)).new(
               repository: build_repository(entry, context),
               store:,
+              ui:,
               **T.unsafe(context).slice(*entry.integration_needs),
             )
             [entry.symbol, integration]

@@ -22,15 +22,17 @@ module Dev
       # @param repository    [Repository, nil]  source adapter for luarocks deps
       # @param store         [ArtifactStore, nil] artifact store
       # @param project_root  [String, Pathname] project root directory
+      # @param ui [Ui] what the install says its work through
       sig do
         params(
           repository: T.nilable(Repository),
           store: T.nilable(ArtifactStore),
           project_root: T.any(String, Pathname),
+          ui: Ui,
         ).void
       end
-      def initialize(repository:, store:, project_root:)
-        super(repository:, store:)
+      def initialize(repository:, store:, project_root:, ui: NoUi.new)
+        super(repository:, store:, ui:)
         @project_root = T.let(Pathname(project_root), Pathname)
       end
 

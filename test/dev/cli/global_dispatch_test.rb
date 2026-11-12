@@ -15,7 +15,7 @@ require "tmpdir"
 class RecordingCredAccessor < Dev::CredentialAccessor
   attr_reader :last_call
 
-  def get(args, out: $stdout)
+  def get(args, ui:, out: $stdout)
     @last_call = [:get, args]
   end
 end unless defined?(RecordingCredAccessor)

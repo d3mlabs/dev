@@ -165,6 +165,19 @@ module Dev
         end
       end
 
+      # `brew update` failed (offline, a remote gone): the index brew has
+      # is what the upgrade that follows reads, and the lock's verification
+      # decides — so this is a warning, never the install's failure.
+      class IndexUpdateError < StandardError
+        extend T::Sig
+
+        # @param stderr [String] what `brew update` said
+        sig { params(stderr: String).void }
+        def initialize(stderr:)
+          super("brew update failed (#{stderr.strip})")
+        end
+      end
+
       # Environment added in pinned-taps mode: formulae come from the
       # checked-out taps, never the API, and brew does not move them.
       PINNED_ENV = T.let(["HOMEBREW_NO_INSTALL_FROM_API=1", "HOMEBREW_NO_AUTO_UPDATE=1"].freeze, T::Array[String])
@@ -227,6 +240,7 @@ module Dev
       #   (INTERPRETERS by default)
       # @param lock [HostLock, nil] the host-wide lock brew writes hold;
       #   nil for the data root's brew lock
+      # @param ui [Ui] what the install says its work through
       sig do
         params(
           repository: T.nilable(Repository),
@@ -240,11 +254,12 @@ module Dev
           brew_env: T.nilable(BrewEnv),
           interpreters: T::Hash[Symbol, T::Module[T.anything]],
           lock: T.nilable(HostLock),
+          ui: Ui,
         ).void
       end
       def initialize(repository:, store:, taps: [], project_dir: nil, project_name: nil, brew_prefix: Settings.brew_prefix,
-        pin_taps: false, tap_pinner: nil, brew_env: nil, interpreters: INTERPRETERS, lock: nil)
-        super(repository:, store:)
+        pin_taps: false, tap_pinner: nil, brew_env: nil, interpreters: INTERPRETERS, lock: nil, ui: NoUi.new)
+        super(repository:, store:, ui:)
         @lock = T.let(lock || HostLock.new(name: TOOL), HostLock)
         @taps = taps
         @project_dir = T.let(project_dir ? Pathname(project_dir) : nil, T.nilable(Pathname))
@@ -290,13 +305,14 @@ module Dev
         casks, formulae = dependencies.partition { |dep| dep.metadata["cask"] }
         pin_taps!(formulae) if @pin_taps
         begin_batch!(formulae: formulae.map { |dep| formula_name(dep) }, casks: casks.map(&:name))
+        satisfied = T.let([], T::Array[String])
         failures = collect_failures(dependencies) do |dep|
-          if dep.metadata["cask"]
-            install_cask(dep)
-          else
-            install_formula(dep)
-          end
+          wrote = dep.metadata["cask"] ? install_cask(dep) : install_formula(dep)
+          satisfied << pin_label(dep) unless wrote
         end
+        # The pins brew already had, as one fact: a warm install's frame
+        # says what it found rather than nothing.
+        @ui.note("{{v}} #{satisfied.join(", ")} already installed") if satisfied.any?
         failed = failures.map(&:first)
         installed_formulae = dependencies.reject { |dep| dep.metadata["cask"] || failed.include?(dep.name) }
         activate!(installed_formulae)
@@ -353,7 +369,7 @@ module Dev
         activated = formulae.map { |dep| [formula_name(dep), dep.version].compact.join("@") }.sort.join(" ")
         bins = formulae.filter_map { |dep| keg_bin(dep) }
         written = ShadowenvPath.setup!(project_root: project_dir, filename: LISP_FILENAME, provide: ["brew", activated], paths: bins)
-        puts ">>> brew: activated #{bins.size} keg bin(s) on the project PATH (.shadowenv.d/#{LISP_FILENAME})" if written
+        @ui.note("{{v}} activated #{bins.size} keg bin(s) on the project PATH (.shadowenv.d/#{LISP_FILENAME})") if written
       end
 
       # The `bin` of the keg whose version is the locked one, if both exist.
@@ -408,7 +424,7 @@ module Dev
         return if formulae.empty?
 
         unless escalation.empty?
-          $stderr.puts "dev: brew writes are escalated to the prefix owner; not recording locked formulae in this user's brew.env"
+          @ui.note("brew writes are escalated to the prefix owner; not recording locked formulae in this user's brew.env")
           return
         end
 
@@ -426,6 +442,18 @@ module Dev
         suffix ? "#{dep.name}@#{suffix}" : dep.name
       end
 
+      # The pin as a fact names it: the cask token, or the formula and the
+      # version the lock pins (`llvm@18 18.1.8`).
+      #
+      # @param dep [Dependency]
+      # @return [String]
+      sig { params(dep: Dependency).returns(String) }
+      def pin_label(dep)
+        return dep.name if dep.metadata["cask"]
+
+        [formula_name(dep), dep.version].compact.join(" ")
+      end
+
       # Register all configured taps (idempotent — runs once).
       sig { void }
       def ensure_taps_registered
@@ -437,7 +465,8 @@ module Dev
       end
 
       # Register a single Homebrew tap (escalated to the prefix owner when
-      # the prefix is not ours — see the class doc).
+      # the prefix is not ours — see the class doc). A step: `brew tap`
+      # runs with the terminal (its clone's progress, sudo's prompt).
       #
       # @param tap [Tap] tap to register
       # @raise [TapRegistrationError] if `brew tap` fails
@@ -445,17 +474,15 @@ module Dev
       def register_tap(tap)
         project_dir = @project_dir
         url = tap.url
-        if tap.local? && project_dir && url
-          path = resolve_file_url(url, project_dir)
-          success = system(*T.unsafe(escalation), brew_executable, "tap", tap.name, path)
-          raise TapRegistrationError, "brew tap #{tap.name} #{path} failed#{escalation_hint}" unless success
+        source = if tap.local? && project_dir && url
+          resolve_file_url(url, project_dir)
         elsif url
-          url_str = url.to_s
-          success = system(*T.unsafe(escalation), brew_executable, "tap", tap.name, url_str)
-          raise TapRegistrationError, "brew tap #{tap.name} #{url_str} failed#{escalation_hint}" unless success
-        else
-          success = system(*T.unsafe(escalation), brew_executable, "tap", tap.name)
-          raise TapRegistrationError, "brew tap #{tap.name} failed#{escalation_hint}" unless success
+          url.to_s
+        end
+        tap_args = source ? [tap.name, source] : [tap.name]
+        @ui.step("Registering the tap #{tap.name}#{escalation_suffix}") do
+          success = system(*T.unsafe(escalation), brew_executable, "tap", *tap_args)
+          raise TapRegistrationError, "brew tap #{tap_args.join(" ")} failed#{escalation_hint}" unless success
         end
       end
 
@@ -499,17 +526,20 @@ module Dev
       # — and a keg at another version is converged before the check fails.
       #
       # @param dep [Dependency]
+      # @return [Boolean] whether brew was written to — false for a pin it
+      #   already had at the locked version
       # @raise [InstallError] if a brew write fails
       # @raise [TapPinner::PinError] if converging cannot pin the formula's
       #   tap at the lock's commit
       # @raise [VersionMismatchError] if no keg is the locked version
-      sig { params(dep: Dependency).void }
+      sig { params(dep: Dependency).returns(T::Boolean) }
       def install_formula(dep)
         formula = formula_name(dep)
-        converge_missing!(formula) { run_brew_install(dep.name, install_spec(dep)) }
+        installed = converge_missing!(formula) { run_brew_install(dep.name, install_spec(dep)) }
 
         locked = dep.version
-        verify_installed!(dep, formula, locked) if locked
+        converged = locked ? verify_installed!(dep, formula, locked) : false
+        installed || converged
       end
 
       # Fail unless one of the formula's kegs is the locked version, after
@@ -523,18 +553,18 @@ module Dev
       # @param dep [Dependency]
       # @param formula [String] the formula (e.g. "llvm@18")
       # @param locked [String] the version the lock pins
-      # @return [void]
+      # @return [Boolean] whether the Cellar had to be converged
       # @raise [VersionMismatchError]
       # @raise [TapPinner::PinError] if the formula's tap cannot be pinned
-      sig { params(dep: Dependency, formula: String, locked: String).void }
+      sig { params(dep: Dependency, formula: String, locked: String).returns(T::Boolean) }
       def verify_installed!(dep, formula, locked)
         installed = installed_versions(formula)
-        return if installed.include?(locked)
+        return false if installed.include?(locked)
 
         unless @pin_taps
           converge!(dep, formula, locked, installed)
           installed = installed_versions(formula)
-          return if installed.include?(locked)
+          return true if installed.include?(locked)
         end
 
         raise VersionMismatchError.new(formula:, installed:, locked:)
@@ -556,7 +586,7 @@ module Dev
       sig { params(dep: Dependency, formula: String, locked: String, installed: T::Array[String]).void }
       def converge!(dep, formula, locked, installed)
         has = installed.empty? ? "absent" : installed.join(", ")
-        puts ">>> brew: #{formula} is #{has} here — converging to the locked #{locked}"
+        @ui.note("#{formula} is #{has} here — converging to the locked #{locked}")
         spec = install_spec(dep)
         commit = dep.metadata["tap_commit"]
         if commit
@@ -589,17 +619,33 @@ module Dev
       end
       def install_pinned!(dep, spec, formula, locked, installed, commit)
         tap = T.let(dep.metadata["tap"] || BrewRepository::CORE_TAP, String)
-        puts ">>> brew: installing #{spec} #{locked} from #{tap} at #{commit[0, 12]}"
-        tap_pinner.pin!(tap, commit)
-        begin
-          err, success = brew_write(["install", *spec.split], pinned: true)
-          return if success && installed_versions(formula).include?(locked)
-
-          err, success = brew_write(["install", "--force", "--skip-link", *spec.split], pinned: true)
-          raise VersionMismatchError.new(formula:, installed:, locked:, reason: err) unless success
-        ensure
-          tap_pinner.restore!(tap)
+        announce("Installing #{spec} #{locked} from #{tap} at #{commit[0, 12]}") do
+          tap_pinner.pin!(tap, commit)
+          begin
+            install_from_pinned_tap!(spec, formula, locked, installed)
+          ensure
+            tap_pinner.restore!(tap)
+          end
         end
+      end
+
+      # The two installs under a pinned tap: the plain one, and when it
+      # leaves no locked keg, the one that skips brew's link and keg-only
+      # checks.
+      #
+      # @param spec [String] the install spec
+      # @param formula [String]
+      # @param locked [String]
+      # @param installed [Array<String>] the keg versions brew had
+      # @return [void]
+      # @raise [VersionMismatchError] if brew refuses both installs
+      sig { params(spec: String, formula: String, locked: String, installed: T::Array[String]).void }
+      def install_from_pinned_tap!(spec, formula, locked, installed)
+        _err, success = brew_write(["install", *spec.split], pinned: true)
+        return if success && installed_versions(formula).include?(locked)
+
+        err, success = brew_write(["install", "--force", "--skip-link", *spec.split], pinned: true)
+        raise VersionMismatchError.new(formula:, installed:, locked:, reason: err) unless success
       end
 
       # No tap commit to pin (a lock written before they were recorded):
@@ -607,16 +653,23 @@ module Dev
       # and let brew upgrade the formula. This converges a machine behind
       # the lock; a lock behind brew stays mismatched, and the verification
       # says so. An offline `brew update` is a warning — the upgrade and
-      # the verification decide.
+      # the verification decide — raised inside its announcement so it
+      # closes as the failure it was, then said as a note right after.
       #
       # @param spec [String] the install spec
       # @return [void]
       # @raise [InstallError] if brew upgrade fails
       sig { params(spec: String).void }
       def upgrade!(spec)
-        err, success = brew_write(["update"])
-        $stderr.puts "dev: warning: brew update failed (#{err.strip}) — upgrading from the index brew has" unless success
-        brew_write!(["upgrade", spec])
+        begin
+          announce("Refreshing brew's index") do
+            err, success = brew_write(["update"])
+            raise IndexUpdateError.new(stderr: err) unless success
+          end
+        rescue IndexUpdateError => e
+          @ui.note("{{x}} #{e.message} — upgrading from the index brew has")
+        end
+        announce("Upgrading #{spec}") { brew_write!(["upgrade", spec]) }
       end
 
       # The spec brew installs the dep by: the formula, tap-qualified for a
@@ -694,8 +747,9 @@ module Dev
       # Install a Homebrew cask.
       #
       # @param dep [Dependency]
+      # @return [Boolean] whether brew was written to — false for a cask it had
       # @raise [InstallError] if brew install --cask fails
-      sig { params(dep: Dependency).void }
+      sig { params(dep: Dependency).returns(T::Boolean) }
       def install_cask(dep)
         converge_missing!(dep.name) { run_brew_install(dep.name, "--cask #{dep.name}") }
       end
@@ -708,14 +762,17 @@ module Dev
       #
       # @param name [String] formula (`llvm@18`) or cask name
       # @yield installs it
-      # @return [void]
-      sig { params(name: String, blk: T.proc.void).void }
+      # @return [Boolean] whether the block ran — false when brew had it
+      sig { params(name: String, blk: T.proc.void).returns(T::Boolean) }
       def converge_missing!(name, &blk)
-        return if brew_installed?(name)
+        return false if brew_installed?(name)
 
         @lock.synchronize do
           @cellar = nil
-          yield unless brew_installed?(name)
+          return false if brew_installed?(name)
+
+          yield
+          true
         end
       end
 
@@ -728,14 +785,37 @@ module Dev
         cellar.key?(name)
       end
 
-      # Run `brew install` with the given spec.
+      # Run `brew install` with the given spec, announced.
       #
       # @param name [String] dependency name (for error messages)
       # @param spec [String] full install spec (e.g. "cmake@3.31.4")
       # @raise [InstallError] if brew exits non-zero
       sig { params(name: String, spec: String).void }
       def run_brew_install(name, spec)
-        brew_write!(["install", *spec.split])
+        announce("Installing #{spec}") { brew_write!(["install", *spec.split]) }
+      end
+
+      # Announce one brew write the way its tier of trust reads: a spin
+      # when brew is ours (captured, parsed), a step when the write is
+      # escalated — sudo owns the terminal (dev#570 hands it the prompt),
+      # and the name says whose brew is written.
+      #
+      # @param name [String] in the progressive: "Installing llvm@18"
+      # @yieldreturn the block's value, answered
+      sig { type_parameters(:T).params(name: String, blk: T.proc.returns(T.type_parameter(:T))).returns(T.type_parameter(:T)) }
+      def announce(name, &blk)
+        return @ui.spin(name, &blk) if escalation.empty?
+
+        @ui.step("#{name}#{escalation_suffix}", &blk)
+      end
+
+      # What an escalated action's name ends with: whose brew it writes.
+      #
+      # @return [String] "" when not escalated
+      sig { returns(String) }
+      def escalation_suffix
+        owner = escalation.last
+        owner ? " (sudo -u #{owner})" : ""
       end
 
       # Run a brew write and fail when it does.

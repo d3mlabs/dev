@@ -40,7 +40,7 @@ module Dev
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)
-          @accessor.get(args.positionals, out: @out)
+          @accessor.get(args.positionals, ui: context.ui, out: @out)
         end
       end
     end

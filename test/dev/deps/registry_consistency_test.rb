@@ -113,6 +113,7 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
       project_root: Pathname(dir),
       project_name: "proj",
       store: Dev::Deps::LocalStore.new(data_root: dir),
+      ui: Dev::NoUi.new,
     )
 
     Then ":url deps install through :cmake's instance, so deps.cmake stays whole"
@@ -131,7 +132,7 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
 
     When "building the host's integrations"
     integrations = Dev::Deps::Registry.host_integrations(
-      project_root: Pathname(dir), project_name: "proj", store: Dev::Deps::LocalStore.new(data_root: dir), pin_taps: pin_taps,
+      project_root: Pathname(dir), project_name: "proj", store: Dev::Deps::LocalStore.new(data_root: dir), ui: Dev::NoUi.new, pin_taps: pin_taps,
     )
 
     Then

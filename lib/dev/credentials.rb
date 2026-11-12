@@ -2,9 +2,9 @@
 # frozen_string_literal: true
 
 require "fileutils"
-require "io/console"
 require "open3"
 require "yaml"
+require "dev/ui"
 
 module Dev
   # Generic credential provider — resolves credentials via a fallback chain:
@@ -12,6 +12,12 @@ module Dev
   #
   # Storage backend is macOS Keychain when available, plain text fallback
   # (~/.config/dev/credentials.yml with 0600 permissions) on Linux.
+  #
+  # The prompt is the caller's Ui's (plans#52): the one question and the
+  # one hidden paste go through `Ui#confirm` and `Ui#ask_secret`, so
+  # whether there is a terminal to ask at is the tier's decision, made
+  # once, never re-asked of `$stdin` here. A nil answer is the headless
+  # path: the miss is refused with the CI remediation.
   module Credentials
     extend T::Sig
 
@@ -27,6 +33,7 @@ module Dev
     # @param key [String] credential key within namespace, e.g. "api_key"
     # @param env_var [String] environment variable name, e.g. "CF_API_KEY"
     # @param prompt_label [String] human-readable description for the interactive prompt
+    # @param ui [Ui] the terminal the onboarding prompt asks at, if any
     # @param create_url [String, nil] URL where the user creates the credential
     #   (omitted from prompts when nil)
     # @return [String] the credential value
@@ -37,13 +44,14 @@ module Dev
         key: String,
         env_var: String,
         prompt_label: String,
+        ui: Ui,
         create_url: T.nilable(String),
       ).returns(String)
     end
-    def resolve(namespace:, key:, env_var:, prompt_label:, create_url: nil)
+    def resolve(namespace:, key:, env_var:, prompt_label:, ui:, create_url: nil)
       ENV[env_var] ||
         load(namespace, key) ||
-        prompt_and_store(namespace, key, env_var, prompt_label, create_url)
+        prompt_and_store(namespace, key, env_var, prompt_label, create_url, ui:)
     end
 
     # Resolve runtime env vars an `image` block declares (`run_env`)
@@ -205,17 +213,21 @@ module Dev
       File.chmod(0o600, path)
     end
 
-    # Interactive prompt for credential onboarding.
+    # Interactive prompt for credential onboarding: offers to open the
+    # page the credential is made on (when one is known), asks for the
+    # value with input hidden, and stores it via the appropriate backend.
     #
-    # Displays instructions, optionally opens the browser (when a create_url
-    # is known), and prompts the user to paste the credential. Stores it via
-    # the appropriate backend.
+    # Both questions go through the Ui, so a terminal-less run never
+    # blocks: the offer's nil is read as no, and the paste's nil is the
+    # headless miss — refused with where to make the credential and the
+    # `gh secret set` that supplies it to a job.
     #
     # @param namespace [String]
     # @param key [String]
     # @param env_var [String]
     # @param prompt_label [String]
     # @param create_url [String, nil]
+    # @param ui [Ui]
     # @return [String] the credential value
     # @raise [MissingCredentialError] if non-interactive or empty input
     sig do
@@ -225,33 +237,49 @@ module Dev
         env_var: String,
         prompt_label: String,
         create_url: T.nilable(String),
+        ui: Ui,
       ).returns(String)
     end
-    def prompt_and_store(namespace, key, env_var, prompt_label, create_url)
-      unless $stdin.tty?
-        message = "#{prompt_label} required.\n"
-        message += "Create one at: #{create_url}\n" if create_url
-        message += "Then set: gh secret set #{env_var}"
-        Kernel.raise MissingCredentialError, message
-      end
+    def prompt_and_store(namespace, key, env_var, prompt_label, create_url, ui:)
+      offer_create_url(prompt_label, create_url, ui:) if create_url
 
-      $stdout.puts "\n#{prompt_label} required."
-      if create_url
-        $stdout.puts "Create one (free) at: #{create_url}\n\n"
-        $stdout.print "Open in browser? (Y/n): "
-        answer = $stdin.gets.chomp
-        Kernel.system("open", create_url) unless answer.downcase == "n"
-      end
-
-      # Security: suppress echo so the credential isn't visible on screen.
-      $stdout.print "\nPaste your #{key}: "
-      value = $stdin.noecho { $stdin.gets.chomp }
-      $stdout.puts
+      value = ui.ask_secret("Paste your #{prompt_label}")
+      Kernel.raise MissingCredentialError, headless_hint(prompt_label, env_var, create_url) if value.nil?
       Kernel.raise MissingCredentialError, "No #{key} provided" if value.empty?
 
       store(namespace, key, value)
-      $stdout.puts "Credential stored.\n\n"
+      ui.note("{{v}} #{prompt_label} stored")
       value
+    end
+
+    # Offer to open the page the credential is created on. Yes is the
+    # answer Enter gives, as it was before the seam: opening a browser tab
+    # is the one thing here dev would do unasked (contrast dev#533's
+    # default of no for everything irreversible). nil — no terminal — is
+    # read as no; the paste that follows refuses with the hint.
+    #
+    # @param prompt_label [String]
+    # @param create_url [String]
+    # @param ui [Ui]
+    # @return [void]
+    sig { params(prompt_label: String, create_url: String, ui: Ui).void }
+    def offer_create_url(prompt_label, create_url, ui:)
+      return unless ui.confirm("#{prompt_label} required — create one (free) at #{create_url}. Open it in the browser?", default: true)
+
+      Kernel.system("open", create_url)
+    end
+
+    # What a run with no terminal to ask at is told instead of a prompt.
+    #
+    # @param prompt_label [String]
+    # @param env_var [String]
+    # @param create_url [String, nil]
+    # @return [String]
+    sig { params(prompt_label: String, env_var: String, create_url: T.nilable(String)).returns(String) }
+    def headless_hint(prompt_label, env_var, create_url)
+      message = "#{prompt_label} required.\n"
+      message += "Create one at: #{create_url}\n" if create_url
+      message + "Then set: gh secret set #{env_var}"
     end
 
     # Path to the plain text credentials file.

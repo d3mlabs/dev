@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "support/answering_ui"
 require "dev/deps/wwise_integration"
 require "dev/deps/local_store"
 require "dev/deps/dependency"
@@ -77,6 +78,49 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
 
   def build_integration(dir, **opts)
     FixtureWwiseIntegration.new(repository: nil, store: Dev::Deps::LocalStore.new(data_root: dir), **opts)
+  end
+
+  test "the install speaks through the Ui (dev#573): a step per wwise-cli run (it owns the terminal), then the fact; a published version is the fact alone" do
+    Given "a wwise dependency and a stubbed wwise-cli, over a recording Ui"
+    dir = Dir.mktmpdir("dev-wwise-int-test-")
+    version_dir = File.join(dir, "wwise", SDK)
+    ui = RecordingUi.new
+    integration = build_integration(dir, ui: ui)
+
+    When "installing twice"
+    integration.install_all([build_dependency])
+    integration.install_all([build_dependency])
+
+    Then
+    ui.rows == [
+      [:step, "Downloading Wwise SDK #{SDK} into #{version_dir}", 0],
+      [:step, "Fetching Wwise Unreal integration #{INTEGRATION} for UE 5.6", 0],
+      [:note, "{{v}} Wwise@#{SDK} installed at #{version_dir}", 0],
+      [:note, "{{v}} Wwise@#{SDK} is installed at #{version_dir}", 0],
+    ]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "the real credential chain is asked at the integration's Ui, email then password" do
+    Given "an integration over a terminal that pastes, nothing stored and nothing in the env"
+    dir = Dir.mktmpdir("dev-wwise-int-test-")
+    ENV["XDG_CONFIG_HOME"] = dir
+    Dev::Credentials.stubs(:keychain_available?).returns(false)
+    ui = AnsweringUi.new(secret: "pasted")
+    integration = Dev::Deps::WwiseIntegration.new(repository: nil, store: Dev::Deps::LocalStore.new(data_root: dir), ui: ui)
+
+    When "resolving the credentials"
+    env = integration.send(:credentials_env)
+
+    Then "both were asked for at this Ui, in order, and are the environment the CLI gets"
+    ui.secrets_asked == ["Paste your Wwise account email (the Audiokinetic login)", "Paste your Wwise account password"]
+    env == { "WWISE_EMAIL" => "pasted", "WWISE_PASSWORD" => "pasted" }
+
+    Cleanup
+    ENV.delete("XDG_CONFIG_HOME")
+    FileUtils.rm_rf(dir)
   end
 
   test "tree_key places the Wwise cache by identity: ~/.dev/wwise/<sdk version>" do

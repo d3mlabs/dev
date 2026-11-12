@@ -38,12 +38,14 @@ module Dev
         INTEGRATION_FLAG = "--integration"
         PINNED_TAPS_FLAG = "--pinned-taps"
 
-        # Builds the Installer for a lockfile + integrations pair;
-        # injected so tests can substitute a fake without touching the host.
+        # Builds the Installer for a lockfile + integrations pair over the
+        # Ui the run speaks through; injected so tests can substitute a fake
+        # without touching the host.
         InstallerFactory = T.type_alias do
           T.proc.params(
             lockfile: Dev::Deps::Lockfile,
             integrations: T::Hash[Symbol, Dev::Deps::Integration],
+            ui: Dev::Ui,
           ).returns(Dev::Deps::Installer)
         end
 
@@ -61,8 +63,8 @@ module Dev
           ).void
         end
         def initialize(
-          installer_factory: ->(lockfile, integrations) {
-            Dev::Deps::Installer.new(lockfile:, integrations:)
+          installer_factory: ->(lockfile, integrations, ui) {
+            Dev::Deps::Installer.new(lockfile:, integrations:, ui:)
           },
           host_service: Dev::HostService.new,
           shadowenv_trust: Dev::ShadowenvTrust.new,
@@ -130,7 +132,7 @@ module Dev
           # builder over an already-written .shadowenv.d has none, and the
           # writers only trust after a write (Dev::ShadowenvTrust).
           @shadowenv_trust.ensure!(project_root: project.root)
-          installer = @installer_factory.call(lockfile, integrations(project, pin_taps:))
+          installer = @installer_factory.call(lockfile, integrations(project, ui: context.ui, pin_taps:), context.ui)
           installer.install(env:, host:, groups:, except:, integration_types:)
           return if @inside_container
 
@@ -154,12 +156,13 @@ module Dev
         # data root (ADR-0008).
         #
         # @param project [ProjectContext]
+        # @param ui [Dev::Ui] what the integrations say their installs through
         # @param pin_taps [Boolean] brew installs from taps pinned at the lock's commits
         # @return [Hash{Symbol => Dev::Deps::Integration}]
-        sig { params(project: ProjectContext, pin_taps: T::Boolean).returns(T::Hash[Symbol, Dev::Deps::Integration]) }
-        def integrations(project, pin_taps:)
+        sig { params(project: ProjectContext, ui: Dev::Ui, pin_taps: T::Boolean).returns(T::Hash[Symbol, Dev::Deps::Integration]) }
+        def integrations(project, ui:, pin_taps:)
           Dev::Deps::Registry.host_integrations(
-            project_root: project.root, project_name: project.name, store: Dev::Deps::LocalStore.new, pin_taps:,
+            project_root: project.root, project_name: project.name, store: Dev::Deps::LocalStore.new, ui:, pin_taps:,
           )
         end
 

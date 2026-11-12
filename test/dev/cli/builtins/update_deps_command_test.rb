@@ -9,6 +9,7 @@ require "dev/deps/package"
 require "dev/deps/package_id"
 require "dev/deps/package_version"
 require "dev/deps/repository"
+require "support/recording_ui"
 require "digest"
 require "fileutils"
 require "pathname"
@@ -118,8 +119,9 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     order = sequence("install the interpreter, then lock")
     brew = mock
     brew.expects(:install_all).with([ruby_pin]).in_sequence(order)
+    ui = RecordingUi.new
     Dev::Deps::Registry.expects(:host_integrations)
-      .with { |**kwargs| kwargs.fetch(:project_root) == root && kwargs.fetch(:project_name) == "TestProject" }
+      .with { |**kwargs| kwargs.fetch(:project_root) == root && kwargs.fetch(:project_name) == "TestProject" && kwargs.fetch(:ui).equal?(ui) }
       .returns({ brew: brew, ruby: brew })
     locker = mock
     locker.expects(:lock).in_sequence(order)
@@ -129,11 +131,12 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     $stdout = StringIO.new
 
     When "running dev deps update"
-    command.call(args: no_args, context: build_context(root))
+    command.call(args: no_args, context: build_context(root, ui: ui))
 
-    Then "bundle lock ran under the locked Ruby, whose exact version is the Gemfile's ruby directive (asserted on the mocks)"
+    Then "bundle lock ran under the locked Ruby, whose exact version is the Gemfile's ruby directive (asserted on the mocks); the install spoke in its own frame"
     $stdout.string.include?("lockfiles updated")
     Dev::Deps::Lockfile.new(dir: root).read.map { |dep| [dep.integration, dep.name, dep.version] } == [[:ruby, "ruby", "4.0.9"]]
+    ui.rows == [[:frame, "ruby: 1 pin", 0]]
 
     Cleanup
     $stdout = old_stdout
@@ -589,9 +592,9 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
                   "platforms" => { "x86_64_linux" => { "hash" => "SHA256=l", "link" => "https://x/l" } } })
   end
 
-  def build_context(project_root)
+  def build_context(project_root, ui: RecordingUi.new)
     Dev::Cli::ExecutionContext.new(
-      ui: typed_mock(Dev::Ui),
+      ui: ui,
       project: Dev::Cli::ProjectContext.new(name: "TestProject", root: project_root),
     )
   end

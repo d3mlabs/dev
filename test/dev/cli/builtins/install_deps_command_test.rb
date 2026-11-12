@@ -31,7 +31,7 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
     installer = typed_mock(Dev::Deps::Installer)
     installer.expects(:install).once.in_sequence(order)
     command = Dev::Cli::Builtins::InstallDepsCommand.new(
-      installer_factory: ->(_lockfile, _integrations) { installer },
+      installer_factory: ->(_lockfile, _integrations, _ui) { installer },
       host_service: quiet_host_service,
       shadowenv_trust: trust,
     )
@@ -58,7 +58,7 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
     host_service.expects(:sync_skills).with(project_root: root).once
     host_service.expects(:sync_learnings).with(project_root: root).once
     command = Dev::Cli::Builtins::InstallDepsCommand.new(
-      installer_factory: ->(_lockfile, _integrations) { installer },
+      installer_factory: ->(_lockfile, _integrations, _ui) { installer },
       host_service: host_service,
       shadowenv_trust: quiet_shadowenv_trust,
     )
@@ -196,8 +196,8 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
     factory_inputs = []
     host_service = typed_mock(Dev::HostService)
     command = Dev::Cli::Builtins::InstallDepsCommand.new(
-      installer_factory: ->(lockfile, integrations) {
-        factory_inputs << [lockfile, integrations]
+      installer_factory: ->(lockfile, integrations, ui) {
+        factory_inputs << [lockfile, integrations, ui]
         installer
       },
       host_service: host_service,
@@ -209,9 +209,9 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
     command.call(args: no_args, context: build_context(root))
 
     Then "every installing type is wired inside — the container is a host with its own data root — and the host-side hooks do not run"
-    _, integrations = factory_inputs.fetch(0)
+    _, integrations, _ = factory_inputs.fetch(0)
     integrations.keys.sort == Dev::Deps::Registry.host_integrations(
-      project_root: root, project_name: "TestProject", store: Dev::Deps::LocalStore.new(data_root: root.to_s),
+      project_root: root, project_name: "TestProject", store: Dev::Deps::LocalStore.new(data_root: root.to_s), ui: Dev::NoUi.new,
     ).keys.sort
     integrations.key?(:bundler)
     integrations.key?(:brew)
@@ -230,8 +230,8 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
     installer = typed_mock(Dev::Deps::Installer)
     factory_inputs = []
     command = Dev::Cli::Builtins::InstallDepsCommand.new(
-      installer_factory: ->(lockfile, integrations) {
-        factory_inputs << [lockfile, integrations]
+      installer_factory: ->(lockfile, integrations, ui) {
+        factory_inputs << [lockfile, integrations, ui]
         installer
       },
       host_service: quiet_host_service,
@@ -242,7 +242,7 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
     command.call(args: parsed_args(command, %w[--group build --integration brew --pinned-taps]), context: build_context(root))
 
     Then "brew pins taps; the group and integration narrowing are what was named"
-    _, integrations = factory_inputs.fetch(0)
+    _, integrations, _ = factory_inputs.fetch(0)
     integrations.fetch(:brew).pin_taps?
     1 * installer.install(env: anything, host: anything, groups: [:build], except: [], integration_types: [:brew])
 
@@ -250,29 +250,31 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "call builds the installer over the project's lockfile and host integrations" do
+  test "call builds the installer over the project's lockfile, the host integrations and the context's Ui (dev#573)" do
     Given "a factory that records its inputs"
     root = Pathname.new(Dir.mktmpdir("install-deps-wiring-"))
     installer = typed_mock(Dev::Deps::Installer)
     installer.stubs(:install)
     factory_inputs = []
     command = Dev::Cli::Builtins::InstallDepsCommand.new(
-      installer_factory: ->(lockfile, integrations) {
-        factory_inputs << [lockfile, integrations]
+      installer_factory: ->(lockfile, integrations, ui) {
+        factory_inputs << [lockfile, integrations, ui]
         installer
       },
       host_service: quiet_host_service,
       shadowenv_trust: quiet_shadowenv_trust,
     )
+    context = build_context(root)
 
     When "running dev deps install"
-    command.call(args: no_args, context: build_context(root))
+    command.call(args: no_args, context: context)
 
-    Then "the installer got the project-rooted lockfile and the host integration set"
-    lockfile, integrations = factory_inputs.fetch(0)
+    Then "the installer got the project-rooted lockfile, the host integration set and the Ui the run speaks through"
+    lockfile, integrations, ui = factory_inputs.fetch(0)
     lockfile.is_a?(Dev::Deps::Lockfile)
     integrations.key?(:bundler)
     integrations.key?(:brew)
+    ui.equal?(context.ui)
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -300,7 +302,7 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
 
   def build_command(installer: typed_mock(Dev::Deps::Installer), inside_container: false)
     Dev::Cli::Builtins::InstallDepsCommand.new(
-      installer_factory: ->(_lockfile, _integrations) { installer },
+      installer_factory: ->(_lockfile, _integrations, _ui) { installer },
       host_service: quiet_host_service,
       shadowenv_trust: quiet_shadowenv_trust,
       inside_container:,

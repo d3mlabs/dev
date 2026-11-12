@@ -3,6 +3,7 @@
 
 require "pathname"
 require "dev/credentials"
+require "dev/ui"
 require "dev/lifecycle/channel"
 require "dev/lifecycle/platform"
 require "dev/lifecycle/publisher"
@@ -79,12 +80,14 @@ module Dev
       # @param store [ArtifactStore] where the tool is installed
       # @param host [String] Dev::Platform.os — which binary in the tree is this machine's
       # @param unpacker [Lifecycle::Unpacker] what turns an archive into a build root
-      sig { params(project_root: Pathname, store: ArtifactStore, host: String, unpacker: Lifecycle::Unpacker).void }
-      def initialize(project_root:, store: LocalStore.new, host: Dev::Platform.os, unpacker: Lifecycle::Unpacker.new)
+      # @param ui [Ui] the terminal a first-time credential is onboarded at
+      sig { params(project_root: Pathname, store: ArtifactStore, host: String, unpacker: Lifecycle::Unpacker, ui: Ui).void }
+      def initialize(project_root:, store: LocalStore.new, host: Dev::Platform.os, unpacker: Lifecycle::Unpacker.new, ui: NoUi.new)
         @lockfile = T.let(Lockfile.new(dir: project_root), Lockfile)
         @store = store
         @host = host
         @unpacker = unpacker
+        @ui = ui
       end
 
       # Register each shipment as a binary of its artifact and label it for
@@ -164,11 +167,11 @@ module Dev
       def client
         client_id = Credentials.resolve(
           namespace: CREDENTIAL_NAMESPACE, key: "client_id", env_var: "EGS_CLIENT_ID",
-          prompt_label: "Epic Games Store client id (the product's BuildPatchTool credentials)", create_url: CREDENTIALS_URL,
+          prompt_label: "Epic Games Store client id (the product's BuildPatchTool credentials)", create_url: CREDENTIALS_URL, ui: @ui,
         )
         secret = Credentials.resolve(
           namespace: CREDENTIAL_NAMESPACE, key: "client_secret", env_var: "EGS_CLIENT_SECRET",
-          prompt_label: "Epic Games Store client secret", create_url: CREDENTIALS_URL,
+          prompt_label: "Epic Games Store client secret", create_url: CREDENTIALS_URL, ui: @ui,
         )
         [client_id, { BuildPatchTool::CLIENT_SECRET_ENV_VAR => secret }]
       end

@@ -106,15 +106,17 @@ module Dev
       # @param repository    [Repository, nil]   source adapter for cmake deps
       # @param store         [ArtifactStore, nil] artifact store (trees: published sources; blobs: downloaded tarballs)
       # @param project_root  [String, Pathname]  project root directory
+      # @param ui [Ui] what the install says its work through
       sig do
         params(
           repository: T.nilable(Repository),
           store: T.nilable(ArtifactStore),
           project_root: T.any(String, Pathname),
+          ui: Ui,
         ).void
       end
-      def initialize(repository:, store:, project_root:)
-        super(repository:, store:)
+      def initialize(repository:, store:, project_root:, ui: NoUi.new)
+        super(repository:, store:, ui:)
         @project_root = T.let(Pathname(project_root), Pathname)
       end
 
@@ -177,18 +179,20 @@ module Dev
       end
 
       # Fetch the dep's source (git clone or tarball extract) into staging
-      # and publish it as the tree its key names.
+      # and publish it as the tree its key names. A step: git, curl and
+      # tar run with the terminal (their progress lands as they write it).
       #
       # @param dep [Dependency]
       # @return [Pathname] the published tree
       sig { params(dep: Dependency).returns(Pathname) }
       def publish_source(dep)
         key = tree_key(dep)
-        puts ">>> Fetching #{dep.name} source into #{store!.tree_path(key)}"
-        store!.publish_tree(key) do |staging|
-          source = staging / "source"
-          dep.metadata["url"] ? fetch_tarball(dep, source) : fetch_git(dep, source)
-          source
+        @ui.step("Fetching #{dep.name} source into #{store!.tree_path(key)}") do
+          store!.publish_tree(key) do |staging|
+            source = staging / "source"
+            dep.metadata["url"] ? fetch_tarball(dep, source) : fetch_git(dep, source)
+            source
+          end
         end
       end
 

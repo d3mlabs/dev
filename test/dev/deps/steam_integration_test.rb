@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "support/recording_ui"
 require "dev/deps/steam_integration"
 require "dev/deps/local_store"
 require "dev/deps/dependency"
@@ -46,12 +47,36 @@ class Dev::Deps::SteamIntegrationTest < Minitest::Test
     )
   end
 
-  def build_integration(dir, manifest_build:)
+  def build_integration(dir, manifest_build:, ui: RecordingUi.new)
     FixtureSteamIntegration.new(
       manifest_build: manifest_build,
       repository: nil,
       store: Dev::Deps::LocalStore.new(data_root: dir),
+      ui: ui,
     )
+  end
+
+  test "the install speaks through the Ui (dev#573): provisioning is a step (SteamCMD owns the terminal), then the fact; a second pass is the fact alone" do
+    Given "a steam dependency and a stubbed provisioner, over a recording Ui"
+    dir = Dir.mktmpdir("dev-steam-int-test-")
+    version_dir = File.join(dir, "steam", "1690800", "15321746")
+    dep = build_dependency(build_id: "15321746")
+    ui = RecordingUi.new
+    integration = build_integration(dir, manifest_build: "15321746", ui: ui)
+
+    When "installing twice"
+    integration.install_all([dep])
+    integration.install_all([dep])
+
+    Then
+    ui.rows == [
+      [:step, "Provisioning SatisfactoryServer (app 1690800, build 15321746) into #{version_dir}", 0],
+      [:note, "{{v}} SatisfactoryServer@15321746 installed at #{File.join(version_dir, "install")}", 0],
+      [:note, "{{v}} SatisfactoryServer@15321746 is installed at #{version_dir}", 0],
+    ]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
   test "tree_key places a steam depot by identity: ~/.dev/steam/<app>/<buildid>" do
