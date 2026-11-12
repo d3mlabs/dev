@@ -148,5 +148,6 @@ In the order a new user needs them:
 For maintainers: [Releasing dev](docs/releasing.md),
 [Sorbet](docs/sorbet.md), the design records in
 [DECISIONS.md](docs/DECISIONS.md), and the architecture notes
-[deps-architecture.md](docs/deps-architecture.md) and
-[deps-channels.md](docs/deps-channels.md).
+[deps-architecture.md](docs/deps-architecture.md),
+[deps-channels.md](docs/deps-channels.md) and
+[lifecycle-architecture.md](docs/lifecycle-architecture.md).
