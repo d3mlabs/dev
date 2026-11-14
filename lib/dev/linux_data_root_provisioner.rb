@@ -151,7 +151,7 @@ module Dev
 
       if current.present && !current.writable
         raise NotWritableError,
-          "#{@root} exists but #{@user} cannot write it. dev does not re-own a data root (dev#310). " \
+          "#{@root} exists but #{@user} cannot write it. dev does not re-own a data root. " \
           "If you are not yet in its group: sudo usermod -aG #{@group} #{@user}, then log in again; " \
           "if the root is not shared with the group yet, its owner's `dev up` shares it."
       end

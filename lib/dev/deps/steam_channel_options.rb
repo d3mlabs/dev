@@ -104,7 +104,7 @@ module Dev
           options.fetch(key) do
             raise MissingOptionError,
               "channel 'deploy #{channel}': `#{KEY}: #{key}:` is missing — the steam publisher needs the AppID and a DepotID " \
-                "per accepted build (d3mlabs/dev#192)"
+                "per accepted build"
           end
         end
 

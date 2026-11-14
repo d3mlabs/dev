@@ -28,7 +28,7 @@ module RuboCop
       #   # good — the vocabulary, which lives beside the features
       #   sig { params(ui: Dev::Ui).void }
       class ShellReference < Base
-        MSG = "`%<constant>s` is the shell's (`Dev::Cli`); a feature or the vocabulary under lib/dev may not reference it (ADR-0014)."
+        MSG = "`%<constant>s` is the shell's (`Dev::Cli`); a feature or the vocabulary under lib/dev may not reference it."
 
         # Where the features and the vocabulary live, and the shell inside them.
         FEATURES = %r{\Alib/dev(?:/|\z)}

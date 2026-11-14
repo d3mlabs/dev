@@ -431,7 +431,7 @@ module Dev
         define_method(verb) do |*_args, **_kwargs, &_block|
           raise StoreVerbInImageError,
             "`#{verb}` inside an image block declares store content baked into the image — " \
-              "that is the fat image, d3mlabs/dev#309, not yet built. Declare it outside the block; " \
+              "which dev does not build. Declare it outside the block; " \
               "the container's own `dev up` installs it."
         end
       end

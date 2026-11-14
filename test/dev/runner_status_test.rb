@@ -726,7 +726,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     out.string.include?("✓ data root #{data_root} shared with group dev (setgid)")
     out.string.include?("✓ brew lock dir /home/linuxbrew/.linuxbrew/var/homebrew/locks shared with group dev (setgid, locks group-writable)")
     out.string.include?("✗ agent engine: ")
-    out.string.include?("plans#61")
+    out.string.include?("inside the project's container")
     out.string.scan("✗ ").length == 1
   end
 

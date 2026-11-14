@@ -203,7 +203,7 @@ module Dev
             runner_user: runner_user || RunnerUser::DEFAULT_NAME)
         else
           raise AgentBootstrap::UnsupportedPlatformError,
-            "the agent host bootstrap converges a Mac or a Linux dev host (plans#26, plans#59); " \
+            "the agent host bootstrap converges a Mac or a Linux dev host; " \
             "agent-capability labels cannot be served by a #{host_os} host."
         end
       end

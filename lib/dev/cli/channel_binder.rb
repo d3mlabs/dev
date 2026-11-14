@@ -116,7 +116,7 @@ module Dev
         Fault.new(
           summary:,
           message: "channel 'deploy #{channel}' has no protocol: it declares no `run:` and #{summary} — #{fix}, " \
-                   "or declare `run:` (a script shipping `$DEV_ARTIFACT`) (d3mlabs/dev#192)",
+                   "or declare `run:` (a script shipping `$DEV_ARTIFACT`)",
         )
       end
 

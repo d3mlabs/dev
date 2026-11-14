@@ -223,7 +223,7 @@ class Dev::AgentBootstrap::LinuxTest < Minitest::Test
 
     Then
     error = raises Dev::AgentBootstrap::Linux::NoAgentEngineError
-    error.message.include?("plans#61")
+    error.message.include?("inside the project's container")
     error.message.include?("root-equivalent")
   end
 
@@ -234,7 +234,7 @@ class Dev::AgentBootstrap::LinuxTest < Minitest::Test
     Expect
     !bs.engine_converged?
     bs.engine_fact.start_with?("agent engine: ")
-    bs.engine_fact.include?("plans#61")
+    bs.engine_fact.include?("inside the project's container")
   end
 
   test "the drop-in carries the service umask and the service env, one Environment= each" do

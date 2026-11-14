@@ -52,8 +52,8 @@ module Dev
 
       # The one explanation, for the engine refusal and the status line.
       NO_ENGINE_MESSAGE = "an image-built repo's agent has no engine of its own on a Linux host — the only engine " \
-        "here is the runner user's docker, whose socket is root-equivalent across the user line (plans#26). Its " \
-        "agent runs inside the project's container instead (plans#61); until that lands, this host cannot serve " \
+        "here is the runner user's docker, whose socket is root-equivalent across the user line. Its " \
+        "agent belongs inside the project's container, so this host cannot serve " \
         "agent labels for a repo that pins an image."
 
       # Every command run as the agent starts from `/`: sudo keeps the

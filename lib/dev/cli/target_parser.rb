@@ -139,8 +139,8 @@ module Dev
       def parse_builder(name, target_hash)
         if target_hash.key?(BUILDER_KEY)
           raise InvalidBuilderError,
-            "target '#{name}': `#{BUILDER_KEY}:` names an integration builder, which lands with d3mlabs/dev#433 — " \
-              "declare a `#{BUILD_KEY}:` script until then"
+            "target '#{name}': `#{BUILDER_KEY}:` is not a builder form — " \
+              "declare a `#{BUILD_KEY}:` script"
         end
         return nil unless target_hash.key?(BUILD_KEY)
 

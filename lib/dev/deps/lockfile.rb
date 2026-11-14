@@ -98,7 +98,7 @@ module Dev
       def read
         if (@dir / RETIRED_BUILD_LOCK_FILE).exist?
           raise RetiredBuildLockError,
-            "#{@dir / RETIRED_BUILD_LOCK_FILE} is retired (ADR-0011): dev reads one lockfile, #{DEPS_LOCK_FILE}. " \
+            "#{@dir / RETIRED_BUILD_LOCK_FILE} is retired: dev reads one lockfile, #{DEPS_LOCK_FILE}. " \
               "Run dev deps update to fold it in and remove it."
         end
 

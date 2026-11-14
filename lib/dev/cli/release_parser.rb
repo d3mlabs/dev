@@ -103,7 +103,7 @@ module Dev
           raise ReleaseBodyError,
             "command '#{RELEASE}' declares `run:`, but with `targets:` declared #{RELEASE} is dev's cut — tag, package the " \
               "release builds at the tag, attach them to the GitHub release — delete the `run:` and declare what a release " \
-              "contains under `#{TARGETS_KEY}:` (or `#{RELEASE}: {}` for every build) (d3mlabs/dev#192)"
+              "contains under `#{TARGETS_KEY}:` (or `#{RELEASE}: {}` for every build)"
         end
         if entry.key?(COMMANDS_KEY)
           raise ReleaseChildrenError, "command '#{RELEASE}' declares `commands:`, but #{RELEASE} has no subcommands — it takes a version"

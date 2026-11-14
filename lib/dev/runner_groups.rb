@@ -129,7 +129,7 @@ module Dev
         unless group.pinned?
           raise UnpinnedGroupError,
             "#{repo} is public and group '#{group.name}' is not pinned to any workflow — an approved fork PR's YAML could land " \
-              "on these runners (plans#5 H3). Pin the group to the workflows that may use it, or enroll for a private repo."
+              "on these runners. Pin the group to the workflows that may use it, or enroll for a private repo."
         end
         unless group.allows_public_repositories
           # The pins ride along: GitHub's PATCH wipes what it does not name.

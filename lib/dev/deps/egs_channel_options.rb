@@ -131,7 +131,7 @@ module Dev
           options.fetch(key) do
             raise MissingOptionError,
               "channel 'deploy #{channel}': `#{KEY}: #{key}:` is missing — the egs publisher needs the Organization ID, " \
-                "the Product ID and an artifact per accepted build (d3mlabs/dev#192)"
+                "the Product ID and an artifact per accepted build"
           end
         end
 

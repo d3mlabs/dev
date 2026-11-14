@@ -133,14 +133,14 @@ module Dev
         unless deploy[RUN_KEY].to_s.empty?
           raise DeployBodyError,
             "command '#{DEPLOY}' declares `run:`, but #{DEPLOY} is derived from its channels — delete the `run:` " \
-              "and declare each destination as a child with `targets:` and `run:` (d3mlabs/dev#192)"
+              "and declare each destination as a child with `targets:` and `run:`"
         end
 
         children = deploy["commands"]
         unless children.is_a?(Hash) && !children.empty?
           raise NoChannelsError,
             "command '#{DEPLOY}' declares no channel — add a child per destination under `commands:`, with the builds it " \
-              "accepts under `#{ACCEPTS_KEY}:` and its protocol under `run:` (d3mlabs/dev#192)"
+              "accepts under `#{ACCEPTS_KEY}:` and its protocol under `run:`"
         end
 
         children.to_h do |name, entry|

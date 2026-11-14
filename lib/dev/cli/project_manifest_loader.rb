@@ -97,7 +97,7 @@ module Dev
         T::Hash[String, String],
       )
       # The block's keys that fed the Dockerfile build and have no successor.
-      GONE_WITH_THE_DOCKERFILE = "delete it — the Dockerfile path is gone (d3mlabs/dev#311)"
+      GONE_WITH_THE_DOCKERFILE = "delete it — the Dockerfile path is gone"
 
       sig do
         params(
@@ -180,7 +180,7 @@ module Dev
 
         raise ChannelWithoutTargetsError,
           "dev.yml declares a `deploy` channel (`#{ChannelParser::ACCEPTS_KEY}:` on a `deploy` child) but no `targets:` — " \
-            "a channel accepts builds, so declare the targets they come from (d3mlabs/dev#192)"
+            "a channel accepts builds, so declare the targets they come from"
       end
 
       # With targets declared, `commands: release:` is what a release contains
@@ -205,7 +205,7 @@ module Dev
 
         raise ReleaseWithoutTargetsError,
           "dev.yml declares what a release contains (`#{ReleaseParser::TARGETS_KEY}:` on `release`) but no `targets:` — " \
-            "a release packages builds, so declare the targets they come from (d3mlabs/dev#192)"
+            "a release packages builds, so declare the targets they come from"
       end
 
       # With targets declared, `build` and `package` exist as derived verbs,
@@ -226,7 +226,7 @@ module Dev
         keys = declared.map { |verb| "`commands: #{verb}:`" }.join(" and ")
         raise DerivedCommandDeclaredError,
           "dev.yml declares #{keys} beside `targets:`, but #{declared.join(" and ")} #{declared.one? ? "is" : "are"} " \
-            "derived from `targets:` — declare what it ran as a target's builder and delete the command (d3mlabs/dev#192)"
+            "derived from `targets:` — declare what it ran as a target's builder and delete the command"
       end
 
       # With targets declared, no command at any depth may be named like a
@@ -248,7 +248,7 @@ module Dev
         raise BuildNamedCommandError,
           "dev.yml names #{offending.one? ? "a command" : "commands"} like a build: " \
             "#{offending.map { |path| "'#{path.join(" ")}'" }.join(", ")} — the lifecycle verbs take a build " \
-            "positionally (`dev build <build>`), so rename the command or the target (d3mlabs/dev#192)"
+            "positionally (`dev build <build>`), so rename the command or the target"
       end
 
       # Every command path in the tree, parents before children, in
@@ -283,8 +283,8 @@ module Dev
         return if lines.empty?
 
         raise RetiredKeysError,
-          "dev.yml carries retired keys — migrate each (the Dockerfile path is gone, d3mlabs/dev#311: " \
-            "declare an `image` block in dependencies.rb; `#{RUNS_ON_KEY}:` is `#{ENVIRONMENT_KEY}:`, d3mlabs/dev#409):" \
+          "dev.yml carries retired keys — migrate each (the Dockerfile path is gone: " \
+            "declare an `image` block in dependencies.rb; `#{RUNS_ON_KEY}:` is `#{ENVIRONMENT_KEY}:`):" \
             "\n  #{lines.join("\n  ")}"
       end
 
