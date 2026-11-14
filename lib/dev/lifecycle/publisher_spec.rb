@@ -6,14 +6,12 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # What a channel declares for its Publisher port (dev#192, K5): the
-    # script form — the `deploy` child's `run:` line, with the
-    # `environment:` it executes in — or the integration form — the
-    # publisher the lock's integration of the channel's name contributes
-    # (dev#422), which is what a child with no `run:` means. The lock is
-    # not read here: Integration is a *reference*, bound at load by the
-    # composition root against the publishers the lock contributes, as an
-    # `environment:` is bound against its images; a reference nothing
+    # What a channel declares for its Publisher port: the script form (the
+    # `deploy` child's `run:` line, with the `environment:` it executes in)
+    # or the integration form (the publisher the lock's integration of the
+    # channel's name contributes, which is what a child with no `run:`
+    # means). Integration is a reference, bound at load by the composition
+    # root against the publishers the lock contributes; one nothing
     # contributes is refused there, naming both fixes.
     #
     # A declaration, not the port: Ports turns it into a Publisher for this
@@ -29,11 +27,10 @@ module Dev
       sig { abstract.returns(String) }
       def to_s; end
 
-      # `run: <command>` — a shell command run at the project root once per
-      # selected archive, with the archive and its manifest in its env
-      # (ScriptEnv.for_deploy). The script owns the protocol and its
-      # credentials. On a channel the lock also contributes, the `run:`
-      # **replaces** the integration's publisher (dev#192, K1b).
+      # `run: <command>`: a shell command run at the project root once per
+      # selected archive, with the archive and its manifest in its env. The
+      # script owns the protocol and its credentials. On a channel the lock
+      # also contributes, the `run:` replaces the integration's publisher.
       class Script < T::Struct
         extend T::Sig
         include PublisherSpec
@@ -56,11 +53,8 @@ module Dev
         end
       end
 
-      # The publisher the lock's integration named `name` contributes — the
-      # channel's own name, since a lock-contributed channel is the
-      # integration's (`deploy steam` is the `steam` integration's write
-      # side). A black box over read-only archives: it runs where dev runs,
-      # with no `environment:` to place.
+      # The publisher the lock's integration named `name` contributes. It
+      # runs where dev runs, with no `environment:` to place.
       class Integration < T::Struct
         extend T::Sig
         include PublisherSpec

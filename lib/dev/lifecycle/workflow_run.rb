@@ -5,11 +5,9 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # One run of the generic workflow as the forge lists it (dev#192, K7):
-    # the id `gh run watch` and `gh run download` take, the page a person
-    # opens, and GitHub's two-word verdict — `status` while it runs,
-    # `conclusion` once it has. What the remote dispatch watches and
-    # judges; nothing of the job's output lives here.
+    # One run of the generic workflow as the forge lists it: the id `gh run
+    # watch` and `gh run download` take, the page a person opens, and
+    # GitHub's `status` while it runs and `conclusion` once it has.
     class WorkflowRun < T::Struct
       extend T::Sig
       include Dev::ValueEquality::Derived

@@ -9,13 +9,12 @@ require_relative "shell"
 
 module Dev
   module Lifecycle
-    # The script form of the Builder port (dev#192, K1): the target's
-    # `build:` line, run at the project root with the build in its env
-    # (ScriptEnv) and `DEV_INSTALL` naming the directory to stage into.
-    # The script owns the mapping from dev's ids to the toolchain's
-    # switches; dev owns where the install goes and what a failure means.
-    # Spawn-and-wait, as every lifecycle seam is: the stage has work after
-    # the builder returns.
+    # The script form of the Builder port: the target's `build:` line, run
+    # at the project root with the build in its env and `DEV_INSTALL`
+    # naming the directory to stage into. The script owns the mapping from
+    # dev's ids to the toolchain's switches; dev owns where the install goes
+    # and what a failure means. Spawn-and-wait: the stage has work after the
+    # builder returns.
     #
     # The project root and the shell are fixed for a checkout and so are
     # constructor-owned; the build is per call.

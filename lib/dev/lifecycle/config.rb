@@ -9,13 +9,10 @@ module Dev
     # its own values.
     class UnknownConfigError < ArgumentError; end
 
-    # The config axis of a build: dev's closed role set (dev#192, K8). The
-    # *roles* are the same in every ecosystem even when the names and the
-    # count are not (UE's five, CMake's four, Cargo's two): a target declares
-    # the subset it supports, and what a role means to the toolchain is the
-    # builder's (`dev → Development`, `release → Shipping`). Anything that
-    # looks like a fourth config — ASan, a demo SKU, Steamworks compiled in —
-    # is conditional compilation, which is a target.
+    # The config axis of a build: one closed set of roles. A target declares
+    # the subset it supports; what a role means to the toolchain is the
+    # builder's (`dev → Development`, `release → Shipping`). A variant that
+    # is conditional compilation (ASan, a demo SKU) is a target, not a config.
     class Config < T::Enum
       extend T::Sig
 

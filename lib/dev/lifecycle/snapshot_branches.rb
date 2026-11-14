@@ -8,12 +8,11 @@ require_relative "snapshot_branch"
 
 module Dev
   module Lifecycle
-    # The `dev/build/*` namespace on the project's `origin` (dev#192, K7):
-    # where a snapshot is pushed for a remote dispatch, deleted from when
-    # the dispatch completes, and pruned from by age when a delete never
-    # happened (a killed dev, a lost connection). The retention rule is
-    # here and nowhere else — `dev cache gc` runs it, a scheduled workflow
-    # never does.
+    # The `dev/build/*` namespace on the project's `origin`: where a
+    # snapshot is pushed for a remote dispatch, deleted from when the
+    # dispatch completes, and pruned from by age when a delete never
+    # happened. The retention rule is here and nowhere else; `dev cache gc`
+    # runs it.
     class SnapshotBranches
       extend T::Sig
 

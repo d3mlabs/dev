@@ -5,10 +5,8 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # A size in bytes as dev.yml and the CLI spell one — `2GiB`, `500MiB`,
-    # `1024` — for the archive's `split:` (dev#192, K1). Binary units only
-    # (`KiB`, `MiB`, `GiB`, `TiB`), because the one limit this exists to
-    # stay under, GitHub's 2 GiB per release asset, is binary.
+    # A size in bytes as dev.yml and the CLI spell one: `2GiB`, `500MiB`, or
+    # a bare integer. Binary units only (`KiB`, `MiB`, `GiB`, `TiB`).
     class ByteSize < T::Struct
       extend T::Sig
       include Dev::ValueEquality::Derived

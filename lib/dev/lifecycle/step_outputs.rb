@@ -6,13 +6,12 @@ require "securerandom"
 
 module Dev
   module Lifecycle
-    # The outputs of the Actions step a verb runs in (dev#192, K10): what
-    # `dev package` tells the generic workflow about the artifact it
-    # stamped — the build's name and the files to upload — so `--fetch`
-    # can bring exactly those back by that name. GitHub's contract is the
-    # file `GITHUB_OUTPUT` names, one `key=value` per line, a multi-line
-    # value fenced with a delimiter; outside a job the variable is unset
-    # and nothing is written. The one place dev writes a step output.
+    # The outputs of the Actions step a verb runs in: what `dev package`
+    # tells the generic workflow about the artifact it stamped (the build's
+    # name and the files to upload) so `--fetch` can bring those back.
+    # GitHub's contract is the file `GITHUB_OUTPUT` names, one `key=value`
+    # per line, a multi-line value fenced with a delimiter; outside a job
+    # the variable is unset and nothing is written.
     class StepOutputs
       extend T::Sig
 

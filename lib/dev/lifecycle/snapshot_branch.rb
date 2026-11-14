@@ -8,18 +8,13 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # The branch a working-tree snapshot is pushed to for a remote dispatch
-    # (dev#192, K7): `dev/build/<runner>/<id>` under `refs/heads/`, because
-    # `workflow_dispatch` accepts only a branch or a tag — a truly hidden
-    # ref cannot be dispatched on, and a tag cannot be force-moved for a
-    # retry. The namespace is dev's own: nothing but the sync step pushes
-    # under it, which is what lets `dev cache gc` prune it by age.
+    # The branch a working-tree snapshot is pushed to for a remote
+    # dispatch: `dev/build/<runner>/<id>` under `refs/heads/`, since
+    # `workflow_dispatch` accepts only a branch or a tag. The namespace is
+    # dev's own, which is what lets `dev cache gc` prune it by age.
     #
     # The id is `<utc instant>-<nonce>`, so a branch carries its own
-    # creation time: the prune reads ages from `git ls-remote` alone,
-    # with no fetch of the snapshots' objects and no API call per branch.
-    # The instant is spelled as every other instant in dev's names
-    # (BuildId's `20261104T123000Z`).
+    # creation time and the prune reads ages from `git ls-remote` alone.
     class SnapshotBranch
       extend T::Sig
       include Dev::ValueEquality::Derived

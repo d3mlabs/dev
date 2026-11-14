@@ -5,12 +5,10 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # The name a release carries on the forge (dev#192, K4, K6): the git
-    # tag `v<version>` that `release <version>` cuts (dev#424) and that a
-    # deploy of the release's archives is recorded against as its `ref`
-    # (`deploy --release <version>`, dev#425) — which is how `dev deploy
-    # status --release <version>` finds, per channel, what carries it. One
-    # spelling of the tag for every surface that names a release.
+    # The name a release carries on the forge: the git tag `v<version>`
+    # that `release` cuts and that a deploy of the release's archives is
+    # recorded against as its `ref`. One spelling of the tag for every
+    # surface that names a release.
     #
     # Owns the invariant that a version is a word: an empty one would tag
     # nothing, a spaced one is not a ref.

@@ -5,12 +5,9 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # What a target declares for its Builder port (dev#192, K1): today the
-    # script form — a `build:` line; the integration form (`builder:
-    # <name>`, owning the toolchain mapping once) lands with dev#433 as a
-    # second variant. A target declaring neither has nothing to compile
-    # (Target#builder is nil): `build` is a no-op for it and `package`
-    # runs alone — a gem, an org payload.
+    # What a target declares for its Builder port: a `build:` line. A target
+    # declaring none has nothing to compile; `build` is a no-op for it and
+    # `package` runs alone.
     #
     # A declaration, not the port: Ports turns it into a Builder for this
     # checkout. Sealed, so the composition matches exhaustively.

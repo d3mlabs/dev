@@ -9,17 +9,13 @@ require_relative "release_tag"
 
 module Dev
   module Lifecycle
-    # The release archive on the forge (dev#192, K4): a GitHub release per
-    # tag, carrying the archives as assets and `release.json` beside them.
-    # The release *is* the archive of the cut — not a store (stores are
-    # channels, K5) — so this is the one place dev writes one: created
-    # once per tag, its assets uploaded with `--clobber` so a resumed run
-    # replaces what a failed one half-attached — and the one place it is
-    # read back from: `deploy --release` downloads the assets by name
-    # (dev#425), and a publisher that points at an asset rather than
-    # fetching it asks for its url (the brew formulas, dev#429). Reads and
-    # writes go through Gh over the checkout, so the
-    # repo is the one `origin` names and the credential the one gh holds.
+    # The release archive on the forge: a GitHub release per tag, carrying
+    # the archives as assets and `release.json` beside them. Created once
+    # per tag, its assets uploaded with `--clobber` so a resumed run
+    # replaces what a failed one half-attached. Read back by `deploy
+    # --release`, which downloads assets by name, and by a publisher that
+    # points at an asset's url rather than fetching it. Reads and writes go
+    # through Gh over the checkout.
     class GithubReleases
       extend T::Sig
 
@@ -118,10 +114,8 @@ module Dev
         raise ApiError, e.message
       end
 
-      # The public download url of one of a tag's release assets — what a
-      # formula points at (dev#429): the forge's own statement of where
-      # the asset is served, asked rather than spelled from the repo's
-      # name, so dev carries no knowledge of GitHub's url layout.
+      # The public download url of one of a tag's release assets, as the
+      # forge states it, so dev carries no knowledge of GitHub's url layout.
       #
       # @param tag [ReleaseTag]
       # @param name [String] the asset's name, exactly

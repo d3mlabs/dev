@@ -9,11 +9,10 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # One build: a target × one of its platforms × one of its configs — what
-    # `build` produces and the fully-qualified name every verb, the store
-    # and the archive carry (dev#192, *The model*). An axis the target does
-    # not declare is absent and contributes no segment, so a target with
-    # neither is its own single build and its name is the build name.
+    # One build: a target × one of its platforms × one of its configs, with
+    # the fully-qualified name every verb, the store and the archive carry.
+    # An axis the target does not declare is absent and contributes no
+    # segment.
     #
     # Owns the invariant that each axis is present exactly when the target
     # declares it, and holds one of the target's declared values.

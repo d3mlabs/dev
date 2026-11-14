@@ -12,20 +12,16 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # Where an archive `deploy` ships came from (dev#192, K4, K5): the
-    # **store** — a working artifact `package` stamped from a working
-    # tree, which ships on the testing track — or a **release** — an asset
-    # of the GitHub release at a tag, downloaded and verified against
-    # `release.json`, which ships on the live track (dev#425). The
-    # provenance is what differs between the two sources once the archive
-    # is on disk: the **ref** the deploy is recorded against (the commit
-    # the artifact was packaged from; the release's tag), what a script
-    # channel is told of it (`DEV_SHA`/`DEV_DIRTY`/`DEV_PACKAGED_AT`;
-    # `DEV_RELEASE_VERSION`), and what a publisher may do with it (a
-    # formula points at a release asset, never at a file in a store).
+    # Where an archive `deploy` ships came from: the store (an artifact
+    # `package` stamped from a working tree; ships on the testing track) or
+    # a release (an asset of the GitHub release at a tag, verified against
+    # `release.json`; ships on the live track). The provenance decides the
+    # ref the deploy is recorded against, what a script channel is told
+    # (`DEV_SHA`/`DEV_DIRTY`/`DEV_PACKAGED_AT` or `DEV_RELEASE_VERSION`),
+    # and what a publisher may do with it.
     #
     # Sealed, so the script env and the publishers match the two
-    # exhaustively; a third source is unrepresentable.
+    # exhaustively.
     module Provenance
       extend T::Sig
       extend T::Helpers
@@ -87,14 +83,11 @@ module Dev
       end
     end
 
-    # One archive as `deploy` hands it to a channel's publisher (dev#192,
-    # K5): the file — read-only input, a split set's `MANIFEST` with the
-    # parts beside it — the build it is of, the id it was packaged under,
-    # its digest, and its Provenance. What the two sources `deploy` selects
-    # from have in common once the bytes are on disk: a publisher ships a
-    # shipment the same way whichever source it came from, and reads the
-    # provenance only where the source matters (the track is decided
-    # before it — by the verb, from the same fact).
+    # One archive as `deploy` hands it to a channel's publisher: the file
+    # (read-only; a split set's `MANIFEST` with the parts beside it), the
+    # build it is of, the id it was packaged under, its digest, and its
+    # Provenance. A publisher ships a shipment the same way whichever source
+    # it came from, and reads the provenance only where the source matters.
     class Shipment < T::Struct
       extend T::Sig
       include Dev::ValueEquality::Derived

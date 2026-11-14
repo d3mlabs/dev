@@ -10,11 +10,10 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # The built-in `as-is` packager (dev#192, K1): the install already *is*
-    # the archive — Alpakit's per-target zip, `gem build`'s `.gem` — so the
-    # one file the builder left in the install directory is adopted under
-    # the build's name with its own extension (`<build>.zip`, `<build>.gem`,
-    # `<build>.tar.zst`). Copied, not moved: the install stays the
+    # The built-in `as-is` packager: the install already is the archive
+    # (Alpakit's per-target zip, `gem build`'s `.gem`), so the one file the
+    # builder left in the install directory is copied under the build's
+    # name with its own extension. Copied, not moved: the install stays the
     # builder's, incremental state included.
     class AsIsPackager
       extend T::Sig

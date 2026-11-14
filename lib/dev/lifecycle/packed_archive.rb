@@ -6,13 +6,9 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # What a packager wrote for one build: the **archive** — the file
-    # `build-id.json` names, a release attaches first and a channel reads
-    # first — and, for the split tar form, the parts the archive's
-    # `MANIFEST` lists (dev#192, K1). One file for a zip, a `.tar.zst`, a
-    # `.gem` or an adopted install; `<build>.MANIFEST` plus
-    # `<build>.tar.zst.00…` for a split set. Every path is in the artifact
-    # directory, beside the manifest the stage stamps afterwards.
+    # What a packager wrote for one build: the archive file `build-id.json`
+    # names and, for a split tar, the parts its `MANIFEST` lists. Every path
+    # is in the artifact directory.
     class PackedArchive < T::Struct
       extend T::Sig
       include Dev::ValueEquality::Derived

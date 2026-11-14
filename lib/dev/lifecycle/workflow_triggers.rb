@@ -6,12 +6,10 @@ require "yaml"
 
 module Dev
   module Lifecycle
-    # The project's GitHub workflows read for one question (dev#192, K7):
-    # would pushing a snapshot branch run any of them? A snapshot push is
-    # a plain branch push, so a workflow with an `on: push` that no branch
-    # filter excludes would run CI on every remote dispatch — twice the
-    # runner time and a red check on a tree nobody committed. The sync
-    # step asks before it pushes anything and refuses with the fix.
+    # The project's GitHub workflows read for one question: would pushing
+    # a snapshot branch run any of them? A workflow with an `on: push` that
+    # no branch filter excludes would run CI on every remote dispatch, so
+    # the sync step asks before it pushes anything and refuses with the fix.
     #
     # The answer is GitHub's own: a push trigger runs for a branch when it
     # has no `branches` / `branches-ignore` / `tags` / `tags-ignore` filter

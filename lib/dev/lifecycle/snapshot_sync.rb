@@ -12,20 +12,17 @@ require_relative "workflow_triggers"
 
 module Dev
   module Lifecycle
-    # The sync step of the remote dispatch (dev#192, K7; ADR-0008): make
-    # the working tree reachable from a build host as a snapshot branch
-    # for exactly as long as the dispatch needs it. In order — refuse
-    # while nothing has left the machine if a project workflow would run
-    # on the push, commit the tree through a temporary index, push the
-    # commit to `dev/build/<runner>/<id>`, hand the snapshot to the
-    # dispatch (the `workflow_dispatch` on an enrolled runner, dev#420; the
-    # container's fetch, dev#421), and delete the branch when the dispatch
-    # returns, however it returns.
+    # The sync step of the remote dispatch: make the working tree reachable
+    # from a build host as a snapshot branch for exactly as long as the
+    # dispatch needs it. In order: refuse while nothing has left the
+    # machine if a project workflow would run on the push, commit the tree
+    # through a temporary index, push the commit to
+    # `dev/build/<runner>/<id>`, hand the snapshot to the dispatch, and
+    # delete the branch when the dispatch returns, however it returns.
     #
-    # The delete is best-effort by design: a build that succeeded is not
-    # failed by a lost connection afterwards, and the branch is not lost
-    # either — the retention rule in SnapshotBranches takes it on the next
-    # `dev cache gc`.
+    # The delete is best-effort: a build that succeeded is not failed by a
+    # lost connection afterwards, and SnapshotBranches' retention rule
+    # takes the branch on the next `dev cache gc`.
     class SnapshotSync
       extend T::Sig
 

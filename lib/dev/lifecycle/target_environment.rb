@@ -7,21 +7,15 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # A target's `environment:` as declared (dev#192, K8): where its builds
-    # run, with the key and the two values a command uses (`<image name>`
-    # or `host`, an EnvironmentRef) — one reference for every build of the
-    # target, or one per declared platform (the editor builds in the Linux
-    # image on linux64 and on the host on macos). A declaration, not a
-    # resolution: the composition root binds each reference against the
-    # lock and checks it against the build's platform (PlacementBinder).
+    # A target's `environment:` as declared: one reference (`<image name>`
+    # or `host`) for every build of the target, or one per declared
+    # platform. A declaration, not a resolution: the composition root binds
+    # each reference against the lock and checks it against the build's
+    # platform.
     #
-    # Sealed: a target's environment is single or per platform, nothing
-    # else, so every reader is a case over two variants with a T.absurd
-    # proof. A target that declares none carries nil, as a command does,
-    # and takes the project's default. Which reference a given build gets,
-    # and that a per-platform declaration covers exactly the target's
-    # platforms, is Target's: it owns the platforms the keys are checked
-    # against.
+    # Sealed: single or per platform, nothing else. A target that declares
+    # none carries nil and takes the project's default. Target owns the
+    # check that a per-platform declaration covers exactly its platforms.
     module TargetEnvironment
       extend T::Sig
       extend T::Helpers

@@ -8,33 +8,19 @@ require_relative "track"
 
 module Dev
   module Lifecycle
-    # The protocol port of a channel (dev#192, K5): what ships the selected
-    # archives to the destination. Two kinds stand behind it — a script,
-    # the channel's `run:` line, for an endpoint no integration knows (the
-    # gamebox, a PC's sshd); and an integration's publisher, contributed by
-    # the lock through the `publisher:` port of its Registry entry
-    # (dev#422) — and dev's stage is the same over both: it selects the
+    # The protocol port of a channel: ships the selected archives to the
+    # destination. Two kinds stand behind it: a script (the channel's `run:`
+    # line) and an integration's publisher, contributed by the lock through
+    # its registry entry. Dev's stage is the same over both: it selects the
     # archives, checks them, hands them over with the track and records
-    # what happened. The port owns its own credentials (`dev cred` from a
-    # script's first line; the Credentials provider inside an integration)
-    # — nothing of them is in dev.yml.
+    # what happened. The port owns its own credentials; nothing of them is
+    # in dev.yml.
     #
-    # The publisher is a black box: it takes the archives — Shipments, one
-    # per build, each carrying where it came from (the store, or a
-    # release; dev#425) — does whatever the destination needs — nothing,
-    # for most channels; for a store, unpacking into depot directories and
-    # writing the upload's own descriptors — and uploads. Two constraints
-    # keep the box honest, both of which are what make "deployed" mean
-    # something: the archives are **read-only input** — unpack and wrap,
-    # never rebuild or alter — and the Receipt is the output: what dev
-    # records of the upload (as a GitHub Deployment, dev#423) is the
-    # receipt plus what dev knew going in, never anything the port
-    # materialised on the way. What it materialises lives in its
-    # **scratch**, the channel's own directory under the project's store
-    # (`<data root>/artifacts/<project>/.<channel>/`, Store#scratch): the
-    # publisher's to create, lay out and reuse; nothing in dev.yml or the
-    # verbs names it. Partial sets are the publisher's call (Steam refuses
-    # a build missing a depot; an rsync does not care).
+    # Two constraints hold for every publisher. The archives are read-only
+    # input: unpack and wrap, never rebuild or alter. The Receipt is the
+    # output: what dev records of the upload is the receipt plus what dev
+    # knew going in. Whatever a publisher materialises lives in its scratch,
+    # the channel's own directory under the project's store (Store#scratch).
     module Publisher
       extend T::Sig
       extend T::Helpers

@@ -13,23 +13,18 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # dev's own archive forms — the built-in `archive` packager, the default
-    # for every target that declares no other (dev#192, K1), and what the
-    # hidden `dev pack` runs for a `package:` script that wants the default
-    # with a twist. Two forms over an install directory's contents:
+    # The built-in `archive` packager, the default for every target that
+    # declares no other, and what `dev pack` runs over any directory. Two
+    # forms over an install directory's contents:
     #
-    # - **zip** (the default): `<build>.zip`, symlinks kept as symlinks.
-    # - **tar**: `<build>.tar.zst` (`tar | zstd`); with `split:`, the
-    #   stream is cut into `<build>.tar.zst.00`, `.01`, … of at most that
-    #   size — GitHub's 2 GiB per release asset is the limit this exists
-    #   for — plus `<build>.MANIFEST` listing each part's SHA-256 in
-    #   `sha256sum -c` form. The split set is what the gh integration's
-    #   reader already consumes (`cat parts | zstd -d | tar -x`), and the
-    #   MANIFEST is the archive the manifest names.
+    # - zip (the default): `<build>.zip`, symlinks kept as symlinks.
+    # - tar: `<build>.tar.zst`; with `split:`, cut into `<build>.tar.zst.00`,
+    #   `.01`, … of at most that size, plus `<build>.MANIFEST` listing each
+    #   part's SHA-256 in `sha256sum -c` form. GitHub's 2 GiB per release
+    #   asset is the limit the split exists for.
     #
-    # Needs no toolchain knowledge and writes over its own previous output,
-    # as every artifact is overwritten in place. The tar form needs `zstd`
-    # on PATH — a project fact, declared with the project's dependencies.
+    # Writes over its own previous output. The tar form needs `zstd` on
+    # PATH, declared with the project's dependencies.
     class Archive
       extend T::Sig
       include Packager

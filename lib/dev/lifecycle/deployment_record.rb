@@ -9,20 +9,15 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # What dev records of one deploy (dev#192, K6): the **channel** it went
-    # to (the GitHub Deployment's environment), the **ref** it was made
-    # from (the archives' Provenance: the commit a store artifact was
-    # packaged from, or the release's tag — dev#425), the **track**, the
-    # **builds** that shipped with the ids they were packaged under, and
-    # how it ended — the state and, in the status's description, the
-    # publisher's Receipt on success or the failure's message. A deploy
-    # produces no node of the store (K0): this record on the forge is its
-    # only trace, shared by the operator's Mac and the box's CI and keyed
-    # the way people think, channel × ref.
+    # What dev records of one deploy: the channel (the GitHub Deployment's
+    # environment), the ref it was made from (the commit a store artifact
+    # was packaged from, or the release's tag), the track, the builds that
+    # shipped with their ids, and how it ended: the state and, in the
+    # status's description, the publisher's Receipt or the failure's
+    # message. This record on the forge is a deploy's only trace.
     #
     # A build is carried by name, not as a Build: the ledger outlives the
-    # declarations (a target renamed last month still shipped), so reading
-    # a record never needs the project's targets.
+    # declarations, so reading a record never needs the project's targets.
     class DeploymentRecord < T::Struct
       extend T::Sig
       include Dev::ValueEquality::Derived
@@ -80,10 +75,9 @@ module Dev
         extend T::Sig
 
         # The records one deploy of these archives makes: one per ref they
-        # came from — one in the common case (a release's archives all
-        # carry its tag), more only when `--allow-stale` shipped artifacts
-        # of different commits together, since a GitHub Deployment is one
-        # (environment, ref).
+        # came from. One in the common case; more only when `--allow-stale`
+        # shipped artifacts of different commits together, since a GitHub
+        # Deployment is one (environment, ref).
         #
         # @param shipments [Array<Shipment>] what shipped, in accept order
         # @param channel [String] the channel's name

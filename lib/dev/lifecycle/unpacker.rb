@@ -9,18 +9,14 @@ require_relative "shell"
 
 module Dev
   module Lifecycle
-    # The inverse of Archive, for a publisher that must hand the destination
-    # a directory rather than a file (dev#192, K5): Steam's content builder
-    # reads a depot's content root, EGS's BuildPatchTool a build root. Reads
-    # every form Archive writes — a zip, a `.tar.zst`, a split set through
-    # its `MANIFEST` (`cat parts | zstd -d | tar -x`, the gh integration's
-    # pipeline) — and tells them apart by the archive's extension, the one
-    # fact the shipment carries about its form.
+    # The inverse of Archive, for a publisher whose destination takes a
+    # directory rather than a file. Reads every form Archive writes (a zip,
+    # a `.tar.zst`, a split set through its `MANIFEST`), told apart by the
+    # archive's extension.
     #
-    # The archive is read-only input: it is never moved or altered. The
-    # destination is **replaced** — removed and recreated before the
-    # extraction — so a content root is exactly the archive's contents and
-    # a file the previous deploy shipped never rides along in this one.
+    # The archive is never moved or altered. The destination is removed and
+    # recreated before the extraction, so a file a previous deploy shipped
+    # never rides along in this one.
     class Unpacker
       extend T::Sig
 
