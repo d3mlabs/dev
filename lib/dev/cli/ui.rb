@@ -66,7 +66,7 @@ module Dev
 
       # The first frame turns the StdoutRouter on and it stays on for the
       # process: cli-ui's `disable` is one-way (it leaves the alias
-      # `enabled?` reads, so a second `enable` refuses — dev#523), and
+      # `enabled?` reads, so a second `enable` refuses), and
       # nothing needs it off — a child's fd 1 is never the Ruby-level
       # `$stdout`, and with no frame open the router prefixes nothing.
       sig { override.type_parameters(:T).params(title: String, block: T.proc.returns(T.type_parameter(:T))).returns(T.type_parameter(:T)) }
@@ -78,7 +78,7 @@ module Dev
 
       # The router first: cli-ui runs the block inside a StdoutRouter
       # Capture, which refuses with the router off — silently, the block
-      # never running, the spinner answering false (plans#52: a verb whose
+      # never running, the spinner answering false (a verb whose
       # first word is a spin, with no frame before it). The spinner
       # swallows the block's raise and answers false (auto_debrief off: no
       # backtrace dump — the verb reports the failure in its own words);

@@ -7,7 +7,7 @@ require_relative "parsed_args"
 
 module Dev
   module Cli
-    # The one rule for `-`-prefixed arguments at a dev-defined node (#217),
+    # The one rule for `-`-prefixed arguments at a dev-defined node,
     # the cobra/gh convention: `-h` / `--help` anywhere among a node's
     # arguments asks for that node's usage; any other flag not in the node's
     # declared vocabulary (Command#flags) is a usage error, as is a value

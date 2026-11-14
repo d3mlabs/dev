@@ -7,7 +7,7 @@ require_relative "parsed_args"
 
 module Dev
   module Cli
-    # What `dev build` and `dev package` make of their argv (dev#192, K4):
+    # What `dev build` and `dev package` make of their argv:
     # one Build. The positional is a build name or a pattern in the grammar
     # (`<target>[-<platform>[-<config>]]`); `--target T --platform P
     # --config C` is its long form; an axis the argument leaves out takes

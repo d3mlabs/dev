@@ -22,16 +22,16 @@ module Dev
       # The project's command tree as declared: runnable commands (with any
       # nested `commands:` as children) and groups.
       const :commands, T::Hash[String, ProjectNode]
-      # What the project can build (`targets:`, dev#192), in declaration
+      # What the project can build (`targets:`), in declaration
       # order — the first is what bare `build` means. Empty when the project
       # declares none, and then no lifecycle verb exists for it.
       const :targets, T::Hash[String, Lifecycle::Target], default: {}
-      # Where the project ships artifacts (`commands: deploy:`'s children,
-      # dev#192 K5), in declaration order — lifted out of `commands` once
+      # Where the project ships artifacts (`commands: deploy:`'s children),
+      # in declaration order — lifted out of `commands` once
       # targets exist, since `deploy` is derived from them. Empty when the
       # project declares none, and then `deploy` does not exist for it.
       const :channels, T::Hash[String, Lifecycle::Channel], default: {}
-      # What a release contains (`commands: release:`, dev#192 K4) — lifted
+      # What a release contains (`commands: release:`) — lifted
       # out of `commands` once targets exist, since `release` is derived
       # from them. Nil when the project declares none, and then `release`
       # does not exist for it.

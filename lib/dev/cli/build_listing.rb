@@ -8,7 +8,7 @@ require_relative "command"
 module Dev
   module Cli
     # What `dev help build` and `dev help package` list, and what Tab
-    # completion offers after them (dev#192, K2, K4): every build the
+    # completion offers after them: every build the
     # project's targets derive, in declaration order — the first is the bare
     # verb's default — each with the placement its target declares for it,
     # and a note when this machine cannot produce it there (a host build of

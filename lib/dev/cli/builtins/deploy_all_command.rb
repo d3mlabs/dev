@@ -15,7 +15,7 @@ require_relative "deploy_status_command"
 module Dev
   module Cli
     module Builtins
-      # `dev deploy`, the node heading the channels (dev#192, K4; dev#425):
+      # `dev deploy`, the node heading the channels:
       # `dev deploy <channel> …` reaches a child (DeployCommand) and
       # `dev deploy status` the ledger's reader (DeployStatusCommand), as
       # with any node; what the node itself runs is the **fan-out** —
@@ -116,7 +116,7 @@ module Dev
 
           tag = Lifecycle::ReleaseTag.new(version)
           words = args.spelling(flags)
-          # Each channel resolves its own dispatch (K10), so this one is
+          # Each channel resolves its own dispatch, so this one is
           # native and its invocation is never spoken to a host.
           Dispatch::Native.new.dispatch(Lifecycle::VerbInvocation.new(words: [NAME, *words])) do
             FanOutEnv.new(tag:, words:, dry_run: args.flag?(DeployCommand::DRY_RUN_FLAG))

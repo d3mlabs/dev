@@ -10,15 +10,15 @@ module Dev
   module Cli
     # Parses the dev.yml `commands: deploy:` entry into Lifecycle::Channel
     # values — the dev.yml boundary for channels, as TargetParser is for
-    # targets (dev#192, K5). With targets declared, `deploy` is derived from
+    # targets. With targets declared, `deploy` is derived from
     # its children: every child is a **channel** — `targets:` the build
     # patterns it accepts (parsed in the one grammar against the project's
     # targets, so a pattern naming no build fails at load), `run:` its
     # protocol when it has a script one, `desc` and `environment:` as any
     # command's. A child with no `run:` names the publisher the lock's
-    # integration of the same name contributes (dev#422): `targets:` then
-    # *configures* that channel, where a `run:` *replaces* its protocol
-    # (K1b). The entry itself has no body and no other keys to give: a
+    # integration of the same name contributes: `targets:` then
+    # *configures* that channel, where a `run:` *replaces* its
+    # protocol. The entry itself has no body and no other keys to give: a
     # `run:` on `deploy`, a child without `targets:`, a child with children
     # of its own, an `environment:` with no `run:` to place are each refused
     # with the fix named.
@@ -30,8 +30,8 @@ module Dev
     # bind (ChannelBinder), as an `environment:` reference is.
     #
     # A child without `run:` may carry the publisher's **options** under a
-    # key of its own name (`steam: { app: 480, depots: … }`, dev#426) — the
-    # namespacing an integration builder's target options use (K1). The
+    # key of its own name (`steam: { app: 480, depots: … }`) — the
+    # namespacing an integration builder's target options use. The
     # mapping is handed to the channel as YAML delivered it: its vocabulary
     # is the publisher's, which validates it. Beside a `run:` the key is
     # refused — the script replaced the publisher the options would

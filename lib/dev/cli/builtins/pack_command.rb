@@ -17,7 +17,7 @@ module Dev
       # the files written are printed one per line. Plumbing for a target's
       # `package:` script that wants the default form with a twist (`dev
       # pack "$DEV_INSTALL" --out "$DEV_ARTIFACT"`), so hidden from the
-      # listings (dev#192, K1).
+      # listings.
       class PackCommand < BuiltinCommand
         extend T::Sig
 

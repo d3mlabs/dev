@@ -15,7 +15,7 @@ module Dev
       # node, ends the walk with nothing to offer. When the walk ends on a
       # leaf, the leaf's own `completions` (over the words after its name)
       # are printed instead, in the leaf's order — this command never sorts
-      # them (#211: order is the leaf's to decide). Hidden itself: the
+      # them (order is the leaf's to decide). Hidden itself: the
       # completers installed by Cd::HookInstaller call it, users never do.
       class CompleteCommand < BuiltinCommand
         extend T::Sig

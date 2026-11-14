@@ -14,15 +14,14 @@ require_relative "target_parser"
 
 module Dev
   module Cli
-    # The boundary coercion for dev.yml: #load parses it once and rejects the
-    # removed keys at parse time — `ruby:`, the Dockerfile path's
-    # `build.container` block with every command's `container:` flag
-    # (dev#307, dev#311), and every command's `runs_on:` (now `environment:`,
-    # dev#409) — each with where it went. dependencies.rb is not read here —
-    # the toolchain is a dependency, and only the deps commands evaluate that
+    # The boundary coercion for dev.yml: #load parses it once and rejects
+    # the removed keys at parse time (`ruby:`, the `build.container` block
+    # with every command's `container:` flag, and every command's
+    # `runs_on:`), each with where it went. dependencies.rb is not read
+    # here; only the deps commands evaluate that file.
     # file.
     #
-    # With `targets:` declared (dev#192) it also holds the rules that span
+    # With `targets:` declared it also holds the rules that span
     # targets and commands: `build` and `package` are derived from the
     # targets, so a project may not declare them as commands; no command may
     # be named like a build, so a positional `dev build <build>` is never
@@ -48,39 +47,39 @@ module Dev
       # clean `dev:` error.
       class UnsupportedDevYamlRubyError < RuntimeError; end
 
-      # Raised when dev.yml still carries a retired key: the Dockerfile
-      # path's `build.container` block and a command's `container:` flag
-      # (the environment is the lock's `image` block, dev#277), or a
-      # command's `runs_on:` (the key is `environment:`, dev#409). The
-      # message lists each key with its migration. RuntimeError so the CLI
-      # boundary reports it as a clean `dev:` error.
+      # Raised when dev.yml still carries a retired key: the
+      # `build.container` block and a command's `container:` flag (the
+      # environment is the lock's `image` block), or a command's `runs_on:`
+      # (the key is `environment:`). The message lists each key with its
+      # migration. RuntimeError so the CLI boundary reports it as a clean
+      # `dev:` error.
       class RetiredKeysError < RuntimeError; end
 
       # Raised when a project with `targets:` declares `commands: build:` or
-      # `commands: package:` — the verbs are derived from the targets
-      # (dev#192, K1); what the project wanted to run is a target's builder.
+      # `commands: package:`: the verbs are derived from the targets, and
+      # what the project wanted to run is a target's builder.
       class DerivedCommandDeclaredError < RuntimeError; end
 
       # Raised when a project with `targets:` names a command like one of its
       # builds (or a pattern over them): `dev build <build>` is positional,
-      # so the two vocabularies may not overlap (dev#192, *The model*).
+      # so the two vocabularies may not overlap.
       class BuildNamedCommandError < RuntimeError; end
 
-      # Raised when a `deploy` child declares `targets:` — the shape of a
-      # channel — in a project that declares no `targets:` at the top level:
-      # there is no build for it to accept (dev#192, K5).
+      # Raised when a `deploy` child declares `targets:` (the shape of a
+      # channel) in a project that declares no `targets:` at the top level:
+      # there is no build for it to accept.
       class ChannelWithoutTargetsError < RuntimeError; end
 
-      # Raised when `release` declares `targets:` — the shape of a release
-      # declaration — in a project that declares no `targets:` at the top
-      # level: there is no build for a release to contain (dev#192, K4).
+      # Raised when `release` declares `targets:` (the shape of a release
+      # declaration) in a project that declares no `targets:` at the top
+      # level: there is no build for a release to contain.
       class ReleaseWithoutTargetsError < RuntimeError; end
 
       # The verbs `targets:` derives; a project may not declare them.
       DERIVED_COMMANDS = T.let(["build", "package"].freeze, T::Array[String])
 
-      # The key `runs_on:` became (dev#409) — the command parser's key, named
-      # here for the migration messages.
+      # The key `runs_on:` became: the command parser's key, named here for
+      # the migration messages.
       ENVIRONMENT_KEY = CommandParser::ENVIRONMENT_KEY
       # The retired spelling of ENVIRONMENT_KEY.
       RUNS_ON_KEY = "runs_on"

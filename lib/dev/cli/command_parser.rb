@@ -33,9 +33,7 @@ module Dev
       class InvalidEnvironmentError < ArgumentError; end
 
       RESERVED_CHILD_NAME = "help"
-      # The key naming the environment a command's body executes in — the
-      # domain's own noun, where `runs_on` (retired, dev#409) is GitHub's
-      # word for a runner label.
+      # The key naming the environment a command's body executes in.
       ENVIRONMENT_KEY = "environment"
 
       # Values may be nil for optional keys; `commands` nests further hashes.

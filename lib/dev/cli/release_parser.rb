@@ -7,7 +7,7 @@ module Dev
   module Cli
     # Parses the dev.yml `commands: release:` entry into the project's
     # Lifecycle::ReleaseBuilds — the dev.yml boundary for the release, as
-    # ChannelParser is for channels (dev#192, K4). With targets declared,
+    # ChannelParser is for channels. With targets declared,
     # `release` is derived, not a command: the entry says what a release
     # contains and nothing else — `targets:`, a list in the build grammar
     # parsed against the project's targets (so a name no target spells fails
