@@ -14,24 +14,20 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # One entry of dev.yml `targets:` — the content axis of what the project
-    # can build (a client, the client with Steamworks compiled in, a
-    # dedicated server, a library, a gem, an org payload), with the
-    # platforms and configs it declares (dev#192, K1) and the environment
-    # its builds run in (`environment:`, K8). Each declared axis
-    # contributes one segment to the names of the target's builds; a target
-    # declaring neither is its own single build.
+    # One entry of dev.yml `targets:`: what the project can build, with the
+    # platforms and configs it declares and the environment its builds run
+    # in. Each declared axis contributes one segment to the names of the
+    # target's builds; a target declaring neither is its own single build.
     #
-    # It also declares how its builds are made: a builder (`build:`; none
-    # for a target with nothing to compile) and a packager (`package:` or
-    # `packager:`; dev's `archive` unless declared, `none` for a target
-    # that is built and never shipped).
+    # Also declares how its builds are made: a builder (`build:`; none for a
+    # target with nothing to compile) and a packager (`package:` or
+    # `packager:`; `archive` unless declared, `none` for a target that is
+    # built and never shipped).
     #
-    # Owns the one rule that keeps the build grammar unambiguous: a target
-    # name may not end in a platform or config id, because
-    # `<target>-<id>` is how a build of the shorter target spells itself.
-    # Owns, too, the fit between its environment and its platforms: a
-    # per-platform environment names exactly the platforms declared.
+    # Owns the rule that keeps the build grammar unambiguous: a target name
+    # may not end in a platform or config id. Owns the fit between its
+    # environment and its platforms: a per-platform environment names
+    # exactly the platforms declared.
     class Target < T::Struct
       extend T::Sig
       include Dev::ValueEquality::Derived

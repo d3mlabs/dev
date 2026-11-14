@@ -14,44 +14,31 @@ module Dev
   module Deps
     # The lock-writing rule that decides, pin by pin, whether the lock being
     # written takes the pin the Resolver just minted or carries the one the
-    # lock on disk already has — `bundle install`'s resolution against an
-    # existing Gemfile.lock (plans#50 D3), applied to the brew channel.
+    # lock on disk already has.
     #
-    # Brew is a moving registry: every `dev deps update` on a machine whose
-    # index is ahead of the lock re-resolved every formula to today's
-    # version, so adding one `gh` entry moved `python@3.12` and `cmake` in
-    # the same diff (cellbound-3d#319, dev#355). A declaration that did not
-    # change should not produce a different pin. So a brew pin — a formula
-    # or an interpreter; casks pin no version — keeps the lock's version
-    # when its declaration is unchanged (same tap, same scope, and the
-    # locked version still satisfies its constraint) and the lock can
-    # converge a host to that version: it records the `tap_commit` at
-    # which the formula is that version, and `dev up` installs from the
-    # tap checked out there (dev#356). It floats when the author asked
-    # (the UnlockSet: `dev deps update <name>`, `--all`), when the
-    # declaration changed, or when the lock records no tap commit — the
-    # one move the author did not ask for, reported with its reason.
+    # Brew is a moving registry, so re-resolving every formula on each `dev
+    # deps update` would move pins whose declarations did not change. A
+    # brew pin (a formula or an interpreter; casks pin no version) keeps the
+    # lock's version when its declaration is unchanged (same tap, same
+    # scope, and the locked version still satisfies its constraint) and the
+    # lock records the `tap_commit` at which the formula is that version.
+    # It floats when the author asked (`dev deps update <name>`, `--all`),
+    # when the declaration changed, or when the lock records no tap commit;
+    # that last move is reported with its reason.
     #
-    # `tap_commit` rides the pin (ADR-0005, refined by dev#355): a kept pin
-    # keeps the commit it was resolved at — a commit where its formula is
-    # what the lock says — and a re-resolved pin takes today's HEAD unless
-    # nothing about it changed, in which case the previous commit still
-    # describes it. The unit is the pin, not the tap: a tap whose pins moved
-    # at different times carries several commits, which a pinned install
-    # refuses (BrewIntegration#pin_taps!) with `--all` as the remediation.
+    # A kept pin keeps the commit it was resolved at; a re-resolved pin
+    # takes today's HEAD unless nothing about it changed. The unit is the
+    # pin, not the tap: a tap whose pins moved at different times carries
+    # several commits, which a pinned install refuses with `--all` as the
+    # remediation.
     #
     # A subset re-lock carries every pin it did not float verbatim from the
-    # lock on disk, whatever its channel — `bundle update <gem>`. Such a pin
-    # needs nothing from today's universe, so when the universe did not
-    # answer for its declaration (the Resolver's Unresolved: an image floor
-    # in a registry the host has no token for, dev#373) the lock's pin
-    # stands all the same, reported as kept for want of an answer —
-    # provided the pin was resolved from the floor the declaration names:
-    # an image pin records its floor, and an edited floor nobody answered
-    # for is a changed declaration, not a kept one. Every other shape —
-    # `--all`, the declaration named, a bare re-lock, no pin to keep, a
-    # floor that moved — needs today's answer, and the repository's
-    # failure propagates as it would have from the resolution.
+    # lock on disk, whatever its channel. Such a pin needs nothing from
+    # today's universe, so when the universe did not answer for its
+    # declaration the lock's pin stands, reported as kept for want of an
+    # answer, provided it was resolved from the source the declaration
+    # names. Every other shape needs today's answer, and the repository's
+    # failure propagates.
     #
     # Pure over the declarations, the previous lock and the resolution; the
     # Resolver never sees the previous lock.
@@ -352,10 +339,9 @@ module Dev
 
       # Whether a host can be converged to the lock's version: the lock
       # records the tap commit at which the formula is that version, and
-      # `dev up` installs it from the tap checked out there (dev#356) —
-      # bottles or not. A pin written before tap commits were recorded
-      # leaves a host only `brew upgrade`, which reaches today's version
-      # and no other.
+      # `dev up` installs it from the tap checked out there. A pin with no
+      # tap commit leaves a host only `brew upgrade`, which reaches today's
+      # version and no other.
       #
       # @param prior [Dependency] the lock's pin
       # @return [Boolean]

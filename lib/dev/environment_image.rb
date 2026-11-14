@@ -9,7 +9,7 @@ require "dev/lifecycle/platform"
 require "dev/platform"
 
 module Dev
-  # A project's environment image as the lock describes it (dev#277): the
+  # A project's environment image as the lock describes it: the
   # floor pinned by digest, the platform, the apt set — and what dev makes
   # of them: the Dockerfile it builds, and the content digest that is the
   # image's identity.
@@ -20,12 +20,12 @@ module Dev
   # it should. The text carries no digest itself (the marker's value arrives
   # as a build arg), so the identity has one definition. The same 64 hex are
   # the registry tag, the lock's `digest`, the marker's `digest=` inside the
-  # image: every compare, dev#308's host rule included, is equality.
+  # image: every compare, the host rule included, is equality.
   #
   # The pin also carries the container's shape — `persist`, `volumes`,
-  # `run_env` (dev#307) — read here for whoever runs the image, and the
+  # `run_env` — read here for whoever runs the image, and the
   # image's capability — `target_platforms`, the build platforms its
-  # toolchain emits (dev#192, K8), what a target's `environment:` is
+  # toolchain emits, what a target's `environment:` is
   # checked against; none of it is image content, so none of it is in the
   # Dockerfile or the digest.
   #
@@ -49,18 +49,18 @@ module Dev
     # does not.
     class TargetPlatformError < StandardError; end
 
-    # The floor contract dev's template relies on (ADR-0006, build-base): the
+    # The floor contract dev's template relies on (build-base): the
     # unprivileged user builds run as, and Linuxbrew's fixed prefix, a
     # named volume at run time.
     FLOOR_USER = "builder"
     LINUXBREW_PREFIX = "/home/linuxbrew/.linuxbrew"
 
     # The file a host or container carries to say which environment it is
-    # (dev#308 compares it to the lock): `name=…\ndigest=…\n`.
+    # (the host rule compares it to the lock): `name=…\ndigest=…\n`.
     MARKER_PATH = "/etc/dev/environment"
 
     # The one placement that is no image — dev.yml's `environment: host`,
-    # "wherever dev itself runs" (dev#307, dev#409) — so no image may bear
+    # "wherever dev itself runs" — so no image may bear
     # the name.
     HOST = "host"
 

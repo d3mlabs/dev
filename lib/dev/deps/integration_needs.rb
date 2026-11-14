@@ -10,7 +10,7 @@ module Dev
   module Deps
     # Reads each integration's own dependencies.rb as a library and builds
     # the needs table the Resolver walks: integration symbol → the
-    # declarations that manifest exports (ADR-0011).
+    # declarations that manifest exports.
     #
     # Library mode is the export rule applied: only ungrouped declarations
     # export (grouped ones are the library's private business and env never

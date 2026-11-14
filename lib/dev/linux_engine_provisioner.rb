@@ -22,7 +22,7 @@ module Dev
   # other presence check — the docker binary on PATH, the buildx plugin file
   # in a CLI plugin dir — never a docker spawn: `docker buildx version` was
   # the first touch of the CLI and its plugin on a hosted runner's cold disk,
-  # 7.4s on every `dev up` (dev#400). When something is missing, one `sudo
+  # 7.4s on every `dev up`. When something is missing, one `sudo
   # -v` asks for the password and the steps that follow ride the cached
   # credential, each as its own argv so a failure names what failed.
   #

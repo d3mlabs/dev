@@ -22,18 +22,18 @@ require "dev/wsl_runner_host"
 module Dev
   # `dev runner status` — register's inspect-only counterpart: this
   # machine's discovered enrollments (every ~/actions-runner*/.runner),
-  # grouped into the host's slots at each scope (dev#470: the enrollments
+  # grouped into the host's slots at each scope (the enrollments
   # sharing a base name — how many jobs the host runs at once there —
   # with, at an org scope, the runner group and the repos it is visible
   # to), each one's labels read
   # from GitHub (their single home — unknown when offline), and the
   # inspected reality of every agent-labeled enrollment's
   # contract. Nothing here mutates and nothing is recorded — every fact is
-  # re-derived from the host or GitHub every time (plans#26: inspected,
+  # re-derived from the host or GitHub every time (inspected,
   # never recorded). No dev.yml involved: status is the machine's view,
   # not any repo's.
   #
-  # Under the Linux host rule (dev#310, RunnerUser) the enrollments live
+  # Under the Linux host rule (RunnerUser) the enrollments live
   # under the runner user's home and run as it: status looks there too,
   # says who each enrollment runs as (one owned by anyone else is drift),
   # and reports the host identity — the user, its gh login, and when that
@@ -44,10 +44,10 @@ module Dev
   # The agent host facts are the bootstrap's own (AgentBootstrap: the
   # host's adapter, the one register converges with), read through its
   # inspection methods — so a Mac and a Linux box report the same facts
-  # in the same words, each probed with its own CLIs (plans#59).
+  # in the same words, each probed with its own CLIs.
   #
   # Inside a WSL2 distro a **WSL runner host** section reports what
-  # register converged there (dev#261, WslRunnerHost): systemd running, and
+  # register converged there (WslRunnerHost): systemd running, and
   # the logon keepalive task — present, holding a session, running — that
   # is the difference between a distro that autostarts and stays up and
   # one WSL stops ~20 s after the operator's last shell closes. The task
@@ -80,7 +80,7 @@ module Dev
     #   repo whose access to each org scope's slots is reported
     # @param reach_factory [Proc] builds the reach check for an identity; injected for tests
     # @param wsl_runner_host [Dev::WslRunnerHost, nil] the WSL runner host's
-    #   facts (dev#261); nil off WSL
+    #   facts; nil off WSL
     sig do
       params(
         discovery: Dev::RunnerDiscovery,
@@ -141,7 +141,7 @@ module Dev
     # runners nested, the host identity, its reach, the agent host, the
     # host tooling — and a note per fact, carrying its glyph: `{{v}}` ok,
     # `{{x}}` a finding, `{{?}}` unknown. The terminal frames and colours
-    # them; a pipe reads the same facts plain (plans#52).
+    # them; a pipe reads the same facts plain.
     #
     # @return [void]
     sig { void }
@@ -164,7 +164,7 @@ module Dev
 
     # A fact this account cannot inspect: neither ok nor a finding, so
     # neither glyph — a `{{x}}` that is wrong once is ignored when it is
-    # right (dev#348). The description says how to find out.
+    # right. The description says how to find out.
     #
     # @param description [String]
     sig { params(description: String).void }
@@ -211,13 +211,13 @@ module Dev
       end
     end
 
-    # The frame for this host's slots at a scope (dev#470), the runners'
+    # The frame for this host's slots at a scope, the runners'
     # frames nested in it by the block: the scope
     # first, then how many jobs the host runs at once there and the
     # runners' names (the hostname, `-<n>` beyond the first), and, at an
     # org scope, who may use them: the runner group slot 1 sits in, held
     # against the group the labels oblige (ai-flow slots belong in the
-    # ai-flow group, pinned to ai-flow's workflows — plans#5 H3; a group
+    # ai-flow group, pinned to ai-flow's workflows; a group
     # the console drifted from that is a finding, register the remedy),
     # the repos the group is visible to, and — in a checkout — whether
     # that repo is among them. All read from GitHub. A lone repo-scoped
@@ -318,7 +318,7 @@ module Dev
     # runner is gone server-side (a stale local dir). A runner GitHub
     # lists offline while this dir holds its enrollment means nothing is
     # running the registration (a stopped service, or a dir `--replace`
-    # superseded) — flagged, with register as the remedy (#238).
+    # superseded) — flagged, with register as the remedy.
     #
     # @param enrollment [Dev::RunnerDiscovery::Enrollment]
     # @return [Array<String>, nil]
@@ -364,8 +364,8 @@ module Dev
     # (RunnerUser#probe_argv). Status never prompts (`-n`, like the
     # sudoers-edge probes): when sudo refuses the operator the login is
     # unknown, not absent — a `{{?}}` with the command that can tell, never
-    # the login remedy, which would overwrite a working login if followed
-    # (dev#348).
+    # the login remedy, which would overwrite a working login if
+    # followed.
     #
     # @return [Boolean] whether the identity has a gh login to probe with
     sig { returns(T::Boolean) }
@@ -412,7 +412,7 @@ module Dev
       true
     end
 
-    # Who owns the toolchain (dev#337): jobs upgrade dev through brew, so
+    # Who owns the toolchain: jobs upgrade dev through brew, so
     # the prefix is the runner user's by rule; anyone else's is drift —
     # every job's `brew upgrade` fails, and dev stays where it is. Nothing
     # on a host without brew.
@@ -467,7 +467,7 @@ module Dev
       match && Date.parse(T.must(match[1]))
     end
 
-    # The WSL runner host's facts (dev#261), re-derived: nothing off WSL.
+    # The WSL runner host's facts, re-derived: nothing off WSL.
     sig { void }
     def report_wsl_runner_host
       wsl = @wsl_runner_host

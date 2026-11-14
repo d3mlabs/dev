@@ -21,13 +21,10 @@ require_relative "target"
 module Dev
   module Lifecycle
     # Turns a target's and a channel's declarations into their ports for
-    # this checkout (dev#192, K1, K5): a `build:` line becomes a
-    # ScriptBuilder at the project root, a `package:` line a
-    # ScriptPackager, a channel's `run:` a ScriptPublisher, a channel
+    # this checkout: a `build:` line becomes a ScriptBuilder, a `package:`
+    # line a ScriptPackager, a channel's `run:` a ScriptPublisher, a channel
     # naming an integration the publisher the lock contributed under that
-    # name, and the built-in packagers are their own ports. The one place
-    # the sealed specs are matched, so dev#433's integration builders have
-    # one site to join.
+    # name. The one place the sealed specs are matched.
     #
     # The project root, the shell and the lock's publishers are fixed for
     # a checkout and so are constructor-owned; the target is per call.
@@ -43,7 +40,7 @@ module Dev
       # @param project_root [Pathname] where the script forms run
       # @param shell [Shell] the process boundary the script forms and the archive share
       # @param publishers [Hash{String => Publisher}] the publishers the
-      #   lock contributes, by channel name (dev#422)
+      #   lock contributes, by channel name
       sig { params(project_root: Pathname, shell: Shell, publishers: T::Hash[String, Publisher]).void }
       def initialize(project_root:, shell: Shell.new, publishers: {})
         @project_root = project_root

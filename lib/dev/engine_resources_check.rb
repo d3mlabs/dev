@@ -11,7 +11,7 @@ module Dev
   # the engine a containerized command is about to use: what the daemon
   # reports (ContainerEngine#resources) against what the repo declared it
   # needs (EngineResources::Hint). One owner per path, one `docker info`
-  # per path (dev#400): EngineProvisioner runs it after sizing the engine
+  # per path: EngineProvisioner runs it after sizing the engine
   # (`dev up`, `dev container up`, `dev engine up`), CommandRunner before a
   # containerized command's image resolution (no provisioner ran there) —
   # so a VM that shrank underneath a project, or was never resized, fails

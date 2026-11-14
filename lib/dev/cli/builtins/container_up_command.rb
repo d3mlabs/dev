@@ -21,7 +21,7 @@ module Dev
     module Builtins
       # `dev container up` — everything a containerized command needs before it
       # runs, done ahead of time: the engine up and sized from this repo's
-      # hint, once; then, image by image (ProjectImages#all, dev#307), the
+      # hint, once; then, image by image (ProjectImages#all), the
       # image resolved (local → registry → build) and, when the image
       # persists its container, the service container created or restarted
       # warm, its dev converged to the host's, and its side of the dependency
@@ -33,8 +33,8 @@ module Dev
       # environment service: commands execute in them), so this is the
       # ServiceUp port `dev up` composes; `call` is the CLI adapter over it.
       #
-      # The host rule, asked of each image (HostRule; ADR-0007 as amended by
-      # dev#308): a container is needed exactly when this host was not
+      # The host rule, asked of each image (HostRule): a container is
+      # needed exactly when this host was not
       # provisioned from the image. A host that was — its marker is the
       # lock's pin — installs everything itself and runs that image's
       # commands directly, so there is nothing to bring up for it: no image,
@@ -46,8 +46,8 @@ module Dev
       # resolves the image so the registry has it for the hosts that do need
       # it, and still starts no container.
       #
-      # The container works on its own checkout, not the host's (ADR-0008 as
-      # closed by dev#421): its dependency install reads the lock from a
+      # The container works on its own checkout, not the host's: its
+      # dependency install reads the lock from a
       # snapshot of this tree, pushed for the install's duration
       # (Lifecycle::SnapshotSync) and fetched into the container's workspace
       # by the container itself (ProjectContainer).
@@ -192,7 +192,7 @@ module Dev
 
         # Engine up, sized from the project's hint and measured against it,
         # once — and not at all when no image needs it. The provisioner is
-        # this path's one owner of the engine-floor gate (dev#400): the image
+        # this path's one owner of the engine-floor gate: the image
         # steps below do not measure again.
         #
         # @param project [ProjectContext]
@@ -247,7 +247,7 @@ module Dev
 
         # What a running container needs before a command runs in it: a user
         # that can write its data root, the host's dev, then its own install
-        # of the lock (the container is a build host, ADR-0008) — read from a
+        # of the lock (the container is a build host) — read from a
         # snapshot of this checkout it fetches for itself.
         #
         # @param name [String] the running container

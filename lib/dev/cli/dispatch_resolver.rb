@@ -12,8 +12,8 @@ require_relative "remote_dispatches"
 
 module Dev
   module Cli
-    # The one decision site of where a lifecycle verb executes (dev#192,
-    # K8): a build's bound placement — its target's `environment:` for the
+    # The one decision site of where a lifecycle verb executes: a build's
+    # bound placement — its target's `environment:` for the
     # build's platform, as TargetPlacement answers it — against the host
     # rule, then against the hosts the remote dispatch can reach. In order:
     #
@@ -21,7 +21,7 @@ module Dev
     #    whatever the placement — a Win64 build-check on the hosted pool
     #    from a box that could build it natively.
     # 2. `--container` forces the project's own container of the build's
-    #    image (dev#421) — a flag, not a label, because a runner may be
+    #    image — a flag, not a label, because a runner may be
     #    labelled `local` and `host` is `environment:`'s reserved word. A
     #    `host` build has no image to run a container of: refused.
     # 3. `host` is native here.
@@ -33,7 +33,7 @@ module Dev
     # 5. Otherwise the verb leaves the machine: to the label `lifecycle.runner`
     #    names (`dev config set`, a standing `--runner`), else to the repo's
     #    enrolled runner when GitHub lists one online, else to the local
-    #    container — the degenerate runner, last (K9).
+    #    container — the degenerate runner, last.
     #
     # The same rule CommandRunner places a project command by, read for a
     # verb: the verb never enters a container itself — its seam is a port in

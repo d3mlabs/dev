@@ -55,7 +55,7 @@ module Dev
 
       # brew is single-owner: it refuses to write a prefix its caller does
       # not own, and on a Linux build host the prefix is the runner user's
-      # by rule (dev#337), so the operator's `dev up` there must not try.
+      # by rule, so the operator's `dev up` there must not try.
       # brew's own test is the Cellar's writability; before a first install
       # there is no Cellar and the prefix itself answers. No prefix, or one
       # that is not there: not writable.
@@ -148,7 +148,7 @@ module Dev
       @prefix_writable = prefix_writable
     end
 
-    # The brew tooling layer (plans#26): brew converges brew — dev never
+    # The brew tooling layer: brew converges brew — dev never
     # re-implements host tooling convergence, it only *triggers* brew's,
     # the same way it triggers bundler for gems. In order: deployment
     # sanity warning, `brew update` (so a deployment fix propagates on the
@@ -166,7 +166,7 @@ module Dev
     # self-skips. A no-op on brewless machines (no prefix means no system
     # config location, no Brewfile, nothing to upgrade), and — silently —
     # for a caller who does not own the prefix: on a Linux build host brew
-    # is the runner user's (dev#337), and the operator's own `dev up` there
+    # is the runner user's, and the operator's own `dev up` there
     # has nothing to converge and nothing to warn about; the jobs do it.
     #
     # @return [void]
@@ -199,8 +199,8 @@ module Dev
     # it — and `brew upgrade` refreshes shipped skills automatically (the
     # symlinks resolve through the installed tree, wherever brew put it).
     # The org channel is the learnings sync's to materialize, right after it
-    # refreshes the cache (see sync_learnings). In a project, the flat gem
-    # links of the pre-#250 layout are swept first (a one-time migration).
+    # refreshes the cache (see sync_learnings). In a project, flat gem
+    # links from the older layout are swept first.
     #
     # @param project_root [Pathname, String, nil] project whose gem skills
     #   to materialize; nil skips them (no project context)

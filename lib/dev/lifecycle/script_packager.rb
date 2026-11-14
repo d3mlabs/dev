@@ -10,16 +10,13 @@ require_relative "shell"
 
 module Dev
   module Lifecycle
-    # The script form of the Packager port (dev#192, K1): the target's
-    # `package:` line, run at the project root with the build, the install
-    # and `DEV_ARTIFACT` — the archive path without its extension — in its
-    # env (ScriptEnv). The script appends the extension of whatever it
-    # writes (`"$DEV_ARTIFACT.zip"`; `dev pack "$DEV_INSTALL" --out
-    # "$DEV_ARTIFACT"` for dev's own forms with a twist). What it wrote is
-    # read back as the files named `<archive>.*` that were not there
-    # before: the lexically first is the archive the manifest records, the
-    # rest its parts — which is the order dev's own split form sorts in
-    # (`<build>.MANIFEST`, then `<build>.tar.zst.00…`).
+    # The script form of the Packager port: the target's `package:` line,
+    # run at the project root with the build, the install and `DEV_ARTIFACT`
+    # (the archive path without its extension) in its env. The script
+    # appends the extension of whatever it writes. What it wrote is read
+    # back as the `<archive>.*` files that were not there before: the
+    # lexically first is the archive the manifest records, the rest its
+    # parts, which is the order dev's own split form sorts in.
     class ScriptPackager
       extend T::Sig
       include Packager

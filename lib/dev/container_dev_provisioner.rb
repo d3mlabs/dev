@@ -8,7 +8,8 @@ require "dev/version"
 
 module Dev
   # Keeps a build container's dev at the host's exact version — "containers
-  # match the orchestrator" (README, "dev is live infrastructure").
+  # match the orchestrator" (docs/configuration.md, "dev is live
+  # infrastructure").
   #
   # Compare-and-install with a no-op steady state: `dev version` inside the
   # container is probed through `docker exec`; when it differs from the
@@ -16,7 +17,7 @@ module Dev
   # bootstrap removed dev-core), bin/container-provision-dev.sh installs the
   # host's version from the tap's history into the container's Linuxbrew
   # prefix — a named volume the script bootstraps Homebrew into when the
-  # image carries none (ADR-0008). The host is the only writer of the
+  # image carries none. The host is the only writer of the
   # container's dev; the inside dev (DEV_INSIDE_CONTAINER) never self-updates.
   class ContainerDevProvisioner
     extend T::Sig

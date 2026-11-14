@@ -52,7 +52,7 @@ module Dev
       # Per-root record of what dev materialized there.
       MANIFEST_FILENAME = "manifest.json"
 
-      # The link-name prefix of the pre-#250 flat gem layout
+      # The link-name prefix of the flat gem layout
       # (`.agents/skills/gem-<gem>--<skill>`), kept only so the one-time
       # migration can recognize what dev minted.
       LEGACY_GEM_LINK_PREFIX = "gem-"
@@ -115,7 +115,7 @@ module Dev
         root.children.select { |child| child.directory? && (child / SKILL_FILE).file? }.sort
       end
 
-      # The flat gem links of the pre-#250 layout still present in a
+      # The flat gem links still present in a
       # project's skills dir — dev's by prefix, removed exactly once by the
       # migration.
       #

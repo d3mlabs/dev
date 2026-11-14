@@ -90,7 +90,7 @@ class Dev::Cli::ChannelBinderTest < Minitest::Test
     faults.keys == [name]
     faults.fetch(name).summary == summary
     faults.fetch(name).message == "channel 'deploy #{name}' has no protocol: it declares no `run:` and #{summary} — #{fix}, " \
-      "or declare `run:` (a script shipping `$DEV_ARTIFACT`) (d3mlabs/dev#192)"
+      "or declare `run:` (a script shipping `$DEV_ARTIFACT`)"
 
     Where
     what                                        | name    | contributed | reach  | summary                                   | fix

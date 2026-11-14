@@ -30,8 +30,8 @@ module Dev
     #
     # The channels are composed by the caller (HostService knows which
     # producers exist on this machine for a project); this class only knows
-    # how to show and sync a list of them. Both verbs speak through the Ui
-    # (plans#52): a frame per channel on `status`, a `{{v}}` / `{{x}}` fact
+    # how to show and sync a list of them. Both verbs speak through the
+    # Ui: a frame per channel on `status`, a `{{v}}` / `{{x}}` fact
     # per link; one frame on `sync`, a spin per channel materialized. The
     # `--json` form is a payload for tooling, printed bare on its stream.
     class Accessor
@@ -87,7 +87,7 @@ module Dev
       end
 
       # `dev skills sync`: materialize every channel now (sweeping the
-      # project's pre-#250 flat gem links first, like the hooks do) — a spin
+      # project's flat gem links first, like the hooks do) — a spin
       # per channel, then what each holds.
       #
       # @return [void]

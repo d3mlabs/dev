@@ -13,7 +13,7 @@ module Dev
   # Storage backend is macOS Keychain when available, plain text fallback
   # (~/.config/dev/credentials.yml with 0600 permissions) on Linux.
   #
-  # The prompt is the caller's Ui's (plans#52): the one question and the
+  # The prompt is the caller's Ui's: the one question and the
   # one hidden paste go through `Ui#confirm` and `Ui#ask_secret`, so
   # whether there is a terminal to ask at is the tier's decision, made
   # once, never re-asked of `$stdin` here. A nil answer is the headless
@@ -253,9 +253,9 @@ module Dev
     end
 
     # Offer to open the page the credential is created on. Yes is the
-    # answer Enter gives, as it was before the seam: opening a browser tab
-    # is the one thing here dev would do unasked (contrast dev#533's
-    # default of no for everything irreversible). nil — no terminal — is
+    # answer Enter gives: opening a browser tab is the one thing here dev
+    # would do unasked (everything irreversible defaults to no). nil — no
+    # terminal — is
     # read as no; the paste that follows refuses with the hint.
     #
     # @param prompt_label [String]

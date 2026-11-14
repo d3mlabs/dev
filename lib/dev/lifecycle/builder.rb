@@ -7,18 +7,13 @@ require "pathname"
 
 module Dev
   module Lifecycle
-    # The port between dev and the project's build tool for the `build`
-    # verb (dev#192, K1): given a build, make its **install** — what the
-    # toolchain calls done (UE's compiled, cooked and staged game; a
-    # library's install tree; for a gem or an org payload, the laid-out
-    # file set) — into the directory dev hands it. The builder never knows
-    # the archive format: that is the Packager's, which is why a target
-    # declares the two separately.
+    # The port between dev and the project's build tool: given a build, make
+    # its install into the directory dev hands it. The builder never knows
+    # the archive format; that is the Packager's.
     #
-    # Two forms: a script (ScriptBuilder — the target's `build:` line,
-    # reading the build from `DEV_*`), and an integration owning the
-    # toolchain mapping once (dev#433), which also declares the target
-    # options it accepts through `target_options_schema`.
+    # ScriptBuilder is the target's `build:` line, reading the build from
+    # `DEV_*`. An integration builder owns the toolchain mapping and declares
+    # the target options it accepts through `target_options_schema`.
     module Builder
       extend T::Sig
       extend T::Helpers
@@ -41,17 +36,15 @@ module Dev
       sig { abstract.returns(T::Array[String]) }
       def target_options_schema; end
 
-      # What the artifact's manifest records as the install's provenance
-      # (`build-id.json`'s `builder`): `script` for the script form, an
-      # integration's name for its own.
+      # What `build-id.json` records as `builder`: `script` for the script
+      # form, an integration's name for its own.
       #
       # @return [String]
       sig { abstract.returns(String) }
       def name; end
 
-      # The builder's own version beside its name (`builder_version`): an
-      # engine tag for an integration that has one; nil for a script, which
-      # has none of its own.
+      # What `build-id.json` records as `builder_version`: an engine tag for
+      # an integration that has one, nil for a script.
       #
       # @return [String, nil]
       sig { abstract.returns(T.nilable(String)) }

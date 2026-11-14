@@ -8,21 +8,13 @@ require "dev/terminal_owner"
 module Dev
   module Lifecycle
     # The process boundary of the lifecycle's tool invocations: a target's
-    # `build:`/`package:` script with its env at the project root, and the
-    # archive pipelines (`tar | zstd | split`). Always spawn-and-wait — a
-    # lifecycle stage has work after its seam (the stamp), so nothing here
-    # exec-replaces dev. Returns the child's status rather than a boolean
-    # so the caller's typed error can carry the exit code: a script that
-    # refuses a build name with `exit 2` is reported as such.
+    # `build:`/`package:` script at the project root, and the archive
+    # pipelines (`tar | zstd | split`). Always spawn-and-wait, since a stage
+    # has work after its seam. Returns the child's status so the caller's
+    # error can carry the exit code.
     #
-    # Injectable so a test can hand back a status it minted from a real
-    # child; the methods themselves are the one place `spawn` is called.
-    #
-    # Every child here inherits dev's stdio — the terminal is the
-    # script's while it runs (its colors, its progress bars, its
-    # prompts). Which is why none may run under a spinner: the terminal's
-    # owner (TerminalOwner) refuses the spawn there, so the caller reaches
-    # for `ui.step` instead.
+    # Every child inherits dev's stdio, so none may run under a spinner:
+    # TerminalOwner refuses the spawn there and the caller uses `ui.step`.
     class Shell
       extend T::Sig
 

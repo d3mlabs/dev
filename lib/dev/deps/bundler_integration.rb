@@ -70,7 +70,7 @@ module Dev
       # Every subprocess below goes through the ShadowenvExec seam: the
       # project's provisioned Ruby (not whatever the host's PATH carries),
       # with dev's own gem env kept out of the child so the installed gems
-      # land in the project's gem home, never dev's (dev#180).
+      # land in the project's gem home, never dev's.
 
       # Ensure a bundler executable is available in the provisioned Ruby.
       # Bundler ships with modern Ruby, so this is normally a no-op; install

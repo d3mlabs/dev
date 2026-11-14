@@ -12,7 +12,7 @@ require "dev/ui"
 
 module Dev
   # Brings a Linux host's data root into being: `/var/lib/dev`
-  # (DataRoot::LINUX_ROOT, dev#308) created as root, owned by the invoking
+  # (DataRoot::LINUX_ROOT) created as root, owned by the invoking
   # user and shared with the `dev` group (DataRoot::GROUP), then the per-user `~/.dev`
   # moved into it (DataRootMigration). The default root is in effect whether
   # or not the directory exists; this is the one step that makes it exist,
@@ -24,7 +24,7 @@ module Dev
   # step. With docker-ce's converge in the same `dev up`, sudo's credential
   # cache makes the two sessions one prompt.
   #
-  # One root, two users (dev#310). The store embeds absolute paths and
+  # One root, two users. The store embeds absolute paths and
   # warmth is path-bound, so a host has exactly one tree, and both the
   # operator and the runner user write it. The root is `<user>:dev 2775`:
   # the owner is whoever ran `dev up` first (a group granted this minute
@@ -35,7 +35,7 @@ module Dev
   # configuration (RunnerSetup). A POSIX default ACL would not do better:
   # a new entry's group permissions are the ACL *intersected with* the mode
   # the creating process asked for, so an ACL never overrides a `022`
-  # umask. A root that predates the group (dev#308's single-owner `0755`)
+  # umask. A root that predates the group (single-owner `0755`)
   # is converged in place — group and mode, down the tree, `secrets-<uid>`
   # dirs left alone — which changes no owner and is idempotent. A root that
   # exists but is not writable by this user belongs to another identity;
@@ -151,7 +151,7 @@ module Dev
 
       if current.present && !current.writable
         raise NotWritableError,
-          "#{@root} exists but #{@user} cannot write it. dev does not re-own a data root (dev#310). " \
+          "#{@root} exists but #{@user} cannot write it. dev does not re-own a data root. " \
           "If you are not yet in its group: sudo usermod -aG #{@group} #{@user}, then log in again; " \
           "if the root is not shared with the group yet, its owner's `dev up` shares it."
       end

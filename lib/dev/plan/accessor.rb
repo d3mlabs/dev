@@ -16,7 +16,7 @@ module Dev
     # remote body changed since the recorded merge base, so the local copy can
     # never clobber newer remote edits.
     #
-    # Every verb speaks through the Ui (plans#52): a frame per verb, a spin
+    # Every verb speaks through the Ui: a frame per verb, a spin
     # per captured gh call, a note per outcome — the one-line result
     # (`pushed … to …`) last, so a run log reads as it always did. Preflight
     # refusals (a usage error, an unlinked file) raise before the frame opens.

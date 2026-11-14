@@ -48,7 +48,7 @@ module Dev
     # questions, and on a shared prefix (an agent user, a second developer,
     # a runner service user) the question must not fail on a write dev
     # never wanted: hosts converge from the tap at the lock's `tap_commit`,
-    # not from brew's live index, so the refresh is of no use here (dev#372).
+    # not from brew's live index, so the refresh is of no use here.
     class BrewRepository < Repository
       extend T::Sig
 

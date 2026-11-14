@@ -11,19 +11,16 @@ require_relative "multi_target_plugin"
 
 module Dev
   module Deps
-    # Merges per-target Alpakit zips into SMR's multi-target zip (dev#192,
-    # K5; dev#427) — the inside of the ficsit publisher's black box. Each
-    # archive is unpacked and read as an AlpakitPlugin, then laid out under
-    # its target's directory; the layout is zipped as `<ModRef>.zip`. Two
-    # archives may share a target — snappy's Steam and Epic builds are two
-    # Windows plugins whose binaries differ and whose cooked content does
-    # not, which Alpakit's own `-merge` would have stacked into one Windows
-    # zip — and then their trees are unioned: a file both carry must be
-    # byte-identical, since picking one would alter the other build's
-    # bytes, which a publisher never does (the archives are read-only
-    # input). Everything is written under the channel's scratch, wiped and
-    # rebuilt per merge; the archives are read, never touched.
-    #
+    # Merges per-target Alpakit zips into SMR's multi-target zip, inside
+    # the ficsit publisher. Each archive is unpacked and read as an
+    # AlpakitPlugin, then laid out under its target's directory; the layout
+    # is zipped as `<ModRef>.zip`. Two archives may share a target (a Steam
+    # and an Epic build are two Windows plugins whose binaries differ and
+    # whose cooked content does not), and then their trees are unioned: a
+    # file both carry must be byte-identical, since a publisher never
+    # alters an archive's bytes. Everything is written under the channel's
+    # scratch, wiped and rebuilt per merge; the archives are read, never
+    # touched.
     # The shell is fixed for a process and so constructor-owned; the
     # archives are per call.
     class MultiTargetPluginMerger

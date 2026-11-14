@@ -13,7 +13,7 @@ module Dev
     # container up` deciding what to bring up — and one rule: native exactly
     # when this host was provisioned from the image — its
     # `/etc/dev/environment` marker names the image at the lock's digest
-    # (HostEnvironment; the host rule, dev#308, ADR-0007 amended). A bare
+    # (HostEnvironment). A bare
     # host, a Mac, a host baked from an older recipe all fail it and run
     # inside; dev never converges a host's OS toward the lock.
     #

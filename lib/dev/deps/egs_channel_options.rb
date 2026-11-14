@@ -10,8 +10,8 @@ require_relative "../value_equality"
 module Dev
   module Deps
     # What a project's `deploy egs` channel says of its Epic Games Store
-    # product (dev#192 K5, dev#426): the options under the channel's `egs:`
-    # key in dev.yml, in the Dev Portal's own words —
+    # product: the options under the channel's `egs:` key in dev.yml, in
+    # the Dev Portal's own words:
     #
     #   egs:
     #     organization: o-abc123                   # the Organization ID
@@ -23,13 +23,12 @@ module Dev
     #         args: ""                             # optional: the launch command line
     #     labels: { testing: Testing, live: Live } # optional: the label per track
     #
-    # The organization, product and artifacts are the destination's facts
-    # (K0); the label is the track's: `Live` is the one label players see,
-    # so a release's archive takes it and a working artifact a label of
-    # its own (`Testing` unless named) — labelled, so Epic's cleanup does
-    # not delete it after a week. The client id and secret are not here:
-    # they are credentials (EgsPublisher). Parsed once at the start of a
-    # deploy; the dev.yml boundary for this vocabulary.
+    # The organization, product and artifacts are the destination's facts;
+    # the label is the track's. `Live` is the one label players see, so a
+    # release's archive takes it and a working artifact a label of its own
+    # (`Testing` unless named); labelled, so Epic's cleanup does not delete
+    # it after a week. The client id and secret are credentials, not
+    # options. Parsed once at the start of a deploy.
     class EgsChannelOptions < T::Struct
       extend T::Sig
 
@@ -132,7 +131,7 @@ module Dev
           options.fetch(key) do
             raise MissingOptionError,
               "channel 'deploy #{channel}': `#{KEY}: #{key}:` is missing — the egs publisher needs the Organization ID, " \
-                "the Product ID and an artifact per accepted build (d3mlabs/dev#192)"
+                "the Product ID and an artifact per accepted build"
           end
         end
 

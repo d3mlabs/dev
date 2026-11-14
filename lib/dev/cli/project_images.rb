@@ -9,18 +9,17 @@ require_relative "placement"
 
 module Dev
   module Cli
-    # The project's environment images as its lock pins them (dev#277), and
+    # The project's environment images as its lock pins them, and
     # the one answer every placement question goes through: which of them an
     # `environment:` reference binds to (`bind`), by name or by the project's
-    # shape when it names none (dev#307). The lock is the only declaration: a
+    # shape when it names none. The lock is the only declaration: a
     # project pinning no image has no container and every command runs on
-    # the host (the Dockerfile path that once filled that gap is gone,
-    # dev#311 — its dev.yml keys are refused at load, ProjectManifestLoader).
+    # the host.
     #
-    # Binding is reference → placement, with no command in the signature
-    # (dev#409): the composition root binds every command's reference at
+    # Binding is reference → placement, with no command in the
+    # signature: the composition root binds every command's reference at
     # load (PlacementBinder), and a lifecycle target's `environment:` binds
-    # through the same call (dev#192).
+    # through the same call.
     class ProjectImages
       extend T::Sig
 

@@ -8,12 +8,10 @@ module Dev
     # its own values.
     class UnknownDeploymentStateError < ArgumentError; end
 
-    # The state of a recorded deploy, as GitHub spells a deployment status
-    # (dev#192, K6): dev writes `success` when the publisher returned and
-    # `failure` when it raised; the rest are GitHub's own vocabulary, which
-    # a deployment written by something else may carry and `dev deploy
-    # status` must still read. A deployment with no status yet is
-    # `pending`, as GitHub's UI reads it.
+    # The state of a recorded deploy, as GitHub spells a deployment status.
+    # Dev writes `success` when the publisher returned and `failure` when it
+    # raised; the rest are GitHub's own vocabulary, which `dev deploy
+    # status` must still read. A deployment with no status yet is `pending`.
     class DeploymentState < T::Enum
       extend T::Sig
 

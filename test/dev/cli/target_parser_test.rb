@@ -186,7 +186,7 @@ class Dev::Cli::TargetParserTest < Minitest::Test
 
     Then
     error = raises(Dev::Cli::TargetParser::InvalidBuilderError)
-    error.message.include?("d3mlabs/dev#433")
+    error.message.include?("`builder:` is not a builder form")
     error.message.include?("`build:`")
   end
 

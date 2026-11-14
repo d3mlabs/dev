@@ -19,7 +19,7 @@ module Dev
       # `dev package [BUILD] [--target T] [--platform P] [--config C]
       # [--no-build]`: turn one build into its artifact in the store — the
       # archive its target's packager makes of the install, stamped with
-      # `build-id.json` (dev#192, K0, K4). `package` implies `build`,
+      # `build-id.json`. `package` implies `build`,
       # make-like: the builder runs first unless the store's artifact for the
       # build is current — packaged from a clean tree at the commit the tree
       # is at now (Manifest::Artifact#current?) — or `--no-build` says to
@@ -277,7 +277,7 @@ module Dev
 
         # Why the builder does not run before the packager, or nil when it
         # does: nothing declared, `--no-build`, or an artifact current with
-        # the tree (K4's staleness rule — the manifest carries this commit
+        # the tree (the manifest carries this commit
         # and the tree it was packaged from was clean).
         #
         # @param build [Lifecycle::Build]

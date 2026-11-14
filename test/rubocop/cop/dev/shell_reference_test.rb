@@ -24,7 +24,7 @@ class RuboCop::Cop::Dev::ShellReferenceTest < Minitest::Test
     found = offenses(source, "lib/dev/operator_access.rb")
 
     Then "one offense, at the reference, naming the shell constant and the rule"
-    found.map { |o| [o.line, o.message] } == [[line, "`#{constant}` is the shell's (`Dev::Cli`); a feature or the vocabulary under lib/dev may not reference it (ADR-0014)."]]
+    found.map { |o| [o.line, o.message] } == [[line, "`#{constant}` is the shell's (`Dev::Cli`); a feature or the vocabulary under lib/dev may not reference it."]]
 
     Where
     spelling                | source                                                                                             | line | constant

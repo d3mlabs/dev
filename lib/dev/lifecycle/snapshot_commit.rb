@@ -6,16 +6,13 @@ require_relative "git"
 
 module Dev
   module Lifecycle
-    # A snapshot commit of the working tree as it is — tracked files as
-    # modified, new files, deletions, `.gitignore` honoured — made through
+    # A snapshot commit of the working tree as it is (tracked files as
+    # modified, new files, deletions, `.gitignore` honoured), made through
     # a temporary index so HEAD, the branch and the operator's own index
-    # are untouched (dev#192, K7; ADR-0008). What the remote dispatch
-    # pushes so a runner builds exactly what the operator sees, uncommitted
-    # changes included.
+    # are untouched.
     #
-    # A clean tree snapshots to HEAD itself: its tree is HEAD's, so a new
-    # commit would only hide the real one behind a throwaway sha — and the
-    # artifact the runner stamps then names the commit the operator is at.
+    # A clean tree snapshots to HEAD itself, so the artifact the runner
+    # stamps names the commit the operator is at.
     class SnapshotCommit
       extend T::Sig
 
@@ -23,9 +20,7 @@ module Dev
       class NotACheckoutError < RuntimeError; end
 
       # The snapshot's identity. Fixed rather than the operator's `user.*`
-      # so the step works on a host with no git identity configured (a
-      # fresh box); the commit is throwaway and the push carries the
-      # operator's credential anyway.
+      # so the step works on a host with no git identity configured.
       IDENTITY_ENV = T.let(
         {
           "GIT_AUTHOR_NAME" => "dev",

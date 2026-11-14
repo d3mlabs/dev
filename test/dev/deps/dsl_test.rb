@@ -434,6 +434,74 @@ class Dev::Deps::DSLTest < Minitest::Test
     raises ArgumentError
   end
 
+  test "gh sha: is an address — full SHA to the revision slot, constraint stays empty" do
+    When "pinning a commit"
+    config = Dev::Deps.define do
+      group :app do
+        gh "json", github: "nlohmann/json",
+          sha: "9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03", build: :none
+      end
+    end
+
+    Then "the slug is the source, the sha the revision, the build the materialization"
+    decl = config.declarations[0]
+    decl.integration == :gh
+    decl.source == "nlohmann/json"
+    decl.revision == "9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03"
+    decl.constraint == {}
+    decl.materialization == { "build" => "none" }
+  end
+
+  test "gh rejects a short sha — the same canonical-spelling rule as cmake commit:" do
+    When "pinning an abbreviated SHA"
+    Dev::Deps.define do
+      group :app do
+        gh "json", github: "nlohmann/json", sha: "9cca280", build: :none
+      end
+    end
+
+    Then
+    raises Dev::Deps::GroupDSL::InvalidRevisionError
+  end
+
+  test "gh rejects assets: at a sha — a commit publishes no release to download from" do
+    When "asking for release assets of a bare commit"
+    Dev::Deps.define do
+      group :app do
+        gh "engine", github: "d3mlabs/unreal-engine",
+          sha: "9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03", assets: "*.tar.zst.*"
+      end
+    end
+
+    Then
+    raises Dev::Deps::GroupDSL::AssetsAtCommitError
+  end
+
+  test "gh rejects tag: alongside sha: — an address forgoes the selection a constraint asks for" do
+    When "stating both"
+    Dev::Deps.define do
+      group :app do
+        gh "json", github: "nlohmann/json", tag: "v3.11.3",
+          sha: "9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03", build: :none
+      end
+    end
+
+    Then
+    raises Dev::Deps::Declaration::RevisionWithConstraintError
+  end
+
+  test "gh rejects a dep naming neither tag: nor sha:" do
+    When "declaring with no version at all"
+    Dev::Deps.define do
+      group :app do
+        gh "json", github: "nlohmann/json", build: :none
+      end
+    end
+
+    Then "a gh pin never floats to the latest release"
+    raises Dev::Deps::GroupDSL::MissingRefError
+  end
+
   test "steam() produces a ScopedDeclaration with steam integration" do
     When "defining a steam dep in a LinuxServer group"
     config = Dev::Deps.define do
@@ -481,7 +549,6 @@ class Dev::Deps::DSLTest < Minitest::Test
     error.message.include?("gh \"UnrealEngine\"")
     error.message.include?("~/.dev/gh/d3mlabs/unreal-engine/")
     error.message.include?("mv ~/.dev/engines/ue5/<version> ~/.dev/gh/d3mlabs/unreal-engine/")
-    error.message.include?("dev#271")
   end
 
   test "egs() declares Epic's BuildPatchTool by its public zip unless a url: names a mirror (dev#426)" do

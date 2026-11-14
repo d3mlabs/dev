@@ -11,25 +11,20 @@ require_relative "gh"
 
 module Dev
   module Lifecycle
-    # The deployment ledger on the forge (dev#192, K6): each deploy is a
-    # GitHub Deployment — `environment` the channel, `ref` the snapshot
-    # sha or the tag, the payload dev's record of builds and track — with
-    # one status saying how it ended and carrying the receipt. It lives on
-    # the forge rather than in a data root because the operator's Mac and
-    # the box's CI would otherwise hold different truths; and it is
-    # GitHub's own object rather than an issue or a file so the repo UI
-    # shows it unaided.
+    # The deployment ledger on the forge: each deploy is a GitHub
+    # Deployment (`environment` the channel, `ref` the commit or the tag,
+    # the payload dev's record of builds and track) with one status saying
+    # how it ended and carrying the receipt. On the forge rather than in a
+    # data root, so the operator's Mac and the box's CI read one truth.
     #
     # Two of GitHub's defaults are turned off on every write, because a
     # deploy is a record, not a request: `auto_merge` (GitHub would merge
     # the default branch into the ref first) and `required_contexts`
-    # (GitHub would refuse the record while a check on the commit is not
-    # green). A `--release` deploy marks the environment `production` —
-    # the live track — so the UI tells the two apart.
+    # (GitHub would refuse the record while a check is not green). A live
+    # track deploy marks the environment `production`.
     #
-    # The repo is read from the checkout on first use, not at
-    # construction: the ledger is wired into every `dev` run that has a
-    # channel, and a gh call at load would tax `dev help`.
+    # The repo is read from the checkout on first use, not at construction,
+    # so `dev help` pays for no gh call.
     class GithubDeployments
       extend T::Sig
 

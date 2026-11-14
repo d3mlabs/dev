@@ -6,22 +6,17 @@ require_relative "vdf"
 
 module Dev
   module Deps
-    # One Steam app build as the content builder takes it (dev#192 K5,
-    # dev#426): the **app build script** (`app_build_<app>.vdf` — AppID,
-    # Desc, BuildOutput, SetLive, and the depots it builds) referencing one
-    # **depot build script** per depot (`depot_build_<depot>.vdf` — DepotID
-    # and a ContentRoot mapped whole into the depot's root). What
-    # `steamcmd +run_app_build` reads; Steam chunks each content root,
-    # uploads the delta against the depot's previous build and assigns the
-    # whole a BuildID.
+    # One Steam app build as the content builder takes it: the app build
+    # script (`app_build_<app>.vdf`: AppID, Desc, BuildOutput, SetLive, and
+    # the depots it builds) referencing one depot build script per depot
+    # (`depot_build_<depot>.vdf`: DepotID and a ContentRoot mapped whole
+    # into the depot's root). What `steamcmd +run_app_build` reads.
     #
-    # Two of its inputs are the destination's and the track's rather than
-    # any build's — the depot ids (SteamChannelOptions) and the branch —
-    # which is why this is written at deploy time in the channel's scratch
-    # and never baked into an artifact (K0). `set_live` is the beta branch
-    # to set live after the upload, or nil to upload only: Steam refuses to
-    # set the default branch live from a script, so a live-track deploy
-    # leaves that last step to the operator and the receipt says so.
+    # The depot ids and the branch are the destination's and the track's
+    # rather than any build's, which is why this is written at deploy time
+    # in the channel's scratch and never baked into an artifact. `set_live`
+    # is the beta branch to set live after the upload, or nil to upload
+    # only: Steam refuses to set the default branch live from a script.
     class SteamAppBuild < T::Struct
       extend T::Sig
 

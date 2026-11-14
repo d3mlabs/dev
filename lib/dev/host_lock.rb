@@ -7,7 +7,7 @@ require "dev/data_root"
 
 module Dev
   # A host-wide mutex on a resource every identity on the box shares — the
-  # brew prefix first (ai-flow#116, dev#483): two runner slots, or a human
+  # brew prefix first: two runner slots, or a human
   # and the agent user, discovering the same missing keg at once must take
   # turns, because brew's own per-formula lock makes the loser *fail*, not
   # wait. Blocking: the second holder waits for the first, then re-asks its

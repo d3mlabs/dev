@@ -20,7 +20,7 @@ module Dev
       attr_reader :declarations
 
       # @return [Array<ScopedDeclaration>] the ungrouped declarations — what
-      #   this manifest exports when read as a library (ADR-0011's export
+      #   this manifest exports when read as a library (the export
       #   rule: grouped declarations are private, and the toolchain
       #   directives — ruby, python — and env scoping never propagate)
       sig { returns(T::Array[ScopedDeclaration]) }

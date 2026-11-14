@@ -11,21 +11,21 @@ require "dev/ui"
 
 module Dev
   module Cli
-    # The publishers the project's lock contributes (dev#192 K5, dev#422):
+    # The publishers the project's lock contributes:
     # the write side of every integration the lock reaches, by the `deploy`
     # channel each contributes — `steam` for a project pinning the
     # Steamworks SDK, `ficsit` for one pinning SML, `brew` for one whose
     # Ruby installs through brew. The lock is the only declaration, as it is
     # for the images (ProjectImages): a store is publishable exactly when
     # the project already depends on it, because the store *is* that
-    # integration, both directions (ADR-0010). Nothing in dev.yml names a
+    # integration, both directions. Nothing in dev.yml names a
     # publisher; a `deploy` child of a contributed channel's name configures
     # it (ChannelBinder).
     #
     # Reads deps.lock once, on first use; the Registry decides which entries
     # the pins reach. The lock also says which **taps** the project pins
     # formulae from (each brew-family pin's `tap:`) — the brew publisher's
-    # destination (dev#429), handed to the Registry's context beside the
+    # destination, handed to the Registry's context beside the
     # root so the lock stays the one declaration.
     class ProjectPublishers
       extend T::Sig
@@ -62,7 +62,7 @@ module Dev
       # What this dev could contribute: each channel the table can ship to,
       # with the types a pin of which reaches it (Registry.publisher_reach) —
       # the lock plays no part. The ChannelBinder's diagnosis of a declared
-      # channel the lock leaves protocol-less (dev#509).
+      # channel the lock leaves protocol-less.
       #
       # @return [Hash{String => Array<Symbol>}]
       sig { returns(T::Hash[String, T::Array[Symbol]]) }

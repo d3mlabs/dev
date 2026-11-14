@@ -22,19 +22,17 @@ require_relative "lockfile"
 
 module Dev
   module Deps
-    # The `egs` integration's write side (dev#192 K5, dev#426): the
-    # Publisher behind the `deploy egs` channel a project pinning
-    # BuildPatchTool gets. The Epic Games Store takes no archive: its
-    # BuildPatchTool reads a **build root** — so each shipment's archive is
-    # unpacked into one in the channel's scratch — and registers it as a
-    # binary of the artifact the channel's `egs:` options name for that
-    # build (`UploadBinary`: the build id as Epic's BuildVersion, the
-    # launch app and args from the options, a cloud dir in the scratch the
-    # tool diffs the upload against), then labels it for the track
-    # (`LabelBinary`: `Live` for a release, the testing label for a working
-    # artifact — a label is what keeps Epic's cleanup from deleting the
-    # binary after a week). The archive is read-only input; the receipt
-    # names the versions registered and the label they got.
+    # The `egs` integration's write side: the Publisher behind the `deploy
+    # egs` channel a project pinning BuildPatchTool gets. The Epic Games
+    # Store takes no archive: its BuildPatchTool reads a build root, so each
+    # shipment's archive is unpacked into one in the channel's scratch and
+    # registered as a binary of the artifact the channel's `egs:` options
+    # name for that build (`UploadBinary`: the build id as Epic's
+    # BuildVersion, the launch app and args from the options, a cloud dir in
+    # the scratch the tool diffs the upload against), then labelled for the
+    # track (`LabelBinary`; a label is what keeps Epic's cleanup from
+    # deleting the binary after a week). The archive is read-only input;
+    # the receipt names the versions registered and the label they got.
     #
     # The tool is the lock's: the one `egs` pin, read from the project's
     # lock and found in the store where `dev up` installed it (the same

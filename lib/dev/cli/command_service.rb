@@ -48,7 +48,7 @@ module Dev
       # only when execute didn't raise, so it records a fully-successful run
       # — and only for wait-mode executions (the executor runs stamping slots
       # spawn-and-wait; an exec-replaced project command never returns here,
-      # which is exactly why it must not stamp, #85).
+      # which is exactly why it must not stamp).
       #
       # @param argv [Array<String>] the command path followed by its args
       # @param context [ExecutionContext]

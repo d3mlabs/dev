@@ -6,15 +6,12 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # What `--fetch` asks of a remote dispatch (dev#192, K10): bring the
-    # artifact the remote `package` stamped back into this machine's
-    # store. The artifact crosses as a workflow artifact named after the
-    # build — the generic workflow uploads the archive and its
-    # `build-id.json` under that name — and lands in the store directory
-    # the build has here, so `dev deploy` on this machine reads it as if
-    # it had been packaged here. The default is the opposite (nothing
-    # comes back): a multi-GB archive over a Mac's uplink is wanted only
-    # when a deploy leaves from the Mac.
+    # What `--fetch` asks of a remote dispatch: bring the artifact the
+    # remote `package` stamped back into this machine's store. The artifact
+    # crosses as a workflow artifact named after the build and lands in the
+    # store directory the build has here, so `dev deploy` on this machine
+    # reads it as if it had been packaged here. By default nothing comes
+    # back.
     class ArtifactFetch < T::Struct
       extend T::Sig
       include Dev::ValueEquality::Derived

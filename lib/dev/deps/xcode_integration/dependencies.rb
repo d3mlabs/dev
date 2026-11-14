@@ -5,7 +5,7 @@
 # to, in the same DSL a project uses. Ungrouped, so it exports: a project
 # that pins an Xcode gets these locked into its own deps.lock with
 # provenance (needed_by: xcode), in the scope of its xcode declaration, and
-# installed before the xcode batch (ADR-0011).
+# installed before the xcode batch.
 require "dev/deps"
 
 Dev::Deps.define do

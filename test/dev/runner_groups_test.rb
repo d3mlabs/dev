@@ -266,7 +266,7 @@ class Dev::RunnerGroupsTest < Minitest::Test
     Then
     error = raises Dev::RunnerGroups::UnpinnedGroupError
     error.message.include?("d3mlabs/dev is public and group 'Default' is not pinned to any workflow")
-    error.message.include?("plans#5 H3")
+    error.message.include?("Pin the group to the workflows that may use it")
     registry.writes == []
 
     Where

@@ -6,7 +6,7 @@ require "dev/ui"
 
 module Dev
   # What the operator's own gh login must be able to do before `dev runner
-  # register` changes anything on the host (dev#493). Register checks the
+  # register` changes anything on the host. Register checks the
   # runner user's side carefully — its gh login, what it can read of the
   # lock (HostReach) — "now rather than discovered by a red run"; this is
   # the same for the operator, whose login mints the registration tokens

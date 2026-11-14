@@ -9,33 +9,25 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # The git half of `release <version>` (dev#192, K4), lifted from dev's
-    # `bin/release.rb`: a **cut** is a clean tree, a bump commit when the
-    # project keeps its version in source (`VERSION` and its `Gemfile.lock`
-    # mirror when a gemspec reads it, ProjectVersion), the tag, and the
-    # push of the branch and the tag to `origin`. Resumable:
-    # a run whose cut landed (HEAD already carries the tag) resumes at the
-    # push instead of bumping again — a retry finishes the release, it
-    # never cuts a second one, which is how a failed tap push once turned
-    # 0.2.99 into an empty 0.2.100. A tag that exists on another commit is
-    # refused: that version was cut from somewhere else.
+    # The git half of `release <version>`: a cut is a clean tree, a bump
+    # commit when the project keeps its version in source (`VERSION` and
+    # its `Gemfile.lock` mirror), the tag, and the push of the branch and
+    # the tag to `origin`. Resumable: a run whose cut landed (HEAD already
+    # carries the tag) resumes at the push instead of bumping again, so a
+    # retry finishes the release and never cuts a second one. A tag that
+    # exists on another commit is refused.
     #
     # Three steps, each reading one plan: `bump!` commits the version,
     # `tag!` tags it (`cut!` is both; nothing when resuming), `push!`
-    # publishes them — split so the verb can report what the cut will do
-    # before it does it, name each step as it runs (dev#514), and so a
-    # push that fails leaves the local cut for the retry to resume.
-    # Every git call goes through Git over the checkout; the commit is
-    # the operator's own (their identity, their branch), unlike a
-    # snapshot's.
+    # publishes them. Split so the verb can report what the cut will do
+    # before it does it and name each step as it runs. The commit is the
+    # operator's own, unlike a snapshot's.
     #
-    # The plan also reads the **base** the release is cut from (dev#514):
-    # HEAD's sha, the previous tag the notes span from, and the **drift**
-    # from the branch's remote-tracking ref *as last fetched* — the cut
-    # never fetches or pulls (a pull could ride unreviewed changes into
-    # the release), so a checkout behind its origin is reported for the
-    # operator to weigh at the confirm, not refused: behind is sometimes
-    # deliberate on a patch branch.
+    # The plan also reads the base the release is cut from: HEAD's sha, the
+    # previous tag the notes span from, and the drift from the branch's
+    # remote-tracking ref as last fetched. The cut never fetches or pulls,
+    # so a checkout behind its origin is reported for the operator to weigh
+    # at the confirm, not refused.
     class ReleaseCut
       extend T::Sig
 

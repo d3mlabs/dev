@@ -9,10 +9,9 @@ module Dev
   module Lifecycle
     # The provenance stamp of a packaged build: `<semver>+<sha>`, or
     # `<semver>+<sha>.dirty.<utc>` for a tree with uncommitted changes, or
-    # `<semver>+unknown.<utc>` outside a checkout (lifted from cellbound-3d's
-    # `Staging::BuildId`). The build metadata after `+` follows semver's
-    # grammar, so the id sorts and compares as a version where one is
-    # expected; the UTC instant makes two dirty packagings distinguishable.
+    # `<semver>+unknown.<utc>` outside a checkout. The part after `+` follows
+    # semver's build-metadata grammar, so the id sorts as a version; the UTC
+    # instant tells two dirty packagings apart.
     class BuildId
       extend T::Sig
       include Dev::ValueEquality::Derived

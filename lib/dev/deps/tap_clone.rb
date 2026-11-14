@@ -9,15 +9,12 @@ require_relative "tap"
 module Dev
   module Deps
     # Dev's own clone of a Homebrew tap, for writing to it: where the brew
-    # publisher rewrites formulas, commits and pushes (dev#192 K3, dev#429).
-    # It is the publisher's scratch — a directory dev creates, lays out and
-    # reuses, that nobody edits between publishes — which is what makes
-    # `sync!` safe to **reset** to the tap's tip rather than merge: the
-    # clone is always exactly `origin`'s default branch when a formula is
+    # publisher rewrites formulas, commits and pushes. It is the publisher's
+    # scratch, a directory nobody edits between publishes, which is what
+    # makes `sync!` safe to reset to the tap's tip rather than merge: the
+    # clone is exactly `origin`'s default branch when a formula is
     # rewritten, so the push that follows is a fast-forward unless someone
     # pushed in the meantime (then git refuses, and the retry syncs again).
-    # The earlier `bin/release.rb` wrote to a developer's own clone beside
-    # the checkout and had to check it was clean, on `main` and
     # fast-forwarded first; a clone dev owns needs none of that.
     #
     # Reads and writes go through Lifecycle::Git over the clone, so a

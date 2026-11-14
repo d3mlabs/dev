@@ -164,7 +164,7 @@ class Dev::Deps::ImageDSLTest < Minitest::Test
     "in a group" | proc { group(:build) { apt "winbind" } }
   end
 
-  test "a store verb inside an image block is a load error pointing at the fat image (dev#309): #{verb}" do
+  test "a store verb inside an image block is a load error saying to declare it outside the block: #{verb}" do
     When
     Dev::Deps.define do
       image "x", from: FLOOR do
@@ -174,7 +174,7 @@ class Dev::Deps::ImageDSLTest < Minitest::Test
 
     Then
     error = raises(Dev::Deps::ImageDSL::StoreVerbInImageError)
-    error.message.include?("#309")
+    error.message.include?("Declare it outside the block")
     error.message.include?(verb.to_s)
 
     Where

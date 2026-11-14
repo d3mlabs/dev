@@ -32,7 +32,7 @@ module Dev
     # termination, carrying the signal), or CommandSpawnError (the child never
     # started) — so a caller with success-contingent post-steps (e.g. the
     # installed stamp) can sequence them after execute while preserving the
-    # child's exit code (#85).
+    # child's exit code.
     #
     # The child has full terminal access — CLI::UI features (frames, spinners,
     # prompts) all work natively without any interception.
@@ -41,10 +41,11 @@ module Dev
     # provisioned (fast-path: skips if the project's ruby lisp is current).
     #
     # Where a command runs is `placement`: the command's environment — its
-    # `environment:` bound against the lock at load (ProjectCommand#placement,
-    # dev#409) — is an image or the host. The host means `shadowenv exec`
+    # `environment:` bound against the lock at load
+    # (ProjectCommand#placement) — is an image or the host. The host means
+    # `shadowenv exec`
     # here, silently. An image means the project's container of it, reached
-    # as a remote that happens to be local (ADR-0008, dev#421): the tree
+    # as a remote that happens to be local: the tree
     # crosses as a snapshot branch for the command's duration
     # (Lifecycle::SnapshotSync), one dim line says so (`→ in <image>
     # (container), snapshot <sha>`), and the container fetches the snapshot
@@ -64,8 +65,8 @@ module Dev
     # to the image.
     #
     # On a host that *is* the command's environment there is no container to
-    # reach for either — the host rule (HostRule, ADR-0007 as amended by
-    # dev#308), asked of the command's image: a host provisioned from the
+    # reach for either — the host rule (HostRule), asked of the command's
+    # image: a host provisioned from the
     # image runs its commands directly, under the host's shadowenv, as a host
     # command does. Inside a container, the same rule refuses work the
     # container is not the image for (drift): the container cannot replace
@@ -264,7 +265,7 @@ module Dev
       # can require it. Nothing is cleared here — env hygiene is bin/dev's
       # entrypoint, once (see Dev::Deps::ShadowenvExec, the other `shadowenv
       # exec` seam, for why a nil'd key here is a regression: this method
-      # once nil'd GEM_HOME on its own and reproduced dev#274's LoadError).
+      # once nil'd GEM_HOME on its own and broke gem loading).
       # RUBYLIB is set, not cleared: the entrypoint stripped the caller's
       # before any Ruby ran, so what this layers on is dev's own.
       sig { returns(T::Hash[String, T.nilable(String)]) }
@@ -278,7 +279,7 @@ module Dev
       # `dev deps install` installs and activates in the project shadowenv —
       # so nothing is provisioned for them here. LLVM is the one host
       # toolchain still set up at run time, a fast provisioned?-guarded no-op
-      # after the first run (#297 moves it into the dependency graph too).
+      # after the first run.
       #
       # Inside the container LLVM is the image's concern: nothing to do.
       sig { void }

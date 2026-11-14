@@ -8,27 +8,19 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # One destination `deploy` ships to (dev#192, K5): a `deploy` child in
-    # dev.yml, or a channel the lock contributes (dev#422) — its name, the
-    # builds it **accepts** (`targets:`, a list of build patterns in the
-    # one grammar) and its **protocol** (the PublisherSpec: the child's
-    # `run:` line, or an integration's publisher). The accept set is the
-    # channel's statement of what may reach it — a Windows box takes
-    # `cellbound-3d-win64`, any config, so dev builds reach it; a store
-    # that takes release builds only says `cellbound-3d-win64-release`. A
-    # build outside the set is shipped only under `--force`; a config is
-    # never implied by the channel.
+    # One destination `deploy` ships to: a `deploy` child in dev.yml, or a
+    # channel the lock contributes. Carries its name, the builds it accepts
+    # (`targets:`, a list of build patterns) and its protocol (the
+    # PublisherSpec). A build outside the accept set is shipped only under
+    # `--force`; a config is never implied by the channel.
     #
-    # An integration channel may carry **options** — the mapping under the
-    # channel's own name on the `deploy` child (`steam: { app: 480, depots:
-    # … }`), namespaced the way an integration builder's target options
-    # are (dev#192, K1) — which are the publisher's vocabulary, not dev's:
-    # the channel carries them as the YAML delivered them and the
-    # publisher parses and validates them (dev#426). A script channel has
-    # none: its `run:` owns whatever it needs.
+    # An integration channel may carry options: the mapping under the
+    # channel's own name on the `deploy` child (`steam: { app: 480, … }`).
+    # They are the publisher's vocabulary: the channel carries them as the
+    # YAML delivered them and the publisher parses and validates them. A
+    # script channel has none.
     #
-    # Owns the invariant that a channel accepts something: a channel with
-    # an empty accept set could ship nothing and would be a typo kept.
+    # Owns the invariant that a channel accepts something.
     class Channel < T::Struct
       extend T::Sig
       include Dev::ValueEquality::Derived
@@ -81,10 +73,8 @@ module Dev
       end
 
       # The accept set with every platform spelled out and the config axis
-      # left as declared — what `deploy` ships **one artifact per**: a
-      # platform is the destination's fact, a config the operator's choice
-      # (`--config`, or the one artifact the store holds). Each once, in
-      # accept order.
+      # left as declared. `deploy` ships one artifact per entry. Each once,
+      # in accept order.
       #
       # @return [Array<BuildPattern>]
       sig { returns(T::Array[BuildPattern]) }

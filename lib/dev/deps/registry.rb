@@ -49,23 +49,16 @@ require "dev/ui"
 module Dev
   module Deps
     # The single source of truth for how each dependency type is wired.
+    # Each Entry says which Repository resolves the type, which Integration
+    # (if any) installs it, which Publisher (if any) is its write side (the
+    # `deploy` channel a project pinning the type gets), and which extra
+    # constructor arguments each side needs. The runner derives its
+    # resolution and install tables from it, and
+    # registry_consistency_test.rb fails when a repository, integration or
+    # publisher class or a DSL verb is left unwired.
     #
-    # Integration wiring used to live in two hand-maintained hashes in the runner
-    # — one for resolution (repositories) and one for host install (integrations)
-    # — and nothing kept them in sync with the classes that exist. That let a
-    # whole integration (LuaRocks) ship resolved-but-never-installed. This table
-    # is now the one place a type is declared; the runner derives both hashes from
-    # it, and registry_consistency_test.rb fails CI if a repository/integration
-    # class or DSL verb is left unwired.
-    #
-    # Each Entry says which Repository resolves the type, which Integration (if
-    # any) installs it, which Publisher (if any) is its write side — the
-    # `deploy` channel a project pinning the type gets (dev#422) — and which
-    # extra constructor arguments each side needs (drawn from a context the
-    # runner assembles). There is one integration set, for whichever build
-    # host runs `dev deps install`: a build container is a host with its own
-    # data root (ADR-0008), so nothing here says where a type installs — the
-    # lock's `host:` filter does that per platform.
+    # There is one integration set, for whichever host runs `dev deps
+    # install`; the lock's `host:` filter says where a type installs.
     module Registry
       # An Entry names a channel but has no publisher to contribute it.
       # Beside Entry rather than inside it: a class body in Data.define's
@@ -76,10 +69,8 @@ module Dev
       # @param repository [Class] Repository subclass that reports this type's universes
       # @param repository_needs [Array<Symbol>] extra kwargs the repository takes
       # @param scheme [Class, nil] VersionScheme subclass carrying this type's
-      #   constraint semantics — every type must answer "how do constraints
-      #   work", and nil is an answer: a purely addressable type (xcode) whose
-      #   declarations carry a revision, never a constraint, has no scheme to
-      #   run
+      #   constraint semantics; nil for a purely addressable type (xcode)
+      #   whose declarations carry a revision, never a constraint
       # @param scheme_args [Hash{Symbol => Object}] constructor kwargs for the
       #   scheme (e.g. ExactScheme's key:)
       # @param locker [Class, nil] Locker subclass for types whose ecosystem tool
@@ -90,26 +81,21 @@ module Dev
       # @param integration_needs [Array<Symbol>] extra kwargs the integration takes
       #   (beyond the always-passed repository: and store:)
       # @param install_alias [Symbol, nil] another entry's symbol whose
-      #   integration INSTANCE installs this type's deps too (e.g. :url deps
-      #   install through :cmake's pipeline). Sharing the instance matters:
-      #   integrations that generate batch artifacts (deps.cmake) must see
-      #   both types' deps in one install_all call, and the Installer groups
-      #   dispatch by instance. Mutually exclusive with integration.
-      # @param publisher [Class, nil] the integration's **write side**
-      #   (dev#192 K5, dev#422): a class implementing Lifecycle::Publisher
-      #   that ships artifacts to the destination the read side resolves
-      #   from — a built-in points it at its repository class when both
-      #   share one client and auth (steamcmd, `gh`, the tap clone). A
-      #   project whose lock pins a dependency of this type gets a `deploy`
-      #   channel of this entry's name with no dev.yml line. nil for a type
-      #   that is a source only.
+      #   integration instance installs this type's deps too (`:url` deps
+      #   install through `:cmake`'s pipeline). The instance is shared so an
+      #   integration that writes one batch artifact (deps.cmake) sees both
+      #   types' deps in one install_all call. Mutually exclusive with
+      #   integration.
+      # @param publisher [Class, nil] the integration's write side: a class
+      #   implementing Lifecycle::Publisher that ships artifacts to the
+      #   destination the read side resolves from. A project whose lock pins
+      #   a dependency of this type gets a `deploy` channel of this entry's
+      #   name with no dev.yml line. nil for a type that is a source only.
       # @param publisher_needs [Array<Symbol>] extra kwargs the publisher takes
       # @param channel [String, nil] the name of the `deploy` channel the
-      #   publisher contributes, when the **destination** is not called as
-      #   the dependency type is: gems (`bundler`) ship to `rubygems`, an
-      #   `image` is pushed to `ghcr`. nil names the channel after the
-      #   entry (`steam`, `brew`), the common case where the integration
-      #   and the store share a name. Meaningless without a publisher.
+      #   publisher contributes, when the destination is not called as the
+      #   dependency type is: gems (`bundler`) ship to `rubygems`, an `image`
+      #   is pushed to `ghcr`. nil names the channel after the entry.
       Entry = Data.define(
         :symbol, :repository, :repository_needs, :scheme, :scheme_args, :locker, :locker_needs,
         :integration, :integration_needs, :install_alias, :publisher, :publisher_needs, :channel,
@@ -240,9 +226,8 @@ module Dev
 
       INTEGRATIONS = T.let(
         [
-          # Gems come from rubygems.org, so a project pinning gems can push
-          # one there (dev#428): the write side is the `rubygems` channel,
-          # named for the store rather than for bundler, the tool.
+          # Gems come from rubygems.org, so the write side is the `rubygems`
+          # channel, named for the store rather than for bundler, the tool.
           Entry.new(
             symbol: :bundler,
             repository: BundlerRepository,
@@ -256,9 +241,9 @@ module Dev
             publisher_needs: %i[project_root],
             channel: "rubygems",
           ),
-          # The write side (dev#429): a project pinning a formula from a tap
-          # gets `deploy brew`, which points the tap's formula of each
-          # target's name at that target's release asset.
+          # The write side: a project pinning a formula from a tap gets
+          # `deploy brew`, which points the tap's formula of each target's
+          # name at that target's release asset.
           Entry.new(
             symbol: :brew,
             repository: BrewRepository,
@@ -327,9 +312,9 @@ module Dev
             integration_needs: %i[project_root],
           ),
           # The write side is the read side's class: one API, one client,
-          # one credential story (dev#427). A project pinning a mod (SML)
-          # gets `deploy ficsit`, which merges its per-target Alpakit zips
-          # into SMR's multi-target zip and uploads a version.
+          # one credential. A project pinning a mod gets `deploy ficsit`,
+          # which merges its per-target Alpakit zips into SMR's multi-target
+          # zip and uploads a version.
           Entry.new(
             symbol: :ficsit,
             repository: FicsitRepository,
@@ -347,7 +332,7 @@ module Dev
             integration_needs: %i[project_root],
           ),
           # The write side is the repository class: one client (steamcmd)
-          # reads a depot and uploads a build (dev#426).
+          # reads a depot and uploads a build.
           Entry.new(
             symbol: :steam,
             repository: SteamRepository,
@@ -356,13 +341,12 @@ module Dev
             publisher: SteamRepository,
             publisher_needs: %i[ui],
           ),
-          # The Epic Games Store's tooling (dev#426): BuildPatchTool is the
-          # one declarable dependency — a url-shaped universe (the zip Epic
-          # serves, TOFU-hashed, no scheme) installed as a store tree — and
-          # pinning it is what gives a project its `deploy egs` channel.
-          # The write side is its own class: the read side's client is
-          # curl, the write side's is the tool under the product's
-          # credentials, so the two share nothing.
+          # The Epic Games Store's tooling: BuildPatchTool is the one
+          # declarable dependency (a url-shaped universe, TOFU-hashed, no
+          # scheme) installed as a store tree, and pinning it gives a project
+          # its `deploy egs` channel. The write side is its own class: the
+          # read side's client is curl, the write side's is the tool under
+          # the product's credentials.
           Entry.new(
             symbol: :egs,
             repository: UrlRepository,
@@ -395,14 +379,11 @@ module Dev
             integration: PipIntegration,
             integration_needs: %i[project_root],
           ),
-          # An environment image's floor (dev#277): the tag is the whole
-          # ask (url model, so no scheme), resolved to the digest the
-          # registry serves. Nothing installs it — an image is not a store
-          # tree (ADR-0009) — the container layer reads the pin
-          # (Dev::EnvironmentImage) and builds or pulls the image from it.
-          # The write side (dev#428) is the registry the floor is pulled
-          # from: a project pinning an image can push one to GHCR, the
-          # `ghcr` channel.
+          # An environment image's floor: the tag is the whole ask (url
+          # model, so no scheme), resolved to the digest the registry serves.
+          # Nothing installs it; the container layer reads the pin and builds
+          # or pulls the image from it. The write side is the registry the
+          # floor is pulled from: the `ghcr` channel.
           Entry.new(
             symbol: :image,
             repository: OciRepository,
@@ -477,9 +458,7 @@ module Dev
         # Every integration symbol → the Integration class that installs it,
         # the input to the needs table (IntegrationNeeds). An aliased type
         # maps to its target's class, since its pins install through that
-        # instance and so its needs are that class's. Built-in entries only:
-        # an integration from outside dev-core arrives as a dependency and
-        # its needs come in through that dependency's own manifest (#300).
+        # instance. Built-in entries only.
         #
         # @return [Hash{Symbol => Class}]
         sig { returns(T::Hash[Symbol, T.class_of(Integration)]) }
@@ -518,14 +497,11 @@ module Dev
         end
 
         # Build the channel-name -> Publisher hash of the write sides the
-        # lock **reaches** (dev#422): every publishing entry whose type the
-        # lock pins, directly or through an alias — a project pinning only
-        # `ruby` installs it through brew, so brew's publisher is its too.
-        # The channels `deploy` contributes with no dev.yml line
-        # (Dev::Cli::ProjectPublishers reads the pins; Dev::Cli::ChannelBinder merges
-        # the result with the declared channels). Built-in entries only, as
-        # every table here: an external publisher arrives through dev#300's
-        # SPI.
+        # lock reaches: every publishing entry whose type the lock pins,
+        # directly or through an alias (a project pinning only `ruby`
+        # installs it through brew, so brew's publisher is its too). These
+        # are the channels `deploy` contributes with no dev.yml line.
+        # Built-in entries only.
         #
         # @param project_root [Pathname] project root (threaded to publishers that need it)
         # @param pinned [Array<Symbol>] the integration types the lock pins
@@ -551,10 +527,10 @@ module Dev
         end
 
         # Every channel a table can ship to, with the types whose pin
-        # reaches its publisher — the entry's own, and each entry that
-        # installs through it (`ruby` → brew). What a project must pin for
-        # a channel it declares without `run:`; a name absent here is one
-        # this dev ships no publisher for at all (dev#509).
+        # reaches its publisher: the entry's own, and each entry that
+        # installs through it (`ruby` → brew). What a project must pin for a
+        # channel it declares without `run:`; a name absent here is one this
+        # dev ships no publisher for.
         #
         # @param entries [Array<Entry>] the table to read (tests substitute one)
         # @return [Hash{String => Array<Symbol>}] channel name => types, in table order

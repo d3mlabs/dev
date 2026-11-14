@@ -17,7 +17,7 @@ module Dev
   #      individuals and per-user overrides
   #   3. system file: <brew prefix>/etc/dev/config.yml — shipped by an
   #      org's deployment formula into the machine's brew prefix
-  #      (Settings.brew_prefix; see README "Org configuration & deployment")
+  #      (Settings.brew_prefix; see docs/configuration.md, "Two formulas")
   #
   # Keys:
   #
@@ -36,7 +36,7 @@ module Dev
   # (see Dev::HostService). `default_org` is the GitHub org a bare
   # `dev clone <repo>` expands under. `lifecycle.runner` is the runner
   # label a lifecycle verb that must leave this machine goes to by
-  # default, ahead of the repo's enrolled runner (dev#192, K8: "build-check
+  # default, ahead of the repo's enrolled runner ("build-check
   # goes hosted" as user state, never a `dev.yml` key). Leaving a nilable
   # key unset turns its feature off.
   class Settings
@@ -149,7 +149,7 @@ module Dev
     end
 
     # The runner label a lifecycle verb leaving this machine goes to by
-    # default — a standing `--runner` (dev#192, K8). Unset is the normal
+    # default — a standing `--runner`. Unset is the normal
     # state: the repo's enrolled runner.
     #
     # @return [String, nil] the label, or nil
@@ -253,7 +253,7 @@ module Dev
       # Never a guess at the environment: a job without a login shell
       # exports no HOMEBREW_PREFIX, and a probe for a prefix that merely
       # *exists* found `/usr/local` on every Linux host whether or not brew
-      # was there (dev#568) — brew's presence is `<prefix>/bin/brew`.
+      # was there — brew's presence is `<prefix>/bin/brew`.
       #
       # @param root [String] dev's root (injectable for tests)
       # @param standard_prefixes [Array<String>] where brew may be installed,

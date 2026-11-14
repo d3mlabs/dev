@@ -8,21 +8,15 @@ require_relative "shell"
 
 module Dev
   module Lifecycle
-    # The gh CLI boundary of the lifecycle's forge writes and reads — the
-    # deployment ledger (GithubDeployments), the generic workflow's runs
-    # (WorkflowRuns); the release's assets (dev#424) next. Every call goes
-    # through one of two methods over one checkout, so gh resolves the
-    # repo the way it does for the operator (`gh repo view` reads the
-    # checkout's `origin`) and the auth it holds — the operator's login,
-    # or a workflow's GITHUB_TOKEN through GH_TOKEN — is the one credential
-    # dev carries to every GitHub surface (GhAuth). Payloads go through
-    # stdin so a body never hits argv. `capture` is for an answer dev
-    # reads; `stream` for a command whose output is the operator's to
-    # watch (`gh run watch`) and whose exit is the only thing dev reads.
+    # The gh CLI boundary of the lifecycle's forge reads and writes. Every
+    # call goes through one of two methods over one checkout, so gh
+    # resolves the repo from the checkout's `origin` and uses the auth it
+    # holds. Payloads go through stdin so a body never hits argv. `capture`
+    # is for an answer dev reads; `stream` for a command whose output is
+    # the operator's to watch and whose exit is the only thing dev reads.
     #
     # The one place gh is spawned by the lifecycle, and so the one thing a
-    # test of the ledger or the dispatch hands a fake for: gh is a true
-    # boundary, the forge behind it is not reproducible in a temp dir.
+    # test hands a fake for.
     class Gh
       extend T::Sig
 
@@ -35,11 +29,9 @@ module Dev
       Argv = T.type_alias { T::Array[String] }
 
       # What `capture` spawns gh under: colour off, whatever the operator
-      # forced. gh honours CLICOLOR_FORCE and GH_FORCE_TTY on a pipe too
-      # and colourises `gh api`'s JSON — unparseable to the reader — and
-      # bin/dev's UI tier is picked by CLICOLOR_FORCE off a TTY, so a
-      # forced run would break every answer dev reads (dev#519). `stream`
-      # is the operator's terminal and leaves their preference alone.
+      # forced. gh honours CLICOLOR_FORCE and GH_FORCE_TTY on a pipe too and
+      # would colourise the JSON dev reads. `stream` is the operator's
+      # terminal and leaves their preference alone.
       CAPTURE_ENV = T.let({ "CLICOLOR_FORCE" => nil, "GH_FORCE_TTY" => nil, "NO_COLOR" => "1" }.freeze, T::Hash[String, T.nilable(String)])
 
       # @return [Pathname] the checkout every call runs in

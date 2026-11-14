@@ -7,7 +7,7 @@ require_relative "layout"
 
 module Dev
   module Skills
-    # The one-time migration off the pre-#250 flat gem layout: the
+    # The migration off the flat gem layout: the
     # `.agents/skills/gem-<gem>--<skill>` symlinks dev minted are removed so
     # the project's skills dir holds only the repo's own content plus the
     # `dev/` subtree. Dev's by prefix, so safe to delete by prefix exactly

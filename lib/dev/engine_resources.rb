@@ -32,7 +32,7 @@ module Dev
       attr_reader :memory_gib
 
       # @return [Integer, nil] disk in GiB for the engine VM — what the
-      #   container's data root and images need to fit on (ADR-0008);
+      #   container's data root and images need to fit on;
       #   grow-only, applied by the colima provisioner, not checked
       sig { returns(T.nilable(Integer)) }
       attr_reader :disk_gib

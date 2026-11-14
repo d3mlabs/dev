@@ -7,8 +7,8 @@ require_relative "../value_equality"
 
 module Dev
   module Cli
-    # Where one target's builds execute, as the lock answers it (dev#192,
-    # K8): the target's `environment:` bound into a Placement per declared
+    # Where one target's builds execute, as the lock answers it: the
+    # target's `environment:` bound into a Placement per declared
     # platform — one entry under nil for a target with no `platforms:`. The
     # config axis never enters: an environment builds a platform, and every
     # config of it.

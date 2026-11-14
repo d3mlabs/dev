@@ -19,55 +19,42 @@ require_relative "tap_pinner"
 
 module Dev
   module Deps
-    # Lifecycle handler for Homebrew dependencies.
+    # Installs Homebrew formulae and casks from the lock.
     #
-    # install_all installs each formula/cask via brew. Registers taps
-    # (if configured) before the first install, and reads what brew has of
-    # the whole batch in one `brew list --versions` per kind, so a warm
-    # machine pays one brew start, not two per keg.
+    # install_all installs each formula/cask via brew. It registers taps
+    # before the first install and reads what brew has of the whole batch
+    # in one `brew list --versions` per kind, so a warm machine pays one
+    # brew start.
     #
-    # Homebrew assumes exactly one non-root owner of exactly one prefix, so
-    # on cooperative shared machines (plans#26) a sandboxed agent user
-    # cannot write /opt/homebrew. Brew *writes* (tap, install) therefore
-    # escalate to the prefix owner via `sudo -n` when the prefix is not
-    # writable by the current user — the owner is stat'd at runtime, never
-    # hardcoded, and the NOPASSWD edge is converged by the agent host
-    # bootstrap (Dev::AgentBootstrap). That edge grants one command, the
-    # prefix's brew by path, so an escalated argv keeps brew in sudo's
-    # command position: the environment a write needs rides as sudo's own
-    # `VAR=value` assignments (the edge carries SETENV for them), never
-    # behind `env`, and the executable is `<prefix>/bin/brew`, not whatever
-    # the agent's PATH resolves (dev#361). On a single-user machine the
-    # prefix is writable and nothing changes.
+    # Homebrew assumes one non-root owner of one prefix. When the prefix is
+    # not writable by the current user, brew writes (tap, install) escalate
+    # to the prefix owner via `sudo -n`; the owner is stat'd at runtime. The
+    # sudoers edge grants one command, `<prefix>/bin/brew` by path, so an
+    # escalated argv keeps brew in sudo's command position and passes the
+    # environment a write needs as sudo's own `VAR=value` assignments. On a
+    # single-user machine the prefix is writable and nothing changes.
     #
-    # Brew links one keg per formula onto PATH and deletes the rest on
-    # `brew upgrade`/`brew cleanup`; a lock names one exact version. So after
-    # installing, the integration activates each locked keg's `bin` in the
-    # project shadowenv — the project runs the version it locked whichever
-    # keg brew linked, and two projects locking two versions coexist — and
-    # records the formulae in brew's no-cleanup list so the kegs outlive the
-    # user's own brew hygiene (ADR-0010, dev#289). Both are per-project side
-    # effects and only happen when the integration knows its project.
+    # Brew links one keg per formula and deletes the rest on `brew
+    # upgrade`/`brew cleanup`, while a lock names one exact version. After
+    # installing, the integration puts each locked keg's `bin` on the
+    # project PATH through shadowenv and records the formulae in brew's
+    # no-cleanup list. Both happen only when the integration knows its
+    # project.
     #
-    # A lock is enforced by verifying the keg, and satisfied by converging
-    # it: a formula brew has at other versions than the lock pins (a
-    # checkpoint behind a re-lock, a branch locking an older version) is
-    # brought to the locked version before the verification fails. The
-    # lock carries the `tap_commit` at which the formula is that version
-    # (ADR-0005), so it is installed from the tap checked out there, with
-    # brew reading the tap and not its API — up or down, bottle or not; a
-    # pin written before tap commits were recorded is upgraded by brew
-    # from a refreshed index instead (dev#350, dev#356).
+    # A lock is enforced by verifying the keg and satisfied by converging
+    # it: a formula brew has at another version is brought to the locked
+    # version before the verification fails. The lock carries the
+    # `tap_commit` at which the formula is that version, so it is installed
+    # from the tap checked out there. A pin with no tap commit is upgraded
+    # by brew from a refreshed index instead.
     #
-    # Env filtering (install vs skip based on ci/dev) is the caller's
-    # responsibility — only pass deps that should be installed.
+    # Env filtering is the caller's; only pass deps that should install.
     #
-    # Every brew write runs holding the host-wide brew lock (Dev::HostLock,
-    # ai-flow#116 / dev#483): two runner slots — or a human and the agent
-    # user — discovering the same missing keg at once would otherwise meet
-    # brew's own per-formula lock, which fails the loser. A keg found
-    # missing is converged under the lock, and the Cellar is asked again
-    # once the lock is ours: the holder before us usually installed it.
+    # Every brew write runs holding the host-wide brew lock (Dev::HostLock):
+    # two processes discovering the same missing keg at once would
+    # otherwise meet brew's own per-formula lock, which fails the loser. A
+    # keg found missing is converged under the lock, and the Cellar is
+    # asked again once the lock is held.
     class BrewIntegration < Integration
       extend T::Sig
 
@@ -126,9 +113,8 @@ module Dev
 
       # Two formulae of one tap lock it at different commits: a tap is one
       # checkout, so a pinned install cannot serve both. A conservative
-      # re-lock keeps each pin's own commit (dev#355), so the taps of a lock
-      # whose pins moved at different times legitimately carry several —
-      # `--all` re-resolves every pin at one HEAD.
+      # re-lock keeps each pin's own commit, so this is legitimate; `--all`
+      # re-resolves every pin at one HEAD.
       class TapPinConflictError < StandardError
         extend T::Sig
 
@@ -190,12 +176,9 @@ module Dev
       # rows) and the language-specific activation each gets once its keg is
       # installed and on the project PATH: gem env for Ruby, the project
       # venv for Python. Each answers
-      # `activate!(keg:, version:, project_root:, project_name:, store:)` —
-      # the project's name keys its state in the store (the venv under
-      # `~/.dev/venv/<project>`). Keyed on the pin's integration symbol, so
-      # the step follows the lock, not a formula name. (A port on the
-      # Registry entry once #300 gives Entry its materialization — the table
-      # lives here until then.)
+      # `activate!(keg:, version:, project_root:, project_name:, store:)`.
+      # Keyed on the pin's integration symbol, so the step follows the lock,
+      # not a formula name.
       INTERPRETERS = T.let(
         { ruby: Dev::ShadowenvRuby, python: Dev::ShadowenvPython }.freeze,
         T::Hash[Symbol, T::Module[T.anything]],
@@ -571,10 +554,8 @@ module Dev
       end
 
       # Bring the formula to the locked version: install it from its tap
-      # checked out at the commit the lock names — the one mechanism brew
-      # offers for a specific version (dev#356) — or, for a lock written
-      # before tap commits were recorded, have brew upgrade it from a
-      # refreshed index.
+      # checked out at the commit the lock names, or, for a lock with no tap
+      # commit, have brew upgrade it from a refreshed index.
       #
       # @param dep [Dependency]
       # @param formula [String]
@@ -707,10 +688,9 @@ module Dev
 
       # What brew has installed of the batch, by name: read on first need
       # and held until a write, so a batch of N already-installed formulae
-      # costs one brew start for the formulae and one for the casks rather
-      # than two per keg (each `brew list` boots brew's Ruby; on Linuxbrew
-      # that is over a second a call — dev#375). A formula and a cask
-      # sharing a name share the entry; dev declares one or the other.
+      # costs one brew start for the formulae and one for the casks (each
+      # `brew list` boots brew's Ruby). A formula and a cask sharing a name
+      # share the entry; dev declares one or the other.
       #
       # @return [Hash{String => Array<String>}] installed versions by name,
       #   revision suffixes stripped; a name brew lacks has no entry
@@ -797,8 +777,7 @@ module Dev
 
       # Announce one brew write the way its tier of trust reads: a spin
       # when brew is ours (captured, parsed), a step when the write is
-      # escalated — sudo owns the terminal (dev#570 hands it the prompt),
-      # and the name says whose brew is written.
+      # escalated and sudo owns the terminal.
       #
       # @param name [String] in the progressive: "Installing llvm@18"
       # @yieldreturn the block's value, answered
@@ -969,8 +948,8 @@ module Dev
 
       # @param err [String] a brew invocation's stderr
       # @return [Boolean] whether sudo -n refused: no NOPASSWD rule for the
-      #   command, or a rule without SETENV for the assignments (an edge
-      #   from before dev#361) — both re-converged by `dev runner register`
+      #   command, or a rule without SETENV for the assignments; both are
+      #   re-converged by `dev runner register`
       sig { params(err: String).returns(T::Boolean) }
       def sudo_refused?(err)
         err.include?("a password is required") || err.include?("not allowed to set the following environment variables")

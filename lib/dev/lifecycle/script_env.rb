@@ -10,35 +10,19 @@ require_relative "track"
 
 module Dev
   module Lifecycle
-    # The env contract of the script forms (dev#192, K1): what a target's
-    # `build:` and `package:` lines read instead of flags. The build's
-    # axes arrive as `DEV_TARGET`, `DEV_PLATFORM` and `DEV_CONFIG` — each
-    # axis set exactly when the target declares it, so a script's `case`
-    # over an undeclared axis fails loudly under `set -u` rather than
-    # matching an empty string — then `DEV_INSTALL` (the install directory
-    # the builder writes and the packager reads) and, for `package:`,
-    # `DEV_ARTIFACT` (the archive path without its extension). The mapping
-    # from dev's ids to the toolchain's switches is the script's `case`,
-    # and a declared name it does not handle must fail (`*) exit 2`).
+    # The env the script forms read instead of flags. A `build:` or
+    # `package:` script gets the build's axes as `DEV_TARGET`,
+    # `DEV_PLATFORM` and `DEV_CONFIG` (each set exactly when the target
+    # declares it, so a `case` over an undeclared axis fails under `set
+    # -u`), `DEV_INSTALL`, and for `package:` `DEV_ARTIFACT` (the archive
+    # path without its extension).
     #
-    # A channel's `run:` reads the same axes for the archive it ships,
-    # with `DEV_ARTIFACT` now the archive file itself (a split set's
-    # `MANIFEST`; the parts sit beside it), `DEV_CHANNEL`, `DEV_TRACK` (the
-    # track the source decided: `testing` from the store, `live` for a
-    # release's archives), `DEV_SCRATCH` (the channel's own directory in
-    # the store, for whatever the script unpacks or wraps — the archive
-    # itself is read-only), `DEV_BUILD`, `DEV_BUILD_ID`,
-    # `DEV_ARCHIVE_SHA256`, and what the source says of it (dev#192, K5;
-    # dev#425): a **store** artifact brings its manifest's `DEV_SHA`,
-    # `DEV_DIRTY` and `DEV_PACKAGED_AT`, so the script can name what it
-    # shipped and refuse a dirty one without reading `build-id.json`; a
-    # **release**'s archive brings `DEV_RELEASE_VERSION` (the version as
-    # given to `--release`) and `DEV_SHA` (the tag's commit, as
-    # `release.json` records it) — and nothing of a working tree, since a
-    # release is cut from a clean one. Each key is set exactly when it
-    # applies, so a script's `${DEV_RELEASE_VERSION}` under `set -u`
-    # fails loudly on a testing deploy rather than reading an empty
-    # version.
+    # A channel's `run:` gets the same axes for the archive it ships,
+    # `DEV_ARTIFACT` as the archive file itself, `DEV_CHANNEL`, `DEV_TRACK`,
+    # `DEV_SCRATCH`, `DEV_BUILD`, `DEV_BUILD_ID`, `DEV_ARCHIVE_SHA256`, and
+    # the provenance's keys: `DEV_SHA`, `DEV_DIRTY` and `DEV_PACKAGED_AT`
+    # for a store artifact, `DEV_RELEASE_VERSION` and `DEV_SHA` for a
+    # release's archive. Each key is set exactly when it applies.
     module ScriptEnv
       TARGET = "DEV_TARGET"
       PLATFORM = "DEV_PLATFORM"

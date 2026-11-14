@@ -24,7 +24,7 @@ module Dev
     # documentation where the operator meets it.
     #
     # Every command with a project body — a project command, a builtin a
-    # project overrode — also says where it runs on this machine (dev#409):
+    # project overrode — also says where it runs on this machine:
     # a dim trailing column on its listing row, a sentence in its own
     # usage. The environment is the command's bound placement under the
     # host rule: `host`, the image's name, or the image's name with
@@ -36,7 +36,7 @@ module Dev
     # declares for it — with `(remote)` rather than `(container)` where
     # this machine is not that environment, since a verb never enters a
     # container: it leaves for a host that is (the remote dispatch — a
-    # runner, dev#420, or the project's own container, dev#421), and which
+    # runner, or the project's own container), and which
     # one is decided when it runs, never asked of the forge by help.
     class UsagePrinter
       extend T::Sig

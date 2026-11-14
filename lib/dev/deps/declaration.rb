@@ -6,39 +6,27 @@ require_relative "../value_equality"
 
 module Dev
   module Deps
-    # The shared atom of the deps domain: "package NAME of INTEGRATION, under
-    # CONSTRAINT". Stated by whoever authored the thing — a project's
-    # dependencies.rb row (which wraps it in a ScopedDeclaration with its
-    # install context) or an upstream manifest (a PackageVersion's declared
-    # dependencies, reported by the integration's Repository).
+    # The shared atom of the deps domain: "package NAME of INTEGRATION,
+    # under CONSTRAINT". Stated by a project's dependencies.rb row (wrapped
+    # in a ScopedDeclaration with its install context) or by an upstream
+    # manifest.
     #
-    # Context-free by type: where and when a dependency installs (group, host,
-    # env) is a property of the path the resolver walked to reach it, never of
-    # the declaration itself. The same upstream declaration reached via two
-    # parents inherits two different contexts — see Scope and
-    # ScopedDeclaration.
+    # Context-free by type: where and when a dependency installs (group,
+    # host, env) is a property of the path the resolver walked to reach it,
+    # never of the declaration itself.
     #
-    # The constraint is always in dev's shape: a hash whose keys are owned by
-    # the integration's VersionScheme (e.g. { "version" => "^3.6" },
-    # { "tag" => "v1.0" }); {} means unconstrained — a present empty form,
-    # never nil. Repositories normalize upstream syntax into this shape at
-    # construction, so constraints cross the system boundary exactly once.
-    # Only version-shaped keys live here: source coordinates are the `source`
-    # field, and install instructions are ScopedDeclaration's materialization.
+    # The constraint is always in dev's shape: a hash whose keys are owned
+    # by the integration's VersionScheme (`{ "version" => "^3.6" }`, `{
+    # "tag" => "v1.0" }`); `{}` means unconstrained. Repositories normalize
+    # upstream syntax into this shape at construction. Source coordinates
+    # are the `source` field; install instructions are ScopedDeclaration's
+    # materialization.
     #
-    # source is on the atom (not ScopedDeclaration) because both authors can
-    # legitimately state it: an upstream manifest edge can point at a source
-    # coordinate (cargo-style git deps) just as a project row can. It is
-    # identity-shaping — Resolver#package_id reads it onto PackageId#source.
-    #
-    # revision is the other way to ask: an address into an integration's
-    # continuous space (a git commit SHA, an exact Xcode version) instead of a
-    # selection over its discrete published universe. An address forgoes
-    # resolution — the Resolver hands it to Repository#at and no scheme runs —
-    # so a revision alongside version constraints is a contradiction and is
-    # rejected at construction. The spelling is the ecosystem's canonical one
-    # (dev's only operation on a revision is equality, in conflict rejection),
-    # validated by the DSL verb that mints it.
+    # `revision` is the other way to ask: an address into an integration's
+    # continuous space (a git commit SHA, an exact Xcode version) instead of
+    # a selection over its published universe. An address forgoes
+    # resolution, so a revision alongside version constraints is rejected
+    # at construction.
     #
     # See docs/deps-architecture.md for the ontology this belongs to.
     class Declaration

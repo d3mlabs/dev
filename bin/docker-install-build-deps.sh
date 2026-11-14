@@ -2,8 +2,8 @@
 # Internal script for Dockerfiles: installs Linuxbrew and the :build group's
 # brew dependencies from deps.lock into the image.
 #
-# Superseded for build containers that own their data root (ADR-0008): there
-# the image is OS + Wine + user, Linuxbrew lives in the container's own
+# Build containers that own their data root do not use it: there the
+# image is OS + Wine + user, Linuxbrew lives in the container's own
 # prefix volume — bin/container-provision-dev.sh bootstraps it — and the
 # container's `dev up` installs the :build group from the lock. Kept for the
 # images that still bake their toolchain in; nothing new should.
@@ -14,9 +14,9 @@
 #         -o /tmp/install-build-deps.sh && bash /tmp/install-build-deps.sh
 #
 # Optional: pass the directory holding those files as $1 (default: /app).
-# A Dockerfile that still copies the retired build-deps.lock (ADR-0011) keeps
-# working until its project re-locks: this script is fetched from main, so a
-# hard switch here would break that image build the day it merged.
+# A Dockerfile that still copies the retired build-deps.lock keeps working
+# until its project re-locks: this script is fetched from main, so a hard
+# switch here would break that image build the day it merged.
 #
 # The install is `dev deps install --group build --integration brew`, run
 # by the latest dev *release* from the Homebrew tap — the same channel every
@@ -25,8 +25,8 @@
 # installed artifacts (e.g. a gh engine release) that are volume-mounted into
 # the container, never baked into the image. dev-core is uninstalled
 # afterwards: dev is live infrastructure, and a copy frozen into an image
-# layer would be a stale dev waiting to be run by accident (README: "dev is
-# live infrastructure").
+# layer would be a stale dev waiting to be run by accident
+# (docs/configuration.md, "dev is live infrastructure").
 #
 # This is NOT a user-facing CLI command. It runs inside docker build only.
 
@@ -55,7 +55,7 @@ export HOMEBREW_NO_SANDBOX_LINUX=1
 echo ">>> Installing Linuxbrew"
 # Pinned to a Homebrew/install commit rather than HEAD: this pipes
 # third-party code to bash inside every image build, and HEAD is a mutable
-# ref an upstream compromise could repoint (dev#99). The repo publishes no
+# ref an upstream compromise could repoint. The repo publishes no
 # tags, so the pin is a commit SHA; bump it deliberately when a newer
 # installer is needed — a stale pin still installs current Homebrew.
 NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/24173182915f24bdd52a22fd073e421953b2a252/install.sh)"
@@ -98,8 +98,8 @@ echo ">>> Installing build dependencies from the lock in ${DEPS_DIR}"
 # ones do not. The host OS is detected (linux), so host: :darwin entries
 # skip themselves.
 #
-# --pinned-taps is the image build's reproducible mode (ADR-0003, "images
-# pin"): dev checks each formula's tap out at the commit the lock
+# --pinned-taps is the image build's reproducible mode: dev checks each
+# formula's tap out at the commit the lock
 # names (one commit, fetched alone — not homebrew-core's history) and brew
 # installs from those checkouts instead of its moving API, so two builds of
 # one lock install one toolchain. Measured at no cost against the unpinned
@@ -114,14 +114,14 @@ fi
 (cd "$DEPS_DIR" && CI=true dev deps install --group build --integration brew ${PINNED_TAPS[@]+"${PINNED_TAPS[@]}"})
 
 echo ">>> Removing dev-core from the image"
-# The toolchain stays; dev leaves (README: "dev is live infrastructure" —
-# the image contains no dev). dev-core's own dependencies (gh, git, ruby,
+# The toolchain stays; dev leaves (docs/configuration.md, "dev is live
+# infrastructure" — the image contains no dev). dev-core's own dependencies (gh, git, ruby,
 # shadowenv, …) stay too: Homebrew 7 autoremoves a formula's
 # now-unneeded dependencies on uninstall by default, and every container
 # bin/container-provision-dev.sh later brings to the host's version would
 # pour those ~30 bottles back before installing the one formula it is
 # there for. Keeping them is a minute off every cold container start
-# (plans#48) and changes nothing about which dev the image carries: none.
+# and changes nothing about which dev the image carries: none.
 HOMEBREW_NO_AUTOREMOVE=1 brew uninstall --quiet dev-core
 
 echo ">>> Done"

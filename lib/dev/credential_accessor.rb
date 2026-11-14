@@ -12,7 +12,7 @@ module Dev
   # resolution detail — here the ENV → keychain → file → prompt fallback chain —
   # to shell consumers (e.g. stage.sh) so they never reimplement credential
   # lookup or hardcode a storage backend. The payload is the value alone;
-  # the prompt a first-time miss raises is the Ui's (plans#52), and a
+  # the prompt a first-time miss raises is the Ui's, and a
   # non-interactive miss raises the provider's MissingCredentialError, whose
   # message points at `gh secret set`.
   #

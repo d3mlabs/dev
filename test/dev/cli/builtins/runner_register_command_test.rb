@@ -1139,7 +1139,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     Then
     error = raises Dev::Reach::ExposedError
-    error.message.include?("plans#5 Gap 1")
+    error.message.include?("YAML could land on this host")
     registry.group_writes == []
     harness.events == []
   end

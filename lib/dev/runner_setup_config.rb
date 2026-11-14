@@ -7,14 +7,13 @@ require_relative "value_equality"
 module Dev
   # Value object for one enrollment's identity, resolved by `dev runner
   # register` from its flags and derivations (never a file — the dev.yml
-  # `runner:` block is retired): the **role** the slot plays (RunnerRole,
-  # dev#566 — the labels config.sh advertises and the runner group the
-  # registration joins both derive from it), plus optional dir/name/version
-  # overrides (see Dev::RunnerSetup for their defaults:
-  # ~/actions-runner-<role suffix>, the hostname, and the pinned runner
-  # version), and whether config.sh may `--replace` a registration GitHub
-  # already holds under the name (register's rule, dev#565: only this
-  # family's own).
+  # `runner:` block is retired): the **role** the slot plays (RunnerRole —
+  # the labels config.sh advertises and the runner group the registration
+  # joins both derive from it), optional dir/name/version overrides (see
+  # Dev::RunnerSetup for their defaults: ~/actions-runner-<role suffix>,
+  # the hostname, and the pinned runner version), and whether config.sh
+  # may `--replace` a registration GitHub already holds under the name
+  # (only this family's own).
   class RunnerSetupConfig
     extend T::Sig
     include Dev::ValueEquality::Derived
@@ -35,7 +34,7 @@ module Dev
     # name (`--replace`). GitHub refuses a duplicate runner name at a scope;
     # `--replace` turns that refusal into a takeover, so it is only ever
     # true for a name whose registration is this family's own — register
-    # decides, having looked the name up (dev#565). False enrolls plainly:
+    # decides, having looked the name up. False enrolls plainly:
     # a name nothing holds needs no replacing, and one another family holds
     # is refused upstream rather than stolen here.
     sig { returns(T::Boolean) }
@@ -59,6 +58,8 @@ module Dev
     end
 
     # The labels config.sh advertises: the role's, comma-separated.
+    #
+    # @return [String]
     sig { returns(String) }
     def labels
       @role.labels.join(",")

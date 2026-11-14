@@ -7,7 +7,7 @@ module Dev
   module Cli
     # Parses the dev.yml `commands: release:` entry into the project's
     # Lifecycle::ReleaseBuilds — the dev.yml boundary for the release, as
-    # ChannelParser is for channels (dev#192, K4). With targets declared,
+    # ChannelParser is for channels. With targets declared,
     # `release` is derived, not a command: the entry says what a release
     # contains and nothing else — `targets:`, a list in the build grammar
     # parsed against the project's targets (so a name no target spells fails
@@ -103,7 +103,7 @@ module Dev
           raise ReleaseBodyError,
             "command '#{RELEASE}' declares `run:`, but with `targets:` declared #{RELEASE} is dev's cut — tag, package the " \
               "release builds at the tag, attach them to the GitHub release — delete the `run:` and declare what a release " \
-              "contains under `#{TARGETS_KEY}:` (or `#{RELEASE}: {}` for every build) (d3mlabs/dev#192)"
+              "contains under `#{TARGETS_KEY}:` (or `#{RELEASE}: {}` for every build)"
         end
         if entry.key?(COMMANDS_KEY)
           raise ReleaseChildrenError, "command '#{RELEASE}' declares `commands:`, but #{RELEASE} has no subcommands — it takes a version"

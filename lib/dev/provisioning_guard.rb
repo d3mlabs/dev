@@ -3,7 +3,7 @@
 
 module Dev
   # Kill-switch against real provisioning, for processes that must never
-  # install anything: the test suite (dev#208). test_helper sets
+  # install anything: the test suite. test_helper sets
   # DEV_FORBID_PROVISIONING=1 for every test process; the install seams the
   # provisioners cannot inject — `brew install`, `xcodes install` — call
   # check! right before doing the work, so a test that reached one without

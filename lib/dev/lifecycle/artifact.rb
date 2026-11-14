@@ -9,11 +9,10 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # One artifact in the store: the directory `package` filled for a build —
-    # the archive (the one file a release attaches and a channel uploads) and
-    # the `build-id.json` that says what it was packaged from (dev#192, K0,
-    # K9). The manifest is the truth about the directory; the directory's
-    # name is only the index the Store reaches it by.
+    # One artifact in the store: the directory `package` filled for a build,
+    # holding the archive and the `build-id.json` that says what it was
+    # packaged from. The manifest is the truth about the directory; the
+    # directory's name is only the index the Store reaches it by.
     class Artifact
       extend T::Sig
       include Dev::ValueEquality::Derived

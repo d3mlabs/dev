@@ -11,29 +11,25 @@ require "dev/lifecycle/gh"
 require "dev/ui"
 
 module Dev
-  # Registers the current host as a self-hosted GitHub Actions runner — scoped
-  # to a repo by default, or to the whole org (`org: true`) so one runner
-  # serves every repo without per-repo registration.
+  # Enrolls this host as a self-hosted GitHub Actions runner at one scope —
+  # a repo, or the org (`org: true`) so one runner serves every repo. The
+  # one implementation behind `dev runner register`, driven by a
+  # Dev::RunnerSetupConfig. Registration tokens are minted through `gh`
+  # (org scope needs the admin:org gh scope), never pasted from the web UI.
   #
-  # This is the one shared implementation behind `dev runner register`; repos opt in
-  # by declaring a `runner:` block in dev.yml (see Dev::RunnerSetupConfig) instead
-  # of vendoring a per-repo setup script. With `gh` already authenticated, there's
-  # no manual "copy a registration token from the web UI" step — we mint one via
-  # the API (org scope needs the admin:org gh scope). Idempotent: re-running
-  # over a configured dir deregisters it first, including across scopes — a
-  # repo-scoped runner re-registered with `org: true` is deregistered at its old
-  # scope first (read back from the runner's own .runner file). `--replace` —
-  # config.sh taking over a registration GitHub already holds under the name,
-  # which GitHub would otherwise refuse as a duplicate — is passed only when
-  # the config says so: register's rule (dev#565) is that only this family's
-  # own name is ever replaced; any other holder is refused upstream, never
-  # overwritten here.
+  # Idempotent: re-running over a configured dir deregisters it first,
+  # across scopes too — a repo-scoped runner re-enrolled with `org: true` is
+  # deregistered at its old scope, read back from its own .runner file.
+  # `--replace` — config.sh taking over a registration GitHub already holds
+  # under the name — is passed only when the config says so: only this
+  # family's own name is ever replaced; any other holder is refused
+  # upstream, never overwritten here.
   #
-  # It installs a systemd service and touches the host filesystem + network, so it
-  # runs on the host (a built-in command), never inside a build container.
+  # It installs a systemd service and touches the host filesystem and
+  # network, so it runs on the host, never inside a build container.
   #
   # The enrollment may belong to another OS user (`as_user:`, the Linux
-  # runner user of dev#310): then every step that touches its files — the
+  # runner user): then every step that touches its files — the
   # dir, the download, `config.sh` — runs as that user through `sudo -u`,
   # the dir defaults under that user's home, and the unit is installed for
   # it (`svc.sh install <user>`). What needs the operator stays the
@@ -70,7 +66,7 @@ module Dev
 
       # A capture is parsed, never shown, so its child runs with colour
       # off whatever the operator forced: gh honours CLICOLOR_FORCE and
-      # GH_FORCE_TTY on a pipe and colourises `gh api`'s JSON (dev#544) —
+      # GH_FORCE_TTY on a pipe and colourises `gh api`'s JSON —
       # the same env Lifecycle::Gh#capture spawns under, the one rule for
       # every gh answer dev reads. `system` is the operator's terminal and
       # leaves their preference alone.
@@ -112,7 +108,7 @@ module Dev
     #   host (e.g. "linux-x64", "osx-arm64"); defaults to detection. Drives both
     #   the tarball choice and the service-install shape (systemd vs LaunchAgent).
     # @param as_user [String, nil] the OS user the enrollment belongs to and the
-    #   service runs as, when not the invoking user (dev#310)
+    #   service runs as, when not the invoking user
     # @param home [String, nil] the home the default dir lives under: the
     #   enrollment owner's (defaults to the invoking user's)
     # @param path [String, nil] the PATH the owner's commands run on
@@ -366,7 +362,7 @@ module Dev
       argv += ["--runnergroup", group] if group
       argv << "--unattended"
       # Only a name whose registration is this family's own is ever
-      # replaced (dev#565); without the flag a held name is GitHub's
+      # replaced; without the flag a held name is GitHub's
       # refusal, not a takeover.
       argv << "--replace" if @config.replace
       argv

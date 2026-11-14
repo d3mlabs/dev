@@ -9,11 +9,9 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # The built-in `none` packager (dev#192, K1): the target is built and
-    # never shipped — the Editor `dev test` runs, a library the clients
-    # link — so it is invisible to `package`, `release` and `deploy`
-    # (Target#packageable?). Asking it to package anyway is a programming
-    # error, reported as one.
+    # The built-in `none` packager: the target is built and never shipped,
+    # so it is invisible to `package`, `release` and `deploy`. Asking it to
+    # package anyway is a programming error, reported as one.
     class NonePackager
       extend T::Sig
       include Packager

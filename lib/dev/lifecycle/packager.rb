@@ -9,18 +9,13 @@ require_relative "packed_archive"
 
 module Dev
   module Lifecycle
-    # The port between dev and the archive format for the `package` verb
-    # (dev#192, K1): turn a build's install into its **archive** — the one
-    # file (or split set) a release attaches and a channel uploads,
-    # byte-identical whichever channel takes it. The packager never knows
-    # the toolchain; dev's own `archive` (Archive) is the default and
-    # needs no declaration.
+    # The port between dev and the archive format: turn a build's install
+    # into its archive, the one file (or split set) a release attaches and a
+    # channel uploads. The packager never knows the toolchain.
     #
-    # Built-ins: Archive (`archive` — a zip, or the split `tar.zst` form),
-    # AsIsPackager (`as-is` — an install that already is an archive:
-    # Alpakit's zip, `gem build`'s `.gem`), NonePackager (`none` — built,
-    # never shipped). The script form is ScriptPackager (the target's
-    # `package:` line); an integration form lands with dev#433.
+    # Built-ins: Archive (`archive`, the default), AsIsPackager (`as-is`, an
+    # install that already is an archive), NonePackager (`none`, built and
+    # never shipped). ScriptPackager is the target's `package:` line.
     module Packager
       extend T::Sig
       extend T::Helpers

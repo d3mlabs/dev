@@ -12,11 +12,10 @@ module Dev
     # A Locker takes every declaration of its integration type at once and
     # delegates the joint solve to the external tool (bundler's `bundle
     # lock`), materializing the tool's own lockfile. The integration's
-    # Repository then reads that lockfile back as a fact universe. This is
-    # the home of the batch semantics that used to hide in
-    # Repository#prepare: repositories answer per-package questions; lockers
-    # solve whole sets. Integrations without a tool-owned solve have no
-    # Locker. See docs/deps-architecture.md.
+    # Repository then reads that lockfile back as a fact universe.
+    # Repositories answer per-package questions; lockers solve whole sets.
+    # Integrations without a tool-owned solve have no Locker. See
+    # docs/deps-architecture.md.
     #
     # A whole-set solve is where a subset re-lock cannot be a filter: the
     # tool is told which of its packages to float (`bundle lock --update

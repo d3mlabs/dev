@@ -9,7 +9,7 @@ module Dev
   module Cli
     module Builtins
       # `dev deploy status [--release V]`: what each channel carries and from
-      # where, read from the deployment ledger on the forge (dev#192, K6) —
+      # where, read from the deployment ledger on the forge —
       # per channel, its most recent GitHub Deployment: the track, the ref
       # it was made from, when, how it ended and the publisher's receipt,
       # then the builds that shipped with their ids. With `--release V` the
@@ -18,7 +18,7 @@ module Dev
       # the channels, which is why no channel may be named `status`
       # (ChannelParser).
       #
-      # Status is the channel's, not the release's (K6): the release records
+      # Status is the channel's, not the release's: the release records
       # what the cut made, the ledger what each channel received; `dev
       # release status` would re-conflate the two.
       class DeployStatusCommand < BuiltinCommand

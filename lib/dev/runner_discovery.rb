@@ -5,8 +5,8 @@ require "etc"
 require "json"
 
 module Dev
-  # This machine's runner enrollments, inspected — never recorded
-  # (plans#26): the actions-runner install dirs under $HOME (suffixless or
+  # This machine's runner enrollments, inspected — never recorded: the
+  # actions-runner install dirs under $HOME (suffixless or
   # `-<suffix>`-suffixed, see DIR_GLOBS) are the only local state, and each
   # configured dir's .runner file (written by config.sh) names the
   # enrollment's scope, runner name, registration id and runner group. Labels are
@@ -15,7 +15,7 @@ module Dev
   # this host's enrollments without the network.
   #
   # On a Linux host the enrollments live under the runner user's home, not
-  # the operator's (dev#310); `also_under` widens the scan to it. Each
+  # the operator's; `also_under` widens the scan to it. Each
   # enrollment knows its owner — the user whose dir it is, which is the
   # user its service runs as — so register can tell an enrollment running
   # as the wrong identity.
@@ -41,7 +41,7 @@ module Dev
       # the registration config.sh made in this dir. Names are reused
       # (another host with the same hostname, after this registration was
       # lost), ids are not: this is what tells this host's own
-      # registration from a look-alike under the same name (dev#565).
+      # registration from a look-alike under the same name.
       const :agent_id, Integer
 
       # Whether svc.sh has installed this enrollment's service: its
@@ -58,12 +58,12 @@ module Dev
       # The user whose dir this is — the one its service runs as.
       const :owner, String
 
-      # The runner group the registration joined (.runner poolName; GitHub's
-      # Default when the record names none — every repo-scoped registration
-      # does). With the id, the record's own account of what this
-      # enrollment is: what tells its family (RunnerRole) once GitHub has
-      # lost the runner and its labels with it — never the dir's name or
-      # the runner's (dev#566).
+      # The runner group the registration joined (.runner `poolName`;
+      # GitHub's Default when the record names none, as every repo-scoped
+      # registration does). With the id, the record's own account of what
+      # this enrollment is: what tells its family (RunnerRole) once GitHub
+      # has lost the runner and its labels with it. Never read from the
+      # dir's name or the runner's.
       const :pool, String
     end
 

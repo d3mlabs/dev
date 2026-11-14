@@ -25,7 +25,7 @@ module Dev
       end
 
       # Run the builtin stage, then the project tail. The tail's message
-      # derives from the slot's stamping trait (the dev#85 invariant): a
+      # derives from the slot's stamping trait: a
       # stamping slot must run spawn-and-wait so the caller can sequence the
       # installed stamp after execute — exec-replace would make it
       # unreachable. Non-stamping slots keep the exec tail-call.

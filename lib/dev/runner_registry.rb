@@ -12,7 +12,7 @@ module Dev
   # GitHub — so this is how register converges an existing enrollment's
   # labels without re-enrolling, how status reports them, and how the
   # remote dispatch learns a repo's enrolled runner is there to target
-  # (plans#26: inspected, never recorded).
+  # (inspected, never recorded).
   #
   # The gh CLI boundary rides the same Executor seam RunnerSetup uses, so
   # tests exercise the orchestration without the network.
@@ -120,11 +120,11 @@ module Dev
     end
 
     # One of an org's runner groups — GitHub's partition of *who may use*
-    # a runner (plans#26: labels say what a host can do, groups say which
+    # a runner (labels say what a host can do, groups say which
     # repos see it): its repository access (visibility and, when
     # "selected", the selected repositories; whether public repos may use
     # it at all) and its workflow access (the workflows pinned as the only
-    # ones that may land jobs on it — plans#5 H3). Read and converged,
+    # ones that may land jobs on it). Read and converged,
     # never recorded.
     class Group < T::Struct
       extend T::Sig
@@ -151,7 +151,7 @@ module Dev
       end
 
       # Whether at least one workflow is pinned: the state the public-repo
-      # rule (plans#5 H3) wants. Restricted to *no* workflow is what an
+      # rule wants. Restricted to *no* workflow is what an
       # incomplete PATCH leaves — a group no job can reach, not a safe one.
       sig { returns(T::Boolean) }
       def pinned?
@@ -198,8 +198,7 @@ module Dev
 
     # Create a runner group with the given access (GitHub's POST; the
     # selected repositories start empty and are converged separately —
-    # setting visibility and repositories in one call is the order plans#5
-    # found to drop the list).
+    # setting visibility and repositories in one call drops the list).
     #
     # @param org [String]
     # @param name [String]
@@ -224,10 +223,10 @@ module Dev
     end
 
     # Change a group's access fields. GitHub's PATCH is not the partial
-    # update its verb suggests (dev#473, probed live): an omitted
+    # update its verb suggests (probed live): an omitted
     # `selected_workflows` is read as none — the pins are wiped — and a
     # PATCH naming `visibility`, even to its current value, clears the
-    # selected repositories (plans#5 H3). So the pins are always sent in
+    # selected repositories. So the pins are always sent in
     # full (the caller passes the current ones when changing something
     # else), and visibility is named only when the caller means to flip
     # it — after which the selection must be written again.

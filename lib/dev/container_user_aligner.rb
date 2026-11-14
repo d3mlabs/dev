@@ -15,28 +15,27 @@ module Dev
   # Two shapes of data root, two rules (one probe either way: the
   # container's ids, the mount's owner, and whether the user can write it).
   #
-  # A **named volume** (a Mac, ADR-0008): the gate is behavioural. Docker
+  # A **named volume** (a Mac): the gate is behavioural. Docker
   # initialised the volume from the image, owned by the image's user, so
   # the user can write it and nothing happens. It cannot for a volume an
   # older image first mounted without declaring the directory (root-owned,
   # empty): that mount is handed to the container's user. A mount owned by
   # some other non-root uid gives the image user that owner's ids.
   #
-  # A **Linux bind mount** (dev#308): the host's own data root, shared
-  # between the operator and the runner user through the `dev` group
-  # (`<user>:dev 2775`, dev#310). Here the owner's ids are the wrong
-  # target — the runner user's container would write the root as the
-  # operator — and writability is the wrong gate: the mount is writable by the image's uid
-  # whenever that happens to be the owner's. The container's user is the
-  # **host caller** (its uid) in the **root's group** (the mount's gid), so
-  # what it writes under the root is the group's, like the host's own
-  # writes. A root-owned mount
-  # is adopted as on a volume.
+  # A **Linux bind mount**: the host's own data root, shared between the
+  # operator and the runner user through the `dev` group (`<user>:dev
+  # 2775`). Here the owner's ids are the wrong target — the runner user's
+  # container would write the root as the operator — and writability is
+  # the wrong gate: the mount is writable by the image's uid whenever that
+  # happens to be the owner's. The container's user is the **host caller**
+  # (its uid) in the **root's group** (the mount's gid), so what it writes
+  # under the root is the group's, like the host's own writes. A
+  # root-owned mount is adopted as on a volume.
   #
   # The Linuxbrew prefix mount comes with the ids. It is a volume docker
   # initialised from the image — owned by the image's user — and on Linux
-  # the host user's own (BuildContainer.prefix_volume, dev#337: a brew
-  # prefix has one owner, its only writer). Once the container's user has
+  # the host user's own (BuildContainer.prefix_volume: a brew prefix has
+  # one owner, its only writer). Once the container's user has
   # its final ids, a prefix owned by any other uid is handed to it: a
   # recursive chown as root, cheap on a volume's real filesystem (no
   # overlay copy-up), idempotent after.

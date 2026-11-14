@@ -10,7 +10,7 @@ module Dev
   # to fd 1 and reads fd 0 directly, past both. The two cannot share the
   # terminal: the child's lines garble the animation, and a child that
   # prompts waits on a stdin nobody can see it asking for — the shape of
-  # every "dev hung under a spinner" we have had (plans#52).
+  # every "dev hung under a spinner" we have had.
   #
   # So the rule is structural rather than reviewed: the UI's `spin` marks
   # the thread's terminal as the spinner's for the block, and the places

@@ -1,8 +1,8 @@
 #!/bin/sh
 # Give a dev-managed build container's user the uid and gid that own its
-# data root mount, so the container can write it. Under ADR-0008 the data
-# root is a volume docker initialised as the image's own user, and this
-# script is not reached; it remains for a mount owned by another uid.
+# data root mount, so the container can write it. A data root that is a
+# volume docker initialised as the image's own user never reaches this
+# script; it is for a mount owned by another uid.
 #
 # Run as root by the host's dev (Dev::ContainerUserAligner) through
 # `docker exec`, once, when the container's user cannot write /var/lib/dev —
@@ -19,15 +19,15 @@
 # them: it stops find *descending* into a mount, but the mount point's own
 # directory entry is still visited, and that inode is the mounted
 # filesystem's root (the host's /var/lib/dev, re-owned to the runner user
-# on the first realign; dev#310). So every mount point in this mount
+# on the first realign). So every mount point in this mount
 # namespace, read from /proc/self/mountinfo, is pruned outright.
 #
 # Regular files inside Linuxbrew's Cellar are the one exception. On an
 # overlay filesystem the first chown of a lower-layer file copies its whole
 # contents into the container's writable layer, so the sweep costs bytes,
 # not entries — and the Cellar is most of them (3.5 GB of 6 GB in the
-# cellbound-3d image; the full sweep took a minute per cold container start,
-# plans#48). Homebrew never writes into a poured keg: it adds and removes
+# cellbound-3d image; the full sweep took a minute per cold container
+# start). Homebrew never writes into a poured keg: it adds and removes
 # whole kegs and rewrites the symlinks in opt/ and bin/, all of which need
 # the enclosing *directories* to be ours — and those are re-owned. The keg
 # contents may stay with the old ids.

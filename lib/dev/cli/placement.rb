@@ -7,14 +7,14 @@ require_relative "../value_equality"
 module Dev
   module Cli
     # Where a command's body executes, as the lock answers it: the host, or
-    # one of the project's pinned images (dev#409). An EnvironmentRef bound
+    # one of the project's pinned images. An EnvironmentRef bound
     # against the lock (ProjectImages#bind) — every name resolved to its
     # EnvironmentImage at load, so whoever runs or lists the command reads a
     # value and never the lock.
     #
     # The host rule's input, not its output: an Image placement says which
     # image the body belongs to; whether this machine enters a container of
-    # it or runs it natively is HostRule's (ADR-0007 as amended).
+    # it or runs it natively is HostRule's.
     #
     # Sealed, like the reference it is bound from: CommandRunner and the
     # usage printer each case over two variants with a T.absurd proof.

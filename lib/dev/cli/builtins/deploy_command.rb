@@ -15,15 +15,15 @@ module Dev
   module Cli
     module Builtins
       # `dev deploy <channel> [BUILD] [--config C] [--release V]
-      # [--allow-stale] [--force] [--dry-run]`: ship archives to one channel
-      # (dev#192, K4, K5). One instance per channel, each a child of `deploy`
+      # [--allow-stale] [--force] [--dry-run]`: ship archives to one
+      # channel. One instance per channel, each a child of `deploy`
       # (DeployAllCommand), so a channel is a subcommand with its own help,
       # flags and completion. `deploy` never builds: what ships is selected
       # (DeploySelector — the accept set narrowed by BUILD, one archive per
       # accepted platform, `--config` choosing among configs) from the store
       # — refused when missing, stale without `--allow-stale`, or outside the
       # accept set without `--force` — or, under `--release <version>`, from
-      # the release of that version on the forge (dev#425): its archives
+      # the release of that version on the forge: its archives
       # downloaded and verified against `release.json`, refused when the
       # release carries none of a build.
       #
@@ -33,7 +33,7 @@ module Dev
       # integration's publisher) and hands that
       # dispatch the invocation a remote host would run — the channel, the
       # positional and the selection flags as given, so the host selects
-      # from *its* store, or downloads the release itself (K10: deploy never
+      # from *its* store, or downloads the release itself (deploy never
       # fetches an artifact across the dispatch) — and, for a seam that runs
       # here, the env: the tree read once (what staleness is read against),
       # the argv consumed into the selection — which carries the track: the
@@ -42,8 +42,8 @@ module Dev
       # ScriptPublisher, or the one the lock contributed); the seam is the
       # publisher over the selected shipments, on that track, with the
       # channel's scratch in the store, skipped under `--dry-run`; `after`
-      # records the deploy as a GitHub Deployment
-      # (K6): the channel as its environment, the shipments' ref — the
+      # records the deploy as a GitHub Deployment: the channel as its
+      # environment, the shipments' ref — the
       # artifacts' commit, or the release's tag — as its ref, the builds and
       # the track in its payload, the publisher's receipt in its `success`
       # status. A seam that raises is recorded too, as a `failure` carrying
@@ -52,7 +52,7 @@ module Dev
       # crosses from the seam to `after` through the env: the template's one
       # channel between the stages.
       #
-      # The UI (dev#514) is the lifecycle verbs' shared one: a frame naming
+      # The UI is the lifecycle verbs' shared one: a frame naming
       # the channel and the track that lists what ships, a step around the
       # publisher (it has the terminal), a spin for the record, and an
       # epilogue — the deployment and its page, the receipt, the receipt's
@@ -148,7 +148,7 @@ module Dev
         # @param fault [ChannelBinder::Fault, nil] why the channel cannot
         #   ship — a declared channel with no protocol (ChannelBinder#faults):
         #   its summary joins the Protocol detail, its message is the
-        #   refusal `deploy <channel>` raises (dev#509)
+        #   refusal `deploy <channel>` raises
         sig do
           params(
             channel: Lifecycle::Channel,
@@ -261,8 +261,8 @@ module Dev
         private
 
         # @return [Placement]
-        # @raise [UnboundChannelError] the channel's fault when it has one
-        #   (dev#509), else the lock could not place it
+        # @raise [UnboundChannelError] the channel's fault when it has one,
+        #   else the lock could not place it
         sig { returns(Placement) }
         def placement!
           return @placement if @placement

@@ -62,68 +62,24 @@ require_relative "lifecycle/workflow_runs"
 require_relative "lifecycle/step_outputs"
 
 module Dev
-  # The vocabulary and the store of the build lifecycle (dev#192): a project
-  # declares **targets** (dev.yml `targets:`); dev derives their **builds**
-  # (target × platform × config, one fully-qualified name each, the grammar
-  # in BuildPattern); `package` turns a build into an **artifact** (an
-  # archive plus `build-id.json`) in the Store under the data root; a
-  # **release** is the tag plus the archives on the forge, described by
-  # `release.json`. Platform and Config are the two closed id sets every
-  # surface spells the axes in.
+  # The build lifecycle: a project declares targets in dev.yml, dev derives
+  # their builds (target × platform × config), `package` turns a build into
+  # an artifact in the Store, `deploy` ships artifacts to a channel, and
+  # `release` tags and attaches archives to a GitHub release.
   #
-  # Between dev and the toolchain sit two ports, one per verb: the
-  # **Builder** makes a build's install (ScriptBuilder — the target's
-  # `build:` line over the ScriptEnv contract), the **Packager** makes the
-  # archive (Archive — dev's own zip or split tar, the default;
-  # AsIsPackager; NonePackager; ScriptPackager for a `package:` line).
-  # A **channel** (Channel — a `deploy` child, or one the lock contributes:
-  # the builds it accepts and its protocol) ships **shipments** (Shipment —
-  # one read-only archive per build, with its Provenance: the store's
-  # artifact and its commit, or a release's archive and its tag) through a
-  # third port, the **Publisher** (ScriptPublisher — the child's `run:`
-  # once per archive, over the same env contract; an integration's
-  # publisher, a black box over the read-only archives with the channel's
-  # scratch in the Store, reading its options off the Channel and
-  # unpacking an archive into a directory through the Unpacker, Archive's
-  # inverse — dev#426), on the **Track** the source decides (testing
-  # from the store, live for a release), and hands back a Receipt. Ports
-  # resolves the declarations (BuilderSpec, PackagerSpec, PublisherSpec)
-  # into them for a checkout. What a deploy leaves behind is not in the
-  # store: GithubDeployments records each as a GitHub Deployment
-  # (DeploymentRecord — channel, ref, track, builds, state, the receipt —
-  # read back as a Deployment), through Gh, the lifecycle's one gh
-  # boundary; ReleaseTag is the ref a release's deploy is recorded against.
+  # Three ports separate dev from the toolchain and the destination: a
+  # Builder makes a build's install, a Packager makes its archive, a
+  # Publisher ships the archives a deploy selected. Ports resolves a
+  # target's and a channel's declarations into them.
   #
-  # A **release** (dev#424) is the cut and nothing more: ReleaseBuilds is
-  # what `release:` says one contains; ReleaseCut is its git half (clean
-  # tree, the bump commit, the tag, the push — resumable); ReleaseAssets
-  # names each artifact's archive `<build>-<version>.<ext>` for the
-  # upload (PartList is a split set's MANIFEST, shared with Archive);
-  # GithubReleases is the release archive on the forge, where the assets
-  # and `release.json` (Manifest::Release) land. Nothing is deployed by
-  # it — distribution is `deploy --release` per channel (dev#425), which
-  # reads the cut back through ReleaseArchives: `release.json`, then the
-  # selected archives downloaded into the store's `.releases/<tag>/` and
-  # verified against the digests it records, on the live track.
+  # Deploys are recorded as GitHub Deployments (GithubDeployments); a
+  # release lives on the forge (GithubReleases) and is read back for
+  # `deploy --release` by ReleaseArchives.
   #
-  # The verbs that act on these (`build`, `package`, `deploy`, `release`)
-  # are LifecycleCommands in the CLI core (src/dev: the before → seam →
-  # after template, Dispatch and DispatchResolver, dev#413), derived by the
-  # sibling milestones (dev#414, dev#415, dev#424); this module is what
-  # they all speak.
-  #
-  # The **sync step** of the remote dispatch (K7) is here too: SnapshotSync
-  # commits the working tree through a temporary index (SnapshotCommit),
-  # pushes it to a SnapshotBranch (`dev/build/<runner>/<id>`) in the
-  # `origin` namespace SnapshotBranches owns — and prunes by age for
-  # `dev cache gc` — after WorkflowTriggers has checked that no project
-  # workflow would run on the push; Git is the one CLI boundary they share.
-  # What crosses to the remote host is a VerbInvocation (the verb's words,
-  # and the ArtifactFetch `--fetch` asks for); the host runs it through
-  # the generic workflow LifecycleWorkflow describes (dev#420), whose runs
-  # WorkflowRuns dispatches, finds by the snapshot branch, watches and
-  # downloads from (WorkflowRun is one as the forge lists it); StepOutputs
-  # is how `package` on the host names its artifact to that workflow.
+  # A verb that leaves the machine goes through SnapshotSync, which pushes
+  # the working tree to a snapshot branch, runs the dispatch and deletes the
+  # branch. The operator's view is docs/lifecycle.md; the class map is
+  # docs/lifecycle-architecture.md.
   module Lifecycle
   end
 end

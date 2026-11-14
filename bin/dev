@@ -1,24 +1,21 @@
 #!/bin/sh
-# The one place dev scrubs a caller's env — and the only env hygiene dev
-# does at all (test/dev/bin_dev_test.rb guards it; the org learning is
-# harness-env-scrub).
+# The one place dev scrubs a caller's env (test/dev/bin_dev_test.rb
+# guards it).
 #
 # What: the keys a bundler activation exports. A harness running dev
-# under `bundle exec` (dev#94, ai-flow#44) leaks RUBYOPT=-r.../bundler/setup
-# and BUNDLE_* into every child, and the interpreter acts on RUBYOPT before
-# the Ruby half runs a single line — dev would boot inside the caller's
-# bundle and fail to load its own gems. No caller's activation is ever
-# wanted: dev picks its own gems (the Ruby half, below) and its children
-# run under the project's shadowenv.
+# under `bundle exec` leaks RUBYOPT=-r.../bundler/setup and BUNDLE_* into
+# every child, and the interpreter acts on RUBYOPT before the Ruby half
+# runs a single line — dev would boot inside the caller's bundle and fail
+# to load its own gems. No caller's activation is ever wanted: dev picks
+# its own gems (the Ruby half, below) and its children run under the
+# project's shadowenv.
 #
 # Where: here, in the sh layer, ahead of the version probe (which would
 # itself crash under a hostile RUBYOPT), and nowhere else. Scrubbing once
 # at the entrypoint protects every spawn dev ever makes; per-spawn lists
-# are the discipline that keeps failing (dev#180, #274, #306 — each a key
-# added to one seam and not the other). The list is the source of truth:
-# bin_dev_test parses this line and checks it against what the locked
-# bundler actually exports, so a new bundler key shows up as a failing
-# test, not a leak.
+# drift. The list is the source of truth: bin_dev_test parses this line
+# and checks it against what the locked bundler actually exports, so a new
+# bundler key shows up as a failing test, not a leak.
 #
 # What stays: GEM_HOME and GEM_PATH. They are the caller's gem environment
 # — in a project shell, the project's activation. dev does not need them
@@ -59,20 +56,19 @@ $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 # beside libexec/specifications. Select them here, in-process, before the
 # first gem require: Gem.use_paths sets this process's gem home and path
 # and touches ENV not at all, so nothing is exported for children to
-# inherit (an exported GEM_HOME was dev#180: bundler installing a
-# project's gems into dev-core's Cellar) and nothing the caller exported
-# can misdirect dev (a GEM_PATH-less brew Ruby falls back to the
-# prefix-wide gem dir shared by every brew Ruby, where another Ruby's
-# native extensions live — dev#274). The vendored dir goes in FRONT of the
-# path dev would otherwise have (the caller's GEM_PATH, or the Ruby's
-# defaults when none) — never instead of it: default gems (json, open3)
-# resolve from the Ruby's stdlib regardless of Gem.path, but *bundled*
-# gems (reline, and readline on it — what CLI::UI::Prompt requires on
-# every tty or CI run) live in the Ruby's gem dir and are only reachable
-# through the path. A path of exactly [libexec] was 0.6.6, and broke every
-# interactive dev. A source checkout has no specifications dir beside it
-# and keeps the shell's gem env untouched. Guarded by
-# test/dev/bin_dev_test.rb against a synthetic libexec, both ways.
+# inherit (an exported GEM_HOME would send a project's bundler install
+# into dev-core's Cellar) and nothing the caller exported can misdirect
+# dev (a GEM_PATH-less brew Ruby falls back to the prefix-wide gem dir
+# shared by every brew Ruby, where another Ruby's native extensions
+# live). The vendored dir goes in FRONT of the path dev would otherwise
+# have (the caller's GEM_PATH, or the Ruby's defaults when none) — never
+# instead of it: default gems (json, open3) resolve from the Ruby's stdlib
+# regardless of Gem.path, but *bundled* gems (reline, and readline on it —
+# what CLI::UI::Prompt requires on every tty or CI run) live in the Ruby's
+# gem dir and are only reachable through the path. A source checkout has
+# no specifications dir beside it and keeps the shell's gem env untouched.
+# Guarded by test/dev/bin_dev_test.rb against a synthetic libexec, both
+# ways.
 vendored = File.dirname(root)
 Gem.use_paths(vendored, [vendored, *Gem.path]) if File.directory?(File.join(vendored, "specifications"))
 
@@ -81,15 +77,15 @@ require "dev/cli/global_dispatch"
 require "dev/shared_umask"
 
 # On Linux the data root is one tree shared by two OS users through a
-# group (dev#310); dev and everything it spawns write it group-writable.
+# group; dev and everything it spawns write it group-writable.
 Dev::SharedUmask.apply!
 
 # The Ui tier is one process-wide choice, made before anything that may
 # ask or report runs — the global builtins included (plan, learnings,
-# skills: dev#575; `cred get` onboards a first-time credential at the
-# terminal, `engine down` confirms: dev#573), so it is chosen ahead of
-# their dispatch, not after. The StdoutRouter is the Ui's to turn on, with
-# its first frame (plans#52, dev#523) — never here.
+# skills; `cred get` onboards a first-time credential at the terminal,
+# `engine down` confirms), so it is chosen ahead of their dispatch, not
+# after. The StdoutRouter is the Ui's to turn on, with its first frame —
+# never here.
 ui = if $stdout.tty? || ENV["CI"] || ENV["CLICOLOR_FORCE"]
   Dev::Cli::UiImpl.new(cli_ui: CLI::UI)
 else

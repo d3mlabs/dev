@@ -15,13 +15,11 @@ module Dev
     # Top-level DSL evaluated inside Dev::Deps.define { ... }.
     #
     # Every declaration verb GroupDSL offers works here too, ungrouped. An
-    # ungrouped declaration lands in the default group for the project's own
-    # lock and is what the manifest *exports* when read as a library (an
-    # integration's dependencies.rb, ADR-0011): the Gemfile/gemspec
-    # convention — top-level lines are the public interface, grouped ones
-    # are private. `env` is deliberately not offered ungrouped: env never
-    # propagates to a consumer, so an ungrouped env block would contradict
-    # itself.
+    # ungrouped declaration lands in the default group for the project's
+    # own lock and is what the manifest exports when read as a library (an
+    # integration's dependencies.rb): top-level lines are the public
+    # interface, grouped ones are private. `env` is not offered ungrouped,
+    # since env never propagates to a consumer.
     class DSL
       extend T::Sig
 
@@ -79,8 +77,8 @@ module Dev
         @registered_methods = T.let([], T::Array[Symbol])
       end
 
-      # The tap publishing one immutable `ruby@X.Y.Z` formula per Ruby patch
-      # — the universe `ruby` resolves over (homebrew-d3mlabs#8).
+      # The tap publishing one immutable `ruby@X.Y.Z` formula per Ruby patch,
+      # the universe `ruby` resolves over.
       RUBY_TAP = "d3mlabs/d3mlabs"
 
       # Declare the project's Ruby: a dependency like any other, minted as a
@@ -188,17 +186,15 @@ module Dev
         @declarations.concat(group_dsl.declarations)
       end
 
-      # Declare an environment image (dev#277): the floor it derives from —
-      # a dependency, resolved to a digest at `dev deps update` — and, in the
-      # block, the project's OS layer as `apt` lines, which are the image's
-      # materialization (a distro package cannot be pinned; the image it
-      # produces can). dev builds the image from the lock and publishes it;
-      # a host runs inside it unless it was provisioned from it (dev#308).
+      # Declare an environment image: the floor it derives from (a
+      # dependency, resolved to a digest at `dev deps update`) and, in the
+      # block, the project's OS layer as `apt` lines. dev builds the image
+      # from the lock and publishes it; a host runs inside it unless it was
+      # provisioned from it.
       #
       # Top level only, and never an export: the environment is the
-      # project's, not a group's, and not something a library manifest can
-      # declare for its consumer. Several blocks declare several images
-      # (dev#307 links commands to them by name).
+      # project's, not a group's. Several blocks declare several images;
+      # commands name them.
       #
       # @param name [String, Symbol] the image's name in the registry
       # @param from [String] the floor, `<registry>/<repository>:<tag>`
@@ -277,25 +273,20 @@ module Dev
       end
     end
 
-    # DSL inside an `image` block (DSL#image): what the environment image is
-    # made of beyond its floor, what it can build, and how its container is
-    # shaped. Two verbs make the image — `platform` and `apt` — because
-    # exactly that much can be locked and compared; a `RUN` apt cannot
-    # express belongs in a floor of the project's own (`from:`). One states
-    # the image's capability — `target_platforms`, the build platforms its
-    # toolchain emits (dev#192, K8) — a fact only the image's author holds
-    # (msvc-wine and a Wine prefix are what make win64 possible), locked
-    # with the image and checked against each target's `environment:` at
-    # load. Three shape the container the image runs as — `persist`,
-    # `volume`, `run_env` (dev#307). None of the last four enters the image
-    # or its digest.
+    # DSL inside an `image` block: what the environment image is made of
+    # beyond its floor, what it can build, and how its container is shaped.
+    # `platform` and `apt` make the image, since exactly that much can be
+    # locked and compared. `target_platforms` states the build platforms
+    # the image's toolchain emits, locked with the image and checked
+    # against each target's `environment:` at load. `persist`, `volume` and
+    # `run_env` shape the container the image runs as. None of the last
+    # four enters the image or its digest.
     class ImageDSL
       extend T::Sig
 
-      # A store verb (gh, brew, gem, …) inside an image block: the fat
-      # image — store trees baked into the image — is dev#309, reserved,
-      # not built. Refused rather than ignored so the author knows the
-      # line did nothing.
+      # A store verb (gh, brew, gem, …) inside an image block. Store trees
+      # are not baked into images; refused rather than ignored so the author
+      # knows the line did nothing.
       class StoreVerbInImageError < StandardError; end
 
       # An `apt` argument that is not a Debian package name — including
@@ -327,10 +318,9 @@ module Dev
       end
 
       # What the image can build, as lock metadata: `target_platforms`, the
-      # ids in the platform set's own order and unique — only when the
-      # block declared any, so a lock without the key reads as it did
-      # before it existed (an image that declares nothing produces no
-      # build platform, and no cross-platform build may name it).
+      # ids in the platform set's own order and unique, only when the block
+      # declared any. An image that declares nothing produces no build
+      # platform, and no cross-platform build may name it.
       #
       # @return [Hash{String => Array<String>}] `target_platforms`, only when declared
       sig { returns(T::Hash[String, T::Array[String]]) }
@@ -392,10 +382,10 @@ module Dev
         @packages.concat(names)
       end
 
-      # Declare the build platforms this image's toolchain emits — the
-      # capability a target's `environment:` is checked against for each
-      # of its builds (dev#192, K8). dev's closed platform ids, as symbols
-      # (`target_platforms :win64, :linux64`). Repeatable.
+      # Declare the build platforms this image's toolchain emits, the
+      # capability a target's `environment:` is checked against for each of
+      # its builds. dev's platform ids, as symbols (`target_platforms :win64,
+      # :linux64`). Repeatable.
       #
       # @param ids [Array<Symbol, String>] platform ids
       # @return [void]
@@ -441,7 +431,7 @@ module Dev
         define_method(verb) do |*_args, **_kwargs, &_block|
           raise StoreVerbInImageError,
             "`#{verb}` inside an image block declares store content baked into the image — " \
-              "that is the fat image, d3mlabs/dev#309, not yet built. Declare it outside the block; " \
+              "which dev does not build. Declare it outside the block; " \
               "the container's own `dev up` installs it."
         end
       end
@@ -550,26 +540,32 @@ module Dev
 
       class EmptyNameError < StandardError; end
 
-      # A commit: pin that is not a full 40-char SHA. Conflict rejection
-      # compares revisions textually, so only the canonical spelling keeps
-      # equality trustworthy — and today's silent fall-through (a short
-      # "commit" quietly resolved as a tag) was a lie worth killing.
+      # A commit pin (cmake commit:, gh sha:) that is not a full 40-char SHA.
+      # Conflict rejection compares revisions textually, so only the
+      # canonical spelling keeps equality trustworthy.
       class InvalidRevisionError < StandardError; end
 
-      # A git-backed cmake dep with nothing to select or address: no tag:, no
-      # branch:, no commit:. An unconstrained enumeration would pin an
-      # arbitrary ref, so the ask must say what it wants.
+      # A git-backed dep with nothing to select or address: a cmake dep with
+      # no tag:, branch:, or commit:, a gh dep with no tag: or sha:. An
+      # unconstrained enumeration would pin an arbitrary ref, so the ask
+      # must say what it wants.
       class MissingRefError < StandardError; end
 
-      # `install_dir:` on a tree dep (gh, steam, wwise). Retired by dev#271:
-      # the store places a tree from its identity, so the manifest no longer
-      # says where. Refused rather than ignored, because a project still
-      # saying it has a tree at the old path to move.
+      # `assets:` on a gh dep pinned at a sha:. Release assets hang off a
+      # release, and a commit publishes none — the only thing GitHub serves
+      # for a bare commit is its source, so a sha: pin materializes with
+      # build: alone.
+      class AssetsAtCommitError < StandardError; end
+
+      # `install_dir:` on a tree dep (gh, steam, wwise). The store places a
+      # tree from its identity, so the manifest does not say where. Refused
+      # rather than ignored, because a project still saying it has a tree at
+      # the old path to move.
       class InstallDirRemovedError < StandardError; end
 
       # `apt` outside an `image` block. A distro package is not a dependency
-      # dev can lock (ADR-0010, dev#284); the image its packages produce is,
-      # so the lines live in the block that produces it (dev#277).
+      # dev can lock; the image its packages produce is, so the lines live in
+      # the block that produces it.
       class AptOutsideImageError < StandardError; end
 
       # The canonical git address: a full 40-char lowercase hex SHA.
@@ -650,11 +646,7 @@ module Dev
           return add_declaration(name, :url, spec, source: url, materialization: materialization)
         end
 
-        if revision && !revision.match?(FULL_SHA)
-          raise InvalidRevisionError,
-            "cmake #{name} pins commit: #{revision.inspect} — a commit is a full 40-char SHA " \
-              "(tags select with tag:)"
-        end
+        validate_full_sha!("cmake", name.to_s, :commit, revision)
         if revision.nil? && !spec.key?(:tag) && !spec.key?(:branch)
           raise MissingRefError,
             "cmake #{name} names no tag:, branch:, or commit: — an unconstrained git universe " \
@@ -731,22 +723,34 @@ module Dev
       # Exactly one of assets:/build: must be given (the verb names the FETCH backend;
       # assets/build names how it's MATERIALIZED).
       #
+      # Two ways to say which version, exactly one of them:
+      #   - tag:  a constraint selecting one tag out of the repo's enumerated
+      #           releases+tags universe (ExactScheme).
+      #   - sha:  a revision — an address into the continuous space between
+      #           tags, full 40-char commit SHA only. No release exists for a
+      #           bare commit, so a sha: pin materializes with build: alone.
+      #
       # The first argument is the declaration name. With github:/repo: it is the name and
       # the slug comes from that option; otherwise it is the "owner/repo" slug and the
       # name is its basename (e.g. gh "EpicGames/UnrealEngine" -> name "UnrealEngine").
       #
       # @param name_or_slug [String, Symbol] dependency name, or "owner/repo" slug
-      # @param tag [String] exact tag (e.g. "5.6.1-release") — no floating "latest"
+      # @param tag [String, nil] exact tag (e.g. "5.6.1-release") — no floating "latest"
+      # @param sha [String, nil] full 40-char commit SHA to pin instead of a tag
       # @param github [String, nil] "owner/repo" slug (shorthand; makes the first arg the name)
       # @param repo [String, nil] alias for github:
       # @param assets [String, nil] glob selecting prebuilt release assets
       # @param build [String, Symbol, nil] build-from-source recipe (script path / shell / :none)
       # @param spec [Hash] additional options
       # @return [void]
+      # @raise [MissingRefError] if neither tag: nor sha: is given
+      # @raise [InvalidRevisionError] if sha: is not a full 40-char SHA
+      # @raise [AssetsAtCommitError] if assets: is combined with sha:
       sig do
         params(
           name_or_slug: T.any(String, Symbol),
-          tag: String,
+          tag: T.nilable(String),
+          sha: T.nilable(String),
           github: T.nilable(String),
           repo: T.nilable(String),
           assets: T.nilable(String),
@@ -754,7 +758,7 @@ module Dev
           spec: T.untyped,
         ).void
       end
-      def gh(name_or_slug, tag:, github: nil, repo: nil, assets: nil, build: nil, **spec)
+      def gh(name_or_slug, tag: nil, sha: nil, github: nil, repo: nil, assets: nil, build: nil, **spec)
         slug = (github || repo || name_or_slug).to_s
         name = (github || repo) ? name_or_slug.to_s : T.must(slug.split("/").last)
         reject_install_dir!("gh", name, spec, place: "gh/#{slug}")
@@ -764,15 +768,27 @@ module Dev
             "gh #{name.inspect}: provide exactly one of assets: (prebuilt release asset) " \
             "or build: (build from source)"
         end
+        if tag.nil? && sha.nil?
+          raise MissingRefError,
+            "gh #{name.inspect} names no tag: or sha: — a gh pin never floats to the latest release"
+        end
+        validate_full_sha!("gh", name, :sha, sha)
+        if sha && assets
+          raise AssetsAtCommitError,
+            "gh #{name.inspect}: assets: selects release assets, and a commit publishes no release — " \
+              "a sha: pin materializes from source (build:)"
+        end
 
         # Sorted into fields: the slug is the source coordinate, the tag is
-        # the constraint, and how to materialize (which assets to fetch or
-        # how to build) is install instruction — the repository never sees
-        # any of it. Where it lands is the store's: ~/.dev/gh/<slug>/<tag>.
+        # the constraint (or the sha the revision — Declaration refuses
+        # both), and how to materialize (which assets to fetch or how to
+        # build) is install instruction — the repository never sees any of
+        # it. Where it lands is the store's: ~/.dev/gh/<slug>/<tag-or-sha>.
         materialization = {}
         materialization["asset_pattern"] = assets if assets
         materialization["build"] = build.to_s if build
-        add_declaration(name, :gh, spec.merge(tag: tag), source: slug, materialization: materialization)
+        spec[:tag] = tag if tag
+        add_declaration(name, :gh, spec, source: slug, revision: sha, materialization: materialization)
       end
 
       # Declare a Steam application dependency (e.g. the Satisfactory Dedicated
@@ -808,13 +824,11 @@ module Dev
 
       # Declare the Epic Games Store's BuildPatchTool, provisioned from the
       # zip Epic serves into the store (~/.dev/egs/<name>/<digest>). Pinning
-      # it is what gives the project its `deploy egs` channel (dev#426): the
-      # tool is the one thing the store needs from a machine that publishes
-      # to it.
+      # it gives the project its `deploy egs` channel.
       #
-      # The universe is url-shaped — the zip is the whole address, hashed
-      # on first use at `dev deps update` and verified at install — so the
-      # declaration takes no version; a project behind a mirror names it
+      # The universe is url-shaped: the zip is the whole address, hashed on
+      # first use at `dev deps update` and verified at install, so the
+      # declaration takes no version. A project behind a mirror names it
       # with url:.
       #
       # @param name [String, Symbol] dependency name (BuildPatchTool::NAME by convention)
@@ -1002,10 +1016,9 @@ module Dev
 
       private
 
-      # Refuse the retired `install_dir:` on a tree verb, telling the author
-      # where the store now places the tree and how to move one already on
-      # disk. Mutates spec: the key is removed so a caller that rescues sees
-      # a clean spec, though none should.
+      # Refuse `install_dir:` on a tree verb, telling the author where the
+      # store places the tree and how to move one already on disk. Mutates
+      # spec: the key is removed so a caller that rescues sees a clean spec.
       #
       # @param verb [String] the DSL verb ("gh", "steam", "wwise")
       # @param name [String] the declaration name
@@ -1023,8 +1036,27 @@ module Dev
           #{verb} #{name.inspect}: install_dir: is gone — the store places trees by identity, \
           under #{new_base}<version>. Remove the option and re-lock. \
           A tree already installed moves with: mv #{old}/<version> #{new_base} \
-          (or let `dev up` fetch it again). See dev#271.
+          (or let `dev up` fetch it again).
         MSG
+      end
+
+      # Refuse a commit pin that is not spelled canonically. A nil revision
+      # is no pin at all and passes; the verbs decide separately whether
+      # one was required.
+      #
+      # @param verb [String] the DSL verb ("cmake", "gh")
+      # @param name [String] the declaration name
+      # @param option [Symbol] the option carrying the pin (:commit, :sha)
+      # @param revision [String, nil] the pin as written
+      # @return [void]
+      # @raise [InvalidRevisionError] if the revision is not a full 40-char SHA
+      sig { params(verb: String, name: String, option: Symbol, revision: T.nilable(String)).void }
+      def validate_full_sha!(verb, name, option, revision)
+        return if revision.nil? || revision.match?(FULL_SHA)
+
+        raise InvalidRevisionError,
+          "#{verb} #{name} pins #{option}: #{revision.inspect} — a commit is a full 40-char SHA " \
+            "(tags select with tag:)"
       end
 
       # Create a ScopedDeclaration and store it.
