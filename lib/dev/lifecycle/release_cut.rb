@@ -113,8 +113,9 @@ module Dev
         # @return [String, nil] the previous tag in HEAD's ancestry — what
         #   the notes span from; nil for a first release
         const :previous, T.nilable(String)
-        # @return [Array<String>] the commits since the previous tag, one
-        #   line each (`git log --oneline`), read before the bump adds its own
+        # @return [Array<String>] the non-merge commits since the previous
+        #   tag, one `git log --oneline` line each in topological order,
+        #   read before the bump adds its own
         const :commits, T::Array[String]
         # @return [Drift] the checkout against its origin as last fetched
         const :drift, Drift
@@ -291,14 +292,19 @@ module Dev
         @git.capture(argv).strip
       end
 
+      # The one-line log since the previous tag, merges left out: a merge
+      # commit records that a branch landed, and its commits are already
+      # in the log. Topological order keeps a merged branch's commits
+      # together where date order interleaves the branches.
+      #
       # @param previous [String, nil] the tag the log starts after
-      # @return [Array<String>] `git log --oneline` since it; empty for a
-      #   first release (its whole history is not release notes)
+      # @return [Array<String>] empty for a first release (its whole
+      #   history is not release notes)
       sig { params(previous: T.nilable(String)).returns(T::Array[String]) }
       def commits_since(previous)
         return [] if previous.nil?
 
-        @git.capture(["log", "--oneline", "#{previous}..HEAD"]).lines(chomp: true).reject(&:empty?)
+        @git.capture(["log", "--oneline", "--no-merges", "--topo-order", "#{previous}..HEAD"]).lines(chomp: true).reject(&:empty?)
       end
 
       # The branch against `origin/<branch>` as the checkout last saw it:
